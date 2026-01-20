@@ -31,12 +31,24 @@ const HANDLE_BLOCK_RECORD_TABLE: u64 = 0x1;
 /// Writes all DXF sections
 pub struct SectionWriter<'a, W: DxfStreamWriter> {
     writer: &'a mut W,
+    next_handle: u64,
+    handle_seed: u64,
 }
 
 impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Create a new section writer
-    pub fn new(writer: &'a mut W) -> Self {
-        Self { writer }
+    pub fn new(writer: &'a mut W, handle_start: u64, handle_seed: u64) -> Self {
+        Self {
+            writer,
+            next_handle: handle_start,
+            handle_seed,
+        }
+    }
+
+    fn allocate_handle(&mut self) -> Handle {
+        let handle = Handle::new(self.next_handle);
+        self.next_handle += 1;
+        handle
     }
 
     /// Write the HEADER section
@@ -58,8 +70,9 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             w.write_string(3, "ANSI_1252")
         })?;
 
+        let handle_seed = self.handle_seed;
         self.write_header_variable("$HANDSEED", |w| {
-            w.write_handle(5, Handle::new(document.next_handle()))
+            w.write_handle(5, Handle::new(handle_seed))
         })?;
 
         // Drawing extents
@@ -1408,10 +1421,9 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         
         // Write vertices
         let polyline_handle = polyline.handle();
-        let base_handle = polyline_handle.value();
-        for (index, vertex) in polyline.vertices.iter().enumerate() {
+        for vertex in polyline.vertices.iter() {
             let vertex_handle = if vertex.handle.is_null() {
-                Handle::new(base_handle + index as u64 + 1)
+                self.allocate_handle()
             } else {
                 vertex.handle
             };
@@ -1428,7 +1440,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         
         // SEQEND
         self.writer.write_entity_type("SEQEND")?;
-        let seqend_handle = Handle::new(base_handle + polyline.vertices.len() as u64 + 1);
+        let seqend_handle = self.allocate_handle();
         self.writer.write_handle(5, seqend_handle)?;
         self.writer.write_handle(330, polyline_handle)?;
         self.writer.write_subclass("AcDbEntity")?;
@@ -1680,7 +1692,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         // Write root dictionary
         let mut root_dict = Dictionary::new();
-        root_dict.handle = Handle::new(document.next_handle());
+        root_dict.handle = self.allocate_handle();
         self.write_dictionary(&root_dict)?;
 
         // Write other objects
@@ -2983,11 +2995,9 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_i16(72, mesh.face_count() as i16)?;
 
         // Write vertices
-        let mesh_handle = mesh.common.handle;
-        let base_handle = mesh_handle.value();
-        for (index, vertex) in mesh.vertices.iter().enumerate() {
+        for vertex in mesh.vertices.iter() {
             let vertex_handle = if vertex.common.handle.is_null() {
-                Handle::new(base_handle + index as u64 + 1)
+                self.allocate_handle()
             } else {
                 vertex.common.handle
             };
@@ -3008,9 +3018,9 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         }
 
         // Write faces
-        for (index, face) in mesh.faces.iter().enumerate() {
+        for face in mesh.faces.iter() {
             let face_handle = if face.common.handle.is_null() {
-                Handle::new(base_handle + mesh.vertices.len() as u64 + index as u64 + 1)
+                self.allocate_handle()
             } else {
                 face.common.handle
             };
@@ -3043,9 +3053,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         // Write SEQEND
         self.writer.write_entity_type("SEQEND")?;
-        let seqend_handle = mesh.seqend_handle.unwrap_or_else(|| {
-            Handle::new(base_handle + mesh.vertices.len() as u64 + mesh.faces.len() as u64 + 1)
-        });
+        let seqend_handle = mesh.seqend_handle.unwrap_or_else(|| self.allocate_handle());
         self.writer.write_handle(5, seqend_handle)?;
         self.writer.write_handle(330, mesh.common.handle)?;
         self.writer.write_subclass("AcDbEntity")?;

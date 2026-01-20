@@ -11,6 +11,7 @@ pub use binary_writer::DxfBinaryWriter;
 pub use section_writer::SectionWriter;
 
 use crate::document::CadDocument;
+use crate::entities::EntityType;
 use crate::error::Result;
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -75,7 +76,10 @@ impl DxfWriter {
 
     /// Write DXF content to a stream writer
     fn write_dxf<W: DxfStreamWriter>(&self, writer: &mut W) -> Result<()> {
-        let mut section_writer = SectionWriter::new(writer);
+        let handle_start = self.document.next_handle();
+        let extra_handles = count_extra_handles(&self.document);
+        let handle_seed = handle_start + extra_handles;
+        let mut section_writer = SectionWriter::new(writer, handle_start, handle_seed);
 
         // Write all sections
         section_writer.write_header(&self.document)?;
@@ -95,6 +99,45 @@ impl DxfWriter {
     pub fn document(&self) -> &CadDocument {
         &self.document
     }
+}
+
+fn count_extra_handles(document: &CadDocument) -> u64 {
+    let mut count = 0u64;
+
+    // Root dictionary in OBJECTS
+    count += 1;
+
+    for entity in document.entities() {
+        match entity {
+            EntityType::Polyline3D(polyline) => {
+                for vertex in &polyline.vertices {
+                    if vertex.handle.is_null() {
+                        count += 1;
+                    }
+                }
+                // SEQEND always written
+                count += 1;
+            }
+            EntityType::PolyfaceMesh(mesh) => {
+                for vertex in &mesh.vertices {
+                    if vertex.common.handle.is_null() {
+                        count += 1;
+                    }
+                }
+                for face in &mesh.faces {
+                    if face.common.handle.is_null() {
+                        count += 1;
+                    }
+                }
+                if mesh.seqend_handle.is_none() {
+                    count += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    count
 }
 
 /// Convenience function to write a document to a file
