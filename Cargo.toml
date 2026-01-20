@@ -1,0 +1,52 @@
+[package]
+name = "dxf-tools-rs"
+version = "0.1.0"
+edition = "2021"
+authors = ["Hakan AK"]
+description = "A pure Rust library for reading and writing CAD files in DXF format (ASCII and Binary)"
+license = "MIT"
+repository = "https://github.com/hakanaktt/dxf-tools-rs"
+keywords = ["cad", "dxf", "autocad", "drawing", "vector-graphics"]
+categories = ["parser-implementations", "encoding"]
+
+[dependencies]
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Binary parsing
+nom = "7.1"
+byteorder = "1.5"
+
+# Compression
+flate2 = "1.0"
+
+# Math
+nalgebra = "0.32"
+
+# Collections
+indexmap = "2.0"
+ahash = "0.8"
+
+# Parallel processing
+rayon = "1.7"
+
+# Encoding
+encoding_rs = "0.8"
+
+# Utilities
+bitflags = "2.4"
+once_cell = "1.19"
+
+[dev-dependencies]
+criterion = "0.5"
+proptest = "1.4"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[profile.bench]
+inherits = "release"
+
