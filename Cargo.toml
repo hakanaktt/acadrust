@@ -1,11 +1,14 @@
 [package]
 name = "dxf-tools-rs"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2021"
 authors = ["Hakan AK"]
 description = "A pure Rust library for reading and writing CAD files in DXF format (ASCII and Binary)"
 license = "MIT"
 repository = "https://github.com/hakanaktt/dxf-tools-rs"
+homepage = "https://github.com/hakanaktt/dxf-tools-rs"
+documentation = "https://docs.rs/dxf-tools-rs"
+readme = "README.md"
 keywords = ["cad", "dxf", "autocad", "drawing", "vector-graphics"]
 categories = ["parser-implementations", "encoding"]
 
