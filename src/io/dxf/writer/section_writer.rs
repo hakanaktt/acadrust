@@ -127,15 +127,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write the CLASSES section
     pub fn write_classes(&mut self, _document: &CadDocument) -> Result<()> {
         self.writer.write_section_start("CLASSES")?;
-        
-        // Only write classes for DXF versions that support them (AC1015+)
-        // Note: Standard entity types like LINE, CIRCLE, ARC, TEXT, MTEXT, LWPOLYLINE, HATCH
-        // and standard objects like DICTIONARY, LAYOUT do NOT need CLASS definitions.
-        // The CLASSES section is only for custom/extended object types.
-        
-        // For a basic DXF file, no custom classes are needed.
-        // If we add custom object types in the future, they would be defined here.
-        
+
         self.writer.write_section_end()?;
         Ok(())
     }
@@ -818,6 +810,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_handle(5, seqend_handle)?;
         self.writer.write_handle(330, polyline_handle)?;
         self.writer.write_subclass("AcDbEntity")?;
+        self.writer.write_subclass("AcDbSequenceEnd")?;
         self.writer.write_string(8, &polyline.common.layer)?;
 
         Ok(())
@@ -828,6 +821,9 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_entity_type("POLYLINE")?;
         self.write_common_entity_data(polyline, owner)?;
         self.writer.write_subclass("AcDb2dPolyline")?;
+
+        // Entities follow flag (VERTEX records follow)
+        self.writer.write_i16(66, 1)?;
 
         self.writer.write_i16(70, polyline.flags.bits() as i16)?;
         
@@ -877,6 +873,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_handle(5, seqend_handle)?;
         self.writer.write_handle(330, polyline_handle)?;
         self.writer.write_subclass("AcDbEntity")?;
+        self.writer.write_subclass("AcDbSequenceEnd")?;
         self.writer.write_string(8, &polyline.common.layer)?;
 
         Ok(())
@@ -903,10 +900,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         for vertex in &lwpoly.vertices {
             self.writer.write_double(10, vertex.location.x)?;
             self.writer.write_double(20, vertex.location.y)?;
-            // Write bulge if non-zero
-            if vertex.bulge != 0.0 {
-                self.writer.write_double(42, vertex.bulge)?;
-            }
+            // Always write start width, end width, and bulge (default to 0.0 if not set)
+            self.writer.write_double(40, vertex.start_width)?;
+            self.writer.write_double(41, vertex.end_width)?;
+            self.writer.write_double(42, vertex.bulge)?;
         }
 
         Ok(())
@@ -1397,15 +1394,29 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_entity_type("POLYLINE")?;
         self.write_common_entity_data(polyline, owner)?;
         self.writer.write_subclass("AcDb3dPolyline")?;
+
+        // Entities follow flag (VERTEX records follow)
+        self.writer.write_i16(66, 1)?;
+        
+        // Dummy point with elevation (ACadSharp pattern)
+        self.writer.write_double(10, 0.0)?;
+        self.writer.write_double(20, 0.0)?;
+        self.writer.write_double(30, polyline.elevation)?;
         
         // Polyline flags (bit 8 = 3D polyline)
         self.writer.write_i16(70, polyline.flags.to_bits() as i16)?;
         
         // Write vertices
         let polyline_handle = polyline.handle();
-        for vertex in &polyline.vertices {
+        let base_handle = polyline_handle.value();
+        for (index, vertex) in polyline.vertices.iter().enumerate() {
+            let vertex_handle = if vertex.handle.is_null() {
+                Handle::new(base_handle + index as u64 + 1)
+            } else {
+                vertex.handle
+            };
             self.writer.write_entity_type("VERTEX")?;
-            self.writer.write_handle(5, vertex.handle)?;
+            self.writer.write_handle(5, vertex_handle)?;
             self.writer.write_handle(330, polyline_handle)?;
             self.writer.write_subclass("AcDbEntity")?;
             self.writer.write_string(8, &vertex.layer)?;
@@ -1417,9 +1428,11 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         
         // SEQEND
         self.writer.write_entity_type("SEQEND")?;
-        self.writer.write_handle(5, Handle::new(0))?; // Placeholder handle
+        let seqend_handle = Handle::new(base_handle + polyline.vertices.len() as u64 + 1);
+        self.writer.write_handle(5, seqend_handle)?;
         self.writer.write_handle(330, polyline_handle)?;
         self.writer.write_subclass("AcDbEntity")?;
+        self.writer.write_subclass("AcDbSequenceEnd")?;
         self.writer.write_string(8, &polyline.common.layer)?;
         
         Ok(())
@@ -2951,21 +2964,35 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     fn write_polyface_mesh(&mut self, mesh: &PolyfaceMesh, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("POLYLINE")?;
         self.write_common_entity_data(mesh, owner)?;
-        self.writer.write_subclass("AcDb2dPolyline")?;
         self.writer.write_subclass("AcDbPolyFaceMesh")?;
 
-        // Polyline flags (64 = polyface mesh)
-        self.writer.write_i16(70, mesh.flags.bits())?;
+        // Entities follow flag (VERTEX records follow)
+        self.writer.write_i16(66, 1)?;
 
-        // Vertex count
+        // Dummy point with elevation (ACadSharp pattern)
+        self.writer.write_double(10, 0.0)?;
+        self.writer.write_double(20, 0.0)?;
+        self.writer.write_double(30, mesh.elevation)?;
+        
+        // Polyline flags (64 = polyface mesh) - MUST be before 71/72
+        self.writer.write_i16(70, mesh.flags.bits())?;
+        
+        // Vertex count - MUST come before smooth surface type
         self.writer.write_i16(71, mesh.vertex_count() as i16)?;
-        // Face count
+        // Face count - MUST come before smooth surface type  
         self.writer.write_i16(72, mesh.face_count() as i16)?;
 
         // Write vertices
-        for vertex in &mesh.vertices {
+        let mesh_handle = mesh.common.handle;
+        let base_handle = mesh_handle.value();
+        for (index, vertex) in mesh.vertices.iter().enumerate() {
+            let vertex_handle = if vertex.common.handle.is_null() {
+                Handle::new(base_handle + index as u64 + 1)
+            } else {
+                vertex.common.handle
+            };
             self.writer.write_entity_type("VERTEX")?;
-            self.writer.write_handle(5, vertex.common.handle)?;
+            self.writer.write_handle(5, vertex_handle)?;
             self.writer.write_handle(330, mesh.common.handle)?;
             self.writer.write_subclass("AcDbEntity")?;
             self.writer.write_string(8, &vertex.common.layer)?;
@@ -2975,24 +3002,32 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer.write_double(10, vertex.location.x)?;
             self.writer.write_double(20, vertex.location.y)?;
             self.writer.write_double(30, vertex.location.z)?;
-            self.writer.write_i16(70, vertex.flags.bits())?;
+
+            let flags = vertex.flags | PolyfaceVertexFlags::POLYGON_MESH;
+            self.writer.write_i16(70, flags.bits())?;
         }
 
         // Write faces
-        for face in &mesh.faces {
+        for (index, face) in mesh.faces.iter().enumerate() {
+            let face_handle = if face.common.handle.is_null() {
+                Handle::new(base_handle + mesh.vertices.len() as u64 + index as u64 + 1)
+            } else {
+                face.common.handle
+            };
             self.writer.write_entity_type("VERTEX")?;
-            self.writer.write_handle(5, face.common.handle)?;
+            self.writer.write_handle(5, face_handle)?;
             self.writer.write_handle(330, mesh.common.handle)?;
             self.writer.write_subclass("AcDbEntity")?;
             self.writer.write_string(8, &face.common.layer)?;
-            self.writer.write_subclass("AcDbVertex")?;
             self.writer.write_subclass("AcDbFaceRecord")?;
 
             // Dummy position
             self.writer.write_double(10, 0.0)?;
             self.writer.write_double(20, 0.0)?;
             self.writer.write_double(30, 0.0)?;
-            self.writer.write_i16(70, 128)?; // Face record flag
+
+            let flags = face.flags | PolyfaceVertexFlags::POLYFACE_MESH;
+            self.writer.write_i16(70, flags.bits())?; // Face record flag
 
             // Vertex indices
             let indices = face.vertex_indices();
@@ -3008,9 +3043,13 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         // Write SEQEND
         self.writer.write_entity_type("SEQEND")?;
-        self.writer.write_handle(5, Handle::NULL)?;
+        let seqend_handle = mesh.seqend_handle.unwrap_or_else(|| {
+            Handle::new(base_handle + mesh.vertices.len() as u64 + mesh.faces.len() as u64 + 1)
+        });
+        self.writer.write_handle(5, seqend_handle)?;
         self.writer.write_handle(330, mesh.common.handle)?;
         self.writer.write_subclass("AcDbEntity")?;
+        self.writer.write_subclass("AcDbSequenceEnd")?;
         self.writer.write_string(8, &mesh.common.layer)?;
 
         Ok(())
