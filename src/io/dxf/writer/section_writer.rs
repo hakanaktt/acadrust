@@ -3229,3 +3229,4 @@ fn get_boundary_path_bits(flags: &BoundaryPathFlags) -> u32 {
     if flags.is_derived() { bits |= 4; }
     bits
 }
+

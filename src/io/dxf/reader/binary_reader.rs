@@ -260,3 +260,4 @@ impl<R: Read + Seek> DxfStreamReader for DxfBinaryReader<R> {
     }
 }
 
+

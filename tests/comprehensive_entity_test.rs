@@ -1,8 +1,8 @@
 //! Comprehensive test that generates DXF files (ASCII and Binary) containing all supported entities
 
-use dxf_tools_rs::entities::*;
-use dxf_tools_rs::types::{Color, Handle, Vector2, Vector3};
-use dxf_tools_rs::{CadDocument, DxfWriter};
+use acadrust::entities::*;
+use acadrust::types::{Color, Handle, Vector2, Vector3};
+use acadrust::{CadDocument, DxfWriter};
 use std::f64::consts::PI;
 
 /// Create a document with all supported entity types
@@ -577,7 +577,7 @@ fn test_all_entity_types_present() {
 
 #[test]
 fn test_write_and_read_roundtrip() {
-    use dxf_tools_rs::DxfReader;
+    use acadrust::DxfReader;
     
     let doc = create_comprehensive_document();
     let original_count = doc.entity_count();
@@ -619,7 +619,7 @@ fn test_document_metadata() {
     let doc = create_comprehensive_document();
     
     // Check document structure
-    assert_eq!(doc.version, dxf_tools_rs::types::DxfVersion::AC1032);
+    assert_eq!(doc.version, acadrust::types::DxfVersion::AC1032);
     assert!(doc.layers.count() > 0, "Should have at least one layer");
     assert!(doc.line_types.count() > 0, "Should have at least one line type");
     
@@ -629,3 +629,4 @@ fn test_document_metadata() {
     println!("  Line Types: {}", doc.line_types.count());
     println!("  Entities: {}", doc.entity_count());
 }
+

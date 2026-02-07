@@ -1,13 +1,13 @@
-# DXF-Tools-RS
+# acadrust
 
-[![Crates.io](https://img.shields.io/crates/v/dxf-tools-rs.svg)](https://crates.io/crates/dxf-tools-rs)
-[![Documentation](https://docs.rs/dxf-tools-rs/badge.svg)](https://docs.rs/dxf-tools-rs)
+[![Crates.io](https://img.shields.io/crates/v/acadrust.svg)](https://crates.io/crates/acadrust)
+[![Documentation](https://docs.rs/acadrust/badge.svg)](https://docs.rs/acadrust)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-2021-orange.svg)](https://www.rust-lang.org/)
 
 **A high-performance, pure Rust library for reading and writing CAD drawing exchange files.**
 
-DXF-Tools-RS provides comprehensive support for CAD file formats with a focus on performance, memory efficiency, and ease of use. Inspired by [ACadSharp](https://github.com/DomCR/ACadSharp), this library brings the power of CAD file manipulation to the Rust ecosystem.
+acadrust provides comprehensive support for CAD file formats with a focus on performance, memory efficiency, and ease of use. Inspired by [ACadSharp](https://github.com/DomCR/ACadSharp), this library brings the power of CAD file manipulation to the Rust ecosystem.
 
 ---
 
@@ -132,17 +132,17 @@ Full support for application-specific extended data:
 
 ## 📦 Installation
 
-Add DXF-Tools-RS to your `Cargo.toml`:
+Add acadrust to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-dxf-tools-rs = "0.1.4"
+acadrust = "0.1.4"
 ```
 
 Or install via cargo:
 
 ```bash
-cargo add dxf-tools-rs
+cargo add acadrust
 ```
 
 ---
@@ -152,9 +152,9 @@ cargo add dxf-tools-rs
 ### Reading a CAD File
 
 ```rust
-use dxf_tools_rs::{CadDocument, DxfReader};
+use acadrust::{CadDocument, DxfReader};
 
-fn main() -> dxf_tools_rs::Result<()> {
+fn main() -> acadrust::Result<()> {
     // Open and read a file
     let doc = DxfReader::from_file("drawing.dxf")?.read()?;
     
@@ -173,9 +173,9 @@ fn main() -> dxf_tools_rs::Result<()> {
 ### Writing a CAD File
 
 ```rust
-use dxf_tools_rs::{CadDocument, DxfWriter, Line, Layer, Vector3};
+use acadrust::{CadDocument, DxfWriter, Line, Layer, Vector3};
 
-fn main() -> dxf_tools_rs::Result<()> {
+fn main() -> acadrust::Result<()> {
     // Create a new document
     let mut doc = CadDocument::new();
     
@@ -201,9 +201,9 @@ fn main() -> dxf_tools_rs::Result<()> {
 ### Working with Layers
 
 ```rust
-use dxf_tools_rs::{CadDocument, Layer, Color};
+use acadrust::{CadDocument, Layer, Color};
 
-fn main() -> dxf_tools_rs::Result<()> {
+fn main() -> acadrust::Result<()> {
     let mut doc = CadDocument::new();
     
     // Create a custom layer
@@ -226,9 +226,9 @@ fn main() -> dxf_tools_rs::Result<()> {
 ### Creating Complex Entities
 
 ```rust
-use dxf_tools_rs::{CadDocument, LwPolyline, LwVertex, Vector2, Circle, Arc};
+use acadrust::{CadDocument, LwPolyline, LwVertex, Vector2, Circle, Arc};
 
-fn main() -> dxf_tools_rs::Result<()> {
+fn main() -> acadrust::Result<()> {
     let mut doc = CadDocument::new();
     
     // Create a rectangle using LwPolyline
@@ -258,7 +258,7 @@ fn main() -> dxf_tools_rs::Result<()> {
 
 ## 🏗️ Architecture
 
-DXF-Tools-RS uses a trait-based design for maximum flexibility and extensibility:
+acadrust uses a trait-based design for maximum flexibility and extensibility:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -304,7 +304,7 @@ DXF-Tools-RS uses a trait-based design for maximum flexibility and extensibility
 
 ## ⚙️ Dependencies
 
-DXF-Tools-RS is built on a foundation of high-quality Rust crates:
+acadrust is built on a foundation of high-quality Rust crates:
 
 | Crate | Purpose |
 |-------|---------|
@@ -345,7 +345,7 @@ cargo bench
 
 ## 📊 Performance
 
-DXF-Tools-RS is optimized for performance:
+acadrust is optimized for performance:
 
 | Metric | Compared to C# |
 |--------|----------------|
@@ -386,8 +386,8 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ```bash
 # Clone the repository
-git clone https://github.com/hakanaktt/dxf-tools-rs.git
-cd dxf-tools-rs
+git clone https://github.com/hakanaktt/acadrust.git
+cd acadrust
 
 # Build the project
 cargo build
@@ -420,11 +420,12 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 Support
 
-- **Issues**: [GitHub Issues](https://github.com/hakanaktt/dxf-tools-rs/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/hakanaktt/dxf-tools-rs/discussions)
+- **Issues**: [GitHub Issues](https://github.com/hakanaktt/acadrust/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/hakanaktt/acadrust/discussions)
 
 ---
 
 <p align="center">
   Made with ❤️ in Rust
 </p>
+

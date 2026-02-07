@@ -89,8 +89,8 @@ impl From<u8> for WipeoutClipMode {
 /// # Example
 ///
 /// ```ignore
-/// use dxf_tools_rs::entities::Wipeout;
-/// use dxf_tools_rs::types::{Vector2, Vector3};
+/// use acadrust::entities::Wipeout;
+/// use acadrust::types::{Vector2, Vector3};
 ///
 /// // Create a rectangular wipeout
 /// let wipeout = Wipeout::rectangular(
@@ -814,3 +814,4 @@ mod tests {
         assert!(!wipeout.contains_point(Vector3::new(50.0, 50.0, 0.0)));
     }
 }
+

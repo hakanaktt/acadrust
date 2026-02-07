@@ -346,8 +346,8 @@ impl Default for PolyfaceFace {
 /// # Example
 ///
 /// ```ignore
-/// use dxf_tools_rs::entities::{PolyfaceMesh, PolyfaceVertex, PolyfaceFace};
-/// use dxf_tools_rs::types::Vector3;
+/// use acadrust::entities::{PolyfaceMesh, PolyfaceVertex, PolyfaceFace};
+/// use acadrust::types::Vector3;
 ///
 /// // Create a simple pyramid
 /// let mut mesh = PolyfaceMesh::new();
@@ -1020,3 +1020,4 @@ mod tests {
         assert_eq!(face.index3, 1);
     }
 }
+

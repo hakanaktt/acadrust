@@ -319,8 +319,8 @@ impl Default for AcisData {
 /// # Example
 ///
 /// ```ignore
-/// use dxf_tools_rs::entities::Solid3D;
-/// use dxf_tools_rs::types::Vector3;
+/// use acadrust::entities::Solid3D;
+/// use acadrust::types::Vector3;
 ///
 /// // Create a 3D solid (typically from DXF/DWG import)
 /// let mut solid = Solid3D::new();
@@ -1067,3 +1067,4 @@ mod tests {
         assert!(solid.silhouettes.is_empty());
     }
 }
+

@@ -14,8 +14,8 @@ use crate::types::{BoundingBox3D, Color, Handle, LineWeight, Transparency, Vecto
 ///
 /// # Example
 /// ```ignore
-/// use dxf_tools_rs::entities::Ray;
-/// use dxf_tools_rs::types::Vector3;
+/// use acadrust::entities::Ray;
+/// use acadrust::types::Vector3;
 ///
 /// let ray = Ray::new(
 ///     Vector3::new(0.0, 0.0, 0.0),
@@ -291,3 +291,4 @@ mod tests {
         assert_eq!(ray.direction, Vector3::UNIT_X);
     }
 }
+

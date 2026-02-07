@@ -1,4 +1,4 @@
-//! # DXF-Tools-RS
+//! # acadrust
 //!
 //! A pure Rust library for reading and writing CAD files in DXF format.
 //!
@@ -16,7 +16,7 @@
 //! ## Quick Start
 //!
 //! ```rust,ignore
-//! use dxf_tools_rs::{CadDocument, io::dxf::DxfReader};
+//! use acadrust::{CadDocument, io::dxf::DxfReader};
 //!
 //! // Read a DXF file
 //! let doc = DxfReader::from_file("sample.dxf")?.read()?;
@@ -27,9 +27,9 @@
 //! }
 //!
 //! // Write to DXF
-//! use dxf_tools_rs::io::dxf::DxfWriter;
+//! use acadrust::io::dxf::DxfWriter;
 //! DxfWriter::new(doc).write_to_file("output.dxf")?;
-//! # Ok::<(), dxf_tools_rs::error::DxfError>(())
+//! # Ok::<(), acadrust::error::DxfError>(())
 //! ```
 //!
 //! ## Architecture
@@ -43,7 +43,7 @@
 //!
 //! ## Performance
 //!
-//! DXF-Tools-RS is designed for high performance:
+//! acadrust is designed for high performance:
 //!
 //! - 2-3x faster than the C# version
 //! - 30-50% less memory usage
@@ -107,4 +107,5 @@ mod tests {
         assert_eq!(doc2.version, DxfVersion::AC1015);
     }
 }
+
 

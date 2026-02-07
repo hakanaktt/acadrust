@@ -176,3 +176,4 @@ impl Entity for Solid {
         self.normal = transform.apply_rotation(self.normal).normalize();
     }
 }
+

@@ -161,3 +161,4 @@ mod tests {
         assert_eq!(buf[sentinel_len+2..sentinel_len+4], [7, 0]); // value 7
     }
 }
+

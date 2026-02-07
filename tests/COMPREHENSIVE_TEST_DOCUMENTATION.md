@@ -2,7 +2,7 @@
 
 ## Overview
 
-This test file (`tests/all_entities_output_test.rs`) creates DXF files containing examples of all 30+ entity types supported by the dxf-tools-rs library in both ASCII and Binary formats.
+This test file (`tests/all_entities_output_test.rs`) creates DXF files containing examples of all 30+ entity types supported by the acadrust library in both ASCII and Binary formats.
 
 ## Generated Files
 
@@ -159,3 +159,4 @@ Test execution time: ~60ms (compilation excluded)
 - Binary DXF: ~9.5 KB (10% smaller)
 
 Binary format is more compact due to efficient encoding of numeric values.
+

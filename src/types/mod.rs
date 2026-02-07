@@ -1,4 +1,4 @@
-//! Core types used throughout DXF-Tools-RS
+//! Core types used throughout acadrust
 
 pub mod bounds;
 pub mod color;
@@ -141,4 +141,5 @@ mod tests {
         assert_eq!(DxfVersion::AC1021.version_code(), 1021);
     }
 }
+
 

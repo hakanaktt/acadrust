@@ -56,8 +56,8 @@ impl SortEntsEntry {
 /// # Example
 ///
 /// ```ignore
-/// use dxf_tools_rs::objects::SortEntitiesTable;
-/// use dxf_tools_rs::types::Handle;
+/// use acadrust::objects::SortEntitiesTable;
+/// use acadrust::types::Handle;
 ///
 /// let mut table = SortEntitiesTable::new();
 /// table.block_owner_handle = Handle::new(0x1F); // Model space block
@@ -546,3 +546,4 @@ mod tests {
         assert_eq!(SortEntitiesTable::DICTIONARY_KEY, "ACAD_SORTENTS");
     }
 }
+

@@ -18,8 +18,8 @@ use std::f64::consts::PI;
 ///
 /// # Example
 /// ```ignore
-/// use dxf_tools_rs::entities::AttributeEntity;
-/// use dxf_tools_rs::types::Vector3;
+/// use acadrust::entities::AttributeEntity;
+/// use acadrust::types::Vector3;
 ///
 /// let mut attrib = AttributeEntity::new(
 ///     "PART_NUMBER".to_string(),
@@ -522,3 +522,4 @@ mod tests {
         assert!((width - 7.5).abs() < 1e-10);
     }
 }
+

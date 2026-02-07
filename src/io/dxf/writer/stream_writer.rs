@@ -105,3 +105,4 @@ pub fn value_type_for_code(code: i32) -> GroupCodeValueType {
     let dxf_code = DxfCode::from_i32(code);
     GroupCodeValueType::from_code(dxf_code)
 }
+

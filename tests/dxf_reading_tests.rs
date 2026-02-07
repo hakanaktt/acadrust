@@ -1,6 +1,6 @@
 //! Integration tests for DXF reading
 
-use dxf_tools_rs::DxfReader;
+use acadrust::DxfReader;
 use std::fs;
 use std::io::Write;
 
@@ -262,4 +262,5 @@ EOF
     assert!(doc.layers.get("0").is_some());
     assert!(doc.layers.get("MyLayer").is_some());
 }
+
 

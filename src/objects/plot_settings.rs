@@ -448,7 +448,7 @@ impl PlotWindow {
 ///
 /// # Example
 /// ```ignore
-/// use dxf_tools_rs::objects::{PlotSettings, PlotRotation, PlotPaperUnits};
+/// use acadrust::objects::{PlotSettings, PlotRotation, PlotPaperUnits};
 ///
 /// let mut settings = PlotSettings::new("Layout1");
 /// settings.paper_size = "ISO_A4_(210.00_x_297.00_MM)".to_string();
@@ -864,3 +864,4 @@ mod tests {
         assert!(settings.flags.plot_centered);
     }
 }
+

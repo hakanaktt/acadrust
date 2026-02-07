@@ -346,7 +346,7 @@ bitflags! {
 /// # Example
 ///
 /// ```ignore
-/// use dxf_tools_rs::objects::MultiLeaderStyle;
+/// use acadrust::objects::MultiLeaderStyle;
 ///
 /// let mut style = MultiLeaderStyle::new("MyStyle");
 /// style.text_height = 0.25;
@@ -873,3 +873,4 @@ mod tests {
         assert_eq!(MultiLeaderDrawOrderType::from(1), MultiLeaderDrawOrderType::LeaderFirst);
     }
 }
+

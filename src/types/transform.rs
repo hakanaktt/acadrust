@@ -576,3 +576,4 @@ mod tests {
         assert!((det - 1.0).abs() < 1e-10); // Should be orthonormal
     }
 }
+

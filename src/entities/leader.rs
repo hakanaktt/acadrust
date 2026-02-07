@@ -96,8 +96,8 @@ impl HooklineDirection {
 ///
 /// # Example
 /// ```ignore
-/// use dxf_tools_rs::entities::Leader;
-/// use dxf_tools_rs::types::Vector3;
+/// use acadrust::entities::Leader;
+/// use acadrust::types::Vector3;
 ///
 /// let mut leader = Leader::new();
 /// leader.add_vertex(Vector3::new(0.0, 0.0, 0.0));    // Arrow point
@@ -600,3 +600,4 @@ mod tests {
         assert_eq!(bbox.max.y, 10.0);
     }
 }
+

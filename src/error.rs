@@ -1,9 +1,9 @@
-//! Error types for DXF-Tools-RS library
+//! Error types for acadrust library
 
 use std::io;
 use thiserror::Error;
 
-/// Main error type for DXF-Tools-RS operations
+/// Main error type for acadrust operations
 #[derive(Debug, Error)]
 pub enum DxfError {
     /// IO error occurred during file operations
@@ -75,7 +75,7 @@ pub enum DxfError {
     Custom(String),
 }
 
-/// Result type alias for DXF-Tools-RS operations
+/// Result type alias for acadrust operations
 pub type Result<T> = std::result::Result<T, DxfError>;
 
 impl From<String> for DxfError {
@@ -120,4 +120,5 @@ mod tests {
         assert!(matches!(dxf_err, DxfError::Io(_)));
     }
 }
+
 

@@ -417,7 +417,7 @@ impl Default for RowCellStyle {
 /// # Example
 ///
 /// ```ignore
-/// use dxf_tools_rs::objects::TableStyle;
+/// use acadrust::objects::TableStyle;
 ///
 /// let mut style = TableStyle::new("MyStyle");
 /// style.horizontal_margin = 0.1;
@@ -795,3 +795,4 @@ mod tests {
         assert_eq!(TableBorderType::from(2), TableBorderType::Double);
     }
 }
+

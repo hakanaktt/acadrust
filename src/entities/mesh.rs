@@ -184,8 +184,8 @@ impl From<Vec<usize>> for MeshFace {
 /// # Example
 ///
 /// ```ignore
-/// use dxf_tools_rs::entities::{Mesh, MeshFace};
-/// use dxf_tools_rs::types::Vector3;
+/// use acadrust::entities::{Mesh, MeshFace};
+/// use acadrust::types::Vector3;
 ///
 /// // Create a simple cube mesh
 /// let mut mesh = Mesh::new();
@@ -1048,3 +1048,4 @@ mod tests {
         assert!(!mesh.blend_crease);
     }
 }
+

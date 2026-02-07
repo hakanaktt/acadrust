@@ -30,8 +30,8 @@ use crate::types::{BoundingBox3D, Color, Handle, LineWeight, Transparency, Vecto
 /// # Example
 ///
 /// ```ignore
-/// use dxf_tools_rs::entities::Shape;
-/// use dxf_tools_rs::types::Vector3;
+/// use acadrust::entities::Shape;
+/// use acadrust::types::Vector3;
 ///
 /// let mut shape = Shape::new();
 /// shape.insertion_point = Vector3::new(100.0, 50.0, 0.0);
@@ -675,3 +675,4 @@ mod tests {
         assert_eq!(shape.size, 1.0);
     }
 }
+

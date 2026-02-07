@@ -1010,8 +1010,8 @@ impl Default for CellRange {
 /// # Example
 ///
 /// ```ignore
-/// use dxf_tools_rs::entities::{Table, TableRow};
-/// use dxf_tools_rs::types::Vector3;
+/// use acadrust::entities::{Table, TableRow};
+/// use acadrust::types::Vector3;
 ///
 /// // Create a 3x4 table
 /// let mut table = Table::new(Vector3::new(0.0, 0.0, 0.0), 3, 4);
@@ -1602,3 +1602,4 @@ mod tests {
         assert!(!flags.contains(CellStateFlags::LINKED));
     }
 }
+

@@ -34,8 +34,8 @@ use crate::types::{BoundingBox3D, Color, Handle, LineWeight, Transparency, Vecto
 /// # Example
 ///
 /// ```ignore
-/// use dxf_tools_rs::entities::Tolerance;
-/// use dxf_tools_rs::types::Vector3;
+/// use acadrust::entities::Tolerance;
+/// use acadrust::types::Vector3;
 ///
 /// let mut tol = Tolerance::new();
 /// tol.insertion_point = Vector3::new(10.0, 10.0, 0.0);
@@ -584,3 +584,4 @@ mod tests {
         assert!(total.contains("t"));
     }
 }
+

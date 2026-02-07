@@ -1,13 +1,13 @@
 [package]
-name = "dxf-tools-rs"
+name = "acadrust"
 version = "0.1.4"
 edition = "2021"
 authors = ["Hakan AK"]
 description = "A pure Rust library for reading and writing CAD files in DXF format (ASCII and Binary)"
 license = "MIT"
-repository = "https://github.com/hakanaktt/dxf-tools-rs"
-homepage = "https://github.com/hakanaktt/dxf-tools-rs"
-documentation = "https://docs.rs/dxf-tools-rs"
+repository = "https://github.com/hakanaktt/acadrust"
+homepage = "https://github.com/hakanaktt/acadrust"
+documentation = "https://docs.rs/acadrust"
 readme = "README.md"
 keywords = ["cad", "dxf", "autocad", "drawing", "vector-graphics"]
 categories = ["parser-implementations", "encoding"]
@@ -52,5 +52,6 @@ codegen-units = 1
 
 [profile.bench]
 inherits = "release"
+
 
 

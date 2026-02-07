@@ -155,8 +155,8 @@ impl MTextFlag {
 ///
 /// # Example
 /// ```ignore
-/// use dxf_tools_rs::entities::AttributeDefinition;
-/// use dxf_tools_rs::types::Vector3;
+/// use acadrust::entities::AttributeDefinition;
+/// use acadrust::types::Vector3;
 ///
 /// let mut attdef = AttributeDefinition::new(
 ///     "PART_NUMBER".to_string(),
@@ -597,3 +597,4 @@ mod tests {
         assert_eq!(VerticalAlignment::Middle.to_value(), 2);
     }
 }
+

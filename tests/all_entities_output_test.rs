@@ -1,9 +1,9 @@
 //! Comprehensive test that generates DXF files (ASCII and Binary) containing all supported entities
 //! This test creates sample instances of every entity type supported by the library
 
-use dxf_tools_rs::entities::*;
-use dxf_tools_rs::types::{Color, Vector2, Vector3};
-use dxf_tools_rs::{CadDocument, DxfWriter};
+use acadrust::entities::*;
+use acadrust::types::{Color, Vector2, Vector3};
+use acadrust::{CadDocument, DxfWriter};
 use std::f64::consts::PI;
 
 /// Create a document with examples of all supported entity types
@@ -490,7 +490,7 @@ fn test_document_structure() {
 
 #[test]
 fn test_write_all_versions_ascii() {
-    use dxf_tools_rs::types::DxfVersion;
+    use acadrust::types::DxfVersion;
     
     let versions = vec![
         (DxfVersion::AC1012, "R13"),
@@ -528,7 +528,7 @@ fn test_write_all_versions_ascii() {
 
 #[test]
 fn test_write_all_versions_binary() {
-    use dxf_tools_rs::types::DxfVersion;
+    use acadrust::types::DxfVersion;
     
     let versions = vec![
         (DxfVersion::AC1012, "R13"),
@@ -563,3 +563,4 @@ fn test_write_all_versions_binary() {
     
     println!("✓ Successfully created Binary DXF files for all 8 versions");
 }
+

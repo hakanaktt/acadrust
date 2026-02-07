@@ -220,3 +220,4 @@ impl Entity for Insert {
         // Note: rotation angle and array spacings may need adjustment for complex transforms
     }
 }
+

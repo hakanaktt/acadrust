@@ -145,8 +145,8 @@ impl Default for MLineStyleElement {
 ///
 /// # Example
 /// ```ignore
-/// use dxf_tools_rs::objects::{MLineStyle, MLineStyleElement};
-/// use dxf_tools_rs::types::Color;
+/// use acadrust::objects::{MLineStyle, MLineStyleElement};
+/// use acadrust::types::Color;
 ///
 /// let mut style = MLineStyle::new("Custom");
 /// style.description = "Custom multiline style".to_string();
@@ -516,3 +516,4 @@ mod tests {
         assert!((style.end_angle_degrees() - 60.0).abs() < 1e-10);
     }
 }
+

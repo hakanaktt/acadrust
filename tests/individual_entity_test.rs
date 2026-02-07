@@ -1,9 +1,9 @@
 //! Individual entity testing - generates one file per entity type
 //! This helps identify which entities cause compatibility issues
 
-use dxf_tools_rs::entities::*;
-use dxf_tools_rs::types::{Color, Vector2, Vector3};
-use dxf_tools_rs::{CadDocument, DxfWriter};
+use acadrust::entities::*;
+use acadrust::types::{Color, Vector2, Vector3};
+use acadrust::{CadDocument, DxfWriter};
 use std::f64::consts::PI;
 
 /// Create a document with a single entity type
@@ -251,7 +251,7 @@ fn create_single_entity_doc(entity_name: &str) -> Option<CadDocument> {
 
 #[test]
 fn test_individual_entities_r13() {
-    use dxf_tools_rs::types::DxfVersion;
+    use acadrust::types::DxfVersion;
     
     let entities = vec![
         "POINT", "LINE", "CIRCLE", "ARC", "ELLIPSE", "LWPOLYLINE", "POLYLINE3D",
@@ -292,7 +292,7 @@ fn test_individual_entities_r13() {
 
 #[test]
 fn test_individual_entities_r14() {
-    use dxf_tools_rs::types::DxfVersion;
+    use acadrust::types::DxfVersion;
     
     let entities = vec![
         "POINT", "LINE", "CIRCLE", "ARC", "ELLIPSE", "LWPOLYLINE", "POLYLINE3D",
@@ -333,7 +333,7 @@ fn test_individual_entities_r14() {
 
 #[test]
 fn test_individual_entities_2010() {
-    use dxf_tools_rs::types::DxfVersion;
+    use acadrust::types::DxfVersion;
     
     let entities = vec![
         "POINT", "LINE", "CIRCLE", "ARC", "ELLIPSE", "LWPOLYLINE", "POLYLINE3D",
@@ -371,3 +371,4 @@ fn test_individual_entities_2010() {
     
     println!("\n📊 Results: {} success, {} failed", success_count, fail_count);
 }
+

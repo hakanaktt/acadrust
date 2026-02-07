@@ -15,8 +15,8 @@ use crate::types::{BoundingBox3D, Color, Handle, LineWeight, Transparency, Vecto
 ///
 /// # Example
 /// ```ignore
-/// use dxf_tools_rs::entities::XLine;
-/// use dxf_tools_rs::types::Vector3;
+/// use acadrust::entities::XLine;
+/// use acadrust::types::Vector3;
 ///
 /// let xline = XLine::new(
 ///     Vector3::new(0.0, 0.0, 0.0),
@@ -360,3 +360,4 @@ mod tests {
         assert!((xline.direction.x - xline.direction.y).abs() < 1e-10);
     }
 }
+

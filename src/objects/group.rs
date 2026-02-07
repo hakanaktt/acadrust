@@ -12,8 +12,8 @@ use crate::types::Handle;
 ///
 /// # Example
 /// ```ignore
-/// use dxf_tools_rs::objects::Group;
-/// use dxf_tools_rs::types::Handle;
+/// use acadrust::objects::Group;
+/// use acadrust::types::Handle;
 ///
 /// let mut group = Group::new("MyGroup");
 /// group.description = "A collection of related entities".to_string();
@@ -279,3 +279,4 @@ mod tests {
         assert_eq!(handles, vec![Handle::new(100), Handle::new(101)]);
     }
 }
+

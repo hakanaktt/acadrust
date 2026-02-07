@@ -25,7 +25,7 @@ use crate::types::Handle;
 /// # Example
 ///
 /// ```ignore
-/// use dxf_tools_rs::objects::Scale;
+/// use acadrust::objects::Scale;
 ///
 /// let scale = Scale::new("1:50", 1.0, 50.0);
 /// assert!((scale.factor() - 0.02).abs() < 1e-10);
@@ -532,3 +532,4 @@ mod tests {
         assert_eq!(scale.drawing_units, cloned.drawing_units);
     }
 }
+

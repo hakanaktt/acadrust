@@ -136,8 +136,8 @@ impl Default for Vertex3DPolyline {
 ///
 /// # Example
 /// ```ignore
-/// use dxf_tools_rs::entities::Polyline3D;
-/// use dxf_tools_rs::types::Vector3;
+/// use acadrust::entities::Polyline3D;
+/// use acadrust::types::Vector3;
 ///
 /// let mut polyline = Polyline3D::new();
 /// polyline.add_vertex(Vector3::new(0.0, 0.0, 0.0));
@@ -530,3 +530,4 @@ mod tests {
         assert_eq!(polyline.end_point(), Some(Vector3::new(10.0, 0.0, 0.0)));
     }
 }
+

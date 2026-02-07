@@ -222,8 +222,8 @@ impl Default for ClipBoundary {
 /// # Example
 ///
 /// ```ignore
-/// use dxf_tools_rs::entities::RasterImage;
-/// use dxf_tools_rs::types::Vector3;
+/// use acadrust::entities::RasterImage;
+/// use acadrust::types::Vector3;
 ///
 /// // Create a raster image at a specific location
 /// let mut image = RasterImage::new(
@@ -1005,3 +1005,4 @@ mod tests {
         assert_eq!(ResolutionUnit::from(5), ResolutionUnit::Inches);
     }
 }
+

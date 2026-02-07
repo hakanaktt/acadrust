@@ -23,7 +23,7 @@ use crate::types::Handle;
 /// # Example
 ///
 /// ```ignore
-/// use dxf_tools_rs::objects::DictionaryVariable;
+/// use acadrust::objects::DictionaryVariable;
 ///
 /// let var = DictionaryVariable::new("CTAB", "Model");
 /// assert_eq!(var.value, "Model");
@@ -342,3 +342,4 @@ mod tests {
         assert_eq!(DictionaryVariable::SUBCLASS_MARKER, "DictionaryVariables");
     }
 }
+

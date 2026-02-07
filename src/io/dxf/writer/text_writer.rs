@@ -172,3 +172,4 @@ mod tests {
         assert!(output.contains("FF\n"));
     }
 }
+

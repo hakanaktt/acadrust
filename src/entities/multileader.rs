@@ -824,8 +824,8 @@ impl Default for MultiLeaderAnnotContext {
 /// # Example
 ///
 /// ```ignore
-/// use dxf_tools_rs::entities::MultiLeader;
-/// use dxf_tools_rs::types::Vector3;
+/// use acadrust::entities::MultiLeader;
+/// use acadrust::types::Vector3;
 ///
 /// // Create a multileader with text content
 /// let mut mleader = MultiLeader::new();
@@ -1543,3 +1543,4 @@ mod tests {
         assert_eq!(ctx.leader_roots.len(), 0);
     }
 }
+

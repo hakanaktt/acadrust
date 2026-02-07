@@ -180,8 +180,8 @@ impl GridFlags {
 ///
 /// # Example
 /// ```ignore
-/// use dxf_tools_rs::entities::Viewport;
-/// use dxf_tools_rs::types::Vector3;
+/// use acadrust::entities::Viewport;
+/// use acadrust::types::Vector3;
 ///
 /// let mut viewport = Viewport::new();
 /// viewport.center = Vector3::new(5.0, 5.0, 0.0);
@@ -772,3 +772,4 @@ mod tests {
         assert!(vp.is_locked());
     }
 }
+

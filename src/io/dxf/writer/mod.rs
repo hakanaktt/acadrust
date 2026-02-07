@@ -152,3 +152,4 @@ pub fn write_binary_dxf<P: AsRef<Path>>(document: &CadDocument, path: P) -> Resu
     let writer = DxfWriter::new_binary(document.clone());
     writer.write_to_file(path)
 }
+

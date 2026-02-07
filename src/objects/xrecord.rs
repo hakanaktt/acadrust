@@ -255,7 +255,7 @@ impl XRecordEntry {
 ///
 /// # Example
 /// ```ignore
-/// use dxf_tools_rs::objects::XRecord;
+/// use acadrust::objects::XRecord;
 ///
 /// let mut xrecord = XRecord::new();
 /// xrecord.add_string(1, "Custom Data");
@@ -541,3 +541,4 @@ mod tests {
         assert_eq!(XRecordValueType::from_code(330), XRecordValueType::ObjectId);
     }
 }
+

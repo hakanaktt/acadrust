@@ -361,8 +361,8 @@ impl Default for MLineVertex {
 /// # Example
 ///
 /// ```ignore
-/// use dxf_tools_rs::entities::{MLine, MLineStyle};
-/// use dxf_tools_rs::types::Vector3;
+/// use acadrust::entities::{MLine, MLineStyle};
+/// use acadrust::types::Vector3;
 ///
 /// // Create a style with 3 parallel lines
 /// let mut style = MLineStyle::new("Triple");
@@ -1017,3 +1017,4 @@ mod tests {
         assert_eq!(elem.color, Color::Index(1));
     }
 }
+
