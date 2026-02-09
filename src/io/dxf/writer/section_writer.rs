@@ -101,6 +101,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.write_header_variable("$TEXTSIZE", |w| w.write_double(40, hdr.text_height))?;
         self.write_header_variable("$TRACEWID", |w| w.write_double(40, hdr.trace_width))?;
         self.write_header_variable("$TEXTSTYLE", |w| w.write_string(7, &hdr.current_text_style_name))?;
+        self.write_header_variable("$CMLSTYLE", |w| w.write_string(2, &hdr.multiline_style))?;
         self.write_header_variable("$CLAYER", |w| w.write_string(8, &hdr.current_layer_name))?;
         self.write_header_variable("$CELTYPE", |w| w.write_string(6, &hdr.current_linetype_name))?;
         self.write_header_variable("$CECOLOR", |w| w.write_i16(62, hdr.current_entity_color.approximate_index()))?;
@@ -453,7 +454,9 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_double(41, style.width_factor)?;
         self.writer.write_double(50, style.oblique_angle)?;
         self.writer.write_i16(71, 0)?; // Text generation flags
-        self.writer.write_double(42, style.height)?; // Last height used
+        // Last height used — must be > 0 for CAD validation
+        let last_height = if style.height > 0.0 { style.height } else { 0.2 };
+        self.writer.write_double(42, last_height)?;
         self.writer.write_string(3, &style.font_file)?;
         self.writer.write_string(4, &style.big_font_file)?;
 
@@ -971,6 +974,14 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.write_common_entity_data(&polyline.common, owner)?;
         self.writer.write_subclass("AcDb3dPolyline")?;
 
+        // Entities follow flag (VERTEX records follow)
+        self.writer.write_i16(66, 1)?;
+
+        // Dummy point (required by DXF spec)
+        self.writer.write_double(10, 0.0)?;
+        self.writer.write_double(20, 0.0)?;
+        self.writer.write_double(30, 0.0)?;
+
         let mut flags: i16 = 8; // 3D polyline flag
         if polyline.is_closed() {
             flags |= 1;
@@ -979,17 +990,19 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         // VERTEX and SEQEND are owned by the polyline entity
         let polyline_handle = polyline.common.handle;
-        // Generate sub-entity handles based on polyline handle
-        let base_handle = polyline_handle.value();
 
-        // Write vertices
-        for (i, vertex) in polyline.vertices.iter().enumerate() {
-            let vertex_handle = Handle::new(base_handle + i as u64 + 1);
+        // Write vertices (allocate unique handles to avoid collisions)
+        for vertex in polyline.vertices.iter() {
+            let vertex_handle = self.allocate_handle();
             self.writer.write_entity_type("VERTEX")?;
             self.writer.write_handle(5, vertex_handle)?;
             self.writer.write_handle(330, polyline_handle)?;
             self.writer.write_subclass("AcDbEntity")?;
             self.writer.write_string(8, &polyline.common.layer)?;
+            // Propagate parent color to vertex so CAD doesn't flag mismatch
+            if polyline.common.color != Color::ByLayer {
+                self.writer.write_color(62, polyline.common.color)?;
+            }
             self.writer.write_subclass("AcDbVertex")?;
             self.writer.write_subclass("AcDb3dPolylineVertex")?;
             self.writer.write_point3d(10, vertex.location)?;
@@ -997,7 +1010,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         }
 
         // Write SEQEND
-        let seqend_handle = Handle::new(base_handle + polyline.vertices.len() as u64 + 1);
+        let seqend_handle = self.allocate_handle();
         self.writer.write_entity_type("SEQEND")?;
         self.writer.write_handle(5, seqend_handle)?;
         self.writer.write_handle(330, polyline_handle)?;
@@ -1017,11 +1030,13 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         // Entities follow flag (VERTEX records follow)
         self.writer.write_i16(66, 1)?;
 
+        // Dummy origin point (required by DXF spec for POLYLINE entity)
+        self.writer.write_double(10, 0.0)?;
+        self.writer.write_double(20, 0.0)?;
+        self.writer.write_double(30, polyline.elevation)?;
+
         self.writer.write_i16(70, polyline.flags.bits() as i16)?;
-        
-        if polyline.elevation != 0.0 {
-            self.writer.write_double(30, polyline.elevation)?;
-        }
+
         if polyline.thickness != 0.0 {
             self.writer.write_double(39, polyline.thickness)?;
         }
@@ -1034,16 +1049,19 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         // VERTEX and SEQEND are owned by the polyline entity
         let polyline_handle = polyline.common.handle;
-        let base_handle = polyline_handle.value();
 
-        // Write vertices
-        for (i, vertex) in polyline.vertices.iter().enumerate() {
-            let vertex_handle = Handle::new(base_handle + i as u64 + 1);
+        // Write vertices (allocate unique handles to avoid collisions)
+        for vertex in polyline.vertices.iter() {
+            let vertex_handle = self.allocate_handle();
             self.writer.write_entity_type("VERTEX")?;
             self.writer.write_handle(5, vertex_handle)?;
             self.writer.write_handle(330, polyline_handle)?;
             self.writer.write_subclass("AcDbEntity")?;
             self.writer.write_string(8, &polyline.common.layer)?;
+            // Propagate parent color to vertex so CAD doesn't flag mismatch
+            if polyline.common.color != Color::ByLayer {
+                self.writer.write_color(62, polyline.common.color)?;
+            }
             self.writer.write_subclass("AcDbVertex")?;
             self.writer.write_subclass("AcDb2dVertex")?;
             self.writer.write_point3d(10, vertex.location)?;
@@ -1060,7 +1078,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         }
 
         // Write SEQEND
-        let seqend_handle = Handle::new(base_handle + polyline.vertices.len() as u64 + 1);
+        let seqend_handle = self.allocate_handle();
         self.writer.write_entity_type("SEQEND")?;
         self.writer.write_handle(5, seqend_handle)?;
         self.writer.write_handle(330, polyline_handle)?;
@@ -1630,6 +1648,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer.write_handle(330, polyline_handle)?;
             self.writer.write_subclass("AcDbEntity")?;
             self.writer.write_string(8, &vertex.layer)?;
+            // Propagate parent color to vertex so CAD doesn't flag mismatch
+            if polyline.common.color != Color::ByLayer {
+                self.writer.write_color(62, polyline.common.color)?;
+            }
             self.writer.write_subclass("AcDbVertex")?;
             self.writer.write_subclass("AcDb3dPolylineVertex")?;
             self.writer.write_point3d(10, vertex.position)?;
@@ -1749,8 +1771,8 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         // Horizontal alignment
         self.writer.write_i16(72, attdef.horizontal_alignment.to_value())?;
         
-        // Alignment point
-        self.writer.write_point3d(21, attdef.alignment_point)?;
+        // Alignment point (base code 11 → writes 11, 21, 31)
+        self.writer.write_point3d(11, attdef.alignment_point)?;
         
         // Normal
         self.writer.write_point3d(210, attdef.normal)?;
@@ -1808,8 +1830,8 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         // Horizontal alignment
         self.writer.write_i16(72, attrib.horizontal_alignment.to_value())?;
         
-        // Alignment point
-        self.writer.write_point3d(21, attrib.alignment_point)?;
+        // Alignment point (base code 11 → writes 11, 21, 31)
+        self.writer.write_point3d(11, attrib.alignment_point)?;
         
         // Normal
         self.writer.write_point3d(210, attrib.normal)?;
@@ -2775,6 +2797,11 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer.write_handle(340, h)?;
         }
 
+        // Leader line type handle
+        if let Some(h) = mleader.line_type_handle {
+            self.writer.write_handle(341, h)?;
+        }
+
         // Path type
         self.writer.write_i16(171, mleader.path_type as i16)?;
 
@@ -2864,10 +2891,9 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         // Style name
         self.writer.write_string(2, &mline.style_name)?;
 
-        // Style handle
-        if let Some(h) = mline.style_handle {
-            self.writer.write_handle(340, h)?;
-        }
+        // Style handle — always write (CAD requires non-null reference)
+        let style_h = mline.style_handle.unwrap_or(Handle::NULL);
+        self.writer.write_handle(340, style_h)?;
 
         // Scale factor
         self.writer.write_double(40, mline.scale_factor)?;
@@ -3567,7 +3593,16 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         self.writer.write_entity_type("POLYLINE")?;
         self.write_common_entity_data(&mesh.common, owner)?;
-        self.writer.write_subclass("AcDb3dPolyline")?;
+        self.writer.write_subclass("AcDbPolygonMesh")?;
+
+        // Entities follow flag (VERTEX records follow)
+        self.writer.write_i16(66, 1)?;
+
+        // Dummy origin point (required by DXF spec for POLYLINE entity)
+        self.writer.write_double(10, 0.0)?;
+        self.writer.write_double(20, 0.0)?;
+        self.writer.write_double(30, 0.0)?;
+
         // Ensure PolygonMesh flag (16) is always set
         let flags = mesh.flags | PolygonMeshFlags::POLYGON_MESH;
         self.writer.write_i16(70, flags.bits())?;
@@ -3582,10 +3617,25 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer.write_double(230, mesh.normal.z)?;
         }
 
-        // Write vertices
+        // VERTEX and SEQEND are owned by the mesh entity
+        let mesh_handle = mesh.common.handle;
+
+        // Write vertices (allocate unique handles to avoid collisions)
         for vertex in &mesh.vertices {
+            let vertex_handle = if vertex.common.handle.is_null() {
+                self.allocate_handle()
+            } else {
+                vertex.common.handle
+            };
             self.writer.write_entity_type("VERTEX")?;
-            self.write_common_entity_data(&vertex.common, owner)?;
+            self.writer.write_handle(5, vertex_handle)?;
+            self.writer.write_handle(330, mesh_handle)?;
+            self.writer.write_subclass("AcDbEntity")?;
+            self.writer.write_string(8, &vertex.common.layer)?;
+            // Propagate parent color to vertex so CAD doesn't flag mismatch
+            if mesh.common.color != Color::ByLayer {
+                self.writer.write_color(62, mesh.common.color)?;
+            }
             self.writer.write_subclass("AcDbVertex")?;
             self.writer.write_subclass("AcDbPolygonMeshVertex")?;
             self.writer.write_point3d(10, vertex.location)?;
@@ -3595,10 +3645,12 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         }
 
         // Write SEQEND
+        let seqend_handle = self.allocate_handle();
         self.writer.write_entity_type("SEQEND")?;
-        self.writer.write_handle(5, Handle::NULL)?;
-        self.writer.write_handle(330, owner)?;
+        self.writer.write_handle(5, seqend_handle)?;
+        self.writer.write_handle(330, mesh_handle)?;
         self.writer.write_subclass("AcDbEntity")?;
+        self.writer.write_subclass("AcDbSequenceEnd")?;
         self.writer.write_string(8, &mesh.common.layer)?;
 
         Ok(())

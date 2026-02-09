@@ -109,6 +109,14 @@ fn count_extra_handles(document: &CadDocument) -> u64 {
 
     for entity in document.entities() {
         match entity {
+            EntityType::Polyline(polyline) => {
+                // Vertices + SEQEND all use allocate_handle()
+                count += polyline.vertices.len() as u64 + 1;
+            }
+            EntityType::Polyline2D(polyline) => {
+                // Vertices + SEQEND all use allocate_handle()
+                count += polyline.vertices.len() as u64 + 1;
+            }
             EntityType::Polyline3D(polyline) => {
                 for vertex in &polyline.vertices {
                     if vertex.handle.is_null() {
@@ -132,6 +140,15 @@ fn count_extra_handles(document: &CadDocument) -> u64 {
                 if mesh.seqend_handle.is_none() {
                     count += 1;
                 }
+            }
+            EntityType::PolygonMesh(mesh) => {
+                for vertex in &mesh.vertices {
+                    if vertex.common.handle.is_null() {
+                        count += 1;
+                    }
+                }
+                // SEQEND always needs a handle
+                count += 1;
             }
             _ => {}
         }

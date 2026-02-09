@@ -1,6 +1,6 @@
 [package]
 name = "acadrust"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2021"
 authors = ["Hakan AK"]
 description = "A pure Rust library for reading and writing CAD files in DXF format (ASCII and Binary)"

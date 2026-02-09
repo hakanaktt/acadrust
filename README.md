@@ -163,7 +163,7 @@ Add acadrust to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-acadrust = "0.1.7"
+acadrust = "0.1.8"
 ```
 
 Or install via cargo:
