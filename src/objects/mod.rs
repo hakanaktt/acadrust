@@ -13,6 +13,7 @@ mod scale;
 mod sort_entities_table;
 mod table_style;
 mod xrecord;
+mod stub_objects;
 
 pub use dictionary_variable::DictionaryVariable;
 pub use group::Group;
@@ -35,6 +36,11 @@ pub use table_style::{
     TableCellStylePropertyFlags, TableFlowDirection, TableStyle, TableStyleFlags,
 };
 pub use xrecord::{DictionaryCloningFlags, XRecord, XRecordEntry, XRecordValue, XRecordValueType};
+pub use stub_objects::{
+    VisualStyle, Material, GeoData,
+    SpatialFilter, RasterVariables, BookColor, PlaceHolder,
+    DictionaryWithDefault, WipeoutVariables, StubObject,
+};
 
 use crate::types::Handle;
 
@@ -51,6 +57,10 @@ pub struct Dictionary {
     pub duplicate_cloning: i16,
     /// Hard owner flag
     pub hard_owner: bool,
+    /// Reactor handles ({ACAD_REACTORS})
+    pub reactors: Vec<Handle>,
+    /// Extended dictionary handle ({ACAD_XDICTIONARY})
+    pub xdictionary_handle: Option<Handle>,
 }
 
 impl Dictionary {
@@ -62,6 +72,8 @@ impl Dictionary {
             entries: Vec::new(),
             duplicate_cloning: 1,
             hard_owner: false,
+            reactors: Vec::new(),
+            xdictionary_handle: None,
         }
     }
 
@@ -122,6 +134,10 @@ pub struct Layout {
     pub block_record: Handle,
     /// Viewport handle
     pub viewport: Handle,
+    /// Reactor handles ({ACAD_REACTORS})
+    pub reactors: Vec<Handle>,
+    /// Extended dictionary handle ({ACAD_XDICTIONARY})
+    pub xdictionary_handle: Option<Handle>,
 }
 
 impl Layout {
@@ -140,6 +156,8 @@ impl Layout {
             max_extents: (12.0, 9.0, 0.0),
             block_record: Handle::NULL,
             viewport: Handle::NULL,
+            reactors: Vec::new(),
+            xdictionary_handle: None,
         }
     }
 }
@@ -171,6 +189,26 @@ pub enum ObjectType {
     SortEntitiesTable(SortEntitiesTable),
     /// DictionaryVariable object - named variable in dictionary
     DictionaryVariable(DictionaryVariable),
+    /// VisualStyle object
+    VisualStyle(VisualStyle),
+    /// Material object
+    Material(Material),
+    /// ImageDefinitionReactor object
+    ImageDefinitionReactor(ImageDefinitionReactor),
+    /// GeoData object
+    GeoData(GeoData),
+    /// SpatialFilter object
+    SpatialFilter(SpatialFilter),
+    /// RasterVariables object
+    RasterVariables(RasterVariables),
+    /// BookColor (DBCOLOR) object
+    BookColor(BookColor),
+    /// PlaceHolder object
+    PlaceHolder(PlaceHolder),
+    /// DictionaryWithDefault object
+    DictionaryWithDefault(DictionaryWithDefault),
+    /// WipeoutVariables object
+    WipeoutVariables(WipeoutVariables),
     /// Unknown object type (stored as raw data)
     Unknown {
         /// Object type name

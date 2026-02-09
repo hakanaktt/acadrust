@@ -124,6 +124,14 @@ pub trait DxfStreamReader {
     /// Reset the reader to the beginning
     #[allow(dead_code)]
     fn reset(&mut self) -> Result<()>;
+
+    /// Set the character encoding for non-UTF8 strings.
+    ///
+    /// Called after reading $DWGCODEPAGE from the header.
+    /// Implementations that don't support encoding changes can ignore this.
+    fn set_encoding(&mut self, _encoding: &'static encoding_rs::Encoding) {
+        // Default: no-op
+    }
 }
 
 /// Helper for reading 3D points from consecutive code pairs

@@ -36,6 +36,10 @@ pub mod polyface_mesh;
 pub mod wipeout;
 pub mod shape;
 pub mod underlay;
+pub mod seqend;
+pub mod ole2frame;
+pub mod polygon_mesh;
+pub mod unknown_entity;
 
 pub use point::Point;
 pub use line::Line;
@@ -103,6 +107,12 @@ pub use underlay::{
     PdfUnderlay, DwfUnderlay, DgnUnderlay,
     PdfUnderlayDefinition, DwfUnderlayDefinition, DgnUnderlayDefinition,
 };
+pub use seqend::Seqend;
+pub use ole2frame::{Ole2Frame, OleObjectType};
+pub use polygon_mesh::{
+    PolygonMesh as PolygonMeshEntity, PolygonMeshVertex, PolygonMeshFlags, SurfaceSmoothType,
+};
+pub use unknown_entity::UnknownEntity;
 
 /// Base trait for all CAD entities
 pub trait Entity {
@@ -200,6 +210,12 @@ pub struct EntityCommon {
     pub invisible: bool,
     /// Extended data (XDATA)
     pub extended_data: crate::xdata::ExtendedData,
+    /// Reactor handles — objects attached as reactors ({ACAD_REACTORS})
+    pub reactors: Vec<Handle>,
+    /// Extended dictionary handle ({ACAD_XDICTIONARY}) — hard-owner handle to a Dictionary
+    pub xdictionary_handle: Option<Handle>,
+    /// Owner handle (soft pointer, code 330)
+    pub owner_handle: Handle,
 }
 
 impl EntityCommon {
@@ -213,6 +229,9 @@ impl EntityCommon {
             transparency: Transparency::OPAQUE,
             invisible: false,
             extended_data: crate::xdata::ExtendedData::new(),
+            reactors: Vec::new(),
+            xdictionary_handle: None,
+            owner_handle: Handle::NULL,
         }
     }
 
@@ -310,6 +329,14 @@ pub enum EntityType {
     Shape(Shape),
     /// Underlay entity (PDF, DWF, DGN)
     Underlay(Underlay),
+    /// End-of-sequence marker
+    Seqend(Seqend),
+    /// OLE2 embedded object
+    Ole2Frame(Ole2Frame),
+    /// Polygon mesh (3D surface mesh)
+    PolygonMesh(PolygonMeshEntity),
+    /// Unknown / unsupported entity type (common fields only)
+    Unknown(UnknownEntity),
 }
 
 impl EntityType {
@@ -354,6 +381,10 @@ impl EntityType {
             EntityType::Wipeout(e) => e,
             EntityType::Shape(e) => e,
             EntityType::Underlay(e) => e,
+            EntityType::Seqend(e) => e,
+            EntityType::Ole2Frame(e) => e,
+            EntityType::PolygonMesh(e) => e,
+            EntityType::Unknown(e) => e,
         }
     }
 
@@ -398,6 +429,58 @@ impl EntityType {
             EntityType::Wipeout(e) => e,
             EntityType::Shape(e) => e,
             EntityType::Underlay(e) => e,
+            EntityType::Seqend(e) => e,
+            EntityType::Ole2Frame(e) => e,
+            EntityType::PolygonMesh(e) => e,
+            EntityType::Unknown(e) => e,
+        }
+    }
+
+    /// Get a reference to the entity's common data
+    pub fn common(&self) -> &EntityCommon {
+        match self {
+            EntityType::Point(e) => &e.common,
+            EntityType::Line(e) => &e.common,
+            EntityType::Circle(e) => &e.common,
+            EntityType::Arc(e) => &e.common,
+            EntityType::Ellipse(e) => &e.common,
+            EntityType::Polyline(e) => &e.common,
+            EntityType::Polyline2D(e) => &e.common,
+            EntityType::Polyline3D(e) => &e.common,
+            EntityType::LwPolyline(e) => &e.common,
+            EntityType::Text(e) => &e.common,
+            EntityType::MText(e) => &e.common,
+            EntityType::Spline(e) => &e.common,
+            EntityType::Dimension(e) => &e.base().common,
+            EntityType::Hatch(e) => &e.common,
+            EntityType::Solid(e) => &e.common,
+            EntityType::Face3D(e) => &e.common,
+            EntityType::Insert(e) => &e.common,
+            EntityType::Block(e) => &e.common,
+            EntityType::BlockEnd(e) => &e.common,
+            EntityType::Ray(e) => &e.common,
+            EntityType::XLine(e) => &e.common,
+            EntityType::Viewport(e) => &e.common,
+            EntityType::AttributeDefinition(e) => &e.common,
+            EntityType::AttributeEntity(e) => &e.common,
+            EntityType::Leader(e) => &e.common,
+            EntityType::MultiLeader(e) => &e.common,
+            EntityType::MLine(e) => &e.common,
+            EntityType::Mesh(e) => &e.common,
+            EntityType::RasterImage(e) => &e.common,
+            EntityType::Solid3D(e) => &e.common,
+            EntityType::Region(e) => &e.common,
+            EntityType::Body(e) => &e.common,
+            EntityType::Table(e) => &e.common,
+            EntityType::Tolerance(e) => &e.common,
+            EntityType::PolyfaceMesh(e) => &e.common,
+            EntityType::Wipeout(e) => &e.common,
+            EntityType::Shape(e) => &e.common,
+            EntityType::Underlay(e) => &e.common,
+            EntityType::Seqend(e) => &e.common,
+            EntityType::Ole2Frame(e) => &e.common,
+            EntityType::PolygonMesh(e) => &e.common,
+            EntityType::Unknown(e) => &e.common,
         }
     }
 }

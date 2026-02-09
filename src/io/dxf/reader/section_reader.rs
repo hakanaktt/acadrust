@@ -374,7 +374,7 @@ impl<'a> SectionReader<'a> {
     }
     
     /// Read the CLASSES section
-    pub fn read_classes(&mut self, _document: &mut CadDocument) -> Result<()> {
+    pub fn read_classes(&mut self, document: &mut CadDocument) -> Result<()> {
         // Read classes until ENDSEC
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 && pair.value_string == "ENDSEC" {
@@ -383,13 +383,42 @@ impl<'a> SectionReader<'a> {
             
             // Classes are defined with code 0 = "CLASS"
             if pair.code == 0 && pair.value_string == "CLASS" {
-                // Skip class definition for now
+                let mut class = crate::classes::DxfClass::new("", "");
                 while let Some(class_pair) = self.reader.read_pair()? {
                     if class_pair.code == 0 {
-                        // Next entity - push back and break to outer loop
                         self.reader.push_back(class_pair);
                         break;
                     }
+                    match class_pair.code {
+                        1 => class.dxf_name = class_pair.value_string.clone(),
+                        2 => class.cpp_class_name = class_pair.value_string.clone(),
+                        3 => class.application_name = class_pair.value_string.clone(),
+                        90 => {
+                            if let Some(v) = class_pair.as_i32() {
+                                class.proxy_flags = crate::classes::ProxyFlags::from(v);
+                            }
+                        }
+                        91 => {
+                            if let Some(v) = class_pair.as_i32() {
+                                class.instance_count = v;
+                            }
+                        }
+                        280 => {
+                            if let Some(v) = class_pair.as_i16() {
+                                class.was_zombie = v != 0;
+                            }
+                        }
+                        281 => {
+                            if let Some(v) = class_pair.as_i16() {
+                                class.is_an_entity = v != 0;
+                                class.item_class_id = if v != 0 { 498 } else { 499 };
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if !class.dxf_name.is_empty() {
+                    document.classes.add_or_update(class);
                 }
             }
         }
@@ -705,8 +734,19 @@ impl<'a> SectionReader<'a> {
                             block_entities.push(EntityType::Underlay(entity));
                         }
                     }
+                    "OLE2FRAME" => {
+                        if let Some(entity) = self.read_ole2frame()? {
+                            block_entities.push(EntityType::Ole2Frame(entity));
+                        }
+                    }
+                    "SEQEND" => {
+                        // Skip SEQEND in blocks — it's consumed by polyline/insert readers
+                        self.skip_entity()?;
+                    }
                     _ => {
-                        // Skip unknown entity type
+                        // Read as unknown entity in block — common fields preserved
+                        let entity = self.read_unknown_entity(&pair.value_string)?;
+                        block_entities.push(EntityType::Unknown(entity));
                     }
                 }
             }
@@ -928,8 +968,23 @@ impl<'a> SectionReader<'a> {
                             let _ = document.add_entity(EntityType::Underlay(entity));
                         }
                     }
+                    "OLE2FRAME" => {
+                        if let Some(entity) = self.read_ole2frame()? {
+                            let _ = document.add_entity(EntityType::Ole2Frame(entity));
+                        }
+                    }
+                    "SEQEND" => {
+                        // Standalone SEQEND — skip (normally consumed by polyline/insert reader)
+                        self.skip_entity()?;
+                    }
                     _ => {
-                        // Skip unknown entity type
+                        // Read as unknown entity — common fields preserved, entity-specific codes discarded
+                        document.notifications.notify(
+                            crate::notification::NotificationType::NotImplemented,
+                            format!("Entity not supported, read as UnknownEntity: {}", entity_type),
+                        );
+                        let entity = self.read_unknown_entity(&entity_type)?;
+                        let _ = document.add_entity(EntityType::Unknown(entity));
                     }
                 }
             }
@@ -947,7 +1002,7 @@ impl<'a> SectionReader<'a> {
 
             if pair.code == 0 {
                 match pair.value_string.as_str() {
-                    "DICTIONARY" | "ACDBDICTIONARYWDFLT" => {
+                    "DICTIONARY" => {
                         if let Some(obj) = self.read_dictionary()? {
                             document.objects.insert(obj.handle, ObjectType::Dictionary(obj));
                         }
@@ -1007,8 +1062,62 @@ impl<'a> SectionReader<'a> {
                             document.objects.insert(obj.handle, ObjectType::DictionaryVariable(obj));
                         }
                     }
+                    "VISUALSTYLE" => {
+                        if let Some(obj) = self.read_visualstyle()? {
+                            document.objects.insert(obj.handle, ObjectType::VisualStyle(obj));
+                        }
+                    }
+                    "MATERIAL" => {
+                        if let Some(obj) = self.read_material()? {
+                            document.objects.insert(obj.handle, ObjectType::Material(obj));
+                        }
+                    }
+                    "IMAGEDEF_REACTOR" => {
+                        if let Some(obj) = self.read_imagedef_reactor()? {
+                            document.objects.insert(obj.handle, ObjectType::ImageDefinitionReactor(obj));
+                        }
+                    }
+                    "GEODATA" => {
+                        let obj = self.read_stub_object::<GeoData>()?;
+                        document.objects.insert(obj.handle, ObjectType::GeoData(obj));
+                    }
+                    "SPATIALFILTER" => {
+                        let obj = self.read_stub_object::<SpatialFilter>()?;
+                        document.objects.insert(obj.handle, ObjectType::SpatialFilter(obj));
+                    }
+                    "RASTERVARIABLES" => {
+                        if let Some(obj) = self.read_raster_variables()? {
+                            document.objects.insert(obj.handle, ObjectType::RasterVariables(obj));
+                        }
+                    }
+                    "DBCOLOR" => {
+                        if let Some(obj) = self.read_bookcolor()? {
+                            document.objects.insert(obj.handle, ObjectType::BookColor(obj));
+                        }
+                    }
+                    "ACDBPLACEHOLDER" => {
+                        let obj = self.read_stub_object::<PlaceHolder>()?;
+                        document.objects.insert(obj.handle, ObjectType::PlaceHolder(obj));
+                    }
+                    "ACDBDICTIONARYWDFLT" => {
+                        // Already handled as DICTIONARY above — this handles standalone cases
+                        if let Some(obj) = self.read_dict_with_default()? {
+                            document.objects.insert(obj.handle, ObjectType::DictionaryWithDefault(obj));
+                        }
+                    }
+                    "WIPEOUTVARIABLES" => {
+                        if let Some(obj) = self.read_wipeout_variables()? {
+                            document.objects.insert(obj.handle, ObjectType::WipeoutVariables(obj));
+                        }
+                    }
                     _ => {
-                        self.skip_unknown_object(&pair.value_string)?;
+                        document.notifications.notify(
+                            crate::notification::NotificationType::NotImplemented,
+                            format!("Object not supported, read as Unknown: {}", pair.value_string),
+                        );
+                        let type_name = pair.value_string.clone();
+                        let handle = self.read_unknown_object_handle()?;
+                        document.objects.insert(handle, ObjectType::Unknown { type_name, handle });
                     }
                 }
             }
@@ -1143,15 +1252,171 @@ impl<'a> SectionReader<'a> {
     }
 
     /// Skip an unknown object type
-    fn skip_unknown_object(&mut self, _type_name: &str) -> Result<()> {
-        // Read until next code 0
+    /// Read a VISUALSTYLE object
+    fn read_visualstyle(&mut self) -> Result<Option<VisualStyle>> {
+        let mut obj = VisualStyle::new();
+        while let Some(pair) = self.reader.read_pair()? {
+            if pair.code == 0 { self.reader.push_back(pair); break; }
+            match pair.code {
+                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.handle = Handle::new(h); } }
+                330 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.owner = Handle::new(h); } }
+                2 => obj.description = pair.value_string.clone(),
+                70 => { if let Some(v) = pair.as_i16() { obj.style_type = v; } }
+                71 => { if let Some(v) = pair.as_i16() { obj.face_lighting_model = v; } }
+                72 => { if let Some(v) = pair.as_i16() { obj.face_lighting_quality = v; } }
+                73 => { if let Some(v) = pair.as_i16() { obj.face_color_mode = v; } }
+                90 => { if let Some(v) = pair.as_i32() { obj.face_modifier = v; } }
+                91 => { if let Some(v) = pair.as_i32() { obj.edge_model = v; } }
+                92 => { if let Some(v) = pair.as_i32() { obj.edge_style = v; } }
+                291 => obj.internal_use_only = pair.value_string.trim() == "1",
+                _ => {}
+            }
+        }
+        Ok(Some(obj))
+    }
+
+    /// Read a MATERIAL object
+    fn read_material(&mut self) -> Result<Option<Material>> {
+        let mut obj = Material::new();
+        while let Some(pair) = self.reader.read_pair()? {
+            if pair.code == 0 { self.reader.push_back(pair); break; }
+            match pair.code {
+                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.handle = Handle::new(h); } }
+                330 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.owner = Handle::new(h); } }
+                1 => obj.name = pair.value_string.clone(),
+                2 => obj.description = pair.value_string.clone(),
+                _ => {}
+            }
+        }
+        Ok(Some(obj))
+    }
+
+    /// Read an IMAGEDEF_REACTOR object
+    fn read_imagedef_reactor(&mut self) -> Result<Option<ImageDefinitionReactor>> {
+        let mut obj = ImageDefinitionReactor::new(Handle::NULL);
+        while let Some(pair) = self.reader.read_pair()? {
+            if pair.code == 0 { self.reader.push_back(pair); break; }
+            match pair.code {
+                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.handle = Handle::new(h); } }
+                330 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.owner = Handle::new(h); } }
+                _ => {}
+            }
+        }
+        Ok(Some(obj))
+    }
+
+    /// Read a RASTERVARIABLES object
+    fn read_raster_variables(&mut self) -> Result<Option<RasterVariables>> {
+        let mut obj = RasterVariables::new();
+        while let Some(pair) = self.reader.read_pair()? {
+            if pair.code == 0 { self.reader.push_back(pair); break; }
+            match pair.code {
+                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.handle = Handle::new(h); } }
+                330 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.owner = Handle::new(h); } }
+                90 => { if let Some(v) = pair.as_i32() { obj.class_version = v; } }
+                70 => { if let Some(v) = pair.as_i16() { obj.display_image_frame = v; } }
+                71 => { if let Some(v) = pair.as_i16() { obj.image_quality = v; } }
+                72 => { if let Some(v) = pair.as_i16() { obj.units = v; } }
+                _ => {}
+            }
+        }
+        Ok(Some(obj))
+    }
+
+    /// Read a DBCOLOR object
+    fn read_bookcolor(&mut self) -> Result<Option<BookColor>> {
+        let mut obj = BookColor::new();
+        while let Some(pair) = self.reader.read_pair()? {
+            if pair.code == 0 { self.reader.push_back(pair); break; }
+            match pair.code {
+                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.handle = Handle::new(h); } }
+                330 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.owner = Handle::new(h); } }
+                1 => obj.color_name = pair.value_string.clone(),
+                2 => obj.book_name = pair.value_string.clone(),
+                _ => {}
+            }
+        }
+        Ok(Some(obj))
+    }
+
+    /// Read an ACDBDICTIONARYWDFLT object (dictionary with default)
+    fn read_dict_with_default(&mut self) -> Result<Option<DictionaryWithDefault>> {
+        let mut obj = DictionaryWithDefault::new();
+        let mut current_key: Option<String> = None;
+
+        while let Some(pair) = self.reader.read_pair()? {
+            if pair.code == 0 { self.reader.push_back(pair); break; }
+            match pair.code {
+                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.handle = Handle::new(h); } }
+                330 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.owner = Handle::new(h); } }
+                280 => obj.hard_owner = pair.value_string.trim() == "1",
+                281 => { if let Some(v) = pair.as_i16() { obj.duplicate_cloning = v; } }
+                3 => { current_key = Some(pair.value_string.clone()); }
+                340 => {
+                    // Could be default handle or entry value
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        if obj.default_handle == Handle::NULL && current_key.is_none() {
+                            obj.default_handle = Handle::new(h);
+                        }
+                    }
+                }
+                350 | 360 => {
+                    if let Some(key) = current_key.take() {
+                        if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                            obj.entries.push((key, Handle::new(h)));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(Some(obj))
+    }
+
+    /// Read a WIPEOUTVARIABLES object
+    fn read_wipeout_variables(&mut self) -> Result<Option<WipeoutVariables>> {
+        let mut obj = WipeoutVariables::new();
+        while let Some(pair) = self.reader.read_pair()? {
+            if pair.code == 0 { self.reader.push_back(pair); break; }
+            match pair.code {
+                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.handle = Handle::new(h); } }
+                330 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.owner = Handle::new(h); } }
+                70 => { if let Some(v) = pair.as_i16() { obj.display_frame = v; } }
+                _ => {}
+            }
+        }
+        Ok(Some(obj))
+    }
+
+    /// Trait-based generic reader for minimal stub objects (handle + owner only)
+    fn read_stub_object<T: StubObject>(&mut self) -> Result<T> {
+        let mut obj = T::new_stub();
+        while let Some(pair) = self.reader.read_pair()? {
+            if pair.code == 0 { self.reader.push_back(pair); break; }
+            match pair.code {
+                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.set_handle(Handle::new(h)); } }
+                330 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.set_owner(Handle::new(h)); } }
+                _ => {}
+            }
+        }
+        Ok(obj)
+    }
+
+    /// Read an unknown object, extracting only the handle, then skip remaining pairs.
+    fn read_unknown_object_handle(&mut self) -> Result<Handle> {
+        let mut handle = Handle::NULL;
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 {
                 self.reader.push_back(pair);
                 break;
             }
+            if pair.code == 5 {
+                if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                    handle = Handle::new(h);
+                }
+            }
         }
-        Ok(())
+        Ok(handle)
     }
     
     /// Skip to ENDTAB
@@ -1676,6 +1941,171 @@ impl<'a> SectionReader<'a> {
         Ok(Some(ucs))
     }
 
+    // ===== Common Entity/Object Code Helpers =====
+
+    /// Try to read a common entity code (5, 60, 102, 330, 92, 160, 310).
+    /// Returns true if the code was consumed, false if not recognized.
+    fn try_read_common_entity_code(
+        &mut self,
+        pair: &super::stream_reader::DxfCodePair,
+        common: &mut EntityCommon,
+    ) -> Result<bool> {
+        match pair.code {
+            5 => {
+                if let Ok(h) = u64::from_str_radix(pair.value_string.trim(), 16) {
+                    common.handle = Handle::new(h);
+                }
+                Ok(true)
+            }
+            60 => {
+                if let Some(v) = pair.as_i16() {
+                    common.invisible = v != 0;
+                }
+                Ok(true)
+            }
+            330 => {
+                if let Ok(h) = u64::from_str_radix(pair.value_string.trim(), 16) {
+                    common.owner_handle = Handle::new(h);
+                }
+                Ok(true)
+            }
+            102 => {
+                let val = pair.value_string.trim();
+                if val == "{ACAD_REACTORS" {
+                    common.reactors = self.read_reactor_handles()?;
+                } else if val == "{ACAD_XDICTIONARY" {
+                    common.xdictionary_handle = self.read_xdictionary_handle()?;
+                } else if val.starts_with('{') {
+                    // Skip unknown defined groups
+                    self.skip_defined_group()?;
+                }
+                // "}" closing tokens are handled inside the group readers
+                Ok(true)
+            }
+            // Proxy graphics — skip data (matches ACadSharp behavior)
+            92 | 160 | 310 => {
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    /// Read reactor handles from a {ACAD_REACTORS group.
+    /// Assumes the opening "102 {ACAD_REACTORS" has already been consumed.
+    fn read_reactor_handles(&mut self) -> Result<Vec<Handle>> {
+        let mut handles = Vec::new();
+        while let Some(pair) = self.reader.read_pair()? {
+            if pair.code == 102 {
+                // Closing "}"
+                break;
+            }
+            if pair.code == 330 {
+                if let Ok(h) = u64::from_str_radix(pair.value_string.trim(), 16) {
+                    handles.push(Handle::new(h));
+                }
+            }
+        }
+        Ok(handles)
+    }
+
+    /// Read an xdictionary handle from a {ACAD_XDICTIONARY group.
+    /// Assumes the opening "102 {ACAD_XDICTIONARY" has already been consumed.
+    fn read_xdictionary_handle(&mut self) -> Result<Option<Handle>> {
+        let mut handle = None;
+        while let Some(pair) = self.reader.read_pair()? {
+            if pair.code == 102 {
+                // Closing "}"
+                break;
+            }
+            if pair.code == 360 {
+                if let Ok(h) = u64::from_str_radix(pair.value_string.trim(), 16) {
+                    handle = Some(Handle::new(h));
+                }
+            }
+        }
+        Ok(handle)
+    }
+
+    /// Skip an unknown defined group (reads pairs until closing "}")
+    fn skip_defined_group(&mut self) -> Result<()> {
+        while let Some(pair) = self.reader.read_pair()? {
+            if pair.code == 102 && pair.value_string.trim() == "}" {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// Skip all pairs for the current entity until the next entity (code 0) or section end
+    fn skip_entity(&mut self) -> Result<()> {
+        while let Some(pair) = self.reader.read_pair()? {
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// Read an unknown entity, capturing only common entity data.
+    ///
+    /// Entity-specific codes are discarded (matching ACadSharp behavior).
+    fn read_unknown_entity(&mut self, dxf_name: &str) -> Result<UnknownEntity> {
+        let mut entity = UnknownEntity::new(dxf_name);
+        while let Some(pair) = self.reader.read_pair()? {
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
+            // Try to read common entity codes; ignore entity-specific ones
+            let _ = self.try_read_common_entity_code(&pair, &mut entity.common)?;
+        }
+        Ok(entity)
+    }
+
+    /// Read an OLE2FRAME entity
+    fn read_ole2frame(&mut self) -> Result<Option<Ole2Frame>> {
+        let mut ole = Ole2Frame::new();
+        let mut binary_chunks: Vec<Vec<u8>> = Vec::new();
+
+        while let Some(pair) = self.reader.read_pair()? {
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
+            match pair.code {
+                70 => { if let Some(v) = pair.as_i16() { ole.version = v; } }
+                3 => ole.source_application = pair.value_string.clone(),
+                10 => { if let Some(v) = pair.as_double() { ole.upper_left_corner.x = v; } }
+                20 => { if let Some(v) = pair.as_double() { ole.upper_left_corner.y = v; } }
+                30 => { if let Some(v) = pair.as_double() { ole.upper_left_corner.z = v; } }
+                11 => { if let Some(v) = pair.as_double() { ole.lower_right_corner.x = v; } }
+                21 => { if let Some(v) = pair.as_double() { ole.lower_right_corner.y = v; } }
+                31 => { if let Some(v) = pair.as_double() { ole.lower_right_corner.z = v; } }
+                71 => { if let Some(v) = pair.as_i16() { ole.ole_object_type = OleObjectType::from_i16(v); } }
+                72 => { if let Some(v) = pair.as_i16() { ole.is_paper_space = v != 0; } }
+                310 => {
+                    // Binary data chunk (hex-encoded)
+                    let hex = pair.value_string.trim();
+                    if let Ok(bytes) = (0..hex.len())
+                        .step_by(2)
+                        .map(|i| u8::from_str_radix(&hex[i..i.min(hex.len()).max(i + 2)], 16))
+                        .collect::<std::result::Result<Vec<u8>, _>>()
+                    {
+                        binary_chunks.push(bytes);
+                    }
+                }
+                1 | 90 | 73 => { /* end marker, length, undocumented — skip */ }
+                _ => { self.try_read_common_entity_code(&pair, &mut ole.common)?; }
+            }
+        }
+
+        // Concatenate binary chunks
+        ole.binary_data = binary_chunks.into_iter().flatten().collect();
+
+        Ok(Some(ole))
+    }
+
     // ===== Entity Readers =====
 
     /// Read a POINT entity
@@ -1707,7 +2137,7 @@ impl<'a> SectionReader<'a> {
                         point.thickness = thickness;
                     }
                 }
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut point.common)?; }
             }
         }
 
@@ -1757,7 +2187,7 @@ impl<'a> SectionReader<'a> {
                     let (extended_data, _next_pair) = self.read_extended_data()?;
                     line.common.extended_data = extended_data;
                 }
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut line.common)?; }
             }
         }
 
@@ -1805,7 +2235,7 @@ impl<'a> SectionReader<'a> {
                         circle.thickness = thickness;
                     }
                 }
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut circle.common)?; }
             }
         }
 
@@ -1860,7 +2290,7 @@ impl<'a> SectionReader<'a> {
                         arc.thickness = thickness;
                     }
                 }
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut arc.common)?; }
             }
         }
 
@@ -1912,7 +2342,7 @@ impl<'a> SectionReader<'a> {
                         ellipse.end_parameter = angle;
                     }
                 }
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut ellipse.common)?; }
             }
         }
 
@@ -1987,7 +2417,7 @@ impl<'a> SectionReader<'a> {
                             }
                         }
                     }
-                    _ => {}
+                    _ => { self.try_read_common_entity_code(&pair, &mut polyline.common)?; }
                 }
             }
         }
@@ -2060,7 +2490,7 @@ impl<'a> SectionReader<'a> {
                         widths_end.push(width);
                     }
                 }
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut lwpolyline.common)?; }
             }
         }
 
@@ -2127,7 +2557,7 @@ impl<'a> SectionReader<'a> {
                     }
                 }
                 7 => text.style = pair.value_string.clone(),
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut text.common)?; }
             }
         }
 
@@ -2182,7 +2612,7 @@ impl<'a> SectionReader<'a> {
                     }
                 }
                 7 => mtext.style = pair.value_string.clone(),
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut mtext.common)?; }
             }
         }
 
@@ -2264,7 +2694,7 @@ impl<'a> SectionReader<'a> {
                     }
                     current_fit_point.add_coordinate(&pair);
                 }
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut spline.common)?; }
             }
         }
 
@@ -2305,6 +2735,7 @@ impl<'a> SectionReader<'a> {
         let mut rotation = 0.0;
         let mut actual_measurement = 0.0;
         let mut leader_length = 0.0;
+        let mut common = EntityCommon::new();
 
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 {
@@ -2362,7 +2793,7 @@ impl<'a> SectionReader<'a> {
                         leader_length = length;
                     }
                 }
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut common)?; }
             }
         }
 
@@ -2372,7 +2803,7 @@ impl<'a> SectionReader<'a> {
         let pt3 = third_point.get_point().unwrap_or(Vector3::zero());
         let _pt4 = fourth_point.get_point().unwrap_or(Vector3::zero());
 
-        let dimension = match dim_type {
+        let mut dimension = match dim_type {
             DimensionType::Aligned => {
                 let mut dim = DimensionAligned::new(pt1, pt2);
                 dim.base.common.layer = layer;
@@ -2459,6 +2890,15 @@ impl<'a> SectionReader<'a> {
                 Dimension::Ordinate(dim)
             }
         };
+
+        {
+            let dc = dimension.base_mut();
+            dc.common.handle = common.handle;
+            dc.common.owner_handle = common.owner_handle;
+            dc.common.reactors = common.reactors;
+            dc.common.xdictionary_handle = common.xdictionary_handle;
+            dc.common.invisible = common.invisible;
+        }
 
         Ok(Some(dimension))
     }
@@ -2596,7 +3036,7 @@ impl<'a> SectionReader<'a> {
                 }
                 // Note: Full hatch reading would require reading all edge data (codes 10-40, etc.)
                 // For now, we create a basic hatch structure
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut hatch.common)?; }
             }
         }
 
@@ -2628,6 +3068,7 @@ impl<'a> SectionReader<'a> {
         let mut layer = String::from("0");
         let mut color = Color::ByLayer;
         let mut line_weight = LineWeight::ByLayer;
+        let mut common = EntityCommon::new();
 
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 {
@@ -2651,7 +3092,7 @@ impl<'a> SectionReader<'a> {
                 11 | 21 | 31 => { corner2.add_coordinate(&pair); }
                 12 | 22 | 32 => { corner3.add_coordinate(&pair); }
                 13 | 23 | 33 => { corner4.add_coordinate(&pair); }
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut common)?; }
             }
         }
 
@@ -2664,6 +3105,11 @@ impl<'a> SectionReader<'a> {
         solid.common.layer = layer;
         solid.common.color = color;
         solid.common.line_weight = line_weight;
+        solid.common.handle = common.handle;
+        solid.common.owner_handle = common.owner_handle;
+        solid.common.reactors = common.reactors;
+        solid.common.xdictionary_handle = common.xdictionary_handle;
+        solid.common.invisible = common.invisible;
 
         Ok(Some(solid))
     }
@@ -2678,6 +3124,7 @@ impl<'a> SectionReader<'a> {
         let mut color = Color::ByLayer;
         let mut line_weight = LineWeight::ByLayer;
         let mut invisible_flags = 0i16;
+        let mut common = EntityCommon::new();
 
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 {
@@ -2706,7 +3153,7 @@ impl<'a> SectionReader<'a> {
                         invisible_flags = flags;
                     }
                 }
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut common)?; }
             }
         }
 
@@ -2727,6 +3174,11 @@ impl<'a> SectionReader<'a> {
         face.common.color = color;
         face.common.line_weight = line_weight;
         face.invisible_edges = invisible_edges;
+        face.common.handle = common.handle;
+        face.common.owner_handle = common.owner_handle;
+        face.common.reactors = common.reactors;
+        face.common.xdictionary_handle = common.xdictionary_handle;
+        face.common.invisible = common.invisible;
 
         Ok(Some(face))
     }
@@ -2746,6 +3198,7 @@ impl<'a> SectionReader<'a> {
         let mut layer = String::from("0");
         let mut color = Color::ByLayer;
         let mut line_weight = LineWeight::ByLayer;
+        let mut common = EntityCommon::new();
 
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 {
@@ -2807,7 +3260,7 @@ impl<'a> SectionReader<'a> {
                         row_spacing = row_spacing_val;
                     }
                 }
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut common)?; }
             }
         }
 
@@ -2824,6 +3277,11 @@ impl<'a> SectionReader<'a> {
         insert.row_count = row_count;
         insert.column_spacing = column_spacing;
         insert.row_spacing = row_spacing;
+        insert.common.handle = common.handle;
+        insert.common.owner_handle = common.owner_handle;
+        insert.common.reactors = common.reactors;
+        insert.common.xdictionary_handle = common.xdictionary_handle;
+        insert.common.invisible = common.invisible;
 
         Ok(Some(insert))
     }
@@ -2834,6 +3292,7 @@ impl<'a> SectionReader<'a> {
         let mut direction = PointReader::new();
         let mut layer = String::from("0");
         let mut color = Color::ByLayer;
+        let mut common = EntityCommon::new();
 
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 {
@@ -2850,7 +3309,7 @@ impl<'a> SectionReader<'a> {
                 }
                 10 | 20 | 30 => { base_point.add_coordinate(&pair); }
                 11 | 21 | 31 => { direction.add_coordinate(&pair); }
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut common)?; }
             }
         }
 
@@ -2859,6 +3318,11 @@ impl<'a> SectionReader<'a> {
         let mut ray = Ray::new(bp, dir);
         ray.common.layer = layer;
         ray.common.color = color;
+        ray.common.handle = common.handle;
+        ray.common.owner_handle = common.owner_handle;
+        ray.common.reactors = common.reactors;
+        ray.common.xdictionary_handle = common.xdictionary_handle;
+        ray.common.invisible = common.invisible;
 
         Ok(Some(ray))
     }
@@ -2869,6 +3333,7 @@ impl<'a> SectionReader<'a> {
         let mut direction = PointReader::new();
         let mut layer = String::from("0");
         let mut color = Color::ByLayer;
+        let mut common = EntityCommon::new();
 
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 {
@@ -2885,7 +3350,7 @@ impl<'a> SectionReader<'a> {
                 }
                 10 | 20 | 30 => { base_point.add_coordinate(&pair); }
                 11 | 21 | 31 => { direction.add_coordinate(&pair); }
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut common)?; }
             }
         }
 
@@ -2894,6 +3359,11 @@ impl<'a> SectionReader<'a> {
         let mut xline = XLine::new(bp, dir);
         xline.common.layer = layer;
         xline.common.color = color;
+        xline.common.handle = common.handle;
+        xline.common.owner_handle = common.owner_handle;
+        xline.common.reactors = common.reactors;
+        xline.common.xdictionary_handle = common.xdictionary_handle;
+        xline.common.invisible = common.invisible;
 
         Ok(Some(xline))
     }
@@ -2908,6 +3378,7 @@ impl<'a> SectionReader<'a> {
         let mut rotation = 0.0;
         let mut layer = String::from("0");
         let mut color = Color::ByLayer;
+        let mut common = EntityCommon::new();
 
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 {
@@ -2936,7 +3407,7 @@ impl<'a> SectionReader<'a> {
                         rotation = r;
                     }
                 }
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut common)?; }
             }
         }
 
@@ -2946,6 +3417,11 @@ impl<'a> SectionReader<'a> {
         attdef.rotation = rotation;
         attdef.common.layer = layer;
         attdef.common.color = color;
+        attdef.common.handle = common.handle;
+        attdef.common.owner_handle = common.owner_handle;
+        attdef.common.reactors = common.reactors;
+        attdef.common.xdictionary_handle = common.xdictionary_handle;
+        attdef.common.invisible = common.invisible;
 
         Ok(Some(attdef))
     }
@@ -2973,7 +3449,7 @@ impl<'a> SectionReader<'a> {
                 3 => tolerance.dimension_style_name = pair.value_string.clone(),
                 10 | 20 | 30 => { insertion_point.add_coordinate(&pair); }
                 11 | 21 | 31 => { direction.add_coordinate(&pair); }
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut tolerance.common)?; }
             }
         }
 
@@ -3013,7 +3489,7 @@ impl<'a> SectionReader<'a> {
                         shape.rotation = r;
                     }
                 }
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut shape.common)?; }
             }
         }
 
@@ -3057,7 +3533,7 @@ impl<'a> SectionReader<'a> {
                         }
                     }
                 }
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut wipeout.common)?; }
             }
         }
 
@@ -3283,7 +3759,7 @@ impl<'a> SectionReader<'a> {
                 142 => { if let Some(v) = pair.as_double() { vp.contrast = v; } }
                 292 => { if let Some(v) = pair.as_bool() { vp.default_lighting = v; } }
                 282 => { if let Some(v) = pair.as_i16() { vp.default_lighting_type = v; } }
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut vp.common)?; }
             }
         }
 
@@ -3341,7 +3817,7 @@ impl<'a> SectionReader<'a> {
                         attrib.vertical_alignment = crate::entities::attribute_definition::VerticalAlignment::from_value(v);
                     }
                 }
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut attrib.common)?; }
             }
         }
 
@@ -3411,7 +3887,7 @@ impl<'a> SectionReader<'a> {
                 211 | 221 | 231 => { horiz_dir.add_coordinate(&pair); }
                 212 | 222 | 232 => { block_offset.add_coordinate(&pair); }
                 213 | 223 | 233 => { annotation_offset.add_coordinate(&pair); }
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut leader.common)?; }
             }
         }
 
@@ -3458,7 +3934,7 @@ impl<'a> SectionReader<'a> {
                 291 => { if let Some(v) = pair.as_bool() { ml.enable_dogleg = v; } }
                 290 => { if let Some(v) = pair.as_bool() { ml.enable_landing = v; } }
                 292 => { if let Some(v) = pair.as_bool() { ml.text_frame = v; } }
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut ml.common)?; }
             }
         }
 
@@ -3543,7 +4019,7 @@ impl<'a> SectionReader<'a> {
                     }
                 }
                 42 => { if let Some(v) = pair.as_double() { current_area_fill.push(v); } }
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut mline.common)?; }
             }
         }
 
@@ -3670,7 +4146,7 @@ impl<'a> SectionReader<'a> {
                         if let Some(v) = pair.as_double() { crease_values.push(v); }
                     }
                 }
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut mesh.common)?; }
             }
         }
 
@@ -3718,7 +4194,7 @@ impl<'a> SectionReader<'a> {
                         if let Some(last) = img.clip_boundary.vertices.last_mut() { last.y = y; }
                     }
                 }
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut img.common)?; }
             }
         }
 
@@ -3746,7 +4222,7 @@ impl<'a> SectionReader<'a> {
                     acis_data.push('\n');
                 }
                 2 => uid = pair.value_string.clone(),
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut common)?; }
             }
         }
 
@@ -3799,7 +4275,7 @@ impl<'a> SectionReader<'a> {
                 343 => {
                     if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { table.block_record_handle = Some(Handle::new(h)); }
                 }
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut table.common)?; }
             }
         }
 
@@ -3844,7 +4320,7 @@ impl<'a> SectionReader<'a> {
                         if let Some(last) = underlay.clip_boundary_vertices.last_mut() { last.y = y; }
                     }
                 }
-                _ => {}
+                _ => { self.try_read_common_entity_code(&pair, &mut underlay.common)?; }
             }
         }
 

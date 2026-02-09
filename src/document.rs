@@ -1,6 +1,7 @@
 //! CAD document structure
 
-use crate::entities::EntityType;
+use crate::classes::DxfClassCollection;
+use crate::entities::{EntityCommon, EntityType};
 use crate::objects::ObjectType;
 use crate::tables::*;
 use crate::types::{DxfVersion, Color, Handle, Vector2, Vector3};
@@ -874,6 +875,12 @@ pub struct CadDocument {
     /// UCS table
     pub ucss: Table<Ucs>,
     
+    /// DXF class definitions (CLASSES section)
+    pub classes: DxfClassCollection,
+
+    /// Notifications collected during the last read/write operation
+    pub notifications: crate::notification::NotificationCollection,
+
     /// All entities in the document (indexed by handle)
     entities: HashMap<Handle, EntityType>,
 
@@ -899,6 +906,8 @@ impl CadDocument {
             views: Table::new(),
             vports: Table::new(),
             ucss: Table::new(),
+            classes: DxfClassCollection::new(),
+            notifications: crate::notification::NotificationCollection::new(),
             entities: HashMap::new(),
             objects: HashMap::new(),
             // Start handle allocation above reserved table handles (0x1-0xA)
@@ -1057,6 +1066,149 @@ impl CadDocument {
     /// Iterate over all entities mutably
     pub fn entities_mut(&mut self) -> impl Iterator<Item = &mut EntityType> {
         self.entities.values_mut()
+    }
+
+    /// Resolve handle references after reading a DXF file.
+    ///
+    /// This performs a simplified version of ACadSharp's two-phase build:
+    ///
+    /// 1. Assigns owner handles on model-space entities (owner = model space
+    ///    block record handle) when the entity has no owner set.
+    /// 2. Assigns owner handles on block-owned entities (owner = the block
+    ///    record handle) when the entity has no owner set.
+    /// 3. Updates `next_handle` to be above the maximum handle seen in the
+    ///    document so that subsequent `allocate_handle()` calls produce unique
+    ///    values.
+    ///
+    /// Call this once after loading (the DXF reader calls it automatically).
+    pub fn resolve_references(&mut self) {
+        // --- 1. Find the max handle in use across the whole document ---
+        let mut max_handle: u64 = self.next_handle;
+
+        // Check entities
+        for entity in self.entities.values() {
+            let h = entity.common().handle.value();
+            if h >= max_handle {
+                max_handle = h + 1;
+            }
+        }
+
+        // Check objects
+        for (handle, _) in &self.objects {
+            let h = handle.value();
+            if h >= max_handle {
+                max_handle = h + 1;
+            }
+        }
+
+        // Check block record entities
+        for br in self.block_records.iter() {
+            let h = br.handle.value();
+            if h >= max_handle {
+                max_handle = h + 1;
+            }
+            for entity in &br.entities {
+                let h = entity.common().handle.value();
+                if h >= max_handle {
+                    max_handle = h + 1;
+                }
+            }
+        }
+
+        self.next_handle = max_handle;
+
+        // --- 2. Assign owner handles ---
+        let model_handle = self.header.model_space_block_handle;
+        let paper_handle = self.header.paper_space_block_handle;
+
+        // Model-space entities (document.entities) — use model space as default owner
+        for entity in self.entities.values_mut() {
+            let common = match entity {
+                EntityType::Dimension(d) => {
+                    let base = d.base_mut();
+                    &mut base.common
+                }
+                _ => {
+                    // For all other entity types, use as_entity_mut().set_handle pattern
+                    // but we need &mut EntityCommon directly — use a helper
+                    get_common_mut(entity)
+                }
+            };
+            if common.owner_handle.is_null() {
+                common.owner_handle = model_handle;
+            }
+        }
+
+        // Block record entities — owner is the block record handle
+        for br in self.block_records.iter_mut() {
+            let br_handle = br.handle;
+            for entity in &mut br.entities {
+                let common = match entity {
+                    EntityType::Dimension(d) => {
+                        let base = d.base_mut();
+                        &mut base.common
+                    }
+                    _ => get_common_mut(entity),
+                };
+                if common.owner_handle.is_null() {
+                    common.owner_handle = br_handle;
+                }
+            }
+        }
+
+        // Paper-space entities — if an entity's owner is the paper space block,
+        // the entity is already correctly assigned by the reader.
+        // We just skip further assignment here.
+
+        let _ = paper_handle; // suppress unused warning; future: paper space logic
+    }
+}
+
+/// Helper to get a mutable reference to EntityCommon for non-Dimension entities.
+fn get_common_mut(entity: &mut EntityType) -> &mut EntityCommon {
+    match entity {
+        EntityType::Point(e) => &mut e.common,
+        EntityType::Line(e) => &mut e.common,
+        EntityType::Circle(e) => &mut e.common,
+        EntityType::Arc(e) => &mut e.common,
+        EntityType::Ellipse(e) => &mut e.common,
+        EntityType::Polyline(e) => &mut e.common,
+        EntityType::Polyline2D(e) => &mut e.common,
+        EntityType::Polyline3D(e) => &mut e.common,
+        EntityType::LwPolyline(e) => &mut e.common,
+        EntityType::Text(e) => &mut e.common,
+        EntityType::MText(e) => &mut e.common,
+        EntityType::Spline(e) => &mut e.common,
+        EntityType::Dimension(d) => &mut d.base_mut().common,
+        EntityType::Hatch(e) => &mut e.common,
+        EntityType::Solid(e) => &mut e.common,
+        EntityType::Face3D(e) => &mut e.common,
+        EntityType::Insert(e) => &mut e.common,
+        EntityType::Block(e) => &mut e.common,
+        EntityType::BlockEnd(e) => &mut e.common,
+        EntityType::Ray(e) => &mut e.common,
+        EntityType::XLine(e) => &mut e.common,
+        EntityType::Viewport(e) => &mut e.common,
+        EntityType::AttributeDefinition(e) => &mut e.common,
+        EntityType::AttributeEntity(e) => &mut e.common,
+        EntityType::Leader(e) => &mut e.common,
+        EntityType::MultiLeader(e) => &mut e.common,
+        EntityType::MLine(e) => &mut e.common,
+        EntityType::Mesh(e) => &mut e.common,
+        EntityType::RasterImage(e) => &mut e.common,
+        EntityType::Solid3D(e) => &mut e.common,
+        EntityType::Region(e) => &mut e.common,
+        EntityType::Body(e) => &mut e.common,
+        EntityType::Table(e) => &mut e.common,
+        EntityType::Tolerance(e) => &mut e.common,
+        EntityType::PolyfaceMesh(e) => &mut e.common,
+        EntityType::Wipeout(e) => &mut e.common,
+        EntityType::Shape(e) => &mut e.common,
+        EntityType::Underlay(e) => &mut e.common,
+        EntityType::Seqend(e) => &mut e.common,
+        EntityType::Ole2Frame(e) => &mut e.common,
+        EntityType::PolygonMesh(e) => &mut e.common,
+        EntityType::Unknown(e) => &mut e.common,
     }
 }
 

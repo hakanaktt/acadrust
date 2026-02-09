@@ -2,6 +2,7 @@
 
 use super::stream_reader::{DxfCodePair, DxfStreamReader};
 use crate::error::{DxfError, Result};
+use encoding_rs::Encoding;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 
 /// DXF ASCII text file reader
@@ -9,6 +10,8 @@ pub struct DxfTextReader<R: Read + Seek> {
     reader: BufReader<R>,
     line_number: usize,
     peeked_pair: Option<DxfCodePair>,
+    /// Non-UTF8 fallback encoding.  `None` means use Latin-1 (byte-to-char).
+    encoding: Option<&'static Encoding>,
 }
 
 impl<R: Read + Seek> DxfTextReader<R> {
@@ -18,11 +21,12 @@ impl<R: Read + Seek> DxfTextReader<R> {
             reader,
             line_number: 0,
             peeked_pair: None,
+            encoding: None,
         })
     }
     
-    /// Read a single line from the stream, handling non-UTF8 bytes gracefully
-    /// Older DXF files may use Latin-1 or Windows-1252 encoding
+    /// Read a single line from the stream, handling non-UTF8 bytes gracefully.
+    /// Uses the configured encoding for fallback, or Latin-1 if none set.
     fn read_line(&mut self) -> Result<Option<String>> {
         let mut bytes = Vec::new();
         
@@ -49,12 +53,17 @@ impl<R: Read + Seek> DxfTextReader<R> {
         
         self.line_number += 1;
         
-        // Try UTF-8 first, fall back to Latin-1 (ISO-8859-1)
+        // Try UTF-8 first, then use configured encoding or Latin-1 fallback
         let line = match String::from_utf8(bytes.clone()) {
             Ok(s) => s,
             Err(_) => {
-                // Latin-1 is a 1:1 mapping of bytes 0-255 to Unicode code points
-                bytes.iter().map(|&b| b as char).collect()
+                if let Some(enc) = self.encoding {
+                    let (decoded, _, _) = enc.decode(&bytes);
+                    decoded.into_owned()
+                } else {
+                    // Latin-1 is a 1:1 mapping of bytes 0-255 to Unicode code points
+                    bytes.iter().map(|&b| b as char).collect()
+                }
             }
         };
         
@@ -132,6 +141,10 @@ impl<R: Read + Seek> DxfStreamReader for DxfTextReader<R> {
         self.line_number = 0;
         self.peeked_pair = None;
         Ok(())
+    }
+
+    fn set_encoding(&mut self, encoding: &'static Encoding) {
+        self.encoding = Some(encoding);
     }
 }
 

@@ -53,8 +53,10 @@
 #![allow(missing_docs)]
 #![warn(rustdoc::missing_crate_level_docs)]
 
+pub mod classes;
 pub mod entities;
 pub mod error;
+pub mod notification;
 pub mod types;
 pub mod tables;
 pub mod document;

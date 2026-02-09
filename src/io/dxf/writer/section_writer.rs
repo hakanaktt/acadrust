@@ -7,11 +7,13 @@ use crate::document::CadDocument;
 use crate::entities::*;
 use crate::error::Result;
 use crate::objects::{
-    Dictionary, DictionaryVariable, Group, ImageDefinition, Layout, MLineStyle, MultiLeaderStyle,
-    ObjectType, PlotSettings, Scale, SortEntitiesTable, TableStyle, XRecord,
+    Dictionary, DictionaryVariable, DictionaryWithDefault, Group, ImageDefinition,
+    ImageDefinitionReactor, Layout, MLineStyle, Material, MultiLeaderStyle,
+    ObjectType, PlotSettings, RasterVariables, Scale, SortEntitiesTable,
+    TableStyle, VisualStyle, BookColor, WipeoutVariables, XRecord,
 };
 use crate::tables::*;
-use crate::types::{Color, Handle};
+use crate::types::{Color, Handle, Vector3};
 use crate::xdata::{ExtendedData, XDataValue};
 
 use super::stream_writer::{DxfStreamWriter, DxfStreamWriterExt};
@@ -229,36 +231,24 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     }
 
     /// Write the CLASSES section
-    pub fn write_classes(&mut self, _document: &CadDocument) -> Result<()> {
+    pub fn write_classes(&mut self, document: &CadDocument) -> Result<()> {
         self.writer.write_section_start("CLASSES")?;
+
+        for class in document.classes.iter() {
+            self.writer.write_string(0, "CLASS")?;
+            self.writer.write_string(1, &class.dxf_name)?;
+            self.writer.write_string(2, &class.cpp_class_name)?;
+            self.writer.write_string(3, &class.application_name)?;
+            self.writer.write_i32(90, class.proxy_flags.0 as i32)?;
+            self.writer.write_i32(91, class.instance_count)?;
+            self.writer.write_byte(280, if class.was_zombie { 1 } else { 0 })?;
+            self.writer.write_byte(281, if class.is_an_entity { 1 } else { 0 })?;
+        }
 
         self.writer.write_section_end()?;
         Ok(())
     }
     
-    /// Write a single CLASS definition (for custom object types only)
-    #[allow(dead_code)]
-    fn write_class(
-        &mut self,
-        dxf_name: &str,
-        cpp_name: &str,
-        app_name: &str,
-        proxy_flags: i32,
-        instance_count: i32,
-        was_proxy: bool,
-        is_entity: bool,
-    ) -> Result<()> {
-        self.writer.write_string(0, "CLASS")?;
-        self.writer.write_string(1, dxf_name)?;      // DXF class name
-        self.writer.write_string(2, cpp_name)?;       // C++ class name
-        self.writer.write_string(3, app_name)?;       // Application name
-        self.writer.write_i32(90, proxy_flags)?;      // Proxy capabilities flag
-        self.writer.write_i32(91, instance_count)?;   // Instance count (informational)
-        self.writer.write_byte(280, if was_proxy { 1 } else { 0 })?;  // Was-a-proxy flag
-        self.writer.write_byte(281, if is_entity { 1 } else { 0 })?;  // Is-an-entity flag
-        Ok(())
-    }
-
     /// Write the TABLES section
     pub fn write_tables(&mut self, document: &CadDocument) -> Result<()> {
         self.writer.write_section_start("TABLES")?;
@@ -857,30 +847,51 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             EntityType::Wipeout(e) => self.write_wipeout(e, owner),
             EntityType::Shape(e) => self.write_shape(e, owner),
             EntityType::Underlay(e) => self.write_underlay(e, owner),
+            EntityType::Seqend(e) => self.write_seqend(e, owner),
+            EntityType::Ole2Frame(e) => self.write_ole2frame(e, owner),
+            EntityType::PolygonMesh(e) => self.write_polygon_mesh(e, owner),
+            EntityType::Unknown(_) => Ok(()), // Unknown entities are never written back
         }
     }
 
     /// Write common entity data with owner
-    fn write_common_entity_data(&mut self, entity: &dyn Entity, owner: Handle) -> Result<()> {
-        self.writer.write_handle(5, entity.handle())?;
+    fn write_common_entity_data(&mut self, common: &EntityCommon, owner: Handle) -> Result<()> {
+        self.writer.write_handle(5, common.handle)?;
         self.writer.write_handle(330, owner)?;
+
+        // Write xdictionary group
+        if let Some(xdict) = common.xdictionary_handle {
+            if xdict != Handle::NULL {
+                self.writer.write_string(102, "{ACAD_XDICTIONARY")?;
+                self.writer.write_handle(360, xdict)?;
+                self.writer.write_string(102, "}")?;
+            }
+        }
+
+        // Write reactor group
+        if !common.reactors.is_empty() {
+            self.writer.write_string(102, "{ACAD_REACTORS")?;
+            for reactor in &common.reactors {
+                self.writer.write_handle(330, *reactor)?;
+            }
+            self.writer.write_string(102, "}")?;
+        }
+
         self.writer.write_subclass("AcDbEntity")?;
-        self.writer.write_string(8, entity.layer())?;
+        self.writer.write_string(8, &common.layer)?;
 
         // Write color only if not ByLayer (default)
-        let color = entity.color();
-        if color != Color::ByLayer {
-            self.writer.write_color(62, color)?;
+        if common.color != Color::ByLayer {
+            self.writer.write_color(62, common.color)?;
         }
 
         // Write lineweight if not default
-        let lw = entity.line_weight();
-        if lw != crate::types::LineWeight::ByLayer {
-            self.writer.write_i16(370, lw.value())?;
+        if common.line_weight != crate::types::LineWeight::ByLayer {
+            self.writer.write_i16(370, common.line_weight.value())?;
         }
 
         // Write visibility
-        if entity.is_invisible() {
+        if common.invisible {
             self.writer.write_i16(60, 1)?;
         }
 
@@ -890,7 +901,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write POINT entity
     fn write_point(&mut self, point: &Point, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("POINT")?;
-        self.write_common_entity_data(point, owner)?;
+        self.write_common_entity_data(&point.common, owner)?;
         self.writer.write_subclass("AcDbPoint")?;
         self.writer.write_point3d(10, point.location)?;
         if point.thickness != 0.0 {
@@ -902,7 +913,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write LINE entity
     fn write_line(&mut self, line: &Line, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("LINE")?;
-        self.write_common_entity_data(line, owner)?;
+        self.write_common_entity_data(&line.common, owner)?;
         self.writer.write_subclass("AcDbLine")?;
         self.writer.write_point3d(10, line.start)?;
         self.writer.write_point3d(11, line.end)?;
@@ -915,7 +926,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write CIRCLE entity
     fn write_circle(&mut self, circle: &Circle, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("CIRCLE")?;
-        self.write_common_entity_data(circle, owner)?;
+        self.write_common_entity_data(&circle.common, owner)?;
         self.writer.write_subclass("AcDbCircle")?;
         self.writer.write_point3d(10, circle.center)?;
         self.writer.write_double(40, circle.radius)?;
@@ -928,7 +939,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write ARC entity
     fn write_arc(&mut self, arc: &Arc, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("ARC")?;
-        self.write_common_entity_data(arc, owner)?;
+        self.write_common_entity_data(&arc.common, owner)?;
         self.writer.write_subclass("AcDbCircle")?;
         self.writer.write_point3d(10, arc.center)?;
         self.writer.write_double(40, arc.radius)?;
@@ -944,7 +955,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write ELLIPSE entity
     fn write_ellipse(&mut self, ellipse: &Ellipse, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("ELLIPSE")?;
-        self.write_common_entity_data(ellipse, owner)?;
+        self.write_common_entity_data(&ellipse.common, owner)?;
         self.writer.write_subclass("AcDbEllipse")?;
         self.writer.write_point3d(10, ellipse.center)?;
         self.writer.write_point3d(11, ellipse.major_axis)?;
@@ -957,7 +968,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write POLYLINE entity (3D polyline)
     fn write_polyline(&mut self, polyline: &Polyline, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("POLYLINE")?;
-        self.write_common_entity_data(polyline, owner)?;
+        self.write_common_entity_data(&polyline.common, owner)?;
         self.writer.write_subclass("AcDb3dPolyline")?;
 
         let mut flags: i16 = 8; // 3D polyline flag
@@ -1000,7 +1011,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write POLYLINE entity (2D polyline)
     fn write_polyline2d(&mut self, polyline: &Polyline2D, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("POLYLINE")?;
-        self.write_common_entity_data(polyline, owner)?;
+        self.write_common_entity_data(&polyline.common, owner)?;
         self.writer.write_subclass("AcDb2dPolyline")?;
 
         // Entities follow flag (VERTEX records follow)
@@ -1063,7 +1074,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write LWPOLYLINE entity
     fn write_lwpolyline(&mut self, lwpoly: &LwPolyline, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("LWPOLYLINE")?;
-        self.write_common_entity_data(lwpoly, owner)?;
+        self.write_common_entity_data(&lwpoly.common, owner)?;
         self.writer.write_subclass("AcDbPolyline")?;
         self.writer.write_i32(90, lwpoly.vertices.len() as i32)?;
 
@@ -1093,7 +1104,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write TEXT entity
     fn write_text(&mut self, text: &Text, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("TEXT")?;
-        self.write_common_entity_data(text, owner)?;
+        self.write_common_entity_data(&text.common, owner)?;
         self.writer.write_subclass("AcDbText")?;
         self.writer.write_point3d(10, text.insertion_point)?;
         self.writer.write_double(40, text.height)?;
@@ -1120,7 +1131,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write MTEXT entity
     fn write_mtext(&mut self, mtext: &MText, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("MTEXT")?;
-        self.write_common_entity_data(mtext, owner)?;
+        self.write_common_entity_data(&mtext.common, owner)?;
         self.writer.write_subclass("AcDbMText")?;
         self.writer.write_point3d(10, mtext.insertion_point)?;
         self.writer.write_double(40, mtext.height)?;
@@ -1154,7 +1165,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write SPLINE entity
     fn write_spline(&mut self, spline: &Spline, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("SPLINE")?;
-        self.write_common_entity_data(spline, owner)?;
+        self.write_common_entity_data(&spline.common, owner)?;
         self.writer.write_subclass("AcDbSpline")?;
 
         // Normal vector
@@ -1220,6 +1231,25 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     fn write_dimension_base(&mut self, base: &DimensionBase, type_flags: i16, owner: Handle) -> Result<()> {
         self.writer.write_handle(5, base.common.handle)?;
         self.writer.write_handle(330, owner)?;
+
+        // Write xdictionary group
+        if let Some(xdict) = base.common.xdictionary_handle {
+            if xdict != Handle::NULL {
+                self.writer.write_string(102, "{ACAD_XDICTIONARY")?;
+                self.writer.write_handle(360, xdict)?;
+                self.writer.write_string(102, "}")?;
+            }
+        }
+
+        // Write reactor group
+        if !base.common.reactors.is_empty() {
+            self.writer.write_string(102, "{ACAD_REACTORS")?;
+            for reactor in &base.common.reactors {
+                self.writer.write_handle(330, *reactor)?;
+            }
+            self.writer.write_string(102, "}")?;
+        }
+
         self.writer.write_subclass("AcDbEntity")?;
         self.writer.write_string(8, &base.common.layer)?;
         self.writer.write_subclass("AcDbDimension")?;
@@ -1307,7 +1337,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write HATCH entity
     fn write_hatch(&mut self, hatch: &Hatch, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("HATCH")?;
-        self.write_common_entity_data(hatch, owner)?;
+        self.write_common_entity_data(&hatch.common, owner)?;
         self.writer.write_subclass("AcDbHatch")?;
 
         // Elevation point
@@ -1462,7 +1492,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write SOLID entity
     fn write_solid(&mut self, solid: &Solid, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("SOLID")?;
-        self.write_common_entity_data(solid, owner)?;
+        self.write_common_entity_data(&solid.common, owner)?;
         self.writer.write_subclass("AcDbTrace")?;
         self.writer.write_point3d(10, solid.first_corner)?;
         self.writer.write_point3d(11, solid.second_corner)?;
@@ -1477,7 +1507,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write 3DFACE entity
     fn write_face3d(&mut self, face: &Face3D, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("3DFACE")?;
-        self.write_common_entity_data(face, owner)?;
+        self.write_common_entity_data(&face.common, owner)?;
         self.writer.write_subclass("AcDbFace")?;
         self.writer.write_point3d(10, face.first_corner)?;
         self.writer.write_point3d(11, face.second_corner)?;
@@ -1493,7 +1523,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write INSERT entity
     fn write_insert(&mut self, insert: &Insert, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("INSERT")?;
-        self.write_common_entity_data(insert, owner)?;
+        self.write_common_entity_data(&insert.common, owner)?;
         self.writer.write_subclass("AcDbBlockReference")?;
         self.writer.write_string(2, &insert.block_name)?;
         self.writer.write_point3d(10, insert.insert_point)?;
@@ -1527,7 +1557,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write BLOCK entity
     fn write_block_entity(&mut self, block: &Block, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("BLOCK")?;
-        self.write_common_entity_data(block, owner)?;
+        self.write_common_entity_data(&block.common, owner)?;
         self.writer.write_subclass("AcDbBlockBegin")?;
         self.writer.write_string(2, &block.name)?;
         self.writer.write_i16(70, 0)?; // Block flags
@@ -1545,7 +1575,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write ENDBLK entity
     fn write_block_end(&mut self, block_end: &BlockEnd, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("ENDBLK")?;
-        self.write_common_entity_data(block_end, owner)?;
+        self.write_common_entity_data(&block_end.common, owner)?;
         self.writer.write_subclass("AcDbBlockEnd")?;
         Ok(())
     }
@@ -1553,7 +1583,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write RAY entity
     fn write_ray(&mut self, ray: &Ray, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("RAY")?;
-        self.write_common_entity_data(ray, owner)?;
+        self.write_common_entity_data(&ray.common, owner)?;
         self.writer.write_subclass("AcDbRay")?;
         self.writer.write_point3d(10, ray.base_point)?;
         self.writer.write_point3d(11, ray.direction)?;
@@ -1563,7 +1593,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write XLINE entity
     fn write_xline(&mut self, xline: &XLine, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("XLINE")?;
-        self.write_common_entity_data(xline, owner)?;
+        self.write_common_entity_data(&xline.common, owner)?;
         self.writer.write_subclass("AcDbXline")?;
         self.writer.write_point3d(10, xline.base_point)?;
         self.writer.write_point3d(11, xline.direction)?;
@@ -1573,7 +1603,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write POLYLINE (3D) entity
     fn write_polyline3d(&mut self, polyline: &Polyline3D, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("POLYLINE")?;
-        self.write_common_entity_data(polyline, owner)?;
+        self.write_common_entity_data(&polyline.common, owner)?;
         self.writer.write_subclass("AcDb3dPolyline")?;
 
         // Entities follow flag (VERTEX records follow)
@@ -1621,7 +1651,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write VIEWPORT entity
     fn write_viewport(&mut self, viewport: &Viewport, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("VIEWPORT")?;
-        self.write_common_entity_data(viewport, owner)?;
+        self.write_common_entity_data(&viewport.common, owner)?;
         self.writer.write_subclass("AcDbViewport")?;
         
         // Center point
@@ -1689,7 +1719,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write ATTDEF entity
     fn write_attdef(&mut self, attdef: &AttributeDefinition, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("ATTDEF")?;
-        self.write_common_entity_data(attdef, owner)?;
+        self.write_common_entity_data(&attdef.common, owner)?;
         self.writer.write_subclass("AcDbText")?;
         
         // Insertion point
@@ -1748,7 +1778,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write ATTRIB entity
     fn write_attrib(&mut self, attrib: &AttributeEntity, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("ATTRIB")?;
-        self.write_common_entity_data(attrib, owner)?;
+        self.write_common_entity_data(&attrib.common, owner)?;
         self.writer.write_subclass("AcDbText")?;
         
         // Insertion point
@@ -1804,7 +1834,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write LEADER entity
     fn write_leader(&mut self, leader: &Leader, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("LEADER")?;
-        self.write_common_entity_data(leader, owner)?;
+        self.write_common_entity_data(&leader.common, owner)?;
         self.writer.write_subclass("AcDbLeader")?;
         
         // Dimension style
@@ -1878,6 +1908,16 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 ObjectType::Scale(scale) => self.write_scale(scale)?,
                 ObjectType::SortEntitiesTable(table) => self.write_sort_entities_table(table)?,
                 ObjectType::DictionaryVariable(var) => self.write_dictionary_variable(var)?,
+                ObjectType::VisualStyle(obj) => self.write_visualstyle(obj)?,
+                ObjectType::Material(obj) => self.write_material(obj)?,
+                ObjectType::ImageDefinitionReactor(obj) => self.write_imagedef_reactor(obj)?,
+                ObjectType::GeoData(obj) => self.write_stub_handle_only("GEODATA", obj.handle, obj.owner)?,
+                ObjectType::SpatialFilter(obj) => self.write_stub_handle_only("SPATIAL_FILTER", obj.handle, obj.owner)?,
+                ObjectType::RasterVariables(obj) => self.write_raster_variables(obj)?,
+                ObjectType::BookColor(obj) => self.write_bookcolor(obj)?,
+                ObjectType::PlaceHolder(obj) => self.write_stub_handle_only("ACDBPLACEHOLDER", obj.handle, obj.owner)?,
+                ObjectType::DictionaryWithDefault(obj) => self.write_dict_with_default(obj)?,
+                ObjectType::WipeoutVariables(obj) => self.write_wipeout_variables(obj)?,
                 ObjectType::Unknown { .. } => {}
             }
         }
@@ -2457,6 +2497,112 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         Ok(())
     }
 
+    /// Write a VISUALSTYLE object
+    fn write_visualstyle(&mut self, obj: &VisualStyle) -> Result<()> {
+        self.writer.write_string(0, "VISUALSTYLE")?;
+        self.writer.write_handle(5, obj.handle)?;
+        self.writer.write_handle(330, obj.owner)?;
+        self.writer.write_subclass("AcDbVisualStyle")?;
+        self.writer.write_string(2, &obj.description)?;
+        self.writer.write_i16(70, obj.style_type)?;
+        self.writer.write_i16(71, obj.face_lighting_model)?;
+        self.writer.write_i16(72, obj.face_lighting_quality)?;
+        self.writer.write_i16(73, obj.face_color_mode)?;
+        self.writer.write_i32(90, obj.face_modifier)?;
+        self.writer.write_i32(91, obj.edge_model)?;
+        self.writer.write_i32(92, obj.edge_style)?;
+        if obj.internal_use_only {
+            self.writer.write_i16(291, 1)?;
+        }
+        Ok(())
+    }
+
+    /// Write a MATERIAL object
+    fn write_material(&mut self, obj: &Material) -> Result<()> {
+        self.writer.write_string(0, "MATERIAL")?;
+        self.writer.write_handle(5, obj.handle)?;
+        self.writer.write_handle(330, obj.owner)?;
+        self.writer.write_subclass("AcDbMaterial")?;
+        self.writer.write_string(1, &obj.name)?;
+        if !obj.description.is_empty() {
+            self.writer.write_string(2, &obj.description)?;
+        }
+        Ok(())
+    }
+
+    /// Write an IMAGEDEF_REACTOR object
+    fn write_imagedef_reactor(&mut self, obj: &ImageDefinitionReactor) -> Result<()> {
+        self.writer.write_string(0, "IMAGEDEF_REACTOR")?;
+        self.writer.write_handle(5, obj.handle)?;
+        self.writer.write_handle(330, obj.owner)?;
+        self.writer.write_subclass("AcDbRasterImageDefReactor")?;
+        self.writer.write_i32(90, 2)?; // class version
+        self.writer.write_handle(330, obj.image_handle)?;
+        Ok(())
+    }
+
+    /// Write a RASTERVARIABLES object
+    fn write_raster_variables(&mut self, obj: &RasterVariables) -> Result<()> {
+        self.writer.write_string(0, "RASTERVARIABLES")?;
+        self.writer.write_handle(5, obj.handle)?;
+        self.writer.write_handle(330, obj.owner)?;
+        self.writer.write_subclass("AcDbRasterVariables")?;
+        self.writer.write_i32(90, obj.class_version)?;
+        self.writer.write_i16(70, obj.display_image_frame)?;
+        self.writer.write_i16(71, obj.image_quality)?;
+        self.writer.write_i16(72, obj.units)?;
+        Ok(())
+    }
+
+    /// Write a DBCOLOR object
+    fn write_bookcolor(&mut self, obj: &BookColor) -> Result<()> {
+        self.writer.write_string(0, "DBCOLOR")?;
+        self.writer.write_handle(5, obj.handle)?;
+        self.writer.write_handle(330, obj.owner)?;
+        self.writer.write_subclass("AcDbColor")?;
+        if !obj.color_name.is_empty() {
+            self.writer.write_string(1, &obj.color_name)?;
+        }
+        if !obj.book_name.is_empty() {
+            self.writer.write_string(2, &obj.book_name)?;
+        }
+        Ok(())
+    }
+
+    /// Write an ACDBDICTIONARYWDFLT object
+    fn write_dict_with_default(&mut self, obj: &DictionaryWithDefault) -> Result<()> {
+        self.writer.write_string(0, "ACDBDICTIONARYWDFLT")?;
+        self.writer.write_handle(5, obj.handle)?;
+        self.writer.write_handle(330, obj.owner)?;
+        self.writer.write_subclass("AcDbDictionary")?;
+        self.writer.write_i16(281, obj.duplicate_cloning)?;
+        for (key, handle) in &obj.entries {
+            self.writer.write_string(3, key)?;
+            self.writer.write_handle(350, *handle)?;
+        }
+        self.writer.write_subclass("AcDbDictionaryWithDefault")?;
+        self.writer.write_handle(340, obj.default_handle)?;
+        Ok(())
+    }
+
+    /// Write a WIPEOUTVARIABLES object
+    fn write_wipeout_variables(&mut self, obj: &WipeoutVariables) -> Result<()> {
+        self.writer.write_string(0, "WIPEOUTVARIABLES")?;
+        self.writer.write_handle(5, obj.handle)?;
+        self.writer.write_handle(330, obj.owner)?;
+        self.writer.write_subclass("AcDbWipeoutVariables")?;
+        self.writer.write_i16(70, obj.display_frame)?;
+        Ok(())
+    }
+
+    /// Write a minimal stub object (handle + owner only)
+    fn write_stub_handle_only(&mut self, type_name: &str, handle: Handle, owner: Handle) -> Result<()> {
+        self.writer.write_string(0, type_name)?;
+        self.writer.write_handle(5, handle)?;
+        self.writer.write_handle(330, owner)?;
+        Ok(())
+    }
+
     /// Helper to write color as i32 (true color format)
     fn write_color_i32(&mut self, code: i32, color: Color) -> Result<()> {
         match color {
@@ -2554,7 +2700,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write MULTILEADER entity
     fn write_multileader(&mut self, mleader: &crate::entities::MultiLeader, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("MULTILEADER")?;
-        self.write_common_entity_data(mleader, owner)?;
+        self.write_common_entity_data(&mleader.common, owner)?;
         self.writer.write_subclass("AcDbMLeader")?;
 
         // Class version (hardcoded to 2 for R2010+)
@@ -2712,7 +2858,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     fn write_mline(&mut self, mline: &crate::entities::MLine, owner: Handle) -> Result<()> {
         
         self.writer.write_entity_type("MLINE")?;
-        self.write_common_entity_data(mline, owner)?;
+        self.write_common_entity_data(&mline.common, owner)?;
         self.writer.write_subclass("AcDbMline")?;
 
         // Style name
@@ -2781,7 +2927,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write MESH entity
     fn write_mesh(&mut self, mesh: &crate::entities::Mesh, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("MESH")?;
-        self.write_common_entity_data(mesh, owner)?;
+        self.write_common_entity_data(&mesh.common, owner)?;
         self.writer.write_subclass("AcDbSubDMesh")?;
 
         // Version
@@ -2840,7 +2986,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write IMAGE (RasterImage) entity
     fn write_raster_image(&mut self, image: &crate::entities::RasterImage, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("IMAGE")?;
-        self.write_common_entity_data(image, owner)?;
+        self.write_common_entity_data(&image.common, owner)?;
         self.writer.write_subclass("AcDbRasterImage")?;
 
         // Class version
@@ -2902,7 +3048,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write 3DSOLID entity
     fn write_solid3d(&mut self, solid: &Solid3D, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("3DSOLID")?;
-        self.write_common_entity_data(solid, owner)?;
+        self.write_common_entity_data(&solid.common, owner)?;
         self.writer.write_subclass("AcDbModelerGeometry")?;
 
         // Version
@@ -2924,7 +3070,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write REGION entity
     fn write_region(&mut self, region: &Region, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("REGION")?;
-        self.write_common_entity_data(region, owner)?;
+        self.write_common_entity_data(&region.common, owner)?;
         self.writer.write_subclass("AcDbModelerGeometry")?;
 
         // Version
@@ -2939,7 +3085,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write BODY entity
     fn write_body(&mut self, body: &Body, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("BODY")?;
-        self.write_common_entity_data(body, owner)?;
+        self.write_common_entity_data(&body.common, owner)?;
         self.writer.write_subclass("AcDbModelerGeometry")?;
 
         // Version
@@ -2982,7 +3128,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write ACAD_TABLE entity
     fn write_acad_table(&mut self, table: &table::Table, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("ACAD_TABLE")?;
-        self.write_common_entity_data(table, owner)?;
+        self.write_common_entity_data(&table.common, owner)?;
         self.writer.write_subclass("AcDbBlockReference")?;
 
         // Block record handle
@@ -3113,7 +3259,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write a Tolerance entity
     fn write_tolerance(&mut self, tolerance: &Tolerance, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("TOLERANCE")?;
-        self.write_common_entity_data(tolerance, owner)?;
+        self.write_common_entity_data(&tolerance.common, owner)?;
         self.writer.write_subclass("AcDbFcf")?;
 
         // Dimension style name
@@ -3143,7 +3289,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write a PolyfaceMesh entity
     fn write_polyface_mesh(&mut self, mesh: &PolyfaceMesh, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("POLYLINE")?;
-        self.write_common_entity_data(mesh, owner)?;
+        self.write_common_entity_data(&mesh.common, owner)?;
         self.writer.write_subclass("AcDbPolyFaceMesh")?;
 
         // Entities follow flag (VERTEX records follow)
@@ -3234,7 +3380,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write a Wipeout entity
     fn write_wipeout(&mut self, wipeout: &Wipeout, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("WIPEOUT")?;
-        self.write_common_entity_data(wipeout, owner)?;
+        self.write_common_entity_data(&wipeout.common, owner)?;
         self.writer.write_subclass("AcDbWipeout")?;
 
         // Class version
@@ -3286,7 +3432,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write a Shape entity
     fn write_shape(&mut self, shape: &Shape, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("SHAPE")?;
-        self.write_common_entity_data(shape, owner)?;
+        self.write_common_entity_data(&shape.common, owner)?;
         self.writer.write_subclass("AcDbShape")?;
 
         // Thickness
@@ -3333,7 +3479,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// Write an Underlay entity (PDF, DWF, or DGN)
     fn write_underlay(&mut self, underlay: &Underlay, owner: Handle) -> Result<()> {
         self.writer.write_entity_type(underlay.entity_name())?;
-        self.write_common_entity_data(underlay, owner)?;
+        self.write_common_entity_data(&underlay.common, owner)?;
         self.writer.write_subclass("AcDbUnderlayReference")?;
 
         // Definition handle
@@ -3374,6 +3520,86 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer.write_double(11, v.x)?;
             self.writer.write_double(21, v.y)?;
         }
+
+        Ok(())
+    }
+
+    /// Write SEQEND entity (end-of-sequence marker)
+    fn write_seqend(&mut self, seqend: &Seqend, owner: Handle) -> Result<()> {
+        self.writer.write_entity_type("SEQEND")?;
+        self.write_common_entity_data(&seqend.common, owner)?;
+        Ok(())
+    }
+
+    /// Write OLE2FRAME entity
+    fn write_ole2frame(&mut self, ole: &Ole2Frame, owner: Handle) -> Result<()> {
+        self.writer.write_entity_type("OLE2FRAME")?;
+        self.write_common_entity_data(&ole.common, owner)?;
+        self.writer.write_subclass("AcDbOle2Frame")?;
+        self.writer.write_i16(70, ole.version)?;
+        if !ole.source_application.is_empty() {
+            self.writer.write_string(3, &ole.source_application)?;
+        }
+        self.writer.write_double(10, ole.upper_left_corner.x)?;
+        self.writer.write_double(20, ole.upper_left_corner.y)?;
+        self.writer.write_double(30, ole.upper_left_corner.z)?;
+        self.writer.write_double(11, ole.lower_right_corner.x)?;
+        self.writer.write_double(21, ole.lower_right_corner.y)?;
+        self.writer.write_double(31, ole.lower_right_corner.z)?;
+        self.writer.write_i16(71, ole.ole_object_type as i16)?;
+        self.writer.write_i16(72, if ole.is_paper_space { 1 } else { 0 })?;
+        self.writer.write_i16(73, 3)?; // undocumented hardcoded value per ACadSharp
+        if !ole.binary_data.is_empty() {
+            self.writer.write_i32(90, ole.binary_data.len() as i32)?;
+            // Write binary data in 127-byte hex chunks (code 310)
+            for chunk in ole.binary_data.chunks(127) {
+                let hex: String = chunk.iter().map(|b| format!("{:02X}", b)).collect();
+                self.writer.write_string(310, &hex)?;
+            }
+        }
+        self.writer.write_string(1, "OLE")?;
+        Ok(())
+    }
+
+    /// Write PolygonMesh entity (POLYLINE with flag bit 16)
+    fn write_polygon_mesh(&mut self, mesh: &PolygonMeshEntity, owner: Handle) -> Result<()> {
+        use crate::entities::polygon_mesh::PolygonMeshFlags;
+
+        self.writer.write_entity_type("POLYLINE")?;
+        self.write_common_entity_data(&mesh.common, owner)?;
+        self.writer.write_subclass("AcDb3dPolyline")?;
+        // Ensure PolygonMesh flag (16) is always set
+        let flags = mesh.flags | PolygonMeshFlags::POLYGON_MESH;
+        self.writer.write_i16(70, flags.bits())?;
+        self.writer.write_i16(71, mesh.m_vertex_count)?;
+        self.writer.write_i16(72, mesh.n_vertex_count)?;
+        self.writer.write_i16(73, mesh.m_smooth_density)?;
+        self.writer.write_i16(74, mesh.n_smooth_density)?;
+        self.writer.write_i16(75, mesh.smooth_type as i16)?;
+        if mesh.normal != Vector3::UNIT_Z {
+            self.writer.write_double(210, mesh.normal.x)?;
+            self.writer.write_double(220, mesh.normal.y)?;
+            self.writer.write_double(230, mesh.normal.z)?;
+        }
+
+        // Write vertices
+        for vertex in &mesh.vertices {
+            self.writer.write_entity_type("VERTEX")?;
+            self.write_common_entity_data(&vertex.common, owner)?;
+            self.writer.write_subclass("AcDbVertex")?;
+            self.writer.write_subclass("AcDbPolygonMeshVertex")?;
+            self.writer.write_point3d(10, vertex.location)?;
+            if vertex.flags != 0 {
+                self.writer.write_i16(70, vertex.flags)?;
+            }
+        }
+
+        // Write SEQEND
+        self.writer.write_entity_type("SEQEND")?;
+        self.writer.write_handle(5, Handle::NULL)?;
+        self.writer.write_handle(330, owner)?;
+        self.writer.write_subclass("AcDbEntity")?;
+        self.writer.write_string(8, &mesh.common.layer)?;
 
         Ok(())
     }
