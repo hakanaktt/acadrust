@@ -103,6 +103,7 @@ impl DxfCodePair {
     }
     
     /// Get value as handle (hex string to u64)
+    #[allow(dead_code)]
     pub fn as_handle(&self) -> Option<u64> {
         u64::from_str_radix(self.value_string.trim(), 16).ok()
     }
