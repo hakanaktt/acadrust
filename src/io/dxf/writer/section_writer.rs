@@ -645,8 +645,8 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_i16(285, dimstyle.dimaltz)?;
         self.writer.write_i16(286, dimstyle.dimalttz)?;
         self.writer.write_i16(289, dimstyle.dimatfit)?;
-        if dimstyle.dimfxlon { self.writer.write_i16(290, 1)?; }
-        if dimstyle.dimtxtdirection { self.writer.write_i16(295, 1)?; }
+        if dimstyle.dimfxlon { self.writer.write_bool(290, true)?; }
+        if dimstyle.dimtxtdirection { self.writer.write_bool(295, true)?; }
 
         // Handle references
         if !dimstyle.dimtxsty_handle.is_null() { self.writer.write_handle(340, dimstyle.dimtxsty_handle)?; }
@@ -1753,7 +1753,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_point3d(21, attdef.alignment_point)?;
         
         // Normal
-        self.writer.write_point3d(230, attdef.normal)?;
+        self.writer.write_point3d(210, attdef.normal)?;
         
         self.writer.write_subclass("AcDbAttributeDefinition")?;
         
@@ -1812,7 +1812,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_point3d(21, attrib.alignment_point)?;
         
         // Normal
-        self.writer.write_point3d(230, attrib.normal)?;
+        self.writer.write_point3d(210, attrib.normal)?;
         
         self.writer.write_subclass("AcDbAttribute")?;
         
@@ -1870,7 +1870,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         }
         
         // Normal
-        self.writer.write_point3d(230, leader.normal)?;
+        self.writer.write_point3d(210, leader.normal)?;
         
         // Horizontal direction
         self.writer.write_point3d(211, leader.horizontal_direction)?;
@@ -2274,7 +2274,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         }
 
         // Leader line weight
-        self.writer.write_i16(92, style.line_weight.value())?;
+        self.writer.write_i32(92, style.line_weight.value() as i32)?;
 
         // Enable landing
         self.writer.write_bool(290, style.enable_landing)?;
@@ -2402,10 +2402,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_double(41, style.vertical_margin)?;
 
         // Title suppressed
-        self.writer.write_bool(280, style.title_suppressed)?;
+        self.writer.write_byte(280, style.title_suppressed as u8)?;
 
         // Header suppressed
-        self.writer.write_bool(281, style.header_suppressed)?;
+        self.writer.write_byte(281, style.header_suppressed as u8)?;
 
         // Write cell style info for data row
         self.write_table_cell_style("DATA", &style.data_row_style)?;
@@ -2433,7 +2433,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.write_color_i16(63, style.fill_color)?;
 
         // Fill enabled
-        self.writer.write_bool(283, style.fill_enabled)?;
+        self.writer.write_byte(283, style.fill_enabled as u8)?;
 
         let _ = name; // Name is for future use in extended format
         
@@ -2512,7 +2512,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_i32(91, obj.edge_model)?;
         self.writer.write_i32(92, obj.edge_style)?;
         if obj.internal_use_only {
-            self.writer.write_i16(291, 1)?;
+            self.writer.write_bool(291, obj.internal_use_only)?;
         }
         Ok(())
     }
@@ -2748,14 +2748,14 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer.write_point3d(11, root.direction)?;
 
             // Number of leader lines
-            self.writer.write_i16(302, root.lines.len() as i16)?;
+            self.writer.write_string(302, &root.lines.len().to_string())?;
 
             for line in &root.lines {
                 // Leader line index
-                self.writer.write_i16(304, line.index as i16)?;
+                self.writer.write_string(304, &line.index.to_string())?;
 
                 // Number of points
-                self.writer.write_i16(305, line.points.len() as i16)?;
+                self.writer.write_string(305, &line.points.len().to_string())?;
 
                 // Points
                 for pt in &line.points {
@@ -2779,7 +2779,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_i16(171, mleader.path_type as i16)?;
 
         // Leader line color
-        self.writer.write_color(91, mleader.line_color)?;
+        self.write_color_i32(91, mleader.line_color)?;
 
         // Leader line weight
         self.writer.write_i16(171, mleader.line_weight.value())?;
@@ -2805,7 +2805,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_i16(173, mleader.text_left_attachment as i16)?;
 
         // Text right attachment type
-        self.writer.write_i16(95, mleader.text_right_attachment as i16)?;
+        self.writer.write_i32(95, mleader.text_right_attachment as i32)?;
 
         // Text angle type
         self.writer.write_i16(174, mleader.text_angle_type as i16)?;
@@ -2814,7 +2814,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_i16(175, mleader.text_alignment as i16)?;
 
         // Text color
-        self.writer.write_color(92, mleader.text_color)?;
+        self.write_color_i32(92, mleader.text_color)?;
 
         // Text frame (code 292 is Bool type)
         self.writer.write_bool(292, mleader.text_frame)?;
@@ -2825,7 +2825,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         }
 
         // Block content color
-        self.writer.write_color(93, mleader.block_content_color)?;
+        self.write_color_i32(93, mleader.block_content_color)?;
 
         // Block content scale
         self.writer.write_point3d(10, mleader.block_scale)?;
@@ -3034,7 +3034,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_i16(71, image.clip_boundary.clip_type as i16)?;
 
         // Number of clip boundary vertices
-        self.writer.write_i16(91, image.clip_boundary.vertices.len() as i16)?;
+        self.writer.write_i32(91, image.clip_boundary.vertices.len() as i32)?;
 
         // Clip boundary vertices
         for v in &image.clip_boundary.vertices {
@@ -3153,18 +3153,18 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_point3d(11, table.horizontal_direction)?;
 
         // Number of rows
-        self.writer.write_i16(91, table.rows.len() as i16)?;
+        self.writer.write_i32(91, table.rows.len() as i32)?;
 
         // Number of columns
-        self.writer.write_i16(92, table.columns.len() as i16)?;
+        self.writer.write_i32(92, table.columns.len() as i32)?;
 
         // Override flags
-        let mut override_flags = 0i16;
+        let mut override_flags = 0i32;
         if table.override_flag { override_flags |= 1; }
         if table.override_border_color { override_flags |= 2; }
         if table.override_border_line_weight { override_flags |= 4; }
         if table.override_border_visibility { override_flags |= 8; }
-        self.writer.write_i16(93, override_flags)?;
+        self.writer.write_i32(93, override_flags)?;
 
         // Row heights
         for row in &table.rows {
@@ -3184,8 +3184,8 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         }
 
         // Break options
-        self.writer.write_i16(94, table.break_options.bits() as i16)?;
-        self.writer.write_i16(95, table.break_flow_direction as i16)?;
+        self.writer.write_i32(94, table.break_options.bits() as i32)?;
+        self.writer.write_i32(95, table.break_flow_direction as i32)?;
         self.writer.write_double(143, table.break_spacing)?;
 
         Ok(())
@@ -3229,7 +3229,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                     self.writer.write_double(140, content.value.numeric_value)?;
                 }
                 CellValueType::Long => {
-                    self.writer.write_i16(90, content.value.numeric_value as i16)?;
+                    self.writer.write_i32(90, content.value.numeric_value as i32)?;
                 }
                 _ => {}
             }
