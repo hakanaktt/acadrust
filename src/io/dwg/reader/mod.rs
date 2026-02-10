@@ -21,6 +21,7 @@ pub mod stream_reader_base;
 
 pub mod app_info_reader;
 pub mod classes_reader;
+pub mod dwg_reader;
 pub mod handle_reader;
 pub mod header_reader;
 pub mod object_reader;
@@ -33,6 +34,7 @@ pub use stream_reader_base::{get_stream_handler, DwgStreamReaderBase};
 
 pub use app_info_reader::{AppInfo, DwgAppInfoReader};
 pub use classes_reader::DwgClassesReader;
+pub use dwg_reader::{DwgReader, DwgReaderConfiguration};
 pub use handle_reader::DwgHandleReader;
 pub use header_reader::DwgHeaderReader;
 pub use preview_reader::DwgPreviewReader;

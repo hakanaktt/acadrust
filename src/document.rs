@@ -1326,8 +1326,8 @@ impl CadDocument {
     }
 }
 
-/// Helper to get a mutable reference to EntityCommon for non-Dimension entities.
-fn get_common_mut(entity: &mut EntityType) -> &mut EntityCommon {
+/// Helper to get a mutable reference to EntityCommon for any entity type.
+pub fn get_common_mut(entity: &mut EntityType) -> &mut EntityCommon {
     match entity {
         EntityType::Point(e) => &mut e.common,
         EntityType::Line(e) => &mut e.common,

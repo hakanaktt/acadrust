@@ -19,6 +19,7 @@
 //! - [`reader`] — Bit-level DWG stream readers
 //! - [`writer`] — Bit-level DWG stream writers
 
+pub mod builder;
 pub mod checksum;
 pub mod compression;
 pub mod constants;
@@ -41,7 +42,8 @@ pub use file_header::{
 };
 pub use header_handles::DwgHeaderHandlesCollection;
 pub use object_type::DwgObjectType;
-pub use reader::{DwgMergedReader, DwgStreamReaderBase, IDwgStreamReader};
+pub use builder::DwgDocumentBuilder;
+pub use reader::{DwgMergedReader, DwgReader, DwgReaderConfiguration, DwgStreamReaderBase, IDwgStreamReader};
 pub use reference_type::{DwgReferenceType, HandleReference};
 pub use section_io::SectionIO;
 pub use writer::{

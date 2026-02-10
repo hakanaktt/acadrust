@@ -4,4 +4,5 @@ pub mod dxf;
 pub mod dwg;
 
 pub use dxf::{DxfReader, DxfWriter};
+pub use dwg::{DwgReader, DwgReaderConfiguration};
 
