@@ -24,6 +24,8 @@ pub struct DwgLocalSectionMap {
     pub compression_type: i32,
     /// Section number.
     pub section_number: i32,
+    /// Section map / page type identifier (e.g. 0x41630E3B for page map).
+    pub section_map: i32,
     /// Decompressed page size (max for this section).
     pub decompressed_page_size: u64,
     /// Checksum value.
@@ -32,9 +34,11 @@ pub struct DwgLocalSectionMap {
     pub crc: u64,
     /// Absolute byte offset in the DWG file to this page.
     pub seeker: u64,
-    /// Page size (may differ from compressed_size with padding).
+    /// Total page size including header (may differ from compressed_size with padding).
     pub page_size: u64,
-    /// Size of the section's ODA size field.
+    /// Overall size of this local section (including page header + compressed data + padding).
+    pub size: u64,
+    /// ODA checksum value.
     pub oda_size: u64,
 }
 

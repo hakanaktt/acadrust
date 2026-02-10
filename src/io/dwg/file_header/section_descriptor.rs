@@ -17,6 +17,8 @@ pub struct DwgSectionDescriptor {
     pub name: String,
     /// Section number.
     pub section_number: i32,
+    /// Section ID (starts at 0, first section is 0).
+    pub section_id: i32,
     /// Decompressed data size.
     pub decompressed_size: u64,
     /// Compressed data size.
@@ -25,10 +27,14 @@ pub struct DwgSectionDescriptor {
     pub compressed_code: i32,
     /// Whether the section is encrypted.
     pub is_encrypted: bool,
+    /// Encrypted flag as integer (0 = no, 1 = yes, 2 = unknown).
+    pub encrypted: i32,
     /// Hash value (section hash used in page map).
     pub hash_code: DwgSectionHash,
     /// Encoding for this section's data.
     pub encoding: u32,
+    /// Number of pages written to file.
+    pub page_count: i32,
     /// Associated local section maps (page data).
     pub local_sections: Vec<DwgLocalSectionMap>,
 }
@@ -40,12 +46,15 @@ impl DwgSectionDescriptor {
             page_type: 0,
             name: name.to_string(),
             section_number: 0,
+            section_id: 0,
             decompressed_size: 0,
             compressed_size: 0,
             compressed_code: 2, // default to compression enabled
             is_encrypted: false,
+            encrypted: 0,
             hash_code: DwgSectionHash::AcDbUnknown,
             encoding: 0,
+            page_count: 0,
             local_sections: Vec::new(),
         }
     }
