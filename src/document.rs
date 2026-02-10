@@ -549,6 +549,110 @@ pub struct HeaderVariables {
     pub current_text_style_name: String,
     /// DIMSTYLE - Current dimension style name
     pub current_dimstyle_name: String,
+
+    // ==================== Additional R13-R14 flags ====================
+    /// DIMSAV - Undocumented dimension variable (R13-R14 only)
+    pub dim_sav: bool,
+    /// PELLIPSE - Create ellipses as polylines (non-DXF)
+    pub create_ellipse_as_polyline: bool,
+    /// SKPOLY - Sketch polylines mode
+    pub sketch_polylines: bool,
+    /// UNITMODE - Unit display mode
+    pub unit_mode: i16,
+
+    // ==================== R2000+ flags ====================
+    /// TSTACKALIGN - Stacked text alignment (default 1)
+    pub stacked_text_alignment: i16,
+    /// TSTACKSIZE - Stacked text size percentage (default 70)
+    pub stacked_text_size_percentage: i16,
+
+    // ==================== R2004+ fields ====================
+    /// DIMFXL - Fixed extension line length (R2007+)
+    pub dim_fixed_ext_line_length: f64,
+    /// DIMFXLON - Extension line length is fixed (R2007+)
+    pub dim_ext_line_length_fixed: bool,
+    /// DIMJOGANG - Jogged radius dimension transverse segment angle (R2007+)
+    pub dim_jog_angle: f64,
+    /// DIMTFILL - Text background fill mode (R2007+)
+    pub dim_text_fill_mode: i16,
+    /// DIMTFILLCLR - Text background fill color (R2007+)
+    pub dim_text_fill_color: Color,
+    /// DIMARCSYM - Arc length symbol position (R2007+)
+    pub dim_arc_symbol_position: i16,
+    /// DIMTXTDIRECTION - Text direction (R2010+, false=LeftToRight, true=RightToLeft)
+    pub dim_text_direction: bool,
+    /// DIMALTMZF - Alt MZF (R2010+)
+    pub dim_alt_mzf: f64,
+    /// DIMALTMZS - Alt MZS (R2010+)
+    pub dim_alt_mzs: String,
+    /// DIMMZF - MZF (R2010+)
+    pub dim_mzf: f64,
+    /// DIMMZS - MZS (R2010+)
+    pub dim_mzs: String,
+
+    // ==================== R2007+ fields ====================
+    /// SOLIDHIST - Solids retain history
+    pub solids_retain_history: i16,
+    /// SHOWHIST - Show solids history
+    pub show_solids_history: i16,
+    /// PSOLWIDTH - Swept solid width
+    pub swept_solid_width: f64,
+    /// PSOLHEIGHT - Swept solid height
+    pub swept_solid_height: f64,
+    /// 3DDWFPREC - 3D DWF precision
+    pub dw3d_precision: f64,
+    /// LIGHTGLYPHDISPLAY - Light glyph display mode
+    pub light_glyph_display: i16,
+    /// TILEMODELIGHTSYNCH - Tile model light synchronization
+    pub tile_model_light_synch: i16,
+    /// DWFFRAME - DWF underlay frame visibility
+    pub dwf_frame: i16,
+    /// DGNFRAME - DGN underlay frame visibility
+    pub dgn_frame: i16,
+    /// CSHADOW - Shadow mode (R2007+)
+    pub shadow_mode: i16,
+
+    // ==================== UCS Orthographic Origins (R2000+) ====================
+    /// PUCSORGTOP - Paper space orthographic top origin
+    pub paper_ucs_ortho_top: Vector3,
+    /// PUCSORGBOTTOM - Paper space orthographic bottom origin
+    pub paper_ucs_ortho_bottom: Vector3,
+    /// PUCSORGLEFT - Paper space orthographic left origin
+    pub paper_ucs_ortho_left: Vector3,
+    /// PUCSORGRIGHT - Paper space orthographic right origin
+    pub paper_ucs_ortho_right: Vector3,
+    /// PUCSORGFRONT - Paper space orthographic front origin
+    pub paper_ucs_ortho_front: Vector3,
+    /// PUCSORGBACK - Paper space orthographic back origin
+    pub paper_ucs_ortho_back: Vector3,
+    /// UCSORGTOP - Model space orthographic top origin
+    pub model_ucs_ortho_top: Vector3,
+    /// UCSORGBOTTOM - Model space orthographic bottom origin
+    pub model_ucs_ortho_bottom: Vector3,
+    /// UCSORGLEFT - Model space orthographic left origin
+    pub model_ucs_ortho_left: Vector3,
+    /// UCSORGRIGHT - Model space orthographic right origin
+    pub model_ucs_ortho_right: Vector3,
+    /// UCSORGFRONT - Model space orthographic front origin
+    pub model_ucs_ortho_front: Vector3,
+    /// UCSORGBACK - Model space orthographic back origin
+    pub model_ucs_ortho_back: Vector3,
+
+    // ==================== Additional Handles (R2007+) ====================
+    /// INTERFEREOBJVS - Interference object visual style handle
+    pub interfereobjvs_handle: Handle,
+    /// INTERFEREVPVS - Interference viewport visual style handle
+    pub interferevpvs_handle: Handle,
+    /// DRAGVS - Drag visual style handle
+    pub dragvs_handle: Handle,
+    /// DIMLDRBLK - Dimension leader block handle (R2000+)
+    pub dim_leader_block_handle: Handle,
+    /// CPSNID - Current plot style name handle (only when CEPSNTYPE==3)
+    pub cpsnid_handle: Handle,
+    /// PUCSBASE - Paper space UCS base handle
+    pub paper_ucs_base_handle: Handle,
+    /// UCSBASE - Model space UCS base handle
+    pub ucs_base_handle: Handle,
 }
 
 impl Default for HeaderVariables {
@@ -835,6 +939,64 @@ impl Default for HeaderVariables {
             current_layer_name: String::from("0"),
             current_text_style_name: String::from("Standard"),
             current_dimstyle_name: String::from("Standard"),
+            
+            // Additional R13-R14 flags
+            dim_sav: false,
+            create_ellipse_as_polyline: false,
+            sketch_polylines: false,
+            unit_mode: 0,
+            
+            // R2000+ flags
+            stacked_text_alignment: 1,
+            stacked_text_size_percentage: 70,
+            
+            // R2004+/R2007+ fields
+            dim_fixed_ext_line_length: 1.0,
+            dim_ext_line_length_fixed: false,
+            dim_jog_angle: 0.7854, // ~45 degrees in radians
+            dim_text_fill_mode: 0,
+            dim_text_fill_color: Color::ByBlock,
+            dim_arc_symbol_position: 0,
+            dim_text_direction: false,
+            dim_alt_mzf: 0.0,
+            dim_alt_mzs: String::new(),
+            dim_mzf: 0.0,
+            dim_mzs: String::new(),
+            
+            // R2007+ fields
+            solids_retain_history: 0,
+            show_solids_history: 0,
+            swept_solid_width: 0.25,
+            swept_solid_height: 4.0,
+            dw3d_precision: 2.0,
+            light_glyph_display: 1,
+            tile_model_light_synch: 1,
+            dwf_frame: 2,
+            dgn_frame: 2,
+            shadow_mode: 0,
+            
+            // UCS orthographic origins
+            paper_ucs_ortho_top: Vector3::ZERO,
+            paper_ucs_ortho_bottom: Vector3::ZERO,
+            paper_ucs_ortho_left: Vector3::ZERO,
+            paper_ucs_ortho_right: Vector3::ZERO,
+            paper_ucs_ortho_front: Vector3::ZERO,
+            paper_ucs_ortho_back: Vector3::ZERO,
+            model_ucs_ortho_top: Vector3::ZERO,
+            model_ucs_ortho_bottom: Vector3::ZERO,
+            model_ucs_ortho_left: Vector3::ZERO,
+            model_ucs_ortho_right: Vector3::ZERO,
+            model_ucs_ortho_front: Vector3::ZERO,
+            model_ucs_ortho_back: Vector3::ZERO,
+            
+            // Additional handles
+            interfereobjvs_handle: Handle::NULL,
+            interferevpvs_handle: Handle::NULL,
+            dragvs_handle: Handle::NULL,
+            dim_leader_block_handle: Handle::NULL,
+            cpsnid_handle: Handle::NULL,
+            paper_ucs_base_handle: Handle::NULL,
+            ucs_base_handle: Handle::NULL,
         }
     }
 }

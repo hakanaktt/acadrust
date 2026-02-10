@@ -57,6 +57,8 @@ pub mod classes;
 pub mod entities;
 pub mod error;
 pub mod notification;
+pub mod preview;
+pub mod summary_info;
 pub mod types;
 pub mod tables;
 pub mod document;

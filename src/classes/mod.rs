@@ -86,6 +86,28 @@ pub struct DxfClass {
     pub class_number: i16,
     /// Item class ID: 498 for entities, 499 for objects
     pub item_class_id: i16,
+    /// DWG version that created this class (R2004+)
+    pub dwg_version: i32,
+    /// Maintenance release version (R2004+)
+    pub maintenance_version: i16,
+}
+
+impl Default for DxfClass {
+    fn default() -> Self {
+        Self {
+            dxf_name: String::new(),
+            cpp_class_name: String::new(),
+            application_name: "ObjectDBX Classes".to_string(),
+            proxy_flags: ProxyFlags::NONE,
+            instance_count: 0,
+            was_zombie: false,
+            is_an_entity: false,
+            class_number: 0,
+            item_class_id: 499,
+            dwg_version: 0,
+            maintenance_version: 0,
+        }
+    }
 }
 
 impl DxfClass {
@@ -101,6 +123,8 @@ impl DxfClass {
             is_an_entity: false,
             class_number: 0,
             item_class_id: 499, // default to object
+            dwg_version: 0,
+            maintenance_version: 0,
         }
     }
 
