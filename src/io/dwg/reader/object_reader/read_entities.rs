@@ -162,11 +162,6 @@ impl DwgObjectReader {
             };
         }
 
-        // Update handle reader for R13-R2000.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
-
         // Style handle.
         text_tmpl.style_handle = streams.handles_reader.handle_reference()?;
 
@@ -366,11 +361,6 @@ impl DwgObjectReader {
 
         let name = streams.read_text()?;
 
-        // Update handle reader for R13-R2000.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
-
         let block = Block {
             common: entity_common,
             name,
@@ -393,11 +383,6 @@ impl DwgObjectReader {
         let (common_tmpl, ent_tmpl, entity_common) =
             self.read_common_entity_data(streams)?;
 
-        // Update handle reader for R13-R2000.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
-
         let endblk = BlockEnd {
             common: entity_common,
         };
@@ -415,11 +400,6 @@ impl DwgObjectReader {
     ) -> Result<CadTemplate> {
         let (common_tmpl, ent_tmpl, entity_common) =
             self.read_common_entity_data(streams)?;
-
-        // Update handle reader for R13-R2000.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
 
         let seqend = Seqend {
             common: entity_common,
@@ -507,11 +487,6 @@ impl DwgObjectReader {
             row_spacing = streams.object_reader.read_bit_double()?;
         }
 
-        // Update handle reader for R13-R2000.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
-
         // Block header handle.
         let block_header_handle = streams.handles_reader.handle_reference()?;
 
@@ -588,11 +563,6 @@ impl DwgObjectReader {
         };
         let tangent = streams.object_reader.read_bit_double()?;
 
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
-
         let vertex = Vertex2D {
             location: pt,
             flags: VertexFlags::from_bits(flags),
@@ -626,11 +596,6 @@ impl DwgObjectReader {
         let flags = streams.object_reader.read_raw_char()?;
         let pt = streams.object_reader.read_3bit_double()?;
 
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
-
         let _ = (flags, pt);
         Ok(CadTemplate::Entity {
             common: common_tmpl,
@@ -653,11 +618,6 @@ impl DwgObjectReader {
         let i2 = streams.object_reader.read_bit_short()?;
         let i3 = streams.object_reader.read_bit_short()?;
         let i4 = streams.object_reader.read_bit_short()?;
-
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
 
         let _ = (i1, i2, i3, i4);
         Ok(CadTemplate::Entity {
@@ -695,11 +655,6 @@ impl DwgObjectReader {
         } else {
             0
         };
-
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
 
         let mut poly_tmpl = CadPolylineTemplateData::default();
         if self.sio.r2004_plus {
@@ -750,11 +705,6 @@ impl DwgObjectReader {
             0
         };
 
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
-
         let mut poly_tmpl = CadPolylineTemplateData::default();
         if self.sio.r2004_plus {
             for _ in 0..owned_count {
@@ -800,11 +750,6 @@ impl DwgObjectReader {
         } else {
             0
         };
-
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
 
         let mut poly_tmpl = CadPolylineTemplateData::default();
         if self.sio.r2004_plus {
@@ -861,11 +806,6 @@ impl DwgObjectReader {
         } else {
             0
         };
-
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
 
         let mut poly_tmpl = CadPolylineTemplateData::default();
         if self.sio.r2004_plus {
@@ -925,11 +865,6 @@ impl DwgObjectReader {
         let start_angle = streams.object_reader.read_bit_double()?;
         let end_angle = streams.object_reader.read_bit_double()?;
 
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
-
         let arc = Arc {
             common: entity_common,
             center,
@@ -958,11 +893,6 @@ impl DwgObjectReader {
         let radius = streams.object_reader.read_bit_double()?;
         let thickness = streams.object_reader.read_bit_thickness()?;
         let normal = streams.object_reader.read_bit_extrusion()?;
-
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
 
         let circle = Circle {
             common: entity_common,
@@ -1020,11 +950,6 @@ impl DwgObjectReader {
             normal = streams.object_reader.read_bit_extrusion()?;
         }
 
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
-
         let line = Line {
             common: entity_common,
             start,
@@ -1051,11 +976,6 @@ impl DwgObjectReader {
         let thickness = streams.object_reader.read_bit_thickness()?;
         let normal = streams.object_reader.read_bit_extrusion()?;
         let _x_axis_angle = streams.object_reader.read_bit_double()?;
-
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
 
         let point = Point {
             common: entity_common,
@@ -1124,11 +1044,6 @@ impl DwgObjectReader {
             invisible_edge = streams.object_reader.read_bit_short()? as u8;
         }
 
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
-
         let face = Face3D {
             common: entity_common,
             first_corner: c1,
@@ -1159,11 +1074,6 @@ impl DwgObjectReader {
         let c3_2d = streams.object_reader.read_2raw_double()?;
         let c4_2d = streams.object_reader.read_2raw_double()?;
         let normal = streams.object_reader.read_bit_extrusion()?;
-
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
 
         let solid = Solid {
             common: entity_common,
@@ -1197,11 +1107,6 @@ impl DwgObjectReader {
         let thickness = streams.object_reader.read_bit_thickness()?;
         let normal = streams.object_reader.read_bit_extrusion()?;
         let shape_number = streams.object_reader.read_bit_short()? as i32;
-
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
 
         let shape_file_handle = streams.handles_reader.handle_reference()?;
 
@@ -1319,10 +1224,6 @@ impl DwgObjectReader {
         streams: &mut StreamSet,
         dim_tmpl: &mut CadDimensionTemplateData,
     ) -> Result<()> {
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
 
         // Dimension style handle.
         dim_tmpl.style_handle = streams.handles_reader.handle_reference()?;
@@ -1654,11 +1555,6 @@ impl DwgObjectReader {
                 vp.ambient_color = streams.object_reader.read_raw_long()?;
             }
 
-            // Update handles.
-            if !self.sio.r2004_plus {
-                self.update_handle_reader(streams)?;
-            }
-
             // Handles.
             vp_tmpl.viewport_header_handle = streams.handles_reader.handle_reference()?;
 
@@ -1674,11 +1570,6 @@ impl DwgObjectReader {
             if self.sio.r2000_plus {
                 vp_tmpl.named_ucs_handle = streams.handles_reader.handle_reference()?;
                 vp_tmpl.base_ucs_handle = streams.handles_reader.handle_reference()?;
-            }
-        } else {
-            // R13-R14 update handles.
-            if !self.sio.r2004_plus {
-                self.update_handle_reader(streams)?;
             }
         }
 
@@ -1703,11 +1594,6 @@ impl DwgObjectReader {
         let minor_axis_ratio = streams.object_reader.read_bit_double()?;
         let start_param = streams.object_reader.read_bit_double()?;
         let end_param = streams.object_reader.read_bit_double()?;
-
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
 
         let ellipse = Ellipse {
             common: entity_common,
@@ -1801,11 +1687,6 @@ impl DwgObjectReader {
             }
         }
 
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
-
         let spline = Spline {
             common: entity_common,
             degree,
@@ -1891,11 +1772,6 @@ impl DwgObjectReader {
             false
         };
 
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
-
         let mut solid3d_tmpl = CadSolid3DTemplateData::default();
 
         // R2007+: history handle.
@@ -1964,11 +1840,6 @@ impl DwgObjectReader {
         let base_point = streams.object_reader.read_3bit_double()?;
         let direction = streams.object_reader.read_3bit_double()?;
 
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
-
         let ray = Ray {
             common: entity_common,
             base_point,
@@ -1991,11 +1862,6 @@ impl DwgObjectReader {
 
         let base_point = streams.object_reader.read_3bit_double()?;
         let direction = streams.object_reader.read_3bit_double()?;
-
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
 
         let xline = XLine {
             common: entity_common,
@@ -2047,11 +1913,6 @@ impl DwgObjectReader {
 
         // Rotation angle.
         let rotation = direction.y.atan2(direction.x);
-
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
 
         // Style handle.
         let style_handle = streams.handles_reader.handle_reference()?;
@@ -2157,11 +2018,6 @@ impl DwgObjectReader {
 
         let _color_val = streams.object_reader.read_bit_short()?;
 
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
-
         let mut leader_tmpl = CadLeaderTemplateData::default();
         leader_tmpl.dimasz = dimasz;
         // Annotation handle.
@@ -2220,11 +2076,6 @@ impl DwgObjectReader {
         let text = streams.read_text()?;
         let insertion_point = streams.object_reader.read_3bit_double()?;
         let direction = streams.object_reader.read_3bit_double()?;
-
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
 
         // Dimstyle handle.
         let style_handle = streams.handles_reader.handle_reference()?;
@@ -2295,11 +2146,6 @@ impl DwgObjectReader {
             });
         }
 
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
-
         // MLineStyle handle.
         let _style_handle = streams.handles_reader.handle_reference()?;
 
@@ -2362,6 +2208,11 @@ impl DwgObjectReader {
         };
 
         let num_pts = streams.object_reader.read_bit_long()? as usize;
+        if num_pts > 10_000_000 {
+            return Err(crate::error::DxfError::Parse(format!(
+                "LWPolyline point count {} is unreasonably large", num_pts
+            )));
+        }
         let num_bulges = if (flag & 0x10) != 0 {
             streams.object_reader.read_bit_long()? as usize
         } else {
@@ -2401,11 +2252,6 @@ impl DwgObjectReader {
             let sw = streams.object_reader.read_bit_double()?;
             let ew = streams.object_reader.read_bit_double()?;
             widths.push((sw, ew));
-        }
-
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
         }
 
         // Build vertices.
@@ -2672,11 +2518,6 @@ impl DwgObjectReader {
             seed_points.push(streams.object_reader.read_2raw_double()?);
         }
 
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
-
         // Read boundary handles from handles reader.
         let mut hatch_tmpl = CadHatchTemplateData::default();
         for _path_idx in 0..num_paths {
@@ -2746,11 +2587,6 @@ impl DwgObjectReader {
         // Data length.
         let length = streams.object_reader.read_bit_long()? as usize;
         let data = streams.object_reader.read_bytes(length)?;
-
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
 
         let ole = Ole2Frame {
             common: entity_common,

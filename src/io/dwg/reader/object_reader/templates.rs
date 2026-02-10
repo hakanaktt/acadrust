@@ -601,6 +601,143 @@ impl CadTemplate {
     pub fn handle(&self) -> u64 {
         self.common().handle
     }
+
+    /// Collect all handle references from this template for enqueuing.
+    ///
+    /// Returns handles from the common data (owner, reactors, xdict),
+    /// entity data (layer, ltype, prev/next), and type-specific data
+    /// (table entry handles, dictionary entries, block record entities, etc.).
+    pub fn all_handles(&self) -> Vec<u64> {
+        let mut handles = Vec::new();
+        let c = self.common();
+        handles.push(c.owner_handle);
+        handles.extend_from_slice(&c.reactor_handles);
+        handles.push(c.xdict_handle);
+
+        // Entity data handles.
+        match self {
+            CadTemplate::Entity { entity_data, .. }
+            | CadTemplate::TextEntity { entity_data, .. }
+            | CadTemplate::Insert { entity_data, .. }
+            | CadTemplate::Polyline { entity_data, .. }
+            | CadTemplate::Dimension { entity_data, .. }
+            | CadTemplate::Leader { entity_data, .. }
+            | CadTemplate::MultiLeader { entity_data, .. }
+            | CadTemplate::Shape { entity_data, .. }
+            | CadTemplate::Viewport { entity_data, .. }
+            | CadTemplate::Hatch { entity_data, .. }
+            | CadTemplate::Solid3D { entity_data, .. }
+            | CadTemplate::Image { entity_data, .. }
+            | CadTemplate::PolyfaceMesh { entity_data, .. } => {
+                handles.push(entity_data.prev_entity);
+                handles.push(entity_data.next_entity);
+                handles.push(entity_data.layer_handle);
+                handles.push(entity_data.linetype_handle);
+                handles.push(entity_data.plotstyle_handle);
+                handles.push(entity_data.material_handle);
+                handles.push(entity_data.color_handle);
+            }
+            _ => {}
+        }
+
+        // Type-specific handles.
+        match self {
+            CadTemplate::TableControl { table_data, .. } => {
+                handles.extend_from_slice(&table_data.entry_handles);
+            }
+            CadTemplate::BlockHeader { block_data, .. } => {
+                handles.push(block_data.first_entity_handle);
+                handles.push(block_data.last_entity_handle);
+                handles.extend_from_slice(&block_data.owned_object_handles);
+                handles.push(block_data.layout_handle);
+                handles.push(block_data.block_entity_handle);
+                handles.push(block_data.end_block_handle);
+            }
+            CadTemplate::DictionaryObj { dict_data, .. } => {
+                for (_, h) in &dict_data.entries {
+                    handles.push(*h);
+                }
+            }
+            CadTemplate::DictWithDefault { dict_default_data, .. } => {
+                for (_, h) in &dict_default_data.dict_data.entries {
+                    handles.push(*h);
+                }
+                handles.push(dict_default_data.default_entry_handle);
+            }
+            CadTemplate::LayerEntry { layer_data, .. } => {
+                handles.push(layer_data.linetype_handle);
+                handles.push(layer_data.plotstyle_handle);
+                handles.push(layer_data.material_handle);
+            }
+            CadTemplate::LineTypeEntry { ltype_data, .. } => {
+                handles.push(ltype_data.ltype_control_handle);
+                handles.extend_from_slice(&ltype_data.segment_handles);
+            }
+            CadTemplate::DimStyleEntry { dimstyle_data, .. } => {
+                handles.push(dimstyle_data.dimtxsty_handle);
+                handles.push(dimstyle_data.dimldrblk_handle);
+                handles.push(dimstyle_data.dimblk_handle);
+                handles.push(dimstyle_data.dimblk1_handle);
+                handles.push(dimstyle_data.dimblk2_handle);
+            }
+            CadTemplate::VPortEntry { vport_data, .. } => {
+                handles.push(vport_data.vport_control_handle);
+                handles.push(vport_data.background_handle);
+                handles.push(vport_data.style_handle);
+                handles.push(vport_data.named_ucs_handle);
+                handles.push(vport_data.base_ucs_handle);
+            }
+            CadTemplate::LayoutObj { layout_data, .. } => {
+                handles.push(layout_data.plot_view_handle);
+                handles.push(layout_data.visual_style_handle);
+                handles.push(layout_data.associated_tab_handle);
+                handles.push(layout_data.viewport_handle);
+                handles.push(layout_data.base_ucs_handle);
+                handles.push(layout_data.named_ucs_handle);
+                handles.push(layout_data.block_record_handle);
+            }
+            CadTemplate::GroupObj { group_data, .. } => {
+                handles.extend_from_slice(&group_data.entity_handles);
+            }
+            CadTemplate::TextEntity { text_data, .. } => {
+                handles.push(text_data.style_handle);
+            }
+            CadTemplate::Insert { insert_data, .. } => {
+                handles.push(insert_data.block_header_handle);
+                handles.push(insert_data.first_attribute_handle);
+                handles.push(insert_data.end_attribute_handle);
+                handles.push(insert_data.seqend_handle);
+            }
+            CadTemplate::Polyline { polyline_data, .. } => {
+                handles.push(polyline_data.first_vertex_handle);
+                handles.push(polyline_data.last_vertex_handle);
+                handles.push(polyline_data.seqend_handle);
+                handles.extend_from_slice(&polyline_data.owned_objects_handles);
+            }
+            CadTemplate::Dimension { dim_data, .. } => {
+                handles.push(dim_data.block_handle);
+                handles.push(dim_data.style_handle);
+            }
+            CadTemplate::Leader { leader_data, .. } => {
+                handles.push(leader_data.dimstyle_handle);
+                handles.push(leader_data.annotation_handle);
+            }
+            CadTemplate::MLineStyleObj { mls_data, .. } => {
+                handles.extend_from_slice(&mls_data.element_linetype_handles);
+            }
+            CadTemplate::MLeaderStyleObj { mls_style_data, .. } => {
+                handles.push(mls_style_data.leader_line_type_handle);
+                handles.push(mls_style_data.arrowhead_handle);
+                handles.push(mls_style_data.mtext_style_handle);
+                handles.push(mls_style_data.block_content_handle);
+            }
+            _ => {}
+        }
+
+        // Filter out zeros.
+        handles.retain(|&h| h != 0);
+        handles
+    }
 }
 
 /// Which type of table control object this is.

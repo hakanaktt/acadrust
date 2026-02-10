@@ -167,7 +167,6 @@ impl<R: Read + Seek> DwgReader<R> {
         let handle_map = self.read_handles()?;
         let _preview = self.read_preview();
         let _app_info = self.read_app_info();
-
         // Step 3: Build the handle queue for the object reader.
         let mut handle_queue: VecDeque<u64> = VecDeque::new();
 
@@ -178,7 +177,18 @@ impl<R: Read + Seek> DwgReader<R> {
         }
 
         // Step 4: Read all objects.
-        let objects_data = self.get_section_stream(section_names::ACDB_OBJECTS)?;
+        // For AC15 (R13-R2000), objects are scattered in the raw file and the
+        // handle map contains absolute file offsets. We load the entire file.
+        // For AC18+, objects are in a decompressed AcDb:AcDbObjects section.
+        let objects_data = match &self.file_header {
+            DwgFileHeader::AC15(_) => {
+                self.reader.seek(SeekFrom::Start(0))?;
+                let mut buf = Vec::new();
+                self.reader.read_to_end(&mut buf)?;
+                buf
+            }
+            _ => self.get_section_stream(section_names::ACDB_OBJECTS)?,
+        };
         let class_entries: Vec<_> = classes.iter().cloned().collect();
         let mut object_reader = DwgObjectReader::new(
             self.version,
@@ -189,7 +199,6 @@ impl<R: Read + Seek> DwgReader<R> {
         );
         object_reader.failsafe = self.config.failsafe;
         object_reader.read()?;
-
         // Step 5: Build the document.
         let mut builder = DwgDocumentBuilder::new(self.version);
         builder.header_handles = header_handles;
@@ -261,36 +270,30 @@ impl<R: Read + Seek> DwgReader<R> {
     fn read_file_header_ac15(&mut self) -> Result<()> {
         self.reader.seek(SeekFrom::Start(6))?;
 
-        // Skip 7 bytes (padding + flags).
-        let mut skip = [0u8; 7];
-        self.reader.read_exact(&mut skip)?;
+        // 0x06: 7 bytes — six bytes of 0x00 (in R14: 5 zeros + ACADMAINTVER + 0x01).
+        let mut padding = [0u8; 7];
+        self.reader.read_exact(&mut padding)?;
+        // Extract maintenance version from byte 5 of the padding (offset 0x0B).
+        let maintenance_ver = padding[5];
 
-        // Maintenance version (4 bytes, little-endian).
-        let maintenance_ver = self.reader.read_u8()?;
-        // Skip 3 bytes of the 4-byte field.
-        self.reader.read_u8()?;
-        self.reader.read_u8()?;
-        self.reader.read_u8()?;
-
-        // Preview image address.
+        // 0x0D: Preview image address (4 bytes, i32 LE).
         let preview_addr = self.reader.read_i32::<LittleEndian>()? as i64;
 
-        // DWG version byte.
-        let _dwg_version = self.reader.read_u8()?;
+        // 0x11: 2 undocumented bytes.
+        let mut _undocumented = [0u8; 2];
+        self.reader.read_exact(&mut _undocumented)?;
 
-        // Application release version.
-        let _app_release = self.reader.read_u8()?;
-
-        // Drawing code page.
+        // 0x13: Drawing code page (2 bytes, u16 LE).
         let code_page = self.reader.read_u16::<LittleEndian>()?;
 
-        // Number of section locator records.
+        // 0x15: Number of section locator records (4 bytes, i32 LE).
         let num_records = self.reader.read_i32::<LittleEndian>()? as usize;
 
         // Read section locator records.
+        // Each record: Number (1 byte) + Seeker (4 bytes i32) + Size (4 bytes i32) = 9 bytes.
         let mut records = HashMap::new();
         for _i in 0..num_records {
-            let number = self.reader.read_i32::<LittleEndian>()?;
+            let number = self.reader.read_u8()? as i32;
             let seeker = self.reader.read_i32::<LittleEndian>()? as i64;
             let size = self.reader.read_i32::<LittleEndian>()? as i64;
             records.insert(
@@ -493,12 +496,23 @@ impl<R: Read + Seek> DwgReader<R> {
         let second_header_addr = c.read_u64::<LittleEndian>().unwrap_or(0);
         let gap_amount = c.read_u32::<LittleEndian>().unwrap_or(0);
         let section_amount = c.read_u32::<LittleEndian>().unwrap_or(0);
+        // 0x44: 0x20 (padding)
         let _x20 = c.read_u32::<LittleEndian>().unwrap_or(0);
+        // 0x48: 0x80 (padding)
+        let _x80 = c.read_u32::<LittleEndian>().unwrap_or(0);
+        // 0x4C: 0x40 (padding)
+        let _x40 = c.read_u32::<LittleEndian>().unwrap_or(0);
+        // 0x50: Section Page Map Id
         let section_page_map_id = c.read_u32::<LittleEndian>().unwrap_or(0);
-        let page_map_address = c.read_u64::<LittleEndian>().unwrap_or(0);
+        // 0x54: Section Page Map address (add 0x100 to get the actual file position)
+        let page_map_address = c.read_u64::<LittleEndian>().unwrap_or(0) + 0x100;
+        // 0x5C: Section Map Id
         let section_map_id = c.read_u32::<LittleEndian>().unwrap_or(0);
+        // 0x60: Section page array size
         let section_array_page_size = c.read_u32::<LittleEndian>().unwrap_or(0);
+        // 0x64: Gap array size
         let gap_array_size = c.read_u32::<LittleEndian>().unwrap_or(0);
+        // 0x68: CRC32
         let crc_seed = c.read_u32::<LittleEndian>().unwrap_or(0);
 
         DecryptedAC18HeaderData {
@@ -523,57 +537,66 @@ impl<R: Read + Seek> DwgReader<R> {
 
     /// Read the page map for AC18.
     ///
-    /// The page map lists all file pages — their offsets and sizes.
+    /// The page map is itself a compressed data section at the page map address.
+    /// It contains (section_number, size) pairs that map section IDs to file positions.
+    ///
+    /// Mirrors ACadSharp `DwgReader.readFileHeaderAC18` — "Read page map of the file" region.
     fn read_page_map_ac18(&mut self, header: &mut DwgFileHeaderAC18) -> Result<()> {
-        // Seek to the page map address.
         let page_map_addr = header.page_map_address;
         if page_map_addr == 0 {
             return Ok(());
         }
 
-        // Read pages from the page map.
-        self.reader.seek(SeekFrom::Start(page_map_addr + 0x100))?;
+        // Seek to the page map address (already includes +0x100 offset).
+        self.reader.seek(SeekFrom::Start(page_map_addr))?;
 
-        let mut page_id: i32 = 1;
-        let mut section_pages: Vec<DwgLocalSectionMap> = Vec::new();
+        // Read the 20-byte page header (unencrypted for page map).
+        let _section_type = self.reader.read_i32::<LittleEndian>()?;    // 0x41630E3B
+        let decompressed_size = self.reader.read_i32::<LittleEndian>()? as usize;
+        let compressed_size = self.reader.read_i32::<LittleEndian>()? as usize;
+        let _compression_type = self.reader.read_i32::<LittleEndian>()?; // 0x02
+        let _checksum = self.reader.read_i32::<LittleEndian>()?;
 
-        loop {
-            let section_number = match self.reader.read_i32::<LittleEndian>() {
+        // Read and decompress the page map data.
+        let decompressed = if compressed_size > 0 && decompressed_size > 0 {
+            let mut compressed_data = vec![0u8; compressed_size];
+            self.reader.read_exact(&mut compressed_data)?;
+            let decompressor = Lz77Ac18Decompressor;
+            decompressor.decompress(&compressed_data, decompressed_size)?
+        } else {
+            return Ok(());
+        };
+
+        // Parse page records from the decompressed data.
+        // Each record: section_number (i32) + size (i32) = 8 bytes.
+        // Seeker is a running total starting at 0x100.
+        let mut cursor = Cursor::new(&decompressed);
+        let mut total = 0x100i64;
+
+        while (cursor.position() as usize) < decompressed.len() {
+            let section_number = match cursor.read_i32::<LittleEndian>() {
                 Ok(v) => v,
                 Err(_) => break,
             };
-            let page_size = self.reader.read_u32::<LittleEndian>()? as u64;
+            let size = match cursor.read_i32::<LittleEndian>() {
+                Ok(v) => v as i64,
+                Err(_) => break,
+            };
 
-            if section_number == 0 && page_size == 0 {
-                break;
+            if section_number >= 0 {
+                header.records.insert(
+                    section_number as usize,
+                    DwgSectionLocatorRecord::new(section_number, total, size),
+                );
+            } else {
+                // Negative section number = gap. Read 4 extra i32 values.
+                let _ = cursor.read_i32::<LittleEndian>(); // Parent
+                let _ = cursor.read_i32::<LittleEndian>(); // Left
+                let _ = cursor.read_i32::<LittleEndian>(); // Right
+                let _ = cursor.read_i32::<LittleEndian>(); // 0x00
             }
 
-            let mut entry = DwgLocalSectionMap::new();
-            entry.page_number = page_id;
-            entry.section_number = section_number;
-            entry.page_size = page_size;
-            entry.seeker = self.reader.stream_position()?;
-
-            section_pages.push(entry);
-            page_id += 1;
-        }
-
-        // Build page offset table.
-        // The first page (page_id=1) starts immediately after the page map.
-        let mut offset = 0x100u64;
-        for page in &mut section_pages {
-            page.seeker = offset;
-            offset += page.page_size;
-        }
-
-        // Store pages in the header for later section buffer extraction.
-        // We store them indexed by page_number.
-        for page in section_pages {
-            if let Some(desc) = header.descriptors.values_mut().find(|d| {
-                d.section_number == page.section_number
-            }) {
-                desc.local_sections.push(page);
-            }
+            total += size;
         }
 
         Ok(())
@@ -581,153 +604,152 @@ impl<R: Read + Seek> DwgReader<R> {
 
     /// Read the section map for AC18.
     ///
-    /// The section map associates section names with their descriptors.
+    /// The section map is stored in the page identified by `section_map_id`.
+    /// It contains section descriptors (name, compressed size, page count, etc.)
+    /// and local section maps (page numbers referencing the page map records).
+    ///
+    /// Mirrors ACadSharp `DwgReader.readFileHeaderAC18` — "Read the data section map" region.
     fn read_section_map_ac18(&mut self, header: &mut DwgFileHeaderAC18) -> Result<()> {
-        // Get the section map data.
         let section_map_id = header.section_map_id;
         if section_map_id == 0 {
             return Ok(());
         }
 
-        // The section map is typically in a dedicated page.
-        // For now we parse the section descriptors from the data pages that
-        // belong to the section map section.
-        // This is a simplified implementation — the full AC18 section map
-        // parsing requires reading the page map first and then extracting
-        // the section map data.
+        // Find the section map page in the already-read page map records.
+        let section_map_record = header.records.get(&(section_map_id as usize)).cloned()
+            .ok_or_else(|| {
+                DxfError::InvalidFormat(format!(
+                    "Section map ID {} not found in page map records",
+                    section_map_id
+                ))
+            })?;
 
-        // Read section map pages.
-        let page_map_addr = header.page_map_address;
-        self.reader.seek(SeekFrom::Start(page_map_addr + 0x100))?;
+        // Seek to the section map page and read its page header.
+        self.reader.seek(SeekFrom::Start(section_map_record.seeker as u64))?;
 
-        // Read pages.
-        let mut pages: Vec<(i32, u64)> = Vec::new();
-        loop {
-            let section_number = match self.reader.read_i32::<LittleEndian>() {
-                Ok(v) => v,
-                Err(_) => break,
-            };
-            let page_size = self.reader.read_u32::<LittleEndian>()? as u64;
+        let _section_type = self.reader.read_i32::<LittleEndian>()?;    // 0x4163003B
+        let decompressed_size = self.reader.read_i32::<LittleEndian>()? as usize;
+        let compressed_size = self.reader.read_i32::<LittleEndian>()? as usize;
+        let _compression_type = self.reader.read_i32::<LittleEndian>()?; // 0x02
+        let _checksum = self.reader.read_i32::<LittleEndian>()?;
 
-            if section_number == 0 && page_size == 0 {
-                break;
-            }
-
-            pages.push((section_number, page_size));
-        }
-
-        // Compute page offsets.
-        let mut offset = 0x100u64;
-        let mut page_offsets: Vec<(i32, u64, u64)> = Vec::new(); // (section_number, offset, size)
-        for (section_number, page_size) in &pages {
-            page_offsets.push((*section_number, offset, *page_size));
-            offset += page_size;
-        }
-
-        // For each page, decrypt the header and get the section descriptor info.
-        for (section_number, file_offset, _page_size) in &page_offsets {
-            if *section_number < 0 {
-                continue;
-            }
-
-            self.reader.seek(SeekFrom::Start(*file_offset))?;
-
-            // Read the 32-byte encrypted page header.
-            let mut page_header_data = [0u8; 32];
-            if self.reader.read_exact(&mut page_header_data).is_err() {
-                continue;
-            }
-
-            let decrypted = encryption::decrypt_data_section_header(
-                &page_header_data,
-                *file_offset,
-            );
-
-            // Read the compressed page data.
-            let compressed_size = decrypted.compressed_size as usize;
-            if compressed_size == 0 {
-                continue;
-            }
-
+        // Read and decompress the section map data.
+        let decompressed = if compressed_size > 0 && decompressed_size > 0 {
             let mut compressed_data = vec![0u8; compressed_size];
-            if self.reader.read_exact(&mut compressed_data).is_err() {
-                continue;
-            }
-
-            // Decompress.
-            let decompressed_size = decrypted.page_size as usize;
+            self.reader.read_exact(&mut compressed_data)?;
             let decompressor = Lz77Ac18Decompressor;
-            let decompressed = match decompressor.decompress(&compressed_data, decompressed_size) {
-                Ok(d) => d,
-                Err(_) => continue,
-            };
+            decompressor.decompress(&compressed_data, decompressed_size)?
+        } else {
+            return Ok(());
+        };
 
-            // Parse section descriptor from decompressed data.
-            self.parse_section_descriptor_ac18(header, &decompressed);
-        }
+        self.parse_section_descriptors_ac18(header, &decompressed)?;
 
         Ok(())
     }
 
-    /// Parse a section descriptor from decompressed section map data.
-    fn parse_section_descriptor_ac18(
+    /// Parse section descriptors from decompressed section map data (AC18).
+    ///
+    /// Mirrors ACadSharp's section descriptor parsing in `readFileHeaderAC18`.
+    fn parse_section_descriptors_ac18(
         &self,
         header: &mut DwgFileHeaderAC18,
         data: &[u8],
-    ) {
-        if data.len() < 32 {
-            return;
+    ) -> Result<()> {
+        if data.len() < 20 {
+            return Ok(());
         }
 
         let mut cursor = Cursor::new(data);
 
-        // Number of section descriptor entries.
-        let num_entries = cursor.read_i32::<LittleEndian>().unwrap_or(0);
+        // 0x00: Number of section descriptions
+        let num_descriptions = cursor.read_i32::<LittleEndian>().unwrap_or(0);
+        // 0x04: 0x02
         let _x04 = cursor.read_i32::<LittleEndian>().unwrap_or(0);
-        let _x08 = cursor.read_u32::<LittleEndian>().unwrap_or(0);
-        let _x0c = cursor.read_u32::<LittleEndian>().unwrap_or(0);
+        // 0x08: 0x00007400
+        let _x08 = cursor.read_i32::<LittleEndian>().unwrap_or(0);
+        // 0x0C: 0x00
+        let _x0c = cursor.read_i32::<LittleEndian>().unwrap_or(0);
+        // 0x10: NumDescriptions (repeated)
+        let _x10 = cursor.read_i32::<LittleEndian>().unwrap_or(0);
 
-        for _entry_idx in 0..num_entries {
-            // Each section descriptor.
-            let _desc_size = cursor.read_i64::<LittleEndian>().unwrap_or(0);
-            let page_count = cursor.read_i32::<LittleEndian>().unwrap_or(0) as u32;
-            let decompressed_size = cursor.read_u64::<LittleEndian>().unwrap_or(0);
+        for _entry_idx in 0..num_descriptions {
+            // 0x00: Size of section (8 bytes, total compressed data size)
             let compressed_size = cursor.read_u64::<LittleEndian>().unwrap_or(0);
+            // 0x08: Page count
+            let page_count = cursor.read_i32::<LittleEndian>().unwrap_or(0);
+            // 0x0C: Max decompressed size of a section page (normally 0x7400)
+            let max_decompressed_size = cursor.read_i32::<LittleEndian>().unwrap_or(0) as u64;
+            // 0x10: Unknown
+            let _unknown = cursor.read_i32::<LittleEndian>().unwrap_or(0);
+            // 0x14: Compressed (1 = no, 2 = yes)
             let compressed_code = cursor.read_i32::<LittleEndian>().unwrap_or(0);
-            let _is_encrypted_i = cursor.read_i32::<LittleEndian>().unwrap_or(0);
-
-            // Section name.
+            // 0x18: Section ID
+            let section_id = cursor.read_i32::<LittleEndian>().unwrap_or(0);
+            // 0x1C: Encrypted (0 = no, 1 = yes, 2 = unknown)
+            let encrypted = cursor.read_i32::<LittleEndian>().unwrap_or(0);
+            // 0x20: Section name (64 bytes, null-terminated)
             let mut name_buf = [0u8; 64];
             let _ = cursor.read_exact(&mut name_buf);
             let name = std::str::from_utf8(&name_buf)
                 .unwrap_or("")
-                .trim_end_matches('\0')
+                .split('\0')
+                .next()
+                .unwrap_or("")
                 .to_string();
 
             if name.is_empty() {
+                // Skip local sections for unnamed entries
+                for _j in 0..page_count {
+                    let _ = cursor.read_i32::<LittleEndian>(); // page_number
+                    let _ = cursor.read_i32::<LittleEndian>(); // compressed_size
+                    let _ = cursor.read_u64::<LittleEndian>(); // offset
+                }
                 continue;
             }
 
             let mut desc = DwgSectionDescriptor::new(&name);
-            desc.decompressed_size = decompressed_size;
             desc.compressed_size = compressed_size;
+            desc.page_count = page_count;
+            desc.decompressed_size = max_decompressed_size;
             desc.compressed_code = compressed_code;
+            desc.section_id = section_id;
+            desc.encrypted = encrypted;
 
-            // Read local pages for this section.
+            // Read local page maps for this section.
             for _page_idx in 0..page_count {
+                // 0x00: Page number (index into page map records)
                 let page_number = cursor.read_i32::<LittleEndian>().unwrap_or(0);
-                let page_data_size = cursor.read_u64::<LittleEndian>().unwrap_or(0);
-                let page_start_offset = cursor.read_u64::<LittleEndian>().unwrap_or(0);
+                // 0x04: Data size for this page (compressed size)
+                let page_compressed_size = cursor.read_i32::<LittleEndian>().unwrap_or(0) as u64;
+                // 0x08: Start offset for this page
+                let page_offset = cursor.read_u64::<LittleEndian>().unwrap_or(0);
 
                 let mut local = DwgLocalSectionMap::new();
                 local.page_number = page_number;
-                local.decompressed_size = page_data_size;
-                local.offset = page_start_offset;
+                local.compressed_size = page_compressed_size;
+                local.offset = page_offset;
+                local.decompressed_size = max_decompressed_size;
+
+                // Look up the actual file position from the page map records.
+                if let Some(record) = header.records.get(&(page_number as usize)) {
+                    local.seeker = record.seeker as u64;
+                }
+
                 desc.local_sections.push(local);
+            }
+
+            // Adjust the last page's decompressed size if the total doesn't fill evenly.
+            let size_left = compressed_size % max_decompressed_size;
+            if size_left > 0 && !desc.local_sections.is_empty() {
+                let last_idx = desc.local_sections.len() - 1;
+                desc.local_sections[last_idx].decompressed_size = size_left;
             }
 
             header.add_descriptor(desc);
         }
+
+        Ok(())
     }
 
     /// Parse AC21 compressed metadata from a decompressed RS block.
@@ -782,11 +804,9 @@ impl<R: Read + Seek> DwgReader<R> {
         if record.seeker < 0 || record.size <= 0 {
             return Ok(Vec::new());
         }
-
         self.reader.seek(SeekFrom::Start(record.seeker as u64))?;
         let mut data = vec![0u8; record.size as usize];
         self.reader.read_exact(&mut data)?;
-
         Ok(data)
     }
 

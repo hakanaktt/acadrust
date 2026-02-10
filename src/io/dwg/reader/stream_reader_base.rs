@@ -136,6 +136,12 @@ impl DwgStreamReaderBase {
 
     /// Read a handle's byte payload (big-endian, returned as u64 LE).
     fn read_handle_bytes(&mut self, length: usize) -> Result<u64> {
+        if length > 8 {
+            return Err(DxfError::InvalidFormat(format!(
+                "Handle byte count {} exceeds maximum of 8",
+                length
+            )));
+        }
         let mut raw = vec![0u8; length];
         let mut arr = [0u8; 8];
 
@@ -546,6 +552,13 @@ impl IDwgStreamReader for DwgStreamReaderBase {
     }
 
     fn read_bytes(&mut self, length: usize) -> Result<Vec<u8>> {
+        // Sanity check: prevent absurd allocations from corrupt data.
+        if length > 16 * 1024 * 1024 {
+            return Err(DxfError::InvalidFormat(format!(
+                "Requested byte read of {} exceeds 16 MB sanity limit",
+                length
+            )));
+        }
         let mut arr = vec![0u8; length];
         self.apply_shift_to_arr(&mut arr)?;
         Ok(arr)

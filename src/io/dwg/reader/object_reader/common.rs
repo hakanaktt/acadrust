@@ -41,6 +41,12 @@ impl DwgObjectReader {
         let mut ent_tmpl = CadEntityTemplateData::default();
         let mut entity_common = EntityCommon::new();
 
+        // R2000-R2007: Update handle reader position (RL: object size in bits).
+        // This comes BEFORE handle+EED — matching C# readCommonData().
+        if self.sio.r2000_plus && !self.sio.r2010_plus {
+            self.update_handle_reader(streams)?;
+        }
+
         // Handle (H).
         let handle = streams.object_reader.handle_reference()?;
         common_tmpl.handle = handle;
@@ -54,11 +60,11 @@ impl DwgObjectReader {
         if graphic_present {
             if self.sio.r2010_plus {
                 // R2010+: BLL graphics size.
-                let _gfx_size = streams.object_reader.read_bit_long_long()?;
+                let gfx_size = streams.object_reader.read_bit_long_long()? as usize;
+                streams.object_reader.advance(gfx_size);
             } else {
                 // R13-R2007: RL graphics size.
                 let gfx_size = streams.object_reader.read_raw_long()? as usize;
-                // Skip the graphic data bytes.
                 streams.object_reader.advance(gfx_size);
             }
         }
@@ -71,6 +77,12 @@ impl DwgObjectReader {
         // Entity mode (BB).
         ent_tmpl.entity_mode = streams.object_reader.read_2bits()?;
 
+        // When entity_mode == 0, the owner handle is present (soft pointer).
+        // Matches C# readEntityMode: if (EntityMode == 0) OwnerHandle = handleReference.
+        if ent_tmpl.entity_mode == 0 {
+            common_tmpl.owner_handle = streams.handles_reader.handle_reference()?;
+        }
+
         // Reactors and extended dictionary.
         let (reactor_handles, xdict_handle) =
             self.read_reactors_and_dictionary_handle(streams)?;
@@ -80,13 +92,21 @@ impl DwgObjectReader {
         // R13-R14: Layer handle, Linetype handle.
         if self.sio.r13_14_only {
             ent_tmpl.layer_handle = streams.handles_reader.handle_reference()?;
-            ent_tmpl.linetype_handle = streams.handles_reader.handle_reference()?;
+            // Isbylayerlt B: 1 if bylayer linetype (no handle), else 0 (read handle).
+            let is_bylayer_lt = streams.object_reader.read_bit()?;
+            if !is_bylayer_lt {
+                ent_tmpl.linetype_handle = streams.handles_reader.handle_reference()?;
+            }
         }
 
-        // R13-R2000: prev/next entity handles.
+        // R13-R2000: prev/next entity handles (linked list).
+        // A bit flag indicates whether the handles are present.
         if !self.sio.r2004_plus {
-            ent_tmpl.prev_entity = streams.handles_reader.handle_reference()?;
-            ent_tmpl.next_entity = streams.handles_reader.handle_reference()?;
+            let no_links = streams.object_reader.read_bit()?;
+            if !no_links {
+                ent_tmpl.prev_entity = streams.handles_reader.handle_reference()?;
+                ent_tmpl.next_entity = streams.handles_reader.handle_reference()?;
+            }
         }
 
         // Color, transparency, book-color flag.
@@ -121,8 +141,8 @@ impl DwgObjectReader {
                 if material_flags == 3 {
                     ent_tmpl.material_handle = streams.handles_reader.handle_reference()?;
                 }
-                // Shadow flags (BB).
-                let _shadow_flags = streams.object_reader.read_2bits()?;
+                // Shadow flags RC (1 byte, not BB).
+                let _shadow_flags = streams.object_reader.read_raw_char()?;
             }
 
             // Plotstyle flags (BB).
@@ -174,6 +194,12 @@ impl DwgObjectReader {
     ) -> Result<CadTemplateCommon> {
         let mut common_tmpl = CadTemplateCommon::default();
 
+        // R2000-R2007: Update handle reader position (RL: object size in bits).
+        // This comes BEFORE handle+EED — matching C# readCommonData().
+        if self.sio.r2000_plus && !self.sio.r2010_plus {
+            self.update_handle_reader(streams)?;
+        }
+
         // Handle (H).
         let handle = streams.object_reader.handle_reference()?;
         common_tmpl.handle = handle;
@@ -181,7 +207,7 @@ impl DwgObjectReader {
         // EED (extended entity data).
         common_tmpl.edata = self.read_extended_data(streams)?;
 
-        // R13-R14: Update handle reader position.
+        // R13-R14: Update handle reader position (RL comes AFTER handle+EED).
         if self.sio.r13_14_only {
             self.update_handle_reader(streams)?;
         }
@@ -232,6 +258,14 @@ impl DwgObjectReader {
         // BL: number of reactors.
         let num_reactors = streams.object_reader.read_bit_long()? as usize;
 
+        // Sanity check: reactor count > 10000 almost certainly means a misaligned stream.
+        if num_reactors > 10_000 {
+            return Err(crate::error::DxfError::Parse(format!(
+                "Reactor count {} is unreasonably large — stream likely misaligned",
+                num_reactors
+            )));
+        }
+
         // R2004+: xdictionary-missing flag (B).
         let xdict_missing = if self.sio.r2004_plus {
             streams.object_reader.read_bit()?
@@ -277,7 +311,7 @@ impl DwgObjectReader {
         loop {
             // BS: size of next app group (0 = end of EED).
             let size = streams.object_reader.read_bit_short()? as i32;
-            if size == 0 {
+            if size <= 0 {
                 break;
             }
 
@@ -285,7 +319,7 @@ impl DwgObjectReader {
             let app_handle = streams.object_reader.handle_reference()?;
 
             // Read `size` bytes of xdata.
-            let end_pos = streams.object_reader.position() + size as u64;
+            let end_pos = streams.object_reader.position().saturating_add(size as u64);
             let mut values = Vec::new();
 
             while (streams.object_reader.position() as i32) < end_pos as i32 {
@@ -368,16 +402,27 @@ impl DwgObjectReader {
     // readXrefDependantBit
     // -----------------------------------------------------------------------
 
-    /// Read the xref-dependent bit + check the xref-dependent name flag.
+    /// Read the xref-dependent bit(s) for a table entry.
     ///
-    /// If the name is xref-dependent (contains `|`), the entry should still be read
-    /// but may need different resolution.
+    /// Matches C# `readXrefDependantBit(TableEntry)`:
+    /// - **R2007+**: BS (xrefindex, bit 0x100 = XrefDependent).
+    /// - **Pre-R2007**: B (64-flag/Referenced) + BS (xrefindex+1) + B (Xdep).
     pub(super) fn read_xref_dependant_bit(
         &self,
         reader: &mut dyn IDwgStreamReader,
     ) -> Result<bool> {
-        let is_xref = reader.read_bit()?;
-        Ok(is_xref)
+        if self.sio.r2007_plus {
+            // R2007+: xrefindex BS — bit 0x100 indicates xref-dependent.
+            let xrefindex = reader.read_bit_short()?;
+            let is_xref = (xrefindex & 0x100) != 0;
+            Ok(is_xref)
+        } else {
+            // Pre-R2007: 64-flag (B) + xrefindex+1 (BS) + Xdep (B).
+            let _referenced = reader.read_bit()?; // 64-flag
+            let _xrefindex = reader.read_bit_short()?; // xref index + 1
+            let is_xref = reader.read_bit()?; // Xdep
+            Ok(is_xref)
+        }
     }
 
     // -----------------------------------------------------------------------

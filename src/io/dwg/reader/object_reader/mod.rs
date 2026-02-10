@@ -169,10 +169,25 @@ impl DwgObjectReader {
                 }
             };
 
+            // Enqueue all handle references from the template for further reading.
+            self.enqueue_template_handles(&template);
             self.templates.push(template);
         }
-
         Ok(())
+    }
+
+    /// Extract all handle references from a template and enqueue any
+    /// that haven't been seen yet.
+    fn enqueue_template_handles(&mut self, template: &CadTemplate) {
+        let handles = template.all_handles();
+        for h in handles {
+            if h != 0
+                && !self.read_objects.contains(&h)
+                && !self.existing_templates.contains(&h)
+            {
+                self.handles.push_back(h);
+            }
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -226,6 +241,7 @@ impl DwgObjectReader {
                 text_reader,
                 handles_reader,
                 merged: true,
+                has_separate_text_reader: true,
             });
         } else {
             // Pre-R2010: no separate handle/text streams yet (set up in updateHandleReader).
@@ -237,13 +253,15 @@ impl DwgObjectReader {
 
             // Handle reader is a clone (positioned later by updateHandleReader).
             let handles_reader = self.make_reader();
-            // Text reader is the same as the object reader for pre-R2007.
+            // Text reader is unused for pre-R2007 (text is inline in object data).
+            // For R2007, update_handle_reader will set up text_reader properly.
 
             streams = Some(StreamSet {
                 object_reader,
-                text_reader: self.make_reader(), // separate clone for safety
+                text_reader: self.make_reader(),
                 handles_reader,
                 merged: false,
+                has_separate_text_reader: false,
             });
         }
 
@@ -460,6 +478,7 @@ impl DwgObjectReader {
             let mut text_reader = self.make_reader();
             text_reader.set_position_by_flag(end_bits - 1)?;
             streams.text_reader = text_reader;
+            streams.has_separate_text_reader = true;
         }
 
         streams.merged = true;
@@ -483,6 +502,9 @@ pub struct StreamSet {
     pub handles_reader: Box<dyn IDwgStreamReader>,
     /// Whether this stream set is a merged multi-stream.
     pub merged: bool,
+    /// Whether the text reader is a separate stream (R2007+ only).
+    /// For pre-R2007, text is inline in the object data.
+    pub has_separate_text_reader: bool,
 }
 
 impl Default for StreamSet {
@@ -492,6 +514,7 @@ impl Default for StreamSet {
             text_reader: Box::new(get_stream_handler(DxfVersion::AC1015, Vec::new())),
             handles_reader: Box::new(get_stream_handler(DxfVersion::AC1015, Vec::new())),
             merged: false,
+            has_separate_text_reader: false,
         }
     }
 }
@@ -503,8 +526,16 @@ impl StreamSet {
     }
 
     /// Read variable text from the text sub-reader.
+    ///
+    /// For R2007+ when `has_separate_text_reader` is true, reads from the
+    /// dedicated text sub-stream. For pre-R2007, text is inline in the
+    /// object data — read from `object_reader`.
     pub fn read_text(&mut self) -> Result<String> {
-        self.text_reader.read_variable_text()
+        if self.has_separate_text_reader {
+            self.text_reader.read_variable_text()
+        } else {
+            self.object_reader.read_variable_text()
+        }
     }
 
     /// Read CmColor from the object reader.

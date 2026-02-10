@@ -25,15 +25,7 @@ impl DwgObjectReader {
         // BL: number of entries.
         let num_entries = streams.object_reader.read_bit_long()? as usize;
 
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
-
-        // Null handle (H).
-        let _null_handle = streams.handles_reader.handle_reference()?;
-
-        // Entry handles.
+        // Entry handles (soft owner).
         let mut table_data = CadTableTemplateData::default();
         for _ in 0..num_entries {
             let h = streams.handles_reader.handle_reference()?;
@@ -56,14 +48,6 @@ impl DwgObjectReader {
 
         // BL: number of entries.
         let num_entries = streams.object_reader.read_bit_long()? as usize;
-
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
-
-        // Null handle (H).
-        let _null_handle = streams.handles_reader.handle_reference()?;
 
         let mut table_data = CadTableTemplateData::default();
         for _ in 0..num_entries {
@@ -97,14 +81,8 @@ impl DwgObjectReader {
         // Name (TV).
         let _name = streams.read_text()?;
 
-        // 64-flag (B).
-        let _flag64 = streams.object_reader.read_bit()?;
-
-        // Xref + (BS).
-        let _xref_index = streams.object_reader.read_bit_short()?;
-
-        // Xref dependent (B).
-        let _xref_dep = streams.object_reader.read_bit()?;
+        // Xref dependent (B) — matches C# readXrefDependantBit.
+        let _xref_dep = self.read_xref_dependant_bit(&mut *streams.object_reader)?;
 
         // Anonymous (B).
         let _anonymous = streams.object_reader.read_bit()?;
@@ -113,18 +91,18 @@ impl DwgObjectReader {
         let _has_attr = streams.object_reader.read_bit()?;
 
         // Is xref (B).
-        let _is_xref = streams.object_reader.read_bit()?;
+        let is_xref = streams.object_reader.read_bit()?;
 
         // Is xref overlay (B).
-        let _is_xref_overlay = streams.object_reader.read_bit()?;
+        let is_xref_overlay = streams.object_reader.read_bit()?;
 
         // R2000+: load xref (B).
         if self.sio.r2000_plus {
             let _loaded = streams.object_reader.read_bit()?;
         }
 
-        // R2004+: owned object count (BL).
-        let owned_count = if self.sio.r2004_plus {
+        // R2004+: owned object count (BL) — only if NOT xref/overlay.
+        let owned_count = if self.sio.r2004_plus && !is_xref && !is_xref_overlay {
             streams.object_reader.read_bit_long()? as usize
         } else {
             0
@@ -136,66 +114,68 @@ impl DwgObjectReader {
         // Xref path name (TV).
         let _xref_path = streams.read_text()?;
 
-        // R2000+: insert count (skip reading until 0).
+        // R2000+: insert count, description, preview data.
+        let mut insert_count = 0usize;
         if self.sio.r2000_plus {
+            // Insert Count: a sequence of non-zero RC's followed by a terminating 0 RC.
             loop {
-                let insert_count = streams.object_reader.read_raw_char()?;
-                if insert_count == 0 {
+                let rc = streams.object_reader.read_raw_char()?;
+                if rc == 0 {
                     break;
                 }
+                insert_count += 1;
             }
-        }
 
-        // Description (TV).
-        let _description = streams.read_text()?;
+            // Block Description (TV).
+            let _description = streams.read_text()?;
 
-        // R2000+: preview data (BL + bytes).
-        if self.sio.r2000_plus {
+            // Size of preview data (BL) + bytes.
             let preview_size = streams.object_reader.read_bit_long()? as usize;
             if preview_size > 0 {
                 let _preview = streams.object_reader.read_bytes(preview_size)?;
             }
         }
 
-        // R2007+: insert units (BS), explodable (B), scale uniformly (B).
+        // R2007+: insert units (BS), explodable (B), block scaling (RC).
         if self.sio.r2007_plus {
             let _units = streams.object_reader.read_bit_short()?;
             let _explodable = streams.object_reader.read_bit()?;
-            let _scale_uniform = streams.object_reader.read_bit()?;
+            let _can_scale = streams.object_reader.read_raw_char()?;
         }
 
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
+        // --- Handle references (from handles_reader) ---
 
-        // Block control handle.
+        // Block control handle (NULL, hard pointer).
         let _block_ctrl = streams.handles_reader.handle_reference()?;
 
-        // Reactors handled by common data.
+        // Block entity handle (BeginBlock, hard owner).
+        block_data.block_entity_handle = streams.handles_reader.handle_reference()?;
 
-        // R2000+ entity handles (owned objects).
-        if self.sio.r2004_plus {
-            for _ in 0..owned_count {
-                let h = streams.handles_reader.handle_reference()?;
-                block_data.owned_object_handles.push(h);
-            }
-        } else {
+        // R13-R2000 (not xref): first and last entity handles.
+        if !self.sio.r2004_plus && !is_xref && !is_xref_overlay {
             block_data.first_entity_handle = streams.handles_reader.handle_reference()?;
             block_data.last_entity_handle = streams.handles_reader.handle_reference()?;
         }
 
-        // Block entity handle.
-        block_data.block_entity_handle = streams.handles_reader.handle_reference()?;
-
-        // R2000+:
-        if self.sio.r2000_plus {
-            // Layout handle (hard pointer).
-            block_data.layout_handle = streams.handles_reader.handle_reference()?;
+        // R2004+ (not xref): owned object handles.
+        if self.sio.r2004_plus && !is_xref && !is_xref_overlay {
+            for _ in 0..owned_count {
+                let h = streams.handles_reader.handle_reference()?;
+                block_data.owned_object_handles.push(h);
+            }
         }
 
-        // End block entity handle.
+        // End block entity handle (ENDBLK, hard owner).
         block_data.end_block_handle = streams.handles_reader.handle_reference()?;
+
+        // R2000+: insert handles + layout handle.
+        if self.sio.r2000_plus {
+            for _ in 0..insert_count {
+                let _insert = streams.handles_reader.handle_reference()?;
+            }
+            // Layout Handle (hard pointer).
+            block_data.layout_handle = streams.handles_reader.handle_reference()?;
+        }
 
         Ok(CadTemplate::BlockHeader {
             common: common_tmpl,
@@ -217,13 +197,7 @@ impl DwgObjectReader {
         // Name (TV).
         let _name = streams.read_text()?;
 
-        // 64-flag (B).
-        let _flag64 = streams.object_reader.read_bit()?;
-
-        // Xref + (BS).
-        let _xref_index = streams.object_reader.read_bit_short()?;
-
-        // Xref dependent (B).
+        // Xref dependent (B) — matches C# readXrefDependantBit.
         let _is_xref = self.read_xref_dependant_bit(&mut *streams.object_reader)?;
 
         // R13-R14: frozen (B), on (B), frozen-in-new (B), locked (B).
@@ -241,11 +215,6 @@ impl DwgObjectReader {
 
         // Color (CMC).
         let _color = streams.object_reader.read_cm_color()?;
-
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
 
         // Layer control handle (soft back pointer).
         let _layer_ctrl = streams.handles_reader.handle_reference()?;
@@ -289,13 +258,7 @@ impl DwgObjectReader {
         // Name (TV).
         let _name = streams.read_text()?;
 
-        // 64-flag (B).
-        let _flag64 = streams.object_reader.read_bit()?;
-
-        // Xref + (BS).
-        let _xref_index = streams.object_reader.read_bit_short()?;
-
-        // Xref dependent (B).
+        // Xref dependent (B) — matches C# readXrefDependantBit.
         let _is_xref = self.read_xref_dependant_bit(&mut *streams.object_reader)?;
 
         // Is vertical (B).
@@ -325,11 +288,6 @@ impl DwgObjectReader {
         // Big font file name (TV).
         let _big_font_file = streams.read_text()?;
 
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
-
         // Style control object handle.
         let _ctrl_handle = streams.handles_reader.handle_reference()?;
 
@@ -352,13 +310,7 @@ impl DwgObjectReader {
         // Name (TV).
         let _name = streams.read_text()?;
 
-        // 64-flag (B).
-        let _flag64 = streams.object_reader.read_bit()?;
-
-        // Xref + (BS).
-        let _xref_index = streams.object_reader.read_bit_short()?;
-
-        // Xref dependent (B).
+        // Xref dependent (B) — matches C# readXrefDependantBit.
         let _is_xref = self.read_xref_dependant_bit(&mut *streams.object_reader)?;
 
         // Description (TV).
@@ -415,11 +367,6 @@ impl DwgObjectReader {
             false
         };
 
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
-
         // LType control object handle.
         ltype_data.ltype_control_handle = streams.handles_reader.handle_reference()?;
 
@@ -449,13 +396,7 @@ impl DwgObjectReader {
         // Name (TV).
         let _name = streams.read_text()?;
 
-        // 64-flag (B).
-        let _flag64 = streams.object_reader.read_bit()?;
-
-        // Xref + (BS).
-        let _xref_index = streams.object_reader.read_bit_short()?;
-
-        // Xref dependent (B).
+        // Xref dependent (B) — matches C# readXrefDependantBit.
         let _is_xref = self.read_xref_dependant_bit(&mut *streams.object_reader)?;
 
         // View height (BD).
@@ -509,11 +450,6 @@ impl DwgObjectReader {
             let _cam = streams.object_reader.read_bit()?;
         }
 
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
-
         // View control object handle.
         let _ctrl_handle = streams.handles_reader.handle_reference()?;
 
@@ -541,13 +477,7 @@ impl DwgObjectReader {
         // Name (TV).
         let _name = streams.read_text()?;
 
-        // 64-flag (B).
-        let _flag64 = streams.object_reader.read_bit()?;
-
-        // Xref + (BS).
-        let _xref_index = streams.object_reader.read_bit_short()?;
-
-        // Xref dependent (B).
+        // Xref dependent (B) — matches C# readXrefDependantBit.
         let _is_xref = self.read_xref_dependant_bit(&mut *streams.object_reader)?;
 
         // Origin (3BD).
@@ -565,11 +495,6 @@ impl DwgObjectReader {
             let _ortho_type = streams.object_reader.read_bit_short()?;
             // Ortho origin array (BC count + 3BD each).
             // Actually: BS ortho_view_type first, then origin
-        }
-
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
         }
 
         // UCS control object handle.
@@ -594,13 +519,7 @@ impl DwgObjectReader {
         // Name (TV).
         let _name = streams.read_text()?;
 
-        // 64-flag (B).
-        let _flag64 = streams.object_reader.read_bit()?;
-
-        // Xref + (BS).
-        let _xref_index = streams.object_reader.read_bit_short()?;
-
-        // Xref dependent (B).
+        // Xref dependent (B) — matches C# readXrefDependantBit.
         let _is_xref = self.read_xref_dependant_bit(&mut *streams.object_reader)?;
 
         // View height (BD).
@@ -695,11 +614,6 @@ impl DwgObjectReader {
             let _grid_major = streams.object_reader.read_bit_short()?;
         }
 
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
-
         // VPort control object handle.
         vport_data.vport_control_handle = streams.handles_reader.handle_reference()?;
 
@@ -734,22 +648,11 @@ impl DwgObjectReader {
         // Name (TV).
         let _name = streams.read_text()?;
 
-        // 64-flag (B).
-        let _flag64 = streams.object_reader.read_bit()?;
-
-        // Xref + (BS).
-        let _xref_index = streams.object_reader.read_bit_short()?;
-
-        // Xref dependent (B).
+        // Xref dependent (B) — matches C# readXrefDependantBit.
         let _is_xref = self.read_xref_dependant_bit(&mut *streams.object_reader)?;
 
         // Unknown (RC).
         let _unknown = streams.object_reader.read_raw_char()?;
-
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
 
         // AppId control object handle.
         let _ctrl_handle = streams.handles_reader.handle_reference()?;
@@ -773,13 +676,7 @@ impl DwgObjectReader {
         // Name (TV).
         let _name = streams.read_text()?;
 
-        // 64-flag (B).
-        let _flag64 = streams.object_reader.read_bit()?;
-
-        // Xref + (BS).
-        let _xref_index = streams.object_reader.read_bit_short()?;
-
-        // Xref dependent (B).
+        // Xref dependent (B) — matches C# readXrefDependantBit.
         let _is_xref = self.read_xref_dependant_bit(&mut *streams.object_reader)?;
 
         // All the dimension style variables (R13-R14 layout).
@@ -935,11 +832,6 @@ impl DwgObjectReader {
             }
         }
 
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
-
         // DimStyle control object handle.
         let _ctrl_handle = streams.handles_reader.handle_reference()?;
 
@@ -977,22 +869,11 @@ impl DwgObjectReader {
     ) -> Result<CadTemplate> {
         let common_tmpl = self.read_common_non_entity_data(streams)?;
 
-        // 64-flag (B).
-        let _flag64 = streams.object_reader.read_bit()?;
-
-        // Xref + (BS).
-        let _xref_index = streams.object_reader.read_bit_short()?;
-
-        // Xref dependent (B).
+        // Xref dependent (B) — matches C# readXrefDependantBit.
         let _is_xref = self.read_xref_dependant_bit(&mut *streams.object_reader)?;
 
         // 1-flag (B) — read as bit.
         let _flag1 = streams.object_reader.read_bit()?;
-
-        // Update handles.
-        if !self.sio.r2004_plus {
-            self.update_handle_reader(streams)?;
-        }
 
         // VP_ENT_HDR control object handle.
         let _ctrl_handle = streams.handles_reader.handle_reference()?;

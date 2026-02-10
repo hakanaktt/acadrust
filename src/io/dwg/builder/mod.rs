@@ -459,9 +459,19 @@ impl DwgDocumentBuilder {
     // ------------------------------------------------------------------
 
     fn build_object_templates(&mut self) {
-        // Entities owned by block records were already consumed in Phase 4.
-        // Remaining templates are non-graphical objects (layouts, groups, etc.)
-        // which will be fully built when the object model is extended.
+        // Populate document.entities from block record entities.
+        // In the DWG format, entities are owned by block records (typically
+        // *Model_Space and *Paper_Space). We need to mirror them into the
+        // flat document.entities collection as well.
+        let mut entities_to_add: Vec<EntityType> = Vec::new();
+        for record in self.document.block_records.iter() {
+            for entity in &record.entities {
+                entities_to_add.push(entity.clone());
+            }
+        }
+        for entity in entities_to_add {
+            let _ = self.document.add_entity(entity);
+        }
     }
 
     // ------------------------------------------------------------------
