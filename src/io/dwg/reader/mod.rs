@@ -23,6 +23,7 @@ pub mod app_info_reader;
 pub mod classes_reader;
 pub mod handle_reader;
 pub mod header_reader;
+pub mod object_reader;
 pub mod preview_reader;
 pub mod summary_info_reader;
 
