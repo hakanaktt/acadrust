@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 
 use crate::entities::EntityType;
+use crate::types::{Color, Vector2, Vector3};
 use crate::xdata::XDataValue;
 
 // ---------------------------------------------------------------------------
@@ -227,6 +228,13 @@ pub struct CadBlockRecordTemplateData {
 /// Template for LAYER table entry.
 #[derive(Debug, Clone, Default)]
 pub struct CadLayerTemplateData {
+    pub name: String,
+    pub color: Color,
+    pub is_on: bool,
+    pub frozen: bool,
+    pub locked: bool,
+    pub is_plottable: bool,
+    pub line_weight_raw: u8,
     pub linetype_handle: u64,
     pub plotstyle_handle: u64,
     pub material_handle: u64,
@@ -235,6 +243,10 @@ pub struct CadLayerTemplateData {
 /// Template for LTYPE table entry.
 #[derive(Debug, Clone, Default)]
 pub struct CadLineTypeTemplateData {
+    pub name: String,
+    pub description: String,
+    pub alignment: u8,
+    pub dash_lengths: Vec<f64>,
     pub ltype_control_handle: u64,
     pub total_len: f64,
     pub segment_handles: Vec<u64>,
@@ -246,9 +258,43 @@ pub struct CadLineTypeSegmentTemplateData {
     pub style_handle: u64,
 }
 
+/// Template for TEXT_STYLE table entry.
+#[derive(Debug, Clone, Default)]
+pub struct CadTextStyleTemplateData {
+    pub name: String,
+    pub height: f64,
+    pub width_factor: f64,
+    pub oblique_angle: f64,
+    pub gen_flags: u8,
+    pub font_file: String,
+    pub big_font_file: String,
+    pub is_vertical: bool,
+    pub is_shape_file: bool,
+    pub last_height: f64,
+    pub style_control_handle: u64,
+}
+
+/// Template for APPID table entry.
+#[derive(Debug, Clone, Default)]
+pub struct CadAppIdTemplateData {
+    pub name: String,
+    pub appid_control_handle: u64,
+}
+
+/// Template for UCS table entry.
+#[derive(Debug, Clone, Default)]
+pub struct CadUcsTemplateData {
+    pub name: String,
+    pub origin: Vector3,
+    pub x_dir: Vector3,
+    pub y_dir: Vector3,
+    pub ucs_control_handle: u64,
+}
+
 /// Template for DIMSTYLE table entry.
 #[derive(Debug, Clone, Default)]
 pub struct CadDimStyleTemplateData {
+    pub name: String,
     pub dimtxsty_handle: u64,
     pub dimldrblk_handle: u64,
     pub dimblk_handle: u64,
@@ -265,6 +311,16 @@ pub struct CadDimStyleTemplateData {
 /// Template for VIEW table entry.
 #[derive(Debug, Clone, Default)]
 pub struct CadViewTemplateData {
+    pub name: String,
+    pub height: f64,
+    pub width: f64,
+    pub center: Vector2,
+    pub target: Vector3,
+    pub direction: Vector3,
+    pub twist_angle: f64,
+    pub lens_length: f64,
+    pub front_clip: f64,
+    pub back_clip: f64,
     pub ucs_handle: u64,
     pub named_ucs_handle: u64,
 }
@@ -272,6 +328,7 @@ pub struct CadViewTemplateData {
 /// Template for VPORT table entry.
 #[derive(Debug, Clone, Default)]
 pub struct CadVPortTemplateData {
+    pub name: String,
     pub vport_control_handle: u64,
     pub background_handle: u64,
     pub style_handle: u64,
@@ -499,7 +556,19 @@ pub enum CadTemplate {
         common: CadTemplateCommon,
         vport_data: CadVPortTemplateData,
     },
-    /// Generic table entry (AppId, TextStyle, UCS, etc.)
+    TextStyleEntry {
+        common: CadTemplateCommon,
+        textstyle_data: CadTextStyleTemplateData,
+    },
+    AppIdEntry {
+        common: CadTemplateCommon,
+        appid_data: CadAppIdTemplateData,
+    },
+    UcsEntry {
+        common: CadTemplateCommon,
+        ucs_data: CadUcsTemplateData,
+    },
+    /// Generic table entry (VP_ENT_HDR, etc.)
     GenericTableEntry {
         common: CadTemplateCommon,
     },
@@ -580,6 +649,9 @@ impl CadTemplate {
             | CadTemplate::DimStyleEntry { common, .. }
             | CadTemplate::ViewEntry { common, .. }
             | CadTemplate::VPortEntry { common, .. }
+            | CadTemplate::TextStyleEntry { common, .. }
+            | CadTemplate::AppIdEntry { common, .. }
+            | CadTemplate::UcsEntry { common, .. }
             | CadTemplate::GenericTableEntry { common, .. }
             | CadTemplate::DictionaryObj { common, .. }
             | CadTemplate::DictWithDefault { common, .. }
@@ -730,6 +802,15 @@ impl CadTemplate {
                 handles.push(mls_style_data.arrowhead_handle);
                 handles.push(mls_style_data.mtext_style_handle);
                 handles.push(mls_style_data.block_content_handle);
+            }
+            CadTemplate::TextStyleEntry { textstyle_data, .. } => {
+                handles.push(textstyle_data.style_control_handle);
+            }
+            CadTemplate::AppIdEntry { appid_data, .. } => {
+                handles.push(appid_data.appid_control_handle);
+            }
+            CadTemplate::UcsEntry { ucs_data, .. } => {
+                handles.push(ucs_data.ucs_control_handle);
             }
             _ => {}
         }

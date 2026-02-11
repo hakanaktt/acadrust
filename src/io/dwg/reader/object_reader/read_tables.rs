@@ -28,7 +28,7 @@ impl DwgObjectReader {
         // Entry handles (soft owner).
         let mut table_data = CadTableTemplateData::default();
         for _ in 0..num_entries {
-            let h = streams.handles_reader.handle_reference()?;
+            let h = streams.handle_ref()?;
             table_data.entry_handles.push(h);
         }
 
@@ -51,14 +51,14 @@ impl DwgObjectReader {
 
         let mut table_data = CadTableTemplateData::default();
         for _ in 0..num_entries {
-            let h = streams.handles_reader.handle_reference()?;
+            let h = streams.handle_ref()?;
             table_data.entry_handles.push(h);
         }
 
         // ByLayer handle.
-        let _bylayer = streams.handles_reader.handle_reference()?;
+        let _bylayer = streams.handle_ref()?;
         // ByBlock handle.
-        let _byblock = streams.handles_reader.handle_reference()?;
+        let _byblock = streams.handle_ref()?;
 
         Ok(CadTemplate::TableControl {
             common: common_tmpl,
@@ -146,35 +146,35 @@ impl DwgObjectReader {
         // --- Handle references (from handles_reader) ---
 
         // Block control handle (NULL, hard pointer).
-        let _block_ctrl = streams.handles_reader.handle_reference()?;
+        let _block_ctrl = streams.handle_ref()?;
 
         // Block entity handle (BeginBlock, hard owner).
-        block_data.block_entity_handle = streams.handles_reader.handle_reference()?;
+        block_data.block_entity_handle = streams.handle_ref()?;
 
         // R13-R2000 (not xref): first and last entity handles.
         if !self.sio.r2004_plus && !is_xref && !is_xref_overlay {
-            block_data.first_entity_handle = streams.handles_reader.handle_reference()?;
-            block_data.last_entity_handle = streams.handles_reader.handle_reference()?;
+            block_data.first_entity_handle = streams.handle_ref()?;
+            block_data.last_entity_handle = streams.handle_ref()?;
         }
 
         // R2004+ (not xref): owned object handles.
         if self.sio.r2004_plus && !is_xref && !is_xref_overlay {
             for _ in 0..owned_count {
-                let h = streams.handles_reader.handle_reference()?;
+                let h = streams.handle_ref()?;
                 block_data.owned_object_handles.push(h);
             }
         }
 
         // End block entity handle (ENDBLK, hard owner).
-        block_data.end_block_handle = streams.handles_reader.handle_reference()?;
+        block_data.end_block_handle = streams.handle_ref()?;
 
         // R2000+: insert handles + layout handle.
         if self.sio.r2000_plus {
             for _ in 0..insert_count {
-                let _insert = streams.handles_reader.handle_reference()?;
+                let _insert = streams.handle_ref()?;
             }
             // Layout Handle (hard pointer).
-            block_data.layout_handle = streams.handles_reader.handle_reference()?;
+            block_data.layout_handle = streams.handle_ref()?;
         }
 
         Ok(CadTemplate::BlockHeader {
@@ -195,49 +195,51 @@ impl DwgObjectReader {
         let mut layer_data = CadLayerTemplateData::default();
 
         // Name (TV).
-        let _name = streams.read_text()?;
+        layer_data.name = streams.read_text()?;
 
         // Xref dependent (B) — matches C# readXrefDependantBit.
         let _is_xref = self.read_xref_dependant_bit(&mut *streams.object_reader)?;
 
         // R13-R14: frozen (B), on (B), frozen-in-new (B), locked (B).
         if self.sio.r13_14_only {
-            let _frozen = streams.object_reader.read_bit()?;
-            let _on = streams.object_reader.read_bit()?;
+            layer_data.frozen = streams.object_reader.read_bit()?;
+            layer_data.is_on = streams.object_reader.read_bit()?;
             let _frozen_new = streams.object_reader.read_bit()?;
-            let _locked = streams.object_reader.read_bit()?;
+            layer_data.locked = streams.object_reader.read_bit()?;
+            layer_data.is_plottable = true; // default for R13-R14
         }
 
-        // R2000+: Values (BS) containing layer flags + color index.
+        // R2000+: Values (BS) containing layer flags + color + lineweight.
         if self.sio.r2000_plus {
-            let _values = streams.object_reader.read_bit_short()?;
+            let values = streams.object_reader.read_bit_short()?;
+            layer_data.frozen = (values & 0x01) != 0;
+            layer_data.is_on = (values & 0x02) == 0; // bit 1 set = off
+            // bit 2 = frozen in new VP (not stored separately)
+            layer_data.locked = (values & 0x08) != 0;
+            layer_data.is_plottable = (values & 0x10) != 0;
+            layer_data.line_weight_raw = ((values & 0x3E0) >> 5) as u8;
         }
 
         // Color (CMC).
-        let _color = streams.object_reader.read_cm_color()?;
+        layer_data.color = streams.object_reader.read_cm_color()?;
 
-        // Layer control handle (soft back pointer).
-        let _layer_ctrl = streams.handles_reader.handle_reference()?;
-
-        // Reactors handled by common data.
-
-        // Xdict handled by common data.
-
-        // Xref handle.
-        let _xref_handle = streams.handles_reader.handle_reference()?;
+        // External reference block handle (hard pointer).
+        // (Misnamed as "layer control handle" in some references; this is
+        //  actually the xref block handle per ACadSharp/ODA spec.)
+        let _xref_block = streams.handle_ref()?;
 
         // R2000+: plotstyle handle.
         if self.sio.r2000_plus {
-            layer_data.plotstyle_handle = streams.handles_reader.handle_reference()?;
+            layer_data.plotstyle_handle = streams.handle_ref()?;
         }
 
         // R2007+: material handle.
         if self.sio.r2007_plus {
-            layer_data.material_handle = streams.handles_reader.handle_reference()?;
+            layer_data.material_handle = streams.handle_ref()?;
         }
 
         // Linetype handle.
-        layer_data.linetype_handle = streams.handles_reader.handle_reference()?;
+        layer_data.linetype_handle = streams.handle_ref()?;
 
         Ok(CadTemplate::LayerEntry {
             common: common_tmpl,
@@ -254,45 +256,47 @@ impl DwgObjectReader {
         streams: &mut StreamSet,
     ) -> Result<CadTemplate> {
         let common_tmpl = self.read_common_non_entity_data(streams)?;
+        let mut ts_data = CadTextStyleTemplateData::default();
 
         // Name (TV).
-        let _name = streams.read_text()?;
+        ts_data.name = streams.read_text()?;
 
         // Xref dependent (B) — matches C# readXrefDependantBit.
         let _is_xref = self.read_xref_dependant_bit(&mut *streams.object_reader)?;
 
         // Is vertical (B).
-        let _is_vertical = streams.object_reader.read_bit()?;
+        ts_data.is_vertical = streams.object_reader.read_bit()?;
 
         // Is shape file (B).
-        let _is_shape_file = streams.object_reader.read_bit()?;
+        ts_data.is_shape_file = streams.object_reader.read_bit()?;
 
         // Fixed height (BD).
-        let _height = streams.object_reader.read_bit_double()?;
+        ts_data.height = streams.object_reader.read_bit_double()?;
 
         // Width factor (BD).
-        let _width_factor = streams.object_reader.read_bit_double()?;
+        ts_data.width_factor = streams.object_reader.read_bit_double()?;
 
         // Oblique angle (BD).
-        let _oblique_angle = streams.object_reader.read_bit_double()?;
+        ts_data.oblique_angle = streams.object_reader.read_bit_double()?;
 
         // Generation flags (RC).
-        let _gen_flags = streams.object_reader.read_raw_char()?;
+        ts_data.gen_flags = streams.object_reader.read_raw_char()?;
 
         // Last height used (BD).
-        let _last_height = streams.object_reader.read_bit_double()?;
+        ts_data.last_height = streams.object_reader.read_bit_double()?;
 
         // Font file name (TV).
-        let _font_file = streams.read_text()?;
+        ts_data.font_file = streams.read_text()?;
 
         // Big font file name (TV).
-        let _big_font_file = streams.read_text()?;
+        ts_data.big_font_file = streams.read_text()?;
 
         // Style control object handle.
-        let _ctrl_handle = streams.handles_reader.handle_reference()?;
+        ts_data.style_control_handle = streams.handle_ref()?;
 
-        Ok(CadTemplate::GenericTableEntry {
+        Ok(CadTemplate::TextStyleEntry {
             common: common_tmpl,
+            textstyle_data: ts_data,
         })
     }
 
@@ -308,26 +312,27 @@ impl DwgObjectReader {
         let mut ltype_data = CadLineTypeTemplateData::default();
 
         // Name (TV).
-        let _name = streams.read_text()?;
+        ltype_data.name = streams.read_text()?;
 
         // Xref dependent (B) — matches C# readXrefDependantBit.
         let _is_xref = self.read_xref_dependant_bit(&mut *streams.object_reader)?;
 
         // Description (TV).
-        let _description = streams.read_text()?;
+        ltype_data.description = streams.read_text()?;
 
         // Pattern length (BD).
         ltype_data.total_len = streams.object_reader.read_bit_double()?;
 
         // Alignment (RC).
-        let _alignment = streams.object_reader.read_raw_char()?;
+        ltype_data.alignment = streams.object_reader.read_raw_char()?;
 
         // Number of dashes (RC).
         let num_dashes = streams.object_reader.read_raw_char()? as usize;
 
         for _i in 0..num_dashes {
             // Dash length (BD).
-            let _dash_length = streams.object_reader.read_bit_double()?;
+            let dash_length = streams.object_reader.read_bit_double()?;
+            ltype_data.dash_lengths.push(dash_length);
 
             // Complex shape code (BS).
             let shape_code = streams.object_reader.read_bit_short()?;
@@ -368,11 +373,11 @@ impl DwgObjectReader {
         };
 
         // LType control object handle.
-        ltype_data.ltype_control_handle = streams.handles_reader.handle_reference()?;
+        ltype_data.ltype_control_handle = streams.handle_ref()?;
 
         // Segment handles (shape file refs).
         for _ in 0..num_dashes {
-            let h = streams.handles_reader.handle_reference()?;
+            let h = streams.handle_ref()?;
             ltype_data.segment_handles.push(h);
         }
 
@@ -394,37 +399,38 @@ impl DwgObjectReader {
         let mut view_data = CadViewTemplateData::default();
 
         // Name (TV).
-        let _name = streams.read_text()?;
+        view_data.name = streams.read_text()?;
 
         // Xref dependent (B) — matches C# readXrefDependantBit.
         let _is_xref = self.read_xref_dependant_bit(&mut *streams.object_reader)?;
 
         // View height (BD).
-        let _height = streams.object_reader.read_bit_double()?;
+        view_data.height = streams.object_reader.read_bit_double()?;
 
         // View width (BD).
-        let _width = streams.object_reader.read_bit_double()?;
+        view_data.width = streams.object_reader.read_bit_double()?;
 
         // View center (2RD).
-        let _center = streams.object_reader.read_2raw_double()?;
+        let center = streams.object_reader.read_2raw_double()?;
+        view_data.center = center;
 
         // View target (3BD).
-        let _target = streams.object_reader.read_3bit_double()?;
+        view_data.target = streams.object_reader.read_3bit_double()?;
 
         // View direction (3BD).
-        let _direction = streams.object_reader.read_3bit_double()?;
+        view_data.direction = streams.object_reader.read_3bit_double()?;
 
         // Twist angle (BD).
-        let _twist = streams.object_reader.read_bit_double()?;
+        view_data.twist_angle = streams.object_reader.read_bit_double()?;
 
         // Lens length (BD).
-        let _lens = streams.object_reader.read_bit_double()?;
+        view_data.lens_length = streams.object_reader.read_bit_double()?;
 
         // Front clip (BD).
-        let _front = streams.object_reader.read_bit_double()?;
+        view_data.front_clip = streams.object_reader.read_bit_double()?;
 
         // Back clip (BD).
-        let _back = streams.object_reader.read_bit_double()?;
+        view_data.back_clip = streams.object_reader.read_bit_double()?;
 
         // UCSFOLLOW (B).
         let _ufi = streams.object_reader.read_bit()?;
@@ -434,10 +440,11 @@ impl DwgObjectReader {
         let _back_on = streams.object_reader.read_bit()?;
 
         // Render mode / UCS at Origin (R2000+).
+        let mut associated_ucs = false;
         if self.sio.r2000_plus {
             let _render_mode = streams.object_reader.read_raw_char()?;
-            let _associated_ucs = streams.object_reader.read_bit()?;
-            // UCS info.
+            associated_ucs = streams.object_reader.read_bit()?;
+            // UCS info (always present when R2000+, regardless of associated flag).
             let _ucs_origin = streams.object_reader.read_3bit_double()?;
             let _ucs_x = streams.object_reader.read_3bit_double()?;
             let _ucs_y = streams.object_reader.read_3bit_double()?;
@@ -445,17 +452,30 @@ impl DwgObjectReader {
             let _ucs_ortho = streams.object_reader.read_bit_short()?;
         }
 
+        // View control object handle (external reference block handle).
+        let _ctrl_handle = streams.handle_ref()?;
+
         if self.sio.r2007_plus {
-            // Camera plottable (B).
+            // Camera plottable (B) — read from object_reader, after ctrl handle.
             let _cam = streams.object_reader.read_bit()?;
+            // Background handle (H 332 soft pointer).
+            let _background = streams.handle_ref()?;
+            // Visual style handle (H 348 hard pointer).
+            let _visual_style = streams.handle_ref()?;
+            // Sun handle (H 361 hard owner).
+            let _sun = streams.handle_ref()?;
         }
 
-        // View control object handle.
-        let _ctrl_handle = streams.handles_reader.handle_reference()?;
+        if self.sio.r2000_plus && associated_ucs {
+            // UCS handle (H 346).
+            view_data.ucs_handle = streams.handle_ref()?;
+            // Named UCS handle (H 345).
+            let _named_ucs = streams.handle_ref()?;
+        }
 
-        if self.sio.r2000_plus {
-            // UCS handle if associated.
-            view_data.ucs_handle = streams.handles_reader.handle_reference()?;
+        if self.sio.r2007_plus {
+            // Live section handle (H 334 soft pointer).
+            let _live_section = streams.handle_ref()?;
         }
 
         Ok(CadTemplate::ViewEntry {
@@ -473,21 +493,22 @@ impl DwgObjectReader {
         streams: &mut StreamSet,
     ) -> Result<CadTemplate> {
         let common_tmpl = self.read_common_non_entity_data(streams)?;
+        let mut ucs_data = CadUcsTemplateData::default();
 
         // Name (TV).
-        let _name = streams.read_text()?;
+        ucs_data.name = streams.read_text()?;
 
         // Xref dependent (B) — matches C# readXrefDependantBit.
         let _is_xref = self.read_xref_dependant_bit(&mut *streams.object_reader)?;
 
         // Origin (3BD).
-        let _origin = streams.object_reader.read_3bit_double()?;
+        ucs_data.origin = streams.object_reader.read_3bit_double()?;
 
         // X direction (3BD).
-        let _x_dir = streams.object_reader.read_3bit_double()?;
+        ucs_data.x_dir = streams.object_reader.read_3bit_double()?;
 
         // Y direction (3BD).
-        let _y_dir = streams.object_reader.read_3bit_double()?;
+        ucs_data.y_dir = streams.object_reader.read_3bit_double()?;
 
         // R2000+: elevation, ortho type, num ortho origins.
         if self.sio.r2000_plus {
@@ -497,11 +518,18 @@ impl DwgObjectReader {
             // Actually: BS ortho_view_type first, then origin
         }
 
-        // UCS control object handle.
-        let _ctrl_handle = streams.handles_reader.handle_reference()?;
+        // UCS control object handle (external reference block handle).
+        ucs_data.ucs_control_handle = streams.handle_ref()?;
 
-        Ok(CadTemplate::GenericTableEntry {
+        // R2000+: Base UCS handle, Named UCS handle.
+        if self.sio.r2000_plus {
+            let _base_ucs = streams.handle_ref()?;
+            let _named_ucs = streams.handle_ref()?;
+        }
+
+        Ok(CadTemplate::UcsEntry {
             common: common_tmpl,
+            ucs_data,
         })
     }
 
@@ -517,7 +545,7 @@ impl DwgObjectReader {
         let mut vport_data = CadVPortTemplateData::default();
 
         // Name (TV).
-        let _name = streams.read_text()?;
+        vport_data.name = streams.read_text()?;
 
         // Xref dependent (B) — matches C# readXrefDependantBit.
         let _is_xref = self.read_xref_dependant_bit(&mut *streams.object_reader)?;
@@ -615,18 +643,18 @@ impl DwgObjectReader {
         }
 
         // VPort control object handle.
-        vport_data.vport_control_handle = streams.handles_reader.handle_reference()?;
+        vport_data.vport_control_handle = streams.handle_ref()?;
 
         // R2007+: background, visual style, sun handles.
         if self.sio.r2007_plus {
-            vport_data.background_handle = streams.handles_reader.handle_reference()?;
-            vport_data.style_handle = streams.handles_reader.handle_reference()?;
-            vport_data.sun_handle = streams.handles_reader.handle_reference()?;
+            vport_data.background_handle = streams.handle_ref()?;
+            vport_data.style_handle = streams.handle_ref()?;
+            vport_data.sun_handle = streams.handle_ref()?;
         }
 
         if self.sio.r2000_plus {
-            vport_data.named_ucs_handle = streams.handles_reader.handle_reference()?;
-            vport_data.base_ucs_handle = streams.handles_reader.handle_reference()?;
+            vport_data.named_ucs_handle = streams.handle_ref()?;
+            vport_data.base_ucs_handle = streams.handle_ref()?;
         }
 
         Ok(CadTemplate::VPortEntry {
@@ -644,9 +672,10 @@ impl DwgObjectReader {
         streams: &mut StreamSet,
     ) -> Result<CadTemplate> {
         let common_tmpl = self.read_common_non_entity_data(streams)?;
+        let mut appid_data = CadAppIdTemplateData::default();
 
         // Name (TV).
-        let _name = streams.read_text()?;
+        appid_data.name = streams.read_text()?;
 
         // Xref dependent (B) — matches C# readXrefDependantBit.
         let _is_xref = self.read_xref_dependant_bit(&mut *streams.object_reader)?;
@@ -655,10 +684,11 @@ impl DwgObjectReader {
         let _unknown = streams.object_reader.read_raw_char()?;
 
         // AppId control object handle.
-        let _ctrl_handle = streams.handles_reader.handle_reference()?;
+        appid_data.appid_control_handle = streams.handle_ref()?;
 
-        Ok(CadTemplate::GenericTableEntry {
+        Ok(CadTemplate::AppIdEntry {
             common: common_tmpl,
+            appid_data,
         })
     }
 
@@ -674,7 +704,7 @@ impl DwgObjectReader {
         let mut dimstyle_data = CadDimStyleTemplateData::default();
 
         // Name (TV).
-        let _name = streams.read_text()?;
+        dimstyle_data.name = streams.read_text()?;
 
         // Xref dependent (B) — matches C# readXrefDependantBit.
         let _is_xref = self.read_xref_dependant_bit(&mut *streams.object_reader)?;
@@ -833,24 +863,26 @@ impl DwgObjectReader {
         }
 
         // DimStyle control object handle.
-        let _ctrl_handle = streams.handles_reader.handle_reference()?;
+        let _ctrl_handle = streams.handle_ref()?;
 
         // R13-R14: block name handles resolved from dimblk_name/dimblk1_name/dimblk2_name.
 
-        // R2000+: Handle references for various sub-objects.
+        // Common: DIMTXSTY (340) text style handle.
+        dimstyle_data.dimtxsty_handle = streams.handle_ref()?;
+
+        // R2000+: Handle references for block sub-objects.
         if self.sio.r2000_plus {
-            dimstyle_data.dimtxsty_handle = streams.handles_reader.handle_reference()?;
-            dimstyle_data.dimldrblk_handle = streams.handles_reader.handle_reference()?;
-            dimstyle_data.dimblk_handle = streams.handles_reader.handle_reference()?;
-            dimstyle_data.dimblk1_handle = streams.handles_reader.handle_reference()?;
-            dimstyle_data.dimblk2_handle = streams.handles_reader.handle_reference()?;
+            dimstyle_data.dimldrblk_handle = streams.handle_ref()?;
+            dimstyle_data.dimblk_handle = streams.handle_ref()?;
+            dimstyle_data.dimblk1_handle = streams.handle_ref()?;
+            dimstyle_data.dimblk2_handle = streams.handle_ref()?;
         }
 
         // R2007+: dimline type handles.
         if self.sio.r2007_plus {
-            dimstyle_data.dimltype_handle = streams.handles_reader.handle_reference()?;
-            dimstyle_data.dimltex1_handle = streams.handles_reader.handle_reference()?;
-            dimstyle_data.dimltex2_handle = streams.handles_reader.handle_reference()?;
+            dimstyle_data.dimltype_handle = streams.handle_ref()?;
+            dimstyle_data.dimltex1_handle = streams.handle_ref()?;
+            dimstyle_data.dimltex2_handle = streams.handle_ref()?;
         }
 
         Ok(CadTemplate::DimStyleEntry {
@@ -876,11 +908,11 @@ impl DwgObjectReader {
         let _flag1 = streams.object_reader.read_bit()?;
 
         // VP_ENT_HDR control object handle.
-        let _ctrl_handle = streams.handles_reader.handle_reference()?;
+        let _ctrl_handle = streams.handle_ref()?;
 
         // Viewport entity handle.
         let _vp_entity = if !self.sio.r2004_plus {
-            streams.handles_reader.handle_reference()?
+            streams.handle_ref()?
         } else {
             0
         };

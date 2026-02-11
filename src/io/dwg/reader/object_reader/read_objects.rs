@@ -33,7 +33,7 @@ impl DwgObjectReader {
         let dict_data = self.read_common_dictionary_data(streams)?;
 
         // Default entry handle (H — hard pointer).
-        let default_handle = streams.handles_reader.handle_reference()?;
+        let default_handle = streams.handle_ref()?;
 
         Ok(CadTemplate::DictWithDefault {
             common: common_tmpl,
@@ -68,7 +68,7 @@ impl DwgObjectReader {
 
         for _ in 0..num_entries {
             let name = streams.read_text()?;
-            let handle = streams.handles_reader.handle_reference()?;
+            let handle = streams.handle_ref()?;
             if handle != 0 && !name.is_empty() {
                 data.entries.push((name, handle));
             }
@@ -124,7 +124,7 @@ impl DwgObjectReader {
 
         // Entity handles.
         for _ in 0..num_handles {
-            let h = streams.handles_reader.handle_reference()?;
+            let h = streams.handle_ref()?;
             group_data.entity_handles.push(h);
         }
 
@@ -175,7 +175,7 @@ impl DwgObjectReader {
 
             // R2018+: linetype handle (H — hard pointer).
             if self.sio.r2018_plus {
-                let h = streams.handles_reader.handle_reference()?;
+                let h = streams.handle_ref()?;
                 style_data.element_linetype_handles.push(h);
             } else {
                 // BS: linetype index (pre-R2018).
@@ -252,21 +252,21 @@ impl DwgObjectReader {
 
         // Handles.
         // Paper space block handle (soft pointer).
-        layout_data.block_record_handle = streams.handles_reader.handle_reference()?;
+        layout_data.block_record_handle = streams.handle_ref()?;
 
         // Active viewport handle (soft pointer).
-        layout_data.viewport_handle = streams.handles_reader.handle_reference()?;
+        layout_data.viewport_handle = streams.handle_ref()?;
 
         // Base UCS handle (hard pointer).
-        layout_data.base_ucs_handle = streams.handles_reader.handle_reference()?;
+        layout_data.base_ucs_handle = streams.handle_ref()?;
 
         // Named UCS handle (hard pointer).
-        layout_data.named_ucs_handle = streams.handles_reader.handle_reference()?;
+        layout_data.named_ucs_handle = streams.handle_ref()?;
 
         // R2004+: viewport handles.
         if self.sio.r2004_plus {
             for _ in 0..num_viewports {
-                let _h = streams.handles_reader.handle_reference()?;
+                let _h = streams.handle_ref()?;
                 // viewport handles not stored individually in template
             }
         }
@@ -374,12 +374,12 @@ impl DwgObjectReader {
             let _shade_dpi = streams.object_reader.read_bit_short()?;
 
             // H: plot view handle (hard pointer) — discarded.
-            let _plot_view = streams.handles_reader.handle_reference()?;
+            let _plot_view = streams.handle_ref()?;
         }
 
         // R2007+: visual style handle (soft pointer) — discarded.
         if self.sio.r2007_plus {
-            let _visual_style = streams.handles_reader.handle_reference()?;
+            let _visual_style = streams.handle_ref()?;
         }
 
         Ok(())
@@ -542,7 +542,7 @@ impl DwgObjectReader {
         let mut sort_data = CadSortEntsTableTemplateData::default();
 
         // Block owner handle (soft pointer).
-        sort_data.block_owner_handle = streams.handles_reader.handle_reference()?;
+        sort_data.block_owner_handle = streams.handle_ref()?;
 
         // BL: number of entries.
         let num_entries = streams.object_reader.read_bit_long()? as usize;
@@ -550,7 +550,7 @@ impl DwgObjectReader {
         // Read entries: sort handle (from object stream) + entity handle (from handle stream).
         for _ in 0..num_entries {
             let sort_handle = streams.object_reader.handle_reference()?;
-            let entity_handle = streams.handles_reader.handle_reference()?;
+            let entity_handle = streams.handle_ref()?;
             sort_data.sort_handle_pairs.push((sort_handle, entity_handle));
         }
 
@@ -659,7 +659,7 @@ impl DwgObjectReader {
         let _line_color = streams.object_reader.read_cm_color()?;
 
         // H: leader line type handle (hard pointer).
-        mleader_data.leader_line_type_handle = streams.handles_reader.handle_reference()?;
+        mleader_data.leader_line_type_handle = streams.handle_ref()?;
 
         // BL: leader line weight.
         let _line_weight = streams.object_reader.read_bit_long()?;
@@ -680,7 +680,7 @@ impl DwgObjectReader {
         let _description = streams.read_text()?;
 
         // H: arrowhead handle (hard pointer).
-        mleader_data.arrowhead_handle = streams.handles_reader.handle_reference()?;
+        mleader_data.arrowhead_handle = streams.handle_ref()?;
 
         // BD: arrowhead size.
         let _arrow_size = streams.object_reader.read_bit_double()?;
@@ -689,7 +689,7 @@ impl DwgObjectReader {
         let _default_text = streams.read_text()?;
 
         // H: text style handle (hard pointer).
-        mleader_data.mtext_style_handle = streams.handles_reader.handle_reference()?;
+        mleader_data.mtext_style_handle = streams.handle_ref()?;
 
         // BS: text left attachment.
         let _text_left = streams.object_reader.read_bit_short()?;
@@ -719,7 +719,7 @@ impl DwgObjectReader {
         let _align_space = streams.object_reader.read_bit_double()?;
 
         // H: block content handle (hard pointer).
-        mleader_data.block_content_handle = streams.handles_reader.handle_reference()?;
+        mleader_data.block_content_handle = streams.handle_ref()?;
 
         // CMC: block content color.
         let _block_color = streams.object_reader.read_cm_color()?;

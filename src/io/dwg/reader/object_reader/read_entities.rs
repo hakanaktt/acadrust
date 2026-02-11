@@ -163,7 +163,7 @@ impl DwgObjectReader {
         }
 
         // Style handle.
-        text_tmpl.style_handle = streams.handles_reader.handle_reference()?;
+        text_tmpl.style_handle = streams.handle_ref()?;
 
         let h_align = match horizontal {
             0 => TextHorizontalAlignment::Left,
@@ -244,7 +244,7 @@ impl DwgObjectReader {
         };
 
         // Style handle.
-        text_tmpl.style_handle = streams.handles_reader.handle_reference()?;
+        text_tmpl.style_handle = streams.handle_ref()?;
 
         let attrib = AttributeEntity {
             common: text.common,
@@ -319,7 +319,7 @@ impl DwgObjectReader {
         };
 
         // Style handle.
-        text_tmpl.style_handle = streams.handles_reader.handle_reference()?;
+        text_tmpl.style_handle = streams.handle_ref()?;
 
         let attdef = AttributeDefinition {
             common: text.common,
@@ -488,7 +488,7 @@ impl DwgObjectReader {
         }
 
         // Block header handle.
-        let block_header_handle = streams.handles_reader.handle_reference()?;
+        let block_header_handle = streams.handle_ref()?;
 
         let mut insert_tmpl = CadInsertTemplateData {
             block_header_handle,
@@ -501,16 +501,16 @@ impl DwgObjectReader {
         if has_atts {
             if self.sio.r2004_plus {
                 for _ in 0..owned_count {
-                    let h = streams.handles_reader.handle_reference()?;
+                    let h = streams.handle_ref()?;
                     insert_tmpl.owned_objects_handles.push(h);
                 }
             } else {
                 insert_tmpl.first_attribute_handle =
-                    streams.handles_reader.handle_reference()?;
+                    streams.handle_ref()?;
                 insert_tmpl.end_attribute_handle =
-                    streams.handles_reader.handle_reference()?;
+                    streams.handle_ref()?;
             }
-            insert_tmpl.seqend_handle = streams.handles_reader.handle_reference()?;
+            insert_tmpl.seqend_handle = streams.handle_ref()?;
         }
 
         let insert = Insert {
@@ -659,14 +659,14 @@ impl DwgObjectReader {
         let mut poly_tmpl = CadPolylineTemplateData::default();
         if self.sio.r2004_plus {
             for _ in 0..owned_count {
-                let h = streams.handles_reader.handle_reference()?;
+                let h = streams.handle_ref()?;
                 poly_tmpl.owned_objects_handles.push(h);
             }
         } else {
-            poly_tmpl.first_vertex_handle = streams.handles_reader.handle_reference()?;
-            poly_tmpl.last_vertex_handle = streams.handles_reader.handle_reference()?;
+            poly_tmpl.first_vertex_handle = streams.handle_ref()?;
+            poly_tmpl.last_vertex_handle = streams.handle_ref()?;
         }
-        poly_tmpl.seqend_handle = streams.handles_reader.handle_reference()?;
+        poly_tmpl.seqend_handle = streams.handle_ref()?;
 
         let polyline = Polyline2D {
             common: entity_common,
@@ -708,14 +708,14 @@ impl DwgObjectReader {
         let mut poly_tmpl = CadPolylineTemplateData::default();
         if self.sio.r2004_plus {
             for _ in 0..owned_count {
-                let h = streams.handles_reader.handle_reference()?;
+                let h = streams.handle_ref()?;
                 poly_tmpl.owned_objects_handles.push(h);
             }
         } else {
-            poly_tmpl.first_vertex_handle = streams.handles_reader.handle_reference()?;
-            poly_tmpl.last_vertex_handle = streams.handles_reader.handle_reference()?;
+            poly_tmpl.first_vertex_handle = streams.handle_ref()?;
+            poly_tmpl.last_vertex_handle = streams.handle_ref()?;
         }
-        poly_tmpl.seqend_handle = streams.handles_reader.handle_reference()?;
+        poly_tmpl.seqend_handle = streams.handle_ref()?;
 
         let polyline = Polyline3D {
             common: entity_common,
@@ -754,14 +754,14 @@ impl DwgObjectReader {
         let mut poly_tmpl = CadPolylineTemplateData::default();
         if self.sio.r2004_plus {
             for _ in 0..owned_count {
-                let h = streams.handles_reader.handle_reference()?;
+                let h = streams.handle_ref()?;
                 poly_tmpl.owned_objects_handles.push(h);
             }
         } else {
-            poly_tmpl.first_vertex_handle = streams.handles_reader.handle_reference()?;
-            poly_tmpl.last_vertex_handle = streams.handles_reader.handle_reference()?;
+            poly_tmpl.first_vertex_handle = streams.handle_ref()?;
+            poly_tmpl.last_vertex_handle = streams.handle_ref()?;
         }
-        poly_tmpl.seqend_handle = streams.handles_reader.handle_reference()?;
+        poly_tmpl.seqend_handle = streams.handle_ref()?;
 
         let mesh = PolyfaceMesh {
             common: entity_common,
@@ -810,14 +810,14 @@ impl DwgObjectReader {
         let mut poly_tmpl = CadPolylineTemplateData::default();
         if self.sio.r2004_plus {
             for _ in 0..owned_count {
-                let h = streams.handles_reader.handle_reference()?;
+                let h = streams.handle_ref()?;
                 poly_tmpl.owned_objects_handles.push(h);
             }
         } else {
-            poly_tmpl.first_vertex_handle = streams.handles_reader.handle_reference()?;
-            poly_tmpl.last_vertex_handle = streams.handles_reader.handle_reference()?;
+            poly_tmpl.first_vertex_handle = streams.handle_ref()?;
+            poly_tmpl.last_vertex_handle = streams.handle_ref()?;
         }
-        poly_tmpl.seqend_handle = streams.handles_reader.handle_reference()?;
+        poly_tmpl.seqend_handle = streams.handle_ref()?;
 
         let smooth_type = match curve_type {
             5 => polygon_mesh::SurfaceSmoothType::Quadratic,
@@ -1108,7 +1108,7 @@ impl DwgObjectReader {
         let normal = streams.object_reader.read_bit_extrusion()?;
         let shape_number = streams.object_reader.read_bit_short()? as i32;
 
-        let shape_file_handle = streams.handles_reader.handle_reference()?;
+        let shape_file_handle = streams.handle_ref()?;
 
         let shape = Shape {
             common: entity_common,
@@ -1226,9 +1226,9 @@ impl DwgObjectReader {
     ) -> Result<()> {
 
         // Dimension style handle.
-        dim_tmpl.style_handle = streams.handles_reader.handle_reference()?;
+        dim_tmpl.style_handle = streams.handle_ref()?;
         // Block handle (anonymous dim block).
-        dim_tmpl.block_handle = streams.handles_reader.handle_reference()?;
+        dim_tmpl.block_handle = streams.handle_ref()?;
 
         Ok(())
     }
@@ -1555,21 +1555,30 @@ impl DwgObjectReader {
                 vp.ambient_color = streams.object_reader.read_raw_long()?;
             }
 
-            // Handles.
-            vp_tmpl.viewport_header_handle = streams.handles_reader.handle_reference()?;
-
-            // Frozen layer handles.
+            // Frozen layer handles (R2000+).
             for _ in 0..frozen_count {
-                let h = streams.handles_reader.handle_reference()?;
+                let h = streams.handle_ref()?;
                 vp_tmpl.frozen_layer_handles.push(h);
             }
 
             // Clip boundary handle.
-            vp_tmpl.boundary_handle = streams.handles_reader.handle_reference()?;
+            vp_tmpl.boundary_handle = streams.handle_ref()?;
 
-            if self.sio.r2000_plus {
-                vp_tmpl.named_ucs_handle = streams.handles_reader.handle_reference()?;
-                vp_tmpl.base_ucs_handle = streams.handles_reader.handle_reference()?;
+            // R2000 only (AC1015): viewport entity header handle.
+            if !self.sio.r2004_plus {
+                vp_tmpl.viewport_header_handle = streams.handle_ref()?;
+            }
+
+            // Named UCS / Base UCS handles.
+            vp_tmpl.named_ucs_handle = streams.handle_ref()?;
+            vp_tmpl.base_ucs_handle = streams.handle_ref()?;
+
+            // R2007+: background, visual style, shade plot, sun handles.
+            if self.sio.r2007_plus {
+                let _background = streams.handle_ref()?;
+                let _visual_style = streams.handle_ref()?;
+                let _shade_plot = streams.handle_ref()?;
+                let _sun = streams.handle_ref()?;
             }
         }
 
@@ -1776,7 +1785,7 @@ impl DwgObjectReader {
 
         // R2007+: history handle.
         if self.sio.r2007_plus {
-            solid3d_tmpl.history_handle = streams.handles_reader.handle_reference()?;
+            solid3d_tmpl.history_handle = streams.handle_ref()?;
         }
 
         match geo_type {
@@ -1915,7 +1924,7 @@ impl DwgObjectReader {
         let rotation = direction.y.atan2(direction.x);
 
         // Style handle.
-        let style_handle = streams.handles_reader.handle_reference()?;
+        let style_handle = streams.handle_ref()?;
         let text_tmpl = CadTextEntityTemplateData { style_handle };
 
         let attach_pt = match attachment {
@@ -2021,9 +2030,9 @@ impl DwgObjectReader {
         let mut leader_tmpl = CadLeaderTemplateData::default();
         leader_tmpl.dimasz = dimasz;
         // Annotation handle.
-        leader_tmpl.annotation_handle = streams.handles_reader.handle_reference()?;
+        leader_tmpl.annotation_handle = streams.handle_ref()?;
         // Dimstyle handle.
-        leader_tmpl.dimstyle_handle = streams.handles_reader.handle_reference()?;
+        leader_tmpl.dimstyle_handle = streams.handle_ref()?;
 
         let ldr_path = match path_type {
             0 => leader::LeaderPathType::StraightLine,
@@ -2078,7 +2087,7 @@ impl DwgObjectReader {
         let direction = streams.object_reader.read_3bit_double()?;
 
         // Dimstyle handle.
-        let style_handle = streams.handles_reader.handle_reference()?;
+        let style_handle = streams.handle_ref()?;
 
         let tolerance = Tolerance {
             common: entity_common,
@@ -2147,7 +2156,7 @@ impl DwgObjectReader {
         }
 
         // MLineStyle handle.
-        let _style_handle = streams.handles_reader.handle_reference()?;
+        let _style_handle = streams.handle_ref()?;
 
         let just = match justification {
             0 => mline::MLineJustification::Top,
@@ -2331,6 +2340,7 @@ impl DwgObjectReader {
         let num_paths = streams.object_reader.read_bit_long()? as usize;
         let mut paths = Vec::with_capacity(num_paths);
         let mut all_boundary_handles: Vec<Vec<u64>> = Vec::with_capacity(num_paths);
+        let mut boundary_handle_counts: Vec<usize> = Vec::with_capacity(num_paths);
 
         for _ in 0..num_paths {
             let path_type_flag = streams.object_reader.read_bit_long()? as u32;
@@ -2458,11 +2468,10 @@ impl DwgObjectReader {
                 }
             }
 
-            // Boundary object handles count.
+            // Boundary object handles count (saved for handle reads later).
             let num_handles = streams.object_reader.read_bit_long()? as usize;
-            let _handles_count = num_handles;
-            // Handles are read later from the handles stream.
-            all_boundary_handles.push(Vec::new());
+            boundary_handle_counts.push(num_handles);
+            all_boundary_handles.push(Vec::new()); // placeholder, filled after seed points
 
             paths.push(hatch::BoundaryPath {
                 flags: hatch::BoundaryPathFlags::from_bits(path_type_flag),
@@ -2518,15 +2527,13 @@ impl DwgObjectReader {
             seed_points.push(streams.object_reader.read_2raw_double()?);
         }
 
-        // Read boundary handles from handles reader.
+        // Read boundary handles from handles reader using counts saved during path loop.
         let mut hatch_tmpl = CadHatchTemplateData::default();
-        for _path_idx in 0..num_paths {
-            // Boundary path handle count was stored implicitly. Let's read from handles stream.
-            // In ACadSharp this is done with boundary object handles for each path.
-            let num_handles = streams.object_reader.read_bit_long().unwrap_or(0) as usize;
+        for path_idx in 0..num_paths {
+            let num_handles = boundary_handle_counts.get(path_idx).copied().unwrap_or(0);
             let mut handles = Vec::with_capacity(num_handles);
             for _ in 0..num_handles {
-                handles.push(streams.handles_reader.handle_reference()?);
+                handles.push(streams.handle_ref()?);
             }
             hatch_tmpl.boundary_handles.push(handles);
         }

@@ -126,7 +126,9 @@ impl DwgObjectReader {
             // Look up the file offset.
             let offset = match self.handle_map.get(&handle) {
                 Some(&off) => off,
-                None => continue,
+                None => {
+                    continue;
+                }
             };
 
             // Get the object type and set up sub-streams.
@@ -242,6 +244,7 @@ impl DwgObjectReader {
                 handles_reader,
                 merged: true,
                 has_separate_text_reader: true,
+                current_handle: 0,
             });
         } else {
             // Pre-R2010: no separate handle/text streams yet (set up in updateHandleReader).
@@ -262,6 +265,7 @@ impl DwgObjectReader {
                 handles_reader,
                 merged: false,
                 has_separate_text_reader: false,
+                current_handle: 0,
             });
         }
 
@@ -505,6 +509,12 @@ pub struct StreamSet {
     /// Whether the text reader is a separate stream (R2007+ only).
     /// For pre-R2007, text is inline in the object data.
     pub has_separate_text_reader: bool,
+    /// Handle of the current object being read.
+    ///
+    /// Used as the reference for relative handle codes (0x6, 0x8, 0xA, 0xC)
+    /// in the handle section. Set after reading the object's own handle in
+    /// `read_common_entity_data` / `read_common_non_entity_data`.
+    pub current_handle: u64,
 }
 
 impl Default for StreamSet {
@@ -515,14 +525,18 @@ impl Default for StreamSet {
             handles_reader: Box::new(get_stream_handler(DxfVersion::AC1015, Vec::new())),
             merged: false,
             has_separate_text_reader: false,
+            current_handle: 0,
         }
     }
 }
 
 impl StreamSet {
     /// Read a handle reference from the handles sub-reader.
+    ///
+    /// Resolves relative handle codes (0x6, 0x8, 0xA, 0xC) against
+    /// `current_handle` — the handle of the object currently being read.
     pub fn handle_ref(&mut self) -> Result<u64> {
-        self.handles_reader.handle_reference()
+        self.handles_reader.handle_reference_resolved(self.current_handle)
     }
 
     /// Read variable text from the text sub-reader.

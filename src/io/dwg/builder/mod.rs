@@ -31,8 +31,10 @@ use crate::types::{DxfVersion, Handle};
 
 use super::header_handles::DwgHeaderHandlesCollection;
 use super::reader::object_reader::templates::{
-    CadBlockRecordTemplateData, CadEntityTemplateData, CadLayerTemplateData,
-    CadLineTypeTemplateData, CadTemplate, CadTemplateCommon, TableControlType,
+    CadAppIdTemplateData, CadBlockRecordTemplateData, CadDimStyleTemplateData,
+    CadEntityTemplateData, CadLayerTemplateData, CadLineTypeTemplateData, CadTemplate,
+    CadTemplateCommon, CadTextStyleTemplateData, CadUcsTemplateData, CadVPortTemplateData,
+    CadViewTemplateData, TableControlType,
 };
 
 /// The DWG document builder.
@@ -323,6 +325,56 @@ impl DwgDocumentBuilder {
                     self.build_linetype(handle, common, ltype_data);
                 }
             }
+            TableControlType::TextStyleControl => {
+                if let CadTemplate::TextStyleEntry {
+                    common,
+                    textstyle_data,
+                } = &template
+                {
+                    self.build_text_style(handle, common, textstyle_data);
+                }
+            }
+            TableControlType::AppIdControl => {
+                if let CadTemplate::AppIdEntry {
+                    common, appid_data, ..
+                } = &template
+                {
+                    self.build_appid(handle, common, appid_data);
+                }
+            }
+            TableControlType::DimStyleControl => {
+                if let CadTemplate::DimStyleEntry {
+                    common,
+                    dimstyle_data,
+                } = &template
+                {
+                    self.build_dimstyle(handle, common, dimstyle_data);
+                }
+            }
+            TableControlType::ViewControl => {
+                if let CadTemplate::ViewEntry {
+                    common, view_data, ..
+                } = &template
+                {
+                    self.build_view(handle, common, view_data);
+                }
+            }
+            TableControlType::VPortControl => {
+                if let CadTemplate::VPortEntry {
+                    common, vport_data, ..
+                } = &template
+                {
+                    self.build_vport(handle, common, vport_data);
+                }
+            }
+            TableControlType::UcsControl => {
+                if let CadTemplate::UcsEntry {
+                    common, ucs_data, ..
+                } = &template
+                {
+                    self.build_ucs(handle, common, ucs_data);
+                }
+            }
             _ => {
                 self.build_generic_table_entry(handle, &template, table_type);
             }
@@ -370,29 +422,147 @@ impl DwgDocumentBuilder {
         &mut self,
         handle: u64,
         _common: &CadTemplateCommon,
-        _data: &CadLayerTemplateData,
+        data: &CadLayerTemplateData,
     ) {
-        // Full field population requires extending the template system to
-        // embed the actual Layer struct read by the object reader.
-        self.notify(
-            &format!(
-                "Layer entry {:#X} — full field population deferred to extended templates",
-                handle
-            ),
-            NotificationType::NotImplemented,
-        );
+        let mut layer = Layer::new(&data.name);
+        layer.handle = Handle::new(handle);
+        layer.color = data.color;
+        layer.flags.frozen = data.frozen;
+        layer.flags.locked = data.locked;
+        layer.flags.off = !data.is_on;
+        layer.is_plottable = data.is_plottable;
+        layer.material = Handle::new(data.material_handle);
+
+        // Resolve linetype handle → name.
+        if data.linetype_handle != 0 {
+            if let Some(name) = self.get_linetype_name(data.linetype_handle) {
+                layer.line_type = name;
+            }
+        }
+
+        self.document.layers.remove(&data.name);
+        let _ = self.document.layers.add(layer);
     }
 
     fn build_linetype(
         &mut self,
         handle: u64,
         _common: &CadTemplateCommon,
-        _data: &CadLineTypeTemplateData,
+        data: &CadLineTypeTemplateData,
     ) {
-        self.notify(
-            &format!("LineType entry {:#X} build deferred", handle),
-            NotificationType::NotImplemented,
-        );
+        let mut lt = LineType::new(&data.name);
+        lt.handle = Handle::new(handle);
+        lt.description = data.description.clone();
+        lt.pattern_length = data.total_len;
+        if data.alignment != 0 {
+            lt.alignment = data.alignment as char;
+        }
+        lt.elements = data
+            .dash_lengths
+            .iter()
+            .map(|&l| LineTypeElement { length: l })
+            .collect();
+
+        self.document.line_types.remove(&data.name);
+        let _ = self.document.line_types.add(lt);
+    }
+
+    fn build_text_style(
+        &mut self,
+        handle: u64,
+        _common: &CadTemplateCommon,
+        data: &CadTextStyleTemplateData,
+    ) {
+        let mut style = TextStyle::new(&data.name);
+        style.handle = Handle::new(handle);
+        style.height = data.height;
+        style.width_factor = data.width_factor;
+        style.oblique_angle = data.oblique_angle;
+        style.font_file = data.font_file.clone();
+        style.big_font_file = data.big_font_file.clone();
+        style.flags.backward = (data.gen_flags & 2) != 0;
+        style.flags.upside_down = (data.gen_flags & 4) != 0;
+
+        self.document.text_styles.remove(&data.name);
+        let _ = self.document.text_styles.add(style);
+    }
+
+    fn build_appid(
+        &mut self,
+        handle: u64,
+        _common: &CadTemplateCommon,
+        data: &CadAppIdTemplateData,
+    ) {
+        let mut appid = AppId::new(&data.name);
+        appid.handle = Handle::new(handle);
+
+        self.document.app_ids.remove(&data.name);
+        let _ = self.document.app_ids.add(appid);
+    }
+
+    fn build_dimstyle(
+        &mut self,
+        handle: u64,
+        _common: &CadTemplateCommon,
+        data: &CadDimStyleTemplateData,
+    ) {
+        let mut ds = DimStyle::new(&data.name);
+        ds.handle = Handle::new(handle);
+        // TODO: populate all dimension style variables from template data
+
+        self.document.dim_styles.remove(&data.name);
+        let _ = self.document.dim_styles.add(ds);
+    }
+
+    fn build_view(
+        &mut self,
+        handle: u64,
+        _common: &CadTemplateCommon,
+        data: &CadViewTemplateData,
+    ) {
+        let mut view = View::new(&data.name);
+        view.handle = Handle::new(handle);
+        view.center = crate::types::Vector3::new(data.center.x, data.center.y, 0.0);
+        view.height = data.height;
+        view.width = data.width;
+        view.direction = data.direction;
+        view.target = data.target;
+        view.lens_length = data.lens_length;
+        view.front_clip = data.front_clip;
+        view.back_clip = data.back_clip;
+        view.twist_angle = data.twist_angle;
+
+        self.document.views.remove(&data.name);
+        let _ = self.document.views.add(view);
+    }
+
+    fn build_vport(
+        &mut self,
+        handle: u64,
+        _common: &CadTemplateCommon,
+        data: &CadVPortTemplateData,
+    ) {
+        let mut vport = VPort::new(&data.name);
+        vport.handle = Handle::new(handle);
+
+        self.document.vports.remove(&data.name);
+        let _ = self.document.vports.add(vport);
+    }
+
+    fn build_ucs(
+        &mut self,
+        handle: u64,
+        _common: &CadTemplateCommon,
+        data: &CadUcsTemplateData,
+    ) {
+        let mut ucs = Ucs::new(&data.name);
+        ucs.handle = Handle::new(handle);
+        ucs.origin = data.origin;
+        ucs.x_axis = data.x_dir;
+        ucs.y_axis = data.y_dir;
+
+        self.document.ucss.remove(&data.name);
+        let _ = self.document.ucss.add(ucs);
     }
 
     fn build_generic_table_entry(
@@ -408,6 +578,17 @@ impl DwgDocumentBuilder {
             ),
             NotificationType::NotImplemented,
         );
+    }
+
+    /// Look up a linetype name by handle from the templates map.
+    fn get_linetype_name(&self, handle: u64) -> Option<String> {
+        if let Some(CadTemplate::LineTypeEntry { ltype_data, .. }) = self.templates_map.get(&handle)
+        {
+            if !ltype_data.name.is_empty() {
+                return Some(ltype_data.name.clone());
+            }
+        }
+        None
     }
 
     // ------------------------------------------------------------------
@@ -780,6 +961,9 @@ fn set_template_handle(template: &mut CadTemplate, handle: u64) {
         | CadTemplate::DimStyleEntry { common, .. }
         | CadTemplate::ViewEntry { common, .. }
         | CadTemplate::VPortEntry { common, .. }
+        | CadTemplate::TextStyleEntry { common, .. }
+        | CadTemplate::AppIdEntry { common, .. }
+        | CadTemplate::UcsEntry { common, .. }
         | CadTemplate::GenericTableEntry { common, .. }
         | CadTemplate::DictionaryObj { common, .. }
         | CadTemplate::DictWithDefault { common, .. }

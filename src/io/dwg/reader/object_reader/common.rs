@@ -51,6 +51,7 @@ impl DwgObjectReader {
         let handle = streams.object_reader.handle_reference()?;
         common_tmpl.handle = handle;
         entity_common.handle = Handle::new(handle);
+        streams.current_handle = handle;
 
         // EED (extended entity data).
         common_tmpl.edata = self.read_extended_data(streams)?;
@@ -80,7 +81,7 @@ impl DwgObjectReader {
         // When entity_mode == 0, the owner handle is present (soft pointer).
         // Matches C# readEntityMode: if (EntityMode == 0) OwnerHandle = handleReference.
         if ent_tmpl.entity_mode == 0 {
-            common_tmpl.owner_handle = streams.handles_reader.handle_reference()?;
+            common_tmpl.owner_handle = streams.handle_ref()?;
         }
 
         // Reactors and extended dictionary.
@@ -91,11 +92,11 @@ impl DwgObjectReader {
 
         // R13-R14: Layer handle, Linetype handle.
         if self.sio.r13_14_only {
-            ent_tmpl.layer_handle = streams.handles_reader.handle_reference()?;
+            ent_tmpl.layer_handle = streams.handle_ref()?;
             // Isbylayerlt B: 1 if bylayer linetype (no handle), else 0 (read handle).
             let is_bylayer_lt = streams.object_reader.read_bit()?;
             if !is_bylayer_lt {
-                ent_tmpl.linetype_handle = streams.handles_reader.handle_reference()?;
+                ent_tmpl.linetype_handle = streams.handle_ref()?;
             }
         }
 
@@ -104,8 +105,8 @@ impl DwgObjectReader {
         if !self.sio.r2004_plus {
             let no_links = streams.object_reader.read_bit()?;
             if !no_links {
-                ent_tmpl.prev_entity = streams.handles_reader.handle_reference()?;
-                ent_tmpl.next_entity = streams.handles_reader.handle_reference()?;
+                ent_tmpl.prev_entity = streams.handle_ref()?;
+                ent_tmpl.next_entity = streams.handle_ref()?;
             }
         }
 
@@ -116,7 +117,7 @@ impl DwgObjectReader {
 
         // R2004+ color handle.
         if self.sio.r2004_plus && has_color_handle {
-            ent_tmpl.color_handle = streams.handles_reader.handle_reference()?;
+            ent_tmpl.color_handle = streams.handle_ref()?;
         }
 
         // Linetype scale (BD).
@@ -126,20 +127,20 @@ impl DwgObjectReader {
         // R2000+: Linetype flags, plotstyle flags, material flags, shadow flags.
         if self.sio.r2000_plus {
             // Layer handle (H).
-            ent_tmpl.layer_handle = streams.handles_reader.handle_reference()?;
+            ent_tmpl.layer_handle = streams.handle_ref()?;
 
             // Linetype flags (BB): 00=bylayer, 01=byblock, 10=continuous, 11=handle.
             ent_tmpl.ltype_flags = streams.object_reader.read_2bits()?;
 
             if ent_tmpl.ltype_flags == 3 {
-                ent_tmpl.linetype_handle = streams.handles_reader.handle_reference()?;
+                ent_tmpl.linetype_handle = streams.handle_ref()?;
             }
 
             if self.sio.r2007_plus {
                 // Material flags (BB).
                 let material_flags = streams.object_reader.read_2bits()?;
                 if material_flags == 3 {
-                    ent_tmpl.material_handle = streams.handles_reader.handle_reference()?;
+                    ent_tmpl.material_handle = streams.handle_ref()?;
                 }
                 // Shadow flags RC (1 byte, not BB).
                 let _shadow_flags = streams.object_reader.read_raw_char()?;
@@ -148,7 +149,7 @@ impl DwgObjectReader {
             // Plotstyle flags (BB).
             let plotstyle_flags = streams.object_reader.read_2bits()?;
             if plotstyle_flags == 3 {
-                ent_tmpl.plotstyle_handle = streams.handles_reader.handle_reference()?;
+                ent_tmpl.plotstyle_handle = streams.handle_ref()?;
             }
 
             if self.sio.r2010_plus {
@@ -157,13 +158,13 @@ impl DwgObjectReader {
                 let has_face_vs = streams.object_reader.read_bit()?;
                 let has_edge_vs = streams.object_reader.read_bit()?;
                 if has_full_vs {
-                    let _full_vs = streams.handles_reader.handle_reference()?;
+                    let _full_vs = streams.handle_ref()?;
                 }
                 if has_face_vs {
-                    let _face_vs = streams.handles_reader.handle_reference()?;
+                    let _face_vs = streams.handle_ref()?;
                 }
                 if has_edge_vs {
-                    let _edge_vs = streams.handles_reader.handle_reference()?;
+                    let _edge_vs = streams.handle_ref()?;
                 }
             }
         }
@@ -203,6 +204,7 @@ impl DwgObjectReader {
         // Handle (H).
         let handle = streams.object_reader.handle_reference()?;
         common_tmpl.handle = handle;
+        streams.current_handle = handle;
 
         // EED (extended entity data).
         common_tmpl.edata = self.read_extended_data(streams)?;
@@ -228,17 +230,17 @@ impl DwgObjectReader {
         }
 
         // Owner handle (H): soft pointer.
-        common_tmpl.owner_handle = streams.handles_reader.handle_reference()?;
+        common_tmpl.owner_handle = streams.handle_ref()?;
 
         // Reactor handles.
         for _ in 0..num_reactors {
-            let rh = streams.handles_reader.handle_reference()?;
+            let rh = streams.handle_ref()?;
             common_tmpl.reactor_handles.push(rh);
         }
 
         // XDictionary handle (hard owner) if not missing.
         if !xdict_missing {
-            common_tmpl.xdict_handle = streams.handles_reader.handle_reference()?;
+            common_tmpl.xdict_handle = streams.handle_ref()?;
         }
 
         Ok(common_tmpl)
@@ -281,13 +283,13 @@ impl DwgObjectReader {
         // Reactor handles.
         let mut reactors = Vec::with_capacity(num_reactors);
         for _ in 0..num_reactors {
-            let rh = streams.handles_reader.handle_reference()?;
+            let rh = streams.handle_ref()?;
             reactors.push(rh);
         }
 
         // XDictionary handle.
         let xdict = if !xdict_missing {
-            streams.handles_reader.handle_reference()?
+            streams.handle_ref()?
         } else {
             0
         };
