@@ -47,5 +47,6 @@ pub use reader::{DwgMergedReader, DwgReader, DwgReaderConfiguration, DwgStreamRe
 pub use reference_type::{DwgReferenceType, HandleReference};
 pub use section_io::SectionIO;
 pub use writer::{
-    DwgMergedStreamWriter, DwgMergedStreamWriterAC14, DwgStreamWriterBase, IDwgStreamWriter,
+    DwgMergedStreamWriter, DwgMergedStreamWriterAC14, DwgStreamWriterBase, DwgWriter,
+    IDwgStreamWriter,
 };
