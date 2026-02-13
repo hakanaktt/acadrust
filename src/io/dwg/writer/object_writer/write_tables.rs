@@ -16,7 +16,6 @@ pub enum TableControlType {
     BlockControl,
     LayerControl,
     TextStyleControl,
-    LineTypeControl,
     ViewControl,
     UcsControl,
     VPortControl,

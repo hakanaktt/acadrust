@@ -252,28 +252,27 @@ test_read_write_read_attribs_from_sample_ac1018
 
 ### Tasks
 
-- ⬜ **3.1** Implement `write_dimension_common` helper in `entities.rs`
-  - ⬜ Write class version (R2010+)
-  - ⬜ Write extrusion (BE for R2000+)
-  - ⬜ Write text_midpoint (2RD)
-  - ⬜ Write elevation (BD), flags (RC)
-  - ⬜ Write user_text (TV)
-  - ⬜ Write text_rotation, horizontal_direction, ins_scale (3BD), ins_rotation
-  - ⬜ Write attachment_point (BS, R2000+), lspace_style/factor (R2000+)
-  - ⬜ Write actual_measurement (BD)
-  - ⬜ Write R2007+ unknown fields (B + B)
-  - ⬜ Write flip_arrow1, flip_arrow2 (R2000+)
-  - ⬜ Write 12-pt (2RD)
-  - ⬜ Write handles: dimstyle, anonymous_block, R2007+ text_style
+- ✅ **3.1** Implement `write_dimension_common_data` + `write_dimension_handles` helpers in `write_entities.rs`
+  - ✅ Write class version (R2010+)
+  - ✅ Write normal (3BD)
+  - ✅ Write text_midpoint (2RD)
+  - ✅ Write elevation (BD), flags (RC)
+  - ✅ Write user_text (TV)
+  - ✅ Write text_rotation, horizontal_direction, ins_scale (3BD), ins_rotation
+  - ✅ Write attachment_point (BS, R2000+), lspace_style/factor (R2000+)
+  - ✅ Write actual_measurement (BD)
+  - ✅ Write R2007+ unknown fields (B + B + B)
+  - ✅ Write insertion_point (2RD)
+  - ✅ Write handles: dimstyle (via dimstyle_handles map), anonymous_block
 
-- ⬜ **3.2** Implement `write_dim_ordinate` — definition_point (3BD) + feature_point + leader_endpoint + flags2 (RC for R2000+)
-- ⬜ **3.3** Implement `write_dim_linear` — 4 points (3BD×2 + 2BD + 3BD) + ext_line_rotation + dim_rotation
-- ⬜ **3.4** Implement `write_dim_aligned` — 4 points (3BD×2 + 2BD + 3BD) + ext_line_rotation
-- ⬜ **3.5** Implement `write_dim_angular_3pt` — definition_point + first_arc + second_arc + 2BD
-- ⬜ **3.6** Implement `write_dim_angular_2line` — 4 points (2BD×2 + 3BD×2) + 2BD
-- ⬜ **3.7** Implement `write_dim_radius` — definition_point + first_arc + leader_length
-- ⬜ **3.8** Implement `write_dim_diameter` — definition_point + first_arc + leader_length
-- ⬜ **3.9** Register all 7 types in `write_entity()` dispatcher (ObjectType codes 20–26)
+- ✅ **3.2** Implement `write_dim_ordinate` — definition_point (3BD) + feature_point (3BD) + leader_endpoint (3BD) + flags2 (RC)
+- ✅ **3.3** Implement `write_dim_linear` — pt13 (3BD) + pt14 (3BD) + pt10 (3BD) + ext_rotation (BD) + rotation (BD)
+- ✅ **3.4** Implement `write_dim_aligned` — pt13 (3BD) + pt14 (3BD) + pt10 (3BD) + ext_rotation (BD)
+- ✅ **3.5** Implement `write_dim_angular_3pt` — pt10 (3BD) + pt13 (3BD) + pt14 (3BD) + pt15 (3BD)
+- ✅ **3.6** Implement `write_dim_angular_2ln` — pt16 (2RD) + pt13 (3BD) + pt14 (3BD) + pt15 (3BD) + pt10 (3BD)
+- ✅ **3.7** Implement `write_dim_radius` — pt10 (3BD) + pt15 (3BD) + leader_length (BD)
+- ✅ **3.8** Implement `write_dim_diameter` — pt10 (3BD) + pt15 (3BD) + leader_length (BD)
+- ✅ **3.9** Register all 7 types in `write_entity()` dispatcher (ObjectType codes 0x14–0x1A) + added `dimstyle_handles` infrastructure
 
 ### Tests for Phase 3
 ```

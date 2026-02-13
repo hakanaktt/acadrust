@@ -42,6 +42,7 @@ impl DwgObjectWriter {
             EntityType::Shape(e) => self.write_shape(e, owner_handle),
             EntityType::Tolerance(e) => self.write_tolerance(e, owner_handle),
             EntityType::Leader(e) => self.write_leader(e, owner_handle),
+            EntityType::Dimension(e) => self.write_dimension(e, owner_handle),
             EntityType::Viewport(e) => self.write_viewport_entity(e, owner_handle),
             EntityType::Block(e) => self.write_block(e, owner_handle),
             EntityType::BlockEnd(e) => self.write_block_end(e, owner_handle),
@@ -1363,6 +1364,342 @@ impl DwgObjectWriter {
     }
 
     // -----------------------------------------------------------------------
+    // DIMENSION writers — all 7 sub-types
+    // -----------------------------------------------------------------------
+
+    /// Dispatch a `Dimension` enum to the appropriate sub-type writer.
+    fn write_dimension(
+        &mut self,
+        dim: &Dimension,
+        owner_handle: u64,
+    ) -> Result<()> {
+        match dim {
+            Dimension::Ordinate(d) => self.write_dim_ordinate(d, owner_handle),
+            Dimension::Linear(d) => self.write_dim_linear(d, owner_handle),
+            Dimension::Aligned(d) => self.write_dim_aligned(d, owner_handle),
+            Dimension::Angular3Pt(d) => self.write_dim_angular_3pt(d, owner_handle),
+            Dimension::Angular2Ln(d) => self.write_dim_angular_2ln(d, owner_handle),
+            Dimension::Radius(d) => self.write_dim_radius(d, owner_handle),
+            Dimension::Diameter(d) => self.write_dim_diameter(d, owner_handle),
+        }
+    }
+
+    /// Write common dimension base data shared by all 7 dimension types.
+    ///
+    /// Binary layout mirrors `read_common_dimension_data` in the reader:
+    ///   R2010+: Version(RC) → Normal(3BD) → TextMidPt(2RD) → Elevation(BD)
+    ///   → R2000+ Flags(RC) → UserText(TV) → TextRotation(BD) →
+    ///   HorizontalDir(BD) → InsertScale(3BD) → InsertRotation(BD)
+    ///   → R2000+: AttachPoint(BS) + LSStyle(BS) + LSFactor(BD) + ActualMeas(BD)
+    ///   → R2007+: Unknown(B) + FlipArrow1(B) + FlipArrow2(B)
+    ///   → InsertionPt(2RD) → Handles: DIMSTYLE + BLOCK
+    fn write_dimension_common_data(
+        &self,
+        writer: &mut dyn crate::io::dwg::writer::stream_writer::IDwgStreamWriter,
+        base: &DimensionBase,
+    ) -> Result<()> {
+        // R2010+: Version (RC)
+        if self.sio.r2010_plus {
+            writer.write_byte(base.version)?;
+        }
+
+        // Extrusion normal (3BD)
+        writer.write_3bit_double(base.normal)?;
+
+        // Text middle point (2RD) — XY only
+        writer.write_2raw_double(crate::types::Vector2::new(
+            base.text_middle_point.x,
+            base.text_middle_point.y,
+        ))?;
+
+        // Elevation (BD) — Z coord shared by ECS points (11, 12, 16)
+        writer.write_bit_double(base.definition_point.z)?;
+
+        // R2000+: flags byte
+        if self.sio.r2000_plus {
+            // bit 0: NOT user-defined location → write 0x01 when NOT user-defined
+            // For simplicity, default to 0 (user-defined location)
+            writer.write_byte(0)?;
+        }
+
+        // User text (TV)
+        let user_text = base.user_text.as_deref().unwrap_or(&base.text);
+        writer.write_variable_text(user_text)?;
+
+        // Text rotation (BD)
+        writer.write_bit_double(base.text_rotation)?;
+
+        // Horizontal direction (BD)
+        writer.write_bit_double(base.horizontal_direction)?;
+
+        // Insert scale (3BD) — hardcoded (1,1,1) per C# reference
+        writer.write_3bit_double(Vector3::new(1.0, 1.0, 1.0))?;
+
+        // Insert rotation (BD) — hardcoded 0
+        writer.write_bit_double(0.0)?;
+
+        // R2000+: attachment point, line spacing style/factor, actual measurement
+        if self.sio.r2000_plus {
+            writer.write_bit_short(base.attachment_point as i16)?;
+            writer.write_bit_short(0)?; // line spacing style (0 = at least)
+            writer.write_bit_double(base.line_spacing_factor)?;
+            writer.write_bit_double(base.actual_measurement)?;
+        }
+
+        // R2007+: unknown + flip arrows
+        if self.sio.r2007_plus {
+            writer.write_bit(false)?; // unknown
+            writer.write_bit(false)?; // flip arrow 1
+            writer.write_bit(false)?; // flip arrow 2
+        }
+
+        // Insertion point (2RD) — XY of group code 12
+        writer.write_2raw_double(crate::types::Vector2::new(
+            base.insertion_point.x,
+            base.insertion_point.y,
+        ))?;
+
+        Ok(())
+    }
+
+    /// Write the common dimension handle references: DIMSTYLE + anonymous BLOCK.
+    fn write_dimension_handles(
+        &self,
+        writer: &mut dyn crate::io::dwg::writer::stream_writer::IDwgStreamWriter,
+        base: &DimensionBase,
+    ) -> Result<()> {
+        // DIMSTYLE handle (hard pointer)
+        writer.handle_reference_typed(
+            DwgReferenceType::HardPointer,
+            self.resolve_dimstyle_handle(&base.style_name),
+        )?;
+        // Anonymous block handle (hard pointer)
+        writer.handle_reference_typed(
+            DwgReferenceType::HardPointer,
+            self.resolve_block_handle(&base.block_name),
+        )?;
+        Ok(())
+    }
+
+    // ----- Ordinate -----
+
+    fn write_dim_ordinate(
+        &mut self,
+        dim: &DimensionOrdinate,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let (mut writer, _) = self.create_entity_writer();
+        self.write_common_entity_data(
+            &mut *writer,
+            DwgObjectType::DimensionOrdinate,
+            &dim.base.common,
+            owner_handle,
+        )?;
+
+        self.write_dimension_common_data(&mut *writer, &dim.base)?;
+
+        // Type-specific: 3BD pt10, 3BD pt13, 3BD pt14, RC flag
+        writer.write_3bit_double(dim.definition_point)?;
+        writer.write_3bit_double(dim.feature_location)?;
+        writer.write_3bit_double(dim.leader_endpoint)?;
+        writer.write_byte(if dim.is_ordinate_type_x { 1 } else { 0 })?;
+
+        self.write_dimension_handles(&mut *writer, &dim.base)?;
+
+        writer.write_spear_shift()?;
+        self.finalize_entity(writer, dim.base.common.handle.value());
+        Ok(())
+    }
+
+    // ----- Linear -----
+
+    fn write_dim_linear(
+        &mut self,
+        dim: &DimensionLinear,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let (mut writer, _) = self.create_entity_writer();
+        self.write_common_entity_data(
+            &mut *writer,
+            DwgObjectType::DimensionLinear,
+            &dim.base.common,
+            owner_handle,
+        )?;
+
+        self.write_dimension_common_data(&mut *writer, &dim.base)?;
+
+        // Type-specific: aligned fields + rotation
+        // 3BD pt13 (first point)
+        writer.write_3bit_double(dim.first_point)?;
+        // 3BD pt14 (second point)
+        writer.write_3bit_double(dim.second_point)?;
+        // 3BD pt10 (definition point on dim line)
+        writer.write_3bit_double(dim.definition_point)?;
+        // BD ext_line_rotation
+        writer.write_bit_double(dim.ext_line_rotation)?;
+        // BD rotation (Linear only, not in Aligned)
+        writer.write_bit_double(dim.rotation)?;
+
+        self.write_dimension_handles(&mut *writer, &dim.base)?;
+
+        writer.write_spear_shift()?;
+        self.finalize_entity(writer, dim.base.common.handle.value());
+        Ok(())
+    }
+
+    // ----- Aligned -----
+
+    fn write_dim_aligned(
+        &mut self,
+        dim: &DimensionAligned,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let (mut writer, _) = self.create_entity_writer();
+        self.write_common_entity_data(
+            &mut *writer,
+            DwgObjectType::DimensionAligned,
+            &dim.base.common,
+            owner_handle,
+        )?;
+
+        self.write_dimension_common_data(&mut *writer, &dim.base)?;
+
+        // Type-specific: 3BD pt13, 3BD pt14, 3BD pt10, BD ext_rotation
+        writer.write_3bit_double(dim.first_point)?;
+        writer.write_3bit_double(dim.second_point)?;
+        writer.write_3bit_double(dim.definition_point)?;
+        writer.write_bit_double(dim.ext_line_rotation)?;
+
+        self.write_dimension_handles(&mut *writer, &dim.base)?;
+
+        writer.write_spear_shift()?;
+        self.finalize_entity(writer, dim.base.common.handle.value());
+        Ok(())
+    }
+
+    // ----- Angular 3-Point -----
+
+    fn write_dim_angular_3pt(
+        &mut self,
+        dim: &DimensionAngular3Pt,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let (mut writer, _) = self.create_entity_writer();
+        self.write_common_entity_data(
+            &mut *writer,
+            DwgObjectType::DimensionAng3Pt,
+            &dim.base.common,
+            owner_handle,
+        )?;
+
+        self.write_dimension_common_data(&mut *writer, &dim.base)?;
+
+        // Type-specific: 3BD pt10, 3BD pt13, 3BD pt14, 3BD pt15
+        writer.write_3bit_double(dim.definition_point)?;
+        writer.write_3bit_double(dim.first_point)?;
+        writer.write_3bit_double(dim.second_point)?;
+        writer.write_3bit_double(dim.angle_vertex)?;
+
+        self.write_dimension_handles(&mut *writer, &dim.base)?;
+
+        writer.write_spear_shift()?;
+        self.finalize_entity(writer, dim.base.common.handle.value());
+        Ok(())
+    }
+
+    // ----- Angular 2-Line -----
+
+    fn write_dim_angular_2ln(
+        &mut self,
+        dim: &DimensionAngular2Ln,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let (mut writer, _) = self.create_entity_writer();
+        self.write_common_entity_data(
+            &mut *writer,
+            DwgObjectType::DimensionAng2Ln,
+            &dim.base.common,
+            owner_handle,
+        )?;
+
+        self.write_dimension_common_data(&mut *writer, &dim.base)?;
+
+        // Type-specific: 2RD pt16, 3BD pt13, 3BD pt14, 3BD pt15, 3BD pt10
+        writer.write_2raw_double(crate::types::Vector2::new(
+            dim.dimension_arc.x,
+            dim.dimension_arc.y,
+        ))?;
+        writer.write_3bit_double(dim.first_point)?;
+        writer.write_3bit_double(dim.second_point)?;
+        writer.write_3bit_double(dim.angle_vertex)?;
+        writer.write_3bit_double(dim.definition_point)?;
+
+        self.write_dimension_handles(&mut *writer, &dim.base)?;
+
+        writer.write_spear_shift()?;
+        self.finalize_entity(writer, dim.base.common.handle.value());
+        Ok(())
+    }
+
+    // ----- Radius -----
+
+    fn write_dim_radius(
+        &mut self,
+        dim: &DimensionRadius,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let (mut writer, _) = self.create_entity_writer();
+        self.write_common_entity_data(
+            &mut *writer,
+            DwgObjectType::DimensionRadius,
+            &dim.base.common,
+            owner_handle,
+        )?;
+
+        self.write_dimension_common_data(&mut *writer, &dim.base)?;
+
+        // Type-specific: 3BD pt10, 3BD pt15, BD leader_length
+        writer.write_3bit_double(dim.definition_point)?;
+        writer.write_3bit_double(dim.angle_vertex)?;
+        writer.write_bit_double(dim.leader_length)?;
+
+        self.write_dimension_handles(&mut *writer, &dim.base)?;
+
+        writer.write_spear_shift()?;
+        self.finalize_entity(writer, dim.base.common.handle.value());
+        Ok(())
+    }
+
+    // ----- Diameter -----
+
+    fn write_dim_diameter(
+        &mut self,
+        dim: &DimensionDiameter,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let (mut writer, _) = self.create_entity_writer();
+        self.write_common_entity_data(
+            &mut *writer,
+            DwgObjectType::DimensionDiameter,
+            &dim.base.common,
+            owner_handle,
+        )?;
+
+        self.write_dimension_common_data(&mut *writer, &dim.base)?;
+
+        // Type-specific: 3BD pt10, 3BD pt15, BD leader_length
+        writer.write_3bit_double(dim.definition_point)?;
+        writer.write_3bit_double(dim.angle_vertex)?;
+        writer.write_bit_double(dim.leader_length)?;
+
+        self.write_dimension_handles(&mut *writer, &dim.base)?;
+
+        writer.write_spear_shift()?;
+        self.finalize_entity(writer, dim.base.common.handle.value());
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
     // VIEWPORT entity
     // -----------------------------------------------------------------------
 
@@ -1544,35 +1881,6 @@ impl DwgObjectWriter {
 
         // BD: curve fit tangent direction
         writer.write_bit_double(vertex.curve_tangent)?;
-
-        writer.write_spear_shift()?;
-        self.finalize_entity(writer, common.handle.value());
-        Ok(())
-    }
-
-    // -----------------------------------------------------------------------
-    // VERTEX 3D  (DwgObjectType::Vertex3D = 0x0B)
-    // -----------------------------------------------------------------------
-
-    pub(super) fn write_vertex_3d(
-        &mut self,
-        vertex: &Vertex3D,
-        common: &crate::entities::EntityCommon,
-        owner_handle: u64,
-    ) -> Result<()> {
-        let (mut writer, _) = self.create_entity_writer();
-        self.write_common_entity_data(
-            &mut *writer,
-            DwgObjectType::Vertex3D,
-            common,
-            owner_handle,
-        )?;
-
-        // RC: flags
-        writer.write_byte(vertex.flags.bits())?;
-
-        // 3BD: point
-        writer.write_3bit_double(vertex.location)?;
 
         writer.write_spear_shift()?;
         self.finalize_entity(writer, common.handle.value());

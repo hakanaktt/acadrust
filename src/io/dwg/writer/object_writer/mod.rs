@@ -53,6 +53,7 @@ pub struct DwgObjectWriter {
     pub(super) linetype_handles: HashMap<String, u64>,
     pub(super) textstyle_handles: HashMap<String, u64>,
     pub(super) block_handles: HashMap<String, u64>,
+    pub(super) dimstyle_handles: HashMap<String, u64>,
 }
 
 impl DwgObjectWriter {
@@ -97,6 +98,11 @@ impl DwgObjectWriter {
             block_handles.insert(br.name().to_uppercase(), br.handle.value());
         }
 
+        let mut dimstyle_handles = HashMap::new();
+        for ds in doc.dim_styles.iter() {
+            dimstyle_handles.insert(ds.name().to_uppercase(), ds.handle.value());
+        }
+
         let model_space_handle = doc.header.model_space_block_handle.value();
         let paper_space_handle = doc.header.paper_space_block_handle.value();
 
@@ -113,6 +119,7 @@ impl DwgObjectWriter {
             linetype_handles,
             textstyle_handles,
             block_handles,
+            dimstyle_handles,
         }
     }
 

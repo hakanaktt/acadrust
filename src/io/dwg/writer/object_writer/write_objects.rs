@@ -67,28 +67,4 @@ impl DwgObjectWriter {
         Ok(())
     }
 
-    // -----------------------------------------------------------------------
-    // PLACEHOLDER (generic non-graphical object)
-    // -----------------------------------------------------------------------
-
-    pub(super) fn write_generic_object(
-        &mut self,
-        obj_type: DwgObjectType,
-        handle: u64,
-        owner_handle: u64,
-    ) -> Result<()> {
-        let (mut writer, _) = self.create_object_writer();
-        self.write_common_non_entity_data(
-            &mut *writer,
-            obj_type,
-            handle,
-            owner_handle,
-            &[],
-            None,
-        )?;
-
-        writer.write_spear_shift()?;
-        self.finalize_object(writer, handle);
-        Ok(())
-    }
 }

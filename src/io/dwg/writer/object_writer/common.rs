@@ -359,4 +359,12 @@ impl DwgObjectWriter {
             .copied()
             .unwrap_or(0)
     }
+
+    /// Resolve a dimension style name to its handle.
+    pub(super) fn resolve_dimstyle_handle(&self, style_name: &str) -> u64 {
+        self.dimstyle_handles
+            .get(&style_name.to_uppercase())
+            .copied()
+            .unwrap_or(0)
+    }
 }

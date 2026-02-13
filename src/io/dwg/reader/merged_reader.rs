@@ -393,12 +393,12 @@ mod tests {
     fn test_merged_text_from_text_stream_empty() {
         // Text reader with is_empty set → returns empty
         let v = DxfVersion::AC1021;
-        let mut text_reader = DwgStreamReaderBase::new(vec![], v);
+        let text_reader = DwgStreamReaderBase::new(vec![], v);
         // Trigger is_empty by set_position_by_flag with no string stream
         // For simplicity: an empty text reader with no data
         let main = DwgStreamReaderBase::new(vec![0x80], v);
         let handle = DwgStreamReaderBase::new(vec![], v);
-        let mut reader = DwgMergedReader::new(main, text_reader, handle, v);
+        let _reader = DwgMergedReader::new(main, text_reader, handle, v);
         // read_variable_text checks is_empty; empty vec means read will fail
         // but we can test the empty-text-reader scenario
     }
