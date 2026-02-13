@@ -24,7 +24,6 @@ impl DwgObjectReader {
         })
     }
 
-    #[allow(dead_code)]
     pub(super) fn read_dictionary_with_default(
         &mut self,
         streams: &mut StreamSet,
@@ -81,7 +80,6 @@ impl DwgObjectReader {
     // DICTIONARYVAR
     // -----------------------------------------------------------------------
 
-    #[allow(dead_code)]
     pub(super) fn read_dictionary_var(
         &mut self,
         streams: &mut StreamSet,
@@ -281,7 +279,6 @@ impl DwgObjectReader {
     // PLOTSETTINGS (standalone object)
     // -----------------------------------------------------------------------
 
-    #[allow(dead_code)]
     pub(super) fn read_plot_settings(
         &mut self,
         streams: &mut StreamSet,
@@ -502,7 +499,6 @@ impl DwgObjectReader {
     // SCALE
     // -----------------------------------------------------------------------
 
-    #[allow(dead_code)]
     pub(super) fn read_scale(
         &mut self,
         streams: &mut StreamSet,
@@ -533,7 +529,6 @@ impl DwgObjectReader {
     // SORTENTSTABLE
     // -----------------------------------------------------------------------
 
-    #[allow(dead_code)]
     pub(super) fn read_sort_entities_table(
         &mut self,
         streams: &mut StreamSet,
@@ -564,7 +559,6 @@ impl DwgObjectReader {
     // IMAGE_DEF
     // -----------------------------------------------------------------------
 
-    #[allow(dead_code)]
     pub(super) fn read_image_definition(
         &mut self,
         streams: &mut StreamSet,
@@ -599,7 +593,6 @@ impl DwgObjectReader {
     // IMAGE_DEF_REACTOR
     // -----------------------------------------------------------------------
 
-    #[allow(dead_code)]
     pub(super) fn read_image_definition_reactor(
         &mut self,
         streams: &mut StreamSet,
@@ -621,7 +614,6 @@ impl DwgObjectReader {
     // MLEADERSTYLE
     // -----------------------------------------------------------------------
 
-    #[allow(dead_code)]
     pub(super) fn read_mleader_style(
         &mut self,
         streams: &mut StreamSet,
@@ -774,7 +766,6 @@ impl DwgObjectReader {
     // VISUALSTYLE (stub — complex, incomplete in C# source too)
     // -----------------------------------------------------------------------
 
-    #[allow(dead_code)]
     pub(super) fn read_visual_style(
         &mut self,
         streams: &mut StreamSet,
@@ -793,7 +784,6 @@ impl DwgObjectReader {
     // MATERIAL (stub — very complex)
     // -----------------------------------------------------------------------
 
-    #[allow(dead_code)]
     pub(super) fn read_material(
         &mut self,
         streams: &mut StreamSet,
@@ -813,7 +803,6 @@ impl DwgObjectReader {
     // PLACEHOLDER
     // -----------------------------------------------------------------------
 
-    #[allow(dead_code)]
     pub(super) fn read_acdb_placeholder(
         &mut self,
         streams: &mut StreamSet,
@@ -828,7 +817,6 @@ impl DwgObjectReader {
     // RASTERVARIABLES
     // -----------------------------------------------------------------------
 
-    #[allow(dead_code)]
     pub(super) fn read_raster_variables(
         &mut self,
         streams: &mut StreamSet,
@@ -856,7 +844,6 @@ impl DwgObjectReader {
     // DBCOLOR (BookColor)
     // -----------------------------------------------------------------------
 
-    #[allow(dead_code)]
     pub(super) fn read_db_color(
         &mut self,
         streams: &mut StreamSet,
@@ -888,7 +875,6 @@ impl DwgObjectReader {
     // PDF_DEFINITION (PdfUnderlayDefinition)
     // -----------------------------------------------------------------------
 
-    #[allow(dead_code)]
     pub(super) fn read_pdf_definition(
         &mut self,
         streams: &mut StreamSet,
@@ -910,7 +896,6 @@ impl DwgObjectReader {
     // TABLESTYLE (stub — very complex r2007+ format)
     // -----------------------------------------------------------------------
 
-    #[allow(dead_code)]
     pub(super) fn read_table_style(
         &mut self,
         streams: &mut StreamSet,
@@ -939,7 +924,6 @@ impl DwgObjectReader {
     // WIPEOUTVARIABLES (simple)
     // -----------------------------------------------------------------------
 
-    #[allow(dead_code)]
     pub(super) fn read_wipeout_variables(
         &mut self,
         streams: &mut StreamSet,
@@ -948,6 +932,48 @@ impl DwgObjectReader {
 
         // BS: display frame.
         let _display_frame = streams.object_reader.read_bit_short()?;
+
+        Ok(CadTemplate::GenericObject {
+            common: common_tmpl,
+        })
+    }
+
+    // -----------------------------------------------------------------------
+    // GEODATA (stub — reads common non-entity data only)
+    // -----------------------------------------------------------------------
+
+    pub(super) fn read_geodata(
+        &mut self,
+        streams: &mut StreamSet,
+    ) -> Result<CadTemplate> {
+        let common_tmpl = self.read_common_non_entity_data(streams)?;
+
+        // GeoData is complex with coordinate systems, mesh points, etc.
+        // Read what we can: version and coordinate type.
+        let _version = streams.object_reader.read_bit_long()?;
+        let _coord_type = streams.object_reader.read_bit_short()?;
+
+        Ok(CadTemplate::GenericObject {
+            common: common_tmpl,
+        })
+    }
+
+    // -----------------------------------------------------------------------
+    // ACAD_EVALUATION_GRAPH (stub)
+    // -----------------------------------------------------------------------
+
+    pub(super) fn read_evaluation_graph(
+        &mut self,
+        streams: &mut StreamSet,
+    ) -> Result<CadTemplate> {
+        let common_tmpl = self.read_common_non_entity_data(streams)?;
+
+        // Evaluation graph contains node/edge data for dynamic block
+        // parameter evaluation. Read minimal fields.
+        // BL: 96 (unknown).
+        let _ = streams.object_reader.read_bit_long();
+        // BL: 97 (unknown).
+        let _ = streams.object_reader.read_bit_long();
 
         Ok(CadTemplate::GenericObject {
             common: common_tmpl,

@@ -877,6 +877,11 @@ impl IDwgStreamReader for DwgStreamReaderBase {
     // ---------------------------------------------------------------
 
     fn read_object_type(&mut self) -> Result<DwgObjectType> {
+        let (obj_type, _raw) = self.read_object_type_raw()?;
+        Ok(obj_type)
+    }
+
+    fn read_object_type_raw(&mut self) -> Result<(DwgObjectType, i16)> {
         if self.version >= DxfVersion::AC1024 {
             // AC24+: 2-bit pair encoding
             let pair = self.read_2bits()?;
@@ -889,11 +894,11 @@ impl IDwgStreamReader for DwgStreamReaderBase {
                 2 | 3 => self.read_raw_short()?,
                 _ => unreachable!(),
             };
-            Ok(DwgObjectType::from_raw(value))
+            Ok((DwgObjectType::from_raw(value), value))
         } else {
             // Pre-AC24: BitShort
             let value = self.read_bit_short()?;
-            Ok(DwgObjectType::from_raw(value))
+            Ok((DwgObjectType::from_raw(value), value))
         }
     }
 

@@ -314,6 +314,10 @@ impl IDwgStreamReader for DwgMergedReader {
         self.main_reader.read_object_type()
     }
 
+    fn read_object_type_raw(&mut self) -> Result<(DwgObjectType, i16)> {
+        self.main_reader.read_object_type_raw()
+    }
+
     fn read_bit_extrusion(&mut self) -> Result<Vector3> {
         self.main_reader.read_bit_extrusion()
     }

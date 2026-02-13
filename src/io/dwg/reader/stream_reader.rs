@@ -195,6 +195,12 @@ pub trait IDwgStreamReader {
     /// **OT** — Read an object type code.
     fn read_object_type(&mut self) -> Result<DwgObjectType>;
 
+    /// **OT** — Read an object type code and return both the enum and raw i16.
+    ///
+    /// This is needed for class-based (unlisted) types where the raw value
+    /// is the class number used to look up the `DxfClass` in the class map.
+    fn read_object_type_raw(&mut self) -> Result<(DwgObjectType, i16)>;
+
     /// **BE** — Read a BitExtrusion (optimized 3D vector).
     fn read_bit_extrusion(&mut self) -> Result<Vector3>;
 

@@ -18,6 +18,7 @@ Thumbs.db
 # Test files
 /test_files/
 /samples/
+/reference_samples/
 *.dwg
 *.dxf
 

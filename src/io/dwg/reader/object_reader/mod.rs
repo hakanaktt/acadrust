@@ -47,7 +47,6 @@ pub struct DwgObjectReader {
     /// Object map: handle → byte offset within `data`.
     handle_map: HashMap<u64, i64>,
     /// DXF class map: class_number → class info.
-    #[allow(dead_code)]
     class_map: HashMap<i16, DxfClass>,
 
     /// Queue of handles to read.
@@ -132,7 +131,7 @@ impl DwgObjectReader {
             };
 
             // Get the object type and set up sub-streams.
-            let (obj_type, streams) = match self.get_entity_type(offset) {
+            let (obj_type, raw_type, streams) = match self.get_entity_type(offset) {
                 Ok(v) => v,
                 Err(e) => {
                     if !self.failsafe {
@@ -150,7 +149,7 @@ impl DwgObjectReader {
             self.read_objects.insert(handle);
 
             // Read the object.
-            let template = match self.read_object(obj_type, &mut streams.unwrap_or_default()) {
+            let template = match self.read_object(obj_type, raw_type, &mut streams.unwrap_or_default()) {
                 Ok(Some(t)) => t,
                 Ok(None) => {
                     self.notify(
@@ -198,7 +197,10 @@ impl DwgObjectReader {
 
     /// Read the MS/MC header, create sub-stream readers, and return the
     /// object type together with a `StreamSet` for dispatching.
-    fn get_entity_type(&mut self, offset: i64) -> Result<(DwgObjectType, Option<StreamSet>)> {
+    ///
+    /// Also returns the raw i16 type code, which is needed for unlisted
+    /// (class-based) types to look up the `DxfClass` in the class map.
+    fn get_entity_type(&mut self, offset: i64) -> Result<(DwgObjectType, i16, Option<StreamSet>)> {
         // Create a CRC reader (position-based) for the raw data.
         let crc_reader = self.make_reader();
         let mut crc_reader = crc_reader;
@@ -209,12 +211,13 @@ impl DwgObjectReader {
         self.object_size = size;
 
         if size == 0 {
-            return Ok((DwgObjectType::Invalid, None));
+            return Ok((DwgObjectType::Invalid, -1, None));
         }
 
         let size_in_bits = (size as u64) << 3;
 
         let obj_type;
+        let raw_type: i16;
         let streams;
 
         if self.sio.r2010_plus {
@@ -228,7 +231,9 @@ impl DwgObjectReader {
             object_reader.set_position_in_bits(crc_reader.position_in_bits());
             self.object_initial_pos = object_reader.position_in_bits();
 
-            obj_type = object_reader.read_object_type()?;
+            let (ot, rt) = object_reader.read_object_type_raw()?;
+            obj_type = ot;
+            raw_type = rt;
 
             // Handle sub-reader.
             let mut handles_reader = self.make_reader();
@@ -252,7 +257,9 @@ impl DwgObjectReader {
             object_reader.set_position_in_bits(crc_reader.position_in_bits());
             self.object_initial_pos = object_reader.position_in_bits();
 
-            obj_type = object_reader.read_object_type()?;
+            let (ot, rt) = object_reader.read_object_type_raw()?;
+            obj_type = ot;
+            raw_type = rt;
 
             // Handle reader is a clone (positioned later by updateHandleReader).
             let handles_reader = self.make_reader();
@@ -269,7 +276,7 @@ impl DwgObjectReader {
             });
         }
 
-        Ok((obj_type, streams))
+        Ok((obj_type, raw_type, streams))
     }
 
     /// Create a fresh stream reader over the raw data (clones `self.data`).
@@ -309,6 +316,7 @@ impl DwgObjectReader {
     fn read_object(
         &mut self,
         obj_type: DwgObjectType,
+        raw_type: i16,
         streams: &mut StreamSet,
     ) -> Result<Option<CadTemplate>> {
         use DwgObjectType::*;
@@ -434,25 +442,102 @@ impl DwgObjectReader {
             Invalid | Undefined | Unknown9 | Unknown36 | Unknown37 | Unknown3A | Unknown3B => None,
 
             // Unlisted (class-based) types
-            Unlisted => self.read_unlisted_type(streams)?,
+            Unlisted => self.read_unlisted_type(raw_type, streams)?,
         };
 
         Ok(template)
     }
 
     /// Attempt to read a class-based (unlisted) object type.
-    fn read_unlisted_type(&mut self, _streams: &mut StreamSet) -> Result<Option<CadTemplate>> {
-        // The object type raw value was already read; we need the class number.
-        // It's stored as the raw value of the object type code that was read.
-        // We retrieve it from the current position context.
-        // For unlisted types, the raw BS/OT value IS the class number.
-        // We have to recover it from the dispatch — but we don't store it.
-        // This is a limitation; for now, we emit a notification.
-        self.notify(
-            "Unlisted (class-based) object types are not yet dispatched by DXF name",
-            NotificationType::Warning,
-        );
-        Ok(None)
+    ///
+    /// Looks up the raw type code in the class map to find the DXF class name,
+    /// then dispatches to the appropriate reader method.
+    fn read_unlisted_type(
+        &mut self,
+        raw_type: i16,
+        streams: &mut StreamSet,
+    ) -> Result<Option<CadTemplate>> {
+        // Look up the DXF class by raw class number.
+        let class = match self.class_map.get(&raw_type) {
+            Some(c) => c.clone(),
+            None => {
+                self.notify(
+                    &format!(
+                        "Unknown class number {raw_type} — no DxfClass entry found"
+                    ),
+                    NotificationType::Warning,
+                );
+                return Ok(None);
+            }
+        };
+
+        let dxf_name = class.dxf_name.to_uppercase();
+        let is_entity = class.is_an_entity;
+
+        let result = match dxf_name.as_str() {
+            // ----- Entities -----
+            "MESH" => Some(self.read_mesh(streams)?),
+            "PDFUNDERLAY" | "DWFUNDERLAY" | "DGNUNDERLAY" => {
+                let utype = match dxf_name.as_str() {
+                    "PDFUNDERLAY" => crate::entities::underlay::UnderlayType::Pdf,
+                    "DWFUNDERLAY" => crate::entities::underlay::UnderlayType::Dwf,
+                    "DGNUNDERLAY" => crate::entities::underlay::UnderlayType::Dgn,
+                    _ => unreachable!(),
+                };
+                Some(self.read_underlay(streams, utype)?)
+            }
+            "ACAD_TABLE" => Some(self.read_table_entity(streams)?),
+            "IMAGE" => Some(self.read_cad_image(streams, false)?),
+            "WIPEOUT" => Some(self.read_cad_image(streams, true)?),
+            "MULTILEADER" | "ACDB_MLEADER_CLASS" => Some(self.read_multileader(streams)?),
+
+            // ----- Non-graphical objects -----
+            "ACDBDICTIONARYWDFLT" | "DICTIONARYWDFLT" => {
+                Some(self.read_dictionary_with_default(streams)?)
+            }
+            "DICTIONARYVAR" => Some(self.read_dictionary_var(streams)?),
+            "DBCOLOR" => Some(self.read_db_color(streams)?),
+            "IMAGEDEF" => Some(self.read_image_definition(streams)?),
+            "IMAGEDEF_REACTOR" => Some(self.read_image_definition_reactor(streams)?),
+            "RASTERVARIABLES" => Some(self.read_raster_variables(streams)?),
+            "SCALE" => Some(self.read_scale(streams)?),
+            "SORTENTSTABLE" => Some(self.read_sort_entities_table(streams)?),
+            "MLEADERSTYLE" => Some(self.read_mleader_style(streams)?),
+            "VISUALSTYLE" => Some(self.read_visual_style(streams)?),
+            "MATERIAL" => Some(self.read_material(streams)?),
+            "PLOTSETTINGS" => Some(self.read_plot_settings(streams)?),
+            "TABLESTYLE" => Some(self.read_table_style(streams)?),
+            "PDFDEFINITION" | "DWFDEFINITION" | "DGNDEFINITION" => {
+                Some(self.read_pdf_definition(streams)?)
+            }
+            "GEODATA" => Some(self.read_geodata(streams)?),
+            "ACAD_EVALUATION_GRAPH" => Some(self.read_evaluation_graph(streams)?),
+            "XRECORD" => Some(self.read_xrecord(streams)?),
+            "ACDBPLACEHOLDER" | "PLACEHOLDER" => Some(self.read_acdb_placeholder(streams)?),
+            "WIPEOUTVARIABLES" => Some(self.read_wipeout_variables(streams)?),
+
+            // ----- Unknown / unimplemented -----
+            _ => {
+                if is_entity {
+                    self.notify(
+                        &format!("Unlisted entity type '{}' read as UnknownEntity", class.dxf_name),
+                        NotificationType::Warning,
+                    );
+                    Some(self.read_unknown_entity(streams)?)
+                } else {
+                    self.notify(
+                        &format!(
+                            "Unlisted object type '{}' read as GenericObject",
+                            class.dxf_name
+                        ),
+                        NotificationType::Warning,
+                    );
+                    Some(self.read_unknown_non_graphical_object(streams)?)
+                }
+            }
+        };
+
+        Ok(result)
     }
 
     // -----------------------------------------------------------------------

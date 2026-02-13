@@ -2618,7 +2618,6 @@ impl DwgObjectReader {
     // Multileader (stub — reads common data, skips body)
     // -----------------------------------------------------------------------
 
-    #[allow(dead_code)]
     pub(super) fn read_multileader(
         &mut self,
         streams: &mut StreamSet,
@@ -2640,5 +2639,355 @@ impl DwgObjectReader {
             mleader_data: CadMultiLeaderTemplateData::default(),
             entity: EntityType::MultiLeader(ml),
         })
+    }
+
+    // -----------------------------------------------------------------------
+    // Mesh entity (MESH / SubDMesh)
+    // -----------------------------------------------------------------------
+
+    /// Read a MESH (SubDMesh) entity.
+    ///
+    /// Mirrors ACadSharp `DwgObjectReader.readMesh()`.
+    pub(super) fn read_mesh(
+        &mut self,
+        streams: &mut StreamSet,
+    ) -> Result<CadTemplate> {
+        let (common_tmpl, ent_tmpl, entity_common) =
+            self.read_common_entity_data(streams)?;
+
+        // BS: version (always 2).
+        let version = streams.object_reader.read_bit_short()?;
+
+        // B: blend crease.
+        let blend_crease = streams.object_reader.read_bit()?;
+
+        // BL: subdivision level.
+        let subdivision_level = streams.object_reader.read_bit_long()?;
+
+        // BL: number of vertices.
+        let num_vertices = streams.object_reader.read_bit_long()? as usize;
+        let mut vertices = Vec::with_capacity(num_vertices);
+        for _ in 0..num_vertices {
+            let x = streams.object_reader.read_bit_double()?;
+            let y = streams.object_reader.read_bit_double()?;
+            let z = streams.object_reader.read_bit_double()?;
+            vertices.push(Vector3::new(x, y, z));
+        }
+
+        // BL: face array size (total number of ints).
+        let face_array_size = streams.object_reader.read_bit_long()? as usize;
+        let mut face_data = Vec::with_capacity(face_array_size);
+        for _ in 0..face_array_size {
+            face_data.push(streams.object_reader.read_bit_long()?);
+        }
+
+        // Parse face data: each face starts with a count followed by indices.
+        let mut faces = Vec::new();
+        let mut idx = 0;
+        while idx < face_data.len() {
+            let count = face_data[idx] as usize;
+            idx += 1;
+            let mut verts = Vec::with_capacity(count);
+            for _ in 0..count {
+                if idx < face_data.len() {
+                    verts.push(face_data[idx] as usize);
+                    idx += 1;
+                }
+            }
+            faces.push(mesh::MeshFace::new(verts));
+        }
+
+        // BL: number of edges.
+        let num_edges = streams.object_reader.read_bit_long()? as usize;
+        let mut edges = Vec::with_capacity(num_edges);
+        for _ in 0..num_edges {
+            let start = streams.object_reader.read_bit_long()? as usize;
+            let end = streams.object_reader.read_bit_long()? as usize;
+            edges.push(mesh::MeshEdge::new(start, end));
+        }
+
+        // BL: number of edge creases.
+        let num_creases = streams.object_reader.read_bit_long()? as usize;
+        for i in 0..num_creases {
+            let crease = streams.object_reader.read_bit_double()?;
+            if i < edges.len() {
+                if crease != 0.0 {
+                    edges[i].set_crease(crease);
+                }
+            }
+        }
+
+        let mesh_entity = mesh::Mesh {
+            common: entity_common,
+            version,
+            blend_crease,
+            subdivision_level,
+            vertices,
+            faces,
+            edges,
+        };
+
+        Ok(CadTemplate::Entity {
+            common: common_tmpl,
+            entity_data: ent_tmpl,
+            entity: EntityType::Mesh(mesh_entity),
+        })
+    }
+
+    // -----------------------------------------------------------------------
+    // Underlay entities (PDF, DWF, DGN)
+    // -----------------------------------------------------------------------
+
+    /// Read an underlay entity (PDFUNDERLAY, DWFUNDERLAY, DGNUNDERLAY).
+    ///
+    /// Mirrors ACadSharp `DwgObjectReader.readPdfUnderlay()`.
+    pub(super) fn read_underlay(
+        &mut self,
+        streams: &mut StreamSet,
+        underlay_type: underlay::UnderlayType,
+    ) -> Result<CadTemplate> {
+        let (common_tmpl, ent_tmpl, entity_common) =
+            self.read_common_entity_data(streams)?;
+
+        // 3BD: normal vector.
+        let normal = streams.object_reader.read_3bit_double()?;
+
+        // 3BD: insertion point.
+        let insertion_point = streams.object_reader.read_3bit_double()?;
+
+        // BD: x scale, y scale, z scale.
+        let x_scale = streams.object_reader.read_bit_double()?;
+        let y_scale = streams.object_reader.read_bit_double()?;
+        let z_scale = streams.object_reader.read_bit_double()?;
+
+        // BD: rotation.
+        let rotation = streams.object_reader.read_bit_double()?;
+
+        // RC: flags.
+        let flags_raw = streams.object_reader.read_raw_char()?;
+
+        // RC: contrast.
+        let contrast = streams.object_reader.read_raw_char()?;
+
+        // RC: fade.
+        let fade = streams.object_reader.read_raw_char()?;
+
+        // Handles: definition handle (hard pointer).
+        let definition_handle = streams.handle_ref()?;
+
+        // BL: number of clipping boundary vertices.
+        // Read from object_reader (merged) if available, else from handles.
+        let num_clip = if streams.merged {
+            streams.object_reader.read_bit_long()? as usize
+        } else {
+            0
+        };
+
+        let mut clip_vertices = Vec::with_capacity(num_clip);
+        for _ in 0..num_clip {
+            let pt = streams.object_reader.read_2raw_double()?;
+            clip_vertices.push(pt);
+        }
+
+        let underlay_entity = underlay::Underlay {
+            common: entity_common,
+            underlay_type,
+            definition_handle: Handle::new(definition_handle),
+            insertion_point,
+            x_scale,
+            y_scale,
+            z_scale,
+            rotation,
+            normal,
+            flags: underlay::UnderlayDisplayFlags::from_bits_truncate(flags_raw),
+            contrast,
+            fade,
+            clip_boundary_vertices: clip_vertices,
+            clip_inverted: false,
+        };
+
+        Ok(CadTemplate::Entity {
+            common: common_tmpl,
+            entity_data: ent_tmpl,
+            entity: EntityType::Underlay(underlay_entity),
+        })
+    }
+
+    // -----------------------------------------------------------------------
+    // Table entity (ACAD_TABLE)
+    // -----------------------------------------------------------------------
+
+    /// Read a TABLE entity (stub — reads common data only).
+    ///
+    /// The full TABLE entity is extremely complex with hundreds of fields.
+    /// This stub reads common entity data and creates a minimal Table.
+    pub(super) fn read_table_entity(
+        &mut self,
+        streams: &mut StreamSet,
+    ) -> Result<CadTemplate> {
+        let (common_tmpl, ent_tmpl, entity_common) =
+            self.read_common_entity_data(streams)?;
+
+        let mut table = table::Table::new(Vector3::ZERO, 1, 1);
+        table.common = entity_common;
+
+        Ok(CadTemplate::Entity {
+            common: common_tmpl,
+            entity_data: ent_tmpl,
+            entity: EntityType::Table(table),
+        })
+    }
+
+    // -----------------------------------------------------------------------
+    // Image / Wipeout entities (IMAGE, WIPEOUT)
+    // -----------------------------------------------------------------------
+
+    /// Read an IMAGE or WIPEOUT entity.
+    ///
+    /// These share the same DWG format (same as ACadSharp readCadImage).
+    pub(super) fn read_cad_image(
+        &mut self,
+        streams: &mut StreamSet,
+        is_wipeout: bool,
+    ) -> Result<CadTemplate> {
+        let (common_tmpl, ent_tmpl, entity_common) =
+            self.read_common_entity_data(streams)?;
+
+        // BL: class version.
+        let class_version = streams.object_reader.read_bit_long()?;
+
+        // 3BD: insertion point.
+        let insertion_point = streams.object_reader.read_3bit_double()?;
+
+        // 3BD: u-vector.
+        let u_vector = streams.object_reader.read_3bit_double()?;
+
+        // 3BD: v-vector.
+        let v_vector = streams.object_reader.read_3bit_double()?;
+
+        // 2RD: image size (pixels).
+        let size = streams.object_reader.read_2raw_double()?;
+
+        // BS: display properties flags.
+        let flags = streams.object_reader.read_bit_short()?;
+
+        // B: clipping state.
+        let clipping = streams.object_reader.read_bit()?;
+
+        // RC: brightness.
+        let brightness = streams.object_reader.read_raw_char()?;
+
+        // RC: contrast.
+        let contrast = streams.object_reader.read_raw_char()?;
+
+        // RC: fade.
+        let fade = streams.object_reader.read_raw_char()?;
+
+        // R2010+: clip mode.
+        let clip_mode = if self.sio.r2010_plus {
+            streams.object_reader.read_bit()? as u8
+        } else {
+            0u8
+        };
+
+        // BS: clipping boundary type (1 = rect, 2 = polygon).
+        let clip_type = streams.object_reader.read_bit_short()?;
+
+        // Clipping boundary vertices.
+        let num_pts = if clip_type == 1 {
+            // Rectangular: 2 points.
+            2usize
+        } else {
+            // Polygonal: BL count.
+            streams.object_reader.read_bit_long()? as usize
+        };
+
+        let mut clip_vertices = Vec::with_capacity(num_pts);
+        for _ in 0..num_pts {
+            let pt = streams.object_reader.read_2raw_double()?;
+            clip_vertices.push(pt);
+        }
+
+        // Handles.
+        let img_def_handle = streams.handle_ref()?;
+        let img_def_reactor_handle = streams.handle_ref()?;
+
+        let image_tmpl = CadImageTemplateData {
+            img_def_handle,
+            img_def_reactor_handle,
+        };
+
+        if is_wipeout {
+            let wipeout_entity = wipeout::Wipeout {
+                common: entity_common,
+                class_version,
+                insertion_point,
+                u_vector,
+                v_vector,
+                size,
+                flags: wipeout::WipeoutDisplayFlags::from_bits_truncate(flags),
+                clipping_enabled: clipping,
+                brightness,
+                contrast,
+                fade,
+                clip_mode: wipeout::WipeoutClipMode::from(clip_mode),
+                clip_type: wipeout::WipeoutClipType::from(clip_type),
+                clip_boundary_vertices: clip_vertices,
+                definition_handle: if img_def_handle != 0 {
+                    Some(Handle::new(img_def_handle))
+                } else {
+                    None
+                },
+                definition_reactor_handle: if img_def_reactor_handle != 0 {
+                    Some(Handle::new(img_def_reactor_handle))
+                } else {
+                    None
+                },
+            };
+
+            Ok(CadTemplate::Image {
+                common: common_tmpl,
+                entity_data: ent_tmpl,
+                image_data: image_tmpl,
+                entity: EntityType::Wipeout(wipeout_entity),
+            })
+        } else {
+            let image_entity = raster_image::RasterImage {
+                common: entity_common,
+                class_version,
+                insertion_point,
+                u_vector,
+                v_vector,
+                size,
+                flags: raster_image::ImageDisplayFlags::from_bits_truncate(flags),
+                clipping_enabled: clipping,
+                brightness,
+                contrast,
+                fade,
+                clip_boundary: raster_image::ClipBoundary {
+                    clip_type: raster_image::ClipType::from(clip_type),
+                    clip_mode: raster_image::ClipMode::from(clip_mode),
+                    vertices: clip_vertices,
+                },
+                definition_handle: if img_def_handle != 0 {
+                    Some(Handle::new(img_def_handle))
+                } else {
+                    None
+                },
+                definition_reactor_handle: if img_def_reactor_handle != 0 {
+                    Some(Handle::new(img_def_reactor_handle))
+                } else {
+                    None
+                },
+                file_path: String::new(),
+            };
+
+            Ok(CadTemplate::Image {
+                common: common_tmpl,
+                entity_data: ent_tmpl,
+                image_data: image_tmpl,
+                entity: EntityType::RasterImage(image_entity),
+            })
+        }
     }
 }
