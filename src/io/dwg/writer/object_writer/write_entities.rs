@@ -52,6 +52,8 @@ impl DwgObjectWriter {
             EntityType::Polyline3D(e) => self.write_polyline_3d_composite(e, owner_handle),
             EntityType::PolyfaceMesh(e) => self.write_polyface_mesh_composite(e, owner_handle),
             EntityType::PolygonMesh(e) => self.write_polygon_mesh_composite(e, owner_handle),
+            // Phase 4 entity writer
+            EntityType::Hatch(e) => self.write_hatch(e, owner_handle),
             // Phase 5 entity writers
             EntityType::MLine(e) => self.write_mline(e, owner_handle),
             EntityType::Ole2Frame(e) => self.write_ole2frame(e, owner_handle),
@@ -2341,6 +2343,227 @@ impl DwgObjectWriter {
 
         writer.write_spear_shift()?;
         self.finalize_entity(writer, mline.common.handle.value());
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // HATCH
+    // -----------------------------------------------------------------------
+
+    /// Write a Hatch entity.
+    ///
+    /// Binary layout mirrors `read_hatch` in the object reader:
+    ///   [R2004+ gradient] → Elevation (BD) → Normal (3BD) → PatternName (TV) →
+    ///   IsSolid (B) → IsAssociative (B) → NumPaths (BL) → paths → Style (BS) →
+    ///   PatternType (BS) → [pattern data if !solid] → PixelSize (B+BD) →
+    ///   NumSeedPoints (BL) → seeds → [boundary handles per path]
+    fn write_hatch(&mut self, hatch: &Hatch, owner_handle: u64) -> Result<()> {
+        let (mut writer, _) = self.create_entity_writer();
+        self.write_common_entity_data(
+            &mut *writer,
+            DwgObjectType::Hatch,
+            &hatch.common,
+            owner_handle,
+        )?;
+
+        // R2004+: Gradient data.
+        if self.sio.r2004_plus {
+            let gradient = &hatch.gradient_color;
+            // Is Gradient Fill (BL)
+            writer.write_bit_long(if gradient.enabled { 1 } else { 0 })?;
+
+            if gradient.enabled {
+                // Reserved (BL)
+                writer.write_bit_long(gradient.reserved)?;
+                // Gradient Angle (BD)
+                writer.write_bit_double(gradient.angle)?;
+                // Gradient Shift (BD)
+                writer.write_bit_double(gradient.shift)?;
+                // Single Color Gradient (BL)
+                writer.write_bit_long(if gradient.is_single_color { 1 } else { 0 })?;
+                // Gradient Tint (BD)
+                writer.write_bit_double(gradient.color_tint)?;
+                // Number of gradient colors (BL)
+                writer.write_bit_long(gradient.colors.len() as i32)?;
+                for color_entry in &gradient.colors {
+                    // Gradient value (BD)
+                    writer.write_bit_double(color_entry.value)?;
+                    // Color (CMC)
+                    writer.write_cm_color(color_entry.color)?;
+                }
+                // Gradient name (TV)
+                writer.write_variable_text(&gradient.name)?;
+            }
+        }
+
+        // Common fields.
+        // Elevation (BD)
+        writer.write_bit_double(hatch.elevation)?;
+        // Normal (3BD)
+        writer.write_3bit_double(hatch.normal)?;
+        // Pattern name (TV)
+        writer.write_variable_text(&hatch.pattern.name)?;
+        // Is solid fill (B)
+        writer.write_bit(hatch.is_solid)?;
+        // Is associative (B)
+        writer.write_bit(hatch.is_associative)?;
+
+        // Number of boundary paths (BL)
+        writer.write_bit_long(hatch.paths.len() as i32)?;
+
+        // Track whether any path has the Derived flag.
+        let mut has_derived_boundary = false;
+
+        for path in &hatch.paths {
+            // Path type flags (BL)
+            writer.write_bit_long(path.flags.bits() as i32)?;
+
+            if path.flags.is_derived() {
+                has_derived_boundary = true;
+            }
+
+            if path.flags.is_polyline() {
+                // Polyline boundary path.
+                if let Some(hatch::BoundaryEdge::Polyline(pline)) = path.edges.first() {
+                    // Bulges present (B)
+                    let has_bulge = pline.has_bulge();
+                    writer.write_bit(has_bulge)?;
+                    // Is closed (B)
+                    writer.write_bit(pline.is_closed)?;
+                    // Number of vertices (BL)
+                    writer.write_bit_long(pline.vertices.len() as i32)?;
+                    for v in &pline.vertices {
+                        // Vertex position (2RD)
+                        writer.write_2raw_double(crate::types::Vector2::new(v.x, v.y))?;
+                        if has_bulge {
+                            // Bulge (BD)
+                            writer.write_bit_double(v.z)?;
+                        }
+                    }
+                }
+            } else {
+                // Non-polyline boundary path — edges.
+                writer.write_bit_long(path.edges.len() as i32)?;
+                for edge in &path.edges {
+                    match edge {
+                        hatch::BoundaryEdge::Line(line) => {
+                            writer.write_byte(1)?; // Edge type (RC)
+                            writer.write_2raw_double(line.start)?;
+                            writer.write_2raw_double(line.end)?;
+                        }
+                        hatch::BoundaryEdge::CircularArc(arc) => {
+                            writer.write_byte(2)?;
+                            writer.write_2raw_double(arc.center)?;
+                            writer.write_bit_double(arc.radius)?;
+                            writer.write_bit_double(arc.start_angle)?;
+                            writer.write_bit_double(arc.end_angle)?;
+                            writer.write_bit(arc.counter_clockwise)?;
+                        }
+                        hatch::BoundaryEdge::EllipticArc(ell) => {
+                            writer.write_byte(3)?;
+                            writer.write_2raw_double(ell.center)?;
+                            writer.write_2raw_double(ell.major_axis_endpoint)?;
+                            writer.write_bit_double(ell.minor_axis_ratio)?;
+                            writer.write_bit_double(ell.start_angle)?;
+                            writer.write_bit_double(ell.end_angle)?;
+                            writer.write_bit(ell.counter_clockwise)?;
+                        }
+                        hatch::BoundaryEdge::Spline(spl) => {
+                            writer.write_byte(4)?;
+                            writer.write_bit_long(spl.degree)?;
+                            writer.write_bit(spl.rational)?;
+                            writer.write_bit(spl.periodic)?;
+                            writer.write_bit_long(spl.knots.len() as i32)?;
+                            writer.write_bit_long(spl.control_points.len() as i32)?;
+                            for &k in &spl.knots {
+                                writer.write_bit_double(k)?;
+                            }
+                            for cp in &spl.control_points {
+                                writer.write_2raw_double(
+                                    crate::types::Vector2::new(cp.x, cp.y),
+                                )?;
+                                if spl.rational {
+                                    writer.write_bit_double(cp.z)?; // weight
+                                }
+                            }
+                            // R2010+: fit points
+                            if self.sio.r2010_plus {
+                                writer.write_bit_long(spl.fit_points.len() as i32)?;
+                                for fp in &spl.fit_points {
+                                    writer.write_2raw_double(*fp)?;
+                                }
+                                if !spl.fit_points.is_empty() {
+                                    writer.write_2raw_double(spl.start_tangent)?;
+                                    writer.write_2raw_double(spl.end_tangent)?;
+                                }
+                            }
+                        }
+                        hatch::BoundaryEdge::Polyline(_) => {
+                            // Polyline edges should only appear in polyline-flagged paths;
+                            // skip if encountered in a non-polyline path.
+                        }
+                    }
+                }
+            }
+
+            // Number of boundary object handles (BL)
+            writer.write_bit_long(path.boundary_handles.len() as i32)?;
+            for &handle in &path.boundary_handles {
+                writer.handle_reference_typed(
+                    DwgReferenceType::SoftPointer,
+                    handle.value(),
+                )?;
+            }
+        }
+
+        // Style (BS)
+        writer.write_bit_short(hatch.style as i16)?;
+        // Pattern type (BS)
+        writer.write_bit_short(hatch.pattern_type as i16)?;
+
+        // Pattern data (only for non-solid hatches).
+        if !hatch.is_solid {
+            // Pattern angle (BD)
+            writer.write_bit_double(hatch.pattern_angle)?;
+            // Pattern scale (BD)
+            writer.write_bit_double(hatch.pattern_scale)?;
+            // Is double (B)
+            writer.write_bit(hatch.is_double)?;
+
+            // Number of definition lines (BS)
+            writer.write_bit_short(hatch.pattern.lines.len() as i16)?;
+            for line in &hatch.pattern.lines {
+                // Angle (BD)
+                writer.write_bit_double(line.angle)?;
+                // Base point (2RD)
+                writer.write_2raw_double(line.base_point)?;
+                // Offset (2RD)
+                writer.write_2raw_double(line.offset)?;
+                // Number of dashes (BS)
+                writer.write_bit_short(line.dash_lengths.len() as i16)?;
+                for &dl in &line.dash_lengths {
+                    writer.write_bit_double(dl)?;
+                }
+            }
+        }
+
+        // Pixel size — flag bit (B) then conditional value (BD).
+        // The reader reads: flag(B), if true → BD, else 0.0.
+        if has_derived_boundary && hatch.pixel_size != 0.0 {
+            writer.write_bit(true)?;
+            writer.write_bit_double(hatch.pixel_size)?;
+        } else {
+            writer.write_bit(false)?;
+        }
+
+        // Seed points (BL + 2RD each).
+        writer.write_bit_long(hatch.seed_points.len() as i32)?;
+        for sp in &hatch.seed_points {
+            writer.write_2raw_double(*sp)?;
+        }
+
+        writer.write_spear_shift()?;
+        self.finalize_entity(writer, hatch.common.handle.value());
         Ok(())
     }
 

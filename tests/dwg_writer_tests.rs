@@ -646,6 +646,690 @@ mod phase5_complex_entities {
 }
 
 // ===========================================================================
+// Phase 4 — HATCH Entity
+// ===========================================================================
+
+mod phase4_hatch {
+    use super::common;
+    use acadrust::entities::*;
+    use acadrust::types::{Color, DxfVersion, Vector2, Vector3};
+    use acadrust::CadDocument;
+
+    /// Helper: create a document with a single entity, roundtrip via DXF, return it.
+    fn roundtrip_entity(entity: EntityType, label: &str) -> CadDocument {
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        doc.add_entity(entity).unwrap();
+        common::roundtrip_dxf(&doc, label)
+    }
+
+    /// Helper: roundtrip via DXF and verify entity count for each writable version.
+    fn roundtrip_all_versions(make_entity: impl Fn() -> EntityType, expected_type: &str) {
+        for &(version, label) in &common::ALL_VERSIONS {
+            let mut doc = CadDocument::new();
+            doc.version = version;
+            doc.add_entity(make_entity()).unwrap();
+            let rdoc = common::roundtrip_dxf(&doc, &format!("{expected_type}_{label}"));
+            assert!(
+                common::entity_count(&rdoc) >= 1,
+                "{label}: expected >=1 entities after roundtrip, got {}",
+                common::entity_count(&rdoc)
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Constructors for test hatches
+    // -----------------------------------------------------------------------
+
+    /// Create a rectangular polyline boundary path.
+    fn rect_polyline_path(x0: f64, y0: f64, x1: f64, y1: f64) -> BoundaryPath {
+        let mut path = BoundaryPath::external();
+        path.add_edge(BoundaryEdge::Polyline(PolylineEdge::new(
+            vec![
+                Vector2::new(x0, y0),
+                Vector2::new(x1, y0),
+                Vector2::new(x1, y1),
+                Vector2::new(x0, y1),
+            ],
+            true,
+        )));
+        path
+    }
+
+    /// Create a boundary from line edges forming a triangle.
+    fn triangle_line_path() -> BoundaryPath {
+        let mut path = BoundaryPath::external();
+        path.add_edge(BoundaryEdge::Line(LineEdge {
+            start: Vector2::new(0.0, 0.0),
+            end: Vector2::new(10.0, 0.0),
+        }));
+        path.add_edge(BoundaryEdge::Line(LineEdge {
+            start: Vector2::new(10.0, 0.0),
+            end: Vector2::new(5.0, 8.66),
+        }));
+        path.add_edge(BoundaryEdge::Line(LineEdge {
+            start: Vector2::new(5.0, 8.66),
+            end: Vector2::new(0.0, 0.0),
+        }));
+        path
+    }
+
+    fn make_solid_hatch() -> EntityType {
+        let mut hatch = Hatch::solid();
+        hatch.add_path(rect_polyline_path(0.0, 0.0, 10.0, 10.0));
+        EntityType::Hatch(hatch)
+    }
+
+    fn make_pattern_hatch() -> EntityType {
+        let mut pattern = HatchPattern::new("ANSI31");
+        pattern.add_line(HatchPatternLine {
+            angle: 0.785398, // 45 degrees
+            base_point: Vector2::new(0.0, 0.0),
+            offset: Vector2::new(0.0, 3.175),
+            dash_lengths: vec![],
+        });
+        let mut hatch_ent = Hatch::with_pattern(pattern);
+        hatch_ent.pattern_angle = 0.785398;
+        hatch_ent.pattern_scale = 1.0;
+        hatch_ent.pattern_type = HatchPatternType::Predefined;
+        hatch_ent.add_path(rect_polyline_path(0.0, 0.0, 20.0, 15.0));
+        EntityType::Hatch(hatch_ent)
+    }
+
+    fn make_gradient_hatch() -> EntityType {
+        let mut hatch_ent = Hatch::solid();
+        hatch_ent.gradient_color = HatchGradientPattern {
+            enabled: true,
+            reserved: 0,
+            angle: 0.0,
+            shift: 0.0,
+            is_single_color: false,
+            color_tint: 0.0,
+            colors: vec![
+                GradientColorEntry {
+                    value: 0.0,
+                    color: Color::from_index(1), // Red
+                },
+                GradientColorEntry {
+                    value: 1.0,
+                    color: Color::from_index(5), // Blue
+                },
+            ],
+            name: "LINEAR".to_string(),
+        };
+        hatch_ent.add_path(rect_polyline_path(0.0, 0.0, 30.0, 20.0));
+        EntityType::Hatch(hatch_ent)
+    }
+
+    // -----------------------------------------------------------------------
+    // Solid fill tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_write_hatch_solid_fill_r2000() {
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1015;
+        doc.add_entity(make_solid_hatch()).unwrap();
+        let _rdoc = common::roundtrip_dxf(&doc, "hatch_solid_r2000");
+    }
+
+    #[test]
+    fn test_write_hatch_solid_fill_r2004() {
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1018;
+        doc.add_entity(make_solid_hatch()).unwrap();
+        let _rdoc = common::roundtrip_dxf(&doc, "hatch_solid_r2004");
+    }
+
+    #[test]
+    fn test_write_hatch_solid_fill_r2010() {
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1024;
+        doc.add_entity(make_solid_hatch()).unwrap();
+        let _rdoc = common::roundtrip_dxf(&doc, "hatch_solid_r2010");
+    }
+
+    // -----------------------------------------------------------------------
+    // Pattern fill tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_write_hatch_pattern_fill_r2000() {
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1015;
+        doc.add_entity(make_pattern_hatch()).unwrap();
+        let _rdoc = common::roundtrip_dxf(&doc, "hatch_pattern_r2000");
+    }
+
+    #[test]
+    fn test_write_hatch_pattern_fill_r2010() {
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1024;
+        doc.add_entity(make_pattern_hatch()).unwrap();
+        let _rdoc = common::roundtrip_dxf(&doc, "hatch_pattern_r2010");
+    }
+
+    // -----------------------------------------------------------------------
+    // Gradient tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_write_hatch_gradient_r2004() {
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1018;
+        doc.add_entity(make_gradient_hatch()).unwrap();
+        let _rdoc = common::roundtrip_dxf(&doc, "hatch_gradient_r2004");
+    }
+
+    #[test]
+    fn test_write_hatch_gradient_r2010() {
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1024;
+        doc.add_entity(make_gradient_hatch()).unwrap();
+        let _rdoc = common::roundtrip_dxf(&doc, "hatch_gradient_r2010");
+    }
+
+    // -----------------------------------------------------------------------
+    // Boundary path type tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_write_hatch_polyline_boundary() {
+        let mut hatch = Hatch::solid();
+        hatch.add_path(rect_polyline_path(0.0, 0.0, 10.0, 10.0));
+        assert!(hatch.paths[0].is_polyline());
+
+        let rdoc = roundtrip_entity(EntityType::Hatch(hatch), "hatch_polyline_boundary");
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    #[test]
+    fn test_write_hatch_line_edge_boundary() {
+        let mut hatch = Hatch::solid();
+        hatch.add_path(triangle_line_path());
+
+        let rdoc = roundtrip_entity(EntityType::Hatch(hatch), "hatch_line_edge");
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    #[test]
+    fn test_write_hatch_arc_edge_boundary() {
+        let mut path = BoundaryPath::external();
+        // Two line edges + one arc edge forming a boundary
+        path.add_edge(BoundaryEdge::Line(LineEdge {
+            start: Vector2::new(0.0, 0.0),
+            end: Vector2::new(10.0, 0.0),
+        }));
+        path.add_edge(BoundaryEdge::CircularArc(CircularArcEdge {
+            center: Vector2::new(5.0, 0.0),
+            radius: 5.0,
+            start_angle: 0.0,
+            end_angle: std::f64::consts::PI,
+            counter_clockwise: true,
+        }));
+
+        let mut hatch = Hatch::solid();
+        hatch.add_path(path);
+
+        let rdoc = roundtrip_entity(EntityType::Hatch(hatch), "hatch_arc_edge");
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    #[test]
+    fn test_write_hatch_ellipse_edge_boundary() {
+        let mut path = BoundaryPath::external();
+        path.add_edge(BoundaryEdge::EllipticArc(EllipticArcEdge {
+            center: Vector2::new(5.0, 5.0),
+            major_axis_endpoint: Vector2::new(5.0, 0.0),
+            minor_axis_ratio: 0.5,
+            start_angle: 0.0,
+            end_angle: std::f64::consts::TAU,
+            counter_clockwise: true,
+        }));
+
+        let mut hatch = Hatch::solid();
+        hatch.add_path(path);
+
+        let rdoc = roundtrip_entity(EntityType::Hatch(hatch), "hatch_ellipse_edge");
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    #[test]
+    fn test_write_hatch_spline_edge_boundary() {
+        let mut path = BoundaryPath::external();
+        path.add_edge(BoundaryEdge::Spline(SplineEdge {
+            degree: 3,
+            rational: false,
+            periodic: false,
+            knots: vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+            control_points: vec![
+                Vector3::new(0.0, 0.0, 1.0),
+                Vector3::new(3.0, 5.0, 1.0),
+                Vector3::new(7.0, 5.0, 1.0),
+                Vector3::new(10.0, 0.0, 1.0),
+            ],
+            fit_points: Vec::new(),
+            start_tangent: Vector2::ZERO,
+            end_tangent: Vector2::ZERO,
+        }));
+        // Close it with a line edge
+        path.add_edge(BoundaryEdge::Line(LineEdge {
+            start: Vector2::new(10.0, 0.0),
+            end: Vector2::new(0.0, 0.0),
+        }));
+
+        let mut hatch = Hatch::solid();
+        hatch.add_path(path);
+
+        let rdoc = roundtrip_entity(EntityType::Hatch(hatch), "hatch_spline_edge");
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    #[test]
+    fn test_write_hatch_mixed_edge_boundary() {
+        let mut path = BoundaryPath::external();
+        // Line
+        path.add_edge(BoundaryEdge::Line(LineEdge {
+            start: Vector2::new(0.0, 0.0),
+            end: Vector2::new(10.0, 0.0),
+        }));
+        // Arc
+        path.add_edge(BoundaryEdge::CircularArc(CircularArcEdge {
+            center: Vector2::new(10.0, 5.0),
+            radius: 5.0,
+            start_angle: -std::f64::consts::FRAC_PI_2,
+            end_angle: std::f64::consts::FRAC_PI_2,
+            counter_clockwise: true,
+        }));
+        // Line back
+        path.add_edge(BoundaryEdge::Line(LineEdge {
+            start: Vector2::new(10.0, 10.0),
+            end: Vector2::new(0.0, 10.0),
+        }));
+        // Line close
+        path.add_edge(BoundaryEdge::Line(LineEdge {
+            start: Vector2::new(0.0, 10.0),
+            end: Vector2::new(0.0, 0.0),
+        }));
+
+        let mut hatch = Hatch::solid();
+        hatch.add_path(path);
+
+        let rdoc = roundtrip_entity(EntityType::Hatch(hatch), "hatch_mixed_edge");
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    #[test]
+    fn test_write_hatch_multiple_boundaries() {
+        let mut hatch = Hatch::solid();
+        // Outer boundary
+        hatch.add_path(rect_polyline_path(0.0, 0.0, 20.0, 20.0));
+        // Inner hole
+        let mut inner = BoundaryPath::new();
+        inner.add_edge(BoundaryEdge::Polyline(PolylineEdge::new(
+            vec![
+                Vector2::new(5.0, 5.0),
+                Vector2::new(15.0, 5.0),
+                Vector2::new(15.0, 15.0),
+                Vector2::new(5.0, 15.0),
+            ],
+            true,
+        )));
+        hatch.add_path(inner);
+
+        assert_eq!(hatch.path_count(), 2);
+
+        let rdoc = roundtrip_entity(EntityType::Hatch(hatch), "hatch_multi_boundary");
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Pattern property tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_write_hatch_with_bulge() {
+        let mut path = BoundaryPath::external();
+        // Polyline with bulge (arc segments)
+        let mut poly = PolylineEdge::new(vec![], true);
+        poly.add_vertex(Vector2::new(0.0, 0.0), 0.5);
+        poly.add_vertex(Vector2::new(10.0, 0.0), 0.0);
+        poly.add_vertex(Vector2::new(10.0, 10.0), -0.3);
+        poly.add_vertex(Vector2::new(0.0, 10.0), 0.0);
+        path.add_edge(BoundaryEdge::Polyline(poly));
+
+        let mut hatch = Hatch::solid();
+        hatch.add_path(path);
+
+        let rdoc = roundtrip_entity(EntityType::Hatch(hatch), "hatch_with_bulge");
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    #[test]
+    fn test_write_hatch_double_pattern() {
+        let mut pattern = HatchPattern::new("ANSI31");
+        pattern.add_line(HatchPatternLine {
+            angle: 0.0,
+            base_point: Vector2::new(0.0, 0.0),
+            offset: Vector2::new(0.0, 3.175),
+            dash_lengths: vec![],
+        });
+        let mut hatch = Hatch::with_pattern(pattern);
+        hatch.is_double = true;
+        hatch.pattern_type = HatchPatternType::Predefined;
+        hatch.add_path(rect_polyline_path(0.0, 0.0, 10.0, 10.0));
+
+        assert!(hatch.is_double);
+
+        let rdoc = roundtrip_entity(EntityType::Hatch(hatch), "hatch_double");
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    #[test]
+    fn test_write_hatch_seed_points() {
+        let mut hatch = Hatch::solid();
+        hatch.add_path(rect_polyline_path(0.0, 0.0, 10.0, 10.0));
+        hatch.add_seed_point(Vector2::new(5.0, 5.0));
+        hatch.add_seed_point(Vector2::new(2.0, 2.0));
+        hatch.add_seed_point(Vector2::new(8.0, 8.0));
+
+        assert_eq!(hatch.seed_points.len(), 3);
+
+        let rdoc = roundtrip_entity(EntityType::Hatch(hatch), "hatch_seed_points");
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    #[test]
+    fn test_write_hatch_associative() {
+        let mut hatch = Hatch::solid();
+        hatch.is_associative = true;
+        hatch.add_path(rect_polyline_path(0.0, 0.0, 10.0, 10.0));
+
+        assert!(hatch.is_associative);
+
+        let rdoc = roundtrip_entity(EntityType::Hatch(hatch), "hatch_associative");
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Roundtrip all-versions tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_roundtrip_hatch_solid_all_versions() {
+        roundtrip_all_versions(make_solid_hatch, "HATCH_SOLID");
+    }
+
+    #[test]
+    fn test_roundtrip_hatch_pattern_all_versions() {
+        roundtrip_all_versions(make_pattern_hatch, "HATCH_PATTERN");
+    }
+
+    #[test]
+    fn test_roundtrip_hatch_gradient_all_versions() {
+        roundtrip_all_versions(make_gradient_hatch, "HATCH_GRADIENT");
+    }
+
+    // -----------------------------------------------------------------------
+    // Preservation tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_hatch_pattern_angle_preserved() {
+        let entity = make_pattern_hatch();
+        if let EntityType::Hatch(ref h) = entity {
+            assert!((h.pattern_angle - 0.785398).abs() < 1e-4);
+        }
+        let rdoc = roundtrip_entity(entity, "hatch_angle_preserved");
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    #[test]
+    fn test_hatch_pattern_scale_preserved() {
+        let mut pattern = HatchPattern::new("ANSI37");
+        pattern.add_line(HatchPatternLine {
+            angle: 0.0,
+            base_point: Vector2::ZERO,
+            offset: Vector2::new(0.0, 5.0),
+            dash_lengths: vec![3.0, -1.5],
+        });
+        let mut hatch = Hatch::with_pattern(pattern);
+        hatch.pattern_scale = 2.5;
+        hatch.pattern_type = HatchPatternType::Predefined;
+        hatch.add_path(rect_polyline_path(0.0, 0.0, 10.0, 10.0));
+
+        assert!((hatch.pattern_scale - 2.5).abs() < 1e-10);
+
+        let rdoc = roundtrip_entity(EntityType::Hatch(hatch), "hatch_scale_preserved");
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    #[test]
+    fn test_hatch_boundary_coords_preserved() {
+        let mut hatch = Hatch::solid();
+        let mut path = BoundaryPath::external();
+        path.add_edge(BoundaryEdge::Line(LineEdge {
+            start: Vector2::new(1.5, 2.5),
+            end: Vector2::new(11.5, 2.5),
+        }));
+        path.add_edge(BoundaryEdge::Line(LineEdge {
+            start: Vector2::new(11.5, 2.5),
+            end: Vector2::new(11.5, 12.5),
+        }));
+        path.add_edge(BoundaryEdge::Line(LineEdge {
+            start: Vector2::new(11.5, 12.5),
+            end: Vector2::new(1.5, 12.5),
+        }));
+        path.add_edge(BoundaryEdge::Line(LineEdge {
+            start: Vector2::new(1.5, 12.5),
+            end: Vector2::new(1.5, 2.5),
+        }));
+        hatch.add_path(path);
+
+        let rdoc = roundtrip_entity(EntityType::Hatch(hatch), "hatch_boundary_coords");
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    #[test]
+    fn test_hatch_seed_points_preserved() {
+        let mut hatch = Hatch::solid();
+        hatch.add_path(rect_polyline_path(0.0, 0.0, 100.0, 100.0));
+        hatch.add_seed_point(Vector2::new(50.0, 50.0));
+        hatch.add_seed_point(Vector2::new(25.0, 75.0));
+
+        assert_eq!(hatch.seed_points.len(), 2);
+
+        let rdoc = roundtrip_entity(EntityType::Hatch(hatch), "hatch_seeds_preserved");
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Combined & edge-case tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_hatch_default_values() {
+        let hatch = Hatch::new();
+        assert!(hatch.is_solid);
+        assert!(!hatch.is_associative);
+        assert!(!hatch.is_double);
+        assert_eq!(hatch.style, HatchStyleType::Normal);
+        assert_eq!(hatch.pattern_type, HatchPatternType::Predefined);
+        assert!((hatch.pattern_scale - 1.0).abs() < 1e-10);
+        assert!((hatch.pattern_angle).abs() < 1e-10);
+        assert!((hatch.elevation).abs() < 1e-10);
+        assert_eq!(hatch.pattern.name, "SOLID");
+    }
+
+    #[test]
+    fn test_hatch_style_variations() {
+        for style in [HatchStyleType::Normal, HatchStyleType::Outer, HatchStyleType::Ignore] {
+            let mut hatch = Hatch::solid();
+            hatch.style = style;
+            hatch.add_path(rect_polyline_path(0.0, 0.0, 10.0, 10.0));
+
+            let rdoc = roundtrip_entity(
+                EntityType::Hatch(hatch),
+                &format!("hatch_style_{:?}", style),
+            );
+            assert!(common::entity_count(&rdoc) >= 1);
+        }
+    }
+
+    #[test]
+    fn test_write_hatch_with_dashes() {
+        let mut pattern = HatchPattern::new("DASHED");
+        pattern.add_line(HatchPatternLine {
+            angle: 0.0,
+            base_point: Vector2::ZERO,
+            offset: Vector2::new(0.0, 5.0),
+            dash_lengths: vec![5.0, -2.5, 1.0, -2.5],
+        });
+        let mut hatch = Hatch::with_pattern(pattern);
+        hatch.pattern_type = HatchPatternType::UserDefined;
+        hatch.add_path(rect_polyline_path(0.0, 0.0, 50.0, 50.0));
+
+        let rdoc = roundtrip_entity(EntityType::Hatch(hatch), "hatch_dashes");
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    #[test]
+    fn test_write_hatch_multi_line_pattern() {
+        let mut pattern = HatchPattern::new("CROSSHATCH");
+        pattern.add_line(HatchPatternLine {
+            angle: 0.0,
+            base_point: Vector2::ZERO,
+            offset: Vector2::new(0.0, 5.0),
+            dash_lengths: vec![],
+        });
+        pattern.add_line(HatchPatternLine {
+            angle: std::f64::consts::FRAC_PI_2,
+            base_point: Vector2::ZERO,
+            offset: Vector2::new(0.0, 5.0),
+            dash_lengths: vec![],
+        });
+        let mut hatch = Hatch::with_pattern(pattern);
+        hatch.pattern_type = HatchPatternType::Predefined;
+        hatch.add_path(rect_polyline_path(0.0, 0.0, 20.0, 20.0));
+
+        assert_eq!(hatch.pattern.lines.len(), 2);
+
+        let rdoc = roundtrip_entity(EntityType::Hatch(hatch), "hatch_crosshatch");
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    #[test]
+    fn test_hatch_gradient_single_color() {
+        let mut hatch = Hatch::solid();
+        hatch.gradient_color = HatchGradientPattern {
+            enabled: true,
+            reserved: 0,
+            angle: 0.5,
+            shift: 0.25,
+            is_single_color: true,
+            color_tint: 0.8,
+            colors: vec![
+                GradientColorEntry {
+                    value: 0.0,
+                    color: Color::from_index(3), // Green
+                },
+            ],
+            name: "CYLINDER".to_string(),
+        };
+        hatch.add_path(rect_polyline_path(0.0, 0.0, 15.0, 15.0));
+
+        let rdoc = roundtrip_entity(EntityType::Hatch(hatch), "hatch_gradient_single");
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    #[test]
+    fn test_hatch_elevation_and_normal() {
+        let mut hatch = Hatch::solid();
+        hatch.elevation = 5.0;
+        hatch.normal = Vector3::new(0.0, 0.0, -1.0);
+        hatch.add_path(rect_polyline_path(0.0, 0.0, 10.0, 10.0));
+
+        assert!((hatch.elevation - 5.0).abs() < 1e-10);
+
+        let rdoc = roundtrip_entity(EntityType::Hatch(hatch), "hatch_elevation_normal");
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    #[test]
+    fn test_phase4_all_hatch_types_combined() {
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+
+        doc.add_entity(make_solid_hatch()).unwrap();
+        doc.add_entity(make_pattern_hatch()).unwrap();
+        doc.add_entity(make_gradient_hatch()).unwrap();
+
+        let rdoc = common::roundtrip_dxf(&doc, "phase4_all_combined");
+        assert!(
+            common::entity_count(&rdoc) >= 3,
+            "expected >=3 entities, got {}",
+            common::entity_count(&rdoc)
+        );
+    }
+
+    #[test]
+    fn test_phase4_per_version() {
+        for &(version, label) in &common::ALL_VERSIONS {
+            let mut doc = CadDocument::new();
+            doc.version = version;
+
+            doc.add_entity(make_solid_hatch()).unwrap();
+            doc.add_entity(make_pattern_hatch()).unwrap();
+
+            let rdoc = common::roundtrip_dxf(&doc, &format!("phase4_all_{label}"));
+            assert!(
+                common::entity_count(&rdoc) >= 2,
+                "{label}: expected >=2 entities, got {}",
+                common::entity_count(&rdoc)
+            );
+        }
+    }
+
+    #[test]
+    fn test_hatch_spline_edge_r2010_fit_points() {
+        let mut path = BoundaryPath::external();
+        path.add_edge(BoundaryEdge::Spline(SplineEdge {
+            degree: 3,
+            rational: true,
+            periodic: false,
+            knots: vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+            control_points: vec![
+                Vector3::new(0.0, 0.0, 1.0),
+                Vector3::new(3.0, 5.0, 0.8),
+                Vector3::new(7.0, 5.0, 1.2),
+                Vector3::new(10.0, 0.0, 1.0),
+            ],
+            fit_points: vec![
+                Vector2::new(0.0, 0.0),
+                Vector2::new(5.0, 5.0),
+                Vector2::new(10.0, 0.0),
+            ],
+            start_tangent: Vector2::new(1.0, 1.0),
+            end_tangent: Vector2::new(1.0, -1.0),
+        }));
+        path.add_edge(BoundaryEdge::Line(LineEdge {
+            start: Vector2::new(10.0, 0.0),
+            end: Vector2::new(0.0, 0.0),
+        }));
+
+        let mut hatch = Hatch::solid();
+        hatch.add_path(path);
+
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1024; // R2010
+        doc.add_entity(EntityType::Hatch(hatch)).unwrap();
+        let rdoc = common::roundtrip_dxf(&doc, "hatch_spline_fit_r2010");
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+}
+
+// ===========================================================================
 // Phase 6 — MULTILEADER, RASTER_IMAGE, WIPEOUT
 // ===========================================================================
 

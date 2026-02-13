@@ -344,23 +344,23 @@ test_read_write_read_dimensions_from_sample_ac1024
 
 ### Tasks
 
-- ⬜ **4.1** Implement `write_hatch` in `entities.rs`
-  - ⬜ Write gradient data (R2004+): is_gradient, reserved, gradient_angle, shift, single_color, tint, num_colors, color_data, gradient_name
-  - ⬜ Write is_solid_fill, is_associative, num_paths
-  - ⬜ Write boundary paths — dispatch by type:
-    - ⬜ **Polyline path**: has_bulge flag, is_closed, num_vertices, vertex (2RD + optional BD bulge)
-    - ⬜ **Non-polyline path**: num_edges, each edge by type:
-      - ⬜ Line edge (start, end — 2RD × 2)
-      - ⬜ Circular arc edge (center, radius, start_angle, end_angle, is_ccw)
-      - ⬜ Elliptic arc edge (center, major_endpoint, minor_ratio, start_angle, end_angle, is_ccw)
-      - ⬜ Spline edge (degree, rational, periodic, num_knots, num_ctrl_pts, [fit_data for R2010+])
-    - ⬜ Write boundary object handles (num_handles + source_boundary handles)
-  - ⬜ Write hatch_style (BS), pattern_type (BS)
-  - ⬜ Write pattern data: angle, scale, is_double, num_def_lines, each line (angle, base, offset, num_dashes, dash_lengths)
-  - ⬜ Write pixel_size (BD) if non-solid non-MPolygon
-  - ⬜ Write num_seed_points, seed_points (2RD[])
+- ✅ **4.1** Implement `write_hatch` in `write_entities.rs`
+  - ✅ Write gradient data (R2004+): is_gradient, reserved, gradient_angle, shift, single_color, tint, num_colors, color_data, gradient_name
+  - ✅ Write is_solid_fill, is_associative, num_paths
+  - ✅ Write boundary paths — dispatch by type:
+    - ✅ **Polyline path**: has_bulge flag, is_closed, num_vertices, vertex (2RD + optional BD bulge)
+    - ✅ **Non-polyline path**: num_edges, each edge by type:
+      - ✅ Line edge (start, end — 2RD × 2)
+      - ✅ Circular arc edge (center, radius, start_angle, end_angle, is_ccw)
+      - ✅ Elliptic arc edge (center, major_endpoint, minor_ratio, start_angle, end_angle, is_ccw)
+      - ✅ Spline edge (degree, rational, periodic, num_knots, num_ctrl_pts, [fit_data for R2010+])
+    - ✅ Write boundary object handles (num_handles + source_boundary handles)
+  - ✅ Write hatch_style (BS), pattern_type (BS)
+  - ✅ Write pattern data: angle, scale, is_double, num_def_lines, each line (angle, base, offset, num_dashes, dash_lengths)
+  - ✅ Write pixel_size (BD) if non-solid non-MPolygon
+  - ✅ Write num_seed_points, seed_points (2RD[])
 
-- ⬜ **4.2** Register HATCH in `write_entity()` dispatcher (unlisted type, match by DXF name)
+- ✅ **4.2** Register HATCH in `write_entity()` dispatcher (listed type, DwgObjectType::Hatch)
 
 ### Tests for Phase 4
 ```
