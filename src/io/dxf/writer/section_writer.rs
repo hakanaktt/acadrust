@@ -3125,19 +3125,32 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
     /// Write ACIS data (shared by Solid3D, Region, Body)
     fn write_acis_data(&mut self, acis: &AcisData) -> Result<()> {
-        // Write ACIS data as 255-byte chunks using group code 1
-        // Final chunk uses group code 3
+        // DXF format requires each line of SAT text to be written as a separate
+        // group code 1 entry, with the final entry using group code 3.
+        // Lines longer than 255 chars must be split into 255-char chunks.
         let data = &acis.sat_data;
-        let chunk_size = 255;
-        let chunks: Vec<&str> = data.as_bytes()
-            .chunks(chunk_size)
-            .map(|c| std::str::from_utf8(c).unwrap_or(""))
-            .collect();
 
-        if chunks.is_empty() {
-            // Write empty string with group code 1
+        // Split SAT data by newlines — each line becomes a group code entry
+        let lines: Vec<&str> = data.lines().collect();
+
+        if lines.is_empty() {
+            // Write empty terminator with group code 1
             self.writer.write_string(1, "")?;
         } else {
+            // Flatten lines into <=255-char chunks
+            let mut chunks: Vec<String> = Vec::new();
+            for line in &lines {
+                if line.len() <= 255 {
+                    chunks.push(line.to_string());
+                } else {
+                    // Split long lines into 255-char segments
+                    let bytes = line.as_bytes();
+                    for sub in bytes.chunks(255) {
+                        chunks.push(String::from_utf8_lossy(sub).into_owned());
+                    }
+                }
+            }
+
             // Write all chunks except the last with group code 1
             for chunk in chunks.iter().take(chunks.len().saturating_sub(1)) {
                 self.writer.write_string(1, chunk)?;

@@ -52,6 +52,12 @@ impl DwgObjectWriter {
             EntityType::Polyline3D(e) => self.write_polyline_3d_composite(e, owner_handle),
             EntityType::PolyfaceMesh(e) => self.write_polyface_mesh_composite(e, owner_handle),
             EntityType::PolygonMesh(e) => self.write_polygon_mesh_composite(e, owner_handle),
+            // Phase 5 entity writers
+            EntityType::MLine(e) => self.write_mline(e, owner_handle),
+            EntityType::Ole2Frame(e) => self.write_ole2frame(e, owner_handle),
+            EntityType::Solid3D(e) => self.write_solid3d(e, owner_handle),
+            EntityType::Region(e) => self.write_region(e, owner_handle),
+            EntityType::Body(e) => self.write_body(e, owner_handle),
             // Entities not yet supported for writing — skip silently
             _ => Ok(()),
         }
@@ -1098,10 +1104,13 @@ impl DwgObjectWriter {
         self.write_insert_inner(insert, owner_handle, false, &[], 0)
     }
 
-    /// Core INSERT writer used by both the simple and composite paths.
+    /// Core INSERT/MINSERT writer used by both the simple and composite paths.
     ///
     /// When `has_attribs` is true, after the block-header handle it writes
     /// the attribute-handle chain and SEQEND handle.
+    ///
+    /// If `insert.is_array()` returns true, writes as MINSERT (type code 8)
+    /// with additional column/row count and spacing fields.
     fn write_insert_inner(
         &mut self,
         insert: &Insert,
@@ -1110,10 +1119,17 @@ impl DwgObjectWriter {
         attrib_handles: &[u64],
         seqend_handle: u64,
     ) -> Result<()> {
+        let is_minsert = insert.is_array();
+        let obj_type = if is_minsert {
+            DwgObjectType::Minsert
+        } else {
+            DwgObjectType::Insert
+        };
+
         let (mut writer, _) = self.create_entity_writer();
         self.write_common_entity_data(
             &mut *writer,
-            DwgObjectType::Insert,
+            obj_type,
             &insert.common,
             owner_handle,
         )?;
@@ -1150,6 +1166,14 @@ impl DwgObjectWriter {
         // R2004+: Owned object count (BL) — only when has_attribs
         if self.sio.r2004_plus && has_attribs {
             writer.write_bit_long(attrib_handles.len() as i32)?;
+        }
+
+        // MINSERT-specific fields: column_count, row_count, column_spacing, row_spacing
+        if is_minsert {
+            writer.write_bit_short(insert.column_count as i16)?;
+            writer.write_bit_short(insert.row_count as i16)?;
+            writer.write_bit_double(insert.column_spacing)?;
+            writer.write_bit_double(insert.row_spacing)?;
         }
 
         // Block header handle (hard pointer)
@@ -2242,5 +2266,217 @@ impl DwgObjectWriter {
         writer.write_spear_shift()?;
         self.finalize_entity(writer, mesh.common.handle.value());
         Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // MLINE (Multiline)
+    // -----------------------------------------------------------------------
+
+    /// Write an MLine entity.
+    ///
+    /// Binary layout mirrors `read_mline` in the object reader:
+    ///   Scale (BD) → Justification (EC) → BasePoint (3BD) → Normal (3BD) →
+    ///   Flags (BS) → NumLines (RC) → NumVerts (BS) →
+    ///   per vertex: Position (3BD) + Direction (3BD) + Miter (3BD) +
+    ///     per line: NumSegParams (BS) + params (BD[]) + NumAreaFill (BS) + areaFill (BD[])
+    ///   → MLineStyle handle (H)
+    fn write_mline(&mut self, mline: &MLine, owner_handle: u64) -> Result<()> {
+        let (mut writer, _) = self.create_entity_writer();
+        self.write_common_entity_data(
+            &mut *writer,
+            DwgObjectType::Mline,
+            &mline.common,
+            owner_handle,
+        )?;
+
+        // Scale (BD)
+        writer.write_bit_double(mline.scale_factor)?;
+        // Justification (EC = raw char)
+        writer.write_byte(mline.justification as u8)?;
+        // Base point (3BD)
+        writer.write_3bit_double(mline.start_point)?;
+        // Normal (3BD)
+        writer.write_3bit_double(mline.normal)?;
+        // Flags (BS)
+        writer.write_bit_short(mline.flags.bits())?;
+        // Number of lines in style (RC)
+        let num_lines = mline.style_element_count as u8;
+        writer.write_byte(num_lines)?;
+        // Number of vertices (BS)
+        writer.write_bit_short(mline.vertices.len() as i16)?;
+
+        // Per vertex
+        for vertex in &mline.vertices {
+            writer.write_3bit_double(vertex.position)?;
+            writer.write_3bit_double(vertex.direction)?;
+            writer.write_3bit_double(vertex.miter)?;
+
+            // Per line (style element) — segment parameters
+            for seg_idx in 0..num_lines as usize {
+                let segment = vertex.segments.get(seg_idx);
+                let num_params = segment.map_or(0, |s| s.parameters.len());
+                writer.write_bit_short(num_params as i16)?;
+                if let Some(seg) = segment {
+                    for &p in &seg.parameters {
+                        writer.write_bit_double(p)?;
+                    }
+                }
+                let num_area = segment.map_or(0, |s| s.area_fill_parameters.len());
+                writer.write_bit_short(num_area as i16)?;
+                if let Some(seg) = segment {
+                    for &a in &seg.area_fill_parameters {
+                        writer.write_bit_double(a)?;
+                    }
+                }
+            }
+        }
+
+        // MLineStyle handle (hard pointer)
+        let style_h = mline.style_handle.map(|h| h.value()).unwrap_or(0);
+        writer.handle_reference_typed(DwgReferenceType::HardPointer, style_h)?;
+
+        writer.write_spear_shift()?;
+        self.finalize_entity(writer, mline.common.handle.value());
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // OLE2FRAME
+    // -----------------------------------------------------------------------
+
+    /// Write an OLE2Frame entity.
+    ///
+    /// Binary layout mirrors `read_ole2frame` in the object reader:
+    ///   Version (BS) → DataLength (BL) → BinaryData (RC[])
+    fn write_ole2frame(&mut self, ole: &Ole2Frame, owner_handle: u64) -> Result<()> {
+        let (mut writer, _) = self.create_entity_writer();
+        self.write_common_entity_data(
+            &mut *writer,
+            DwgObjectType::Ole2Frame,
+            &ole.common,
+            owner_handle,
+        )?;
+
+        // Version (BS)
+        writer.write_bit_short(ole.version)?;
+        // Data length (BL)
+        writer.write_bit_long(ole.binary_data.len() as i32)?;
+        // Binary data (raw bytes)
+        writer.write_bytes(&ole.binary_data)?;
+
+        writer.write_spear_shift()?;
+        self.finalize_entity(writer, ole.common.handle.value());
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // 3DSOLID / REGION / BODY — shared modeler geometry writer
+    // -----------------------------------------------------------------------
+
+    /// Write shared ACIS/SAT modeler geometry data.
+    ///
+    /// Binary layout mirrors `read_modeler_geometry` in the object reader:
+    ///   AcisVersion (RC) →
+    ///   R2007+: SAB binary chunks loop [BL length + RC[] data, terminated by BL 0]
+    ///   Pre-R2007: SAT text lines loop [TV line, terminated by empty string]
+    ///   Pre-R2000: wireframe flag (B)
+    ///   R2007+: history handle (H)
+    fn write_modeler_geometry(
+        &mut self,
+        obj_type: DwgObjectType,
+        common: &EntityCommon,
+        acis_data: &solid3d::AcisData,
+        history_handle: Option<Handle>,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let (mut writer, _) = self.create_entity_writer();
+        self.write_common_entity_data(
+            &mut *writer,
+            obj_type,
+            common,
+            owner_handle,
+        )?;
+
+        // ACIS version (RC)
+        let version_byte = match acis_data.version {
+            solid3d::AcisVersion::Version1 => 1u8,
+            solid3d::AcisVersion::Version2 => 2u8,
+        };
+        writer.write_byte(version_byte)?;
+
+        // SAT/SAB data
+        if self.sio.r2007_plus {
+            // R2007+: SAB binary chunks
+            // Write data as a single chunk (BL length + bytes), then terminate with BL 0
+            if !acis_data.sab_data.is_empty() {
+                writer.write_bit_long(acis_data.sab_data.len() as i32)?;
+                writer.write_bytes(&acis_data.sab_data)?;
+            } else if !acis_data.sat_data.is_empty() {
+                // Fall back to encoding SAT as binary chunk
+                let sat_bytes = acis_data.sat_data.as_bytes();
+                writer.write_bit_long(sat_bytes.len() as i32)?;
+                writer.write_bytes(sat_bytes)?;
+            }
+            // Terminator: chunk length 0
+            writer.write_bit_long(0)?;
+        } else {
+            // Pre-R2007: SAT text lines
+            if !acis_data.sat_data.is_empty() {
+                // Split by newlines and write each line as TV
+                for line in acis_data.sat_data.lines() {
+                    writer.write_variable_text(line)?;
+                }
+            }
+            // Terminator: empty string
+            writer.write_variable_text("")?;
+        }
+
+        // Pre-R2000: wireframe flag (B)
+        if !self.sio.r2000_plus {
+            writer.write_bit(false)?; // no wireframe data
+        }
+
+        // R2007+: history handle
+        if self.sio.r2007_plus {
+            let h = history_handle.map(|h| h.value()).unwrap_or(0);
+            writer.handle_reference_typed(DwgReferenceType::HardPointer, h)?;
+        }
+
+        writer.write_spear_shift()?;
+        self.finalize_entity(writer, common.handle.value());
+        Ok(())
+    }
+
+    /// Write a 3DSOLID entity.
+    fn write_solid3d(&mut self, solid: &Solid3D, owner_handle: u64) -> Result<()> {
+        self.write_modeler_geometry(
+            DwgObjectType::Solid3D,
+            &solid.common,
+            &solid.acis_data,
+            solid.history_handle,
+            owner_handle,
+        )
+    }
+
+    /// Write a REGION entity.
+    fn write_region(&mut self, region: &Region, owner_handle: u64) -> Result<()> {
+        self.write_modeler_geometry(
+            DwgObjectType::Region,
+            &region.common,
+            &region.acis_data,
+            None, // Region has no history handle
+            owner_handle,
+        )
+    }
+
+    /// Write a BODY entity.
+    fn write_body(&mut self, body: &Body, owner_handle: u64) -> Result<()> {
+        self.write_modeler_geometry(
+            DwgObjectType::Body,
+            &body.common,
+            &body.acis_data,
+            None, // Body has no history handle
+            owner_handle,
+        )
     }
 }

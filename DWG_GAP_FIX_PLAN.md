@@ -402,42 +402,49 @@ test_read_write_read_hatch_from_sample_ac1024
 
 ---
 
-## Phase 5: Writer — MINSERT, MLINE, OLE2FRAME, 3DSOLID/REGION/BODY
+## Phase 5: Writer — MINSERT, MLINE, OLE2FRAME, 3DSOLID/REGION/BODY ✅
 
 > **Goal:** Add DWG write support for remaining complex entities.  
 > **Reference:** `DwgObjectWriter.Entities.cs`
 
 ### Tasks
 
-- ⬜ **5.1** Implement `write_minsert` in `entities.rs`
-  - ⬜ Reuse INSERT writing logic
-  - ⬜ Add column_count, row_count, column_spacing, row_spacing (BS + BS + BD + BD)
+- ✅ **5.1** Implement `write_minsert` in `write_entities.rs`
+  - ✅ Reuse INSERT writing logic — modified `write_insert_inner()` to detect `is_array()` and use `DwgObjectType::Minsert` (code 8)
+  - ✅ Add column_count, row_count, column_spacing, row_spacing (BS + BS + BD + BD) after has_atts/owned_count
 
-- ⬜ **5.2** Implement `write_mline` in `entities.rs`
-  - ⬜ Write scale, justification, base_point, extrusion
-  - ⬜ Write num_vertices, each vertex (3BD + direction + miter_direction)
-  - ⬜ Write per-vertex segments (num_elements × [num_params × BD + num_area_fills × BD])
-  - ⬜ Write mlinestyle handle
+- ✅ **5.2** Implement `write_mline` in `write_entities.rs`
+  - ✅ Write scale, justification, base_point, extrusion
+  - ✅ Write num_vertices, each vertex (3BD + direction + miter_direction)
+  - ✅ Write per-vertex segments (num_elements × [num_params × BD + num_area_fills × BD])
+  - ✅ Write mlinestyle handle (hard pointer)
 
-- ⬜ **5.3** Implement `write_ole2frame` in `entities.rs`
-  - ⬜ Write binary data blob (BS flags + BS mode + RL data_size + RC[] data)
+- ✅ **5.3** Implement `write_ole2frame` in `write_entities.rs`
+  - ✅ Write version (BS), data_length (BL), binary_data (RC[])
 
-- ⬜ **5.4** Implement `write_3dsolid` in `entities.rs`
-  - ⬜ Write ACIS SAT data: version (RC), num_sat_records, total_size
-  - ⬜ Write SAT text records (each: BS + RC + RL + RC[])
-  - ⬜ Write end markers, isolines, has_history (R2007+), has_wireframe
+- ✅ **5.4** Implement `write_modeler_geometry` (shared) in `write_entities.rs`
+  - ✅ Write acis_version (RC)
+  - ✅ R2007+: Write SAB binary chunks (BL len + bytes, terminated by BL 0)
+  - ✅ Pre-R2007: Write SAT text lines (TV per line, terminated by empty string)
+  - ✅ Pre-R2000: Write wireframe flag (B)
+  - ✅ R2007+: Write history handle (H)
 
-- ⬜ **5.5** Implement `write_region` and `write_body` — reuse 3DSOLID logic (shared ACIS format)
+- ✅ **5.5** Implement `write_solid3d`, `write_region`, `write_body` — thin wrappers calling `write_modeler_geometry`
 
-- ⬜ **5.6** Register all in `write_entity()` dispatcher
+- ✅ **5.6** Register all in `write_entity()` dispatcher — MLine, Ole2Frame, Solid3D, Region, Body match arms added
 
-### Tests for Phase 5
+### Bonus fix
+- ✅ Fixed `write_acis_data` in DXF writer (`section_writer.rs`) — split SAT data by newlines instead of raw byte chunks to prevent corrupted DXF output
+
+### Tests for Phase 5 (48 total: 14 Phase 0 + 34 Phase 5)
 ```
 test_write_minsert_r2000
 test_write_minsert_r2010
 test_write_minsert_array_3x4
 test_roundtrip_minsert_all_versions
 test_minsert_column_row_spacing_preserved
+test_minsert_not_minsert_when_1x1
+test_minsert_with_attribs
 
 test_write_mline_r2000
 test_write_mline_r2010
@@ -446,21 +453,31 @@ test_write_mline_multi_segment
 test_roundtrip_mline_all_versions
 test_mline_scale_preserved
 test_mline_justification_preserved
+test_mline_closed
 
 test_write_ole2frame_r2000
 test_write_ole2frame_r2010
 test_roundtrip_ole2frame_all_versions
+test_ole2frame_empty_data
+test_ole2frame_large_data
 
 test_write_3dsolid_r2000
 test_write_3dsolid_r2010
-test_write_region_r2000
-test_write_body_r2000
+test_write_3dsolid_empty
 test_roundtrip_3dsolid_all_versions
-test_roundtrip_region_all_versions
 test_3dsolid_sat_data_preserved
+test_3dsolid_sab_data
 
-test_read_write_read_mlines_from_sample
-test_read_write_read_solids_from_sample
+test_write_region_r2000
+test_write_region_r2010
+test_roundtrip_region_all_versions
+
+test_write_body_r2000
+test_write_body_r2010
+test_roundtrip_body_all_versions
+
+test_write_all_phase5_entities_together
+test_write_phase5_entities_per_version
 ```
 
 ---
