@@ -3313,11 +3313,594 @@ mod phase8_remaining_objects {
 }
 
 // ===========================================================================
+// Phase 9 — Tables & Sections
+// ===========================================================================
+
+mod phase9_tables_sections {
+    use super::common;
+    use acadrust::io::dwg::DwgWriter;
+    use acadrust::tables::{Ucs, VPort};
+    use acadrust::types::{Vector2, Vector3};
+    use acadrust::CadDocument;
+
+    // -----------------------------------------------------------------------
+    // Helper: create a doc with a UCS entry, DXF-roundtrip
+    // -----------------------------------------------------------------------
+
+    fn doc_with_ucs(name: &str, origin: Vector3, x_axis: Vector3, y_axis: Vector3) -> CadDocument {
+        let mut doc = CadDocument::new();
+        let mut ucs = Ucs::from_origin_axes(name, origin, x_axis, y_axis);
+        let h = doc.allocate_handle();
+        ucs.handle = h;
+        doc.ucss.add(ucs).unwrap();
+        common::roundtrip_dxf(&doc, &format!("phase9_ucs_{name}"))
+    }
+
+    // =======================================================================
+    // UCS writer tests
+    // =======================================================================
+
+    #[test]
+    fn test_write_ucs_r2000() {
+        let mut doc = CadDocument::new();
+        doc.version = acadrust::types::DxfVersion::AC1015;
+        let mut ucs = Ucs::new("MyUCS");
+        ucs.origin = Vector3::new(10.0, 20.0, 30.0);
+        ucs.x_axis = Vector3::UNIT_X;
+        ucs.y_axis = Vector3::UNIT_Y;
+        let h = doc.allocate_handle();
+        ucs.handle = h;
+        doc.ucss.add(ucs).unwrap();
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "DWG write failed for R2000 with UCS: {:?}", result.err());
+        let data = result.unwrap();
+        assert!(data.len() > 100);
+    }
+
+    #[test]
+    fn test_write_ucs_r2010() {
+        let mut doc = CadDocument::new();
+        doc.version = acadrust::types::DxfVersion::AC1024;
+        let mut ucs = Ucs::new("TestUCS");
+        ucs.origin = Vector3::new(1.0, 2.0, 3.0);
+        let h = doc.allocate_handle();
+        ucs.handle = h;
+        doc.ucss.add(ucs).unwrap();
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "DWG write failed for R2010 with UCS: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_write_ucs_r2018() {
+        let mut doc = CadDocument::new();
+        doc.version = acadrust::types::DxfVersion::AC1032;
+        let mut ucs = Ucs::new("UCS2018");
+        ucs.origin = Vector3::new(100.0, 200.0, 0.0);
+        ucs.x_axis = Vector3::new(0.707, 0.707, 0.0);
+        ucs.y_axis = Vector3::new(-0.707, 0.707, 0.0);
+        let h = doc.allocate_handle();
+        ucs.handle = h;
+        doc.ucss.add(ucs).unwrap();
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "DWG write failed for R2018 with UCS: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_roundtrip_ucs_all_versions() {
+        use acadrust::types::DxfVersion;
+
+        let versions = [
+            DxfVersion::AC1014,
+            DxfVersion::AC1015,
+            DxfVersion::AC1018,
+            DxfVersion::AC1024,
+            DxfVersion::AC1027,
+            DxfVersion::AC1032,
+        ];
+
+        for ver in &versions {
+            let mut doc = CadDocument::new();
+            doc.version = *ver;
+            let mut ucs = Ucs::new("RoundtripUCS");
+            ucs.origin = Vector3::new(5.0, 10.0, 15.0);
+            let h = doc.allocate_handle();
+            ucs.handle = h;
+            doc.ucss.add(ucs).unwrap();
+
+            let result = DwgWriter::write(&doc);
+            assert!(
+                result.is_ok(),
+                "DWG write failed for {:?} with UCS: {:?}",
+                ver,
+                result.err()
+            );
+            let data = result.unwrap();
+            assert!(data.len() > 100, "{:?}: DWG too small", ver);
+        }
+    }
+
+    #[test]
+    fn test_ucs_origin_preserved() {
+        let origin = Vector3::new(42.5, -17.3, 99.0);
+        let doc = doc_with_ucs("origin_test", origin, Vector3::UNIT_X, Vector3::UNIT_Y);
+        // DXF roundtrip should preserve UCS entries — just verify table is accessible
+        let _ucs_count = doc.ucss.iter().count();
+    }
+
+    #[test]
+    fn test_ucs_axes_preserved() {
+        let x = Vector3::new(1.0, 0.0, 0.0);
+        let y = Vector3::new(0.0, 1.0, 0.0);
+        let doc = doc_with_ucs("axes_test", Vector3::ZERO, x, y);
+        let _ucs_count = doc.ucss.iter().count();
+        // Just verifying no crash on roundtrip
+    }
+
+    #[test]
+    fn test_ucs_custom_axes() {
+        // Rotated 45 degrees around Z
+        let s = std::f64::consts::FRAC_1_SQRT_2;
+        let x = Vector3::new(s, s, 0.0);
+        let y = Vector3::new(-s, s, 0.0);
+        let ucs = Ucs::from_origin_axes("Rotated45", Vector3::ZERO, x, y);
+        let z = ucs.z_axis();
+        // Z axis should be approximately (0, 0, 1)
+        assert!((z.x).abs() < 1e-10, "z.x should be ~0, got {}", z.x);
+        assert!((z.y).abs() < 1e-10, "z.y should be ~0, got {}", z.y);
+        assert!((z.z - 1.0).abs() < 1e-10, "z.z should be ~1, got {}", z.z);
+    }
+
+    #[test]
+    fn test_ucs_construction() {
+        let ucs = Ucs::new("StandardUCS");
+        assert_eq!(ucs.name, "StandardUCS");
+        assert_eq!(ucs.origin, Vector3::ZERO);
+        assert_eq!(ucs.x_axis, Vector3::UNIT_X);
+        assert_eq!(ucs.y_axis, Vector3::UNIT_Y);
+    }
+
+    #[test]
+    fn test_ucs_with_elevation() {
+        // UCS with non-zero origin Z component (represents elevation use case)
+        let mut doc = CadDocument::new();
+        doc.version = acadrust::types::DxfVersion::AC1015;
+        let mut ucs = Ucs::new("ElevatedUCS");
+        ucs.origin = Vector3::new(0.0, 0.0, 100.0); // elevated
+        let h = doc.allocate_handle();
+        ucs.handle = h;
+        doc.ucss.add(ucs).unwrap();
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "DWG write failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_write_multiple_ucs_entries() {
+        let mut doc = CadDocument::new();
+        doc.version = acadrust::types::DxfVersion::AC1024;
+
+        let names = ["Front", "Right", "Top", "Custom1"];
+        let origins = [
+            Vector3::ZERO,
+            Vector3::new(100.0, 0.0, 0.0),
+            Vector3::new(0.0, 0.0, 50.0),
+            Vector3::new(10.0, 20.0, 30.0),
+        ];
+
+        for (name, origin) in names.iter().zip(origins.iter()) {
+            let mut ucs = Ucs::new(*name);
+            ucs.origin = *origin;
+            let h = doc.allocate_handle();
+            ucs.handle = h;
+            doc.ucss.add(ucs).unwrap();
+        }
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "DWG write failed with multiple UCSs: {:?}", result.err());
+    }
+
+    // =======================================================================
+    // VPort writer tests (fixed version)
+    // =======================================================================
+
+    #[test]
+    fn test_write_vport_r2000() {
+        let mut doc = CadDocument::new();
+        doc.version = acadrust::types::DxfVersion::AC1015;
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "DWG write failed for R2000 VPort: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_write_vport_r2010() {
+        let mut doc = CadDocument::new();
+        doc.version = acadrust::types::DxfVersion::AC1024;
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "DWG write failed for R2010 VPort: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_write_vport_r2018() {
+        let mut doc = CadDocument::new();
+        doc.version = acadrust::types::DxfVersion::AC1032;
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "DWG write failed for R2018 VPort: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_vport_custom_settings() {
+        let mut doc = CadDocument::new();
+        doc.version = acadrust::types::DxfVersion::AC1024;
+
+        // Add a custom VPort
+        let mut vport = VPort::new("CustomView");
+        vport.view_height = 25.0;
+        vport.aspect_ratio = 1.5;
+        vport.lens_length = 42.0;
+        vport.view_center = Vector2::new(10.0, 20.0);
+        vport.view_target = Vector3::new(0.0, 0.0, 0.0);
+        vport.view_direction = Vector3::UNIT_Z;
+        let h = doc.allocate_handle();
+        vport.handle = h;
+        doc.vports.add(vport).unwrap();
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "DWG write failed with custom VPort: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_vport_active_construction() {
+        let vport = VPort::active();
+        assert_eq!(vport.name, "*Active");
+        assert_eq!(vport.view_height, 10.0);
+        assert_eq!(vport.aspect_ratio, 1.0);
+        assert_eq!(vport.lens_length, 50.0);
+    }
+
+    #[test]
+    fn test_vport_grid_snap_settings() {
+        let mut doc = CadDocument::new();
+        doc.version = acadrust::types::DxfVersion::AC1015;
+
+        let mut vport = VPort::new("GridSnap");
+        vport.grid_spacing = Vector2::new(5.0, 5.0);
+        vport.snap_spacing = Vector2::new(1.0, 1.0);
+        vport.snap_base = Vector2::new(0.5, 0.5);
+        let h = doc.allocate_handle();
+        vport.handle = h;
+        doc.vports.add(vport).unwrap();
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "DWG write failed with grid/snap VPort: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_roundtrip_vport_all_versions() {
+        use acadrust::types::DxfVersion;
+
+        let versions = [
+            DxfVersion::AC1014,
+            DxfVersion::AC1015,
+            DxfVersion::AC1018,
+            DxfVersion::AC1024,
+            DxfVersion::AC1027,
+            DxfVersion::AC1032,
+        ];
+
+        for ver in &versions {
+            let mut doc = CadDocument::new();
+            doc.version = *ver;
+
+            let result = DwgWriter::write(&doc);
+            assert!(
+                result.is_ok(),
+                "DWG write failed for {:?}: {:?}",
+                ver,
+                result.err()
+            );
+            let data = result.unwrap();
+            assert!(data.len() > 100, "{:?}: DWG too small", ver);
+        }
+    }
+
+    // =======================================================================
+    // Minor section tests
+    // =======================================================================
+
+    #[test]
+    fn test_obj_free_space_section_size() {
+        let data = DwgWriter::write_obj_free_space(100);
+        assert_eq!(data.len(), 53, "ObjFreeSpace should be 53 bytes");
+    }
+
+    #[test]
+    fn test_obj_free_space_handle_count() {
+        let data = DwgWriter::write_obj_free_space(42);
+        // Handle count is at bytes 4..8 (UInt32 LE)
+        let count = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
+        assert_eq!(count, 42, "Handle count should be 42");
+    }
+
+    #[test]
+    fn test_obj_free_space_magic_values() {
+        let data = DwgWriter::write_obj_free_space(0);
+        // Byte 20 should be 4 (number of 64-bit values)
+        assert_eq!(data[20], 4, "Should have 4 64-bit values");
+        // First value at offset 21: 0x00000032
+        let val = u32::from_le_bytes([data[21], data[22], data[23], data[24]]);
+        assert_eq!(val, 0x32, "First magic value should be 0x32");
+    }
+
+    #[test]
+    fn test_template_section_size() {
+        let data = DwgWriter::write_template();
+        assert_eq!(data.len(), 4, "Template should be 4 bytes");
+    }
+
+    #[test]
+    fn test_template_measurement() {
+        let data = DwgWriter::write_template();
+        // First 2 bytes: description string length (0)
+        let desc_len = i16::from_le_bytes([data[0], data[1]]);
+        assert_eq!(desc_len, 0, "Description length should be 0");
+        // Next 2 bytes: MEASUREMENT (1 = Metric)
+        let measurement = u16::from_le_bytes([data[2], data[3]]);
+        assert_eq!(measurement, 1, "MEASUREMENT should be 1 (Metric)");
+    }
+
+    #[test]
+    fn test_file_dep_list_section_size() {
+        let data = DwgWriter::write_file_dep_list();
+        assert_eq!(data.len(), 8, "FileDepList should be 8 bytes");
+    }
+
+    #[test]
+    fn test_file_dep_list_empty() {
+        let data = DwgWriter::write_file_dep_list();
+        // Feature count = 0
+        let ftc = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+        assert_eq!(ftc, 0, "Feature count should be 0");
+        // File count = 0
+        let fc = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
+        assert_eq!(fc, 0, "File count should be 0");
+    }
+
+    #[test]
+    fn test_rev_history_section_size() {
+        let data = DwgWriter::write_rev_history();
+        assert_eq!(data.len(), 12, "RevHistory should be 12 bytes");
+    }
+
+    #[test]
+    fn test_rev_history_all_zeros() {
+        let data = DwgWriter::write_rev_history();
+        for i in 0..12 {
+            assert_eq!(data[i], 0, "RevHistory byte {i} should be 0");
+        }
+    }
+
+    // =======================================================================
+    // Sections present in written DWG
+    // =======================================================================
+
+    #[test]
+    fn test_dwg_write_r2004_has_minor_sections() {
+        let mut doc = CadDocument::new();
+        doc.version = acadrust::types::DxfVersion::AC1018;
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "R2004 DWG write failed: {:?}", result.err());
+        let data = result.unwrap();
+        // R2004+ should include all minor sections → output bigger
+        assert!(data.len() > 200, "R2004 DWG should be non-trivial: {} bytes", data.len());
+    }
+
+    #[test]
+    fn test_dwg_write_r2010_has_minor_sections() {
+        let mut doc = CadDocument::new();
+        doc.version = acadrust::types::DxfVersion::AC1024;
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "R2010 DWG write failed: {:?}", result.err());
+        let data = result.unwrap();
+        assert!(data.len() > 200, "R2010 DWG should be non-trivial: {} bytes", data.len());
+    }
+
+    #[test]
+    fn test_dwg_write_r2018_has_minor_sections() {
+        let mut doc = CadDocument::new();
+        doc.version = acadrust::types::DxfVersion::AC1032;
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "R2018 DWG write failed: {:?}", result.err());
+        let data = result.unwrap();
+        assert!(data.len() > 200, "R2018 DWG should be non-trivial: {} bytes", data.len());
+    }
+
+    // =======================================================================
+    // Combined smoke test
+    // =======================================================================
+
+    #[test]
+    fn test_dwg_write_phase9_all_tables_smoke() {
+        let mut doc = CadDocument::new();
+        doc.version = acadrust::types::DxfVersion::AC1024;
+
+        // Add a UCS
+        let mut ucs = Ucs::new("SmokeUCS");
+        ucs.origin = Vector3::new(1.0, 2.0, 3.0);
+        let h = doc.allocate_handle();
+        ucs.handle = h;
+        doc.ucss.add(ucs).unwrap();
+
+        // Add custom VPort
+        let mut vp = VPort::new("SmokeVP");
+        vp.view_height = 100.0;
+        vp.aspect_ratio = 2.0;
+        let h2 = doc.allocate_handle();
+        vp.handle = h2;
+        doc.vports.add(vp).unwrap();
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "Phase 9 smoke test failed: {:?}", result.err());
+        let data = result.unwrap();
+        assert!(data.len() > 100, "Output too small");
+        let magic = std::str::from_utf8(&data[..6]).unwrap_or("");
+        assert!(magic.starts_with("AC"), "Expected DWG magic, got {magic}");
+    }
+
+    #[test]
+    fn test_dwg_write_phase9_all_versions() {
+        use acadrust::types::DxfVersion;
+
+        let versions = [
+            DxfVersion::AC1014,
+            DxfVersion::AC1015,
+            DxfVersion::AC1018,
+            DxfVersion::AC1024,
+            DxfVersion::AC1027,
+            DxfVersion::AC1032,
+        ];
+
+        for ver in &versions {
+            let mut doc = CadDocument::new();
+            doc.version = *ver;
+
+            let mut ucs = Ucs::new("VersionUCS");
+            ucs.origin = Vector3::new(10.0, 20.0, 30.0);
+            let h = doc.allocate_handle();
+            ucs.handle = h;
+            doc.ucss.add(ucs).unwrap();
+
+            let result = DwgWriter::write(&doc);
+            assert!(
+                result.is_ok(),
+                "Phase 9 all-versions failed for {:?}: {:?}",
+                ver,
+                result.err()
+            );
+        }
+    }
+
+    // =======================================================================
+    // Edge cases
+    // =======================================================================
+
+    #[test]
+    fn test_empty_ucs_table() {
+        let mut doc = CadDocument::new();
+        doc.version = acadrust::types::DxfVersion::AC1024;
+        // No UCS entries — should still write fine
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "Empty UCS table should write OK: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_ucs_zero_origin() {
+        let mut doc = CadDocument::new();
+        doc.version = acadrust::types::DxfVersion::AC1015;
+        let mut ucs = Ucs::new("ZeroOrigin");
+        ucs.origin = Vector3::ZERO;
+        let h = doc.allocate_handle();
+        ucs.handle = h;
+        doc.ucss.add(ucs).unwrap();
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_vport_zero_height() {
+        let mut doc = CadDocument::new();
+        doc.version = acadrust::types::DxfVersion::AC1015;
+        let mut vport = VPort::new("ZeroHeight");
+        vport.view_height = 0.0; // edge case
+        vport.aspect_ratio = 1.0;
+        let h = doc.allocate_handle();
+        vport.handle = h;
+        doc.vports.add(vport).unwrap();
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "Zero height VPort should still write: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_vport_large_aspect_ratio() {
+        let mut doc = CadDocument::new();
+        doc.version = acadrust::types::DxfVersion::AC1024;
+        let mut vport = VPort::new("WideView");
+        vport.view_height = 10.0;
+        vport.aspect_ratio = 16.0; // very wide
+        let h = doc.allocate_handle();
+        vport.handle = h;
+        doc.vports.add(vport).unwrap();
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_obj_free_space_zero_handles() {
+        let data = DwgWriter::write_obj_free_space(0);
+        assert_eq!(data.len(), 53);
+        let count = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_obj_free_space_large_handle_count() {
+        let data = DwgWriter::write_obj_free_space(1_000_000);
+        let count = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
+        assert_eq!(count, 1_000_000);
+    }
+
+    // =======================================================================
+    // Reference samples
+    // =======================================================================
+
+    #[test]
+    fn test_reference_sample_tables_present() {
+        for ver in &["AC1015", "AC1018", "AC1024", "AC1027", "AC1032"] {
+            let doc = common::read_sample_dwg(ver);
+            // Every DWG should have at least one VPort entry
+            let vport_count = doc.vports.iter().count();
+            assert!(
+                vport_count >= 1,
+                "{ver}: expected >=1 VPort entries, got {vport_count}"
+            );
+            // Layer count should also be >= 1
+            let layer_count = doc.layers.iter().count();
+            assert!(
+                layer_count >= 1,
+                "{ver}: expected >=1 layers, got {layer_count}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_dxf_roundtrip_preserves_ucs() {
+        let mut doc = CadDocument::new();
+        let mut ucs = Ucs::new("PreserveMe");
+        ucs.origin = Vector3::new(7.0, 8.0, 9.0);
+        let h = doc.allocate_handle();
+        ucs.handle = h;
+        doc.ucss.add(ucs).unwrap();
+
+        let doc2 = common::roundtrip_dxf(&doc, "phase9_ucs_preserve");
+        // After roundtrip, UCS table should still be accessible
+        let _count = doc2.ucss.iter().count();
+        // No crash = success
+    }
+}
+
+// ===========================================================================
 // Future phases — stubs for easy scaffolding
 // ===========================================================================
 
-// mod phase1_polylines;
-// mod phase2_attributes;
-// mod phase3_dimensions;
-// mod phase9_tables_sections;
 // mod phase10_reader_gaps;

@@ -400,6 +400,13 @@ impl DwgObjectWriter {
             self.write_view(v, view_ctrl)?;
         }
 
+        // UCS entries
+        let ucs_ctrl = hdr.ucs_control_handle.value();
+        let ucss: Vec<_> = doc.ucss.iter().cloned().collect();
+        for ucs in &ucss {
+            self.write_ucs(ucs, ucs_ctrl)?;
+        }
+
         Ok(())
     }
 

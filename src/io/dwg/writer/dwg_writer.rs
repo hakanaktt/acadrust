@@ -124,10 +124,43 @@ impl DwgWriter {
             let summary_data = DwgSummaryInfoWriter::new(version)
                 .write(summary_info)?;
             file_writer.add_section(section_names::SUMMARY_INFO, summary_data, true, 0)?;
+
+            // File Dependency List (AcDb:FileDepList) — uncompressed, align 0x80
+            let file_dep_data = Self::write_file_dep_list();
+            file_writer.add_section(
+                section_names::FILE_DEP_LIST,
+                file_dep_data,
+                false, // NOT compressed (matches C# reference)
+                0x80,
+            )?;
+
+            // Revision History (AcDb:RevHistory) — compressed
+            let rev_history_data = Self::write_rev_history();
+            file_writer.add_section(section_names::REV_HISTORY, rev_history_data, true, 0)?;
         }
 
         // -------------------------------------------------------------------
-        // 6. Assemble final file
+        // 6. ObjFreeSpace and Template (all versions)
+        //    Written after handles because ObjFreeSpace needs handle_map count.
+        // -------------------------------------------------------------------
+        let obj_free_space_data = Self::write_obj_free_space(handle_map.len() as u32);
+        file_writer.add_section(
+            section_names::OBJ_FREE_SPACE,
+            obj_free_space_data,
+            sio.r2004_plus,
+            0,
+        )?;
+
+        let template_data = Self::write_template();
+        file_writer.add_section(
+            section_names::TEMPLATE,
+            template_data,
+            sio.r2004_plus,
+            0,
+        )?;
+
+        // -------------------------------------------------------------------
+        // 7. Assemble final file
         // -------------------------------------------------------------------
         file_writer.write_file()
     }
@@ -209,5 +242,80 @@ impl DwgWriter {
     /// The standard code page for ANSI_1252 is 30 in DWG files.
     fn code_page_for_version(_version: DxfVersion) -> u16 {
         30 // ANSI_1252 / Western European
+    }
+
+    // -----------------------------------------------------------------------
+    // Minor section writers
+    // -----------------------------------------------------------------------
+
+    /// Write the ObjFreeSpace section data.
+    ///
+    /// Matches ACadSharp's `writeObjFreeSpace()`. Total: 53 bytes.
+    pub fn write_obj_free_space(handle_count: u32) -> Vec<u8> {
+        let mut data = Vec::with_capacity(53);
+
+        // Int32: 0
+        data.extend_from_slice(&0i32.to_le_bytes());
+        // UInt32: approximate number of objects (handle count)
+        data.extend_from_slice(&handle_count.to_le_bytes());
+        // Julian datetime (8 bytes) — write zeros (no TDUPDATE available here)
+        data.extend_from_slice(&0i32.to_le_bytes()); // jdate
+        data.extend_from_slice(&0i32.to_le_bytes()); // milliseconds
+        // UInt32: offset of objects section in stream (set to 0)
+        data.extend_from_slice(&0u32.to_le_bytes());
+        // UInt8: number of 64-bit values that follow (4)
+        data.push(4);
+        // 4 × 64-bit values as 8 × UInt32:
+        data.extend_from_slice(&0x00000032u32.to_le_bytes());
+        data.extend_from_slice(&0x00000000u32.to_le_bytes());
+        data.extend_from_slice(&0x00000064u32.to_le_bytes());
+        data.extend_from_slice(&0x00000000u32.to_le_bytes());
+        data.extend_from_slice(&0x00000200u32.to_le_bytes());
+        data.extend_from_slice(&0x00000000u32.to_le_bytes());
+        data.extend_from_slice(&0xFFFFFFFFu32.to_le_bytes());
+        data.extend_from_slice(&0x00000000u32.to_le_bytes());
+
+        data
+    }
+
+    /// Write the Template section data.
+    ///
+    /// Matches ACadSharp's `writeTemplate()`. Total: 4 bytes.
+    pub fn write_template() -> Vec<u8> {
+        let mut data = Vec::with_capacity(4);
+
+        // Int16: template description string length (always 0)
+        data.extend_from_slice(&0i16.to_le_bytes());
+        // UInt16: MEASUREMENT (0=English, 1=Metric) — default to Metric
+        data.extend_from_slice(&1u16.to_le_bytes());
+
+        data
+    }
+
+    /// Write the FileDepList section data (R2004+ only).
+    ///
+    /// Matches ACadSharp's `writeFileDepList()`. Total: 8 bytes (empty list).
+    pub fn write_file_dep_list() -> Vec<u8> {
+        let mut data = Vec::with_capacity(8);
+
+        // UInt32: feature count (0)
+        data.extend_from_slice(&0u32.to_le_bytes());
+        // UInt32: file count (0)
+        data.extend_from_slice(&0u32.to_le_bytes());
+
+        data
+    }
+
+    /// Write the RevHistory section data (R2004+ only).
+    ///
+    /// Matches ACadSharp's `writeRevHistory()`. Total: 12 bytes (three zeros).
+    pub fn write_rev_history() -> Vec<u8> {
+        let mut data = Vec::with_capacity(12);
+
+        data.extend_from_slice(&0u32.to_le_bytes());
+        data.extend_from_slice(&0u32.to_le_bytes());
+        data.extend_from_slice(&0u32.to_le_bytes());
+
+        data
     }
 }

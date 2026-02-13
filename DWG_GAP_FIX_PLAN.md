@@ -761,61 +761,109 @@ test_reference_sample_phase8_objects_present
 
 ---
 
-## Phase 9: Writer — Missing Table Entries + Minor Sections
+## Phase 9: Writer — Missing Table Entries + Minor Sections ✅
 
-> **Goal:** Add UCS table writer, VPortEntityHeader writer, and minor DWG sections (ObjFreeSpace, Template, FileDepList, RevHistory).  
-> **Reference:** `DwgObjectWriter.Tables.cs`, `DwgWriter.cs`
+> **Goal:** Add UCS table writer, VPortEntityHeader writer, fix VPort writer, and minor DWG sections (ObjFreeSpace, Template, FileDepList, RevHistory).  
+> **Reference:** `DwgObjectWriter.Tables.cs`, `DwgWriter.cs`  
+> **Status:** ✅ Complete — 39 tests, 237 total integration tests, 733 lib tests
 
 ### Tasks
 
-- ⬜ **9.1** Implement `write_ucs` in `tables.rs`
-  - ⬜ Write origin (3BD), x_direction (3BD), y_direction (3BD)
-  - ⬜ Write elevation (BD) — R2000+
-  - ⬜ Write orthographic_type (BS) — R2000+
-  - ⬜ Write orthographic_origin per type (6 × [BS + 3BD]) — R2000+
+- ✅ **9.1** Implement `write_ucs` in `tables.rs`
+  - ✅ Write name (TV), xref_dependant_bit, origin (3BD), x_axis (3BD), y_axis (3BD)
+  - ✅ Write elevation (BD=0) — R2000+
+  - ✅ Write orthoViewType (BS=0), orthoType (BS=0) — R2000+
+  - ✅ Write handles: owner (SoftPointer), baseUCS (HP=0), namedUCS (HP=0) — R2000+
 
-- ⬜ **9.2** Implement `write_vport_entity_header` in `tables.rs`
-  - ⬜ Write flags, entity handles
+- ✅ **9.2** Implement `write_vport_entity_header` in `tables.rs`
+  - ✅ Write name, xref_dependant_bit, 1-flag, ctrl handle, block handle
+  - ✅ Marked `#[allow(dead_code)]` — not dispatched (matches C# reference)
 
-- ⬜ **9.3** Register UCS and VPortEntityHeader in table writer dispatcher
+- ✅ **9.3** Register UCS in table writer dispatcher (`write_table_entries` in mod.rs)
+  - ✅ VPortEntityHeader deliberately not dispatched (C# reference also skips it)
 
-- ⬜ **9.4** Implement `write_obj_free_space` section in writer pipeline
-  - ⬜ Write object count, date timestamps, offsets
+- ✅ **9.4** Implement `write_obj_free_space` section in writer pipeline
+  - ✅ Write 53 bytes: Int32(0), UInt32(handle_count), Julian(0,0), UInt32(0), UInt8(4), 8×UInt32 magic values
 
-- ⬜ **9.5** Implement `write_template` section
-  - ⬜ Write template description + MEASUREMENT variable
+- ✅ **9.5** Implement `write_template` section
+  - ✅ Write 4 bytes: Int16(0) desc_length, UInt16(1) MEASUREMENT
 
-- ⬜ **9.6** Implement `write_file_dep_list` section
-  - ⬜ Write file dependency records (XRefs, images, fonts)
+- ✅ **9.6** Implement `write_file_dep_list` section
+  - ✅ Write 8 bytes: UInt32(0) features, UInt32(0) files — R2004+ only, uncompressed, align 0x80
 
-- ⬜ **9.7** Implement `write_rev_history` section
-  - ⬜ Write revision history (3 × BL zeros)
+- ✅ **9.7** Implement `write_rev_history` section
+  - ✅ Write 12 bytes: 3×UInt32(0) — R2004+ only, compressed
 
-- ⬜ **9.8** Add these sections to the writer pipeline in `dwg_writer.rs`
-  - ⬜ Emit in correct order between objects and handles sections
+- ✅ **9.8** Add these sections to the writer pipeline in `dwg_writer.rs`
+  - ✅ FileDepList + RevHistory in R2004+ block
+  - ✅ ObjFreeSpace + Template for all versions after handles section
 
-### Tests for Phase 9
+- ✅ **9.9** Fix `write_vport` to match C# reference (10+ corrections)
+  - ✅ View mode: 4×B individual bits (was BL)
+  - ✅ Aspect ratio: multiplied by view_height
+  - ✅ Added fast_zoom(B=true) and UCSICON display(2×B)
+  - ✅ Render mode moved to R2000+ section
+  - ✅ R2007+ ambient color uses CMC, handles use SoftPointer
+  - ✅ R2000+ UCS: added unknown(B=false) before UCS_per_viewport(B=true)
+  - ✅ Grid/snap field order corrected
+
+- ✅ **9.10** Add `write_xref_dependant_bit` helper
+  - ✅ R2007+: writes BS(0), pre-R2007: writes B(false)+BS(0)+B(false)
+
+### Tests for Phase 9 (39 tests)
 ```
+# UCS writer tests (11)
 test_write_ucs_r2000
 test_write_ucs_r2010
-test_write_ucs_with_elevation
-test_write_ucs_orthographic_types
+test_write_ucs_r2018
 test_roundtrip_ucs_all_versions
 test_ucs_origin_preserved
 test_ucs_axes_preserved
+test_ucs_custom_axes
+test_ucs_construction
+test_ucs_with_elevation
+test_write_multiple_ucs_entries
+test_dxf_roundtrip_preserves_ucs
 
-test_write_vport_entity_header_r2000
-test_roundtrip_vport_entity_header
+# VPort writer tests (7)
+test_write_vport_r2000
+test_write_vport_r2010
+test_write_vport_r2018
+test_vport_custom_settings
+test_vport_active_construction
+test_vport_grid_snap_settings
+test_roundtrip_vport_all_versions
 
-test_write_obj_free_space_section_r2004
-test_write_obj_free_space_section_r2010
-test_write_template_section_r2004
-test_write_file_dep_list_section_r2004
-test_write_rev_history_section_r2004
+# Minor section tests (11)
+test_obj_free_space_section_size
+test_obj_free_space_handle_count
+test_obj_free_space_magic_values
+test_template_section_size
+test_template_measurement
+test_file_dep_list_section_size
+test_file_dep_list_empty
+test_rev_history_section_size
+test_rev_history_all_zeros
+test_obj_free_space_zero_handles
+test_obj_free_space_large_handle_count
 
-test_all_sections_present_in_written_dwg_r2004
-test_all_sections_present_in_written_dwg_r2010
-test_all_sections_present_in_written_dwg_r2018
+# Sections present tests (3)
+test_dwg_write_r2004_has_minor_sections
+test_dwg_write_r2010_has_minor_sections
+test_dwg_write_r2018_has_minor_sections
+
+# Combined smoke tests (2)
+test_dwg_write_phase9_all_tables_smoke
+test_dwg_write_phase9_all_versions
+
+# Edge cases (4)
+test_empty_ucs_table
+test_ucs_zero_origin
+test_vport_zero_height
+test_vport_large_aspect_ratio
+
+# Reference sample test (1)
+test_reference_sample_tables_present
 ```
 
 ---

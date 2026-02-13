@@ -6,6 +6,7 @@
 use crate::error::Result;
 use crate::io::dwg::object_type::DwgObjectType;
 use crate::io::dwg::reference_type::DwgReferenceType;
+use crate::io::dwg::writer::stream_writer::IDwgStreamWriter;
 use crate::tables::*;
 
 use super::DwgObjectWriter;
@@ -678,6 +679,36 @@ impl DwgObjectWriter {
     // VPORT table entry
     // -----------------------------------------------------------------------
 
+    // -----------------------------------------------------------------------
+    // Xref dependant bit helper (matches C# writeXrefDependantBit)
+    // -----------------------------------------------------------------------
+
+    /// Write the xref-dependent flag for a table entry.
+    ///
+    /// R2007+: writes `BS` — `0x100` if xref-dependent, else `0`.
+    /// Pre-R2007: writes `B` (64-flag) + `BS` (xrefindex+1=0) + `B` (xdep).
+    fn write_xref_dependant_bit(
+        &self,
+        writer: &mut dyn IDwgStreamWriter,
+    ) -> Result<()> {
+        if self.sio.r2007_plus {
+            // R2007+: xrefindex+1 BS — bit 0x100 indicates xref-dependent
+            writer.write_bit_short(0)?; // non-xref → 0
+        } else {
+            // 64-flag (Referenced) (B)
+            writer.write_bit(false)?;
+            // xrefindex+1 (BS) — 0 means no xref
+            writer.write_bit_short(0)?;
+            // Xdep (B) — XrefDependent flag
+            writer.write_bit(false)?;
+        }
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // VPORT table entry
+    // -----------------------------------------------------------------------
+
     pub(super) fn write_vport(
         &mut self,
         vport: &VPort,
@@ -697,14 +728,14 @@ impl DwgObjectWriter {
         // Name (TV)
         writer.write_variable_text(vport.name())?;
 
-        // Xref dependent (B)
-        writer.write_bit(false)?;
+        // Xref dependant bit
+        self.write_xref_dependant_bit(&mut *writer)?;
 
         // View height (BD)
         writer.write_bit_double(vport.view_height)?;
 
-        // Aspect ratio (BD)
-        writer.write_bit_double(vport.aspect_ratio)?;
+        // Aspect ratio (BD) — stored as aspect_ratio * view_height per spec
+        writer.write_bit_double(vport.aspect_ratio * vport.view_height)?;
 
         // View center (2RD)
         writer.write_2raw_double(vport.view_center)?;
@@ -727,19 +758,28 @@ impl DwgObjectWriter {
         // Back clip (BD)
         writer.write_bit_double(0.0)?;
 
-        // View mode (BL)
-        writer.write_bit_long(0)?;
+        // View mode — 4 individual bits (NOT BL)
+        // bit 0: PerspectiveView (71 bit 0)
+        writer.write_bit(false)?;
+        // bit 1: FrontClipping (71 bit 1)
+        writer.write_bit(false)?;
+        // bit 2: BackClipping (71 bit 2)
+        writer.write_bit(false)?;
+        // bit 3: OPPOSITE of 71 bit 4 (FrontClippingZ)
+        writer.write_bit(false)?;
 
-        // Render mode (RC)
-        writer.write_byte(0)?;
-
-        // R2000+
+        // R2000+: Render mode (RC)
         if self.sio.r2000_plus {
-            writer.write_bit(true)?;  // use default lighting
-            writer.write_byte(1)?;     // default lighting type
-            writer.write_bit_double(0.0)?; // brightness
-            writer.write_bit_double(0.0)?; // contrast
-            writer.write_raw_long(0)?;     // ambient color
+            writer.write_byte(0)?;
+        }
+
+        // R2007+: Lighting settings
+        if self.sio.r2007_plus {
+            writer.write_bit(true)?;       // use default lighting (B)
+            writer.write_byte(1)?;          // default lighting type (RC)
+            writer.write_bit_double(0.0)?;  // brightness (BD)
+            writer.write_bit_double(0.0)?;  // contrast (BD)
+            writer.write_cm_color(crate::types::Color::ByBlock)?; // ambient color (CMC)
         }
 
         // Lower-left corner (2RD)
@@ -748,53 +788,181 @@ impl DwgObjectWriter {
         // Upper-right corner (2RD)
         writer.write_2raw_double(vport.upper_right)?;
 
-        // UCSFOLLOW (B)
+        // UCSFOLLOW (B) — bit 3 (8) of 71 group
         writer.write_bit(false)?;
 
-        // Circle sides (BS)
+        // Circle zoom percent (BS)
         writer.write_bit_short(1000)?;
 
-        // Snap settings
-        writer.write_bit(false)?; // snap on
-        writer.write_bit(false)?; // snap style
-        writer.write_bit_short(0)?; // snap isopair
-        writer.write_bit_double(0.0)?; // snap rotation
-        writer.write_2raw_double(vport.snap_base)?;
-        writer.write_2raw_double(vport.snap_spacing)?;
+        // Fast zoom (B) — always true
+        writer.write_bit(true)?;
 
-        // Grid settings
-        writer.write_bit(false)?; // grid on
+        // UCSICON display — 2 individual bits
+        // bit 0: OnLower (74 bit 0)
+        writer.write_bit(true)?;
+        // bit 1: OnOrigin (74 bit 1)
+        writer.write_bit(true)?;
+
+        // Grid on/off (B)
+        writer.write_bit(false)?;
+        // Grid spacing (2RD)
         writer.write_2raw_double(vport.grid_spacing)?;
 
-        // UCS flags (R2000+)
+        // Snap on/off (B)
+        writer.write_bit(false)?;
+        // Snap style / Isometric (B)
+        writer.write_bit(false)?;
+        // Snap isopair (BS)
+        writer.write_bit_short(0)?;
+        // Snap rotation (BD)
+        writer.write_bit_double(0.0)?;
+        // Snap base (2RD)
+        writer.write_2raw_double(vport.snap_base)?;
+        // Snap spacing (2RD)
+        writer.write_2raw_double(vport.snap_spacing)?;
+
+        // R2000+: UCS per viewport settings
         if self.sio.r2000_plus {
-            writer.write_bit(false)?; // ucs per viewport
-            writer.write_3bit_double(crate::types::Vector3::ZERO)?; // UCS origin
-            writer.write_3bit_double(crate::types::Vector3::UNIT_X)?; // UCS X
-            writer.write_3bit_double(crate::types::Vector3::UNIT_Y)?; // UCS Y
-            writer.write_bit_double(0.0)?; // UCS elevation
-            writer.write_bit_short(0)?;     // UCS ortho type
+            // Unknown (B) — always false
+            writer.write_bit(false)?;
+            // UCS per viewport (B) — always true
+            writer.write_bit(true)?;
+            // UCS origin (3BD)
+            writer.write_3bit_double(crate::types::Vector3::ZERO)?;
+            // UCS X axis (3BD)
+            writer.write_3bit_double(crate::types::Vector3::UNIT_X)?;
+            // UCS Y axis (3BD)
+            writer.write_3bit_double(crate::types::Vector3::UNIT_Y)?;
+            // UCS elevation (BD)
+            writer.write_bit_double(0.0)?;
+            // UCS orthographic type (BS)
+            writer.write_bit_short(0)?;
         }
 
+        // R2007+: grid flags and major grid
         if self.sio.r2007_plus {
-            writer.write_bit_short(0)?; // grid flags
-            writer.write_bit_short(5)?; // grid major
+            writer.write_bit_short(0)?; // grid flags (BS)
+            writer.write_bit_short(5)?; // grid major (BS)
         }
 
-        // VPort control object handle
-        writer.handle_reference_typed(DwgReferenceType::HardPointer, owner_handle)?;
+        // External reference block handle (hard pointer)
+        writer.handle_reference_typed(DwgReferenceType::HardPointer, 0)?;
 
-        // R2007+: background, visual style, sun handles
+        // R2007+: background, visual style, sun handles (soft pointer per C# ref)
         if self.sio.r2007_plus {
-            writer.handle_reference_typed(DwgReferenceType::HardPointer, 0)?;
-            writer.handle_reference_typed(DwgReferenceType::HardPointer, 0)?;
-            writer.handle_reference_typed(DwgReferenceType::HardPointer, 0)?;
+            writer.handle_reference_typed(DwgReferenceType::SoftPointer, 0)?; // background
+            writer.handle_reference_typed(DwgReferenceType::SoftPointer, 0)?; // visual style
+            writer.handle_reference_typed(DwgReferenceType::SoftPointer, 0)?; // sun
         }
 
+        // R2000+: Named UCS and Base UCS handles
         if self.sio.r2000_plus {
             writer.handle_reference_typed(DwgReferenceType::HardPointer, 0)?; // named UCS
             writer.handle_reference_typed(DwgReferenceType::HardPointer, 0)?; // base UCS
         }
+
+        writer.write_spear_shift()?;
+        self.finalize_object(writer, handle);
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // UCS table entry
+    // -----------------------------------------------------------------------
+
+    pub(super) fn write_ucs(
+        &mut self,
+        ucs: &Ucs,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let handle = ucs.handle.value();
+        let (mut writer, _) = self.create_object_writer();
+        self.write_common_non_entity_data(
+            &mut *writer,
+            DwgObjectType::Ucs,
+            handle,
+            owner_handle,
+            &[],
+            None,
+        )?;
+
+        // Name (TV)
+        writer.write_variable_text(ucs.name())?;
+
+        // Xref dependant bit
+        self.write_xref_dependant_bit(&mut *writer)?;
+
+        // Origin (3BD)
+        writer.write_3bit_double(ucs.origin)?;
+
+        // X-direction (3BD)
+        writer.write_3bit_double(ucs.x_axis)?;
+
+        // Y-direction (3BD)
+        writer.write_3bit_double(ucs.y_axis)?;
+
+        // R2000+: elevation, ortho type fields
+        if self.sio.r2000_plus {
+            // Elevation (BD) — DXF 146
+            writer.write_bit_double(0.0)?;
+            // OrthographicViewType (BS) — DXF 79, always 0
+            writer.write_bit_short(0)?;
+            // OrthographicType (BS) — DXF 71
+            writer.write_bit_short(0)?;
+        }
+
+        // UCS control object handle (soft pointer)
+        writer.handle_reference_typed(DwgReferenceType::SoftPointer, owner_handle)?;
+
+        // R2000+: Base UCS handle and Named UCS handle
+        if self.sio.r2000_plus {
+            // Base UCS Handle (hard pointer) — always 0
+            writer.handle_reference_typed(DwgReferenceType::HardPointer, 0)?;
+            // Named UCS Handle (hard pointer) — always 0
+            writer.handle_reference_typed(DwgReferenceType::HardPointer, 0)?;
+        }
+
+        writer.write_spear_shift()?;
+        self.finalize_object(writer, handle);
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // VP_ENT_HDR table entry (VPortEntityHeader) — pre-R2004 only
+    // -----------------------------------------------------------------------
+
+    #[allow(dead_code)]
+    pub(super) fn write_vport_entity_header(
+        &mut self,
+        handle: u64,
+        owner_handle: u64,
+        name: &str,
+        block_handle: u64,
+    ) -> Result<()> {
+        let (mut writer, _) = self.create_object_writer();
+        self.write_common_non_entity_data(
+            &mut *writer,
+            DwgObjectType::VpEntHdr,
+            handle,
+            owner_handle,
+            &[],
+            None,
+        )?;
+
+        // Name (TV)
+        writer.write_variable_text(name)?;
+
+        // Xref dependant bit
+        self.write_xref_dependant_bit(&mut *writer)?;
+
+        // 1-flag (B) — bit 0 of flags
+        writer.write_bit(false)?;
+
+        // VP_ENT_HDR control object handle (soft pointer)
+        writer.handle_reference_typed(DwgReferenceType::SoftPointer, owner_handle)?;
+
+        // External reference block handle (hard pointer)
+        writer.handle_reference_typed(DwgReferenceType::HardPointer, block_handle)?;
 
         writer.write_spear_shift()?;
         self.finalize_object(writer, handle);
