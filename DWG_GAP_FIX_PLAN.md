@@ -649,91 +649,114 @@ test_dwg_roundtrip_dictionary
 
 ---
 
-## Phase 8: Writer — Remaining Non-Graphical Objects
+## Phase 8: Writer — Remaining Non-Graphical Objects ✅
 
 > **Goal:** Add DWG write support for all remaining non-graphical objects.  
-> **Reference:** `DwgObjectWriter.Objects.cs`
+> **Reference:** `DwgObjectWriter.Objects.cs`  
+> **Status:** ✅ Complete — 43 tests pass, 198 total integration tests, 733 lib tests, 0 warnings  
+> **Note:** VisualStyle, Material, TableStyle, and PdfDefinition writers are intentionally skipped — the C# reference also skips them (returns `true` from `isNotWritable`) due to incomplete/undocumented DWG binary format. PdfDefinition has no ObjectType variant.
 
 ### Tasks
 
-- ⬜ **8.1** Implement `write_imagedef` in `objects.rs`
-  - ⬜ Write class_version (BL), file_path (TV), is_loaded (B)
-  - ⬜ Write resolution_units (RC), pixel_width (RD), pixel_height (RD)
+- ✅ **8.1** Implement `write_image_definition` in `write_objects.rs`
+  - ✅ Write class_version (BL), image_size (2RD), file_path (TV), is_loaded (B)
+  - ✅ Write resolution_units (RC), pixel_size (2RD)
+  - ✅ Unlisted type ("IMAGEDEF")
 
-- ⬜ **8.2** Implement `write_imagedef_reactor` in `objects.rs`
-  - ⬜ Write class_version (BL) only
+- ✅ **8.2** Implement `write_image_definition_reactor` in `write_objects.rs`
+  - ✅ Write class_version (BL = 2) only
+  - ✅ Unlisted type ("IMAGEDEF_REACTOR")
 
-- ⬜ **8.3** Implement `write_mleaderstyle` in `objects.rs`
-  - ⬜ Write all style properties: content_type, draw_order, leader_type, line_color, etc.
-  - ⬜ Write text style, block content, scale, attachments
-  - ⬜ Write handle references
+- ✅ **8.3** Implement `write_mleader_style` in `write_objects.rs`
+  - ✅ R2010+ version header (BS = 2)
+  - ✅ Write all 40+ style properties: content_type, draw_order, path_type, line_color, line_weight, landing/dogleg, arrowhead, text properties, block properties, scale/constraints
+  - ✅ Write 4 handle references (line_type, arrowhead, text_style, block_content — all HardPointer)
+  - ✅ R2010+: attachment_direction, text_bottom/top_attachment
+  - ✅ R2013+: unknown flag
+  - ✅ Unlisted type ("MLEADERSTYLE")
 
-- ⬜ **8.4** Implement `write_scale` in `objects.rs`
-  - ⬜ Write name (TV), paper_units (BD), drawing_units (BD), is_unit_scale (B)
+- ✅ **8.4** Implement `write_scale` in `write_objects.rs`
+  - ✅ Write unknown (BS=0), name (TV), paper_units (BD), drawing_units (BD), is_unit_scale (B)
+  - ✅ Unlisted type ("SCALE")
 
-- ⬜ **8.5** Implement `write_sortentstable` in `objects.rs`
-  - ⬜ Write parent_handle, num_entries, sort_handle/entity_handle pairs
+- ✅ **8.5** Implement `write_sort_entities_table` in `write_objects.rs`
+  - ✅ Write block_owner_handle (SoftPointer) first
+  - ✅ Write num_entries (BL), then per entry: sort_handle (raw handle in main stream) + entity_handle (SoftPointer in handle stream)
+  - ✅ Unlisted type ("SORTENTSTABLE")
 
-- ⬜ **8.6** Implement `write_raster_variables` in `objects.rs`
-  - ⬜ Write class_version, display_frame, quality, units
+- ✅ **8.6** Implement `write_raster_variables` in `write_objects.rs`
+  - ✅ Write class_version (BL), display_frame (BS), quality (BS), units (BS)
+  - ✅ Unlisted type ("RASTERVARIABLES")
 
-- ⬜ **8.7** Implement `write_dbcolor` in `objects.rs`
-  - ⬜ Write RGB + book name + color name (R2004+)
+- ✅ **8.7** Implement `write_book_color` in `write_objects.rs`
+  - ✅ Write color_index (BS=0 always)
+  - ✅ R2004+: true_color (BL), flags (RC), color_name (TV if present), book_name (TV if present)
+  - ✅ Unlisted type ("DBCOLOR")
 
-- ⬜ **8.8** Implement `write_pdf_definition` in `objects.rs`
-  - ⬜ Write file_path (TV) + page_number (TV)
+- ⬜ **8.8** Implement `write_pdf_definition` — **Skipped** (no ObjectType variant for UnderlayDefinition)
 
-- ⬜ **8.9** Implement `write_visual_style` in `objects.rs`
-  - ⬜ Write all visual style properties (flags, colors, edge settings)
+- ⬜ **8.9** Implement `write_visual_style` — **Skipped** (C# reference also skips — undocumented DWG binary format)
 
-- ⬜ **8.10** Implement `write_tablestyle` in `objects.rs`
-  - ⬜ Write all table style cell settings
+- ⬜ **8.10** Implement `write_tablestyle` — **Skipped** (C# reference also skips — complex sub-structures)
 
-- ⬜ **8.11** Implement `write_material` in `objects.rs`
-  - ⬜ Write material properties
+- ⬜ **8.11** Implement `write_material` — **Skipped** (C# reference also skips — ~200+ fields, partial reader only)
 
-- ⬜ **8.12** Implement `write_placeholder` in `objects.rs`
-  - ⬜ Write empty body (no data beyond common)
+- ✅ **8.12** Implement `write_placeholder` in `write_objects.rs`
+  - ✅ Empty body (no data beyond common non-entity data)
+  - ✅ Listed type (DwgObjectType::AcDbPlaceholder = 0x50)
 
-- ⬜ **8.13** Implement `write_wipeout_variables` in `objects.rs`
-  - ⬜ Write display_frame (BS)
+- ✅ **8.13** Implement `write_wipeout_variables` in `write_objects.rs`
+  - ✅ Write display_frame (BS)
+  - ✅ Unlisted type ("WIPEOUTVARIABLES")
 
-- ⬜ **8.14** Register all in object writer dispatcher
+- ✅ **8.14** Register all 9 implementable types in object writer dispatcher
+  - ✅ ImageDefinition, ImageDefinitionReactor, MultiLeaderStyle, Scale, SortEntitiesTable, RasterVariables, BookColor, PlaceHolder, WipeoutVariables
 
-### Tests for Phase 8
+### Tests for Phase 8 (43 tests)
 ```
 test_write_imagedef_r2000
 test_write_imagedef_r2010
-test_write_imagedef_reactor_r2000
 test_roundtrip_imagedef_all_versions
 test_imagedef_file_path_preserved
 test_imagedef_resolution_preserved
-
+test_imagedef_dimensions
+test_write_imagedef_reactor_r2000
+test_imagedef_reactor_construction
 test_write_mleaderstyle_r2010
 test_write_mleaderstyle_r2018
 test_roundtrip_mleaderstyle_all_versions
-
+test_mleaderstyle_default_values
+test_mleaderstyle_block_content
+test_mleaderstyle_text_attachments
 test_write_scale_r2010
 test_roundtrip_scale_all_versions
 test_scale_units_preserved
-
+test_scale_unit_scale
 test_write_sortentstable_r2000
 test_write_sortentstable_r2010
 test_roundtrip_sortentstable_all_versions
-
+test_sortentstable_entries
+test_sortentstable_draw_order
 test_write_raster_variables_r2000
+test_raster_variables_defaults
 test_write_dbcolor_r2004
 test_write_dbcolor_r2010
-test_write_pdf_definition_r2010
-test_write_visual_style_r2010
-test_write_tablestyle_r2010
-test_write_material_r2010
-test_write_placeholder_r2000
-test_write_wipeout_variables_r2000
-
 test_roundtrip_dbcolor_all_versions
-test_roundtrip_pdf_definition_all_versions
-test_roundtrip_visual_style_all_versions
+test_dbcolor_empty_names
+test_write_placeholder_r2000
+test_placeholder_construction
+test_write_wipeout_variables_r2000
+test_wipeout_variables_defaults
+test_dwg_write_all_phase8_objects_smoke
+test_dwg_write_phase8_all_versions
+test_empty_sortentstable
+test_imagedef_zero_pixels
+test_scale_zero_drawing_units
+test_sortentstable_update_existing
+test_bookcolor_with_names
+test_mleaderstyle_draw_order_enums
+test_resolution_unit_roundtrip
+test_reference_sample_phase8_objects_present
 ```
 
 ---

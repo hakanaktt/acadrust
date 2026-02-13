@@ -7,8 +7,10 @@ use crate::io::dwg::object_type::DwgObjectType;
 use crate::io::dwg::reference_type::DwgReferenceType;
 use crate::io::dwg::writer::stream_writer::IDwgStreamWriter;
 use crate::objects::{
-    Dictionary, DictionaryVariable, DictionaryWithDefault, Group, Layout, MLineStyle,
-    PlotSettings, XRecord,
+    BookColor, Dictionary, DictionaryVariable, DictionaryWithDefault, Group,
+    ImageDefinition, ImageDefinitionReactor, Layout, MLineStyle, MultiLeaderStyle,
+    PlaceHolder, PlotSettings, RasterVariables, Scale, SortEntitiesTable,
+    WipeoutVariables, XRecord,
 };
 use crate::types::Handle;
 
@@ -612,6 +614,495 @@ impl DwgObjectWriter {
                 writer.write_bit_short(0)?;
             }
         }
+
+        writer.write_spear_shift()?;
+        self.finalize_object(writer, handle);
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // IMAGE DEFINITION — unlisted type ("IMAGEDEF")
+    // -----------------------------------------------------------------------
+
+    pub(super) fn write_image_definition(
+        &mut self,
+        imgdef: &ImageDefinition,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let handle = imgdef.handle.value();
+        let (mut writer, _) = self.create_object_writer();
+
+        self.write_common_non_entity_data_unlisted(
+            &mut *writer,
+            "IMAGEDEF",
+            handle,
+            owner_handle,
+            &[],
+            None,
+        )?;
+
+        // BL: class version
+        writer.write_bit_long(imgdef.class_version)?;
+
+        // 2RD: image size in pixels
+        writer.write_raw_double(imgdef.size_in_pixels.0 as f64)?;
+        writer.write_raw_double(imgdef.size_in_pixels.1 as f64)?;
+
+        // TV: file path
+        writer.write_variable_text(&imgdef.file_name)?;
+
+        // B: is loaded
+        writer.write_bit(imgdef.is_loaded)?;
+
+        // RC: resolution units
+        writer.write_byte(imgdef.resolution_unit.to_code() as u8)?;
+
+        // 2RD: pixel size (default size of one pixel in ACAD units)
+        writer.write_raw_double(imgdef.pixel_size.0)?;
+        writer.write_raw_double(imgdef.pixel_size.1)?;
+
+        writer.write_spear_shift()?;
+        self.finalize_object(writer, handle);
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // IMAGE DEFINITION REACTOR — unlisted type ("IMAGEDEF_REACTOR")
+    // -----------------------------------------------------------------------
+
+    pub(super) fn write_image_definition_reactor(
+        &mut self,
+        reactor: &ImageDefinitionReactor,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let handle = reactor.handle.value();
+        let (mut writer, _) = self.create_object_writer();
+
+        self.write_common_non_entity_data_unlisted(
+            &mut *writer,
+            "IMAGEDEF_REACTOR",
+            handle,
+            owner_handle,
+            &[],
+            None,
+        )?;
+
+        // BL: class version (always 2)
+        writer.write_bit_long(2)?;
+
+        writer.write_spear_shift()?;
+        self.finalize_object(writer, handle);
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // MULTILEADERSTYLE — unlisted type ("MLEADERSTYLE")
+    // -----------------------------------------------------------------------
+
+    pub(super) fn write_mleader_style(
+        &mut self,
+        style: &MultiLeaderStyle,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let handle = style.handle.value();
+        let (mut writer, _) = self.create_object_writer();
+
+        self.write_common_non_entity_data_unlisted(
+            &mut *writer,
+            "MLEADERSTYLE",
+            handle,
+            owner_handle,
+            &[],
+            None,
+        )?;
+
+        // R2010+: BS version = 2
+        if self.sio.r2010_plus {
+            writer.write_bit_short(2)?;
+        }
+
+        // BS: content type
+        writer.write_bit_short(style.content_type as i16)?;
+
+        // BS: multileader draw order
+        writer.write_bit_short(style.multileader_draw_order as i16)?;
+
+        // BS: leader draw order
+        writer.write_bit_short(style.leader_draw_order as i16)?;
+
+        // BL: max leader segment points
+        writer.write_bit_long(style.max_leader_points)?;
+
+        // BD: first segment angle
+        writer.write_bit_double(style.first_segment_angle)?;
+
+        // BD: second segment angle
+        writer.write_bit_double(style.second_segment_angle)?;
+
+        // BS: path type
+        writer.write_bit_short(style.path_type as i16)?;
+
+        // CMC: line color
+        writer.write_cm_color(style.line_color)?;
+
+        // H: leader line type handle (hard pointer)
+        writer.handle_reference_typed(
+            DwgReferenceType::HardPointer,
+            style.line_type_handle.map_or(0, |h| h.value()),
+        )?;
+
+        // BL: line weight
+        writer.write_bit_long(style.line_weight.value() as i32)?;
+
+        // B: enable landing
+        writer.write_bit(style.enable_landing)?;
+
+        // BD: landing gap
+        writer.write_bit_double(style.landing_gap)?;
+
+        // B: enable dogleg
+        writer.write_bit(style.enable_dogleg)?;
+
+        // BD: landing distance
+        writer.write_bit_double(style.landing_distance)?;
+
+        // TV: description
+        writer.write_variable_text(&style.description)?;
+
+        // H: arrowhead block handle (hard pointer)
+        writer.handle_reference_typed(
+            DwgReferenceType::HardPointer,
+            style.arrowhead_handle.map_or(0, |h| h.value()),
+        )?;
+
+        // BD: arrowhead size
+        writer.write_bit_double(style.arrowhead_size)?;
+
+        // TV: default text contents
+        writer.write_variable_text(&style.default_text)?;
+
+        // H: text style handle (hard pointer)
+        writer.handle_reference_typed(
+            DwgReferenceType::HardPointer,
+            style.text_style_handle.map_or(0, |h| h.value()),
+        )?;
+
+        // BS: text left attachment
+        writer.write_bit_short(style.text_left_attachment as i16)?;
+
+        // BS: text right attachment
+        writer.write_bit_short(style.text_right_attachment as i16)?;
+
+        // BS: text angle type
+        writer.write_bit_short(style.text_angle_type as i16)?;
+
+        // BS: text alignment
+        writer.write_bit_short(style.text_alignment as i16)?;
+
+        // CMC: text color
+        writer.write_cm_color(style.text_color)?;
+
+        // BD: text height
+        writer.write_bit_double(style.text_height)?;
+
+        // B: text frame enabled
+        writer.write_bit(style.text_frame)?;
+
+        // B: always align text left
+        writer.write_bit(style.text_always_left)?;
+
+        // BD: align space
+        writer.write_bit_double(style.align_space)?;
+
+        // H: block content handle (hard pointer)
+        writer.handle_reference_typed(
+            DwgReferenceType::HardPointer,
+            style.block_content_handle.map_or(0, |h| h.value()),
+        )?;
+
+        // CMC: block content color
+        writer.write_cm_color(style.block_content_color)?;
+
+        // 3BD: block content scale (x, y, z)
+        writer.write_bit_double(style.block_content_scale_x)?;
+        writer.write_bit_double(style.block_content_scale_y)?;
+        writer.write_bit_double(style.block_content_scale_z)?;
+
+        // B: enable block scale
+        writer.write_bit(style.enable_block_scale)?;
+
+        // BD: block content rotation
+        writer.write_bit_double(style.block_content_rotation)?;
+
+        // B: enable block rotation
+        writer.write_bit(style.enable_block_rotation)?;
+
+        // BS: block content connection type
+        writer.write_bit_short(style.block_content_connection as i16)?;
+
+        // BD: scale factor
+        writer.write_bit_double(style.scale_factor)?;
+
+        // B: property changed (overwrite property value)
+        writer.write_bit(style.property_changed)?;
+
+        // B: is annotative
+        writer.write_bit(style.is_annotative)?;
+
+        // BD: break gap size
+        writer.write_bit_double(style.break_gap_size)?;
+
+        // R2010+: attachment direction, text bottom/top attachment
+        if self.sio.r2010_plus {
+            // BS: attachment direction
+            writer.write_bit_short(style.text_attachment_direction as i16)?;
+
+            // BS: text bottom attachment
+            writer.write_bit_short(style.text_bottom_attachment as i16)?;
+
+            // BS: text top attachment
+            writer.write_bit_short(style.text_top_attachment as i16)?;
+        }
+
+        // R2013+: unknown flag (write false)
+        if self.sio.r2013_plus {
+            writer.write_bit(false)?;
+        }
+
+        writer.write_spear_shift()?;
+        self.finalize_object(writer, handle);
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // SCALE — unlisted type ("SCALE")
+    // -----------------------------------------------------------------------
+
+    pub(super) fn write_scale(
+        &mut self,
+        scale: &Scale,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let handle = scale.handle.value();
+        let (mut writer, _) = self.create_object_writer();
+
+        self.write_common_non_entity_data_unlisted(
+            &mut *writer,
+            "SCALE",
+            handle,
+            owner_handle,
+            &[],
+            None,
+        )?;
+
+        // BS: unknown (ODA writes 0)
+        writer.write_bit_short(0)?;
+
+        // TV: name
+        writer.write_variable_text(&scale.name)?;
+
+        // BD: paper units
+        writer.write_bit_double(scale.paper_units)?;
+
+        // BD: drawing units
+        writer.write_bit_double(scale.drawing_units)?;
+
+        // B: is unit scale
+        writer.write_bit(scale.is_unit_scale)?;
+
+        writer.write_spear_shift()?;
+        self.finalize_object(writer, handle);
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // SORT ENTITIES TABLE — unlisted type ("SORTENTSTABLE")
+    // -----------------------------------------------------------------------
+
+    pub(super) fn write_sort_entities_table(
+        &mut self,
+        table: &SortEntitiesTable,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let handle = table.handle.value();
+        let (mut writer, _) = self.create_object_writer();
+
+        self.write_common_non_entity_data_unlisted(
+            &mut *writer,
+            "SORTENTSTABLE",
+            handle,
+            owner_handle,
+            &[],
+            None,
+        )?;
+
+        // H: block owner handle (soft pointer) — written FIRST
+        writer.handle_reference_typed(
+            DwgReferenceType::SoftPointer,
+            table.block_owner_handle.value(),
+        )?;
+
+        // BL: number of entries
+        let entries: Vec<_> = table.entries().collect();
+        writer.write_bit_long(entries.len() as i32)?;
+
+        // For each entry:
+        for entry in &entries {
+            // Sort handle: written as raw handle in main bit stream (code 0)
+            // This is unique — uses handle_reference (default/undefined type)
+            // which writes to main stream, not handle stream
+            writer.handle_reference(entry.sort_handle.value())?;
+
+            // Entity handle: soft pointer (written to handle stream)
+            writer.handle_reference_typed(
+                DwgReferenceType::SoftPointer,
+                entry.entity_handle.value(),
+            )?;
+        }
+
+        writer.write_spear_shift()?;
+        self.finalize_object(writer, handle);
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // RASTER VARIABLES — unlisted type ("RASTERVARIABLES")
+    // -----------------------------------------------------------------------
+
+    pub(super) fn write_raster_variables(
+        &mut self,
+        rv: &RasterVariables,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let handle = rv.handle.value();
+        let (mut writer, _) = self.create_object_writer();
+
+        self.write_common_non_entity_data_unlisted(
+            &mut *writer,
+            "RASTERVARIABLES",
+            handle,
+            owner_handle,
+            &[],
+            None,
+        )?;
+
+        // BL: class version
+        writer.write_bit_long(rv.class_version)?;
+
+        // BS: display frame
+        writer.write_bit_short(rv.display_image_frame)?;
+
+        // BS: image quality
+        writer.write_bit_short(rv.image_quality)?;
+
+        // BS: units
+        writer.write_bit_short(rv.units)?;
+
+        writer.write_spear_shift()?;
+        self.finalize_object(writer, handle);
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // BOOK COLOR (DBCOLOR) — unlisted type ("DBCOLOR")
+    // -----------------------------------------------------------------------
+
+    pub(super) fn write_book_color(
+        &mut self,
+        bc: &BookColor,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let handle = bc.handle.value();
+        let (mut writer, _) = self.create_object_writer();
+
+        self.write_common_non_entity_data_unlisted(
+            &mut *writer,
+            "DBCOLOR",
+            handle,
+            owner_handle,
+            &[],
+            None,
+        )?;
+
+        // BS: color index (always 0 per C# reference)
+        writer.write_bit_short(0)?;
+
+        // R2004+: true color + flags + color_name / book_name
+        if self.sio.r2004_plus {
+            // BL: true color (BGRA packed as u32) — write 0 (no true color)
+            writer.write_bit_long(0)?;
+
+            // RC: flags byte — bit 0 = has color_name, bit 1 = has book_name
+            let has_color = !bc.color_name.is_empty();
+            let has_book = !bc.book_name.is_empty();
+            let flags: u8 = (if has_color { 1 } else { 0 })
+                | (if has_book { 2 } else { 0 });
+            writer.write_byte(flags)?;
+
+            if has_color {
+                writer.write_variable_text(&bc.color_name)?;
+            }
+            if has_book {
+                writer.write_variable_text(&bc.book_name)?;
+            }
+        }
+
+        writer.write_spear_shift()?;
+        self.finalize_object(writer, handle);
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // PLACEHOLDER (0x50) — listed type
+    // -----------------------------------------------------------------------
+
+    pub(super) fn write_placeholder(
+        &mut self,
+        ph: &PlaceHolder,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let handle = ph.handle.value();
+        let (mut writer, _) = self.create_object_writer();
+
+        self.write_common_non_entity_data(
+            &mut *writer,
+            DwgObjectType::AcDbPlaceholder,
+            handle,
+            owner_handle,
+            &[],
+            None,
+        )?;
+
+        // Empty body — no data beyond common non-entity data
+
+        writer.write_spear_shift()?;
+        self.finalize_object(writer, handle);
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // WIPEOUT VARIABLES — unlisted type ("WIPEOUTVARIABLES")
+    // -----------------------------------------------------------------------
+
+    pub(super) fn write_wipeout_variables(
+        &mut self,
+        wv: &WipeoutVariables,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let handle = wv.handle.value();
+        let (mut writer, _) = self.create_object_writer();
+
+        self.write_common_non_entity_data_unlisted(
+            &mut *writer,
+            "WIPEOUTVARIABLES",
+            handle,
+            owner_handle,
+            &[],
+            None,
+        )?;
+
+        // BS: display frame
+        writer.write_bit_short(wv.display_frame)?;
 
         writer.write_spear_shift()?;
         self.finalize_object(writer, handle);

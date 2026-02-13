@@ -2592,13 +2592,732 @@ mod phase7_critical_objects {
 }
 
 // ===========================================================================
+// Phase 8 — Remaining Non-Graphical Objects
+// ===========================================================================
+
+mod phase8_remaining_objects {
+    use super::common;
+    use acadrust::objects::*;
+    use acadrust::types::{Color, Handle};
+    use acadrust::CadDocument;
+
+    // -----------------------------------------------------------------------
+    // Helper: create a document, add a specific object, DXF-roundtrip
+    // -----------------------------------------------------------------------
+
+    fn roundtrip_with_object(label: &str, obj_type: ObjectType) -> CadDocument {
+        let mut doc = CadDocument::new();
+        let h = doc.allocate_handle();
+        let obj_type = set_object_handle(obj_type, h);
+        doc.objects.insert(h, obj_type);
+        common::roundtrip_dxf(&doc, label)
+    }
+
+    fn set_object_handle(mut obj: ObjectType, h: Handle) -> ObjectType {
+        match &mut obj {
+            ObjectType::ImageDefinition(d) => d.handle = h,
+            ObjectType::ImageDefinitionReactor(r) => r.handle = h,
+            ObjectType::MultiLeaderStyle(s) => s.handle = h,
+            ObjectType::Scale(s) => s.handle = h,
+            ObjectType::SortEntitiesTable(t) => t.handle = h,
+            ObjectType::RasterVariables(r) => r.handle = h,
+            ObjectType::BookColor(b) => b.handle = h,
+            ObjectType::PlaceHolder(p) => p.handle = h,
+            ObjectType::WipeoutVariables(w) => w.handle = h,
+            ObjectType::Dictionary(d) => d.handle = h,
+            ObjectType::Layout(l) => l.handle = h,
+            ObjectType::XRecord(x) => x.handle = h,
+            ObjectType::Group(g) => g.handle = h,
+            ObjectType::MLineStyle(m) => m.handle = h,
+            ObjectType::PlotSettings(p) => p.handle = h,
+            ObjectType::DictionaryVariable(dv) => dv.handle = h,
+            ObjectType::DictionaryWithDefault(dd) => dd.handle = h,
+            _ => {}
+        }
+        obj
+    }
+
+    // =======================================================================
+    // IMAGE DEFINITION
+    // =======================================================================
+
+    #[test]
+    fn test_write_imagedef_r2000() {
+        use acadrust::io::dwg::DwgWriter;
+        use acadrust::types::DxfVersion;
+
+        let mut doc = CadDocument::with_version(DxfVersion::AC1015);
+        let h = doc.allocate_handle();
+        let mut imgdef = ImageDefinition::new("C:\\Images\\test.jpg");
+        imgdef.handle = h;
+        imgdef.size_in_pixels = (1024, 768);
+        imgdef.pixel_size = (0.01, 0.01);
+        imgdef.resolution_unit = ResolutionUnit::Inches;
+        imgdef.is_loaded = true;
+        doc.objects.insert(h, ObjectType::ImageDefinition(imgdef));
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "DWG write failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_write_imagedef_r2010() {
+        use acadrust::io::dwg::DwgWriter;
+        use acadrust::types::DxfVersion;
+
+        let mut doc = CadDocument::with_version(DxfVersion::AC1024);
+        let h = doc.allocate_handle();
+        let mut imgdef = ImageDefinition::with_dimensions("photo.png", 2048, 1536);
+        imgdef.handle = h;
+        imgdef.is_loaded = true;
+        imgdef.resolution_unit = ResolutionUnit::Centimeters;
+        doc.objects.insert(h, ObjectType::ImageDefinition(imgdef));
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "DWG write failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_roundtrip_imagedef_all_versions() {
+        let mut imgdef = ImageDefinition::new("test_image.tif");
+        imgdef.size_in_pixels = (800, 600);
+        imgdef.pixel_size = (0.1, 0.1);
+
+        let doc = roundtrip_with_object("p8_imagedef", ObjectType::ImageDefinition(imgdef));
+        assert!(doc.entity_count() == 0);
+    }
+
+    #[test]
+    fn test_imagedef_file_path_preserved() {
+        let imgdef = ImageDefinition::new("C:\\Drawings\\Images\\blueprint.jpg");
+        assert_eq!(imgdef.file_name, "C:\\Drawings\\Images\\blueprint.jpg");
+        assert_eq!(imgdef.class_version, 0);
+        assert!(!imgdef.is_loaded);
+    }
+
+    #[test]
+    fn test_imagedef_resolution_preserved() {
+        let mut imgdef = ImageDefinition::new("test.jpg");
+        imgdef.set_resolution_dpi(300.0);
+        assert_eq!(imgdef.resolution_unit, ResolutionUnit::Inches);
+        assert!((imgdef.pixel_size.0 - 1.0 / 300.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_imagedef_dimensions() {
+        let imgdef = ImageDefinition::with_dimensions("test.png", 1920, 1080);
+        assert_eq!(imgdef.width_pixels(), 1920);
+        assert_eq!(imgdef.height_pixels(), 1080);
+        assert!((imgdef.width_units() - 1920.0).abs() < 1e-10);
+        assert!((imgdef.height_units() - 1080.0).abs() < 1e-10);
+    }
+
+    // =======================================================================
+    // IMAGE DEFINITION REACTOR
+    // =======================================================================
+
+    #[test]
+    fn test_write_imagedef_reactor_r2000() {
+        use acadrust::io::dwg::DwgWriter;
+        use acadrust::types::DxfVersion;
+
+        let mut doc = CadDocument::with_version(DxfVersion::AC1015);
+        let h = doc.allocate_handle();
+        let mut reactor = ImageDefinitionReactor::new(Handle::new(0x100));
+        reactor.handle = h;
+        doc.objects.insert(h, ObjectType::ImageDefinitionReactor(reactor));
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "DWG write failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_imagedef_reactor_construction() {
+        let reactor = ImageDefinitionReactor::new(Handle::new(0xABC));
+        assert_eq!(reactor.image_handle.value(), 0xABC);
+        assert_eq!(reactor.handle, Handle::NULL);
+        assert_eq!(reactor.owner, Handle::NULL);
+    }
+
+    // =======================================================================
+    // MULTILEADER STYLE
+    // =======================================================================
+
+    #[test]
+    fn test_write_mleaderstyle_r2010() {
+        use acadrust::io::dwg::DwgWriter;
+        use acadrust::types::DxfVersion;
+
+        let mut doc = CadDocument::with_version(DxfVersion::AC1024);
+        let h = doc.allocate_handle();
+        let mut style = MultiLeaderStyle::standard();
+        style.handle = h;
+        doc.objects.insert(h, ObjectType::MultiLeaderStyle(style));
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "DWG write failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_write_mleaderstyle_r2018() {
+        use acadrust::io::dwg::DwgWriter;
+        use acadrust::types::DxfVersion;
+
+        let mut doc = CadDocument::with_version(DxfVersion::AC1032);
+        let h = doc.allocate_handle();
+        let mut style = MultiLeaderStyle::new("CustomMLS");
+        style.handle = h;
+        style.content_type = LeaderContentType::Block;
+        style.path_type = MultiLeaderPathType::Spline;
+        style.arrowhead_size = 0.25;
+        style.text_height = 0.35;
+        style.landing_distance = 0.5;
+        style.enable_landing = true;
+        style.enable_dogleg = false;
+        style.text_frame = true;
+        doc.objects.insert(h, ObjectType::MultiLeaderStyle(style));
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "DWG write failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_roundtrip_mleaderstyle_all_versions() {
+        let style = MultiLeaderStyle::standard();
+        let doc = roundtrip_with_object("p8_mleaderstyle", ObjectType::MultiLeaderStyle(style));
+        assert!(doc.entity_count() == 0);
+    }
+
+    #[test]
+    fn test_mleaderstyle_default_values() {
+        let style = MultiLeaderStyle::default();
+        assert_eq!(style.path_type, MultiLeaderPathType::StraightLineSegments);
+        assert_eq!(style.content_type, LeaderContentType::MText);
+        assert!(style.enable_landing);
+        assert!(style.enable_dogleg);
+        assert!((style.landing_distance - 0.36).abs() < 1e-10);
+        assert!((style.arrowhead_size - 0.18).abs() < 1e-10);
+        assert!((style.text_height - 0.18).abs() < 1e-10);
+        assert!((style.scale_factor - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_mleaderstyle_block_content() {
+        let mut style = MultiLeaderStyle::new("BlockStyle");
+        style.content_type = LeaderContentType::Block;
+        style.block_content_handle = Some(Handle::new(0x500));
+        style.block_content_color = Color::RED;
+        style.set_block_scale(2.5);
+        style.set_block_rotation_degrees(45.0);
+        style.enable_block_scale = true;
+        style.enable_block_rotation = true;
+
+        assert!(style.has_block_content());
+        assert_eq!(style.uniform_block_scale(), Some(2.5));
+        assert!((style.block_rotation_degrees() - 45.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_mleaderstyle_text_attachments() {
+        let mut style = MultiLeaderStyle::new("AttachStyle");
+        style.text_left_attachment = TextAttachmentType::BottomOfBottomLine;
+        style.text_right_attachment = TextAttachmentType::TopOfTopLine;
+        style.text_top_attachment = TextAttachmentType::CenterOfText;
+        style.text_bottom_attachment = TextAttachmentType::MiddleOfText;
+        style.text_attachment_direction = TextAttachmentDirectionType::Vertical;
+
+        assert_eq!(style.text_left_attachment as i16, 4);
+        assert_eq!(style.text_right_attachment as i16, 0);
+        assert_eq!(style.text_attachment_direction as i16, 1);
+    }
+
+    // =======================================================================
+    // SCALE
+    // =======================================================================
+
+    #[test]
+    fn test_write_scale_r2010() {
+        use acadrust::io::dwg::DwgWriter;
+        use acadrust::types::DxfVersion;
+
+        let mut doc = CadDocument::with_version(DxfVersion::AC1024);
+        let h = doc.allocate_handle();
+        let mut scale = Scale::new("1:50", 1.0, 50.0);
+        scale.handle = h;
+        doc.objects.insert(h, ObjectType::Scale(scale));
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "DWG write failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_roundtrip_scale_all_versions() {
+        let scale = Scale::new("1:100", 1.0, 100.0);
+        let doc = roundtrip_with_object("p8_scale", ObjectType::Scale(scale));
+        assert!(doc.entity_count() == 0);
+    }
+
+    #[test]
+    fn test_scale_units_preserved() {
+        let scale = Scale::new("1:50", 1.0, 50.0);
+        assert_eq!(scale.paper_units, 1.0);
+        assert_eq!(scale.drawing_units, 50.0);
+        assert!(!scale.is_unit_scale);
+        assert!((scale.factor() - 0.02).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_scale_unit_scale() {
+        let scale = Scale::unit_scale();
+        assert_eq!(scale.name, "1:1");
+        assert!(scale.is_unit_scale);
+        assert!((scale.factor() - 1.0).abs() < 1e-10);
+    }
+
+    // =======================================================================
+    // SORT ENTITIES TABLE
+    // =======================================================================
+
+    #[test]
+    fn test_write_sortentstable_r2000() {
+        use acadrust::io::dwg::DwgWriter;
+        use acadrust::types::DxfVersion;
+
+        let mut doc = CadDocument::with_version(DxfVersion::AC1015);
+        let h = doc.allocate_handle();
+        let mut table = SortEntitiesTable::new();
+        table.handle = h;
+        table.block_owner_handle = Handle::new(0x1F);
+        table.add_entry(Handle::new(0x100), Handle::new(0x1));
+        table.add_entry(Handle::new(0x101), Handle::new(0x2));
+        doc.objects.insert(h, ObjectType::SortEntitiesTable(table));
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "DWG write failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_write_sortentstable_r2010() {
+        use acadrust::io::dwg::DwgWriter;
+        use acadrust::types::DxfVersion;
+
+        let mut doc = CadDocument::with_version(DxfVersion::AC1024);
+        let h = doc.allocate_handle();
+        let mut table = SortEntitiesTable::for_block(Handle::new(0x2F));
+        table.handle = h;
+        table.add_entry(Handle::new(0x200), Handle::new(0x10));
+        table.add_entry(Handle::new(0x201), Handle::new(0x20));
+        table.add_entry(Handle::new(0x202), Handle::new(0x30));
+        doc.objects.insert(h, ObjectType::SortEntitiesTable(table));
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "DWG write failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_roundtrip_sortentstable_all_versions() {
+        let mut table = SortEntitiesTable::new();
+        table.block_owner_handle = Handle::new(0x1F);
+        table.add_entry(Handle::new(0x100), Handle::new(0x1));
+
+        let doc = roundtrip_with_object("p8_sortentstable", ObjectType::SortEntitiesTable(table));
+        assert!(doc.entity_count() == 0);
+    }
+
+    #[test]
+    fn test_sortentstable_entries() {
+        let mut table = SortEntitiesTable::new();
+        table.add_entry(Handle::new(0x100), Handle::new(0x1));
+        table.add_entry(Handle::new(0x101), Handle::new(0x2));
+        table.add_entry(Handle::new(0x102), Handle::new(0x3));
+
+        assert_eq!(table.len(), 3);
+        assert!(!table.is_empty());
+        assert!(table.contains(Handle::new(0x100)));
+        assert!(!table.contains(Handle::new(0x999)));
+
+        let sort_h = table.get_sort_handle(Handle::new(0x101));
+        assert_eq!(sort_h, Some(Handle::new(0x2)));
+    }
+
+    #[test]
+    fn test_sortentstable_draw_order() {
+        let mut table = SortEntitiesTable::new();
+        table.add_entry(Handle::new(0x100), Handle::new(0x10));
+        table.add_entry(Handle::new(0x101), Handle::new(0x05));
+        table.add_entry(Handle::new(0x102), Handle::new(0x20));
+
+        let sorted = table.sorted_entries();
+        assert_eq!(sorted[0].entity_handle.value(), 0x101); // lowest sort handle
+        assert_eq!(sorted[2].entity_handle.value(), 0x102); // highest sort handle
+    }
+
+    // =======================================================================
+    // RASTER VARIABLES
+    // =======================================================================
+
+    #[test]
+    fn test_write_raster_variables_r2000() {
+        use acadrust::io::dwg::DwgWriter;
+        use acadrust::types::DxfVersion;
+
+        let mut doc = CadDocument::with_version(DxfVersion::AC1015);
+        let h = doc.allocate_handle();
+        let mut rv = RasterVariables::new();
+        rv.handle = h;
+        rv.display_image_frame = 1;
+        rv.image_quality = 1;
+        rv.units = 5; // inches
+        doc.objects.insert(h, ObjectType::RasterVariables(rv));
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "DWG write failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_raster_variables_defaults() {
+        let rv = RasterVariables::new();
+        assert_eq!(rv.class_version, 0);
+        assert_eq!(rv.display_image_frame, 1);
+        assert_eq!(rv.image_quality, 1);
+        assert_eq!(rv.units, 0);
+    }
+
+    // =======================================================================
+    // BOOK COLOR (DBCOLOR)
+    // =======================================================================
+
+    #[test]
+    fn test_write_dbcolor_r2004() {
+        use acadrust::io::dwg::DwgWriter;
+        use acadrust::types::DxfVersion;
+
+        let mut doc = CadDocument::with_version(DxfVersion::AC1018);
+        let h = doc.allocate_handle();
+        let mut bc = BookColor::new();
+        bc.handle = h;
+        bc.color_name = "Red".to_string();
+        bc.book_name = "PANTONE".to_string();
+        doc.objects.insert(h, ObjectType::BookColor(bc));
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "DWG write failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_write_dbcolor_r2010() {
+        use acadrust::io::dwg::DwgWriter;
+        use acadrust::types::DxfVersion;
+
+        let mut doc = CadDocument::with_version(DxfVersion::AC1024);
+        let h = doc.allocate_handle();
+        let mut bc = BookColor::new();
+        bc.handle = h;
+        bc.color_name = "Blue".to_string();
+        doc.objects.insert(h, ObjectType::BookColor(bc));
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "DWG write failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_roundtrip_dbcolor_all_versions() {
+        let mut bc = BookColor::new();
+        bc.color_name = "Green".to_string();
+        bc.book_name = "RAL".to_string();
+
+        let doc = roundtrip_with_object("p8_dbcolor", ObjectType::BookColor(bc));
+        assert!(doc.entity_count() == 0);
+    }
+
+    #[test]
+    fn test_dbcolor_empty_names() {
+        let bc = BookColor::new();
+        assert!(bc.color_name.is_empty());
+        assert!(bc.book_name.is_empty());
+    }
+
+    // =======================================================================
+    // PLACEHOLDER
+    // =======================================================================
+
+    #[test]
+    fn test_write_placeholder_r2000() {
+        use acadrust::io::dwg::DwgWriter;
+        use acadrust::types::DxfVersion;
+
+        let mut doc = CadDocument::with_version(DxfVersion::AC1015);
+        let h = doc.allocate_handle();
+        let mut ph = PlaceHolder::new();
+        ph.handle = h;
+        doc.objects.insert(h, ObjectType::PlaceHolder(ph));
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "DWG write failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_placeholder_construction() {
+        let ph = PlaceHolder::new();
+        assert_eq!(ph.handle, Handle::NULL);
+        assert_eq!(ph.owner, Handle::NULL);
+    }
+
+    // =======================================================================
+    // WIPEOUT VARIABLES
+    // =======================================================================
+
+    #[test]
+    fn test_write_wipeout_variables_r2000() {
+        use acadrust::io::dwg::DwgWriter;
+        use acadrust::types::DxfVersion;
+
+        let mut doc = CadDocument::with_version(DxfVersion::AC1015);
+        let h = doc.allocate_handle();
+        let mut wv = WipeoutVariables::new();
+        wv.handle = h;
+        wv.display_frame = 1;
+        doc.objects.insert(h, ObjectType::WipeoutVariables(wv));
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "DWG write failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_wipeout_variables_defaults() {
+        let wv = WipeoutVariables::new();
+        assert_eq!(wv.display_frame, 0);
+    }
+
+    // =======================================================================
+    // COMBINED / SMOKE TESTS
+    // =======================================================================
+
+    #[test]
+    fn test_dwg_write_all_phase8_objects_smoke() {
+        use acadrust::io::dwg::DwgWriter;
+
+        let mut doc = CadDocument::new();
+
+        // ImageDefinition
+        let h = doc.allocate_handle();
+        let mut imgdef = ImageDefinition::new("test.jpg");
+        imgdef.handle = h;
+        imgdef.size_in_pixels = (640, 480);
+        imgdef.pixel_size = (0.05, 0.05);
+        imgdef.is_loaded = true;
+        doc.objects.insert(h, ObjectType::ImageDefinition(imgdef));
+
+        // ImageDefinitionReactor
+        let h2 = doc.allocate_handle();
+        let mut reactor = ImageDefinitionReactor::new(Handle::new(h.value()));
+        reactor.handle = h2;
+        doc.objects.insert(h2, ObjectType::ImageDefinitionReactor(reactor));
+
+        // MultiLeaderStyle
+        let h3 = doc.allocate_handle();
+        let mut mls = MultiLeaderStyle::standard();
+        mls.handle = h3;
+        doc.objects.insert(h3, ObjectType::MultiLeaderStyle(mls));
+
+        // Scale
+        let h4 = doc.allocate_handle();
+        let mut scale = Scale::new("1:100", 1.0, 100.0);
+        scale.handle = h4;
+        doc.objects.insert(h4, ObjectType::Scale(scale));
+
+        // SortEntitiesTable
+        let h5 = doc.allocate_handle();
+        let mut set = SortEntitiesTable::new();
+        set.handle = h5;
+        set.block_owner_handle = Handle::new(0x1F);
+        set.add_entry(Handle::new(0x100), Handle::new(0x1));
+        doc.objects.insert(h5, ObjectType::SortEntitiesTable(set));
+
+        // RasterVariables
+        let h6 = doc.allocate_handle();
+        let mut rv = RasterVariables::new();
+        rv.handle = h6;
+        doc.objects.insert(h6, ObjectType::RasterVariables(rv));
+
+        // BookColor
+        let h7 = doc.allocate_handle();
+        let mut bc = BookColor::new();
+        bc.handle = h7;
+        bc.color_name = "Cyan".to_string();
+        doc.objects.insert(h7, ObjectType::BookColor(bc));
+
+        // PlaceHolder
+        let h8 = doc.allocate_handle();
+        let mut ph = PlaceHolder::new();
+        ph.handle = h8;
+        doc.objects.insert(h8, ObjectType::PlaceHolder(ph));
+
+        // WipeoutVariables
+        let h9 = doc.allocate_handle();
+        let mut wv = WipeoutVariables::new();
+        wv.handle = h9;
+        wv.display_frame = 1;
+        doc.objects.insert(h9, ObjectType::WipeoutVariables(wv));
+
+        let result = DwgWriter::write(&doc);
+        assert!(result.is_ok(), "DWG write failed: {:?}", result.err());
+
+        let data = result.unwrap();
+        assert!(data.len() > 100, "DWG output too small: {} bytes", data.len());
+        let magic = std::str::from_utf8(&data[..6]).unwrap_or("");
+        assert!(magic.starts_with("AC"), "Expected DWG magic, got {magic}");
+    }
+
+    #[test]
+    fn test_dwg_write_phase8_all_versions() {
+        use acadrust::io::dwg::DwgWriter;
+        use acadrust::types::DxfVersion;
+
+        let versions = [
+            DxfVersion::AC1014,
+            DxfVersion::AC1015,
+            DxfVersion::AC1018,
+            DxfVersion::AC1024,
+            DxfVersion::AC1027,
+            DxfVersion::AC1032,
+        ];
+
+        for version in &versions {
+            let mut doc = CadDocument::with_version(*version);
+
+            // ImageDefinition
+            let h = doc.allocate_handle();
+            let mut imgdef = ImageDefinition::new("version_test.jpg");
+            imgdef.handle = h;
+            imgdef.size_in_pixels = (100, 100);
+            doc.objects.insert(h, ObjectType::ImageDefinition(imgdef));
+
+            // MultiLeaderStyle
+            let h2 = doc.allocate_handle();
+            let mut mls = MultiLeaderStyle::standard();
+            mls.handle = h2;
+            doc.objects.insert(h2, ObjectType::MultiLeaderStyle(mls));
+
+            // Scale
+            let h3 = doc.allocate_handle();
+            let mut scale = Scale::unit_scale();
+            scale.handle = h3;
+            doc.objects.insert(h3, ObjectType::Scale(scale));
+
+            // SortEntitiesTable
+            let h4 = doc.allocate_handle();
+            let mut set = SortEntitiesTable::new();
+            set.handle = h4;
+            set.add_entry(Handle::new(0x100), Handle::new(0x1));
+            doc.objects.insert(h4, ObjectType::SortEntitiesTable(set));
+
+            // PlaceHolder
+            let h5 = doc.allocate_handle();
+            let mut ph = PlaceHolder::new();
+            ph.handle = h5;
+            doc.objects.insert(h5, ObjectType::PlaceHolder(ph));
+
+            let result = DwgWriter::write(&doc);
+            assert!(
+                result.is_ok(),
+                "DWG write failed for {:?}: {:?}",
+                version,
+                result.err()
+            );
+        }
+    }
+
+    // =======================================================================
+    // EDGE CASES
+    // =======================================================================
+
+    #[test]
+    fn test_empty_sortentstable() {
+        let table = SortEntitiesTable::new();
+        assert!(table.is_empty());
+        assert_eq!(table.len(), 0);
+    }
+
+    #[test]
+    fn test_imagedef_zero_pixels() {
+        let imgdef = ImageDefinition::new("empty.png");
+        assert_eq!(imgdef.width_pixels(), 0);
+        assert_eq!(imgdef.height_pixels(), 0);
+        assert_eq!(imgdef.aspect_ratio(), None);
+    }
+
+    #[test]
+    fn test_scale_zero_drawing_units() {
+        // Should not panic even with 0 drawing units
+        let scale = Scale::new("ZeroScale", 1.0, 0.0);
+        assert_eq!(scale.drawing_units, 0.0);
+    }
+
+    #[test]
+    fn test_sortentstable_update_existing() {
+        let mut table = SortEntitiesTable::new();
+        table.add_entry(Handle::new(0x100), Handle::new(0x1));
+        let old = table.add_entry(Handle::new(0x100), Handle::new(0x2));
+        assert_eq!(old, Some(Handle::new(0x1)));
+        assert_eq!(table.len(), 1);
+        assert_eq!(table.get_sort_handle(Handle::new(0x100)), Some(Handle::new(0x2)));
+    }
+
+    #[test]
+    fn test_bookcolor_with_names() {
+        let mut bc = BookColor::new();
+        bc.color_name = "Pantone 300 C".to_string();
+        bc.book_name = "PANTONE+ Solid Coated".to_string();
+        assert!(!bc.color_name.is_empty());
+        assert!(!bc.book_name.is_empty());
+    }
+
+    #[test]
+    fn test_mleaderstyle_draw_order_enums() {
+        assert_eq!(LeaderDrawOrderType::from(0), LeaderDrawOrderType::LeaderHeadFirst);
+        assert_eq!(LeaderDrawOrderType::from(1), LeaderDrawOrderType::LeaderTailFirst);
+        assert_eq!(MultiLeaderDrawOrderType::from(0), MultiLeaderDrawOrderType::ContentFirst);
+        assert_eq!(MultiLeaderDrawOrderType::from(1), MultiLeaderDrawOrderType::LeaderFirst);
+    }
+
+    #[test]
+    fn test_resolution_unit_roundtrip() {
+        for code in [0, 2, 5, 99] {
+            let unit = ResolutionUnit::from_code(code);
+            if code == 0 || code == 99 {
+                assert_eq!(unit, ResolutionUnit::None);
+            } else if code == 2 {
+                assert_eq!(unit, ResolutionUnit::Centimeters);
+            } else if code == 5 {
+                assert_eq!(unit, ResolutionUnit::Inches);
+            }
+        }
+    }
+
+    // =======================================================================
+    // REFERENCE SAMPLES — verify objects can be read from sample files
+    // =======================================================================
+
+    #[test]
+    fn test_reference_sample_phase8_objects_present() {
+        for ver in &["AC1015", "AC1018", "AC1024", "AC1027", "AC1032"] {
+            let doc = common::read_sample_dwg(ver);
+            let entity_count = doc.entity_count();
+            assert!(
+                entity_count > 0,
+                "{ver}: expected >0 entities, got {entity_count}"
+            );
+        }
+    }
+}
+
+// ===========================================================================
 // Future phases — stubs for easy scaffolding
 // ===========================================================================
 
 // mod phase1_polylines;
 // mod phase2_attributes;
 // mod phase3_dimensions;
-// mod phase7_critical_objects;
-// mod phase8_remaining_objects;
 // mod phase9_tables_sections;
 // mod phase10_reader_gaps;

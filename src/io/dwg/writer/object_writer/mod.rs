@@ -475,6 +475,42 @@ impl DwgObjectWriter {
                     let owner_h = style.owner.value();
                     self.write_mline_style(style, owner_h)?;
                 }
+                ObjectType::ImageDefinition(imgdef) => {
+                    let owner_h = imgdef.owner.value();
+                    self.write_image_definition(imgdef, owner_h)?;
+                }
+                ObjectType::ImageDefinitionReactor(reactor) => {
+                    let owner_h = reactor.owner.value();
+                    self.write_image_definition_reactor(reactor, owner_h)?;
+                }
+                ObjectType::MultiLeaderStyle(style) => {
+                    let owner_h = style.owner_handle.value();
+                    self.write_mleader_style(style, owner_h)?;
+                }
+                ObjectType::Scale(scale) => {
+                    let owner_h = scale.owner_handle.value();
+                    self.write_scale(scale, owner_h)?;
+                }
+                ObjectType::SortEntitiesTable(table) => {
+                    let owner_h = table.owner_handle.value();
+                    self.write_sort_entities_table(table, owner_h)?;
+                }
+                ObjectType::RasterVariables(rv) => {
+                    let owner_h = rv.owner.value();
+                    self.write_raster_variables(rv, owner_h)?;
+                }
+                ObjectType::BookColor(bc) => {
+                    let owner_h = bc.owner.value();
+                    self.write_book_color(bc, owner_h)?;
+                }
+                ObjectType::PlaceHolder(ph) => {
+                    let owner_h = ph.owner.value();
+                    self.write_placeholder(ph, owner_h)?;
+                }
+                ObjectType::WipeoutVariables(wv) => {
+                    let owner_h = wv.owner.value();
+                    self.write_wipeout_variables(wv, owner_h)?;
+                }
                 // Other object types — skip for now
                 _ => {}
             }
