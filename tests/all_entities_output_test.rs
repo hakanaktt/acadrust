@@ -1,12 +1,15 @@
 //! Comprehensive test that generates DXF files (ASCII and Binary) containing all supported entities
 //! This test creates sample instances of every entity type supported by the library
 
+mod common;
+
 use acadrust::entities::*;
 use acadrust::types::{Color, Vector2, Vector3};
 use acadrust::{CadDocument, DxfWriter};
 use std::f64::consts::PI;
 
 /// Create a document with examples of all supported entity types
+#[allow(unused_assignments)]
 fn create_all_entities_document() -> CadDocument {
     let mut doc = CadDocument::new();
 

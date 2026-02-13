@@ -7,367 +7,49 @@
 //! (report mismatches without failing) while structural invariants are strict.
 
 use acadrust::entities::EntityType;
-use acadrust::io::dxf::{DxfReader, DxfReaderConfiguration};
-use acadrust::io::dwg::{DwgReader, DwgReaderConfiguration};
 use acadrust::CadDocument;
 use std::collections::BTreeMap;
 
+mod common;
+
 // ---------------------------------------------------------------------------
-// Helpers
+// Helpers — delegated to common module
 // ---------------------------------------------------------------------------
 
-/// Read a DWG file in failsafe mode.
 fn read_dwg(path: &str) -> CadDocument {
-    let config = DwgReaderConfiguration {
-        failsafe: true,
-        ..Default::default()
-    };
-    DwgReader::from_file(path)
-        .unwrap_or_else(|e| panic!("Cannot open DWG {path}: {e:?}"))
-        .with_config(config)
-        .read()
-        .unwrap_or_else(|e| panic!("Failed to read DWG {path}: {e:?}"))
+    common::read_dwg(path)
 }
 
-/// Read a DXF file in failsafe mode.
 fn read_dxf(path: &str) -> CadDocument {
-    let config = DxfReaderConfiguration { failsafe: true };
-    DxfReader::from_file(path)
-        .unwrap_or_else(|e| panic!("Cannot open DXF {path}: {e:?}"))
-        .with_configuration(config)
-        .read()
-        .unwrap_or_else(|e| panic!("Failed to read DXF {path}: {e:?}"))
+    common::read_dxf(path)
 }
 
-/// Return the DXF-style type name for an EntityType variant.
-fn entity_type_name(e: &EntityType) -> &'static str {
-    e.as_entity().entity_type()
-}
-
-/// Build a sorted frequency map of entity type names.
 fn entity_type_histogram(doc: &CadDocument) -> BTreeMap<&'static str, usize> {
-    let mut map = BTreeMap::new();
-    for e in doc.entities() {
-        *map.entry(entity_type_name(e)).or_insert(0) += 1;
-    }
-    map
+    common::entity_type_histogram(doc)
 }
 
-/// Collect sorted layer names.
 fn layer_names(doc: &CadDocument) -> Vec<String> {
-    let mut names: Vec<_> = doc.layers.iter().map(|l| l.name.clone()).collect();
-    names.sort();
-    names
+    common::layer_names(doc)
 }
 
-/// Collect sorted line-type names.
 fn linetype_names(doc: &CadDocument) -> Vec<String> {
-    let mut names: Vec<_> = doc.line_types.iter().map(|lt| lt.name.clone()).collect();
-    names.sort();
-    names
+    common::linetype_names(doc)
 }
 
-/// Collect sorted text-style names.
 fn textstyle_names(doc: &CadDocument) -> Vec<String> {
-    let mut names: Vec<_> = doc.text_styles.iter().map(|ts| ts.name.clone()).collect();
-    names.sort();
-    names
+    common::textstyle_names(doc)
 }
 
-/// Collect sorted block-record names.
 fn block_record_names(doc: &CadDocument) -> Vec<String> {
-    let mut names: Vec<_> = doc.block_records.iter().map(|br| br.name.clone()).collect();
-    names.sort();
-    names
+    common::block_record_names(doc)
 }
 
-/// Approximate equality for f64 values.
-fn approx_eq(a: f64, b: f64, tol: f64) -> bool {
-    (a - b).abs() < tol
-}
-
-/// Collect entities grouped by type name, sorted by a geometric key within each group.
 fn sorted_entities_by_type(doc: &CadDocument) -> BTreeMap<&'static str, Vec<&EntityType>> {
-    let mut groups: BTreeMap<&'static str, Vec<&EntityType>> = BTreeMap::new();
-    for e in doc.entities() {
-        groups.entry(entity_type_name(e)).or_default().push(e);
-    }
-    for entities in groups.values_mut() {
-        entities.sort_by(|a, b| {
-            entity_sort_key(a)
-                .partial_cmp(&entity_sort_key(b))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-    }
-    groups
+    common::comparison::sorted_entities_by_type(doc)
 }
 
-/// A rough numeric sort key for an entity (based on first geometric coordinate).
-fn entity_sort_key(e: &EntityType) -> (f64, f64, f64) {
-    match e {
-        EntityType::Line(l) => (l.start.x, l.start.y, l.start.z),
-        EntityType::Circle(c) => (c.center.x, c.center.y, c.center.z),
-        EntityType::Arc(a) => (a.center.x, a.center.y, a.center.z),
-        EntityType::Ellipse(el) => (el.center.x, el.center.y, el.center.z),
-        EntityType::Point(p) => (p.location.x, p.location.y, p.location.z),
-        EntityType::Text(t) => (t.insertion_point.x, t.insertion_point.y, t.insertion_point.z),
-        EntityType::MText(t) => (t.insertion_point.x, t.insertion_point.y, t.insertion_point.z),
-        EntityType::LwPolyline(lw) => {
-            if let Some(v) = lw.vertices.first() {
-                (v.location.x, v.location.y, lw.elevation)
-            } else {
-                (0.0, 0.0, 0.0)
-            }
-        }
-        EntityType::Spline(s) => {
-            if let Some(cp) = s.control_points.first() {
-                (cp.x, cp.y, cp.z)
-            } else {
-                (0.0, 0.0, 0.0)
-            }
-        }
-        EntityType::Insert(ins) => (ins.insert_point.x, ins.insert_point.y, ins.insert_point.z),
-        EntityType::Ray(r) => (r.base_point.x, r.base_point.y, r.base_point.z),
-        EntityType::Solid(s) => (s.first_corner.x, s.first_corner.y, s.first_corner.z),
-        EntityType::Face3D(f) => (f.first_corner.x, f.first_corner.y, f.first_corner.z),
-        EntityType::Hatch(h) => (h.elevation, h.pattern_angle, h.pattern_scale),
-        EntityType::Leader(l) => {
-            if let Some(v) = l.vertices.first() {
-                (v.x, v.y, v.z)
-            } else {
-                (0.0, 0.0, 0.0)
-            }
-        }
-        EntityType::Tolerance(t) => {
-            (t.insertion_point.x, t.insertion_point.y, t.insertion_point.z)
-        }
-        EntityType::Shape(s) => (s.insertion_point.x, s.insertion_point.y, s.insertion_point.z),
-        EntityType::Viewport(vp) => (vp.center.x, vp.center.y, vp.center.z),
-        EntityType::XLine(xl) => (xl.base_point.x, xl.base_point.y, xl.base_point.z),
-        _ => {
-            let c = e.common();
-            (c.handle.value() as f64, 0.0, 0.0)
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Per-entity-type geometry comparison
-// ---------------------------------------------------------------------------
-
-const TOL: f64 = 1e-6;
-
-/// Compare two entities of the same type. Returns a list of mismatches (empty = OK).
-fn compare_entity_geometry(dwg_e: &EntityType, dxf_e: &EntityType) -> Vec<String> {
-    let mut diffs = Vec::new();
-
-    // Layer should match
-    let dwg_layer = &dwg_e.common().layer;
-    let dxf_layer = &dxf_e.common().layer;
-    if dwg_layer != dxf_layer {
-        diffs.push(format!("layer: DWG={dwg_layer:?} DXF={dxf_layer:?}"));
-    }
-
-    match (dwg_e, dxf_e) {
-        (EntityType::Line(dw), EntityType::Line(dx)) => {
-            check_vec3(&mut diffs, "start", &dw.start, &dx.start);
-            check_vec3(&mut diffs, "end", &dw.end, &dx.end);
-        }
-        (EntityType::Circle(dw), EntityType::Circle(dx)) => {
-            check_vec3(&mut diffs, "center", &dw.center, &dx.center);
-            check_f64(&mut diffs, "radius", dw.radius, dx.radius);
-        }
-        (EntityType::Arc(dw), EntityType::Arc(dx)) => {
-            check_vec3(&mut diffs, "center", &dw.center, &dx.center);
-            check_f64(&mut diffs, "radius", dw.radius, dx.radius);
-            check_f64(&mut diffs, "start_angle", dw.start_angle, dx.start_angle);
-            check_f64(&mut diffs, "end_angle", dw.end_angle, dx.end_angle);
-        }
-        (EntityType::Ellipse(dw), EntityType::Ellipse(dx)) => {
-            check_vec3(&mut diffs, "center", &dw.center, &dx.center);
-            check_vec3(&mut diffs, "major_axis", &dw.major_axis, &dx.major_axis);
-            check_f64(&mut diffs, "minor_axis_ratio", dw.minor_axis_ratio, dx.minor_axis_ratio);
-            check_f64(&mut diffs, "start_parameter", dw.start_parameter, dx.start_parameter);
-            check_f64(&mut diffs, "end_parameter", dw.end_parameter, dx.end_parameter);
-        }
-        (EntityType::Point(dw), EntityType::Point(dx)) => {
-            check_vec3(&mut diffs, "location", &dw.location, &dx.location);
-        }
-        (EntityType::Text(dw), EntityType::Text(dx)) => {
-            check_vec3(&mut diffs, "insertion_point", &dw.insertion_point, &dx.insertion_point);
-            check_f64(&mut diffs, "height", dw.height, dx.height);
-            if dw.value != dx.value {
-                diffs.push(format!("value: DWG={:?} DXF={:?}", dw.value, dx.value));
-            }
-        }
-        (EntityType::MText(dw), EntityType::MText(dx)) => {
-            check_vec3(&mut diffs, "insertion_point", &dw.insertion_point, &dx.insertion_point);
-            check_f64(&mut diffs, "height", dw.height, dx.height);
-            if dw.value != dx.value {
-                diffs.push(format!("value: DWG={:?} DXF={:?}", dw.value, dx.value));
-            }
-        }
-        (EntityType::LwPolyline(dw), EntityType::LwPolyline(dx)) => {
-            if dw.vertices.len() != dx.vertices.len() {
-                diffs.push(format!(
-                    "vertex_count: DWG={} DXF={}",
-                    dw.vertices.len(),
-                    dx.vertices.len()
-                ));
-            } else {
-                for (i, (vd, vx)) in dw.vertices.iter().zip(dx.vertices.iter()).enumerate() {
-                    if !approx_eq(vd.location.x, vx.location.x, TOL)
-                        || !approx_eq(vd.location.y, vx.location.y, TOL)
-                    {
-                        diffs.push(format!(
-                            "vertex[{i}]: DWG=({},{}) DXF=({},{})",
-                            vd.location.x, vd.location.y, vx.location.x, vx.location.y
-                        ));
-                    }
-                    if !approx_eq(vd.bulge, vx.bulge, TOL) {
-                        diffs.push(format!(
-                            "vertex[{i}].bulge: DWG={} DXF={}",
-                            vd.bulge, vx.bulge
-                        ));
-                    }
-                }
-            }
-            if dw.is_closed != dx.is_closed {
-                diffs.push(format!("is_closed: DWG={} DXF={}", dw.is_closed, dx.is_closed));
-            }
-        }
-        (EntityType::Spline(dw), EntityType::Spline(dx)) => {
-            if dw.degree != dx.degree {
-                diffs.push(format!("degree: DWG={} DXF={}", dw.degree, dx.degree));
-            }
-            if dw.control_points.len() != dx.control_points.len() {
-                diffs.push(format!(
-                    "control_points_count: DWG={} DXF={}",
-                    dw.control_points.len(),
-                    dx.control_points.len()
-                ));
-            } else {
-                for (i, (a, b)) in
-                    dw.control_points.iter().zip(dx.control_points.iter()).enumerate()
-                {
-                    if !approx_eq(a.x, b.x, TOL)
-                        || !approx_eq(a.y, b.y, TOL)
-                        || !approx_eq(a.z, b.z, TOL)
-                    {
-                        diffs.push(format!(
-                            "control_point[{i}]: DWG=({},{},{}) DXF=({},{},{})",
-                            a.x, a.y, a.z, b.x, b.y, b.z
-                        ));
-                    }
-                }
-            }
-            if dw.knots.len() != dx.knots.len() {
-                diffs.push(format!(
-                    "knots_count: DWG={} DXF={}",
-                    dw.knots.len(),
-                    dx.knots.len()
-                ));
-            }
-        }
-        (EntityType::Insert(dw), EntityType::Insert(dx)) => {
-            if dw.block_name != dx.block_name {
-                diffs.push(format!(
-                    "block_name: DWG={:?} DXF={:?}",
-                    dw.block_name, dx.block_name
-                ));
-            }
-            check_vec3(&mut diffs, "insert_point", &dw.insert_point, &dx.insert_point);
-            check_f64(&mut diffs, "x_scale", dw.x_scale, dx.x_scale);
-            check_f64(&mut diffs, "y_scale", dw.y_scale, dx.y_scale);
-            check_f64(&mut diffs, "z_scale", dw.z_scale, dx.z_scale);
-            check_f64(&mut diffs, "rotation", dw.rotation, dx.rotation);
-        }
-        (EntityType::Ray(dw), EntityType::Ray(dx)) => {
-            check_vec3(&mut diffs, "base_point", &dw.base_point, &dx.base_point);
-            check_vec3(&mut diffs, "direction", &dw.direction, &dx.direction);
-        }
-        (EntityType::XLine(dw), EntityType::XLine(dx)) => {
-            check_vec3(&mut diffs, "base_point", &dw.base_point, &dx.base_point);
-            check_vec3(&mut diffs, "direction", &dw.direction, &dx.direction);
-        }
-        (EntityType::Solid(dw), EntityType::Solid(dx)) => {
-            check_vec3(&mut diffs, "first_corner", &dw.first_corner, &dx.first_corner);
-            check_vec3(&mut diffs, "second_corner", &dw.second_corner, &dx.second_corner);
-            check_vec3(&mut diffs, "third_corner", &dw.third_corner, &dx.third_corner);
-            check_vec3(&mut diffs, "fourth_corner", &dw.fourth_corner, &dx.fourth_corner);
-        }
-        (EntityType::Face3D(dw), EntityType::Face3D(dx)) => {
-            check_vec3(&mut diffs, "first_corner", &dw.first_corner, &dx.first_corner);
-            check_vec3(&mut diffs, "second_corner", &dw.second_corner, &dx.second_corner);
-            check_vec3(&mut diffs, "third_corner", &dw.third_corner, &dx.third_corner);
-            check_vec3(&mut diffs, "fourth_corner", &dw.fourth_corner, &dx.fourth_corner);
-        }
-        (EntityType::Hatch(dw), EntityType::Hatch(dx)) => {
-            if dw.pattern.name != dx.pattern.name {
-                diffs.push(format!(
-                    "pattern_name: DWG={:?} DXF={:?}",
-                    dw.pattern.name, dx.pattern.name
-                ));
-            }
-            if dw.is_solid != dx.is_solid {
-                diffs.push(format!("is_solid: DWG={} DXF={}", dw.is_solid, dx.is_solid));
-            }
-            check_f64(&mut diffs, "pattern_scale", dw.pattern_scale, dx.pattern_scale);
-        }
-        (EntityType::Leader(dw), EntityType::Leader(dx)) => {
-            if dw.vertices.len() != dx.vertices.len() {
-                diffs.push(format!(
-                    "vertex_count: DWG={} DXF={}",
-                    dw.vertices.len(),
-                    dx.vertices.len()
-                ));
-            } else {
-                for (i, (a, b)) in dw.vertices.iter().zip(dx.vertices.iter()).enumerate() {
-                    if !approx_eq(a.x, b.x, TOL)
-                        || !approx_eq(a.y, b.y, TOL)
-                        || !approx_eq(a.z, b.z, TOL)
-                    {
-                        diffs.push(format!(
-                            "vertex[{i}]: DWG=({},{},{}) DXF=({},{},{})",
-                            a.x, a.y, a.z, b.x, b.y, b.z
-                        ));
-                    }
-                }
-            }
-        }
-        (EntityType::Tolerance(dw), EntityType::Tolerance(dx)) => {
-            check_vec3(&mut diffs, "insertion_point", &dw.insertion_point, &dx.insertion_point);
-            if dw.text != dx.text {
-                diffs.push(format!("text: DWG={:?} DXF={:?}", dw.text, dx.text));
-            }
-        }
-        (EntityType::Shape(dw), EntityType::Shape(dx)) => {
-            check_vec3(&mut diffs, "insertion_point", &dw.insertion_point, &dx.insertion_point);
-            check_f64(&mut diffs, "size", dw.size, dx.size);
-        }
-        (EntityType::Viewport(dw), EntityType::Viewport(dx)) => {
-            check_vec3(&mut diffs, "center", &dw.center, &dx.center);
-            check_f64(&mut diffs, "width", dw.width, dx.width);
-            check_f64(&mut diffs, "height", dw.height, dx.height);
-        }
-        _ => {}
-    }
-    diffs
-}
-
-fn check_vec3(diffs: &mut Vec<String>, name: &str, a: &acadrust::Vector3, b: &acadrust::Vector3) {
-    if !approx_eq(a.x, b.x, TOL) || !approx_eq(a.y, b.y, TOL) || !approx_eq(a.z, b.z, TOL) {
-        diffs.push(format!(
-            "{name}: DWG=({},{},{}) DXF=({},{},{})",
-            a.x, a.y, a.z, b.x, b.y, b.z
-        ));
-    }
-}
-
-fn check_f64(diffs: &mut Vec<String>, name: &str, a: f64, b: f64) {
-    if !approx_eq(a, b, TOL) {
-        diffs.push(format!("{name}: DWG={a} DXF={b}"));
-    }
+fn compare_entity_geometry(a: &EntityType, b: &EntityType) -> Vec<String> {
+    common::comparison::compare_entity_geometry(a, b)
 }
 
 // ---------------------------------------------------------------------------

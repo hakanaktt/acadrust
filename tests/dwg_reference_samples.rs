@@ -1,13 +1,10 @@
+mod common;
+
 use acadrust::io::dwg::{DwgReader, DwgReaderConfiguration};
 
 /// Helper: read DWG in failsafe mode (errors logged but not fatal).
 fn read_dwg_failsafe(path: &str) -> acadrust::CadDocument {
-    let config = DwgReaderConfiguration { failsafe: true, ..Default::default() };
-    DwgReader::from_file(path)
-        .unwrap_or_else(|e| panic!("Cannot open {}: {:?}", path, e))
-        .with_config(config)
-        .read()
-        .unwrap_or_else(|e| panic!("Failed to read {}: {:?}", path, e))
+    common::read_dwg(path)
 }
 
 // ===== AC1014 (R14) ============================================================

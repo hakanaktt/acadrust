@@ -24,42 +24,54 @@
 
 ### Tasks
 
-- ⬜ **0.1** Create `tests/common/mod.rs` shared test helper module
-  - ⬜ `fn sample_dwg_path(version: &str) -> PathBuf` — resolve sample file paths
-  - ⬜ `fn sample_dxf_path(version: &str, format: &str) -> PathBuf`
-  - ⬜ `fn read_sample_dwg(version: &str) -> CadDocument`
-  - ⬜ `fn read_sample_dxf(version: &str) -> CadDocument`
-  - ⬜ `fn all_dwg_versions() -> Vec<&'static str>` — returns `["AC1014","AC1015","AC1018","AC1021","AC1024","AC1027","AC1032"]`
-  - ⬜ `fn writable_dwg_versions() -> Vec<&'static str>` — excludes AC1021
-  - ⬜ `fn create_test_document() -> CadDocument` — minimal doc with default tables
-  - ⬜ `fn assert_roundtrip_dwg(doc: &CadDocument, version: ACadVersion)` — write → read → compare
-  - ⬜ `fn assert_entity_roundtrip<F>(version: ACadVersion, build: F)` — create entity, write, read, compare
-  - ⬜ `fn count_entities_by_type(doc: &CadDocument) -> HashMap<String, usize>`
-  - ⬜ `fn find_entities_of_type<T>(doc: &CadDocument) -> Vec<&T>`
+- ✅ **0.1** Create `tests/common/mod.rs` shared test helper module
+  - ✅ `fn sample_dwg_path(version: &str) -> PathBuf` — resolve sample file paths
+  - ✅ `fn sample_dxf_path(version: &str, format: &str) -> PathBuf`
+  - ✅ `fn read_sample_dwg(version: &str) -> CadDocument`
+  - ✅ `fn read_sample_dxf(version: &str) -> CadDocument`
+  - ✅ `ALL_VERSIONS`, `DWG_SAMPLE_VERSIONS`, `DXF_SAMPLE_VERSIONS` constants
+  - ✅ `DXF_WRITABLE_VERSIONS` — all 8 writable versions
+  - ✅ `fn read_dwg()`, `fn read_dwg_strict()`, `fn read_dxf()`, `fn read_dxf_strict()`
+  - ✅ `fn write_and_read_back_dxf()`, `fn roundtrip_dxf()`
+  - ✅ `fn entity_type_name()`, `fn entity_type_histogram()`, `fn entity_type_counts()`
+  - ✅ `fn entity_count()`, `fn layer_names()`, `fn linetype_names()`, `fn textstyle_names()`, `fn block_record_names()`
 
-- ⬜ **0.2** Create `tests/common/comparison.rs` deep comparison utilities
-  - ⬜ `fn compare_documents(a: &CadDocument, b: &CadDocument) -> ComparisonReport`
-  - ⬜ `fn compare_entities(a: &Entity, b: &Entity) -> Vec<FieldDiff>`
-  - ⬜ `fn assert_f64_eq(a: f64, b: f64, tolerance: f64)`
-  - ⬜ `fn assert_point3d_eq(a: &Vector3, b: &Vector3, tolerance: f64)`
+- ✅ **0.2** Create `tests/common/comparison.rs` deep comparison utilities
+  - ✅ `fn compare_entity_geometry(a, b) -> Vec<String>` — per-entity-type field comparison
+  - ✅ `fn sorted_entities_by_type()`, `fn entity_sort_key()`
+  - ✅ `fn assert_f64_eq(a: f64, b: f64, tolerance: f64)`
+  - ✅ `fn assert_vec3_eq(a: &Vector3, b: &Vector3, tolerance: f64)`
+  - ✅ `fn check_f64()`, `fn check_vec3()`, `fn approx_eq()`
 
-- ⬜ **0.3** Create `tests/dwg_writer_tests.rs` master test file for all writer tests
-  - ⬜ Scaffold with per-phase test modules (`mod phase1_core_entities`, etc.)
+- ✅ **0.3** Create `tests/common/builders.rs` + `tests/dwg_writer_tests.rs`
+  - ✅ `fn create_all_entities_document()` — 44-entity comprehensive builder
+  - ✅ `fn create_single_entity_doc(name)` — single-entity doc by type name
+  - ✅ Master test file with per-phase module scaffold (14 Phase 0 tests)
 
-- ⬜ **0.4** Refactor existing tests to use shared helpers (non-breaking)
+- ✅ **0.4** Refactor existing tests to use shared helpers (non-breaking)
+  - ✅ `dwg_reference_samples.rs` — delegates to `common::read_dwg`
+  - ✅ `cad_roundtrip_output.rs` — delegates builder + helpers to common
+  - ✅ `comprehensive_entity_test.rs` — delegates `entity_type_counts`, `read_back`
+  - ✅ `dwg_vs_dxf_comparison.rs` — delegates all 10 helper functions to common
+  - ✅ `dwg_reader_extensive_test.rs` — delegates `read_dwg`, `read_dwg_strict`, `approx_eq`, `entity_type_name`, `entity_histogram`
+  - ✅ `all_entities_output_test.rs`, `individual_entity_test.rs` — `mod common` added
 
-### Tests for Phase 0
+### Tests for Phase 0 (14 tests — all passing ✅)
 ```
-test_common_sample_path_resolution
+test_common_sample_dwg_path_resolution
+test_common_sample_dxf_path_resolution
 test_common_read_all_sample_dwgs
 test_common_read_all_sample_dxfs
 test_common_create_test_document_has_defaults
 test_common_roundtrip_helper_minimal
 test_common_entity_count_helper
-test_common_comparison_identical_docs
-test_common_comparison_different_docs
+test_common_comparison_identical_entities
+test_common_comparison_different_entities
 test_common_f64_tolerance_pass
 test_common_f64_tolerance_fail
+test_common_vec3_tolerance_pass
+test_common_vec3_tolerance_fail
+test_common_entity_sort_key
 ```
 
 ---

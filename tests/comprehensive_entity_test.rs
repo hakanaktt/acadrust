@@ -1,8 +1,9 @@
 //! Comprehensive DXF writer test — creates every entity type, writes ASCII & Binary,
 //! reads back and compares entity types, counts, and geometry values.
 
+mod common;
+
 use acadrust::entities::*;
-use acadrust::io::dxf::{DxfReader, DxfReaderConfiguration};
 use acadrust::types::{Color, DxfVersion, Vector2, Vector3};
 use acadrust::{CadDocument, DxfWriter};
 use std::collections::BTreeMap;
@@ -12,6 +13,7 @@ use std::f64::consts::PI;
 // Document creation — every entity type the writer handles
 // ---------------------------------------------------------------------------
 
+#[allow(unused_assignments)]
 fn create_all_entities_document() -> CadDocument {
     let mut doc = CadDocument::new();
     let sp = 25.0; // spacing
@@ -449,20 +451,11 @@ fn create_all_entities_document() -> CadDocument {
 const ENTITY_COUNT: usize = 44;
 
 fn entity_type_counts(doc: &CadDocument) -> BTreeMap<String, usize> {
-    let mut map = BTreeMap::new();
-    for e in doc.entities() {
-        *map.entry(e.as_entity().entity_type().to_string()).or_insert(0) += 1;
-    }
-    map
+    common::entity_type_counts(doc)
 }
 
 fn read_back(path: &str) -> CadDocument {
-    let config = DxfReaderConfiguration { failsafe: true };
-    DxfReader::from_file(path)
-        .unwrap()
-        .with_configuration(config)
-        .read()
-        .unwrap()
+    common::read_dxf(path)
 }
 
 // ---------------------------------------------------------------------------
@@ -512,11 +505,11 @@ fn test_ascii_roundtrip() {
     println!("{:<35} {:>6} {:>6}", "Type", "Wrote", "Read");
     let mut all_keys: Vec<_> = orig.keys().chain(read.keys()).cloned().collect();
     all_keys.sort(); all_keys.dedup();
-    let mut mismatches = 0;
+    let mut _mismatches = 0;
     for key in &all_keys {
         let w = orig.get(key).copied().unwrap_or(0);
         let r = read.get(key).copied().unwrap_or(0);
-        let mark = if w == r { "OK" } else { mismatches += 1; "DIFF" };
+        let mark = if w == r { "OK" } else { _mismatches += 1; "DIFF" };
         println!("  {:<35} {:>6} {:>6}  {}", key, w, r, mark);
     }
 

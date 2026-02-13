@@ -22,36 +22,23 @@ use acadrust::CadDocument;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::Instant;
 
+mod common;
+
 // ===========================================================================
-// Helpers
+// Helpers — delegated to common module where possible
 // ===========================================================================
 
 /// Read DWG in failsafe mode.
 fn read_dwg(path: &str) -> CadDocument {
-    let config = DwgReaderConfiguration {
-        failsafe: true,
-        ..Default::default()
-    };
-    DwgReader::from_file(path)
-        .unwrap_or_else(|e| panic!("Cannot open DWG {path}: {e:?}"))
-        .with_config(config)
-        .read()
-        .unwrap_or_else(|e| panic!("Failed to read DWG {path}: {e:?}"))
+    common::read_dwg(path)
 }
 
 /// Read DWG in strict (non-failsafe) mode.
 fn read_dwg_strict(path: &str) -> Result<CadDocument, Box<dyn std::error::Error>> {
-    let config = DwgReaderConfiguration {
-        failsafe: false,
-        ..Default::default()
-    };
-    let doc = DwgReader::from_file(path)?
-        .with_config(config)
-        .read()?;
-    Ok(doc)
+    common::read_dwg_strict(path)
 }
 
-/// Read DXF for comparison.
+/// Read DXF for comparison (strict / non-failsafe — intentional for this test).
 fn read_dxf(path: &str) -> CadDocument {
     DxfReader::from_file(path)
         .unwrap_or_else(|e| panic!("Cannot open DXF {path}: {e:?}"))
@@ -61,7 +48,7 @@ fn read_dxf(path: &str) -> CadDocument {
 
 /// Approximate f64 equality.
 fn approx_eq(a: f64, b: f64, tol: f64) -> bool {
-    (a - b).abs() < tol
+    common::comparison::approx_eq(a, b, tol)
 }
 
 const TOL: f64 = 1e-6;
@@ -98,16 +85,12 @@ const DWG_DXF_PAIRS: &[(&str, &str, &str)] = &[
 
 /// Entity type name from EntityType.
 fn entity_type_name(e: &EntityType) -> &'static str {
-    e.as_entity().entity_type()
+    common::entity_type_name(e)
 }
 
 /// Build entity type histogram.
 fn entity_histogram(doc: &CadDocument) -> BTreeMap<&'static str, usize> {
-    let mut map = BTreeMap::new();
-    for e in doc.entities() {
-        *map.entry(entity_type_name(e)).or_insert(0) += 1;
-    }
-    map
+    common::entity_type_histogram(doc)
 }
 
 /// Collect layer names.

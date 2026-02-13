@@ -1,6 +1,8 @@
 //! Individual entity testing - generates one file per entity type
 //! This helps identify which entities cause compatibility issues
 
+mod common;
+
 use acadrust::entities::*;
 use acadrust::types::{Color, Vector2, Vector3};
 use acadrust::{CadDocument, DxfWriter};
