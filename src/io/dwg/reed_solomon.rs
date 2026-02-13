@@ -189,4 +189,42 @@ mod tests {
         assert_eq!(factor, 12);
         assert_eq!(read_size, 3060);
     }
+
+    #[test]
+    fn test_ac21_file_header_metadata_roundtrip() {
+        // AC21 compressed metadata: 0x110 (272) bytes decoded using factor=3, block_size=239
+        let data_size = 0x110;
+        let mut data = vec![0u8; data_size];
+        // Fill with recognizable pattern (simulating the 34 u64 fields)
+        for i in 0..data_size {
+            data[i] = ((i * 7 + 13) % 256) as u8;
+        }
+
+        let encoded = encode(&data, 3, 239);
+        // Encoded should be factor * 255 = 3 * 255 = 765 bytes
+        assert_eq!(encoded.len(), 765);
+
+        let decoded = decode(&encoded, data_size, 3, 239);
+        assert_eq!(decoded, data);
+    }
+
+    #[test]
+    fn test_ac21_page_buffer_roundtrip() {
+        // AC21 section pages use factor from compute_page_buffer_params, block_size=251
+        let compressed_size: u64 = 2048;
+        let correction_factor: u64 = 3;
+        let (factor, read_size) = compute_page_buffer_params(compressed_size, correction_factor, 251);
+
+        // Create test data of the actual compressed size
+        let mut data = vec![0u8; compressed_size as usize];
+        for i in 0..data.len() {
+            data[i] = ((i * 31 + 5) % 256) as u8;
+        }
+
+        let encoded = encode(&data, factor, 251);
+        assert_eq!(encoded.len(), read_size);
+
+        let decoded = decode(&encoded, data.len(), factor, 251);
+        assert_eq!(decoded, data);
+    }
 }

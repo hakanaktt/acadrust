@@ -15,7 +15,7 @@ use crate::io::dwg::writer::app_info_writer::DwgAppInfoWriter;
 use crate::io::dwg::writer::aux_header_writer::DwgAuxHeaderWriter;
 use crate::io::dwg::writer::classes_writer::DwgClassesWriter;
 use crate::io::dwg::writer::file_header_writer::{
-    DwgFileHeaderWriterAC15, DwgFileHeaderWriterAC18, IDwgFileHeaderWriter,
+    DwgFileHeaderWriterAC15, DwgFileHeaderWriterAC18, DwgFileHeaderWriterAC21, IDwgFileHeaderWriter,
 };
 use crate::io::dwg::writer::handle_writer::DwgHandleWriter;
 use crate::io::dwg::writer::header_writer::DwgHeaderWriter;
@@ -179,6 +179,14 @@ impl DwgWriter {
         match version {
             DxfVersion::AC1012 | DxfVersion::AC1014 | DxfVersion::AC1015 => {
                 Box::new(DwgFileHeaderWriterAC15::new(
+                    version,
+                    version_string,
+                    code_page,
+                    maintenance_version,
+                ))
+            }
+            DxfVersion::AC1021 => {
+                Box::new(DwgFileHeaderWriterAC21::new(
                     version,
                     version_string,
                     code_page,

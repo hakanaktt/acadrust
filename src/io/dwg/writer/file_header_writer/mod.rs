@@ -6,9 +6,11 @@
 
 mod writer_ac15;
 mod writer_ac18;
+mod writer_ac21;
 
 pub use writer_ac15::DwgFileHeaderWriterAC15;
 pub use writer_ac18::DwgFileHeaderWriterAC18;
+pub use writer_ac21::DwgFileHeaderWriterAC21;
 
 use crate::error::Result;
 

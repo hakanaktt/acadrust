@@ -931,24 +931,29 @@ test_reference_sample_tables_present
 
 #### 10B — AC1021 (R2007) Write Support
 
-- ⬜ **10.10** Implement LZ77 AC21 compressor in `src/io/dwg/compression/lz77_ac21.rs`
-  - ⬜ Implement hash-table-based compression matching AC21 opcode table
-  - ⬜ Handle 4 opcode cases: case 0 (long match), case 1 (short match), case 2 (2-byte offset), default (nibble)
-  - ⬜ Ensure decompressor(compressor(data)) == data
+- ✅ **10.10** Implement LZ77 AC21 compressor in `src/io/dwg/compression/lz77_ac21.rs`
+  - ✅ Implement hash-table-based compression matching AC21 opcode table
+  - ✅ Handle 4 opcode cases: case 0 (long match), case 1 (short match), case 2 (2-byte offset), default (nibble)
+  - ✅ Ensure decompressor(compressor(data)) == data
+  - ✅ Fixed Case 2 Variant A offset encoding (raw distance, not distance-1)
+  - ✅ Fixed Case 0 chaining bug: skip Case 0 when previous match had 0 inline literals (top nibble 0 conflict with literal-length indicator)
 
-- ⬜ **10.11** Implement Reed-Solomon encoder in `src/io/dwg/reed_solomon.rs`
-  - ⬜ Implement byte interleaving (reverse of existing de-interleaving)
-  - ⬜ Support factor=3, block_size=239 for file header
-  - ⬜ Support dynamic factor/block_size for section pages
+- ✅ **10.11** Implement Reed-Solomon encoder in `src/io/dwg/reed_solomon.rs`
+  - ✅ Implement byte interleaving (reverse of existing de-interleaving)
+  - ✅ Support factor=3, block_size=239 for file header
+  - ✅ Support dynamic factor/block_size for section pages
+  - ✅ Added 2 AC21-specific roundtrip tests (6 total tests pass)
 
-- ⬜ **10.12** Add AC21 file header writer in `src/io/dwg/writer/file_header/`
-  - ⬜ Write 34 compressed metadata fields
-  - ⬜ Apply Reed-Solomon encoding
-  - ⬜ Write section page map with AC21 layout
+- ✅ **10.12** Add AC21 file header writer in `src/io/dwg/writer/file_header_writer/writer_ac21.rs`
+  - ✅ Write 34 compressed metadata fields (Dwg21CompressedMetadata serialization)
+  - ✅ Apply LZ77-AC21 compression + Reed-Solomon encoding for metadata at offset 0x80
+  - ✅ Write section page map with AC21 u64-field layout, UTF-16 names, hash codes
+  - ✅ 0x480-byte file header, encrypted 0x6C block, section hash mapping
+  - ✅ 7 unit tests: header size, hash mapping, metadata size, RS roundtrip, section pages, file output, encrypted header
 
-- ⬜ **10.13** Enable R2007 in the writer pipeline
-  - ⬜ Remove AC1021 write restriction
-  - ⬜ Route to AC21 file header writer
+- ✅ **10.13** Enable R2007 in the writer pipeline
+  - ✅ Route AC1021 to DwgFileHeaderWriterAC21 in `dwg_writer.rs`
+  - ✅ Registered writer_ac21 module in file_header_writer/mod.rs
 
 #### 10C — Final Parity Verification
 
