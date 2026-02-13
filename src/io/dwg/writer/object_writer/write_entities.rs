@@ -6,6 +6,7 @@
 //! to produce exactly the same binary layout.
 
 use crate::entities::*;
+use crate::entities::attribute_definition::AttributeFlags;
 use crate::error::Result;
 use crate::io::dwg::object_type::DwgObjectType;
 use crate::io::dwg::reference_type::DwgReferenceType;
@@ -29,13 +30,15 @@ impl DwgObjectWriter {
             EntityType::Ellipse(e) => self.write_ellipse(e, owner_handle),
             EntityType::Text(e) => self.write_text(e, owner_handle),
             EntityType::MText(e) => self.write_mtext(e, owner_handle),
+            EntityType::AttributeEntity(e) => self.write_attribute(e, owner_handle),
+            EntityType::AttributeDefinition(e) => self.write_attribute_definition(e, owner_handle),
             EntityType::Solid(e) => self.write_solid(e, owner_handle),
             EntityType::Face3D(e) => self.write_3d_face(e, owner_handle),
             EntityType::Ray(e) => self.write_ray(e, owner_handle),
             EntityType::XLine(e) => self.write_xline(e, owner_handle),
             EntityType::LwPolyline(e) => self.write_lwpolyline(e, owner_handle),
             EntityType::Spline(e) => self.write_spline(e, owner_handle),
-            EntityType::Insert(e) => self.write_insert(e, owner_handle),
+            EntityType::Insert(e) => self.write_insert_composite(e, owner_handle),
             EntityType::Shape(e) => self.write_shape(e, owner_handle),
             EntityType::Tolerance(e) => self.write_tolerance(e, owner_handle),
             EntityType::Leader(e) => self.write_leader(e, owner_handle),
@@ -406,86 +409,21 @@ impl DwgObjectWriter {
         )?;
 
         let align_pt = text.alignment_point.unwrap_or(text.insertion_point);
-
-        if self.sio.r13_14_only {
-            writer.write_bit_double(text.insertion_point.z)?; // elevation
-            writer.write_2raw_double(crate::types::Vector2::new(
-                text.insertion_point.x,
-                text.insertion_point.y,
-            ))?;
-            writer.write_2raw_double(crate::types::Vector2::new(
-                align_pt.x,
-                align_pt.y,
-            ))?;
-            writer.write_bit_extrusion(text.normal)?;
-            writer.write_bit_thickness(0.0)?;
-            writer.write_bit_double(text.oblique_angle)?;
-            writer.write_bit_double(text.rotation)?;
-            writer.write_bit_double(text.height)?;
-            writer.write_bit_double(text.width_factor)?;
-            writer.write_variable_text(&text.value)?;
-            writer.write_bit_short(0)?; // generation_flags
-            writer.write_bit_short(text.horizontal_alignment as i16)?;
-            writer.write_bit_short(text.vertical_alignment as i16)?;
-        } else {
-            // R2000+: DataFlags byte for conditional writing
-            let elevation = text.insertion_point.z;
-            let mut data_flags: u8 = 0;
-            if elevation != 0.0 {
-                data_flags |= 0x01;
-            }
-            if text.alignment_point.is_some() {
-                data_flags |= 0x04;
-            }
-            if text.oblique_angle != 0.0 {
-                data_flags |= 0x08;
-            }
-            if text.rotation != 0.0 {
-                data_flags |= 0x10;
-            }
-            if text.width_factor != 1.0 {
-                data_flags |= 0x20;
-            }
-            if text.horizontal_alignment != TextHorizontalAlignment::Left
-                || text.vertical_alignment != TextVerticalAlignment::Baseline
-            {
-                data_flags |= 0x80;
-            }
-
-            writer.write_byte(data_flags)?;
-
-            if data_flags & 0x01 != 0 {
-                writer.write_raw_double(elevation)?;
-            }
-            writer.write_2raw_double(crate::types::Vector2::new(
-                text.insertion_point.x,
-                text.insertion_point.y,
-            ))?;
-            if data_flags & 0x04 != 0 {
-                writer.write_2bit_double_with_default(
-                    crate::types::Vector2::new(text.insertion_point.x, text.insertion_point.y),
-                    crate::types::Vector2::new(align_pt.x, align_pt.y),
-                )?;
-            }
-            writer.write_bit_extrusion(text.normal)?;
-            writer.write_bit_thickness(0.0)?;
-
-            if data_flags & 0x08 != 0 {
-                writer.write_raw_double(text.oblique_angle)?;
-            }
-            if data_flags & 0x10 != 0 {
-                writer.write_raw_double(text.rotation)?;
-            }
-            writer.write_raw_double(text.height)?;
-            if data_flags & 0x20 != 0 {
-                writer.write_raw_double(text.width_factor)?;
-            }
-            writer.write_variable_text(&text.value)?;
-            if data_flags & 0x80 != 0 {
-                writer.write_bit_short(text.horizontal_alignment as i16)?;
-                writer.write_bit_short(text.vertical_alignment as i16)?;
-            }
-        }
+        self.write_text_data(
+            &mut *writer,
+            text.insertion_point,
+            align_pt,
+            text.alignment_point.is_some(),
+            text.normal,
+            text.oblique_angle,
+            text.rotation,
+            text.height,
+            text.width_factor,
+            &text.value,
+            0, // generation_flags
+            text.horizontal_alignment as i16,
+            text.vertical_alignment as i16,
+        )?;
 
         // Style handle (hard pointer)
         writer.handle_reference_typed(
@@ -496,6 +434,278 @@ impl DwgObjectWriter {
         writer.write_spear_shift()?;
         self.finalize_entity(writer, text.common.handle.value());
         Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Shared text-entity data writer
+    // -----------------------------------------------------------------------
+
+    /// Write text-entity body data shared by TEXT, ATTRIB and ATTDEF.
+    ///
+    /// The binary layout mirrors `read_common_text_data` in the object reader.
+    /// For R2000+ the DataFlags byte uses the convention:
+    ///   bit SET   → field has its DEFAULT value → do NOT write the field
+    ///   bit CLEAR → field is NON-default      → write the field
+    fn write_text_data(
+        &self,
+        writer: &mut dyn crate::io::dwg::writer::stream_writer::IDwgStreamWriter,
+        insertion_point: Vector3,
+        alignment_point: Vector3,
+        has_alignment_point: bool,
+        normal: Vector3,
+        oblique_angle: f64,
+        rotation: f64,
+        height: f64,
+        width_factor: f64,
+        value: &str,
+        generation_flags: i16,
+        horizontal_alignment: i16,
+        vertical_alignment: i16,
+    ) -> Result<()> {
+        if self.sio.r13_14_only {
+            writer.write_bit_double(insertion_point.z)?; // elevation
+            writer.write_2raw_double(crate::types::Vector2::new(
+                insertion_point.x,
+                insertion_point.y,
+            ))?;
+            writer.write_2raw_double(crate::types::Vector2::new(
+                alignment_point.x,
+                alignment_point.y,
+            ))?;
+            writer.write_bit_extrusion(normal)?;
+            writer.write_bit_thickness(0.0)?;
+            writer.write_bit_double(oblique_angle)?;
+            writer.write_bit_double(rotation)?;
+            writer.write_bit_double(height)?;
+            writer.write_bit_double(width_factor)?;
+            writer.write_variable_text(value)?;
+            writer.write_bit_short(generation_flags)?;
+            writer.write_bit_short(horizontal_alignment)?;
+            writer.write_bit_short(vertical_alignment)?;
+        } else {
+            // R2000+: DataFlags byte — bit SET = default value (skip)
+            let elevation = insertion_point.z;
+            let mut data_flags: u8 = 0;
+            if elevation == 0.0 {
+                data_flags |= 0x01;
+            }
+            if !has_alignment_point
+                || (alignment_point.x == insertion_point.x
+                    && alignment_point.y == insertion_point.y)
+            {
+                data_flags |= 0x02;
+            }
+            if oblique_angle == 0.0 {
+                data_flags |= 0x04;
+            }
+            if rotation == 0.0 {
+                data_flags |= 0x08;
+            }
+            if width_factor == 1.0 {
+                data_flags |= 0x10;
+            }
+            if generation_flags == 0 {
+                data_flags |= 0x20;
+            }
+            if horizontal_alignment == 0 {
+                data_flags |= 0x40;
+            }
+            if vertical_alignment == 0 {
+                data_flags |= 0x80;
+            }
+
+            writer.write_byte(data_flags)?;
+
+            if data_flags & 0x01 == 0 {
+                writer.write_raw_double(elevation)?;
+            }
+            writer.write_2raw_double(crate::types::Vector2::new(
+                insertion_point.x,
+                insertion_point.y,
+            ))?;
+            if data_flags & 0x02 == 0 {
+                writer.write_2bit_double_with_default(
+                    crate::types::Vector2::new(insertion_point.x, insertion_point.y),
+                    crate::types::Vector2::new(alignment_point.x, alignment_point.y),
+                )?;
+            }
+            writer.write_bit_extrusion(normal)?;
+            writer.write_bit_thickness(0.0)?;
+
+            if data_flags & 0x04 == 0 {
+                writer.write_raw_double(oblique_angle)?;
+            }
+            if data_flags & 0x08 == 0 {
+                writer.write_raw_double(rotation)?;
+            }
+            writer.write_raw_double(height)?;
+            if data_flags & 0x10 == 0 {
+                writer.write_raw_double(width_factor)?;
+            }
+            writer.write_variable_text(value)?;
+            if data_flags & 0x20 == 0 {
+                writer.write_bit_short(generation_flags)?;
+            }
+            if data_flags & 0x40 == 0 {
+                writer.write_bit_short(horizontal_alignment)?;
+            }
+            if data_flags & 0x80 == 0 {
+                writer.write_bit_short(vertical_alignment)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // ATTRIB
+    // -----------------------------------------------------------------------
+
+    /// Write an ATTRIB entity (block attribute instance).
+    ///
+    /// Binary layout mirrors `read_common_att_data`:
+    ///   common_entity_data → text_data → Tag(TV) → FieldLength(BS) →
+    ///   Flags(RC) → LockPosition(B, R2007+) → hasMText(B, R2010+) →
+    ///   StyleHandle(H)
+    fn write_attribute(
+        &mut self,
+        attrib: &AttributeEntity,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let (mut writer, _) = self.create_entity_writer();
+        self.write_common_entity_data(
+            &mut *writer,
+            DwgObjectType::Attrib,
+            &attrib.common,
+            owner_handle,
+        )?;
+
+        // Text base data
+        self.write_text_data(
+            &mut *writer,
+            attrib.insertion_point,
+            attrib.alignment_point,
+            true, // attributes always store alignment point
+            attrib.normal,
+            attrib.oblique_angle,
+            attrib.rotation,
+            attrib.height,
+            attrib.width_factor,
+            &attrib.value,
+            attrib.text_generation_flags,
+            attrib.horizontal_alignment as i16,
+            attrib.vertical_alignment as i16,
+        )?;
+
+        // Tag (TV)
+        writer.write_variable_text(&attrib.tag)?;
+        // Field length (BS) — always 0 (unused)
+        writer.write_bit_short(0)?;
+        // Flags (RC) — NOT bit-pair coded
+        let flags_byte = Self::attribute_flags_to_byte(&attrib.flags);
+        writer.write_byte(flags_byte)?;
+
+        // R2007+: Lock position flag (B)
+        if self.sio.r2007_plus {
+            writer.write_bit(attrib.lock_position)?;
+        }
+
+        // R2010+: has MText flag (B)
+        if self.sio.r2010_plus {
+            writer.write_bit(false)?; // single-line attributes
+        }
+
+        // Style handle (hard pointer)
+        writer.handle_reference_typed(
+            DwgReferenceType::HardPointer,
+            self.resolve_textstyle_handle(&attrib.text_style),
+        )?;
+
+        writer.write_spear_shift()?;
+        self.finalize_entity(writer, attrib.common.handle.value());
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // ATTDEF
+    // -----------------------------------------------------------------------
+
+    /// Write an ATTDEF entity (block attribute definition).
+    ///
+    /// Binary layout mirrors `read_common_attdef_data`:
+    ///   common_entity_data → text_data → Tag(TV) → FieldLength(BS) →
+    ///   Flags(RC) → Prompt(TV) → LockPosition(B, R2007+) →
+    ///   hasMText(B, R2010+) → StyleHandle(H)
+    fn write_attribute_definition(
+        &mut self,
+        attdef: &AttributeDefinition,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let (mut writer, _) = self.create_entity_writer();
+        self.write_common_entity_data(
+            &mut *writer,
+            DwgObjectType::Attdef,
+            &attdef.common,
+            owner_handle,
+        )?;
+
+        // Text base data (default_value is the text value)
+        self.write_text_data(
+            &mut *writer,
+            attdef.insertion_point,
+            attdef.alignment_point,
+            true, // attribute defs always store alignment point
+            attdef.normal,
+            attdef.oblique_angle,
+            attdef.rotation,
+            attdef.height,
+            attdef.width_factor,
+            &attdef.default_value,
+            attdef.text_generation_flags,
+            attdef.horizontal_alignment as i16,
+            attdef.vertical_alignment as i16,
+        )?;
+
+        // Tag (TV)
+        writer.write_variable_text(&attdef.tag)?;
+        // Field length (BS) — always 0 (unused)
+        writer.write_bit_short(0)?;
+        // Flags (RC) — NOT bit-pair coded
+        let flags_byte = Self::attribute_flags_to_byte(&attdef.flags);
+        writer.write_byte(flags_byte)?;
+
+        // Prompt (TV) — only in ATTDEF, not in ATTRIB
+        writer.write_variable_text(&attdef.prompt)?;
+
+        // R2007+: Lock position flag (B)
+        if self.sio.r2007_plus {
+            writer.write_bit(attdef.lock_position)?;
+        }
+
+        // R2010+: has MText flag (B)
+        if self.sio.r2010_plus {
+            writer.write_bit(false)?;
+        }
+
+        // Style handle (hard pointer)
+        writer.handle_reference_typed(
+            DwgReferenceType::HardPointer,
+            self.resolve_textstyle_handle(&attdef.text_style),
+        )?;
+
+        writer.write_spear_shift()?;
+        self.finalize_entity(writer, attdef.common.handle.value());
+        Ok(())
+    }
+
+    /// Convert `AttributeFlags` to the raw byte encoding used in the DWG format.
+    fn attribute_flags_to_byte(flags: &AttributeFlags) -> u8 {
+        let mut v: u8 = 0;
+        if flags.invisible { v |= 1; }
+        if flags.constant  { v |= 2; }
+        if flags.verify    { v |= 4; }
+        if flags.preset    { v |= 8; }
+        v
     }
 
     // -----------------------------------------------------------------------
@@ -879,10 +1089,26 @@ impl DwgObjectWriter {
     }
 
     // -----------------------------------------------------------------------
-    // INSERT
+    // INSERT (with attribute support)
     // -----------------------------------------------------------------------
 
-    fn write_insert(&mut self, insert: &Insert, owner_handle: u64) -> Result<()> {
+    /// Write a simple INSERT entity with no attributes.
+    fn write_insert_simple(&mut self, insert: &Insert, owner_handle: u64) -> Result<()> {
+        self.write_insert_inner(insert, owner_handle, false, &[], 0)
+    }
+
+    /// Core INSERT writer used by both the simple and composite paths.
+    ///
+    /// When `has_attribs` is true, after the block-header handle it writes
+    /// the attribute-handle chain and SEQEND handle.
+    fn write_insert_inner(
+        &mut self,
+        insert: &Insert,
+        owner_handle: u64,
+        has_attribs: bool,
+        attrib_handles: &[u64],
+        seqend_handle: u64,
+    ) -> Result<()> {
         let (mut writer, _) = self.create_entity_writer();
         self.write_common_entity_data(
             &mut *writer,
@@ -917,17 +1143,112 @@ impl DwgObjectWriter {
         writer.write_bit_double(insert.rotation)?;
         writer.write_bit_extrusion(insert.normal)?;
 
-        // has_attribs = false
-        writer.write_bit(false)?;
+        // Has ATTRIBs flag (B)
+        writer.write_bit(has_attribs)?;
 
-        // Block header handle
+        // R2004+: Owned object count (BL) — only when has_attribs
+        if self.sio.r2004_plus && has_attribs {
+            writer.write_bit_long(attrib_handles.len() as i32)?;
+        }
+
+        // Block header handle (hard pointer)
         writer.handle_reference_typed(
             DwgReferenceType::HardPointer,
             self.resolve_block_handle(&insert.block_name),
         )?;
 
+        // Attribute handles
+        if has_attribs {
+            if self.sio.r2004_plus {
+                // R2004+: owned handles list (hard ownership)
+                for &ah in attrib_handles {
+                    writer.handle_reference_typed(
+                        DwgReferenceType::HardOwnership,
+                        ah,
+                    )?;
+                }
+            } else {
+                // R13–R2000: first and last attribute handles (soft pointer)
+                if let Some(&first) = attrib_handles.first() {
+                    writer.handle_reference_typed(
+                        DwgReferenceType::SoftPointer,
+                        first,
+                    )?;
+                }
+                if let Some(&last) = attrib_handles.last() {
+                    writer.handle_reference_typed(
+                        DwgReferenceType::SoftPointer,
+                        last,
+                    )?;
+                }
+            }
+            // SEQEND handle (hard ownership)
+            writer.handle_reference_typed(
+                DwgReferenceType::HardOwnership,
+                seqend_handle,
+            )?;
+        }
+
         writer.write_spear_shift()?;
         self.finalize_entity(writer, insert.common.handle.value());
+        Ok(())
+    }
+
+    /// Write a complete INSERT: parent INSERT + ATTRIB children + SEQEND.
+    ///
+    /// If the insert has no attributes, writes a simple insert.
+    fn write_insert_composite(
+        &mut self,
+        insert: &Insert,
+        owner_handle: u64,
+    ) -> Result<()> {
+        if insert.attributes.is_empty() {
+            return self.write_insert_simple(insert, owner_handle);
+        }
+
+        let insert_handle = insert.common.handle.value();
+
+        // Allocate handles for attribute children and SEQEND
+        let mut next_h = self.next_available_handle();
+        let mut attrib_handles = Vec::with_capacity(insert.attributes.len());
+        let mut attrib_commons = Vec::with_capacity(insert.attributes.len());
+
+        for _att in &insert.attributes {
+            let h = next_h;
+            next_h += 1;
+            attrib_handles.push(h);
+            let mut ac = EntityCommon::new();
+            ac.handle = Handle::new(h);
+            ac.layer = insert.common.layer.clone();
+            ac.color = insert.common.color;
+            attrib_commons.push(ac);
+        }
+
+        let seqend_h = next_h;
+        let mut seqend_common = EntityCommon::new();
+        seqend_common.handle = Handle::new(seqend_h);
+        seqend_common.layer = insert.common.layer.clone();
+
+        // 1. Write the parent INSERT with attribute references
+        self.write_insert_inner(
+            insert,
+            owner_handle,
+            true,
+            &attrib_handles,
+            seqend_h,
+        )?;
+
+        // 2. Write each ATTRIB as a separate entity owned by the insert
+        for (i, attrib) in insert.attributes.iter().enumerate() {
+            let mut att_clone = attrib.clone();
+            att_clone.common = attrib_commons[i].clone();
+            self.write_attribute(&att_clone, insert_handle)?;
+        }
+
+        // 3. Write SEQEND
+        let seqend = Seqend { common: seqend_common };
+        self.write_seqend(&seqend, insert_handle)?;
+
         Ok(())
     }
 

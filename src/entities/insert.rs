@@ -1,6 +1,7 @@
 //! Insert entity (block reference)
 
 use crate::entities::{Entity, EntityCommon};
+use crate::entities::attribute_entity::AttributeEntity;
 use crate::types::{BoundingBox3D, Color, Handle, LineWeight, Transparency, Vector3};
 
 /// Insert entity - a reference to a block definition
@@ -32,6 +33,8 @@ pub struct Insert {
     pub column_spacing: f64,
     /// Row spacing (for array inserts)
     pub row_spacing: f64,
+    /// Attribute entities attached to this insert
+    pub attributes: Vec<AttributeEntity>,
 }
 
 impl Insert {
@@ -50,6 +53,7 @@ impl Insert {
             row_count: 1,
             column_spacing: 0.0,
             row_spacing: 0.0,
+            attributes: Vec::new(),
         }
     }
 

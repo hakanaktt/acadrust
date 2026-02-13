@@ -170,7 +170,7 @@ test_read_write_read_polylines_from_sample_ac1024
 
 ---
 
-## Phase 2: Writer — Attributes (ATTRIB & ATTDEF)
+## Phase 2: Writer — Attributes (ATTRIB & ATTDEF) ✅
 
 > **Goal:** Add DWG write support for ATTRIB and ATTDEF entities.  
 > **Why:** Attributes are used in virtually every block-based drawing for title blocks, part numbers, etc. INSERT entities with attributes are broken without these.  
@@ -178,28 +178,37 @@ test_read_write_read_polylines_from_sample_ac1024
 
 ### Tasks
 
-- ⬜ **2.1** Implement `write_attribute` in `entities.rs`
-  - ⬜ Write common text data (R13: full fields, R2000+: data-flags optimized)
-  - ⬜ Write insertion_point, alignment_point, extrusion (version-dependent)
-  - ⬜ Write thickness (R2000+ BT optimization)
-  - ⬜ Write rotation, height, oblique_angle, generation_flags
-  - ⬜ Write horizontal/vertical justification
-  - ⬜ Write tag string, default value
-  - ⬜ Write field_length, flags, lock_position (R2010+)
-  - ⬜ Write style handle
-  - ⬜ Write attribute version + MText sub-entity (R2018+)
+- ✅ **2.1** Implement `write_attribute` in `write_entities.rs`
+  - ✅ Write common text data via shared `write_text_data` helper (R13: full fields, R2000+: data-flags optimized)
+  - ✅ Write insertion_point, alignment_point, extrusion (version-dependent)
+  - ✅ Write thickness (R2000+ BT optimization)
+  - ✅ Write rotation, height, oblique_angle, generation_flags
+  - ✅ Write horizontal/vertical justification
+  - ✅ Write tag string (TV)
+  - ✅ Write field_length (BS=0), flags (RC byte), lock_position (B, R2007+)
+  - ✅ Write hasMText flag (B, R2010+)
+  - ✅ Write style handle (hard pointer)
 
-- ⬜ **2.2** Implement `write_attribute_definition` in `entities.rs`
-  - ⬜ Extends attribute writing with prompt string
-  - ⬜ Write R2018 multi-line support
+- ✅ **2.2** Implement `write_attribute_definition` in `write_entities.rs`
+  - ✅ Reuses `write_text_data` for text body, writes default_value as text
+  - ✅ Extends attribute writing with prompt string (TV) between Flags and LockPosition
 
-- ⬜ **2.3** Update INSERT writer to emit ATTRIB children
-  - ⬜ Write `has_attribs` flag correctly
-  - ⬜ Write owned_object_count (R2004+) for attribute handles
-  - ⬜ Write attrib handles + SEQEND handle
-  - ⬜ Enqueue ATTRIB entities after INSERT
+- ✅ **2.3** Update INSERT writer to emit ATTRIB children
+  - ✅ Write `has_attribs` flag dynamically based on attributes vec
+  - ✅ Write owned_object_count (BL, R2004+) for attribute handles
+  - ✅ Write attrib handles (R2004+ hard ownership list, R13-R2000 first/last soft pointers)
+  - ✅ Write SEQEND handle (hard ownership)
+  - ✅ Composite writer: INSERT parent → ATTRIB children → SEQEND
 
-- ⬜ **2.4** Register ATTRIB/ATTDEF in `write_entity()` dispatcher
+- ✅ **2.4** Register ATTRIB/ATTDEF in `write_entity()` dispatcher
+  - ✅ `AttributeEntity` → `write_attribute`
+  - ✅ `AttributeDefinition` → `write_attribute_definition`
+  - ✅ `Insert` → `write_insert_composite` (auto-detects attributes)
+
+### Additional improvements
+- ✅ Fixed TEXT writer data_flags bug: was using inverted logic (bit SET = non-default), now matches reader/C# convention (bit SET = default/skip)
+- ✅ Extracted `write_text_data` shared helper used by TEXT, ATTRIB, and ATTDEF writers
+- ✅ Added `attributes: Vec<AttributeEntity>` field to `Insert` struct
 
 ### Tests for Phase 2
 ```

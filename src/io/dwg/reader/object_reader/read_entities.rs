@@ -526,6 +526,7 @@ impl DwgObjectReader {
             row_count,
             column_spacing,
             row_spacing,
+            attributes: Vec::new(), // populated later during template resolution
         };
 
         Ok(CadTemplate::Insert {
