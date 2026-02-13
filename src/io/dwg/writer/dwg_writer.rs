@@ -56,6 +56,15 @@ impl DwgWriter {
         // Build the handles collection from the document.
         let handles = Self::build_header_handles(doc);
 
+        // Ensure default DXF classes are present (needed for unlisted types
+        // like MULTILEADER, IMAGE, WIPEOUT, etc.).
+        let mut classes: Vec<_> = doc.classes.iter().cloned().collect();
+        if classes.is_empty() {
+            let mut coll = crate::classes::DxfClassCollection::new();
+            coll.update_defaults();
+            classes = coll.iter().cloned().collect();
+        }
+
         // Create the version-appropriate file header writer.
         let mut file_writer: Box<dyn IDwgFileHeaderWriter> =
             Self::create_file_header_writer(version, version_string, code_page, maintenance_version);
@@ -70,7 +79,6 @@ impl DwgWriter {
         // -------------------------------------------------------------------
         // 2. Classes section (AcDb:Classes)
         // -------------------------------------------------------------------
-        let classes: Vec<_> = doc.classes.iter().cloned().collect();
         let classes_data = DwgClassesWriter::new(version)
             .write(&classes, maintenance_version)?;
         file_writer.add_section(section_names::CLASSES, classes_data, sio.r2004_plus, 0)?;

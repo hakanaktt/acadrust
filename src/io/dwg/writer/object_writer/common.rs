@@ -367,4 +367,108 @@ impl DwgObjectWriter {
             .copied()
             .unwrap_or(0)
     }
+
+    /// Resolve a DXF class name to its class_number (for unlisted types).
+    /// Returns 500 as fallback.
+    pub(super) fn resolve_class_number(&self, dxf_class_name: &str) -> i16 {
+        self.class_numbers
+            .get(&dxf_class_name.to_uppercase())
+            .copied()
+            .unwrap_or(500)
+    }
+
+    /// Write common entity data for an **unlisted** (class-based) entity type.
+    ///
+    /// Instead of passing a `DwgObjectType` enum, this uses the DXF class
+    /// name (e.g., "MULTILEADER", "IMAGE", "WIPEOUT") to look up the
+    /// class_number and write that as the object type code.
+    pub(super) fn write_common_entity_data_unlisted(
+        &mut self,
+        writer: &mut dyn IDwgStreamWriter,
+        dxf_class_name: &str,
+        common: &EntityCommon,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let class_number = self.resolve_class_number(dxf_class_name);
+
+        // Write type code + handle (same as write_common_data_entity but with raw class_number)
+        writer.reset_stream()?;
+        writer.write_object_type(class_number)?;
+
+        if self.sio.r2000_plus && !self.sio.r2010_plus {
+            writer.save_position_for_size()?;
+        }
+
+        writer.handle_reference(common.handle.value())?;
+
+        // Now write the standard entity header fields
+        self.write_extended_data(writer, common)?;
+
+        // Graphic present flag
+        writer.write_bit(false)?;
+
+        if self.sio.r13_14_only {
+            writer.save_position_for_size()?;
+        }
+
+        // Entity mode
+        let entity_mode = if owner_handle == self.model_space_handle {
+            2u8
+        } else if owner_handle == self.paper_space_handle {
+            1u8
+        } else {
+            0u8
+        };
+        writer.write_2bits(entity_mode)?;
+
+        if entity_mode == 0 {
+            writer.handle_reference_typed(DwgReferenceType::SoftPointer, owner_handle)?;
+        }
+
+        self.write_reactors_and_xdictionary(writer, common)?;
+
+        if self.sio.r13_14_only {
+            writer.handle_reference_typed(
+                DwgReferenceType::SoftPointer,
+                self.resolve_layer_handle(&common.layer),
+            )?;
+            writer.write_bit(true)?;
+        }
+
+        if !self.sio.r2004_plus {
+            writer.write_bit(true)?; // no_links
+        }
+
+        writer.write_en_color(common.color, common.transparency, false)?;
+        writer.write_bit_double(1.0)?; // linetype scale
+
+        if self.sio.r2000_plus {
+            writer.handle_reference_typed(
+                DwgReferenceType::SoftPointer,
+                self.resolve_layer_handle(&common.layer),
+            )?;
+            writer.write_2bits(0)?; // linetype flags = bylayer
+
+            if self.sio.r2007_plus {
+                writer.write_2bits(0)?; // material flags
+                writer.write_byte(0)?;  // shadow flags
+            }
+
+            writer.write_2bits(0)?; // plotstyle flags
+
+            if self.sio.r2010_plus {
+                writer.write_bit(false)?; // full visual style
+                writer.write_bit(false)?; // face visual style
+                writer.write_bit(false)?; // edge visual style
+            }
+        }
+
+        writer.write_bit_short(if common.invisible { 1 } else { 0 })?;
+
+        if self.sio.r2000_plus {
+            writer.write_byte(common.line_weight.value() as u8)?;
+        }
+
+        Ok(())
+    }
 }

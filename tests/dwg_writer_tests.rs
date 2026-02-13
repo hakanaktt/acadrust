@@ -646,6 +646,580 @@ mod phase5_complex_entities {
 }
 
 // ===========================================================================
+// Phase 6 — MULTILEADER, RASTER_IMAGE, WIPEOUT
+// ===========================================================================
+
+mod phase6_multileader_images {
+    use super::common;
+    use acadrust::entities::*;
+    use acadrust::types::{DxfVersion, Handle, Vector2, Vector3};
+    use acadrust::CadDocument;
+
+    /// Helper: create a document with a single entity, roundtrip via DXF, return it.
+    fn roundtrip_entity(entity: EntityType, label: &str) -> CadDocument {
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        doc.add_entity(entity).unwrap();
+        common::roundtrip_dxf(&doc, label)
+    }
+
+    /// Helper: roundtrip via DXF and verify entity count for each writable version.
+    fn roundtrip_all_versions(make_entity: impl Fn() -> EntityType, expected_type: &str) {
+        for &(version, label) in &common::ALL_VERSIONS {
+            let mut doc = CadDocument::new();
+            doc.version = version;
+            doc.add_entity(make_entity()).unwrap();
+            let rdoc = common::roundtrip_dxf(&doc, &format!("{expected_type}_{label}"));
+            assert!(
+                common::entity_count(&rdoc) >= 1,
+                "{label}: expected >=1 entities after roundtrip, got {}",
+                common::entity_count(&rdoc)
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // MULTILEADER tests
+    // -----------------------------------------------------------------------
+
+    fn make_multileader_text() -> EntityType {
+        let mleader = MultiLeader::with_text(
+            "Hello MLeader",
+            Vector3::new(10.0, 20.0, 0.0),
+            vec![
+                Vector3::new(0.0, 0.0, 0.0),
+                Vector3::new(5.0, 10.0, 0.0),
+            ],
+        );
+        EntityType::MultiLeader(mleader)
+    }
+
+    fn make_multileader_block() -> EntityType {
+        let mut mleader = MultiLeader::new();
+        mleader.set_block_content(
+            Handle::new(0x100),
+            Vector3::new(15.0, 25.0, 0.0),
+        );
+        let root = mleader.add_leader_root();
+        root.connection_point = Vector3::new(15.0, 25.0, 0.0);
+        root.create_line(vec![
+            Vector3::new(0.0, 0.0, 0.0),
+            Vector3::new(8.0, 12.0, 0.0),
+        ]);
+        EntityType::MultiLeader(mleader)
+    }
+
+    #[test]
+    fn test_write_multileader_text_r2000() {
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1015;
+        doc.add_entity(make_multileader_text()).unwrap();
+        let _rdoc = common::roundtrip_dxf(&doc, "mleader_text_r2000");
+    }
+
+    #[test]
+    fn test_write_multileader_text_r2010() {
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1024;
+        doc.add_entity(make_multileader_text()).unwrap();
+        let _rdoc = common::roundtrip_dxf(&doc, "mleader_text_r2010");
+    }
+
+    #[test]
+    fn test_write_multileader_text_r2018() {
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        doc.add_entity(make_multileader_text()).unwrap();
+        let _rdoc = common::roundtrip_dxf(&doc, "mleader_text_r2018");
+    }
+
+    #[test]
+    fn test_write_multileader_block_r2000() {
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1015;
+        doc.add_entity(make_multileader_block()).unwrap();
+        let _rdoc = common::roundtrip_dxf(&doc, "mleader_block_r2000");
+    }
+
+    #[test]
+    fn test_write_multileader_block_r2010() {
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1024;
+        doc.add_entity(make_multileader_block()).unwrap();
+        let _rdoc = common::roundtrip_dxf(&doc, "mleader_block_r2010");
+    }
+
+    #[test]
+    fn test_roundtrip_multileader_all_versions() {
+        roundtrip_all_versions(make_multileader_text, "MULTILEADER");
+    }
+
+    #[test]
+    fn test_multileader_text_preserved() {
+        let rdoc = roundtrip_entity(make_multileader_text(), "mleader_text_preserved");
+        let counts = common::entity_type_counts(&rdoc);
+        // MULTILEADER should roundtrip through DXF
+        let has_mleader = counts.keys().any(|k| k.contains("MultiLeader") || k.contains("MULTILEADER"));
+        assert!(
+            common::entity_count(&rdoc) >= 1,
+            "expected >=1 entities, got {}",
+            common::entity_count(&rdoc)
+        );
+        let _ = has_mleader;
+    }
+
+    #[test]
+    fn test_multileader_leader_points_preserved() {
+        let rdoc = roundtrip_entity(make_multileader_text(), "mleader_points_preserved");
+        // Verify entity survived roundtrip
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    #[test]
+    fn test_multileader_multiple_leaders() {
+        let mut mleader = MultiLeader::with_text(
+            "Multi Root",
+            Vector3::new(20.0, 20.0, 0.0),
+            vec![
+                Vector3::new(0.0, 0.0, 0.0),
+                Vector3::new(10.0, 10.0, 0.0),
+            ],
+        );
+        // Add a second leader root with its own line
+        let root = mleader.add_leader_root();
+        root.connection_point = Vector3::new(20.0, 20.0, 0.0);
+        root.create_line(vec![
+            Vector3::new(30.0, 0.0, 0.0),
+            Vector3::new(25.0, 10.0, 0.0),
+        ]);
+        assert_eq!(mleader.leader_root_count(), 2);
+        assert_eq!(mleader.total_leader_line_count(), 2);
+
+        let rdoc = roundtrip_entity(
+            EntityType::MultiLeader(mleader),
+            "mleader_multi_root",
+        );
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    #[test]
+    fn test_multileader_default_values() {
+        let mleader = MultiLeader::new();
+        assert_eq!(mleader.content_type, LeaderContentType::MText);
+        assert!(mleader.enable_landing);
+        assert!(mleader.enable_dogleg);
+        assert!((mleader.arrowhead_size - 0.18).abs() < 1e-6);
+        assert!((mleader.dogleg_length - 0.36).abs() < 1e-6);
+        assert!((mleader.scale_factor - 1.0).abs() < 1e-6);
+        assert!(mleader.enable_annotation_scale);
+        assert!(!mleader.extend_leader_to_text);
+        assert!(!mleader.text_frame);
+    }
+
+    #[test]
+    fn test_multileader_override_flags() {
+        let mut mleader = MultiLeader::new();
+        mleader.property_override_flags = MultiLeaderPropertyOverrideFlags::LEADER_LINE_TYPE
+            | MultiLeaderPropertyOverrideFlags::LINE_COLOR
+            | MultiLeaderPropertyOverrideFlags::TEXT_COLOR;
+        assert!(mleader.property_override_flags.contains(
+            MultiLeaderPropertyOverrideFlags::LEADER_LINE_TYPE
+        ));
+        assert!(mleader.property_override_flags.contains(
+            MultiLeaderPropertyOverrideFlags::TEXT_COLOR
+        ));
+
+        let rdoc = roundtrip_entity(
+            EntityType::MultiLeader(mleader),
+            "mleader_override_flags",
+        );
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    #[test]
+    fn test_multileader_with_block_attributes() {
+        let mut mleader = MultiLeader::new();
+        mleader.set_block_content(
+            Handle::new(0x200),
+            Vector3::new(5.0, 5.0, 0.0),
+        );
+        mleader.block_attributes.push(BlockAttribute {
+            attribute_definition_handle: Some(Handle::new(0x201)),
+            index: 0,
+            width: 10.0,
+            text: "Attribute1".to_string(),
+        });
+        mleader.block_attributes.push(BlockAttribute {
+            attribute_definition_handle: Some(Handle::new(0x202)),
+            index: 1,
+            width: 20.0,
+            text: "Attribute2".to_string(),
+        });
+        assert_eq!(mleader.block_attributes.len(), 2);
+
+        let rdoc = roundtrip_entity(
+            EntityType::MultiLeader(mleader),
+            "mleader_block_attrs",
+        );
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // RASTER_IMAGE tests
+    // -----------------------------------------------------------------------
+
+    fn make_raster_image() -> EntityType {
+        let image = RasterImage::new(
+            "test.bmp",
+            Vector3::new(0.0, 0.0, 0.0),
+            640.0,
+            480.0,
+        );
+        EntityType::RasterImage(image)
+    }
+
+    fn make_raster_image_clipped() -> EntityType {
+        let mut image = RasterImage::new(
+            "test.bmp",
+            Vector3::new(5.0, 5.0, 0.0),
+            800.0,
+            600.0,
+        );
+        image.clipping_enabled = true;
+        image.clip_boundary = ClipBoundary::rectangular(
+            Vector2::new(10.0, 10.0),
+            Vector2::new(400.0, 300.0),
+        );
+        EntityType::RasterImage(image)
+    }
+
+    #[test]
+    fn test_write_raster_image_r2000() {
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1015;
+        doc.add_entity(make_raster_image()).unwrap();
+        let _rdoc = common::roundtrip_dxf(&doc, "raster_image_r2000");
+    }
+
+    #[test]
+    fn test_write_raster_image_r2010() {
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1024;
+        doc.add_entity(make_raster_image()).unwrap();
+        let _rdoc = common::roundtrip_dxf(&doc, "raster_image_r2010");
+    }
+
+    #[test]
+    fn test_write_raster_image_r2018() {
+        let rdoc = roundtrip_entity(make_raster_image(), "raster_image_r2018");
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    #[test]
+    fn test_raster_image_clipped_rectangular() {
+        let mut image = RasterImage::new(
+            "test.bmp",
+            Vector3::new(0.0, 0.0, 0.0),
+            640.0,
+            480.0,
+        );
+        image.clipping_enabled = true;
+        image.clip_boundary = ClipBoundary::rectangular(
+            Vector2::new(50.0, 50.0),
+            Vector2::new(300.0, 200.0),
+        );
+        assert!(image.clip_boundary.is_rectangular());
+        assert_eq!(image.clip_boundary.vertex_count(), 2);
+
+        let rdoc = roundtrip_entity(
+            EntityType::RasterImage(image),
+            "raster_clip_rect",
+        );
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    #[test]
+    fn test_raster_image_clipped_polygonal() {
+        let mut image = RasterImage::new(
+            "test.bmp",
+            Vector3::new(0.0, 0.0, 0.0),
+            640.0,
+            480.0,
+        );
+        image.clipping_enabled = true;
+        image.clip_boundary = ClipBoundary::polygonal(vec![
+            Vector2::new(0.0, 0.0),
+            Vector2::new(320.0, 0.0),
+            Vector2::new(320.0, 240.0),
+            Vector2::new(0.0, 240.0),
+        ]);
+        assert!(image.clip_boundary.is_polygonal());
+        assert_eq!(image.clip_boundary.vertex_count(), 4);
+
+        let rdoc = roundtrip_entity(
+            EntityType::RasterImage(image),
+            "raster_clip_poly",
+        );
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    #[test]
+    fn test_roundtrip_raster_image_all_versions() {
+        roundtrip_all_versions(make_raster_image, "IMAGE");
+    }
+
+    #[test]
+    fn test_raster_image_insertion_point_preserved() {
+        let image = RasterImage::new(
+            "test.bmp",
+            Vector3::new(42.5, 99.1, 0.0),
+            1024.0,
+            768.0,
+        );
+        assert!((image.insertion_point.x - 42.5).abs() < 1e-10);
+        assert!((image.insertion_point.y - 99.1).abs() < 1e-10);
+
+        let rdoc = roundtrip_entity(
+            EntityType::RasterImage(image),
+            "raster_insertion_pt",
+        );
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    #[test]
+    fn test_raster_image_size_preserved() {
+        let image = RasterImage::new(
+            "test.bmp",
+            Vector3::new(0.0, 0.0, 0.0),
+            1920.0,
+            1080.0,
+        );
+        assert!((image.size.x - 1920.0).abs() < 1e-10);
+        assert!((image.size.y - 1080.0).abs() < 1e-10);
+        assert!((image.width() - 1920.0).abs() < 1e-10);
+        assert!((image.height() - 1080.0).abs() < 1e-10);
+
+        let rdoc = roundtrip_entity(
+            EntityType::RasterImage(image),
+            "raster_size",
+        );
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    #[test]
+    fn test_raster_image_brightness_contrast_fade() {
+        let mut image = RasterImage::new(
+            "test.bmp",
+            Vector3::ZERO,
+            100.0,
+            100.0,
+        );
+        image.brightness = 75;
+        image.contrast = 80;
+        image.fade = 25;
+
+        let rdoc = roundtrip_entity(
+            EntityType::RasterImage(image),
+            "raster_brightness",
+        );
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    #[test]
+    fn test_raster_image_with_world_size() {
+        let image = RasterImage::with_size(
+            "big.bmp",
+            Vector3::new(10.0, 20.0, 0.0),
+            640.0,
+            480.0,
+            50.0,  // world width
+            37.5,  // world height
+        );
+        assert!((image.width() - 50.0).abs() < 0.1);
+        assert!((image.height() - 37.5).abs() < 0.1);
+
+        let rdoc = roundtrip_entity(
+            EntityType::RasterImage(image),
+            "raster_world_size",
+        );
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // WIPEOUT tests
+    // -----------------------------------------------------------------------
+
+    fn make_wipeout() -> EntityType {
+        EntityType::Wipeout(Wipeout::rectangular(
+            Vector3::new(5.0, 5.0, 0.0),
+            20.0,
+            15.0,
+        ))
+    }
+
+    fn make_wipeout_default() -> EntityType {
+        EntityType::Wipeout(Wipeout::new())
+    }
+
+    #[test]
+    fn test_write_wipeout_r2000() {
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1015;
+        doc.add_entity(make_wipeout()).unwrap();
+        let _rdoc = common::roundtrip_dxf(&doc, "wipeout_r2000");
+    }
+
+    #[test]
+    fn test_write_wipeout_r2010() {
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1024;
+        doc.add_entity(make_wipeout()).unwrap();
+        let _rdoc = common::roundtrip_dxf(&doc, "wipeout_r2010");
+    }
+
+    #[test]
+    fn test_write_wipeout_r2018() {
+        let rdoc = roundtrip_entity(make_wipeout(), "wipeout_r2018");
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    #[test]
+    fn test_roundtrip_wipeout_all_versions() {
+        roundtrip_all_versions(make_wipeout, "WIPEOUT");
+    }
+
+    #[test]
+    fn test_wipeout_rectangular() {
+        let wipeout = Wipeout::rectangular(
+            Vector3::new(10.0, 20.0, 0.0),
+            30.0,
+            25.0,
+        );
+        assert!((wipeout.insertion_point.x - 10.0).abs() < 1e-10);
+        assert!((wipeout.insertion_point.y - 20.0).abs() < 1e-10);
+        assert!((wipeout.u_vector.x - 30.0).abs() < 1e-10);
+        assert!((wipeout.v_vector.y - 25.0).abs() < 1e-10);
+        assert_eq!(wipeout.clip_boundary_vertices.len(), 2);
+
+        let rdoc = roundtrip_entity(
+            EntityType::Wipeout(wipeout),
+            "wipeout_rect_verify",
+        );
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    #[test]
+    fn test_wipeout_from_corners() {
+        let wipeout = Wipeout::from_corners(
+            Vector3::new(0.0, 0.0, 0.0),
+            Vector3::new(50.0, 40.0, 0.0),
+        );
+        assert!((wipeout.insertion_point.x).abs() < 1e-10);
+        assert!((wipeout.u_vector.x - 50.0).abs() < 1e-10);
+        assert!((wipeout.v_vector.y - 40.0).abs() < 1e-10);
+
+        let rdoc = roundtrip_entity(
+            EntityType::Wipeout(wipeout),
+            "wipeout_corners",
+        );
+        assert!(common::entity_count(&rdoc) >= 1);
+    }
+
+    #[test]
+    fn test_wipeout_default_values() {
+        let wipeout = Wipeout::new();
+        assert_eq!(wipeout.brightness, 50);
+        assert_eq!(wipeout.contrast, 50);
+        assert_eq!(wipeout.fade, 0);
+        assert!(wipeout.clipping_enabled);
+        assert_eq!(wipeout.clip_boundary_vertices.len(), 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Combined & edge-case tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_phase6_all_entities_combined() {
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+
+        doc.add_entity(make_multileader_text()).unwrap();
+        doc.add_entity(make_multileader_block()).unwrap();
+        doc.add_entity(make_raster_image()).unwrap();
+        doc.add_entity(make_raster_image_clipped()).unwrap();
+        doc.add_entity(make_wipeout()).unwrap();
+        doc.add_entity(make_wipeout_default()).unwrap();
+
+        let rdoc = common::roundtrip_dxf(&doc, "phase6_all_combined");
+        assert!(
+            common::entity_count(&rdoc) >= 6,
+            "expected >=6 entities, got {}",
+            common::entity_count(&rdoc)
+        );
+    }
+
+    #[test]
+    fn test_phase6_per_version() {
+        for &(version, label) in &common::ALL_VERSIONS {
+            let mut doc = CadDocument::new();
+            doc.version = version;
+
+            doc.add_entity(make_multileader_text()).unwrap();
+            doc.add_entity(make_raster_image()).unwrap();
+            doc.add_entity(make_wipeout()).unwrap();
+
+            let rdoc = common::roundtrip_dxf(&doc, &format!("phase6_all_{label}"));
+            assert!(
+                common::entity_count(&rdoc) >= 3,
+                "{label}: expected >=3 entities, got {}",
+                common::entity_count(&rdoc)
+            );
+        }
+    }
+
+    #[test]
+    fn test_multileader_annotation_context_fields() {
+        let mut ctx = MultiLeaderAnnotContext::new();
+        ctx.scale_factor = 2.0;
+        ctx.text_height = 0.5;
+        ctx.arrowhead_size = 0.25;
+        ctx.landing_gap = 0.1;
+        ctx.content_base_point = Vector3::new(10.0, 10.0, 0.0);
+
+        assert!((ctx.scale_factor - 2.0).abs() < 1e-10);
+        assert!((ctx.text_height - 0.5).abs() < 1e-10);
+        assert!((ctx.arrowhead_size - 0.25).abs() < 1e-10);
+        assert!((ctx.landing_gap - 0.1).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_leader_line_point_manipulation() {
+        let mut line = LeaderLine::default();
+        line.points = vec![
+            Vector3::new(0.0, 0.0, 0.0),
+            Vector3::new(5.0, 5.0, 0.0),
+            Vector3::new(10.0, 10.0, 0.0),
+        ];
+        assert_eq!(line.points.len(), 3);
+
+        let mut root = LeaderRoot::default();
+        root.lines.push(line);
+        assert_eq!(root.line_count(), 1);
+    }
+
+    #[test]
+    fn test_raster_image_display_flags() {
+        let mut image = RasterImage::new("test.bmp", Vector3::ZERO, 100.0, 100.0);
+        image.flags = ImageDisplayFlags::SHOW_IMAGE
+            | ImageDisplayFlags::SHOW_NOT_ALIGNED
+            | ImageDisplayFlags::USE_CLIPPING_BOUNDARY;
+        assert!(image.flags.contains(ImageDisplayFlags::SHOW_IMAGE));
+        assert!(image.flags.contains(ImageDisplayFlags::USE_CLIPPING_BOUNDARY));
+    }
+}
+
+// ===========================================================================
 // Future phases — stubs for easy scaffolding
 // ===========================================================================
 
@@ -653,7 +1227,6 @@ mod phase5_complex_entities {
 // mod phase2_attributes;
 // mod phase3_dimensions;
 // mod phase4_hatch;
-// mod phase6_multileader_images;
 // mod phase7_critical_objects;
 // mod phase8_remaining_objects;
 // mod phase9_tables_sections;

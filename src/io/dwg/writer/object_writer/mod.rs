@@ -54,6 +54,10 @@ pub struct DwgObjectWriter {
     pub(super) textstyle_handles: HashMap<String, u64>,
     pub(super) block_handles: HashMap<String, u64>,
     pub(super) dimstyle_handles: HashMap<String, u64>,
+
+    // Class number lookup: DXF class name (uppercased) → class_number (i16)
+    // Used for unlisted (class-based) entity types like MULTILEADER, IMAGE, WIPEOUT.
+    pub(super) class_numbers: HashMap<String, i16>,
 }
 
 impl DwgObjectWriter {
@@ -106,6 +110,22 @@ impl DwgObjectWriter {
         let model_space_handle = doc.header.model_space_block_handle.value();
         let paper_space_handle = doc.header.paper_space_block_handle.value();
 
+        // Build class name → class_number lookup for unlisted types.
+        // If the document has no classes registered, fall back to defaults
+        // so that unlisted entity writers (MULTILEADER, IMAGE, WIPEOUT, …)
+        // can resolve their class numbers.
+        let mut class_numbers = HashMap::new();
+        for cls in doc.classes.iter() {
+            class_numbers.insert(cls.dxf_name.to_uppercase(), cls.class_number);
+        }
+        if class_numbers.is_empty() {
+            let mut coll = crate::classes::DxfClassCollection::new();
+            coll.update_defaults();
+            for cls in coll.iter() {
+                class_numbers.insert(cls.dxf_name.to_uppercase(), cls.class_number);
+            }
+        }
+
         DwgObjectWriter {
             sio,
             objects_stream: Vec::with_capacity(64 * 1024),
@@ -120,6 +140,7 @@ impl DwgObjectWriter {
             textstyle_handles,
             block_handles,
             dimstyle_handles,
+            class_numbers,
         }
     }
 

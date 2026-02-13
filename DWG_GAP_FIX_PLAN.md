@@ -482,61 +482,64 @@ test_write_phase5_entities_per_version
 
 ---
 
-## Phase 6: Writer — MULTILEADER & RASTER_IMAGE/WIPEOUT
+## Phase 6: Writer — MULTILEADER & RASTER_IMAGE/WIPEOUT ✅
 
 > **Goal:** Add DWG write support for MULTILEADER (most complex annotation) and image entities.  
 > **Reference:** `DwgObjectWriter.Entities.cs` — `writeMultiLeader` (~500 lines), `writeCadImage`
+> **Status:** ✅ Complete — 34 tests passing, 0 warnings
 
 ### Tasks
 
-- ⬜ **6.1** Implement `write_multileader` in `entities.rs`
-  - ⬜ Write class version (RS)
-  - ⬜ Write annotation context: scale_factor, content_base, text_height, text_rotation, etc.
-  - ⬜ Write leader roots: is_valid, leader_lines count, attachment direction
-  - ⬜ Write leader lines: vertices, breaks, break_start_index, break_end_index
-  - ⬜ Write text content: default_text, text_location, text_direction, flow_direction
-  - ⬜ Write block content: block_reference, block_scale, block_position
-  - ⬜ Write leader style settings: leader_type, line_color, line_weight, landing_flag, etc.
-  - ⬜ Write arrowhead settings: arrowhead_id, arrowhead_size
-  - ⬜ Write all handle references
+- ✅ **6.1** Implement `write_multileader` in `write_entities.rs`
+  - ✅ Write class version (BS=2 for R2010+)
+  - ✅ Write annotation context: scale_factor, content_base, text_height, text_rotation, etc.
+  - ✅ Write leader roots: content_valid, leader_lines count, attachment direction
+  - ✅ Write leader lines: vertices, breaks, break_start_index, break_end_index
+  - ✅ Write text content: text_string, text_location, text_direction, flow_direction
+  - ✅ Write block content: block_handle, block_scale, block_location, transform matrix
+  - ✅ Write leader style settings: path_type, line_color, line_weight, landing_flag, etc.
+  - ✅ Write arrowhead settings: arrowhead_handle, arrowhead_size
+  - ✅ Write all handle references (style, text_style, line_type, arrowhead, block)
 
-- ⬜ **6.2** Implement `write_raster_image` in `entities.rs`
-  - ⬜ Write class_version (BL)
-  - ⬜ Write insertion_point (3BD), u_vector (3BD), v_vector (3BD)
-  - ⬜ Write image_size (2RD), display_flags (BS), clipping_state (B)
-  - ⬜ Write brightness, contrast, fade (RC × 3)
-  - ⬜ Write clip_boundary_type (BS), clip_vertices
-  - ⬜ Write imagedef handle, imagedef_reactor handle
+- ✅ **6.2** Implement `write_raster_image` in `write_entities.rs`
+  - ✅ Write class_version (BL)
+  - ✅ Write insertion_point (3BD), u_vector (3BD), v_vector (3BD)
+  - ✅ Write image_size (2RD), display_flags (BS), clipping_state (B)
+  - ✅ Write brightness, contrast, fade (RC × 3)
+  - ✅ Write clip_boundary_type (BS), clip_vertices (rectangular / polygonal)
+  - ✅ Write imagedef handle, imagedef_reactor handle
+  - ✅ R2010+: clip_mode (B)
 
-- ⬜ **6.3** Implement `write_wipeout` — reuse raster_image logic (same binary format, different class)
+- ✅ **6.3** Implement `write_wipeout` — reuses `write_cad_image_inner()` (same binary format, different DXF class name)
 
-- ⬜ **6.4** Register in `write_entity()` dispatcher (unlisted types, match by DXF name)
+- ✅ **6.4** Register in `write_entity()` dispatcher (unlisted types via `write_common_entity_data_unlisted`)
+  - ✅ Added `class_numbers: HashMap<String, i16>` to DwgObjectWriter for class number resolution
+  - ✅ Added `resolve_class_number()` + `write_common_entity_data_unlisted()` in common.rs
+  - ✅ Auto-populate class_numbers from `default_classes()` when doc.classes is empty
 
-### Tests for Phase 6
+### Tests for Phase 6 (34 tests)
 ```
-test_write_multileader_text_r2010
-test_write_multileader_text_r2013
-test_write_multileader_text_r2018
-test_write_multileader_block_r2010
-test_write_multileader_multiple_leaders
-test_write_multileader_no_landing
-test_roundtrip_multileader_all_versions
-test_multileader_text_preserved
-test_multileader_leader_points_preserved
+test_write_multileader_text_r2000          test_write_multileader_text_r2010
+test_write_multileader_text_r2018          test_write_multileader_block_r2000
+test_write_multileader_block_r2010         test_roundtrip_multileader_all_versions
+test_multileader_text_preserved            test_multileader_leader_points_preserved
+test_multileader_multiple_leaders          test_multileader_default_values
+test_multileader_override_flags            test_multileader_with_block_attributes
+test_multileader_annotation_context_fields test_leader_line_point_manipulation
 
-test_write_raster_image_r2000
-test_write_raster_image_r2010
-test_write_raster_image_clipped
-test_write_raster_image_rectangular_clip
-test_roundtrip_raster_image_all_versions
+test_write_raster_image_r2000              test_write_raster_image_r2010
+test_write_raster_image_r2018              test_raster_image_clipped_rectangular
+test_raster_image_clipped_polygonal        test_roundtrip_raster_image_all_versions
+test_raster_image_insertion_point_preserved test_raster_image_size_preserved
+test_raster_image_brightness_contrast_fade test_raster_image_with_world_size
+test_raster_image_display_flags
 
-test_write_wipeout_r2000
-test_write_wipeout_r2010
-test_roundtrip_wipeout_all_versions
+test_write_wipeout_r2000                   test_write_wipeout_r2010
+test_write_wipeout_r2018                   test_roundtrip_wipeout_all_versions
+test_wipeout_rectangular                   test_wipeout_from_corners
+test_wipeout_default_values
 
-test_image_insertion_point_preserved
-test_image_size_preserved
-test_image_clip_boundary_preserved
+test_phase6_all_entities_combined          test_phase6_per_version
 ```
 
 ---

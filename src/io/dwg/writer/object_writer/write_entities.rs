@@ -58,6 +58,10 @@ impl DwgObjectWriter {
             EntityType::Solid3D(e) => self.write_solid3d(e, owner_handle),
             EntityType::Region(e) => self.write_region(e, owner_handle),
             EntityType::Body(e) => self.write_body(e, owner_handle),
+            // Phase 6 entity writers (unlisted / class-based types)
+            EntityType::MultiLeader(e) => self.write_multileader(e, owner_handle),
+            EntityType::RasterImage(e) => self.write_raster_image(e, owner_handle),
+            EntityType::Wipeout(e) => self.write_wipeout(e, owner_handle),
             // Entities not yet supported for writing — skip silently
             _ => Ok(()),
         }
@@ -2478,5 +2482,534 @@ impl DwgObjectWriter {
             None, // Body has no history handle
             owner_handle,
         )
+    }
+
+    // =======================================================================
+    // Phase 6: MULTILEADER, RASTER_IMAGE, WIPEOUT (unlisted / class-based)
+    // =======================================================================
+
+    /// Write a MULTILEADER entity.
+    ///
+    /// Mirrors ACadSharp's `writeMultiLeader`, `writeMultiLeaderAnnotContextSubObject`,
+    /// `writeLeaderRoot`, and `writeLeaderLine`.
+    fn write_multileader(
+        &mut self,
+        mleader: &multileader::MultiLeader,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let (mut writer, _version) = self.create_entity_writer();
+        self.write_common_entity_data_unlisted(
+            &mut *writer, "MULTILEADER", &mleader.common, owner_handle,
+        )?;
+
+        // R2010+: class version (BS) = 2
+        if self.sio.r2010_plus {
+            writer.write_bit_short(2)?;
+        }
+
+        // --- Annotation context sub-object ---
+        self.write_multileader_annot_context(&mut *writer, &mleader.context)?;
+
+        // --- Common multileader data ---
+        // Style handle (H hard pointer)
+        writer.handle_reference_typed(
+            DwgReferenceType::HardPointer,
+            mleader.style_handle.map(|h| h.value()).unwrap_or(0),
+        )?;
+        // Property override flags (BL)
+        writer.write_bit_long(mleader.property_override_flags.bits() as i32)?;
+        // Path type (BS)
+        writer.write_bit_short(mleader.path_type as i16)?;
+        // Line color (CMC)
+        writer.write_cm_color(mleader.line_color)?;
+        // Leader line type handle (H hard pointer)
+        writer.handle_reference_typed(
+            DwgReferenceType::HardPointer,
+            mleader.line_type_handle.map(|h| h.value()).unwrap_or(0),
+        )?;
+        // Leader line weight (BL)
+        writer.write_bit_long(mleader.line_weight.value() as i32)?;
+        // Enable landing (B)
+        writer.write_bit(mleader.enable_landing)?;
+        // Enable dogleg (B)
+        writer.write_bit(mleader.enable_dogleg)?;
+        // Landing distance (BD)
+        writer.write_bit_double(mleader.dogleg_length)?;
+        // Arrowhead handle (H hard pointer)
+        writer.handle_reference_typed(
+            DwgReferenceType::HardPointer,
+            mleader.arrowhead_handle.map(|h| h.value()).unwrap_or(0),
+        )?;
+        // Arrowhead size (BD)
+        writer.write_bit_double(mleader.arrowhead_size)?;
+        // Content type (BS)
+        writer.write_bit_short(mleader.content_type as i16)?;
+        // Text style handle (H hard pointer)
+        writer.handle_reference_typed(
+            DwgReferenceType::HardPointer,
+            mleader.text_style_handle.map(|h| h.value()).unwrap_or(0),
+        )?;
+        // Text left attachment type (BS)
+        writer.write_bit_short(mleader.text_left_attachment as i16)?;
+        // Text right attachment type (BS)
+        writer.write_bit_short(mleader.text_right_attachment as i16)?;
+        // Text angle type (BS)
+        writer.write_bit_short(mleader.text_angle_type as i16)?;
+        // Text alignment type (BS)
+        writer.write_bit_short(mleader.text_alignment as i16)?;
+        // Text color (CMC)
+        writer.write_cm_color(mleader.text_color)?;
+        // Enable frame text (B)
+        writer.write_bit(mleader.text_frame)?;
+        // Block content handle (H hard pointer)
+        writer.handle_reference_typed(
+            DwgReferenceType::HardPointer,
+            mleader.block_content_handle.map(|h| h.value()).unwrap_or(0),
+        )?;
+        // Block content color (CMC)
+        writer.write_cm_color(mleader.block_content_color)?;
+        // Block content scale (3BD)
+        writer.write_3bit_double(mleader.block_scale)?;
+        // Block content rotation (BD)
+        writer.write_bit_double(mleader.block_rotation)?;
+        // Block content connection type (BS)
+        writer.write_bit_short(mleader.block_connection_type as i16)?;
+        // Enable annotation scale (B)
+        writer.write_bit(mleader.enable_annotation_scale)?;
+
+        // Block attributes (BL count + per attribute data)
+        writer.write_bit_long(mleader.block_attributes.len() as i32)?;
+        for ba in &mleader.block_attributes {
+            // Attribute definition handle (H hard pointer)
+            writer.handle_reference_typed(
+                DwgReferenceType::HardPointer,
+                ba.attribute_definition_handle.map(|h| h.value()).unwrap_or(0),
+            )?;
+            // Text (TV)
+            writer.write_variable_text(&ba.text)?;
+            // Index (BS)
+            writer.write_bit_short(ba.index)?;
+            // Width (BD)
+            writer.write_bit_double(ba.width)?;
+        }
+
+        // Text direction negative (B)
+        writer.write_bit(mleader.text_direction_negative)?;
+        // Text align in IPE (BS)
+        writer.write_bit_short(mleader.text_align_in_ipe)?;
+        // Text attachment point (BS)
+        writer.write_bit_short(mleader.text_attachment_point as i16)?;
+        // Scale factor (BD)
+        writer.write_bit_double(mleader.scale_factor)?;
+
+        if self.sio.r2010_plus {
+            // Text attachment direction (BS)
+            writer.write_bit_short(mleader.text_attachment_direction as i16)?;
+            // Bottom text attachment (BS)
+            writer.write_bit_short(mleader.text_bottom_attachment as i16)?;
+            // Top text attachment (BS)
+            writer.write_bit_short(mleader.text_top_attachment as i16)?;
+        }
+
+        if self.sio.r2013_plus {
+            // Extended to text (B)
+            writer.write_bit(mleader.extend_leader_to_text)?;
+        }
+
+        writer.write_spear_shift()?;
+        self.finalize_entity(writer, mleader.common.handle.value());
+        Ok(())
+    }
+
+    /// Write the MultiLeader annotation context sub-object.
+    fn write_multileader_annot_context(
+        &self,
+        writer: &mut dyn crate::io::dwg::writer::stream_writer::IDwgStreamWriter,
+        ctx: &multileader::MultiLeaderAnnotContext,
+    ) -> Result<()> {
+        // BL: number of leader roots
+        writer.write_bit_long(ctx.leader_roots.len() as i32)?;
+
+        // Write each leader root
+        for root in &ctx.leader_roots {
+            self.write_leader_root(writer, root)?;
+        }
+
+        // Common context data
+        // BD: overall scale
+        writer.write_bit_double(ctx.scale_factor)?;
+        // 3BD: content base point
+        writer.write_3bit_double(ctx.content_base_point)?;
+        // BD: text height
+        writer.write_bit_double(ctx.text_height)?;
+        // BD: arrowhead size
+        writer.write_bit_double(ctx.arrowhead_size)?;
+        // BD: landing gap
+        writer.write_bit_double(ctx.landing_gap)?;
+        // BS: text left attachment
+        writer.write_bit_short(ctx.text_left_attachment as i16)?;
+        // BS: text right attachment
+        writer.write_bit_short(ctx.text_right_attachment as i16)?;
+        // BS: text alignment
+        writer.write_bit_short(ctx.text_alignment as i16)?;
+        // BS: block connection type
+        writer.write_bit_short(ctx.block_connection_type as i16)?;
+        // B: has text contents
+        writer.write_bit(ctx.has_text_contents)?;
+
+        if ctx.has_text_contents {
+            // TV: text label
+            writer.write_variable_text(&ctx.text_string)?;
+            // 3BD: text normal
+            writer.write_3bit_double(ctx.text_normal)?;
+            // H: text style handle
+            writer.handle_reference_typed(
+                DwgReferenceType::HardPointer,
+                ctx.text_style_handle.map(|h| h.value()).unwrap_or(0),
+            )?;
+            // 3BD: text location
+            writer.write_3bit_double(ctx.text_location)?;
+            // 3BD: text direction
+            writer.write_3bit_double(ctx.text_direction)?;
+            // BD: text rotation
+            writer.write_bit_double(ctx.text_rotation)?;
+            // BD: boundary width
+            writer.write_bit_double(ctx.text_width)?;
+            // BD: boundary height
+            writer.write_bit_double(ctx.text_boundary_height)?;
+            // BD: line spacing factor
+            writer.write_bit_double(ctx.line_spacing_factor)?;
+            // BS: line spacing style
+            writer.write_bit_short(ctx.line_spacing_style as i16)?;
+            // CMC: text color
+            writer.write_cm_color(ctx.text_color)?;
+            // BS: attachment point
+            writer.write_bit_short(ctx.text_attachment_point as i16)?;
+            // BS: flow direction
+            writer.write_bit_short(ctx.text_flow_direction as i16)?;
+            // CMC: background fill color
+            writer.write_cm_color(ctx.background_fill_color)?;
+            // BD: background scale factor
+            writer.write_bit_double(ctx.background_scale_factor)?;
+            // BL: background transparency
+            writer.write_bit_long(ctx.background_transparency)?;
+            // B: background fill enabled
+            writer.write_bit(ctx.background_fill_enabled)?;
+            // B: background mask fill on
+            writer.write_bit(ctx.background_mask_fill_on)?;
+            // BS: column type
+            writer.write_bit_short(ctx.column_type)?;
+            // B: text height automatic
+            writer.write_bit(ctx.text_height_automatic)?;
+            // BD: column width
+            writer.write_bit_double(ctx.column_width)?;
+            // BD: column gutter
+            writer.write_bit_double(ctx.column_gutter)?;
+            // B: column flow reversed
+            writer.write_bit(ctx.column_flow_reversed)?;
+            // BL: column sizes count + BD[]
+            writer.write_bit_long(ctx.column_sizes.len() as i32)?;
+            for &size in &ctx.column_sizes {
+                writer.write_bit_double(size)?;
+            }
+            // B: word break
+            writer.write_bit(ctx.word_break)?;
+            // B: unknown
+            writer.write_bit(false)?;
+        } else if ctx.has_block_contents {
+            // B: has contents block
+            writer.write_bit(true)?;
+            // H: block content handle (soft pointer)
+            writer.handle_reference_typed(
+                DwgReferenceType::SoftPointer,
+                ctx.block_content_handle.map(|h| h.value()).unwrap_or(0),
+            )?;
+            // 3BD: block content normal
+            writer.write_3bit_double(ctx.block_content_normal)?;
+            // 3BD: block content location
+            writer.write_3bit_double(ctx.block_content_location)?;
+            // 3BD: block content scale
+            writer.write_3bit_double(ctx.block_content_scale)?;
+            // BD: block rotation
+            writer.write_bit_double(ctx.block_rotation)?;
+            // CMC: block color
+            writer.write_cm_color(ctx.block_content_color)?;
+            // 16 × BD: 4×4 transformation matrix (column-major)
+            for &val in &ctx.transform_matrix {
+                writer.write_bit_double(val)?;
+            }
+        } else {
+            // No content — write has_contents_block = false
+            writer.write_bit(false)?;
+        }
+
+        // 3BD: base point
+        writer.write_3bit_double(ctx.base_point)?;
+        // 3BD: base direction
+        writer.write_3bit_double(ctx.base_direction)?;
+        // 3BD: base vertical
+        writer.write_3bit_double(ctx.base_vertical)?;
+        // B: normal reversed
+        writer.write_bit(ctx.normal_reversed)?;
+
+        if self.sio.r2010_plus {
+            // BS: text top attachment
+            writer.write_bit_short(ctx.text_top_attachment as i16)?;
+            // BS: text bottom attachment
+            writer.write_bit_short(ctx.text_bottom_attachment as i16)?;
+        }
+
+        Ok(())
+    }
+
+    /// Write a single leader root.
+    fn write_leader_root(
+        &self,
+        writer: &mut dyn crate::io::dwg::writer::stream_writer::IDwgStreamWriter,
+        root: &multileader::LeaderRoot,
+    ) -> Result<()> {
+        // B: content valid
+        writer.write_bit(root.content_valid)?;
+        // B: unknown (true per ODA)
+        writer.write_bit(root.unknown)?;
+        // 3BD: connection point
+        writer.write_3bit_double(root.connection_point)?;
+        // 3BD: direction
+        writer.write_3bit_double(root.direction)?;
+        // BL: number of break start/end point pairs
+        writer.write_bit_long(root.break_points.len() as i32)?;
+        for bp in &root.break_points {
+            writer.write_3bit_double(bp.start_point)?;
+            writer.write_3bit_double(bp.end_point)?;
+        }
+        // BL: leader index
+        writer.write_bit_long(root.leader_index)?;
+        // BD: landing distance
+        writer.write_bit_double(root.landing_distance)?;
+        // BL: number of leader lines
+        writer.write_bit_long(root.lines.len() as i32)?;
+        for line in &root.lines {
+            self.write_leader_line(writer, line)?;
+        }
+
+        if self.sio.r2010_plus {
+            // BS: attachment direction
+            writer.write_bit_short(root.text_attachment_direction as i16)?;
+        }
+
+        Ok(())
+    }
+
+    /// Write a single leader line.
+    fn write_leader_line(
+        &self,
+        writer: &mut dyn crate::io::dwg::writer::stream_writer::IDwgStreamWriter,
+        line: &multileader::LeaderLine,
+    ) -> Result<()> {
+        // BL: number of points
+        writer.write_bit_long(line.points.len() as i32)?;
+        for &pt in &line.points {
+            writer.write_3bit_double(pt)?;
+        }
+        // BL: break info count
+        writer.write_bit_long(line.break_info_count)?;
+        if line.break_info_count > 0 {
+            // BL: segment index
+            writer.write_bit_long(line.segment_index)?;
+            // BL: break point pairs count
+            writer.write_bit_long(line.break_points.len() as i32)?;
+            for bp in &line.break_points {
+                writer.write_3bit_double(bp.start_point)?;
+                writer.write_3bit_double(bp.end_point)?;
+            }
+        }
+        // BL: leader line index
+        writer.write_bit_long(line.index)?;
+
+        if self.sio.r2010_plus {
+            // BS: leader type (path type)
+            writer.write_bit_short(line.path_type as i16)?;
+            // CMC: line color
+            writer.write_cm_color(line.line_color)?;
+            // H: line type handle
+            writer.handle_reference_typed(
+                DwgReferenceType::HardPointer,
+                line.line_type_handle.map(|h| h.value()).unwrap_or(0),
+            )?;
+            // BL: line weight
+            writer.write_bit_long(line.line_weight.value() as i32)?;
+            // BD: arrowhead size
+            writer.write_bit_double(line.arrowhead_size)?;
+            // H: arrowhead handle
+            writer.handle_reference_typed(
+                DwgReferenceType::HardPointer,
+                line.arrowhead_handle.map(|h| h.value()).unwrap_or(0),
+            )?;
+            // BL: override flags
+            writer.write_bit_long(line.override_flags.bits() as i32)?;
+        }
+
+        Ok(())
+    }
+
+    /// Write a RASTER_IMAGE entity (IMAGE).
+    ///
+    /// Mirrors ACadSharp's `writeCadImage`. Both IMAGE and WIPEOUT use
+    /// the same binary format — only the DXF class name differs.
+    fn write_raster_image(
+        &mut self,
+        image: &raster_image::RasterImage,
+        owner_handle: u64,
+    ) -> Result<()> {
+        self.write_cad_image_inner(
+            "IMAGE",
+            &image.common,
+            image.class_version,
+            image.insertion_point,
+            image.u_vector,
+            image.v_vector,
+            image.size,
+            image.flags.bits(),
+            image.clipping_enabled,
+            image.brightness,
+            image.contrast,
+            image.fade,
+            image.clip_boundary.clip_mode as u8,
+            image.clip_boundary.clip_type as i16,
+            &image.clip_boundary.vertices,
+            image.definition_handle,
+            image.definition_reactor_handle,
+            owner_handle,
+        )
+    }
+
+    /// Write a WIPEOUT entity.
+    ///
+    /// Uses the same binary format as IMAGE — only the class name differs.
+    fn write_wipeout(
+        &mut self,
+        wipeout: &wipeout::Wipeout,
+        owner_handle: u64,
+    ) -> Result<()> {
+        self.write_cad_image_inner(
+            "WIPEOUT",
+            &wipeout.common,
+            wipeout.class_version,
+            wipeout.insertion_point,
+            wipeout.u_vector,
+            wipeout.v_vector,
+            wipeout.size,
+            wipeout.flags.bits(),
+            wipeout.clipping_enabled,
+            wipeout.brightness,
+            wipeout.contrast,
+            wipeout.fade,
+            wipeout.clip_mode as u8,
+            wipeout.clip_type as i16,
+            &wipeout.clip_boundary_vertices,
+            wipeout.definition_handle,
+            wipeout.definition_reactor_handle,
+            owner_handle,
+        )
+    }
+
+    /// Shared IMAGE/WIPEOUT writer. Mirrors ACadSharp's `writeCadImage`.
+    #[allow(clippy::too_many_arguments)]
+    fn write_cad_image_inner(
+        &mut self,
+        dxf_class_name: &str,
+        common: &EntityCommon,
+        class_version: i32,
+        insertion_point: Vector3,
+        u_vector: Vector3,
+        v_vector: Vector3,
+        size: crate::types::Vector2,
+        flags: i16,
+        clipping_enabled: bool,
+        brightness: u8,
+        contrast: u8,
+        fade: u8,
+        clip_mode: u8,
+        clip_type: i16,
+        clip_vertices: &[crate::types::Vector2],
+        definition_handle: Option<Handle>,
+        definition_reactor_handle: Option<Handle>,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let (mut writer, _version) = self.create_entity_writer();
+        self.write_common_entity_data_unlisted(
+            &mut *writer, dxf_class_name, common, owner_handle,
+        )?;
+
+        // BL: class version
+        writer.write_bit_long(class_version)?;
+        // 3BD: insertion point
+        writer.write_3bit_double(insertion_point)?;
+        // 3BD: U vector
+        writer.write_3bit_double(u_vector)?;
+        // 3BD: V vector
+        writer.write_3bit_double(v_vector)?;
+        // 2RD: size (width, height in pixels)
+        writer.write_2raw_double(size)?;
+        // BS: display flags
+        writer.write_bit_short(flags)?;
+        // B: clipping state
+        writer.write_bit(clipping_enabled)?;
+        // RC: brightness
+        writer.write_byte(brightness)?;
+        // RC: contrast
+        writer.write_byte(contrast)?;
+        // RC: fade
+        writer.write_byte(fade)?;
+
+        // R2010+: clip mode (B — true = Inside)
+        if self.sio.r2010_plus {
+            writer.write_bit(clip_mode == 1)?;
+        }
+
+        // BS: clip type
+        writer.write_bit_short(clip_type)?;
+
+        // Clip boundary vertices
+        match clip_type {
+            1 => {
+                // Rectangular: 2 vertices
+                if clip_vertices.len() >= 2 {
+                    writer.write_2raw_double(clip_vertices[0])?;
+                    writer.write_2raw_double(clip_vertices[1])?;
+                } else {
+                    // Fallback: write zero vertices
+                    writer.write_2raw_double(crate::types::Vector2::ZERO)?;
+                    writer.write_2raw_double(crate::types::Vector2::ZERO)?;
+                }
+            }
+            2 => {
+                // Polygonal: BL count + 2RD[] vertices
+                writer.write_bit_long(clip_vertices.len() as i32)?;
+                for &v in clip_vertices {
+                    writer.write_2raw_double(v)?;
+                }
+            }
+            _ => {
+                // Default to rectangular with zeros
+                writer.write_2raw_double(crate::types::Vector2::ZERO)?;
+                writer.write_2raw_double(crate::types::Vector2::ZERO)?;
+            }
+        }
+
+        // H: image definition handle (hard pointer)
+        writer.handle_reference_typed(
+            DwgReferenceType::HardPointer,
+            definition_handle.map(|h| h.value()).unwrap_or(0),
+        )?;
+        // H: image definition reactor handle
+        writer.handle_reference_typed(
+            DwgReferenceType::HardPointer,
+            definition_reactor_handle.map(|h| h.value()).unwrap_or(0),
+        )?;
+
+        writer.write_spear_shift()?;
+        self.finalize_entity(writer, common.handle.value());
+        Ok(())
     }
 }
