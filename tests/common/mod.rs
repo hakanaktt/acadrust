@@ -240,3 +240,54 @@ pub fn roundtrip_dxf(doc: &CadDocument, label: &str) -> CadDocument {
     let path = test_output_path(&format!("roundtrip_{label}.dxf"));
     write_and_read_back_dxf(doc, path.to_str().unwrap())
 }
+
+// ===========================================================================
+// DWG write + read-back
+// ===========================================================================
+
+/// Write a document to DWG bytes via `DwgWriter::write`.
+pub fn write_dwg_bytes(doc: &CadDocument) -> Vec<u8> {
+    acadrust::io::dwg::DwgWriter::write(doc)
+        .unwrap_or_else(|e| panic!("DwgWriter::write failed: {e:?}"))
+}
+
+/// Write a document to DWG bytes, then read it back in failsafe mode.
+/// Returns the re-read document.
+pub fn roundtrip_dwg(doc: &CadDocument, label: &str) -> CadDocument {
+    let bytes = write_dwg_bytes(doc);
+
+    // Also persist to disk for debugging/manual inspection.
+    let path = test_output_path(&format!("roundtrip_{label}.dwg"));
+    std::fs::write(&path, &bytes)
+        .unwrap_or_else(|e| panic!("Failed to write DWG to {}: {e}", path.display()));
+
+    // Read back from bytes
+    let cursor = std::io::Cursor::new(bytes);
+    let config = DwgReaderConfiguration { failsafe: true, ..Default::default() };
+    DwgReader::from_reader(cursor)
+        .unwrap_or_else(|e| panic!("DwgReader::from_reader failed for {label}: {e:?}"))
+        .with_config(config)
+        .read()
+        .unwrap_or_else(|e| panic!("DwgReader::read failed for {label}: {e:?}"))
+}
+
+/// Write a document to DWG bytes and attempt to read back.
+/// Returns `Ok(doc)` on success, `Err(msg)` on failure — never panics.
+pub fn try_roundtrip_dwg(doc: &CadDocument, label: &str) -> std::result::Result<CadDocument, String> {
+    let bytes = match acadrust::io::dwg::DwgWriter::write(doc) {
+        Ok(b) => b,
+        Err(e) => return Err(format!("DwgWriter::write failed for {label}: {e:?}")),
+    };
+
+    // Persist for debugging.
+    let path = test_output_path(&format!("roundtrip_{label}.dwg"));
+    let _ = std::fs::write(&path, &bytes);
+
+    let cursor = std::io::Cursor::new(bytes);
+    let config = DwgReaderConfiguration { failsafe: true, ..Default::default() };
+    DwgReader::from_reader(cursor)
+        .map_err(|e| format!("DwgReader::from_reader failed for {label}: {e:?}"))?
+        .with_config(config)
+        .read()
+        .map_err(|e| format!("DwgReader::read failed for {label}: {e:?}"))
+}

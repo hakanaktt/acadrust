@@ -957,12 +957,25 @@ test_reference_sample_tables_present
 
 #### 10C — Final Parity Verification
 
-- ⬜ **10.14** Create comprehensive parity test suite
-  - ⬜ Read every sample DWG → write → read → deep compare for every entity/object/table type
-  - ⬜ Cross-version: read AC1018 → write as AC1024 → verify
+- ✅ **10.14** Create comprehensive parity test suite (61 tests in `tests/dwg_parity_tests.rs`)
+  - ✅ Write smoke tests — DwgWriter::write succeeds for all 8 versions (AC1012–AC1032)
+  - ✅ Version string tests — DWG output starts with correct version signature
+  - ✅ Full parity tests — write → read → compare for all 8 DWG versions
+  - ✅ Cross-version tests — write as different version → read back (5 scenarios)
+  - ✅ All-entities roundtrip — full 44-entity gallery through DWG for 5 versions
+  - ✅ Table parity tests — layers/linetypes/text styles survive roundtrip (5 versions)
+  - ✅ Empty document roundtrip — zero-entity doc through DWG (5 versions)
+  - ✅ Reference sample parity — read real sample DWG → write → read back (6 versions)
+  - ✅ Entity coverage tests — writer coverage, reader coverage, no unknowns
+  - ✅ DWG vs DXF comparison — compare DWG and DXF roundtrip fidelity (3 versions)
+  - ✅ Geometry preservation — deep per-entity geometry comparison (4 versions)
+  - ✅ Parity summary matrix — single test printing full status table
+  - ✅ Added DWG roundtrip helpers to `tests/common/mod.rs` (roundtrip_dwg, try_roundtrip_dwg, write_dwg_bytes)
 
-- ⬜ **10.15** Create AutoCAD compatibility verification scripts
-  - ⬜ Document manual verification steps with AutoCAD/BricsCAD
+- ✅ **10.15** Create AutoCAD compatibility verification scripts
+  - ✅ Manual verification checklist documented in `dwg_parity_tests.rs` comments
+  - ✅ All parity tests write DWG files to `test_output/` for manual inspection
+  - ✅ Documented ODA File Converter workflow for automated compatibility checks
 
 ### Tests for Phase 10
 ```
