@@ -377,6 +377,68 @@ impl DwgObjectWriter {
             .unwrap_or(500)
     }
 
+    /// Write common non-entity data fields for an **unlisted** (class-based) object type.
+    ///
+    /// Instead of passing a `DwgObjectType` enum, this uses the DXF class name
+    /// to look up the class_number and write that as the object type code.
+    pub(super) fn write_common_non_entity_data_unlisted(
+        &mut self,
+        writer: &mut dyn IDwgStreamWriter,
+        dxf_class_name: &str,
+        handle: u64,
+        owner_handle: u64,
+        reactors: &[Handle],
+        xdictionary_handle: Option<Handle>,
+    ) -> Result<()> {
+        let class_number = self.resolve_class_number(dxf_class_name);
+
+        // Write type code + handle
+        writer.reset_stream()?;
+        writer.write_object_type(class_number)?;
+
+        if self.sio.r2000_plus && !self.sio.r2010_plus {
+            writer.save_position_for_size()?;
+        }
+
+        writer.handle_reference(handle)?;
+
+        // EED — empty
+        writer.write_bit_short(0)?;
+
+        // R13-R14: save position for size
+        if self.sio.r13_14_only {
+            writer.save_position_for_size()?;
+        }
+
+        // Number of reactors (BL)
+        writer.write_bit_long(reactors.len() as i32)?;
+
+        // R2004+: xdictionary-missing flag (B)
+        if self.sio.r2004_plus {
+            writer.write_bit(xdictionary_handle.is_none())?;
+        }
+
+        // R2013+: has-ds-binary-data (B)
+        if self.sio.r2013_plus {
+            writer.write_bit(false)?;
+        }
+
+        // Owner handle (soft pointer)
+        writer.handle_reference_typed(DwgReferenceType::SoftPointer, owner_handle)?;
+
+        // Reactor handles
+        for r in reactors {
+            writer.handle_reference_typed(DwgReferenceType::HardPointer, r.value())?;
+        }
+
+        // XDictionary handle (hard owner)
+        if let Some(xdict) = xdictionary_handle {
+            writer.handle_reference_typed(DwgReferenceType::HardOwnership, xdict.value())?;
+        }
+
+        Ok(())
+    }
+
     /// Write common entity data for an **unlisted** (class-based) entity type.
     ///
     /// Instead of passing a `DwgObjectType` enum, this uses the DXF class

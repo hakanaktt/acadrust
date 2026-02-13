@@ -1217,7 +1217,7 @@ impl<'a> SectionReader<'a> {
                 71 => {
                     // Tab order
                     if let Some(value) = pair.as_i16() {
-                        layout.tab_order = value;
+                        layout.tab_order = value as i32;
                     }
                 }
                 10 => {

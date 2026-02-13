@@ -444,10 +444,36 @@ impl DwgObjectWriter {
         for obj in objects {
             match obj {
                 ObjectType::Dictionary(dict) => {
-                    // Owner handle: look up from the dictionary's own info;
-                    // root dictionary is owned by handle 0.
-                    let owner_h = 0u64; // simplified — root dict owned by 0
+                    let owner_h = dict.owner.value();
                     self.write_dictionary(dict, owner_h)?;
+                }
+                ObjectType::DictionaryWithDefault(dict) => {
+                    let owner_h = dict.owner.value();
+                    self.write_dictionary_with_default(dict, owner_h)?;
+                }
+                ObjectType::DictionaryVariable(dv) => {
+                    let owner_h = dv.owner_handle.value();
+                    self.write_dictionary_variable(dv, owner_h)?;
+                }
+                ObjectType::XRecord(xr) => {
+                    let owner_h = xr.owner.value();
+                    self.write_xrecord(xr, owner_h)?;
+                }
+                ObjectType::PlotSettings(ps) => {
+                    let owner_h = ps.owner.value();
+                    self.write_plot_settings_obj(ps, owner_h)?;
+                }
+                ObjectType::Layout(layout) => {
+                    let owner_h = layout.owner.value();
+                    self.write_layout(layout, owner_h)?;
+                }
+                ObjectType::Group(group) => {
+                    let owner_h = group.owner.value();
+                    self.write_group(group, owner_h)?;
+                }
+                ObjectType::MLineStyle(style) => {
+                    let owner_h = style.owner.value();
+                    self.write_mline_style(style, owner_h)?;
                 }
                 // Other object types — skip for now
                 _ => {}

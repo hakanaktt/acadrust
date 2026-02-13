@@ -119,13 +119,23 @@ pub struct Layout {
     /// Layout flags
     pub flags: i16,
     /// Tab order
-    pub tab_order: i16,
+    pub tab_order: i32,
     /// Minimum limits
     pub min_limits: (f64, f64),
     /// Maximum limits
     pub max_limits: (f64, f64),
     /// Insertion base point
     pub insertion_base: (f64, f64, f64),
+    /// UCS origin
+    pub ucs_origin: (f64, f64, f64),
+    /// UCS X axis direction
+    pub ucs_x_axis: (f64, f64, f64),
+    /// UCS Y axis direction
+    pub ucs_y_axis: (f64, f64, f64),
+    /// UCS elevation
+    pub elevation: f64,
+    /// UCS orthographic type (BS)
+    pub ucs_ortho_type: i16,
     /// Minimum extents
     pub min_extents: (f64, f64, f64),
     /// Maximum extents
@@ -134,6 +144,14 @@ pub struct Layout {
     pub block_record: Handle,
     /// Viewport handle
     pub viewport: Handle,
+    /// Base UCS handle (hard pointer)
+    pub base_ucs: Handle,
+    /// Named UCS handle (hard pointer)
+    pub named_ucs: Handle,
+    /// Viewport handles (R2004+)
+    pub viewport_handles: Vec<Handle>,
+    /// Plot settings (inherited from PlotSettings)
+    pub plot_settings: PlotSettings,
     /// Reactor handles ({ACAD_REACTORS})
     pub reactors: Vec<Handle>,
     /// Extended dictionary handle ({ACAD_XDICTIONARY})
@@ -152,13 +170,29 @@ impl Layout {
             min_limits: (0.0, 0.0),
             max_limits: (12.0, 9.0),
             insertion_base: (0.0, 0.0, 0.0),
+            ucs_origin: (0.0, 0.0, 0.0),
+            ucs_x_axis: (1.0, 0.0, 0.0),
+            ucs_y_axis: (0.0, 1.0, 0.0),
+            elevation: 0.0,
+            ucs_ortho_type: 0,
             min_extents: (0.0, 0.0, 0.0),
             max_extents: (12.0, 9.0, 0.0),
             block_record: Handle::NULL,
             viewport: Handle::NULL,
+            base_ucs: Handle::NULL,
+            named_ucs: Handle::NULL,
+            viewport_handles: Vec::new(),
+            plot_settings: PlotSettings::default(),
             reactors: Vec::new(),
             xdictionary_handle: None,
         }
+    }
+
+    /// Create a Model layout
+    pub fn model() -> Self {
+        let mut layout = Self::new("Model");
+        layout.flags = 1; // model space
+        layout
     }
 }
 

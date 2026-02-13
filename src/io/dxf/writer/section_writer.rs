@@ -1998,7 +1998,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_subclass("AcDbLayout")?;
         self.writer.write_string(1, &layout.name)?;
         self.writer.write_i16(70, layout.flags)?;
-        self.writer.write_i16(71, layout.tab_order)?;
+        self.writer.write_i16(71, layout.tab_order as i16)?;
         self.writer.write_double(10, layout.min_limits.0)?;
         self.writer.write_double(20, layout.min_limits.1)?;
         self.writer.write_double(11, layout.max_limits.0)?;
