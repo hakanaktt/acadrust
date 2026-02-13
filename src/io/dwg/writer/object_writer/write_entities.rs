@@ -10,6 +10,7 @@ use crate::error::Result;
 use crate::io::dwg::object_type::DwgObjectType;
 use crate::io::dwg::reference_type::DwgReferenceType;
 use crate::types::Vector3;
+use crate::types::Handle;
 
 use super::DwgObjectWriter;
 
@@ -42,9 +43,219 @@ impl DwgObjectWriter {
             EntityType::Block(e) => self.write_block(e, owner_handle),
             EntityType::BlockEnd(e) => self.write_block_end(e, owner_handle),
             EntityType::Seqend(e) => self.write_seqend(e, owner_handle),
+            // Composite polyline entities — write parent + children + SEQEND
+            EntityType::Polyline2D(e) => self.write_polyline_2d_composite(e, owner_handle),
+            EntityType::Polyline3D(e) => self.write_polyline_3d_composite(e, owner_handle),
+            EntityType::PolyfaceMesh(e) => self.write_polyface_mesh_composite(e, owner_handle),
+            EntityType::PolygonMesh(e) => self.write_polygon_mesh_composite(e, owner_handle),
             // Entities not yet supported for writing — skip silently
             _ => Ok(()),
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Composite polyline writers — write parent + child vertices + SEQEND
+    // -----------------------------------------------------------------------
+
+    /// Assign unique handles to child objects if they don't have one yet.
+    /// Returns the next available handle value.
+    fn next_available_handle(&self) -> u64 {
+        self.handle_map
+            .keys()
+            .last()
+            .map(|&h| h + 1)
+            .unwrap_or(0x100)
+    }
+
+    /// Write a complete Polyline2D: parent polyline + Vertex2D children + SEQEND.
+    fn write_polyline_2d_composite(
+        &mut self,
+        polyline: &Polyline2D,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let polyline_handle = polyline.common.handle.value();
+
+        // Allocate handles for vertices and SEQEND
+        let mut next_h = self.next_available_handle();
+        let mut vertex_handles = Vec::with_capacity(polyline.vertices.len());
+        let mut vertex_commons = Vec::with_capacity(polyline.vertices.len());
+
+        for _v in &polyline.vertices {
+            let h = next_h;
+            next_h += 1;
+            vertex_handles.push(h);
+            let mut vc = EntityCommon::new();
+            vc.handle = Handle::new(h);
+            vc.layer = polyline.common.layer.clone();
+            vc.color = polyline.common.color;
+            vertex_commons.push(vc);
+        }
+
+        let seqend_h = next_h;
+        let mut seqend_common = EntityCommon::new();
+        seqend_common.handle = Handle::new(seqend_h);
+        seqend_common.layer = polyline.common.layer.clone();
+
+        // 1. Write the parent polyline with references to children
+        self.write_polyline_2d(polyline, owner_handle, &vertex_handles, seqend_h)?;
+
+        // 2. Write each vertex as a separate entity
+        for (i, vertex) in polyline.vertices.iter().enumerate() {
+            self.write_vertex_2d(vertex, &vertex_commons[i], polyline_handle)?;
+        }
+
+        // 3. Write SEQEND
+        let seqend = Seqend { common: seqend_common };
+        self.write_seqend(&seqend, polyline_handle)?;
+
+        Ok(())
+    }
+
+    /// Write a complete Polyline3D: parent polyline + Vertex3D children + SEQEND.
+    fn write_polyline_3d_composite(
+        &mut self,
+        polyline: &Polyline3D,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let polyline_handle = polyline.common.handle.value();
+
+        let mut next_h = self.next_available_handle();
+        let mut vertex_handles = Vec::with_capacity(polyline.vertices.len());
+        let mut vertex_commons = Vec::with_capacity(polyline.vertices.len());
+
+        for v in &polyline.vertices {
+            let h = if v.handle.value() != 0 { v.handle.value() } else { let h = next_h; next_h += 1; h };
+            vertex_handles.push(h);
+            let mut vc = EntityCommon::new();
+            vc.handle = Handle::new(h);
+            vc.layer = polyline.common.layer.clone();
+            vc.color = polyline.common.color;
+            vertex_commons.push(vc);
+        }
+
+        let seqend_h = next_h;
+        let mut seqend_common = EntityCommon::new();
+        seqend_common.handle = Handle::new(seqend_h);
+        seqend_common.layer = polyline.common.layer.clone();
+
+        self.write_polyline_3d(polyline, owner_handle, &vertex_handles, seqend_h)?;
+
+        for (i, vertex) in polyline.vertices.iter().enumerate() {
+            self.write_vertex_3d_polyline(vertex, &vertex_commons[i], polyline_handle)?;
+        }
+
+        let seqend = Seqend { common: seqend_common };
+        self.write_seqend(&seqend, polyline_handle)?;
+
+        Ok(())
+    }
+
+    /// Write a complete PolyfaceMesh: parent + PolyfaceVertex children + PolyfaceFace children + SEQEND.
+    fn write_polyface_mesh_composite(
+        &mut self,
+        mesh: &PolyfaceMesh,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let mesh_handle = mesh.common.handle.value();
+
+        let mut next_h = self.next_available_handle();
+        let total_children = mesh.vertices.len() + mesh.faces.len();
+        let mut child_handles = Vec::with_capacity(total_children);
+
+        // Allocate handles for vertices
+        let mut vertex_commons = Vec::with_capacity(mesh.vertices.len());
+        for v in &mesh.vertices {
+            let h = if v.common.handle.value() != 0 { v.common.handle.value() } else { let h = next_h; next_h += 1; h };
+            child_handles.push(h);
+            let mut vc = v.common.clone();
+            vc.handle = Handle::new(h);
+            if vc.layer.is_empty() || vc.layer == "0" {
+                vc.layer = mesh.common.layer.clone();
+            }
+            vertex_commons.push(vc);
+        }
+
+        // Allocate handles for faces
+        let mut face_commons = Vec::with_capacity(mesh.faces.len());
+        for f in &mesh.faces {
+            let h = if f.common.handle.value() != 0 { f.common.handle.value() } else { let h = next_h; next_h += 1; h };
+            child_handles.push(h);
+            let mut fc = f.common.clone();
+            fc.handle = Handle::new(h);
+            if fc.layer.is_empty() || fc.layer == "0" {
+                fc.layer = mesh.common.layer.clone();
+            }
+            face_commons.push(fc);
+        }
+
+        let seqend_h = next_h;
+        let mut seqend_common = EntityCommon::new();
+        seqend_common.handle = Handle::new(seqend_h);
+        seqend_common.layer = mesh.common.layer.clone();
+
+        // 1. Write parent polyface mesh
+        self.write_polyface_mesh(mesh, owner_handle, &child_handles, seqend_h)?;
+
+        // 2. Write vertex position entities (VertexPface = 0x0D)
+        for (i, vertex) in mesh.vertices.iter().enumerate() {
+            self.write_pface_vertex(vertex, &vertex_commons[i], mesh_handle)?;
+        }
+
+        // 3. Write face record entities (VertexPfaceFace = 0x0E)
+        for (i, face) in mesh.faces.iter().enumerate() {
+            let mut face_copy = face.clone();
+            face_copy.common = face_commons[i].clone();
+            self.write_pface_face(&face_copy, mesh_handle)?;
+        }
+
+        // 4. Write SEQEND
+        let seqend = Seqend { common: seqend_common };
+        self.write_seqend(&seqend, mesh_handle)?;
+
+        Ok(())
+    }
+
+    /// Write a complete PolygonMesh: parent + PolygonMeshVertex children + SEQEND.
+    fn write_polygon_mesh_composite(
+        &mut self,
+        mesh: &crate::entities::PolygonMeshEntity,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let mesh_handle = mesh.common.handle.value();
+
+        let mut next_h = self.next_available_handle();
+        let mut vertex_handles = Vec::with_capacity(mesh.vertices.len());
+        let mut vertex_commons = Vec::with_capacity(mesh.vertices.len());
+
+        for v in &mesh.vertices {
+            let h = if v.common.handle.value() != 0 { v.common.handle.value() } else { let h = next_h; next_h += 1; h };
+            vertex_handles.push(h);
+            let mut vc = v.common.clone();
+            vc.handle = Handle::new(h);
+            if vc.layer.is_empty() || vc.layer == "0" {
+                vc.layer = mesh.common.layer.clone();
+            }
+            vertex_commons.push(vc);
+        }
+
+        let seqend_h = next_h;
+        let mut seqend_common = EntityCommon::new();
+        seqend_common.handle = Handle::new(seqend_h);
+        seqend_common.layer = mesh.common.layer.clone();
+
+        // 1. Write parent polygon mesh
+        self.write_polygon_mesh(mesh, owner_handle, &vertex_handles, seqend_h)?;
+
+        // 2. Write vertex entities (VertexMesh = 0x0C)
+        for (i, vertex) in mesh.vertices.iter().enumerate() {
+            self.write_vertex_mesh(vertex, &vertex_commons[i], mesh_handle)?;
+        }
+
+        // 3. Write SEQEND
+        let seqend = Seqend { common: seqend_common };
+        self.write_seqend(&seqend, mesh_handle)?;
+
+        Ok(())
     }
 
     // -----------------------------------------------------------------------
@@ -962,6 +1173,445 @@ impl DwgObjectWriter {
 
         writer.write_spear_shift()?;
         self.finalize_entity(writer, seqend.common.handle.value());
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // VERTEX 2D  (DwgObjectType::Vertex2D = 0x0A)
+    // -----------------------------------------------------------------------
+
+    pub(super) fn write_vertex_2d(
+        &mut self,
+        vertex: &Vertex2D,
+        common: &crate::entities::EntityCommon,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let (mut writer, _) = self.create_entity_writer();
+        self.write_common_entity_data(
+            &mut *writer,
+            DwgObjectType::Vertex2D,
+            common,
+            owner_handle,
+        )?;
+
+        // RC: flags
+        writer.write_byte(vertex.flags.bits())?;
+
+        // 3BD: point
+        writer.write_3bit_double(vertex.location)?;
+
+        // BD: start_width — negative means same as end_width
+        let sw = if vertex.start_width == vertex.end_width && vertex.start_width != 0.0 {
+            -vertex.start_width
+        } else {
+            vertex.start_width
+        };
+        writer.write_bit_double(sw)?;
+
+        // BD: end_width (only if start_width >= 0, i.e. they differ)
+        if sw >= 0.0 {
+            writer.write_bit_double(vertex.end_width)?;
+        }
+
+        // BD: bulge
+        writer.write_bit_double(vertex.bulge)?;
+
+        // BL: vertex id (R2010+ only)
+        if self.sio.r2010_plus {
+            writer.write_bit_long(vertex.id)?;
+        }
+
+        // BD: curve fit tangent direction
+        writer.write_bit_double(vertex.curve_tangent)?;
+
+        writer.write_spear_shift()?;
+        self.finalize_entity(writer, common.handle.value());
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // VERTEX 3D  (DwgObjectType::Vertex3D = 0x0B)
+    // -----------------------------------------------------------------------
+
+    pub(super) fn write_vertex_3d(
+        &mut self,
+        vertex: &Vertex3D,
+        common: &crate::entities::EntityCommon,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let (mut writer, _) = self.create_entity_writer();
+        self.write_common_entity_data(
+            &mut *writer,
+            DwgObjectType::Vertex3D,
+            common,
+            owner_handle,
+        )?;
+
+        // RC: flags
+        writer.write_byte(vertex.flags.bits())?;
+
+        // 3BD: point
+        writer.write_3bit_double(vertex.location)?;
+
+        writer.write_spear_shift()?;
+        self.finalize_entity(writer, common.handle.value());
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // VERTEX 3D POLYLINE  (DwgObjectType::Vertex3D = 0x0B)
+    // -----------------------------------------------------------------------
+
+    pub(super) fn write_vertex_3d_polyline(
+        &mut self,
+        vertex: &Vertex3DPolyline,
+        common: &crate::entities::EntityCommon,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let (mut writer, _) = self.create_entity_writer();
+        self.write_common_entity_data(
+            &mut *writer,
+            DwgObjectType::Vertex3D,
+            common,
+            owner_handle,
+        )?;
+
+        // RC: flags
+        writer.write_byte(vertex.flags as u8)?;
+
+        // 3BD: point
+        writer.write_3bit_double(vertex.position)?;
+
+        writer.write_spear_shift()?;
+        self.finalize_entity(writer, common.handle.value());
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // VERTEX MESH  (DwgObjectType::VertexMesh = 0x0C)
+    // -----------------------------------------------------------------------
+
+    pub(super) fn write_vertex_mesh(
+        &mut self,
+        vertex: &crate::entities::PolygonMeshVertex,
+        common: &crate::entities::EntityCommon,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let (mut writer, _) = self.create_entity_writer();
+        self.write_common_entity_data(
+            &mut *writer,
+            DwgObjectType::VertexMesh,
+            common,
+            owner_handle,
+        )?;
+
+        // RC: flags
+        writer.write_byte(vertex.flags as u8)?;
+
+        // 3BD: point
+        writer.write_3bit_double(vertex.location)?;
+
+        writer.write_spear_shift()?;
+        self.finalize_entity(writer, common.handle.value());
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // VERTEX PFACE  (DwgObjectType::VertexPface = 0x0D)
+    // Same format as Vertex3D — position vertex in a polyface mesh
+    // -----------------------------------------------------------------------
+
+    pub(super) fn write_pface_vertex(
+        &mut self,
+        vertex: &crate::entities::PolyfaceVertex,
+        common: &crate::entities::EntityCommon,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let (mut writer, _) = self.create_entity_writer();
+        self.write_common_entity_data(
+            &mut *writer,
+            DwgObjectType::VertexPface,
+            common,
+            owner_handle,
+        )?;
+
+        // RC: flags
+        writer.write_byte(vertex.flags.bits() as u8)?;
+
+        // 3BD: point
+        writer.write_3bit_double(vertex.location)?;
+
+        writer.write_spear_shift()?;
+        self.finalize_entity(writer, common.handle.value());
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // VERTEX PFACE FACE  (DwgObjectType::VertexPfaceFace = 0x0E)
+    // Face record referencing vertices by index
+    // -----------------------------------------------------------------------
+
+    pub(super) fn write_pface_face(
+        &mut self,
+        face: &crate::entities::PolyfaceFace,
+        owner_handle: u64,
+    ) -> Result<()> {
+        let (mut writer, _) = self.create_entity_writer();
+        self.write_common_entity_data(
+            &mut *writer,
+            DwgObjectType::VertexPfaceFace,
+            &face.common,
+            owner_handle,
+        )?;
+
+        // 4 × BS: face vertex indices
+        writer.write_bit_short(face.index1)?;
+        writer.write_bit_short(face.index2)?;
+        writer.write_bit_short(face.index3)?;
+        writer.write_bit_short(face.index4)?;
+
+        writer.write_spear_shift()?;
+        self.finalize_entity(writer, face.common.handle.value());
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // POLYLINE 2D  (DwgObjectType::Polyline2D = 0x0F)
+    // -----------------------------------------------------------------------
+
+    fn write_polyline_2d(
+        &mut self,
+        polyline: &Polyline2D,
+        owner_handle: u64,
+        vertex_handles: &[u64],
+        seqend_handle: u64,
+    ) -> Result<()> {
+        let (mut writer, _) = self.create_entity_writer();
+        self.write_common_entity_data(
+            &mut *writer,
+            DwgObjectType::Polyline2D,
+            &polyline.common,
+            owner_handle,
+        )?;
+
+        // BS: flags
+        writer.write_bit_short(polyline.flags.bits() as i16)?;
+
+        // BS: curve type (smooth surface type)
+        writer.write_bit_short(polyline.smooth_surface as i16)?;
+
+        // BD: start width
+        writer.write_bit_double(polyline.start_width)?;
+
+        // BD: end width
+        writer.write_bit_double(polyline.end_width)?;
+
+        // BT: thickness
+        writer.write_bit_thickness(polyline.thickness)?;
+
+        // BD: elevation
+        writer.write_bit_double(polyline.elevation)?;
+
+        // BE: normal (extrusion)
+        writer.write_bit_extrusion(polyline.normal)?;
+
+        // Owned objects (R2004+)
+        if self.sio.r2004_plus {
+            // BL: owned object count
+            writer.write_bit_long(vertex_handles.len() as i32)?;
+        }
+
+        // Handle references for owned vertices
+        if self.sio.r2004_plus {
+            for &vh in vertex_handles {
+                writer.handle_reference_typed(DwgReferenceType::HardOwnership, vh)?;
+            }
+        } else {
+            // Pre-R2004: first vertex handle + last vertex handle
+            let first = vertex_handles.first().copied().unwrap_or(0);
+            let last = vertex_handles.last().copied().unwrap_or(0);
+            writer.handle_reference_typed(DwgReferenceType::HardPointer, first)?;
+            writer.handle_reference_typed(DwgReferenceType::HardPointer, last)?;
+        }
+
+        // H: SEQEND handle
+        writer.handle_reference_typed(DwgReferenceType::SoftPointer, seqend_handle)?;
+
+        writer.write_spear_shift()?;
+        self.finalize_entity(writer, polyline.common.handle.value());
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // POLYLINE 3D  (DwgObjectType::Polyline3D = 0x10)
+    // -----------------------------------------------------------------------
+
+    fn write_polyline_3d(
+        &mut self,
+        polyline: &Polyline3D,
+        owner_handle: u64,
+        vertex_handles: &[u64],
+        seqend_handle: u64,
+    ) -> Result<()> {
+        let (mut writer, _) = self.create_entity_writer();
+        self.write_common_entity_data(
+            &mut *writer,
+            DwgObjectType::Polyline3D,
+            &polyline.common,
+            owner_handle,
+        )?;
+
+        // RC: curve flags — derive from Polyline3DFlags
+        let mut curve_flags: u8 = 0;
+        if polyline.flags.closed {
+            curve_flags |= 1;
+        }
+        if polyline.flags.spline_fit {
+            curve_flags |= 4;
+        }
+        writer.write_byte(curve_flags)?;
+
+        // RC: spline flags — smooth type
+        let spline_flags: u8 = polyline.smooth_type as u8;
+        writer.write_byte(spline_flags)?;
+
+        // Owned objects (R2004+)
+        if self.sio.r2004_plus {
+            writer.write_bit_long(vertex_handles.len() as i32)?;
+        }
+
+        if self.sio.r2004_plus {
+            for &vh in vertex_handles {
+                writer.handle_reference_typed(DwgReferenceType::HardOwnership, vh)?;
+            }
+        } else {
+            let first = vertex_handles.first().copied().unwrap_or(0);
+            let last = vertex_handles.last().copied().unwrap_or(0);
+            writer.handle_reference_typed(DwgReferenceType::HardPointer, first)?;
+            writer.handle_reference_typed(DwgReferenceType::HardPointer, last)?;
+        }
+
+        // H: SEQEND handle
+        writer.handle_reference_typed(DwgReferenceType::SoftPointer, seqend_handle)?;
+
+        writer.write_spear_shift()?;
+        self.finalize_entity(writer, polyline.common.handle.value());
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // POLYFACE MESH  (DwgObjectType::PolylinePface = 0x1D)
+    // -----------------------------------------------------------------------
+
+    fn write_polyface_mesh(
+        &mut self,
+        mesh: &PolyfaceMesh,
+        owner_handle: u64,
+        child_handles: &[u64],
+        seqend_handle: u64,
+    ) -> Result<()> {
+        let (mut writer, _) = self.create_entity_writer();
+        self.write_common_entity_data(
+            &mut *writer,
+            DwgObjectType::PolylinePface,
+            &mesh.common,
+            owner_handle,
+        )?;
+
+        // BS: number of vertices
+        writer.write_bit_short(mesh.vertices.len() as i16)?;
+
+        // BS: number of faces
+        writer.write_bit_short(mesh.faces.len() as i16)?;
+
+        // Owned objects (R2004+)
+        if self.sio.r2004_plus {
+            writer.write_bit_long(child_handles.len() as i32)?;
+        }
+
+        if self.sio.r2004_plus {
+            for &ch in child_handles {
+                writer.handle_reference_typed(DwgReferenceType::HardOwnership, ch)?;
+            }
+        } else {
+            let first = child_handles.first().copied().unwrap_or(0);
+            let last = child_handles.last().copied().unwrap_or(0);
+            writer.handle_reference_typed(DwgReferenceType::HardPointer, first)?;
+            writer.handle_reference_typed(DwgReferenceType::HardPointer, last)?;
+        }
+
+        // H: SEQEND handle
+        writer.handle_reference_typed(DwgReferenceType::SoftPointer, seqend_handle)?;
+
+        writer.write_spear_shift()?;
+        self.finalize_entity(writer, mesh.common.handle.value());
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // POLYGON MESH  (DwgObjectType::PolylineMesh = 0x1E)
+    // -----------------------------------------------------------------------
+
+    fn write_polygon_mesh(
+        &mut self,
+        mesh: &crate::entities::PolygonMeshEntity,
+        owner_handle: u64,
+        vertex_handles: &[u64],
+        seqend_handle: u64,
+    ) -> Result<()> {
+        let (mut writer, _) = self.create_entity_writer();
+        self.write_common_entity_data(
+            &mut *writer,
+            DwgObjectType::PolylineMesh,
+            &mesh.common,
+            owner_handle,
+        )?;
+
+        // BS: flags
+        writer.write_bit_short(mesh.flags.bits())?;
+
+        // BS: curve type (smooth surface type)
+        let curve_type: i16 = match mesh.smooth_type {
+            crate::entities::SurfaceSmoothType::Quadratic => 5,
+            crate::entities::SurfaceSmoothType::Cubic => 6,
+            crate::entities::SurfaceSmoothType::Bezier => 8,
+            _ => 0,
+        };
+        writer.write_bit_short(curve_type)?;
+
+        // BS: M vertex count
+        writer.write_bit_short(mesh.m_vertex_count)?;
+
+        // BS: N vertex count
+        writer.write_bit_short(mesh.n_vertex_count)?;
+
+        // BS: M smooth density
+        writer.write_bit_short(mesh.m_smooth_density)?;
+
+        // BS: N smooth density
+        writer.write_bit_short(mesh.n_smooth_density)?;
+
+        // Owned objects (R2004+)
+        if self.sio.r2004_plus {
+            writer.write_bit_long(vertex_handles.len() as i32)?;
+        }
+
+        if self.sio.r2004_plus {
+            for &vh in vertex_handles {
+                writer.handle_reference_typed(DwgReferenceType::HardOwnership, vh)?;
+            }
+        } else {
+            let first = vertex_handles.first().copied().unwrap_or(0);
+            let last = vertex_handles.last().copied().unwrap_or(0);
+            writer.handle_reference_typed(DwgReferenceType::HardPointer, first)?;
+            writer.handle_reference_typed(DwgReferenceType::HardPointer, last)?;
+        }
+
+        // H: SEQEND handle
+        writer.handle_reference_typed(DwgReferenceType::SoftPointer, seqend_handle)?;
+
+        writer.write_spear_shift()?;
+        self.finalize_entity(writer, mesh.common.handle.value());
         Ok(())
     }
 }

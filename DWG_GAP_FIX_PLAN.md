@@ -72,42 +72,45 @@ test_common_f64_tolerance_fail
 
 ### Tasks
 
-- ⬜ **1.1** Implement `write_vertex_2d` in `src/io/dwg/writer/object_writer/entities.rs`
-  - ⬜ Write flags, point (with Z-zero-bit optimization for R2000+)
-  - ⬜ Write start_width, end_width (with DD compression for R2000+)
-  - ⬜ Write bulge, tangent_direction
-  - ⬜ Write vertex_id (R2010+)
-  - ⬜ Write owner handle (back to polyline)
+- ✅ **1.1** Implement `write_vertex_2d` in `src/io/dwg/writer/object_writer/write_entities.rs`
+  - ✅ Write flags (RC), point (3BD)
+  - ✅ Write start_width (BD, negative=same-as-end trick), end_width (conditional BD)
+  - ✅ Write bulge (BD), tangent_direction (BD)
+  - ✅ Write vertex_id (BL, R2010+ only)
+  - ✅ Write owner handle (back to polyline)
 
-- ⬜ **1.2** Implement `write_vertex_3d` in `entities.rs`
-  - ⬜ Write flags + 3D point (full 3BD)
+- ✅ **1.2** Implement `write_vertex_3d` in `write_entities.rs`
+  - ✅ Write flags (RC) + 3D point (3BD)
+  - ✅ Separate implementations for `Vertex3D` and `Vertex3DPolyline`
 
-- ⬜ **1.3** Implement `write_pface_vertex` in `entities.rs`
-  - ⬜ Write flags + 3D point
-  - ⬜ Write 4 face indices (BS)
+- ✅ **1.3** Implement polyface vertex writers in `write_entities.rs`
+  - ✅ `write_pface_vertex` — VertexPface (0x0D): flags + 3BD point
+  - ✅ `write_pface_face` — VertexPfaceFace (0x0E): 4 × BS face indices
+  - ✅ `write_vertex_mesh` — VertexMesh (0x0C): flags + 3BD point
 
-- ⬜ **1.4** Implement `write_polyline_2d` in `entities.rs`
-  - ⬜ Write flags, curve_type, start_width, end_width, thickness, elevation, extrusion
-  - ⬜ Write owned_object_count (R2004+) vs first_vertex/last_vertex/seqend handles (R13-R2000)
-  - ⬜ Write child vertex handles + SEQEND handle
+- ✅ **1.4** Implement `write_polyline_2d` in `write_entities.rs`
+  - ✅ Write flags (BS), curve_type (BS), start_width (BD), end_width (BD), thickness (BT), elevation (BD), extrusion (BE)
+  - ✅ Write owned_object_count (BL, R2004+) vs first_vertex/last_vertex handles (R13-R2000)
+  - ✅ Write child vertex handles + SEQEND handle
 
-- ⬜ **1.5** Implement `write_polyline_3d` in `entities.rs`
-  - ⬜ Write curve_type flags (spline_flags + closed_flags as 2 separate RCs for R2000+)
-  - ⬜ Write owned handles chain
+- ✅ **1.5** Implement `write_polyline_3d` in `write_entities.rs`
+  - ✅ Write curve_flags (RC) + spline_flags (RC)
+  - ✅ Write owned handles chain (same R2004+ / pre-R2004 pattern)
 
-- ⬜ **1.6** Implement `write_polyface_mesh` in `entities.rs`
-  - ⬜ Write vertex_count, face_count
-  - ⬜ Write owned_object_count (R2004+) or first/last/seqend handles (R13-R2000)
+- ✅ **1.6** Implement `write_polyface_mesh` in `write_entities.rs`
+  - ✅ Write vertex_count (BS), face_count (BS)
+  - ✅ Write owned_object_count (R2004+) or first/last/seqend handles (R13-R2000)
 
-- ⬜ **1.7** Implement `write_polygon_mesh` in `entities.rs`
-  - ⬜ Write flags, surface_type, m_count, n_count, m_density, n_density
-  - ⬜ Write owned handles chain
+- ✅ **1.7** Implement `write_polygon_mesh` in `write_entities.rs`
+  - ✅ Write flags (BS), surface_type (BS), m_count (BS), n_count (BS), m_density (BS), n_density (BS)
+  - ✅ Write owned handles chain
 
-- ⬜ **1.8** Register all new types in `write_entity()` match dispatcher
+- ✅ **1.8** Register all new types in `write_entity()` match dispatcher
 
-- ⬜ **1.9** Handle entity-chain linking for owned vertices in `object_writer/mod.rs`
-  - ⬜ Ensure vertices are enqueued after parent polyline
-  - ⬜ Ensure SEQEND is written after last vertex
+- ✅ **1.9** Handle entity-chain linking for owned vertices in composite writers
+  - ✅ Composite writers (`write_*_composite`) write parent + child vertices + SEQEND
+  - ✅ Auto-allocate handles for child objects when not assigned
+  - ✅ SEQEND written after last vertex
 
 ### Tests for Phase 1
 ```
