@@ -39,6 +39,41 @@ impl DwgObjectReader {
         })
     }
 
+    /// Read the BLOCK_CONTROL object (special: has extra Model_Space/Paper_Space handles).
+    ///
+    /// The DWG spec stores *Model_Space and *Paper_Space handles separately
+    /// after the regular block entry handles.
+    pub(super) fn read_block_control(
+        &mut self,
+        streams: &mut StreamSet,
+    ) -> Result<CadTemplate> {
+        let common_tmpl = self.read_common_non_entity_data(streams)?;
+
+        // BL: number of entries (excludes *Model_Space and *Paper_Space).
+        let num_entries = streams.object_reader.read_bit_long()? as usize;
+
+        // Regular entry handles (soft owner).
+        let mut table_data = CadTableTemplateData::default();
+        for _ in 0..num_entries {
+            let h = streams.handle_ref()?;
+            table_data.entry_handles.push(h);
+        }
+
+        // *Model_Space handle (hard owner) — add to entry list.
+        let model_space = streams.handle_ref()?;
+        table_data.entry_handles.push(model_space);
+
+        // *Paper_Space handle (hard owner) — add to entry list.
+        let paper_space = streams.handle_ref()?;
+        table_data.entry_handles.push(paper_space);
+
+        Ok(CadTemplate::TableControl {
+            common: common_tmpl,
+            table_data,
+            table_type: TableControlType::BlockControl,
+        })
+    }
+
     /// Read the LTYPE_CONTROL object (special: has extra ByLayer/ByBlock handles).
     pub(super) fn read_ltype_control(
         &mut self,

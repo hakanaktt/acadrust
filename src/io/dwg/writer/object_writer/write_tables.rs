@@ -60,6 +60,50 @@ impl DwgObjectWriter {
         Ok(())
     }
 
+    /// Write BLOCK_CONTROL (special: has extra Model_Space/Paper_Space handles).
+    ///
+    /// The DWG spec requires BLOCK_CONTROL to be written differently from
+    /// other table controls:
+    ///  - `entry_count` excludes *Model_Space and *Paper_Space
+    ///  - `entry_handles` lists only regular blocks (SoftOwnership)
+    ///  - Two extra HardOwnership handles for *Model_Space and *Paper_Space
+    ///    are appended after the entry handles.
+    pub(super) fn write_block_control(
+        &mut self,
+        handle: u64,
+        owner_handle: u64,
+        regular_entry_handles: &[u64],
+        model_space_handle: u64,
+        paper_space_handle: u64,
+    ) -> Result<()> {
+        let (mut writer, _) = self.create_object_writer();
+        self.write_common_non_entity_data(
+            &mut *writer,
+            DwgObjectType::BlockControlObj,
+            handle,
+            owner_handle,
+            &[],
+            None,
+        )?;
+
+        // BL: number of entries (excluding *Model_Space and *Paper_Space)
+        writer.write_bit_long(regular_entry_handles.len() as i32)?;
+
+        // Regular entry handles (soft owner)
+        for &eh in regular_entry_handles {
+            writer.handle_reference_typed(DwgReferenceType::SoftOwnership, eh)?;
+        }
+
+        // *Model_Space handle (hard owner)
+        writer.handle_reference_typed(DwgReferenceType::HardOwnership, model_space_handle)?;
+        // *Paper_Space handle (hard owner)
+        writer.handle_reference_typed(DwgReferenceType::HardOwnership, paper_space_handle)?;
+
+        writer.write_spear_shift()?;
+        self.finalize_object(writer, handle);
+        Ok(())
+    }
+
     /// Write LTYPE_CONTROL (special: has extra ByLayer/ByBlock handles).
     pub(super) fn write_ltype_control(
         &mut self,

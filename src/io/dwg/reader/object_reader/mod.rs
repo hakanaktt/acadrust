@@ -385,7 +385,7 @@ impl DwgObjectReader {
             Ole2Frame => Some(self.read_ole2frame(streams)?),
 
             // Table control objects
-            BlockControlObj => Some(self.read_table_control(streams, templates::TableControlType::BlockControl)?),
+            BlockControlObj => Some(self.read_block_control(streams)?),
             LayerControlObj => Some(self.read_table_control(streams, templates::TableControlType::LayerControl)?),
             StyleControlObj => Some(self.read_table_control(streams, templates::TableControlType::TextStyleControl)?),
             LtypeControlObj => Some(self.read_ltype_control(streams)?),

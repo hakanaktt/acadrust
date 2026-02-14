@@ -239,18 +239,25 @@ impl DwgObjectWriter {
     fn write_table_controls(&mut self, doc: &CadDocument) -> Result<()> {
         let hdr = &doc.header;
 
-        // BLOCK_CONTROL
-        let block_entry_handles: Vec<u64> = doc
-            .block_records
-            .iter()
-            .map(|b| b.handle.value())
-            .collect();
-        self.write_table_control(
-            TableControlType::BlockControl,
-            crate::io::dwg::object_type::DwgObjectType::BlockControlObj,
+        // BLOCK_CONTROL (special: Model_Space/Paper_Space separated)
+        let mut regular_block_handles: Vec<u64> = Vec::new();
+        let mut model_space_block_handle = 0u64;
+        let mut paper_space_block_handle = 0u64;
+        for br in doc.block_records.iter() {
+            if br.is_model_space() {
+                model_space_block_handle = br.handle.value();
+            } else if br.is_paper_space() {
+                paper_space_block_handle = br.handle.value();
+            } else {
+                regular_block_handles.push(br.handle.value());
+            }
+        }
+        self.write_block_control(
             hdr.block_control_handle.value(),
             0, // owned by root
-            &block_entry_handles,
+            &regular_block_handles,
+            model_space_block_handle,
+            paper_space_block_handle,
         )?;
 
         // LAYER_CONTROL
