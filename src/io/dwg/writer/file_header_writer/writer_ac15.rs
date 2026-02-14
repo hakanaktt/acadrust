@@ -8,12 +8,12 @@
 //! FILE HEADER (0x61 bytes)
 //! DWG HEADER VARIABLES (section 0)
 //! CLASS DEFINITIONS (section 1)
-//! OBJ FREE SPACE (section 3)
-//! TEMPLATE (section 4)
+//! PREVIEW (no section number)
 //! AUX HEADER (section 5)
 //! OBJECT DATA (no section number)
+//! OBJ FREE SPACE (section 3)
+//! TEMPLATE (section 4)
 //! OBJECT MAP (section 2)
-//! PREVIEW (no section number)
 //! ```
 //!
 //! Mirrors ACadSharp's `DwgFileHeaderWriterAC15`.

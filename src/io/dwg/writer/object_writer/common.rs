@@ -29,6 +29,10 @@ impl DwgObjectWriter {
     pub(super) fn register_object(&mut self, handle: u64, object_data: Vec<u8>) {
         let position = self.objects_stream.len() as i64;
 
+        // CRC-8 covers MS size + MC handle bits (R2010+) + object data.
+        // This matches C# CRC8StreamHandler wrapping the full object record.
+        let crc_start = self.objects_stream.len();
+
         // Write MS (Modular Short) size prefix
         Self::write_modular_short(&mut self.objects_stream, object_data.len() as u32);
 
@@ -36,16 +40,14 @@ impl DwgObjectWriter {
         if self.sio.r2010_plus {
             // The handle stream size is encoded in the merged writer's
             // saved_position_in_bits after write_spear_shift.
-            // For now we encode 0 (updated later if needed).
             // The actual handle size bits was saved during write_spear_shift.
             Self::write_modular_char(&mut self.objects_stream, self.last_handle_size_bits as i32);
         }
 
         // Write the object data
-        let crc_start = self.objects_stream.len();
         self.objects_stream.extend_from_slice(&object_data);
 
-        // CRC-8 (16-bit) over the object data (little-endian)
+        // CRC-8 (16-bit) over MS + MC + object data (little-endian)
         let crc_val = crc::crc8(0xC0C1, &self.objects_stream[crc_start..]);
         self.objects_stream.push((crc_val & 0xFF) as u8);
         self.objects_stream.push((crc_val >> 8) as u8);
