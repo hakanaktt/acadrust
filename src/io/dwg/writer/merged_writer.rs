@@ -233,6 +233,12 @@ impl IDwgStreamWriter for DwgMergedStreamWriter {
         self.handle.handle_reference_typed(ref_type, handle)
     }
 
+    /// Write a handle reference to the MAIN stream (not handle sub-stream).
+    /// Used for the object's own handle.
+    fn handle_reference_on_main(&mut self, handle: u64) -> Result<()> {
+        self.main.handle_reference(handle)
+    }
+
     // ---------------------------------------------------------------
     // Stream control
     // ---------------------------------------------------------------
@@ -255,7 +261,8 @@ impl IDwgStreamWriter for DwgMergedStreamWriter {
                 }
             }
 
-            let saved_pos = self.main.saved_position_in_bits();
+            // BUG2 fix: use merged writer's saved position, not base writer's
+            let saved_pos = self.position_in_bits;
             self.main.set_position_in_bits(saved_pos)?;
             // Write the total size in bits
             self.main.write_raw_long(main_text_total_bits)?;
@@ -278,6 +285,7 @@ impl IDwgStreamWriter for DwgMergedStreamWriter {
         }
 
         self.handle.write_spear_shift()?;
+        // BUG3 fix: store handle start OFFSET (size computed later in finalize)
         self.saved_position_in_bits = self.main.position_in_bits();
         let handle_data = self.handle.data().to_vec();
         self.main.write_bytes(&handle_data)?;
@@ -521,6 +529,12 @@ impl IDwgStreamWriter for DwgMergedStreamWriterAC14 {
         self.handle.handle_reference_typed(ref_type, handle)
     }
 
+    /// Write a handle reference to the MAIN stream (not handle sub-stream).
+    /// Used for the object's own handle.
+    fn handle_reference_on_main(&mut self, handle: u64) -> Result<()> {
+        self.main.handle_reference(handle)
+    }
+
     // ---------------------------------------------------------------
     // Stream control
     // ---------------------------------------------------------------
@@ -530,7 +544,8 @@ impl IDwgStreamWriter for DwgMergedStreamWriterAC14 {
 
         if self.saved_position {
             self.main.write_spear_shift()?;
-            let saved_pos = self.main.saved_position_in_bits();
+            // BUG2 fix: use merged writer's saved position, not base writer's
+            let saved_pos = self.position_in_bits;
             self.main.set_position_in_bits(saved_pos)?;
             self.main.write_raw_long(pos as i32)?;
             self.main.write_shift_value()?;

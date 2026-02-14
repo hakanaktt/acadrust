@@ -470,6 +470,12 @@ impl IDwgStreamWriter for DwgStreamWriterBase {
         Ok(())
     }
 
+    /// For the base writer, handle_reference_on_main is the same as
+    /// handle_reference (there's no separate handle sub-stream).
+    fn handle_reference_on_main(&mut self, handle: u64) -> Result<()> {
+        self.handle_reference(handle)
+    }
+
     // ---------------------------------------------------------------
     // Object type (version-specific)
     // ---------------------------------------------------------------

@@ -746,17 +746,28 @@ impl DwgObjectWriter {
         writer.write_3bit_double(direction)?;
 
         writer.write_bit_double(mtext.rectangle_width)?;
+
+        // Rectangle height (R2007+ only)
+        if self.sio.r2007_plus {
+            writer.write_bit_double(mtext.rectangle_height.unwrap_or(0.0))?;
+        }
+
         writer.write_bit_double(mtext.height)?;
         writer.write_bit_short(mtext.attachment_point as i16)?;
         writer.write_bit_short(mtext.drawing_direction as i16)?;
 
+        // Ext height/width (always written, before text)
+        writer.write_bit_double(0.0)?; // ext_height
+        writer.write_bit_double(0.0)?; // ext_width
+
         // Text value
         writer.write_variable_text(&mtext.value)?;
-        // Extra text string (empty)
-        writer.write_variable_text("")?;
 
-        writer.write_bit_double(mtext.line_spacing_factor)?;
-        writer.write_bit_short(0)?; // line spacing style (0 = at least)
+        // Line spacing (R2000+ only): style THEN factor
+        if self.sio.r2000_plus {
+            writer.write_bit_short(0)?; // line spacing style (0 = at least)
+            writer.write_bit_double(mtext.line_spacing_factor)?;
+        }
 
         // Style handle
         writer.handle_reference_typed(
@@ -944,13 +955,6 @@ impl DwgObjectWriter {
 
         let num_pts = lwpoly.vertices.len();
 
-        // Flags (BS)
-        let mut flags: i16 = 0;
-        if lwpoly.is_closed {
-            flags |= 0x200;
-        }
-        writer.write_bit_short(flags)?;
-
         let has_constant_width = lwpoly.constant_width != 0.0;
         let has_elevation = lwpoly.elevation != 0.0;
         let has_thickness = lwpoly.thickness != 0.0;
@@ -960,6 +964,31 @@ impl DwgObjectWriter {
             .vertices
             .iter()
             .any(|v| v.start_width != 0.0 || v.end_width != 0.0);
+
+        // Flags (BS) — set all conditional bits BEFORE writing
+        let mut flags: i16 = 0;
+        if lwpoly.is_closed {
+            flags |= 0x200;
+        }
+        if has_constant_width {
+            flags |= 4;
+        }
+        if has_elevation {
+            flags |= 8;
+        }
+        if has_thickness {
+            flags |= 2;
+        }
+        if has_normal {
+            flags |= 1;
+        }
+        if has_bulges {
+            flags |= 0x10;
+        }
+        if has_widths {
+            flags |= 0x20;
+        }
+        writer.write_bit_short(flags)?;
 
         if has_constant_width {
             writer.write_bit_double(lwpoly.constant_width)?;
@@ -977,13 +1006,18 @@ impl DwgObjectWriter {
         // Number of points (BL)
         writer.write_bit_long(num_pts as i32)?;
 
-        // Number of bulges (BL)
-        let bulge_count = if has_bulges { num_pts } else { 0 };
-        writer.write_bit_long(bulge_count as i32)?;
+        // Number of bulges (BL) — only when flag bit 0x10 is set
+        if has_bulges {
+            writer.write_bit_long(num_pts as i32)?;
+        }
 
-        // Number of width pairs (BL)
-        let width_count = if has_widths { num_pts } else { 0 };
-        writer.write_bit_long(width_count as i32)?;
+        // R2010+: vertex IDs (BL count) — flag bit 0x400, not currently written
+        // (skip for now — we don't set 0x400)
+
+        // Number of width pairs (BL) — only when flag bit 0x20 is set
+        if has_widths {
+            writer.write_bit_long(num_pts as i32)?;
+        }
 
         // Points (2RD / 2DD)
         for (i, v) in lwpoly.vertices.iter().enumerate() {
@@ -1326,12 +1360,18 @@ impl DwgObjectWriter {
             owner_handle,
         )?;
 
-        writer.write_bit_short(0)?; // unknown purpose version
-        writer.write_bit_double(tolerance.text_height)?;
-        writer.write_variable_text(&tolerance.text)?;
+        // R13-R14 only: BS unknown + BD height + BD dimgap
+        if self.sio.r13_14_only {
+            writer.write_bit_short(0)?; // unknown short
+            writer.write_bit_double(tolerance.text_height)?; // height
+            writer.write_bit_double(0.0)?; // dimgap
+        }
+
+        // Common: 3BD insertion + 3BD direction + 3BD extrusion + TV text
         writer.write_3bit_double(tolerance.insertion_point)?;
         writer.write_3bit_double(tolerance.direction)?;
-        writer.write_bit_extrusion(tolerance.normal)?;
+        writer.write_3bit_double(tolerance.normal)?;
+        writer.write_variable_text(&tolerance.text)?;
 
         // Dimstyle handle
         let dimstyle_handle = tolerance
@@ -1358,30 +1398,53 @@ impl DwgObjectWriter {
             owner_handle,
         )?;
 
-        writer.write_bit(leader.arrow_enabled)?;
-        writer.write_bit_short(leader.path_type as i16)?;
+        // B: unknown bit
+        writer.write_bit(false)?;
+        // BS: annotation_type (creation_type)
         writer.write_bit_short(leader.creation_type as i16)?;
-        writer.write_bit_short(leader.hookline_direction as i16)?;
-        writer.write_bit(leader.hookline_enabled)?;
-        writer.write_bit_double(leader.text_height)?;
-        writer.write_bit_double(leader.text_width)?;
-
+        // BS: path_type
+        writer.write_bit_short(leader.path_type as i16)?;
+        // BL: number of points
         writer.write_bit_long(leader.vertices.len() as i32)?;
+        // 3BD × N: vertices
         for v in &leader.vertices {
             writer.write_3bit_double(*v)?;
         }
+        // 3BD: normal (extrusion)
+        writer.write_3bit_double(leader.normal)?;
+        // 3BD: horizontal direction
+        writer.write_3bit_double(leader.horizontal_direction)?;
+        // 3BD: block offset
+        writer.write_3bit_double(leader.block_offset)?;
 
-        // R14+: last vertex override + dim base point
-        if self.sio.version() >= crate::types::DxfVersion::AC1014 {
+        // R14+ / R13_14 / R2000+: end_pt_proj
+        if self.sio.r13_14_only || self.sio.r2000_plus {
             writer.write_3bit_double(
                 leader.vertices.last().copied().unwrap_or(Vector3::ZERO),
             )?;
-            writer.write_3bit_double(leader.annotation_offset)?;
         }
 
-        writer.write_3bit_double(leader.normal)?;
+        // R2000+: dimasz (BD)
+        if self.sio.r2000_plus {
+            writer.write_bit_double(0.0)?;
+        }
 
-        // Handles: ANN_HANDLE (soft pointer), DIMSTYLE (hard pointer)
+        // B: hookline_on
+        writer.write_bit(leader.hookline_enabled)?;
+        // B: arrow_head_on
+        writer.write_bit(leader.arrow_enabled)?;
+
+        // R13/14 only: arrowhead_size, text_width, text_height
+        if self.sio.r13_14_only {
+            writer.write_bit_double(0.0)?; // arrowhead_size
+            writer.write_bit_double(leader.text_width)?;
+            writer.write_bit_double(leader.text_height)?;
+        }
+
+        // BS: color_val
+        writer.write_bit_short(0)?;
+
+        // Handles: annotation handle (soft pointer), DIMSTYLE (hard pointer)
         writer.handle_reference_typed(
             DwgReferenceType::SoftPointer,
             leader.annotation_handle.value(),
@@ -1433,8 +1496,8 @@ impl DwgObjectWriter {
             writer.write_byte(base.version)?;
         }
 
-        // Extrusion normal (3BD)
-        writer.write_3bit_double(base.normal)?;
+        // Extrusion normal (BE — bit extrusion)
+        writer.write_bit_extrusion(base.normal)?;
 
         // Text middle point (2RD) — XY only
         writer.write_2raw_double(crate::types::Vector2::new(
@@ -1476,11 +1539,10 @@ impl DwgObjectWriter {
             writer.write_bit_double(base.actual_measurement)?;
         }
 
-        // R2007+: unknown + flip arrows
+        // R2007+: unknown + has_style_override
         if self.sio.r2007_plus {
             writer.write_bit(false)?; // unknown
-            writer.write_bit(false)?; // flip arrow 1
-            writer.write_bit(false)?; // flip arrow 2
+            writer.write_bit(false)?; // has_style_override
         }
 
         // Insertion point (2RD) — XY of group code 12
@@ -1565,10 +1627,10 @@ impl DwgObjectWriter {
         writer.write_3bit_double(dim.second_point)?;
         // 3BD pt10 (definition point on dim line)
         writer.write_3bit_double(dim.definition_point)?;
-        // BD ext_line_rotation
-        writer.write_bit_double(dim.ext_line_rotation)?;
         // BD rotation (Linear only, not in Aligned)
         writer.write_bit_double(dim.rotation)?;
+        // BD ext_line_rotation
+        writer.write_bit_double(dim.ext_line_rotation)?;
 
         self.write_dimension_handles(&mut *writer, &dim.base)?;
 
@@ -1759,26 +1821,29 @@ impl DwgObjectWriter {
             writer.write_bit_double(viewport.front_clip_z)?;
             writer.write_bit_double(viewport.back_clip_z)?;
             writer.write_bit_double(viewport.snap_angle)?;
-            writer.write_2bit_double(crate::types::Vector2::new(
+
+            // 2RD (raw doubles) for view_center, snap_base, snap_spacing, grid_spacing
+            writer.write_2raw_double(crate::types::Vector2::new(
                 viewport.view_center.x,
                 viewport.view_center.y,
             ))?;
-            writer.write_2bit_double(crate::types::Vector2::new(
+            writer.write_2raw_double(crate::types::Vector2::new(
                 viewport.snap_base.x,
                 viewport.snap_base.y,
             ))?;
-            writer.write_2bit_double(crate::types::Vector2::new(
+            writer.write_2raw_double(crate::types::Vector2::new(
                 viewport.snap_spacing.x,
                 viewport.snap_spacing.y,
             ))?;
-            writer.write_2bit_double(crate::types::Vector2::new(
+            writer.write_2raw_double(crate::types::Vector2::new(
                 viewport.grid_spacing.x,
                 viewport.grid_spacing.y,
             ))?;
+
             writer.write_bit_short(viewport.circle_sides)?;
 
-            if self.sio.r2007_plus {
-                writer.write_bit_short(viewport.grid_flags.to_bits())?;
+            // R2000+: grid_major (BS)
+            if self.sio.r2000_plus {
                 writer.write_bit_short(viewport.grid_major)?;
             }
 
@@ -1788,7 +1853,8 @@ impl DwgObjectWriter {
             writer.write_bit_long(viewport.status.to_bits())?;
             writer.write_variable_text("")?; // stylesheet
             writer.write_byte(viewport.render_mode as u8)?;
-            writer.write_bit(viewport.ucs_icon_visible)?;
+
+            // UCS per viewport (B) — NO ucs_icon_visible
             writer.write_bit(viewport.ucs_per_viewport)?;
             writer.write_3bit_double(viewport.ucs_origin)?;
             writer.write_3bit_double(viewport.ucs_x_axis)?;
@@ -1801,13 +1867,44 @@ impl DwgObjectWriter {
             }
 
             if self.sio.r2007_plus {
+                // Grid flags (BS)
+                writer.write_bit_short(viewport.grid_flags.to_bits())?;
+
                 writer.write_bit(viewport.default_lighting)?;
                 writer.write_byte(viewport.default_lighting_type as u8)?;
                 writer.write_bit_double(viewport.brightness)?;
                 writer.write_bit_double(viewport.contrast)?;
-                writer.write_cm_color(crate::types::Color::from_index(
-                    (viewport.ambient_color & 0xFF) as i16,
-                ))?;
+                // Ambient color as RL (raw long), NOT CMC
+                writer.write_raw_long(viewport.ambient_color)?;
+            }
+
+            // -- Handle references --
+            // Frozen layer handles (one per frozen layer)
+            for fl in &viewport.frozen_layers {
+                writer.handle_reference_typed(
+                    DwgReferenceType::HardPointer,
+                    fl.value(),
+                )?;
+            }
+
+            // Clip boundary handle
+            writer.handle_reference_typed(DwgReferenceType::HardPointer, 0)?;
+
+            // Pre-R2004: viewport entity header handle
+            if !self.sio.r2004_plus {
+                writer.handle_reference_typed(DwgReferenceType::HardPointer, 0)?;
+            }
+
+            // Named UCS / Base UCS handles
+            writer.handle_reference_typed(DwgReferenceType::HardPointer, 0)?;
+            writer.handle_reference_typed(DwgReferenceType::HardPointer, 0)?;
+
+            // R2007+: background, visual style, shade plot, sun handles
+            if self.sio.r2007_plus {
+                writer.handle_reference_typed(DwgReferenceType::HardPointer, 0)?;
+                writer.handle_reference_typed(DwgReferenceType::HardPointer, 0)?;
+                writer.handle_reference_typed(DwgReferenceType::HardPointer, 0)?;
+                writer.handle_reference_typed(DwgReferenceType::HardPointer, 0)?;
             }
         }
 
@@ -1820,7 +1917,7 @@ impl DwgObjectWriter {
     // BLOCK / ENDBLK / SEQEND
     // -----------------------------------------------------------------------
 
-    fn write_block(&mut self, block: &Block, owner_handle: u64) -> Result<()> {
+    pub(super) fn write_block(&mut self, block: &Block, owner_handle: u64) -> Result<()> {
         let (mut writer, _) = self.create_entity_writer();
         self.write_common_entity_data(
             &mut *writer,
@@ -1836,7 +1933,7 @@ impl DwgObjectWriter {
         Ok(())
     }
 
-    fn write_block_end(&mut self, block_end: &BlockEnd, owner_handle: u64) -> Result<()> {
+    pub(super) fn write_block_end(&mut self, block_end: &BlockEnd, owner_handle: u64) -> Result<()> {
         let (mut writer, _) = self.create_entity_writer();
         self.write_common_entity_data(
             &mut *writer,

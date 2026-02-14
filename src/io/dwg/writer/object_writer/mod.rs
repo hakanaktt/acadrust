@@ -18,13 +18,14 @@ use std::collections::{BTreeMap, HashMap};
 use std::io::SeekFrom;
 
 use crate::document::CadDocument;
+use crate::entities::{Block, BlockEnd};
 use crate::error::Result;
 use crate::io::dwg::section_io::SectionIO;
 use crate::io::dwg::writer::merged_writer::{DwgMergedStreamWriter, DwgMergedStreamWriterAC14};
 use crate::io::dwg::writer::stream_writer::IDwgStreamWriter;
 use crate::objects::ObjectType;
 use crate::tables::TableEntry;
-use crate::types::DxfVersion;
+use crate::types::{DxfVersion, Vector3};
 
 use write_tables::TableControlType;
 
@@ -193,9 +194,10 @@ impl DwgObjectWriter {
         mut writer: Box<dyn IDwgStreamWriter>,
         handle: u64,
     ) {
-        let handle_bits = writer.saved_position_in_bits();
-        self.last_handle_size_bits = handle_bits;
+        let handle_start_offset = writer.saved_position_in_bits();
         let data = Self::extract_writer_data(&mut *writer);
+        let total_bits = data.len() as i64 * 8;
+        self.last_handle_size_bits = total_bits - handle_start_offset;
         self.register_object(handle, data);
     }
 
@@ -205,9 +207,10 @@ impl DwgObjectWriter {
         mut writer: Box<dyn IDwgStreamWriter>,
         handle: u64,
     ) {
-        let handle_bits = writer.saved_position_in_bits();
-        self.last_handle_size_bits = handle_bits;
+        let handle_start_offset = writer.saved_position_in_bits();
         let data = Self::extract_writer_data(&mut *writer);
+        let total_bits = data.len() as i64 * 8;
+        self.last_handle_size_bits = total_bits - handle_start_offset;
         self.register_object(handle, data);
     }
 
@@ -410,21 +413,34 @@ impl DwgObjectWriter {
         Ok(())
     }
 
-    /// Write block contents: for each block record, write BLOCK entity,
-    /// owned entities, and ENDBLK entity.
+    /// Write block contents: for each block record, write BLOCK_RECORD (header),
+    /// BLOCK entity, owned entities, and ENDBLK entity.
+    ///
+    /// For model-space: also includes standalone entities from `doc.entities`.
     fn write_block_contents(&mut self, doc: &CadDocument) -> Result<()> {
         let block_ctrl = doc.header.block_control_handle.value();
         let blocks: Vec<_> = doc.block_records.iter().cloned().collect();
 
+        // Collect standalone entity handles that belong to model space
+        let standalone_entities: Vec<_> = doc.entities().cloned().collect();
+
         for block in &blocks {
             let owner_handle = block.handle.value();
+            let is_model_space = block.is_model_space();
 
-            // Collect entity handles for the block header
-            let entity_handles: Vec<u64> = block
+            // Collect entity handles for the block header.
+            // Include standalone entities for model space.
+            let mut entity_handles: Vec<u64> = block
                 .entities
                 .iter()
                 .map(|e| e.common().handle.value())
                 .collect();
+
+            if is_model_space {
+                for e in &standalone_entities {
+                    entity_handles.push(e.common().handle.value());
+                }
+            }
 
             // Write block header (BLOCK_RECORD)
             self.write_block_header(
@@ -436,9 +452,32 @@ impl DwgObjectWriter {
                 block.layout.value(),
             )?;
 
-            // Write owned entities
+            // Write BLOCK entity (begin marker)
+            {
+                let mut blk = Block::new(block.name(), Vector3::ZERO);
+                blk.common.handle = block.block_entity_handle;
+                blk.common.layer = "0".to_string();
+                self.write_block(&blk, owner_handle)?;
+            }
+
+            // Write owned entities from the block record
             for entity in &block.entities {
                 self.write_entity(entity, owner_handle)?;
+            }
+
+            // Write standalone entities into model space
+            if is_model_space {
+                for entity in &standalone_entities {
+                    self.write_entity(entity, owner_handle)?;
+                }
+            }
+
+            // Write ENDBLK entity (end marker)
+            {
+                let mut end = BlockEnd::new();
+                end.common.handle = block.block_end_handle;
+                end.common.layer = "0".to_string();
+                self.write_block_end(&end, owner_handle)?;
             }
         }
 

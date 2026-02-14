@@ -123,6 +123,13 @@ pub trait IDwgStreamWriter {
         handle: u64,
     ) -> Result<()>;
 
+    /// **H** — Write a handle reference to the MAIN (object data) stream,
+    /// bypassing the handle sub-stream routing used in merged writers.
+    ///
+    /// Used for the object's own handle, which the DWG reader expects to
+    /// find in the object data stream, not the handle sub-stream.
+    fn handle_reference_on_main(&mut self, handle: u64) -> Result<()>;
+
     // ---------------------------------------------------------------
     // Object type
     // ---------------------------------------------------------------

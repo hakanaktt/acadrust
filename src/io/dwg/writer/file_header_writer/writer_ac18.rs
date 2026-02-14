@@ -180,11 +180,10 @@ impl DwgFileHeaderWriterAC18 {
         self.output.extend_from_slice(&checksum_buf);
         self.output.extend_from_slice(&compressed_data);
 
-        // Write compression padding
-        if is_compressed {
-            for i in 0..compress_diff {
-                self.output.push(MAGIC_SEQUENCE[i % 256]);
-            }
+        // Write compression padding (always, to ensure 32-byte alignment
+        // so that page sizes in the page map don't drift from magic alignment bytes)
+        for i in 0..compress_diff {
+            self.output.push(MAGIC_SEQUENCE[i % 256]);
         }
 
         if local_map.page_number > 0 {

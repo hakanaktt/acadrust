@@ -45,10 +45,10 @@ impl DwgObjectWriter {
         let crc_start = self.objects_stream.len();
         self.objects_stream.extend_from_slice(&object_data);
 
-        // CRC-8 (16-bit) over the object data
+        // CRC-8 (16-bit) over the object data (little-endian)
         let crc_val = crc::crc8(0xC0C1, &self.objects_stream[crc_start..]);
-        self.objects_stream.push((crc_val >> 8) as u8);
         self.objects_stream.push((crc_val & 0xFF) as u8);
+        self.objects_stream.push((crc_val >> 8) as u8);
 
         // Record handle → offset
         self.handle_map.insert(handle, position);
@@ -111,7 +111,9 @@ impl DwgObjectWriter {
             writer.save_position_for_size()?;
         }
 
-        writer.handle_reference(handle)?;
+        // Object's own handle must go to the MAIN stream (not handle sub-stream).
+        // The reader reads it from object_reader (main stream).
+        writer.handle_reference_on_main(handle)?;
         Ok(())
     }
 
@@ -267,8 +269,12 @@ impl DwgObjectWriter {
         }
 
         // XDictionary handle (hard owner)
+        // For pre-R2004, there is no xdictionary-missing flag, so the handle
+        // must ALWAYS be present (use handle 0 for "no xdictionary").
         if let Some(xdict) = xdictionary_handle {
             writer.handle_reference_typed(DwgReferenceType::HardOwnership, xdict.value())?;
+        } else if !self.sio.r2004_plus {
+            writer.handle_reference_typed(DwgReferenceType::HardOwnership, 0)?;
         }
 
         Ok(())
@@ -302,8 +308,12 @@ impl DwgObjectWriter {
         }
 
         // XDictionary handle
+        // For pre-R2004, there is no xdictionary-missing flag, so the handle
+        // must ALWAYS be present (use handle 0 for "no xdictionary").
         if let Some(xdict) = common.xdictionary_handle {
             writer.handle_reference_typed(DwgReferenceType::HardOwnership, xdict.value())?;
+        } else if !self.sio.r2004_plus {
+            writer.handle_reference_typed(DwgReferenceType::HardOwnership, 0)?;
         }
 
         Ok(())
@@ -432,8 +442,12 @@ impl DwgObjectWriter {
         }
 
         // XDictionary handle (hard owner)
+        // For pre-R2004, there is no xdictionary-missing flag, so the handle
+        // must ALWAYS be present (use handle 0 for "no xdictionary").
         if let Some(xdict) = xdictionary_handle {
             writer.handle_reference_typed(DwgReferenceType::HardOwnership, xdict.value())?;
+        } else if !self.sio.r2004_plus {
+            writer.handle_reference_typed(DwgReferenceType::HardOwnership, 0)?;
         }
 
         Ok(())
@@ -461,7 +475,7 @@ impl DwgObjectWriter {
             writer.save_position_for_size()?;
         }
 
-        writer.handle_reference(common.handle.value())?;
+        writer.handle_reference_on_main(common.handle.value())?;
 
         // Now write the standard entity header fields
         self.write_extended_data(writer, common)?;

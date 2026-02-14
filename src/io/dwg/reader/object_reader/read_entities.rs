@@ -117,8 +117,10 @@ impl DwgObjectReader {
             insertion_point = Vector3::new(ip.x, ip.y, elevation);
 
             alignment_point = if (data_flags & 2) == 0 {
-                let ap = streams.object_reader.read_2raw_double()?;
-                Vector3::new(ap.x, ap.y, elevation)
+                // 2DD (BitDoubleWithDefault) — default is the insertion point
+                let ap_x = streams.object_reader.read_bit_double_with_default(ip.x)?;
+                let ap_y = streams.object_reader.read_bit_double_with_default(ip.y)?;
+                Vector3::new(ap_x, ap_y, elevation)
             } else {
                 insertion_point
             };
@@ -207,10 +209,8 @@ impl DwgObjectReader {
         common: EntityCommon,
         _is_definition: bool,
     ) -> Result<(AttributeEntity, CadTextEntityTemplateData)> {
-        let mut text_tmpl = CadTextEntityTemplateData::default();
-
-        // Read text base data.
-        let (text, _) = self.read_common_text_data(streams, common.clone())?;
+        // Read text base data (includes style handle on the handle sub-stream).
+        let (text, text_tmpl) = self.read_common_text_data(streams, common.clone())?;
 
         // Tag (TV).
         let tag = streams.read_text()?;
@@ -243,8 +243,8 @@ impl DwgObjectReader {
             false
         };
 
-        // Style handle.
-        text_tmpl.style_handle = streams.handle_ref()?;
+        // NOTE: Style handle was already read inside read_common_text_data.
+        // Do NOT read another handle here — the writer only writes one.
 
         let attrib = AttributeEntity {
             common: text.common,
@@ -279,10 +279,8 @@ impl DwgObjectReader {
         streams: &mut StreamSet,
         common: EntityCommon,
     ) -> Result<(AttributeDefinition, CadTextEntityTemplateData)> {
-        let mut text_tmpl = CadTextEntityTemplateData::default();
-
-        // Read text base data.
-        let (text, _) = self.read_common_text_data(streams, common.clone())?;
+        // Read text base data (includes style handle on the handle sub-stream).
+        let (text, text_tmpl) = self.read_common_text_data(streams, common.clone())?;
 
         // Tag (TV).
         let tag = streams.read_text()?;
@@ -318,8 +316,8 @@ impl DwgObjectReader {
             false
         };
 
-        // Style handle.
-        text_tmpl.style_handle = streams.handle_ref()?;
+        // NOTE: Style handle was already read inside read_common_text_data.
+        // Do NOT read another handle here — the writer only writes one.
 
         let attdef = AttributeDefinition {
             common: text.common,
@@ -444,19 +442,35 @@ impl DwgObjectReader {
         let z_scale;
 
         if self.sio.r2000_plus {
-            // R2000+: scales as DD with default 1.0
-            let data_flags = streams.object_reader.read_2bits()?;
-            x_scale = if (data_flags & 1) == 0 {
-                streams.object_reader.read_raw_double()? // DD with default
-            } else {
-                1.0
-            };
-            y_scale = if (data_flags & 2) == 0 {
-                streams.object_reader.read_bit_double_with_default(x_scale)?
-            } else {
-                x_scale
-            };
-            z_scale = streams.object_reader.read_bit_double_with_default(x_scale)?;
+            // R2000+: scale flags (BB) — 4-case enumeration per DWG spec
+            let scale_flag = streams.object_reader.read_2bits()?;
+            match scale_flag {
+                3 => {
+                    // All scales are 1.0 — no data follows
+                    x_scale = 1.0;
+                    y_scale = 1.0;
+                    z_scale = 1.0;
+                }
+                2 => {
+                    // One RD, all scales equal
+                    let s = streams.object_reader.read_raw_double()?;
+                    x_scale = s;
+                    y_scale = s;
+                    z_scale = s;
+                }
+                1 => {
+                    // x = 1.0, y and z as DD(default=1.0)
+                    x_scale = 1.0;
+                    y_scale = streams.object_reader.read_bit_double_with_default(1.0)?;
+                    z_scale = streams.object_reader.read_bit_double_with_default(1.0)?;
+                }
+                _ => {
+                    // 0: explicit — BD(x), DD(x,y), DD(x,z)
+                    x_scale = streams.object_reader.read_bit_double()?;
+                    y_scale = streams.object_reader.read_bit_double_with_default(x_scale)?;
+                    z_scale = streams.object_reader.read_bit_double_with_default(x_scale)?;
+                }
+            }
         } else {
             x_scale = streams.object_reader.read_bit_double()?;
             y_scale = streams.object_reader.read_bit_double()?;
@@ -1371,7 +1385,8 @@ impl DwgObjectReader {
         let (common_tmpl, ent_tmpl, mut base, mut dim_tmpl) =
             self.read_common_dimension_data(streams)?;
 
-        let pt_16 = streams.object_reader.read_3bit_double()?;
+        // pt16 is 2RD (not 3BD) per DWG spec; Z comes from the common elevation
+        let pt_16_2d = streams.object_reader.read_2raw_double()?;
         let pt_13 = streams.object_reader.read_3bit_double()?;
         let pt_14 = streams.object_reader.read_3bit_double()?;
         let pt_15 = streams.object_reader.read_3bit_double()?;
@@ -1381,9 +1396,10 @@ impl DwgObjectReader {
 
         base.dimension_type = dimension::DimensionType::Angular;
 
+        let elevation = base.definition_point.z;
         let dim = DimensionAngular2Ln {
             base,
-            dimension_arc: pt_16,
+            dimension_arc: Vector3::new(pt_16_2d.x, pt_16_2d.y, elevation),
             first_point: pt_13,
             second_point: pt_14,
             angle_vertex: pt_15,
@@ -2082,10 +2098,19 @@ impl DwgObjectReader {
         let (common_tmpl, ent_tmpl, entity_common) =
             self.read_common_entity_data(streams)?;
 
-        let _version = streams.object_reader.read_bit_short()?;
-        let text = streams.read_text()?;
+        let mut text_height = 0.0;
+        // R13-R14 only: BS unknown + BD height + BD dimgap
+        if self.sio.r13_14_only {
+            let _unknown_short = streams.object_reader.read_bit_short()?;
+            text_height = streams.object_reader.read_bit_double()?;
+            let _dimgap = streams.object_reader.read_bit_double()?;
+        }
+
+        // Common: 3BD insertion + 3BD direction + 3BD extrusion + TV text
         let insertion_point = streams.object_reader.read_3bit_double()?;
         let direction = streams.object_reader.read_3bit_double()?;
+        let normal = streams.object_reader.read_3bit_double()?;
+        let text = streams.read_text()?;
 
         // Dimstyle handle.
         let style_handle = streams.handle_ref()?;
@@ -2094,11 +2119,11 @@ impl DwgObjectReader {
             common: entity_common,
             insertion_point,
             direction,
-            normal: Vector3::UNIT_Z,
+            normal,
             text,
             dimension_style_name: String::new(),
             dimension_style_handle: Some(Handle::new(style_handle)),
-            text_height: 0.0,
+            text_height,
             dimension_gap: 0.0,
         };
 
@@ -2242,9 +2267,18 @@ impl DwgObjectReader {
         };
 
         let mut pts = Vec::with_capacity(num_pts);
-        for _ in 0..num_pts {
-            let v = streams.object_reader.read_2raw_double()?;
-            pts.push(v);
+        for i in 0..num_pts {
+            if i == 0 {
+                // First point: 2RD (raw doubles)
+                let v = streams.object_reader.read_2raw_double()?;
+                pts.push(v);
+            } else {
+                // 2nd+ points: 2DD (BitDoubleWithDefault, default = previous point)
+                let prev = pts[i - 1];
+                let x = streams.object_reader.read_bit_double_with_default(prev.x)?;
+                let y = streams.object_reader.read_bit_double_with_default(prev.y)?;
+                pts.push(crate::types::Vector2::new(x, y));
+            }
         }
 
         let mut bulges = Vec::with_capacity(num_bulges);

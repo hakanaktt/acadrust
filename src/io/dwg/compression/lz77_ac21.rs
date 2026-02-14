@@ -518,8 +518,15 @@ fn emit_match_and_literals(
     // How many trailing literal bytes to encode in the opcode's low 3 bits
     let inline_lits = if lit_len <= 7 { lit_len } else { 0 };
 
-    // Try short default encoding first (most compact)
-    if try_emit_default(adj_offset, match_len, inline_lits, out) {
+    // Try short default encoding first (most compact).
+    // When the previous match had 0 inline trailing literals, the decompressor's
+    // inner loop reads the next opcode byte directly. If that byte has top nibble
+    // 0xF (i.e., Default case with match_len == 15), the decompressor remaps it
+    // via `op_code &= 15` turning it into Case 0 — which reads different parameter
+    // bytes and computes a completely different offset/length. We must skip the
+    // Default encoding when match_len == 15 and forbid_case0 is set.
+    let forbid_default_0xf = forbid_case0 && match_len == 15;
+    if !forbid_default_0xf && try_emit_default(adj_offset, match_len, inline_lits, out) {
         emit_lit_tail(input, lit_start, lit_len, out);
         return;
     }

@@ -120,8 +120,8 @@ impl DwgObjectWriter {
         // Name (TV)
         writer.write_variable_text(layer.name())?;
 
-        // Xref dependent (B)
-        writer.write_bit(false)?;
+        // Xref dependent
+        self.write_xref_dependant_bit(&mut *writer)?;
 
         if self.sio.r13_14_only {
             writer.write_bit(layer.flags.frozen)?;
@@ -203,8 +203,8 @@ impl DwgObjectWriter {
         // Name (TV)
         writer.write_variable_text(style.name())?;
 
-        // Xref dependent (B)
-        writer.write_bit(false)?;
+        // Xref dependent
+        self.write_xref_dependant_bit(&mut *writer)?;
 
         // Is vertical (B)
         writer.write_bit(false)?; // TextGenerationFlags has no vertical flag
@@ -266,8 +266,8 @@ impl DwgObjectWriter {
         // Name (TV)
         writer.write_variable_text(ltype.name())?;
 
-        // Xref dependent (B)
-        writer.write_bit(false)?;
+        // Xref dependent
+        self.write_xref_dependant_bit(&mut *writer)?;
 
         // Description (TV)
         writer.write_variable_text(&ltype.description)?;
@@ -346,8 +346,8 @@ impl DwgObjectWriter {
         // Name (TV)
         writer.write_variable_text(block.name())?;
 
-        // Xref dependent (B)
-        writer.write_bit(false)?;
+        // Xref dependent
+        self.write_xref_dependant_bit(&mut *writer)?;
 
         // Anonymous (B)
         writer.write_bit(block.flags.anonymous)?;
@@ -457,8 +457,8 @@ impl DwgObjectWriter {
         // Name (TV)
         writer.write_variable_text(appid.name())?;
 
-        // Xref dependent (B)
-        writer.write_bit(false)?;
+        // Xref dependent
+        self.write_xref_dependant_bit(&mut *writer)?;
 
         // Unknown (RC)
         writer.write_byte(0)?;
@@ -494,8 +494,8 @@ impl DwgObjectWriter {
         // Name (TV)
         writer.write_variable_text(dimstyle.name())?;
 
-        // Xref dependent (B)
-        writer.write_bit(false)?;
+        // Xref dependent
+        self.write_xref_dependant_bit(&mut *writer)?;
 
         // Write the dimension variables — this is version-specific.
         // For simplicity, we write the R2000+ layout which covers
@@ -758,28 +758,19 @@ impl DwgObjectWriter {
         // Back clip (BD)
         writer.write_bit_double(0.0)?;
 
-        // View mode — 4 individual bits (NOT BL)
-        // bit 0: PerspectiveView (71 bit 0)
-        writer.write_bit(false)?;
-        // bit 1: FrontClipping (71 bit 1)
-        writer.write_bit(false)?;
-        // bit 2: BackClipping (71 bit 2)
-        writer.write_bit(false)?;
-        // bit 3: OPPOSITE of 71 bit 4 (FrontClippingZ)
-        writer.write_bit(false)?;
+        // View mode (BL) — combined flag bits
+        writer.write_bit_long(0)?;
 
-        // R2000+: Render mode (RC)
+        // Render mode (RC)
+        writer.write_byte(0)?;
+
+        // R2000+: Lighting settings
         if self.sio.r2000_plus {
-            writer.write_byte(0)?;
-        }
-
-        // R2007+: Lighting settings
-        if self.sio.r2007_plus {
             writer.write_bit(true)?;       // use default lighting (B)
             writer.write_byte(1)?;          // default lighting type (RC)
             writer.write_bit_double(0.0)?;  // brightness (BD)
             writer.write_bit_double(0.0)?;  // contrast (BD)
-            writer.write_cm_color(crate::types::Color::ByBlock)?; // ambient color (CMC)
+            writer.write_raw_long(0)?;      // ambient color (RL)
         }
 
         // Lower-left corner (2RD)
@@ -788,25 +779,11 @@ impl DwgObjectWriter {
         // Upper-right corner (2RD)
         writer.write_2raw_double(vport.upper_right)?;
 
-        // UCSFOLLOW (B) — bit 3 (8) of 71 group
+        // UCSFOLLOW (B)
         writer.write_bit(false)?;
 
-        // Circle zoom percent (BS)
+        // Circle sides (BS)
         writer.write_bit_short(1000)?;
-
-        // Fast zoom (B) — always true
-        writer.write_bit(true)?;
-
-        // UCSICON display — 2 individual bits
-        // bit 0: OnLower (74 bit 0)
-        writer.write_bit(true)?;
-        // bit 1: OnOrigin (74 bit 1)
-        writer.write_bit(true)?;
-
-        // Grid on/off (B)
-        writer.write_bit(false)?;
-        // Grid spacing (2RD)
-        writer.write_2raw_double(vport.grid_spacing)?;
 
         // Snap on/off (B)
         writer.write_bit(false)?;
@@ -821,11 +798,14 @@ impl DwgObjectWriter {
         // Snap spacing (2RD)
         writer.write_2raw_double(vport.snap_spacing)?;
 
+        // Grid on/off (B)
+        writer.write_bit(false)?;
+        // Grid spacing (2RD)
+        writer.write_2raw_double(vport.grid_spacing)?;
+
         // R2000+: UCS per viewport settings
         if self.sio.r2000_plus {
-            // Unknown (B) — always false
-            writer.write_bit(false)?;
-            // UCS per viewport (B) — always true
+            // UCS per viewport (B)
             writer.write_bit(true)?;
             // UCS origin (3BD)
             writer.write_3bit_double(crate::types::Vector3::ZERO)?;
@@ -845,20 +825,20 @@ impl DwgObjectWriter {
             writer.write_bit_short(5)?; // grid major (BS)
         }
 
-        // External reference block handle (hard pointer)
-        writer.handle_reference_typed(DwgReferenceType::HardPointer, 0)?;
+        // VPort control object handle (hard pointer)
+        writer.handle_reference_typed(DwgReferenceType::HardPointer, owner_handle)?;
 
-        // R2007+: background, visual style, sun handles (soft pointer per C# ref)
+        // R2007+: background, visual style, sun handles
         if self.sio.r2007_plus {
-            writer.handle_reference_typed(DwgReferenceType::SoftPointer, 0)?; // background
-            writer.handle_reference_typed(DwgReferenceType::SoftPointer, 0)?; // visual style
-            writer.handle_reference_typed(DwgReferenceType::SoftPointer, 0)?; // sun
+            writer.handle_reference_typed(DwgReferenceType::HardPointer, 0)?; // background
+            writer.handle_reference_typed(DwgReferenceType::HardPointer, 0)?; // visual style
+            writer.handle_reference_typed(DwgReferenceType::HardPointer, 0)?; // sun
         }
 
-        // R2000+: Named UCS and Base UCS handles
+        // R2000+: named ucs, base ucs handles
         if self.sio.r2000_plus {
-            writer.handle_reference_typed(DwgReferenceType::HardPointer, 0)?; // named UCS
-            writer.handle_reference_typed(DwgReferenceType::HardPointer, 0)?; // base UCS
+            writer.handle_reference_typed(DwgReferenceType::HardPointer, 0)?; // named ucs
+            writer.handle_reference_typed(DwgReferenceType::HardPointer, 0)?; // base ucs
         }
 
         writer.write_spear_shift()?;
@@ -992,8 +972,8 @@ impl DwgObjectWriter {
         // Name (TV)
         writer.write_variable_text(view.name())?;
 
-        // Xref dependent (B)
-        writer.write_bit(false)?;
+        // Xref dependent
+        self.write_xref_dependant_bit(&mut *writer)?;
 
         // View height, width (BD)
         writer.write_bit_double(view.height)?;

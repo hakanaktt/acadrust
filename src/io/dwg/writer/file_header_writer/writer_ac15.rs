@@ -95,8 +95,8 @@ impl DwgFileHeaderWriterAC15 {
         // 0x13: Code page (2 bytes, little-endian u16)
         buf.write_u16::<LittleEndian>(self.code_page)?;
 
-        // 0x15: Number of section records (2 bytes, little-endian i16)
-        buf.write_i16::<LittleEndian>(records.len() as i16)?;
+        // 0x15: Number of section records (4 bytes, little-endian i32)
+        buf.write_i32::<LittleEndian>(records.len() as i32)?;
 
         // Section records: each has record_number(1) + seeker(4) + size(4) = 9 bytes
         for &(number, seeker, size) in records {

@@ -35,6 +35,7 @@ use super::super::encryption;
 use super::super::file_header::{
     DwgFileHeader, DwgFileHeaderAC15, DwgFileHeaderAC18, DwgFileHeaderAC21,
     DwgLocalSectionMap, DwgSectionDescriptor, DwgSectionLocatorRecord,
+    Dwg21CompressedMetadata,
 };
 use super::super::header_handles::DwgHeaderHandlesCollection;
 use super::super::reed_solomon;
@@ -418,43 +419,99 @@ impl<R: Read + Seek> DwgReader<R> {
 
     /// Read AC21 (R2007) file header.
     ///
-    /// AC21 uses Reed-Solomon encoding for the file header data.
+    /// AC21 uses a completely different structure from AC18:
+    /// - Preamble metadata at 0x00–0x7F (same field layout as AC18)
+    /// - RS-encoded compressed metadata at 0x80–0x47F (NOT the encrypted header)
+    /// - Data pages start at 0x480 (not 0x100)
+    /// - Page map and section map use u64 fields (not i32)
+    /// - Section names are Unicode strings with hash codes
     fn read_file_header_ac21(&mut self) -> Result<()> {
-        // Read the basic AC18 header first.
-        self.read_file_header_ac18()?;
+        // Step 1: Read preamble metadata (same layout as AC18, offset 0x06–0x2F)
+        self.reader.seek(SeekFrom::Start(6))?;
+        let mut skip = [0u8; 5];
+        self.reader.read_exact(&mut skip)?;
+        let maintenance_ver = self.reader.read_u8()?;
+        let _drawing_byte = self.reader.read_u8()?;
+        let preview_addr = self.reader.read_i32::<LittleEndian>()? as i64;
+        let dwg_version = self.reader.read_u8()?;
+        let app_release_version = self.reader.read_u8()?;
+        let code_page = self.reader.read_u16::<LittleEndian>()?;
+        let mut filler = [0u8; 3];
+        self.reader.read_exact(&mut filler)?;
+        let security_type = self.reader.read_i32::<LittleEndian>()? as i64;
+        let _unknown = self.reader.read_i32::<LittleEndian>()?;
+        let summary_info_addr = self.reader.read_i32::<LittleEndian>()? as i64;
+        let vba_project_addr = self.reader.read_i32::<LittleEndian>()? as i64;
 
-        // The AC21 file has additional Reed-Solomon encoded data at offset 0x80.
-        // Re-read it from the file and decode.
+        // Step 2: Read RS-encoded compressed metadata at offset 0x80
         self.reader.seek(SeekFrom::Start(0x80))?;
-
         let mut rs_data = vec![0u8; ac21::RS_ENCODED_BLOCK_SIZE];
         self.reader.read_exact(&mut rs_data)?;
 
-        // Decode the RS block.
+        // RS decode: factor=3, block_size=239, output = 3*239 = 717 bytes
+        let rs_output_size = 3 * ac21::RS_BLOCK_SIZE; // 717
         let decoded = reed_solomon::decode(
             &rs_data,
-            ac21::DECOMPRESSED_HEADER_SIZE,
+            rs_output_size,
             3,
             ac21::RS_BLOCK_SIZE,
         );
 
-        // Decompress the decoded block.
-        let decompressor = Lz77Ac21Decompressor;
-        let decompressed = decompressor.decompress(&decoded, ac21::DECOMPRESSED_HEADER_SIZE)?;
-
-        // Parse the decompressed metadata.
-        self.parse_ac21_compressed_metadata(&decompressed)?;
-
-        // Wrap the AC18 header into an AC21 header.
-        if let DwgFileHeader::AC18(ac18_header) = std::mem::replace(
-            &mut self.file_header,
-            DwgFileHeader::create(self.version)?,
-        ) {
-            self.file_header = DwgFileHeader::AC21(DwgFileHeaderAC21 {
-                base: ac18_header,
-                compressed_metadata: None,
-            });
+        // The decoded data has a 32-byte header:
+        //   0x00: CRC (i64)
+        //   0x08: Unknown key (i64)
+        //   0x10: Compressed data CRC (i64)
+        //   0x18: ComprLen (i32)
+        //   0x1C: Length2 (i32)
+        // Followed by ComprLen bytes of LZ77-AC21 compressed metadata.
+        if decoded.len() < 32 {
+            return Err(DxfError::InvalidFormat(
+                "AC21 RS-decoded metadata header too short".into(),
+            ));
         }
+        let compr_len = {
+            let mut c = Cursor::new(&decoded[24..28]);
+            c.read_i32::<LittleEndian>().unwrap_or(0)
+        };
+
+        // Decompress the metadata (from offset 32, for compr_len bytes)
+        let decompressed = if compr_len > 0 && (32 + compr_len as usize) <= decoded.len() {
+            let compressed_slice = &decoded[32..32 + compr_len as usize];
+            let mut buf = vec![0u8; ac21::DECOMPRESSED_HEADER_SIZE];
+            super::super::compression::lz77_ac21::decompress(
+                compressed_slice, 0, compr_len as u32, &mut buf,
+            )?;
+            buf
+        } else {
+            // Fallback: data is not compressed or invalid
+            decoded[32..32 + ac21::DECOMPRESSED_HEADER_SIZE.min(decoded.len().saturating_sub(32))].to_vec()
+        };
+
+        // Step 3: Parse the 34 u64 fields from the decompressed metadata
+        let meta = self.parse_ac21_metadata_fields(&decompressed)?;
+
+        // Step 4: Build the base AC18 header with preamble data
+        let mut header = DwgFileHeaderAC18::new(self.version);
+        header.preview_address = preview_addr;
+        header.maintenance_version = maintenance_ver;
+        header.drawing_code_page = code_page;
+        header.dwg_version = dwg_version;
+        header.app_release_version = app_release_version;
+        header.summary_info_addr = summary_info_addr;
+        header.security_type = security_type;
+        header.vba_project_addr = vba_project_addr;
+
+        // Step 5: Read page map using compressed metadata
+        self.read_page_map_ac21(&mut header, &meta)?;
+
+        // Step 6: Read section map using compressed metadata
+        self.read_section_map_ac21(&mut header, &meta)?;
+
+        // Step 7: Store the final header
+        self.file_header = DwgFileHeader::AC21(DwgFileHeaderAC21 {
+            base: header,
+            compressed_metadata: Some(meta),
+        });
 
         Ok(())
     }
@@ -752,13 +809,216 @@ impl<R: Read + Seek> DwgReader<R> {
         Ok(())
     }
 
-    /// Parse AC21 compressed metadata from a decompressed RS block.
-    fn parse_ac21_compressed_metadata(&mut self, _data: &[u8]) -> Result<()> {
-        // The AC21 compressed metadata contains the section page map
-        // with page sizes and checksums for the RS-encoded pages.
-        // This is a complex structure — for now we mark it as parsed
-        // and rely on the AC18-compatible page map reading.
+    /// Parse AC21 compressed metadata fields from a decompressed RS block.
+    ///
+    /// The decompressed block contains 34 × u64 fields = 272 bytes.
+    /// Field order MUST match the serialization order in writer_ac21.rs
+    /// `serialize_compressed_metadata`.
+    fn parse_ac21_metadata_fields(&self, data: &[u8]) -> Result<Dwg21CompressedMetadata> {
+        if data.len() < 0x110 {
+            return Err(DxfError::InvalidFormat(format!(
+                "AC21 compressed metadata too short: {} bytes (expected {})",
+                data.len(), 0x110
+            )));
+        }
+        let mut c = Cursor::new(data);
+        // Order matches serialize_compressed_metadata in writer_ac21.rs exactly:
+        let meta = Dwg21CompressedMetadata {
+            header_size: c.read_u64::<LittleEndian>().unwrap_or(0),        // 0x00
+            file_size: c.read_u64::<LittleEndian>().unwrap_or(0),          // 0x08
+            pages_map_crc_compressed: c.read_u64::<LittleEndian>().unwrap_or(0), // 0x10
+            pages_map_correction_factor: c.read_u64::<LittleEndian>().unwrap_or(0), // 0x18
+            pages_map_crc_seed: c.read_u64::<LittleEndian>().unwrap_or(0), // 0x20
+            map2_offset: c.read_u64::<LittleEndian>().unwrap_or(0),        // 0x28
+            map2_id: c.read_u64::<LittleEndian>().unwrap_or(0),            // 0x30
+            pages_map_offset: c.read_u64::<LittleEndian>().unwrap_or(0),   // 0x38
+            header2_offset: c.read_u64::<LittleEndian>().unwrap_or(0),     // 0x40
+            pages_map_size_compressed: c.read_u64::<LittleEndian>().unwrap_or(0), // 0x48
+            pages_map_size_uncompressed: c.read_u64::<LittleEndian>().unwrap_or(0), // 0x50
+            pages_amount: c.read_u64::<LittleEndian>().unwrap_or(0),       // 0x58
+            pages_max_id: c.read_u64::<LittleEndian>().unwrap_or(0),       // 0x60
+            sections_map2_id: c.read_u64::<LittleEndian>().unwrap_or(0),   // 0x68
+            pages_map_id: c.read_u64::<LittleEndian>().unwrap_or(0),       // 0x70
+            unknow_0x20: c.read_u64::<LittleEndian>().unwrap_or(0),        // 0x78
+            unknow_0x40: c.read_u64::<LittleEndian>().unwrap_or(0),        // 0x80
+            pages_map_crc_uncompressed: c.read_u64::<LittleEndian>().unwrap_or(0), // 0x88
+            unknown_0xf800: c.read_u64::<LittleEndian>().unwrap_or(0),     // 0x90
+            unknown_4: c.read_u64::<LittleEndian>().unwrap_or(0),          // 0x98
+            unknown_1: c.read_u64::<LittleEndian>().unwrap_or(0),          // 0xA0
+            sections_amount: c.read_u64::<LittleEndian>().unwrap_or(0),    // 0xA8
+            sections_map_crc_uncompressed: c.read_u64::<LittleEndian>().unwrap_or(0), // 0xB0
+            sections_map_size_compressed: c.read_u64::<LittleEndian>().unwrap_or(0), // 0xB8
+            sections_map_id: c.read_u64::<LittleEndian>().unwrap_or(0),    // 0xC0
+            sections_map_size_uncompressed: c.read_u64::<LittleEndian>().unwrap_or(0), // 0xC8
+            sections_map_crc_compressed: c.read_u64::<LittleEndian>().unwrap_or(0), // 0xD0
+            sections_map_correction_factor: c.read_u64::<LittleEndian>().unwrap_or(0), // 0xD8
+            sections_map_crc_seed: c.read_u64::<LittleEndian>().unwrap_or(0), // 0xE0
+            stream_version: c.read_u64::<LittleEndian>().unwrap_or(0),     // 0xE8
+            crc_seed: c.read_u64::<LittleEndian>().unwrap_or(0),           // 0xF0
+            crc_seed_encoded: c.read_u64::<LittleEndian>().unwrap_or(0),   // 0xF8
+            random_seed: c.read_u64::<LittleEndian>().unwrap_or(0),        // 0x100
+            header_crc64: c.read_u64::<LittleEndian>().unwrap_or(0),       // 0x108
+        };
+        Ok(meta)
+    }
+
+    /// Read the page map for AC21.
+    ///
+    /// The page map is a data page with a 20-byte header followed by
+    /// LZ77-compressed (page_number: i32, size: i32) pairs.
+    /// The running offset starts at DATA_PAGE_BASE_OFFSET (0x480).
+    fn read_page_map_ac21(
+        &mut self,
+        header: &mut DwgFileHeaderAC18,
+        meta: &Dwg21CompressedMetadata,
+    ) -> Result<()> {
+        // pages_map_offset is the absolute file position in our writer
+        let page_data = self.read_ac21_map_page(meta.pages_map_offset)?;
+
+        // Parse (page_number: i32, size: i32) pairs — same format as AC18 page map
+        let mut c = Cursor::new(&page_data);
+        let mut total = ac21::DATA_PAGE_BASE_OFFSET as i64; // Running total starts at 0x480
+
+        while (c.position() as usize) + 8 <= page_data.len() {
+            let section_number = match c.read_i32::<LittleEndian>() {
+                Ok(v) => v,
+                Err(_) => break,
+            };
+            let size = match c.read_i32::<LittleEndian>() {
+                Ok(v) => v as i64,
+                Err(_) => break,
+            };
+
+            if section_number >= 0 {
+                header.records.insert(
+                    section_number as usize,
+                    DwgSectionLocatorRecord::new(section_number, total, size),
+                );
+            }
+
+            total += size;
+        }
+
         Ok(())
+    }
+
+    /// Read the section map for AC21.
+    ///
+    /// The section map is another data page found via the page map.
+    /// Uses AC21's u64-based section descriptor format with Unicode names.
+    fn read_section_map_ac21(
+        &mut self,
+        header: &mut DwgFileHeaderAC18,
+        meta: &Dwg21CompressedMetadata,
+    ) -> Result<()> {
+        let sections_map_id = meta.sections_map_id as usize;
+        let record = header.records.get(&sections_map_id).cloned()
+            .ok_or_else(|| {
+                DxfError::InvalidFormat(format!(
+                    "AC21 sections map ID {} not found in page records",
+                    sections_map_id
+                ))
+            })?;
+
+        // The section map page is at the offset given by the page record
+        let section_data = self.read_ac21_map_page(record.seeker as u64)?;
+
+        let mut c = Cursor::new(&section_data);
+
+        while (c.position() as usize) + 0x40 <= section_data.len() {
+            let compressed_size = c.read_u64::<LittleEndian>().unwrap_or(0);
+            let decompressed_size = c.read_u64::<LittleEndian>().unwrap_or(0);
+            let _encrypted = c.read_u64::<LittleEndian>().unwrap_or(0);
+            let _hash_code = c.read_u64::<LittleEndian>().unwrap_or(0);
+            let name_length = c.read_u64::<LittleEndian>().unwrap_or(0);
+            let _unknown = c.read_u64::<LittleEndian>().unwrap_or(0);
+            let encoding_val = c.read_u64::<LittleEndian>().unwrap_or(0);
+            let page_count = c.read_u64::<LittleEndian>().unwrap_or(0) as usize;
+
+            // Read section name (UTF-16LE characters; name_length = char count)
+            let name = if name_length > 0 {
+                let byte_count = (name_length as usize) * 2; // UTF-16LE: 2 bytes per char
+                if (c.position() as usize) + byte_count > section_data.len() {
+                    break;
+                }
+                let mut name_bytes = vec![0u8; byte_count];
+                c.read_exact(&mut name_bytes).unwrap_or_default();
+                let u16_values: Vec<u16> = name_bytes
+                    .chunks_exact(2)
+                    .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                    .collect();
+                String::from_utf16_lossy(&u16_values).replace('\0', "")
+            } else {
+                String::new()
+            };
+
+            let mut descriptor = DwgSectionDescriptor::new(&name);
+            descriptor.compressed_size = compressed_size;
+            descriptor.decompressed_size = decompressed_size;
+            descriptor.compressed_code = encoding_val as i32;
+
+            // Read page info for each page in this section (7 × u64 per page)
+            for _ in 0..page_count {
+                if (c.position() as usize) + 56 > section_data.len() {
+                    break;
+                }
+                let page_offset = c.read_u64::<LittleEndian>().unwrap_or(0);
+                let page_size = c.read_u64::<LittleEndian>().unwrap_or(0);
+                let page_number = c.read_u64::<LittleEndian>().unwrap_or(0) as i32;
+                let page_decompressed_size = c.read_u64::<LittleEndian>().unwrap_or(0);
+                let page_compressed_size = c.read_u64::<LittleEndian>().unwrap_or(0);
+                let _page_checksum = c.read_u64::<LittleEndian>().unwrap_or(0);
+                let _page_crc = c.read_u64::<LittleEndian>().unwrap_or(0);
+
+                let mut page = DwgLocalSectionMap::default();
+                page.page_number = page_number;
+                page.offset = page_offset;
+                page.size = page_size;
+                page.decompressed_size = page_decompressed_size;
+                page.compressed_size = page_compressed_size;
+
+                // Look up this page's file seeker from the page map records
+                if let Some(rec) = header.records.get(&(page_number as usize)) {
+                    page.seeker = rec.seeker as u64;
+                }
+
+                descriptor.local_sections.push(page);
+            }
+
+            if !name.is_empty() {
+                header.descriptors.insert(name, descriptor);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Read a page/section map page at the given absolute file position.
+    /// Reads 20-byte page header, then LZ77 decompresses the data.
+    fn read_ac21_map_page(
+        &mut self,
+        file_position: u64,
+    ) -> Result<Vec<u8>> {
+        self.reader.seek(SeekFrom::Start(file_position))?;
+
+        // Read 20-byte page header
+        let _section_map_type = self.reader.read_i32::<LittleEndian>()?;
+        let decompressed_size = self.reader.read_i32::<LittleEndian>()? as usize;
+        let compressed_size = self.reader.read_i32::<LittleEndian>()? as usize;
+        let compression_type = self.reader.read_i32::<LittleEndian>()?;
+        let _checksum = self.reader.read_i32::<LittleEndian>()?;
+
+        // Read compressed data
+        let mut compressed_data = vec![0u8; compressed_size];
+        self.reader.read_exact(&mut compressed_data)?;
+
+        // Decompress
+        if compression_type == 2 && decompressed_size > 0 {
+            let decompressor = Lz77Ac21Decompressor;
+            decompressor.decompress(&compressed_data, decompressed_size)
+        } else {
+            Ok(compressed_data)
+        }
     }
 
     // ------------------------------------------------------------------
@@ -872,7 +1132,7 @@ impl<R: Read + Seek> DwgReader<R> {
 
     /// Extract section data for AC21 (R2007).
     ///
-    /// AC21 uses Reed-Solomon encoded pages + LZ77 AC21 compression.
+    /// AC21 data pages: masked 32-byte header + LZ77 AC21 compressed data.
     fn get_section_buffer_ac21(
         &mut self,
         header: DwgFileHeaderAC21,
@@ -893,39 +1153,49 @@ impl<R: Read + Seek> DwgReader<R> {
         let decompressor = Lz77Ac21Decompressor;
 
         for page in &descriptor.local_sections {
-            // For AC21, pages use RS encoding.
-            // Seek to the page's file offset.
-            let page_offset = ac21::DATA_PAGE_BASE_OFFSET + page.seeker;
+            // page.seeker is already the absolute file position
+            let page_offset = page.seeker;
             self.reader.seek(SeekFrom::Start(page_offset))?;
 
-            let compressed_size = page.compressed_size;
-            let decompressed_size = page.decompressed_size as usize;
+            // Read and unmask the 32-byte page header
+            let mut header_buf = [0u8; 32];
+            self.reader.read_exact(&mut header_buf)?;
 
+            // Unmask: XOR with (0x4164536B ^ stream_position_without_base)
+            let mask = 0x4164536Bu32 ^ (page.seeker as u32);
+            let mask_bytes = mask.to_le_bytes();
+            for i in (0..32).step_by(4) {
+                for j in 0..4 {
+                    header_buf[i + j] ^= mask_bytes[j];
+                }
+            }
+
+            // Parse the unmasked 32-byte header
+            let mut hc = Cursor::new(&header_buf[..]);
+            let _page_type = hc.read_i32::<LittleEndian>().unwrap_or(0);
+            let _section_id = hc.read_i32::<LittleEndian>().unwrap_or(0);
+            let compressed_size = hc.read_i32::<LittleEndian>().unwrap_or(0) as usize;
+            let _page_size = hc.read_i32::<LittleEndian>().unwrap_or(0);
+            let _start_offset = hc.read_i64::<LittleEndian>().unwrap_or(0);
+            let _checksum = hc.read_u32::<LittleEndian>().unwrap_or(0);
+            let _oda = hc.read_u32::<LittleEndian>().unwrap_or(0);
+
+            let decompressed_size = page.decompressed_size as usize;
             if compressed_size == 0 || decompressed_size == 0 {
                 continue;
             }
 
-            // Compute RS parameters.
-            let (factor, read_size) = reed_solomon::compute_page_buffer_params(
-                compressed_size,
-                1, // Correction factor — may come from compressed metadata.
-                251,
-            );
+            // Read compressed data
+            let mut compressed_data = vec![0u8; compressed_size];
+            self.reader.read_exact(&mut compressed_data)?;
 
-            // Read the RS encoded data.
-            let mut rs_data = vec![0u8; read_size];
-            let bytes_read = self.reader.read(&mut rs_data)?;
-            rs_data.truncate(bytes_read);
-
-            // RS decode.
-            let decoded = reed_solomon::decode(&rs_data, compressed_size as usize, factor, 251);
-
-            // LZ77 AC21 decompress.
-            if descriptor.compressed_code == 2 {
-                let decompressed = decompressor.decompress(&decoded, decompressed_size)?;
+            // LZ77 AC21 decompress: determine compression by comparing sizes
+            // (matching the C# reference which checks CompressedSize != DecompressedSize)
+            if compressed_size != decompressed_size && decompressed_size > 0 {
+                let decompressed = decompressor.decompress(&compressed_data, decompressed_size)?;
                 result.extend_from_slice(&decompressed);
             } else {
-                result.extend_from_slice(&decoded);
+                result.extend_from_slice(&compressed_data);
             }
         }
 

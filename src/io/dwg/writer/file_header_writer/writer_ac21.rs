@@ -163,9 +163,10 @@ impl DwgFileHeaderWriterAC21 {
             holder.resize(decompressed_size, 0);
             self.compressor.compress(&holder, 0, decompressed_size)
         } else {
-            let mut data = Vec::with_capacity(decompressed_size);
-            data.extend_from_slice(&buffer[offset..offset + total_size]);
-            data.resize(decompressed_size, 0);
+            // For uncompressed data, store exactly the actual bytes
+            // so that compressed_size == decompressed_size (the reader
+            // uses this equality to skip LZ77 decompression).
+            let data = buffer[offset..offset + total_size].to_vec();
             Ok(data)
         }
     }
@@ -211,7 +212,13 @@ impl DwgFileHeaderWriterAC21 {
 
         let compress_diff = checksum::compression_padding(compressed_data.len());
         local_map.compressed_size = compressed_data.len() as u64;
-        local_map.decompressed_size = total_size as u64;
+        // When compressed, the data is padded to `decompressed_size` before compression,
+        // so the decompressor will produce `decompressed_size` bytes (not `total_size`).
+        local_map.decompressed_size = if is_compressed {
+            decompressed_size as u64
+        } else {
+            total_size as u64
+        };
         local_map.page_size = local_map.compressed_size + 32 + compress_diff as u64;
         local_map.checksum = 0;
 
@@ -242,11 +249,10 @@ impl DwgFileHeaderWriterAC21 {
         self.output.extend_from_slice(&checksum_buf);
         self.output.extend_from_slice(&compressed_data);
 
-        // Write compression padding
-        if is_compressed {
-            for i in 0..compress_diff {
-                self.output.push(MAGIC_SEQUENCE[i % 256]);
-            }
+        // Write compression padding (always, to ensure 32-byte alignment
+        // so that page sizes in the page map don't drift from magic alignment bytes)
+        for i in 0..compress_diff {
+            self.output.push(MAGIC_SEQUENCE[i % 256]);
         }
 
         if local_map.page_number > 0 {
@@ -336,8 +342,8 @@ impl DwgFileHeaderWriterAC21 {
             map_data.extend_from_slice(&(name_utf16.len() as u64).to_le_bytes());
             // 6. unknown (0)
             map_data.extend_from_slice(&0u64.to_le_bytes());
-            // 7. encoding (4 = RS)
-            map_data.extend_from_slice(&4u64.to_le_bytes());
+            // 7. encoding (compressed_code: 2 = compressed, 1 = uncompressed)
+            map_data.extend_from_slice(&(desc.compressed_code as u64).to_le_bytes());
             // 8. page_count
             map_data.extend_from_slice(&(desc.page_count as u64).to_le_bytes());
 
@@ -636,9 +642,21 @@ impl DwgFileHeaderWriterAC21 {
         let compressed_meta = self.compressor.compress(&metadata_raw, 0, metadata_raw.len())
             .unwrap_or_else(|_| metadata_raw.clone());
 
-        // RS-encode the compressed metadata.
+        // Build the 32-byte header that precedes the compressed data
+        // (matching the C# DWG spec: CRC, unknown key, compressed CRC,
+        //  comprLen i32, length2 i32).
+        let compr_len = compressed_meta.len() as i32;
+        let mut rs_payload = Vec::with_capacity(32 + compressed_meta.len());
+        rs_payload.extend_from_slice(&0i64.to_le_bytes());          // 0x00: CRC (placeholder)
+        rs_payload.extend_from_slice(&0i64.to_le_bytes());          // 0x08: Unknown key
+        rs_payload.extend_from_slice(&0i64.to_le_bytes());          // 0x10: Compressed data CRC (placeholder)
+        rs_payload.extend_from_slice(&compr_len.to_le_bytes());     // 0x18: ComprLen
+        rs_payload.extend_from_slice(&compr_len.to_le_bytes());     // 0x1C: Length2
+        rs_payload.extend_from_slice(&compressed_meta);             // 0x20: Compressed data
+
+        // RS-encode the payload (header + compressed metadata).
         let rs_encoded = reed_solomon::encode(
-            &compressed_meta,
+            &rs_payload,
             RS_FACTOR_HEADER,
             RS_BLOCK_SIZE_HEADER,
         );
