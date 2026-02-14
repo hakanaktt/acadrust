@@ -91,7 +91,9 @@ impl DwgFileHeaderWriterAC18 {
         buffer[offset..offset + count].iter().all(|&b| b == 0)
     }
 
-    /// Compress data (or copy if not compressed), pad to `decompressed_size`.
+    /// Compress data (or copy if not compressed).
+    /// For compressed data, pads to `decompressed_size` before compressing.
+    /// For uncompressed data, stores the actual bytes without padding.
     fn apply_compression(
         &self,
         buffer: &[u8],
@@ -101,15 +103,14 @@ impl DwgFileHeaderWriterAC18 {
         is_compressed: bool,
     ) -> Result<Vec<u8>> {
         if is_compressed {
-            // Pad to decompressed_size
+            // Pad to decompressed_size before compressing (zeros compress well)
             let mut holder = Vec::with_capacity(decompressed_size);
             holder.extend_from_slice(&buffer[offset..offset + total_size]);
             holder.resize(decompressed_size, 0);
             self.compressor.compress(&holder, 0, decompressed_size)
         } else {
-            let mut data = Vec::with_capacity(decompressed_size);
-            data.extend_from_slice(&buffer[offset..offset + total_size]);
-            data.resize(decompressed_size, 0);
+            // Uncompressed: store only the actual bytes, no padding
+            let data = buffer[offset..offset + total_size].to_vec();
             Ok(data)
         }
     }

@@ -1163,13 +1163,111 @@ impl CadDocument {
         active_vport.set_handle(self.allocate_handle());
         self.vports.add(active_vport).ok();
         
-        // Allocate dictionary handles (required for DWG format)
+        // Allocate dictionary handles and create actual dictionary objects
+        // (required for DWG format — readers follow these handle references)
         self.header.named_objects_dict_handle = self.allocate_handle();
         self.header.acad_group_dict_handle = self.allocate_handle();
         self.header.acad_mlinestyle_dict_handle = self.allocate_handle();
         self.header.acad_layout_dict_handle = self.allocate_handle();
         self.header.acad_plotsettings_dict_handle = self.allocate_handle();
         self.header.acad_plotstylename_dict_handle = self.allocate_handle();
+
+        // Allocate layout handles for model space and paper space
+        let model_layout_handle = self.allocate_handle();
+        let paper_layout_handle = self.allocate_handle();
+
+        // Link the BlockRecords to their layout handles
+        if let Some(ms) = self.block_records.iter_mut().find(|b| b.is_model_space()) {
+            ms.layout = model_layout_handle;
+        }
+        if let Some(ps) = self.block_records.iter_mut().find(|b| b.is_paper_space()) {
+            ps.layout = paper_layout_handle;
+        }
+
+        // Create sub-dictionaries
+        let root_handle = self.header.named_objects_dict_handle;
+
+        // ACAD_GROUP dictionary (empty)
+        let mut group_dict = crate::objects::Dictionary::new();
+        group_dict.handle = self.header.acad_group_dict_handle;
+        group_dict.owner = root_handle;
+        self.objects.insert(
+            self.header.acad_group_dict_handle,
+            crate::objects::ObjectType::Dictionary(group_dict),
+        );
+
+        // ACAD_MLINESTYLE dictionary (empty)
+        let mut mlinestyle_dict = crate::objects::Dictionary::new();
+        mlinestyle_dict.handle = self.header.acad_mlinestyle_dict_handle;
+        mlinestyle_dict.owner = root_handle;
+        self.objects.insert(
+            self.header.acad_mlinestyle_dict_handle,
+            crate::objects::ObjectType::Dictionary(mlinestyle_dict),
+        );
+
+        // ACAD_LAYOUT dictionary — contains Model and Layout1
+        let mut layout_dict = crate::objects::Dictionary::new();
+        layout_dict.handle = self.header.acad_layout_dict_handle;
+        layout_dict.owner = root_handle;
+        layout_dict.add_entry("Model".to_string(), model_layout_handle);
+        layout_dict.add_entry("Layout1".to_string(), paper_layout_handle);
+        self.objects.insert(
+            self.header.acad_layout_dict_handle,
+            crate::objects::ObjectType::Dictionary(layout_dict),
+        );
+
+        // ACAD_PLOTSETTINGS dictionary (empty)
+        let mut plotsettings_dict = crate::objects::Dictionary::new();
+        plotsettings_dict.handle = self.header.acad_plotsettings_dict_handle;
+        plotsettings_dict.owner = root_handle;
+        self.objects.insert(
+            self.header.acad_plotsettings_dict_handle,
+            crate::objects::ObjectType::Dictionary(plotsettings_dict),
+        );
+
+        // ACAD_PLOTSTYLENAME dictionary (empty)
+        let mut plotstylename_dict = crate::objects::Dictionary::new();
+        plotstylename_dict.handle = self.header.acad_plotstylename_dict_handle;
+        plotstylename_dict.owner = root_handle;
+        self.objects.insert(
+            self.header.acad_plotstylename_dict_handle,
+            crate::objects::ObjectType::Dictionary(plotstylename_dict),
+        );
+
+        // Create the root dictionary (named objects dictionary)
+        let mut root_dict = crate::objects::Dictionary::new();
+        root_dict.handle = root_handle;
+        root_dict.owner = Handle::new(0); // root has no owner
+        root_dict.add_entry("ACAD_GROUP".to_string(), self.header.acad_group_dict_handle);
+        root_dict.add_entry("ACAD_MLINESTYLE".to_string(), self.header.acad_mlinestyle_dict_handle);
+        root_dict.add_entry("ACAD_LAYOUT".to_string(), self.header.acad_layout_dict_handle);
+        root_dict.add_entry("ACAD_PLOTSETTINGS".to_string(), self.header.acad_plotsettings_dict_handle);
+        root_dict.add_entry("ACAD_PLOTSTYLENAME".to_string(), self.header.acad_plotstylename_dict_handle);
+        self.objects.insert(
+            root_handle,
+            crate::objects::ObjectType::Dictionary(root_dict),
+        );
+
+        // Create model space layout
+        let mut model_layout = crate::objects::Layout::model();
+        model_layout.handle = model_layout_handle;
+        model_layout.owner = self.header.acad_layout_dict_handle;
+        model_layout.block_record = self.header.model_space_block_handle;
+        self.objects.insert(
+            model_layout_handle,
+            crate::objects::ObjectType::Layout(model_layout),
+        );
+
+        // Create paper space layout
+        let mut paper_layout = crate::objects::Layout::new("Layout1");
+        paper_layout.handle = paper_layout_handle;
+        paper_layout.owner = self.header.acad_layout_dict_handle;
+        paper_layout.block_record = self.header.paper_space_block_handle;
+        paper_layout.tab_order = 1;
+        self.objects.insert(
+            paper_layout_handle,
+            crate::objects::ObjectType::Layout(paper_layout),
+        );
     }
 
     /// Allocate a new unique handle

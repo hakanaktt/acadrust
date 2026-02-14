@@ -93,13 +93,30 @@ impl DwgWriter {
         }
 
         // -------------------------------------------------------------------
-        // 4. Preview section (AcDb:Preview) — before objects per C# order
+        // 4. ObjFreeSpace and Template (before objects, matching ACadSharp order)
         // -------------------------------------------------------------------
-        let preview_data = DwgPreviewWriter::new(version).write_empty()?;
-        file_writer.add_section(section_names::PREVIEW, preview_data, false, 0)?;
+        // For R2004+, these are added later (after objects). For AC15, they go here.
+        let _obj_free_space_placeholder = if !sio.r2004_plus {
+            // Write placeholder — will be overwritten below with correct handle count
+            let placeholder_data = Self::write_obj_free_space(0);
+            file_writer.add_section(section_names::OBJ_FREE_SPACE, placeholder_data, false, 0)?;
+
+            let template_data = Self::write_template();
+            file_writer.add_section(section_names::TEMPLATE, template_data, false, 0)?;
+            true
+        } else {
+            false
+        };
 
         // -------------------------------------------------------------------
-        // 5. R2004+ only sections: AppInfo, FileDepList, RevHistory
+        // 5. Aux Header (ALL versions — C# writeAuxHeader() has no version guard)
+        // -------------------------------------------------------------------
+        let aux_header_data = DwgAuxHeaderWriter::new(version)
+            .write(&doc.header, maintenance_version as i16)?;
+        file_writer.add_section(section_names::AUX_HEADER, aux_header_data, sio.r2004_plus, 0)?;
+
+        // -------------------------------------------------------------------
+        // 6. R2004+ only sections: AppInfo, FileDepList, RevHistory
         // -------------------------------------------------------------------
         if sio.r2004_plus {
             // App Info (AcDb:AppInfo)
@@ -121,13 +138,6 @@ impl DwgWriter {
         }
 
         // -------------------------------------------------------------------
-        // 6. Aux Header (ALL versions — C# writeAuxHeader() has no version guard)
-        // -------------------------------------------------------------------
-        let aux_header_data = DwgAuxHeaderWriter::new(version)
-            .write(&doc.header, maintenance_version as i16)?;
-        file_writer.add_section(section_names::AUX_HEADER, aux_header_data, sio.r2004_plus, 0)?;
-
-        // -------------------------------------------------------------------
         // 7. Objects section (AcDb:AcDbObjects)
         // -------------------------------------------------------------------
         let obj_writer = DwgObjectWriter::new(version, doc);
@@ -143,34 +153,37 @@ impl DwgWriter {
         let section_offset = file_writer.handle_section_offset();
 
         // -------------------------------------------------------------------
-        // 8. ObjFreeSpace and Template (all versions)
-        // -------------------------------------------------------------------
-        let obj_free_space_data = Self::write_obj_free_space(handle_map.len() as u32);
-        file_writer.add_section(
-            section_names::OBJ_FREE_SPACE,
-            obj_free_space_data,
-            sio.r2004_plus,
-            0,
-        )?;
-
-        let template_data = Self::write_template();
-        file_writer.add_section(
-            section_names::TEMPLATE,
-            template_data,
-            sio.r2004_plus,
-            0,
-        )?;
-
-        // -------------------------------------------------------------------
-        // 9. Handles section (last — C# "Write in last place to avoid
-        //    conflicts with versions < AC1018")
+        // 8. Handles section (C# "Write in last place to avoid conflicts
+        //    with versions < AC1018")
         // -------------------------------------------------------------------
         let handles_data = DwgHandleWriter::new(version)
             .write(&handle_map, section_offset)?;
         file_writer.add_section(section_names::HANDLES, handles_data, sio.r2004_plus, 0)?;
 
         // -------------------------------------------------------------------
-        // 10. Assemble final file
+        // 9. R2004+: ObjFreeSpace and Template (after handles for page-based layout)
+        // -------------------------------------------------------------------
+        if sio.r2004_plus {
+            let obj_free_space_data = Self::write_obj_free_space(handle_map.len() as u32);
+            file_writer.add_section(
+                section_names::OBJ_FREE_SPACE,
+                obj_free_space_data,
+                true,
+                0,
+            )?;
+
+            let template_data = Self::write_template();
+            file_writer.add_section(section_names::TEMPLATE, template_data, true, 0)?;
+        }
+
+        // -------------------------------------------------------------------
+        // 10. Preview section (AcDb:Preview) — last per ACadSharp order
+        // -------------------------------------------------------------------
+        let preview_data = DwgPreviewWriter::new(version).write_empty()?;
+        file_writer.add_section(section_names::PREVIEW, preview_data, false, 0)?;
+
+        // -------------------------------------------------------------------
+        // 11. Assemble final file
         // -------------------------------------------------------------------
         file_writer.write_file()
     }
@@ -336,4 +349,5 @@ impl DwgWriter {
 
         data
     }
+
 }

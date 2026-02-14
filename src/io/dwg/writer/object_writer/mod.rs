@@ -25,7 +25,7 @@ use crate::io::dwg::writer::merged_writer::{DwgMergedStreamWriter, DwgMergedStre
 use crate::io::dwg::writer::stream_writer::IDwgStreamWriter;
 use crate::objects::ObjectType;
 use crate::tables::TableEntry;
-use crate::types::{DxfVersion, Vector3};
+use crate::types::{DxfVersion, Handle, Vector3};
 
 use write_tables::TableControlType;
 
@@ -153,16 +153,33 @@ impl DwgObjectWriter {
     ///   - the objects section data (`Vec<u8>`)
     ///   - the handle → offset map (`BTreeMap<u64, i64>`)
     pub fn write(mut self, doc: &CadDocument) -> Result<(Vec<u8>, BTreeMap<u64, i64>)> {
-        // 1. Table controls ------------------------------------------------
-        self.write_table_controls(doc)?;
+        // R2004+: write 0x0DCA magic prefix (matches ACadSharp)
+        if self.sio.r2004_plus {
+            self.objects_stream
+                .extend_from_slice(&0x0DCAi32.to_le_bytes());
+        }
 
-        // 2. Table entries --------------------------------------------------
-        self.write_table_entries(doc)?;
+        // ACadSharp interleaves table control + entries before block entities.
+        // The order is:
+        //   1. BLOCK_CONTROL + block record headers (entries)
+        //   2. LAYER_CONTROL + layer entries
+        //   3. STYLE_CONTROL + text style entries
+        //   4. LTYPE_CONTROL + linetype entries
+        //   5. VIEW_CONTROL + view entries
+        //   6. UCS_CONTROL + UCS entries
+        //   7. VPORT_CONTROL + VPort entries
+        //   8. APPID_CONTROL + app ID entries
+        //   9. DIMSTYLE_CONTROL + dimension style entries
+        //   10. Block entities (BLOCK, owned entities, ENDBLK)
+        //   11. Non-graphical objects (BFS from root dictionary)
 
-        // 3. Block entities (BLOCK, owned entities, ENDBLK) -----------------
+        // 1. Tables: control + entries interleaved -------------------------
+        self.write_tables_interleaved(doc)?;
+
+        // 2. Block entities (BLOCK, owned entities, ENDBLK) -----------------
         self.write_block_contents(doc)?;
 
-        // 4. Non-graphical objects ------------------------------------------
+        // 3. Non-graphical objects ------------------------------------------
         self.write_nongraphical_objects(doc)?;
 
         Ok((self.objects_stream, self.handle_map))
@@ -235,11 +252,12 @@ impl DwgObjectWriter {
     // Internal orchestration helpers
     // -----------------------------------------------------------------------
 
-    /// Write the nine table control objects.
-    fn write_table_controls(&mut self, doc: &CadDocument) -> Result<()> {
+    /// Write the nine table control objects interleaved with their entries.
+    /// Matches ACadSharp's write order: control → all entries → next control → all entries.
+    fn write_tables_interleaved(&mut self, doc: &CadDocument) -> Result<()> {
         let hdr = &doc.header;
 
-        // BLOCK_CONTROL (special: Model_Space/Paper_Space separated)
+        // ── BLOCK_CONTROL + block record entries ──────────────────────
         let mut regular_block_handles: Vec<u64> = Vec::new();
         let mut model_space_block_handle = 0u64;
         let mut paper_space_block_handle = 0u64;
@@ -254,13 +272,39 @@ impl DwgObjectWriter {
         }
         self.write_block_control(
             hdr.block_control_handle.value(),
-            0, // owned by root
+            0,
             &regular_block_handles,
             model_space_block_handle,
             paper_space_block_handle,
         )?;
 
-        // LAYER_CONTROL
+        // Block record entries (headers) — written here to match ACadSharp
+        let block_ctrl = hdr.block_control_handle.value();
+        let blocks: Vec<_> = doc.block_records.iter().cloned().collect();
+        let standalone_entities: Vec<_> = doc.entities().cloned().collect();
+        for block in &blocks {
+            let is_model_space = block.is_model_space();
+            let mut entity_handles: Vec<u64> = block
+                .entities
+                .iter()
+                .map(|e| e.common().handle.value())
+                .collect();
+            if is_model_space {
+                for e in &standalone_entities {
+                    entity_handles.push(e.common().handle.value());
+                }
+            }
+            self.write_block_header(
+                block,
+                block_ctrl,
+                &entity_handles,
+                block.block_entity_handle.value(),
+                block.block_end_handle.value(),
+                block.layout.value(),
+            )?;
+        }
+
+        // ── LAYER_CONTROL + entries ──────────────────────────────────
         let layer_entry_handles: Vec<u64> =
             doc.layers.iter().map(|l| l.handle.value()).collect();
         self.write_table_control(
@@ -270,8 +314,13 @@ impl DwgObjectWriter {
             0,
             &layer_entry_handles,
         )?;
+        let layer_ctrl = hdr.layer_control_handle.value();
+        let layers: Vec<_> = doc.layers.iter().cloned().collect();
+        for layer in &layers {
+            self.write_layer(layer, layer_ctrl)?;
+        }
 
-        // STYLE_CONTROL (text styles)
+        // ── STYLE_CONTROL + entries ──────────────────────────────────
         let style_entry_handles: Vec<u64> =
             doc.text_styles.iter().map(|s| s.handle.value()).collect();
         self.write_table_control(
@@ -281,8 +330,13 @@ impl DwgObjectWriter {
             0,
             &style_entry_handles,
         )?;
+        let style_ctrl = hdr.style_control_handle.value();
+        let styles: Vec<_> = doc.text_styles.iter().cloned().collect();
+        for style in &styles {
+            self.write_text_style(style, style_ctrl)?;
+        }
 
-        // LTYPE_CONTROL (special: extra ByLayer/ByBlock handles)
+        // ── LTYPE_CONTROL + entries ──────────────────────────────────
         let ltype_entry_handles: Vec<u64> = doc
             .line_types
             .iter()
@@ -295,8 +349,13 @@ impl DwgObjectWriter {
             hdr.bylayer_linetype_handle.value(),
             hdr.byblock_linetype_handle.value(),
         )?;
+        let ltype_ctrl = hdr.linetype_control_handle.value();
+        let ltypes: Vec<_> = doc.line_types.iter().cloned().collect();
+        for lt in &ltypes {
+            self.write_linetype(lt, ltype_ctrl)?;
+        }
 
-        // VIEW_CONTROL
+        // ── VIEW_CONTROL + entries ───────────────────────────────────
         let view_entry_handles: Vec<u64> =
             doc.views.iter().map(|v| v.handle.value()).collect();
         self.write_table_control(
@@ -306,8 +365,13 @@ impl DwgObjectWriter {
             0,
             &view_entry_handles,
         )?;
+        let view_ctrl = hdr.view_control_handle.value();
+        let views: Vec<_> = doc.views.iter().cloned().collect();
+        for v in &views {
+            self.write_view(v, view_ctrl)?;
+        }
 
-        // UCS_CONTROL
+        // ── UCS_CONTROL + entries ────────────────────────────────────
         let ucs_entry_handles: Vec<u64> =
             doc.ucss.iter().map(|u| u.handle.value()).collect();
         self.write_table_control(
@@ -317,8 +381,13 @@ impl DwgObjectWriter {
             0,
             &ucs_entry_handles,
         )?;
+        let ucs_ctrl = hdr.ucs_control_handle.value();
+        let ucss: Vec<_> = doc.ucss.iter().cloned().collect();
+        for ucs in &ucss {
+            self.write_ucs(ucs, ucs_ctrl)?;
+        }
 
-        // VPORT_CONTROL
+        // ── VPORT_CONTROL + entries ──────────────────────────────────
         let vport_entry_handles: Vec<u64> =
             doc.vports.iter().map(|v| v.handle.value()).collect();
         self.write_table_control(
@@ -328,8 +397,13 @@ impl DwgObjectWriter {
             0,
             &vport_entry_handles,
         )?;
+        let vport_ctrl = hdr.vport_control_handle.value();
+        let vports: Vec<_> = doc.vports.iter().cloned().collect();
+        for vp in &vports {
+            self.write_vport(vp, vport_ctrl)?;
+        }
 
-        // APPID_CONTROL
+        // ── APPID_CONTROL + entries ──────────────────────────────────
         let appid_entry_handles: Vec<u64> =
             doc.app_ids.iter().map(|a| a.handle.value()).collect();
         self.write_table_control(
@@ -339,8 +413,13 @@ impl DwgObjectWriter {
             0,
             &appid_entry_handles,
         )?;
+        let appid_ctrl = hdr.appid_control_handle.value();
+        let appids: Vec<_> = doc.app_ids.iter().cloned().collect();
+        for appid in &appids {
+            self.write_appid(appid, appid_ctrl)?;
+        }
 
-        // DIMSTYLE_CONTROL
+        // ── DIMSTYLE_CONTROL + entries (last, per ACadSharp) ─────────
         let dimstyle_entry_handles: Vec<u64> = doc
             .dim_styles
             .iter()
@@ -353,79 +432,23 @@ impl DwgObjectWriter {
             0,
             &dimstyle_entry_handles,
         )?;
-
-        Ok(())
-    }
-
-    /// Write all table entries.
-    fn write_table_entries(&mut self, doc: &CadDocument) -> Result<()> {
-        let hdr = &doc.header;
-
-        // Layers
-        let layer_ctrl = hdr.layer_control_handle.value();
-        let layers: Vec<_> = doc.layers.iter().cloned().collect();
-        for layer in &layers {
-            self.write_layer(layer, layer_ctrl)?;
-        }
-
-        // Text Styles
-        let style_ctrl = hdr.style_control_handle.value();
-        let styles: Vec<_> = doc.text_styles.iter().cloned().collect();
-        for style in &styles {
-            self.write_text_style(style, style_ctrl)?;
-        }
-
-        // Line Types
-        let ltype_ctrl = hdr.linetype_control_handle.value();
-        let ltypes: Vec<_> = doc.line_types.iter().cloned().collect();
-        for lt in &ltypes {
-            self.write_linetype(lt, ltype_ctrl)?;
-        }
-
-        // Application IDs
-        let appid_ctrl = hdr.appid_control_handle.value();
-        let appids: Vec<_> = doc.app_ids.iter().cloned().collect();
-        for appid in &appids {
-            self.write_appid(appid, appid_ctrl)?;
-        }
-
-        // Dimension Styles
         let dimstyle_ctrl = hdr.dimstyle_control_handle.value();
         let dimstyles: Vec<_> = doc.dim_styles.iter().cloned().collect();
         for ds in &dimstyles {
             self.write_dimstyle(ds, dimstyle_ctrl)?;
         }
 
-        // VPorts
-        let vport_ctrl = hdr.vport_control_handle.value();
-        let vports: Vec<_> = doc.vports.iter().cloned().collect();
-        for vp in &vports {
-            self.write_vport(vp, vport_ctrl)?;
-        }
-
-        // Views
-        let view_ctrl = hdr.view_control_handle.value();
-        let views: Vec<_> = doc.views.iter().cloned().collect();
-        for v in &views {
-            self.write_view(v, view_ctrl)?;
-        }
-
-        // UCS entries
-        let ucs_ctrl = hdr.ucs_control_handle.value();
-        let ucss: Vec<_> = doc.ucss.iter().cloned().collect();
-        for ucs in &ucss {
-            self.write_ucs(ucs, ucs_ctrl)?;
-        }
-
         Ok(())
     }
 
-    /// Write block contents: for each block record, write BLOCK_RECORD (header),
+    /// Write block contents: for each block record, write
     /// BLOCK entity, owned entities, and ENDBLK entity.
+    ///
+    /// Note: BLOCK_RECORD (header) objects are written in write_tables_interleaved()
+    /// as part of the block control entries, matching ACadSharp's order.
     ///
     /// For model-space: also includes standalone entities from `doc.entities`.
     fn write_block_contents(&mut self, doc: &CadDocument) -> Result<()> {
-        let block_ctrl = doc.header.block_control_handle.value();
         let blocks: Vec<_> = doc.block_records.iter().cloned().collect();
 
         // Collect standalone entity handles that belong to model space
@@ -434,30 +457,6 @@ impl DwgObjectWriter {
         for block in &blocks {
             let owner_handle = block.handle.value();
             let is_model_space = block.is_model_space();
-
-            // Collect entity handles for the block header.
-            // Include standalone entities for model space.
-            let mut entity_handles: Vec<u64> = block
-                .entities
-                .iter()
-                .map(|e| e.common().handle.value())
-                .collect();
-
-            if is_model_space {
-                for e in &standalone_entities {
-                    entity_handles.push(e.common().handle.value());
-                }
-            }
-
-            // Write block header (BLOCK_RECORD)
-            self.write_block_header(
-                block,
-                block_ctrl,
-                &entity_handles,
-                block.block_entity_handle.value(),
-                block.block_end_handle.value(),
-                block.layout.value(),
-            )?;
 
             // Write BLOCK entity (begin marker)
             {
@@ -491,10 +490,128 @@ impl DwgObjectWriter {
         Ok(())
     }
 
-    /// Write non-graphical objects (dictionaries, etc.).
+    /// Write non-graphical objects using BFS starting from the root dictionary.
+    ///
+    /// Mirrors ACadSharp's `writeObjects()`: a BFS queue seeded with the root
+    /// dictionary. Writing a dictionary enqueues its children, so nested
+    /// dictionaries cascade breadth-first.
     fn write_nongraphical_objects(&mut self, doc: &CadDocument) -> Result<()> {
-        let objects: Vec<_> = doc.objects.values().collect();
-        for obj in objects {
+        use std::collections::VecDeque;
+
+        let root_handle = doc.header.named_objects_dict_handle;
+        if root_handle.is_null() {
+            return Ok(());
+        }
+
+        // BFS queue of handles to write
+        let mut queue: VecDeque<Handle> = VecDeque::new();
+        let mut written: std::collections::HashSet<Handle> = std::collections::HashSet::new();
+
+        // Seed with root dictionary
+        queue.push_back(root_handle);
+
+        while let Some(obj_handle) = queue.pop_front() {
+            if obj_handle.is_null() || written.contains(&obj_handle) {
+                continue;
+            }
+            written.insert(obj_handle);
+
+            let obj = match doc.objects.get(&obj_handle) {
+                Some(o) => o.clone(),
+                None => continue,
+            };
+
+            // Write the object and enqueue children from dictionaries
+            match &obj {
+                ObjectType::Dictionary(dict) => {
+                    let owner_h = dict.owner.value();
+                    self.write_dictionary(dict, owner_h)?;
+                    // Enqueue all dictionary entries (BFS expansion)
+                    for (_, entry_handle) in &dict.entries {
+                        if !written.contains(entry_handle) {
+                            queue.push_back(*entry_handle);
+                        }
+                    }
+                }
+                ObjectType::DictionaryWithDefault(dict) => {
+                    let owner_h = dict.owner.value();
+                    self.write_dictionary_with_default(dict, owner_h)?;
+                    for (_, entry_handle) in &dict.entries {
+                        if !written.contains(entry_handle) {
+                            queue.push_back(*entry_handle);
+                        }
+                    }
+                }
+                ObjectType::DictionaryVariable(dv) => {
+                    let owner_h = dv.owner_handle.value();
+                    self.write_dictionary_variable(dv, owner_h)?;
+                }
+                ObjectType::XRecord(xr) => {
+                    let owner_h = xr.owner.value();
+                    self.write_xrecord(xr, owner_h)?;
+                }
+                ObjectType::PlotSettings(ps) => {
+                    let owner_h = ps.owner.value();
+                    self.write_plot_settings_obj(ps, owner_h)?;
+                }
+                ObjectType::Layout(layout) => {
+                    let owner_h = layout.owner.value();
+                    self.write_layout(layout, owner_h)?;
+                }
+                ObjectType::Group(group) => {
+                    let owner_h = group.owner.value();
+                    self.write_group(group, owner_h)?;
+                }
+                ObjectType::MLineStyle(style) => {
+                    let owner_h = style.owner.value();
+                    self.write_mline_style(style, owner_h)?;
+                }
+                ObjectType::ImageDefinition(imgdef) => {
+                    let owner_h = imgdef.owner.value();
+                    self.write_image_definition(imgdef, owner_h)?;
+                }
+                ObjectType::ImageDefinitionReactor(reactor) => {
+                    let owner_h = reactor.owner.value();
+                    self.write_image_definition_reactor(reactor, owner_h)?;
+                }
+                ObjectType::MultiLeaderStyle(style) => {
+                    let owner_h = style.owner_handle.value();
+                    self.write_mleader_style(style, owner_h)?;
+                }
+                ObjectType::Scale(scale) => {
+                    let owner_h = scale.owner_handle.value();
+                    self.write_scale(scale, owner_h)?;
+                }
+                ObjectType::SortEntitiesTable(table) => {
+                    let owner_h = table.owner_handle.value();
+                    self.write_sort_entities_table(table, owner_h)?;
+                }
+                ObjectType::RasterVariables(rv) => {
+                    let owner_h = rv.owner.value();
+                    self.write_raster_variables(rv, owner_h)?;
+                }
+                ObjectType::BookColor(bc) => {
+                    let owner_h = bc.owner.value();
+                    self.write_book_color(bc, owner_h)?;
+                }
+                ObjectType::PlaceHolder(ph) => {
+                    let owner_h = ph.owner.value();
+                    self.write_placeholder(ph, owner_h)?;
+                }
+                ObjectType::WipeoutVariables(wv) => {
+                    let owner_h = wv.owner.value();
+                    self.write_wipeout_variables(wv, owner_h)?;
+                }
+                // Other object types — skip for now
+                _ => {}
+            }
+        }
+
+        // Write any remaining objects not reachable from root dictionary
+        for (handle, obj) in &doc.objects {
+            if written.contains(handle) {
+                continue;
+            }
             match obj {
                 ObjectType::Dictionary(dict) => {
                     let owner_h = dict.owner.value();
@@ -564,10 +681,10 @@ impl DwgObjectWriter {
                     let owner_h = wv.owner.value();
                     self.write_wipeout_variables(wv, owner_h)?;
                 }
-                // Other object types — skip for now
                 _ => {}
             }
         }
+
         Ok(())
     }
 }
