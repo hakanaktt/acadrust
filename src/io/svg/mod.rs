@@ -64,7 +64,7 @@ use crate::types::{BoundingBox3D, Color, Vector3};
 /// Convert an AutoCAD Color Index (ACI) value to an sRGB triple.
 ///
 /// Follows the standard AutoCAD 256-colour palette.
-fn aci_to_rgb(index: u8) -> (u8, u8, u8) {
+pub(crate) fn aci_to_rgb(index: u8) -> (u8, u8, u8) {
     match index {
         0 => (0, 0, 0),         // ByBlock – fall back to black
         1 => (255, 0, 0),       // Red

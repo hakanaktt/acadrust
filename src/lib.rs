@@ -12,6 +12,7 @@
 //! - **DXF** — Read and write ASCII and Binary DXF (R12 through R2018+)
 //! - **DWG** — Read and write native DWG binary files (R13 through R2018+)
 //! - **SVG** — Export drawings to Scalable Vector Graphics
+//! - **PDF** — Export drawings to PDF 1.4 (pure Rust, no extra dependencies)
 //! - **41 entity types**, 9 table types, 20+ non-graphical objects
 //! - **ACIS/SAT/SAB** — Parse and write ACIS solid-model data (SAT text and SAB binary);
 //!   parametric primitive builders for box, wedge, pyramid, cylinder, cone, sphere, and torus
@@ -100,8 +101,9 @@
 //! | [`tables`]   | Table entries ([`Layer`], [`LineType`], [`TextStyle`], [`DimStyle`], …) |
 //! | [`objects`]   | Non-graphical objects (dictionaries, layouts, styles) |
 //! | [`types`]     | Primitives ([`Vector3`], [`Color`], [`Handle`], [`DxfVersion`], …) |
-//! | [`io`]        | Readers and writers for DXF, DWG, and SVG |
+//! | [`io`]        | Readers and writers for DXF, DWG, SVG, and PDF |
 //! | [`io::svg`]   | [`SvgWriter`] — export drawings to SVG format |
+//! | [`io::pdf`]   | [`PdfWriter`] — export drawings to PDF 1.4 format |
 //! | [`entities::acis`] | ACIS/SAT/SAB solid-model parser, writer, and primitive builders |
 //! | [`classes`]   | DXF class definitions (CLASSES section) |
 //! | [`xdata`]     | Extended data (XData) attached to entities |
@@ -161,6 +163,7 @@ pub use document::CadDocument;
 pub use io::dxf::{DxfReader, DxfWriter};
 pub use io::dwg::{DwgReader, DwgReadOptions, DwgWriter};
 pub use io::svg::SvgWriter;
+pub use io::pdf::PdfWriter;
 
 // Re-export ACIS types
 pub use entities::acis::{SatDocument, SatHeader, SatVersion, SatRecord, SatPointer, SatToken};
