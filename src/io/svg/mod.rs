@@ -568,6 +568,9 @@ fn escape_xml(s: &str) -> String {
 }
 
 /// Strip MTEXT inline formatting codes (e.g. `\P`, `\f{...}`, `{…}`).
+///
+/// A trailing backslash (which would be malformed MTEXT) is silently discarded,
+/// as there is no character code for it to prefix.
 fn strip_mtext_codes(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
@@ -704,5 +707,7 @@ mod tests {
     fn test_strip_mtext_codes() {
         assert_eq!(strip_mtext_codes(r"\P"), "");
         assert_eq!(strip_mtext_codes("{hello}"), "hello");
+        // Trailing backslash (malformed MTEXT): silently dropped.
+        assert_eq!(strip_mtext_codes(r"hello\"), "hello");
     }
 }
