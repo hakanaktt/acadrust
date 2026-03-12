@@ -745,7 +745,220 @@ impl Entity for Hatch {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::document::CadDocument;
+    use crate::entities::EntityType;
+    use crate::io::dxf::{DxfReader, DxfWriter};
+    use std::io::Cursor;
 
+    /// Helper: create a document with a hatch, write to DXF, read back, return the parsed Hatch.
+    fn roundtrip_hatch(hatch: Hatch) -> Hatch {
+        let mut doc = CadDocument::new();
+        doc.add_entity(EntityType::Hatch(hatch)).unwrap();
 
+        let writer = DxfWriter::new(doc);
+        let buf = writer.write_to_vec().unwrap();
 
+        let reader = DxfReader::from_reader(Cursor::new(buf)).unwrap();
+        let read_doc = reader.read().unwrap();
+
+        // Find the Hatch entity in the read document
+        let mut found: Option<Hatch> = None;
+        for entity in read_doc.entities() {
+            if let EntityType::Hatch(h) = entity {
+                found = Some(h.clone());
+                break;
+            }
+        }
+        found.expect("Hatch entity not found after roundtrip")
+    }
+
+    #[test]
+    fn test_hatch_line_edge_roundtrip() {
+        let mut hatch = Hatch::new();
+        let mut path = BoundaryPath::with_flags(BoundaryPathFlags::from_bits(0));
+        path.add_edge(BoundaryEdge::Line(LineEdge {
+            start: Vector2::new(0.0, 0.0),
+            end: Vector2::new(10.0, 0.0),
+        }));
+        path.add_edge(BoundaryEdge::Line(LineEdge {
+            start: Vector2::new(10.0, 0.0),
+            end: Vector2::new(10.0, 10.0),
+        }));
+        path.add_edge(BoundaryEdge::Line(LineEdge {
+            start: Vector2::new(10.0, 10.0),
+            end: Vector2::new(0.0, 0.0),
+        }));
+        hatch.paths.push(path);
+
+        let result = roundtrip_hatch(hatch);
+        assert_eq!(result.paths.len(), 1);
+        assert_eq!(result.paths[0].edges.len(), 3);
+
+        if let BoundaryEdge::Line(ref edge) = result.paths[0].edges[0] {
+            assert!((edge.start.x - 0.0).abs() < 1e-10);
+            assert!((edge.start.y - 0.0).abs() < 1e-10);
+            assert!((edge.end.x - 10.0).abs() < 1e-10);
+            assert!((edge.end.y - 0.0).abs() < 1e-10);
+        } else {
+            panic!("Expected Line edge");
+        }
+
+        if let BoundaryEdge::Line(ref edge) = result.paths[0].edges[1] {
+            assert!((edge.start.x - 10.0).abs() < 1e-10);
+            assert!((edge.start.y - 0.0).abs() < 1e-10);
+            assert!((edge.end.x - 10.0).abs() < 1e-10);
+            assert!((edge.end.y - 10.0).abs() < 1e-10);
+        } else {
+            panic!("Expected Line edge");
+        }
+
+        if let BoundaryEdge::Line(ref edge) = result.paths[0].edges[2] {
+            assert!((edge.start.x - 10.0).abs() < 1e-10);
+            assert!((edge.start.y - 10.0).abs() < 1e-10);
+            assert!((edge.end.x - 0.0).abs() < 1e-10);
+            assert!((edge.end.y - 0.0).abs() < 1e-10);
+        } else {
+            panic!("Expected Line edge");
+        }
+    }
+
+    #[test]
+    fn test_hatch_circular_arc_edge_roundtrip() {
+        let mut hatch = Hatch::new();
+        let mut path = BoundaryPath::with_flags(BoundaryPathFlags::from_bits(0));
+        path.add_edge(BoundaryEdge::CircularArc(CircularArcEdge {
+            center: Vector2::new(5.0, 5.0),
+            radius: 3.0,
+            start_angle: 0.0_f64,
+            end_angle: std::f64::consts::PI,
+            counter_clockwise: true,
+        }));
+        hatch.paths.push(path);
+
+        let result = roundtrip_hatch(hatch);
+        assert_eq!(result.paths.len(), 1);
+        assert_eq!(result.paths[0].edges.len(), 1);
+
+        if let BoundaryEdge::CircularArc(ref edge) = result.paths[0].edges[0] {
+            assert!((edge.center.x - 5.0).abs() < 1e-10);
+            assert!((edge.center.y - 5.0).abs() < 1e-10);
+            assert!((edge.radius - 3.0).abs() < 1e-10);
+            assert!((edge.start_angle - 0.0).abs() < 1e-6);
+            assert!((edge.end_angle - std::f64::consts::PI).abs() < 1e-6);
+            assert!(edge.counter_clockwise);
+        } else {
+            panic!("Expected CircularArc edge");
+        }
+    }
+
+    #[test]
+    fn test_hatch_elliptic_arc_edge_roundtrip() {
+        let mut hatch = Hatch::new();
+        let mut path = BoundaryPath::with_flags(BoundaryPathFlags::from_bits(0));
+        path.add_edge(BoundaryEdge::EllipticArc(EllipticArcEdge {
+            center: Vector2::new(3.0, 4.0),
+            major_axis_endpoint: Vector2::new(5.0, 0.0),
+            minor_axis_ratio: 0.5,
+            start_angle: 0.0,
+            end_angle: std::f64::consts::TAU,
+            counter_clockwise: false,
+        }));
+        hatch.paths.push(path);
+
+        let result = roundtrip_hatch(hatch);
+        assert_eq!(result.paths.len(), 1);
+        assert_eq!(result.paths[0].edges.len(), 1);
+
+        if let BoundaryEdge::EllipticArc(ref edge) = result.paths[0].edges[0] {
+            assert!((edge.center.x - 3.0).abs() < 1e-10);
+            assert!((edge.center.y - 4.0).abs() < 1e-10);
+            assert!((edge.major_axis_endpoint.x - 5.0).abs() < 1e-10);
+            assert!((edge.major_axis_endpoint.y - 0.0).abs() < 1e-10);
+            assert!((edge.minor_axis_ratio - 0.5).abs() < 1e-10);
+            assert!((edge.start_angle - 0.0).abs() < 1e-10);
+            assert!((edge.end_angle - std::f64::consts::TAU).abs() < 1e-10);
+            assert!(!edge.counter_clockwise);
+        } else {
+            panic!("Expected EllipticArc edge");
+        }
+    }
+
+    #[test]
+    fn test_hatch_polyline_boundary_roundtrip() {
+        let mut hatch = Hatch::new();
+        let mut path = BoundaryPath::with_flags(BoundaryPathFlags::from_bits(2)); // polyline flag
+        let mut poly = PolylineEdge {
+            vertices: Vec::new(),
+            is_closed: true,
+        };
+        poly.add_vertex(Vector2::new(0.0, 0.0), 0.0);
+        poly.add_vertex(Vector2::new(10.0, 0.0), 0.0);
+        poly.add_vertex(Vector2::new(10.0, 10.0), 0.0);
+        poly.add_vertex(Vector2::new(0.0, 10.0), 0.0);
+        path.add_edge(BoundaryEdge::Polyline(poly));
+        hatch.paths.push(path);
+
+        let result = roundtrip_hatch(hatch);
+        assert_eq!(result.paths.len(), 1);
+        assert_eq!(result.paths[0].edges.len(), 1);
+
+        if let BoundaryEdge::Polyline(ref poly) = result.paths[0].edges[0] {
+            assert!(poly.is_closed);
+            assert_eq!(poly.vertices.len(), 4);
+            assert!((poly.vertices[0].x - 0.0).abs() < 1e-10);
+            assert!((poly.vertices[0].y - 0.0).abs() < 1e-10);
+            assert!((poly.vertices[1].x - 10.0).abs() < 1e-10);
+            assert!((poly.vertices[1].y - 0.0).abs() < 1e-10);
+            assert!((poly.vertices[2].x - 10.0).abs() < 1e-10);
+            assert!((poly.vertices[2].y - 10.0).abs() < 1e-10);
+            assert!((poly.vertices[3].x - 0.0).abs() < 1e-10);
+            assert!((poly.vertices[3].y - 10.0).abs() < 1e-10);
+        } else {
+            panic!("Expected Polyline edge");
+        }
+    }
+
+    #[test]
+    fn test_hatch_spline_edge_roundtrip() {
+        let mut hatch = Hatch::new();
+        let mut path = BoundaryPath::with_flags(BoundaryPathFlags::from_bits(0));
+        path.add_edge(BoundaryEdge::Spline(SplineEdge {
+            degree: 3,
+            rational: false,
+            periodic: false,
+            knots: vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+            control_points: vec![
+                Vector3::new(0.0, 0.0, 1.0),
+                Vector3::new(3.0, 5.0, 1.0),
+                Vector3::new(7.0, 5.0, 1.0),
+                Vector3::new(10.0, 0.0, 1.0),
+            ],
+            fit_points: Vec::new(),
+            start_tangent: Vector2::new(0.0, 0.0),
+            end_tangent: Vector2::new(0.0, 0.0),
+        }));
+        hatch.paths.push(path);
+
+        let result = roundtrip_hatch(hatch);
+        assert_eq!(result.paths.len(), 1);
+        assert_eq!(result.paths[0].edges.len(), 1);
+
+        if let BoundaryEdge::Spline(ref edge) = result.paths[0].edges[0] {
+            assert_eq!(edge.degree, 3);
+            assert_eq!(edge.knots.len(), 8);
+            assert_eq!(edge.control_points.len(), 4);
+            assert!((edge.knots[0] - 0.0).abs() < 1e-10);
+            assert!((edge.knots[4] - 1.0).abs() < 1e-10);
+            assert!((edge.control_points[0].x - 0.0).abs() < 1e-10);
+            assert!((edge.control_points[1].x - 3.0).abs() < 1e-10);
+            assert!((edge.control_points[1].y - 5.0).abs() < 1e-10);
+            assert!((edge.control_points[3].x - 10.0).abs() < 1e-10);
+        } else {
+            panic!("Expected Spline edge");
+        }
+    }
+}
 

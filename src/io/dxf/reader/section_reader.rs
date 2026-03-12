@@ -2920,6 +2920,7 @@ impl<'a> SectionReader<'a> {
         let mut line_weight = LineWeight::ByLayer;
         let mut _num_boundary_paths = 0;
         let mut current_path_edges: Vec<BoundaryEdge> = Vec::new();
+        let mut current_path_flags = BoundaryPathFlags::new();
         let mut reading_boundary = false;
 
         while let Some(pair) = self.reader.read_pair()? {
@@ -2978,10 +2979,10 @@ impl<'a> SectionReader<'a> {
                 }
                 92 => {
                     // Boundary path type flags - indicates start of a new boundary path
-                    if reading_boundary && !current_path_edges.is_empty() {
+                    if reading_boundary {
                         // Save previous path
                         let path = BoundaryPath {
-                            flags: BoundaryPathFlags::new(),
+                            flags: current_path_flags,
                             edges: current_path_edges.clone(),
                             boundary_handles: Vec::new(),
                         };
@@ -2989,66 +2990,64 @@ impl<'a> SectionReader<'a> {
                         current_path_edges.clear();
                     }
                     reading_boundary = true;
+                    if let Some(flags) = pair.as_i32() {
+                        current_path_flags = BoundaryPathFlags::from_bits(flags as u32);
+                        if current_path_flags.is_polyline() {
+                            // Read polyline boundary data
+                            self.read_hatch_polyline_boundary(&mut current_path_edges)?;
+                        }
+                    } else {
+                        current_path_flags = BoundaryPathFlags::new();
+                    }
                 }
                 72 => {
-                    // Edge type - indicates start of a new edge
+                    // Edge type - indicates start of a new edge (non-polyline boundaries)
                     if let Some(edge_type) = pair.as_i16() {
                         match edge_type {
                             1 => {
-                                // Line edge - will be populated by subsequent codes
-                                current_path_edges.push(BoundaryEdge::Line(LineEdge {
-                                    start: Vector2::new(0.0, 0.0),
-                                    end: Vector2::new(0.0, 0.0),
-                                }));
+                                // Line edge
+                                let edge = self.read_hatch_line_edge()?;
+                                current_path_edges.push(BoundaryEdge::Line(edge));
                             }
                             2 => {
                                 // Circular arc edge
-                                current_path_edges.push(BoundaryEdge::CircularArc(CircularArcEdge {
-                                    center: Vector2::new(0.0, 0.0),
-                                    radius: 0.0,
-                                    start_angle: 0.0,
-                                    end_angle: 0.0,
-                                    counter_clockwise: true,
-                                }));
+                                let edge = self.read_hatch_circular_arc_edge()?;
+                                current_path_edges.push(BoundaryEdge::CircularArc(edge));
                             }
                             3 => {
                                 // Elliptic arc edge
-                                current_path_edges.push(BoundaryEdge::EllipticArc(EllipticArcEdge {
-                                    center: Vector2::new(0.0, 0.0),
-                                    major_axis_endpoint: Vector2::new(1.0, 0.0),
-                                    minor_axis_ratio: 1.0,
-                                    start_angle: 0.0,
-                                    end_angle: 0.0,
-                                    counter_clockwise: true,
-                                }));
+                                let edge = self.read_hatch_elliptic_arc_edge()?;
+                                current_path_edges.push(BoundaryEdge::EllipticArc(edge));
                             }
                             4 => {
                                 // Spline edge
-                                current_path_edges.push(BoundaryEdge::Spline(SplineEdge {
-                                    degree: 3,
-                                    rational: false,
-                                    periodic: false,
-                                    knots: Vec::new(),
-                                    control_points: Vec::new(),
-                                    fit_points: Vec::new(),
-                                    start_tangent: Vector2::new(0.0, 0.0),
-                                    end_tangent: Vector2::new(0.0, 0.0),
-                                }));
+                                let edge = self.read_hatch_spline_edge()?;
+                                current_path_edges.push(BoundaryEdge::Spline(edge));
                             }
                             _ => {}
                         }
                     }
                 }
-                // Note: Full hatch reading would require reading all edge data (codes 10-40, etc.)
-                // For now, we create a basic hatch structure
+                93 => {
+                    // Number of edges (for non-polyline paths) - already handled by edge reading
+                }
+                97 => {
+                    // Number of source boundary objects - skip the handles
+                    if let Some(num_handles) = pair.as_i32() {
+                        for _ in 0..num_handles {
+                            // Read and discard boundary object handles (code 330)
+                            let _ = self.reader.read_pair()?;
+                        }
+                    }
+                }
                 _ => { self.try_read_common_entity_code(&pair, &mut hatch.common)?; }
             }
         }
 
         // Save last boundary path if any
-        if reading_boundary && !current_path_edges.is_empty() {
+        if reading_boundary {
             let path = BoundaryPath {
-                flags: BoundaryPathFlags::new(),
+                flags: current_path_flags,
                 edges: current_path_edges,
                 boundary_handles: Vec::new(),
             };
@@ -3062,6 +3061,219 @@ impl<'a> SectionReader<'a> {
         hatch.pattern_type = pattern_type;
 
         Ok(Some(hatch))
+    }
+
+    /// Read a line edge for HATCH boundary (codes 10/20, 11/21)
+    fn read_hatch_line_edge(&mut self) -> Result<LineEdge> {
+        let mut edge = LineEdge {
+            start: Vector2::new(0.0, 0.0),
+            end: Vector2::new(0.0, 0.0),
+        };
+        // Line edge: 10/20 = start, 11/21 = end
+        while let Some(pair) = self.reader.read_pair()? {
+            match pair.code {
+                10 => { if let Some(v) = pair.as_double() { edge.start.x = v; } }
+                20 => { if let Some(v) = pair.as_double() { edge.start.y = v; } }
+                11 => { if let Some(v) = pair.as_double() { edge.end.x = v; } }
+                21 => { if let Some(v) = pair.as_double() { edge.end.y = v; } }
+                _ => { self.reader.push_back(pair); break; }
+            }
+        }
+        Ok(edge)
+    }
+
+    /// Read a circular arc edge for HATCH boundary (codes 10/20, 40, 50, 51, 73)
+    fn read_hatch_circular_arc_edge(&mut self) -> Result<CircularArcEdge> {
+        let mut edge = CircularArcEdge {
+            center: Vector2::new(0.0, 0.0),
+            radius: 0.0,
+            start_angle: 0.0,
+            end_angle: 0.0,
+            counter_clockwise: true,
+        };
+        while let Some(pair) = self.reader.read_pair()? {
+            match pair.code {
+                10 => { if let Some(v) = pair.as_double() { edge.center.x = v; } }
+                20 => { if let Some(v) = pair.as_double() { edge.center.y = v; } }
+                40 => { if let Some(v) = pair.as_double() { edge.radius = v; } }
+                50 => { if let Some(v) = pair.as_double() { edge.start_angle = v.to_radians(); } }
+                51 => { if let Some(v) = pair.as_double() { edge.end_angle = v.to_radians(); } }
+                73 => { if let Some(v) = pair.as_i16() { edge.counter_clockwise = v != 0; } }
+                _ => { self.reader.push_back(pair); break; }
+            }
+        }
+        Ok(edge)
+    }
+
+    /// Read an elliptic arc edge for HATCH boundary (codes 10/20, 11/21, 40, 50, 51, 73)
+    fn read_hatch_elliptic_arc_edge(&mut self) -> Result<EllipticArcEdge> {
+        let mut edge = EllipticArcEdge {
+            center: Vector2::new(0.0, 0.0),
+            major_axis_endpoint: Vector2::new(1.0, 0.0),
+            minor_axis_ratio: 1.0,
+            start_angle: 0.0,
+            end_angle: 0.0,
+            counter_clockwise: true,
+        };
+        while let Some(pair) = self.reader.read_pair()? {
+            match pair.code {
+                10 => { if let Some(v) = pair.as_double() { edge.center.x = v; } }
+                20 => { if let Some(v) = pair.as_double() { edge.center.y = v; } }
+                11 => { if let Some(v) = pair.as_double() { edge.major_axis_endpoint.x = v; } }
+                21 => { if let Some(v) = pair.as_double() { edge.major_axis_endpoint.y = v; } }
+                40 => { if let Some(v) = pair.as_double() { edge.minor_axis_ratio = v; } }
+                50 => { if let Some(v) = pair.as_double() { edge.start_angle = v; } }
+                51 => { if let Some(v) = pair.as_double() { edge.end_angle = v; } }
+                73 => { if let Some(v) = pair.as_i16() { edge.counter_clockwise = v != 0; } }
+                _ => { self.reader.push_back(pair); break; }
+            }
+        }
+        Ok(edge)
+    }
+
+    /// Read a spline edge for HATCH boundary
+    fn read_hatch_spline_edge(&mut self) -> Result<SplineEdge> {
+        let mut edge = SplineEdge {
+            degree: 3,
+            rational: false,
+            periodic: false,
+            knots: Vec::new(),
+            control_points: Vec::new(),
+            fit_points: Vec::new(),
+            start_tangent: Vector2::new(0.0, 0.0),
+            end_tangent: Vector2::new(0.0, 0.0),
+        };
+        let mut num_knots: i32 = 0;
+        let mut num_control_points: i32 = 0;
+        let mut num_fit_points: i32 = 0;
+        let mut current_cp_x: Option<f64> = None;
+        let mut current_fp_x: Option<f64> = None;
+
+        while let Some(pair) = self.reader.read_pair()? {
+            match pair.code {
+                94 => { if let Some(v) = pair.as_i32() { edge.degree = v; } }
+                73 => { if let Some(v) = pair.as_i16() { edge.rational = v != 0; } }
+                74 => { if let Some(v) = pair.as_i16() { edge.periodic = v != 0; } }
+                95 => { if let Some(v) = pair.as_i32() { num_knots = v; } }
+                96 => { if let Some(v) = pair.as_i32() { num_control_points = v; } }
+                97 => { if let Some(v) = pair.as_i32() { num_fit_points = v; } }
+                40 => {
+                    // Knot value
+                    if let Some(v) = pair.as_double() {
+                        if (edge.knots.len() as i32) < num_knots {
+                            edge.knots.push(v);
+                        }
+                    }
+                }
+                10 => {
+                    // X of control point
+                    if let Some(v) = pair.as_double() {
+                        current_cp_x = Some(v);
+                    }
+                }
+                20 => {
+                    // Y of control point
+                    if let Some(v) = pair.as_double() {
+                        if let Some(x) = current_cp_x.take() {
+                            edge.control_points.push(Vector3::new(x, v, 1.0));
+                        }
+                    }
+                }
+                42 => {
+                    // Weight for last control point
+                    if let Some(v) = pair.as_double() {
+                        if let Some(last) = edge.control_points.last_mut() {
+                            last.z = v;
+                        }
+                    }
+                }
+                11 => {
+                    // X of fit point
+                    if let Some(v) = pair.as_double() {
+                        current_fp_x = Some(v);
+                    }
+                }
+                21 => {
+                    // Y of fit point
+                    if let Some(v) = pair.as_double() {
+                        if let Some(x) = current_fp_x.take() {
+                            edge.fit_points.push(Vector2::new(x, v));
+                        }
+                    }
+                }
+                12 => {
+                    if let Some(v) = pair.as_double() { edge.start_tangent.x = v; }
+                }
+                22 => {
+                    if let Some(v) = pair.as_double() { edge.start_tangent.y = v; }
+                }
+                13 => {
+                    if let Some(v) = pair.as_double() { edge.end_tangent.x = v; }
+                }
+                23 => {
+                    if let Some(v) = pair.as_double() { edge.end_tangent.y = v; }
+                }
+                _ => {
+                    self.reader.push_back(pair);
+                    break;
+                }
+            }
+        }
+        let _ = (num_control_points, num_fit_points);
+        Ok(edge)
+    }
+
+    /// Read a polyline boundary for HATCH (codes 72, 73, 93, then 10/20/42 per vertex)
+    fn read_hatch_polyline_boundary(&mut self, edges: &mut Vec<BoundaryEdge>) -> Result<()> {
+        let mut has_bulge = false;
+        let mut is_closed = false;
+        let mut num_vertices: i32 = 0;
+        let mut poly = PolylineEdge {
+            vertices: Vec::new(),
+            is_closed: false,
+        };
+
+        while let Some(pair) = self.reader.read_pair()? {
+            match pair.code {
+                72 => { if let Some(v) = pair.as_i16() { has_bulge = v != 0; } }
+                73 => { if let Some(v) = pair.as_i16() { is_closed = v != 0; } }
+                93 => {
+                    if let Some(v) = pair.as_i32() {
+                        num_vertices = v;
+                    }
+                    // Now read the vertices
+                    poly.is_closed = is_closed;
+                    for _ in 0..num_vertices {
+                        let mut x = 0.0;
+                        let mut y = 0.0;
+                        let mut bulge = 0.0;
+                        // Read vertex x (code 10)
+                        if let Some(p) = self.reader.read_pair()? {
+                            if p.code == 10 { if let Some(v) = p.as_double() { x = v; } }
+                            else { self.reader.push_back(p); break; }
+                        }
+                        // Read vertex y (code 20)
+                        if let Some(p) = self.reader.read_pair()? {
+                            if p.code == 20 { if let Some(v) = p.as_double() { y = v; } }
+                            else { self.reader.push_back(p); break; }
+                        }
+                        // Optionally read bulge (code 42)
+                        if has_bulge {
+                            if let Some(p) = self.reader.read_pair()? {
+                                if p.code == 42 { if let Some(v) = p.as_double() { bulge = v; } }
+                                else { self.reader.push_back(p); }
+                            }
+                        }
+                        poly.vertices.push(Vector3::new(x, y, bulge));
+                    }
+                    break;
+                }
+                _ => { self.reader.push_back(pair); break; }
+            }
+        }
+        let _ = has_bulge;
+        edges.push(BoundaryEdge::Polyline(poly));
+        Ok(())
     }
 
     /// Read a SOLID entity
