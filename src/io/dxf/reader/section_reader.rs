@@ -2436,11 +2436,15 @@ impl<'a> SectionReader<'a> {
         use crate::types::Vector2;
 
         let mut lwpolyline = LwPolyline::new();
-        let mut vertices_x: Vec<f64> = Vec::new();
-        let mut vertices_y: Vec<f64> = Vec::new();
-        let mut bulges: Vec<f64> = Vec::new();
-        let mut widths_start: Vec<f64> = Vec::new();
-        let mut widths_end: Vec<f64> = Vec::new();
+
+        // Per-vertex state: code 10 starts a new vertex; codes 20, 40, 41, 42
+        // apply to the most recently started vertex. This correctly handles DXF
+        // files where optional codes (40, 41, 42) are omitted for some vertices.
+        let mut current_x: Option<f64> = None;
+        let mut current_y: f64 = 0.0;
+        let mut current_bulge: f64 = 0.0;
+        let mut current_start_width: f64 = 0.0;
+        let mut current_end_width: f64 = 0.0;
 
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 {
@@ -2471,45 +2475,52 @@ impl<'a> SectionReader<'a> {
                     }
                 }
                 10 => {
-                    if let Some(x) = pair.as_double() {
-                        vertices_x.push(x);
+                    // Code 10 starts a new vertex. Finalize the previous one if any.
+                    if let Some(x) = current_x {
+                        lwpolyline.vertices.push(LwVertex {
+                            location: Vector2::new(x, current_y),
+                            bulge: current_bulge,
+                            start_width: current_start_width,
+                            end_width: current_end_width,
+                        });
                     }
+                    current_x = pair.as_double();
+                    current_y = 0.0;
+                    current_bulge = 0.0;
+                    current_start_width = 0.0;
+                    current_end_width = 0.0;
                 }
                 20 => {
                     if let Some(y) = pair.as_double() {
-                        vertices_y.push(y);
+                        current_y = y;
                     }
                 }
                 42 => {
                     if let Some(bulge) = pair.as_double() {
-                        bulges.push(bulge);
+                        current_bulge = bulge;
                     }
                 }
                 40 => {
                     if let Some(width) = pair.as_double() {
-                        widths_start.push(width);
+                        current_start_width = width;
                     }
                 }
                 41 => {
                     if let Some(width) = pair.as_double() {
-                        widths_end.push(width);
+                        current_end_width = width;
                     }
                 }
                 _ => { self.try_read_common_entity_code(&pair, &mut lwpolyline.common)?; }
             }
         }
 
-        // Build vertices from collected data
-        for i in 0..vertices_x.len().min(vertices_y.len()) {
-            let bulge = bulges.get(i).copied().unwrap_or(0.0);
-            let start_width = widths_start.get(i).copied().unwrap_or(0.0);
-            let end_width = widths_end.get(i).copied().unwrap_or(0.0);
-
+        // Finalize the last vertex
+        if let Some(x) = current_x {
             lwpolyline.vertices.push(LwVertex {
-                location: Vector2::new(vertices_x[i], vertices_y[i]),
-                bulge,
-                start_width,
-                end_width,
+                location: Vector2::new(x, current_y),
+                bulge: current_bulge,
+                start_width: current_start_width,
+                end_width: current_end_width,
             });
         }
 
@@ -4615,5 +4626,162 @@ impl<'a> SectionReader<'a> {
         }
 
         Ok(Some(dv))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Cursor, BufReader};
+    use crate::io::dxf::reader::text_reader::DxfTextReader;
+
+    /// Helper to parse LWPOLYLINE from DXF text content.
+    /// The content should be the group codes AFTER the "0 LWPOLYLINE" pair,
+    /// and should be followed by "0\nENDSEC\n" to terminate parsing.
+    fn parse_lwpolyline(dxf_content: &str) -> lwpolyline::LwPolyline {
+        let cursor = Cursor::new(dxf_content.as_bytes().to_vec());
+        let buf_reader = BufReader::new(cursor);
+        let text_reader = DxfTextReader::new(buf_reader).unwrap();
+        let mut reader: Box<dyn DxfStreamReader> = Box::new(text_reader);
+        let mut section_reader = SectionReader::new(&mut reader);
+        section_reader.read_lwpolyline().unwrap().unwrap()
+    }
+
+    #[test]
+    fn test_lwpolyline_bulge_omitted_for_some_vertices() {
+        // 4 vertices, only vertex 1 has bulge 0.5, others omit code 42
+        let dxf = "\
+10\n0.0\n\
+20\n0.0\n\
+10\n10.0\n\
+20\n0.0\n\
+42\n0.5\n\
+10\n20.0\n\
+20\n0.0\n\
+10\n30.0\n\
+20\n0.0\n\
+0\nENDSEC\n";
+
+        let lwpoly = parse_lwpolyline(dxf);
+        assert_eq!(lwpoly.vertices.len(), 4);
+        assert_eq!(lwpoly.vertices[0].bulge, 0.0);
+        assert_eq!(lwpoly.vertices[1].bulge, 0.5);
+        assert_eq!(lwpoly.vertices[2].bulge, 0.0);
+        assert_eq!(lwpoly.vertices[3].bulge, 0.0);
+    }
+
+    #[test]
+    fn test_lwpolyline_all_bulges_present() {
+        // All vertices have explicit bulge values
+        let dxf = "\
+10\n0.0\n\
+20\n0.0\n\
+42\n0.1\n\
+10\n10.0\n\
+20\n5.0\n\
+42\n0.2\n\
+10\n20.0\n\
+20\n10.0\n\
+42\n0.3\n\
+0\nENDSEC\n";
+
+        let lwpoly = parse_lwpolyline(dxf);
+        assert_eq!(lwpoly.vertices.len(), 3);
+        assert_eq!(lwpoly.vertices[0].bulge, 0.1);
+        assert_eq!(lwpoly.vertices[1].bulge, 0.2);
+        assert_eq!(lwpoly.vertices[2].bulge, 0.3);
+    }
+
+    #[test]
+    fn test_lwpolyline_no_bulges() {
+        // No vertices have bulge values — all default to 0
+        let dxf = "\
+10\n0.0\n\
+20\n0.0\n\
+10\n10.0\n\
+20\n5.0\n\
+0\nENDSEC\n";
+
+        let lwpoly = parse_lwpolyline(dxf);
+        assert_eq!(lwpoly.vertices.len(), 2);
+        assert_eq!(lwpoly.vertices[0].bulge, 0.0);
+        assert_eq!(lwpoly.vertices[1].bulge, 0.0);
+    }
+
+    #[test]
+    fn test_lwpolyline_widths_omitted_for_some_vertices() {
+        // 3 vertices: vertex 0 has start_width=1.0, vertex 2 has end_width=2.0
+        let dxf = "\
+10\n0.0\n\
+20\n0.0\n\
+40\n1.0\n\
+10\n10.0\n\
+20\n5.0\n\
+10\n20.0\n\
+20\n10.0\n\
+41\n2.0\n\
+0\nENDSEC\n";
+
+        let lwpoly = parse_lwpolyline(dxf);
+        assert_eq!(lwpoly.vertices.len(), 3);
+        assert_eq!(lwpoly.vertices[0].start_width, 1.0);
+        assert_eq!(lwpoly.vertices[0].end_width, 0.0);
+        assert_eq!(lwpoly.vertices[1].start_width, 0.0);
+        assert_eq!(lwpoly.vertices[1].end_width, 0.0);
+        assert_eq!(lwpoly.vertices[2].start_width, 0.0);
+        assert_eq!(lwpoly.vertices[2].end_width, 2.0);
+    }
+
+    #[test]
+    fn test_lwpolyline_mixed_optional_codes() {
+        // Mix of bulge, start_width, end_width — some present, some omitted
+        let dxf = "\
+10\n0.0\n\
+20\n0.0\n\
+10\n10.0\n\
+20\n5.0\n\
+42\n0.5\n\
+40\n1.5\n\
+41\n2.5\n\
+10\n20.0\n\
+20\n10.0\n\
+42\n-0.3\n\
+0\nENDSEC\n";
+
+        let lwpoly = parse_lwpolyline(dxf);
+        assert_eq!(lwpoly.vertices.len(), 3);
+        // Vertex 0: no optional codes
+        assert_eq!(lwpoly.vertices[0].bulge, 0.0);
+        assert_eq!(lwpoly.vertices[0].start_width, 0.0);
+        assert_eq!(lwpoly.vertices[0].end_width, 0.0);
+        // Vertex 1: all optional codes present
+        assert_eq!(lwpoly.vertices[1].bulge, 0.5);
+        assert_eq!(lwpoly.vertices[1].start_width, 1.5);
+        assert_eq!(lwpoly.vertices[1].end_width, 2.5);
+        // Vertex 2: only bulge
+        assert_eq!(lwpoly.vertices[2].bulge, -0.3);
+        assert_eq!(lwpoly.vertices[2].start_width, 0.0);
+        assert_eq!(lwpoly.vertices[2].end_width, 0.0);
+    }
+
+    #[test]
+    fn test_lwpolyline_coordinates() {
+        let dxf = "\
+10\n1.0\n\
+20\n2.0\n\
+10\n3.0\n\
+20\n4.0\n\
+10\n5.0\n\
+20\n6.0\n\
+0\nENDSEC\n";
+
+        let lwpoly = parse_lwpolyline(dxf);
+        assert_eq!(lwpoly.vertices.len(), 3);
+        assert_eq!(lwpoly.vertices[0].location.x, 1.0);
+        assert_eq!(lwpoly.vertices[0].location.y, 2.0);
+        assert_eq!(lwpoly.vertices[1].location.x, 3.0);
+        assert_eq!(lwpoly.vertices[1].location.y, 4.0);
+        assert_eq!(lwpoly.vertices[2].location.x, 5.0);
+        assert_eq!(lwpoly.vertices[2].location.y, 6.0);
     }
 }
