@@ -3122,6 +3122,7 @@ impl<'a> SectionReader<'a> {
                 11 => { if let Some(v) = pair.as_double() { edge.major_axis_endpoint.x = v; } }
                 21 => { if let Some(v) = pair.as_double() { edge.major_axis_endpoint.y = v; } }
                 40 => { if let Some(v) = pair.as_double() { edge.minor_axis_ratio = v; } }
+                // DXF stores elliptic arc angles in radians (unlike circular arcs which use degrees)
                 50 => { if let Some(v) = pair.as_double() { edge.start_angle = v; } }
                 51 => { if let Some(v) = pair.as_double() { edge.end_angle = v; } }
                 73 => { if let Some(v) = pair.as_i16() { edge.counter_clockwise = v != 0; } }
@@ -3271,7 +3272,6 @@ impl<'a> SectionReader<'a> {
                 _ => { self.reader.push_back(pair); break; }
             }
         }
-        let _ = has_bulge;
         edges.push(BoundaryEdge::Polyline(poly));
         Ok(())
     }
