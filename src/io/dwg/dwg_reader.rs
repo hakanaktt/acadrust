@@ -680,7 +680,12 @@ impl<R: Read + Seek> DwgReader<R> {
             let page_number = cursor.read_i32::<LittleEndian>()?;
             let page_size = cursor.read_i32::<LittleEndian>()?;
 
-            if page_number > 0 && page_size > 0 {
+            // Entries with page_size <= 0 are alignment/padding markers; skip them.
+            if page_size <= 0 {
+                continue;
+            }
+
+            if page_number > 0 {
                 info.page_records.insert(page_number, (file_offset, page_size as i64));
             }
             file_offset += page_size as i64;
@@ -1352,11 +1357,13 @@ impl<R: Read + Seek> DwgReader<R> {
         for page in &section.pages {
             let page_number = page.page_number as i32;
 
-            let &(page_file_offset, _page_total_size) = info.page_records.get(&page_number)
+            let &(page_file_offset_raw, _page_total_size) = info.page_records.get(&page_number)
                 .ok_or_else(|| DxfError::Parse(
                     format!("AC18 page {} not found in page records for section '{}'",
                             page_number, section_name)
                 ))?;
+
+            let page_file_offset = page_file_offset_raw;
 
             self.stream.seek(SeekFrom::Start(page_file_offset as u64))?;
 
