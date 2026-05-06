@@ -382,6 +382,7 @@ fn explode_mtext(mtext: &MText) -> Vec<EntityType> {
         horizontal_alignment: TextHorizontalAlignment::Left,
         vertical_alignment: TextVerticalAlignment::Baseline,
         normal: mtext.normal,
+        is_annotative: mtext.is_annotative,
     };
     vec![EntityType::Text(text)]
 }
@@ -441,6 +442,7 @@ fn explode_multileader(ml: &MultiLeader) -> Vec<EntityType> {
             drawing_direction: DrawingDirection::LeftToRight,
             line_spacing_factor: ml.context.line_spacing_factor,
             normal: ml.context.text_normal,
+            is_annotative: true,
         };
         result.push(EntityType::MText(text));
     }
@@ -534,7 +536,7 @@ fn explode_dimension(dim: &Dimension) -> Vec<EntityType> {
         value: text_value,
         insertion_point: base.text_middle_point,
         alignment_point: None,
-        height: 2.5, // default text height
+        height: 2.5,
         rotation: base.text_rotation,
         width_factor: 1.0,
         oblique_angle: 0.0,
@@ -542,6 +544,7 @@ fn explode_dimension(dim: &Dimension) -> Vec<EntityType> {
         horizontal_alignment: TextHorizontalAlignment::Center,
         vertical_alignment: TextVerticalAlignment::Middle,
         normal: base.normal,
+        is_annotative: true,
     };
     result.push(EntityType::Text(text));
 

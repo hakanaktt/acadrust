@@ -3006,6 +3006,11 @@ impl<'a> SectionReader<'a> {
                 }
                 7 => text.style = pair.value_string.clone(),
                 210 | 220 | 230 => { normal.add_coordinate(&pair); }
+                293 => {
+                    if let Some(v) = pair.as_i16() {
+                        text.is_annotative = v != 0;
+                    }
+                }
                 _ => { self.try_read_common_entity_code(&pair, &mut text.common)?; }
             }
         }
@@ -3100,6 +3105,11 @@ impl<'a> SectionReader<'a> {
                 }
                 7 => mtext.style = pair.value_string.clone(),
                 210 | 220 | 230 => { normal.add_coordinate(&pair); }
+                293 => {
+                    if let Some(v) = pair.as_i16() {
+                        mtext.is_annotative = v != 0;
+                    }
+                }
                 _ => { self.try_read_common_entity_code(&pair, &mut mtext.common)?; }
             }
         }

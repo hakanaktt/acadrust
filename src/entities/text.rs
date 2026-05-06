@@ -63,6 +63,8 @@ pub struct Text {
     pub vertical_alignment: TextVerticalAlignment,
     /// Normal vector
     pub normal: Vector3,
+    /// Whether this entity participates in annotation scaling (group code 293; default true)
+    pub is_annotative: bool,
 }
 
 impl Text {
@@ -81,6 +83,7 @@ impl Text {
             horizontal_alignment: TextHorizontalAlignment::Left,
             vertical_alignment: TextVerticalAlignment::Baseline,
             normal: Vector3::UNIT_Z,
+            is_annotative: true,
         }
     }
 

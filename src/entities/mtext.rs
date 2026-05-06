@@ -67,6 +67,8 @@ pub struct MText {
     pub line_spacing_factor: f64,
     /// Normal vector
     pub normal: Vector3,
+    /// Whether this entity participates in annotation scaling (group code 293; default true)
+    pub is_annotative: bool,
 }
 
 impl MText {
@@ -85,6 +87,7 @@ impl MText {
             drawing_direction: DrawingDirection::LeftToRight,
             line_spacing_factor: 1.0,
             normal: Vector3::UNIT_Z,
+            is_annotative: true,
         }
     }
 

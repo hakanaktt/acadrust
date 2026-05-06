@@ -1380,6 +1380,9 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.write_normal(text.normal)?;
         self.writer.write_subclass("AcDbText")?;
         self.writer.write_i16(73, text.vertical_alignment as i16)?;
+        if !text.is_annotative {
+            self.writer.write_i16(293, 0)?;
+        }
         Ok(())
     }
 
@@ -1431,6 +1434,9 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         }
         self.writer.write_double(44, mtext.line_spacing_factor)?;
         self.write_normal(mtext.normal)?;
+        if !mtext.is_annotative {
+            self.writer.write_i16(293, 0)?;
+        }
         Ok(())
     }
 
