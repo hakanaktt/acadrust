@@ -3668,8 +3668,8 @@ impl<'a> SectionReader<'a> {
                     11 => edge.major_axis_endpoint.x = p.as_double().unwrap_or(0.0),
                     21 => edge.major_axis_endpoint.y = p.as_double().unwrap_or(0.0),
                     40 => edge.minor_axis_ratio = p.as_double().unwrap_or(1.0),
-                    50 => edge.start_angle = p.as_double().unwrap_or(0.0),
-                    51 => edge.end_angle = p.as_double().unwrap_or(std::f64::consts::TAU),
+                    50 => edge.start_angle = p.as_double().unwrap_or(0.0).to_radians(),
+                    51 => edge.end_angle = p.as_double().unwrap_or(0.0).to_radians(),
                     73 => edge.counter_clockwise = p.as_i16().unwrap_or(1) != 0,
                     _ => { self.reader.push_back(p); break; }
                 }

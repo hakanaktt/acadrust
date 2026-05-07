@@ -415,23 +415,34 @@ impl Insert {
 
     /// Explode an arc with uniform XY scale — keeps it as an Arc.
     fn explode_arc_uniform(&self, arc: &Arc, transform: &Transform) -> EntityType {
-        let start = arc.start_point();
-        let end = arc.end_point();
+        // Use the arc's OCS basis (arbitrary axis algorithm) to compute the
+        // correct WCS start/end points, accounting for non-standard normals
+        // such as (0,0,-1) which have Ax=(-1,0,0) instead of (1,0,0).
+        let ocs_to_wcs = Matrix3::arbitrary_axis(arc.normal);
+        let wcs_start = arc.center
+            + ocs_to_wcs * Vector3::new(arc.radius * arc.start_angle.cos(), arc.radius * arc.start_angle.sin(), 0.0);
+        let wcs_end = arc.center
+            + ocs_to_wcs * Vector3::new(arc.radius * arc.end_angle.cos(), arc.radius * arc.end_angle.sin(), 0.0);
 
         let new_center = transform.apply(arc.center);
-        let new_start = transform.apply(start);
-        let new_end = transform.apply(end);
+        let new_start = transform.apply(wcs_start);
+        let new_end = transform.apply(wcs_end);
 
         let new_radius = (new_start - new_center).length();
+        let new_normal = Self::transform_normal(transform, arc.normal);
 
-        let ds = new_start - new_center;
-        let de = new_end - new_center;
-        let new_start_angle = ds.y.atan2(ds.x);
-        let new_end_angle = de.y.atan2(de.x);
+        // Convert transformed WCS offsets back to OCS angles for the new normal,
+        // so that to_truck()'s arc_pt (which applies the new OCS) gives correct WCS points.
+        let new_ocs_to_wcs = Matrix3::arbitrary_axis(new_normal);
+        let new_wcs_to_ocs = new_ocs_to_wcs.transpose();
+        let ds_ocs = new_wcs_to_ocs * (new_start - new_center);
+        let de_ocs = new_wcs_to_ocs * (new_end - new_center);
+        let new_start_angle = ds_ocs.y.atan2(ds_ocs.x);
+        let new_end_angle = de_ocs.y.atan2(de_ocs.x);
 
         let mut new_arc =
             Arc::from_center_radius_angles(new_center, new_radius, new_start_angle, new_end_angle);
-        new_arc.normal = Self::transform_normal(transform, arc.normal);
+        new_arc.normal = new_normal;
         new_arc.common = arc.common.clone();
         self.resolve_properties(&mut new_arc.common);
         EntityType::Arc(new_arc)
