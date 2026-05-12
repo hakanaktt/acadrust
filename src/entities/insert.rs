@@ -415,37 +415,78 @@ impl Insert {
 
     /// Explode an arc with uniform XY scale — keeps it as an Arc.
     fn explode_arc_uniform(&self, arc: &Arc, transform: &Transform) -> EntityType {
-        // Use the arc's OCS basis (arbitrary axis algorithm) to compute the
-        // correct WCS start/end points, accounting for non-standard normals
-        // such as (0,0,-1) which have Ax=(-1,0,0) instead of (1,0,0).
+        // DXF arcs store `center` in OCS (arbitrary-axis algorithm with the
+        // arc's normal). Convert everything to WCS, apply the INSERT transform
+        // in WCS, then project back into the new arc's OCS so the renderer
+        // (which always treats `center` as OCS) reproduces the correct WCS
+        // position regardless of normal direction.
         let ocs_to_wcs = Matrix3::arbitrary_axis(arc.normal);
-        let wcs_start = arc.center
-            + ocs_to_wcs * Vector3::new(arc.radius * arc.start_angle.cos(), arc.radius * arc.start_angle.sin(), 0.0);
-        let wcs_end = arc.center
-            + ocs_to_wcs * Vector3::new(arc.radius * arc.end_angle.cos(), arc.radius * arc.end_angle.sin(), 0.0);
+        let center_wcs = ocs_to_wcs * arc.center;
+        let wcs_start = center_wcs
+            + ocs_to_wcs
+                * Vector3::new(
+                    arc.radius * arc.start_angle.cos(),
+                    arc.radius * arc.start_angle.sin(),
+                    0.0,
+                );
+        let wcs_end = center_wcs
+            + ocs_to_wcs
+                * Vector3::new(
+                    arc.radius * arc.end_angle.cos(),
+                    arc.radius * arc.end_angle.sin(),
+                    0.0,
+                );
 
-        let new_center = transform.apply(arc.center);
-        let new_start = transform.apply(wcs_start);
-        let new_end = transform.apply(wcs_end);
+        let new_center_wcs = transform.apply(center_wcs);
+        let new_start_wcs = transform.apply(wcs_start);
+        let new_end_wcs = transform.apply(wcs_end);
 
-        let new_radius = (new_start - new_center).length();
-        let new_normal = Self::transform_normal(transform, arc.normal);
+        let new_radius = (new_start_wcs - new_center_wcs).length();
+        let mut new_normal = Self::transform_normal(transform, arc.normal);
 
-        // Convert transformed WCS offsets back to OCS angles for the new normal,
-        // so that to_truck()'s arc_pt (which applies the new OCS) gives correct WCS points.
+        // Handedness correction: a transform with negative upper-3×3 determinant
+        // (e.g. odd-count mirror in the INSERT scale) flips the OCS plane's
+        // orientation. Arcs are always CCW around their normal, so to preserve
+        // the visual sweep we flip the normal — the new OCS basis is then the
+        // mirror of the old one and CCW around the flipped normal traces the
+        // mirrored geometry.
+        if Self::upper3x3_determinant(transform) < 0.0 {
+            new_normal = new_normal * -1.0;
+        }
+
+        // Convert transformed WCS offsets back to OCS angles & center for the
+        // new normal so to_truck()'s arc_pt (which applies the new OCS) gives
+        // correct WCS points.
         let new_ocs_to_wcs = Matrix3::arbitrary_axis(new_normal);
         let new_wcs_to_ocs = new_ocs_to_wcs.transpose();
-        let ds_ocs = new_wcs_to_ocs * (new_start - new_center);
-        let de_ocs = new_wcs_to_ocs * (new_end - new_center);
+        let new_center_ocs = new_wcs_to_ocs * new_center_wcs;
+        let ds_ocs = new_wcs_to_ocs * (new_start_wcs - new_center_wcs);
+        let de_ocs = new_wcs_to_ocs * (new_end_wcs - new_center_wcs);
         let new_start_angle = ds_ocs.y.atan2(ds_ocs.x);
         let new_end_angle = de_ocs.y.atan2(de_ocs.x);
 
-        let mut new_arc =
-            Arc::from_center_radius_angles(new_center, new_radius, new_start_angle, new_end_angle);
+        let mut new_arc = Arc::from_center_radius_angles(
+            new_center_ocs,
+            new_radius,
+            new_start_angle,
+            new_end_angle,
+        );
         new_arc.normal = new_normal;
         new_arc.common = arc.common.clone();
         self.resolve_properties(&mut new_arc.common);
         EntityType::Arc(new_arc)
+    }
+
+    /// Determinant of the upper-3×3 portion of a transform's matrix.
+    /// Negative ⇒ the transform reverses handedness (a reflection).
+    fn upper3x3_determinant(transform: &Transform) -> f64 {
+        let m = transform.matrix.m;
+        Matrix3::from_rows(
+            [m[0][0], m[0][1], m[0][2]],
+            [m[1][0], m[1][1], m[1][2]],
+            [m[2][0], m[2][1], m[2][2]],
+        )
+        .determinant()
     }
 
     /// Explode an arc with non-uniform XY scale — converts to an elliptical arc (Ellipse).
@@ -468,43 +509,77 @@ impl Insert {
     ///
     /// Unlike the default Ellipse::apply_transform (which leaves minor_axis_ratio
     /// unchanged), this properly computes the new ratio by transforming both
-    /// major and minor axis directions independently.
+    /// major and minor axis directions independently. The new normal is derived
+    /// from `new_major × new_minor`, which automatically encodes any handedness
+    /// flip introduced by a reflective transform (det < 0). The stored
+    /// `major_axis` is then expressed in the new ellipse's OCS so the renderer
+    /// reconstructs the correct WCS direction together with the derived normal,
+    /// preserving the original sweep direction.
     fn apply_full_ellipse_transform(ellipse: &mut Ellipse, transform: &Transform) {
-        // Compute the original minor axis direction (perpendicular to major in the ellipse plane)
-        let original_minor_dir = ellipse.normal.cross(&ellipse.major_axis).normalize();
-        let original_minor_len = ellipse.major_axis.length() * ellipse.minor_axis_ratio;
+        // Convert center and major axis (both stored in OCS per the arbitrary-axis
+        // algorithm) to WCS so the INSERT transform can be applied uniformly.
+        // For normal=(0,0,1) OCS == WCS and these conversions are no-ops.
+        let ocs_to_wcs = Matrix3::arbitrary_axis(ellipse.normal);
+        let center_wcs = ocs_to_wcs * ellipse.center;
+        let major_wcs = ocs_to_wcs * ellipse.major_axis;
+
+        // Original minor axis vector (WCS, perpendicular to major in the ellipse plane).
+        let original_minor_dir = ellipse.normal.cross(&major_wcs).normalize();
+        let original_minor_len = major_wcs.length() * ellipse.minor_axis_ratio;
         let original_minor = original_minor_dir * original_minor_len;
 
-        // Transform center
-        ellipse.center = transform.apply(ellipse.center);
+        // Transform center in WCS
+        let new_center_wcs = transform.apply(center_wcs);
 
         // Transform both axes through the 3×3 portion (direction + scale, no translation)
-        let new_major = transform.apply_rotation(ellipse.major_axis);
-        let new_minor = transform.apply_rotation(original_minor);
+        let new_major_wcs = transform.apply_rotation(major_wcs);
+        let new_minor_wcs = transform.apply_rotation(original_minor);
 
-        let new_major_len = new_major.length();
-        let new_minor_len = new_minor.length();
+        let new_major_len = new_major_wcs.length();
+        let new_minor_len = new_minor_wcs.length();
 
         // DXF convention: major_axis must be the longer axis.
         // If the minor became longer, swap them.
-        if new_minor_len > new_major_len + 1e-12 {
-            // The old minor is now the major
-            ellipse.major_axis = new_minor;
-            ellipse.minor_axis_ratio = new_major_len / new_minor_len;
+        let (final_major_wcs, final_minor_wcs, swapped) = if new_minor_len > new_major_len + 1e-12
+        {
+            (new_minor_wcs, new_major_wcs, true)
+        } else {
+            (new_major_wcs, new_minor_wcs, false)
+        };
+
+        // Derive normal from major × minor so handedness follows the geometry:
+        // a reflective transform automatically produces a flipped normal, and the
+        // CCW parameter sweep (around the new normal) traces the mirrored shape.
+        let cross = final_major_wcs.cross(&final_minor_wcs);
+        let cross_len = cross.length();
+        let new_normal = if cross_len > 1e-12 {
+            cross * (1.0 / cross_len)
+        } else {
+            Self::transform_normal(transform, ellipse.normal)
+        };
+
+        // Re-express center and major axis in the new OCS so the renderer
+        // (which interprets `center` and `major_axis` components in OCS)
+        // reconstructs the correct WCS values.
+        let new_ocs_to_wcs = Matrix3::arbitrary_axis(new_normal);
+        let new_wcs_to_ocs = new_ocs_to_wcs.transpose();
+        let center_ocs = new_wcs_to_ocs * new_center_wcs;
+        let major_ocs = new_wcs_to_ocs * final_major_wcs;
+
+        ellipse.center = center_ocs;
+        ellipse.major_axis = major_ocs;
+        ellipse.minor_axis_ratio = if final_major_wcs.length() > 1e-12 {
+            final_minor_wcs.length() / final_major_wcs.length()
+        } else {
+            1.0
+        };
+        ellipse.normal = new_normal;
+
+        if swapped {
             // When axes swap, parameters need to shift by π/2
             ellipse.start_parameter -= std::f64::consts::FRAC_PI_2;
             ellipse.end_parameter -= std::f64::consts::FRAC_PI_2;
-        } else {
-            ellipse.major_axis = new_major;
-            ellipse.minor_axis_ratio = if new_major_len > 1e-12 {
-                new_minor_len / new_major_len
-            } else {
-                1.0
-            };
         }
-
-        // Transform the normal via inverse-transpose
-        ellipse.normal = Self::transform_normal(transform, ellipse.normal);
     }
 
     /// Convenience wrapper that looks up the block in a
@@ -1088,6 +1163,231 @@ mod tests {
             assert_eq!(a.common.layer, "ArcLayer");
         } else {
             panic!("expected Arc");
+        }
+    }
+
+    // ── Mirrored INSERT arc handedness ──────────────────────────
+    //
+    // The visual sweep direction of an arc inside a mirrored block must match
+    // the mirror of the original sweep. acadrust encodes this by emitting a
+    // flipped normal so that the CCW (around-normal) parameterization traces
+    // the mirrored geometry.
+
+    /// Reconstruct an arc's three sample points (start, midpoint, end) in WCS,
+    /// using the renderer's OCS-axis convention. `arc.center` is interpreted as
+    /// OCS coordinates (per DXF arbitrary-axis algorithm).
+    fn arc_sample_points(arc: &Arc) -> (Vector3, Vector3, Vector3) {
+        let basis = Matrix3::arbitrary_axis(arc.normal);
+        let center_wcs = basis * arc.center;
+        let ccw_end = if arc.end_angle >= arc.start_angle {
+            arc.end_angle
+        } else {
+            arc.end_angle + TAU
+        };
+        let mid = arc.start_angle + (ccw_end - arc.start_angle) * 0.5;
+        let pt = |a: f64| {
+            center_wcs
+                + basis * Vector3::new(arc.radius * a.cos(), arc.radius * a.sin(), 0.0)
+        };
+        (pt(arc.start_angle), pt(mid), pt(arc.end_angle))
+    }
+
+    #[test]
+    fn explode_arc_mirror_x_preserves_sweep_direction() {
+        // Original arc traces Q1 from (r,0) through (~0.707r, ~0.707r) to (0,r).
+        let arc = Arc::from_center_radius_angles(Vector3::ZERO, 1.0, 0.0, FRAC_PI_2);
+        let block_entities = vec![EntityType::Arc(arc)];
+
+        // Mirror-X (x_scale = -1) should produce a CCW arc through Q2.
+        let insert = Insert::new("B", Vector3::ZERO).with_scale(-1.0, 1.0, 1.0);
+        let result = insert.explode(&block_entities);
+
+        if let EntityType::Arc(a) = &result[0] {
+            let (start, mid, end) = arc_sample_points(a);
+            // Endpoints land at the mirrored positions.
+            assert!(approx_vec(start, Vector3::new(-1.0, 0.0, 0.0)));
+            assert!(approx_vec(end, Vector3::new(0.0, 1.0, 0.0)));
+            // Crucially, the midpoint is in Q2 (mirror of the original Q1 midpoint),
+            // not Q4 (which is what you would see if the sweep went the wrong way).
+            let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
+            assert!(approx_vec(mid, Vector3::new(-inv_sqrt2, inv_sqrt2, 0.0)));
+        } else {
+            panic!("expected Arc");
+        }
+    }
+
+    #[test]
+    fn explode_arc_mirror_y_preserves_sweep_direction() {
+        let arc = Arc::from_center_radius_angles(Vector3::ZERO, 1.0, 0.0, FRAC_PI_2);
+        let block_entities = vec![EntityType::Arc(arc)];
+
+        // Mirror-Y (y_scale = -1) → mirrored arc should trace Q4.
+        let insert = Insert::new("B", Vector3::ZERO).with_scale(1.0, -1.0, 1.0);
+        let result = insert.explode(&block_entities);
+
+        if let EntityType::Arc(a) = &result[0] {
+            let (start, mid, end) = arc_sample_points(a);
+            assert!(approx_vec(start, Vector3::new(1.0, 0.0, 0.0)));
+            assert!(approx_vec(end, Vector3::new(0.0, -1.0, 0.0)));
+            let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
+            assert!(approx_vec(mid, Vector3::new(inv_sqrt2, -inv_sqrt2, 0.0)));
+        } else {
+            panic!("expected Arc");
+        }
+    }
+
+    #[test]
+    fn explode_arc_double_mirror_is_rotation() {
+        // x_scale = -1, y_scale = -1 has det = +1 (a 180° rotation), so the
+        // normal must NOT be flipped and the arc should land in Q3.
+        let arc = Arc::from_center_radius_angles(Vector3::ZERO, 1.0, 0.0, FRAC_PI_2);
+        let block_entities = vec![EntityType::Arc(arc)];
+
+        let insert = Insert::new("B", Vector3::ZERO).with_scale(-1.0, -1.0, 1.0);
+        let result = insert.explode(&block_entities);
+
+        if let EntityType::Arc(a) = &result[0] {
+            // Normal stays (0,0,1).
+            assert!(approx_vec(a.normal, Vector3::new(0.0, 0.0, 1.0)));
+            let (start, mid, end) = arc_sample_points(a);
+            assert!(approx_vec(start, Vector3::new(-1.0, 0.0, 0.0)));
+            assert!(approx_vec(end, Vector3::new(0.0, -1.0, 0.0)));
+            let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
+            assert!(approx_vec(mid, Vector3::new(-inv_sqrt2, -inv_sqrt2, 0.0)));
+        } else {
+            panic!("expected Arc");
+        }
+    }
+
+    #[test]
+    fn explode_arc_mirror_x_offset_center_position_preserved() {
+        // Regression: when the normal flips, `arc.center` (stored in OCS) must
+        // be projected into the new OCS so the renderer reconstructs the WCS
+        // position correctly. Earlier the center was stored as WCS, which made
+        // the renderer apply the new OCS basis a second time and flip the X
+        // back — placing the arc at the mirror of where it should be.
+        let arc = Arc::from_center_radius_angles(
+            Vector3::new(5.0, 3.0, 0.0),
+            1.0,
+            0.0,
+            FRAC_PI_2,
+        );
+        let block_entities = vec![EntityType::Arc(arc)];
+
+        let insert = Insert::new("B", Vector3::ZERO).with_scale(-1.0, 1.0, 1.0);
+        let result = insert.explode(&block_entities);
+
+        if let EntityType::Arc(a) = &result[0] {
+            // Original arc centered at (5,3,0) sweeps Q1-of-center: start (6,3) → end (5,4).
+            // Mirror-X: centered at (-5,3,0), start (-6,3) → end (-5,4), midpoint upper-left.
+            assert!(approx_vec(a.normal, Vector3::new(0.0, 0.0, -1.0)));
+            let (start, mid, end) = arc_sample_points(a);
+            assert!(approx_vec(start, Vector3::new(-6.0, 3.0, 0.0)));
+            assert!(approx_vec(end, Vector3::new(-5.0, 4.0, 0.0)));
+            let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
+            assert!(approx_vec(
+                mid,
+                Vector3::new(-5.0 - inv_sqrt2, 3.0 + inv_sqrt2, 0.0)
+            ));
+        } else {
+            panic!("expected Arc");
+        }
+    }
+
+    #[test]
+    fn explode_arc_mirror_x_with_translation_position_preserved() {
+        // Same regression but with both mirror and INSERT translation —
+        // catches any leftover confusion between WCS/OCS center.
+        let arc = Arc::from_center_radius_angles(
+            Vector3::new(2.0, 0.0, 0.0),
+            1.0,
+            0.0,
+            FRAC_PI_2,
+        );
+        let block_entities = vec![EntityType::Arc(arc)];
+
+        let insert = Insert::new("B", Vector3::new(10.0, 20.0, 0.0)).with_scale(-1.0, 1.0, 1.0);
+        let result = insert.explode(&block_entities);
+
+        if let EntityType::Arc(a) = &result[0] {
+            let (start, mid, end) = arc_sample_points(a);
+            // The block arc at (2,0,0) gets mirrored to (-2,0,0) then translated to (8,20,0).
+            // Sweep: start (3,0)→mirror→(−3,0)→translate→(7,20).
+            //        end   (2,1)→mirror→(−2,1)→translate→(8,21).
+            assert!(approx_vec(start, Vector3::new(7.0, 20.0, 0.0)));
+            assert!(approx_vec(end, Vector3::new(8.0, 21.0, 0.0)));
+            let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
+            assert!(approx_vec(
+                mid,
+                Vector3::new(8.0 - inv_sqrt2, 20.0 + inv_sqrt2, 0.0)
+            ));
+        } else {
+            panic!("expected Arc");
+        }
+    }
+
+    #[test]
+    fn explode_arc_mirror_flips_normal() {
+        let arc = Arc::from_center_radius_angles(Vector3::ZERO, 1.0, 0.0, FRAC_PI_2);
+        let block_entities = vec![EntityType::Arc(arc)];
+
+        let insert = Insert::new("B", Vector3::ZERO).with_scale(-1.0, 1.0, 1.0);
+        let result = insert.explode(&block_entities);
+
+        if let EntityType::Arc(a) = &result[0] {
+            // A single-axis mirror should flip the arc normal so the renderer's
+            // CCW sweep matches the mirrored geometry.
+            assert!(approx_vec(a.normal, Vector3::new(0.0, 0.0, -1.0)));
+        } else {
+            panic!("expected Arc");
+        }
+    }
+
+    // ── Mirrored INSERT ellipse handedness ──────────────────────
+
+    /// Reconstruct an ellipse's three sample points at t = start, mid, end in WCS.
+    /// Both `center` and `major_axis` are interpreted as OCS (arbitrary-axis algorithm).
+    fn ellipse_sample_points(e: &Ellipse) -> (Vector3, Vector3, Vector3) {
+        let basis = Matrix3::arbitrary_axis(e.normal);
+        let center_wcs = basis * e.center;
+        let major_wcs = basis * e.major_axis;
+        let major_len = major_wcs.length();
+        let u = major_wcs * (1.0 / major_len.max(1e-12));
+        let v = e.normal.cross(&u);
+        let minor_len = major_len * e.minor_axis_ratio;
+        let mut t1 = e.end_parameter;
+        if t1 <= e.start_parameter {
+            t1 += TAU;
+        }
+        let pt = |t: f64| {
+            center_wcs + u * (major_len * t.cos()) + v * (minor_len * t.sin())
+        };
+        let mid = e.start_parameter + (t1 - e.start_parameter) * 0.5;
+        (pt(e.start_parameter), pt(mid), pt(t1))
+    }
+
+    #[test]
+    fn explode_arc_mirror_x_nonuniform_to_ellipse() {
+        // Non-uniform XY scale with mirror: arc → ellipse, sweep preserved.
+        let arc = Arc::from_center_radius_angles(Vector3::ZERO, 1.0, 0.0, FRAC_PI_2);
+        let block_entities = vec![EntityType::Arc(arc)];
+
+        // Mirror-X plus stretch X by 2: total X factor = -2, Y factor = 1.
+        let insert = Insert::new("B", Vector3::ZERO).with_scale(-2.0, 1.0, 1.0);
+        let result = insert.explode(&block_entities);
+
+        if let EntityType::Ellipse(e) = &result[0] {
+            let (start, mid, end) = ellipse_sample_points(e);
+            // Apply the transform manually to the original arc samples to derive expectations:
+            //  start (1,0) → (-2,0)
+            //  mid   (~0.707, ~0.707) → (~-1.414, ~0.707)
+            //  end   (0,1) → (0,1)
+            let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
+            assert!(approx_vec(start, Vector3::new(-2.0, 0.0, 0.0)));
+            assert!(approx_vec(mid, Vector3::new(-2.0 * inv_sqrt2, inv_sqrt2, 0.0)));
+            assert!(approx_vec(end, Vector3::new(0.0, 1.0, 0.0)));
+        } else {
+            panic!("expected Ellipse for non-uniform mirrored scale");
         }
     }
 }
