@@ -1394,6 +1394,17 @@ impl DwgDocumentBuilder {
                     e.view_direction = data.view_direction;
                     e.view_target = data.view_target;
                     e.view_height = data.view_height;
+                    // Derive the paper-to-model display ratio that
+                    // AutoCAD shows in its viewport-scale selector.
+                    // `custom_scale` is otherwise never populated, so
+                    // downstream code that reads it (instead of
+                    // recomputing `height / view_height`) sees the
+                    // default 1.0 and renders every viewport at 1:1.
+                    e.custom_scale = if data.view_height.abs() > 1e-10 {
+                        data.height / data.view_height
+                    } else {
+                        1.0
+                    };
                     e.lens_length = data.lens_length;
                     e.front_clip_z = data.front_clip_z;
                     e.back_clip_z = data.back_clip_z;

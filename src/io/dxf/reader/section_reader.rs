@@ -4641,6 +4641,13 @@ impl<'a> SectionReader<'a> {
         vp.snap_base = Vector3::new(snap_base_x.unwrap_or(0.0), snap_base_y.unwrap_or(0.0), 0.0);
         vp.snap_spacing = Vector3::new(snap_spacing_x.unwrap_or(10.0), snap_spacing_y.unwrap_or(10.0), 0.0);
         vp.grid_spacing = Vector3::new(grid_spacing_x.unwrap_or(10.0), grid_spacing_y.unwrap_or(10.0), 0.0);
+        // Mirror what the DWG builder does: populate `custom_scale`
+        // from the paper-to-model ratio so downstream code that reads
+        // `custom_scale` sees the viewport's display scale instead of
+        // the default 1.0.
+        if vp.view_height.abs() > 1e-10 {
+            vp.custom_scale = vp.height / vp.view_height;
+        }
 
         Ok(Some(vp))
     }
