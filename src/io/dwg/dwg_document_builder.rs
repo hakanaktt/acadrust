@@ -1773,6 +1773,23 @@ impl DwgDocumentBuilder {
                     e.brightness = data.brightness;
                     e.contrast = data.contrast;
                     e.fade = data.fade;
+                    // Propagate clip boundary the same way Wipeout does — the
+                    // parser used to discard the vertices, leaving the default
+                    // boundary on the entity. Without this, clip regions
+                    // shrink/expand by orders of magnitude on render.
+                    e.clip_boundary = crate::entities::raster_image::ClipBoundary {
+                        clip_type: if data.clip_type == 1 {
+                            crate::entities::raster_image::ClipType::Rectangular
+                        } else {
+                            crate::entities::raster_image::ClipType::Polygonal
+                        },
+                        clip_mode: if data.clip_inverted {
+                            crate::entities::raster_image::ClipMode::Inside
+                        } else {
+                            crate::entities::raster_image::ClipMode::Outside
+                        },
+                        vertices: data.clip_boundary_vertices,
+                    };
                     if data.definition_handle != 0 {
                         e.definition_handle = Some(Handle::from(data.definition_handle));
                     }
@@ -1797,6 +1814,12 @@ impl DwgDocumentBuilder {
                     e.brightness = data.brightness;
                     e.contrast = data.contrast;
                     e.fade = data.fade;
+                    e.clip_type = if data.clip_type == 1 {
+                        crate::entities::WipeoutClipType::Rectangular
+                    } else {
+                        crate::entities::WipeoutClipType::Polygonal
+                    };
+                    e.clip_boundary_vertices = data.clip_boundary_vertices;
                     if data.definition_handle != 0 {
                         e.definition_handle = Some(Handle::from(data.definition_handle));
                     }

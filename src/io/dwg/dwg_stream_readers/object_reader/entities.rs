@@ -1061,6 +1061,10 @@ pub struct RasterImageData {
     pub clip_type: i16,
     pub definition_handle: u64,
     pub reactor_handle: u64,
+    /// Clip boundary vertices in image pixel space (range 0..size for rect;
+    /// arbitrary polygon for polygonal). For rectangular clips two corners
+    /// are stored; for polygonal, three or more sequential vertices.
+    pub clip_boundary_vertices: Vec<Vector2>,
 }
 
 #[derive(Debug, Clone)]
@@ -1604,14 +1608,18 @@ pub fn read_raster_image(reader: &mut DwgMergedReader, version: DwgVersion) -> R
 
     // Clip boundary
     let clip_type = reader.read_bit_short();
+    let mut clip_boundary_vertices: Vec<Vector2> = Vec::new();
     if clip_type == 1 {
-        // Rectangular: 2 fixed vertices
-        let _pt1 = reader.read_2raw_double();
-        let _pt2 = reader.read_2raw_double();
+        // Rectangular: 2 opposite-corner vertices
+        clip_boundary_vertices.push(reader.read_2raw_double());
+        clip_boundary_vertices.push(reader.read_2raw_double());
     } else {
         // Polygonal
-        let n = safe_count(reader.read_bit_long());
-        for _ in 0..n { let _pt = reader.read_2raw_double(); }
+        let n = safe_count(reader.read_bit_long()) as usize;
+        clip_boundary_vertices.reserve(n);
+        for _ in 0..n {
+            clip_boundary_vertices.push(reader.read_2raw_double());
+        }
     }
 
     let definition_handle = reader.read_handle();
@@ -1621,6 +1629,7 @@ pub fn read_raster_image(reader: &mut DwgMergedReader, version: DwgVersion) -> R
         class_version, insertion_point, u_vector, v_vector, size,
         flags, clipping_enabled, brightness, contrast, fade, clip_inverted,
         clip_type, definition_handle, reactor_handle,
+        clip_boundary_vertices,
     }
 }
 
