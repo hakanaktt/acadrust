@@ -693,9 +693,11 @@ impl<'a> SatLoop<'a> {
         }
     }
 
-    /// Pointer to the next loop.
+    /// Pointer to the next loop in the face's loop list (the inner/hole loops
+    /// follow the outer boundary here). The first token is a leading pointer
+    /// (loop kind / unused); the next-loop link is the second.
     pub fn next_loop(&self) -> SatPointer {
-        self.record.token_pointer(0).unwrap_or(SatPointer::NULL)
+        self.record.token_pointer(1).unwrap_or(SatPointer::NULL)
     }
 
     /// Pointer to the first coedge.
