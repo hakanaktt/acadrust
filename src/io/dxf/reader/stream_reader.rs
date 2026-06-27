@@ -39,36 +39,13 @@ impl DxfCodePair {
     /// Create a new code/value pair
     pub fn new(code: i32, value_string: String) -> Self {
         let dxf_code = DxfCode::from_i32(code);
-        let value_type = GroupCodeValueType::from_code(dxf_code);
-        
-        // Parse value based on type
-        let typed_value = match value_type {
-            GroupCodeValueType::Int16 | GroupCodeValueType::Int32 | GroupCodeValueType::Int64 | GroupCodeValueType::Byte => {
-                match value_string.trim().parse::<i64>() {
-                    Ok(v) => CodePairValue::Int(v),
-                    Err(_) => CodePairValue::None,
-                }
-            }
-            GroupCodeValueType::Double => {
-                match value_string.trim().parse::<f64>() {
-                    Ok(v) => CodePairValue::Double(v),
-                    Err(_) => CodePairValue::None,
-                }
-            }
-            GroupCodeValueType::Bool => {
-                match value_string.trim().parse::<i32>() {
-                    Ok(v) => CodePairValue::Bool(v != 0),
-                    Err(_) => CodePairValue::None,
-                }
-            }
-            _ => CodePairValue::None,
-        };
-        
+        // Deferred string->number parsing for ASCII DXF readers to avoid parsing overhead
+        // for values that are never accessed as numbers.
         Self {
             code,
             dxf_code,
             value_string,
-            typed_value,
+            typed_value: CodePairValue::None,
         }
     }
     
@@ -95,7 +72,7 @@ impl DxfCodePair {
     pub fn as_int(&self) -> Option<i64> {
         match self.typed_value {
             CodePairValue::Int(v) => Some(v),
-            _ => None,
+            _ => self.value_string.trim().parse::<i64>().ok(),
         }
     }
 
@@ -103,7 +80,7 @@ impl DxfCodePair {
     pub fn as_i16(&self) -> Option<i16> {
         match self.typed_value {
             CodePairValue::Int(v) => i16::try_from(v).ok(),
-            _ => None,
+            _ => self.value_string.trim().parse::<i64>().ok().and_then(|v| i16::try_from(v).ok()),
         }
     }
 
@@ -112,7 +89,7 @@ impl DxfCodePair {
     pub fn as_i32(&self) -> Option<i32> {
         match self.typed_value {
             CodePairValue::Int(v) => i32::try_from(v).ok(),
-            _ => None,
+            _ => self.value_string.trim().parse::<i64>().ok().and_then(|v| i32::try_from(v).ok()),
         }
     }
     
@@ -120,7 +97,7 @@ impl DxfCodePair {
     pub fn as_double(&self) -> Option<f64> {
         match self.typed_value {
             CodePairValue::Double(v) => Some(v),
-            _ => None,
+            _ => self.value_string.trim().parse::<f64>().ok(),
         }
     }
     
@@ -128,7 +105,7 @@ impl DxfCodePair {
     pub fn as_bool(&self) -> Option<bool> {
         match self.typed_value {
             CodePairValue::Bool(v) => Some(v),
-            _ => None,
+            _ => self.value_string.trim().parse::<i32>().ok().map(|v| v != 0),
         }
     }
     
