@@ -1786,7 +1786,11 @@ impl DwgDocumentBuilder {
                     );
                     dim.base.common = entity_common;
                     map_dimension_common(&mut dim.base, &data.common, &maps);
+                    // The DXF writer emits group 10 from the BASE definition
+                    // point — mirror the variant field there or it round-trips
+                    // as (0,0) and regenerating CADs misplace the dimension.
                     dim.definition_point = data.definition_point;
+                    dim.base.definition_point = data.definition_point;
                     dim.rotation = data.rotation;
                     dim.ext_line_rotation = data.ext_line_rotation;
                     let _ = document.add_entity(EntityType::Dimension(
@@ -1804,6 +1808,7 @@ impl DwgDocumentBuilder {
                     dim.base.common = entity_common;
                     map_dimension_common(&mut dim.base, &data.common, &maps);
                     dim.definition_point = data.definition_point;
+                    dim.base.definition_point = data.definition_point;
                     dim.ext_line_rotation = data.ext_line_rotation;
                     let _ = document.add_entity(EntityType::Dimension(
                         Dimension::Aligned(dim),
@@ -1819,6 +1824,7 @@ impl DwgDocumentBuilder {
                     );
                     dim.base.common = entity_common;
                     map_dimension_common(&mut dim.base, &data.common, &maps);
+                    dim.base.definition_point = data.definition_point;
                     dim.leader_length = data.leader_length;
                     let _ = document.add_entity(EntityType::Dimension(
                         Dimension::Radius(dim),
@@ -1834,6 +1840,7 @@ impl DwgDocumentBuilder {
                     );
                     dim.base.common = entity_common;
                     map_dimension_common(&mut dim.base, &data.common, &maps);
+                    dim.base.definition_point = data.definition_point;
                     dim.leader_length = data.leader_length;
                     let _ = document.add_entity(EntityType::Dimension(
                         Dimension::Diameter(dim),
@@ -1851,6 +1858,7 @@ impl DwgDocumentBuilder {
                     dim.second_point = data.second_point;
                     dim.angle_vertex = data.angle_vertex;
                     dim.definition_point = data.definition_point;
+                    dim.base.definition_point = data.definition_point;
                     let _ = document.add_entity(EntityType::Dimension(
                         Dimension::Angular2Ln(dim),
                     ));
@@ -1866,6 +1874,7 @@ impl DwgDocumentBuilder {
                     dim.second_point = data.second_point;
                     dim.angle_vertex = data.angle_vertex;
                     dim.definition_point = data.definition_point;
+                    dim.base.definition_point = data.definition_point;
                     let _ = document.add_entity(EntityType::Dimension(
                         Dimension::Angular3Pt(dim),
                     ));
@@ -1882,6 +1891,7 @@ impl DwgDocumentBuilder {
                     dim.base.common = entity_common;
                     map_dimension_common(&mut dim.base, &data.common, &maps);
                     dim.definition_point = data.definition_point;
+                    dim.base.definition_point = data.definition_point;
                     let _ = document.add_entity(EntityType::Dimension(
                         Dimension::Ordinate(dim),
                     ));

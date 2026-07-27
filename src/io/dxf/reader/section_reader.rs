@@ -3838,6 +3838,7 @@ impl<'a> SectionReader<'a> {
         let mut fourth_point = PointReader::new();
         let mut text = String::new();
         let mut style_name = String::from("Standard");
+        let mut block_name = String::new();
         let mut layer = String::from("0");
         let mut color = Color::ByLayer;
         let mut line_weight = LineWeight::ByLayer;
@@ -3890,6 +3891,10 @@ impl<'a> SectionReader<'a> {
                     }
                 }
                 1 => text = pair.value_string.clone(),
+                // Geometry block reference — without it the DWG writer emits
+                // a NULL block handle and receiving CADs regenerate the
+                // dimension instead of displaying the authored block.
+                2 => block_name = pair.value_string.clone(),
                 3 => style_name = pair.value_string.clone(),
                 10 | 20 | 30 => { definition_point.add_coordinate(&pair); }
                 11 | 21 | 31 => { text_middle_point.add_coordinate(&pair); }
@@ -4065,6 +4070,9 @@ impl<'a> SectionReader<'a> {
             dc.common.linetype = common.linetype;
             dc.common.linetype_scale = common.linetype_scale;
             dc.common.transparency = common.transparency;
+            if !block_name.is_empty() {
+                dc.block_name = block_name;
+            }
             if let Some(pt) = text_middle_point.get_point() {
                 dc.text_middle_point = pt;
             }
