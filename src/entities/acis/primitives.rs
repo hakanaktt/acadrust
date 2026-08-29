@@ -160,6 +160,7 @@ pub fn build_box(center: [f64; 3], length: f64, width: f64, height: f64) -> SatD
     if let Some(body_rec) = sat.record_mut(0) {
         body_rec.tokens[1] = SatToken::Pointer(ptr(lump_idx));
     }
+    fill_back_pointers(&mut sat);
     sat
 }
 
@@ -275,6 +276,7 @@ pub fn build_wedge(origin: [f64; 3], length: f64, width: f64, height: f64) -> Sa
     if let Some(body_rec) = sat.record_mut(0) {
         body_rec.tokens[1] = SatToken::Pointer(ptr(lump_idx));
     }
+    fill_back_pointers(&mut sat);
     sat
 }
 
@@ -380,6 +382,7 @@ pub fn build_pyramid(center: [f64; 3], base_size: f64, height: f64) -> SatDocume
     if let Some(body_rec) = sat.record_mut(0) {
         body_rec.tokens[1] = SatToken::Pointer(ptr(lump_idx));
     }
+    fill_back_pointers(&mut sat);
     sat
 }
 
@@ -446,6 +449,7 @@ pub fn build_cylinder(center: [f64; 3], radius: f64, height: f64) -> SatDocument
     if let Some(body_rec) = sat.record_mut(0) {
         body_rec.tokens[1] = SatToken::Pointer(ptr(lump_idx));
     }
+    fill_back_pointers(&mut sat);
     sat
 }
 
@@ -515,6 +519,7 @@ pub fn build_cone(center: [f64; 3], radius: f64, height: f64) -> SatDocument {
     if let Some(body_rec) = sat.record_mut(0) {
         body_rec.tokens[1] = SatToken::Pointer(ptr(lump_idx));
     }
+    fill_back_pointers(&mut sat);
     sat
 }
 
@@ -539,6 +544,7 @@ pub fn build_sphere(center: [f64; 3], radius: f64) -> SatDocument {
     if let Some(body_rec) = sat.record_mut(0) {
         body_rec.tokens[1] = SatToken::Pointer(ptr(lump_idx));
     }
+    fill_back_pointers(&mut sat);
     sat
 }
 
@@ -569,6 +575,7 @@ pub fn build_torus(center: [f64; 3], major_radius: f64, minor_radius: f64) -> Sa
     if let Some(body_rec) = sat.record_mut(0) {
         body_rec.tokens[1] = SatToken::Pointer(ptr(lump_idx));
     }
+    fill_back_pointers(&mut sat);
     sat
 }
 
@@ -614,6 +621,103 @@ fn set_coedge_partner(sat: &mut SatDocument, coedge_idx: i32, partner_idx: i32) 
     if let Some(rec) = sat.record_mut(coedge_idx as usize) {
         // coedge tokens: [0]=sentinel [1]=next [2]=prev [3]=partner [4]=edge …
         rec.tokens[3] = SatToken::Pointer(SatPointer::new(partner_idx));
+    }
+}
+
+/// Point an `edge` record at one of its coedges.
+///
+/// ACIS topology is doubly linked: a coedge references its edge *and* the edge
+/// must reference a coedge back. Without it, ACIS reports
+/// "edge without backptr" / "coedge's edge doesn't point to coedge" and rejects
+/// the body, so the back-pointer is not optional.
+fn set_edge_coedge(sat: &mut SatDocument, edge_idx: i32, coedge_idx: i32) {
+    if let Some(rec) = sat.record_mut(edge_idx as usize) {
+        // edge tokens: [0]=sentinel [1]=start_v [2]=start_p [3]=end_v
+        //              [4]=end_p [5]=coedge [6]=curve [7]=sense [8]=unknown
+        rec.tokens[5] = SatToken::Pointer(SatPointer::new(coedge_idx));
+    }
+}
+
+/// Point a `vertex` record at one of the edges meeting it.
+///
+/// Same reasoning as [`set_edge_coedge`]: ACIS reports "vertex without edge"
+/// when this is left NULL.
+fn set_vertex_edge(sat: &mut SatDocument, vertex_idx: i32, edge_idx: i32) {
+    if let Some(rec) = sat.record_mut(vertex_idx as usize) {
+        // vertex tokens: [0]=sentinel [1]=edge [2]=point
+        rec.tokens[1] = SatToken::Pointer(SatPointer::new(edge_idx));
+    }
+}
+
+/// Fill in the reverse links of an ACIS topology graph: `edge -> coedge` and
+/// `vertex -> edge`.
+///
+/// ACIS topology is doubly linked. A builder that only writes the forward
+/// direction (coedge -> edge -> vertex) produces a body that fails validation in
+/// ACIS-based applications with "edge without backptr", "vertex without edge",
+/// and "coedge's edge doesn't point to coedge. Fatal topology error." —
+/// the body is then discarded rather than repaired.
+///
+/// This walks the record list and sets any back-pointer that is still NULL,
+/// leaving already-populated ones alone, so it is safe to call at the end of any
+/// builder regardless of the order records were emitted in.
+fn fill_back_pointers(sat: &mut SatDocument) {
+    let n = sat.records.len();
+
+    // Pass 1: coedge -> its edge, so the edge points back at a coedge.
+    let mut edge_of_coedge: Vec<(i32, i32)> = Vec::new();
+    for i in 0..n {
+        let rec = match sat.records.get(i) {
+            Some(r) => r,
+            None => continue,
+        };
+        if rec.entity_type != "coedge" {
+            continue;
+        }
+        // coedge tokens: [0]=sentinel [1]=next [2]=prev [3]=partner [4]=edge …
+        if let Some(SatToken::Pointer(p)) = rec.tokens.get(4) {
+            if p.0 >= 0 {
+                edge_of_coedge.push((p.0, i as i32));
+            }
+        }
+    }
+    for (edge_idx, coedge_idx) in edge_of_coedge {
+        let needs = matches!(
+            sat.records.get(edge_idx as usize).and_then(|r| r.tokens.get(5)),
+            Some(SatToken::Pointer(p)) if p.0 < 0
+        );
+        if needs {
+            set_edge_coedge(sat, edge_idx, coedge_idx);
+        }
+    }
+
+    // Pass 2: edge -> its two vertices, so each vertex points back at an edge.
+    let mut vert_of_edge: Vec<(i32, i32)> = Vec::new();
+    for i in 0..n {
+        let rec = match sat.records.get(i) {
+            Some(r) => r,
+            None => continue,
+        };
+        if rec.entity_type != "edge" {
+            continue;
+        }
+        // edge tokens: [0]=sentinel [1]=start_v [2]=start_p [3]=end_v …
+        for slot in [1usize, 3usize] {
+            if let Some(SatToken::Pointer(p)) = rec.tokens.get(slot) {
+                if p.0 >= 0 {
+                    vert_of_edge.push((p.0, i as i32));
+                }
+            }
+        }
+    }
+    for (vert_idx, edge_idx) in vert_of_edge {
+        let needs = matches!(
+            sat.records.get(vert_idx as usize).and_then(|r| r.tokens.get(1)),
+            Some(SatToken::Pointer(p)) if p.0 < 0
+        );
+        if needs {
+            set_vertex_edge(sat, vert_idx, edge_idx);
+        }
     }
 }
 
@@ -762,6 +866,10 @@ pub fn build_planar_body(vertices: &[[f64; 3]], faces: &[Vec<usize>]) -> Option<
         let (c0, c1) = (info.coedges[0], info.coedges[1]);
         set_coedge_partner(&mut sat, c0, c1);
         set_coedge_partner(&mut sat, c1, c0);
+        // Close the reverse links ACIS requires: edge -> coedge, vertex -> edge.
+        set_edge_coedge(&mut sat, info.edge_idx, c0);
+        set_vertex_edge(&mut sat, vert_idx[info.start], info.edge_idx);
+        set_vertex_edge(&mut sat, vert_idx[info.end], info.edge_idx);
     }
 
     // Loops + faces (each face's normal already matches its plane → Forward).
@@ -789,6 +897,9 @@ pub fn build_planar_body(vertices: &[[f64; 3]], faces: &[Vec<usize>]) -> Option<
     if let Some(body_rec) = sat.record_mut(0) {
         body_rec.tokens[1] = SatToken::Pointer(ptr(lump_idx));
     }
+    // Safety net: the partner-linking loop above already sets edge/vertex
+    // back-pointers, but this covers any record it could not reach.
+    fill_back_pointers(&mut sat);
 
     if sat.validate().is_empty() {
         Some(sat)
