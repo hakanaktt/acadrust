@@ -257,13 +257,16 @@ fn face_with_hole_keeps_inner_loop() {
     );
 }
 
-/// Two disjoint solids in one body must become two shells, each in its own lump,
-/// with the lumps chained through `next_lump`.
+/// Several shells in one body must share a single lump, chained through the
+/// `shell` record's `next_shell` pointer: the first is the outer boundary, the
+/// rest are voids inside it.
 ///
-/// Flattening several boundary surfaces into one shell is what ACIS reports as
-/// "Entities in shell are not connected" before discarding the solid.
+/// This is the distinction STEP draws with `BrepWithVoids` — a cavity is not a
+/// separate solid, so it must not get its own lump. Flattening all faces into one
+/// shell is the other failure mode, which ACIS reports as "Entities in shell are
+/// not connected" before discarding the solid.
 #[test]
-fn disjoint_shells_get_one_lump_each() {
+fn void_shells_share_one_lump() {
     let v = vec![
         [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0],
         [5.0, 0.0, 0.0], [6.0, 0.0, 0.0], [5.0, 1.0, 0.0], [5.0, 0.0, 1.0],
@@ -282,14 +285,18 @@ fn disjoint_shells_get_one_lump_each() {
     let shells = sat.records.iter().filter(|r| r.entity_type == "shell").count();
     let lumps = sat.records.iter().filter(|r| r.entity_type == "lump").count();
     assert_eq!(shells, 2, "expected 2 shell records, found {}", shells);
-    assert_eq!(lumps, 2, "expected 2 lump records, found {}", lumps);
+    assert_eq!(lumps, 1, "voids share the outer shell's lump, found {}", lumps);
 
-    // Exactly one lump chains to a next lump; the last terminates.
+    // Exactly one shell chains to a next shell; the last terminates.
     let chained = sat
         .records
         .iter()
-        .filter(|r| r.entity_type == "lump")
+        .filter(|r| r.entity_type == "shell")
         .filter(|r| matches!(r.tokens.first(), Some(SatToken::Pointer(p)) if p.0 >= 0))
         .count();
-    assert_eq!(chained, 1, "lumps should form a chain of 2, found {} links", chained);
+    assert_eq!(
+        chained, 1,
+        "shells should form a chain of 2, found {} next_shell links",
+        chained
+    );
 }

@@ -762,14 +762,21 @@ pub fn build_planar_body_with_holes(
 
 /// As [`build_planar_body_with_holes`], but faces are grouped into shells.
 ///
-/// `shell_of_face[i]` gives the shell index of `faces[i]`. Each shell becomes its
-/// own ACIS `shell` inside its own `lump`, with lumps chained through
-/// `next_lump`.
+/// `shell_of_face[i]` gives the shell index of `faces[i]`. Shell 0 is the outer
+/// boundary; any further shells are **voids** inside it, and all of them live in
+/// a single `lump`, chained through the `shell` record's `next_shell` pointer.
 ///
-/// A body genuinely can have several boundary surfaces: subtracting a fully
-/// interior solid leaves an outer boundary plus a disjoint cavity. Emitting those
-/// as one shell is what ACIS reports as "Entities in shell are not connected"
-/// before discarding the solid.
+/// A cavity is not a separate solid. Subtracting a fully interior sphere from a
+/// box leaves one solid with a hollow inside, which is the same distinction STEP
+/// draws with `BrepWithVoids` (an outer shell plus void shells, one
+/// `manifold_solid_brep`). Giving each shell its own lump would instead declare
+/// two disjoint solids, and BricsCAD V20 rejects such a body outright when it
+/// arrives as SAB — measured: a two-lump body is accepted through the inline-SAT
+/// route and reported as "Data stream is empty" through SAB, while the same
+/// geometry as outer-plus-void shells in one lump is accepted by both.
+///
+/// Emitting all faces as one shell is the other failure mode: that is what ACIS
+/// reports as "Entities in shell are not connected" before discarding the solid.
 pub fn build_planar_body_shells(
     vertices: &[[f64; 3]],
     faces: &[Vec<Vec<usize>>],
@@ -881,7 +888,9 @@ pub fn build_planar_body_shells(
     let loop_base = co_base + num_coedges as i32;
     let face_base = loop_base + loops.len() as i32;
     let shell_base = face_base + faces.len() as i32;
-    let lump_base = shell_base + n_shells as i32;
+    // One lump holds every shell: the first is the outer boundary, the rest are
+    // voids inside it, chained through `next_shell`.
+    let lump_idx = shell_base + n_shells as i32;
 
     // Coedges: a next/prev ring per face loop; partner filled in afterwards.
     let mut co_cursor = co_base;
@@ -990,24 +999,23 @@ pub fn build_planar_body_shells(
     }
     for sh in 0..n_shells {
         let first = shell_first_face[sh].unwrap_or(face_base);
-        sat.add_shell(ptr(first), ptr(lump_base + sh as i32));
+        sat.add_shell(ptr(first), ptr(lump_idx));
     }
-    // One lump per shell, chained through `next_lump` (token 0).
-    for sh in 0..n_shells {
-        sat.add_lump(ptr(shell_base + sh as i32), body_idx);
-    }
+    // Chain the void shells onto the outer one via `next_shell` (token 0).
     for sh in 0..n_shells {
         let next = if sh + 1 < n_shells {
-            ptr(lump_base + sh as i32 + 1)
+            ptr(shell_base + sh as i32 + 1)
         } else {
             SatPointer::NULL
         };
-        if let Some(rec) = sat.record_mut((lump_base + sh as i32) as usize) {
+        if let Some(rec) = sat.record_mut((shell_base + sh as i32) as usize) {
             rec.tokens[0] = SatToken::Pointer(next);
         }
     }
+    // A single lump, pointing at the outer shell.
+    sat.add_lump(ptr(shell_base), body_idx);
     if let Some(body_rec) = sat.record_mut(0) {
-        body_rec.tokens[1] = SatToken::Pointer(ptr(lump_base));
+        body_rec.tokens[1] = SatToken::Pointer(ptr(lump_idx));
     }
     // Safety net: the partner-linking loop above already sets edge/vertex
     // back-pointers, but this covers any record it could not reach.

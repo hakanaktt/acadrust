@@ -263,7 +263,14 @@ fn emit(
     let mut s3d = acadrust::entities::solid3d::Solid3D::new();
     s3d.set_sat_document(&sat);
     let stem = format!("bool_{}", name);
-    if write_pair(dir, &stem, EntityType::Solid3D(s3d)) {
+    // A void shell has to go out as inline SAT; see `write_pair_ver`.
+    let multi_shell = solid.num_shells() > 1;
+    let (ver, vtag) = if multi_shell {
+        (DxfVersion::AC1024, "AC1024")
+    } else {
+        (VERSION, VER_STR)
+    };
+    if write_pair_ver(dir, &stem, EntityType::Solid3D(s3d), ver, vtag) {
         println!(
             "  OK   {:<26} {} verts, {} faces",
             name,
@@ -428,14 +435,34 @@ fn brep_to_planar_soup(
 /// if DWG fails and DXF opens, the fault is in the DWG writer rather than
 /// in the geometry.
 fn write_pair(dir: &str, stem: &str, entity: EntityType) -> bool {
-    let mut doc = CadDocument::with_version(VERSION);
+    write_pair_ver(dir, stem, entity, VERSION, VER_STR)
+}
+
+/// Write the same entity as both DWG and DXF at a given version.
+///
+/// Solids carrying a void shell are written at AC1024 rather than AC1032.
+/// Measured in BricsCAD V20 with a minimal hollow cube: AC1015 through AC1024
+/// audit clean, AC1027 and AC1032 report "Data stream is empty" and discard the
+/// solid. That boundary is exactly `needs_sab()` in the DXF writer — AC1027+
+/// routes ACIS through SAB in the ACDSDATA section, and our SAB encoding of a
+/// chained `next_shell` is not accepted even though the byte layout matches the
+/// SAT that is accepted, and round-trips through our own SabReader with zero
+/// validation errors. The geometry is valid ACIS; only the SAB path is at fault.
+fn write_pair_ver(
+    dir: &str,
+    stem: &str,
+    entity: EntityType,
+    version: DxfVersion,
+    ver_str: &str,
+) -> bool {
+    let mut doc = CadDocument::with_version(version);
     if let Err(e) = doc.add_entity(entity) {
         println!("  FAIL {:<26} add_entity: {:?}", stem, e);
         return false;
     }
 
-    let dwg_path = format!("{}/{}_{}.dwg", dir, stem, VER_STR);
-    let dxf_path = format!("{}/{}_{}.dxf", dir, stem, VER_STR);
+    let dwg_path = format!("{}/{}_{}.dwg", dir, stem, ver_str);
+    let dxf_path = format!("{}/{}_{}.dxf", dir, stem, ver_str);
 
     let dwg_ok = match DwgWriter::write_to_file(&dwg_path, &doc) {
         Ok(()) => true,
