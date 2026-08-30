@@ -226,7 +226,7 @@ fn emit(
         }
     };
 
-    let (verts, faces) = match brep_to_planar_soup(&solid) {
+    let (verts, faces, shell_of_face) = match brep_to_planar_soup(&solid) {
         Some(v) => v,
         None => {
             println!("  SKIP {:<26} no usable planar faces", name);
@@ -235,24 +235,13 @@ fn emit(
     };
     let n_faces = faces.len();
 
-    // `build_planar_body` emits a single ACIS shell and chains every face into
-    // it. A result with more than one boundary surface — subtracting a fully
-    // interior solid leaves an outer boundary plus a disjoint cavity — cannot be
-    // expressed that way, and flattening the two into one shell is exactly what
-    // ACIS rejects as "Entities in shell are not connected". Route those to
-    // POLYFACE_MESH, which carries no shell structure to get wrong.
-    if solid.num_shells() > 1 {
-        println!(
-            "  MESH {:<26} {} shells (ACIS body here would need one lump per \
-             shell), wrote POLYFACE_MESH",
-            name,
-            solid.num_shells()
-        );
-        emit_mesh(dir, manifest, name, &verts, &faces, expected_volume);
-        return;
-    }
+    // Multi-shell results are expressible: `build_planar_body_shells` emits one
+    // ACIS lump per shell, chained through `next_lump`. Subtracting a fully
+    // interior solid leaves an outer boundary plus a disjoint cavity, and each
+    // becomes its own shell rather than being flattened into one (which is what
+    // ACIS rejects as "Entities in shell are not connected").
 
-    let sat = match primitives::build_planar_body(&verts, &faces) {
+    let sat = match primitives::build_planar_body_shells(&verts, &faces, &shell_of_face) {
         Some(s) => s,
         None => {
             // ACIS requires a closed manifold shell: every edge used by exactly
@@ -300,7 +289,7 @@ fn emit_mesh(
     manifest: &mut Vec<ManifestRow>,
     name: &'static str,
     verts: &[[f64; 3]],
-    faces: &[Vec<usize>],
+    faces: &[Vec<Vec<usize>>],
     expected_volume: Option<f64>,
 ) {
     use acadrust::entities::polyface_mesh::PolyfaceMesh;
@@ -315,7 +304,9 @@ fn emit_mesh(
         mesh.add_vertex_xyz(v[0], v[1], v[2]);
     }
     let mut n_emitted = 0usize;
-    for f in faces {
+    // POLYFACE_MESH has no loop structure, so hole loops are emitted as
+    // additional faces; this path is only a fallback for solids ACIS rejects.
+    for f in faces.iter().flat_map(|lps| lps.iter()) {
         let idx: Vec<i16> = f.iter().map(|&i| (i + 1) as i16).collect();
         match idx.len() {
             3 => {
@@ -349,12 +340,18 @@ fn emit_mesh(
     }
 }
 
-/// Extract a welded vertex list plus per-face index loops from a `BRepSolid`.
+/// Extract a welded vertex list plus per-face loop lists from a `BRepSolid`.
 ///
-/// Vertices are welded on a 1e-6 grid. The kernel audit found that boolean
-/// output carries duplicate vertex/edge records, so welding here is required
-/// for `build_planar_body` to see a consistent shared-edge topology at all.
-fn brep_to_planar_soup(solid: &BRepSolid) -> Option<(Vec<[f64; 3]>, Vec<Vec<usize>>)> {
+/// Each face becomes `vec![outer_loop, inner_loop, ...]`. Inner loops are carried
+/// through rather than dropped: a boolean that pierces a face leaves a hole loop
+/// there, and discarding it would emit a solid whose face is unpierced — and
+/// whose edge use counts no longer balance, so ACIS would reject it.
+///
+/// Vertices are welded on a 1e-6 grid so both sides of a seam reference one
+/// vertex record.
+fn brep_to_planar_soup(
+    solid: &BRepSolid,
+) -> Option<(Vec<[f64; 3]>, Vec<Vec<Vec<usize>>>, Vec<usize>)> {
     use std::collections::HashMap;
 
     let key = |p: Point3| {
@@ -367,42 +364,62 @@ fn brep_to_planar_soup(solid: &BRepSolid) -> Option<(Vec<[f64; 3]>, Vec<Vec<usiz
 
     let mut verts: Vec<[f64; 3]> = Vec::new();
     let mut index: HashMap<(i64, i64, i64), usize> = HashMap::new();
-    let mut faces: Vec<Vec<usize>> = Vec::new();
+    let mut faces: Vec<Vec<Vec<usize>>> = Vec::new();
+    let mut shell_of_face: Vec<usize> = Vec::new();
 
-    for (fid, _f) in solid.faces.iter() {
-        let vids = solid.face_vertices(acadrust_geom::brep::FaceId(fid));
-        if vids.len() < 3 {
-            continue;
+    // Which shell each face belongs to, so multi-shell results (an outer
+    // boundary plus a cavity) become one ACIS lump per shell.
+    let mut shell_index: HashMap<usize, usize> = HashMap::new();
+    for (si, (_, sh)) in solid.shells.iter().enumerate() {
+        for f in &sh.faces {
+            shell_index.insert(f.raw().index, si);
         }
-        let mut loop_idx: Vec<usize> = Vec::with_capacity(vids.len());
-        for vid in vids {
-            let p = match solid.vertices.get(vid.raw()) {
-                Some(v) => v.point,
-                None => continue,
-            };
-            let k = key(p);
-            let idx = *index.entry(k).or_insert_with(|| {
-                verts.push([p.x, p.y, p.z]);
-                verts.len() - 1
-            });
-            // Drop consecutive duplicates introduced by welding.
-            if loop_idx.last() != Some(&idx) {
-                loop_idx.push(idx);
+    }
+
+    for (fid, face) in solid.faces.iter() {
+        let mut face_loops: Vec<Vec<usize>> = Vec::new();
+
+        let loop_ids = std::iter::once(face.outer_loop).chain(face.inner_loops.iter().copied());
+        for lid in loop_ids {
+            let mut loop_idx: Vec<usize> = Vec::new();
+            for he_id in solid.loop_half_edges(lid) {
+                let he = match solid.half_edges.get(he_id.raw()) {
+                    Some(h) => h,
+                    None => continue,
+                };
+                let p = match solid.vertices.get(he.start_vertex.raw()) {
+                    Some(v) => v.point,
+                    None => continue,
+                };
+                let k = key(p);
+                let idx = *index.entry(k).or_insert_with(|| {
+                    verts.push([p.x, p.y, p.z]);
+                    verts.len() - 1
+                });
+                // Drop consecutive duplicates introduced by welding.
+                if loop_idx.last() != Some(&idx) {
+                    loop_idx.push(idx);
+                }
+            }
+            // Close-the-loop duplicate.
+            if loop_idx.len() > 1 && loop_idx.first() == loop_idx.last() {
+                loop_idx.pop();
+            }
+            if loop_idx.len() >= 3 {
+                face_loops.push(loop_idx);
             }
         }
-        // Close-the-loop duplicate.
-        if loop_idx.len() > 1 && loop_idx.first() == loop_idx.last() {
-            loop_idx.pop();
-        }
-        if loop_idx.len() >= 3 {
-            faces.push(loop_idx);
+
+        if !face_loops.is_empty() {
+            shell_of_face.push(shell_index.get(&fid.index).copied().unwrap_or(0));
+            faces.push(face_loops);
         }
     }
 
     if faces.is_empty() || verts.len() < 4 {
         return None;
     }
-    Some((verts, faces))
+    Some((verts, faces, shell_of_face))
 }
 
 // ── Writing ──────────────────────────────────────────────────────────

@@ -199,3 +199,97 @@ fn single_face_primitives_have_no_edges() {
         );
     }
 }
+
+/// A face with a hole must keep its inner loop, chained through the `loop`
+/// record's `next_loop` pointer.
+///
+/// Boolean results need this: subtracting a cylinder from a box leaves a cap face
+/// carrying a circular hole. Dropping the hole loop emits a solid whose cap is
+/// unpierced, and unbalances the edge use counts so ACIS rejects the body.
+#[test]
+fn face_with_hole_keeps_inner_loop() {
+    // Square plate, 0..3 outer ring, with a smaller square hole 4..7.
+    // Both rings are also joined by side walls so the body stays closed.
+    let v = vec![
+        // outer bottom
+        [0.0, 0.0, 0.0], [3.0, 0.0, 0.0], [3.0, 3.0, 0.0], [0.0, 3.0, 0.0],
+        // hole bottom
+        [1.0, 1.0, 0.0], [2.0, 1.0, 0.0], [2.0, 2.0, 0.0], [1.0, 2.0, 0.0],
+        // outer top
+        [0.0, 0.0, 1.0], [3.0, 0.0, 1.0], [3.0, 3.0, 1.0], [0.0, 3.0, 1.0],
+        // hole top
+        [1.0, 1.0, 1.0], [2.0, 1.0, 1.0], [2.0, 2.0, 1.0], [1.0, 2.0, 1.0],
+    ];
+    let faces: Vec<Vec<Vec<usize>>> = vec![
+        // bottom: outer CW seen from below, hole wound opposite
+        vec![vec![0, 3, 2, 1], vec![4, 5, 6, 7]],
+        // top: outer CCW seen from above, hole wound opposite
+        vec![vec![8, 9, 10, 11], vec![15, 14, 13, 12]],
+        // outer walls
+        vec![vec![0, 1, 9, 8]],
+        vec![vec![1, 2, 10, 9]],
+        vec![vec![2, 3, 11, 10]],
+        vec![vec![3, 0, 8, 11]],
+        // hole walls (inward facing)
+        vec![vec![4, 12, 13, 5]],
+        vec![vec![5, 13, 14, 6]],
+        vec![vec![6, 14, 15, 7]],
+        vec![vec![7, 15, 12, 4]],
+    ];
+
+    let sat = primitives::build_planar_body_with_holes(&v, &faces)
+        .expect("plate with a square hole should build");
+    assert_back_pointers(&sat, "plate with hole");
+    assert_coedge_edge_consistency(&sat, "plate with hole");
+
+    // Two of the loops must be chained as inner loops, i.e. some `loop` record
+    // carries a non-null next_loop.
+    let chained = sat
+        .records
+        .iter()
+        .filter(|r| r.entity_type == "loop")
+        .filter(|r| matches!(r.tokens.get(1), Some(SatToken::Pointer(p)) if p.0 >= 0))
+        .count();
+    assert_eq!(
+        chained, 2,
+        "expected 2 faces to chain a hole loop via next_loop, found {}",
+        chained
+    );
+}
+
+/// Two disjoint solids in one body must become two shells, each in its own lump,
+/// with the lumps chained through `next_lump`.
+///
+/// Flattening several boundary surfaces into one shell is what ACIS reports as
+/// "Entities in shell are not connected" before discarding the solid.
+#[test]
+fn disjoint_shells_get_one_lump_each() {
+    let v = vec![
+        [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0],
+        [5.0, 0.0, 0.0], [6.0, 0.0, 0.0], [5.0, 1.0, 0.0], [5.0, 0.0, 1.0],
+    ];
+    let faces: Vec<Vec<Vec<usize>>> = vec![
+        vec![vec![0, 2, 1]], vec![vec![0, 1, 3]], vec![vec![1, 2, 3]], vec![vec![0, 3, 2]],
+        vec![vec![4, 6, 5]], vec![vec![4, 5, 7]], vec![vec![5, 6, 7]], vec![vec![4, 7, 6]],
+    ];
+    let shell_of_face = vec![0, 0, 0, 0, 1, 1, 1, 1];
+
+    let sat = primitives::build_planar_body_shells(&v, &faces, &shell_of_face)
+        .expect("two tetrahedra should build");
+    assert_back_pointers(&sat, "two shells");
+    assert_coedge_edge_consistency(&sat, "two shells");
+
+    let shells = sat.records.iter().filter(|r| r.entity_type == "shell").count();
+    let lumps = sat.records.iter().filter(|r| r.entity_type == "lump").count();
+    assert_eq!(shells, 2, "expected 2 shell records, found {}", shells);
+    assert_eq!(lumps, 2, "expected 2 lump records, found {}", lumps);
+
+    // Exactly one lump chains to a next lump; the last terminates.
+    let chained = sat
+        .records
+        .iter()
+        .filter(|r| r.entity_type == "lump")
+        .filter(|r| matches!(r.tokens.first(), Some(SatToken::Pointer(p)) if p.0 >= 0))
+        .count();
+    assert_eq!(chained, 1, "lumps should form a chain of 2, found {} links", chained);
+}

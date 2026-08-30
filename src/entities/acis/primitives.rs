@@ -728,8 +728,10 @@ fn fill_back_pointers(sat: &mut SatDocument) {
 /// * `vertices` — the distinct corner positions.
 /// * `faces` — each face is an ordered ring of indices into `vertices`, wound
 ///   counter-clockwise **as seen from outside** the solid, so the outward
-///   normal is `(v1-v0) × (v2-v0)`. Only single (outer) loops are supported;
-///   faces with holes are not.
+///   normal is `(v1-v0) × (v2-v0)`.
+///
+/// Each face here carries a single loop. Use
+/// [`build_planar_body_with_holes`] for faces that also have inner (hole) loops.
 ///
 /// The mesh must be a closed 2-manifold: every polygon edge is shared by exactly
 /// two faces. Returns `None` (leaving the caller's geometry untouched) on any
@@ -737,21 +739,78 @@ fn fill_back_pointers(sat: &mut SatDocument) {
 /// index, a collinear face, a zero-length edge, a non-manifold edge, or a body
 /// that fails [`SatDocument::validate`] — so a malformed solid is never emitted.
 pub fn build_planar_body(vertices: &[[f64; 3]], faces: &[Vec<usize>]) -> Option<SatDocument> {
+    let single: Vec<Vec<Vec<usize>>> = faces.iter().map(|f| vec![f.clone()]).collect();
+    build_planar_body_with_holes(vertices, &single)
+}
+
+/// As [`build_planar_body`], but each face is a list of loops.
+///
+/// `faces[i][0]` is the outer loop; `faces[i][1..]` are inner (hole) loops, which
+/// must wind opposite to the outer one. ACIS represents this by chaining the
+/// loops of a face through the `loop` record's `next_loop` pointer, so a face
+/// with a through-hole is expressible without splitting it into pieces.
+///
+/// This is what a boolean result needs: subtracting a cylinder from a box leaves
+/// a cap face carrying a circular hole, and dropping that hole loop would emit a
+/// solid whose cap is unpierced.
+pub fn build_planar_body_with_holes(
+    vertices: &[[f64; 3]],
+    faces: &[Vec<Vec<usize>>],
+) -> Option<SatDocument> {
+    build_planar_body_shells(vertices, faces, &vec![0usize; faces.len()])
+}
+
+/// As [`build_planar_body_with_holes`], but faces are grouped into shells.
+///
+/// `shell_of_face[i]` gives the shell index of `faces[i]`. Each shell becomes its
+/// own ACIS `shell` inside its own `lump`, with lumps chained through
+/// `next_lump`.
+///
+/// A body genuinely can have several boundary surfaces: subtracting a fully
+/// interior solid leaves an outer boundary plus a disjoint cavity. Emitting those
+/// as one shell is what ACIS reports as "Entities in shell are not connected"
+/// before discarding the solid.
+pub fn build_planar_body_shells(
+    vertices: &[[f64; 3]],
+    faces: &[Vec<Vec<usize>>],
+    shell_of_face: &[usize],
+) -> Option<SatDocument> {
     use std::collections::HashMap;
+
+    if shell_of_face.len() != faces.len() {
+        return None;
+    }
 
     if faces.is_empty() || vertices.len() < 4 {
         return None;
     }
     for f in faces {
-        if f.len() < 3 {
+        if f.is_empty() {
             return None;
         }
-        for &vi in f {
-            if vi >= vertices.len() {
+        for lp in f {
+            if lp.len() < 3 {
                 return None;
+            }
+            for &vi in lp {
+                if vi >= vertices.len() {
+                    return None;
+                }
             }
         }
     }
+    // Group faces by shell, and work in that order so each shell's faces occupy
+    // a contiguous run of face records — the `next_face` chain then terminates
+    // naturally at each shell boundary.
+    let n_shells = shell_of_face.iter().copied().max().map_or(1, |m| m + 1);
+    let mut order: Vec<usize> = (0..faces.len()).collect();
+    order.sort_by_key(|&i| shell_of_face[i]);
+    let faces: Vec<Vec<Vec<usize>>> = order.iter().map(|&i| faces[i].clone()).collect();
+    let shell_of_face: Vec<usize> = order.iter().map(|&i| shell_of_face[i]).collect();
+    let faces = &faces[..];
+
+    // Flat view of every loop, in face order, for the index arithmetic below.
+    let loops: Vec<&Vec<usize>> = faces.iter().flat_map(|f| f.iter()).collect();
 
     let mut sat = SatDocument::new_body();
     let body_idx = SatPointer::new(0);
@@ -773,7 +832,7 @@ pub fn build_planar_body(vertices: &[[f64; 3]], faces: &[Vec<usize>]) -> Option<
     }
     let mut edges: HashMap<(usize, usize), EdgeInfo> = HashMap::new();
     let mut edge_order: Vec<(usize, usize)> = Vec::new();
-    for f in faces {
+    for f in &loops {
         let n = f.len();
         for i in 0..n {
             let a = f[i];
@@ -809,28 +868,28 @@ pub fn build_planar_body(vertices: &[[f64; 3]], faces: &[Vec<usize>]) -> Option<
         }
     }
 
-    // One plane surface per face.
+    // One plane surface per face, defined by that face's outer loop.
     let mut surf_idx = Vec::with_capacity(faces.len());
     for f in faces {
-        let (root, normal, u_dir) = face_plane(vertices, f)?;
+        let (root, normal, u_dir) = face_plane(vertices, &f[0])?;
         surf_idx.push(sat.add_plane_surface(root, normal, u_dir));
     }
 
     // Contiguous index layout: coedges, then loops, faces, shell, lump.
     let co_base = sat.records.len() as i32;
-    let num_coedges: usize = faces.iter().map(|f| f.len()).sum();
+    let num_coedges: usize = loops.iter().map(|l| l.len()).sum();
     let loop_base = co_base + num_coedges as i32;
-    let face_base = loop_base + faces.len() as i32;
-    let shell_idx = face_base + faces.len() as i32;
-    let lump_idx = shell_idx + 1;
+    let face_base = loop_base + loops.len() as i32;
+    let shell_base = face_base + faces.len() as i32;
+    let lump_base = shell_base + n_shells as i32;
 
     // Coedges: a next/prev ring per face loop; partner filled in afterwards.
     let mut co_cursor = co_base;
-    let mut face_first_co = Vec::with_capacity(faces.len());
-    for (fi, f) in faces.iter().enumerate() {
+    let mut loop_first_co = Vec::with_capacity(loops.len());
+    for (fi, f) in loops.iter().enumerate() {
         let n = f.len() as i32;
         let start = co_cursor;
-        face_first_co.push(start);
+        loop_first_co.push(start);
         for i in 0..f.len() {
             let a = f[i];
             let b = f[(i + 1) % f.len()];
@@ -872,30 +931,83 @@ pub fn build_planar_body(vertices: &[[f64; 3]], faces: &[Vec<usize>]) -> Option<
         set_vertex_edge(&mut sat, vert_idx[info.end], info.edge_idx);
     }
 
-    // Loops + faces (each face's normal already matches its plane → Forward).
-    for fi in 0..faces.len() {
-        sat.add_loop(SatPointer::NULL, ptr(face_first_co[fi]), ptr(face_base + fi as i32));
+    // Loops, chained per face: a face's loops form a `next_loop` list whose head
+    // is the outer loop, so inner (hole) loops belong to the same face rather
+    // than to faces of their own.
+    let mut li = 0usize;
+    for (fi, f) in faces.iter().enumerate() {
+        let first_li = li;
+        for k in 0..f.len() {
+            let next_loop = if k + 1 < f.len() {
+                ptr(loop_base + (first_li + k + 1) as i32)
+            } else {
+                SatPointer::NULL
+            };
+            sat.add_loop(
+                next_loop,
+                ptr(loop_first_co[first_li + k]),
+                ptr(face_base + fi as i32),
+            );
+            li += 1;
+        }
+    }
+    // Position of each face's outer loop, for the face records below.
+    let mut face_first_loop = Vec::with_capacity(faces.len());
+    {
+        let mut acc = 0usize;
+        for f in faces {
+            face_first_loop.push(acc);
+            acc += f.len();
+        }
     }
     for fi in 0..faces.len() {
-        let next_face = if fi + 1 < faces.len() {
+        // The face chain stops at a shell boundary: each shell owns a
+        // contiguous run, so `next_face` is NULL on the last face of a run.
+        let same_shell_next =
+            fi + 1 < faces.len() && shell_of_face[fi + 1] == shell_of_face[fi];
+        let next_face = if same_shell_next {
             ptr(face_base + fi as i32 + 1)
         } else {
             SatPointer::NULL
         };
         sat.add_face(
             next_face,
-            ptr(loop_base + fi as i32),
-            ptr(shell_idx),
+            ptr(loop_base + face_first_loop[fi] as i32),
+            ptr(shell_base + shell_of_face[fi] as i32),
             ptr(surf_idx[fi]),
             Sense::Forward,
             Sidedness::Single,
         );
     }
 
-    sat.add_shell(ptr(face_base), ptr(lump_idx));
-    sat.add_lump(ptr(shell_idx), body_idx);
+    // First face of each shell, for the shell records.
+    let mut shell_first_face = vec![None::<i32>; n_shells];
+    for fi in 0..faces.len() {
+        let sh = shell_of_face[fi];
+        if shell_first_face[sh].is_none() {
+            shell_first_face[sh] = Some(face_base + fi as i32);
+        }
+    }
+    for sh in 0..n_shells {
+        let first = shell_first_face[sh].unwrap_or(face_base);
+        sat.add_shell(ptr(first), ptr(lump_base + sh as i32));
+    }
+    // One lump per shell, chained through `next_lump` (token 0).
+    for sh in 0..n_shells {
+        sat.add_lump(ptr(shell_base + sh as i32), body_idx);
+    }
+    for sh in 0..n_shells {
+        let next = if sh + 1 < n_shells {
+            ptr(lump_base + sh as i32 + 1)
+        } else {
+            SatPointer::NULL
+        };
+        if let Some(rec) = sat.record_mut((lump_base + sh as i32) as usize) {
+            rec.tokens[0] = SatToken::Pointer(next);
+        }
+    }
     if let Some(body_rec) = sat.record_mut(0) {
-        body_rec.tokens[1] = SatToken::Pointer(ptr(lump_idx));
+        body_rec.tokens[1] = SatToken::Pointer(ptr(lump_base));
     }
     // Safety net: the partner-linking loop above already sets edge/vertex
     // back-pointers, but this covers any record it could not reach.
