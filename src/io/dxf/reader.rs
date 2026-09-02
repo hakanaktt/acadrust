@@ -30,7 +30,7 @@ pub struct DxfReaderConfiguration {
     /// When `true`, parse errors within individual entities/objects/sections
     /// are caught and reported as notifications instead of aborting the read.
     ///
-    /// Default: `false` (strict mode — errors propagate).
+    /// Default: `false` (strict mode â€” errors propagate).
     pub failsafe: bool,
 
     /// Default encoding to use for non-UTF8 strings if the DXF file does not
@@ -354,7 +354,7 @@ impl DxfReader {
         // Pre-R2004 (R2000/R14) down-saved gradient hatches keep their gradient
         // in the ACAD round-trip metadata (GradientColor1/2ACI EED + an
         // ACAD_XREC_ROUNDTRIP XRecord) rather than a native gradient block, so
-        // they read back as flat solid fills. Rebuild them — gated to pre-R2004
+        // they read back as flat solid fills. Rebuild them â€” gated to pre-R2004
         // so a native R2004+ gradient (read directly) always wins over any
         // stale round-trip EED left by an earlier edit.
         if document.version < crate::types::DxfVersion::AC1018 {
@@ -449,7 +449,7 @@ impl DxfReader {
     /// 320 soft-pointer handle. The DWG reader gets this from the merged AcDs
     /// stream; the DXF reader used to skip the whole section, leaving every
     /// modeler entity geometry-less. Parse the records, then attach each SAB
-    /// blob to its entity so the same downstream SAB → mesh path runs.
+    /// blob to its entity so the same downstream SAB â†’ mesh path runs.
     fn read_acdsdata_section(&mut self, document: &mut CadDocument) -> Result<()> {
         // (entity handle, SAB bytes) pairs collected from ASM_Data records.
         let mut blobs: Vec<(u64, Vec<u8>)> = Vec::new();
@@ -461,7 +461,7 @@ impl DxfReader {
 
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 {
-                // Record boundary — flush a complete ASM_Data record.
+                // Record boundary â€” flush a complete ASM_Data record.
                 if is_asm && !chunks.is_empty() {
                     if let Some(h) = cur_handle {
                         blobs.push((h, std::mem::take(&mut chunks)));
@@ -482,7 +482,7 @@ impl DxfReader {
                         cur_handle = Some(h);
                     }
                 }
-                // Property name — the binary payload that follows is ACIS only
+                // Property name â€” the binary payload that follows is ACIS only
                 // for the ASM_Data property (Thumbnail_Data etc. are skipped).
                 2 => is_asm = pair.value_string == "ASM_Data",
                 // Binary chunk (hex-encoded); only kept once inside ASM_Data.
@@ -562,7 +562,7 @@ impl DxfReader {
 }
 
 /// Snapshot the handles `initialize_defaults()` handed to its well-known
-/// table entries: (table, entry name) → handle.
+/// table entries: (table, entry name) â†’ handle.
 fn snapshot_default_entry_handles(
     document: &CadDocument,
 ) -> HashMap<(&'static str, String), u64> {
@@ -596,7 +596,7 @@ fn snapshot_default_entry_handles(
 /// `CadDocument::new()` creates well-known entries (Standard text style and
 /// dimstyle, ByLayer/ByBlock linetypes, ...) before the file is parsed. When
 /// the file lacks such an entry but uses its handle for one of its own
-/// records, the writer would emit two records with the same handle — a hard
+/// records, the writer would emit two records with the same handle â€” a hard
 /// integrity error CAD applications reject. Nothing inside the file
 /// references a default the file does not contain, so the surviving default
 /// is moved to a fresh handle and header references still pointing at it
@@ -678,6 +678,44 @@ fn rehandle_colliding_default_entries(
     collect!("vx_table", document.vx_table);
     collect!("block_records", document.block_records);
 
+    // The surviving default Standard DIMSTYLE was created pointing at the
+    // default Standard text style. When the file replaces that text style
+    // with its own entry (different handle), the reference goes stale and
+    // resolves to whatever object reused the numeric handle - e.g. a ByBlock
+    // linetype written as the DIMSTYLE text style (issue #64). Follow the
+    // name: repoint it at the current Standard text style entry.
+    if let Some(default_text_style) = defaults
+        .get(&("text_styles", "Standard".to_string()))
+        .map(|h| Handle::new(*h))
+    {
+        let current = document.text_styles.get("Standard").map(|t| t.handle());
+        let dimstyle_is_default = defaults
+            .get(&("dim_styles", "Standard".to_string()))
+            .map(|h| Handle::new(*h))
+            .is_some_and(|default_dimstyle| {
+                document
+                    .dim_styles
+                    .get("Standard")
+                    .is_some_and(|d| d.handle() == default_dimstyle)
+            });
+        let text_style_replaced = current.is_some_and(|h| h != default_text_style);
+        if dimstyle_is_default && text_style_replaced {
+            if let Some(ds) = document.dim_styles.get_mut("Standard") {
+                if ds.dimtxsty_handle == default_text_style {
+                    ds.dimtxsty_handle = current.unwrap();
+                }
+            }
+            // The header's dim text-style references follow.
+            let header = &mut document.header;
+            if header.current_text_style_handle == default_text_style {
+                header.current_text_style_handle = current.unwrap();
+            }
+            if header.dim_text_style_handle == default_text_style {
+                header.dim_text_style_handle = current.unwrap();
+            }
+        }
+    }
+
     for (tag, name, old) in moves {
         let new = document.allocate_handle();
         macro_rules! apply {
@@ -742,11 +780,16 @@ fn rehandle_colliding_default_entries(
             header.dim_linetype2_handle = new;
         }
 
-        // Default entries cross-referencing the moved one (the Standard
-        // dimstyle points at the Standard text style).
-        for ds in document.dim_styles.iter_mut() {
-            if ds.dimtxsty_handle.value() == old {
-                ds.dimtxsty_handle = new;
+        // Default entries cross-referencing the moved one: the default
+        // Standard dimstyle points at the default Standard text style, so
+        // only a moved text style may rewrite dimtxsty. Updating it for
+        // unrelated moved defaults re-wrote the reference onto objects from
+        // other tables (issue #64).
+        if tag == "text_styles" {
+            for ds in document.dim_styles.iter_mut() {
+                if ds.dimtxsty_handle.value() == old {
+                    ds.dimtxsty_handle = new;
+                }
             }
         }
     }
