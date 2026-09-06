@@ -94,10 +94,7 @@ pub struct BlockVisibilityParameter {
 }
 
 impl BlockVisibilityParameter {
-    pub(crate) fn visit_handles_mut(
-        &mut self,
-        visit: &mut impl FnMut(&mut Handle),
-    ) {
+    pub(crate) fn visit_handles_mut(&mut self, visit: &mut impl FnMut(&mut Handle)) {
         visit(&mut self.handle);
         visit(&mut self.owner);
         if let BlockEvalValue::Handle(handle) = &mut self.eval_value {

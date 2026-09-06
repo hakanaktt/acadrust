@@ -9,11 +9,10 @@ use crate::entities::*;
 use crate::error::Result;
 use crate::objects::*;
 use crate::objects::{
-    DetailViewStyle as ClassDetailViewStyle,
-    SectionViewStyle as ClassSectionViewStyle,
+    DetailViewStyle as ClassDetailViewStyle, SectionViewStyle as ClassSectionViewStyle,
 };
-use crate::tables::*;
 use crate::tables::linetype::LineTypeElement;
+use crate::tables::*;
 use crate::types::*;
 use crate::xdata::{ExtendedData, ExtendedDataRecord, XDataValue};
 
@@ -60,27 +59,21 @@ fn semantic_property_from_pair(
 ) -> SemanticProperty {
     use crate::io::dxf::GroupCodeValueType;
     let value = match GroupCodeValueType::from_raw_code(pair.code) {
-        GroupCodeValueType::Bool => {
-            SemanticPropertyValue::Bool(pair.as_bool().unwrap_or(false))
-        }
-        GroupCodeValueType::Byte => {
-            SemanticPropertyValue::Byte(pair.as_int().unwrap_or(0) as u8)
-        }
+        GroupCodeValueType::Bool => SemanticPropertyValue::Bool(pair.as_bool().unwrap_or(false)),
+        GroupCodeValueType::Byte => SemanticPropertyValue::Byte(pair.as_int().unwrap_or(0) as u8),
         GroupCodeValueType::Int16 => {
             SemanticPropertyValue::Int16(pair.as_int().unwrap_or(0) as i16)
         }
         GroupCodeValueType::Int32 => {
             SemanticPropertyValue::Int32(pair.as_int().unwrap_or(0) as i32)
         }
-        GroupCodeValueType::Int64 => {
-            SemanticPropertyValue::Int64(pair.as_int().unwrap_or(0))
-        }
+        GroupCodeValueType::Int64 => SemanticPropertyValue::Int64(pair.as_int().unwrap_or(0)),
         GroupCodeValueType::Double | GroupCodeValueType::Point3D => {
             SemanticPropertyValue::Double(pair.as_double().unwrap_or(0.0))
         }
-        GroupCodeValueType::Handle => SemanticPropertyValue::Handle(
-            pair.as_handle().map(Handle::new).unwrap_or(Handle::NULL),
-        ),
+        GroupCodeValueType::Handle => {
+            SemanticPropertyValue::Handle(pair.as_handle().map(Handle::new).unwrap_or(Handle::NULL))
+        }
         GroupCodeValueType::BinaryData => {
             let mut bytes = Vec::new();
             append_hex_bytes(&mut bytes, &pair.value_string);
@@ -171,20 +164,14 @@ fn read_dgn_stroke_pattern_dxf(
     properties: &mut Vec<SemanticProperty>,
     subclass: &str,
 ) -> DgnLsStrokePattern {
-    let has_iteration_limit =
-        dgn_bool(take_dgn_property(properties, subclass, 290));
-    let is_single_segment =
-        dgn_bool(take_dgn_property(properties, subclass, 291));
-    let iteration_limit =
-        dgn_i32(take_dgn_property(properties, subclass, 92), 0);
-    let auto_phase =
-        dgn_f64(take_dgn_property(properties, subclass, 41), 0.0);
+    let has_iteration_limit = dgn_bool(take_dgn_property(properties, subclass, 290));
+    let is_single_segment = dgn_bool(take_dgn_property(properties, subclass, 291));
+    let iteration_limit = dgn_i32(take_dgn_property(properties, subclass, 92), 0);
+    let auto_phase = dgn_f64(take_dgn_property(properties, subclass, 41), 0.0);
     let phase = dgn_f64(take_dgn_property(properties, subclass, 42), 0.0);
-    let phase_mode = DgnLsPhaseMode::from_code(
-        dgn_i32(take_dgn_property(properties, subclass, 281), 0) as u8,
-    );
-    let count =
-        dgn_i32(take_dgn_property(properties, subclass, 93), 0).max(0) as usize;
+    let phase_mode =
+        DgnLsPhaseMode::from_code(dgn_i32(take_dgn_property(properties, subclass, 281), 0) as u8);
+    let count = dgn_i32(take_dgn_property(properties, subclass, 93), 0).max(0) as usize;
     let mut dash = take_all_dgn_properties(properties, subclass, 292);
     let mut bypass = take_all_dgn_properties(properties, subclass, 293);
     let mut scalable = take_all_dgn_properties(properties, subclass, 294);
@@ -221,9 +208,7 @@ fn read_dgn_stroke_pattern_dxf(
     }
 }
 
-fn take_first(
-    values: &mut Vec<SemanticPropertyValue>,
-) -> Option<SemanticPropertyValue> {
+fn take_first(values: &mut Vec<SemanticPropertyValue>) -> Option<SemanticPropertyValue> {
     if values.is_empty() {
         None
     } else {
@@ -252,9 +237,7 @@ fn read_field_cell_value_dxf(
     version: DxfVersion,
 ) -> CellValue {
     let mut value = CellValue::new();
-    if version >= DxfVersion::AC1021
-        && entries.get(*cursor).map(|entry| entry.0) == Some(93)
-    {
+    if version >= DxfVersion::AC1021 && entries.get(*cursor).map(|entry| entry.0) == Some(93) {
         value.flags = entries[*cursor].1.parse().unwrap_or(0);
         *cursor += 1;
     }
@@ -301,16 +284,13 @@ fn read_field_cell_value_dxf(
                     value.point_value.y = entries[*cursor].1.parse().unwrap_or(0.0);
                     *cursor += 1;
                 }
-                if type_code == 0x20
-                    && entries.get(*cursor).map(|entry| entry.0) == Some(31)
-                {
+                if type_code == 0x20 && entries.get(*cursor).map(|entry| entry.0) == Some(31) {
                     value.point_value.z = entries[*cursor].1.parse().unwrap_or(0.0);
                     *cursor += 1;
                 }
             }
             0x40 => {
-                value.handle_value = field_next_code(entries, cursor, 330)
-                    .map(parse_dxf_handle);
+                value.handle_value = field_next_code(entries, cursor, 330).map(parse_dxf_handle);
             }
             0x80 | 0x100 => {}
             _ => {}
@@ -319,16 +299,14 @@ fn read_field_cell_value_dxf(
     if version >= DxfVersion::AC1021 {
         if entries.get(*cursor).map(|entry| entry.0) == Some(94) {
             value.raw_unit_type_code = entries[*cursor].1.parse().unwrap_or(0);
-            value.unit_type =
-                ValueUnitType::from(value.raw_unit_type_code as u32);
+            value.unit_type = ValueUnitType::from(value.raw_unit_type_code as u32);
             *cursor += 1;
         }
         if entries.get(*cursor).map(|entry| entry.0) == Some(300) {
             value.format = entries[*cursor].1.clone();
             *cursor += 1;
         }
-        if value.raw_unit_type_code != 12
-            && entries.get(*cursor).map(|entry| entry.0) == Some(302)
+        if value.raw_unit_type_code != 12 && entries.get(*cursor).map(|entry| entry.0) == Some(302)
         {
             value.formatted_value = entries[*cursor].1.clone();
             *cursor += 1;
@@ -555,9 +533,7 @@ fn registered_class_cpp_name(name: &str) -> &'static str {
         "ACAD_PROXY_ENTITY_WRAPPER" => "AcDbProxyEntityWrapper",
         "ACAD_PROXY_OBJECT_WRAPPER" => "AcDbProxyObjectWrapper",
         "AEC_REFEDIT_STATUS_TRACKER" => "AecDbRefEditStatusTracker",
-        "EXACXREFPANELOBJECT" | "XREFPANELOBJECT" => {
-            "ExAcXREFPanelObject"
-        }
+        "EXACXREFPANELOBJECT" | "XREFPANELOBJECT" => "ExAcXREFPanelObject",
         "NPOCOLLECTION" => "AcDbImpNonPersistentObjectsCollection",
         "LSINTERNALCOMPONENT" => "AcDbLSInternalComponent",
         "MCDBCONTAINER2" => "McDbContainer2",
@@ -617,12 +593,7 @@ impl ClassDxfFields {
             .unwrap_or_default()
     }
 
-    fn string_skipping(
-        &mut self,
-        section: &str,
-        code: i32,
-        markers: &[&str],
-    ) -> String {
+    fn string_skipping(&mut self, section: &str, code: i32, markers: &[&str]) -> String {
         loop {
             let value = self.string(section, code);
             if value.is_empty() || !markers.iter().any(|marker| *marker == value) {
@@ -656,10 +627,7 @@ impl ClassDxfFields {
     }
 
     fn point2(&mut self, section: &str, code: i32) -> Vector2 {
-        Vector2::new(
-            self.f64(section, code),
-            self.f64(section, code + 10),
-        )
+        Vector2::new(self.f64(section, code), self.f64(section, code + 10))
     }
 
     fn point3(&mut self, section: &str, code: i32) -> Vector3 {
@@ -686,8 +654,7 @@ fn class_dxf_render_settings(
         environment_image_filename: fields.string(section, 1),
         description: fields.string(section, 1),
         display_index: fields.i32(section, 90),
-        has_predefined: has_predefined_in_base
-            && fields.bool(section, 290),
+        has_predefined: has_predefined_in_base && fields.bool(section, 290),
     }
 }
 
@@ -724,21 +691,13 @@ fn class_dxf_point_cloud_ramps(
     result
 }
 
-fn class_dxf_hatch_scale_context(
-    fields: &mut ClassDxfFields,
-) -> crate::objects::HatchScaleContext {
+fn class_dxf_hatch_scale_context(fields: &mut ClassDxfFields) -> crate::objects::HatchScaleContext {
     let section = "AcDbHatchObjectContextData";
     let mut pattern_lines = Vec::new();
     for _ in 0..fields.i32(section, 78).max(0).min(10_000) {
         let angle = fields.f64(section, 53).to_radians();
-        let base_point = Vector2::new(
-            fields.f64(section, 43),
-            fields.f64(section, 44),
-        );
-        let offset = Vector2::new(
-            fields.f64(section, 45),
-            fields.f64(section, 46),
-        );
+        let base_point = Vector2::new(fields.f64(section, 43), fields.f64(section, 44));
+        let offset = Vector2::new(fields.f64(section, 45), fields.f64(section, 46));
         let mut dash_lengths = Vec::new();
         for _ in 0..fields.i32(section, 79).max(0).min(10_000) {
             dash_lengths.push(fields.f64(section, 49));
@@ -1013,10 +972,7 @@ fn dynamic_dxf_one_point(fields: &DynamicDxfFields) -> BlockOnePointParameter {
 fn dynamic_dxf_two_point(fields: &DynamicDxfFields) -> BlockTwoPointParameter {
     let section = "AcDbBlock2PtParameter";
     let mut property_states = [0; 4];
-    for (target, source) in property_states
-        .iter_mut()
-        .zip(fields.values(section, 91))
-    {
+    for (target, source) in property_states.iter_mut().zip(fields.values(section, 91)) {
         *target = source.parse().unwrap_or(0);
     }
     BlockTwoPointParameter {
@@ -1076,16 +1032,12 @@ fn dynamic_dxf_action(fields: &DynamicDxfFields) -> BlockAction {
     }
 }
 
-fn dynamic_dxf_action_with_base(
-    fields: &DynamicDxfFields,
-) -> BlockActionWithBasePoint {
+fn dynamic_dxf_action_with_base(fields: &DynamicDxfFields) -> BlockActionWithBasePoint {
     let section = "AcDbBlockActionWithBasePt";
     BlockActionWithBasePoint {
         action: dynamic_dxf_action(fields),
         offset: fields.point(section, 1011),
-        connections: dynamic_dxf_sequential_connections(
-            fields, section, 92, 301, 2,
-        ),
+        connections: dynamic_dxf_sequential_connections(fields, section, 92, 301, 2),
         dependent: fields.bool(section, 280),
         base_point: fields.point(section, 1012),
     }
@@ -1119,9 +1071,7 @@ fn dynamic_dxf_constraint(fields: &DynamicDxfFields) -> BlockConstraintParameter
     }
 }
 
-fn dynamic_dxf_linear_constraint(
-    fields: &DynamicDxfFields,
-) -> BlockLinearConstraintParameter {
+fn dynamic_dxf_linear_constraint(fields: &DynamicDxfFields) -> BlockLinearConstraintParameter {
     let section = "AcDbBlockLinearConstraintParameter";
     BlockLinearConstraintParameter {
         constraint: dynamic_dxf_constraint(fields),
@@ -1286,10 +1236,14 @@ impl<'a> SectionReader<'a> {
                         document.version = DxfVersion::from_version_string(&p.value_string);
                     }
                 }
-                "$ACADMAINTVER" => { self.reader.read_pair()?; }
+                "$ACADMAINTVER" => {
+                    self.reader.read_pair()?;
+                }
                 "$REQUIREDVERSIONS" => {
                     if let Some(p) = self.reader.read_pair()? {
-                        if let Some(v) = p.as_int() { hdr.required_versions = v; }
+                        if let Some(v) = p.as_int() {
+                            hdr.required_versions = v;
+                        }
                     }
                 }
                 "$DWGCODEPAGE" => {
@@ -1297,7 +1251,9 @@ impl<'a> SectionReader<'a> {
                         hdr.code_page = p.value_string.clone();
                         // Set encoding immediately for pre-2007 files
                         if document.version < DxfVersion::AC1021 {
-                            if let Some(enc) = crate::io::dxf::code_page::encoding_from_code_page(&hdr.code_page) {
+                            if let Some(enc) =
+                                crate::io::dxf::code_page::encoding_from_code_page(&hdr.code_page)
+                            {
                                 self.reader.set_encoding(enc);
                             }
                         }
@@ -1311,268 +1267,1400 @@ impl<'a> SectionReader<'a> {
                     }
                 }
                 "$LASTSAVEDBY" => {
-                    if let Some(p) = self.reader.read_pair()? { hdr.last_saved_by = p.value_string.clone(); }
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.last_saved_by = p.value_string.clone();
+                    }
                 }
                 "$FINGERPRINTGUID" => {
-                    if let Some(p) = self.reader.read_pair()? { hdr.fingerprint_guid = p.value_string.clone(); }
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.fingerprint_guid = p.value_string.clone();
+                    }
                 }
                 "$VERSIONGUID" => {
-                    if let Some(p) = self.reader.read_pair()? { hdr.version_guid = p.value_string.clone(); }
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.version_guid = p.value_string.clone();
+                    }
                 }
                 "$MENU" => {
-                    if let Some(p) = self.reader.read_pair()? { hdr.menu_name = p.value_string.clone(); }
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.menu_name = p.value_string.clone();
+                    }
                 }
                 "$PROJECTNAME" => {
-                    if let Some(p) = self.reader.read_pair()? { hdr.project_name = p.value_string.clone(); }
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.project_name = p.value_string.clone();
+                    }
                 }
                 "$HYPERLINKBASE" => {
-                    if let Some(p) = self.reader.read_pair()? { hdr.hyperlink_base = p.value_string.clone(); }
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.hyperlink_base = p.value_string.clone();
+                    }
                 }
                 "$STYLESHEET" => {
-                    if let Some(p) = self.reader.read_pair()? { hdr.stylesheet = p.value_string.clone(); }
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.stylesheet = p.value_string.clone();
+                    }
                 }
 
                 // ── Drawing Mode Booleans ──
-                "$DIMASO" => { if let Some(p) = self.reader.read_pair()? { hdr.associate_dimensions = p.as_i16() == Some(1); } }
-                "$DIMSHO" => { if let Some(p) = self.reader.read_pair()? { hdr.update_dimensions_while_dragging = p.as_i16() == Some(1); } }
-                "$ORTHOMODE" => { if let Some(p) = self.reader.read_pair()? { hdr.ortho_mode = p.as_i16() == Some(1); } }
-                "$FILLMODE" => { if let Some(p) = self.reader.read_pair()? { hdr.fill_mode = p.as_i16() == Some(1); } }
-                "$QTEXTMODE" => { if let Some(p) = self.reader.read_pair()? { hdr.quick_text_mode = p.as_i16() == Some(1); } }
-                "$MIRRTEXT" => { if let Some(p) = self.reader.read_pair()? { hdr.mirror_text = p.as_i16() == Some(1); } }
-                "$REGENMODE" => { if let Some(p) = self.reader.read_pair()? { hdr.regen_mode = p.as_i16() == Some(1); } }
-                "$LIMCHECK" => { if let Some(p) = self.reader.read_pair()? { hdr.limit_check = p.as_i16() == Some(1); } }
-                "$PLIMCHECK" => { if let Some(p) = self.reader.read_pair()? { hdr.paper_space_limit_check = p.as_i16() == Some(1); } }
-                "$PLINEGEN" => { if let Some(p) = self.reader.read_pair()? { hdr.polyline_linetype_generation = p.as_i16() == Some(1); } }
-                "$PSLTSCALE" => { if let Some(p) = self.reader.read_pair()? { hdr.paper_space_linetype_scaling = p.as_i16() == Some(1); } }
-                "$TILEMODE" => { if let Some(p) = self.reader.read_pair()? { hdr.show_model_space = p.as_i16() == Some(1); } }
-                "$USRTIMER" => { if let Some(p) = self.reader.read_pair()? { hdr.user_timer = p.as_i16() == Some(1); } }
-                "$WORLDVIEW" => { if let Some(p) = self.reader.read_pair()? { hdr.world_view = p.as_i16() == Some(1); } }
-                "$VISRETAIN" => { if let Some(p) = self.reader.read_pair()? { hdr.retain_xref_visibility = p.as_i16() == Some(1); } }
-                "$DISPSILH" => { if let Some(p) = self.reader.read_pair()? { hdr.display_silhouette = p.as_i16() == Some(1); } }
-                "$SPLFRAME" => { if let Some(p) = self.reader.read_pair()? { hdr.spline_frame = p.as_i16() == Some(1); } }
-                "$DELOBJ" => { if let Some(p) = self.reader.read_pair()? { hdr.delete_objects = p.as_i16() == Some(1); } }
-                "$SOLIDHIST" => { if let Some(p) = self.reader.read_pair()? { hdr.record_solid_history = p.as_i16() == Some(1); } }
-                "$SHOWHIST" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.show_solid_history = v.clamp(0, 2); } } }
-                "$BLIPMODE" => { if let Some(p) = self.reader.read_pair()? { hdr.blip_mode = p.as_i16() == Some(1); } }
-                "$ATTREQ" => { if let Some(p) = self.reader.read_pair()? { hdr.attribute_request = p.as_i16() == Some(1); } }
-                "$ATTDIA" => { if let Some(p) = self.reader.read_pair()? { hdr.attribute_dialog = p.as_i16() == Some(1); } }
+                "$DIMASO" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.associate_dimensions = p.as_i16() == Some(1);
+                    }
+                }
+                "$DIMSHO" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.update_dimensions_while_dragging = p.as_i16() == Some(1);
+                    }
+                }
+                "$ORTHOMODE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.ortho_mode = p.as_i16() == Some(1);
+                    }
+                }
+                "$FILLMODE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.fill_mode = p.as_i16() == Some(1);
+                    }
+                }
+                "$QTEXTMODE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.quick_text_mode = p.as_i16() == Some(1);
+                    }
+                }
+                "$MIRRTEXT" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.mirror_text = p.as_i16() == Some(1);
+                    }
+                }
+                "$REGENMODE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.regen_mode = p.as_i16() == Some(1);
+                    }
+                }
+                "$LIMCHECK" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.limit_check = p.as_i16() == Some(1);
+                    }
+                }
+                "$PLIMCHECK" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.paper_space_limit_check = p.as_i16() == Some(1);
+                    }
+                }
+                "$PLINEGEN" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.polyline_linetype_generation = p.as_i16() == Some(1);
+                    }
+                }
+                "$PSLTSCALE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.paper_space_linetype_scaling = p.as_i16() == Some(1);
+                    }
+                }
+                "$TILEMODE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.show_model_space = p.as_i16() == Some(1);
+                    }
+                }
+                "$USRTIMER" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.user_timer = p.as_i16() == Some(1);
+                    }
+                }
+                "$WORLDVIEW" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.world_view = p.as_i16() == Some(1);
+                    }
+                }
+                "$VISRETAIN" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.retain_xref_visibility = p.as_i16() == Some(1);
+                    }
+                }
+                "$DISPSILH" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.display_silhouette = p.as_i16() == Some(1);
+                    }
+                }
+                "$SPLFRAME" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.spline_frame = p.as_i16() == Some(1);
+                    }
+                }
+                "$DELOBJ" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.delete_objects = p.as_i16() == Some(1);
+                    }
+                }
+                "$SOLIDHIST" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.record_solid_history = p.as_i16() == Some(1);
+                    }
+                }
+                "$SHOWHIST" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.show_solid_history = v.clamp(0, 2);
+                        }
+                    }
+                }
+                "$BLIPMODE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.blip_mode = p.as_i16() == Some(1);
+                    }
+                }
+                "$ATTREQ" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.attribute_request = p.as_i16() == Some(1);
+                    }
+                }
+                "$ATTDIA" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.attribute_dialog = p.as_i16() == Some(1);
+                    }
+                }
 
                 // ── Drawing Mode Integers ──
-                "$DRAGMODE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.drag_mode = v; } } }
+                "$DRAGMODE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.drag_mode = v;
+                        }
+                    }
+                }
 
                 // ── Units ──
-                "$LUNITS" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.linear_unit_format = v; } } }
-                "$LUPREC" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.linear_unit_precision = v; } } }
-                "$AUNITS" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.angular_unit_format = v; } } }
-                "$AUPREC" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.angular_unit_precision = v; } } }
-                "$INSUNITS" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.insertion_units = v; } } }
-                "$ATTMODE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.attribute_visibility = v; } } }
-                "$PDMODE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.point_display_mode = v; } } }
-                "$USERI1" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.user_int1 = v; } } }
-                "$USERI2" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.user_int2 = v; } } }
-                "$USERI3" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.user_int3 = v; } } }
-                "$USERI4" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.user_int4 = v; } } }
-                "$USERI5" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.user_int5 = v; } } }
-                "$COORDS" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.coords_mode = v; } } }
-                "$OSMODE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i32() { hdr.object_snap_mode = v; } } }
-                "$PICKSTYLE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.pick_style = v; } } }
-                "$SPLINETYPE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.spline_type = v; } } }
-                "$SPLINESEGS" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.spline_segments = v; } } }
-                "$SURFU" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.surface_u_density = v; } } }
-                "$SURFV" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.surface_v_density = v; } } }
-                "$SURFTYPE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.surface_type = v; } } }
-                "$SURFTAB1" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.surface_tab1 = v; } } }
-                "$SURFTAB2" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.surface_tab2 = v; } } }
-                "$SHADEDGE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.shade_edge = v; } } }
-                "$SHADEDIF" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.shade_diffuse = v; } } }
-                "$MAXACTVP" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.max_active_viewports = v; } } }
-                "$ISOLINES" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.isolines = v; } } }
-                "$CMLJUST" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.multiline_justification = v; } } }
-                "$TEXTQLTY" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.text_quality = v; } } }
-                "$SORTENTS" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.sort_entities = v; } } }
-                "$INDEXCTL" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.index_control = v; } } }
-                "$HIDETEXT" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.hide_text = v; } } }
-                "$XCLIPFRAME" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.xclip_frame = v; } } }
-                "$HALOGAP" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.halo_gap = v; } } }
-                "$OBSCOLOR" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.obscured_color = v; } } }
-                "$OBSLTYPE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.obscured_linetype = v; } } }
-                "$INTERSECTIONDISPLAY" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.intersection_display = v; } } }
-                "$INTERSECTIONCOLOR" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.intersection_color = v; } } }
-                "$DIMASSOC" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.dimension_associativity = v; } } }
-                "$MEASUREMENT" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.measurement = v; } } }
-                "$PROXYGRAPHICS" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.proxy_graphics = v; } } }
-                "$TREEDEPTH" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.tree_depth = v; } } }
+                "$LUNITS" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.linear_unit_format = v;
+                        }
+                    }
+                }
+                "$LUPREC" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.linear_unit_precision = v;
+                        }
+                    }
+                }
+                "$AUNITS" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.angular_unit_format = v;
+                        }
+                    }
+                }
+                "$AUPREC" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.angular_unit_precision = v;
+                        }
+                    }
+                }
+                "$INSUNITS" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.insertion_units = v;
+                        }
+                    }
+                }
+                "$ATTMODE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.attribute_visibility = v;
+                        }
+                    }
+                }
+                "$PDMODE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.point_display_mode = v;
+                        }
+                    }
+                }
+                "$USERI1" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.user_int1 = v;
+                        }
+                    }
+                }
+                "$USERI2" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.user_int2 = v;
+                        }
+                    }
+                }
+                "$USERI3" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.user_int3 = v;
+                        }
+                    }
+                }
+                "$USERI4" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.user_int4 = v;
+                        }
+                    }
+                }
+                "$USERI5" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.user_int5 = v;
+                        }
+                    }
+                }
+                "$COORDS" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.coords_mode = v;
+                        }
+                    }
+                }
+                "$OSMODE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i32() {
+                            hdr.object_snap_mode = v;
+                        }
+                    }
+                }
+                "$PICKSTYLE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.pick_style = v;
+                        }
+                    }
+                }
+                "$SPLINETYPE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.spline_type = v;
+                        }
+                    }
+                }
+                "$SPLINESEGS" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.spline_segments = v;
+                        }
+                    }
+                }
+                "$SURFU" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.surface_u_density = v;
+                        }
+                    }
+                }
+                "$SURFV" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.surface_v_density = v;
+                        }
+                    }
+                }
+                "$SURFTYPE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.surface_type = v;
+                        }
+                    }
+                }
+                "$SURFTAB1" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.surface_tab1 = v;
+                        }
+                    }
+                }
+                "$SURFTAB2" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.surface_tab2 = v;
+                        }
+                    }
+                }
+                "$SHADEDGE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.shade_edge = v;
+                        }
+                    }
+                }
+                "$SHADEDIF" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.shade_diffuse = v;
+                        }
+                    }
+                }
+                "$MAXACTVP" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.max_active_viewports = v;
+                        }
+                    }
+                }
+                "$ISOLINES" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.isolines = v;
+                        }
+                    }
+                }
+                "$CMLJUST" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.multiline_justification = v;
+                        }
+                    }
+                }
+                "$TEXTQLTY" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.text_quality = v;
+                        }
+                    }
+                }
+                "$SORTENTS" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.sort_entities = v;
+                        }
+                    }
+                }
+                "$INDEXCTL" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.index_control = v;
+                        }
+                    }
+                }
+                "$HIDETEXT" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.hide_text = v;
+                        }
+                    }
+                }
+                "$XCLIPFRAME" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.xclip_frame = v;
+                        }
+                    }
+                }
+                "$HALOGAP" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.halo_gap = v;
+                        }
+                    }
+                }
+                "$OBSCOLOR" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.obscured_color = v;
+                        }
+                    }
+                }
+                "$OBSLTYPE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.obscured_linetype = v;
+                        }
+                    }
+                }
+                "$INTERSECTIONDISPLAY" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.intersection_display = v;
+                        }
+                    }
+                }
+                "$INTERSECTIONCOLOR" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.intersection_color = v;
+                        }
+                    }
+                }
+                "$DIMASSOC" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dimension_associativity = v;
+                        }
+                    }
+                }
+                "$MEASUREMENT" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.measurement = v;
+                        }
+                    }
+                }
+                "$PROXYGRAPHICS" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.proxy_graphics = v;
+                        }
+                    }
+                }
+                "$TREEDEPTH" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.tree_depth = v;
+                        }
+                    }
+                }
 
                 // ── Scale / Size Defaults ──
-                "$LTSCALE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.linetype_scale = v; } } }
-                "$TEXTSIZE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.text_height = v; } } }
-                "$TRACEWID" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.trace_width = v; } } }
-                "$SKETCHINC" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.sketch_increment = v; } } }
-                "$SKPOLY" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.sketch_type = v.clamp(0, 2); } } }
-                "$SKTOLERANCE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.sketch_tolerance = if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.5 }; } } }
-                "$THICKNESS" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.thickness = v; } } }
-                "$PDSIZE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.point_display_size = v; } } }
-                "$PLINEWID" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.polyline_width = v; } } }
-                "$CELTSCALE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.current_entity_linetype_scale = v; } } }
-                "$VIEWTWIST" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.view_twist = v; } } }
-                "$FILLETRAD" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.fillet_radius = v; } } }
-                "$CHAMFERA" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.chamfer_distance_a = v; } } }
-                "$CHAMFERB" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.chamfer_distance_b = v; } } }
-                "$CHAMFERC" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.chamfer_length = v; } } }
-                "$CHAMFERD" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.chamfer_angle = v; } } }
-                "$ANGBASE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.angle_base = v; } } }
-                "$ANGDIR" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.angle_direction = v; } } }
-                "$ELEVATION" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.elevation = v; } } }
-                "$PELEVATION" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.paper_elevation = v; } } }
-                "$FACETRES" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.facet_resolution = v; } } }
-                "$CMLSCALE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.multiline_scale = v; } } }
-                "$USERR1" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.user_real1 = v; } } }
-                "$USERR2" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.user_real2 = v; } } }
-                "$USERR3" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.user_real3 = v; } } }
-                "$USERR4" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.user_real4 = v; } } }
-                "$USERR5" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.user_real5 = v; } } }
-                "$PSVPSCALE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.viewport_scale_factor = v; } } }
-                "$CANNOSCALE" => { if let Some(p) = self.reader.read_pair()? { hdr.current_annotation_scale = p.value_string.clone(); } }
-                "$CANNOSCALEVALUE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.annotation_scale_value = v; } } }
-                "$SHADOWPLANELOCATION" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.shadow_plane_location = v; } } }
-                "$LOFTANG1" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.loft_angle1 = v; } } }
-                "$LOFTANG2" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.loft_angle2 = v; } } }
-                "$LOFTMAG1" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.loft_magnitude1 = v; } } }
-                "$LOFTMAG2" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.loft_magnitude2 = v; } } }
-                "$LOFTPARAM" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.loft_param = v; } } }
-                "$LOFTNORMALS" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.loft_normals = v; } } }
-                "$LATITUDE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.latitude = v; } } }
-                "$LONGITUDE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.longitude = v; } } }
-                "$NORTHDIRECTION" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.north_direction = v; } } }
-                "$TIMEZONE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i32() { hdr.timezone = v; } } }
-                "$STEPSPERSEC" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.steps_per_second = v; } } }
-                "$STEPSIZE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.step_size = v; } } }
-                "$LENSLENGTH" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.lens_length = v; } } }
-                "$CAMERAHEIGHT" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.camera_height = v; } } }
-                "$CAMERADISPLAY" => { if let Some(p) = self.reader.read_pair()? { hdr.camera_display = p.as_bool() == Some(true); } }
+                "$LTSCALE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.linetype_scale = v;
+                        }
+                    }
+                }
+                "$TEXTSIZE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.text_height = v;
+                        }
+                    }
+                }
+                "$TRACEWID" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.trace_width = v;
+                        }
+                    }
+                }
+                "$SKETCHINC" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.sketch_increment = v;
+                        }
+                    }
+                }
+                "$SKPOLY" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.sketch_type = v.clamp(0, 2);
+                        }
+                    }
+                }
+                "$SKTOLERANCE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.sketch_tolerance = if v.is_finite() {
+                                v.clamp(0.0, 1.0)
+                            } else {
+                                0.5
+                            };
+                        }
+                    }
+                }
+                "$THICKNESS" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.thickness = v;
+                        }
+                    }
+                }
+                "$PDSIZE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.point_display_size = v;
+                        }
+                    }
+                }
+                "$PLINEWID" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.polyline_width = v;
+                        }
+                    }
+                }
+                "$CELTSCALE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.current_entity_linetype_scale = v;
+                        }
+                    }
+                }
+                "$VIEWTWIST" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.view_twist = v;
+                        }
+                    }
+                }
+                "$FILLETRAD" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.fillet_radius = v;
+                        }
+                    }
+                }
+                "$CHAMFERA" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.chamfer_distance_a = v;
+                        }
+                    }
+                }
+                "$CHAMFERB" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.chamfer_distance_b = v;
+                        }
+                    }
+                }
+                "$CHAMFERC" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.chamfer_length = v;
+                        }
+                    }
+                }
+                "$CHAMFERD" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.chamfer_angle = v;
+                        }
+                    }
+                }
+                "$ANGBASE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.angle_base = v;
+                        }
+                    }
+                }
+                "$ANGDIR" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.angle_direction = v;
+                        }
+                    }
+                }
+                "$ELEVATION" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.elevation = v;
+                        }
+                    }
+                }
+                "$PELEVATION" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.paper_elevation = v;
+                        }
+                    }
+                }
+                "$FACETRES" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.facet_resolution = v;
+                        }
+                    }
+                }
+                "$CMLSCALE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.multiline_scale = v;
+                        }
+                    }
+                }
+                "$USERR1" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.user_real1 = v;
+                        }
+                    }
+                }
+                "$USERR2" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.user_real2 = v;
+                        }
+                    }
+                }
+                "$USERR3" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.user_real3 = v;
+                        }
+                    }
+                }
+                "$USERR4" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.user_real4 = v;
+                        }
+                    }
+                }
+                "$USERR5" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.user_real5 = v;
+                        }
+                    }
+                }
+                "$PSVPSCALE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.viewport_scale_factor = v;
+                        }
+                    }
+                }
+                "$CANNOSCALE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.current_annotation_scale = p.value_string.clone();
+                    }
+                }
+                "$CANNOSCALEVALUE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.annotation_scale_value = v;
+                        }
+                    }
+                }
+                "$SHADOWPLANELOCATION" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.shadow_plane_location = v;
+                        }
+                    }
+                }
+                "$LOFTANG1" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.loft_angle1 = v;
+                        }
+                    }
+                }
+                "$LOFTANG2" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.loft_angle2 = v;
+                        }
+                    }
+                }
+                "$LOFTMAG1" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.loft_magnitude1 = v;
+                        }
+                    }
+                }
+                "$LOFTMAG2" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.loft_magnitude2 = v;
+                        }
+                    }
+                }
+                "$LOFTPARAM" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.loft_param = v;
+                        }
+                    }
+                }
+                "$LOFTNORMALS" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.loft_normals = v;
+                        }
+                    }
+                }
+                "$LATITUDE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.latitude = v;
+                        }
+                    }
+                }
+                "$LONGITUDE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.longitude = v;
+                        }
+                    }
+                }
+                "$NORTHDIRECTION" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.north_direction = v;
+                        }
+                    }
+                }
+                "$TIMEZONE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i32() {
+                            hdr.timezone = v;
+                        }
+                    }
+                }
+                "$STEPSPERSEC" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.steps_per_second = v;
+                        }
+                    }
+                }
+                "$STEPSIZE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.step_size = v;
+                        }
+                    }
+                }
+                "$LENSLENGTH" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.lens_length = v;
+                        }
+                    }
+                }
+                "$CAMERAHEIGHT" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.camera_height = v;
+                        }
+                    }
+                }
+                "$CAMERADISPLAY" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.camera_display = p.as_bool() == Some(true);
+                    }
+                }
 
                 // ── Current Entity Settings ──
                 "$CECOLOR" => {
                     if let Some(p) = self.reader.read_pair()? {
-                        if let Some(v) = p.as_i16() { hdr.current_entity_color = Color::from_index(v); }
+                        if let Some(v) = p.as_i16() {
+                            hdr.current_entity_color = Color::from_index(v);
+                        }
                     }
                 }
-                "$CELWEIGHT" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.current_line_weight = v; } } }
-                "$CEPSNTYPE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.current_plotstyle_type = v; } } }
-                "$ENDCAPS" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.end_caps = v; } } }
-                "$JOINSTYLE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.join_style = v; } } }
-                "$LWDISPLAY" => { if let Some(p) = self.reader.read_pair()? { hdr.lineweight_display = p.as_bool() == Some(true); } }
-                "$XEDIT" => { if let Some(p) = self.reader.read_pair()? { hdr.xedit = p.as_bool() == Some(true); } }
-                "$EXTNAMES" => { if let Some(p) = self.reader.read_pair()? { hdr.extended_names = p.as_bool() == Some(true); } }
-                "$PSTYLEMODE" => { if let Some(p) = self.reader.read_pair()? { hdr.plotstyle_mode = p.as_bool() == Some(true); } }
-                "$OLESTARTUP" => { if let Some(p) = self.reader.read_pair()? { hdr.ole_startup = p.as_bool() == Some(true); } }
+                "$CELWEIGHT" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.current_line_weight = v;
+                        }
+                    }
+                }
+                "$CEPSNTYPE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.current_plotstyle_type = v;
+                        }
+                    }
+                }
+                "$ENDCAPS" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.end_caps = v;
+                        }
+                    }
+                }
+                "$JOINSTYLE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.join_style = v;
+                        }
+                    }
+                }
+                "$LWDISPLAY" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.lineweight_display = p.as_bool() == Some(true);
+                    }
+                }
+                "$XEDIT" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.xedit = p.as_bool() == Some(true);
+                    }
+                }
+                "$EXTNAMES" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.extended_names = p.as_bool() == Some(true);
+                    }
+                }
+                "$PSTYLEMODE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.plotstyle_mode = p.as_bool() == Some(true);
+                    }
+                }
+                "$OLESTARTUP" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.ole_startup = p.as_bool() == Some(true);
+                    }
+                }
 
                 // ── Dimension Variables ──
-                "$DIMSCALE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.dim_scale = v; } } }
-                "$DIMASZ" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.dim_arrow_size = v; } } }
-                "$DIMEXO" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.dim_ext_line_offset = v; } } }
-                "$DIMDLI" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.dim_line_increment = v; } } }
-                "$DIMEXE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.dim_ext_line_extension = v; } } }
-                "$DIMRND" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.dim_rounding = v; } } }
-                "$DIMDLE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.dim_line_extension = v; } } }
-                "$DIMTP" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.dim_tolerance_plus = v; } } }
-                "$DIMTM" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.dim_tolerance_minus = v; } } }
-                "$DIMTXT" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.dim_text_height = v; } } }
-                "$DIMCEN" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.dim_center_mark = v; } } }
-                "$DIMTSZ" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.dim_tick_size = v; } } }
-                "$DIMALTF" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.dim_alt_scale = v; } } }
-                "$DIMLFAC" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.dim_linear_scale = v; } } }
-                "$DIMTVP" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.dim_text_vertical_pos = v; } } }
-                "$DIMTFAC" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.dim_tolerance_scale = v; } } }
-                "$DIMGAP" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.dim_line_gap = v; } } }
-                "$DIMALTRND" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.dim_alt_rounding = v; } } }
-                "$DIMTOL" => { if let Some(p) = self.reader.read_pair()? { hdr.dim_tolerance = p.as_i16() == Some(1); } }
-                "$DIMLIM" => { if let Some(p) = self.reader.read_pair()? { hdr.dim_limits = p.as_i16() == Some(1); } }
-                "$DIMTIH" => { if let Some(p) = self.reader.read_pair()? { hdr.dim_text_inside_horizontal = p.as_i16() == Some(1); } }
-                "$DIMTOH" => { if let Some(p) = self.reader.read_pair()? { hdr.dim_text_outside_horizontal = p.as_i16() == Some(1); } }
-                "$DIMSE1" => { if let Some(p) = self.reader.read_pair()? { hdr.dim_suppress_ext1 = p.as_i16() == Some(1); } }
-                "$DIMSE2" => { if let Some(p) = self.reader.read_pair()? { hdr.dim_suppress_ext2 = p.as_i16() == Some(1); } }
-                "$DIMTAD" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.dim_text_above = v; } } }
-                "$DIMZIN" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.dim_zero_suppression = v; } } }
-                "$DIMAZIN" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.dim_alt_zero_suppression = v; } } }
-                "$DIMALT" => { if let Some(p) = self.reader.read_pair()? { hdr.dim_alternate_units = p.as_i16() == Some(1); } }
-                "$DIMALTD" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.dim_alt_decimal_places = v; } } }
-                "$DIMTOFL" => { if let Some(p) = self.reader.read_pair()? { hdr.dim_force_line_inside = p.as_i16() == Some(1); } }
-                "$DIMSAH" => { if let Some(p) = self.reader.read_pair()? { hdr.dim_separate_arrows = p.as_i16() == Some(1); } }
-                "$DIMTIX" => { if let Some(p) = self.reader.read_pair()? { hdr.dim_force_text_inside = p.as_i16() == Some(1); } }
-                "$DIMSOXD" => { if let Some(p) = self.reader.read_pair()? { hdr.dim_suppress_outside_ext = p.as_i16() == Some(1); } }
-                "$DIMCLRD" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.dim_line_color = Color::from_index(v); } } }
-                "$DIMCLRE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.dim_ext_line_color = Color::from_index(v); } } }
-                "$DIMCLRT" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.dim_text_color = Color::from_index(v); } } }
-                "$DIMADEC" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.dim_angular_decimal_places = v; } } }
-                "$DIMDEC" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.dim_decimal_places = v; } } }
-                "$DIMTDEC" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.dim_tolerance_decimal_places = v; } } }
-                "$DIMALTU" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.dim_alt_units_format = v; } } }
-                "$DIMALTTD" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.dim_alt_tolerance_decimal_places = v; } } }
-                "$DIMAUNIT" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.dim_angular_units = v; } } }
-                "$DIMFRAC" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.dim_fraction_format = v; } } }
-                "$DIMLUNIT" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.dim_linear_unit_format = v; } } }
-                "$DIMDSEP" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.dim_decimal_separator = char::from(v as u8); } } }
-                "$DIMTMOVE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.dim_text_movement = v; } } }
-                "$DIMJUST" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.dim_horizontal_justification = v; } } }
-                "$DIMSD1" => { if let Some(p) = self.reader.read_pair()? { hdr.dim_suppress_line1 = p.as_i16() == Some(1); } }
-                "$DIMSD2" => { if let Some(p) = self.reader.read_pair()? { hdr.dim_suppress_line2 = p.as_i16() == Some(1); } }
-                "$DIMTOLJ" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.dim_tolerance_justification = v; } } }
-                "$DIMTZIN" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.dim_tolerance_zero_suppression = v; } } }
-                "$DIMALTZ" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.dim_alt_tolerance_zero_suppression = v; } } }
-                "$DIMALTTZ" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.dim_alt_tolerance_zero_tight = v; } } }
-                "$DIMATFIT" | "$DIMFIT" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.dim_fit = v; } } }
-                "$DIMUPT" => { if let Some(p) = self.reader.read_pair()? { hdr.dim_user_positioned_text = p.as_i16() == Some(1); } }
-                "$DIMPOST" => { if let Some(p) = self.reader.read_pair()? { hdr.dim_post = p.value_string.clone(); } }
-                "$DIMAPOST" => { if let Some(p) = self.reader.read_pair()? { hdr.dim_alt_post = p.value_string.clone(); } }
-                "$DIMBLK" => { if let Some(p) = self.reader.read_pair()? { hdr.dim_arrow_block = p.value_string.clone(); } }
-                "$DIMBLK1" => { if let Some(p) = self.reader.read_pair()? { hdr.dim_arrow_block1 = p.value_string.clone(); } }
-                "$DIMBLK2" => { if let Some(p) = self.reader.read_pair()? { hdr.dim_arrow_block2 = p.value_string.clone(); } }
-                "$DIMLDRBLK" => { if let Some(p) = self.reader.read_pair()? { hdr.dim_leader_arrow_block = p.value_string.clone(); } }
-                "$DIMLWD" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.dim_line_weight = v; } } }
-                "$DIMLWE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.dim_ext_line_weight = v; } } }
+                "$DIMSCALE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.dim_scale = v;
+                        }
+                    }
+                }
+                "$DIMASZ" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.dim_arrow_size = v;
+                        }
+                    }
+                }
+                "$DIMEXO" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.dim_ext_line_offset = v;
+                        }
+                    }
+                }
+                "$DIMDLI" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.dim_line_increment = v;
+                        }
+                    }
+                }
+                "$DIMEXE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.dim_ext_line_extension = v;
+                        }
+                    }
+                }
+                "$DIMRND" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.dim_rounding = v;
+                        }
+                    }
+                }
+                "$DIMDLE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.dim_line_extension = v;
+                        }
+                    }
+                }
+                "$DIMTP" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.dim_tolerance_plus = v;
+                        }
+                    }
+                }
+                "$DIMTM" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.dim_tolerance_minus = v;
+                        }
+                    }
+                }
+                "$DIMTXT" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.dim_text_height = v;
+                        }
+                    }
+                }
+                "$DIMCEN" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.dim_center_mark = v;
+                        }
+                    }
+                }
+                "$DIMTSZ" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.dim_tick_size = v;
+                        }
+                    }
+                }
+                "$DIMALTF" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.dim_alt_scale = v;
+                        }
+                    }
+                }
+                "$DIMLFAC" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.dim_linear_scale = v;
+                        }
+                    }
+                }
+                "$DIMTVP" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.dim_text_vertical_pos = v;
+                        }
+                    }
+                }
+                "$DIMTFAC" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.dim_tolerance_scale = v;
+                        }
+                    }
+                }
+                "$DIMGAP" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.dim_line_gap = v;
+                        }
+                    }
+                }
+                "$DIMALTRND" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.dim_alt_rounding = v;
+                        }
+                    }
+                }
+                "$DIMTOL" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.dim_tolerance = p.as_i16() == Some(1);
+                    }
+                }
+                "$DIMLIM" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.dim_limits = p.as_i16() == Some(1);
+                    }
+                }
+                "$DIMTIH" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.dim_text_inside_horizontal = p.as_i16() == Some(1);
+                    }
+                }
+                "$DIMTOH" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.dim_text_outside_horizontal = p.as_i16() == Some(1);
+                    }
+                }
+                "$DIMSE1" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.dim_suppress_ext1 = p.as_i16() == Some(1);
+                    }
+                }
+                "$DIMSE2" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.dim_suppress_ext2 = p.as_i16() == Some(1);
+                    }
+                }
+                "$DIMTAD" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_text_above = v;
+                        }
+                    }
+                }
+                "$DIMZIN" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_zero_suppression = v;
+                        }
+                    }
+                }
+                "$DIMAZIN" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_alt_zero_suppression = v;
+                        }
+                    }
+                }
+                "$DIMALT" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.dim_alternate_units = p.as_i16() == Some(1);
+                    }
+                }
+                "$DIMALTD" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_alt_decimal_places = v;
+                        }
+                    }
+                }
+                "$DIMTOFL" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.dim_force_line_inside = p.as_i16() == Some(1);
+                    }
+                }
+                "$DIMSAH" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.dim_separate_arrows = p.as_i16() == Some(1);
+                    }
+                }
+                "$DIMTIX" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.dim_force_text_inside = p.as_i16() == Some(1);
+                    }
+                }
+                "$DIMSOXD" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.dim_suppress_outside_ext = p.as_i16() == Some(1);
+                    }
+                }
+                "$DIMCLRD" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_line_color = Color::from_index(v);
+                        }
+                    }
+                }
+                "$DIMCLRE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_ext_line_color = Color::from_index(v);
+                        }
+                    }
+                }
+                "$DIMCLRT" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_text_color = Color::from_index(v);
+                        }
+                    }
+                }
+                "$DIMADEC" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_angular_decimal_places = v;
+                        }
+                    }
+                }
+                "$DIMDEC" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_decimal_places = v;
+                        }
+                    }
+                }
+                "$DIMTDEC" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_tolerance_decimal_places = v;
+                        }
+                    }
+                }
+                "$DIMALTU" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_alt_units_format = v;
+                        }
+                    }
+                }
+                "$DIMALTTD" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_alt_tolerance_decimal_places = v;
+                        }
+                    }
+                }
+                "$DIMAUNIT" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_angular_units = v;
+                        }
+                    }
+                }
+                "$DIMFRAC" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_fraction_format = v;
+                        }
+                    }
+                }
+                "$DIMLUNIT" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_linear_unit_format = v;
+                        }
+                    }
+                }
+                "$DIMDSEP" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_decimal_separator = char::from(v as u8);
+                        }
+                    }
+                }
+                "$DIMTMOVE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_text_movement = v;
+                        }
+                    }
+                }
+                "$DIMJUST" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_horizontal_justification = v;
+                        }
+                    }
+                }
+                "$DIMSD1" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.dim_suppress_line1 = p.as_i16() == Some(1);
+                    }
+                }
+                "$DIMSD2" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.dim_suppress_line2 = p.as_i16() == Some(1);
+                    }
+                }
+                "$DIMTOLJ" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_tolerance_justification = v;
+                        }
+                    }
+                }
+                "$DIMTZIN" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_tolerance_zero_suppression = v;
+                        }
+                    }
+                }
+                "$DIMALTZ" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_alt_tolerance_zero_suppression = v;
+                        }
+                    }
+                }
+                "$DIMALTTZ" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_alt_tolerance_zero_tight = v;
+                        }
+                    }
+                }
+                "$DIMATFIT" | "$DIMFIT" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_fit = v;
+                        }
+                    }
+                }
+                "$DIMUPT" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.dim_user_positioned_text = p.as_i16() == Some(1);
+                    }
+                }
+                "$DIMPOST" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.dim_post = p.value_string.clone();
+                    }
+                }
+                "$DIMAPOST" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.dim_alt_post = p.value_string.clone();
+                    }
+                }
+                "$DIMBLK" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.dim_arrow_block = p.value_string.clone();
+                    }
+                }
+                "$DIMBLK1" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.dim_arrow_block1 = p.value_string.clone();
+                    }
+                }
+                "$DIMBLK2" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.dim_arrow_block2 = p.value_string.clone();
+                    }
+                }
+                "$DIMLDRBLK" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.dim_leader_arrow_block = p.value_string.clone();
+                    }
+                }
+                "$DIMLWD" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_line_weight = v;
+                        }
+                    }
+                }
+                "$DIMLWE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_ext_line_weight = v;
+                        }
+                    }
+                }
 
                 // ── Name references ──
-                "$CLAYER" => { if let Some(p) = self.reader.read_pair()? { hdr.current_layer_name = p.value_string.clone(); } }
-                "$CELTYPE" => { if let Some(p) = self.reader.read_pair()? { hdr.current_linetype_name = p.value_string.clone(); } }
-                "$TEXTSTYLE" => { if let Some(p) = self.reader.read_pair()? { hdr.current_text_style_name = p.value_string.clone(); } }
-                "$DIMSTYLE" => { if let Some(p) = self.reader.read_pair()? { hdr.current_dimstyle_name = p.value_string.clone(); } }
-                "$CMLSTYLE" => { if let Some(p) = self.reader.read_pair()? { hdr.multiline_style = p.value_string.clone(); } }
-                "$CTABLESTYLE" => { if let Some(p) = self.reader.read_pair()? { hdr.current_table_style_name = p.value_string.clone(); } }
-                "$CMLEADERSTYLE" => { if let Some(p) = self.reader.read_pair()? { hdr.current_mleader_style_name = p.value_string.clone(); } }
+                "$CLAYER" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.current_layer_name = p.value_string.clone();
+                    }
+                }
+                "$CELTYPE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.current_linetype_name = p.value_string.clone();
+                    }
+                }
+                "$TEXTSTYLE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.current_text_style_name = p.value_string.clone();
+                    }
+                }
+                "$DIMSTYLE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.current_dimstyle_name = p.value_string.clone();
+                    }
+                }
+                "$CMLSTYLE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.multiline_style = p.value_string.clone();
+                    }
+                }
+                "$CTABLESTYLE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.current_table_style_name = p.value_string.clone();
+                    }
+                }
+                "$CMLEADERSTYLE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.current_mleader_style_name = p.value_string.clone();
+                    }
+                }
 
                 // ── Extents / Limits (multi-value XYZ / XY) ──
-                "$INSBASE" => { self.read_header_point3(&mut hdr.model_space_insertion_base)?; }
-                "$EXTMIN" => { self.read_header_point3(&mut hdr.model_space_extents_min)?; }
-                "$EXTMAX" => { self.read_header_point3(&mut hdr.model_space_extents_max)?; }
-                "$LIMMIN" => { self.read_header_point2(&mut hdr.model_space_limits_min)?; }
-                "$LIMMAX" => { self.read_header_point2(&mut hdr.model_space_limits_max)?; }
-                "$PINSBASE" => { self.read_header_point3(&mut hdr.paper_space_insertion_base)?; }
-                "$PEXTMIN" => { self.read_header_point3(&mut hdr.paper_space_extents_min)?; }
-                "$PEXTMAX" => { self.read_header_point3(&mut hdr.paper_space_extents_max)?; }
-                "$PLIMMIN" => { self.read_header_point2(&mut hdr.paper_space_limits_min)?; }
-                "$PLIMMAX" => { self.read_header_point2(&mut hdr.paper_space_limits_max)?; }
+                "$INSBASE" => {
+                    self.read_header_point3(&mut hdr.model_space_insertion_base)?;
+                }
+                "$EXTMIN" => {
+                    self.read_header_point3(&mut hdr.model_space_extents_min)?;
+                }
+                "$EXTMAX" => {
+                    self.read_header_point3(&mut hdr.model_space_extents_max)?;
+                }
+                "$LIMMIN" => {
+                    self.read_header_point2(&mut hdr.model_space_limits_min)?;
+                }
+                "$LIMMAX" => {
+                    self.read_header_point2(&mut hdr.model_space_limits_max)?;
+                }
+                "$PINSBASE" => {
+                    self.read_header_point3(&mut hdr.paper_space_insertion_base)?;
+                }
+                "$PEXTMIN" => {
+                    self.read_header_point3(&mut hdr.paper_space_extents_min)?;
+                }
+                "$PEXTMAX" => {
+                    self.read_header_point3(&mut hdr.paper_space_extents_max)?;
+                }
+                "$PLIMMIN" => {
+                    self.read_header_point2(&mut hdr.paper_space_limits_min)?;
+                }
+                "$PLIMMAX" => {
+                    self.read_header_point2(&mut hdr.paper_space_limits_max)?;
+                }
 
                 // ── UCS ──
-                "$UCSBASE" => { if let Some(p) = self.reader.read_pair()? { hdr.ucs_base = p.value_string.clone(); } }
-                "$UCSNAME" => { if let Some(p) = self.reader.read_pair()? { hdr.model_space_ucs_name = p.value_string.clone(); } }
-                "$PUCSNAME" => { if let Some(p) = self.reader.read_pair()? { hdr.paper_space_ucs_name = p.value_string.clone(); } }
-                "$UCSORG" => { self.read_header_point3(&mut hdr.model_space_ucs_origin)?; }
-                "$UCSXDIR" => { self.read_header_point3(&mut hdr.model_space_ucs_x_axis)?; }
-                "$UCSYDIR" => { self.read_header_point3(&mut hdr.model_space_ucs_y_axis)?; }
-                "$PUCSORG" => { self.read_header_point3(&mut hdr.paper_space_ucs_origin)?; }
-                "$PUCSXDIR" => { self.read_header_point3(&mut hdr.paper_space_ucs_x_axis)?; }
-                "$PUCSYDIR" => { self.read_header_point3(&mut hdr.paper_space_ucs_y_axis)?; }
-                "$UCSORTHOVIEW" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.ucs_ortho_view = v; } } }
-                "$PUCSORTHOVIEW" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_i16() { hdr.paper_ucs_ortho_view = v; } } }
+                "$UCSBASE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.ucs_base = p.value_string.clone();
+                    }
+                }
+                "$UCSNAME" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.model_space_ucs_name = p.value_string.clone();
+                    }
+                }
+                "$PUCSNAME" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.paper_space_ucs_name = p.value_string.clone();
+                    }
+                }
+                "$UCSORG" => {
+                    self.read_header_point3(&mut hdr.model_space_ucs_origin)?;
+                }
+                "$UCSXDIR" => {
+                    self.read_header_point3(&mut hdr.model_space_ucs_x_axis)?;
+                }
+                "$UCSYDIR" => {
+                    self.read_header_point3(&mut hdr.model_space_ucs_y_axis)?;
+                }
+                "$PUCSORG" => {
+                    self.read_header_point3(&mut hdr.paper_space_ucs_origin)?;
+                }
+                "$PUCSXDIR" => {
+                    self.read_header_point3(&mut hdr.paper_space_ucs_x_axis)?;
+                }
+                "$PUCSYDIR" => {
+                    self.read_header_point3(&mut hdr.paper_space_ucs_y_axis)?;
+                }
+                "$UCSORTHOVIEW" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.ucs_ortho_view = v;
+                        }
+                    }
+                }
+                "$PUCSORTHOVIEW" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.paper_ucs_ortho_view = v;
+                        }
+                    }
+                }
 
                 // ── Date / Time ──
-                "$TDCREATE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.create_date_julian = v; } } }
-                "$TDUCREATE" => { self.reader.read_pair()?; } // UTC variant: skip (no field)
-                "$TDUPDATE" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.update_date_julian = v; } } }
-                "$TDUUPDATE" => { self.reader.read_pair()?; }
-                "$TDINDWG" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.total_editing_time = v; } } }
-                "$TDUSRTIMER" => { if let Some(p) = self.reader.read_pair()? { if let Some(v) = p.as_double() { hdr.user_elapsed_time = v; } } }
+                "$TDCREATE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.create_date_julian = v;
+                        }
+                    }
+                }
+                "$TDUCREATE" => {
+                    self.reader.read_pair()?;
+                } // UTC variant: skip (no field)
+                "$TDUPDATE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.update_date_julian = v;
+                        }
+                    }
+                }
+                "$TDUUPDATE" => {
+                    self.reader.read_pair()?;
+                }
+                "$TDINDWG" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.total_editing_time = v;
+                        }
+                    }
+                }
+                "$TDUSRTIMER" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.user_elapsed_time = v;
+                        }
+                    }
+                }
 
                 _ => {
                     // Skip unknown header variable value(s) – consume until next code 9 or code 0
@@ -1595,9 +2683,13 @@ impl<'a> SectionReader<'a> {
                 // Coordinate codes are 10–39 (X=1x, Y=2x, Z=3x); anything else belongs to the next token
                 if base >= 10 && base < 40 {
                     if let Some(v) = p.as_double() {
-                        if base < 20 { target.x = v; }
-                        else if base < 30 { target.y = v; }
-                        else { target.z = v; }
+                        if base < 20 {
+                            target.x = v;
+                        } else if base < 30 {
+                            target.y = v;
+                        } else {
+                            target.z = v;
+                        }
                     }
                 } else {
                     self.reader.push_back(p);
@@ -1614,7 +2706,11 @@ impl<'a> SectionReader<'a> {
             if let Some(p) = self.reader.read_pair()? {
                 if let Some(v) = p.as_double() {
                     // First value (code 10) → X, second (code 20) → Y
-                    if p.code % 100 < 20 { target.x = v; } else { target.y = v; }
+                    if p.code % 100 < 20 {
+                        target.x = v;
+                    } else {
+                        target.y = v;
+                    }
                 }
             }
         }
@@ -1639,7 +2735,7 @@ impl<'a> SectionReader<'a> {
             if pair.code == 0 && pair.value_string == "ENDSEC" {
                 break;
             }
-            
+
             // Classes are defined with code 0 = "CLASS"
             if pair.code == 0 && pair.value_string == "CLASS" {
                 let mut class = crate::classes::DxfClass::new("", "");
@@ -1681,7 +2777,7 @@ impl<'a> SectionReader<'a> {
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -1692,7 +2788,7 @@ impl<'a> SectionReader<'a> {
             if pair.code == 0 && pair.value_string == "ENDSEC" {
                 break;
             }
-            
+
             // Tables start with code 0 = "TABLE"
             if pair.code == 0 && pair.value_string == "TABLE" {
                 // Read table name (code 2)
@@ -1717,10 +2813,10 @@ impl<'a> SectionReader<'a> {
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Read the BLOCKS section
     pub fn read_blocks(&mut self, document: &mut CadDocument) -> Result<()> {
         // Read blocks until ENDSEC
@@ -1799,7 +2895,11 @@ impl<'a> SectionReader<'a> {
                         base_point = pt;
                     }
                 }
-                70 => { if let Some(v) = pair.as_i16() { block_flags = v; } }
+                70 => {
+                    if let Some(v) = pair.as_i16() {
+                        block_flags = v;
+                    }
+                }
                 _ => {}
             }
         }
@@ -1958,9 +3058,7 @@ impl<'a> SectionReader<'a> {
                         }
                     }
                     "ARC_DIMENSION" | "LARGE_RADIAL_DIMENSION" => {
-                        if let Some(entity) =
-                            self.read_extended_dimension(&pair.value_string)?
-                        {
+                        if let Some(entity) = self.read_extended_dimension(&pair.value_string)? {
                             block_entities.push(EntityType::Dimension(entity));
                         }
                     }
@@ -2134,9 +3232,7 @@ impl<'a> SectionReader<'a> {
                     | "XYGRIPENTITY"
                     | "BLOCKANGULARCONSTRAINTPARAMETERENTITY"
                     | "XYPARAMETERENTITY" => {
-                        if let Some(entity) =
-                            self.read_extended_entity(&pair.value_string)?
-                        {
+                        if let Some(entity) = self.read_extended_entity(&pair.value_string)? {
                             block_entities.push(EntityType::Extended(entity));
                         }
                     }
@@ -2190,7 +3286,7 @@ impl<'a> SectionReader<'a> {
 
         Ok(block_end)
     }
-    
+
     /// Read the ENTITIES section
     pub fn read_entities(&mut self, document: &mut CadDocument) -> Result<()> {
         // Read entities until ENDSEC
@@ -2198,12 +3294,12 @@ impl<'a> SectionReader<'a> {
             if pair.code == 0 && pair.value_string == "ENDSEC" {
                 break;
             }
-            
+
             // Entities start with code 0
             if pair.code == 0 {
                 let entity_type = pair.value_string.clone();
                 let before = document.entities().count();
-                
+
                 match entity_type.as_str() {
                     "POINT" => {
                         if let Some(entity) = self.read_point()? {
@@ -2386,9 +3482,8 @@ impl<'a> SectionReader<'a> {
                             let _ = document.add_entity(EntityType::Light(entity));
                         }
                     }
-                    "SURFACE" | "PLANESURFACE" | "EXTRUDEDSURFACE"
-                    | "LOFTEDSURFACE" | "REVOLVEDSURFACE" | "SWEPTSURFACE"
-                    | "NURBSURFACE" => {
+                    "SURFACE" | "PLANESURFACE" | "EXTRUDEDSURFACE" | "LOFTEDSURFACE"
+                    | "REVOLVEDSURFACE" | "SWEPTSURFACE" | "NURBSURFACE" => {
                         if let Some(entity) =
                             self.read_surface_entity(&entity_type, document.version)?
                         {
@@ -2451,10 +3546,8 @@ impl<'a> SectionReader<'a> {
                         }
                     }
                     name if is_registered_class_entity_name(name) => {
-                        let entity =
-                            self.read_registered_class_entity(name)?;
-                        let _ =
-                            document.add_entity(EntityType::Extended(entity));
+                        let entity = self.read_registered_class_entity(name)?;
+                        let _ = document.add_entity(EntityType::Extended(entity));
                     }
                     "SEQEND" => {
                         // Standalone SEQEND — skip (normally consumed by polyline/insert reader)
@@ -2464,7 +3557,10 @@ impl<'a> SectionReader<'a> {
                         // Read as unknown entity — common fields preserved, entity-specific codes discarded
                         document.notifications.notify(
                             crate::notification::NotificationType::NotImplemented,
-                            format!("Entity not supported, read as UnknownEntity: {}", entity_type),
+                            format!(
+                                "Entity not supported, read as UnknownEntity: {}",
+                                entity_type
+                            ),
                         );
                         let entity = self.read_unknown_entity(&entity_type)?;
                         let _ = document.add_entity(EntityType::Unknown(entity));
@@ -2475,19 +3571,16 @@ impl<'a> SectionReader<'a> {
                     .saturating_add(document.entities().count().saturating_sub(before));
             }
         }
-        
+
         Ok(())
     }
-    
+
     fn read_dynamic_block_object_dxf(
         &mut self,
         dxf_name: &str,
         dxf_version: DxfVersion,
     ) -> Result<DynamicBlockObject> {
-        let mut object = DynamicBlockObject::new(
-            dxf_name,
-            dynamic_block_cpp_name(dxf_name),
-        );
+        let mut object = DynamicBlockObject::new(dxf_name, dynamic_block_cpp_name(dxf_name));
         let mut fields = DynamicDxfFields::default();
         let mut section = String::new();
         let mut group = String::new();
@@ -2501,13 +3594,10 @@ impl<'a> SectionReader<'a> {
                 5 => object.handle = parse_dxf_handle(&pair.value_string),
                 102 => group = pair.value_string.clone(),
                 330 if group == "{ACAD_REACTORS" => {
-                    object
-                        .reactors
-                        .push(parse_dxf_handle(&pair.value_string));
+                    object.reactors.push(parse_dxf_handle(&pair.value_string));
                 }
                 360 if group == "{ACAD_XDICTIONARY" => {
-                    object.xdictionary_handle =
-                        Some(parse_dxf_handle(&pair.value_string));
+                    object.xdictionary_handle = Some(parse_dxf_handle(&pair.value_string));
                 }
                 330 if !owner_seen && section.is_empty() => {
                     object.owner = parse_dxf_handle(&pair.value_string);
@@ -2551,24 +3641,22 @@ impl<'a> SectionReader<'a> {
                     width: fields.f64(section, 41),
                     height: fields.f64(section, 42),
                 };
-                DynamicBlockData::SolidHistoryNode(
-                    if dxf_name == "ACSH_BOX_CLASS" {
-                        SolidHistoryOperation::Box(value)
-                    } else {
-                        SolidHistoryOperation::Wedge(value)
-                    },
-                )
+                DynamicBlockData::SolidHistoryNode(if dxf_name == "ACSH_BOX_CLASS" {
+                    SolidHistoryOperation::Box(value)
+                } else {
+                    SolidHistoryOperation::Wedge(value)
+                })
             }
             "ACSH_SPHERE_CLASS" => {
                 let section = "AcDbShSphere";
-                DynamicBlockData::SolidHistoryNode(
-                    SolidHistoryOperation::Sphere(SolidHistorySphere {
+                DynamicBlockData::SolidHistoryNode(SolidHistoryOperation::Sphere(
+                    SolidHistorySphere {
                         base: dynamic_dxf_history_base(&fields),
                         operation_major: fields.i32(section, 90),
                         operation_minor: fields.i32(section, 91),
                         radius: fields.f64(section, 40),
-                    }),
-                )
+                    },
+                ))
             }
             "ACSH_CYLINDER_CLASS" => {
                 let section = "AcDbShCylinder";
@@ -2586,22 +3674,20 @@ impl<'a> SectionReader<'a> {
             }
             "ACSH_CONE_CLASS" => {
                 let section = "AcDbShCone";
-                DynamicBlockData::SolidHistoryNode(SolidHistoryOperation::Cone(
-                    SolidHistoryCone {
+                DynamicBlockData::SolidHistoryNode(SolidHistoryOperation::Cone(SolidHistoryCone {
                     base: dynamic_dxf_history_base(&fields),
                     operation_major: fields.i32(section, 90),
                     operation_minor: fields.i32(section, 91),
                     height: fields.f64(section, 40),
-                        base_x_radius: fields.f64(section, 41),
-                        base_y_radius: fields.f64(section, 42),
-                        top_radius: fields.f64(section, 43),
-                    },
-                ))
+                    base_x_radius: fields.f64(section, 41),
+                    base_y_radius: fields.f64(section, 42),
+                    top_radius: fields.f64(section, 43),
+                }))
             }
             "ACSH_PYRAMID_CLASS" => {
                 let section = "AcDbShPyramid";
-                DynamicBlockData::SolidHistoryNode(
-                    SolidHistoryOperation::Pyramid(SolidHistoryPyramid {
+                DynamicBlockData::SolidHistoryNode(SolidHistoryOperation::Pyramid(
+                    SolidHistoryPyramid {
                         base: dynamic_dxf_history_base(&fields),
                         operation_major: fields.i32(section, 90),
                         operation_minor: fields.i32(section, 91),
@@ -2609,38 +3695,38 @@ impl<'a> SectionReader<'a> {
                         sides: fields.i32(section, 92),
                         radius: fields.f64(section, 41),
                         top_radius: fields.f64(section, 42),
-                    }),
-                )
+                    },
+                ))
             }
             "ACSH_TORUS_CLASS" => {
                 let section = "AcDbShTorus";
-                DynamicBlockData::SolidHistoryNode(
-                    SolidHistoryOperation::Torus(SolidHistoryTorus {
+                DynamicBlockData::SolidHistoryNode(SolidHistoryOperation::Torus(
+                    SolidHistoryTorus {
                         base: dynamic_dxf_history_base(&fields),
                         operation_major: fields.i32(section, 90),
                         operation_minor: fields.i32(section, 91),
                         major_radius: fields.f64(section, 40),
                         minor_radius: fields.f64(section, 41),
-                    }),
-                )
+                    },
+                ))
             }
             "ACSH_BOOLEAN_CLASS" => {
                 let section = "AcDbShBoolean";
-                DynamicBlockData::SolidHistoryNode(
-                    SolidHistoryOperation::Boolean(SolidHistoryBoolean {
+                DynamicBlockData::SolidHistoryNode(SolidHistoryOperation::Boolean(
+                    SolidHistoryBoolean {
                         base: dynamic_dxf_history_base(&fields),
                         operation_major: fields.i32(section, 90),
                         operation_minor: fields.i32(section, 91),
                         operation: fields.i16(section, 280).clamp(0, 255) as u8,
                         first_operand: fields.i32(section, 92),
                         second_operand: fields.i32(section, 93),
-                    }),
-                )
+                    },
+                ))
             }
             "ACSH_CHAMFER_CLASS" => {
                 let section = "AcDbShChamfer";
-                DynamicBlockData::SolidHistoryNode(
-                    SolidHistoryOperation::Chamfer(SolidHistoryChamfer {
+                DynamicBlockData::SolidHistoryNode(SolidHistoryOperation::Chamfer(
+                    SolidHistoryChamfer {
                         base: dynamic_dxf_history_base(&fields),
                         operation_major: fields.i32(section, 90),
                         operation_minor: fields.i32(section, 91),
@@ -2653,13 +3739,13 @@ impl<'a> SectionReader<'a> {
                             .filter_map(|value| value.parse().ok())
                             .collect(),
                         base_face: fields.i32(section, 95),
-                    }),
-                )
+                    },
+                ))
             }
             "ACSH_FILLET_CLASS" => {
                 let section = "AcDbShFillet";
-                DynamicBlockData::SolidHistoryNode(
-                    SolidHistoryOperation::Fillet(SolidHistoryFillet {
+                DynamicBlockData::SolidHistoryNode(SolidHistoryOperation::Fillet(
+                    SolidHistoryFillet {
                         base: dynamic_dxf_history_base(&fields),
                         operation_major: fields.i32(section, 90),
                         operation_minor: fields.i32(section, 91),
@@ -2684,8 +3770,8 @@ impl<'a> SectionReader<'a> {
                             .into_iter()
                             .filter_map(|value| value.parse().ok())
                             .collect(),
-                    }),
-                )
+                    },
+                ))
             }
             "ACSH_BREP_CLASS" => {
                 let section = "AcDbShBrep";
@@ -2704,26 +3790,18 @@ impl<'a> SectionReader<'a> {
                     text = AcisData::decode_sat(&text);
                 }
                 acis_data.sat_data = AcisData::strip_sat_terminator(&text);
-                DynamicBlockData::SolidHistoryNode(
-                    SolidHistoryOperation::Brep(SolidHistoryBrep {
-                        base: dynamic_dxf_history_base(&fields),
-                        operation_major: fields.i32(section, 90),
-                        operation_minor: fields.i32(section, 91),
-                        acis_data,
-                    }),
-                )
+                DynamicBlockData::SolidHistoryNode(SolidHistoryOperation::Brep(SolidHistoryBrep {
+                    base: dynamic_dxf_history_base(&fields),
+                    operation_major: fields.i32(section, 90),
+                    operation_minor: fields.i32(section, 91),
+                    acis_data,
+                }))
             }
-            "ACSH_SWEEP_CLASS" => DynamicBlockData::SolidHistoryNode(
-                SolidHistoryOperation::Sweep(dynamic_dxf_history_sweep(
-                    &fields,
-                    dxf_version,
-                )),
-            ),
+            "ACSH_SWEEP_CLASS" => DynamicBlockData::SolidHistoryNode(SolidHistoryOperation::Sweep(
+                dynamic_dxf_history_sweep(&fields, dxf_version),
+            )),
             "ACSH_EXTRUSION_CLASS" => DynamicBlockData::SolidHistoryNode(
-                SolidHistoryOperation::Extrusion(dynamic_dxf_history_sweep(
-                    &fields,
-                    dxf_version,
-                )),
+                SolidHistoryOperation::Extrusion(dynamic_dxf_history_sweep(&fields, dxf_version)),
             ),
             "ACSH_LOFT_CLASS" => {
                 let section = "AcDbShLoft";
@@ -2731,9 +3809,8 @@ impl<'a> SectionReader<'a> {
                 for value in fields.values(section, 310) {
                     append_hex_bytes(&mut binary, value);
                 }
-                let dwg_version =
-                    crate::io::dwg::DwgVersion::from_dxf_version(dxf_version)
-                        .unwrap_or(crate::io::dwg::DwgVersion::AC24);
+                let dwg_version = crate::io::dwg::DwgVersion::from_dxf_version(dxf_version)
+                    .unwrap_or(crate::io::dwg::DwgVersion::AC24);
                 let mut offset = 0usize;
                 let mut decode_list = |type_code: i32, bit_length: usize| {
                     let byte_length = bit_length.div_ceil(8);
@@ -2774,15 +3851,13 @@ impl<'a> SectionReader<'a> {
                         guides.push(entity);
                     }
                 }
-                DynamicBlockData::SolidHistoryNode(
-                    SolidHistoryOperation::Loft(SolidHistoryLoft {
-                        base: dynamic_dxf_history_base(&fields),
-                        operation_major: fields.i32(section, 90),
-                        operation_minor: fields.i32(section, 91),
-                        cross_sections,
-                        guides,
-                    }),
-                )
+                DynamicBlockData::SolidHistoryNode(SolidHistoryOperation::Loft(SolidHistoryLoft {
+                    base: dynamic_dxf_history_base(&fields),
+                    operation_major: fields.i32(section, 90),
+                    operation_minor: fields.i32(section, 91),
+                    cross_sections,
+                    guides,
+                }))
             }
             "ACSH_REVOLVE_CLASS" => {
                 let section = "AcDbShRevolve";
@@ -2799,27 +3874,22 @@ impl<'a> SectionReader<'a> {
                 for value in fields.values(section, 310) {
                     append_hex_bytes(&mut binary, value);
                 }
-                let dwg_version =
-                    crate::io::dwg::DwgVersion::from_dxf_version(dxf_version)
-                        .unwrap_or(crate::io::dwg::DwgVersion::AC24);
-                let sweep_entity =
-                    crate::io::dwg::embedded_entity::decode_embedded_entity(
-                        entity_type,
-                        bit_length,
-                        binary,
-                        dwg_version,
-                        dxf_version,
-                    );
-                DynamicBlockData::SolidHistoryNode(
-                    SolidHistoryOperation::Revolve(SolidHistoryRevolve {
+                let dwg_version = crate::io::dwg::DwgVersion::from_dxf_version(dxf_version)
+                    .unwrap_or(crate::io::dwg::DwgVersion::AC24);
+                let sweep_entity = crate::io::dwg::embedded_entity::decode_embedded_entity(
+                    entity_type,
+                    bit_length,
+                    binary,
+                    dwg_version,
+                    dxf_version,
+                );
+                DynamicBlockData::SolidHistoryNode(SolidHistoryOperation::Revolve(
+                    SolidHistoryRevolve {
                         base: dynamic_dxf_history_base(&fields),
                         operation_major: fields.i32(section, 90),
                         operation_minor: fields.i32(section, 91),
                         axis_point: fields.point(section, 10),
-                        direction: Vector2::new(
-                            fields.f64(section, 11),
-                            fields.f64(section, 21),
-                        ),
+                        direction: Vector2::new(fields.f64(section, 11), fields.f64(section, 21)),
                         revolve_angle: fields.f64(section, 40),
                         start_angle: fields.f64(section, 41),
                         draft_angle: fields.f64(section, 43),
@@ -2829,8 +3899,8 @@ impl<'a> SectionReader<'a> {
                         flag_290: fields.bool(section, 290),
                         close_to_axis: fields.bool(section, 291),
                         sweep_entity,
-                    }),
-                )
+                    },
+                ))
             }
             "ACDB_BLOCKREPRESENTATION_DATA" => {
                 DynamicBlockData::Representation(BlockRepresentationData {
@@ -2844,9 +3914,7 @@ impl<'a> SectionReader<'a> {
                     block: fields.handle("AcDbDynamicBlockPurgePreventer", 340),
                 })
             }
-            "ACDB_DYNAMICBLOCKPROXYNODE" => {
-                DynamicBlockData::ProxyNode(dynamic_dxf_eval(&fields))
-            }
+            "ACDB_DYNAMICBLOCKPROXYNODE" => DynamicBlockData::ProxyNode(dynamic_dxf_eval(&fields)),
             "BLOCKGRIPLOCATIONCOMPONENT" => {
                 DynamicBlockData::GripLocationComponent(BlockGripExpression {
                     eval: dynamic_dxf_eval(&fields),
@@ -2854,35 +3922,23 @@ impl<'a> SectionReader<'a> {
                     expression: fields.text("AcDbBlockGripExpr", 300),
                 })
             }
-            "BLOCKALIGNMENTGRIP" => {
-                DynamicBlockData::AlignmentGrip(BlockOrientedGrip {
-                    grip: dynamic_dxf_grip(&fields),
-                    orientation: fields.point("AcDbBlockAlignmentGrip", 140),
-                })
-            }
+            "BLOCKALIGNMENTGRIP" => DynamicBlockData::AlignmentGrip(BlockOrientedGrip {
+                grip: dynamic_dxf_grip(&fields),
+                orientation: fields.point("AcDbBlockAlignmentGrip", 140),
+            }),
             "BLOCKFLIPGRIP" => DynamicBlockData::FlipGrip(BlockFlipGrip {
                 grip: dynamic_dxf_grip(&fields),
                 combined_state: fields.i32("AcDbBlockFlipGrip", 93),
                 orientation: fields.point("AcDbBlockFlipGrip", 140),
             }),
-            "BLOCKLINEARGRIP" => {
-                DynamicBlockData::LinearGrip(BlockOrientedGrip {
-                    grip: dynamic_dxf_grip(&fields),
-                    orientation: fields.point("AcDbBlockLinearGrip", 140),
-                })
-            }
-            "BLOCKLOOKUPGRIP" => {
-                DynamicBlockData::LookupGrip(dynamic_dxf_grip(&fields))
-            }
-            "BLOCKPOLARGRIP" => {
-                DynamicBlockData::PolarGrip(dynamic_dxf_grip(&fields))
-            }
-            "BLOCKROTATIONGRIP" => {
-                DynamicBlockData::RotationGrip(dynamic_dxf_grip(&fields))
-            }
-            "BLOCKVISIBILITYGRIP" => {
-                DynamicBlockData::VisibilityGrip(dynamic_dxf_grip(&fields))
-            }
+            "BLOCKLINEARGRIP" => DynamicBlockData::LinearGrip(BlockOrientedGrip {
+                grip: dynamic_dxf_grip(&fields),
+                orientation: fields.point("AcDbBlockLinearGrip", 140),
+            }),
+            "BLOCKLOOKUPGRIP" => DynamicBlockData::LookupGrip(dynamic_dxf_grip(&fields)),
+            "BLOCKPOLARGRIP" => DynamicBlockData::PolarGrip(dynamic_dxf_grip(&fields)),
+            "BLOCKROTATIONGRIP" => DynamicBlockData::RotationGrip(dynamic_dxf_grip(&fields)),
+            "BLOCKVISIBILITYGRIP" => DynamicBlockData::VisibilityGrip(dynamic_dxf_grip(&fields)),
             "BLOCKXYGRIP" => DynamicBlockData::XYGrip(dynamic_dxf_grip(&fields)),
             "BLOCKPROPERTIESTABLEGRIP" => {
                 DynamicBlockData::PropertiesTableGrip(dynamic_dxf_grip(&fields))
@@ -2890,34 +3946,26 @@ impl<'a> SectionReader<'a> {
             "BLOCKALIGNMENTPARAMETER" => {
                 DynamicBlockData::AlignmentParameter(BlockAlignmentParameter {
                     parameter: dynamic_dxf_two_point(&fields),
-                    align_perpendicular: fields
-                        .bool("AcDbBlockAlignmentParameter", 280),
+                    align_perpendicular: fields.bool("AcDbBlockAlignmentParameter", 280),
                 })
             }
             "BLOCKBASEPOINTPARAMETER" => {
                 DynamicBlockData::BasePointParameter(BlockBasePointParameter {
                     parameter: dynamic_dxf_one_point(&fields),
                     point: fields.point("AcDbBlockBasepointParameter", 1011),
-                    base_point: fields
-                        .point("AcDbBlockBasepointParameter", 1012),
+                    base_point: fields.point("AcDbBlockBasepointParameter", 1012),
                 })
             }
-            "BLOCKFLIPPARAMETER" => {
-                DynamicBlockData::FlipParameter(BlockFlipParameter {
-                    parameter: dynamic_dxf_two_point(&fields),
-                    flip_label: fields.text("AcDbBlockFlipParameter", 305),
-                    flip_label_description: fields
-                        .text("AcDbBlockFlipParameter", 306),
-                    base_state_label: fields
-                        .text("AcDbBlockFlipParameter", 307),
-                    flipped_state_label: fields
-                        .text("AcDbBlockFlipParameter", 308),
-                    definition_label_point: fields
-                        .point("AcDbBlockFlipParameter", 1012),
-                    flags_96: fields.i32("AcDbBlockFlipParameter", 96),
-                    tooltip: fields.text("AcDbBlockFlipParameter", 309),
-                })
-            }
+            "BLOCKFLIPPARAMETER" => DynamicBlockData::FlipParameter(BlockFlipParameter {
+                parameter: dynamic_dxf_two_point(&fields),
+                flip_label: fields.text("AcDbBlockFlipParameter", 305),
+                flip_label_description: fields.text("AcDbBlockFlipParameter", 306),
+                base_state_label: fields.text("AcDbBlockFlipParameter", 307),
+                flipped_state_label: fields.text("AcDbBlockFlipParameter", 308),
+                definition_label_point: fields.point("AcDbBlockFlipParameter", 1012),
+                flags_96: fields.i32("AcDbBlockFlipParameter", 96),
+                tooltip: fields.text("AcDbBlockFlipParameter", 309),
+            }),
             "BLOCKLINEARPARAMETER" => {
                 let section = "AcDbBlockLinearParameter";
                 DynamicBlockData::LinearParameter(BlockLinearParameter {
@@ -2925,31 +3973,22 @@ impl<'a> SectionReader<'a> {
                     distance_name: fields.text(section, 305),
                     distance_description: fields.text(section, 306),
                     distance: fields.f64(section, 140),
-                    value_set: dynamic_dxf_value_set(
-                        &fields, section, 96, 141, 307,
-                    ),
+                    value_set: dynamic_dxf_value_set(&fields, section, 96, 141, 307),
                 })
             }
-            "BLOCKLOOKUPPARAMETER" => {
-                DynamicBlockData::LookupParameter(BlockLookupParameter {
-                    parameter: dynamic_dxf_one_point(&fields),
-                    index: fields.i32("AcDbBlockLookupParameter", 94),
-                    lookup_name: fields.text("AcDbBlockLookupParameter", 303),
-                    lookup_description: fields
-                        .text("AcDbBlockLookupParameter", 304),
-                    unknown_text: String::new(),
-                })
-            }
-            "BLOCKPOINTPARAMETER" => {
-                DynamicBlockData::PointParameter(BlockPointParameter {
-                    parameter: dynamic_dxf_one_point(&fields),
-                    position_name: fields.text("AcDbBlockPointParameter", 303),
-                    position_description: fields
-                        .text("AcDbBlockPointParameter", 304),
-                    definition_label_point: fields
-                        .point("AcDbBlockPointParameter", 1011),
-                })
-            }
+            "BLOCKLOOKUPPARAMETER" => DynamicBlockData::LookupParameter(BlockLookupParameter {
+                parameter: dynamic_dxf_one_point(&fields),
+                index: fields.i32("AcDbBlockLookupParameter", 94),
+                lookup_name: fields.text("AcDbBlockLookupParameter", 303),
+                lookup_description: fields.text("AcDbBlockLookupParameter", 304),
+                unknown_text: String::new(),
+            }),
+            "BLOCKPOINTPARAMETER" => DynamicBlockData::PointParameter(BlockPointParameter {
+                parameter: dynamic_dxf_one_point(&fields),
+                position_name: fields.text("AcDbBlockPointParameter", 303),
+                position_description: fields.text("AcDbBlockPointParameter", 304),
+                definition_label_point: fields.point("AcDbBlockPointParameter", 1011),
+            }),
             "BLOCKPOLARPARAMETER" => {
                 let section = "AcDbBlockPolarParameter";
                 DynamicBlockData::PolarParameter(BlockPolarParameter {
@@ -2979,12 +4018,8 @@ impl<'a> SectionReader<'a> {
                         .unwrap_or("")
                         .to_string(),
                     offset: fields.f64(section, 140),
-                    angle_value_set: dynamic_dxf_value_set(
-                        &fields, section, 96, 142, 410,
-                    ),
-                    distance_value_set: dynamic_dxf_value_set(
-                        &fields, section, 97, 146, 309,
-                    ),
+                    angle_value_set: dynamic_dxf_value_set(&fields, section, 96, 142, 410),
+                    distance_value_set: dynamic_dxf_value_set(&fields, section, 97, 146, 309),
                 })
             }
             "BLOCKROTATIONPARAMETER" => {
@@ -2995,9 +4030,7 @@ impl<'a> SectionReader<'a> {
                     angle_name: fields.text(section, 305),
                     angle_description: fields.text(section, 306),
                     angle: fields.f64(section, 140),
-                    value_set: dynamic_dxf_value_set(
-                        &fields, section, 96, 141, 307,
-                    ),
+                    value_set: dynamic_dxf_value_set(&fields, section, 96, 141, 307),
                 })
             }
             "BLOCKXYPARAMETER" => {
@@ -3010,12 +4043,8 @@ impl<'a> SectionReader<'a> {
                     y_label_description: fields.text(section, 308),
                     x_value: fields.f64(section, 142),
                     y_value: fields.f64(section, 141),
-                    x_value_set: dynamic_dxf_value_set(
-                        &fields, section, 96, 142, 410,
-                    ),
-                    y_value_set: dynamic_dxf_value_set(
-                        &fields, section, 97, 146, 309,
-                    ),
+                    x_value_set: dynamic_dxf_value_set(&fields, section, 96, 142, 410),
+                    y_value_set: dynamic_dxf_value_set(&fields, section, 97, 146, 309),
                 })
             }
             "BLOCKUSERPARAMETER" => {
@@ -3041,23 +4070,18 @@ impl<'a> SectionReader<'a> {
             }
             "BLOCKANGULARCONSTRAINTPARAMETER" => {
                 let section = "AcDbBlockAngularConstraintParameter";
-                DynamicBlockData::AngularConstraintParameter(
-                    BlockAngularConstraintParameter {
-                        constraint: dynamic_dxf_constraint(&fields),
-                        center_point: fields.point(section, 1011),
-                        end_point: fields.point(section, 1012),
-                        expression_name: fields.text(section, 305),
-                        expression_description: fields.text(section, 306),
-                        angle: fields.f64(section, 140),
-                        orientation_on_both_grips: fields.bool(section, 280),
-                        value_set: dynamic_dxf_value_set(
-                            &fields, section, 96, 128, 307,
-                        ),
-                    },
-                )
+                DynamicBlockData::AngularConstraintParameter(BlockAngularConstraintParameter {
+                    constraint: dynamic_dxf_constraint(&fields),
+                    center_point: fields.point(section, 1011),
+                    end_point: fields.point(section, 1012),
+                    expression_name: fields.text(section, 305),
+                    expression_description: fields.text(section, 306),
+                    angle: fields.f64(section, 140),
+                    orientation_on_both_grips: fields.bool(section, 280),
+                    value_set: dynamic_dxf_value_set(&fields, section, 96, 128, 307),
+                })
             }
-            "BLOCKDIAMETRICCONSTRAINTPARAMETER"
-            | "BLOCKRADIALCONSTRAINTPARAMETER" => {
+            "BLOCKDIAMETRICCONSTRAINTPARAMETER" | "BLOCKRADIALCONSTRAINTPARAMETER" => {
                 let section = if dxf_name == "BLOCKDIAMETRICCONSTRAINTPARAMETER" {
                     "AcDbBlockDiametricConstraintParameter"
                 } else {
@@ -3068,9 +4092,7 @@ impl<'a> SectionReader<'a> {
                     expression_name: fields.text(section, 305),
                     expression_description: fields.text(section, 306),
                     distance: fields.f64(section, 140),
-                    value_set: dynamic_dxf_value_set(
-                        &fields, section, 96, 128, 307,
-                    ),
+                    value_set: dynamic_dxf_value_set(&fields, section, 96, 128, 307),
                 };
                 if dxf_name == "BLOCKDIAMETRICCONSTRAINTPARAMETER" {
                     DynamicBlockData::DiametricConstraintParameter(value)
@@ -3079,44 +4101,30 @@ impl<'a> SectionReader<'a> {
                 }
             }
             "BLOCKALIGNEDCONSTRAINTPARAMETER" => {
-                DynamicBlockData::AlignedConstraintParameter(
-                    dynamic_dxf_linear_constraint(&fields),
-                )
+                DynamicBlockData::AlignedConstraintParameter(dynamic_dxf_linear_constraint(&fields))
             }
             "BLOCKLINEARCONSTRAINTPARAMETER" => {
-                DynamicBlockData::LinearConstraintParameter(
-                    dynamic_dxf_linear_constraint(&fields),
-                )
+                DynamicBlockData::LinearConstraintParameter(dynamic_dxf_linear_constraint(&fields))
             }
             "BLOCKHORIZONTALCONSTRAINTPARAMETER" => {
-                DynamicBlockData::HorizontalConstraintParameter(
-                    dynamic_dxf_linear_constraint(&fields),
-                )
+                DynamicBlockData::HorizontalConstraintParameter(dynamic_dxf_linear_constraint(
+                    &fields,
+                ))
             }
-            "BLOCKVERTICALCONSTRAINTPARAMETER" => {
-                DynamicBlockData::VerticalConstraintParameter(
-                    dynamic_dxf_linear_constraint(&fields),
-                )
-            }
+            "BLOCKVERTICALCONSTRAINTPARAMETER" => DynamicBlockData::VerticalConstraintParameter(
+                dynamic_dxf_linear_constraint(&fields),
+            ),
             "ACDBBLOCKPARAMDEPENDENCYBODY" | "BLOCKPARAMDEPENDENCYBODY" => {
-                DynamicBlockData::ParameterDependencyBody(
-                    BlockParameterDependencyBody {
-                        dependency_body_version: fields
-                            .i16("AcDbAssocDependencyBody", 90),
-                        dimension_base_version: fields
-                            .i16("AcDbImpAssocDimDependencyBodyBase", 90),
-                        name: fields
-                            .text("AcDbImpAssocDimDependencyBodyBase", 1),
-                        class_version: fields
-                            .i16("AcDbBlockParameterDependencyBody", 90),
-                    },
-                )
+                DynamicBlockData::ParameterDependencyBody(BlockParameterDependencyBody {
+                    dependency_body_version: fields.i16("AcDbAssocDependencyBody", 90),
+                    dimension_base_version: fields.i16("AcDbImpAssocDimDependencyBodyBase", 90),
+                    name: fields.text("AcDbImpAssocDimDependencyBodyBase", 1),
+                    class_version: fields.i16("AcDbBlockParameterDependencyBody", 90),
+                })
             }
             "BLOCKMOVEACTION" => {
                 let section = "AcDbBlockMoveAction";
-                let connections = dynamic_dxf_sequential_connections(
-                    &fields, section, 92, 301, 2,
-                );
+                let connections = dynamic_dxf_sequential_connections(&fields, section, 92, 301, 2);
                 DynamicBlockData::MoveAction(BlockMoveAction {
                     action: dynamic_dxf_action(&fields),
                     connections: [
@@ -3132,9 +4140,7 @@ impl<'a> SectionReader<'a> {
             }
             "BLOCKFLIPACTION" => {
                 let section = "AcDbBlockFlipAction";
-                let values = dynamic_dxf_sequential_connections(
-                    &fields, section, 92, 301, 4,
-                );
+                let values = dynamic_dxf_sequential_connections(&fields, section, 92, 301, 4);
                 DynamicBlockData::FlipAction(BlockFlipAction {
                     action: dynamic_dxf_action(&fields),
                     connections: std::array::from_fn(|index| {
@@ -3155,7 +4161,11 @@ impl<'a> SectionReader<'a> {
                         section,
                         94,
                         303,
-                        if dxf_name == "BLOCKROTATEACTION" { 1 } else { 3 },
+                        if dxf_name == "BLOCKROTATEACTION" {
+                            1
+                        } else {
+                            3
+                        },
                     ),
                 };
                 if dxf_name == "BLOCKROTATEACTION" {
@@ -3166,9 +4176,7 @@ impl<'a> SectionReader<'a> {
             }
             "BLOCKARRAYACTION" => {
                 let section = "AcDbBlockArrayAction";
-                let values = dynamic_dxf_sequential_connections(
-                    &fields, section, 92, 301, 4,
-                );
+                let values = dynamic_dxf_sequential_connections(&fields, section, 92, 301, 4);
                 DynamicBlockData::ArrayAction(BlockArrayAction {
                     action: dynamic_dxf_action(&fields),
                     connections: std::array::from_fn(|index| {
@@ -3182,9 +4190,7 @@ impl<'a> SectionReader<'a> {
                 let section = "AcDbBlockLookupAction";
                 let row_count = fields.i32(section, 92);
                 let column_count = fields.i32(section, 93);
-                let count = row_count
-                    .saturating_mul(column_count)
-                    .max(0) as usize;
+                let count = row_count.saturating_mul(column_count).max(0) as usize;
                 let code0 = fields.values(section, 94);
                 let code1 = fields.values(section, 95);
                 let code2 = fields.values(section, 96);
@@ -3201,33 +4207,21 @@ impl<'a> SectionReader<'a> {
                                     .get(index)
                                     .and_then(|value| value.parse().ok())
                                     .unwrap_or(0),
-                                name: name0
-                                    .get(index)
-                                    .copied()
-                                    .unwrap_or("")
-                                    .to_string(),
+                                name: name0.get(index).copied().unwrap_or("").to_string(),
                             },
                             BlockConnection {
                                 code: code1
                                     .get(index)
                                     .and_then(|value| value.parse().ok())
                                     .unwrap_or(0),
-                                name: name1
-                                    .get(index)
-                                    .copied()
-                                    .unwrap_or("")
-                                    .to_string(),
+                                name: name1.get(index).copied().unwrap_or("").to_string(),
                             },
                             BlockConnection {
                                 code: code2
                                     .get(index)
                                     .and_then(|value| value.parse().ok())
                                     .unwrap_or(0),
-                                name: name2
-                                    .get(index)
-                                    .copied()
-                                    .unwrap_or("")
-                                    .to_string(),
+                                name: name2.get(index).copied().unwrap_or("").to_string(),
                             },
                         ],
                         flag_282: flag282
@@ -3258,9 +4252,7 @@ impl<'a> SectionReader<'a> {
             }
             "BLOCKSTRETCHACTION" => {
                 let section = "AcDbBlockStretchAction";
-                let connections = dynamic_dxf_sequential_connections(
-                    &fields, section, 92, 301, 2,
-                );
+                let connections = dynamic_dxf_sequential_connections(&fields, section, 92, 301, 2);
                 let xs = fields.values(section, 1011);
                 let ys = fields.values(section, 1021);
                 let handles_raw = fields.values(section, 331);
@@ -3323,10 +4315,7 @@ impl<'a> SectionReader<'a> {
                         .iter()
                         .zip(ys.iter())
                         .map(|(x, y)| {
-                            Vector2::new(
-                                x.parse().unwrap_or(0.0),
-                                y.parse().unwrap_or(0.0),
-                            )
+                            Vector2::new(x.parse().unwrap_or(0.0), y.parse().unwrap_or(0.0))
                         })
                         .collect(),
                     handles,
@@ -3340,9 +4329,7 @@ impl<'a> SectionReader<'a> {
             }
             "BLOCKPOLARSTRETCHACTION" => {
                 let section = "AcDbBlockPolarStretchAction";
-                let connections = dynamic_dxf_sequential_connections(
-                    &fields, section, 92, 301, 6,
-                );
+                let connections = dynamic_dxf_sequential_connections(&fields, section, 92, 301, 6);
                 let xs = fields.values(section, 10);
                 let ys = fields.values(section, 20);
                 DynamicBlockData::PolarStretchAction(BlockPolarStretchAction {
@@ -3354,10 +4341,7 @@ impl<'a> SectionReader<'a> {
                         .iter()
                         .zip(ys.iter())
                         .map(|(x, y)| {
-                            Vector2::new(
-                                x.parse().unwrap_or(0.0),
-                                y.parse().unwrap_or(0.0),
-                            )
+                            Vector2::new(x.parse().unwrap_or(0.0), y.parse().unwrap_or(0.0))
                         })
                         .collect(),
                     handles: fields
@@ -3443,17 +4427,15 @@ impl<'a> SectionReader<'a> {
                     name: fields.text(section, 301),
                     description: fields.text(section, 302),
                     def_point: one.definition_point,
-                    property_info: std::array::from_fn(|index| {
-                        BlockParameterPropertyInfo {
-                            connections: one.properties[index]
-                                .connections
-                                .iter()
-                                .map(|item| BlockParameterConnection {
-                                    code: item.code,
-                                    name: item.name.clone(),
-                                })
-                                .collect(),
-                        }
+                    property_info: std::array::from_fn(|index| BlockParameterPropertyInfo {
+                        connections: one.properties[index]
+                            .connections
+                            .iter()
+                            .map(|item| BlockParameterConnection {
+                                code: item.code,
+                                name: item.name.clone(),
+                            })
+                            .collect(),
                     }),
                     property_info_count: one.property_count,
                     is_initialized: fields.bool(section, 281),
@@ -3488,17 +4470,9 @@ impl<'a> SectionReader<'a> {
                         }
                         nodes.push(BlockEvaluationNode {
                             id: entries[index].1.parse().unwrap_or(0),
-                            edge_flags: entries[index + 1]
-                                .1
-                                .parse()
-                                .unwrap_or(0),
-                            next_id: entries[index + 2]
-                                .1
-                                .parse()
-                                .unwrap_or(0),
-                            expression: parse_dxf_handle(
-                                &entries[index + 3].1,
-                            ),
+                            edge_flags: entries[index + 1].1.parse().unwrap_or(0),
+                            next_id: entries[index + 2].1.parse().unwrap_or(0),
+                            expression: parse_dxf_handle(&entries[index + 3].1),
                             node_data,
                             active_cycles: None,
                         });
@@ -3519,22 +4493,10 @@ impl<'a> SectionReader<'a> {
                         }
                         edges.push(BlockEvaluationEdge {
                             id: entries[index].1.parse().unwrap_or(0),
-                            next_id: entries[index + 1]
-                                .1
-                                .parse()
-                                .unwrap_or(0),
-                            incoming_edge: entries[index + 2]
-                                .1
-                                .parse()
-                                .unwrap_or(0),
-                            source_node: entries[index + 3]
-                                .1
-                                .parse()
-                                .unwrap_or(0),
-                            destination_node: entries[index + 4]
-                                .1
-                                .parse()
-                                .unwrap_or(0),
+                            next_id: entries[index + 1].1.parse().unwrap_or(0),
+                            incoming_edge: entries[index + 2].1.parse().unwrap_or(0),
+                            source_node: entries[index + 3].1.parse().unwrap_or(0),
+                            destination_node: entries[index + 4].1.parse().unwrap_or(0),
                             outgoing_edges,
                         });
                         index += 10;
@@ -3554,10 +4516,7 @@ impl<'a> SectionReader<'a> {
         Ok(object)
     }
 
-    fn read_object_context_data_dxf(
-        &mut self,
-        dxf_name: &str,
-    ) -> Result<ObjectContextData> {
+    fn read_object_context_data_dxf(&mut self, dxf_name: &str) -> Result<ObjectContextData> {
         let mut handle = Handle::NULL;
         let mut owner_handle = Handle::NULL;
         let mut reactors = Vec::new();
@@ -3566,10 +4525,8 @@ impl<'a> SectionReader<'a> {
         let mut section = String::new();
         let mut group = String::new();
         let mut owner_seen = false;
-        let is_mleader = dxf_name
-            .eq_ignore_ascii_case("ACDB_MLEADEROBJECTCONTEXTDATA_CLASS");
-        let mut mleader_context =
-            crate::entities::multileader::MultiLeaderAnnotContext::new();
+        let is_mleader = dxf_name.eq_ignore_ascii_case("ACDB_MLEADEROBJECTCONTEXTDATA_CLASS");
+        let mut mleader_context = crate::entities::multileader::MultiLeaderAnnotContext::new();
 
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 {
@@ -3586,16 +4543,13 @@ impl<'a> SectionReader<'a> {
                     reactors.push(parse_dxf_handle(&pair.value_string));
                 }
                 360 if group == "{ACAD_XDICTIONARY" => {
-                    xdictionary_handle =
-                        Some(parse_dxf_handle(&pair.value_string));
+                    xdictionary_handle = Some(parse_dxf_handle(&pair.value_string));
                 }
                 330 if !owner_seen && group.is_empty() => {
                     owner_handle = parse_dxf_handle(&pair.value_string);
                     owner_seen = true;
                 }
-                300 if is_mleader
-                    && pair.value_string.starts_with("CONTEXT_DATA") =>
-                {
+                300 if is_mleader && pair.value_string.starts_with("CONTEXT_DATA") => {
                     self.read_mleader_context(&mut mleader_context)?;
                 }
                 _ => fields.push(&section, pair.code, pair.value_string),
@@ -3607,13 +4561,10 @@ impl<'a> SectionReader<'a> {
 
         let class_version = fields.i16("AcDbObjectContextData", 70);
         let is_default = fields.bool("AcDbObjectContextData", 290);
-        let scale =
-            fields.handle("AcDbAnnotScaleObjectContextData", 340);
+        let scale = fields.handle("AcDbAnnotScaleObjectContextData", 340);
         let name = dxf_name.to_uppercase();
         let kind = match name.as_str() {
-            "ACDB_ANNOTSCALEOBJECTCONTEXTDATA_CLASS" => {
-                ObjectContextKind::AnnotScale
-            }
+            "ACDB_ANNOTSCALEOBJECTCONTEXTDATA_CLASS" => ObjectContextKind::AnnotScale,
             "ACDB_BLKREFOBJECTCONTEXTDATA_CLASS" => {
                 let section = "AcDbBlkRefObjectContextData";
                 ObjectContextKind::BlkRef {
@@ -3702,63 +4653,27 @@ impl<'a> SectionReader<'a> {
                 let flip_arrow2 = fields.bool(section, 296);
                 let flip_arrow1 = fields.bool(section, 297);
                 let subtype = match name.as_str() {
-                    "ACDB_ALDIMOBJECTCONTEXTDATA_CLASS" => {
-                        DimSubtype::Aligned {
-                            dimline_pt: fields.point3(
-                                "AcDbAlignedDimensionObjectContextData",
-                                11,
-                            ),
-                        }
-                    }
-                    "ACDB_ANGDIMOBJECTCONTEXTDATA_CLASS" => {
-                        DimSubtype::Angular {
-                            arc_pt: fields.point3(
-                                "AcDbAngularDimensionObjectContextData",
-                                11,
-                            ),
-                        }
-                    }
-                    "ACDB_DMDIMOBJECTCONTEXTDATA_CLASS" => {
-                        DimSubtype::Diametric {
-                            first_arc_pt: fields.point3(
-                                "AcDbDiametricDimensionObjectContextData",
-                                11,
-                            ),
-                            def_pt: fields.point3(
-                                "AcDbDiametricDimensionObjectContextData",
-                                12,
-                            ),
-                        }
-                    }
-                    "ACDB_RADIMOBJECTCONTEXTDATA_CLASS" => {
-                        DimSubtype::Radial {
-                            first_arc_pt: fields.point3(
-                                "AcDbRadialDimensionObjectContextData",
-                                11,
-                            ),
-                        }
-                    }
-                    "ACDB_RADIMLGOBJECTCONTEXTDATA_CLASS" => {
-                        DimSubtype::RadialLarge {
-                            ovr_center: fields.point3(
-                                "AcDbRadialDimensionLargeObjectContextData",
-                                12,
-                            ),
-                            jog_point: fields.point3(
-                                "AcDbRadialDimensionLargeObjectContextData",
-                                13,
-                            ),
-                        }
-                    }
+                    "ACDB_ALDIMOBJECTCONTEXTDATA_CLASS" => DimSubtype::Aligned {
+                        dimline_pt: fields.point3("AcDbAlignedDimensionObjectContextData", 11),
+                    },
+                    "ACDB_ANGDIMOBJECTCONTEXTDATA_CLASS" => DimSubtype::Angular {
+                        arc_pt: fields.point3("AcDbAngularDimensionObjectContextData", 11),
+                    },
+                    "ACDB_DMDIMOBJECTCONTEXTDATA_CLASS" => DimSubtype::Diametric {
+                        first_arc_pt: fields.point3("AcDbDiametricDimensionObjectContextData", 11),
+                        def_pt: fields.point3("AcDbDiametricDimensionObjectContextData", 12),
+                    },
+                    "ACDB_RADIMOBJECTCONTEXTDATA_CLASS" => DimSubtype::Radial {
+                        first_arc_pt: fields.point3("AcDbRadialDimensionObjectContextData", 11),
+                    },
+                    "ACDB_RADIMLGOBJECTCONTEXTDATA_CLASS" => DimSubtype::RadialLarge {
+                        ovr_center: fields.point3("AcDbRadialDimensionLargeObjectContextData", 12),
+                        jog_point: fields.point3("AcDbRadialDimensionLargeObjectContextData", 13),
+                    },
                     _ => DimSubtype::Ordinate {
-                        feature_location_pt: fields.point3(
-                            "AcDbOrdinateDimensionObjectContextData",
-                            11,
-                        ),
-                        leader_endpt: fields.point3(
-                            "AcDbOrdinateDimensionObjectContextData",
-                            12,
-                        ),
+                        feature_location_pt: fields
+                            .point3("AcDbOrdinateDimensionObjectContextData", 11),
+                        leader_endpt: fields.point3("AcDbOrdinateDimensionObjectContextData", 12),
                     },
                 };
                 ObjectContextKind::Dim(DimContext {
@@ -3779,34 +4694,26 @@ impl<'a> SectionReader<'a> {
                     subtype,
                 })
             }
-            "ACDB_MLEADEROBJECTCONTEXTDATA_CLASS" => {
-                ObjectContextKind::MLeader(mleader_context)
-            }
+            "ACDB_MLEADEROBJECTCONTEXTDATA_CLASS" => ObjectContextKind::MLeader(mleader_context),
             "ACDB_MTEXTATTRIBUTEOBJECTCONTEXTDATA_CLASS" => {
-                let text_section =
-                    if fields.has("AcDbTextObjectContextData", 70) {
-                        "AcDbTextObjectContextData"
-                    } else {
-                        "AcDbAnnotScaleObjectContextData"
-                    };
+                let text_section = if fields.has("AcDbTextObjectContextData", 70) {
+                    "AcDbTextObjectContextData"
+                } else {
+                    "AcDbAnnotScaleObjectContextData"
+                };
                 let horizontal_mode = fields.i16(text_section, 70);
                 let rotation = fields.f64(text_section, 50).to_radians();
                 let insertion = fields.point2(text_section, 10);
                 let alignment = fields.point2(text_section, 11);
-                let enable_section =
-                    if fields.has("AcDbMTextAttributeObjectContextData", 290) {
-                        "AcDbMTextAttributeObjectContextData"
-                    } else {
-                        "AcDbAnnotScaleObjectContextData"
-                    };
+                let enable_section = if fields.has("AcDbMTextAttributeObjectContextData", 290) {
+                    "AcDbMTextAttributeObjectContextData"
+                } else {
+                    "AcDbAnnotScaleObjectContextData"
+                };
                 let enable_context = fields.bool(enable_section, 290);
-                let context = if enable_context
-                    && fields.has("AcDbObjectContextData", 70)
-                {
-                    let context_class_version =
-                        fields.i16("AcDbObjectContextData", 70);
-                    let context_is_default =
-                        fields.bool("AcDbObjectContextData", 290);
+                let context = if enable_context && fields.has("AcDbObjectContextData", 70) {
+                    let context_class_version = fields.i16("AcDbObjectContextData", 70);
+                    let context_is_default = fields.bool("AcDbObjectContextData", 290);
                     let section = "AcDbAnnotScaleObjectContextData";
                     let context_scale = fields.handle(section, 340);
                     let attachment = fields.i32(section, 70);
@@ -3873,12 +4780,11 @@ impl<'a> SectionReader<'a> {
                 })
             }
             "ACDB_LEADEROBJECTCONTEXTDATA_CLASS" => {
-                let section =
-                    if fields.has("AcDbLeaderObjectContextData", 70) {
-                        "AcDbLeaderObjectContextData"
-                    } else {
-                        "AcDbAnnotScaleObjectContextData"
-                    };
+                let section = if fields.has("AcDbLeaderObjectContextData", 70) {
+                    "AcDbLeaderObjectContextData"
+                } else {
+                    "AcDbAnnotScaleObjectContextData"
+                };
                 let mut points = Vec::new();
                 for _ in 0..fields.i32(section, 70).max(0).min(100_000) {
                     points.push(fields.point3(section, 10));
@@ -3899,22 +4805,18 @@ impl<'a> SectionReader<'a> {
                 }
             }
             "ACDB_HATCHSCALECONTEXTDATA_CLASS" => {
-                ObjectContextKind::HatchScale(
-                    class_dxf_hatch_scale_context(&mut fields),
-                )
+                ObjectContextKind::HatchScale(class_dxf_hatch_scale_context(&mut fields))
             }
             "ACDB_HATCHVIEWCONTEXTDATA_CLASS" => {
                 let hatch = class_dxf_hatch_scale_context(&mut fields);
                 let section = "AcDbHatchViewContextData";
-                ObjectContextKind::HatchView(
-                    crate::objects::HatchViewContext {
-                        hatch,
-                        view: fields.handle(section, 330),
-                        view_normal: fields.point3(section, 10),
-                        view_rotation: fields.f64(section, 51).to_radians(),
-                        evaluate_hatch: fields.bool(section, 290),
-                    },
-                )
+                ObjectContextKind::HatchView(crate::objects::HatchViewContext {
+                    hatch,
+                    view: fields.handle(section, 330),
+                    view_normal: fields.point3(section, 10),
+                    view_rotation: fields.f64(section, 51).to_radians(),
+                    evaluate_hatch: fields.bool(section, 290),
+                })
             }
             _ => ObjectContextKind::Opaque,
         };
@@ -3931,10 +4833,7 @@ impl<'a> SectionReader<'a> {
         })
     }
 
-    fn read_class_object_dxf(
-        &mut self,
-        dxf_name: &str,
-    ) -> Result<ClassObject> {
+    fn read_class_object_dxf(&mut self, dxf_name: &str) -> Result<ClassObject> {
         let mut object = ClassObject::default();
         let mut fields = ClassDxfFields::default();
         let mut section = String::new();
@@ -3953,13 +4852,10 @@ impl<'a> SectionReader<'a> {
                 100 => section = pair.value_string.clone(),
                 102 => group = pair.value_string.clone(),
                 330 if group == "{ACAD_REACTORS" => {
-                    object
-                        .reactors
-                        .push(parse_dxf_handle(&pair.value_string));
+                    object.reactors.push(parse_dxf_handle(&pair.value_string));
                 }
                 360 if group == "{ACAD_XDICTIONARY" => {
-                    object.xdictionary_handle =
-                        Some(parse_dxf_handle(&pair.value_string));
+                    object.xdictionary_handle = Some(parse_dxf_handle(&pair.value_string));
                 }
                 330 if !owner_seen && group.is_empty() => {
                     object.owner = parse_dxf_handle(&pair.value_string);
@@ -4038,9 +4934,7 @@ impl<'a> SectionReader<'a> {
                     append_hex_bytes(&mut data, &value);
                 }
                 ClassObjectData::VbaProject(VbaProject {
-                    storage: crate::compound_file::StructuredStoragePayload::decode(
-                        &data,
-                    ),
+                    storage: crate::compound_file::StructuredStoragePayload::decode(&data),
                 })
             }
             "SECTION_MANAGER" => {
@@ -4050,10 +4944,7 @@ impl<'a> SectionReader<'a> {
                 for _ in 0..fields.i32(section, 90).max(0).min(100_000) {
                     sections.push(fields.handle(section, 330));
                 }
-                ClassObjectData::SectionManager(SectionManager {
-                    is_live,
-                    sections,
-                })
+                ClassObjectData::SectionManager(SectionManager { is_live, sections })
             }
             "SECTION_SETTINGS" => {
                 let section = "AcDbSectionSettings";
@@ -4068,11 +4959,8 @@ impl<'a> SectionReader<'a> {
                         sources.push(fields.handle(section, 330));
                     }
                     let destination_block = fields.handle(section, 331);
-                    let destination_file = fields.string_skipping(
-                        section,
-                        1,
-                        &["SectionTypeSettings"],
-                    );
+                    let destination_file =
+                        fields.string_skipping(section, 1, &["SectionTypeSettings"]);
                     let mut geometry = Vec::new();
                     for _ in 0..fields.i32(section, 93).max(0).min(100_000) {
                         geometry.push(SectionGeometrySettings {
@@ -4144,81 +5032,72 @@ impl<'a> SectionReader<'a> {
                 })
             }
             "RENDERSETTINGS" => {
-                ClassObjectData::RenderSettings(class_dxf_render_settings(
-                    &mut fields,
-                    true,
-                ))
+                ClassObjectData::RenderSettings(class_dxf_render_settings(&mut fields, true))
             }
             "MENTALRAYRENDERSETTINGS" => {
-                let base =
-                    class_dxf_render_settings(&mut fields, true);
+                let base = class_dxf_render_settings(&mut fields, true);
                 let section = "AcDbMentalRayRenderSettings";
-                ClassObjectData::MentalRayRenderSettings(
-                    MentalRayRenderSettings {
-                        base,
-                        version: fields.i32(section, 90),
-                        sampling_min: fields.i32(section, 90),
-                        sampling_max: fields.i32(section, 90),
-                        sampling_filter: fields.i16(section, 70),
-                        sampling_filter_width: fields.f64(section, 40),
-                        sampling_filter_height: fields.f64(section, 40),
-                        sampling_contrast: [
-                            fields.f64(section, 40),
-                            fields.f64(section, 40),
-                            fields.f64(section, 40),
-                            fields.f64(section, 40),
-                        ],
-                        shadow_mode: fields.i16(section, 70),
-                        shadow_maps_enabled: fields.bool(section, 290),
-                        ray_tracing_enabled: fields.bool(section, 290),
-                        ray_trace_depth: [
-                            fields.i32(section, 90),
-                            fields.i32(section, 90),
-                            fields.i32(section, 90),
-                        ],
-                        global_illumination_enabled: fields.bool(section, 290),
-                        global_illumination_sample_count: fields.i32(section, 90),
-                        global_illumination_sample_radius_enabled: fields
-                            .bool(section, 290),
-                        global_illumination_sample_radius: fields
-                            .f64(section, 40),
-                        photons_per_light: fields.i32(section, 90),
-                        photon_trace_depth: [
-                            fields.i32(section, 90),
-                            fields.i32(section, 90),
-                            fields.i32(section, 90),
-                        ],
-                        final_gathering_enabled: fields.bool(section, 290),
-                        final_gathering_ray_count: fields.i32(section, 90),
-                        final_gathering_sample_radius_state: [
-                            fields.bool(section, 290),
-                            fields.bool(section, 290),
-                            fields.bool(section, 290),
-                        ],
-                        final_gathering_sample_radius: [
-                            fields.f64(section, 40),
-                            fields.f64(section, 40),
-                        ],
-                        light_luminance_scale: fields.f64(section, 40),
-                        diagnostics_mode: fields.i16(section, 70),
-                        diagnostics_grid_mode: fields.i16(section, 70),
-                        diagnostics_grid_size: fields.f64(section, 40),
-                        diagnostics_photon_mode: fields.i16(section, 70),
-                        diagnostics_bsp_mode: fields.i16(section, 70),
-                        export_mi_enabled: fields.bool(section, 290),
-                        description: fields.string(section, 1),
-                        tile_size: fields.i32(section, 90),
-                        tile_order: fields.i16(section, 70),
-                        memory_limit: fields.i32(section, 90),
-                        diagnostics_samples_mode: fields.bool(section, 290),
-                        energy_multiplier: fields.f64(section, 40),
-                    },
-                )
+                ClassObjectData::MentalRayRenderSettings(MentalRayRenderSettings {
+                    base,
+                    version: fields.i32(section, 90),
+                    sampling_min: fields.i32(section, 90),
+                    sampling_max: fields.i32(section, 90),
+                    sampling_filter: fields.i16(section, 70),
+                    sampling_filter_width: fields.f64(section, 40),
+                    sampling_filter_height: fields.f64(section, 40),
+                    sampling_contrast: [
+                        fields.f64(section, 40),
+                        fields.f64(section, 40),
+                        fields.f64(section, 40),
+                        fields.f64(section, 40),
+                    ],
+                    shadow_mode: fields.i16(section, 70),
+                    shadow_maps_enabled: fields.bool(section, 290),
+                    ray_tracing_enabled: fields.bool(section, 290),
+                    ray_trace_depth: [
+                        fields.i32(section, 90),
+                        fields.i32(section, 90),
+                        fields.i32(section, 90),
+                    ],
+                    global_illumination_enabled: fields.bool(section, 290),
+                    global_illumination_sample_count: fields.i32(section, 90),
+                    global_illumination_sample_radius_enabled: fields.bool(section, 290),
+                    global_illumination_sample_radius: fields.f64(section, 40),
+                    photons_per_light: fields.i32(section, 90),
+                    photon_trace_depth: [
+                        fields.i32(section, 90),
+                        fields.i32(section, 90),
+                        fields.i32(section, 90),
+                    ],
+                    final_gathering_enabled: fields.bool(section, 290),
+                    final_gathering_ray_count: fields.i32(section, 90),
+                    final_gathering_sample_radius_state: [
+                        fields.bool(section, 290),
+                        fields.bool(section, 290),
+                        fields.bool(section, 290),
+                    ],
+                    final_gathering_sample_radius: [
+                        fields.f64(section, 40),
+                        fields.f64(section, 40),
+                    ],
+                    light_luminance_scale: fields.f64(section, 40),
+                    diagnostics_mode: fields.i16(section, 70),
+                    diagnostics_grid_mode: fields.i16(section, 70),
+                    diagnostics_grid_size: fields.f64(section, 40),
+                    diagnostics_photon_mode: fields.i16(section, 70),
+                    diagnostics_bsp_mode: fields.i16(section, 70),
+                    export_mi_enabled: fields.bool(section, 290),
+                    description: fields.string(section, 1),
+                    tile_size: fields.i32(section, 90),
+                    tile_order: fields.i16(section, 70),
+                    memory_limit: fields.i32(section, 90),
+                    diagnostics_samples_mode: fields.bool(section, 290),
+                    energy_multiplier: fields.f64(section, 40),
+                })
             }
             "RAPIDRTRENDERSETTINGS" => {
                 let section = "AcDbRapidRTRenderSettings";
-                let mut base =
-                    class_dxf_render_settings(&mut fields, false);
+                let mut base = class_dxf_render_settings(&mut fields, false);
                 let version = fields.i32(section, 90);
                 let render_target = fields.i32(section, 70);
                 let render_level = fields.i32(section, 90);
@@ -4254,19 +5133,15 @@ impl<'a> SectionReader<'a> {
             }
             "GROUND_PLANE_BACKGROUND" => {
                 let section = "AcDbGroundPlaneBackground";
-                ClassObjectData::GroundPlaneBackground(
-                    GroundPlaneBackground {
-                        class_version: fields.i32(section, 90),
-                        color_sky_zenith: fields.i32(section, 90) as u32,
-                        color_sky_horizon: fields.i32(section, 91) as u32,
-                        color_underground_horizon: fields.i32(section, 92)
-                            as u32,
-                        color_underground_azimuth: fields.i32(section, 93)
-                            as u32,
-                        color_near: fields.i32(section, 94) as u32,
-                        color_far: fields.i32(section, 95) as u32,
-                    },
-                )
+                ClassObjectData::GroundPlaneBackground(GroundPlaneBackground {
+                    class_version: fields.i32(section, 90),
+                    color_sky_zenith: fields.i32(section, 90) as u32,
+                    color_sky_horizon: fields.i32(section, 91) as u32,
+                    color_underground_horizon: fields.i32(section, 92) as u32,
+                    color_underground_azimuth: fields.i32(section, 93) as u32,
+                    color_near: fields.i32(section, 94) as u32,
+                    color_far: fields.i32(section, 95) as u32,
+                })
             }
             "RAPIDRTRENDERENVIRONMENT" | "IBL_BACKGROUND" => {
                 let section = "AcDbIBLBackground";
@@ -4409,37 +5284,21 @@ impl<'a> SectionReader<'a> {
                     reserved_double: fields.f64(section, 41),
                 })
             }
-            "ACDBPOINTCLOUDDEF" | "POINTCLOUDDEF" => {
-                ClassObjectData::PointCloudDefinition(
-                    class_dxf_point_cloud_definition(
-                        &mut fields,
-                        "AcDbPointCloudDef",
-                    ),
-                )
-            }
-            "ACDBPOINTCLOUDDEFEX" | "POINTCLOUDDEFEX" => {
-                ClassObjectData::PointCloudDefinitionEx(
-                    class_dxf_point_cloud_definition(
-                        &mut fields,
-                        "AcDbPointCloudDefEx",
-                    ),
-                )
-            }
+            "ACDBPOINTCLOUDDEF" | "POINTCLOUDDEF" => ClassObjectData::PointCloudDefinition(
+                class_dxf_point_cloud_definition(&mut fields, "AcDbPointCloudDef"),
+            ),
+            "ACDBPOINTCLOUDDEFEX" | "POINTCLOUDDEFEX" => ClassObjectData::PointCloudDefinitionEx(
+                class_dxf_point_cloud_definition(&mut fields, "AcDbPointCloudDefEx"),
+            ),
             "ACDBPOINTCLOUDDEF_REACTOR" | "POINTCLOUDDEF_REACTOR" => {
-                ClassObjectData::PointCloudDefinitionReactor(
-                    PointCloudDefinitionReactor {
-                        class_version: fields
-                            .i32("AcDbPointCloudDefReactor", 90),
-                    },
-                )
+                ClassObjectData::PointCloudDefinitionReactor(PointCloudDefinitionReactor {
+                    class_version: fields.i32("AcDbPointCloudDefReactor", 90),
+                })
             }
             "ACDBPOINTCLOUDDEF_REACTOR_EX" | "POINTCLOUDDEF_REACTOR_EX" => {
-                ClassObjectData::PointCloudDefinitionReactorEx(
-                    PointCloudDefinitionReactor {
-                        class_version: fields
-                            .i32("AcDbPointCloudDefReactorEx", 90),
-                    },
-                )
+                ClassObjectData::PointCloudDefinitionReactorEx(PointCloudDefinitionReactor {
+                    class_version: fields.i32("AcDbPointCloudDefReactorEx", 90),
+                })
             }
             "ACDBPOINTCLOUDCOLORMAP" | "POINTCLOUDCOLORMAP" => {
                 let section = "AcDbPointCloudColorMap";
@@ -4447,10 +5306,8 @@ impl<'a> SectionReader<'a> {
                 let default_intensity_scheme = fields.string(section, 1);
                 let default_elevation_scheme = fields.string(section, 1);
                 let default_classification_scheme = fields.string(section, 1);
-                let color_ramps =
-                    class_dxf_point_cloud_ramps(&mut fields, section);
-                let classification_color_ramps =
-                    class_dxf_point_cloud_ramps(&mut fields, section);
+                let color_ramps = class_dxf_point_cloud_ramps(&mut fields, section);
+                let classification_color_ramps = class_dxf_point_cloud_ramps(&mut fields, section);
                 ClassObjectData::PointCloudColorMap(PointCloudColorMap {
                     class_version,
                     default_intensity_scheme,
@@ -4462,16 +5319,14 @@ impl<'a> SectionReader<'a> {
             }
             "NAVISWORKSMODELDEF" | "COORDINATION_MODEL_DEFINITION" => {
                 let section = "AcDbNavisworksModelDef";
-                ClassObjectData::NavisworksModelDefinition(
-                    NavisworksModelDefinition {
-                        flags: fields.i16(section, 70),
-                        path: fields.string(section, 1),
-                        status: fields.bool(section, 290),
-                        extents_min: fields.point3(section, 10),
-                        extents_max: fields.point3(section, 11),
-                        host_drawing_visibility: fields.bool(section, 290),
-                    },
-                )
+                ClassObjectData::NavisworksModelDefinition(NavisworksModelDefinition {
+                    flags: fields.i16(section, 70),
+                    path: fields.string(section, 1),
+                    status: fields.bool(section, 290),
+                    extents_min: fields.point3(section, 10),
+                    extents_max: fields.point3(section, 11),
+                    host_drawing_visibility: fields.bool(section, 290),
+                })
             }
             "CONTEXTDATAMANAGER" => {
                 let section = "AcDbContextDataManager";
@@ -4499,16 +5354,15 @@ impl<'a> SectionReader<'a> {
                 let setup_name = fields.string(section, 1);
                 let description = fields.string(section, 2);
                 let output_type = fields.i32(section, 70);
-                let (use_subset, sheet_set_name, sheet_subset_name) =
-                    if output_type == 0 {
-                        (
-                            fields.bool(section, 290),
-                            fields.string(section, 3),
-                            fields.string(section, 4),
-                        )
-                    } else {
-                        (false, String::new(), String::new())
-                    };
+                let (use_subset, sheet_set_name, sheet_subset_name) = if output_type == 0 {
+                    (
+                        fields.bool(section, 290),
+                        fields.string(section, 3),
+                        fields.string(section, 4),
+                    )
+                } else {
+                    (false, String::new(), String::new())
+                };
                 let select_dates_from_calendar = fields.bool(section, 291);
                 let mut dates = Vec::new();
                 for _ in 0..fields.i32(section, 91).max(0).min(10_000) {
@@ -4647,17 +5501,15 @@ impl<'a> SectionReader<'a> {
                 for _ in 0..fields.i32(section, 90).max(0).min(100_000) {
                     subentities.push(fields.i32(section, 90));
                 }
-                ClassObjectData::PersistentSubentityManager(
-                    PersistentSubentityManager {
-                        class_version,
-                        reserved_zero,
-                        reserved_two,
-                        associated_step_count,
-                        associated_subentity_count,
-                        steps,
-                        subentities,
-                    },
-                )
+                ClassObjectData::PersistentSubentityManager(PersistentSubentityManager {
+                    class_version,
+                    reserved_zero,
+                    reserved_two,
+                    associated_step_count,
+                    associated_subentity_count,
+                    steps,
+                    subentities,
+                })
             }
             "GEOMAPIMAGE" => {
                 let section = "AcDbGeomapImage";
@@ -4686,26 +5538,21 @@ impl<'a> SectionReader<'a> {
                 let flags = fields.i32(section, 90);
                 let _identifier_group = fields.i16(section, 71);
                 let identifier_style = fields.handle(section, 340);
-                let identifier_color =
-                    Color::from_index(fields.i16(section, 62));
+                let identifier_color = Color::from_index(fields.i16(section, 62));
                 let identifier_height = fields.f64(section, 40);
                 let arrow_symbol = fields.handle(section, 340);
-                let arrow_symbol_color =
-                    Color::from_index(fields.i16(section, 62));
+                let arrow_symbol_color = Color::from_index(fields.i16(section, 62));
                 let arrow_symbol_size = fields.f64(section, 40);
-                let identifier_excluded_characters =
-                    fields.string(section, 300);
+                let identifier_excluded_characters = fields.string(section, 300);
                 let identifier_offset = fields.f64(section, 40);
                 let identifier_placement = fields.i16(section, 280) as u8;
                 let _boundary_group = fields.i16(section, 71);
                 let boundary_linetype = fields.handle(section, 340);
                 let boundary_lineweight = fields.i32(section, 90);
-                let boundary_color =
-                    Color::from_index(fields.i16(section, 62));
+                let boundary_color = Color::from_index(fields.i16(section, 62));
                 let _view_label_group = fields.i16(section, 71);
                 let view_label_text_style = fields.handle(section, 340);
-                let view_label_text_color =
-                    Color::from_index(fields.i16(section, 62));
+                let view_label_text_color = Color::from_index(fields.i16(section, 62));
                 let view_label_text_height = fields.f64(section, 40);
                 let view_label_attachment = fields.i32(section, 90);
                 let view_label_offset = fields.f64(section, 40);
@@ -4737,14 +5584,10 @@ impl<'a> SectionReader<'a> {
                     view_label_pattern,
                     connection_linetype: fields.handle(section, 340),
                     connection_lineweight: fields.i32(section, 90),
-                    connection_color: Color::from_index(
-                        fields.i16(section, 62),
-                    ),
+                    connection_color: Color::from_index(fields.i16(section, 62)),
                     border_linetype: fields.handle(section, 340),
                     border_lineweight: fields.i32(section, 90),
-                    border_color: Color::from_index(
-                        fields.i16(section, 62),
-                    ),
+                    border_color: Color::from_index(fields.i16(section, 62)),
                     model_edge: fields.i16(section, 280) as u8,
                 })
             }
@@ -4762,16 +5605,13 @@ impl<'a> SectionReader<'a> {
                 let flags = fields.i32(section, 90);
                 let _identifier_group = fields.i16(section, 71);
                 let identifier_style = fields.handle(section, 340);
-                let identifier_color =
-                    Color::from_index(fields.i16(section, 62));
+                let identifier_color = Color::from_index(fields.i16(section, 62));
                 let identifier_height = fields.f64(section, 40);
                 let arrow_start_symbol = fields.handle(section, 340);
                 let arrow_end_symbol = fields.handle(section, 340);
-                let arrow_symbol_color =
-                    Color::from_index(fields.i16(section, 62));
+                let arrow_symbol_color = Color::from_index(fields.i16(section, 62));
                 let arrow_symbol_size = fields.f64(section, 40);
-                let identifier_excluded_characters =
-                    fields.string(section, 300);
+                let identifier_excluded_characters = fields.string(section, 300);
                 let arrow_symbol_extension_length = fields.f64(section, 40);
                 let identifier_position = fields.i32(section, 90);
                 let identifier_offset = fields.f64(section, 40);
@@ -4779,8 +5619,7 @@ impl<'a> SectionReader<'a> {
                 let _plane_group = fields.i16(section, 71);
                 let plane_linetype = fields.handle(section, 340);
                 let plane_lineweight = fields.i32(section, 90);
-                let plane_color =
-                    Color::from_index(fields.i16(section, 62));
+                let plane_color = Color::from_index(fields.i16(section, 62));
                 let bend_linetype = fields.handle(section, 340);
                 let bend_lineweight = fields.i32(section, 90);
                 let bend_color = Color::from_index(fields.i16(section, 62));
@@ -4789,8 +5628,7 @@ impl<'a> SectionReader<'a> {
                 let end_line_length = fields.f64(section, 40);
                 let _view_label_group = fields.i16(section, 71);
                 let view_label_text_style = fields.handle(section, 340);
-                let view_label_text_color =
-                    Color::from_index(fields.i16(section, 62));
+                let view_label_text_color = Color::from_index(fields.i16(section, 62));
                 let view_label_text_height = fields.f64(section, 40);
                 let view_label_attachment = fields.i32(section, 90);
                 let view_label_offset = fields.f64(section, 40);
@@ -4798,8 +5636,7 @@ impl<'a> SectionReader<'a> {
                 let view_label_pattern = fields.string(section, 300);
                 let _hatch_group = fields.i16(section, 71);
                 let hatch_color = Color::from_index(fields.i16(section, 62));
-                let hatch_background_color =
-                    Color::from_index(fields.i16(section, 62));
+                let hatch_background_color = Color::from_index(fields.i16(section, 62));
                 let hatch_pattern = fields.string(section, 300);
                 let hatch_scale = fields.f64(section, 40);
                 let hatch_transparency = fields.i32(section, 90);
@@ -4852,9 +5689,7 @@ impl<'a> SectionReader<'a> {
                 ClassObjectData::AcMeCommandHistory(AcMeCommandHistory::default())
             }
             "ACMESCOPE" => ClassObjectData::AcMeScope(AcMeScope::default()),
-            "ACMESTATEMGR" => {
-                ClassObjectData::AcMeStateManager(AcMeStateManager::default())
-            }
+            "ACMESTATEMGR" => ClassObjectData::AcMeStateManager(AcMeStateManager::default()),
             "CSACDOCUMENTOPTIONS" => {
                 ClassObjectData::CsacDocumentOptions(CsacDocumentOptions::default())
             }
@@ -4922,10 +5757,7 @@ impl<'a> SectionReader<'a> {
                             reserved: fields.f64(section, 40),
                         },
                         42 => {
-                            let flags = [
-                                fields.bool(section, 70),
-                                fields.bool(section, 70),
-                            ];
+                            let flags = [fields.bool(section, 70), fields.bool(section, 70)];
                             let degree = fields.i32(section, 90);
                             let tolerance = fields.f64(section, 40);
                             let knot_header = [
@@ -4981,35 +5813,21 @@ impl<'a> SectionReader<'a> {
                         final_flag,
                     });
                 }
-                let related_objects = [
-                    fields.handle(section, 330),
-                    fields.handle(section, 330),
-                ];
+                let related_objects = [fields.handle(section, 330), fields.handle(section, 330)];
                 let source_manager = fields.handle(section, 340);
-                let owned_objects = [
-                    fields.handle(section, 360),
-                    fields.handle(section, 360),
-                ];
-                let optional_objects = [
-                    fields.handle(section, 330),
-                    fields.handle(section, 330),
-                ];
+                let owned_objects = [fields.handle(section, 360), fields.handle(section, 360)];
+                let optional_objects = [fields.handle(section, 330), fields.handle(section, 330)];
                 let position = fields.point2(section, 10);
                 let rotation = fields.f64(section, 40);
                 let orientation = fields.handle(section, 340);
                 let is_active = fields.bool(section, 290);
                 let projection = fields.i16(section, 70);
-                let linked_views = [
-                    fields.handle(section, 330),
-                    fields.handle(section, 330),
-                ];
+                let linked_views = [fields.handle(section, 330), fields.handle(section, 330)];
                 let mut section_sketches = Vec::new();
                 for _ in 0..fields.i32(section, 90).max(0).min(100_000) {
                     let class_name = fields.string(section, 1);
-                    let path_count =
-                        fields.i16(section, 70).max(0).min(10_000) as usize;
-                    let mut objects =
-                        Vec::with_capacity(path_count.saturating_add(1));
+                    let path_count = fields.i16(section, 70).max(0).min(10_000) as usize;
+                    let mut objects = Vec::with_capacity(path_count.saturating_add(1));
                     for _ in 0..=path_count {
                         objects.push(fields.handle(section, 330));
                     }
@@ -5127,41 +5945,31 @@ impl<'a> SectionReader<'a> {
                 for item in &mut data4 {
                     *item = fields.i32(section, 280) as u8;
                 }
-                ClassObjectData::ViewRepModelSpaceSource(
-                    ViewRepModelSpaceSource {
-                        enabled,
-                        header_values,
-                        transform,
-                        source_version,
-                        source_status,
-                        model,
-                        guid: ViewRepGuid {
-                            data1,
-                            data2,
-                            data3,
-                            data4,
-                        },
-                        references: [
-                            fields.handle(section, 330),
-                            fields.handle(section, 330),
-                        ],
-                        tail_values: [
-                            fields.i32(section, 90),
-                            fields.i32(section, 90),
-                        ],
-                        orientation: fields.handle(section, 350),
+                ClassObjectData::ViewRepModelSpaceSource(ViewRepModelSpaceSource {
+                    enabled,
+                    header_values,
+                    transform,
+                    source_version,
+                    source_status,
+                    model,
+                    guid: ViewRepGuid {
+                        data1,
+                        data2,
+                        data3,
+                        data4,
                     },
-                )
+                    references: [fields.handle(section, 330), fields.handle(section, 330)],
+                    tail_values: [fields.i32(section, 90), fields.i32(section, 90)],
+                    orientation: fields.handle(section, 350),
+                })
             }
             "ACDBVIEWREPSOURCEMGR" => {
                 let section = "AcDbViewRepSourceMgr";
-                ClassObjectData::ViewRepSourceManager(
-                    ViewRepSourceManager {
-                        has_source: fields.bool(section, 290),
-                        source: fields.handle(section, 350),
-                        status: fields.i32(section, 90),
-                    },
-                )
+                ClassObjectData::ViewRepSourceManager(ViewRepSourceManager {
+                    has_source: fields.bool(section, 290),
+                    source: fields.handle(section, 350),
+                    status: fields.i32(section, 90),
+                })
             }
             "ACDBVIEWREPSTANDARD" => {
                 let section = "AcDbViewRepStandard";
@@ -5176,9 +5984,7 @@ impl<'a> SectionReader<'a> {
                     ],
                 })
             }
-            "ACDBVIEWREPORIENTATIONDEF" => {
-                ClassObjectData::ViewRepOrientationDefinition
-            }
+            "ACDBVIEWREPORIENTATIONDEF" => ClassObjectData::ViewRepOrientationDefinition,
             "ACDBVIEWREPORIENTATION" => {
                 let section = "AcDbViewRepOrientation";
                 ClassObjectData::ViewRepOrientation(ViewRepOrientation {
@@ -5189,16 +5995,11 @@ impl<'a> SectionReader<'a> {
             }
             "ACDBVIEWREPSECTIONDEFINITION" => {
                 let section = "AcDbViewRepSectionDefinition";
-                ClassObjectData::ViewRepSectionDefinition(
-                    ViewRepSectionDefinition {
-                        version: fields.i32(section, 90),
-                        section_depth: fields.f64(section, 40),
-                        flags: [
-                            fields.i32(section, 90),
-                            fields.i32(section, 90),
-                        ],
-                    },
-                )
+                ClassObjectData::ViewRepSectionDefinition(ViewRepSectionDefinition {
+                    version: fields.i32(section, 90),
+                    section_depth: fields.f64(section, 40),
+                    flags: [fields.i32(section, 90), fields.i32(section, 90)],
+                })
             }
             "ACDBSYMODELSPACEVIEWSELSET" => {
                 let section = "AcDbViewRepModelSpaceViewSelSet";
@@ -5209,10 +6010,7 @@ impl<'a> SectionReader<'a> {
                     entities.push(fields.handle(section, 330));
                 }
                 ClassObjectData::ViewRepModelSpaceViewSelectionSet(
-                    ViewRepModelSpaceViewSelectionSet {
-                        version,
-                        entities,
-                    },
+                    ViewRepModelSpaceViewSelectionSet { version, entities },
                 )
             }
             _ => ClassObjectData::Empty,
@@ -5239,7 +6037,9 @@ impl<'a> SectionReader<'a> {
                 match pair.value_string.as_str() {
                     "DICTIONARY" => {
                         if let Some(obj) = self.read_dictionary()? {
-                            document.objects.insert(obj.handle, ObjectType::Dictionary(obj));
+                            document
+                                .objects
+                                .insert(obj.handle, ObjectType::Dictionary(obj));
                         }
                     }
                     "LAYOUT" => {
@@ -5249,7 +6049,9 @@ impl<'a> SectionReader<'a> {
                     }
                     "XRECORD" => {
                         if let Some(obj) = self.read_xrecord()? {
-                            document.objects.insert(obj.handle, ObjectType::XRecord(obj));
+                            document
+                                .objects
+                                .insert(obj.handle, ObjectType::XRecord(obj));
                         }
                     }
                     "GROUP" => {
@@ -5259,12 +6061,16 @@ impl<'a> SectionReader<'a> {
                     }
                     "MLINESTYLE" => {
                         if let Some(obj) = self.read_mlinestyle_object()? {
-                            document.objects.insert(obj.handle, ObjectType::MLineStyle(obj));
+                            document
+                                .objects
+                                .insert(obj.handle, ObjectType::MLineStyle(obj));
                         }
                     }
                     "IMAGEDEF" => {
                         if let Some(obj) = self.read_image_definition()? {
-                            document.objects.insert(obj.handle, ObjectType::ImageDefinition(obj));
+                            document
+                                .objects
+                                .insert(obj.handle, ObjectType::ImageDefinition(obj));
                         }
                     }
                     "PDFDEFINITION" | "DWFDEFINITION" | "DGNDEFINITION" => {
@@ -5282,27 +6088,30 @@ impl<'a> SectionReader<'a> {
                     }
                     "MLEADERSTYLE" => {
                         if let Some(obj) = self.read_multileader_style()? {
-                            document.objects.insert(obj.handle, ObjectType::MultiLeaderStyle(obj));
+                            document
+                                .objects
+                                .insert(obj.handle, ObjectType::MultiLeaderStyle(obj));
                         }
                     }
                     "PLOTSETTINGS" => {
                         if let Some(obj) = self.read_plot_settings()? {
-                            document.objects.insert(obj.handle, ObjectType::PlotSettings(obj));
+                            document
+                                .objects
+                                .insert(obj.handle, ObjectType::PlotSettings(obj));
                         }
                     }
                     "TABLESTYLE" => {
                         if let Some(obj) = self.read_table_style()? {
-                            document.objects.insert(obj.handle, ObjectType::TableStyle(obj));
+                            document
+                                .objects
+                                .insert(obj.handle, ObjectType::TableStyle(obj));
                         }
                     }
                     "TABLECONTENT" => {
-                        if let Some(obj) =
-                            self.read_table_content_object_typed_dxf()?
-                        {
-                            document.objects.insert(
-                                obj.common.handle,
-                                ObjectType::TableContent(obj),
-                            );
+                        if let Some(obj) = self.read_table_content_object_typed_dxf()? {
+                            document
+                                .objects
+                                .insert(obj.common.handle, ObjectType::TableContent(obj));
                         }
                     }
                     "SCALE" => {
@@ -5312,38 +6121,58 @@ impl<'a> SectionReader<'a> {
                     }
                     "SORTENTSTABLE" => {
                         if let Some(obj) = self.read_sort_entities_table(document.version)? {
-                            document.objects.insert(obj.handle, ObjectType::SortEntitiesTable(obj));
+                            document
+                                .objects
+                                .insert(obj.handle, ObjectType::SortEntitiesTable(obj));
                         }
                     }
                     "DICTIONARYVAR" => {
                         if let Some(obj) = self.read_dictionary_variable()? {
-                            document.objects.insert(obj.handle, ObjectType::DictionaryVariable(obj));
+                            document
+                                .objects
+                                .insert(obj.handle, ObjectType::DictionaryVariable(obj));
                         }
                     }
                     "VISUALSTYLE" => {
                         if let Some(obj) = self.read_visualstyle()? {
-                            document.objects.insert(obj.handle, ObjectType::VisualStyle(obj));
+                            document
+                                .objects
+                                .insert(obj.handle, ObjectType::VisualStyle(obj));
                         }
                     }
                     "MATERIAL" => {
                         if let Some(obj) = self.read_material()? {
-                            document.objects.insert(obj.handle, ObjectType::Material(obj));
+                            document
+                                .objects
+                                .insert(obj.handle, ObjectType::Material(obj));
                         }
                     }
                     "IMAGEDEF_REACTOR" => {
                         if let Some(obj) = self.read_imagedef_reactor()? {
-                            document.objects.insert(obj.handle, ObjectType::ImageDefinitionReactor(obj));
+                            document
+                                .objects
+                                .insert(obj.handle, ObjectType::ImageDefinitionReactor(obj));
                         }
                     }
                     "GEODATA" => {
                         let obj = self.read_geodata()?;
-                        document.objects.insert(obj.handle, ObjectType::GeoData(obj));
+                        document
+                            .objects
+                            .insert(obj.handle, ObjectType::GeoData(obj));
                     }
-                    "BREAKDATA" | "BREAKPOINTREF" | "IDBUFFER" | "INDEX"
-                    | "LAYER_INDEX" | "PARTIAL_VIEWING_FILTER"
-                    | "CELLSTYLEMAP" | "TABLEGEOMETRY"
-                    | "LONG_TRANSACTION" | "ACDSRECORD"
-                    | "ACDSSCHEMA" | "DUMMY" | "OBJECT_PTR" => {
+                    "BREAKDATA"
+                    | "BREAKPOINTREF"
+                    | "IDBUFFER"
+                    | "INDEX"
+                    | "LAYER_INDEX"
+                    | "PARTIAL_VIEWING_FILTER"
+                    | "CELLSTYLEMAP"
+                    | "TABLEGEOMETRY"
+                    | "LONG_TRANSACTION"
+                    | "ACDSRECORD"
+                    | "ACDSSCHEMA"
+                    | "DUMMY"
+                    | "OBJECT_PTR" => {
                         let obj = self.read_data_object_dxf(&pair.value_string)?;
                         document
                             .objects
@@ -5353,32 +6182,44 @@ impl<'a> SectionReader<'a> {
                     // both spellings so the INSERT xclip chain resolves.
                     "SPATIAL_FILTER" | "SPATIALFILTER" => {
                         if let Some(obj) = self.read_spatial_filter()? {
-                            document.objects.insert(obj.handle, ObjectType::SpatialFilter(obj));
+                            document
+                                .objects
+                                .insert(obj.handle, ObjectType::SpatialFilter(obj));
                         }
                     }
                     "RASTERVARIABLES" => {
                         if let Some(obj) = self.read_raster_variables()? {
-                            document.objects.insert(obj.handle, ObjectType::RasterVariables(obj));
+                            document
+                                .objects
+                                .insert(obj.handle, ObjectType::RasterVariables(obj));
                         }
                     }
                     "DBCOLOR" => {
                         if let Some(obj) = self.read_bookcolor()? {
-                            document.objects.insert(obj.handle, ObjectType::BookColor(obj));
+                            document
+                                .objects
+                                .insert(obj.handle, ObjectType::BookColor(obj));
                         }
                     }
                     "ACDBPLACEHOLDER" => {
                         let obj = self.read_stub_object::<PlaceHolder>()?;
-                        document.objects.insert(obj.handle, ObjectType::PlaceHolder(obj));
+                        document
+                            .objects
+                            .insert(obj.handle, ObjectType::PlaceHolder(obj));
                     }
                     "ACDBDICTIONARYWDFLT" => {
                         // Already handled as DICTIONARY above — this handles standalone cases
                         if let Some(obj) = self.read_dict_with_default()? {
-                            document.objects.insert(obj.handle, ObjectType::DictionaryWithDefault(obj));
+                            document
+                                .objects
+                                .insert(obj.handle, ObjectType::DictionaryWithDefault(obj));
                         }
                     }
                     "WIPEOUTVARIABLES" => {
                         if let Some(obj) = self.read_wipeout_variables()? {
-                            document.objects.insert(obj.handle, ObjectType::WipeoutVariables(obj));
+                            document
+                                .objects
+                                .insert(obj.handle, ObjectType::WipeoutVariables(obj));
                         }
                     }
                     "FIELD" | "ACDBFIELD" => {
@@ -5402,11 +6243,8 @@ impl<'a> SectionReader<'a> {
                             .insert(obj.handle, ObjectType::FieldList(obj));
                     }
                     name if is_dynamic_block_object_name(name) => {
-                        let object =
-                            self.read_dynamic_block_object_dxf(name, document.version)?;
-                        if let DynamicBlockData::VisibilityParameter(parameter) =
-                            &object.data
-                        {
+                        let object = self.read_dynamic_block_object_dxf(name, document.version)?;
+                        if let DynamicBlockData::VisibilityParameter(parameter) = &object.data {
                             document
                                 .block_visibility_params
                                 .insert(parameter.handle, parameter.clone());
@@ -5423,68 +6261,48 @@ impl<'a> SectionReader<'a> {
                     name if is_object_context_name(name) => {
                         let object = self.read_object_context_data_dxf(name)?;
                         if !object.scale.is_null() {
-                            document
-                                .context_scales
-                                .insert(object.handle, object.scale);
+                            document.context_scales.insert(object.handle, object.scale);
                         }
-                        document.objects.insert(
-                            object.handle,
-                            ObjectType::ObjectContextData(object),
-                        );
+                        document
+                            .objects
+                            .insert(object.handle, ObjectType::ObjectContextData(object));
                     }
                     name if is_associative_object_name(name) => {
-                        let object = self.read_associative_object_dxf(
-                            name,
-                            document.version,
-                        )?;
+                        let object = self.read_associative_object_dxf(name, document.version)?;
                         document
                             .objects
                             .insert(object.handle, ObjectType::Associative(object));
                     }
                     name if is_class_object_name(name) => {
                         let object = self.read_class_object_dxf(name)?;
-                        if let ClassObjectData::SectionViewStyle(style) =
-                            &object.data
-                        {
-                            document.section_view_style = Some(
-                                crate::entities::SectionViewStyle {
-                                    show_arrows: style.flags & 0x02 != 0,
-                                    show_plane_line: style.flags & 0x08 != 0,
-                                    show_end_lines: style.flags & 0x20 != 0,
-                                    arrow_size: style.arrow_symbol_size,
-                                    arrow_extension: style
-                                        .arrow_symbol_extension_length,
-                                    label_height: style.identifier_height,
-                                    label_offset: style.identifier_offset,
-                                    label_position: style.identifier_position,
-                                    arrow_position: style.arrow_position,
-                                    end_line_length: style.end_line_length,
-                                    end_line_overshoot: style
-                                        .end_line_overshoot,
-                                    arrow_start_handle: style
-                                        .arrow_start_symbol
-                                        .value(),
-                                    arrow_end_handle: style
-                                        .arrow_end_symbol
-                                        .value(),
-                                    arrow_is_default: style
-                                        .arrow_start_symbol
-                                        .is_null()
-                                        && style.arrow_end_symbol.is_null(),
-                                },
-                            );
+                        if let ClassObjectData::SectionViewStyle(style) = &object.data {
+                            document.section_view_style = Some(crate::entities::SectionViewStyle {
+                                show_arrows: style.flags & 0x02 != 0,
+                                show_plane_line: style.flags & 0x08 != 0,
+                                show_end_lines: style.flags & 0x20 != 0,
+                                arrow_size: style.arrow_symbol_size,
+                                arrow_extension: style.arrow_symbol_extension_length,
+                                label_height: style.identifier_height,
+                                label_offset: style.identifier_offset,
+                                label_position: style.identifier_position,
+                                arrow_position: style.arrow_position,
+                                end_line_length: style.end_line_length,
+                                end_line_overshoot: style.end_line_overshoot,
+                                arrow_start_handle: style.arrow_start_symbol.value(),
+                                arrow_end_handle: style.arrow_end_symbol.value(),
+                                arrow_is_default: style.arrow_start_symbol.is_null()
+                                    && style.arrow_end_symbol.is_null(),
+                            });
                         }
                         document
                             .objects
                             .insert(object.handle, ObjectType::ClassObject(object));
                     }
                     name if is_dgn_line_style_name(name) => {
-                        let object =
-                            self.read_dgn_line_style_object(name)?;
-                        document.objects.insert(
-                            object.handle,
-                            ObjectType::DgnLineStyle(object),
-                        );
+                        let object = self.read_dgn_line_style_object(name)?;
+                        document
+                            .objects
+                            .insert(object.handle, ObjectType::DgnLineStyle(object));
                     }
                     "ACAD_PROXY_OBJECT" => {
                         let object = self.read_proxy_object_dxf()?;
@@ -5492,58 +6310,58 @@ impl<'a> SectionReader<'a> {
                         let object_type = if let Some(envelope) =
                             crate::objects::semantic_property::decode_registered_class_envelope(
                                 &object.payload,
-                            )
-                        {
-                            ObjectType::RegisteredClass(
-                                RegisteredClassObject {
-                                    handle: object.handle,
-                                    owner: object.owner,
-                                    reactors: object.reactors,
-                                    xdictionary_handle:
-                                        object.xdictionary_handle,
-                                    dxf_name: envelope.dxf_name,
-                                    cpp_class_name:
-                                        envelope.cpp_class_name,
-                                    properties: envelope.properties,
-                                    payload: envelope.payload,
-                                    object_ids: object.object_ids,
-                                    raw_dwg_data: None,
-                                    raw_dwg_handle_bits: 0,
-                                    raw_dwg_version: None,
-                                },
-                            )
+                            ) {
+                            ObjectType::RegisteredClass(RegisteredClassObject {
+                                handle: object.handle,
+                                owner: object.owner,
+                                reactors: object.reactors,
+                                xdictionary_handle: object.xdictionary_handle,
+                                dxf_name: envelope.dxf_name,
+                                cpp_class_name: envelope.cpp_class_name,
+                                properties: envelope.properties,
+                                payload: envelope.payload,
+                                object_ids: object.object_ids,
+                                raw_dwg_data: None,
+                                raw_dwg_handle_bits: 0,
+                                raw_dwg_version: None,
+                            })
                         } else {
                             ObjectType::ProxyObject(object)
                         };
-                        document.objects.insert(
-                            handle,
-                            object_type,
-                        );
+                        document.objects.insert(handle, object_type);
                     }
                     name if is_registered_class_object_name(name) => {
-                        let object =
-                            self.read_registered_class_object(name)?;
-                        document.objects.insert(
-                            object.handle,
-                            ObjectType::RegisteredClass(object),
-                        );
+                        let object = self.read_registered_class_object(name)?;
+                        document
+                            .objects
+                            .insert(object.handle, ObjectType::RegisteredClass(object));
                     }
                     _ => {
                         document.notifications.notify(
                             crate::notification::NotificationType::NotImplemented,
-                            format!("Object not supported, read as Unknown: {}", pair.value_string),
+                            format!(
+                                "Object not supported, read as Unknown: {}",
+                                pair.value_string
+                            ),
                         );
                         let type_name = pair.value_string.clone();
                         let (handle, owner, raw_codes) = self.read_unknown_object_full()?;
-                        document.objects.insert(handle, ObjectType::Unknown {
-                            type_name,
+                        document.objects.insert(
                             handle,
-                            owner,
-                            raw_dxf_codes: if raw_codes.is_empty() { None } else { Some(raw_codes) },
-                            raw_dwg_data: None,
-                            raw_dwg_handle_bits: 0,
-                            raw_dwg_version: None,
-                        });
+                            ObjectType::Unknown {
+                                type_name,
+                                handle,
+                                owner,
+                                raw_dxf_codes: if raw_codes.is_empty() {
+                                    None
+                                } else {
+                                    Some(raw_codes)
+                                },
+                                raw_dwg_data: None,
+                                raw_dwg_handle_bits: 0,
+                                raw_dwg_version: None,
+                            },
+                        );
                     }
                 }
                 self.decoded_records = self
@@ -5552,8 +6370,7 @@ impl<'a> SectionReader<'a> {
             }
         }
 
-        let viewport_handles_by_block:
-            std::collections::HashMap<Handle, Vec<Handle>> = document
+        let viewport_handles_by_block: std::collections::HashMap<Handle, Vec<Handle>> = document
             .block_records
             .iter()
             .map(|block| {
@@ -5567,10 +6384,7 @@ impl<'a> SectionReader<'a> {
                             .get(handle)
                             .and_then(|index| document.entities.get(*index))
                             .is_some_and(|entity| {
-                                matches!(
-                                    entity.as_ref(),
-                                    EntityType::Viewport(_)
-                                )
+                                matches!(entity.as_ref(), EntityType::Viewport(_))
                             })
                     })
                     .collect();
@@ -5579,9 +6393,7 @@ impl<'a> SectionReader<'a> {
             .collect();
         for object in document.objects.values_mut() {
             if let ObjectType::Layout(layout) = object {
-                if let Some(viewports) =
-                    viewport_handles_by_block.get(&layout.block_record)
-                {
+                if let Some(viewports) = viewport_handles_by_block.get(&layout.block_record) {
                     layout.viewports = viewports.clone();
                 }
             }
@@ -5607,8 +6419,7 @@ impl<'a> SectionReader<'a> {
                 if let crate::objects::ObjectType::Dictionary(dict) = object {
                     if dict.owner.is_null() {
                         if dict.entries.len() > best_count
-                            || (dict.entries.len() == best_count
-                                && handle.value() > best.value())
+                            || (dict.entries.len() == best_count && handle.value() > best.value())
                         {
                             best = *handle;
                             best_count = dict.entries.len();
@@ -5726,11 +6537,15 @@ impl<'a> SectionReader<'a> {
                                     layout.xdictionary_handle = Some(Handle::new(h));
                                 }
                             }
-                            if p2.code == 102 { break; } // closing "}"
+                            if p2.code == 102 {
+                                break;
+                            } // closing "}"
                         }
                     } else if pair.value_string == "{ACAD_REACTORS" {
                         while let Some(p2) = self.reader.read_pair()? {
-                            if p2.code == 102 { break; }
+                            if p2.code == 102 {
+                                break;
+                            }
                             if p2.code == 330 {
                                 if let Ok(h) = u64::from_str_radix(&p2.value_string, 16) {
                                     layout.reactors.push(Handle::new(h));
@@ -5771,21 +6586,81 @@ impl<'a> SectionReader<'a> {
                     // AcDbLayout — parse the layout-specific fields
                     match pair.code {
                         1 => layout.name = pair.value_string.clone(),
-                        70 => { if let Some(v) = pair.as_i16() { layout.flags = v; } }
-                        71 => { if let Some(v) = pair.as_i16() { layout.tab_order = v; } }
-                        10 => { if let Some(v) = pair.as_double() { layout.min_limits.0 = v; } }
-                        20 => { if let Some(v) = pair.as_double() { layout.min_limits.1 = v; } }
-                        11 => { if let Some(v) = pair.as_double() { layout.max_limits.0 = v; } }
-                        21 => { if let Some(v) = pair.as_double() { layout.max_limits.1 = v; } }
-                        12 => { if let Some(v) = pair.as_double() { layout.insertion_base.0 = v; } }
-                        22 => { if let Some(v) = pair.as_double() { layout.insertion_base.1 = v; } }
-                        32 => { if let Some(v) = pair.as_double() { layout.insertion_base.2 = v; } }
-                        14 => { if let Some(v) = pair.as_double() { layout.min_extents.0 = v; } }
-                        24 => { if let Some(v) = pair.as_double() { layout.min_extents.1 = v; } }
-                        34 => { if let Some(v) = pair.as_double() { layout.min_extents.2 = v; } }
-                        15 => { if let Some(v) = pair.as_double() { layout.max_extents.0 = v; } }
-                        25 => { if let Some(v) = pair.as_double() { layout.max_extents.1 = v; } }
-                        35 => { if let Some(v) = pair.as_double() { layout.max_extents.2 = v; } }
+                        70 => {
+                            if let Some(v) = pair.as_i16() {
+                                layout.flags = v;
+                            }
+                        }
+                        71 => {
+                            if let Some(v) = pair.as_i16() {
+                                layout.tab_order = v;
+                            }
+                        }
+                        10 => {
+                            if let Some(v) = pair.as_double() {
+                                layout.min_limits.0 = v;
+                            }
+                        }
+                        20 => {
+                            if let Some(v) = pair.as_double() {
+                                layout.min_limits.1 = v;
+                            }
+                        }
+                        11 => {
+                            if let Some(v) = pair.as_double() {
+                                layout.max_limits.0 = v;
+                            }
+                        }
+                        21 => {
+                            if let Some(v) = pair.as_double() {
+                                layout.max_limits.1 = v;
+                            }
+                        }
+                        12 => {
+                            if let Some(v) = pair.as_double() {
+                                layout.insertion_base.0 = v;
+                            }
+                        }
+                        22 => {
+                            if let Some(v) = pair.as_double() {
+                                layout.insertion_base.1 = v;
+                            }
+                        }
+                        32 => {
+                            if let Some(v) = pair.as_double() {
+                                layout.insertion_base.2 = v;
+                            }
+                        }
+                        14 => {
+                            if let Some(v) = pair.as_double() {
+                                layout.min_extents.0 = v;
+                            }
+                        }
+                        24 => {
+                            if let Some(v) = pair.as_double() {
+                                layout.min_extents.1 = v;
+                            }
+                        }
+                        34 => {
+                            if let Some(v) = pair.as_double() {
+                                layout.min_extents.2 = v;
+                            }
+                        }
+                        15 => {
+                            if let Some(v) = pair.as_double() {
+                                layout.max_extents.0 = v;
+                            }
+                        }
+                        25 => {
+                            if let Some(v) = pair.as_double() {
+                                layout.max_extents.1 = v;
+                            }
+                        }
+                        35 => {
+                            if let Some(v) = pair.as_double() {
+                                layout.max_extents.2 = v;
+                            }
+                        }
                         330 => {
                             // In AcDbLayout, code 330 = block_record handle
                             if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
@@ -5799,30 +6674,70 @@ impl<'a> SectionReader<'a> {
                             }
                         }
                         345 => {
-                            if let Ok(h) =
-                                u64::from_str_radix(&pair.value_string, 16)
-                            {
+                            if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
                                 layout.named_ucs = Handle::new(h);
                             }
                         }
                         346 => {
-                            if let Ok(h) =
-                                u64::from_str_radix(&pair.value_string, 16)
-                            {
+                            if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
                                 layout.base_ucs = Handle::new(h);
                             }
                         }
-                        146 => { if let Some(v) = pair.as_double() { layout.elevation = v; } }
-                        13 => { if let Some(v) = pair.as_double() { layout.ucs_origin.0 = v; } }
-                        23 => { if let Some(v) = pair.as_double() { layout.ucs_origin.1 = v; } }
-                        33 => { if let Some(v) = pair.as_double() { layout.ucs_origin.2 = v; } }
-                        16 => { if let Some(v) = pair.as_double() { layout.ucs_x_axis.0 = v; } }
-                        26 => { if let Some(v) = pair.as_double() { layout.ucs_x_axis.1 = v; } }
-                        36 => { if let Some(v) = pair.as_double() { layout.ucs_x_axis.2 = v; } }
-                        17 => { if let Some(v) = pair.as_double() { layout.ucs_y_axis.0 = v; } }
-                        27 => { if let Some(v) = pair.as_double() { layout.ucs_y_axis.1 = v; } }
-                        37 => { if let Some(v) = pair.as_double() { layout.ucs_y_axis.2 = v; } }
-                        76 => { if let Some(v) = pair.as_i16() { layout.ucs_ortho_type = v; } }
+                        146 => {
+                            if let Some(v) = pair.as_double() {
+                                layout.elevation = v;
+                            }
+                        }
+                        13 => {
+                            if let Some(v) = pair.as_double() {
+                                layout.ucs_origin.0 = v;
+                            }
+                        }
+                        23 => {
+                            if let Some(v) = pair.as_double() {
+                                layout.ucs_origin.1 = v;
+                            }
+                        }
+                        33 => {
+                            if let Some(v) = pair.as_double() {
+                                layout.ucs_origin.2 = v;
+                            }
+                        }
+                        16 => {
+                            if let Some(v) = pair.as_double() {
+                                layout.ucs_x_axis.0 = v;
+                            }
+                        }
+                        26 => {
+                            if let Some(v) = pair.as_double() {
+                                layout.ucs_x_axis.1 = v;
+                            }
+                        }
+                        36 => {
+                            if let Some(v) = pair.as_double() {
+                                layout.ucs_x_axis.2 = v;
+                            }
+                        }
+                        17 => {
+                            if let Some(v) = pair.as_double() {
+                                layout.ucs_y_axis.0 = v;
+                            }
+                        }
+                        27 => {
+                            if let Some(v) = pair.as_double() {
+                                layout.ucs_y_axis.1 = v;
+                            }
+                        }
+                        37 => {
+                            if let Some(v) = pair.as_double() {
+                                layout.ucs_y_axis.2 = v;
+                            }
+                        }
+                        76 => {
+                            if let Some(v) = pair.as_i16() {
+                                layout.ucs_ortho_type = v;
+                            }
+                        }
                         _ => {} // codes not currently stored
                     }
                 }
@@ -5838,36 +6753,131 @@ impl<'a> SectionReader<'a> {
                     4 => layout.paper_size = val.clone(),
                     6 => layout.plot_view_name = val.clone(),
                     7 => layout.plot_style_sheet = val.clone(),
-                    40 => { if let Ok(v) = val.parse::<f64>() { layout.plot_margin_left = v; } }
-                    41 => { if let Ok(v) = val.parse::<f64>() { layout.plot_margin_bottom = v; } }
-                    42 => { if let Ok(v) = val.parse::<f64>() { layout.plot_margin_right = v; } }
-                    43 => { if let Ok(v) = val.parse::<f64>() { layout.plot_margin_top = v; } }
-                    44 => { if let Ok(v) = val.parse::<f64>() { layout.paper_width = v; } }
-                    45 => { if let Ok(v) = val.parse::<f64>() { layout.paper_height = v; } }
-                    46 => { if let Ok(v) = val.parse::<f64>() { layout.plot_origin_x = v; } }
-                    47 => { if let Ok(v) = val.parse::<f64>() { layout.plot_origin_y = v; } }
-                    48 => { if let Ok(v) = val.parse::<f64>() { layout.plot_window_min_x = v; } }
-                    49 => { if let Ok(v) = val.parse::<f64>() { layout.plot_window_min_y = v; } }
-                    70 => {
-                        if let Ok(v) = val.parse::<i32>() {
-                            layout.plot_flags =
-                                crate::objects::PlotFlags::from_bits(v);
+                    40 => {
+                        if let Ok(v) = val.parse::<f64>() {
+                            layout.plot_margin_left = v;
                         }
                     }
-                    72 => { if let Ok(v) = val.parse::<i16>() { layout.plot_paper_units = v; } }
-                    73 => { if let Ok(v) = val.parse::<i16>() { layout.plot_rotation = v; } }
-                    74 => { if let Ok(v) = val.parse::<i16>() { layout.plot_type = v; } }
-                    75 => { if let Ok(v) = val.parse::<i16>() { layout.plot_scale_type = v; } }
-                    76 => { if let Ok(v) = val.parse::<i16>() { layout.shade_plot_mode = v; } }
-                    77 => { if let Ok(v) = val.parse::<i16>() { layout.shade_plot_resolution = v; } }
-                    78 => { if let Ok(v) = val.parse::<i16>() { layout.shade_plot_dpi = v; } }
-                    140 => { if let Ok(v) = val.parse::<f64>() { layout.plot_window_max_x = v; } }
-                    141 => { if let Ok(v) = val.parse::<f64>() { layout.plot_window_max_y = v; } }
-                    142 => { if let Ok(v) = val.parse::<f64>() { layout.plot_scale_numerator = v; } }
-                    143 => { if let Ok(v) = val.parse::<f64>() { layout.plot_scale_denominator = v; } }
-                    147 => { if let Ok(v) = val.parse::<f64>() { layout.plot_scale_factor = v; } }
-                    148 => { if let Ok(v) = val.parse::<f64>() { layout.paper_image_origin_x = v; } }
-                    149 => { if let Ok(v) = val.parse::<f64>() { layout.paper_image_origin_y = v; } }
+                    41 => {
+                        if let Ok(v) = val.parse::<f64>() {
+                            layout.plot_margin_bottom = v;
+                        }
+                    }
+                    42 => {
+                        if let Ok(v) = val.parse::<f64>() {
+                            layout.plot_margin_right = v;
+                        }
+                    }
+                    43 => {
+                        if let Ok(v) = val.parse::<f64>() {
+                            layout.plot_margin_top = v;
+                        }
+                    }
+                    44 => {
+                        if let Ok(v) = val.parse::<f64>() {
+                            layout.paper_width = v;
+                        }
+                    }
+                    45 => {
+                        if let Ok(v) = val.parse::<f64>() {
+                            layout.paper_height = v;
+                        }
+                    }
+                    46 => {
+                        if let Ok(v) = val.parse::<f64>() {
+                            layout.plot_origin_x = v;
+                        }
+                    }
+                    47 => {
+                        if let Ok(v) = val.parse::<f64>() {
+                            layout.plot_origin_y = v;
+                        }
+                    }
+                    48 => {
+                        if let Ok(v) = val.parse::<f64>() {
+                            layout.plot_window_min_x = v;
+                        }
+                    }
+                    49 => {
+                        if let Ok(v) = val.parse::<f64>() {
+                            layout.plot_window_min_y = v;
+                        }
+                    }
+                    70 => {
+                        if let Ok(v) = val.parse::<i32>() {
+                            layout.plot_flags = crate::objects::PlotFlags::from_bits(v);
+                        }
+                    }
+                    72 => {
+                        if let Ok(v) = val.parse::<i16>() {
+                            layout.plot_paper_units = v;
+                        }
+                    }
+                    73 => {
+                        if let Ok(v) = val.parse::<i16>() {
+                            layout.plot_rotation = v;
+                        }
+                    }
+                    74 => {
+                        if let Ok(v) = val.parse::<i16>() {
+                            layout.plot_type = v;
+                        }
+                    }
+                    75 => {
+                        if let Ok(v) = val.parse::<i16>() {
+                            layout.plot_scale_type = v;
+                        }
+                    }
+                    76 => {
+                        if let Ok(v) = val.parse::<i16>() {
+                            layout.shade_plot_mode = v;
+                        }
+                    }
+                    77 => {
+                        if let Ok(v) = val.parse::<i16>() {
+                            layout.shade_plot_resolution = v;
+                        }
+                    }
+                    78 => {
+                        if let Ok(v) = val.parse::<i16>() {
+                            layout.shade_plot_dpi = v;
+                        }
+                    }
+                    140 => {
+                        if let Ok(v) = val.parse::<f64>() {
+                            layout.plot_window_max_x = v;
+                        }
+                    }
+                    141 => {
+                        if let Ok(v) = val.parse::<f64>() {
+                            layout.plot_window_max_y = v;
+                        }
+                    }
+                    142 => {
+                        if let Ok(v) = val.parse::<f64>() {
+                            layout.plot_scale_numerator = v;
+                        }
+                    }
+                    143 => {
+                        if let Ok(v) = val.parse::<f64>() {
+                            layout.plot_scale_denominator = v;
+                        }
+                    }
+                    147 => {
+                        if let Ok(v) = val.parse::<f64>() {
+                            layout.plot_scale_factor = v;
+                        }
+                    }
+                    148 => {
+                        if let Ok(v) = val.parse::<f64>() {
+                            layout.paper_image_origin_x = v;
+                        }
+                    }
+                    149 => {
+                        if let Ok(v) = val.parse::<f64>() {
+                            layout.paper_image_origin_y = v;
+                        }
+                    }
                     333 => {
                         if let Ok(v) = u64::from_str_radix(val, 16) {
                             layout.visual_style_handle = Handle::new(v);
@@ -5892,59 +6902,45 @@ impl<'a> SectionReader<'a> {
         let mut pending_property = None;
         let mut legacy_properties = Vec::new();
         while let Some(pair) = self.reader.read_pair()? {
-            if pair.code == 0 { self.reader.push_back(pair); break; }
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
             if property_count.is_some() {
                 match pair.code {
                     90 => {
-                        pending_property = Some(
-                            VisualStylePropertyValue::Long(
-                                pair.as_i32().unwrap_or_default(),
-                            ),
-                        );
+                        pending_property = Some(VisualStylePropertyValue::Long(
+                            pair.as_i32().unwrap_or_default(),
+                        ));
                         continue;
                     }
                     40 => {
-                        pending_property = Some(
-                            VisualStylePropertyValue::Double(
-                                pair.as_double().unwrap_or_default(),
-                            ),
-                        );
+                        pending_property = Some(VisualStylePropertyValue::Double(
+                            pair.as_double().unwrap_or_default(),
+                        ));
                         continue;
                     }
                     290 => {
-                        pending_property = Some(
-                            VisualStylePropertyValue::Bool(
-                                pair.as_bool().unwrap_or(false),
-                            ),
-                        );
+                        pending_property = Some(VisualStylePropertyValue::Bool(
+                            pair.as_bool().unwrap_or(false),
+                        ));
                         continue;
                     }
                     62 => {
-                        pending_property = Some(
-                            VisualStylePropertyValue::Color(
-                                Color::from_index(
-                                    pair.as_i16().unwrap_or(256),
-                                ),
-                            ),
-                        );
+                        pending_property = Some(VisualStylePropertyValue::Color(
+                            Color::from_index(pair.as_i16().unwrap_or(256)),
+                        ));
                         continue;
                     }
                     420 => {
-                        pending_property = Some(
-                            VisualStylePropertyValue::Color(
-                                Color::from_true_color_value(
-                                    pair.as_i32().unwrap_or_default(),
-                                ),
-                            ),
-                        );
+                        pending_property = Some(VisualStylePropertyValue::Color(
+                            Color::from_true_color_value(pair.as_i32().unwrap_or_default()),
+                        ));
                         continue;
                     }
                     1 => {
-                        pending_property = Some(
-                            VisualStylePropertyValue::Text(
-                                pair.value_string.clone(),
-                            ),
-                        );
+                        pending_property =
+                            Some(VisualStylePropertyValue::Text(pair.value_string.clone()));
                         continue;
                     }
                     176 => {
@@ -5962,91 +6958,60 @@ impl<'a> SectionReader<'a> {
             if extended_seen && property_count.is_none() {
                 match pair.code {
                     40 | 41 | 42 | 43 | 44 => {
-                        pending_property = Some(
-                            VisualStylePropertyValue::Double(
-                                pair.as_double().unwrap_or_default(),
-                            ),
-                        );
+                        pending_property = Some(VisualStylePropertyValue::Double(
+                            pair.as_double().unwrap_or_default(),
+                        ));
                     }
                     63..=67 => {
-                        pending_property = Some(
-                            VisualStylePropertyValue::Color(
-                                Color::from_index(
-                                    pair.as_i16()
-                                        .or_else(|| {
-                                            pair.value_string
-                                                .trim()
-                                                .parse::<i16>()
-                                                .ok()
-                                        })
-                                        .unwrap_or(256),
-                                ),
-                            ),
-                        );
+                        pending_property =
+                            Some(VisualStylePropertyValue::Color(Color::from_index(
+                                pair.as_i16()
+                                    .or_else(|| pair.value_string.trim().parse::<i16>().ok())
+                                    .unwrap_or(256),
+                            )));
                     }
                     75..=79 | 170 | 171 | 173 | 175 | 92 | 93 => {
-                        pending_property = Some(
-                            VisualStylePropertyValue::Long(
-                                pair.as_i32()
-                                    .or_else(|| pair.as_i16().map(i32::from))
-                                    .unwrap_or_default(),
-                            ),
-                        );
+                        pending_property = Some(VisualStylePropertyValue::Long(
+                            pair.as_i32()
+                                .or_else(|| pair.as_i16().map(i32::from))
+                                .unwrap_or_default(),
+                        ));
                     }
                     290 => {
-                        pending_property = Some(
-                            VisualStylePropertyValue::Bool(
-                                pair.as_bool().unwrap_or(false),
-                            ),
-                        );
+                        pending_property = Some(VisualStylePropertyValue::Bool(
+                            pair.as_bool().unwrap_or(false),
+                        ));
                     }
                     420 => {
-                        pending_property = Some(
-                            VisualStylePropertyValue::Color(
-                                Color::from_true_color_value(
-                                    pair.as_i32().unwrap_or_default(),
-                                ),
-                            ),
-                        );
+                        pending_property = Some(VisualStylePropertyValue::Color(
+                            Color::from_true_color_value(pair.as_i32().unwrap_or_default()),
+                        ));
                     }
                     _ => {}
                 }
             }
             if style_type_seen && !extended_seen {
                 let property = match pair.code {
-                    40 | 41 | 42 | 43 | 45 => {
-                        Some(VisualStylePropertyValue::Double(
-                            pair.as_double().unwrap_or_default(),
-                        ))
-                    }
+                    40 | 41 | 42 | 43 | 45 => Some(VisualStylePropertyValue::Double(
+                        pair.as_double().unwrap_or_default(),
+                    )),
                     44 => Some(VisualStylePropertyValue::Long(
                         pair.as_double().unwrap_or_default() as i32,
                     )),
-                    63..=67 => Some(VisualStylePropertyValue::Color(
-                        Color::from_index(
-                            pair.as_i16()
-                                .or_else(|| {
-                                    pair.value_string
-                                        .trim()
-                                        .parse::<i16>()
-                                        .ok()
-                                })
-                                .unwrap_or(256),
-                        ),
-                    )),
-                    75 | 78 | 92 | 93 | 170 | 173 => {
-                        Some(VisualStylePropertyValue::Long(
+                    63..=67 => Some(VisualStylePropertyValue::Color(Color::from_index(
+                        pair.as_i16()
+                            .or_else(|| pair.value_string.trim().parse::<i16>().ok())
+                            .unwrap_or(256),
+                    ))),
+                    75 | 78 | 92 | 93 | 170 | 173 => Some(VisualStylePropertyValue::Long(
                         pair.as_i32()
                             .or_else(|| pair.as_i16().map(i32::from))
                             .or_else(|| pair.as_double().map(|value| value as i32))
                             .unwrap_or_default(),
-                        ))
-                    }
-                    76 | 77 | 79 | 171 | 174 | 175 => {
-                        Some(VisualStylePropertyValue::Short(
-                            pair.as_i16().unwrap_or_default(),
-                        ))
-                    }
+                    )),
+                    76 | 77 | 79 | 171 | 174 | 175 => Some(VisualStylePropertyValue::Short(
+                        pair.as_i16().unwrap_or_default(),
+                    )),
                     290 => Some(VisualStylePropertyValue::Bool(
                         pair.as_bool().unwrap_or(false),
                     )),
@@ -6056,102 +7021,85 @@ impl<'a> SectionReader<'a> {
                             ..
                         }) = legacy_properties.last_mut()
                         {
-                            *value = Color::from_true_color_value(
-                                pair.as_i32().unwrap_or_default(),
-                            );
+                            *value =
+                                Color::from_true_color_value(pair.as_i32().unwrap_or_default());
                         }
                         None
                     }
                     _ => None,
                 };
                 if let Some(value) = property {
-                    legacy_properties.push(VisualStyleProperty {
-                        value,
-                        enabled: 1,
-                    });
+                    legacy_properties.push(VisualStyleProperty { value, enabled: 1 });
                 }
             }
             match pair.code {
-                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.handle = Handle::new(h); } }
+                5 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        obj.handle = Handle::new(h);
+                    }
+                }
                 102 if pair.value_string.trim() == "{ACAD_REACTORS" => {
                     obj.reactors = self.read_reactor_handles()?;
                 }
                 102 if pair.value_string.trim() == "{ACAD_XDICTIONARY" => {
                     obj.xdictionary_handle = self.read_xdictionary_handle()?;
                 }
-                330 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.owner = Handle::new(h); } }
+                330 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        obj.owner = Handle::new(h);
+                    }
+                }
                 2 => obj.description = pair.value_string.clone(),
                 70 if !style_type_seen => {
                     style_type_seen = true;
                     obj.style_type = pair.as_i16().unwrap_or_default();
                 }
                 70 if extended_seen => {
-                    property_count = Some(
-                        pair.as_i16().unwrap_or_default().max(0) as usize,
-                    );
+                    property_count = Some(pair.as_i16().unwrap_or_default().max(0) as usize);
                 }
                 177 => {
                     extended_seen = true;
-                    obj.extended_lighting_model =
-                        pair.as_i16().unwrap_or_default();
+                    obj.extended_lighting_model = pair.as_i16().unwrap_or_default();
                 }
                 71 => {
-                    obj.face_lighting_model =
-                        pair.as_i16().unwrap_or_default();
+                    obj.face_lighting_model = pair.as_i16().unwrap_or_default();
                     if extended_seen {
-                        pending_property = Some(
-                            VisualStylePropertyValue::Long(
-                                obj.face_lighting_model as i32,
-                            ),
-                        );
+                        pending_property = Some(VisualStylePropertyValue::Long(
+                            obj.face_lighting_model as i32,
+                        ));
                     }
                 }
                 72 => {
-                    obj.face_lighting_quality =
-                        pair.as_i16().unwrap_or_default();
+                    obj.face_lighting_quality = pair.as_i16().unwrap_or_default();
                     if extended_seen {
-                        pending_property = Some(
-                            VisualStylePropertyValue::Long(
-                                obj.face_lighting_quality as i32,
-                            ),
-                        );
+                        pending_property = Some(VisualStylePropertyValue::Long(
+                            obj.face_lighting_quality as i32,
+                        ));
                     }
                 }
                 73 => {
-                    obj.face_color_mode =
-                        pair.as_i16().unwrap_or_default();
+                    obj.face_color_mode = pair.as_i16().unwrap_or_default();
                     if extended_seen {
-                        pending_property = Some(
-                            VisualStylePropertyValue::Long(
-                                obj.face_color_mode as i32,
-                            ),
-                        );
+                        pending_property =
+                            Some(VisualStylePropertyValue::Long(obj.face_color_mode as i32));
                     }
                 }
                 90 => {
                     obj.face_modifier = pair.as_i32().unwrap_or_default();
                     if extended_seen {
-                        pending_property = Some(
-                            VisualStylePropertyValue::Long(
-                                obj.face_modifier,
-                            ),
-                        );
+                        pending_property = Some(VisualStylePropertyValue::Long(obj.face_modifier));
                     }
                 }
                 74 => {
                     obj.edge_model = pair.as_i32().unwrap_or_default();
                     if extended_seen {
-                        pending_property = Some(
-                            VisualStylePropertyValue::Long(obj.edge_model),
-                        );
+                        pending_property = Some(VisualStylePropertyValue::Long(obj.edge_model));
                     }
                 }
                 91 => {
                     obj.edge_style = pair.as_i32().unwrap_or_default();
                     if extended_seen {
-                        pending_property = Some(
-                            VisualStylePropertyValue::Long(obj.edge_style),
-                        );
+                        pending_property = Some(VisualStylePropertyValue::Long(obj.edge_style));
                     }
                 }
                 291 => obj.internal_use_only = pair.as_bool().unwrap_or(false),
@@ -6256,10 +7204,7 @@ impl<'a> SectionReader<'a> {
         Ok(value)
     }
 
-    fn read_material_dxf_texture(
-        &mut self,
-        depth: usize,
-    ) -> Result<Option<MaterialTexture>> {
+    fn read_material_dxf_texture(&mut self, depth: usize) -> Result<Option<MaterialTexture>> {
         if depth > 32 {
             return Ok(None);
         }
@@ -6274,16 +7219,12 @@ impl<'a> SectionReader<'a> {
         value.mode = mode_pair.as_i16().unwrap_or_default();
         match value.mode {
             0 => {
-                value.color1 =
-                    self.read_material_dxf_texture_color(278, 460, 95)?;
-                value.color2 =
-                    self.read_material_dxf_texture_color(279, 461, 96)?;
+                value.color1 = self.read_material_dxf_texture_color(278, 460, 95)?;
+                value.color2 = self.read_material_dxf_texture_color(279, 461, 96)?;
             }
             1 => {
-                value.color1 =
-                    self.read_material_dxf_texture_color(280, 465, 97)?;
-                value.color2 =
-                    self.read_material_dxf_texture_color(281, 466, 98)?;
+                value.color1 = self.read_material_dxf_texture_color(280, 465, 97)?;
+                value.color2 = self.read_material_dxf_texture_color(281, 466, 98)?;
             }
             2 => {
                 let Some(kind) = self.reader.read_pair()? else {
@@ -6300,8 +7241,7 @@ impl<'a> SectionReader<'a> {
                         kind.as_double().unwrap_or_default(),
                     )),
                     62 => {
-                        let mut color =
-                            Color::from_index(kind.as_i16().unwrap_or(256));
+                        let mut color = Color::from_index(kind.as_i16().unwrap_or(256));
                         if let Some(true_color) = self.reader.read_pair()? {
                             if true_color.code == 420 {
                                 color = Color::from_true_color_value(
@@ -6321,9 +7261,7 @@ impl<'a> SectionReader<'a> {
                         let mut items = Vec::new();
                         let mut name = kind.value_string;
                         loop {
-                            if let Some(texture) =
-                                self.read_material_dxf_texture(depth + 1)?
-                            {
+                            if let Some(texture) = self.read_material_dxf_texture(depth + 1)? {
                                 items.push((name, texture));
                             } else {
                                 break;
@@ -6334,8 +7272,7 @@ impl<'a> SectionReader<'a> {
                             match next.code {
                                 300 => name = next.value_string,
                                 292 => {
-                                    value.table_end =
-                                        next.as_bool().unwrap_or(false);
+                                    value.table_end = next.as_bool().unwrap_or(false);
                                     break;
                                 }
                                 _ => {
@@ -6370,16 +7307,27 @@ impl<'a> SectionReader<'a> {
         let mut advanced = false;
         let mut ambient_rgb_seen = false;
         while let Some(pair) = self.reader.read_pair()? {
-            if pair.code == 0 { self.reader.push_back(pair); break; }
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
             match pair.code {
-                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.handle = Handle::new(h); } }
+                5 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        obj.handle = Handle::new(h);
+                    }
+                }
                 102 if pair.value_string.trim() == "{ACAD_REACTORS" => {
                     obj.reactors = self.read_reactor_handles()?;
                 }
                 102 if pair.value_string.trim() == "{ACAD_XDICTIONARY" => {
                     obj.xdictionary_handle = self.read_xdictionary_handle()?;
                 }
-                330 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.owner = Handle::new(h); } }
+                330 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        obj.owner = Handle::new(h);
+                    }
+                }
                 1 => obj.name = pair.value_string.clone(),
                 2 => obj.description = pair.value_string.clone(),
                 70 => obj.ambient_color.flag = pair.as_i16().unwrap_or_default() as u8,
@@ -6392,39 +7340,45 @@ impl<'a> SectionReader<'a> {
                 71 => obj.diffuse_color.flag = pair.as_i16().unwrap_or_default() as u8,
                 41 => obj.diffuse_color.factor = pair.as_double().unwrap_or_default(),
                 91 => obj.diffuse_color.rgb = pair.as_i32(),
-                42 if advanced => obj.normal_map.blend_factor = pair.as_double().unwrap_or_default(),
+                42 if advanced => {
+                    obj.normal_map.blend_factor = pair.as_double().unwrap_or_default()
+                }
                 42 => obj.diffuse_map.blend_factor = pair.as_double().unwrap_or_default(),
                 72 if advanced => {
                     obj.normal_map.source = pair.as_i16().unwrap_or_default() as u8;
                     if obj.normal_map.source == 2 {
-                        obj.normal_map.texture =
-                            self.read_material_dxf_texture(0)?;
+                        obj.normal_map.texture = self.read_material_dxf_texture(0)?;
                     }
                 }
                 72 => {
                     obj.diffuse_map.source = pair.as_i16().unwrap_or_default() as u8;
                     if obj.diffuse_map.source == 2 {
-                        obj.diffuse_map.texture =
-                            self.read_material_dxf_texture(0)?;
+                        obj.diffuse_map.texture = self.read_material_dxf_texture(0)?;
                     }
                 }
                 3 if advanced => obj.normal_map.file_name = pair.value_string.clone(),
                 3 => obj.diffuse_map.file_name = pair.value_string.clone(),
-                73 if advanced => obj.normal_map.projection = pair.as_i16().unwrap_or_default() as u8,
+                73 if advanced => {
+                    obj.normal_map.projection = pair.as_i16().unwrap_or_default() as u8
+                }
                 73 => obj.diffuse_map.projection = pair.as_i16().unwrap_or_default() as u8,
                 74 if advanced => obj.normal_map.tiling = pair.as_i16().unwrap_or_default() as u8,
                 74 => obj.diffuse_map.tiling = pair.as_i16().unwrap_or_default() as u8,
-                75 if advanced => obj.normal_map.auto_transform = pair.as_i16().unwrap_or_default() as u8,
+                75 if advanced => {
+                    obj.normal_map.auto_transform = pair.as_i16().unwrap_or_default() as u8
+                }
                 75 => obj.diffuse_map.auto_transform = pair.as_i16().unwrap_or_default() as u8,
                 43 if advanced => {
                     if normal_matrix < 16 {
-                        obj.normal_map.transform[normal_matrix] = pair.as_double().unwrap_or_default();
+                        obj.normal_map.transform[normal_matrix] =
+                            pair.as_double().unwrap_or_default();
                         normal_matrix += 1;
                     }
                 }
                 43 => {
                     if diffuse_matrix < 16 {
-                        obj.diffuse_map.transform[diffuse_matrix] = pair.as_double().unwrap_or_default();
+                        obj.diffuse_map.transform[diffuse_matrix] =
+                            pair.as_double().unwrap_or_default();
                         diffuse_matrix += 1;
                     }
                 }
@@ -6436,8 +7390,7 @@ impl<'a> SectionReader<'a> {
                 77 => {
                     obj.specular_map.source = pair.as_i16().unwrap_or_default() as u8;
                     if obj.specular_map.source == 2 {
-                        obj.specular_map.texture =
-                            self.read_material_dxf_texture(0)?;
+                        obj.specular_map.texture = self.read_material_dxf_texture(0)?;
                     }
                 }
                 4 => obj.specular_map.file_name = pair.value_string.clone(),
@@ -6446,7 +7399,8 @@ impl<'a> SectionReader<'a> {
                 170 => obj.specular_map.auto_transform = pair.as_i16().unwrap_or_default() as u8,
                 47 => {
                     if specular_matrix < 16 {
-                        obj.specular_map.transform[specular_matrix] = pair.as_double().unwrap_or_default();
+                        obj.specular_map.transform[specular_matrix] =
+                            pair.as_double().unwrap_or_default();
                         specular_matrix += 1;
                     }
                 }
@@ -6454,8 +7408,7 @@ impl<'a> SectionReader<'a> {
                 171 => {
                     obj.reflection_map.source = pair.as_i16().unwrap_or_default() as u8;
                     if obj.reflection_map.source == 2 {
-                        obj.reflection_map.texture =
-                            self.read_material_dxf_texture(0)?;
+                        obj.reflection_map.texture = self.read_material_dxf_texture(0)?;
                     }
                 }
                 6 => obj.reflection_map.file_name = pair.value_string.clone(),
@@ -6464,7 +7417,8 @@ impl<'a> SectionReader<'a> {
                 174 => obj.reflection_map.auto_transform = pair.as_i16().unwrap_or_default() as u8,
                 49 => {
                     if reflection_matrix < 16 {
-                        obj.reflection_map.transform[reflection_matrix] = pair.as_double().unwrap_or_default();
+                        obj.reflection_map.transform[reflection_matrix] =
+                            pair.as_double().unwrap_or_default();
                         reflection_matrix += 1;
                     }
                 }
@@ -6473,8 +7427,7 @@ impl<'a> SectionReader<'a> {
                 175 => {
                     obj.opacity_map.source = pair.as_i16().unwrap_or_default() as u8;
                     if obj.opacity_map.source == 2 {
-                        obj.opacity_map.texture =
-                            self.read_material_dxf_texture(0)?;
+                        obj.opacity_map.texture = self.read_material_dxf_texture(0)?;
                     }
                 }
                 7 => obj.opacity_map.file_name = pair.value_string.clone(),
@@ -6483,7 +7436,8 @@ impl<'a> SectionReader<'a> {
                 178 => obj.opacity_map.auto_transform = pair.as_i16().unwrap_or_default() as u8,
                 142 => {
                     if opacity_matrix < 16 {
-                        obj.opacity_map.transform[opacity_matrix] = pair.as_double().unwrap_or_default();
+                        obj.opacity_map.transform[opacity_matrix] =
+                            pair.as_double().unwrap_or_default();
                         opacity_matrix += 1;
                     }
                 }
@@ -6491,8 +7445,7 @@ impl<'a> SectionReader<'a> {
                 179 => {
                     obj.bump_map.source = pair.as_i16().unwrap_or_default() as u8;
                     if obj.bump_map.source == 2 {
-                        obj.bump_map.texture =
-                            self.read_material_dxf_texture(0)?;
+                        obj.bump_map.texture = self.read_material_dxf_texture(0)?;
                     }
                 }
                 8 => obj.bump_map.file_name = pair.value_string.clone(),
@@ -6514,8 +7467,7 @@ impl<'a> SectionReader<'a> {
                 273 => {
                     obj.refraction_map.source = pair.as_i16().unwrap_or_default() as u8;
                     if obj.refraction_map.source == 2 {
-                        obj.refraction_map.texture =
-                            self.read_material_dxf_texture(0)?;
+                        obj.refraction_map.texture = self.read_material_dxf_texture(0)?;
                     }
                 }
                 9 => obj.refraction_map.file_name = pair.value_string.clone(),
@@ -6524,7 +7476,8 @@ impl<'a> SectionReader<'a> {
                 276 => obj.refraction_map.auto_transform = pair.as_i16().unwrap_or_default() as u8,
                 147 => {
                     if refraction_matrix < 16 {
-                        obj.refraction_map.transform[refraction_matrix] = pair.as_double().unwrap_or_default();
+                        obj.refraction_map.transform[refraction_matrix] =
+                            pair.as_double().unwrap_or_default();
                         refraction_matrix += 1;
                     }
                 }
@@ -6580,10 +7533,21 @@ impl<'a> SectionReader<'a> {
     fn read_imagedef_reactor(&mut self) -> Result<Option<ImageDefinitionReactor>> {
         let mut obj = ImageDefinitionReactor::new(Handle::NULL);
         while let Some(pair) = self.reader.read_pair()? {
-            if pair.code == 0 { self.reader.push_back(pair); break; }
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
             match pair.code {
-                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.handle = Handle::new(h); } }
-                330 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.owner = Handle::new(h); } }
+                5 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        obj.handle = Handle::new(h);
+                    }
+                }
+                330 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        obj.owner = Handle::new(h);
+                    }
+                }
                 _ => {}
             }
         }
@@ -6620,8 +7584,7 @@ impl<'a> SectionReader<'a> {
                     obj.reactors.push(parse_dxf_handle(&pair.value_string));
                 }
                 360 if group == "{ACAD_XDICTIONARY" => {
-                    obj.xdictionary_handle =
-                        Some(parse_dxf_handle(&pair.value_string));
+                    obj.xdictionary_handle = Some(parse_dxf_handle(&pair.value_string));
                 }
                 330 if !owner_seen => {
                     obj.owner = parse_dxf_handle(&pair.value_string);
@@ -6631,98 +7594,46 @@ impl<'a> SectionReader<'a> {
                     obj.host_block = parse_dxf_handle(&pair.value_string);
                 }
                 90 => obj.version = pair.as_i32().unwrap_or(obj.version),
-                70 => {
-                    obj.coordinate_type =
-                        pair.as_i16().unwrap_or(obj.coordinate_type)
-                }
-                10 => {
-                    obj.design_point.x =
-                        pair.as_double().unwrap_or(obj.design_point.x)
-                }
-                20 => {
-                    obj.design_point.y =
-                        pair.as_double().unwrap_or(obj.design_point.y)
-                }
-                30 => {
-                    obj.design_point.z =
-                        pair.as_double().unwrap_or(obj.design_point.z)
-                }
-                11 => {
-                    obj.reference_point.x =
-                        pair.as_double().unwrap_or(obj.reference_point.x)
-                }
-                21 => {
-                    obj.reference_point.y =
-                        pair.as_double().unwrap_or(obj.reference_point.y)
-                }
-                31 => {
-                    obj.reference_point.z =
-                        pair.as_double().unwrap_or(obj.reference_point.z)
-                }
-                12 => {
-                    obj.north_direction.x =
-                        pair.as_double().unwrap_or(obj.north_direction.x)
-                }
-                22 => {
-                    obj.north_direction.y =
-                        pair.as_double().unwrap_or(obj.north_direction.y)
-                }
-                210 => {
-                    obj.up_direction.x =
-                        pair.as_double().unwrap_or(obj.up_direction.x)
-                }
-                220 => {
-                    obj.up_direction.y =
-                        pair.as_double().unwrap_or(obj.up_direction.y)
-                }
-                230 => {
-                    obj.up_direction.z =
-                        pair.as_double().unwrap_or(obj.up_direction.z)
-                }
+                70 => obj.coordinate_type = pair.as_i16().unwrap_or(obj.coordinate_type),
+                10 => obj.design_point.x = pair.as_double().unwrap_or(obj.design_point.x),
+                20 => obj.design_point.y = pair.as_double().unwrap_or(obj.design_point.y),
+                30 => obj.design_point.z = pair.as_double().unwrap_or(obj.design_point.z),
+                11 => obj.reference_point.x = pair.as_double().unwrap_or(obj.reference_point.x),
+                21 => obj.reference_point.y = pair.as_double().unwrap_or(obj.reference_point.y),
+                31 => obj.reference_point.z = pair.as_double().unwrap_or(obj.reference_point.z),
+                12 => obj.north_direction.x = pair.as_double().unwrap_or(obj.north_direction.x),
+                22 => obj.north_direction.y = pair.as_double().unwrap_or(obj.north_direction.y),
+                210 => obj.up_direction.x = pair.as_double().unwrap_or(obj.up_direction.x),
+                220 => obj.up_direction.y = pair.as_double().unwrap_or(obj.up_direction.y),
+                230 => obj.up_direction.z = pair.as_double().unwrap_or(obj.up_direction.z),
                 40 => {
-                    obj.horizontal_unit_scale = pair
-                        .as_double()
-                        .unwrap_or(obj.horizontal_unit_scale)
+                    obj.horizontal_unit_scale =
+                        pair.as_double().unwrap_or(obj.horizontal_unit_scale)
                 }
-                41 => {
-                    obj.vertical_unit_scale =
-                        pair.as_double().unwrap_or(obj.vertical_unit_scale)
-                }
-                91 => {
-                    obj.horizontal_units =
-                        pair.as_i32().unwrap_or(obj.horizontal_units)
-                }
-                92 => {
-                    obj.vertical_units =
-                        pair.as_i32().unwrap_or(obj.vertical_units)
-                }
+                41 => obj.vertical_unit_scale = pair.as_double().unwrap_or(obj.vertical_unit_scale),
+                91 => obj.horizontal_units = pair.as_i32().unwrap_or(obj.horizontal_units),
+                92 => obj.vertical_units = pair.as_i32().unwrap_or(obj.vertical_units),
                 95 => {
-                    obj.scale_estimation_method = pair
-                        .as_i32()
-                        .unwrap_or(obj.scale_estimation_method)
+                    obj.scale_estimation_method =
+                        pair.as_i32().unwrap_or(obj.scale_estimation_method)
                 }
-                141 => {
-                    obj.user_scale_factor =
-                        pair.as_double().unwrap_or(obj.user_scale_factor)
-                }
+                141 => obj.user_scale_factor = pair.as_double().unwrap_or(obj.user_scale_factor),
                 294 => {
                     obj.sea_level_correction =
                         pair.as_i16().map(|value| value != 0).unwrap_or(false)
                 }
                 142 => {
-                    obj.sea_level_elevation =
-                        pair.as_double().unwrap_or(obj.sea_level_elevation)
+                    obj.sea_level_elevation = pair.as_double().unwrap_or(obj.sea_level_elevation)
                 }
                 143 => {
-                    obj.coordinate_projection_radius = pair
-                        .as_double()
-                        .unwrap_or(obj.coordinate_projection_radius)
+                    obj.coordinate_projection_radius =
+                        pair.as_double().unwrap_or(obj.coordinate_projection_radius)
                 }
                 301 => obj.coordinate_system_definition = pair.value_string,
-                303 if obj.version == 1 => {
-                    obj.coordinate_system_datum = pair.value_string
-                }
-                303 => obj.coordinate_system_definition.push_str(&pair.value_string),
+                303 if obj.version == 1 => obj.coordinate_system_datum = pair.value_string,
+                303 => obj
+                    .coordinate_system_definition
+                    .push_str(&pair.value_string),
                 304 => obj.coordinate_system_wkt = pair.value_string,
                 302 => obj.geo_rss_tag = pair.value_string,
                 305 => obj.observation_from_tag = pair.value_string,
@@ -6730,35 +7641,27 @@ impl<'a> SectionReader<'a> {
                 307 => obj.observation_coverage_tag = pair.value_string,
                 13 => source_x = pair.as_double(),
                 23 => source_y = pair.as_double(),
-                14 if civil_mode => {
-                    obj.civil_reference_point1.x = pair.as_double().unwrap_or(0.0)
-                }
-                24 if civil_mode => {
-                    obj.civil_reference_point1.y = pair.as_double().unwrap_or(0.0)
-                }
-                15 if civil_mode => {
-                    obj.civil_reference_point2.x = pair.as_double().unwrap_or(0.0)
-                }
-                25 if civil_mode => {
-                    obj.civil_reference_point2.y = pair.as_double().unwrap_or(0.0)
-                }
-                16 if civil_mode => {
-                    obj.civil_zero_point1.x = pair.as_double().unwrap_or(0.0)
-                }
-                26 if civil_mode => {
-                    obj.civil_zero_point1.y = pair.as_double().unwrap_or(0.0)
-                }
-                17 if civil_mode => {
-                    obj.civil_zero_point2.x = pair.as_double().unwrap_or(0.0)
-                }
-                27 if civil_mode => {
-                    obj.civil_zero_point2.y = pair.as_double().unwrap_or(0.0)
-                }
+                14 if civil_mode => obj.civil_reference_point1.x = pair.as_double().unwrap_or(0.0),
+                24 if civil_mode => obj.civil_reference_point1.y = pair.as_double().unwrap_or(0.0),
+                15 if civil_mode => obj.civil_reference_point2.x = pair.as_double().unwrap_or(0.0),
+                25 if civil_mode => obj.civil_reference_point2.y = pair.as_double().unwrap_or(0.0),
+                16 if civil_mode => obj.civil_zero_point1.x = pair.as_double().unwrap_or(0.0),
+                26 if civil_mode => obj.civil_zero_point1.y = pair.as_double().unwrap_or(0.0),
+                17 if civil_mode => obj.civil_zero_point2.x = pair.as_double().unwrap_or(0.0),
+                27 if civil_mode => obj.civil_zero_point2.y = pair.as_double().unwrap_or(0.0),
                 14 => destination_x = pair.as_double(),
                 24 => {
-                    if let (Some(source_x), Some(source_y), Some(destination_x), Some(destination_y)) =
-                        (source_x.take(), source_y.take(), destination_x.take(), pair.as_double())
-                    {
+                    if let (
+                        Some(source_x),
+                        Some(source_y),
+                        Some(destination_x),
+                        Some(destination_y),
+                    ) = (
+                        source_x.take(),
+                        source_y.take(),
+                        destination_x.take(),
+                        pair.as_double(),
+                    ) {
                         obj.mesh_points.push(GeoDataMeshPoint {
                             source: Vector2::new(source_x, source_y),
                             destination: Vector2::new(destination_x, destination_y),
@@ -6766,22 +7669,14 @@ impl<'a> SectionReader<'a> {
                     }
                 }
                 292 if civil_mode => {
-                    obj.civil_obsolete_flag =
-                        pair.as_i16().is_some_and(|value| value != 0)
+                    obj.civil_obsolete_flag = pair.as_i16().is_some_and(|value| value != 0)
                 }
                 293 if civil_mode => {
-                    obj.civil_unknown_flag1 =
-                        pair.as_i16().is_some_and(|value| value != 0)
+                    obj.civil_unknown_flag1 = pair.as_i16().is_some_and(|value| value != 0)
                 }
-                93 if civil_mode => {
-                    obj.civil_unknown1 = pair.as_i32().unwrap_or(0)
-                }
-                94 if civil_mode => {
-                    obj.civil_unknown2 = pair.as_i32().unwrap_or(0)
-                }
-                54 if civil_mode => {
-                    obj.civil_north_angle_degrees = pair.as_double().unwrap_or(0.0)
-                }
+                93 if civil_mode => obj.civil_unknown1 = pair.as_i32().unwrap_or(0),
+                94 if civil_mode => obj.civil_unknown2 = pair.as_i32().unwrap_or(0),
+                54 if civil_mode => obj.civil_north_angle_degrees = pair.as_double().unwrap_or(0.0),
                 140 if civil_mode => {
                     obj.civil_north_angle_radians = pair.as_double().unwrap_or(0.0)
                 }
@@ -6808,9 +7703,7 @@ impl<'a> SectionReader<'a> {
         let data = match dxf_name.to_uppercase().as_str() {
             "BREAKDATA" => DataObjectData::BreakData(BreakData::default()),
             "BREAKPOINTREF" => DataObjectData::BreakPointRef,
-            "CELLSTYLEMAP" => {
-                DataObjectData::CellStyleMap(CellStyleMap::default())
-            }
+            "CELLSTYLEMAP" => DataObjectData::CellStyleMap(CellStyleMap::default()),
             "ACDSRECORD" => DataObjectData::AcDsRecord,
             "ACDSSCHEMA" => DataObjectData::AcDsSchema,
             "DUMMY" => DataObjectData::Dummy,
@@ -6819,12 +7712,10 @@ impl<'a> SectionReader<'a> {
             "LAYER_INDEX" => DataObjectData::LayerIndex(LayerIndex::default()),
             "LONG_TRANSACTION" => DataObjectData::LongTransaction,
             "OBJECT_PTR" => DataObjectData::ObjectPointer,
-            "PARTIAL_VIEWING_FILTER" => DataObjectData::PartialViewingFilter(
-                PartialViewingFilter::default(),
-            ),
-            "TABLEGEOMETRY" => {
-                DataObjectData::TableGeometry(TableGeometry::default())
+            "PARTIAL_VIEWING_FILTER" => {
+                DataObjectData::PartialViewingFilter(PartialViewingFilter::default())
             }
+            "TABLEGEOMETRY" => DataObjectData::TableGeometry(TableGeometry::default()),
             _ => DataObjectData::BreakPointRef,
         };
         let mut obj = DataObject::new(data);
@@ -6849,21 +7740,15 @@ impl<'a> SectionReader<'a> {
                 100 => {
                     section = pair.value_string.clone();
                     if section == "AcDbBreakPointRef" {
-                        if let DataObjectData::BreakData(value) =
-                            &mut obj.data
-                        {
-                            value
-                                .point_references
-                                .push(BreakPointReference::default());
+                        if let DataObjectData::BreakData(value) = &mut obj.data {
+                            value.point_references.push(BreakPointReference::default());
                         }
                     }
                 }
                 1 => {
                     style_section = pair.value_string.clone();
                     if style_section == "GRIDFORMAT_BEGIN" {
-                        if let DataObjectData::CellStyleMap(value) =
-                            &mut obj.data
-                        {
+                        if let DataObjectData::CellStyleMap(value) = &mut obj.data {
                             if let Some(cell) = value.cells.last_mut() {
                                 cell.cell_style.borders.push(TableGridFormat {
                                     index_mask: pending_grid_index,
@@ -6879,13 +7764,9 @@ impl<'a> SectionReader<'a> {
                 309 => {
                     if pair.value_string == "GRIDFORMAT_END" {
                         if !grid_open {
-                            if let DataObjectData::CellStyleMap(value) =
-                                &mut obj.data
-                            {
+                            if let DataObjectData::CellStyleMap(value) = &mut obj.data {
                                 if let Some(cell) = value.cells.last_mut() {
-                                    cell.cell_style
-                                        .borders
-                                        .push(TableGridFormat::default());
+                                    cell.cell_style.borders.push(TableGridFormat::default());
                                 }
                             }
                         }
@@ -6893,9 +7774,7 @@ impl<'a> SectionReader<'a> {
                         pending_grid_index = 0;
                     }
                     style_section = match pair.value_string.as_str() {
-                        "CONTENTFORMAT_END"
-                        | "CELLMARGIN_END"
-                        | "GRIDFORMAT_END" => {
+                        "CONTENTFORMAT_END" | "CELLMARGIN_END" | "GRIDFORMAT_END" => {
                             "TABLEFORMAT_BEGIN".to_string()
                         }
                         _ => String::new(),
@@ -6906,8 +7785,7 @@ impl<'a> SectionReader<'a> {
                     obj.reactors.push(parse_dxf_handle(&pair.value_string));
                 }
                 360 if group == "{ACAD_XDICTIONARY" => {
-                    obj.xdictionary_handle =
-                        Some(parse_dxf_handle(&pair.value_string));
+                    obj.xdictionary_handle = Some(parse_dxf_handle(&pair.value_string));
                 }
                 330 if !owner_seen => {
                     obj.owner = parse_dxf_handle(&pair.value_string);
@@ -6915,108 +7793,85 @@ impl<'a> SectionReader<'a> {
                 }
                 330 => match &mut obj.data {
                     DataObjectData::BreakData(value) => {
-                        value.dimension_reference =
-                            parse_dxf_handle(&pair.value_string);
+                        value.dimension_reference = parse_dxf_handle(&pair.value_string);
                     }
-                    DataObjectData::IdBuffer(value) => value
-                        .object_ids
-                        .push(parse_dxf_handle(&pair.value_string)),
+                    DataObjectData::IdBuffer(value) => {
+                        value.object_ids.push(parse_dxf_handle(&pair.value_string))
+                    }
                     DataObjectData::TableGeometry(value) => {
                         if let Some(cell) = value.cells.last_mut() {
-                            cell.table_geometry =
-                                parse_dxf_handle(&pair.value_string);
+                            cell.table_geometry = parse_dxf_handle(&pair.value_string);
                         }
                     }
                     _ => {}
                 },
                 331 => {
                     if let DataObjectData::BreakData(value) = &mut obj.data {
-                        value.dimension_reference =
-                            parse_dxf_handle(&pair.value_string);
+                        value.dimension_reference = parse_dxf_handle(&pair.value_string);
                     }
                 }
-                40 => {
-                    match &mut obj.data {
-                        DataObjectData::Index(value) => {
-                            if let Some(timestamp) = pair.as_double() {
-                                value.last_updated_julian_day =
-                                    timestamp.floor() as i32;
-                                value.last_updated_milliseconds =
-                                    ((timestamp - timestamp.floor())
-                                        * 86_400_000.0)
-                                        .round()
-                                        as i32;
-                            }
+                40 => match &mut obj.data {
+                    DataObjectData::Index(value) => {
+                        if let Some(timestamp) = pair.as_double() {
+                            value.last_updated_julian_day = timestamp.floor() as i32;
+                            value.last_updated_milliseconds =
+                                ((timestamp - timestamp.floor()) * 86_400_000.0).round() as i32;
                         }
-                        DataObjectData::LayerIndex(value) => {
-                            if let Some(timestamp) = pair.as_double() {
-                                value.last_updated_julian_day =
-                                    timestamp.floor() as i32;
-                                value.last_updated_milliseconds =
-                                    ((timestamp - timestamp.floor())
-                                        * 86_400_000.0)
-                                        .round()
-                                        as i32;
-                            }
+                    }
+                    DataObjectData::LayerIndex(value) => {
+                        if let Some(timestamp) = pair.as_double() {
+                            value.last_updated_julian_day = timestamp.floor() as i32;
+                            value.last_updated_milliseconds =
+                                ((timestamp - timestamp.floor()) * 86_400_000.0).round() as i32;
                         }
-                        DataObjectData::CellStyleMap(value) => {
-                            if let Some(cell) = value.cells.last_mut() {
-                                let number = pair.as_double().unwrap_or(0.0);
-                                match style_section.as_str() {
-                                    "CONTENTFORMAT_BEGIN" => {
-                                        cell.cell_style
-                                            .content_format
-                                            .rotation = number;
-                                    }
-                                    "CELLMARGIN_BEGIN" => {
-                                        let target = match margin_index {
-                                            0 => &mut cell.cell_style.vertical_margin,
-                                            1 => &mut cell.cell_style.horizontal_margin,
-                                            2 => &mut cell.cell_style.bottom_margin,
-                                            3 => &mut cell.cell_style.right_margin,
-                                            4 => &mut cell.cell_style.horizontal_spacing,
-                                            _ => &mut cell.cell_style.vertical_spacing,
-                                        };
-                                        *target = number;
-                                        margin_index += 1;
-                                    }
-                                    "GRIDFORMAT_BEGIN" => {
-                                        if let Some(grid) =
-                                            cell.cell_style.borders.last_mut()
-                                        {
-                                            grid.border.double_line_spacing =
-                                                number;
-                                        }
-                                    }
-                                    _ => {}
+                    }
+                    DataObjectData::CellStyleMap(value) => {
+                        if let Some(cell) = value.cells.last_mut() {
+                            let number = pair.as_double().unwrap_or(0.0);
+                            match style_section.as_str() {
+                                "CONTENTFORMAT_BEGIN" => {
+                                    cell.cell_style.content_format.rotation = number;
                                 }
+                                "CELLMARGIN_BEGIN" => {
+                                    let target = match margin_index {
+                                        0 => &mut cell.cell_style.vertical_margin,
+                                        1 => &mut cell.cell_style.horizontal_margin,
+                                        2 => &mut cell.cell_style.bottom_margin,
+                                        3 => &mut cell.cell_style.right_margin,
+                                        4 => &mut cell.cell_style.horizontal_spacing,
+                                        _ => &mut cell.cell_style.vertical_spacing,
+                                    };
+                                    *target = number;
+                                    margin_index += 1;
+                                }
+                                "GRIDFORMAT_BEGIN" => {
+                                    if let Some(grid) = cell.cell_style.borders.last_mut() {
+                                        grid.border.double_line_spacing = number;
+                                    }
+                                }
+                                _ => {}
                             }
                         }
-                        DataObjectData::TableGeometry(value) => {
-                            if let Some(cell) = value.cells.last_mut() {
-                                cell.width_with_gap =
-                                    pair.as_double().unwrap_or(0.0);
-                            }
-                        }
-                        _ => {}
                     }
-                }
+                    DataObjectData::TableGeometry(value) => {
+                        if let Some(cell) = value.cells.last_mut() {
+                            cell.width_with_gap = pair.as_double().unwrap_or(0.0);
+                        }
+                    }
+                    _ => {}
+                },
                 70 => {
                     if let DataObjectData::BreakData(value) = &mut obj.data {
                         if section == "AcDbBreakData" {
-                            value.version =
-                                pair.as_i16().unwrap_or_default();
+                            value.version = pair.as_i16().unwrap_or_default();
                         }
                     }
                 }
                 71 => {
                     if let DataObjectData::BreakData(value) = &mut obj.data {
                         if section == "AcDbBreakPointRef" {
-                            if let Some(reference) =
-                                value.point_references.last_mut()
-                            {
-                                reference.reference_type =
-                                    pair.as_i32().unwrap_or_default();
+                            if let Some(reference) = value.point_references.last_mut() {
+                                reference.reference_type = pair.as_i32().unwrap_or_default();
                             }
                         }
                     }
@@ -7024,71 +7879,55 @@ impl<'a> SectionReader<'a> {
                 72 => {
                     if let DataObjectData::BreakData(value) = &mut obj.data {
                         if section == "AcDbBreakPointRef" {
-                            if let Some(reference) =
-                                value.point_references.last_mut()
-                            {
-                                reference.flags =
-                                    pair.as_i16().unwrap_or_default();
+                            if let Some(reference) = value.point_references.last_mut() {
+                                reference.flags = pair.as_i16().unwrap_or_default();
                             }
                         }
                     }
                 }
-                90 => {
-                    match &mut obj.data {
-                        DataObjectData::LayerIndex(value) => {
-                            if !layer_header_seen {
-                                layer_header_seen = true;
-                            } else if pending_layer_name.is_none() {
-                                if let Some(entry) = value.entries.last_mut() {
-                                    entry.layer_count =
-                                        pair.as_i32().unwrap_or_default();
-                                }
-                            } else {
-                                pending_layer_count =
-                                    pair.as_i32().unwrap_or_default();
+                90 => match &mut obj.data {
+                    DataObjectData::LayerIndex(value) => {
+                        if !layer_header_seen {
+                            layer_header_seen = true;
+                        } else if pending_layer_name.is_none() {
+                            if let Some(entry) = value.entries.last_mut() {
+                                entry.layer_count = pair.as_i32().unwrap_or_default();
                             }
+                        } else {
+                            pending_layer_count = pair.as_i32().unwrap_or_default();
                         }
-                        DataObjectData::CellStyleMap(value) => {
-                            if let Some(cell) = value.cells.last_mut() {
-                                let number = pair.as_i32().unwrap_or_default();
-                                match style_section.as_str() {
-                                    "TABLEFORMAT_BEGIN" => {
-                                        cell.cell_style.style_type = number;
-                                    }
-                                    "CONTENTFORMAT_BEGIN" => {
-                                        cell.cell_style
-                                            .content_format
-                                            .property_override_flags = number;
-                                    }
-                                    "GRIDFORMAT_BEGIN" => {
-                                        if let Some(grid) =
-                                            cell.cell_style.borders.last_mut()
-                                        {
-                                            grid.border.property_flags =
-                                                TableBorderPropertyFlags::from_bits_retain(
-                                                    number,
-                                                );
-                                        }
-                                    }
-                                    "CELLSTYLE_BEGIN" => cell.id = number,
-                                    _ => {}
-                                }
-                            }
-                        }
-                        DataObjectData::TableGeometry(value) => {
-                            value.rows = pair.as_i32().unwrap_or_default();
-                        }
-                        _ => {}
                     }
-                }
+                    DataObjectData::CellStyleMap(value) => {
+                        if let Some(cell) = value.cells.last_mut() {
+                            let number = pair.as_i32().unwrap_or_default();
+                            match style_section.as_str() {
+                                "TABLEFORMAT_BEGIN" => {
+                                    cell.cell_style.style_type = number;
+                                }
+                                "CONTENTFORMAT_BEGIN" => {
+                                    cell.cell_style.content_format.property_override_flags = number;
+                                }
+                                "GRIDFORMAT_BEGIN" => {
+                                    if let Some(grid) = cell.cell_style.borders.last_mut() {
+                                        grid.border.property_flags =
+                                            TableBorderPropertyFlags::from_bits_retain(number);
+                                    }
+                                }
+                                "CELLSTYLE_BEGIN" => cell.id = number,
+                                _ => {}
+                            }
+                        }
+                    }
+                    DataObjectData::TableGeometry(value) => {
+                        value.rows = pair.as_i32().unwrap_or_default();
+                    }
+                    _ => {}
+                },
                 91 => match &mut obj.data {
                     DataObjectData::BreakData(value) => {
                         if section == "AcDbBreakPointRef" {
-                            if let Some(reference) =
-                                value.point_references.last_mut()
-                            {
-                                reference.identifier =
-                                    pair.as_i32().unwrap_or_default();
+                            if let Some(reference) = value.point_references.last_mut() {
+                                reference.identifier = pair.as_i32().unwrap_or_default();
                             }
                         }
                     }
@@ -7097,18 +7936,13 @@ impl<'a> SectionReader<'a> {
                             let number = pair.as_i32().unwrap_or_default();
                             match style_section.as_str() {
                                 "TABLEFORMAT_BEGIN" => {
-                                    cell.cell_style
-                                        .property_override_flags = number;
+                                    cell.cell_style.property_override_flags = number;
                                 }
                                 "CONTENTFORMAT_BEGIN" => {
-                                    cell.cell_style
-                                        .content_format
-                                        .property_flags = number;
+                                    cell.cell_style.content_format.property_flags = number;
                                 }
                                 "GRIDFORMAT_BEGIN" => {
-                                    if let Some(grid) =
-                                        cell.cell_style.borders.last_mut()
-                                    {
+                                    if let Some(grid) = cell.cell_style.borders.last_mut() {
                                         grid.border.border_type =
                                             TableBorderType::from(number as i16);
                                     }
@@ -7132,14 +7966,10 @@ impl<'a> SectionReader<'a> {
                                     cell.cell_style.merge_flags = number;
                                 }
                                 "CONTENTFORMAT_BEGIN" => {
-                                    cell.cell_style
-                                        .content_format
-                                        .value_data_type = number;
+                                    cell.cell_style.content_format.value_data_type = number;
                                 }
                                 "GRIDFORMAT_BEGIN" => {
-                                    if let Some(grid) =
-                                        cell.cell_style.borders.last_mut()
-                                    {
+                                    if let Some(grid) = cell.cell_style.borders.last_mut() {
                                         grid.border.line_weight =
                                             LineWeight::from_value(number as i16);
                                     }
@@ -7158,14 +7988,10 @@ impl<'a> SectionReader<'a> {
                                     cell.cell_style.content_layout = number;
                                 }
                                 "CONTENTFORMAT_BEGIN" => {
-                                    cell.cell_style
-                                        .content_format
-                                        .value_unit_type = number;
+                                    cell.cell_style.content_format.value_unit_type = number;
                                 }
                                 "GRIDFORMAT_BEGIN" => {
-                                    if let Some(grid) =
-                                        cell.cell_style.borders.last_mut()
-                                    {
+                                    if let Some(grid) = cell.cell_style.borders.last_mut() {
                                         grid.border.is_invisible = number == 0;
                                     }
                                 }
@@ -7175,9 +8001,7 @@ impl<'a> SectionReader<'a> {
                     }
                     DataObjectData::TableGeometry(value) => {
                         value.cells.push(TableGeometryCell {
-                            geometry_data_flag: pair
-                                .as_i32()
-                                .unwrap_or_default(),
+                            geometry_data_flag: pair.as_i32().unwrap_or_default(),
                             ..TableGeometryCell::default()
                         });
                     }
@@ -7187,9 +8011,7 @@ impl<'a> SectionReader<'a> {
                     if let DataObjectData::CellStyleMap(value) = &mut obj.data {
                         if let Some(cell) = value.cells.last_mut() {
                             if style_section == "CONTENTFORMAT_BEGIN" {
-                                cell.cell_style
-                                    .content_format
-                                    .cell_alignment =
+                                cell.cell_style.content_format.cell_alignment =
                                     pair.as_i32().unwrap_or_default();
                             }
                         }
@@ -7197,8 +8019,7 @@ impl<'a> SectionReader<'a> {
                 }
                 95 => match &mut obj.data {
                     DataObjectData::CellStyleMap(_) => {
-                        pending_grid_index =
-                            pair.as_i32().unwrap_or_default();
+                        pending_grid_index = pair.as_i32().unwrap_or_default();
                     }
                     DataObjectData::TableGeometry(value) => {
                         if let Some(geometry) = value
@@ -7206,8 +8027,7 @@ impl<'a> SectionReader<'a> {
                             .last_mut()
                             .and_then(|cell| cell.geometry.last_mut())
                         {
-                            geometry.flags =
-                                pair.as_i32().unwrap_or_default();
+                            geometry.flags = pair.as_i32().unwrap_or_default();
                         }
                     }
                     _ => {}
@@ -7215,8 +8035,7 @@ impl<'a> SectionReader<'a> {
                 170 => {
                     if let DataObjectData::CellStyleMap(value) = &mut obj.data {
                         if let Some(cell) = value.cells.last_mut() {
-                            cell.cell_style.data_flags =
-                                pair.as_i16().unwrap_or_default();
+                            cell.cell_style.data_flags = pair.as_i16().unwrap_or_default();
                         }
                     }
                 }
@@ -7230,16 +8049,12 @@ impl<'a> SectionReader<'a> {
                 }
                 300 => {
                     if let DataObjectData::CellStyleMap(value) = &mut obj.data {
-                        if pair.value_string == "CELLSTYLE"
-                            && style_section.is_empty()
-                        {
+                        if pair.value_string == "CELLSTYLE" && style_section.is_empty() {
                             value.cells.push(NamedTableCellStyle::default());
                         } else if let Some(cell) = value.cells.last_mut() {
                             match style_section.as_str() {
                                 "CONTENTFORMAT_BEGIN" => {
-                                    cell.cell_style
-                                        .content_format
-                                        .value_format_string =
+                                    cell.cell_style.content_format.value_format_string =
                                         pair.value_string;
                                 }
                                 "CELLSTYLE_BEGIN" => {
@@ -7253,21 +8068,16 @@ impl<'a> SectionReader<'a> {
                 62 => {
                     if let DataObjectData::CellStyleMap(value) = &mut obj.data {
                         if let Some(cell) = value.cells.last_mut() {
-                            let color = Color::from_index(
-                                pair.as_i16().unwrap_or(256),
-                            );
+                            let color = Color::from_index(pair.as_i16().unwrap_or(256));
                             match style_section.as_str() {
                                 "TABLEFORMAT_BEGIN" => {
                                     cell.cell_style.background_color = color;
                                 }
                                 "CONTENTFORMAT_BEGIN" => {
-                                    cell.cell_style.content_format.content_color =
-                                        color;
+                                    cell.cell_style.content_format.content_color = color;
                                 }
                                 "GRIDFORMAT_BEGIN" => {
-                                    if let Some(grid) =
-                                        cell.cell_style.borders.last_mut()
-                                    {
+                                    if let Some(grid) = cell.cell_style.borders.last_mut() {
                                         grid.border.color = color;
                                     }
                                 }
@@ -7279,21 +8089,17 @@ impl<'a> SectionReader<'a> {
                 420 => {
                     if let DataObjectData::CellStyleMap(value) = &mut obj.data {
                         if let Some(cell) = value.cells.last_mut() {
-                            let color = Color::from_true_color_value(
-                                pair.as_i32().unwrap_or_default(),
-                            );
+                            let color =
+                                Color::from_true_color_value(pair.as_i32().unwrap_or_default());
                             match style_section.as_str() {
                                 "TABLEFORMAT_BEGIN" => {
                                     cell.cell_style.background_color = color;
                                 }
                                 "CONTENTFORMAT_BEGIN" => {
-                                    cell.cell_style.content_format.content_color =
-                                        color;
+                                    cell.cell_style.content_format.content_color = color;
                                 }
                                 "GRIDFORMAT_BEGIN" => {
-                                    if let Some(grid) =
-                                        cell.cell_style.borders.last_mut()
-                                    {
+                                    if let Some(grid) = cell.cell_style.borders.last_mut() {
                                         grid.border.color = color;
                                     }
                                 }
@@ -7323,12 +8129,9 @@ impl<'a> SectionReader<'a> {
                         if let Some(cell) = value.cells.last_mut() {
                             let handle = parse_dxf_handle(&pair.value_string);
                             if style_section == "CONTENTFORMAT_BEGIN" {
-                                cell.cell_style.content_format.text_style =
-                                    handle;
+                                cell.cell_style.content_format.text_style = handle;
                             } else if style_section == "GRIDFORMAT_BEGIN" {
-                                if let Some(grid) =
-                                    cell.cell_style.borders.last_mut()
-                                {
+                                if let Some(grid) = cell.cell_style.borders.last_mut() {
                                     grid.line_type = handle;
                                 }
                             }
@@ -7338,90 +8141,72 @@ impl<'a> SectionReader<'a> {
                 41 => {
                     if let DataObjectData::TableGeometry(value) = &mut obj.data {
                         if let Some(cell) = value.cells.last_mut() {
-                            cell.height_with_gap =
-                                pair.as_double().unwrap_or_default();
+                            cell.height_with_gap = pair.as_double().unwrap_or_default();
                         }
                     }
                 }
-                10 => {
-                    match &mut obj.data {
-                        DataObjectData::BreakData(value)
-                            if section == "AcDbBreakPointRef" =>
+                10 => match &mut obj.data {
+                    DataObjectData::BreakData(value) if section == "AcDbBreakPointRef" => {
+                        if let Some(reference) = value.point_references.last_mut() {
+                            reference.first_point.x = pair.as_double().unwrap_or_default();
+                        }
+                    }
+                    DataObjectData::TableGeometry(value) => {
+                        if let Some(cell) = value.cells.last_mut() {
+                            cell.geometry.push(CellContentGeometry {
+                                distance_to_top_left: Vector3::new(
+                                    pair.as_double().unwrap_or_default(),
+                                    0.0,
+                                    0.0,
+                                ),
+                                distance_to_center: Vector3::ZERO,
+                                width: 0.0,
+                                height: 0.0,
+                                outer_width: 0.0,
+                                outer_height: 0.0,
+                                flags: 0,
+                            });
+                        }
+                    }
+                    _ => {}
+                },
+                20 | 30 | 11 | 21 | 31 => match &mut obj.data {
+                    DataObjectData::BreakData(value) if section == "AcDbBreakPointRef" => {
+                        if let Some(reference) = value.point_references.last_mut() {
+                            let number = pair.as_double().unwrap_or_default();
+                            match pair.code {
+                                20 => reference.first_point.y = number,
+                                30 => reference.first_point.z = number,
+                                11 => reference.second_point.x = number,
+                                21 => reference.second_point.y = number,
+                                31 => reference.second_point.z = number,
+                                _ => {}
+                            }
+                        }
+                    }
+                    DataObjectData::TableGeometry(value) => {
+                        if let Some(geometry) = value
+                            .cells
+                            .last_mut()
+                            .and_then(|cell| cell.geometry.last_mut())
                         {
-                            if let Some(reference) =
-                                value.point_references.last_mut()
-                            {
-                                reference.first_point.x =
-                                    pair.as_double().unwrap_or_default();
-                            }
-                        }
-                        DataObjectData::TableGeometry(value) => {
-                            if let Some(cell) = value.cells.last_mut() {
-                                cell.geometry.push(CellContentGeometry {
-                                    distance_to_top_left: Vector3::new(
-                                        pair.as_double().unwrap_or_default(),
-                                        0.0,
-                                        0.0,
-                                    ),
-                                    distance_to_center: Vector3::ZERO,
-                                    width: 0.0,
-                                    height: 0.0,
-                                    outer_width: 0.0,
-                                    outer_height: 0.0,
-                                    flags: 0,
-                                });
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                20 | 30 | 11 | 21 | 31 => {
-                    match &mut obj.data {
-                        DataObjectData::BreakData(value)
-                            if section == "AcDbBreakPointRef" =>
-                        {
-                            if let Some(reference) =
-                                value.point_references.last_mut()
-                            {
-                                let number =
-                                    pair.as_double().unwrap_or_default();
-                                match pair.code {
-                                    20 => reference.first_point.y = number,
-                                    30 => reference.first_point.z = number,
-                                    11 => reference.second_point.x = number,
-                                    21 => reference.second_point.y = number,
-                                    31 => reference.second_point.z = number,
-                                    _ => {}
+                            let number = pair.as_double().unwrap_or_default();
+                            match pair.code {
+                                20 => {
+                                    geometry.distance_to_top_left.y = number;
                                 }
-                            }
-                        }
-                        DataObjectData::TableGeometry(value) => {
-                            if let Some(geometry) = value
-                                .cells
-                                .last_mut()
-                                .and_then(|cell| cell.geometry.last_mut())
-                            {
-                                let number =
-                                    pair.as_double().unwrap_or_default();
-                                match pair.code {
-                                    20 => {
-                                        geometry.distance_to_top_left.y =
-                                            number;
-                                    }
-                                    30 => {
-                                        geometry.distance_to_top_left.z =
-                                            number;
-                                    }
-                                    11 => geometry.distance_to_center.x = number,
-                                    21 => geometry.distance_to_center.y = number,
-                                    31 => geometry.distance_to_center.z = number,
-                                    _ => {}
+                                30 => {
+                                    geometry.distance_to_top_left.z = number;
                                 }
+                                11 => geometry.distance_to_center.x = number,
+                                21 => geometry.distance_to_center.y = number,
+                                31 => geometry.distance_to_center.z = number,
+                                _ => {}
                             }
                         }
-                        _ => {}
                     }
-                }
+                    _ => {}
+                },
                 43 | 44 | 45 | 46 => {
                     if let DataObjectData::TableGeometry(value) = &mut obj.data {
                         if let Some(geometry) = value
@@ -7441,9 +8226,7 @@ impl<'a> SectionReader<'a> {
                     }
                 }
                 8 => match &mut obj.data {
-                    DataObjectData::LayerIndex(_) => {
-                        pending_layer_name = Some(pair.value_string)
-                    }
+                    DataObjectData::LayerIndex(_) => pending_layer_name = Some(pair.value_string),
                     DataObjectData::PartialViewingFilter(_) => {}
                     _ => {}
                 },
@@ -7486,25 +8269,68 @@ impl<'a> SectionReader<'a> {
         let mut pending_x: Option<f64> = None;
         let mut mat: Vec<f64> = Vec::new();
         while let Some(pair) = self.reader.read_pair()? {
-            if pair.code == 0 { self.reader.push_back(pair); break; }
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
             match pair.code {
-                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.handle = Handle::new(h); } }
-                330 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.owner = Handle::new(h); } }
+                5 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        obj.handle = Handle::new(h);
+                    }
+                }
+                330 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        obj.owner = Handle::new(h);
+                    }
+                }
                 70 => {} // point count is implied by the 10/20 pairs we read
-                10 => { if let Some(v) = pair.as_double() { pending_x = Some(v); } }
+                10 => {
+                    if let Some(v) = pair.as_double() {
+                        pending_x = Some(v);
+                    }
+                }
                 20 => {
                     if let (Some(x), Some(y)) = (pending_x.take(), pair.as_double()) {
                         obj.boundary_points.push(Vector2::new(x, y));
                     }
                 }
-                210 => { if let Some(v) = pair.as_double() { obj.normal.x = v; } }
-                220 => { if let Some(v) = pair.as_double() { obj.normal.y = v; } }
-                230 => { if let Some(v) = pair.as_double() { obj.normal.z = v; } }
-                11 => { if let Some(v) = pair.as_double() { obj.origin.x = v; } }
-                21 => { if let Some(v) = pair.as_double() { obj.origin.y = v; } }
-                31 => { if let Some(v) = pair.as_double() { obj.origin.z = v; } }
-                71 => { obj.display_enabled = pair.as_i16().map(|v| v != 0).unwrap_or(true); }
-                72 => { front_flag = pair.as_i16().map(|v| v != 0).unwrap_or(false); }
+                210 => {
+                    if let Some(v) = pair.as_double() {
+                        obj.normal.x = v;
+                    }
+                }
+                220 => {
+                    if let Some(v) = pair.as_double() {
+                        obj.normal.y = v;
+                    }
+                }
+                230 => {
+                    if let Some(v) = pair.as_double() {
+                        obj.normal.z = v;
+                    }
+                }
+                11 => {
+                    if let Some(v) = pair.as_double() {
+                        obj.origin.x = v;
+                    }
+                }
+                21 => {
+                    if let Some(v) = pair.as_double() {
+                        obj.origin.y = v;
+                    }
+                }
+                31 => {
+                    if let Some(v) = pair.as_double() {
+                        obj.origin.z = v;
+                    }
+                }
+                71 => {
+                    obj.display_enabled = pair.as_i16().map(|v| v != 0).unwrap_or(true);
+                }
+                72 => {
+                    front_flag = pair.as_i16().map(|v| v != 0).unwrap_or(false);
+                }
                 73 => {} // back clip distance arrives as code 41 below
                 40 => {
                     if let Some(v) = pair.as_double() {
@@ -7515,7 +8341,11 @@ impl<'a> SectionReader<'a> {
                         }
                     }
                 }
-                41 => { if let Some(v) = pair.as_double() { obj.back_clip = Some(v); } }
+                41 => {
+                    if let Some(v) = pair.as_double() {
+                        obj.back_clip = Some(v);
+                    }
+                }
                 _ => {}
             }
         }
@@ -7532,14 +8362,41 @@ impl<'a> SectionReader<'a> {
     fn read_raster_variables(&mut self) -> Result<Option<RasterVariables>> {
         let mut obj = RasterVariables::new();
         while let Some(pair) = self.reader.read_pair()? {
-            if pair.code == 0 { self.reader.push_back(pair); break; }
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
             match pair.code {
-                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.handle = Handle::new(h); } }
-                330 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.owner = Handle::new(h); } }
-                90 => { if let Some(v) = pair.as_i32() { obj.class_version = v; } }
-                70 => { if let Some(v) = pair.as_i16() { obj.display_image_frame = v; } }
-                71 => { if let Some(v) = pair.as_i16() { obj.image_quality = v; } }
-                72 => { if let Some(v) = pair.as_i16() { obj.units = v; } }
+                5 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        obj.handle = Handle::new(h);
+                    }
+                }
+                330 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        obj.owner = Handle::new(h);
+                    }
+                }
+                90 => {
+                    if let Some(v) = pair.as_i32() {
+                        obj.class_version = v;
+                    }
+                }
+                70 => {
+                    if let Some(v) = pair.as_i16() {
+                        obj.display_image_frame = v;
+                    }
+                }
+                71 => {
+                    if let Some(v) = pair.as_i16() {
+                        obj.image_quality = v;
+                    }
+                }
+                72 => {
+                    if let Some(v) = pair.as_i16() {
+                        obj.units = v;
+                    }
+                }
                 _ => {}
             }
         }
@@ -7552,10 +8409,21 @@ impl<'a> SectionReader<'a> {
         let mut indexed_color = None;
         let mut true_color = None;
         while let Some(pair) = self.reader.read_pair()? {
-            if pair.code == 0 { self.reader.push_back(pair); break; }
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
             match pair.code {
-                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.handle = Handle::new(h); } }
-                330 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.owner = Handle::new(h); } }
+                5 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        obj.handle = Handle::new(h);
+                    }
+                }
+                330 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        obj.owner = Handle::new(h);
+                    }
+                }
                 1 => obj.color_name = pair.value_string.clone(),
                 2 => obj.book_name = pair.value_string.clone(),
                 62 => indexed_color = pair.as_i16().map(Color::from_index),
@@ -7581,13 +8449,30 @@ impl<'a> SectionReader<'a> {
         let mut current_key: Option<String> = None;
 
         while let Some(pair) = self.reader.read_pair()? {
-            if pair.code == 0 { self.reader.push_back(pair); break; }
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
             match pair.code {
-                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.handle = Handle::new(h); } }
-                330 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.owner = Handle::new(h); } }
+                5 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        obj.handle = Handle::new(h);
+                    }
+                }
+                330 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        obj.owner = Handle::new(h);
+                    }
+                }
                 280 => obj.hard_owner = pair.as_i16().map(|v| v != 0).unwrap_or(false),
-                281 => { if let Some(v) = pair.as_i16() { obj.duplicate_cloning = v; } }
-                3 => { current_key = Some(pair.value_string.clone()); }
+                281 => {
+                    if let Some(v) = pair.as_i16() {
+                        obj.duplicate_cloning = v;
+                    }
+                }
+                3 => {
+                    current_key = Some(pair.value_string.clone());
+                }
                 340 => {
                     // Could be default handle or entry value
                     if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
@@ -7613,11 +8498,26 @@ impl<'a> SectionReader<'a> {
     fn read_wipeout_variables(&mut self) -> Result<Option<WipeoutVariables>> {
         let mut obj = WipeoutVariables::new();
         while let Some(pair) = self.reader.read_pair()? {
-            if pair.code == 0 { self.reader.push_back(pair); break; }
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
             match pair.code {
-                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.handle = Handle::new(h); } }
-                330 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.owner = Handle::new(h); } }
-                70 => { if let Some(v) = pair.as_i16() { obj.display_frame = v; } }
+                5 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        obj.handle = Handle::new(h);
+                    }
+                }
+                330 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        obj.owner = Handle::new(h);
+                    }
+                }
+                70 => {
+                    if let Some(v) = pair.as_i16() {
+                        obj.display_frame = v;
+                    }
+                }
                 _ => {}
             }
         }
@@ -7628,10 +8528,21 @@ impl<'a> SectionReader<'a> {
     fn read_stub_object<T: StubObject>(&mut self) -> Result<T> {
         let mut obj = T::new_stub();
         while let Some(pair) = self.reader.read_pair()? {
-            if pair.code == 0 { self.reader.push_back(pair); break; }
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
             match pair.code {
-                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.set_handle(Handle::new(h)); } }
-                330 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { obj.set_owner(Handle::new(h)); } }
+                5 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        obj.set_handle(Handle::new(h));
+                    }
+                }
+                330 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        obj.set_owner(Handle::new(h));
+                    }
+                }
                 _ => {}
             }
         }
@@ -7648,9 +8559,7 @@ impl<'a> SectionReader<'a> {
             }
             match pair.code {
                 5 => value.handle = parse_dxf_handle(&pair.value_string),
-                330 if value.owner.is_null() => {
-                    value.owner = parse_dxf_handle(&pair.value_string)
-                }
+                330 if value.owner.is_null() => value.owner = parse_dxf_handle(&pair.value_string),
                 100 => {}
                 _ => entries.push((pair.code, pair.value_string.clone())),
             }
@@ -7660,15 +8569,11 @@ impl<'a> SectionReader<'a> {
         value.evaluator_id = field_next_code(&entries, &mut cursor, 1)
             .unwrap_or("")
             .to_string();
-        while cursor < entries.len()
-            && matches!(entries[cursor].0, 2 | 3)
-        {
+        while cursor < entries.len() && matches!(entries[cursor].0, 2 | 3) {
             value.code.push_str(&entries[cursor].1);
             cursor += 1;
         }
-        if version < DxfVersion::AC1021
-            && entries.get(cursor).map(|entry| entry.0) == Some(4)
-        {
+        if version < DxfVersion::AC1021 && entries.get(cursor).map(|entry| entry.0) == Some(4) {
             value.format = entries[cursor].1.clone();
             cursor += 1;
         }
@@ -7708,38 +8613,27 @@ impl<'a> SectionReader<'a> {
         value.evaluation_status = field_next_code(&entries, &mut cursor, 95)
             .and_then(|item| item.parse().ok())
             .unwrap_or(0);
-        value.evaluation_error_code =
-            field_next_code(&entries, &mut cursor, 96)
-                .and_then(|item| item.parse().ok())
-                .unwrap_or(0);
-        value.evaluation_error_message =
-            field_next_code(&entries, &mut cursor, 300)
-                .unwrap_or("")
-                .to_string();
+        value.evaluation_error_code = field_next_code(&entries, &mut cursor, 96)
+            .and_then(|item| item.parse().ok())
+            .unwrap_or(0);
+        value.evaluation_error_message = field_next_code(&entries, &mut cursor, 300)
+            .unwrap_or("")
+            .to_string();
         value.value = read_field_cell_value_dxf(&entries, &mut cursor, version);
-        let child_value_count =
-            if entries.get(cursor).map(|entry| entry.0) == Some(93) {
-                let count = entries[cursor]
-                    .1
-                    .parse::<usize>()
-                    .unwrap_or(0)
-                    .min(20_000);
-                cursor += 1;
-                count
-            } else {
-                0
-            };
+        let child_value_count = if entries.get(cursor).map(|entry| entry.0) == Some(93) {
+            let count = entries[cursor].1.parse::<usize>().unwrap_or(0).min(20_000);
+            cursor += 1;
+            count
+        } else {
+            0
+        };
         for _ in 0..child_value_count {
             let key = field_next_code(&entries, &mut cursor, 6)
                 .unwrap_or("")
                 .to_string();
             value.child_values.push(FieldChildValue {
                 key,
-                value: read_field_cell_value_dxf(
-                    &entries,
-                    &mut cursor,
-                    version,
-                ),
+                value: read_field_cell_value_dxf(&entries, &mut cursor, version),
             });
         }
         if entries.get(cursor).map(|entry| entry.0) == Some(301) {
@@ -7747,8 +8641,7 @@ impl<'a> SectionReader<'a> {
             cursor += 1;
         }
         if entries.get(cursor).map(|entry| entry.0) == Some(98) {
-            value.value_string_length =
-                entries[cursor].1.parse().unwrap_or(0);
+            value.value_string_length = entries[cursor].1.parse().unwrap_or(0);
         }
         Ok(value)
     }
@@ -7763,25 +8656,12 @@ impl<'a> SectionReader<'a> {
             }
             match pair.code {
                 5 => value.handle = parse_dxf_handle(&pair.value_string),
-                330 if value.owner.is_null() => {
-                    value.owner = parse_dxf_handle(&pair.value_string)
-                }
-                90 => {
-                    count = pair
-                        .value_string
-                        .parse::<usize>()
-                        .unwrap_or(0)
-                        .min(20_000)
-                }
-                290 => {
-                    value.unknown =
-                        pair.value_string.parse::<i32>().unwrap_or(0) != 0
-                }
+                330 if value.owner.is_null() => value.owner = parse_dxf_handle(&pair.value_string),
+                90 => count = pair.value_string.parse::<usize>().unwrap_or(0).min(20_000),
+                290 => value.unknown = pair.value_string.parse::<i32>().unwrap_or(0) != 0,
                 330 => {
                     if value.fields.len() < count {
-                        value
-                            .fields
-                            .push(parse_dxf_handle(&pair.value_string));
+                        value.fields.push(parse_dxf_handle(&pair.value_string));
                     }
                 }
                 _ => {}
@@ -7850,9 +8730,7 @@ impl<'a> SectionReader<'a> {
             if pair.code == 0 && pair.value_string == "LAYER" {
                 if let Some((layer, xdictionary)) = self.read_layer_entry()? {
                     if let Some(xdictionary) = xdictionary {
-                        document
-                            .xdic_by_handle
-                            .insert(layer.handle, xdictionary);
+                        document.xdic_by_handle.insert(layer.handle, xdictionary);
                     }
                     document.layers.add_or_replace(layer);
                     self.decoded_records = self.decoded_records.saturating_add(1);
@@ -7863,9 +8741,7 @@ impl<'a> SectionReader<'a> {
                     document.layers.set_handle(table_handle);
                     document.header.layer_control_handle = table_handle;
                 }
-            } else if pair.code == 102
-                && pair.value_string.trim() == "{ACAD_XDICTIONARY"
-            {
+            } else if pair.code == 102 && pair.value_string.trim() == "{ACAD_XDICTIONARY" {
                 xdictionary_handle = self.read_xdictionary_handle()?;
             }
         }
@@ -7890,7 +8766,11 @@ impl<'a> SectionReader<'a> {
             }
 
             match pair.code {
-                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { layer.handle = Handle::new(h); } }
+                5 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        layer.handle = Handle::new(h);
+                    }
+                }
                 102 if pair.value_string.trim() == "{ACAD_XDICTIONARY" => {
                     xdictionary_handle = self.read_xdictionary_handle()?;
                 }
@@ -7947,15 +8827,12 @@ impl<'a> SectionReader<'a> {
                     if let Some(next_pair) = next_pair {
                         self.reader.push_back(next_pair);
                     }
-                    if let Some(value) = xdata
-                        .get_record("AcCmTransparency")
-                        .and_then(|record| {
-                            record.values.iter().find_map(|value| match value {
-                                XDataValue::Integer32(value) => Some(*value),
-                                _ => None,
-                            })
+                    if let Some(value) = xdata.get_record("AcCmTransparency").and_then(|record| {
+                        record.values.iter().find_map(|value| match value {
+                            XDataValue::Integer32(value) => Some(*value),
+                            _ => None,
                         })
-                    {
+                    }) {
                         layer.transparency =
                             crate::types::Transparency::from_alpha_value(value as u32);
                     }
@@ -8004,7 +8881,11 @@ impl<'a> SectionReader<'a> {
             }
 
             match pair.code {
-                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { linetype.handle = Handle::new(h); } }
+                5 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        linetype.handle = Handle::new(h);
+                    }
+                }
                 2 => linetype.name = pair.value_string.clone(),
                 3 => linetype.description = pair.value_string.clone(),
                 70 => {
@@ -8024,7 +8905,10 @@ impl<'a> SectionReader<'a> {
                 }
                 49 => {
                     if let Some(dash) = pair.as_double() {
-                        linetype.elements.push(LineTypeElement { length: dash, complex: None });
+                        linetype.elements.push(LineTypeElement {
+                            length: dash,
+                            complex: None,
+                        });
                     }
                 }
                 9 => {
@@ -8083,7 +8967,8 @@ impl<'a> SectionReader<'a> {
                 75 => {
                     if let Some(last) = linetype.elements.last_mut() {
                         if last.complex.is_some() {
-                            last.complex_mut().set_shape_number(pair.as_i16().unwrap_or(0));
+                            last.complex_mut()
+                                .set_shape_number(pair.as_i16().unwrap_or(0));
                         }
                     }
                 }
@@ -8141,7 +9026,11 @@ impl<'a> SectionReader<'a> {
             }
 
             match pair.code {
-                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { style.handle = Handle::new(h); } }
+                5 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        style.handle = Handle::new(h);
+                    }
+                }
                 2 => style.name = pair.value_string.clone(),
                 70 => {
                     if let Some(f) = pair.as_i16() {
@@ -8354,7 +9243,11 @@ impl<'a> SectionReader<'a> {
             }
 
             match pair.code {
-                105 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { ds.handle = Handle::new(h); } }
+                105 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        ds.handle = Handle::new(h);
+                    }
+                }
                 2 => ds.name = pair.value_string.clone(),
                 3 => ds.dimpost = pair.value_string.clone(),
                 4 => ds.dimapost = pair.value_string.clone(),
@@ -8362,28 +9255,112 @@ impl<'a> SectionReader<'a> {
                 6 => ds.dimblk1_name = pair.value_string.clone(),
                 7 => ds.dimblk2_name = pair.value_string.clone(),
                 // Scale / lines
-                40 => { if let Some(v) = pair.as_double() { ds.dimscale = v; } }
-                41 => { if let Some(v) = pair.as_double() { ds.dimasz = v; } }
-                42 => { if let Some(v) = pair.as_double() { ds.dimexo = v; } }
-                43 => { if let Some(v) = pair.as_double() { ds.dimdli = v; } }
-                44 => { if let Some(v) = pair.as_double() { ds.dimexe = v; } }
-                45 => { if let Some(v) = pair.as_double() { ds.dimrnd = v; } }
-                46 => { if let Some(v) = pair.as_double() { ds.dimdle = v; } }
-                47 => { if let Some(v) = pair.as_double() { ds.dimtp = v; } }
-                48 => { if let Some(v) = pair.as_double() { ds.dimtm = v; } }
-                49 => { if let Some(v) = pair.as_double() { ds.dimfxl = v; } }
-                50 => { if let Some(v) = pair.as_double() { ds.dimjogang = v; } }
-                140 => { if let Some(v) = pair.as_double() { ds.dimtxt = v; } }
-                141 => { if let Some(v) = pair.as_double() { ds.dimcen = v; } }
-                142 => { if let Some(v) = pair.as_double() { ds.dimtsz = v; } }
-                143 => { if let Some(v) = pair.as_double() { ds.dimaltf = v; } }
-                144 => { if let Some(v) = pair.as_double() { ds.dimlfac = v; } }
-                145 => { if let Some(v) = pair.as_double() { ds.dimtvp = v; } }
-                146 => { if let Some(v) = pair.as_double() { ds.dimtfac = v; } }
-                147 => { if let Some(v) = pair.as_double() { ds.dimgap = v; } }
-                148 => { if let Some(v) = pair.as_double() { ds.dimaltrnd = v; } }
+                40 => {
+                    if let Some(v) = pair.as_double() {
+                        ds.dimscale = v;
+                    }
+                }
+                41 => {
+                    if let Some(v) = pair.as_double() {
+                        ds.dimasz = v;
+                    }
+                }
+                42 => {
+                    if let Some(v) = pair.as_double() {
+                        ds.dimexo = v;
+                    }
+                }
+                43 => {
+                    if let Some(v) = pair.as_double() {
+                        ds.dimdli = v;
+                    }
+                }
+                44 => {
+                    if let Some(v) = pair.as_double() {
+                        ds.dimexe = v;
+                    }
+                }
+                45 => {
+                    if let Some(v) = pair.as_double() {
+                        ds.dimrnd = v;
+                    }
+                }
+                46 => {
+                    if let Some(v) = pair.as_double() {
+                        ds.dimdle = v;
+                    }
+                }
+                47 => {
+                    if let Some(v) = pair.as_double() {
+                        ds.dimtp = v;
+                    }
+                }
+                48 => {
+                    if let Some(v) = pair.as_double() {
+                        ds.dimtm = v;
+                    }
+                }
+                49 => {
+                    if let Some(v) = pair.as_double() {
+                        ds.dimfxl = v;
+                    }
+                }
+                50 => {
+                    if let Some(v) = pair.as_double() {
+                        ds.dimjogang = v;
+                    }
+                }
+                140 => {
+                    if let Some(v) = pair.as_double() {
+                        ds.dimtxt = v;
+                    }
+                }
+                141 => {
+                    if let Some(v) = pair.as_double() {
+                        ds.dimcen = v;
+                    }
+                }
+                142 => {
+                    if let Some(v) = pair.as_double() {
+                        ds.dimtsz = v;
+                    }
+                }
+                143 => {
+                    if let Some(v) = pair.as_double() {
+                        ds.dimaltf = v;
+                    }
+                }
+                144 => {
+                    if let Some(v) = pair.as_double() {
+                        ds.dimlfac = v;
+                    }
+                }
+                145 => {
+                    if let Some(v) = pair.as_double() {
+                        ds.dimtvp = v;
+                    }
+                }
+                146 => {
+                    if let Some(v) = pair.as_double() {
+                        ds.dimtfac = v;
+                    }
+                }
+                147 => {
+                    if let Some(v) = pair.as_double() {
+                        ds.dimgap = v;
+                    }
+                }
+                148 => {
+                    if let Some(v) = pair.as_double() {
+                        ds.dimaltrnd = v;
+                    }
+                }
                 // Integer codes
-                69 => { if let Some(v) = pair.as_i16() { ds.dimtfill = v; } }
+                69 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimtfill = v;
+                    }
+                }
                 70 => {
                     if let Some(v) = pair.as_i16() {
                         if seen_table_flags {
@@ -8396,60 +9373,272 @@ impl<'a> SectionReader<'a> {
                         }
                     }
                 }
-                71 => { if let Some(v) = pair.as_i16() { ds.dimtol = v != 0; } }
-                72 => { if let Some(v) = pair.as_i16() { ds.dimlim = v != 0; } }
-                73 => { if let Some(v) = pair.as_i16() { ds.dimtih = v != 0; } }
-                74 => { if let Some(v) = pair.as_i16() { ds.dimtoh = v != 0; } }
-                75 => { if let Some(v) = pair.as_i16() { ds.dimse1 = v != 0; } }
-                76 => { if let Some(v) = pair.as_i16() { ds.dimse2 = v != 0; } }
-                77 => { if let Some(v) = pair.as_i16() { ds.dimtad = v; } }
-                78 => { if let Some(v) = pair.as_i16() { ds.dimzin = v; } }
-                79 => { if let Some(v) = pair.as_i16() { ds.dimazin = v; } }
-                90 => { if let Some(v) = pair.as_i32() { ds.dimarcsym = v as i16; } }
-                170 => { if let Some(v) = pair.as_i16() { ds.dimalt = v != 0; } }
-                171 => { if let Some(v) = pair.as_i16() { ds.dimaltd = v; } }
-                172 => { if let Some(v) = pair.as_i16() { ds.dimtofl = v != 0; } }
-                173 => { if let Some(v) = pair.as_i16() { ds.dimsah = v != 0; } }
-                174 => { if let Some(v) = pair.as_i16() { ds.dimtix = v != 0; } }
-                175 => { if let Some(v) = pair.as_i16() { ds.dimsoxd = v != 0; } }
-                176 => { if let Some(v) = pair.as_i16() { ds.dimclrd = v; } }
-                177 => { if let Some(v) = pair.as_i16() { ds.dimclre = v; } }
-                178 => { if let Some(v) = pair.as_i16() { ds.dimclrt = v; } }
-                179 => { if let Some(v) = pair.as_i16() { ds.dimadec = v; } }
-                270 => { if let Some(v) = pair.as_i16() { ds.dimunit = v; } }
-                271 => { if let Some(v) = pair.as_i16() { ds.dimdec = v; } }
-                272 => { if let Some(v) = pair.as_i16() { ds.dimtdec = v; } }
-                273 => { if let Some(v) = pair.as_i16() { ds.dimaltu = v; } }
-                274 => { if let Some(v) = pair.as_i16() { ds.dimalttd = v; } }
-                275 => { if let Some(v) = pair.as_i16() { ds.dimaunit = v; } }
-                276 => { if let Some(v) = pair.as_i16() { ds.dimfrac = v; } }
-                277 => { if let Some(v) = pair.as_i16() { ds.dimlunit = v; } }
-                278 => { if let Some(v) = pair.as_i16() { ds.dimdsep = v; } }
-                279 => { if let Some(v) = pair.as_i16() { ds.dimtmove = v; } }
-                280 => { if let Some(v) = pair.as_i16() { ds.dimjust = v; } }
-                281 => { if let Some(v) = pair.as_i16() { ds.dimsd1 = v != 0; } }
-                282 => { if let Some(v) = pair.as_i16() { ds.dimsd2 = v != 0; } }
-                283 => { if let Some(v) = pair.as_i16() { ds.dimtolj = v; } }
-                284 => { if let Some(v) = pair.as_i16() { ds.dimtzin = v; } }
-                285 => { if let Some(v) = pair.as_i16() { ds.dimaltz = v; } }
-                286 => { if let Some(v) = pair.as_i16() { ds.dimalttz = v; } }
-                287 => { if let Some(v) = pair.as_i16() { ds.dimfit = v; } }
-                288 => { if let Some(v) = pair.as_i16() { ds.dimupt = v != 0; } }
-                289 => { if let Some(v) = pair.as_i16() { ds.dimatfit = v; } }
-                290 => { if let Some(v) = pair.as_i16() { ds.dimfxlon = v != 0; } }
-                294 | 295 => { if let Some(v) = pair.as_i16() { ds.dimtxtdirection = v != 0; } }
+                71 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimtol = v != 0;
+                    }
+                }
+                72 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimlim = v != 0;
+                    }
+                }
+                73 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimtih = v != 0;
+                    }
+                }
+                74 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimtoh = v != 0;
+                    }
+                }
+                75 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimse1 = v != 0;
+                    }
+                }
+                76 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimse2 = v != 0;
+                    }
+                }
+                77 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimtad = v;
+                    }
+                }
+                78 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimzin = v;
+                    }
+                }
+                79 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimazin = v;
+                    }
+                }
+                90 => {
+                    if let Some(v) = pair.as_i32() {
+                        ds.dimarcsym = v as i16;
+                    }
+                }
+                170 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimalt = v != 0;
+                    }
+                }
+                171 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimaltd = v;
+                    }
+                }
+                172 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimtofl = v != 0;
+                    }
+                }
+                173 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimsah = v != 0;
+                    }
+                }
+                174 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimtix = v != 0;
+                    }
+                }
+                175 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimsoxd = v != 0;
+                    }
+                }
+                176 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimclrd = v;
+                    }
+                }
+                177 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimclre = v;
+                    }
+                }
+                178 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimclrt = v;
+                    }
+                }
+                179 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimadec = v;
+                    }
+                }
+                270 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimunit = v;
+                    }
+                }
+                271 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimdec = v;
+                    }
+                }
+                272 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimtdec = v;
+                    }
+                }
+                273 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimaltu = v;
+                    }
+                }
+                274 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimalttd = v;
+                    }
+                }
+                275 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimaunit = v;
+                    }
+                }
+                276 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimfrac = v;
+                    }
+                }
+                277 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimlunit = v;
+                    }
+                }
+                278 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimdsep = v;
+                    }
+                }
+                279 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimtmove = v;
+                    }
+                }
+                280 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimjust = v;
+                    }
+                }
+                281 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimsd1 = v != 0;
+                    }
+                }
+                282 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimsd2 = v != 0;
+                    }
+                }
+                283 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimtolj = v;
+                    }
+                }
+                284 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimtzin = v;
+                    }
+                }
+                285 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimaltz = v;
+                    }
+                }
+                286 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimalttz = v;
+                    }
+                }
+                287 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimfit = v;
+                    }
+                }
+                288 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimupt = v != 0;
+                    }
+                }
+                289 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimatfit = v;
+                    }
+                }
+                290 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimfxlon = v != 0;
+                    }
+                }
+                294 | 295 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimtxtdirection = v != 0;
+                    }
+                }
                 // Handle references
-                340 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { ds.dimtxsty_handle = Handle::new(h); } }
-                341 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { ds.dimldrblk = Handle::new(h); } }
-                342 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { ds.dimblk = Handle::new(h); } }
-                343 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { ds.dimblk1 = Handle::new(h); } }
-                344 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { ds.dimblk2 = Handle::new(h); } }
-                345 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { ds.dimltex_handle = Handle::new(h); } }
-                346 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { ds.dimltex1_handle = Handle::new(h); } }
-                347 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { ds.dimltex2_handle = Handle::new(h); } }
-                371 => { if let Some(v) = pair.as_i16() { ds.dimlwd = v; } }
-                372 => { if let Some(v) = pair.as_i16() { ds.dimlwe = v; } }
-                1001 => { if pair.value_string == "AcadAnnotative" { ds.annotative = self.read_annotative_xdata(pair)?; } }
+                340 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        ds.dimtxsty_handle = Handle::new(h);
+                    }
+                }
+                341 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        ds.dimldrblk = Handle::new(h);
+                    }
+                }
+                342 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        ds.dimblk = Handle::new(h);
+                    }
+                }
+                343 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        ds.dimblk1 = Handle::new(h);
+                    }
+                }
+                344 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        ds.dimblk2 = Handle::new(h);
+                    }
+                }
+                345 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        ds.dimltex_handle = Handle::new(h);
+                    }
+                }
+                346 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        ds.dimltex1_handle = Handle::new(h);
+                    }
+                }
+                347 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        ds.dimltex2_handle = Handle::new(h);
+                    }
+                }
+                371 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimlwd = v;
+                    }
+                }
+                372 => {
+                    if let Some(v) = pair.as_i16() {
+                        ds.dimlwe = v;
+                    }
+                }
+                1001 => {
+                    if pair.value_string == "AcadAnnotative" {
+                        ds.annotative = self.read_annotative_xdata(pair)?;
+                    }
+                }
                 _ => {}
             }
         }
@@ -8494,7 +9683,11 @@ impl<'a> SectionReader<'a> {
             }
 
             match pair.code {
-                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { appid.handle = Handle::new(h); } }
+                5 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        appid.handle = Handle::new(h);
+                    }
+                }
                 2 => appid.name = pair.value_string.clone(),
                 _ => {}
             }
@@ -8546,14 +9739,30 @@ impl<'a> SectionReader<'a> {
             }
 
             match pair.code {
-                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { view.handle = Handle::new(h); } }
+                5 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        view.handle = Handle::new(h);
+                    }
+                }
                 2 => view.name = pair.value_string.clone(),
-                10 | 20 | 30 => { center.add_coordinate(&pair); }
-                11 | 21 | 31 => { direction.add_coordinate(&pair); }
-                12 | 22 | 32 => { target.add_coordinate(&pair); }
-                110 | 120 | 130 => { ucs_origin.add_coordinate(&pair); }
-                111 | 121 | 131 => { ucs_x_axis.add_coordinate(&pair); }
-                112 | 122 | 132 => { ucs_y_axis.add_coordinate(&pair); }
+                10 | 20 | 30 => {
+                    center.add_coordinate(&pair);
+                }
+                11 | 21 | 31 => {
+                    direction.add_coordinate(&pair);
+                }
+                12 | 22 | 32 => {
+                    target.add_coordinate(&pair);
+                }
+                110 | 120 | 130 => {
+                    ucs_origin.add_coordinate(&pair);
+                }
+                111 | 121 | 131 => {
+                    ucs_x_axis.add_coordinate(&pair);
+                }
+                112 | 122 | 132 => {
+                    ucs_y_axis.add_coordinate(&pair);
+                }
                 40 => {
                     if let Some(height) = pair.as_double() {
                         view.height = height;
@@ -8564,11 +9773,31 @@ impl<'a> SectionReader<'a> {
                         view.width = width;
                     }
                 }
-                42 => { if let Some(v) = pair.as_double() { view.lens_length = v; } }
-                43 => { if let Some(v) = pair.as_double() { view.front_clip = v; } }
-                44 => { if let Some(v) = pair.as_double() { view.back_clip = v; } }
-                50 => { if let Some(v) = pair.as_double() { view.twist_angle = v.to_radians(); } }
-                63 => { if let Some(v) = pair.as_i16() { view.ambient_color = Color::from_index(v); } }
+                42 => {
+                    if let Some(v) = pair.as_double() {
+                        view.lens_length = v;
+                    }
+                }
+                43 => {
+                    if let Some(v) = pair.as_double() {
+                        view.front_clip = v;
+                    }
+                }
+                44 => {
+                    if let Some(v) = pair.as_double() {
+                        view.back_clip = v;
+                    }
+                }
+                50 => {
+                    if let Some(v) = pair.as_double() {
+                        view.twist_angle = v.to_radians();
+                    }
+                }
+                63 => {
+                    if let Some(v) = pair.as_i16() {
+                        view.ambient_color = Color::from_index(v);
+                    }
+                }
                 70 => {
                     if let Some(v) = pair.as_i16() {
                         view.paper_space = (v & 1) != 0;
@@ -8585,22 +9814,86 @@ impl<'a> SectionReader<'a> {
                         view.front_clip_at_eye = (v & 16) != 0;
                     }
                 }
-                72 => { if let Some(v) = pair.as_i16() { view.ucs_associated = v != 0; } }
-                73 => { if let Some(v) = pair.as_i16() { view.camera_plottable = v != 0; } }
-                79 => { if let Some(v) = pair.as_i16() { view.ucs_ortho_type = v; } }
-                141 => { if let Some(v) = pair.as_double() { view.brightness = v; } }
-                142 => { if let Some(v) = pair.as_double() { view.contrast = v; } }
-                146 => { if let Some(v) = pair.as_double() { view.ucs_elevation = v; } }
-                281 => { if let Some(v) = pair.as_i16() { view.render_mode = ViewportRenderMode::from_value(v); } }
-                282 => { if let Some(v) = pair.as_i16() { view.default_lighting_type = v; } }
-                292 => { if let Some(v) = pair.as_i16() { view.use_default_lights = v != 0; } }
-                332 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { view.background_handle = Handle::new(h); } }
-                334 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { view.live_section_handle = Handle::new(h); } }
-                345 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { view.named_ucs_handle = Handle::new(h); } }
-                346 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { view.base_ucs_handle = Handle::new(h); } }
-                348 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { view.visual_style_handle = Handle::new(h); } }
-                361 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { view.sun_handle = Handle::new(h); } }
-                421 => { if let Some(v) = pair.as_i32() { view.ambient_color = Color::from_true_color_value(v); } }
+                72 => {
+                    if let Some(v) = pair.as_i16() {
+                        view.ucs_associated = v != 0;
+                    }
+                }
+                73 => {
+                    if let Some(v) = pair.as_i16() {
+                        view.camera_plottable = v != 0;
+                    }
+                }
+                79 => {
+                    if let Some(v) = pair.as_i16() {
+                        view.ucs_ortho_type = v;
+                    }
+                }
+                141 => {
+                    if let Some(v) = pair.as_double() {
+                        view.brightness = v;
+                    }
+                }
+                142 => {
+                    if let Some(v) = pair.as_double() {
+                        view.contrast = v;
+                    }
+                }
+                146 => {
+                    if let Some(v) = pair.as_double() {
+                        view.ucs_elevation = v;
+                    }
+                }
+                281 => {
+                    if let Some(v) = pair.as_i16() {
+                        view.render_mode = ViewportRenderMode::from_value(v);
+                    }
+                }
+                282 => {
+                    if let Some(v) = pair.as_i16() {
+                        view.default_lighting_type = v;
+                    }
+                }
+                292 => {
+                    if let Some(v) = pair.as_i16() {
+                        view.use_default_lights = v != 0;
+                    }
+                }
+                332 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        view.background_handle = Handle::new(h);
+                    }
+                }
+                334 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        view.live_section_handle = Handle::new(h);
+                    }
+                }
+                345 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        view.named_ucs_handle = Handle::new(h);
+                    }
+                }
+                346 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        view.base_ucs_handle = Handle::new(h);
+                    }
+                }
+                348 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        view.visual_style_handle = Handle::new(h);
+                    }
+                }
+                361 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        view.sun_handle = Handle::new(h);
+                    }
+                }
+                421 => {
+                    if let Some(v) = pair.as_i32() {
+                        view.ambient_color = Color::from_true_color_value(v);
+                    }
+                }
                 _ => {}
             }
         }
@@ -8665,37 +9958,157 @@ impl<'a> SectionReader<'a> {
             }
 
             match pair.code {
-                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { vport.handle = Handle::new(h); } }
+                5 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        vport.handle = Handle::new(h);
+                    }
+                }
                 2 => vport.name = pair.value_string.clone(),
-                10 => { if let Some(v) = pair.as_double() { vport.lower_left.x = v; } }
-                20 => { if let Some(v) = pair.as_double() { vport.lower_left.y = v; } }
-                11 => { if let Some(v) = pair.as_double() { vport.upper_right.x = v; } }
-                21 => { if let Some(v) = pair.as_double() { vport.upper_right.y = v; } }
-                12 => { if let Some(v) = pair.as_double() { vport.view_center.x = v; } }
-                22 => { if let Some(v) = pair.as_double() { vport.view_center.y = v; } }
-                13 => { if let Some(v) = pair.as_double() { vport.snap_base.x = v; } }
-                23 => { if let Some(v) = pair.as_double() { vport.snap_base.y = v; } }
-                14 => { if let Some(v) = pair.as_double() { vport.snap_spacing.x = v; } }
-                24 => { if let Some(v) = pair.as_double() { vport.snap_spacing.y = v; } }
-                15 => { if let Some(v) = pair.as_double() { vport.grid_spacing.x = v; } }
-                25 => { if let Some(v) = pair.as_double() { vport.grid_spacing.y = v; } }
-                16 => { if let Some(v) = pair.as_double() { vport.view_direction.x = v; } }
-                26 => { if let Some(v) = pair.as_double() { vport.view_direction.y = v; } }
-                36 => { if let Some(v) = pair.as_double() { vport.view_direction.z = v; } }
-                17 => { if let Some(v) = pair.as_double() { vport.view_target.x = v; } }
-                27 => { if let Some(v) = pair.as_double() { vport.view_target.y = v; } }
-                37 => { if let Some(v) = pair.as_double() { vport.view_target.z = v; } }
-                40 => { if let Some(v) = pair.as_double() { vport.view_height = v; } }
-                41 => { if let Some(v) = pair.as_double() { vport.aspect_ratio = v; } }
-                42 => { if let Some(v) = pair.as_double() { vport.lens_length = v; } }
-                43 => { if let Some(v) = pair.as_double() { vport.front_clip = v; } }
-                44 => { if let Some(v) = pair.as_double() { vport.back_clip = v; } }
-                50 => { if let Some(v) = pair.as_double() { vport.snap_rotation = v.to_radians(); } }
-                51 => { if let Some(v) = pair.as_double() { vport.view_twist = v.to_radians(); } }
-                60 => { if let Some(v) = pair.as_i16() { vport.grid_flags = GridFlags::from_bits(v); } }
-                61 => { if let Some(v) = pair.as_i16() { vport.grid_major = v; } }
-                63 => { if let Some(v) = pair.as_i16() { vport.ambient_color = Color::from_index(v); } }
-                65 => { if let Some(v) = pair.as_i16() { vport.ucs_per_viewport = v != 0; } }
+                10 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.lower_left.x = v;
+                    }
+                }
+                20 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.lower_left.y = v;
+                    }
+                }
+                11 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.upper_right.x = v;
+                    }
+                }
+                21 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.upper_right.y = v;
+                    }
+                }
+                12 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.view_center.x = v;
+                    }
+                }
+                22 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.view_center.y = v;
+                    }
+                }
+                13 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.snap_base.x = v;
+                    }
+                }
+                23 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.snap_base.y = v;
+                    }
+                }
+                14 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.snap_spacing.x = v;
+                    }
+                }
+                24 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.snap_spacing.y = v;
+                    }
+                }
+                15 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.grid_spacing.x = v;
+                    }
+                }
+                25 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.grid_spacing.y = v;
+                    }
+                }
+                16 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.view_direction.x = v;
+                    }
+                }
+                26 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.view_direction.y = v;
+                    }
+                }
+                36 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.view_direction.z = v;
+                    }
+                }
+                17 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.view_target.x = v;
+                    }
+                }
+                27 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.view_target.y = v;
+                    }
+                }
+                37 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.view_target.z = v;
+                    }
+                }
+                40 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.view_height = v;
+                    }
+                }
+                41 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.aspect_ratio = v;
+                    }
+                }
+                42 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.lens_length = v;
+                    }
+                }
+                43 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.front_clip = v;
+                    }
+                }
+                44 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.back_clip = v;
+                    }
+                }
+                50 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.snap_rotation = v.to_radians();
+                    }
+                }
+                51 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.view_twist = v.to_radians();
+                    }
+                }
+                60 => {
+                    if let Some(v) = pair.as_i16() {
+                        vport.grid_flags = GridFlags::from_bits(v);
+                    }
+                }
+                61 => {
+                    if let Some(v) = pair.as_i16() {
+                        vport.grid_major = v;
+                    }
+                }
+                63 => {
+                    if let Some(v) = pair.as_i16() {
+                        vport.ambient_color = Color::from_index(v);
+                    }
+                }
+                65 => {
+                    if let Some(v) = pair.as_i16() {
+                        vport.ucs_per_viewport = v != 0;
+                    }
+                }
                 70 => {
                     if let Some(v) = pair.as_i16() {
                         vport.xref_dependent = (v & 0x10) != 0;
@@ -8712,40 +10125,152 @@ impl<'a> SectionReader<'a> {
                         vport.front_clip_at_eye = (v & 16) != 0;
                     }
                 }
-                72 => { if let Some(v) = pair.as_i16() { vport.circle_zoom = v; } }
-                73 => { if let Some(v) = pair.as_i16() { vport.fast_zoom = v != 0; } }
+                72 => {
+                    if let Some(v) = pair.as_i16() {
+                        vport.circle_zoom = v;
+                    }
+                }
+                73 => {
+                    if let Some(v) = pair.as_i16() {
+                        vport.fast_zoom = v != 0;
+                    }
+                }
                 74 => {
                     if let Some(v) = pair.as_i16() {
                         vport.ucsicon_lower = (v & 1) != 0;
                         vport.ucsicon_origin = (v & 2) != 0;
                     }
                 }
-                75 => { if let Some(v) = pair.as_i16() { vport.snap_on = v != 0; } }
-                76 => { if let Some(v) = pair.as_i16() { vport.grid_on = v != 0; } }
-                77 => { if let Some(v) = pair.as_i16() { vport.snap_style = v != 0; } }
-                78 => { if let Some(v) = pair.as_i16() { vport.snap_isopair = v; } }
-                79 => { if let Some(v) = pair.as_i16() { vport.ucs_ortho_type = v; } }
-                110 => { if let Some(v) = pair.as_double() { vport.ucs_origin.x = v; } }
-                120 => { if let Some(v) = pair.as_double() { vport.ucs_origin.y = v; } }
-                130 => { if let Some(v) = pair.as_double() { vport.ucs_origin.z = v; } }
-                111 => { if let Some(v) = pair.as_double() { vport.ucs_x_axis.x = v; } }
-                121 => { if let Some(v) = pair.as_double() { vport.ucs_x_axis.y = v; } }
-                131 => { if let Some(v) = pair.as_double() { vport.ucs_x_axis.z = v; } }
-                112 => { if let Some(v) = pair.as_double() { vport.ucs_y_axis.x = v; } }
-                122 => { if let Some(v) = pair.as_double() { vport.ucs_y_axis.y = v; } }
-                132 => { if let Some(v) = pair.as_double() { vport.ucs_y_axis.z = v; } }
-                141 => { if let Some(v) = pair.as_double() { vport.brightness = v; } }
-                142 => { if let Some(v) = pair.as_double() { vport.contrast = v; } }
-                146 => { if let Some(v) = pair.as_double() { vport.ucs_elevation = v; } }
-                281 => { if let Some(v) = pair.as_i16() { vport.render_mode = ViewportRenderMode::from_value(v); } }
-                282 => { if let Some(v) = pair.as_i16() { vport.default_lighting_type = v; } }
-                292 => { if let Some(v) = pair.as_i16() { vport.use_default_lights = v != 0; } }
-                332 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { vport.background_handle = Handle::new(h); } }
-                345 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { vport.named_ucs_handle = Handle::new(h); } }
-                346 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { vport.base_ucs_handle = Handle::new(h); } }
-                348 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { vport.visual_style_handle = Handle::new(h); } }
-                361 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { vport.sun_handle = Handle::new(h); } }
-                421 => { if let Some(v) = pair.as_i32() { vport.ambient_color = Color::from_true_color_value(v); } }
+                75 => {
+                    if let Some(v) = pair.as_i16() {
+                        vport.snap_on = v != 0;
+                    }
+                }
+                76 => {
+                    if let Some(v) = pair.as_i16() {
+                        vport.grid_on = v != 0;
+                    }
+                }
+                77 => {
+                    if let Some(v) = pair.as_i16() {
+                        vport.snap_style = v != 0;
+                    }
+                }
+                78 => {
+                    if let Some(v) = pair.as_i16() {
+                        vport.snap_isopair = v;
+                    }
+                }
+                79 => {
+                    if let Some(v) = pair.as_i16() {
+                        vport.ucs_ortho_type = v;
+                    }
+                }
+                110 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.ucs_origin.x = v;
+                    }
+                }
+                120 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.ucs_origin.y = v;
+                    }
+                }
+                130 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.ucs_origin.z = v;
+                    }
+                }
+                111 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.ucs_x_axis.x = v;
+                    }
+                }
+                121 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.ucs_x_axis.y = v;
+                    }
+                }
+                131 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.ucs_x_axis.z = v;
+                    }
+                }
+                112 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.ucs_y_axis.x = v;
+                    }
+                }
+                122 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.ucs_y_axis.y = v;
+                    }
+                }
+                132 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.ucs_y_axis.z = v;
+                    }
+                }
+                141 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.brightness = v;
+                    }
+                }
+                142 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.contrast = v;
+                    }
+                }
+                146 => {
+                    if let Some(v) = pair.as_double() {
+                        vport.ucs_elevation = v;
+                    }
+                }
+                281 => {
+                    if let Some(v) = pair.as_i16() {
+                        vport.render_mode = ViewportRenderMode::from_value(v);
+                    }
+                }
+                282 => {
+                    if let Some(v) = pair.as_i16() {
+                        vport.default_lighting_type = v;
+                    }
+                }
+                292 => {
+                    if let Some(v) = pair.as_i16() {
+                        vport.use_default_lights = v != 0;
+                    }
+                }
+                332 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        vport.background_handle = Handle::new(h);
+                    }
+                }
+                345 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        vport.named_ucs_handle = Handle::new(h);
+                    }
+                }
+                346 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        vport.base_ucs_handle = Handle::new(h);
+                    }
+                }
+                348 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        vport.visual_style_handle = Handle::new(h);
+                    }
+                }
+                361 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        vport.sun_handle = Handle::new(h);
+                    }
+                }
+                421 => {
+                    if let Some(v) = pair.as_i32() {
+                        vport.ambient_color = Color::from_true_color_value(v);
+                    }
+                }
                 _ => {}
             }
         }
@@ -8793,11 +10318,21 @@ impl<'a> SectionReader<'a> {
             }
 
             match pair.code {
-                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { ucs.handle = Handle::new(h); } }
+                5 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        ucs.handle = Handle::new(h);
+                    }
+                }
                 2 => ucs.name = pair.value_string.clone(),
-                10 | 20 | 30 => { origin.add_coordinate(&pair); }
-                11 | 21 | 31 => { x_axis.add_coordinate(&pair); }
-                12 | 22 | 32 => { y_axis.add_coordinate(&pair); }
+                10 | 20 | 30 => {
+                    origin.add_coordinate(&pair);
+                }
+                11 | 21 | 31 => {
+                    x_axis.add_coordinate(&pair);
+                }
+                12 | 22 | 32 => {
+                    y_axis.add_coordinate(&pair);
+                }
                 70 => {
                     if let Some(v) = pair.as_i16() {
                         ucs.xref_dependent = (v & 0x10) != 0;
@@ -8805,11 +10340,31 @@ impl<'a> SectionReader<'a> {
                         ucs.xref_reference = (v & 0x40) != 0;
                     }
                 }
-                71 => { if let Some(v) = pair.as_i16() { ucs.ortho_type = v; } }
-                79 => { if let Some(v) = pair.as_i16() { ucs.ortho_view_type = v; } }
-                146 => { if let Some(v) = pair.as_double() { ucs.elevation = v; } }
-                345 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { ucs.named_ucs_handle = Handle::new(h); } }
-                346 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { ucs.base_ucs_handle = Handle::new(h); } }
+                71 => {
+                    if let Some(v) = pair.as_i16() {
+                        ucs.ortho_type = v;
+                    }
+                }
+                79 => {
+                    if let Some(v) = pair.as_i16() {
+                        ucs.ortho_view_type = v;
+                    }
+                }
+                146 => {
+                    if let Some(v) = pair.as_double() {
+                        ucs.elevation = v;
+                    }
+                }
+                345 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        ucs.named_ucs_handle = Handle::new(h);
+                    }
+                }
+                346 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        ucs.base_ucs_handle = Handle::new(h);
+                    }
+                }
                 _ => {}
             }
         }
@@ -8862,13 +10417,41 @@ impl<'a> SectionReader<'a> {
                 break;
             }
             match pair.code {
-                71 => { if let Some(v) = pair.as_i16() { col.column_type = v; } }
-                72 => { if let Some(v) = pair.as_i16() { col.column_count = v as i32; } }
-                73 => { if let Some(v) = pair.as_i16() { col.auto_height = v != 0; } }
-                74 => { if let Some(v) = pair.as_i16() { col.flow_reversed = v != 0; } }
-                44 => { if let Some(v) = pair.as_double() { col.width = v; } }
-                45 => { if let Some(v) = pair.as_double() { col.gutter = v; } }
-                46 => { if let Some(v) = pair.as_double() { col.heights.push(v); } }
+                71 => {
+                    if let Some(v) = pair.as_i16() {
+                        col.column_type = v;
+                    }
+                }
+                72 => {
+                    if let Some(v) = pair.as_i16() {
+                        col.column_count = v as i32;
+                    }
+                }
+                73 => {
+                    if let Some(v) = pair.as_i16() {
+                        col.auto_height = v != 0;
+                    }
+                }
+                74 => {
+                    if let Some(v) = pair.as_i16() {
+                        col.flow_reversed = v != 0;
+                    }
+                }
+                44 => {
+                    if let Some(v) = pair.as_double() {
+                        col.width = v;
+                    }
+                }
+                45 => {
+                    if let Some(v) = pair.as_double() {
+                        col.gutter = v;
+                    }
+                }
+                46 => {
+                    if let Some(v) = pair.as_double() {
+                        col.heights.push(v);
+                    }
+                }
                 _ => {}
             }
         }
@@ -9091,20 +10674,15 @@ impl<'a> SectionReader<'a> {
                         view_symbol_70_index += 1;
                     }
                     340 => {
-                        entity.style_handle = pair
-                            .as_handle()
-                            .map(Handle::new)
-                            .unwrap_or(Handle::NULL);
+                        entity.style_handle =
+                            pair.as_handle().map(Handle::new).unwrap_or(Handle::NULL);
                     }
                     40 => {
-                        entity.symbol_scale =
-                            pair.as_double().unwrap_or(1.0);
+                        entity.symbol_scale = pair.as_double().unwrap_or(1.0);
                     }
                     330 => {
-                        entity.view_rep_handle = pair
-                            .as_handle()
-                            .map(Handle::new)
-                            .unwrap_or(Handle::NULL);
+                        entity.view_rep_handle =
+                            pair.as_handle().map(Handle::new).unwrap_or(Handle::NULL);
                     }
                     _ => {}
                 }
@@ -9129,8 +10707,7 @@ impl<'a> SectionReader<'a> {
                         section_90_index += 1;
                     }
                     10 => {
-                        let mut point =
-                            crate::entities::SectionSymbolPoint::new();
+                        let mut point = crate::entities::SectionSymbolPoint::new();
                         point.point.x = pair.as_double().unwrap_or(0.0);
                         entity.points.push(point);
                         point_index = Some(entity.points.len() - 1);
@@ -9142,43 +10719,33 @@ impl<'a> SectionReader<'a> {
                         let point = &mut entity.points[index];
                         match code {
                             20 => {
-                                point.point.y =
-                                    pair.as_double().unwrap_or(0.0);
+                                point.point.y = pair.as_double().unwrap_or(0.0);
                             }
                             30 => {
-                                point.point.z =
-                                    pair.as_double().unwrap_or(0.0);
+                                point.point.z = pair.as_double().unwrap_or(0.0);
                             }
                             40 => {
-                                point.bulge =
-                                    pair.as_double().unwrap_or(0.0);
+                                point.bulge = pair.as_double().unwrap_or(0.0);
                             }
                             1 => point.label = pair.value_string,
                             11 => {
-                                point.label_offset.x =
-                                    pair.as_double().unwrap_or(0.0);
+                                point.label_offset.x = pair.as_double().unwrap_or(0.0);
                             }
                             21 => {
-                                point.label_offset.y =
-                                    pair.as_double().unwrap_or(0.0);
+                                point.label_offset.y = pair.as_double().unwrap_or(0.0);
                             }
                             31 => {
-                                point.label_offset.z =
-                                    pair.as_double().unwrap_or(0.0);
+                                point.label_offset.z = pair.as_double().unwrap_or(0.0);
                             }
                             280 => {
-                                point.raw_flag_280 =
-                                    pair.as_i16().unwrap_or(0) as u8;
+                                point.raw_flag_280 = pair.as_i16().unwrap_or(0) as u8;
                             }
                             _ => {}
                         }
                     }
                 }
             } else {
-                self.try_read_common_entity_code(
-                    &pair,
-                    &mut entity.common,
-                )?;
+                self.try_read_common_entity_code(&pair, &mut entity.common)?;
             }
         }
         entity.sync_display_fields();
@@ -9220,10 +10787,8 @@ impl<'a> SectionReader<'a> {
                         point_index += 1;
                     }
                     330 => {
-                        entity.active_viewport = pair
-                            .as_handle()
-                            .map(Handle::new)
-                            .unwrap_or(Handle::NULL);
+                        entity.active_viewport =
+                            pair.as_handle().map(Handle::new).unwrap_or(Handle::NULL);
                     }
                     40 => {
                         let value = pair.as_double().unwrap_or(0.0);
@@ -9237,27 +10802,19 @@ impl<'a> SectionReader<'a> {
                         double_index += 1;
                     }
                     340 => {
-                        entity.scale_handle = pair
-                            .as_handle()
-                            .map(Handle::new)
-                            .unwrap_or(Handle::NULL);
+                        entity.scale_handle =
+                            pair.as_handle().map(Handle::new).unwrap_or(Handle::NULL);
                     }
                     _ => {}
                 }
             } else {
-                self.try_read_common_entity_code(
-                    &pair,
-                    &mut entity.common,
-                )?;
+                self.try_read_common_entity_code(&pair, &mut entity.common)?;
             }
         }
         Ok(entity)
     }
 
-    fn read_registered_class_entity(
-        &mut self,
-        dxf_name: &str,
-    ) -> Result<ExtendedEntity> {
+    fn read_registered_class_entity(&mut self, dxf_name: &str) -> Result<ExtendedEntity> {
         let mut common = EntityCommon::new();
         let mut subclass = String::new();
         let mut properties = Vec::new();
@@ -9273,8 +10830,7 @@ impl<'a> SectionReader<'a> {
             match pair.code {
                 8 => common.layer = pair.value_string,
                 62 => {
-                    common.color =
-                        Color::from_index(pair.as_i16().unwrap_or(256));
+                    common.color = Color::from_index(pair.as_i16().unwrap_or(256));
                 }
                 370 => {
                     if let Some(value) = pair.as_i16() {
@@ -9282,41 +10838,28 @@ impl<'a> SectionReader<'a> {
                     }
                 }
                 _ => {
-                    let is_common_section =
-                        subclass.is_empty() || subclass == "AcDbEntity";
+                    let is_common_section = subclass.is_empty() || subclass == "AcDbEntity";
                     if !is_common_section
-                        || !self.try_read_common_entity_code(
-                            &pair,
-                            &mut common,
-                        )?
+                        || !self.try_read_common_entity_code(&pair, &mut common)?
                     {
-                        properties.push(semantic_property_from_pair(
-                            &subclass,
-                            &pair,
-                        ));
+                        properties.push(semantic_property_from_pair(&subclass, &pair));
                     }
                 }
             }
         }
         Ok(ExtendedEntity {
             common,
-            data: ExtendedEntityData::RegisteredClass(
-                RegisteredClassEntityData {
-                    dxf_name: dxf_name.to_string(),
-                    cpp_class_name: registered_class_cpp_name(dxf_name)
-                        .to_string(),
-                    properties,
-                    payload: crate::objects::ProxyPayload::default(),
-                    object_ids: Vec::new(),
-                },
-            ),
+            data: ExtendedEntityData::RegisteredClass(RegisteredClassEntityData {
+                dxf_name: dxf_name.to_string(),
+                cpp_class_name: registered_class_cpp_name(dxf_name).to_string(),
+                properties,
+                payload: crate::objects::ProxyPayload::default(),
+                object_ids: Vec::new(),
+            }),
         })
     }
 
-    fn read_registered_class_object(
-        &mut self,
-        dxf_name: &str,
-    ) -> Result<RegisteredClassObject> {
+    fn read_registered_class_object(&mut self, dxf_name: &str) -> Result<RegisteredClassObject> {
         let mut object = RegisteredClassObject {
             dxf_name: dxf_name.to_string(),
             cpp_class_name: registered_class_cpp_name(dxf_name).to_string(),
@@ -9336,21 +10879,19 @@ impl<'a> SectionReader<'a> {
                 }
                 100 => subclass = pair.value_string,
                 102 => group = pair.value_string,
-                330 if group == "{ACAD_REACTORS" => object
-                    .reactors
-                    .push(parse_dxf_handle(&pair.value_string)),
+                330 if group == "{ACAD_REACTORS" => {
+                    object.reactors.push(parse_dxf_handle(&pair.value_string))
+                }
                 360 if group == "{ACAD_XDICTIONARY" => {
-                    object.xdictionary_handle =
-                        Some(parse_dxf_handle(&pair.value_string));
+                    object.xdictionary_handle = Some(parse_dxf_handle(&pair.value_string));
                 }
                 330 if !owner_seen && group.is_empty() => {
                     object.owner = parse_dxf_handle(&pair.value_string);
                     owner_seen = true;
                 }
-                _ => object.properties.push(semantic_property_from_pair(
-                    &subclass,
-                    &pair,
-                )),
+                _ => object
+                    .properties
+                    .push(semantic_property_from_pair(&subclass, &pair)),
             }
             if group == "}" {
                 group.clear();
@@ -9375,12 +10916,11 @@ impl<'a> SectionReader<'a> {
                     object.handle = parse_dxf_handle(&pair.value_string);
                 }
                 102 => group = pair.value_string,
-                330 if group == "{ACAD_REACTORS" => object
-                    .reactors
-                    .push(parse_dxf_handle(&pair.value_string)),
+                330 if group == "{ACAD_REACTORS" => {
+                    object.reactors.push(parse_dxf_handle(&pair.value_string))
+                }
                 360 if group == "{ACAD_XDICTIONARY" => {
-                    object.xdictionary_handle =
-                        Some(parse_dxf_handle(&pair.value_string));
+                    object.xdictionary_handle = Some(parse_dxf_handle(&pair.value_string));
                 }
                 330 if !owner_seen && group.is_empty() => {
                     object.owner = parse_dxf_handle(&pair.value_string);
@@ -9394,22 +10934,21 @@ impl<'a> SectionReader<'a> {
                         360 => crate::objects::ProxyReferenceKind::HardPointer,
                         _ => unreachable!(),
                     };
-                    object.object_ids.push(crate::objects::ProxyObjectReference {
-                        handle: parse_dxf_handle(&pair.value_string),
-                        kind,
-                    });
+                    object
+                        .object_ids
+                        .push(crate::objects::ProxyObjectReference {
+                            handle: parse_dxf_handle(&pair.value_string),
+                            kind,
+                        });
                 }
                 90 => object.proxy_id = pair.as_i32().unwrap_or(499),
                 91 => object.class_id = pair.as_i32().unwrap_or(499),
                 95 => object.version = pair.as_i32().unwrap_or(0),
-                71 => object.dwg_version =
-                    pair.as_i32().unwrap_or(0),
-                97 => object.maintenance_version =
-                    pair.as_i32().unwrap_or(0),
+                71 => object.dwg_version = pair.as_i32().unwrap_or(0),
+                97 => object.maintenance_version = pair.as_i32().unwrap_or(0),
                 70 => object.from_dxf = pair.as_i16().unwrap_or(0) != 0,
                 93 => {
-                    object_data_bits =
-                        pair.as_i32().unwrap_or(0).max(0) as u32;
+                    object_data_bits = pair.as_i32().unwrap_or(0).max(0) as u32;
                 }
                 310 => append_hex_bytes(&mut binary, &pair.value_string),
                 _ => {}
@@ -9418,42 +10957,27 @@ impl<'a> SectionReader<'a> {
                 group.clear();
             }
         }
-        object.payload =
-            crate::objects::ProxyPayload::from_bits(&binary, object_data_bits);
+        object.payload = crate::objects::ProxyPayload::from_bits(&binary, object_data_bits);
         if object.dwg_version == 0 && object.maintenance_version == 0 {
             object.dwg_version = object.version & 0xffff;
             object.maintenance_version = object.version >> 16;
         } else {
-            object.version = (object.maintenance_version << 16)
-                | (object.dwg_version & 0xffff);
+            object.version = (object.maintenance_version << 16) | (object.dwg_version & 0xffff);
         }
         Ok(object)
     }
 
-    fn read_dgn_line_style_object(
-        &mut self,
-        dxf_name: &str,
-    ) -> Result<DgnLineStyleObject> {
+    fn read_dgn_line_style_object(&mut self, dxf_name: &str) -> Result<DgnLineStyleObject> {
         let mut object = self.read_registered_class_object(dxf_name)?;
         let name = dxf_name.to_uppercase();
         if name == "LSDEFINITION" {
             let subclass = "AcDbLSDefinition";
-            let description = match take_dgn_property(
-                &mut object.properties,
-                subclass,
-                1,
-            ) {
+            let description = match take_dgn_property(&mut object.properties, subclass, 1) {
                 Some(SemanticPropertyValue::Text(value)) => value,
                 _ => String::new(),
             };
-            let version = dgn_i32(
-                take_dgn_property(&mut object.properties, subclass, 90),
-                0,
-            );
-            let style_number = dgn_i32(
-                take_dgn_property(&mut object.properties, subclass, 91),
-                0,
-            );
+            let version = dgn_i32(take_dgn_property(&mut object.properties, subclass, 90), 0);
+            let style_number = dgn_i32(take_dgn_property(&mut object.properties, subclass, 91), 0);
             return Ok(DgnLineStyleObject {
                 handle: object.handle,
                 owner: object.owner,
@@ -9481,20 +11005,9 @@ impl<'a> SectionReader<'a> {
                         take_dgn_property(&mut object.properties, subclass, 41),
                         0.0,
                     ),
-                    units_type: dgn_i32(
-                        take_dgn_property(&mut object.properties, subclass, 92),
-                        0,
-                    ),
-                    is_element: dgn_bool(take_dgn_property(
-                        &mut object.properties,
-                        subclass,
-                        291,
-                    )),
-                    is_physical: dgn_bool(take_dgn_property(
-                        &mut object.properties,
-                        subclass,
-                        292,
-                    )),
+                    units_type: dgn_i32(take_dgn_property(&mut object.properties, subclass, 92), 0),
+                    is_element: dgn_bool(take_dgn_property(&mut object.properties, subclass, 291)),
+                    is_physical: dgn_bool(take_dgn_property(&mut object.properties, subclass, 292)),
                     is_scale_independent: dgn_bool(take_dgn_property(
                         &mut object.properties,
                         subclass,
@@ -9515,26 +11028,13 @@ impl<'a> SectionReader<'a> {
             });
         }
         let (kind, subclass) = match name.as_str() {
-            "LSSYMBOLCOMPONENT" => (
-                DgnLsComponentType::Symbol,
-                "AcDbLSSymbolComponent",
-            ),
-            "LSCOMPOUNDCOMPONENT" => (
-                DgnLsComponentType::Compound,
-                "AcDbLSCompoundComponent",
-            ),
-            "LSSTROKEPATTERNCOMPONENT" => (
-                DgnLsComponentType::Stroke,
-                "AcDbLSStrokePatternComponent",
-            ),
-            "LSPOINTCOMPONENT" => (
-                DgnLsComponentType::Point,
-                "AcDbLSPointComponent",
-            ),
-            "LSINTERNALCOMPONENT" => (
-                DgnLsComponentType::Internal,
-                "AcDbLSInternalComponent",
-            ),
+            "LSSYMBOLCOMPONENT" => (DgnLsComponentType::Symbol, "AcDbLSSymbolComponent"),
+            "LSCOMPOUNDCOMPONENT" => (DgnLsComponentType::Compound, "AcDbLSCompoundComponent"),
+            "LSSTROKEPATTERNCOMPONENT" => {
+                (DgnLsComponentType::Stroke, "AcDbLSStrokePatternComponent")
+            }
+            "LSPOINTCOMPONENT" => (DgnLsComponentType::Point, "AcDbLSPointComponent"),
+            "LSINTERNALCOMPONENT" => (DgnLsComponentType::Internal, "AcDbLSInternalComponent"),
             _ => {
                 return Ok(DgnLineStyleObject {
                     handle: object.handle,
@@ -9550,60 +11050,30 @@ impl<'a> SectionReader<'a> {
                 });
             }
         };
-        let description =
-            match take_dgn_property(&mut object.properties, subclass, 1) {
-                Some(SemanticPropertyValue::Text(value)) => value,
-                _ => String::new(),
-            };
-        let version = dgn_i32(
-            take_dgn_property(&mut object.properties, subclass, 90),
-            0,
-        );
-        let _component_type =
-            take_dgn_property(&mut object.properties, subclass, 91);
-        let component_uid =
-            dgn_uid(take_dgn_property(&mut object.properties, subclass, 310));
-        let scale = dgn_f64(
-            take_dgn_property(&mut object.properties, subclass, 40),
-            1.0,
-        );
-        let property_flags = dgn_i32(
-            take_dgn_property(&mut object.properties, subclass, 280),
-            0,
-        ) as u8;
+        let description = match take_dgn_property(&mut object.properties, subclass, 1) {
+            Some(SemanticPropertyValue::Text(value)) => value,
+            _ => String::new(),
+        };
+        let version = dgn_i32(take_dgn_property(&mut object.properties, subclass, 90), 0);
+        let _component_type = take_dgn_property(&mut object.properties, subclass, 91);
+        let component_uid = dgn_uid(take_dgn_property(&mut object.properties, subclass, 310));
+        let scale = dgn_f64(take_dgn_property(&mut object.properties, subclass, 40), 1.0);
+        let property_flags =
+            dgn_i32(take_dgn_property(&mut object.properties, subclass, 280), 0) as u8;
         let component = match kind {
-            DgnLsComponentType::Symbol => {
-                DgnLsComponentData::Symbol(DgnLsSymbolComponent {
-                    stored_unit_scale: dgn_f64(
-                        take_dgn_property(&mut object.properties, subclass, 41),
-                        1.0,
-                    ),
-                    unit_scale: dgn_f64(
-                        take_dgn_property(&mut object.properties, subclass, 42),
-                        1.0,
-                    ),
-                    has_unit_scale: dgn_bool(take_dgn_property(
-                        &mut object.properties,
-                        subclass,
-                        290,
-                    )),
-                    is_3d: dgn_bool(take_dgn_property(
-                        &mut object.properties,
-                        subclass,
-                        291,
-                    )),
-                    block: dgn_handle(take_dgn_property(
-                        &mut object.properties,
-                        subclass,
-                        340,
-                    )),
-                })
-            }
+            DgnLsComponentType::Symbol => DgnLsComponentData::Symbol(DgnLsSymbolComponent {
+                stored_unit_scale: dgn_f64(
+                    take_dgn_property(&mut object.properties, subclass, 41),
+                    1.0,
+                ),
+                unit_scale: dgn_f64(take_dgn_property(&mut object.properties, subclass, 42), 1.0),
+                has_unit_scale: dgn_bool(take_dgn_property(&mut object.properties, subclass, 290)),
+                is_3d: dgn_bool(take_dgn_property(&mut object.properties, subclass, 291)),
+                block: dgn_handle(take_dgn_property(&mut object.properties, subclass, 340)),
+            }),
             DgnLsComponentType::Compound => {
-                let offsets =
-                    take_all_dgn_properties(&mut object.properties, subclass, 41);
-                let handles =
-                    take_all_dgn_properties(&mut object.properties, subclass, 340);
+                let offsets = take_all_dgn_properties(&mut object.properties, subclass, 41);
+                let handles = take_all_dgn_properties(&mut object.properties, subclass, 340);
                 let count = offsets.len().max(handles.len());
                 let mut entries = Vec::with_capacity(count);
                 for index in 0..count {
@@ -9614,72 +11084,49 @@ impl<'a> SectionReader<'a> {
                 }
                 DgnLsComponentData::Compound(DgnLsCompoundComponent { entries })
             }
-            DgnLsComponentType::Stroke => DgnLsComponentData::Stroke(
-                read_dgn_stroke_pattern_dxf(&mut object.properties, subclass),
-            ),
+            DgnLsComponentType::Stroke => DgnLsComponentData::Stroke(read_dgn_stroke_pattern_dxf(
+                &mut object.properties,
+                subclass,
+            )),
             DgnLsComponentType::Point => {
-                let count = dgn_i32(
-                    take_dgn_property(&mut object.properties, subclass, 93),
-                    0,
-                )
-                .max(0) as usize;
-                let stroke_component = dgn_handle(take_dgn_property(
-                    &mut object.properties,
-                    subclass,
-                    340,
-                ));
+                let count = dgn_i32(take_dgn_property(&mut object.properties, subclass, 93), 0)
+                    .max(0) as usize;
+                let stroke_component =
+                    dgn_handle(take_dgn_property(&mut object.properties, subclass, 340));
                 let mut symbol_handles =
                     take_all_dgn_properties(&mut object.properties, subclass, 341);
-                let mut partial =
-                    take_all_dgn_properties(&mut object.properties, subclass, 290);
-                let mut clip =
-                    take_all_dgn_properties(&mut object.properties, subclass, 291);
-                let mut stretch =
-                    take_all_dgn_properties(&mut object.properties, subclass, 292);
-                let mut projected =
-                    take_all_dgn_properties(&mut object.properties, subclass, 293);
-                let mut colors =
-                    take_all_dgn_properties(&mut object.properties, subclass, 294);
+                let mut partial = take_all_dgn_properties(&mut object.properties, subclass, 290);
+                let mut clip = take_all_dgn_properties(&mut object.properties, subclass, 291);
+                let mut stretch = take_all_dgn_properties(&mut object.properties, subclass, 292);
+                let mut projected = take_all_dgn_properties(&mut object.properties, subclass, 293);
+                let mut colors = take_all_dgn_properties(&mut object.properties, subclass, 294);
                 let mut lineweights =
                     take_all_dgn_properties(&mut object.properties, subclass, 295);
-                let mut justify =
-                    take_all_dgn_properties(&mut object.properties, subclass, 92);
-                let mut rotations =
-                    take_all_dgn_properties(&mut object.properties, subclass, 94);
-                let mut vertices =
-                    take_all_dgn_properties(&mut object.properties, subclass, 95);
-                let mut x_offsets =
-                    take_all_dgn_properties(&mut object.properties, subclass, 41);
-                let mut y_offsets =
-                    take_all_dgn_properties(&mut object.properties, subclass, 42);
-                let mut angles =
-                    take_all_dgn_properties(&mut object.properties, subclass, 43);
+                let mut justify = take_all_dgn_properties(&mut object.properties, subclass, 92);
+                let mut rotations = take_all_dgn_properties(&mut object.properties, subclass, 94);
+                let mut vertices = take_all_dgn_properties(&mut object.properties, subclass, 95);
+                let mut x_offsets = take_all_dgn_properties(&mut object.properties, subclass, 41);
+                let mut y_offsets = take_all_dgn_properties(&mut object.properties, subclass, 42);
+                let mut angles = take_all_dgn_properties(&mut object.properties, subclass, 43);
                 let mut stroke_numbers =
                     take_all_dgn_properties(&mut object.properties, subclass, 96);
                 let mut symbols = Vec::with_capacity(count);
                 for _ in 0..count {
                     symbols.push(DgnLsSymbolReference {
-                        symbol_component: dgn_handle(take_first(
-                            &mut symbol_handles,
-                        )),
+                        symbol_component: dgn_handle(take_first(&mut symbol_handles)),
                         partial_strokes: dgn_bool(take_first(&mut partial)),
                         clip_partial: dgn_bool(take_first(&mut clip)),
                         allow_stretch: dgn_bool(take_first(&mut stretch)),
                         partial_projected: dgn_bool(take_first(&mut projected)),
                         use_symbol_color: dgn_bool(take_first(&mut colors)),
-                        use_symbol_lineweight: dgn_bool(take_first(
-                            &mut lineweights,
-                        )),
+                        use_symbol_lineweight: dgn_bool(take_first(&mut lineweights)),
                         justify: dgn_i32(take_first(&mut justify), 0),
                         rotation_type: dgn_i32(take_first(&mut rotations), 0),
                         vertex_mask: dgn_i32(take_first(&mut vertices), 0),
                         x_offset: dgn_f64(take_first(&mut x_offsets), 0.0),
                         y_offset: dgn_f64(take_first(&mut y_offsets), 0.0),
                         angle: dgn_f64(take_first(&mut angles), 0.0),
-                        stroke_number: dgn_i32(
-                            take_first(&mut stroke_numbers),
-                            0,
-                        ),
+                        stroke_number: dgn_i32(take_first(&mut stroke_numbers), 0),
                     });
                 }
                 DgnLsComponentData::Point(DgnLsPointComponent {
@@ -9688,8 +11135,7 @@ impl<'a> SectionReader<'a> {
                 })
             }
             DgnLsComponentType::Internal => {
-                let pattern =
-                    read_dgn_stroke_pattern_dxf(&mut object.properties, subclass);
+                let pattern = read_dgn_stroke_pattern_dxf(&mut object.properties, subclass);
                 DgnLsComponentData::Internal(DgnLsInternalComponent {
                     pattern,
                     internal_version: dgn_i32(
@@ -9705,10 +11151,7 @@ impl<'a> SectionReader<'a> {
                         subclass,
                         297,
                     )),
-                    line_code: dgn_i32(
-                        take_dgn_property(&mut object.properties, subclass, 98),
-                        0,
-                    ),
+                    line_code: dgn_i32(take_dgn_property(&mut object.properties, subclass, 98), 0),
                 })
             }
         };
@@ -9741,22 +11184,58 @@ impl<'a> SectionReader<'a> {
                 break;
             }
             match pair.code {
-                70 => { if let Some(v) = pair.as_i16() { ole.version = v; } }
+                70 => {
+                    if let Some(v) = pair.as_i16() {
+                        ole.version = v;
+                    }
+                }
                 3 => ole.source_application = pair.value_string.clone(),
-                10 => { if let Some(v) = pair.as_double() { ole.upper_left_corner.x = v; } }
-                20 => { if let Some(v) = pair.as_double() { ole.upper_left_corner.y = v; } }
-                30 => { if let Some(v) = pair.as_double() { ole.upper_left_corner.z = v; } }
-                11 => { if let Some(v) = pair.as_double() { ole.lower_right_corner.x = v; } }
-                21 => { if let Some(v) = pair.as_double() { ole.lower_right_corner.y = v; } }
-                31 => { if let Some(v) = pair.as_double() { ole.lower_right_corner.z = v; } }
-                71 => { if let Some(v) = pair.as_i16() { ole.ole_object_type = OleObjectType::from_i16(v); } }
+                10 => {
+                    if let Some(v) = pair.as_double() {
+                        ole.upper_left_corner.x = v;
+                    }
+                }
+                20 => {
+                    if let Some(v) = pair.as_double() {
+                        ole.upper_left_corner.y = v;
+                    }
+                }
+                30 => {
+                    if let Some(v) = pair.as_double() {
+                        ole.upper_left_corner.z = v;
+                    }
+                }
+                11 => {
+                    if let Some(v) = pair.as_double() {
+                        ole.lower_right_corner.x = v;
+                    }
+                }
+                21 => {
+                    if let Some(v) = pair.as_double() {
+                        ole.lower_right_corner.y = v;
+                    }
+                }
+                31 => {
+                    if let Some(v) = pair.as_double() {
+                        ole.lower_right_corner.z = v;
+                    }
+                }
+                71 => {
+                    if let Some(v) = pair.as_i16() {
+                        ole.ole_object_type = OleObjectType::from_i16(v);
+                    }
+                }
                 72 => {
                     if let Some(v) = pair.as_i16() {
                         ole.is_paper_space = v != 0;
                         ole.dwg_mode = if ole.is_paper_space { 1 } else { 0 };
                     }
                 }
-                73 => { if let Some(v) = pair.as_i16() { ole.lock_aspect = v.clamp(0, u8::MAX as i16) as u8; } }
+                73 => {
+                    if let Some(v) = pair.as_i16() {
+                        ole.lock_aspect = v.clamp(0, u8::MAX as i16) as u8;
+                    }
+                }
                 310 => {
                     // Binary data chunk (hex-encoded)
                     let hex = pair.value_string.trim();
@@ -9769,14 +11248,15 @@ impl<'a> SectionReader<'a> {
                     }
                 }
                 1 | 90 => { /* end marker and length */ }
-                _ => { self.try_read_common_entity_code(&pair, &mut ole.common)?; }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut ole.common)?;
+                }
             }
         }
 
         // Concatenate binary chunks
         let data: Vec<u8> = binary_chunks.into_iter().flatten().collect();
-        let (storage, envelope, _, _) =
-            Ole2Frame::decode_payload(&data);
+        let (storage, envelope, _, _) = Ole2Frame::decode_payload(&data);
         ole.storage = storage;
         ole.envelope = envelope;
 
@@ -9809,7 +11289,9 @@ impl<'a> SectionReader<'a> {
                         point.common.line_weight = LineWeight::from_value(lw);
                     }
                 }
-                10 | 20 | 30 => { location.add_coordinate(&pair); }
+                10 | 20 | 30 => {
+                    location.add_coordinate(&pair);
+                }
                 39 => {
                     if let Some(thickness) = pair.as_double() {
                         point.thickness = thickness;
@@ -9820,8 +11302,12 @@ impl<'a> SectionReader<'a> {
                         point.x_axis_angle = a;
                     }
                 }
-                210 | 220 | 230 => { normal.add_coordinate(&pair); }
-                _ => { self.try_read_common_entity_code(&pair, &mut point.common)?; }
+                210 | 220 | 230 => {
+                    normal.add_coordinate(&pair);
+                }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut point.common)?;
+                }
             }
         }
 
@@ -9861,15 +11347,23 @@ impl<'a> SectionReader<'a> {
                         line.common.line_weight = LineWeight::from_value(lw);
                     }
                 }
-                10 | 20 | 30 => { start.add_coordinate(&pair); }
-                11 | 21 | 31 => { end.add_coordinate(&pair); }
+                10 | 20 | 30 => {
+                    start.add_coordinate(&pair);
+                }
+                11 | 21 | 31 => {
+                    end.add_coordinate(&pair);
+                }
                 39 => {
                     if let Some(thickness) = pair.as_double() {
                         line.thickness = thickness;
                     }
                 }
-                210 | 220 | 230 => { normal.add_coordinate(&pair); }
-                _ => { self.try_read_common_entity_code(&pair, &mut line.common)?; }
+                210 | 220 | 230 => {
+                    normal.add_coordinate(&pair);
+                }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut line.common)?;
+                }
             }
         }
 
@@ -9910,7 +11404,9 @@ impl<'a> SectionReader<'a> {
                         circle.common.line_weight = LineWeight::from_value(lw);
                     }
                 }
-                10 | 20 | 30 => { center.add_coordinate(&pair); }
+                10 | 20 | 30 => {
+                    center.add_coordinate(&pair);
+                }
                 40 => {
                     if let Some(radius) = pair.as_double() {
                         circle.radius = radius;
@@ -9921,8 +11417,12 @@ impl<'a> SectionReader<'a> {
                         circle.thickness = thickness;
                     }
                 }
-                210 | 220 | 230 => { normal.add_coordinate(&pair); }
-                _ => { self.try_read_common_entity_code(&pair, &mut circle.common)?; }
+                210 | 220 | 230 => {
+                    normal.add_coordinate(&pair);
+                }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut circle.common)?;
+                }
             }
         }
 
@@ -9960,7 +11460,9 @@ impl<'a> SectionReader<'a> {
                         arc.common.line_weight = LineWeight::from_value(lw);
                     }
                 }
-                10 | 20 | 30 => { center.add_coordinate(&pair); }
+                10 | 20 | 30 => {
+                    center.add_coordinate(&pair);
+                }
                 40 => {
                     if let Some(radius) = pair.as_double() {
                         arc.radius = radius;
@@ -9981,8 +11483,12 @@ impl<'a> SectionReader<'a> {
                         arc.thickness = thickness;
                     }
                 }
-                210 | 220 | 230 => { normal.add_coordinate(&pair); }
-                _ => { self.try_read_common_entity_code(&pair, &mut arc.common)?; }
+                210 | 220 | 230 => {
+                    normal.add_coordinate(&pair);
+                }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut arc.common)?;
+                }
             }
         }
 
@@ -10021,8 +11527,12 @@ impl<'a> SectionReader<'a> {
                         ellipse.common.line_weight = LineWeight::from_value(lw);
                     }
                 }
-                10 | 20 | 30 => { center.add_coordinate(&pair); }
-                11 | 21 | 31 => { major_axis.add_coordinate(&pair); }
+                10 | 20 | 30 => {
+                    center.add_coordinate(&pair);
+                }
+                11 | 21 | 31 => {
+                    major_axis.add_coordinate(&pair);
+                }
                 40 => {
                     if let Some(ratio) = pair.as_double() {
                         ellipse.minor_axis_ratio = ratio;
@@ -10038,8 +11548,12 @@ impl<'a> SectionReader<'a> {
                         ellipse.end_parameter = angle;
                     }
                 }
-                210 | 220 | 230 => { normal.add_coordinate(&pair); }
-                _ => { self.try_read_common_entity_code(&pair, &mut ellipse.common)?; }
+                210 | 220 | 230 => {
+                    normal.add_coordinate(&pair);
+                }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut ellipse.common)?;
+                }
             }
         }
 
@@ -10058,17 +11572,15 @@ impl<'a> SectionReader<'a> {
 
     /// Read a POLYLINE or POLYFACE MESH entity, returning the appropriate EntityType.
     fn read_polyline_entity(&mut self) -> Result<Option<EntityType>> {
-        use crate::entities::polyline::{Vertex2D, VertexFlags, PolylineFlags, SmoothSurfaceType};
-        use crate::entities::polyline3d::{
-            Polyline3D, Vertex3DPolyline, Polyline3DFlags,
-            SmoothSurfaceType as SmoothSurface3D,
+        use crate::entities::polyface_mesh::{
+            PolyfaceFace, PolyfaceMesh, PolyfaceMeshFlags, PolyfaceVertex, PolyfaceVertexFlags,
         };
         use crate::entities::polygon_mesh::{
-            PolygonMesh, PolygonMeshVertex, PolygonMeshFlags, SurfaceSmoothType,
+            PolygonMesh, PolygonMeshFlags, PolygonMeshVertex, SurfaceSmoothType,
         };
-        use crate::entities::polyface_mesh::{
-            PolyfaceMesh, PolyfaceVertex, PolyfaceFace,
-            PolyfaceMeshFlags, PolyfaceVertexFlags,
+        use crate::entities::polyline::{PolylineFlags, SmoothSurfaceType, Vertex2D, VertexFlags};
+        use crate::entities::polyline3d::{
+            Polyline3D, Polyline3DFlags, SmoothSurfaceType as SmoothSurface3D, Vertex3DPolyline,
         };
 
         // One captured geometry vertex — mapped to the target vertex type once
@@ -10131,22 +11643,86 @@ impl<'a> SectionReader<'a> {
                             break;
                         }
                         match vpair.code {
-                            5 => { if let Some(h) = vpair.as_handle() { vhandle = h; } }
-                            8 => { vlayer = vpair.value_string.clone(); }
-                            10 => { if let Some(v) = vpair.as_double() { loc.x = v; } }
-                            20 => { if let Some(v) = vpair.as_double() { loc.y = v; } }
-                            30 => { if let Some(v) = vpair.as_double() { loc.z = v; } }
-                            40 => { if let Some(v) = vpair.as_double() { sw = v; has_sw = true; } }
-                            41 => { if let Some(v) = vpair.as_double() { ew = v; has_ew = true; } }
-                            42 => { if let Some(v) = vpair.as_double() { bulge = v; } }
-                            50 => { if let Some(v) = vpair.as_double() { tangent = v; } }
-                            62 => { if let Some(ci) = vpair.as_i16() { vcolor = Some(Color::from_index(ci)); } }
-                            420 => { if let Some(tc) = vpair.as_i32() { vcolor = Some(Color::from_true_color_value(tc)); } }
-                            70 => { if let Some(v) = vpair.as_i16() { vflags = v; } }
-                            71 => { if let Some(v) = vpair.as_i16() { vi1 = v; } }
-                            72 => { if let Some(v) = vpair.as_i16() { vi2 = v; } }
-                            73 => { if let Some(v) = vpair.as_i16() { vi3 = v; } }
-                            74 => { if let Some(v) = vpair.as_i16() { vi4 = v; } }
+                            5 => {
+                                if let Some(h) = vpair.as_handle() {
+                                    vhandle = h;
+                                }
+                            }
+                            8 => {
+                                vlayer = vpair.value_string.clone();
+                            }
+                            10 => {
+                                if let Some(v) = vpair.as_double() {
+                                    loc.x = v;
+                                }
+                            }
+                            20 => {
+                                if let Some(v) = vpair.as_double() {
+                                    loc.y = v;
+                                }
+                            }
+                            30 => {
+                                if let Some(v) = vpair.as_double() {
+                                    loc.z = v;
+                                }
+                            }
+                            40 => {
+                                if let Some(v) = vpair.as_double() {
+                                    sw = v;
+                                    has_sw = true;
+                                }
+                            }
+                            41 => {
+                                if let Some(v) = vpair.as_double() {
+                                    ew = v;
+                                    has_ew = true;
+                                }
+                            }
+                            42 => {
+                                if let Some(v) = vpair.as_double() {
+                                    bulge = v;
+                                }
+                            }
+                            50 => {
+                                if let Some(v) = vpair.as_double() {
+                                    tangent = v;
+                                }
+                            }
+                            62 => {
+                                if let Some(ci) = vpair.as_i16() {
+                                    vcolor = Some(Color::from_index(ci));
+                                }
+                            }
+                            420 => {
+                                if let Some(tc) = vpair.as_i32() {
+                                    vcolor = Some(Color::from_true_color_value(tc));
+                                }
+                            }
+                            70 => {
+                                if let Some(v) = vpair.as_i16() {
+                                    vflags = v;
+                                }
+                            }
+                            71 => {
+                                if let Some(v) = vpair.as_i16() {
+                                    vi1 = v;
+                                }
+                            }
+                            72 => {
+                                if let Some(v) = vpair.as_i16() {
+                                    vi2 = v;
+                                }
+                            }
+                            73 => {
+                                if let Some(v) = vpair.as_i16() {
+                                    vi3 = v;
+                                }
+                            }
+                            74 => {
+                                if let Some(v) = vpair.as_i16() {
+                                    vi4 = v;
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -10269,8 +11845,12 @@ impl<'a> SectionReader<'a> {
                             smooth = v;
                         }
                     }
-                    210 | 220 | 230 => { normal.add_coordinate(&pair); }
-                    _ => { self.try_read_common_entity_code(&pair, &mut common)?; }
+                    210 | 220 | 230 => {
+                        normal.add_coordinate(&pair);
+                    }
+                    _ => {
+                        self.try_read_common_entity_code(&pair, &mut common)?;
+                    }
                 }
             }
         }
@@ -10348,8 +11928,16 @@ impl<'a> SectionReader<'a> {
                 .map(|rv| {
                     let mut v = Vertex2D::new(rv.loc);
                     v.flags = VertexFlags::from_bits(rv.vflags as u8);
-                    v.start_width = if rv.has_start_width { rv.start_width } else { def_start_width };
-                    v.end_width = if rv.has_end_width { rv.end_width } else { def_end_width };
+                    v.start_width = if rv.has_start_width {
+                        rv.start_width
+                    } else {
+                        def_start_width
+                    };
+                    v.end_width = if rv.has_end_width {
+                        rv.end_width
+                    } else {
+                        def_end_width
+                    };
                     v.bulge = rv.bulge;
                     v.curve_tangent = rv.tangent;
                     v
@@ -10469,8 +12057,12 @@ impl<'a> SectionReader<'a> {
                         }
                     }
                 }
-                210 | 220 | 230 => { normal.add_coordinate(&pair); }
-                _ => { self.try_read_common_entity_code(&pair, &mut lwpolyline.common)?; }
+                210 | 220 | 230 => {
+                    normal.add_coordinate(&pair);
+                }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut lwpolyline.common)?;
+                }
             }
         }
 
@@ -10511,7 +12103,9 @@ impl<'a> SectionReader<'a> {
                         text.common.line_weight = LineWeight::from_value(lw);
                     }
                 }
-                10 | 20 | 30 => { insertion.add_coordinate(&pair); }
+                10 | 20 | 30 => {
+                    insertion.add_coordinate(&pair);
+                }
                 11 | 21 | 31 => {
                     alignment.add_coordinate(&pair);
                     has_alignment_point = true;
@@ -10570,8 +12164,12 @@ impl<'a> SectionReader<'a> {
                     }
                 }
                 7 => text.style = pair.value_string.clone(),
-                210 | 220 | 230 => { normal.add_coordinate(&pair); }
-                _ => { self.try_read_common_entity_code(&pair, &mut text.common)?; }
+                210 | 220 | 230 => {
+                    normal.add_coordinate(&pair);
+                }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut text.common)?;
+                }
             }
         }
 
@@ -10616,7 +12214,9 @@ impl<'a> SectionReader<'a> {
                         mtext.common.line_weight = LineWeight::from_value(lw);
                     }
                 }
-                10 | 20 | 30 => { insertion.add_coordinate(&pair); }
+                10 | 20 | 30 => {
+                    insertion.add_coordinate(&pair);
+                }
                 1 | 3 => {
                     // Text content (can be split across multiple codes)
                     mtext.value.push_str(&pair.value_string);
@@ -10721,13 +12321,14 @@ impl<'a> SectionReader<'a> {
                 }
                 73 => {
                     if let Some(ls) = pair.as_i16() {
-                        mtext.line_spacing_style =
-                            crate::entities::LineSpacingStyle::from(ls);
+                        mtext.line_spacing_style = crate::entities::LineSpacingStyle::from(ls);
                     }
                 }
                 7 => mtext.style = pair.value_string.clone(),
                 // X-axis direction vector (takes priority over rotation 50).
-                11 | 21 | 31 => { x_direction.add_coordinate(&pair); }
+                11 | 21 | 31 => {
+                    x_direction.add_coordinate(&pair);
+                }
                 // Defined rectangle height (0 = auto).
                 46 => {
                     if let Some(h) = pair.as_double() {
@@ -10766,7 +12367,9 @@ impl<'a> SectionReader<'a> {
                         mtext.background_transparency = t;
                     }
                 }
-                210 | 220 | 230 => { normal.add_coordinate(&pair); }
+                210 | 220 | 230 => {
+                    normal.add_coordinate(&pair);
+                }
                 // R2018+ column/layout companion — its codes shadow the
                 // entity's own, so it must not fall through this match. The
                 // embedded object carries the MTEXT column layout.
@@ -10774,7 +12377,9 @@ impl<'a> SectionReader<'a> {
                     mtext.column_data = self.read_mtext_embedded_object()?;
                     reading_columns = false;
                 }
-                _ => { self.try_read_common_entity_code(&pair, &mut mtext.common)?; }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut mtext.common)?;
+                }
             }
         }
 
@@ -10863,8 +12468,12 @@ impl<'a> SectionReader<'a> {
                         spline.fit_tolerance = t;
                     }
                 }
-                12 | 22 | 32 => { begin_tangent.add_coordinate(&pair); }
-                13 | 23 | 33 => { end_tangent.add_coordinate(&pair); }
+                12 | 22 | 32 => {
+                    begin_tangent.add_coordinate(&pair);
+                }
+                13 | 23 | 33 => {
+                    end_tangent.add_coordinate(&pair);
+                }
                 10 | 20 | 30 => {
                     // Control point coordinates
                     if pair.code == 10 {
@@ -10893,8 +12502,12 @@ impl<'a> SectionReader<'a> {
                     }
                     current_fit_point.add_coordinate(&pair);
                 }
-                210 | 220 | 230 => { normal.add_coordinate(&pair); }
-                _ => { self.try_read_common_entity_code(&pair, &mut spline.common)?; }
+                210 | 220 | 230 => {
+                    normal.add_coordinate(&pair);
+                }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut spline.common)?;
+                }
             }
         }
 
@@ -11130,23 +12743,15 @@ impl<'a> SectionReader<'a> {
             "SECTIONOBJECT" => self.read_section_object_entity(),
             "ARCALIGNEDTEXT" => self.read_arc_aligned_text_entity(),
             "RTEXT" => self.read_remote_text_entity(),
-            "POSITIONMARKER" | "GEOPOSITIONMARKER" => {
-                self.read_geo_position_marker_entity()
-            }
-            "COORDINATION_MODEL" | "NAVISWORKSMODEL" => {
-                self.read_coordination_model_entity()
-            }
+            "POSITIONMARKER" | "GEOPOSITIONMARKER" => self.read_geo_position_marker_entity(),
+            "COORDINATION_MODEL" | "NAVISWORKSMODEL" => self.read_coordination_model_entity(),
             "ACDBPOINTCLOUD" | "POINTCLOUD" => self.read_point_cloud_entity(),
-            "ACDBPOINTCLOUDEX" | "POINTCLOUDEX" => {
-                self.read_point_cloud_ex_entity()
-            }
+            "ACDBPOINTCLOUDEX" | "POINTCLOUDEX" => self.read_point_cloud_ex_entity(),
             "ACAD_PROXY_ENTITY" => self.read_proxy_entity_dxf(),
             "OLEFRAME" => self.read_ole_frame_entity(),
             "LAYOUTPRINTCONFIG" => self.read_layout_print_config_entity(),
             "FORMAT" => self.read_format_entity(),
-            "REPEAT" | "ENDREP" | "LOAD" | "JUMP" => {
-                self.read_legacy_entity(entity_name)
-            }
+            "REPEAT" | "ENDREP" | "LOAD" | "JUMP" => self.read_legacy_entity(entity_name),
             "BLOCKANGULARCONSTRAINTPARAMETERENTITY" => {
                 self.read_block_angular_constraint_parameter_entity()
             }
@@ -11160,12 +12765,10 @@ impl<'a> SectionReader<'a> {
         }
     }
 
-    fn read_block_angular_constraint_parameter_entity(
-        &mut self,
-    ) -> Result<Option<ExtendedEntity>> {
+    fn read_block_angular_constraint_parameter_entity(&mut self) -> Result<Option<ExtendedEntity>> {
         use crate::objects::{
-            BlockAngularConstraintParameterEntity, BlockConnection,
-            BlockEvalValue, DynamicBlockData,
+            BlockAngularConstraintParameterEntity, BlockConnection, BlockEvalValue,
+            DynamicBlockData,
         };
         let mut common = EntityCommon::new();
         let mut value = BlockAngularConstraintParameterEntity::default();
@@ -11272,11 +12875,8 @@ impl<'a> SectionReader<'a> {
                         definition_end.add_coordinate(&pair);
                     }
                     91 => {
-                        if property_state_index
-                            < value.constraint.parameter.property_states.len()
-                        {
-                            value.constraint.parameter.property_states
-                                [property_state_index] =
+                        if property_state_index < value.constraint.parameter.property_states.len() {
+                            value.constraint.parameter.property_states[property_state_index] =
                                 pair.as_i32().unwrap_or(0);
                             property_state_index += 1;
                         }
@@ -11309,8 +12909,7 @@ impl<'a> SectionReader<'a> {
                 },
                 "AcDbBlockConstraintParameter" => {
                     if pair.code == 330 {
-                        value.constraint.dependency =
-                            parse_dxf_handle(&pair.value_string);
+                        value.constraint.dependency = parse_dxf_handle(&pair.value_string);
                     } else {
                         self.try_read_common_entity_code(&pair, &mut common)?;
                     }
@@ -11323,23 +12922,15 @@ impl<'a> SectionReader<'a> {
                         label.add_coordinate(&pair);
                     }
                     305 => value.expression_name = pair.value_string.clone(),
-                    306 => {
-                        value.expression_description = pair.value_string.clone()
-                    }
+                    306 => value.expression_description = pair.value_string.clone(),
                     140 => value.angle = pair.as_double().unwrap_or(0.0),
-                    280 => {
-                        value.orientation_on_both_grips =
-                            pair.as_i16().unwrap_or(0) != 0
-                    }
+                    280 => value.orientation_on_both_grips = pair.as_i16().unwrap_or(0) != 0,
                     307 => value.value_set.description = pair.value_string.clone(),
                     96 => value.value_set.flags = pair.as_i32().unwrap_or(0),
                     128 => value.value_set.minimum = pair.as_double().unwrap_or(0.0),
                     129 => value.value_set.maximum = pair.as_double().unwrap_or(0.0),
                     130 => value.value_set.increment = pair.as_double().unwrap_or(0.0),
-                    131 => value
-                        .value_set
-                        .values
-                        .push(pair.as_double().unwrap_or(0.0)),
+                    131 => value.value_set.values.push(pair.as_double().unwrap_or(0.0)),
                     _ => {
                         self.try_read_common_entity_code(&pair, &mut common)?;
                     }
@@ -11363,10 +12954,7 @@ impl<'a> SectionReader<'a> {
         }))
     }
 
-    fn read_empty_dynamic_entity(
-        &mut self,
-        dxf_name: &str,
-    ) -> Result<Option<ExtendedEntity>> {
+    fn read_empty_dynamic_entity(&mut self, dxf_name: &str) -> Result<Option<ExtendedEntity>> {
         let mut common = EntityCommon::new();
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 {
@@ -11380,15 +12968,12 @@ impl<'a> SectionReader<'a> {
         Ok(Some(ExtendedEntity {
             common,
             data: ExtendedEntityData::DynamicBlock(
-                DynamicBlockData::empty_entity_from_dxf_name(dxf_name)
-                    .unwrap_or_default(),
+                DynamicBlockData::empty_entity_from_dxf_name(dxf_name).unwrap_or_default(),
             ),
         }))
     }
 
-    fn read_layout_print_config_entity(
-        &mut self,
-    ) -> Result<Option<ExtendedEntity>> {
+    fn read_layout_print_config_entity(&mut self) -> Result<Option<ExtendedEntity>> {
         let mut common = EntityCommon::new();
         let mut value = LayoutPrintConfigData::default();
         while let Some(pair) = self.reader.read_pair()? {
@@ -11430,10 +13015,7 @@ impl<'a> SectionReader<'a> {
         }))
     }
 
-    fn read_legacy_entity(
-        &mut self,
-        entity_name: &str,
-    ) -> Result<Option<ExtendedEntity>> {
+    fn read_legacy_entity(&mut self, entity_name: &str) -> Result<Option<ExtendedEntity>> {
         let mut common = EntityCommon::new();
         let mut columns = 0;
         let mut rows = 0;
@@ -11549,15 +13131,9 @@ impl<'a> SectionReader<'a> {
             }
             match pair.code {
                 100 => current_subclass = pair.value_string.clone(),
-                90 if current_subclass == "AcDbSection" => {
-                    state = pair.as_i32().unwrap_or(0)
-                }
-                91 if current_subclass == "AcDbSection" => {
-                    flags = pair.as_i32().unwrap_or(0)
-                }
-                1 if current_subclass == "AcDbSection" => {
-                    name = pair.value_string.clone()
-                }
+                90 if current_subclass == "AcDbSection" => state = pair.as_i32().unwrap_or(0),
+                91 if current_subclass == "AcDbSection" => flags = pair.as_i32().unwrap_or(0),
+                1 if current_subclass == "AcDbSection" => name = pair.value_string.clone(),
                 10 | 20 | 30 if current_subclass == "AcDbSection" => {
                     vertical_direction.add_coordinate(&pair);
                 }
@@ -11571,8 +13147,7 @@ impl<'a> SectionReader<'a> {
                     indicator_alpha = pair.as_i16().unwrap_or(0)
                 }
                 62 if current_subclass == "AcDbSection" => {
-                    indicator_color =
-                        Color::from_index(pair.as_i16().unwrap_or(256))
+                    indicator_color = Color::from_index(pair.as_i16().unwrap_or(256))
                 }
                 11 => {
                     if pair.code == 11 && vertex.get_point().is_some() {
@@ -11590,8 +13165,7 @@ impl<'a> SectionReader<'a> {
                 }
                 12 => {
                     if back_vertex.get_point().is_some() {
-                        back_line_vertices
-                            .push(back_vertex.get_point().unwrap_or(Vector3::ZERO));
+                        back_line_vertices.push(back_vertex.get_point().unwrap_or(Vector3::ZERO));
                         back_vertex = PointReader::new();
                     }
                     back_vertex.add_coordinate(&pair);
@@ -11599,8 +13173,7 @@ impl<'a> SectionReader<'a> {
                 22 | 32 => {
                     back_vertex.add_coordinate(&pair);
                     if pair.code == 32 {
-                        back_line_vertices
-                            .push(back_vertex.get_point().unwrap_or(Vector3::ZERO));
+                        back_line_vertices.push(back_vertex.get_point().unwrap_or(Vector3::ZERO));
                         back_vertex = PointReader::new();
                     }
                 }
@@ -11617,9 +13190,7 @@ impl<'a> SectionReader<'a> {
                 state,
                 flags,
                 name,
-                vertical_direction: vertical_direction
-                    .get_point()
-                    .unwrap_or(Vector3::UNIT_Z),
+                vertical_direction: vertical_direction.get_point().unwrap_or(Vector3::UNIT_Z),
                 top_height,
                 bottom_height,
                 indicator_alpha,
@@ -11918,10 +13489,7 @@ impl<'a> SectionReader<'a> {
             data: ExtendedEntityData::OleFrame(OleFrameData {
                 flag,
                 mode,
-                storage:
-                    crate::compound_file::StructuredStoragePayload::decode(
-                        &data,
-                    ),
+                storage: crate::compound_file::StructuredStoragePayload::decode(&data),
             }),
         }))
     }
@@ -11969,9 +13537,7 @@ impl<'a> SectionReader<'a> {
                 2 if current_subclass == "AcDbPointCloud" => {
                     source_files.push(pair.value_string.clone())
                 }
-                3 if current_subclass == "AcDbPointCloud" => {
-                    ucs_name = pair.value_string.clone()
-                }
+                3 if current_subclass == "AcDbPointCloud" => ucs_name = pair.value_string.clone(),
                 11 | 21 | 31 => {
                     extents_min.add_coordinate(&pair);
                 }
@@ -12019,15 +13585,9 @@ impl<'a> SectionReader<'a> {
                 point_count,
                 ucs_name,
                 ucs_origin: ucs_origin.get_point().unwrap_or(Vector3::ZERO),
-                ucs_x_direction: ucs_x_direction
-                    .get_point()
-                    .unwrap_or(Vector3::UNIT_X),
-                ucs_y_direction: ucs_y_direction
-                    .get_point()
-                    .unwrap_or(Vector3::UNIT_Y),
-                ucs_z_direction: ucs_z_direction
-                    .get_point()
-                    .unwrap_or(Vector3::UNIT_Z),
+                ucs_x_direction: ucs_x_direction.get_point().unwrap_or(Vector3::UNIT_X),
+                ucs_y_direction: ucs_y_direction.get_point().unwrap_or(Vector3::UNIT_Y),
+                ucs_z_direction: ucs_z_direction.get_point().unwrap_or(Vector3::UNIT_Z),
                 definition_handle,
                 reactor_handle,
                 show_intensity,
@@ -12083,10 +13643,8 @@ impl<'a> SectionReader<'a> {
             if pair.code == 0 {
                 if let Some(mut value) = crop.take() {
                     value.plane = crop_plane.get_point().unwrap_or(Vector3::ZERO);
-                    value.x_direction =
-                        crop_x_direction.get_point().unwrap_or(Vector3::UNIT_X);
-                    value.y_direction =
-                        crop_y_direction.get_point().unwrap_or(Vector3::UNIT_Y);
+                    value.x_direction = crop_x_direction.get_point().unwrap_or(Vector3::UNIT_X);
+                    value.y_direction = crop_y_direction.get_point().unwrap_or(Vector3::UNIT_Y);
                     croppings.push(value);
                 }
                 self.reader.push_back(pair);
@@ -12132,30 +13690,21 @@ impl<'a> SectionReader<'a> {
                     stylization_type = pair.as_i16().unwrap_or(0);
                     behavior_71_seen = true;
                 }
-                71 => {
-                    intensity_out_of_range_behavior = pair.as_i16().unwrap_or(0)
-                }
-                72 => {
-                    elevation_out_of_range_behavior = pair.as_i16().unwrap_or(0)
-                }
+                71 => intensity_out_of_range_behavior = pair.as_i16().unwrap_or(0),
+                72 => elevation_out_of_range_behavior = pair.as_i16().unwrap_or(0),
                 40 => elevation_min = pair.as_double().unwrap_or(0.0),
                 41 => elevation_max = pair.as_double().unwrap_or(0.0),
                 90 => intensity_min = pair.as_i32().unwrap_or(0),
                 91 => intensity_max = pair.as_i32().unwrap_or(0),
-                292 => {
-                    elevation_apply_to_fixed_range = pair.as_i16().unwrap_or(0) != 0
-                }
+                292 => elevation_apply_to_fixed_range = pair.as_i16().unwrap_or(0) != 0,
                 293 => intensity_as_gradient = pair.as_i16().unwrap_or(0) != 0,
                 294 => elevation_as_gradient = pair.as_i16().unwrap_or(0) != 0,
                 295 => show_cropping = pair.as_i16().unwrap_or(0) != 0,
                 280 => {
                     if let Some(mut value) = crop.take() {
-                        value.plane =
-                            crop_plane.get_point().unwrap_or(Vector3::ZERO);
-                        value.x_direction =
-                            crop_x_direction.get_point().unwrap_or(Vector3::UNIT_X);
-                        value.y_direction =
-                            crop_y_direction.get_point().unwrap_or(Vector3::UNIT_Y);
+                        value.plane = crop_plane.get_point().unwrap_or(Vector3::ZERO);
+                        value.x_direction = crop_x_direction.get_point().unwrap_or(Vector3::UNIT_X);
+                        value.y_direction = crop_y_direction.get_point().unwrap_or(Vector3::UNIT_Y);
                         croppings.push(value);
                     }
                     crop = Some(PointCloudExCrop {
@@ -12217,15 +13766,9 @@ impl<'a> SectionReader<'a> {
                 extents_min: extents_min.get_point().unwrap_or(Vector3::ZERO),
                 extents_max: extents_max.get_point().unwrap_or(Vector3::ZERO),
                 ucs_origin: ucs_origin.get_point().unwrap_or(Vector3::ZERO),
-                ucs_x_direction: ucs_x_direction
-                    .get_point()
-                    .unwrap_or(Vector3::UNIT_X),
-                ucs_y_direction: ucs_y_direction
-                    .get_point()
-                    .unwrap_or(Vector3::UNIT_Y),
-                ucs_z_direction: ucs_z_direction
-                    .get_point()
-                    .unwrap_or(Vector3::UNIT_Z),
+                ucs_x_direction: ucs_x_direction.get_point().unwrap_or(Vector3::UNIT_X),
+                ucs_y_direction: ucs_y_direction.get_point().unwrap_or(Vector3::UNIT_Y),
+                ucs_z_direction: ucs_z_direction.get_point().unwrap_or(Vector3::UNIT_Z),
                 locked,
                 definition_handle,
                 reactor_handle,
@@ -12277,21 +13820,16 @@ impl<'a> SectionReader<'a> {
             match pair.code {
                 100 => subclass = pair.value_string.clone(),
                 92 | 160 if subclass == "AcDbEntity" => {
-                    common_graphics_size =
-                        pair.as_int().unwrap_or(0).max(0) as usize;
+                    common_graphics_size = pair.as_int().unwrap_or(0).max(0) as usize;
                 }
                 310..=319 if subclass == "AcDbEntity" => {
-                    append_hex_bytes(
-                        &mut common_graphics,
-                        &pair.value_string,
-                    );
+                    append_hex_bytes(&mut common_graphics, &pair.value_string);
                 }
                 90 => proxy_id = pair.as_i32().unwrap_or(498),
                 91 => class_id = pair.as_i32().unwrap_or(0),
                 95 => version = pair.as_i32().unwrap_or(0),
                 71 => dwg_version = pair.as_i32().unwrap_or(0),
-                97 => maintenance_version =
-                    pair.as_i32().unwrap_or(0),
+                97 => maintenance_version = pair.as_i32().unwrap_or(0),
                 70 => from_dxf = pair.as_i16().unwrap_or(0) != 0,
                 92 => {
                     proxy_data_size = pair.as_i32().unwrap_or(0).max(0) as usize;
@@ -12336,32 +13874,24 @@ impl<'a> SectionReader<'a> {
             dwg_version = version & 0xffff;
             maintenance_version = version >> 16;
         } else {
-            version = (maintenance_version << 16)
-                | (dwg_version & 0xffff);
+            version = (maintenance_version << 16) | (dwg_version & 0xffff);
         }
-        let payload = crate::objects::ProxyPayload::from_bits(
-            &object_data,
-            object_data_bits,
-        );
+        let payload = crate::objects::ProxyPayload::from_bits(&object_data, object_data_bits);
         if let Some(envelope) =
-            crate::objects::semantic_property::decode_registered_class_envelope(
-                &payload,
-            )
+            crate::objects::semantic_property::decode_registered_class_envelope(&payload)
         {
             if !proxy_data.is_empty() {
                 common.graphic_data = Some(proxy_data);
             }
             return Ok(Some(ExtendedEntity {
                 common,
-                data: ExtendedEntityData::RegisteredClass(
-                    RegisteredClassEntityData {
-                        dxf_name: envelope.dxf_name,
-                        cpp_class_name: envelope.cpp_class_name,
-                        properties: envelope.properties,
-                        payload: envelope.payload,
-                        object_ids,
-                    },
-                ),
+                data: ExtendedEntityData::RegisteredClass(RegisteredClassEntityData {
+                    dxf_name: envelope.dxf_name,
+                    cpp_class_name: envelope.cpp_class_name,
+                    properties: envelope.properties,
+                    payload: envelope.payload,
+                    object_ids,
+                }),
             }));
         }
         Ok(Some(ExtendedEntity {
@@ -12374,9 +13904,7 @@ impl<'a> SectionReader<'a> {
                 dwg_version,
                 maintenance_version,
                 from_dxf,
-                graphics: crate::objects::ProxyPayload::from_bytes(
-                    &proxy_data,
-                ),
+                graphics: crate::objects::ProxyPayload::from_bytes(&proxy_data),
                 payload,
                 text_payload: crate::objects::ProxyPayload::default(),
                 object_ids,
@@ -12417,9 +13945,7 @@ impl<'a> SectionReader<'a> {
             match pair.code {
                 100 => current_subclass = pair.value_string.clone(),
                 8 => common.layer = pair.value_string.clone(),
-                1 if current_subclass == "AcDbDimension" => {
-                    base.text = pair.value_string.clone()
-                }
+                1 if current_subclass == "AcDbDimension" => base.text = pair.value_string.clone(),
                 2 => base.block_name = pair.value_string.clone(),
                 3 => base.style_name = pair.value_string.clone(),
                 10 | 20 | 30 => {
@@ -12614,13 +14140,27 @@ impl<'a> SectionReader<'a> {
                 1 => text = pair.value_string.clone(),
                 2 => block_name = pair.value_string.clone(),
                 3 => style_name = pair.value_string.clone(),
-                10 | 20 | 30 => { definition_point.add_coordinate(&pair); }
-                11 | 21 | 31 => { text_middle_point.add_coordinate(&pair); }
-                12 | 22 | 32 => { insertion_point.add_coordinate(&pair); }
-                13 | 23 | 33 => { first_point.add_coordinate(&pair); }
-                14 | 24 | 34 => { second_point.add_coordinate(&pair); }
-                15 | 25 | 35 => { third_point.add_coordinate(&pair); }
-                16 | 26 | 36 => { fourth_point.add_coordinate(&pair); }
+                10 | 20 | 30 => {
+                    definition_point.add_coordinate(&pair);
+                }
+                11 | 21 | 31 => {
+                    text_middle_point.add_coordinate(&pair);
+                }
+                12 | 22 | 32 => {
+                    insertion_point.add_coordinate(&pair);
+                }
+                13 | 23 | 33 => {
+                    first_point.add_coordinate(&pair);
+                }
+                14 | 24 | 34 => {
+                    second_point.add_coordinate(&pair);
+                }
+                15 | 25 | 35 => {
+                    third_point.add_coordinate(&pair);
+                }
+                16 | 26 | 36 => {
+                    fourth_point.add_coordinate(&pair);
+                }
                 50 => {
                     // DXF stores dimension-line rotation in degrees; internal
                     // representation is radians.
@@ -12674,8 +14214,12 @@ impl<'a> SectionReader<'a> {
                         leader_length = length;
                     }
                 }
-                210 | 220 | 230 => { normal.add_coordinate(&pair); }
-                _ => { self.try_read_common_entity_code(&pair, &mut common)?; }
+                210 | 220 | 230 => {
+                    normal.add_coordinate(&pair);
+                }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut common)?;
+                }
             }
         }
 
@@ -12808,9 +14352,7 @@ impl<'a> SectionReader<'a> {
                 Dimension::Ordinate(dim)
             }
             DimensionType::ArcLength => Dimension::Arc(DimensionArc::default()),
-            DimensionType::LargeRadial => {
-                Dimension::LargeRadial(DimensionLargeRadial::default())
-            }
+            DimensionType::LargeRadial => Dimension::LargeRadial(DimensionLargeRadial::default()),
         };
 
         {
@@ -12913,8 +14455,7 @@ impl<'a> SectionReader<'a> {
                     mpolygon_x_direction.add_coordinate(&pair);
                 }
                 99 if is_mpolygon => {
-                    hatch.mpolygon_boundary_handle_count =
-                        pair.as_i32().unwrap_or(0)
+                    hatch.mpolygon_boundary_handle_count = pair.as_i32().unwrap_or(0)
                 }
                 70 => {
                     if let Some(solid_fill) = pair.as_i16() {
@@ -13082,8 +14623,7 @@ impl<'a> SectionReader<'a> {
                         match gp.code {
                             451 => hatch.gradient_color.reserved = gp.as_i32().unwrap_or(0),
                             452 => {
-                                hatch.gradient_color.is_single_color =
-                                    gp.as_i16().unwrap_or(0) != 0
+                                hatch.gradient_color.is_single_color = gp.as_i16().unwrap_or(0) != 0
                             }
                             453 => { /* colour count — inferred from 463 entries */ }
                             460 => {
@@ -13132,7 +14672,9 @@ impl<'a> SectionReader<'a> {
                         }
                     }
                 }
-                _ => { self.try_read_common_entity_code(&pair, &mut hatch.common)?; }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut hatch.common)?;
+                }
             }
         }
 
@@ -13223,7 +14765,10 @@ impl<'a> SectionReader<'a> {
                     20 => edge.start.y = p.as_double().unwrap_or(0.0),
                     11 => edge.end.x = p.as_double().unwrap_or(0.0),
                     21 => edge.end.y = p.as_double().unwrap_or(0.0),
-                    _ => { self.reader.push_back(p); break; }
+                    _ => {
+                        self.reader.push_back(p);
+                        break;
+                    }
                 }
             }
         }
@@ -13249,7 +14794,10 @@ impl<'a> SectionReader<'a> {
                     50 => edge.start_angle = p.as_double().unwrap_or(0.0).to_radians(),
                     51 => edge.end_angle = p.as_double().unwrap_or(0.0).to_radians(),
                     73 => edge.counter_clockwise = p.as_i16().unwrap_or(1) != 0,
-                    _ => { self.reader.push_back(p); break; }
+                    _ => {
+                        self.reader.push_back(p);
+                        break;
+                    }
                 }
             }
         }
@@ -13278,7 +14826,10 @@ impl<'a> SectionReader<'a> {
                     50 => edge.start_angle = p.as_double().unwrap_or(0.0),
                     51 => edge.end_angle = p.as_double().unwrap_or(std::f64::consts::TAU),
                     73 => edge.counter_clockwise = p.as_i16().unwrap_or(1) != 0,
-                    _ => { self.reader.push_back(p); break; }
+                    _ => {
+                        self.reader.push_back(p);
+                        break;
+                    }
                 }
             }
         }
@@ -13310,7 +14861,10 @@ impl<'a> SectionReader<'a> {
                     74 => edge.periodic = p.as_i16().unwrap_or(0) != 0,
                     95 => num_knots = p.as_i32().unwrap_or(0),
                     96 => num_control_points = p.as_i32().unwrap_or(0),
-                    _ => { self.reader.push_back(p); break; }
+                    _ => {
+                        self.reader.push_back(p);
+                        break;
+                    }
                 }
             }
         }
@@ -13334,12 +14888,19 @@ impl<'a> SectionReader<'a> {
             let mut w = 1.0;
             // Read 10, 20
             if let Some(p) = self.reader.read_pair()? {
-                if p.code == 10 { x = p.as_double().unwrap_or(0.0); }
-                else { self.reader.push_back(p); continue; }
+                if p.code == 10 {
+                    x = p.as_double().unwrap_or(0.0);
+                } else {
+                    self.reader.push_back(p);
+                    continue;
+                }
             }
             if let Some(p) = self.reader.read_pair()? {
-                if p.code == 20 { y = p.as_double().unwrap_or(0.0); }
-                else { self.reader.push_back(p); }
+                if p.code == 20 {
+                    y = p.as_double().unwrap_or(0.0);
+                } else {
+                    self.reader.push_back(p);
+                }
             }
             // Peek for optional weight (code 42)
             if let Some(p) = self.reader.read_pair()? {
@@ -13366,12 +14927,19 @@ impl<'a> SectionReader<'a> {
             let mut x = 0.0;
             let mut y = 0.0;
             if let Some(p) = self.reader.read_pair()? {
-                if p.code == 11 { x = p.as_double().unwrap_or(0.0); }
-                else { self.reader.push_back(p); continue; }
+                if p.code == 11 {
+                    x = p.as_double().unwrap_or(0.0);
+                } else {
+                    self.reader.push_back(p);
+                    continue;
+                }
             }
             if let Some(p) = self.reader.read_pair()? {
-                if p.code == 21 { y = p.as_double().unwrap_or(0.0); }
-                else { self.reader.push_back(p); }
+                if p.code == 21 {
+                    y = p.as_double().unwrap_or(0.0);
+                } else {
+                    self.reader.push_back(p);
+                }
             }
             edge.fit_points.push(Vector2::new(x, y));
         }
@@ -13384,7 +14952,10 @@ impl<'a> SectionReader<'a> {
                     22 => edge.start_tangent.y = p.as_double().unwrap_or(0.0),
                     13 => edge.end_tangent.x = p.as_double().unwrap_or(0.0),
                     23 => edge.end_tangent.y = p.as_double().unwrap_or(0.0),
-                    _ => { self.reader.push_back(p); break; }
+                    _ => {
+                        self.reader.push_back(p);
+                        break;
+                    }
                 }
             }
         }
@@ -13405,7 +14976,10 @@ impl<'a> SectionReader<'a> {
                     72 => has_bulge = p.as_i16().unwrap_or(0) != 0,
                     73 => is_closed = p.as_i16().unwrap_or(0) != 0,
                     93 => num_vertices = p.as_i32().unwrap_or(0),
-                    _ => { self.reader.push_back(p); break; }
+                    _ => {
+                        self.reader.push_back(p);
+                        break;
+                    }
                 }
             }
         }
@@ -13421,12 +14995,19 @@ impl<'a> SectionReader<'a> {
             let mut y = 0.0;
             let mut bulge = 0.0;
             if let Some(p) = self.reader.read_pair()? {
-                if p.code == 10 { x = p.as_double().unwrap_or(0.0); }
-                else { self.reader.push_back(p); continue; }
+                if p.code == 10 {
+                    x = p.as_double().unwrap_or(0.0);
+                } else {
+                    self.reader.push_back(p);
+                    continue;
+                }
             }
             if let Some(p) = self.reader.read_pair()? {
-                if p.code == 20 { y = p.as_double().unwrap_or(0.0); }
-                else { self.reader.push_back(p); }
+                if p.code == 20 {
+                    y = p.as_double().unwrap_or(0.0);
+                } else {
+                    self.reader.push_back(p);
+                }
             }
             if has_bulge {
                 if let Some(p) = self.reader.read_pair()? {
@@ -13474,17 +15055,29 @@ impl<'a> SectionReader<'a> {
                         line_weight = LineWeight::from_value(lw);
                     }
                 }
-                10 | 20 | 30 => { corner1.add_coordinate(&pair); }
-                11 | 21 | 31 => { corner2.add_coordinate(&pair); }
-                12 | 22 | 32 => { corner3.add_coordinate(&pair); }
-                13 | 23 | 33 => { corner4.add_coordinate(&pair); }
+                10 | 20 | 30 => {
+                    corner1.add_coordinate(&pair);
+                }
+                11 | 21 | 31 => {
+                    corner2.add_coordinate(&pair);
+                }
+                12 | 22 | 32 => {
+                    corner3.add_coordinate(&pair);
+                }
+                13 | 23 | 33 => {
+                    corner4.add_coordinate(&pair);
+                }
                 39 => {
                     if let Some(t) = pair.as_double() {
                         thickness = t;
                     }
                 }
-                210 | 220 | 230 => { normal.add_coordinate(&pair); }
-                _ => { self.try_read_common_entity_code(&pair, &mut common)?; }
+                210 | 220 | 230 => {
+                    normal.add_coordinate(&pair);
+                }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut common)?;
+                }
             }
         }
 
@@ -13540,16 +15133,26 @@ impl<'a> SectionReader<'a> {
                         line_weight = LineWeight::from_value(lw);
                     }
                 }
-                10 | 20 | 30 => { corner1.add_coordinate(&pair); }
-                11 | 21 | 31 => { corner2.add_coordinate(&pair); }
-                12 | 22 | 32 => { corner3.add_coordinate(&pair); }
-                13 | 23 | 33 => { corner4.add_coordinate(&pair); }
+                10 | 20 | 30 => {
+                    corner1.add_coordinate(&pair);
+                }
+                11 | 21 | 31 => {
+                    corner2.add_coordinate(&pair);
+                }
+                12 | 22 | 32 => {
+                    corner3.add_coordinate(&pair);
+                }
+                13 | 23 | 33 => {
+                    corner4.add_coordinate(&pair);
+                }
                 70 => {
                     if let Some(flags) = pair.as_i16() {
                         invisible_flags = flags;
                     }
                 }
-                _ => { self.try_read_common_entity_code(&pair, &mut common)?; }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut common)?;
+                }
             }
         }
 
@@ -13614,9 +15217,7 @@ impl<'a> SectionReader<'a> {
                         .eq_ignore_ascii_case("AcDbViewRepBlockReference");
                 }
                 330 if view_rep_subclass => {
-                    view_rep_handle = pair
-                        .as_handle()
-                        .map(Handle::from);
+                    view_rep_handle = pair.as_handle().map(Handle::from);
                 }
                 8 => layer = pair.value_string.clone(),
                 62 => {
@@ -13633,7 +15234,9 @@ impl<'a> SectionReader<'a> {
                 66 => {
                     has_attributes = pair.as_i16() == Some(1);
                 }
-                10 | 20 | 30 => { insertion.add_coordinate(&pair); }
+                10 | 20 | 30 => {
+                    insertion.add_coordinate(&pair);
+                }
                 41 => {
                     if let Some(sx) = pair.as_double() {
                         x_scale = sx;
@@ -13674,8 +15277,12 @@ impl<'a> SectionReader<'a> {
                         row_spacing = row_spacing_val;
                     }
                 }
-                210 | 220 | 230 => { normal.add_coordinate(&pair); }
-                _ => { self.try_read_common_entity_code(&pair, &mut common)?; }
+                210 | 220 | 230 => {
+                    normal.add_coordinate(&pair);
+                }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut common)?;
+                }
             }
         }
 
@@ -13761,9 +15368,15 @@ impl<'a> SectionReader<'a> {
                         color = Color::from_index(color_index);
                     }
                 }
-                10 | 20 | 30 => { base_point.add_coordinate(&pair); }
-                11 | 21 | 31 => { direction.add_coordinate(&pair); }
-                _ => { self.try_read_common_entity_code(&pair, &mut common)?; }
+                10 | 20 | 30 => {
+                    base_point.add_coordinate(&pair);
+                }
+                11 | 21 | 31 => {
+                    direction.add_coordinate(&pair);
+                }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut common)?;
+                }
             }
         }
 
@@ -13802,9 +15415,15 @@ impl<'a> SectionReader<'a> {
                         color = Color::from_index(color_index);
                     }
                 }
-                10 | 20 | 30 => { base_point.add_coordinate(&pair); }
-                11 | 21 | 31 => { direction.add_coordinate(&pair); }
-                _ => { self.try_read_common_entity_code(&pair, &mut common)?; }
+                10 | 20 | 30 => {
+                    base_point.add_coordinate(&pair);
+                }
+                11 | 21 | 31 => {
+                    direction.add_coordinate(&pair);
+                }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut common)?;
+                }
             }
         }
 
@@ -13853,7 +15472,9 @@ impl<'a> SectionReader<'a> {
                 1 => default_value = pair.value_string.clone(),
                 2 => tag = pair.value_string.clone(),
                 3 => prompt = pair.value_string.clone(),
-                10 | 20 | 30 => { insertion_point.add_coordinate(&pair); }
+                10 | 20 | 30 => {
+                    insertion_point.add_coordinate(&pair);
+                }
                 40 => {
                     if let Some(h) = pair.as_double() {
                         height = h;
@@ -13879,7 +15500,9 @@ impl<'a> SectionReader<'a> {
                         default_value = t;
                     }
                 }
-                _ => { self.try_read_common_entity_code(&pair, &mut common)?; }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut common)?;
+                }
             }
         }
 
@@ -13921,10 +15544,18 @@ impl<'a> SectionReader<'a> {
                 }
                 1 => tolerance.text = pair.value_string.clone(),
                 3 => tolerance.dimension_style_name = pair.value_string.clone(),
-                10 | 20 | 30 => { insertion_point.add_coordinate(&pair); }
-                11 | 21 | 31 => { direction.add_coordinate(&pair); }
-                210 | 220 | 230 => { normal.add_coordinate(&pair); }
-                _ => { self.try_read_common_entity_code(&pair, &mut tolerance.common)?; }
+                10 | 20 | 30 => {
+                    insertion_point.add_coordinate(&pair);
+                }
+                11 | 21 | 31 => {
+                    direction.add_coordinate(&pair);
+                }
+                210 | 220 | 230 => {
+                    normal.add_coordinate(&pair);
+                }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut tolerance.common)?;
+                }
             }
         }
 
@@ -13957,7 +15588,9 @@ impl<'a> SectionReader<'a> {
                     }
                 }
                 2 => shape.shape_name = pair.value_string.clone(),
-                10 | 20 | 30 => { insertion_point.add_coordinate(&pair); }
+                10 | 20 | 30 => {
+                    insertion_point.add_coordinate(&pair);
+                }
                 40 => {
                     if let Some(s) = pair.as_double() {
                         shape.size = s;
@@ -13985,8 +15618,12 @@ impl<'a> SectionReader<'a> {
                         shape.oblique_angle = o;
                     }
                 }
-                210 | 220 | 230 => { normal.add_coordinate(&pair); }
-                _ => { self.try_read_common_entity_code(&pair, &mut shape.common)?; }
+                210 | 220 | 230 => {
+                    normal.add_coordinate(&pair);
+                }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut shape.common)?;
+                }
             }
         }
 
@@ -14018,19 +15655,41 @@ impl<'a> SectionReader<'a> {
                         wipeout.common.color = Color::from_index(color_index);
                     }
                 }
-                10 | 20 | 30 => { insertion_point.add_coordinate(&pair); }
-                11 | 21 | 31 => { u_vector.add_coordinate(&pair); }
-                12 | 22 | 32 => { v_vector.add_coordinate(&pair); }
-                13 => { if let Some(v) = pair.as_double() { wipeout.size.x = v; } }
-                23 => { if let Some(v) = pair.as_double() { wipeout.size.y = v; } }
-                90 => { if let Some(v) = pair.as_i32() { wipeout.class_version = v; } }
+                10 | 20 | 30 => {
+                    insertion_point.add_coordinate(&pair);
+                }
+                11 | 21 | 31 => {
+                    u_vector.add_coordinate(&pair);
+                }
+                12 | 22 | 32 => {
+                    v_vector.add_coordinate(&pair);
+                }
+                13 => {
+                    if let Some(v) = pair.as_double() {
+                        wipeout.size.x = v;
+                    }
+                }
+                23 => {
+                    if let Some(v) = pair.as_double() {
+                        wipeout.size.y = v;
+                    }
+                }
+                90 => {
+                    if let Some(v) = pair.as_i32() {
+                        wipeout.class_version = v;
+                    }
+                }
                 340 => {
                     let handle = parse_dxf_handle(&pair.value_string);
-                    if !handle.is_null() { wipeout.definition_handle = Some(handle); }
+                    if !handle.is_null() {
+                        wipeout.definition_handle = Some(handle);
+                    }
                 }
                 360 => {
                     let handle = parse_dxf_handle(&pair.value_string);
-                    if !handle.is_null() { wipeout.definition_reactor_handle = Some(handle); }
+                    if !handle.is_null() {
+                        wipeout.definition_reactor_handle = Some(handle);
+                    }
                 }
                 70 => {
                     if let Some(v) = pair.as_i16() {
@@ -14043,16 +15702,24 @@ impl<'a> SectionReader<'a> {
                     }
                 }
                 280 => {
-                    if let Some(v) = pair.as_i16() { wipeout.clipping_enabled = v != 0; }
+                    if let Some(v) = pair.as_i16() {
+                        wipeout.clipping_enabled = v != 0;
+                    }
                 }
                 281 => {
-                    if let Some(v) = pair.as_i16() { wipeout.brightness = v.clamp(0, 100) as u8; }
+                    if let Some(v) = pair.as_i16() {
+                        wipeout.brightness = v.clamp(0, 100) as u8;
+                    }
                 }
                 282 => {
-                    if let Some(v) = pair.as_i16() { wipeout.contrast = v.clamp(0, 100) as u8; }
+                    if let Some(v) = pair.as_i16() {
+                        wipeout.contrast = v.clamp(0, 100) as u8;
+                    }
                 }
                 283 => {
-                    if let Some(v) = pair.as_i16() { wipeout.fade = v.clamp(0, 100) as u8; }
+                    if let Some(v) = pair.as_i16() {
+                        wipeout.fade = v.clamp(0, 100) as u8;
+                    }
                 }
                 290 => {
                     if let Some(v) = pair.as_bool() {
@@ -14080,7 +15747,9 @@ impl<'a> SectionReader<'a> {
                         }
                     }
                 }
-                _ => { self.try_read_common_entity_code(&pair, &mut wipeout.common)?; }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut wipeout.common)?;
+                }
             }
         }
 
@@ -14093,7 +15762,9 @@ impl<'a> SectionReader<'a> {
 
     /// Read extended data (XDATA) from the current position
     /// Returns the extended data and the last pair read (which is not part of XDATA)
-    fn read_extended_data(&mut self) -> Result<(ExtendedData, Option<super::stream_reader::DxfCodePair>)> {
+    fn read_extended_data(
+        &mut self,
+    ) -> Result<(ExtendedData, Option<super::stream_reader::DxfCodePair>)> {
         let mut xdata = ExtendedData::new();
         let mut current_record: Option<ExtendedDataRecord> = None;
         let mut point_reader = PointReader::new();
@@ -14272,10 +15943,7 @@ impl<'a> SectionReader<'a> {
     /// record and return its annotative flag. The block has the form
     /// `AnnotativeData { 1 <flag> }`; the flag is the last 16-bit integer.
     /// The terminating non-XDATA pair is pushed back for the caller's loop.
-    fn read_annotative_xdata(
-        &mut self,
-        pair: super::stream_reader::DxfCodePair,
-    ) -> Result<bool> {
+    fn read_annotative_xdata(&mut self, pair: super::stream_reader::DxfCodePair) -> Result<bool> {
         use crate::xdata::XDataValue;
         self.reader.push_back(pair);
         let (xdata, next_pair) = self.read_extended_data()?;
@@ -14318,65 +15986,205 @@ impl<'a> SectionReader<'a> {
         let mut ucs_y_axis = PointReader::new();
 
         while let Some(pair) = self.reader.read_pair()? {
-            if pair.code == 0 { self.reader.push_back(pair); break; }
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
             match pair.code {
                 8 => vp.common.layer = pair.value_string.clone(),
-                62 => { if let Some(v) = pair.as_i16() { vp.common.color = Color::from_index(v); } }
-                10 | 20 | 30 => { center.add_coordinate(&pair); }
-                40 => { if let Some(v) = pair.as_double() { vp.width = v; } }
-                41 => { if let Some(v) = pair.as_double() { vp.height = v; } }
-                90 => { if let Some(v) = pair.as_i32() { vp.status = crate::entities::viewport::ViewportStatusFlags::from_bits(v); } }
-                69 => { if let Some(v) = pair.as_i16() { vp.id = v; } }
-                12 => { if let Some(v) = pair.as_double() { view_center.add_coordinate(&pair); let _ = v; } }
-                22 => { view_center.add_coordinate(&pair); }
-                13 => { snap_base_x = pair.as_double(); }
-                23 => { snap_base_y = pair.as_double(); }
-                14 => { snap_spacing_x = pair.as_double(); }
-                24 => { snap_spacing_y = pair.as_double(); }
-                15 => { grid_spacing_x = pair.as_double(); }
-                25 => { grid_spacing_y = pair.as_double(); }
-                16 | 26 | 36 => { view_direction.add_coordinate(&pair); }
-                17 | 27 | 37 => { view_target.add_coordinate(&pair); }
-                42 => { if let Some(v) = pair.as_double() { vp.lens_length = v; } }
-                43 => { if let Some(v) = pair.as_double() { vp.front_clip_z = v; } }
-                44 => { if let Some(v) = pair.as_double() { vp.back_clip_z = v; } }
-                45 => { if let Some(v) = pair.as_double() { vp.view_height = v; } }
-                50 => { if let Some(v) = pair.as_double() { vp.snap_angle = v; } }
-                51 => { if let Some(v) = pair.as_double() { vp.twist_angle = v; } }
-                72 => { if let Some(v) = pair.as_i16() { vp.circle_sides = v; } }
+                62 => {
+                    if let Some(v) = pair.as_i16() {
+                        vp.common.color = Color::from_index(v);
+                    }
+                }
+                10 | 20 | 30 => {
+                    center.add_coordinate(&pair);
+                }
+                40 => {
+                    if let Some(v) = pair.as_double() {
+                        vp.width = v;
+                    }
+                }
+                41 => {
+                    if let Some(v) = pair.as_double() {
+                        vp.height = v;
+                    }
+                }
+                90 => {
+                    if let Some(v) = pair.as_i32() {
+                        vp.status = crate::entities::viewport::ViewportStatusFlags::from_bits(v);
+                    }
+                }
+                69 => {
+                    if let Some(v) = pair.as_i16() {
+                        vp.id = v;
+                    }
+                }
+                12 => {
+                    if let Some(v) = pair.as_double() {
+                        view_center.add_coordinate(&pair);
+                        let _ = v;
+                    }
+                }
+                22 => {
+                    view_center.add_coordinate(&pair);
+                }
+                13 => {
+                    snap_base_x = pair.as_double();
+                }
+                23 => {
+                    snap_base_y = pair.as_double();
+                }
+                14 => {
+                    snap_spacing_x = pair.as_double();
+                }
+                24 => {
+                    snap_spacing_y = pair.as_double();
+                }
+                15 => {
+                    grid_spacing_x = pair.as_double();
+                }
+                25 => {
+                    grid_spacing_y = pair.as_double();
+                }
+                16 | 26 | 36 => {
+                    view_direction.add_coordinate(&pair);
+                }
+                17 | 27 | 37 => {
+                    view_target.add_coordinate(&pair);
+                }
+                42 => {
+                    if let Some(v) = pair.as_double() {
+                        vp.lens_length = v;
+                    }
+                }
+                43 => {
+                    if let Some(v) = pair.as_double() {
+                        vp.front_clip_z = v;
+                    }
+                }
+                44 => {
+                    if let Some(v) = pair.as_double() {
+                        vp.back_clip_z = v;
+                    }
+                }
+                45 => {
+                    if let Some(v) = pair.as_double() {
+                        vp.view_height = v;
+                    }
+                }
+                50 => {
+                    if let Some(v) = pair.as_double() {
+                        vp.snap_angle = v;
+                    }
+                }
+                51 => {
+                    if let Some(v) = pair.as_double() {
+                        vp.twist_angle = v;
+                    }
+                }
+                72 => {
+                    if let Some(v) = pair.as_i16() {
+                        vp.circle_sides = v;
+                    }
+                }
                 331 => {
                     if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
                         vp.frozen_layers.push(Handle::new(h));
                     }
                 }
-                281 => { if let Some(v) = pair.as_i16() { vp.render_mode = crate::entities::viewport::ViewportRenderMode::from_value(v); } }
-                71 => { if let Some(v) = pair.as_i16() { vp.ucs_per_viewport = v != 0; } }
-                110 | 120 | 130 => { ucs_origin.add_coordinate(&pair); }
-                111 | 121 | 131 => { ucs_x_axis.add_coordinate(&pair); }
-                112 | 122 | 132 => { ucs_y_axis.add_coordinate(&pair); }
-                146 => { if let Some(v) = pair.as_double() { vp.elevation = v; } }
-                61 => { if let Some(v) = pair.as_i16() { vp.grid_major = v; } }
-                141 => { if let Some(v) = pair.as_double() { vp.brightness = v; } }
-                142 => { if let Some(v) = pair.as_double() { vp.contrast = v; } }
-                292 => { if let Some(v) = pair.as_bool() { vp.default_lighting = v; } }
-                282 => { if let Some(v) = pair.as_i16() { vp.default_lighting_type = v; } }
-                _ => { self.try_read_common_entity_code(&pair, &mut vp.common)?; }
+                281 => {
+                    if let Some(v) = pair.as_i16() {
+                        vp.render_mode =
+                            crate::entities::viewport::ViewportRenderMode::from_value(v);
+                    }
+                }
+                71 => {
+                    if let Some(v) = pair.as_i16() {
+                        vp.ucs_per_viewport = v != 0;
+                    }
+                }
+                110 | 120 | 130 => {
+                    ucs_origin.add_coordinate(&pair);
+                }
+                111 | 121 | 131 => {
+                    ucs_x_axis.add_coordinate(&pair);
+                }
+                112 | 122 | 132 => {
+                    ucs_y_axis.add_coordinate(&pair);
+                }
+                146 => {
+                    if let Some(v) = pair.as_double() {
+                        vp.elevation = v;
+                    }
+                }
+                61 => {
+                    if let Some(v) = pair.as_i16() {
+                        vp.grid_major = v;
+                    }
+                }
+                141 => {
+                    if let Some(v) = pair.as_double() {
+                        vp.brightness = v;
+                    }
+                }
+                142 => {
+                    if let Some(v) = pair.as_double() {
+                        vp.contrast = v;
+                    }
+                }
+                292 => {
+                    if let Some(v) = pair.as_bool() {
+                        vp.default_lighting = v;
+                    }
+                }
+                282 => {
+                    if let Some(v) = pair.as_i16() {
+                        vp.default_lighting_type = v;
+                    }
+                }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut vp.common)?;
+                }
             }
         }
 
-        if let Some(pt) = center.get_point() { vp.center = pt; }
-        if let Some(pt) = view_direction.get_point() { vp.view_direction = pt; }
-        if let Some(pt) = view_target.get_point() { vp.view_target = pt; }
-        if let Some(pt) = ucs_origin.get_point() { vp.ucs_origin = pt; }
-        if let Some(pt) = ucs_x_axis.get_point() { vp.ucs_x_axis = pt; }
-        if let Some(pt) = ucs_y_axis.get_point() { vp.ucs_y_axis = pt; }
+        if let Some(pt) = center.get_point() {
+            vp.center = pt;
+        }
+        if let Some(pt) = view_direction.get_point() {
+            vp.view_direction = pt;
+        }
+        if let Some(pt) = view_target.get_point() {
+            vp.view_target = pt;
+        }
+        if let Some(pt) = ucs_origin.get_point() {
+            vp.ucs_origin = pt;
+        }
+        if let Some(pt) = ucs_x_axis.get_point() {
+            vp.ucs_x_axis = pt;
+        }
+        if let Some(pt) = ucs_y_axis.get_point() {
+            vp.ucs_y_axis = pt;
+        }
         // For 2D points, assemble manually
-        if let (Some(x), Some(y)) = (view_center.get_point().map(|p| p.x), view_center.get_point().map(|p| p.y)) {
+        if let (Some(x), Some(y)) = (
+            view_center.get_point().map(|p| p.x),
+            view_center.get_point().map(|p| p.y),
+        ) {
             vp.view_center = Vector3::new(x, y, 0.0);
         }
         vp.snap_base = Vector3::new(snap_base_x.unwrap_or(0.0), snap_base_y.unwrap_or(0.0), 0.0);
-        vp.snap_spacing = Vector3::new(snap_spacing_x.unwrap_or(10.0), snap_spacing_y.unwrap_or(10.0), 0.0);
-        vp.grid_spacing = Vector3::new(grid_spacing_x.unwrap_or(10.0), grid_spacing_y.unwrap_or(10.0), 0.0);
+        vp.snap_spacing = Vector3::new(
+            snap_spacing_x.unwrap_or(10.0),
+            snap_spacing_y.unwrap_or(10.0),
+            0.0,
+        );
+        vp.grid_spacing = Vector3::new(
+            grid_spacing_x.unwrap_or(10.0),
+            grid_spacing_y.unwrap_or(10.0),
+            0.0,
+        );
 
         Ok(Some(vp))
     }
@@ -14394,7 +16202,10 @@ impl<'a> SectionReader<'a> {
         let mut in_attribute_subclass = false;
 
         while let Some(pair) = self.reader.read_pair()? {
-            if pair.code == 0 { self.reader.push_back(pair); break; }
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
             match pair.code {
                 100 => {
                     if pair.value_string == "AcDbAttribute" {
@@ -14402,20 +16213,51 @@ impl<'a> SectionReader<'a> {
                     }
                 }
                 8 => attrib.common.layer = pair.value_string.clone(),
-                62 => { if let Some(v) = pair.as_i16() { attrib.common.color = Color::from_index(v); } }
-                370 => { if let Some(v) = pair.as_i16() { attrib.common.line_weight = LineWeight::from_value(v); } }
+                62 => {
+                    if let Some(v) = pair.as_i16() {
+                        attrib.common.color = Color::from_index(v);
+                    }
+                }
+                370 => {
+                    if let Some(v) = pair.as_i16() {
+                        attrib.common.line_weight = LineWeight::from_value(v);
+                    }
+                }
                 1 => attrib.value = pair.value_string.clone(),
                 2 => attrib.tag = pair.value_string.clone(),
                 7 => attrib.text_style = pair.value_string.clone(),
-                10 | 20 | 30 => { insertion_point.add_coordinate(&pair); }
-                11 | 21 | 31 => { alignment_point.add_coordinate(&pair); }
-                40 => { if let Some(v) = pair.as_double() { attrib.height = v; } }
-                41 => { if let Some(v) = pair.as_double() { attrib.width_factor = v; } }
-                50 => { if let Some(v) = pair.as_double() { attrib.rotation = v; } }
-                51 => { if let Some(v) = pair.as_double() { attrib.oblique_angle = v; } }
+                10 | 20 | 30 => {
+                    insertion_point.add_coordinate(&pair);
+                }
+                11 | 21 | 31 => {
+                    alignment_point.add_coordinate(&pair);
+                }
+                40 => {
+                    if let Some(v) = pair.as_double() {
+                        attrib.height = v;
+                    }
+                }
+                41 => {
+                    if let Some(v) = pair.as_double() {
+                        attrib.width_factor = v;
+                    }
+                }
+                50 => {
+                    if let Some(v) = pair.as_double() {
+                        attrib.rotation = v;
+                    }
+                }
+                51 => {
+                    if let Some(v) = pair.as_double() {
+                        attrib.oblique_angle = v;
+                    }
+                }
                 70 => {
                     if let Some(v) = pair.as_i16() {
-                        attrib.flags = crate::entities::attribute_definition::AttributeFlags::from_bits(v as i32);
+                        attrib.flags =
+                            crate::entities::attribute_definition::AttributeFlags::from_bits(
+                                v as i32,
+                            );
                     }
                 }
                 71 => {
@@ -14428,7 +16270,8 @@ impl<'a> SectionReader<'a> {
                                 4 => MTextFlag::ConstantMultiLine,
                                 _ => MTextFlag::SingleLine,
                             };
-                            attrib.is_multiline = !matches!(attrib.mtext_flag, MTextFlag::SingleLine);
+                            attrib.is_multiline =
+                                !matches!(attrib.mtext_flag, MTextFlag::SingleLine);
                         } else {
                             attrib.text_generation_flags = v;
                         }
@@ -14436,12 +16279,16 @@ impl<'a> SectionReader<'a> {
                 }
                 72 => {
                     if let Some(v) = pair.as_i16() {
-                        attrib.horizontal_alignment = crate::entities::attribute_definition::HorizontalAlignment::from_value(v);
+                        attrib.horizontal_alignment =
+                            crate::entities::attribute_definition::HorizontalAlignment::from_value(
+                                v,
+                            );
                     }
                 }
                 74 => {
                     if let Some(v) = pair.as_i16() {
-                        attrib.vertical_alignment = crate::entities::attribute_definition::VerticalAlignment::from_value(v);
+                        attrib.vertical_alignment =
+                            crate::entities::attribute_definition::VerticalAlignment::from_value(v);
                     }
                 }
                 280 => {
@@ -14460,7 +16307,9 @@ impl<'a> SectionReader<'a> {
                         attrib.value = t;
                     }
                 }
-                _ => { self.try_read_common_entity_code(&pair, &mut attrib.common)?; }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut attrib.common)?;
+                }
             }
         }
 
@@ -14481,16 +16330,35 @@ impl<'a> SectionReader<'a> {
         let mut current_vertex = PointReader::new();
 
         while let Some(pair) = self.reader.read_pair()? {
-            if pair.code == 0 { self.reader.push_back(pair); break; }
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
             match pair.code {
                 8 => leader.common.layer = pair.value_string.clone(),
-                62 => { if let Some(v) = pair.as_i16() { leader.common.color = Color::from_index(v); } }
-                370 => { if let Some(v) = pair.as_i16() { leader.common.line_weight = LineWeight::from_value(v); } }
+                62 => {
+                    if let Some(v) = pair.as_i16() {
+                        leader.common.color = Color::from_index(v);
+                    }
+                }
+                370 => {
+                    if let Some(v) = pair.as_i16() {
+                        leader.common.line_weight = LineWeight::from_value(v);
+                    }
+                }
                 3 => leader.dimension_style = pair.value_string.clone(),
-                71 => { if let Some(v) = pair.as_i16() { leader.arrow_enabled = v != 0; } }
+                71 => {
+                    if let Some(v) = pair.as_i16() {
+                        leader.arrow_enabled = v != 0;
+                    }
+                }
                 72 => {
                     if let Some(v) = pair.as_i16() {
-                        leader.path_type = if v == 1 { crate::entities::leader::LeaderPathType::Spline } else { crate::entities::leader::LeaderPathType::StraightLine };
+                        leader.path_type = if v == 1 {
+                            crate::entities::leader::LeaderPathType::Spline
+                        } else {
+                            crate::entities::leader::LeaderPathType::StraightLine
+                        };
                     }
                 }
                 73 => {
@@ -14505,43 +16373,83 @@ impl<'a> SectionReader<'a> {
                 }
                 74 => {
                     if let Some(v) = pair.as_i16() {
-                        leader.hookline_direction = if v == 1 { crate::entities::leader::HooklineDirection::Same } else { crate::entities::leader::HooklineDirection::Opposite };
+                        leader.hookline_direction = if v == 1 {
+                            crate::entities::leader::HooklineDirection::Same
+                        } else {
+                            crate::entities::leader::HooklineDirection::Opposite
+                        };
                     }
                 }
-                75 => { if let Some(v) = pair.as_i16() { leader.hookline_enabled = v != 0; } }
-                40 => { if let Some(v) = pair.as_double() { leader.text_height = v; } }
-                41 => { if let Some(v) = pair.as_double() { leader.text_width = v; } }
+                75 => {
+                    if let Some(v) = pair.as_i16() {
+                        leader.hookline_enabled = v != 0;
+                    }
+                }
+                40 => {
+                    if let Some(v) = pair.as_double() {
+                        leader.text_height = v;
+                    }
+                }
+                41 => {
+                    if let Some(v) = pair.as_double() {
+                        leader.text_width = v;
+                    }
+                }
                 10 => {
                     // Save previous vertex
                     if reading_vertex {
-                        if let Some(pt) = current_vertex.get_point() { leader.vertices.push(pt); }
+                        if let Some(pt) = current_vertex.get_point() {
+                            leader.vertices.push(pt);
+                        }
                     }
                     current_vertex = PointReader::new();
                     current_vertex.add_coordinate(&pair);
                     reading_vertex = true;
                 }
-                20 | 30 => { current_vertex.add_coordinate(&pair); }
+                20 | 30 => {
+                    current_vertex.add_coordinate(&pair);
+                }
                 340 => {
                     if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
                         leader.annotation_handle = Handle::new(h);
                     }
                 }
-                210 | 220 | 230 => { normal.add_coordinate(&pair); }
-                211 | 221 | 231 => { horiz_dir.add_coordinate(&pair); }
-                212 | 222 | 232 => { block_offset.add_coordinate(&pair); }
-                213 | 223 | 233 => { annotation_offset.add_coordinate(&pair); }
-                _ => { self.try_read_common_entity_code(&pair, &mut leader.common)?; }
+                210 | 220 | 230 => {
+                    normal.add_coordinate(&pair);
+                }
+                211 | 221 | 231 => {
+                    horiz_dir.add_coordinate(&pair);
+                }
+                212 | 222 | 232 => {
+                    block_offset.add_coordinate(&pair);
+                }
+                213 | 223 | 233 => {
+                    annotation_offset.add_coordinate(&pair);
+                }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut leader.common)?;
+                }
             }
         }
 
         // Save last vertex
         if reading_vertex {
-            if let Some(pt) = current_vertex.get_point() { leader.vertices.push(pt); }
+            if let Some(pt) = current_vertex.get_point() {
+                leader.vertices.push(pt);
+            }
         }
-        if let Some(pt) = normal.get_point() { leader.normal = pt; }
-        if let Some(pt) = horiz_dir.get_point() { leader.horizontal_direction = pt; }
-        if let Some(pt) = block_offset.get_point() { leader.block_offset = pt; }
-        if let Some(pt) = annotation_offset.get_point() { leader.annotation_offset = pt; }
+        if let Some(pt) = normal.get_point() {
+            leader.normal = pt;
+        }
+        if let Some(pt) = horiz_dir.get_point() {
+            leader.horizontal_direction = pt;
+        }
+        if let Some(pt) = block_offset.get_point() {
+            leader.block_offset = pt;
+        }
+        if let Some(pt) = annotation_offset.get_point() {
+            leader.annotation_offset = pt;
+        }
 
         Ok(Some(leader))
     }
@@ -14563,15 +16471,25 @@ impl<'a> SectionReader<'a> {
         let mut proxy_graphics = Vec::new();
 
         while let Some(pair) = self.reader.read_pair()? {
-            if pair.code == 0 { self.reader.push_back(pair); break; }
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
             match pair.code {
                 100 => section = pair.value_string.clone(),
                 8 => ml.common.layer = pair.value_string.clone(),
-                62 => { if let Some(v) = pair.as_i16() { ml.common.color = Color::from_index(v); } }
-                370 => { if let Some(v) = pair.as_i16() { ml.common.line_weight = LineWeight::from_value(v); } }
+                62 => {
+                    if let Some(v) = pair.as_i16() {
+                        ml.common.color = Color::from_index(v);
+                    }
+                }
+                370 => {
+                    if let Some(v) = pair.as_i16() {
+                        ml.common.line_weight = LineWeight::from_value(v);
+                    }
+                }
                 92 | 160 if section == "AcDbEntity" => {
-                    proxy_graphics_size =
-                        pair.as_int().unwrap_or(0).max(0) as usize;
+                    proxy_graphics_size = pair.as_int().unwrap_or(0).max(0) as usize;
                 }
                 310 if section == "AcDbEntity" => {
                     append_hex_bytes(&mut proxy_graphics, &pair.value_string);
@@ -14607,26 +16525,64 @@ impl<'a> SectionReader<'a> {
                 300 if pair.value_string.starts_with("CONTEXT_DATA") => {
                     self.read_mleader_context(&mut ml.context)?;
                 }
-                340 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { ml.style_handle = Some(Handle::new(h)); } }
+                340 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        ml.style_handle = Some(Handle::new(h));
+                    }
+                }
                 90 => {
                     if let Some(v) = pair.as_i32() {
                         ml.property_override_flags =
                             mlt::MultiLeaderPropertyOverrideFlags::from_bits_retain(v as u32);
                     }
                 }
-                170 => { if let Some(v) = pair.as_i16() { ml.path_type = mlt::MultiLeaderPathType::from(v); } }
-                91 => { if let Some(v) = pair.as_i32() { ml.line_color = color_from_i32(v); } }
-                341 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { ml.line_type_handle = Some(Handle::new(h)); } }
-                171 => { if let Some(v) = pair.as_i16() { ml.line_weight = LineWeight::from_value(v); } }
-                290 => { if let Some(v) = pair.as_bool() { ml.enable_landing = v; } }
-                291 => { if let Some(v) = pair.as_bool() { ml.enable_dogleg = v; } }
-                41 => { if let Some(v) = pair.as_double() { ml.dogleg_length = v; } }
-                342 => {
-                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
-                        if h != 0 { ml.arrowhead_handle = Some(Handle::new(h)); }
+                170 => {
+                    if let Some(v) = pair.as_i16() {
+                        ml.path_type = mlt::MultiLeaderPathType::from(v);
                     }
                 }
-                42 => { if let Some(v) = pair.as_double() { ml.arrowhead_size = v; } }
+                91 => {
+                    if let Some(v) = pair.as_i32() {
+                        ml.line_color = color_from_i32(v);
+                    }
+                }
+                341 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        ml.line_type_handle = Some(Handle::new(h));
+                    }
+                }
+                171 => {
+                    if let Some(v) = pair.as_i16() {
+                        ml.line_weight = LineWeight::from_value(v);
+                    }
+                }
+                290 => {
+                    if let Some(v) = pair.as_bool() {
+                        ml.enable_landing = v;
+                    }
+                }
+                291 => {
+                    if let Some(v) = pair.as_bool() {
+                        ml.enable_dogleg = v;
+                    }
+                }
+                41 => {
+                    if let Some(v) = pair.as_double() {
+                        ml.dogleg_length = v;
+                    }
+                }
+                342 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        if h != 0 {
+                            ml.arrowhead_handle = Some(Handle::new(h));
+                        }
+                    }
+                }
+                42 => {
+                    if let Some(v) = pair.as_double() {
+                        ml.arrowhead_size = v;
+                    }
+                }
                 172 => {
                     if let Some(v) = pair.as_i16() {
                         ml.content_type = match v {
@@ -14636,27 +16592,82 @@ impl<'a> SectionReader<'a> {
                         };
                     }
                 }
-                343 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { ml.text_style_handle = Some(Handle::new(h)); } }
-                173 => { if let Some(v) = pair.as_i16() { ml.text_left_attachment = mlt::TextAttachmentType::from(v); } }
-                95 => { if let Some(v) = pair.as_i32() { ml.text_right_attachment = mlt::TextAttachmentType::from(v as i16); } }
-                174 => { if let Some(v) = pair.as_i16() { ml.text_angle_type = mlt::TextAngleType::from(v); } }
-                175 => { if let Some(v) = pair.as_i16() { ml.text_alignment = mlt::TextAlignmentType::from(v); } }
-                92 => { if let Some(v) = pair.as_i32() { ml.text_color = color_from_i32(v); } }
-                292 => { if let Some(v) = pair.as_bool() { ml.text_frame = v; } }
-                344 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { ml.block_content_handle = Some(Handle::new(h)); } }
-                93 => { if let Some(v) = pair.as_i32() { ml.block_content_color = color_from_i32(v); } }
-                10 | 20 | 30 => { block_scale.add_coordinate(&pair); }
-                43 => { if let Some(v) = pair.as_double() { ml.block_rotation = v; } }
-                45 => { if let Some(v) = pair.as_double() { ml.scale_factor = v; } }
-                176 => { if let Some(v) = pair.as_i16() { ml.block_connection_type = mlt::BlockContentConnectionType::from(v); } }
-                293 => { if let Some(v) = pair.as_bool() { ml.enable_annotation_scale = v; } }
+                343 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        ml.text_style_handle = Some(Handle::new(h));
+                    }
+                }
+                173 => {
+                    if let Some(v) = pair.as_i16() {
+                        ml.text_left_attachment = mlt::TextAttachmentType::from(v);
+                    }
+                }
+                95 => {
+                    if let Some(v) = pair.as_i32() {
+                        ml.text_right_attachment = mlt::TextAttachmentType::from(v as i16);
+                    }
+                }
+                174 => {
+                    if let Some(v) = pair.as_i16() {
+                        ml.text_angle_type = mlt::TextAngleType::from(v);
+                    }
+                }
+                175 => {
+                    if let Some(v) = pair.as_i16() {
+                        ml.text_alignment = mlt::TextAlignmentType::from(v);
+                    }
+                }
+                92 => {
+                    if let Some(v) = pair.as_i32() {
+                        ml.text_color = color_from_i32(v);
+                    }
+                }
+                292 => {
+                    if let Some(v) = pair.as_bool() {
+                        ml.text_frame = v;
+                    }
+                }
+                344 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        ml.block_content_handle = Some(Handle::new(h));
+                    }
+                }
+                93 => {
+                    if let Some(v) = pair.as_i32() {
+                        ml.block_content_color = color_from_i32(v);
+                    }
+                }
+                10 | 20 | 30 => {
+                    block_scale.add_coordinate(&pair);
+                }
+                43 => {
+                    if let Some(v) = pair.as_double() {
+                        ml.block_rotation = v;
+                    }
+                }
+                45 => {
+                    if let Some(v) = pair.as_double() {
+                        ml.scale_factor = v;
+                    }
+                }
+                176 => {
+                    if let Some(v) = pair.as_i16() {
+                        ml.block_connection_type = mlt::BlockContentConnectionType::from(v);
+                    }
+                }
+                293 => {
+                    if let Some(v) = pair.as_bool() {
+                        ml.enable_annotation_scale = v;
+                    }
+                }
                 94 => {
                     if let Some(index) = pair.as_i32() {
-                        ml.arrowhead_overrides.push(mlt::MultiLeaderArrowheadOverride {
-                            index,
-                            is_default: index == 0,
-                            arrowhead_handle: None,
-                        });
+                        ml.arrowhead_overrides
+                            .push(mlt::MultiLeaderArrowheadOverride {
+                                index,
+                                is_default: index == 0,
+                                arrowhead_handle: None,
+                            });
                     }
                 }
                 345 => {
@@ -14698,16 +16709,50 @@ impl<'a> SectionReader<'a> {
                         ml.block_attributes.push(attribute);
                     }
                 }
-                294 => { if let Some(v) = pair.as_bool() { ml.text_direction_negative = v; } }
-                178 => { if let Some(v) = pair.as_i16() { ml.text_align_in_ipe = v; } }
-                179 => { if let Some(v) = pair.as_i16() { ml.text_attachment_point = mlt::TextAttachmentPointType::from(v); } }
-                271 => { if let Some(v) = pair.as_i16() { ml.text_attachment_direction = mlt::TextAttachmentDirectionType::from(v); } }
-                272 => { if let Some(v) = pair.as_i16() { ml.text_bottom_attachment = mlt::TextAttachmentType::from(v); } }
-                273 => { if let Some(v) = pair.as_i16() { ml.text_top_attachment = mlt::TextAttachmentType::from(v); } }
-                295 => { if let Some(v) = pair.as_bool() { ml.extend_leader_to_text = v; } }
+                294 => {
+                    if let Some(v) = pair.as_bool() {
+                        ml.text_direction_negative = v;
+                    }
+                }
+                178 => {
+                    if let Some(v) = pair.as_i16() {
+                        ml.text_align_in_ipe = v;
+                    }
+                }
+                179 => {
+                    if let Some(v) = pair.as_i16() {
+                        ml.text_attachment_point = mlt::TextAttachmentPointType::from(v);
+                    }
+                }
+                271 => {
+                    if let Some(v) = pair.as_i16() {
+                        ml.text_attachment_direction = mlt::TextAttachmentDirectionType::from(v);
+                    }
+                }
+                272 => {
+                    if let Some(v) = pair.as_i16() {
+                        ml.text_bottom_attachment = mlt::TextAttachmentType::from(v);
+                    }
+                }
+                273 => {
+                    if let Some(v) = pair.as_i16() {
+                        ml.text_top_attachment = mlt::TextAttachmentType::from(v);
+                    }
+                }
+                295 => {
+                    if let Some(v) = pair.as_bool() {
+                        ml.extend_leader_to_text = v;
+                    }
+                }
                 // Lenient extras some exporters emit at entity level.
-                44 => { if let Some(v) = pair.as_double() { ml.text_height = v; } }
-                _ => { self.try_read_common_entity_code(&pair, &mut ml.common)?; }
+                44 => {
+                    if let Some(v) = pair.as_double() {
+                        ml.text_height = v;
+                    }
+                }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut ml.common)?;
+                }
             }
         }
 
@@ -14755,52 +16800,198 @@ impl<'a> SectionReader<'a> {
                     let root = self.read_mleader_leader_root()?;
                     ctx.leader_roots.push(root);
                 }
-                40 => { if let Some(v) = pair.as_double() { ctx.scale_factor = v; } }
-                10 | 20 | 30 => { content_base.add_coordinate(&pair); }
-                41 => { if let Some(v) = pair.as_double() { ctx.text_height = v; } }
-                140 => { if let Some(v) = pair.as_double() { ctx.arrowhead_size = v; } }
-                145 => { if let Some(v) = pair.as_double() { ctx.landing_gap = v; } }
-                174 => { if let Some(v) = pair.as_i16() { ctx.text_left_attachment = mlt::TextAttachmentType::from(v); } }
-                175 => { if let Some(v) = pair.as_i16() { ctx.text_right_attachment = mlt::TextAttachmentType::from(v); } }
-                176 => { if let Some(v) = pair.as_i16() { ctx.text_alignment = mlt::TextAlignmentType::from(v); } }
-                177 => { if let Some(v) = pair.as_i16() { ctx.block_connection_type = mlt::BlockContentConnectionType::from(v); } }
-                290 => { if let Some(v) = pair.as_bool() { ctx.has_text_contents = v; } }
+                40 => {
+                    if let Some(v) = pair.as_double() {
+                        ctx.scale_factor = v;
+                    }
+                }
+                10 | 20 | 30 => {
+                    content_base.add_coordinate(&pair);
+                }
+                41 => {
+                    if let Some(v) = pair.as_double() {
+                        ctx.text_height = v;
+                    }
+                }
+                140 => {
+                    if let Some(v) = pair.as_double() {
+                        ctx.arrowhead_size = v;
+                    }
+                }
+                145 => {
+                    if let Some(v) = pair.as_double() {
+                        ctx.landing_gap = v;
+                    }
+                }
+                174 => {
+                    if let Some(v) = pair.as_i16() {
+                        ctx.text_left_attachment = mlt::TextAttachmentType::from(v);
+                    }
+                }
+                175 => {
+                    if let Some(v) = pair.as_i16() {
+                        ctx.text_right_attachment = mlt::TextAttachmentType::from(v);
+                    }
+                }
+                176 => {
+                    if let Some(v) = pair.as_i16() {
+                        ctx.text_alignment = mlt::TextAlignmentType::from(v);
+                    }
+                }
+                177 => {
+                    if let Some(v) = pair.as_i16() {
+                        ctx.block_connection_type = mlt::BlockContentConnectionType::from(v);
+                    }
+                }
+                290 => {
+                    if let Some(v) = pair.as_bool() {
+                        ctx.has_text_contents = v;
+                    }
+                }
                 304 => ctx.text_string = pair.value_string.clone(),
-                11 | 21 | 31 => { text_normal.add_coordinate(&pair); }
-                340 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { ctx.text_style_handle = Some(Handle::new(h)); } }
-                12 | 22 | 32 => { text_location.add_coordinate(&pair); }
-                13 | 23 | 33 => { text_direction.add_coordinate(&pair); }
-                42 => { if let Some(v) = pair.as_double() { ctx.text_rotation = v; } }
-                43 => { if let Some(v) = pair.as_double() { ctx.text_width = v; } }
-                44 => { if let Some(v) = pair.as_double() { ctx.text_boundary_height = v; } }
-                45 => { if let Some(v) = pair.as_double() { ctx.line_spacing_factor = v; } }
-                170 => { if let Some(v) = pair.as_i16() { ctx.line_spacing_style = crate::entities::LineSpacingStyle::from(v); } }
-                90 => { if let Some(v) = pair.as_i32() { ctx.text_color = color_from_i32(v); } }
+                11 | 21 | 31 => {
+                    text_normal.add_coordinate(&pair);
+                }
+                340 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        ctx.text_style_handle = Some(Handle::new(h));
+                    }
+                }
+                12 | 22 | 32 => {
+                    text_location.add_coordinate(&pair);
+                }
+                13 | 23 | 33 => {
+                    text_direction.add_coordinate(&pair);
+                }
+                42 => {
+                    if let Some(v) = pair.as_double() {
+                        ctx.text_rotation = v;
+                    }
+                }
+                43 => {
+                    if let Some(v) = pair.as_double() {
+                        ctx.text_width = v;
+                    }
+                }
+                44 => {
+                    if let Some(v) = pair.as_double() {
+                        ctx.text_boundary_height = v;
+                    }
+                }
+                45 => {
+                    if let Some(v) = pair.as_double() {
+                        ctx.line_spacing_factor = v;
+                    }
+                }
+                170 => {
+                    if let Some(v) = pair.as_i16() {
+                        ctx.line_spacing_style = crate::entities::LineSpacingStyle::from(v);
+                    }
+                }
+                90 => {
+                    if let Some(v) = pair.as_i32() {
+                        ctx.text_color = color_from_i32(v);
+                    }
+                }
                 171 => {
                     if let Some(v) = pair.as_i16() {
                         ctx.text_attachment_point = mlt::TextAttachmentPointType::from(v);
                     }
                 }
-                172 => { if let Some(v) = pair.as_i16() { ctx.text_flow_direction = mlt::FlowDirectionType::from(v); } }
-                91 => { if let Some(v) = pair.as_i32() { ctx.background_fill_color = color_from_i32(v); } }
-                141 => { if let Some(v) = pair.as_double() { ctx.background_scale_factor = v; } }
-                92 => { if let Some(v) = pair.as_i32() { ctx.background_transparency = v; } }
-                291 => { if let Some(v) = pair.as_bool() { ctx.background_fill_enabled = v; } }
-                292 => { if let Some(v) = pair.as_bool() { ctx.background_mask_fill_on = v; } }
-                173 => { if let Some(v) = pair.as_i16() { ctx.column_type = v; } }
-                293 => { if let Some(v) = pair.as_bool() { ctx.text_height_automatic = v; } }
-                142 => { if let Some(v) = pair.as_double() { ctx.column_width = v; } }
-                143 => { if let Some(v) = pair.as_double() { ctx.column_gutter = v; } }
-                144 => { if let Some(v) = pair.as_double() { ctx.column_sizes.push(v); } }
-                294 => { if let Some(v) = pair.as_bool() { ctx.column_flow_reversed = v; } }
-                295 => { if let Some(v) = pair.as_bool() { ctx.word_break = v; } }
-                296 => { if let Some(v) = pair.as_bool() { ctx.has_block_contents = v; } }
-                341 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { ctx.block_content_handle = Some(Handle::new(h)); } }
-                14 | 24 | 34 => { block_normal.add_coordinate(&pair); }
-                15 | 25 | 35 => { block_location.add_coordinate(&pair); }
-                16 | 26 | 36 => { block_scale.add_coordinate(&pair); }
-                46 => { if let Some(v) = pair.as_double() { ctx.block_rotation = v; } }
-                93 => { if let Some(v) = pair.as_i32() { ctx.block_content_color = color_from_i32(v); } }
+                172 => {
+                    if let Some(v) = pair.as_i16() {
+                        ctx.text_flow_direction = mlt::FlowDirectionType::from(v);
+                    }
+                }
+                91 => {
+                    if let Some(v) = pair.as_i32() {
+                        ctx.background_fill_color = color_from_i32(v);
+                    }
+                }
+                141 => {
+                    if let Some(v) = pair.as_double() {
+                        ctx.background_scale_factor = v;
+                    }
+                }
+                92 => {
+                    if let Some(v) = pair.as_i32() {
+                        ctx.background_transparency = v;
+                    }
+                }
+                291 => {
+                    if let Some(v) = pair.as_bool() {
+                        ctx.background_fill_enabled = v;
+                    }
+                }
+                292 => {
+                    if let Some(v) = pair.as_bool() {
+                        ctx.background_mask_fill_on = v;
+                    }
+                }
+                173 => {
+                    if let Some(v) = pair.as_i16() {
+                        ctx.column_type = v;
+                    }
+                }
+                293 => {
+                    if let Some(v) = pair.as_bool() {
+                        ctx.text_height_automatic = v;
+                    }
+                }
+                142 => {
+                    if let Some(v) = pair.as_double() {
+                        ctx.column_width = v;
+                    }
+                }
+                143 => {
+                    if let Some(v) = pair.as_double() {
+                        ctx.column_gutter = v;
+                    }
+                }
+                144 => {
+                    if let Some(v) = pair.as_double() {
+                        ctx.column_sizes.push(v);
+                    }
+                }
+                294 => {
+                    if let Some(v) = pair.as_bool() {
+                        ctx.column_flow_reversed = v;
+                    }
+                }
+                295 => {
+                    if let Some(v) = pair.as_bool() {
+                        ctx.word_break = v;
+                    }
+                }
+                296 => {
+                    if let Some(v) = pair.as_bool() {
+                        ctx.has_block_contents = v;
+                    }
+                }
+                341 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        ctx.block_content_handle = Some(Handle::new(h));
+                    }
+                }
+                14 | 24 | 34 => {
+                    block_normal.add_coordinate(&pair);
+                }
+                15 | 25 | 35 => {
+                    block_location.add_coordinate(&pair);
+                }
+                16 | 26 | 36 => {
+                    block_scale.add_coordinate(&pair);
+                }
+                46 => {
+                    if let Some(v) = pair.as_double() {
+                        ctx.block_rotation = v;
+                    }
+                }
+                93 => {
+                    if let Some(v) = pair.as_i32() {
+                        ctx.block_content_color = color_from_i32(v);
+                    }
+                }
                 47 => {
                     if let Some(value) = pair.as_double() {
                         if transform_index < ctx.transform_matrix.len() {
@@ -14809,34 +17000,70 @@ impl<'a> SectionReader<'a> {
                         }
                     }
                 }
-                110 | 120 | 130 => { base_point.add_coordinate(&pair); }
-                111 | 121 | 131 => { base_direction.add_coordinate(&pair); }
-                112 | 122 | 132 => { base_vertical.add_coordinate(&pair); }
-                297 => { if let Some(v) = pair.as_bool() { ctx.normal_reversed = v; } }
-                273 => { if let Some(v) = pair.as_i16() { ctx.text_top_attachment = mlt::TextAttachmentType::from(v); } }
-                272 => { if let Some(v) = pair.as_i16() { ctx.text_bottom_attachment = mlt::TextAttachmentType::from(v); } }
+                110 | 120 | 130 => {
+                    base_point.add_coordinate(&pair);
+                }
+                111 | 121 | 131 => {
+                    base_direction.add_coordinate(&pair);
+                }
+                112 | 122 | 132 => {
+                    base_vertical.add_coordinate(&pair);
+                }
+                297 => {
+                    if let Some(v) = pair.as_bool() {
+                        ctx.normal_reversed = v;
+                    }
+                }
+                273 => {
+                    if let Some(v) = pair.as_i16() {
+                        ctx.text_top_attachment = mlt::TextAttachmentType::from(v);
+                    }
+                }
+                272 => {
+                    if let Some(v) = pair.as_i16() {
+                        ctx.text_bottom_attachment = mlt::TextAttachmentType::from(v);
+                    }
+                }
                 _ => {}
             }
         }
 
-        if let Some(p) = content_base.get_point() { ctx.content_base_point = p; }
-        if let Some(p) = text_normal.get_point() { ctx.text_normal = p; }
-        if let Some(p) = text_location.get_point() { ctx.text_location = p; }
-        if let Some(p) = text_direction.get_point() { ctx.text_direction = p; }
-        if let Some(p) = block_normal.get_point() { ctx.block_content_normal = p; }
-        if let Some(p) = block_location.get_point() { ctx.block_content_location = p; }
-        if let Some(p) = block_scale.get_point() { ctx.block_content_scale = p; }
-        if let Some(p) = base_point.get_point() { ctx.base_point = p; }
-        if let Some(p) = base_direction.get_point() { ctx.base_direction = p; }
-        if let Some(p) = base_vertical.get_point() { ctx.base_vertical = p; }
+        if let Some(p) = content_base.get_point() {
+            ctx.content_base_point = p;
+        }
+        if let Some(p) = text_normal.get_point() {
+            ctx.text_normal = p;
+        }
+        if let Some(p) = text_location.get_point() {
+            ctx.text_location = p;
+        }
+        if let Some(p) = text_direction.get_point() {
+            ctx.text_direction = p;
+        }
+        if let Some(p) = block_normal.get_point() {
+            ctx.block_content_normal = p;
+        }
+        if let Some(p) = block_location.get_point() {
+            ctx.block_content_location = p;
+        }
+        if let Some(p) = block_scale.get_point() {
+            ctx.block_content_scale = p;
+        }
+        if let Some(p) = base_point.get_point() {
+            ctx.base_point = p;
+        }
+        if let Some(p) = base_direction.get_point() {
+            ctx.base_direction = p;
+        }
+        if let Some(p) = base_vertical.get_point() {
+            ctx.base_vertical = p;
+        }
         Ok(())
     }
 
     /// Read one `LEADER{ … }` root (up to its closing `303 }`), including
     /// nested `304 LEADER_LINE{ … }` lines.
-    fn read_mleader_leader_root(
-        &mut self,
-    ) -> Result<crate::entities::multileader::LeaderRoot> {
+    fn read_mleader_leader_root(&mut self) -> Result<crate::entities::multileader::LeaderRoot> {
         use crate::entities::multileader::{LeaderRoot, StartEndPointPair};
         let mut root = LeaderRoot::new(0);
         let mut connection = PointReader::new();
@@ -14853,17 +17080,35 @@ impl<'a> SectionReader<'a> {
             match pair.code {
                 303 => break, // "}"
                 304 if pair.value_string.starts_with("LEADER_LINE") => {
-                    let line = self.read_mleader_leader_line(
-                        root.lines.len() as i32,
-                    )?;
+                    let line = self.read_mleader_leader_line(root.lines.len() as i32)?;
                     root.lines.push(line);
                 }
-                290 => { if let Some(v) = pair.as_bool() { root.content_valid = v; } }
-                291 => { if let Some(v) = pair.as_bool() { root.unknown = v; } }
-                10 | 20 | 30 => { connection.add_coordinate(&pair); }
-                11 | 21 | 31 => { direction.add_coordinate(&pair); }
-                90 => { if let Some(v) = pair.as_i32() { root.leader_index = v; } }
-                40 => { if let Some(v) = pair.as_double() { root.landing_distance = v; } }
+                290 => {
+                    if let Some(v) = pair.as_bool() {
+                        root.content_valid = v;
+                    }
+                }
+                291 => {
+                    if let Some(v) = pair.as_bool() {
+                        root.unknown = v;
+                    }
+                }
+                10 | 20 | 30 => {
+                    connection.add_coordinate(&pair);
+                }
+                11 | 21 | 31 => {
+                    direction.add_coordinate(&pair);
+                }
+                90 => {
+                    if let Some(v) = pair.as_i32() {
+                        root.leader_index = v;
+                    }
+                }
+                40 => {
+                    if let Some(v) = pair.as_double() {
+                        root.landing_distance = v;
+                    }
+                }
                 12 => {
                     if let (Some(start), Some(end)) =
                         (break_start.get_point(), break_end.get_point())
@@ -14874,8 +17119,12 @@ impl<'a> SectionReader<'a> {
                     }
                     break_start.add_coordinate(&pair);
                 }
-                22 | 32 => { break_start.add_coordinate(&pair); }
-                13 | 23 | 33 => { break_end.add_coordinate(&pair); }
+                22 | 32 => {
+                    break_start.add_coordinate(&pair);
+                }
+                13 | 23 | 33 => {
+                    break_end.add_coordinate(&pair);
+                }
                 271 => {
                     if let Some(v) = pair.as_i16() {
                         root.text_attachment_direction =
@@ -14886,8 +17135,12 @@ impl<'a> SectionReader<'a> {
             }
         }
 
-        if let Some(p) = connection.get_point() { root.connection_point = p; }
-        if let Some(p) = direction.get_point() { root.direction = p; }
+        if let Some(p) = connection.get_point() {
+            root.connection_point = p;
+        }
+        if let Some(p) = direction.get_point() {
+            root.direction = p;
+        }
         if let (Some(s), Some(e)) = (break_start.get_point(), break_end.get_point()) {
             root.break_points.push(StartEndPointPair::new(s, e));
         }
@@ -14934,8 +17187,7 @@ impl<'a> SectionReader<'a> {
                         if let (Some(start), Some(end)) =
                             (break_start.get_point(), break_end.get_point())
                         {
-                            current_break_points
-                                .push(mlt::StartEndPointPair::new(start, end));
+                            current_break_points.push(mlt::StartEndPointPair::new(start, end));
                         }
                         break_start.reset();
                         break_end.reset();
@@ -14953,28 +17205,55 @@ impl<'a> SectionReader<'a> {
                     if let (Some(start), Some(end)) =
                         (break_start.get_point(), break_end.get_point())
                     {
-                        current_break_points
-                            .push(mlt::StartEndPointPair::new(start, end));
+                        current_break_points.push(mlt::StartEndPointPair::new(start, end));
                         break_start.reset();
                         break_end.reset();
                     }
                     break_start.add_coordinate(&pair);
                 }
-                21 | 31 => { break_start.add_coordinate(&pair); }
-                12 | 22 | 32 => { break_end.add_coordinate(&pair); }
-                91 => { if let Some(v) = pair.as_i32() { line.index = v; } }
-                170 => { if let Some(v) = pair.as_i16() { line.path_type = mlt::MultiLeaderPathType::from(v); } }
-                92 => { if let Some(v) = pair.as_i32() { line.line_color = color_from_i32(v); } }
-                340 => {
-                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
-                        if h != 0 { line.line_type_handle = Some(Handle::new(h)); }
+                21 | 31 => {
+                    break_start.add_coordinate(&pair);
+                }
+                12 | 22 | 32 => {
+                    break_end.add_coordinate(&pair);
+                }
+                91 => {
+                    if let Some(v) = pair.as_i32() {
+                        line.index = v;
                     }
                 }
-                171 => { if let Some(v) = pair.as_i16() { line.line_weight = LineWeight::from_value(v); } }
-                40 => { if let Some(v) = pair.as_double() { line.arrowhead_size = v; } }
+                170 => {
+                    if let Some(v) = pair.as_i16() {
+                        line.path_type = mlt::MultiLeaderPathType::from(v);
+                    }
+                }
+                92 => {
+                    if let Some(v) = pair.as_i32() {
+                        line.line_color = color_from_i32(v);
+                    }
+                }
+                340 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        if h != 0 {
+                            line.line_type_handle = Some(Handle::new(h));
+                        }
+                    }
+                }
+                171 => {
+                    if let Some(v) = pair.as_i16() {
+                        line.line_weight = LineWeight::from_value(v);
+                    }
+                }
+                40 => {
+                    if let Some(v) = pair.as_double() {
+                        line.arrowhead_size = v;
+                    }
+                }
                 341 => {
                     if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
-                        if h != 0 { line.arrowhead_handle = Some(Handle::new(h)); }
+                        if h != 0 {
+                            line.arrowhead_handle = Some(Handle::new(h));
+                        }
                     }
                 }
                 93 => {
@@ -14986,11 +17265,8 @@ impl<'a> SectionReader<'a> {
                 _ => {}
             }
         }
-        if let (Some(start), Some(end)) =
-            (break_start.get_point(), break_end.get_point())
-        {
-            current_break_points
-                .push(mlt::StartEndPointPair::new(start, end));
+        if let (Some(start), Some(end)) = (break_start.get_point(), break_end.get_point()) {
+            current_break_points.push(mlt::StartEndPointPair::new(start, end));
         }
         if let Some(segment_index) = current_break_segment {
             line.break_infos.push(mlt::LeaderLineBreakInfo {
@@ -15025,18 +17301,49 @@ impl<'a> SectionReader<'a> {
         let mut reading_area_fill = false;
 
         while let Some(pair) = self.reader.read_pair()? {
-            if pair.code == 0 { self.reader.push_back(pair); break; }
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
             match pair.code {
                 8 => mline.common.layer = pair.value_string.clone(),
-                62 => { if let Some(v) = pair.as_i16() { mline.common.color = Color::from_index(v); } }
-                370 => { if let Some(v) = pair.as_i16() { mline.common.line_weight = LineWeight::from_value(v); } }
+                62 => {
+                    if let Some(v) = pair.as_i16() {
+                        mline.common.color = Color::from_index(v);
+                    }
+                }
+                370 => {
+                    if let Some(v) = pair.as_i16() {
+                        mline.common.line_weight = LineWeight::from_value(v);
+                    }
+                }
                 2 => mline.style_name = pair.value_string.clone(),
-                40 => { if let Some(v) = pair.as_double() { mline.scale_factor = v; } }
-                70 => { if let Some(v) = pair.as_i16() { mline.justification = MLineJustification::from(v); } }
-                71 => { if let Some(v) = pair.as_i16() { mline.flags = MLineFlags::from_bits_truncate(v); } }
-                73 => { if let Some(v) = pair.as_i16() { num_elements = v as usize; } }
-                10 | 20 | 30 => { start_point.add_coordinate(&pair); }
-                210 | 220 | 230 => { normal.add_coordinate(&pair); }
+                40 => {
+                    if let Some(v) = pair.as_double() {
+                        mline.scale_factor = v;
+                    }
+                }
+                70 => {
+                    if let Some(v) = pair.as_i16() {
+                        mline.justification = MLineJustification::from(v);
+                    }
+                }
+                71 => {
+                    if let Some(v) = pair.as_i16() {
+                        mline.flags = MLineFlags::from_bits_truncate(v);
+                    }
+                }
+                73 => {
+                    if let Some(v) = pair.as_i16() {
+                        num_elements = v as usize;
+                    }
+                }
+                10 | 20 | 30 => {
+                    start_point.add_coordinate(&pair);
+                }
+                210 | 220 | 230 => {
+                    normal.add_coordinate(&pair);
+                }
                 340 => {
                     if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
                         mline.style_handle = Some(Handle::new(h));
@@ -15045,9 +17352,17 @@ impl<'a> SectionReader<'a> {
                 11 => {
                     // New vertex – save previous if any
                     if reading_vertices {
-                        self.finalize_mline_vertex(&mut vertices, &current_vertex_pos, &current_vertex_dir,
-                            &current_vertex_miter, &mut current_segments, &mut current_params, &mut current_area_fill,
-                            &mut reading_params, &mut reading_area_fill);
+                        self.finalize_mline_vertex(
+                            &mut vertices,
+                            &current_vertex_pos,
+                            &current_vertex_dir,
+                            &current_vertex_miter,
+                            &mut current_segments,
+                            &mut current_params,
+                            &mut current_area_fill,
+                            &mut reading_params,
+                            &mut reading_area_fill,
+                        );
                     }
                     current_vertex_pos = PointReader::new();
                     current_vertex_pos.add_coordinate(&pair);
@@ -15060,9 +17375,15 @@ impl<'a> SectionReader<'a> {
                     reading_area_fill = false;
                     reading_vertices = true;
                 }
-                21 | 31 => { current_vertex_pos.add_coordinate(&pair); }
-                12 | 22 | 32 => { current_vertex_dir.add_coordinate(&pair); }
-                13 | 23 | 33 => { current_vertex_miter.add_coordinate(&pair); }
+                21 | 31 => {
+                    current_vertex_pos.add_coordinate(&pair);
+                }
+                12 | 22 | 32 => {
+                    current_vertex_dir.add_coordinate(&pair);
+                }
+                13 | 23 | 33 => {
+                    current_vertex_miter.add_coordinate(&pair);
+                }
                 74 => {
                     // Number of parameters for this element
                     if reading_params {
@@ -15076,27 +17397,50 @@ impl<'a> SectionReader<'a> {
                     current_params = Vec::new();
                     current_area_fill = Vec::new();
                 }
-                75 => { reading_area_fill = true; }
+                75 => {
+                    reading_area_fill = true;
+                }
                 41 => {
                     if let Some(v) = pair.as_double() {
-                        if reading_area_fill { current_area_fill.push(v); }
-                        else if reading_params { current_params.push(v); }
+                        if reading_area_fill {
+                            current_area_fill.push(v);
+                        } else if reading_params {
+                            current_params.push(v);
+                        }
                     }
                 }
-                42 => { if let Some(v) = pair.as_double() { current_area_fill.push(v); } }
-                _ => { self.try_read_common_entity_code(&pair, &mut mline.common)?; }
+                42 => {
+                    if let Some(v) = pair.as_double() {
+                        current_area_fill.push(v);
+                    }
+                }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut mline.common)?;
+                }
             }
         }
 
         // Finalize last vertex
         if reading_vertices {
-            self.finalize_mline_vertex(&mut vertices, &current_vertex_pos, &current_vertex_dir,
-                &current_vertex_miter, &mut current_segments, &mut current_params, &mut current_area_fill,
-                &mut reading_params, &mut reading_area_fill);
+            self.finalize_mline_vertex(
+                &mut vertices,
+                &current_vertex_pos,
+                &current_vertex_dir,
+                &current_vertex_miter,
+                &mut current_segments,
+                &mut current_params,
+                &mut current_area_fill,
+                &mut reading_params,
+                &mut reading_area_fill,
+            );
         }
 
-        if let Some(pt) = start_point.get_point() { mline.start_point = pt; }
-        if let Some(pt) = normal.get_point() { mline.normal = pt; }
+        if let Some(pt) = start_point.get_point() {
+            mline.start_point = pt;
+        }
+        if let Some(pt) = normal.get_point() {
+            mline.normal = pt;
+        }
         mline.vertices = vertices;
         mline.style_element_count = num_elements;
 
@@ -15106,10 +17450,14 @@ impl<'a> SectionReader<'a> {
     fn finalize_mline_vertex(
         &self,
         vertices: &mut Vec<crate::entities::mline::MLineVertex>,
-        pos: &PointReader, dir: &PointReader, miter: &PointReader,
+        pos: &PointReader,
+        dir: &PointReader,
+        miter: &PointReader,
         segments: &mut Vec<crate::entities::mline::MLineSegment>,
-        params: &mut Vec<f64>, area_fill: &mut Vec<f64>,
-        reading_params: &mut bool, _reading_area_fill: &mut bool,
+        params: &mut Vec<f64>,
+        area_fill: &mut Vec<f64>,
+        reading_params: &mut bool,
+        _reading_area_fill: &mut bool,
     ) {
         use crate::entities::mline::*;
         if *reading_params {
@@ -15143,32 +17491,63 @@ impl<'a> SectionReader<'a> {
         let mut crease_values: Vec<f64> = Vec::new();
 
         while let Some(pair) = self.reader.read_pair()? {
-            if pair.code == 0 { self.reader.push_back(pair); break; }
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
             match pair.code {
                 8 => mesh.common.layer = pair.value_string.clone(),
-                62 => { if let Some(v) = pair.as_i16() { mesh.common.color = Color::from_index(v); } }
-                370 => { if let Some(v) = pair.as_i16() { mesh.common.line_weight = LineWeight::from_value(v); } }
-                71 => { if let Some(v) = pair.as_i16() { mesh.version = v; } }
-                72 => { if let Some(v) = pair.as_i16() { mesh.blend_crease = v != 0; } }
-                91 => {
-                    match reading_state {
-                        MeshReadState::Properties => {
-                            if let Some(v) = pair.as_i32() { mesh.subdivision_level = v; }
-                        }
-                        _ => {}
+                62 => {
+                    if let Some(v) = pair.as_i16() {
+                        mesh.common.color = Color::from_index(v);
                     }
                 }
+                370 => {
+                    if let Some(v) = pair.as_i16() {
+                        mesh.common.line_weight = LineWeight::from_value(v);
+                    }
+                }
+                71 => {
+                    if let Some(v) = pair.as_i16() {
+                        mesh.version = v;
+                    }
+                }
+                72 => {
+                    if let Some(v) = pair.as_i16() {
+                        mesh.blend_crease = v != 0;
+                    }
+                }
+                91 => match reading_state {
+                    MeshReadState::Properties => {
+                        if let Some(v) = pair.as_i32() {
+                            mesh.subdivision_level = v;
+                        }
+                    }
+                    _ => {}
+                },
                 92 => {
-                    if let Some(v) = pair.as_i32() { vertex_count = v as usize; reading_state = MeshReadState::Vertices; }
+                    if let Some(v) = pair.as_i32() {
+                        vertex_count = v as usize;
+                        reading_state = MeshReadState::Vertices;
+                    }
                 }
                 93 => {
-                    if let Some(v) = pair.as_i32() { _face_count = v as usize; reading_state = MeshReadState::Faces; }
+                    if let Some(v) = pair.as_i32() {
+                        _face_count = v as usize;
+                        reading_state = MeshReadState::Faces;
+                    }
                 }
                 94 => {
-                    if let Some(v) = pair.as_i32() { _edge_count = v as usize; reading_state = MeshReadState::Edges; }
+                    if let Some(v) = pair.as_i32() {
+                        _edge_count = v as usize;
+                        reading_state = MeshReadState::Edges;
+                    }
                 }
                 95 => {
-                    if let Some(v) = pair.as_i32() { _crease_count = v as usize; reading_state = MeshReadState::Creases; }
+                    if let Some(v) = pair.as_i32() {
+                        _crease_count = v as usize;
+                        reading_state = MeshReadState::Creases;
+                    }
                 }
                 10 | 20 | 30 => {
                     if reading_state == MeshReadState::Vertices {
@@ -15190,7 +17569,9 @@ impl<'a> SectionReader<'a> {
                                 } else {
                                     face_indices.push(v as usize);
                                     if face_indices.len() == face_subcount.unwrap() {
-                                        mesh.faces.push(MeshFace { vertices: std::mem::take(&mut face_indices) });
+                                        mesh.faces.push(MeshFace {
+                                            vertices: std::mem::take(&mut face_indices),
+                                        });
                                         face_subcount = None;
                                     }
                                 }
@@ -15198,7 +17579,11 @@ impl<'a> SectionReader<'a> {
                             MeshReadState::Edges => {
                                 edge_buf.push(v as usize);
                                 if edge_buf.len() == 2 {
-                                    mesh.edges.push(MeshEdge { start: edge_buf[0], end: edge_buf[1], crease: None });
+                                    mesh.edges.push(MeshEdge {
+                                        start: edge_buf[0],
+                                        end: edge_buf[1],
+                                        crease: None,
+                                    });
                                     edge_buf.clear();
                                 }
                             }
@@ -15208,10 +17593,14 @@ impl<'a> SectionReader<'a> {
                 }
                 140 => {
                     if reading_state == MeshReadState::Creases {
-                        if let Some(v) = pair.as_double() { crease_values.push(v); }
+                        if let Some(v) = pair.as_double() {
+                            crease_values.push(v);
+                        }
                     }
                 }
-                _ => { self.try_read_common_entity_code(&pair, &mut mesh.common)?; }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut mesh.common)?;
+                }
             }
         }
 
@@ -15240,17 +17629,46 @@ impl<'a> SectionReader<'a> {
         let mut v_vector = PointReader::new();
 
         while let Some(pair) = self.reader.read_pair()? {
-            if pair.code == 0 { self.reader.push_back(pair); break; }
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
             match pair.code {
                 8 => img.common.layer = pair.value_string.clone(),
-                62 => { if let Some(v) = pair.as_i16() { img.common.color = Color::from_index(v); } }
-                10 | 20 | 30 => { insertion_point.add_coordinate(&pair); }
-                11 | 21 | 31 => { u_vector.add_coordinate(&pair); }
-                12 | 22 | 32 => { v_vector.add_coordinate(&pair); }
-                13 => { if let Some(v) = pair.as_double() { img.size.x = v; } }
-                23 => { if let Some(v) = pair.as_double() { img.size.y = v; } }
-                340 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { img.definition_handle = Some(Handle::new(h)); } }
-                360 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { img.definition_reactor_handle = Some(Handle::new(h)); } }
+                62 => {
+                    if let Some(v) = pair.as_i16() {
+                        img.common.color = Color::from_index(v);
+                    }
+                }
+                10 | 20 | 30 => {
+                    insertion_point.add_coordinate(&pair);
+                }
+                11 | 21 | 31 => {
+                    u_vector.add_coordinate(&pair);
+                }
+                12 | 22 | 32 => {
+                    v_vector.add_coordinate(&pair);
+                }
+                13 => {
+                    if let Some(v) = pair.as_double() {
+                        img.size.x = v;
+                    }
+                }
+                23 => {
+                    if let Some(v) = pair.as_double() {
+                        img.size.y = v;
+                    }
+                }
+                340 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        img.definition_handle = Some(Handle::new(h));
+                    }
+                }
+                360 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        img.definition_reactor_handle = Some(Handle::new(h));
+                    }
+                }
                 70 => {
                     if let Some(v) = pair.as_i16() {
                         img.flags = ImageDisplayFlags::from_bits_truncate(v);
@@ -15261,15 +17679,34 @@ impl<'a> SectionReader<'a> {
                         img.clip_boundary.clip_type = ClipType::from(v);
                     }
                 }
-                280 => { if let Some(v) = pair.as_i16() { img.clipping_enabled = v != 0; } }
-                281 => { if let Some(v) = pair.as_i16() { img.brightness = v as u8; } }
-                282 => { if let Some(v) = pair.as_i16() { img.contrast = v as u8; } }
-                283 => { if let Some(v) = pair.as_i16() { img.fade = v as u8; } }
+                280 => {
+                    if let Some(v) = pair.as_i16() {
+                        img.clipping_enabled = v != 0;
+                    }
+                }
+                281 => {
+                    if let Some(v) = pair.as_i16() {
+                        img.brightness = v as u8;
+                    }
+                }
+                282 => {
+                    if let Some(v) = pair.as_i16() {
+                        img.contrast = v as u8;
+                    }
+                }
+                283 => {
+                    if let Some(v) = pair.as_i16() {
+                        img.fade = v as u8;
+                    }
+                }
                 290 => {
                     // Clip mode (0 = outside, 1 = inside). Bool-typed group code.
                     if let Some(v) = pair.as_bool() {
-                        img.clip_boundary.clip_mode =
-                            if v { ClipMode::Inside } else { ClipMode::Outside };
+                        img.clip_boundary.clip_mode = if v {
+                            ClipMode::Inside
+                        } else {
+                            ClipMode::Outside
+                        };
                     }
                 }
                 91 => {
@@ -15284,10 +17721,14 @@ impl<'a> SectionReader<'a> {
                 }
                 24 => {
                     if let Some(y) = pair.as_double() {
-                        if let Some(last) = img.clip_boundary.vertices.last_mut() { last.y = y; }
+                        if let Some(last) = img.clip_boundary.vertices.last_mut() {
+                            last.y = y;
+                        }
                     }
                 }
-                _ => { self.try_read_common_entity_code(&pair, &mut img.common)?; }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut img.common)?;
+                }
             }
         }
 
@@ -15306,11 +17747,22 @@ impl<'a> SectionReader<'a> {
         let mut acis_version: u8 = 1; // default to Version 1 (encoded)
 
         while let Some(pair) = self.reader.read_pair()? {
-            if pair.code == 0 { self.reader.push_back(pair); break; }
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
             match pair.code {
                 8 => common.layer = pair.value_string.clone(),
-                62 => { if let Some(v) = pair.as_i16() { common.color = Color::from_index(v); } }
-                370 => { if let Some(v) = pair.as_i16() { common.line_weight = LineWeight::from_value(v); } }
+                62 => {
+                    if let Some(v) = pair.as_i16() {
+                        common.color = Color::from_index(v);
+                    }
+                }
+                370 => {
+                    if let Some(v) = pair.as_i16() {
+                        common.line_weight = LineWeight::from_value(v);
+                    }
+                }
                 1 | 3 => {
                     acis_data.push_str(&pair.value_string);
                     acis_data.push('\n');
@@ -15321,7 +17773,9 @@ impl<'a> SectionReader<'a> {
                         acis_version = v as u8;
                     }
                 }
-                _ => { self.try_read_common_entity_code(&pair, &mut common)?; }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut common)?;
+                }
             }
         }
 
@@ -15386,8 +17840,7 @@ impl<'a> SectionReader<'a> {
             }
             match pair.code {
                 92 | 160 if subclass == "AcDbEntity" => {
-                    proxy_graphics_size =
-                        pair.as_int().unwrap_or(0).max(0) as usize;
+                    proxy_graphics_size = pair.as_int().unwrap_or(0).max(0) as usize;
                 }
                 310 if subclass == "AcDbEntity" => {
                     append_hex_bytes(&mut proxy_graphics, &pair.value_string);
@@ -15399,17 +17852,11 @@ impl<'a> SectionReader<'a> {
                 70 if !in_photometric => {
                     light.light_type = pair.as_i32().unwrap_or(light.light_type)
                 }
-                290 if !in_photometric => {
-                    light.status = pair.as_i16().unwrap_or(0) != 0
-                }
+                290 if !in_photometric => light.status = pair.as_i16().unwrap_or(0) != 0,
                 63 if !in_photometric => {
-                    light.light_color =
-                        Color::from_index(pair.as_i16().unwrap_or(256))
+                    light.light_color = Color::from_index(pair.as_i16().unwrap_or(256))
                 }
-                421 => {
-                    light.light_color =
-                        Color::from_true_color_value(pair.as_i32().unwrap_or(0))
-                }
+                421 => light.light_color = Color::from_true_color_value(pair.as_i32().unwrap_or(0)),
                 291 => light.plot_glyph = pair.as_i16().unwrap_or(0) != 0,
                 40 if !in_photometric => {
                     light.intensity = pair.as_double().unwrap_or(light.intensity)
@@ -15421,13 +17868,9 @@ impl<'a> SectionReader<'a> {
                     target.add_coordinate(&pair);
                 }
                 72 if !in_photometric => {
-                    light.attenuation_type =
-                        pair.as_i32().unwrap_or(light.attenuation_type)
+                    light.attenuation_type = pair.as_i32().unwrap_or(light.attenuation_type)
                 }
-                292 => {
-                    light.use_attenuation_limits =
-                        pair.as_i16().unwrap_or(0) != 0
-                }
+                292 => light.use_attenuation_limits = pair.as_i16().unwrap_or(0) != 0,
                 41 if !in_photometric => {
                     light.attenuation_start_limit =
                         pair.as_double().unwrap_or(light.attenuation_start_limit)
@@ -15437,57 +17880,41 @@ impl<'a> SectionReader<'a> {
                         pair.as_double().unwrap_or(light.attenuation_end_limit)
                 }
                 50 if !in_photometric => {
-                    light.hotspot_angle =
-                        pair.as_double().unwrap_or(light.hotspot_angle)
+                    light.hotspot_angle = pair.as_double().unwrap_or(light.hotspot_angle)
                 }
                 51 if !in_photometric => {
-                    light.falloff_angle =
-                        pair.as_double().unwrap_or(light.falloff_angle)
+                    light.falloff_angle = pair.as_double().unwrap_or(light.falloff_angle)
                 }
                 293 => light.cast_shadows = pair.as_i16().unwrap_or(0) != 0,
                 73 if !in_photometric => {
                     light.shadow_type = pair.as_i32().unwrap_or(light.shadow_type)
                 }
-                91 => {
-                    light.shadow_map_size =
-                        pair.as_i16().unwrap_or(light.shadow_map_size)
-                }
+                91 => light.shadow_map_size = pair.as_i16().unwrap_or(light.shadow_map_size),
                 280 if !in_photometric => {
-                    light.shadow_map_softness =
-                        pair.as_i16().unwrap_or(0).clamp(0, 255) as u8
+                    light.shadow_map_softness = pair.as_i16().unwrap_or(0).clamp(0, 255) as u8
                 }
                 295 => {
                     in_photometric = true;
                     light.photometric_mode = true;
                 }
-                290 if in_photometric => {
-                    photo.has_web_file = pair.as_i16().unwrap_or(0) != 0
-                }
+                290 if in_photometric => photo.has_web_file = pair.as_i16().unwrap_or(0) != 0,
                 300 if in_photometric => photo.web_file = pair.value_string.clone(),
                 70 if in_photometric => {
                     photo.physical_intensity_method = pair.as_i16().unwrap_or(0)
                 }
-                40 if in_photometric => {
-                    photo.physical_intensity = pair.as_double().unwrap_or(0.0)
-                }
+                40 if in_photometric => photo.physical_intensity = pair.as_double().unwrap_or(0.0),
                 41 if in_photometric => {
                     photo.illuminance_distance = pair.as_double().unwrap_or(0.0)
                 }
-                71 if in_photometric => {
-                    photo.lamp_color_type = pair.as_i16().unwrap_or(0)
-                }
+                71 if in_photometric => photo.lamp_color_type = pair.as_i16().unwrap_or(0),
                 42 if in_photometric => {
                     photo.lamp_color_temperature = pair.as_double().unwrap_or(0.0)
                 }
-                72 if in_photometric => {
-                    photo.lamp_color_preset = pair.as_i16().unwrap_or(0)
-                }
+                72 if in_photometric => photo.lamp_color_preset = pair.as_i16().unwrap_or(0),
                 43 | 53 | 63 if in_photometric => {
                     web_rotation.add_coordinate(&pair);
                 }
-                73 if in_photometric => {
-                    photo.extended_light_shape = pair.as_i16().unwrap_or(0)
-                }
+                73 if in_photometric => photo.extended_light_shape = pair.as_i16().unwrap_or(0),
                 46 if in_photometric => {
                     photo.extended_light_length = pair.as_double().unwrap_or(0.0)
                 }
@@ -15497,25 +17924,14 @@ impl<'a> SectionReader<'a> {
                 48 if in_photometric => {
                     photo.extended_light_radius = pair.as_double().unwrap_or(0.0)
                 }
-                74 if in_photometric => {
-                    photo.web_file_type = pair.as_i16().unwrap_or(0)
-                }
-                75 if in_photometric => {
-                    photo.web_symmetry = pair.as_i16().unwrap_or(0)
-                }
-                76 if in_photometric => {
-                    photo.has_target_grip = pair.as_i16().unwrap_or(0)
-                }
-                49 if in_photometric => {
-                    photo.web_flux = pair.as_double().unwrap_or(0.0)
-                }
+                74 if in_photometric => photo.web_file_type = pair.as_i16().unwrap_or(0),
+                75 if in_photometric => photo.web_symmetry = pair.as_i16().unwrap_or(0),
+                76 if in_photometric => photo.has_target_grip = pair.as_i16().unwrap_or(0),
+                49 if in_photometric => photo.web_flux = pair.as_double().unwrap_or(0.0),
                 50..=54 if in_photometric => {
-                    photo.web_angles[(pair.code - 50) as usize] =
-                        pair.as_double().unwrap_or(0.0)
+                    photo.web_angles[(pair.code - 50) as usize] = pair.as_double().unwrap_or(0.0)
                 }
-                77 if in_photometric => {
-                    photo.glyph_display_type = pair.as_i16().unwrap_or(0)
-                }
+                77 if in_photometric => photo.glyph_display_type = pair.as_i16().unwrap_or(0),
                 _ => {
                     self.try_read_common_entity_code(&pair, &mut light.common)?;
                 }
@@ -15525,8 +17941,9 @@ impl<'a> SectionReader<'a> {
         light.position = position.get_point().unwrap_or(Vector3::ZERO);
         light.target = target.get_point().unwrap_or(Vector3::ZERO);
         if in_photometric {
-            photo.web_rotation =
-                web_rotation.get_point().unwrap_or(Vector3::new(1.0, 1.0, 1.0));
+            photo.web_rotation = web_rotation
+                .get_point()
+                .unwrap_or(Vector3::new(1.0, 1.0, 1.0));
             light.photometric_data = Some(photo);
         }
         if proxy_graphics_size != 0 || !proxy_graphics.is_empty() {
@@ -15564,10 +17981,9 @@ impl<'a> SectionReader<'a> {
         let mut path_entity_bits = 0usize;
         let mut proxy_graphics_size = 0usize;
         let mut proxy_graphics = Vec::new();
-        let swept_has_class_version =
-            crate::io::dwg::DwgVersion::from_dxf_version(dxf_version)
-                .map(|version| version.r2007_plus())
-                .unwrap_or(true);
+        let swept_has_class_version = crate::io::dwg::DwgVersion::from_dxf_version(dxf_version)
+            .map(|version| version.r2007_plus())
+            .unwrap_or(true);
 
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 {
@@ -15581,20 +17997,13 @@ impl<'a> SectionReader<'a> {
             if subclass == "AcDbEntity" {
                 match pair.code {
                     92 | 160 => {
-                        proxy_graphics_size =
-                            pair.as_int().unwrap_or(0).max(0) as usize;
+                        proxy_graphics_size = pair.as_int().unwrap_or(0).max(0) as usize;
                     }
                     310 => {
-                        append_hex_bytes(
-                            &mut proxy_graphics,
-                            &pair.value_string,
-                        );
+                        append_hex_bytes(&mut proxy_graphics, &pair.value_string);
                     }
                     _ => {
-                        self.try_read_common_entity_code(
-                            &pair,
-                            &mut surface.common,
-                        )?;
+                        self.try_read_common_entity_code(&pair, &mut surface.common)?;
                     }
                 }
                 continue;
@@ -15644,8 +18053,7 @@ impl<'a> SectionReader<'a> {
                         swept_binary_target = 1;
                     }
                     90 => {
-                        sweep_entity_bits =
-                            pair.as_i32().unwrap_or(0).max(0) as usize;
+                        sweep_entity_bits = pair.as_i32().unwrap_or(0).max(0) as usize;
                         swept_binary_target = 2;
                     }
                     310 => append_hex_bytes(&mut sweep_data, &pair.value_string),
@@ -15657,14 +18065,8 @@ impl<'a> SectionReader<'a> {
                     }
                     40 => matrix.push(pair.as_double().unwrap_or(0.0)),
                     42 => options.draft_angle = pair.as_double().unwrap_or(0.0),
-                    43 => {
-                        options.draft_start_distance =
-                            pair.as_double().unwrap_or(0.0)
-                    }
-                    44 => {
-                        options.draft_end_distance =
-                            pair.as_double().unwrap_or(0.0)
-                    }
+                    43 => options.draft_start_distance = pair.as_double().unwrap_or(0.0),
+                    44 => options.draft_end_distance = pair.as_double().unwrap_or(0.0),
                     45 => options.twist_angle = pair.as_double().unwrap_or(0.0),
                     48 => options.scale_factor = pair.as_double().unwrap_or(1.0),
                     49 => options.align_angle = pair.as_double().unwrap_or(0.0),
@@ -15677,13 +18079,9 @@ impl<'a> SectionReader<'a> {
                     293 => options.bank = pair.as_i16().unwrap_or(0) != 0,
                     294 => options.base_point_set = pair.as_i16().unwrap_or(0) != 0,
                     295 => {
-                        options.sweep_entity_transform_computed =
-                            pair.as_i16().unwrap_or(0) != 0
+                        options.sweep_entity_transform_computed = pair.as_i16().unwrap_or(0) != 0
                     }
-                    296 => {
-                        options.path_entity_transform_computed =
-                            pair.as_i16().unwrap_or(0) != 0
-                    }
+                    296 => options.path_entity_transform_computed = pair.as_i16().unwrap_or(0) != 0,
                     _ => {
                         self.try_read_common_entity_code(&pair, &mut surface.common)?;
                     }
@@ -15708,10 +18106,7 @@ impl<'a> SectionReader<'a> {
                     ..
                 } => match pair.code {
                     40 => matrix.push(pair.as_double().unwrap_or(0.0)),
-                    70 => {
-                        *plane_normal_lofting_type =
-                            pair.as_i32().unwrap_or(0)
-                    }
+                    70 => *plane_normal_lofting_type = pair.as_i32().unwrap_or(0),
                     41 => *start_draft_angle = pair.as_double().unwrap_or(0.0),
                     42 => *end_draft_angle = pair.as_double().unwrap_or(0.0),
                     43 => *start_draft_magnitude = pair.as_double().unwrap_or(0.0),
@@ -15758,8 +18153,7 @@ impl<'a> SectionReader<'a> {
                         swept_binary_target = 1;
                     }
                     90 => {
-                        sweep_entity_bits =
-                            pair.as_i32().unwrap_or(0).max(0) as usize;
+                        sweep_entity_bits = pair.as_i32().unwrap_or(0).max(0) as usize;
                         swept_binary_target = 2;
                     }
                     310 => append_hex_bytes(&mut sweep_data, &pair.value_string),
@@ -15799,8 +18193,7 @@ impl<'a> SectionReader<'a> {
                         swept_binary_target = 1;
                     }
                     90 if swept_binary_target == 1 => {
-                        sweep_entity_bits =
-                            pair.as_i32().unwrap_or(0).max(0) as usize;
+                        sweep_entity_bits = pair.as_i32().unwrap_or(0).max(0) as usize;
                         swept_binary_target = 2;
                     }
                     90 if swept_binary_target == 2 => {
@@ -15812,8 +18205,7 @@ impl<'a> SectionReader<'a> {
                         swept_binary_target = 3;
                     }
                     90 => {
-                        path_entity_bits =
-                            pair.as_i32().unwrap_or(0).max(0) as usize;
+                        path_entity_bits = pair.as_i32().unwrap_or(0).max(0) as usize;
                         swept_binary_target = 4;
                     }
                     310 if swept_binary_target == 2 => {
@@ -15839,10 +18231,10 @@ impl<'a> SectionReader<'a> {
                     292 => options.align_start = pair.as_i16().unwrap_or(0) != 0,
                     293 => options.bank = pair.as_i16().unwrap_or(0) != 0,
                     294 => options.base_point_set = pair.as_i16().unwrap_or(0) != 0,
-                    295 => options.sweep_entity_transform_computed =
-                        pair.as_i16().unwrap_or(0) != 0,
-                    296 => options.path_entity_transform_computed =
-                        pair.as_i16().unwrap_or(0) != 0,
+                    295 => {
+                        options.sweep_entity_transform_computed = pair.as_i16().unwrap_or(0) != 0
+                    }
+                    296 => options.path_entity_transform_computed = pair.as_i16().unwrap_or(0) != 0,
                     _ => {
                         self.try_read_common_entity_code(&pair, &mut surface.common)?;
                     }
@@ -15895,20 +18287,17 @@ impl<'a> SectionReader<'a> {
                 sweep_vector,
                 sweep_transform,
             } => {
-                let dwg_version =
-                    crate::io::dwg::DwgVersion::from_dxf_version(dxf_version)
-                        .unwrap_or(crate::io::dwg::DwgVersion::AC24);
-                *sweep_entity =
-                    crate::io::dwg::embedded_entity::decode_embedded_entity(
-                        sweep_entity_type,
-                        sweep_entity_bits,
-                        sweep_data,
-                        dwg_version,
-                        dxf_version,
-                    );
+                let dwg_version = crate::io::dwg::DwgVersion::from_dxf_version(dxf_version)
+                    .unwrap_or(crate::io::dwg::DwgVersion::AC24);
+                *sweep_entity = crate::io::dwg::embedded_entity::decode_embedded_entity(
+                    sweep_entity_type,
+                    sweep_entity_bits,
+                    sweep_data,
+                    dwg_version,
+                    dxf_version,
+                );
                 *sweep_vector = point_10.get_point().unwrap_or(Vector3::ZERO);
-                options.reference_vector =
-                    point_11.get_point().unwrap_or(Vector3::UNIT_Z);
+                options.reference_vector = point_11.get_point().unwrap_or(Vector3::UNIT_Z);
                 fill_matrix(sweep_transform, &matrix);
                 fill_matrix(&mut options.sweep_entity_transform, &option_sweep_matrix);
                 fill_matrix(&mut options.path_entity_transform, &option_path_matrix);
@@ -15929,17 +18318,15 @@ impl<'a> SectionReader<'a> {
                     *class_version = sweep_entity_type;
                     *entity_id = sweep_entity_bits as i32;
                 } else {
-                    let dwg_version =
-                        crate::io::dwg::DwgVersion::from_dxf_version(dxf_version)
-                            .unwrap_or(crate::io::dwg::DwgVersion::AC24);
-                    *revolve_entity =
-                        crate::io::dwg::embedded_entity::decode_embedded_entity(
-                            sweep_entity_type,
-                            sweep_entity_bits,
-                            sweep_data,
-                            dwg_version,
-                            dxf_version,
-                        );
+                    let dwg_version = crate::io::dwg::DwgVersion::from_dxf_version(dxf_version)
+                        .unwrap_or(crate::io::dwg::DwgVersion::AC24);
+                    *revolve_entity = crate::io::dwg::embedded_entity::decode_embedded_entity(
+                        sweep_entity_type,
+                        sweep_entity_bits,
+                        sweep_data,
+                        dwg_version,
+                        dxf_version,
+                    );
                 }
                 *axis_point = point_10.get_point().unwrap_or(Vector3::ZERO);
                 *axis_vector = point_11.get_point().unwrap_or(Vector3::UNIT_Z);
@@ -15953,29 +18340,25 @@ impl<'a> SectionReader<'a> {
                 options,
                 ..
             } => {
-                let dwg_version =
-                    crate::io::dwg::DwgVersion::from_dxf_version(dxf_version)
-                        .unwrap_or(crate::io::dwg::DwgVersion::AC24);
-                *sweep_entity =
-                    crate::io::dwg::embedded_entity::decode_embedded_entity(
-                        sweep_entity_type,
-                        sweep_entity_bits,
-                        sweep_data,
-                        dwg_version,
-                        dxf_version,
-                    );
-                *path_entity =
-                    crate::io::dwg::embedded_entity::decode_embedded_entity(
-                        path_entity_type,
-                        path_entity_bits,
-                        path_data,
-                        dwg_version,
-                        dxf_version,
-                    );
+                let dwg_version = crate::io::dwg::DwgVersion::from_dxf_version(dxf_version)
+                    .unwrap_or(crate::io::dwg::DwgVersion::AC24);
+                *sweep_entity = crate::io::dwg::embedded_entity::decode_embedded_entity(
+                    sweep_entity_type,
+                    sweep_entity_bits,
+                    sweep_data,
+                    dwg_version,
+                    dxf_version,
+                );
+                *path_entity = crate::io::dwg::embedded_entity::decode_embedded_entity(
+                    path_entity_type,
+                    path_entity_bits,
+                    path_data,
+                    dwg_version,
+                    dxf_version,
+                );
                 fill_matrix(sweep_transform, &matrix);
                 fill_matrix(path_transform, &path_matrix);
-                options.reference_vector =
-                    point_11.get_point().unwrap_or(Vector3::UNIT_Z);
+                options.reference_vector = point_11.get_point().unwrap_or(Vector3::UNIT_Z);
                 fill_matrix(&mut options.sweep_entity_transform, &option_sweep_matrix);
                 fill_matrix(&mut options.path_entity_transform, &option_path_matrix);
             }
@@ -16003,10 +18386,9 @@ impl<'a> SectionReader<'a> {
     /// Read a TABLE entity (basic properties)
     fn read_table_entity(&mut self) -> Result<Option<crate::entities::Table>> {
         use crate::entities::table::{
-            CellContent, CellStateFlags, CellType, CellValueType,
-            LegacyBorderOverrides, LegacyTableStyleOverride, TableAttribute,
-            TableCell, TableCellContentType, TableColumn, TableRow,
-            ValueUnitType,
+            CellContent, CellStateFlags, CellType, CellValueType, LegacyBorderOverrides,
+            LegacyTableStyleOverride, TableAttribute, TableCell, TableCellContentType, TableColumn,
+            TableRow, ValueUnitType,
         };
 
         let mut insertion_point = PointReader::new();
@@ -16056,8 +18438,7 @@ impl<'a> SectionReader<'a> {
                     }
                 }
                 92 | 160 if section == "AcDbEntity" => {
-                    proxy_graphics_size =
-                        pair.as_int().unwrap_or(0).max(0) as usize;
+                    proxy_graphics_size = pair.as_int().unwrap_or(0).max(0) as usize;
                 }
                 310 if section == "AcDbEntity" => {
                     append_hex_bytes(&mut proxy_graphics, &pair.value_string);
@@ -16205,22 +18586,19 @@ impl<'a> SectionReader<'a> {
                 93 if cur.is_none() => {
                     if let Some(value) = pair.as_i32() {
                         table.override_flag = value != 0;
-                        table.legacy_style_override = (value != 0).then(|| {
-                            LegacyTableStyleOverride {
+                        table.legacy_style_override =
+                            (value != 0).then(|| LegacyTableStyleOverride {
                                 flags: value,
                                 ..LegacyTableStyleOverride::default()
-                            }
-                        });
+                            });
                     }
                 }
                 94 if cur.is_none() => {
                     if let Some(value) = pair.as_i32() {
                         table.override_border_color = value != 0;
-                        table.legacy_border_colors = (value != 0).then(|| {
-                            LegacyBorderOverrides {
-                                flags: value,
-                                values: Vec::new(),
-                            }
+                        table.legacy_border_colors = (value != 0).then(|| LegacyBorderOverrides {
+                            flags: value,
+                            values: Vec::new(),
                         });
                     }
                 }
@@ -16263,7 +18641,11 @@ impl<'a> SectionReader<'a> {
                     pending_attribute_index = None;
                     let mut c = TableCell::new();
                     if let Some(v) = pair.as_i16() {
-                        c.cell_type = if v == 2 { CellType::Block } else { CellType::Text };
+                        c.cell_type = if v == 2 {
+                            CellType::Block
+                        } else {
+                            CellType::Text
+                        };
                     }
                     cur = Some(c);
                 }
@@ -16420,15 +18802,16 @@ impl<'a> SectionReader<'a> {
                         if let Some(c) = cur.as_mut() {
                             if let Some(content) = c.contents.last_mut() {
                                 if content.value.raw_unit_type_code != 12 {
-                                    content.value.formatted_value =
-                                        pair.value_string.clone();
+                                    content.value.formatted_value = pair.value_string.clone();
                                 }
                             }
                         }
                     }
                 }
                 // CELL_VALUE block end.
-                304 => { in_value = false; }
+                304 => {
+                    in_value = false;
+                }
                 300 => {
                     if let Some(c) = cur.as_mut() {
                         if let Some(content) = c.contents.last_mut() {
@@ -16447,19 +18830,14 @@ impl<'a> SectionReader<'a> {
                         ensure_content(c);
                         let value = &mut c.contents.last_mut().unwrap().value;
                         if (value.flags & 3) == 0 {
-                            append_hex_bytes(
-                                &mut value.binary_value,
-                                &pair.value_string,
-                            );
+                            append_hex_bytes(&mut value.binary_value, &pair.value_string);
                         }
                     }
                 }
                 330 if in_value => {
                     if let Some(c) = cur.as_mut() {
                         ensure_content(c);
-                        if let Ok(h) =
-                            u64::from_str_radix(pair.value_string.trim(), 16)
-                        {
+                        if let Ok(h) = u64::from_str_radix(pair.value_string.trim(), 16) {
                             c.contents.last_mut().unwrap().value.handle_value =
                                 Some(Handle::new(h));
                         }
@@ -16480,12 +18858,9 @@ impl<'a> SectionReader<'a> {
                 344 => {
                     if let Some(c) = cur.as_mut() {
                         ensure_content(c);
-                        if let Ok(value) =
-                            u64::from_str_radix(pair.value_string.trim(), 16)
-                        {
+                        if let Ok(value) = u64::from_str_radix(pair.value_string.trim(), 16) {
                             let content = c.contents.last_mut().unwrap();
-                            content.field_handle =
-                                (value != 0).then(|| Handle::new(value));
+                            content.field_handle = (value != 0).then(|| Handle::new(value));
                             content.content_type = TableCellContentType::Field;
                         }
                     }
@@ -16528,9 +18903,7 @@ impl<'a> SectionReader<'a> {
                             }
                         }
                         if !consumed {
-                            if let Some(overrides) =
-                                table.legacy_border_colors.as_mut()
-                            {
+                            if let Some(overrides) = table.legacy_border_colors.as_mut() {
                                 overrides.values.push(color);
                             }
                         }
@@ -16538,9 +18911,7 @@ impl<'a> SectionReader<'a> {
                 }
                 63 | 64 | 65 | 66 | 68 | 69 => {
                     if let (Some(c), Some(value)) = (cur.as_mut(), pair.as_i16()) {
-                        let style = c
-                            .style
-                            .get_or_insert_with(crate::entities::CellStyle::new);
+                        let style = c.style.get_or_insert_with(crate::entities::CellStyle::new);
                         let color = Color::from_index(value);
                         match pair.code {
                             63 => style.background_color = color,
@@ -16554,18 +18925,15 @@ impl<'a> SectionReader<'a> {
                     }
                 }
                 274..=279 if cur.is_none() => {
-                    if let (Some(overrides), Some(value)) = (
-                        table.legacy_border_line_weights.as_mut(),
-                        pair.as_i16(),
-                    ) {
+                    if let (Some(overrides), Some(value)) =
+                        (table.legacy_border_line_weights.as_mut(), pair.as_i16())
+                    {
                         overrides.values.push(LineWeight::from_value(value));
                     }
                 }
                 275 | 276 | 278 | 279 => {
                     if let (Some(c), Some(value)) = (cur.as_mut(), pair.as_i16()) {
-                        let style = c
-                            .style
-                            .get_or_insert_with(crate::entities::CellStyle::new);
+                        let style = c.style.get_or_insert_with(crate::entities::CellStyle::new);
                         let border = match pair.code {
                             275 => &mut style.right_border,
                             276 => &mut style.bottom_border,
@@ -16590,18 +18958,15 @@ impl<'a> SectionReader<'a> {
                     }
                 }
                 284..=289 if cur.is_none() => {
-                    if let (Some(overrides), Some(value)) = (
-                        table.legacy_border_visibility.as_mut(),
-                        pair.as_bool(),
-                    ) {
+                    if let (Some(overrides), Some(value)) =
+                        (table.legacy_border_visibility.as_mut(), pair.as_bool())
+                    {
                         overrides.values.push(value);
                     }
                 }
                 285 | 286 | 288 | 289 => {
                     if let (Some(c), Some(value)) = (cur.as_mut(), pair.as_bool()) {
-                        let style = c
-                            .style
-                            .get_or_insert_with(crate::entities::CellStyle::new);
+                        let style = c.style.get_or_insert_with(crate::entities::CellStyle::new);
                         let border = match pair.code {
                             285 => &mut style.right_border,
                             286 => &mut style.bottom_border,
@@ -16707,17 +19072,48 @@ impl<'a> SectionReader<'a> {
         let mut normal = PointReader::new();
 
         while let Some(pair) = self.reader.read_pair()? {
-            if pair.code == 0 { self.reader.push_back(pair); break; }
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
             match pair.code {
                 8 => underlay.common.layer = pair.value_string.clone(),
-                62 => { if let Some(v) = pair.as_i16() { underlay.common.color = Color::from_index(v); } }
-                370 => { if let Some(v) = pair.as_i16() { underlay.common.line_weight = LineWeight::from_value(v); } }
-                10 | 20 | 30 => { insertion_point.add_coordinate(&pair); }
-                210 | 220 | 230 => { normal.add_coordinate(&pair); }
-                41 => { if let Some(v) = pair.as_double() { underlay.x_scale = v; } }
-                42 => { if let Some(v) = pair.as_double() { underlay.y_scale = v; } }
-                43 => { if let Some(v) = pair.as_double() { underlay.z_scale = v; } }
-                50 => { if let Some(v) = pair.as_double() { underlay.rotation = v; } }
+                62 => {
+                    if let Some(v) = pair.as_i16() {
+                        underlay.common.color = Color::from_index(v);
+                    }
+                }
+                370 => {
+                    if let Some(v) = pair.as_i16() {
+                        underlay.common.line_weight = LineWeight::from_value(v);
+                    }
+                }
+                10 | 20 | 30 => {
+                    insertion_point.add_coordinate(&pair);
+                }
+                210 | 220 | 230 => {
+                    normal.add_coordinate(&pair);
+                }
+                41 => {
+                    if let Some(v) = pair.as_double() {
+                        underlay.x_scale = v;
+                    }
+                }
+                42 => {
+                    if let Some(v) = pair.as_double() {
+                        underlay.y_scale = v;
+                    }
+                }
+                43 => {
+                    if let Some(v) = pair.as_double() {
+                        underlay.z_scale = v;
+                    }
+                }
+                50 => {
+                    if let Some(v) = pair.as_double() {
+                        underlay.rotation = v;
+                    }
+                }
                 280 => {
                     // Display flags (bit0 clipping, bit1 on, bit2 monochrome,
                     // bit3 adjust-for-background, bit4 clip-inside/inverted).
@@ -16727,20 +19123,36 @@ impl<'a> SectionReader<'a> {
                         underlay.clip_inverted = flags.contains(UnderlayDisplayFlags::CLIP_INSIDE);
                     }
                 }
-                281 => { if let Some(v) = pair.as_i16() { underlay.contrast = v as u8; } }
-                282 => { if let Some(v) = pair.as_i16() { underlay.fade = v as u8; } }
+                281 => {
+                    if let Some(v) = pair.as_i16() {
+                        underlay.contrast = v as u8;
+                    }
+                }
+                282 => {
+                    if let Some(v) = pair.as_i16() {
+                        underlay.fade = v as u8;
+                    }
+                }
                 340 => {
-                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { underlay.definition_handle = Handle::new(h); }
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        underlay.definition_handle = Handle::new(h);
+                    }
                 }
                 11 => {
-                    if let Some(x) = pair.as_double() { underlay.clip_boundary_vertices.push(Vector2::new(x, 0.0)); }
+                    if let Some(x) = pair.as_double() {
+                        underlay.clip_boundary_vertices.push(Vector2::new(x, 0.0));
+                    }
                 }
                 21 => {
                     if let Some(y) = pair.as_double() {
-                        if let Some(last) = underlay.clip_boundary_vertices.last_mut() { last.y = y; }
+                        if let Some(last) = underlay.clip_boundary_vertices.last_mut() {
+                            last.y = y;
+                        }
                     }
                 }
-                _ => { self.try_read_common_entity_code(&pair, &mut underlay.common)?; }
+                _ => {
+                    self.try_read_common_entity_code(&pair, &mut underlay.common)?;
+                }
             }
         }
 
@@ -16758,9 +19170,16 @@ impl<'a> SectionReader<'a> {
         let mut owner_seen = false;
 
         while let Some(pair) = self.reader.read_pair()? {
-            if pair.code == 0 { self.reader.push_back(pair); break; }
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
             match pair.code {
-                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { xr.handle = Handle::new(h); } }
+                5 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        xr.handle = Handle::new(h);
+                    }
+                }
                 100 if pair.value_string == "AcDbXrecord" => {}
                 102 if pair.value_string == "{ACAD_REACTORS"
                     || pair.value_string == "{ACAD_XDICTIONARY" =>
@@ -16774,8 +19193,7 @@ impl<'a> SectionReader<'a> {
                     xr.reactors.push(parse_dxf_handle(&pair.value_string));
                 }
                 360 if group == "{ACAD_XDICTIONARY" => {
-                    xr.xdictionary_handle =
-                        Some(parse_dxf_handle(&pair.value_string));
+                    xr.xdictionary_handle = Some(parse_dxf_handle(&pair.value_string));
                 }
                 330 if !owner_seen && group.is_empty() => {
                     xr.owner = parse_dxf_handle(&pair.value_string);
@@ -16788,24 +19206,14 @@ impl<'a> SectionReader<'a> {
                 }
                 _ => {
                     let value = match XRecordValueType::from_code(pair.code) {
-                        XRecordValueType::String => {
-                            XRecordValue::String(pair.value_string.clone())
-                        }
+                        XRecordValueType::String => XRecordValue::String(pair.value_string.clone()),
                         XRecordValueType::Point3D => {
-                            let x = pair
-                                .value_string
-                                .trim()
-                                .parse::<f64>()
-                                .unwrap_or(0.0);
+                            let x = pair.value_string.trim().parse::<f64>().unwrap_or(0.0);
                             let mut y = 0.0;
                             let mut z = 0.0;
                             if let Some(next) = self.reader.read_pair()? {
                                 if next.code == pair.code + 10 {
-                                    y = next
-                                        .value_string
-                                        .trim()
-                                        .parse::<f64>()
-                                        .unwrap_or(0.0);
+                                    y = next.value_string.trim().parse::<f64>().unwrap_or(0.0);
                                     if let Some(next_z) = self.reader.read_pair()? {
                                         if next_z.code == pair.code + 20 {
                                             z = next_z
@@ -16823,54 +19231,48 @@ impl<'a> SectionReader<'a> {
                             }
                             XRecordValue::Point3D(x, y, z)
                         }
-                        XRecordValueType::Double => {
-                            pair.value_string
-                                .trim()
-                                .parse::<f64>()
-                                .ok()
-                                .map(XRecordValue::Double)
-                                .unwrap_or(XRecordValue::String(pair.value_string.clone()))
-                        }
-                        XRecordValueType::Int16 => {
-                            pair.value_string
-                                .trim()
-                                .parse::<i16>()
-                                .ok()
-                                .map(XRecordValue::Int16)
-                                .unwrap_or(XRecordValue::String(pair.value_string.clone()))
-                        }
-                        XRecordValueType::Int32 => {
-                            pair.value_string
-                                .trim()
-                                .parse::<i32>()
-                                .ok()
-                                .map(XRecordValue::Int32)
-                                .unwrap_or(XRecordValue::String(pair.value_string.clone()))
-                        }
-                        XRecordValueType::Int64 => {
-                            pair.value_string
-                                .trim()
-                                .parse::<i64>()
-                                .ok()
-                                .map(XRecordValue::Int64)
-                                .unwrap_or(XRecordValue::String(pair.value_string.clone()))
-                        }
-                        XRecordValueType::Byte => {
-                            pair.value_string
-                                .trim()
-                                .parse::<u8>()
-                                .ok()
-                                .map(XRecordValue::Byte)
-                                .unwrap_or(XRecordValue::String(pair.value_string.clone()))
-                        }
-                        XRecordValueType::Bool => {
-                            pair.value_string
-                                .trim()
-                                .parse::<i32>()
-                                .ok()
-                                .map(|value| XRecordValue::Bool(value != 0))
-                                .unwrap_or(XRecordValue::String(pair.value_string.clone()))
-                        }
+                        XRecordValueType::Double => pair
+                            .value_string
+                            .trim()
+                            .parse::<f64>()
+                            .ok()
+                            .map(XRecordValue::Double)
+                            .unwrap_or(XRecordValue::String(pair.value_string.clone())),
+                        XRecordValueType::Int16 => pair
+                            .value_string
+                            .trim()
+                            .parse::<i16>()
+                            .ok()
+                            .map(XRecordValue::Int16)
+                            .unwrap_or(XRecordValue::String(pair.value_string.clone())),
+                        XRecordValueType::Int32 => pair
+                            .value_string
+                            .trim()
+                            .parse::<i32>()
+                            .ok()
+                            .map(XRecordValue::Int32)
+                            .unwrap_or(XRecordValue::String(pair.value_string.clone())),
+                        XRecordValueType::Int64 => pair
+                            .value_string
+                            .trim()
+                            .parse::<i64>()
+                            .ok()
+                            .map(XRecordValue::Int64)
+                            .unwrap_or(XRecordValue::String(pair.value_string.clone())),
+                        XRecordValueType::Byte => pair
+                            .value_string
+                            .trim()
+                            .parse::<u8>()
+                            .ok()
+                            .map(XRecordValue::Byte)
+                            .unwrap_or(XRecordValue::String(pair.value_string.clone())),
+                        XRecordValueType::Bool => pair
+                            .value_string
+                            .trim()
+                            .parse::<i32>()
+                            .ok()
+                            .map(|value| XRecordValue::Bool(value != 0))
+                            .unwrap_or(XRecordValue::String(pair.value_string.clone())),
                         XRecordValueType::Handle | XRecordValueType::ObjectId => {
                             u64::from_str_radix(pair.value_string.trim(), 16)
                                 .map(|h| XRecordValue::Handle(Handle::new(h)))
@@ -16928,17 +19330,32 @@ impl<'a> SectionReader<'a> {
         let mut group = Group::new("");
 
         while let Some(pair) = self.reader.read_pair()? {
-            if pair.code == 0 { self.reader.push_back(pair); break; }
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
             match pair.code {
-                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { group.handle = Handle::new(h); } }
-                330 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { group.owner = Handle::new(h); } }
+                5 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        group.handle = Handle::new(h);
+                    }
+                }
+                330 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        group.owner = Handle::new(h);
+                    }
+                }
                 300 => group.description = pair.value_string.clone(),
                 70 => {
                     if let Some(v) = pair.as_i16() {
                         group.unnamed = v != 0;
                     }
                 }
-                71 => { if let Some(v) = pair.as_i16() { group.selectable = v != 0; } }
+                71 => {
+                    if let Some(v) = pair.as_i16() {
+                        group.selectable = v != 0;
+                    }
+                }
                 340 => {
                     if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
                         group.entities.push(Handle::new(h));
@@ -16957,18 +19374,37 @@ impl<'a> SectionReader<'a> {
         let mut style = crate::objects::MLineStyle::new("");
 
         while let Some(pair) = self.reader.read_pair()? {
-            if pair.code == 0 { self.reader.push_back(pair); break; }
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
             match pair.code {
-                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { style.handle = Handle::new(h); } }
-                330 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { style.owner = Handle::new(h); } }
+                5 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        style.handle = Handle::new(h);
+                    }
+                }
+                330 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        style.owner = Handle::new(h);
+                    }
+                }
                 2 => style.name = pair.value_string.clone(),
                 3 => style.description = pair.value_string.clone(),
                 // DXF stores MLINESTYLE angles in degrees; the model stores
                 // radians (the DWG stream and the DXF writer both use
                 // radians/degrees respectively). Reading them raw made every
                 // read→write cycle multiply the angle by 180/π (issue #51).
-                51 => { if let Some(v) = pair.as_double() { style.start_angle = v.to_radians(); } }
-                52 => { if let Some(v) = pair.as_double() { style.end_angle = v.to_radians(); } }
+                51 => {
+                    if let Some(v) = pair.as_double() {
+                        style.start_angle = v.to_radians();
+                    }
+                }
+                52 => {
+                    if let Some(v) = pair.as_double() {
+                        style.end_angle = v.to_radians();
+                    }
+                }
                 62 => {
                     if let Some(v) = pair.as_i16() {
                         if let Some(last) = style.elements.last_mut() {
@@ -17005,16 +19441,47 @@ impl<'a> SectionReader<'a> {
         let mut def = crate::objects::ImageDefinition::new("");
 
         while let Some(pair) = self.reader.read_pair()? {
-            if pair.code == 0 { self.reader.push_back(pair); break; }
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
             match pair.code {
-                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { def.handle = Handle::new(h); } }
-                330 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { def.owner = Handle::new(h); } }
+                5 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        def.handle = Handle::new(h);
+                    }
+                }
+                330 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        def.owner = Handle::new(h);
+                    }
+                }
                 1 => def.file_name = pair.value_string.clone(),
-                10 => { if let Some(v) = pair.as_double() { def.size_in_pixels.0 = v as u32; } }
-                20 => { if let Some(v) = pair.as_double() { def.size_in_pixels.1 = v as u32; } }
-                11 => { if let Some(v) = pair.as_double() { def.pixel_size.0 = v; } }
-                21 => { if let Some(v) = pair.as_double() { def.pixel_size.1 = v; } }
-                280 => { if let Some(v) = pair.as_i16() { def.is_loaded = v != 0; } }
+                10 => {
+                    if let Some(v) = pair.as_double() {
+                        def.size_in_pixels.0 = v as u32;
+                    }
+                }
+                20 => {
+                    if let Some(v) = pair.as_double() {
+                        def.size_in_pixels.1 = v as u32;
+                    }
+                }
+                11 => {
+                    if let Some(v) = pair.as_double() {
+                        def.pixel_size.0 = v;
+                    }
+                }
+                21 => {
+                    if let Some(v) = pair.as_double() {
+                        def.pixel_size.1 = v;
+                    }
+                }
+                280 => {
+                    if let Some(v) = pair.as_i16() {
+                        def.is_loaded = v != 0;
+                    }
+                }
                 _ => {}
             }
         }
@@ -17030,10 +19497,21 @@ impl<'a> SectionReader<'a> {
         let mut def = crate::objects::UnderlayDefinition::new(utype);
 
         while let Some(pair) = self.reader.read_pair()? {
-            if pair.code == 0 { self.reader.push_back(pair); break; }
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
             match pair.code {
-                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { def.handle = Handle::new(h); } }
-                330 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { def.owner_handle = Handle::new(h); } }
+                5 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        def.handle = Handle::new(h);
+                    }
+                }
+                330 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        def.owner_handle = Handle::new(h);
+                    }
+                }
                 1 => def.file_path = pair.value_string.clone(),
                 2 => def.page_name = pair.value_string.clone(),
                 _ => {}
@@ -17048,35 +19526,134 @@ impl<'a> SectionReader<'a> {
         let mut style = MultiLeaderStyle::new("Standard");
 
         while let Some(pair) = self.reader.read_pair()? {
-            if pair.code == 0 { self.reader.push_back(pair); break; }
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
             match pair.code {
-                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { style.handle = Handle::new(h); } }
-                330 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { style.owner_handle = Handle::new(h); } }
+                5 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        style.handle = Handle::new(h);
+                    }
+                }
+                330 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        style.owner_handle = Handle::new(h);
+                    }
+                }
                 3 => style.name = pair.value_string.clone(),
                 300 => style.description = pair.value_string.clone(),
-                170 => { if let Some(v) = pair.as_i16() { style.content_type = crate::objects::LeaderContentType::from(v); } }
-                173 => { if let Some(v) = pair.as_i16() { style.path_type = crate::objects::MultiLeaderPathType::from(v); } }
-                91 => { if let Some(v) = pair.as_i32() { style.line_color = Color::from_index(v as i16); } }
-                92 => { if let Some(v) = pair.as_i32() { style.line_weight = LineWeight::from_value(v as i16); } }
-                290 => { if let Some(v) = pair.as_bool() { style.enable_landing = v; } }
-                291 => { if let Some(v) = pair.as_bool() { style.enable_dogleg = v; } }
-                43 => { if let Some(v) = pair.as_double() { style.landing_distance = v; } }
-                42 => { if let Some(v) = pair.as_double() { style.landing_gap = v; } }
-                44 => { if let Some(v) = pair.as_double() { style.arrowhead_size = v; } }
-                45 => { if let Some(v) = pair.as_double() { style.text_height = v; } }
-                93 => { if let Some(v) = pair.as_i32() { style.text_color = Color::from_index(v as i16); } }
-                292 => { if let Some(v) = pair.as_bool() { style.text_frame = v; } }
-                174 => { if let Some(v) = pair.as_i16() { style.text_left_attachment = crate::objects::TextAttachmentType::from(v); } }
-                178 => { if let Some(v) = pair.as_i16() { style.text_right_attachment = crate::objects::TextAttachmentType::from(v); } }
-                175 => { if let Some(v) = pair.as_i16() { style.text_angle_type = crate::objects::TextAngleType::from(v); } }
-                176 => { if let Some(v) = pair.as_i16() { style.text_alignment = crate::objects::TextAlignmentType::from(v); } }
-                142 => { if let Some(v) = pair.as_double() { style.scale_factor = v; } }
+                170 => {
+                    if let Some(v) = pair.as_i16() {
+                        style.content_type = crate::objects::LeaderContentType::from(v);
+                    }
+                }
+                173 => {
+                    if let Some(v) = pair.as_i16() {
+                        style.path_type = crate::objects::MultiLeaderPathType::from(v);
+                    }
+                }
+                91 => {
+                    if let Some(v) = pair.as_i32() {
+                        style.line_color = Color::from_index(v as i16);
+                    }
+                }
+                92 => {
+                    if let Some(v) = pair.as_i32() {
+                        style.line_weight = LineWeight::from_value(v as i16);
+                    }
+                }
+                290 => {
+                    if let Some(v) = pair.as_bool() {
+                        style.enable_landing = v;
+                    }
+                }
+                291 => {
+                    if let Some(v) = pair.as_bool() {
+                        style.enable_dogleg = v;
+                    }
+                }
+                43 => {
+                    if let Some(v) = pair.as_double() {
+                        style.landing_distance = v;
+                    }
+                }
+                42 => {
+                    if let Some(v) = pair.as_double() {
+                        style.landing_gap = v;
+                    }
+                }
+                44 => {
+                    if let Some(v) = pair.as_double() {
+                        style.arrowhead_size = v;
+                    }
+                }
+                45 => {
+                    if let Some(v) = pair.as_double() {
+                        style.text_height = v;
+                    }
+                }
+                93 => {
+                    if let Some(v) = pair.as_i32() {
+                        style.text_color = Color::from_index(v as i16);
+                    }
+                }
+                292 => {
+                    if let Some(v) = pair.as_bool() {
+                        style.text_frame = v;
+                    }
+                }
+                174 => {
+                    if let Some(v) = pair.as_i16() {
+                        style.text_left_attachment = crate::objects::TextAttachmentType::from(v);
+                    }
+                }
+                178 => {
+                    if let Some(v) = pair.as_i16() {
+                        style.text_right_attachment = crate::objects::TextAttachmentType::from(v);
+                    }
+                }
+                175 => {
+                    if let Some(v) = pair.as_i16() {
+                        style.text_angle_type = crate::objects::TextAngleType::from(v);
+                    }
+                }
+                176 => {
+                    if let Some(v) = pair.as_i16() {
+                        style.text_alignment = crate::objects::TextAlignmentType::from(v);
+                    }
+                }
+                142 => {
+                    if let Some(v) = pair.as_double() {
+                        style.scale_factor = v;
+                    }
+                }
                 304 => style.default_text = pair.value_string.clone(),
-                340 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { style.line_type_handle = Some(Handle::new(h)); } }
-                341 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { style.arrowhead_handle = Some(Handle::new(h)); } }
-                342 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { style.text_style_handle = Some(Handle::new(h)); } }
-                343 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { style.block_content_handle = Some(Handle::new(h)); } }
-                296 => { if let Some(v) = pair.as_bool() { style.is_annotative = v; } }
+                340 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        style.line_type_handle = Some(Handle::new(h));
+                    }
+                }
+                341 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        style.arrowhead_handle = Some(Handle::new(h));
+                    }
+                }
+                342 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        style.text_style_handle = Some(Handle::new(h));
+                    }
+                }
+                343 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        style.block_content_handle = Some(Handle::new(h));
+                    }
+                }
+                296 => {
+                    if let Some(v) = pair.as_bool() {
+                        style.is_annotative = v;
+                    }
+                }
                 _ => {}
             }
         }
@@ -17091,30 +19668,31 @@ impl<'a> SectionReader<'a> {
         let mut owner_seen = false;
 
         while let Some(pair) = self.reader.read_pair()? {
-            if pair.code == 0 { self.reader.push_back(pair); break; }
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
             match pair.code {
-                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { ps.handle = Handle::new(h); } }
+                5 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        ps.handle = Handle::new(h);
+                    }
+                }
                 102 => {
                     group = pair.value_string.clone();
                 }
                 330 if group == "{ACAD_REACTORS" => {
-                    if let Ok(h) =
-                        u64::from_str_radix(&pair.value_string, 16)
-                    {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
                         ps.reactors.push(Handle::new(h));
                     }
                 }
                 360 if group == "{ACAD_XDICTIONARY" => {
-                    if let Ok(h) =
-                        u64::from_str_radix(&pair.value_string, 16)
-                    {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
                         ps.xdictionary_handle = Some(Handle::new(h));
                     }
                 }
                 330 if group.is_empty() && !owner_seen => {
-                    if let Ok(h) =
-                        u64::from_str_radix(&pair.value_string, 16)
-                    {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
                         ps.owner = Handle::new(h);
                     }
                     owner_seen = true;
@@ -17124,16 +19702,56 @@ impl<'a> SectionReader<'a> {
                 4 => ps.paper_size = pair.value_string.clone(),
                 6 => ps.plot_view_name = pair.value_string.clone(),
                 7 => ps.current_style_sheet = pair.value_string.clone(),
-                40 => { if let Some(v) = pair.as_double() { ps.margins.left = v; } }
-                41 => { if let Some(v) = pair.as_double() { ps.margins.bottom = v; } }
-                42 => { if let Some(v) = pair.as_double() { ps.margins.right = v; } }
-                43 => { if let Some(v) = pair.as_double() { ps.margins.top = v; } }
-                44 => { if let Some(v) = pair.as_double() { ps.paper_width = v; } }
-                45 => { if let Some(v) = pair.as_double() { ps.paper_height = v; } }
-                46 => { if let Some(v) = pair.as_double() { ps.origin_x = v; } }
-                47 => { if let Some(v) = pair.as_double() { ps.origin_y = v; } }
-                48 => { if let Some(v) = pair.as_double() { ps.plot_window.lower_left_x = v; } }
-                49 => { if let Some(v) = pair.as_double() { ps.plot_window.lower_left_y = v; } }
+                40 => {
+                    if let Some(v) = pair.as_double() {
+                        ps.margins.left = v;
+                    }
+                }
+                41 => {
+                    if let Some(v) = pair.as_double() {
+                        ps.margins.bottom = v;
+                    }
+                }
+                42 => {
+                    if let Some(v) = pair.as_double() {
+                        ps.margins.right = v;
+                    }
+                }
+                43 => {
+                    if let Some(v) = pair.as_double() {
+                        ps.margins.top = v;
+                    }
+                }
+                44 => {
+                    if let Some(v) = pair.as_double() {
+                        ps.paper_width = v;
+                    }
+                }
+                45 => {
+                    if let Some(v) = pair.as_double() {
+                        ps.paper_height = v;
+                    }
+                }
+                46 => {
+                    if let Some(v) = pair.as_double() {
+                        ps.origin_x = v;
+                    }
+                }
+                47 => {
+                    if let Some(v) = pair.as_double() {
+                        ps.origin_y = v;
+                    }
+                }
+                48 => {
+                    if let Some(v) = pair.as_double() {
+                        ps.plot_window.lower_left_x = v;
+                    }
+                }
+                49 => {
+                    if let Some(v) = pair.as_double() {
+                        ps.plot_window.lower_left_y = v;
+                    }
+                }
                 70 => {
                     if let Some(v) = pair.as_i32() {
                         ps.flags = crate::objects::PlotFlags::from_bits(v);
@@ -17141,40 +19759,33 @@ impl<'a> SectionReader<'a> {
                 }
                 72 => {
                     if let Some(v) = pair.as_i16() {
-                        ps.paper_units =
-                            crate::objects::PlotPaperUnits::from_code(v);
+                        ps.paper_units = crate::objects::PlotPaperUnits::from_code(v);
                     }
                 }
                 73 => {
                     if let Some(v) = pair.as_i16() {
-                        ps.rotation =
-                            crate::objects::PlotRotation::from_code(v);
+                        ps.rotation = crate::objects::PlotRotation::from_code(v);
                     }
                 }
                 74 => {
                     if let Some(v) = pair.as_i16() {
-                        ps.plot_type =
-                            crate::objects::PlotType::from_code(v);
+                        ps.plot_type = crate::objects::PlotType::from_code(v);
                     }
                 }
                 75 => {
                     if let Some(v) = pair.as_i16() {
-                        ps.scale_type =
-                            crate::objects::ScaledType::from_code(v);
+                        ps.scale_type = crate::objects::ScaledType::from_code(v);
                     }
                 }
                 76 => {
                     if let Some(v) = pair.as_i16() {
-                        ps.shade_plot_mode =
-                            crate::objects::ShadePlotMode::from_code(v);
+                        ps.shade_plot_mode = crate::objects::ShadePlotMode::from_code(v);
                     }
                 }
                 77 => {
                     if let Some(v) = pair.as_i16() {
                         ps.shade_plot_resolution =
-                            crate::objects::ShadePlotResolutionLevel::from_code(
-                                v,
-                            );
+                            crate::objects::ShadePlotResolutionLevel::from_code(v);
                     }
                 }
                 78 => {
@@ -17182,10 +19793,26 @@ impl<'a> SectionReader<'a> {
                         ps.shade_plot_dpi = v;
                     }
                 }
-                140 => { if let Some(v) = pair.as_double() { ps.plot_window.upper_right_x = v; } }
-                141 => { if let Some(v) = pair.as_double() { ps.plot_window.upper_right_y = v; } }
-                142 => { if let Some(v) = pair.as_double() { ps.scale_numerator = v; } }
-                143 => { if let Some(v) = pair.as_double() { ps.scale_denominator = v; } }
+                140 => {
+                    if let Some(v) = pair.as_double() {
+                        ps.plot_window.upper_right_x = v;
+                    }
+                }
+                141 => {
+                    if let Some(v) = pair.as_double() {
+                        ps.plot_window.upper_right_y = v;
+                    }
+                }
+                142 => {
+                    if let Some(v) = pair.as_double() {
+                        ps.scale_numerator = v;
+                    }
+                }
+                143 => {
+                    if let Some(v) = pair.as_double() {
+                        ps.scale_denominator = v;
+                    }
+                }
                 147 => {
                     if let Some(v) = pair.as_double() {
                         ps.standard_scale_factor = v;
@@ -17202,9 +19829,7 @@ impl<'a> SectionReader<'a> {
                     }
                 }
                 333 => {
-                    if let Ok(h) =
-                        u64::from_str_radix(&pair.value_string, 16)
-                    {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
                         ps.visual_style_handle = Handle::new(h);
                     }
                 }
@@ -17237,22 +19862,61 @@ impl<'a> SectionReader<'a> {
         let mut saw_name = false;
 
         while let Some(pair) = self.reader.read_pair()? {
-            if pair.code == 0 { self.reader.push_back(pair); break; }
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
             raw_dxf_codes.push((pair.code, pair.value_string.clone()));
             match pair.code {
-                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { ts.handle = Handle::new(h); } }
-                330 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { ts.owner_handle = Handle::new(h); } }
+                5 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        ts.handle = Handle::new(h);
+                    }
+                }
+                330 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        ts.owner_handle = Handle::new(h);
+                    }
+                }
                 3 => {
                     ts.name = pair.value_string.clone();
                     saw_name = true;
                 }
-                70 => { if let Some(v) = pair.as_i16() { ts.flow_direction = TableFlowDirection::from(v); } }
-                71 => { if let Some(v) = pair.as_i16() { ts.flags = TableStyleFlags::from_bits_retain(v); } }
-                40 => { if let Some(v) = pair.as_double() { ts.horizontal_margin = v; } }
-                41 => { if let Some(v) = pair.as_double() { ts.vertical_margin = v; } }
-                280 if saw_name => { if let Some(v) = pair.as_bool() { ts.title_suppressed = v; } }
-                280 => { if let Some(v) = pair.as_i16() { ts.version = v; } }
-                281 => { if let Some(v) = pair.as_bool() { ts.header_suppressed = v; } }
+                70 => {
+                    if let Some(v) = pair.as_i16() {
+                        ts.flow_direction = TableFlowDirection::from(v);
+                    }
+                }
+                71 => {
+                    if let Some(v) = pair.as_i16() {
+                        ts.flags = TableStyleFlags::from_bits_retain(v);
+                    }
+                }
+                40 => {
+                    if let Some(v) = pair.as_double() {
+                        ts.horizontal_margin = v;
+                    }
+                }
+                41 => {
+                    if let Some(v) = pair.as_double() {
+                        ts.vertical_margin = v;
+                    }
+                }
+                280 if saw_name => {
+                    if let Some(v) = pair.as_bool() {
+                        ts.title_suppressed = v;
+                    }
+                }
+                280 => {
+                    if let Some(v) = pair.as_i16() {
+                        ts.version = v;
+                    }
+                }
+                281 => {
+                    if let Some(v) = pair.as_bool() {
+                        ts.header_suppressed = v;
+                    }
+                }
                 7 if rows.len() < 3 => {
                     let mut row = RowCellStyle::new();
                     row.text_style_name = pair.value_string.clone();
@@ -17311,8 +19975,7 @@ impl<'a> SectionReader<'a> {
                 }
                 64..=69 => {
                     if let (Some(row), Some(v)) = (rows.last_mut(), pair.as_i16()) {
-                        border_mut(row, (pair.code - 64) as usize).color =
-                            Color::from_index(v);
+                        border_mut(row, (pair.code - 64) as usize).color = Color::from_index(v);
                     }
                 }
                 420 | 421 => {
@@ -17331,7 +19994,11 @@ impl<'a> SectionReader<'a> {
                             Color::from_true_color_value(v);
                     }
                 }
-                1001 => { if pair.value_string == "AcadAnnotative" { ts.annotative = self.read_annotative_xdata(pair)?; } }
+                1001 => {
+                    if pair.value_string == "AcadAnnotative" {
+                        ts.annotative = self.read_annotative_xdata(pair)?;
+                    }
+                }
                 _ => {}
             }
         }
@@ -17354,14 +20021,37 @@ impl<'a> SectionReader<'a> {
         let mut scale = Scale::new("1:1", 1.0, 1.0);
 
         while let Some(pair) = self.reader.read_pair()? {
-            if pair.code == 0 { self.reader.push_back(pair); break; }
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
             match pair.code {
-                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { scale.handle = Handle::new(h); } }
-                330 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { scale.owner_handle = Handle::new(h); } }
+                5 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        scale.handle = Handle::new(h);
+                    }
+                }
+                330 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        scale.owner_handle = Handle::new(h);
+                    }
+                }
                 300 => scale.name = pair.value_string.clone(),
-                140 => { if let Some(v) = pair.as_double() { scale.paper_units = v; } }
-                141 => { if let Some(v) = pair.as_double() { scale.drawing_units = v; } }
-                290 => { if let Some(v) = pair.as_bool() { scale.is_unit_scale = v; } }
+                140 => {
+                    if let Some(v) = pair.as_double() {
+                        scale.paper_units = v;
+                    }
+                }
+                141 => {
+                    if let Some(v) = pair.as_double() {
+                        scale.drawing_units = v;
+                    }
+                }
+                290 => {
+                    if let Some(v) = pair.as_bool() {
+                        scale.is_unit_scale = v;
+                    }
+                }
                 _ => {}
             }
         }
@@ -17379,7 +20069,10 @@ impl<'a> SectionReader<'a> {
         let mut raw_dxf_codes = Vec::new();
 
         while let Some(pair) = self.reader.read_pair()? {
-            if pair.code == 0 { self.reader.push_back(pair); break; }
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
             raw_dxf_codes.push((pair.code, pair.value_string.clone()));
             match pair.code {
                 5 => {
@@ -17415,11 +20108,26 @@ impl<'a> SectionReader<'a> {
         let mut dv = DictionaryVariable::new("", "");
 
         while let Some(pair) = self.reader.read_pair()? {
-            if pair.code == 0 { self.reader.push_back(pair); break; }
+            if pair.code == 0 {
+                self.reader.push_back(pair);
+                break;
+            }
             match pair.code {
-                5 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { dv.handle = Handle::new(h); } }
-                330 => { if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) { dv.owner_handle = Handle::new(h); } }
-                280 => { if let Some(v) = pair.as_i16() { dv.schema_number = v; } }
+                5 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        dv.handle = Handle::new(h);
+                    }
+                }
+                330 => {
+                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
+                        dv.owner_handle = Handle::new(h);
+                    }
+                }
+                280 => {
+                    if let Some(v) = pair.as_i16() {
+                        dv.schema_number = v;
+                    }
+                }
                 1 => dv.value = pair.value_string.clone(),
                 _ => {}
             }
@@ -17656,10 +20364,34 @@ mod tests {
         let mut doc = CadDocument::new();
         let mut lwpoly = LwPolyline::new();
         lwpoly.vertices = vec![
-            LwVertex { location: Vector2::new(0.0, 0.0), bulge: 0.0, start_width: 0.0, end_width: 0.0, vertex_id: 0 },
-            LwVertex { location: Vector2::new(10.0, 0.0), bulge: 0.5, start_width: 1.0, end_width: 2.0, vertex_id: 0 },
-            LwVertex { location: Vector2::new(20.0, 0.0), bulge: 0.0, start_width: 0.0, end_width: 0.0, vertex_id: 0 },
-            LwVertex { location: Vector2::new(30.0, 0.0), bulge: -0.3, start_width: 0.5, end_width: 0.5, vertex_id: 0 },
+            LwVertex {
+                location: Vector2::new(0.0, 0.0),
+                bulge: 0.0,
+                start_width: 0.0,
+                end_width: 0.0,
+                vertex_id: 0,
+            },
+            LwVertex {
+                location: Vector2::new(10.0, 0.0),
+                bulge: 0.5,
+                start_width: 1.0,
+                end_width: 2.0,
+                vertex_id: 0,
+            },
+            LwVertex {
+                location: Vector2::new(20.0, 0.0),
+                bulge: 0.0,
+                start_width: 0.0,
+                end_width: 0.0,
+                vertex_id: 0,
+            },
+            LwVertex {
+                location: Vector2::new(30.0, 0.0),
+                bulge: -0.3,
+                start_width: 0.5,
+                end_width: 0.5,
+                vertex_id: 0,
+            },
         ];
         let _ = doc.add_entity(EntityType::LwPolyline(lwpoly));
 
@@ -17669,19 +20401,35 @@ mod tests {
         if let EntityType::LwPolyline(ref lw) = entities[0] {
             assert_eq!(lw.vertices.len(), 4);
             // Vertex 0: no bulge, no widths
-            assert!((lw.vertices[0].bulge).abs() < 1e-9, "v0 bulge should be 0.0, got {}", lw.vertices[0].bulge);
+            assert!(
+                (lw.vertices[0].bulge).abs() < 1e-9,
+                "v0 bulge should be 0.0, got {}",
+                lw.vertices[0].bulge
+            );
             assert!((lw.vertices[0].start_width).abs() < 1e-9);
             assert!((lw.vertices[0].end_width).abs() < 1e-9);
             // Vertex 1: bulge=0.5, widths=1.0/2.0
-            assert!((lw.vertices[1].bulge - 0.5).abs() < 1e-9, "v1 bulge should be 0.5, got {}", lw.vertices[1].bulge);
+            assert!(
+                (lw.vertices[1].bulge - 0.5).abs() < 1e-9,
+                "v1 bulge should be 0.5, got {}",
+                lw.vertices[1].bulge
+            );
             assert!((lw.vertices[1].start_width - 1.0).abs() < 1e-9);
             assert!((lw.vertices[1].end_width - 2.0).abs() < 1e-9);
             // Vertex 2: no bulge, no widths
-            assert!((lw.vertices[2].bulge).abs() < 1e-9, "v2 bulge should be 0.0, got {}", lw.vertices[2].bulge);
+            assert!(
+                (lw.vertices[2].bulge).abs() < 1e-9,
+                "v2 bulge should be 0.0, got {}",
+                lw.vertices[2].bulge
+            );
             assert!((lw.vertices[2].start_width).abs() < 1e-9);
             assert!((lw.vertices[2].end_width).abs() < 1e-9);
             // Vertex 3: bulge=-0.3, widths=0.5/0.5
-            assert!((lw.vertices[3].bulge - (-0.3)).abs() < 1e-9, "v3 bulge should be -0.3, got {}", lw.vertices[3].bulge);
+            assert!(
+                (lw.vertices[3].bulge - (-0.3)).abs() < 1e-9,
+                "v3 bulge should be -0.3, got {}",
+                lw.vertices[3].bulge
+            );
             assert!((lw.vertices[3].start_width - 0.5).abs() < 1e-9);
             assert!((lw.vertices[3].end_width - 0.5).abs() < 1e-9);
         } else {
@@ -17722,7 +20470,12 @@ mod tests {
         let doc = reader.read().expect("read");
 
         let entities: Vec<_> = doc.entities().collect();
-        assert_eq!(entities.len(), 1, "Expected 1 entity, got {}", entities.len());
+        assert_eq!(
+            entities.len(),
+            1,
+            "Expected 1 entity, got {}",
+            entities.len()
+        );
         if let EntityType::LwPolyline(ref lw) = entities[0] {
             assert_eq!(lw.vertices.len(), 4);
             assert!((lw.vertices[0].location.x - 0.0).abs() < 1e-9);
@@ -17730,10 +20483,26 @@ mod tests {
             assert!((lw.vertices[2].location.x - 20.0).abs() < 1e-9);
             assert!((lw.vertices[3].location.x - 30.0).abs() < 1e-9);
             // The critical check: bulge 0.5 must be on vertex 1, not vertex 0
-            assert!((lw.vertices[0].bulge).abs() < 1e-9, "v0 bulge should be 0.0, got {}", lw.vertices[0].bulge);
-            assert!((lw.vertices[1].bulge - 0.5).abs() < 1e-9, "v1 bulge should be 0.5, got {}", lw.vertices[1].bulge);
-            assert!((lw.vertices[2].bulge).abs() < 1e-9, "v2 bulge should be 0.0, got {}", lw.vertices[2].bulge);
-            assert!((lw.vertices[3].bulge).abs() < 1e-9, "v3 bulge should be 0.0, got {}", lw.vertices[3].bulge);
+            assert!(
+                (lw.vertices[0].bulge).abs() < 1e-9,
+                "v0 bulge should be 0.0, got {}",
+                lw.vertices[0].bulge
+            );
+            assert!(
+                (lw.vertices[1].bulge - 0.5).abs() < 1e-9,
+                "v1 bulge should be 0.5, got {}",
+                lw.vertices[1].bulge
+            );
+            assert!(
+                (lw.vertices[2].bulge).abs() < 1e-9,
+                "v2 bulge should be 0.0, got {}",
+                lw.vertices[2].bulge
+            );
+            assert!(
+                (lw.vertices[3].bulge).abs() < 1e-9,
+                "v3 bulge should be 0.0, got {}",
+                lw.vertices[3].bulge
+            );
         } else {
             panic!("Expected LwPolyline entity");
         }
@@ -17787,15 +20556,31 @@ mod tests {
             assert!((lw.vertices[0].start_width).abs() < 1e-9);
             assert!((lw.vertices[0].end_width).abs() < 1e-9);
             // Vertex 1: only bulge
-            assert!((lw.vertices[1].bulge - 0.5).abs() < 1e-9, "v1 bulge wrong: {}", lw.vertices[1].bulge);
+            assert!(
+                (lw.vertices[1].bulge - 0.5).abs() < 1e-9,
+                "v1 bulge wrong: {}",
+                lw.vertices[1].bulge
+            );
             assert!((lw.vertices[1].start_width).abs() < 1e-9);
             assert!((lw.vertices[1].end_width).abs() < 1e-9);
             // Vertex 2: only widths
             assert!((lw.vertices[2].bulge).abs() < 1e-9);
-            assert!((lw.vertices[2].start_width - 1.0).abs() < 1e-9, "v2 start_width wrong: {}", lw.vertices[2].start_width);
-            assert!((lw.vertices[2].end_width - 2.0).abs() < 1e-9, "v2 end_width wrong: {}", lw.vertices[2].end_width);
+            assert!(
+                (lw.vertices[2].start_width - 1.0).abs() < 1e-9,
+                "v2 start_width wrong: {}",
+                lw.vertices[2].start_width
+            );
+            assert!(
+                (lw.vertices[2].end_width - 2.0).abs() < 1e-9,
+                "v2 end_width wrong: {}",
+                lw.vertices[2].end_width
+            );
             // Vertex 3: all present
-            assert!((lw.vertices[3].bulge - (-0.3)).abs() < 1e-9, "v3 bulge wrong: {}", lw.vertices[3].bulge);
+            assert!(
+                (lw.vertices[3].bulge - (-0.3)).abs() < 1e-9,
+                "v3 bulge wrong: {}",
+                lw.vertices[3].bulge
+            );
             assert!((lw.vertices[3].start_width - 0.5).abs() < 1e-9);
             assert!((lw.vertices[3].end_width - 0.5).abs() < 1e-9);
         } else {
@@ -17829,7 +20614,8 @@ mod tests {
         let writer = crate::io::dxf::writer::DxfWriter::new_binary(&doc);
         let bytes = writer.write_to_vec().expect("binary write_to_vec");
         let cursor = std::io::Cursor::new(bytes);
-        let reader = crate::io::dxf::reader::DxfReader::from_reader(cursor).expect("binary from_reader");
+        let reader =
+            crate::io::dxf::reader::DxfReader::from_reader(cursor).expect("binary from_reader");
         reader.read().expect("binary read")
     }
 
@@ -17867,8 +20653,15 @@ mod tests {
         assert_eq!(entities.len(), 1);
         if let EntityType::MText(ref m) = entities[0] {
             // Newlines should have been converted to \P paragraph markers
-            assert!(m.value.contains("\\P"), "Expected \\P paragraph marker, got: {}", m.value);
-            assert!(!m.value.contains('\n'), "Literal newline should not survive roundtrip");
+            assert!(
+                m.value.contains("\\P"),
+                "Expected \\P paragraph marker, got: {}",
+                m.value
+            );
+            assert!(
+                !m.value.contains('\n'),
+                "Literal newline should not survive roundtrip"
+            );
         } else {
             panic!("Expected MText entity");
         }

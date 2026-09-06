@@ -114,12 +114,8 @@ impl Arc {
 
     /// Point at an arc angle converted to world space.
     pub fn point_at_angle_wcs(&self, angle: f64) -> Vector3 {
-        let local = self.center
-            + Vector3::new(
-                self.radius * angle.cos(),
-                self.radius * angle.sin(),
-                0.0,
-            );
+        let local =
+            self.center + Vector3::new(self.radius * angle.cos(), self.radius * angle.sin(), 0.0);
         Matrix3::arbitrary_axis(self.normal) * local
     }
 
@@ -205,11 +201,7 @@ impl Entity for Arc {
         let ax = basis * Vector3::new(1.0, 0.0, 0.0);
         let ay = basis * Vector3::new(0.0, 1.0, 0.0);
         let mut angles = vec![self.start_angle, self.end_angle];
-        for angle in [
-            ay.x.atan2(ax.x),
-            ay.y.atan2(ax.y),
-            ay.z.atan2(ax.z),
-        ] {
+        for angle in [ay.x.atan2(ax.x), ay.y.atan2(ax.y), ay.z.atan2(ax.z)] {
             for candidate in [angle, angle + std::f64::consts::PI] {
                 if self.contains_angle(candidate) {
                     angles.push(candidate);
@@ -236,11 +228,11 @@ impl Entity for Arc {
     fn entity_type(&self) -> &'static str {
         "ARC"
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_arc(self, transform);
     }
-    
+
     fn apply_mirror(&mut self, transform: &crate::types::Transform) {
         super::mirror::mirror_arc(self, transform);
     }
@@ -289,22 +281,22 @@ mod tests {
         assert_eq!(arc.center, Vector3::new(10.0, 20.0, 30.0));
         assert_eq!(arc.radius, 5.0);
     }
-    
+
     #[test]
     fn test_arc_mirror_x() {
         use std::f64::consts::PI;
         // Arc from 0° to 90° at origin, radius 5
         let mut arc = Arc::from_coords(0.0, 0.0, 0.0, 5.0, 0.0, PI / 2.0);
-        
+
         // Save original endpoints
         let orig_start = arc.start_point();
         let orig_end = arc.end_point();
-        
+
         arc.mirror_x();
-        
+
         // Center should be mirrored (x negated)
         assert!((arc.center.x - 0.0).abs() < 1e-10);
-        
+
         // New endpoints should match mirrored original endpoints (swapped)
         let new_start = arc.start_point();
         let new_end = arc.end_point();
@@ -315,16 +307,16 @@ mod tests {
         assert!((new_end.x - (-orig_start.x)).abs() < 1e-8);
         assert!((new_end.y - orig_start.y).abs() < 1e-8);
     }
-    
+
     #[test]
     fn test_arc_mirror_y() {
         use std::f64::consts::PI;
         let mut arc = Arc::from_coords(0.0, 0.0, 0.0, 5.0, 0.0, PI / 2.0);
         let orig_start = arc.start_point();
         let orig_end = arc.end_point();
-        
+
         arc.mirror_y();
-        
+
         let new_start = arc.start_point();
         let new_end = arc.end_point();
         // Mirrored original end → new start
@@ -335,5 +327,3 @@ mod tests {
         assert!((new_end.y - (-orig_start.y)).abs() < 1e-8);
     }
 }
-
-

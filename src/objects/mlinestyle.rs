@@ -42,14 +42,30 @@ impl MLineStyleFlags {
     /// Convert to DXF bit value
     pub fn to_bits(&self) -> i32 {
         let mut bits = 0;
-        if self.fill_on { bits |= 1; }
-        if self.display_joints { bits |= 2; }
-        if self.start_square_cap { bits |= 16; }
-        if self.start_inner_arcs_cap { bits |= 32; }
-        if self.start_round_cap { bits |= 64; }
-        if self.end_square_cap { bits |= 256; }
-        if self.end_inner_arcs_cap { bits |= 512; }
-        if self.end_round_cap { bits |= 1024; }
+        if self.fill_on {
+            bits |= 1;
+        }
+        if self.display_joints {
+            bits |= 2;
+        }
+        if self.start_square_cap {
+            bits |= 16;
+        }
+        if self.start_inner_arcs_cap {
+            bits |= 32;
+        }
+        if self.start_round_cap {
+            bits |= 64;
+        }
+        if self.end_square_cap {
+            bits |= 256;
+        }
+        if self.end_inner_arcs_cap {
+            bits |= 512;
+        }
+        if self.end_round_cap {
+            bits |= 1024;
+        }
         bits
     }
 
@@ -259,10 +275,10 @@ impl MLineStyle {
         if self.elements.is_empty() {
             return 0.0;
         }
-        
+
         let mut min_offset = f64::MAX;
         let mut max_offset = f64::MIN;
-        
+
         for element in &self.elements {
             if element.offset < min_offset {
                 min_offset = element.offset;
@@ -271,13 +287,14 @@ impl MLineStyle {
                 max_offset = element.offset;
             }
         }
-        
+
         max_offset - min_offset
     }
 
     /// Sort elements by offset (ascending)
     pub fn sort_elements(&mut self) {
-        self.elements.sort_by(|a, b| a.offset.partial_cmp(&b.offset).unwrap());
+        self.elements
+            .sort_by(|a, b| a.offset.partial_cmp(&b.offset).unwrap());
     }
 
     /// Set the start angle in degrees
@@ -386,7 +403,7 @@ mod tests {
         let style = MLineStyle::standard();
         assert_eq!(style.name, "Standard");
         assert_eq!(style.element_count(), 2);
-        
+
         // Check offsets are ±0.5
         let offsets: Vec<f64> = style.elements.iter().map(|e| e.offset).collect();
         assert!(offsets.contains(&0.5));
@@ -398,7 +415,7 @@ mod tests {
         let mut style = MLineStyle::new("Test");
         style.add_element(MLineStyleElement::new(0.0));
         style.add_element(MLineStyleElement::new(1.0));
-        
+
         assert_eq!(style.element_count(), 2);
     }
 
@@ -406,7 +423,7 @@ mod tests {
     fn test_mlinestyle_remove_element() {
         let mut style = MLineStyle::standard();
         assert_eq!(style.element_count(), 2);
-        
+
         let removed = style.remove_element(0);
         assert!(removed.is_some());
         assert_eq!(style.element_count(), 1);
@@ -418,7 +435,7 @@ mod tests {
         style.add_element(MLineStyleElement::new(-1.0));
         style.add_element(MLineStyleElement::new(0.0));
         style.add_element(MLineStyleElement::new(1.5));
-        
+
         assert!((style.width() - 2.5).abs() < 1e-10);
     }
 
@@ -428,9 +445,9 @@ mod tests {
         style.add_element(MLineStyleElement::new(1.0));
         style.add_element(MLineStyleElement::new(-1.0));
         style.add_element(MLineStyleElement::new(0.0));
-        
+
         style.sort_elements();
-        
+
         assert_eq!(style.elements[0].offset, -1.0);
         assert_eq!(style.elements[1].offset, 0.0);
         assert_eq!(style.elements[2].offset, 1.0);
@@ -441,10 +458,10 @@ mod tests {
         let mut element = MLineStyleElement::new(0.5);
         assert_eq!(element.offset, 0.5);
         assert_eq!(element.color, Color::ByLayer);
-        
+
         element.set_color(Color::from_index(1));
         assert_eq!(element.color, Color::from_index(1));
-        
+
         element.set_linetype("DASHED");
         assert_eq!(element.linetype, "DASHED");
     }
@@ -464,19 +481,19 @@ mod tests {
         assert!(flags.start_square_cap);
         assert!(flags.end_square_cap);
         assert!(!flags.display_joints);
-        
+
         assert_eq!(flags.to_bits(), 1 | 16 | 256);
     }
 
     #[test]
     fn test_mlinestyle_caps() {
         let mut style = MLineStyle::new("Test");
-        
+
         style.set_round_caps();
         assert!(style.flags.start_round_cap);
         assert!(style.flags.end_round_cap);
         assert!(!style.flags.start_square_cap);
-        
+
         style.set_square_caps();
         assert!(style.flags.start_square_cap);
         assert!(style.flags.end_square_cap);
@@ -486,11 +503,11 @@ mod tests {
     #[test]
     fn test_mlinestyle_fill() {
         let mut style = MLineStyle::new("Test");
-        
+
         style.enable_fill(Color::from_index(5));
         assert!(style.flags.fill_on);
         assert_eq!(style.fill_color, Color::from_index(5));
-        
+
         style.disable_fill();
         assert!(!style.flags.fill_on);
     }
@@ -502,7 +519,7 @@ mod tests {
             .with_element(MLineStyleElement::new(-0.5))
             .with_element(MLineStyleElement::new(0.5))
             .with_fill(Color::from_index(3));
-        
+
         assert_eq!(style.description, "A test style");
         assert_eq!(style.element_count(), 2);
         assert!(style.flags.fill_on);
@@ -511,12 +528,11 @@ mod tests {
     #[test]
     fn test_mlinestyle_angles() {
         let mut style = MLineStyle::new("Test");
-        
+
         style.set_start_angle_degrees(45.0);
         style.set_end_angle_degrees(60.0);
-        
+
         assert!((style.start_angle_degrees() - 45.0).abs() < 1e-10);
         assert!((style.end_angle_degrees() - 60.0).abs() < 1e-10);
     }
 }
-

@@ -25,7 +25,7 @@ impl InvisibleEdgeFlags {
     pub fn from_bits(bits: u8) -> Self {
         Self { bits }
     }
-    
+
     /// Get the raw bits value
     pub fn bits(&self) -> u8 {
         self.bits
@@ -108,12 +108,7 @@ pub struct Face3D {
 
 impl Face3D {
     /// Create a new 3D face with four corners
-    pub fn new(
-        first: Vector3,
-        second: Vector3,
-        third: Vector3,
-        fourth: Vector3,
-    ) -> Self {
+    pub fn new(first: Vector3, second: Vector3, third: Vector3, fourth: Vector3) -> Self {
         Self {
             common: EntityCommon::default(),
             first_corner: first,
@@ -226,7 +221,9 @@ impl Entity for Face3D {
     }
 
     fn bounding_box(&self) -> BoundingBox3D {
-        BoundingBox3D::from_points(&self.corners()).unwrap_or_else(|| BoundingBox3D::new(Vector3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 0.0)))
+        BoundingBox3D::from_points(&self.corners()).unwrap_or_else(|| {
+            BoundingBox3D::new(Vector3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 0.0))
+        })
     }
 
     fn translate(&mut self, offset: Vector3) {
@@ -236,14 +233,12 @@ impl Entity for Face3D {
     fn entity_type(&self) -> &'static str {
         "3DFACE"
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_face3d(self, transform);
     }
-    
+
     fn apply_mirror(&mut self, transform: &crate::types::Transform) {
         super::mirror::mirror_face3d(self, transform);
     }
 }
-
-

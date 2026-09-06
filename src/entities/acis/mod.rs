@@ -42,16 +42,16 @@
 //! assert!(output.contains("700"));
 //! ```
 
-pub mod types;
 pub mod parser;
-pub mod writer;
-pub mod sab;
 pub mod primitives;
+pub mod sab;
+pub mod types;
+pub mod writer;
 
-pub use types::*;
 pub use parser::SatParser;
+pub use sab::{SabReader, SabWriter};
+pub use types::*;
 pub use writer::SatWriter;
-pub use sab::{SabWriter, SabReader};
 
 /// Downgrade ACIS v600+ record token layouts to v400 format.
 ///

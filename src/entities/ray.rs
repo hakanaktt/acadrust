@@ -200,7 +200,7 @@ impl Entity for Ray {
     fn entity_type(&self) -> &'static str {
         "RAY"
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_ray(self, transform);
     }
@@ -212,20 +212,14 @@ mod tests {
 
     #[test]
     fn test_ray_creation() {
-        let ray = Ray::new(
-            Vector3::new(1.0, 2.0, 3.0),
-            Vector3::new(1.0, 0.0, 0.0),
-        );
+        let ray = Ray::new(Vector3::new(1.0, 2.0, 3.0), Vector3::new(1.0, 0.0, 0.0));
         assert_eq!(ray.base_point, Vector3::new(1.0, 2.0, 3.0));
         assert!((ray.direction.length() - 1.0).abs() < 1e-10);
     }
 
     #[test]
     fn test_ray_from_points() {
-        let ray = Ray::from_points(
-            Vector3::new(0.0, 0.0, 0.0),
-            Vector3::new(10.0, 0.0, 0.0),
-        );
+        let ray = Ray::from_points(Vector3::new(0.0, 0.0, 0.0), Vector3::new(10.0, 0.0, 0.0));
         assert_eq!(ray.base_point, Vector3::ZERO);
         assert!((ray.direction.x - 1.0).abs() < 1e-10);
     }
@@ -248,11 +242,11 @@ mod tests {
     #[test]
     fn test_ray_closest_point() {
         let ray = Ray::along_x(Vector3::ZERO);
-        
+
         // Point above the ray
         let closest = ray.closest_point(Vector3::new(5.0, 3.0, 0.0));
         assert_eq!(closest, Vector3::new(5.0, 0.0, 0.0));
-        
+
         // Point behind the base point
         let closest = ray.closest_point(Vector3::new(-5.0, 0.0, 0.0));
         assert_eq!(closest, Vector3::ZERO);
@@ -288,4 +282,3 @@ mod tests {
         assert_eq!(ray.direction, Vector3::UNIT_X);
     }
 }
-

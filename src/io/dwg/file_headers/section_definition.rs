@@ -32,16 +32,16 @@ pub mod names {
 /// These mark the beginning of a section in AC15 format.
 pub mod start_sentinels {
     pub const HEADER: [u8; 16] = [
-        0xCF, 0x7B, 0x1F, 0x23, 0xFD, 0xDE, 0x38, 0xA9,
-        0x5F, 0x7C, 0x68, 0xB8, 0x4E, 0x6D, 0x33, 0x5F,
+        0xCF, 0x7B, 0x1F, 0x23, 0xFD, 0xDE, 0x38, 0xA9, 0x5F, 0x7C, 0x68, 0xB8, 0x4E, 0x6D, 0x33,
+        0x5F,
     ];
     pub const CLASSES: [u8; 16] = [
-        0x8D, 0xA1, 0xC4, 0xB8, 0xC4, 0xA9, 0xF8, 0xC5,
-        0xC0, 0xDC, 0xF4, 0x5F, 0xE7, 0xCF, 0xB6, 0x8A,
+        0x8D, 0xA1, 0xC4, 0xB8, 0xC4, 0xA9, 0xF8, 0xC5, 0xC0, 0xDC, 0xF4, 0x5F, 0xE7, 0xCF, 0xB6,
+        0x8A,
     ];
     pub const PREVIEW: [u8; 16] = [
-        0x1F, 0x25, 0x6D, 0x07, 0xD4, 0x36, 0x28, 0x28,
-        0x9D, 0x57, 0xCA, 0x3F, 0x9D, 0x44, 0x10, 0x2B,
+        0x1F, 0x25, 0x6D, 0x07, 0xD4, 0x36, 0x28, 0x28, 0x9D, 0x57, 0xCA, 0x3F, 0x9D, 0x44, 0x10,
+        0x2B,
     ];
 }
 
@@ -50,21 +50,21 @@ pub mod start_sentinels {
 /// These mark the end of a section in AC15 format.
 pub mod end_sentinels {
     pub const HEADER: [u8; 16] = [
-        0x30, 0x84, 0xE0, 0xDC, 0x02, 0x21, 0xC7, 0x56,
-        0xA0, 0x83, 0x97, 0x47, 0xB1, 0x92, 0xCC, 0xA0,
+        0x30, 0x84, 0xE0, 0xDC, 0x02, 0x21, 0xC7, 0x56, 0xA0, 0x83, 0x97, 0x47, 0xB1, 0x92, 0xCC,
+        0xA0,
     ];
     pub const CLASSES: [u8; 16] = [
-        0x72, 0x5E, 0x3B, 0x47, 0x3B, 0x56, 0x07, 0x3A,
-        0x3F, 0x23, 0x0B, 0xA0, 0x18, 0x30, 0x49, 0x75,
+        0x72, 0x5E, 0x3B, 0x47, 0x3B, 0x56, 0x07, 0x3A, 0x3F, 0x23, 0x0B, 0xA0, 0x18, 0x30, 0x49,
+        0x75,
     ];
     pub const PREVIEW: [u8; 16] = [
-        0xE0, 0xDA, 0x92, 0xF8, 0x2B, 0xC9, 0xD7, 0xD7,
-        0x62, 0xA8, 0x35, 0xC0, 0x62, 0xBB, 0xEF, 0xD4,
+        0xE0, 0xDA, 0x92, 0xF8, 0x2B, 0xC9, 0xD7, 0xD7, 0x62, 0xA8, 0x35, 0xC0, 0x62, 0xBB, 0xEF,
+        0xD4,
     ];
     /// File header end sentinel (AC15 format)
     pub const FILE_HEADER: [u8; 16] = [
-        0x95, 0xA0, 0x4E, 0x28, 0x99, 0x82, 0x1A, 0xE5,
-        0x5E, 0x41, 0xE0, 0x5F, 0x9D, 0x3A, 0x4D, 0x00,
+        0x95, 0xA0, 0x4E, 0x28, 0x99, 0x82, 0x1A, 0xE5, 0x5E, 0x41, 0xE0, 0x5F, 0x9D, 0x3A, 0x4D,
+        0x00,
     ];
 }
 
@@ -106,20 +106,20 @@ pub mod ac21_section_info {
     /// for unknown section names.
     pub fn hash_code(name: &str) -> Option<u32> {
         match name {
-            names::HEADER       => Some(0x32B803D9),
-            names::CLASSES      => Some(0x3F54045F),
-            names::HANDLES      => Some(0x3F6E0450),
+            names::HEADER => Some(0x32B803D9),
+            names::CLASSES => Some(0x3F54045F),
+            names::HANDLES => Some(0x3F6E0450),
             names::ACDB_OBJECTS => Some(0x674C05A9),
             names::OBJ_FREE_SPACE => Some(0x77E2061F),
-            names::TEMPLATE     => Some(0x4A1404CE),
-            names::AUX_HEADER   => Some(0x54F0050A),
-            names::REV_HISTORY  => Some(0x60A205B3),
+            names::TEMPLATE => Some(0x4A1404CE),
+            names::AUX_HEADER => Some(0x54F0050A),
+            names::REV_HISTORY => Some(0x60A205B3),
             names::SUMMARY_INFO => Some(0x717A060F),
-            names::PREVIEW      => Some(0x40AA0473),
-            names::APP_INFO     => Some(0x3FA0043E),
+            names::PREVIEW => Some(0x40AA0473),
+            names::APP_INFO => Some(0x3FA0043E),
             names::FILE_DEP_LIST => Some(0x6C4205CA),
-            names::SECURITY     => Some(0x4A0204EA),
-            names::VBA_PROJECT  => Some(0x586E0544),
+            names::SECURITY => Some(0x4A0204EA),
+            names::VBA_PROJECT => Some(0x586E0544),
             _ => None,
         }
     }
@@ -130,21 +130,21 @@ pub mod ac21_section_info {
     /// `AcDb:VBAProject` has no fixed default — its page size varies with content.
     pub fn page_size(name: &str) -> Option<u64> {
         match name {
-            names::HEADER       => Some(0x800),
-            names::CLASSES      => Some(0xF800),
-            names::HANDLES      => Some(0xF800),
+            names::HEADER => Some(0x800),
+            names::CLASSES => Some(0xF800),
+            names::HANDLES => Some(0xF800),
             names::ACDB_OBJECTS => Some(0xF800),
             names::OBJ_FREE_SPACE => Some(0xF800),
-            names::TEMPLATE     => Some(0x400),
-            names::AUX_HEADER   => Some(0x800),
-            names::REV_HISTORY  => Some(0x1000),
+            names::TEMPLATE => Some(0x400),
+            names::AUX_HEADER => Some(0x800),
+            names::REV_HISTORY => Some(0x1000),
             names::SUMMARY_INFO => Some(0x80),
-            names::PREVIEW      => Some(0x400),
-            names::APP_INFO     => Some(0x300),
+            names::PREVIEW => Some(0x400),
+            names::APP_INFO => Some(0x300),
             names::FILE_DEP_LIST => Some(0x100),
-            names::SECURITY     => Some(0xF800),
+            names::SECURITY => Some(0xF800),
             // VBAProject has variable page size — caller must supply it
-            names::VBA_PROJECT  => None,
+            names::VBA_PROJECT => None,
             _ => None,
         }
     }
@@ -194,8 +194,7 @@ pub mod ac21_section_info {
     pub fn encryption(name: &str) -> Option<u64> {
         match name {
             // Sections with fixed obfuscation (encryption=2, spec §5.2)
-            names::FILE_DEP_LIST
-            | names::VBA_PROJECT => Some(2),
+            names::FILE_DEP_LIST | names::VBA_PROJECT => Some(2),
 
             // All other sections default to no encryption
             names::HEADER
@@ -322,20 +321,62 @@ mod tests {
     fn test_hash_code_matches_enum() {
         // Verify that ac21_section_info::hash_code() returns the same values
         // as the DwgSectionHash enum discriminants.
-        assert_eq!(ac21_section_info::hash_code(names::HEADER), Some(DwgSectionHash::Header as u32));
-        assert_eq!(ac21_section_info::hash_code(names::CLASSES), Some(DwgSectionHash::Classes as u32));
-        assert_eq!(ac21_section_info::hash_code(names::HANDLES), Some(DwgSectionHash::Handles as u32));
-        assert_eq!(ac21_section_info::hash_code(names::ACDB_OBJECTS), Some(DwgSectionHash::AcDbObjects as u32));
-        assert_eq!(ac21_section_info::hash_code(names::OBJ_FREE_SPACE), Some(DwgSectionHash::ObjFreeSpace as u32));
-        assert_eq!(ac21_section_info::hash_code(names::TEMPLATE), Some(DwgSectionHash::Template as u32));
-        assert_eq!(ac21_section_info::hash_code(names::AUX_HEADER), Some(DwgSectionHash::AuxHeader as u32));
-        assert_eq!(ac21_section_info::hash_code(names::REV_HISTORY), Some(DwgSectionHash::RevHistory as u32));
-        assert_eq!(ac21_section_info::hash_code(names::SUMMARY_INFO), Some(DwgSectionHash::SummaryInfo as u32));
-        assert_eq!(ac21_section_info::hash_code(names::PREVIEW), Some(DwgSectionHash::Preview as u32));
-        assert_eq!(ac21_section_info::hash_code(names::APP_INFO), Some(DwgSectionHash::AppInfo as u32));
-        assert_eq!(ac21_section_info::hash_code(names::FILE_DEP_LIST), Some(DwgSectionHash::FileDepList as u32));
-        assert_eq!(ac21_section_info::hash_code(names::SECURITY), Some(DwgSectionHash::Security as u32));
-        assert_eq!(ac21_section_info::hash_code(names::VBA_PROJECT), Some(DwgSectionHash::VbaProject as u32));
+        assert_eq!(
+            ac21_section_info::hash_code(names::HEADER),
+            Some(DwgSectionHash::Header as u32)
+        );
+        assert_eq!(
+            ac21_section_info::hash_code(names::CLASSES),
+            Some(DwgSectionHash::Classes as u32)
+        );
+        assert_eq!(
+            ac21_section_info::hash_code(names::HANDLES),
+            Some(DwgSectionHash::Handles as u32)
+        );
+        assert_eq!(
+            ac21_section_info::hash_code(names::ACDB_OBJECTS),
+            Some(DwgSectionHash::AcDbObjects as u32)
+        );
+        assert_eq!(
+            ac21_section_info::hash_code(names::OBJ_FREE_SPACE),
+            Some(DwgSectionHash::ObjFreeSpace as u32)
+        );
+        assert_eq!(
+            ac21_section_info::hash_code(names::TEMPLATE),
+            Some(DwgSectionHash::Template as u32)
+        );
+        assert_eq!(
+            ac21_section_info::hash_code(names::AUX_HEADER),
+            Some(DwgSectionHash::AuxHeader as u32)
+        );
+        assert_eq!(
+            ac21_section_info::hash_code(names::REV_HISTORY),
+            Some(DwgSectionHash::RevHistory as u32)
+        );
+        assert_eq!(
+            ac21_section_info::hash_code(names::SUMMARY_INFO),
+            Some(DwgSectionHash::SummaryInfo as u32)
+        );
+        assert_eq!(
+            ac21_section_info::hash_code(names::PREVIEW),
+            Some(DwgSectionHash::Preview as u32)
+        );
+        assert_eq!(
+            ac21_section_info::hash_code(names::APP_INFO),
+            Some(DwgSectionHash::AppInfo as u32)
+        );
+        assert_eq!(
+            ac21_section_info::hash_code(names::FILE_DEP_LIST),
+            Some(DwgSectionHash::FileDepList as u32)
+        );
+        assert_eq!(
+            ac21_section_info::hash_code(names::SECURITY),
+            Some(DwgSectionHash::Security as u32)
+        );
+        assert_eq!(
+            ac21_section_info::hash_code(names::VBA_PROJECT),
+            Some(DwgSectionHash::VbaProject as u32)
+        );
     }
 
     #[test]
@@ -348,20 +389,62 @@ mod tests {
     #[test]
     fn test_hash_code_exact_values() {
         // Cross-check against ODA spec §5.2 table values
-        assert_eq!(ac21_section_info::hash_code(names::HEADER), Some(0x32B803D9));
-        assert_eq!(ac21_section_info::hash_code(names::CLASSES), Some(0x3F54045F));
-        assert_eq!(ac21_section_info::hash_code(names::HANDLES), Some(0x3F6E0450));
-        assert_eq!(ac21_section_info::hash_code(names::ACDB_OBJECTS), Some(0x674C05A9));
-        assert_eq!(ac21_section_info::hash_code(names::OBJ_FREE_SPACE), Some(0x77E2061F));
-        assert_eq!(ac21_section_info::hash_code(names::TEMPLATE), Some(0x4A1404CE));
-        assert_eq!(ac21_section_info::hash_code(names::AUX_HEADER), Some(0x54F0050A));
-        assert_eq!(ac21_section_info::hash_code(names::REV_HISTORY), Some(0x60A205B3));
-        assert_eq!(ac21_section_info::hash_code(names::SUMMARY_INFO), Some(0x717A060F));
-        assert_eq!(ac21_section_info::hash_code(names::PREVIEW), Some(0x40AA0473));
-        assert_eq!(ac21_section_info::hash_code(names::APP_INFO), Some(0x3FA0043E));
-        assert_eq!(ac21_section_info::hash_code(names::FILE_DEP_LIST), Some(0x6C4205CA));
-        assert_eq!(ac21_section_info::hash_code(names::SECURITY), Some(0x4A0204EA));
-        assert_eq!(ac21_section_info::hash_code(names::VBA_PROJECT), Some(0x586E0544));
+        assert_eq!(
+            ac21_section_info::hash_code(names::HEADER),
+            Some(0x32B803D9)
+        );
+        assert_eq!(
+            ac21_section_info::hash_code(names::CLASSES),
+            Some(0x3F54045F)
+        );
+        assert_eq!(
+            ac21_section_info::hash_code(names::HANDLES),
+            Some(0x3F6E0450)
+        );
+        assert_eq!(
+            ac21_section_info::hash_code(names::ACDB_OBJECTS),
+            Some(0x674C05A9)
+        );
+        assert_eq!(
+            ac21_section_info::hash_code(names::OBJ_FREE_SPACE),
+            Some(0x77E2061F)
+        );
+        assert_eq!(
+            ac21_section_info::hash_code(names::TEMPLATE),
+            Some(0x4A1404CE)
+        );
+        assert_eq!(
+            ac21_section_info::hash_code(names::AUX_HEADER),
+            Some(0x54F0050A)
+        );
+        assert_eq!(
+            ac21_section_info::hash_code(names::REV_HISTORY),
+            Some(0x60A205B3)
+        );
+        assert_eq!(
+            ac21_section_info::hash_code(names::SUMMARY_INFO),
+            Some(0x717A060F)
+        );
+        assert_eq!(
+            ac21_section_info::hash_code(names::PREVIEW),
+            Some(0x40AA0473)
+        );
+        assert_eq!(
+            ac21_section_info::hash_code(names::APP_INFO),
+            Some(0x3FA0043E)
+        );
+        assert_eq!(
+            ac21_section_info::hash_code(names::FILE_DEP_LIST),
+            Some(0x6C4205CA)
+        );
+        assert_eq!(
+            ac21_section_info::hash_code(names::SECURITY),
+            Some(0x4A0204EA)
+        );
+        assert_eq!(
+            ac21_section_info::hash_code(names::VBA_PROJECT),
+            Some(0x586E0544)
+        );
     }
 
     #[test]
@@ -369,15 +452,30 @@ mod tests {
         assert_eq!(ac21_section_info::page_size(names::HEADER), Some(0x800));
         assert_eq!(ac21_section_info::page_size(names::CLASSES), Some(0xF800));
         assert_eq!(ac21_section_info::page_size(names::HANDLES), Some(0xF800));
-        assert_eq!(ac21_section_info::page_size(names::ACDB_OBJECTS), Some(0xF800));
-        assert_eq!(ac21_section_info::page_size(names::OBJ_FREE_SPACE), Some(0xF800));
+        assert_eq!(
+            ac21_section_info::page_size(names::ACDB_OBJECTS),
+            Some(0xF800)
+        );
+        assert_eq!(
+            ac21_section_info::page_size(names::OBJ_FREE_SPACE),
+            Some(0xF800)
+        );
         assert_eq!(ac21_section_info::page_size(names::TEMPLATE), Some(0x400));
         assert_eq!(ac21_section_info::page_size(names::AUX_HEADER), Some(0x800));
-        assert_eq!(ac21_section_info::page_size(names::REV_HISTORY), Some(0x1000));
-        assert_eq!(ac21_section_info::page_size(names::SUMMARY_INFO), Some(0x80));
+        assert_eq!(
+            ac21_section_info::page_size(names::REV_HISTORY),
+            Some(0x1000)
+        );
+        assert_eq!(
+            ac21_section_info::page_size(names::SUMMARY_INFO),
+            Some(0x80)
+        );
         assert_eq!(ac21_section_info::page_size(names::PREVIEW), Some(0x400));
         assert_eq!(ac21_section_info::page_size(names::APP_INFO), Some(0x300));
-        assert_eq!(ac21_section_info::page_size(names::FILE_DEP_LIST), Some(0x100));
+        assert_eq!(
+            ac21_section_info::page_size(names::FILE_DEP_LIST),
+            Some(0x100)
+        );
         assert_eq!(ac21_section_info::page_size(names::SECURITY), Some(0xF800));
         // VBAProject has variable page size
         assert_eq!(ac21_section_info::page_size(names::VBA_PROJECT), None);
@@ -402,7 +500,8 @@ mod tests {
             names::REV_HISTORY,
         ] {
             assert_eq!(
-                ac21_section_info::encoding(name), Some(4),
+                ac21_section_info::encoding(name),
+                Some(4),
                 "{name} should be compressed (encoding=4)"
             );
         }
@@ -420,7 +519,8 @@ mod tests {
             names::VBA_PROJECT,
         ] {
             assert_eq!(
-                ac21_section_info::encoding(name), Some(1),
+                ac21_section_info::encoding(name),
+                Some(1),
                 "{name} should be uncompressed (encoding=1)"
             );
         }
@@ -449,7 +549,8 @@ mod tests {
             names::SECURITY,
         ] {
             assert_eq!(
-                ac21_section_info::encryption(name), Some(0),
+                ac21_section_info::encryption(name),
+                Some(0),
                 "{name} should have encryption=0"
             );
         }
@@ -510,7 +611,10 @@ mod tests {
         for name in ac21_section_info::ALL_SECTION_NAMES {
             if let Some(size) = ac21_section_info::page_size(name) {
                 assert!(size > 0, "{name} has zero page size");
-                assert!(size <= 0x10000, "{name} has unexpectedly large page size: {size:#X}");
+                assert!(
+                    size <= 0x10000,
+                    "{name} has unexpectedly large page size: {size:#X}"
+                );
             }
         }
     }

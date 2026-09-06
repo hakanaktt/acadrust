@@ -2,9 +2,7 @@
 //! (degrees<->radians), radial centre/arc point group codes, and the ordinate
 //! X/Y datum bit. Regression tests for the reader/writer pairing.
 
-use acadrust::entities::{
-    Dimension, DimensionLinear, DimensionOrdinate, DimensionRadius,
-};
+use acadrust::entities::{Dimension, DimensionLinear, DimensionOrdinate, DimensionRadius};
 use acadrust::types::Vector3;
 use acadrust::{CadDocument, DxfReader, DxfWriter, EntityType};
 
@@ -22,7 +20,8 @@ fn roundtrip(doc: &CadDocument, tag: &str) -> CadDocument {
 #[test]
 fn linear_rotation_survives_dxf_roundtrip() {
     let mut doc = CadDocument::new();
-    let mut d = DimensionLinear::vertical(Vector3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 10.0, 0.0));
+    let mut d =
+        DimensionLinear::vertical(Vector3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 10.0, 0.0));
     d.definition_point = Vector3::new(5.0, 5.0, 0.0);
     d.base.definition_point = d.definition_point;
     doc.add_entity(EntityType::Dimension(Dimension::Linear(d)))
@@ -49,7 +48,8 @@ fn block_name_survives_dxf_roundtrip() {
     // dimension came back with an empty block_name and lost its geometry link —
     // consumers then recomputed the picture and the text drifted.
     let mut doc = CadDocument::new();
-    let mut d = DimensionLinear::vertical(Vector3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 10.0, 0.0));
+    let mut d =
+        DimensionLinear::vertical(Vector3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 10.0, 0.0));
     d.base.block_name = "*D42".to_string();
     doc.add_entity(EntityType::Dimension(Dimension::Linear(d)))
         .unwrap();

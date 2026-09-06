@@ -153,4 +153,3 @@ impl TableEntry for View {
         self.name = name;
     }
 }
-

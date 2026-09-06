@@ -533,4 +533,3 @@ mod tests {
         assert_eq!(scale.drawing_units, cloned.drawing_units);
     }
 }
-

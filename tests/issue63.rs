@@ -21,7 +21,12 @@ use acadrust::types::{DxfVersion, Handle, Vector3};
 use acadrust::{CadDocument, DxfReader, DxfWriter};
 
 fn write_text(doc: &CadDocument) -> String {
-    String::from_utf8(DxfWriter::new(doc).write_to_vec().expect("DXF write failed")).unwrap()
+    String::from_utf8(
+        DxfWriter::new(doc)
+            .write_to_vec()
+            .expect("DXF write failed"),
+    )
+    .unwrap()
 }
 
 fn read_bytes(bytes: Vec<u8>) -> CadDocument {
@@ -55,7 +60,10 @@ fn dictionary_entry(text: &str, key: &str) -> (u16, u64) {
 fn acad_field_nod_entry_uses_hard_owner_pointer() {
     let mut doc = CadDocument::with_version(DxfVersion::AC1032);
     let nod_handle = doc.header.named_objects_dict_handle;
-    assert!(!nod_handle.is_null(), "default document must have a root NOD");
+    assert!(
+        !nod_handle.is_null(),
+        "default document must have a root NOD"
+    );
 
     let field_list_handle = Handle::new(0x114D);
     let field_list = FieldList {
@@ -79,7 +87,10 @@ fn acad_field_nod_entry_uses_hard_owner_pointer() {
     let (code, target) = dictionary_entry(&output, "ACAD_FIELD");
     assert_eq!(code, 360, "ACAD_FIELD must use hard-owner code 360");
     assert_eq!(target, 0x114D, "ACAD_FIELD must point at the FIELDLIST");
-    assert!(has_record(&output, "FIELDLIST"), "FIELDLIST object must be written");
+    assert!(
+        has_record(&output, "FIELDLIST"),
+        "FIELDLIST object must be written"
+    );
 }
 
 #[test]
@@ -125,13 +136,26 @@ fn plain_polyline() -> Polyline2D {
 #[test]
 fn plain_polyline2d_downsaves_to_lwpolyline_r2000_plus() {
     let mut doc = CadDocument::with_version(DxfVersion::AC1032);
-    doc.add_entity(EntityType::Polyline2D(plain_polyline())).unwrap();
+    doc.add_entity(EntityType::Polyline2D(plain_polyline()))
+        .unwrap();
 
     let output = write_text(&doc);
-    assert!(has_record(&output, "LWPOLYLINE"), "expected LWPOLYLINE output");
-    assert!(!has_record(&output, "POLYLINE"), "legacy POLYLINE must not be written");
-    assert!(!has_record(&output, "VERTEX"), "VERTEX records must not be written");
-    assert!(!has_record(&output, "SEQEND"), "SEQEND records must not be written");
+    assert!(
+        has_record(&output, "LWPOLYLINE"),
+        "expected LWPOLYLINE output"
+    );
+    assert!(
+        !has_record(&output, "POLYLINE"),
+        "legacy POLYLINE must not be written"
+    );
+    assert!(
+        !has_record(&output, "VERTEX"),
+        "VERTEX records must not be written"
+    );
+    assert!(
+        !has_record(&output, "SEQEND"),
+        "SEQEND records must not be written"
+    );
 
     // Round-trip fidelity: geometry, bulge, widths and elevation survive the
     // down-save with the defaults baked into each vertex.
@@ -147,7 +171,10 @@ fn plain_polyline2d_downsaves_to_lwpolyline_r2000_plus() {
                 assert_eq!(lw.vertices[0].location.y, 0.0);
                 assert_eq!(lw.vertices[0].bulge, 0.5);
                 assert_eq!(lw.vertices[0].start_width, 0.5, "default width baked in");
-                assert_eq!(lw.vertices[1].start_width, 1.0, "per-vertex width preserved");
+                assert_eq!(
+                    lw.vertices[1].start_width, 1.0,
+                    "per-vertex width preserved"
+                );
                 assert_eq!(lw.vertices[1].end_width, 0.25);
                 assert_eq!(lw.vertices[2].start_width, 0.5, "default width baked in");
                 assert_eq!(lw.vertices[2].end_width, 0.0);
@@ -165,7 +192,10 @@ fn spline_fit_polyline2d_keeps_legacy_form() {
     doc.add_entity(EntityType::Polyline2D(pl)).unwrap();
 
     let output = write_text(&doc);
-    assert!(has_record(&output, "POLYLINE"), "fitted polylines keep the legacy form");
+    assert!(
+        has_record(&output, "POLYLINE"),
+        "fitted polylines keep the legacy form"
+    );
     assert!(has_record(&output, "VERTEX"));
     assert!(has_record(&output, "SEQEND"));
     assert!(!has_record(&output, "LWPOLYLINE"));
@@ -186,10 +216,14 @@ fn polyface_mesh_flags_keep_legacy_form() {
 #[test]
 fn r14_output_keeps_legacy_polyline_form() {
     let mut doc = CadDocument::with_version(DxfVersion::AC1014);
-    doc.add_entity(EntityType::Polyline2D(plain_polyline())).unwrap();
+    doc.add_entity(EntityType::Polyline2D(plain_polyline()))
+        .unwrap();
 
     let output = write_text(&doc);
-    assert!(has_record(&output, "POLYLINE"), "pre-R2000 output keeps legacy POLYLINE");
+    assert!(
+        has_record(&output, "POLYLINE"),
+        "pre-R2000 output keeps legacy POLYLINE"
+    );
     assert!(has_record(&output, "VERTEX"));
     assert!(has_record(&output, "SEQEND"));
     assert!(!has_record(&output, "LWPOLYLINE"));
@@ -198,7 +232,8 @@ fn r14_output_keeps_legacy_polyline_form() {
 #[test]
 fn empty_polyline2d_still_downsaves_without_children() {
     let mut doc = CadDocument::with_version(DxfVersion::AC1032);
-    doc.add_entity(EntityType::Polyline2D(Polyline2D::new())).unwrap();
+    doc.add_entity(EntityType::Polyline2D(Polyline2D::new()))
+        .unwrap();
 
     let output = write_text(&doc);
     assert!(has_record(&output, "LWPOLYLINE"));

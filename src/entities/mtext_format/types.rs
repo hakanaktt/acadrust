@@ -922,7 +922,11 @@ impl MTextDocument {
             if pi > 0 {
                 // `\N` opens a column, `\P` only a line — writing `\P` for both
                 // would flatten a multi-column MTEXT every time it round-trips.
-                result.push_str(if paragraph.starts_column { "\\N" } else { "\\P" });
+                result.push_str(if paragraph.starts_column {
+                    "\\N"
+                } else {
+                    "\\P"
+                });
             }
 
             // Emit paragraph properties
@@ -1131,9 +1135,7 @@ impl MTextDocument {
             match (&current_props.height, &props.height) {
                 // Factor → Factor: emit target/current so re-parse multiplies
                 // back to exactly `target`.
-                (Some(MTextScalar::Factor(c)), Some(MTextScalar::Factor(t)))
-                    if c.abs() > 1e-12 =>
-                {
+                (Some(MTextScalar::Factor(c)), Some(MTextScalar::Factor(t))) if c.abs() > 1e-12 => {
                     write!(result, "\\H{}x;", t / c).ok();
                 }
                 // Fresh factor over the implicit 1.0.

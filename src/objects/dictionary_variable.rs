@@ -343,4 +343,3 @@ mod tests {
         assert_eq!(DictionaryVariable::SUBCLASS_MARKER, "DictionaryVariables");
     }
 }
-

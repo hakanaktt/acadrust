@@ -127,23 +127,23 @@
 
 pub mod classes;
 pub mod compound_file;
-pub mod vba;
+pub mod document;
 pub mod entities;
 pub mod error;
-pub mod notification;
-pub mod types;
-pub mod tables;
-pub mod document;
-pub mod layer_state;
-pub mod io;
-pub mod xdata;
-pub mod objects;
 pub mod fields;
+pub mod io;
+pub mod layer_state;
+pub mod notification;
+pub mod objects;
+pub mod tables;
+pub mod types;
+pub mod vba;
+pub mod xdata;
 
 // Re-export commonly used types
 pub use error::{DxfError, Result};
 pub use types::{
-    DxfVersion, BoundingBox2D, BoundingBox3D, Color, Handle, LineWeight, Transparency, Vector2,
+    BoundingBox2D, BoundingBox3D, Color, DxfVersion, Handle, LineWeight, Transparency, Vector2,
     Vector3,
 };
 
@@ -155,8 +155,8 @@ pub use entities::{
 
 // Re-export table types
 pub use tables::{
-    AppId, BlockRecord, DimStyle, Layer, LineType, Table, TableEntry, TextStyle, Ucs, VPort,
-    View, VxTableRecord,
+    AppId, BlockRecord, DimStyle, Layer, LineType, Table, TableEntry, TextStyle, Ucs, VPort, View,
+    VxTableRecord,
 };
 
 // Re-export document
@@ -164,23 +164,23 @@ pub use document::{CadDocument, Preview, PreviewFormat, SolidHistoryGraph};
 pub use layer_state::{LayerState, LayerStateLayer, LayerStateMask};
 
 // Re-export I/O types
+pub use io::dwg::{DwgReadOptions, DwgReader, DwgWriter};
 pub use io::dxf::{DxfReader, DxfReaderConfiguration, DxfWriter};
-pub use io::dwg::{DwgReader, DwgReadOptions, DwgWriter};
 pub use io::read::{
     push_read_diagnostic, ReadDiagnostic, ReadOutcome, ReadStage, ReadStats, SourceFormat,
     MAX_READ_DIAGNOSTICS,
 };
 
 // Re-export ACIS types
-pub use entities::acis::{SatDocument, SatHeader, SatVersion, SatRecord, SatPointer, SatToken};
-pub use entities::acis::{SatParser, SatWriter, SabWriter, SabReader};
 pub use entities::acis::primitives;
+pub use entities::acis::{SabReader, SabWriter, SatParser, SatWriter};
+pub use entities::acis::{SatDocument, SatHeader, SatPointer, SatRecord, SatToken, SatVersion};
 
 // Re-export import types (when `import` feature is enabled)
 #[cfg(feature = "import")]
 pub use io::import::{
-    ColladaImporter, FbxImporter, GltfImporter, ImportConfig, ImportFormat, ObjImporter,
-    StlImporter, import_file,
+    import_file, ColladaImporter, FbxImporter, GltfImporter, ImportConfig, ImportFormat,
+    ObjImporter, StlImporter,
 };
 
 /// Library version

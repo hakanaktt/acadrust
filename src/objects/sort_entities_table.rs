@@ -153,7 +153,8 @@ impl SortEntitiesTable {
         } else {
             // Add new entry
             let idx = self.entries.len();
-            self.entries.push(SortEntsEntry::new(entity_handle, sort_handle));
+            self.entries
+                .push(SortEntsEntry::new(entity_handle, sort_handle));
             self.entry_map.insert(key, idx);
             None
         }
@@ -189,7 +190,9 @@ impl SortEntitiesTable {
     /// Returns None if the entity is not in the table.
     pub fn get_sort_handle(&self, entity_handle: Handle) -> Option<Handle> {
         let key = entity_handle.value();
-        self.entry_map.get(&key).map(|&idx| self.entries[idx].sort_handle)
+        self.entry_map
+            .get(&key)
+            .map(|&idx| self.entries[idx].sort_handle)
     }
 
     /// Checks if an entity is in the sort table.
@@ -504,7 +507,10 @@ mod tests {
             entry.sort_handle = Handle::new(0x99);
         }
 
-        assert_eq!(table.get_sort_handle(Handle::new(0x100)), Some(Handle::new(0x99)));
+        assert_eq!(
+            table.get_sort_handle(Handle::new(0x100)),
+            Some(Handle::new(0x99))
+        );
     }
 
     #[test]

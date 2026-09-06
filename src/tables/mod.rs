@@ -22,26 +22,26 @@ pub fn normalize_name(name: &str) -> String {
     name.to_uppercase()
 }
 
+pub mod appid;
+pub mod block_record;
+pub mod dimstyle;
 pub mod layer;
 pub mod linetype;
 pub mod textstyle;
-pub mod block_record;
-pub mod dimstyle;
-pub mod appid;
+pub mod ucs;
 pub mod view;
 pub mod vport;
-pub mod ucs;
 pub mod vx;
 
-pub use layer::{Layer, LayerFlags};
-pub use linetype::{LineType, LineTypeComplexData, LineTypeComplexContent, LineTypeElement};
-pub use textstyle::{TextStyle, TextGenerationFlags};
+pub use appid::AppId;
 pub use block_record::BlockRecord;
 pub use dimstyle::DimStyle;
-pub use appid::AppId;
+pub use layer::{Layer, LayerFlags};
+pub use linetype::{LineType, LineTypeComplexContent, LineTypeComplexData, LineTypeElement};
+pub use textstyle::{TextGenerationFlags, TextStyle};
+pub use ucs::Ucs;
 pub use view::View;
 pub use vport::VPort;
-pub use ucs::Ucs;
 pub use vx::VxTableRecord;
 
 /// Base trait for all table entries
@@ -256,7 +256,7 @@ mod tests {
             handle: Handle::new(1),
             name: "Test".to_string(),
         };
-        
+
         assert!(table.add(entry).is_ok());
         assert!(table.contains("Test"));
         assert!(table.contains("test")); // Case-insensitive
@@ -274,7 +274,7 @@ mod tests {
             handle: Handle::new(2),
             name: "test".to_string(), // Same name, different case
         };
-        
+
         assert!(table.add(entry1).is_ok());
         assert!(table.add(entry2).is_err()); // Should fail
     }
@@ -295,7 +295,10 @@ mod tests {
         table.add_allow_duplicate(entry2);
 
         assert_eq!(table.len(), 2);
-        assert_eq!(table.names().collect::<Vec<_>>(), vec!["*Active", "*Active"]);
+        assert_eq!(
+            table.names().collect::<Vec<_>>(),
+            vec!["*Active", "*Active"]
+        );
         assert_eq!(table.get("*active").unwrap().handle(), Handle::new(1));
     }
 
@@ -306,10 +309,10 @@ mod tests {
             handle: Handle::new(1),
             name: "Test".to_string(),
         };
-        
+
         table.add(entry).unwrap();
         assert_eq!(table.len(), 1);
-        
+
         let removed = table.remove("test");
         assert!(removed.is_some());
         assert_eq!(table.len(), 0);

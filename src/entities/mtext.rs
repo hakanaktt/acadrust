@@ -272,13 +272,12 @@ impl Entity for MText {
     fn entity_type(&self) -> &'static str {
         "MTEXT"
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_mtext(self, transform);
     }
-    
+
     fn apply_mirror(&mut self, transform: &crate::types::Transform) {
         super::mirror::mirror_mtext(self, transform);
     }
 }
-

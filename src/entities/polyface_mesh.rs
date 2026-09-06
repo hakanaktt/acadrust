@@ -272,11 +272,7 @@ impl PolyfaceFace {
 
     /// Returns the vertex indices as absolute values (ignoring visibility).
     pub fn vertex_indices(&self) -> Vec<i16> {
-        let mut indices = vec![
-            self.index1.abs(),
-            self.index2.abs(),
-            self.index3.abs(),
-        ];
+        let mut indices = vec![self.index1.abs(), self.index2.abs(), self.index3.abs()];
         if self.is_quad() {
             indices.push(self.index4.abs());
         }
@@ -309,10 +305,34 @@ impl PolyfaceFace {
         let make_invisible = |idx: i16| -idx.abs();
 
         match edge {
-            0 => self.index1 = if visible { make_visible(self.index1) } else { make_invisible(self.index1) },
-            1 => self.index2 = if visible { make_visible(self.index2) } else { make_invisible(self.index2) },
-            2 => self.index3 = if visible { make_visible(self.index3) } else { make_invisible(self.index3) },
-            3 => self.index4 = if visible { make_visible(self.index4) } else { make_invisible(self.index4) },
+            0 => {
+                self.index1 = if visible {
+                    make_visible(self.index1)
+                } else {
+                    make_invisible(self.index1)
+                }
+            }
+            1 => {
+                self.index2 = if visible {
+                    make_visible(self.index2)
+                } else {
+                    make_invisible(self.index2)
+                }
+            }
+            2 => {
+                self.index3 = if visible {
+                    make_visible(self.index3)
+                } else {
+                    make_invisible(self.index3)
+                }
+            }
+            3 => {
+                self.index4 = if visible {
+                    make_visible(self.index4)
+                } else {
+                    make_invisible(self.index4)
+                }
+            }
             _ => {}
         }
     }
@@ -653,11 +673,11 @@ impl PolyfaceMesh {
         mesh.add_vertex_xyz(base_center.x, base_center.y, base_center.z + height);
 
         // Faces
-        mesh.add_quad(1, 2, 3, 4);   // base
-        mesh.add_triangle(1, 2, 5);  // side 1
-        mesh.add_triangle(2, 3, 5);  // side 2
-        mesh.add_triangle(3, 4, 5);  // side 3
-        mesh.add_triangle(4, 1, 5);  // side 4
+        mesh.add_quad(1, 2, 3, 4); // base
+        mesh.add_triangle(1, 2, 5); // side 1
+        mesh.add_triangle(2, 3, 5); // side 2
+        mesh.add_triangle(3, 4, 5); // side 3
+        mesh.add_triangle(4, 1, 5); // side 4
 
         mesh
     }
@@ -782,11 +802,11 @@ impl Entity for PolyfaceMesh {
     fn entity_type(&self) -> &'static str {
         Self::ENTITY_NAME
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_polyface_mesh(self, transform);
     }
-    
+
     fn apply_mirror(&mut self, transform: &crate::types::Transform) {
         super::mirror::mirror_polyface_mesh(self, transform);
     }
@@ -911,10 +931,7 @@ mod tests {
 
     #[test]
     fn test_create_box() {
-        let mesh = PolyfaceMesh::create_box(
-            Vector3::ZERO,
-            Vector3::new(1.0, 1.0, 1.0),
-        );
+        let mesh = PolyfaceMesh::create_box(Vector3::ZERO, Vector3::new(1.0, 1.0, 1.0));
         assert_eq!(mesh.vertex_count(), 8);
         assert_eq!(mesh.face_count(), 6);
         assert!(mesh.validate());
@@ -922,11 +939,7 @@ mod tests {
 
     #[test]
     fn test_create_pyramid() {
-        let mesh = PolyfaceMesh::create_pyramid(
-            Vector3::ZERO,
-            2.0,
-            1.0,
-        );
+        let mesh = PolyfaceMesh::create_pyramid(Vector3::ZERO, 2.0, 1.0);
         assert_eq!(mesh.vertex_count(), 5);
         assert_eq!(mesh.face_count(), 5);
         assert!(mesh.validate());
@@ -963,10 +976,7 @@ mod tests {
 
     #[test]
     fn test_bounding_box() {
-        let mesh = PolyfaceMesh::create_box(
-            Vector3::ZERO,
-            Vector3::new(2.0, 3.0, 4.0),
-        );
+        let mesh = PolyfaceMesh::create_box(Vector3::ZERO, Vector3::new(2.0, 3.0, 4.0));
         let bb = mesh.bounding_box();
         assert_eq!(bb.min, Vector3::ZERO);
         assert_eq!(bb.max, Vector3::new(2.0, 3.0, 4.0));
@@ -1022,4 +1032,3 @@ mod tests {
         assert_eq!(face.index3, 1);
     }
 }
-

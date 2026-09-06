@@ -8,7 +8,6 @@ use crate::types::{Matrix3, Transform, Vector3};
 
 // ── Point ────────────────────────────────────────────────────────────────────
 
-
 /// Map a WCS displacement into a planar entity's OCS frame. ARC / CIRCLE /
 /// TEXT / SOLID / LWPOLYLINE / ... store their coordinates in OCS, so adding
 /// a raw world offset moves a mirrored entity (normal 0,0,-1) the wrong way.
@@ -378,7 +377,10 @@ pub(crate) fn translate_solid3d(e: &mut Solid3D, offset: Vector3) {
     e.point_of_reference = e.point_of_reference + offset;
     // The body geometry lives in the ACIS placement, so move it there too —
     // otherwise the solid keeps rendering at its original location.
-    super::transform::compose_acis_placement(&mut e.acis_data, &Transform::from_translation(offset));
+    super::transform::compose_acis_placement(
+        &mut e.acis_data,
+        &Transform::from_translation(offset),
+    );
 
     for wire in &mut e.wires {
         for pt in &mut wire.points {
@@ -400,7 +402,10 @@ pub(crate) fn translate_solid3d(e: &mut Solid3D, offset: Vector3) {
 
 pub(crate) fn translate_region(e: &mut Region, offset: Vector3) {
     e.point_of_reference = e.point_of_reference + offset;
-    super::transform::compose_acis_placement(&mut e.acis_data, &Transform::from_translation(offset));
+    super::transform::compose_acis_placement(
+        &mut e.acis_data,
+        &Transform::from_translation(offset),
+    );
     for wire in &mut e.wires {
         for pt in &mut wire.points {
             *pt = *pt + offset;
@@ -420,7 +425,10 @@ pub(crate) fn translate_region(e: &mut Region, offset: Vector3) {
 
 pub(crate) fn translate_body(e: &mut Body, offset: Vector3) {
     e.point_of_reference = e.point_of_reference + offset;
-    super::transform::compose_acis_placement(&mut e.acis_data, &Transform::from_translation(offset));
+    super::transform::compose_acis_placement(
+        &mut e.acis_data,
+        &Transform::from_translation(offset),
+    );
     for wire in &mut e.wires {
         for pt in &mut wire.points {
             *pt = *pt + offset;
@@ -438,7 +446,10 @@ pub(crate) fn translate_body(e: &mut Body, offset: Vector3) {
 
 pub(crate) fn translate_surface(e: &mut crate::entities::Surface, offset: Vector3) {
     e.point_of_reference = e.point_of_reference + offset;
-    super::transform::compose_acis_placement(&mut e.acis_data, &Transform::from_translation(offset));
+    super::transform::compose_acis_placement(
+        &mut e.acis_data,
+        &Transform::from_translation(offset),
+    );
     for wire in &mut e.wires {
         for pt in &mut wire.points {
             *pt = *pt + offset;
@@ -600,10 +611,7 @@ mod tests {
 
     #[test]
     fn test_translate_line() {
-        let mut line = Line::from_points(
-            Vector3::new(0.0, 0.0, 0.0),
-            Vector3::new(10.0, 0.0, 0.0),
-        );
+        let mut line = Line::from_points(Vector3::new(0.0, 0.0, 0.0), Vector3::new(10.0, 0.0, 0.0));
         translate_line(&mut line, Vector3::new(5.0, 5.0, 0.0));
         assert_eq!(line.start, Vector3::new(5.0, 5.0, 0.0));
         assert_eq!(line.end, Vector3::new(15.0, 5.0, 0.0));
@@ -652,8 +660,14 @@ mod tests {
 
         assert_eq!(ins.insert_point, Vector3::new(15.0, 10.0, 0.0));
         // The attribute must follow the block (a MOVE used to leave it behind).
-        assert_eq!(ins.attributes[0].insertion_point, Vector3::new(17.0, 10.0, 0.0));
-        assert_eq!(ins.attributes[0].alignment_point, Vector3::new(17.0, 10.0, 0.0));
+        assert_eq!(
+            ins.attributes[0].insertion_point,
+            Vector3::new(17.0, 10.0, 0.0)
+        );
+        assert_eq!(
+            ins.attributes[0].alignment_point,
+            Vector3::new(17.0, 10.0, 0.0)
+        );
     }
 
     #[test]
@@ -669,7 +683,10 @@ mod tests {
         // Every anchor moves, not just the leader line (the label used to stay).
         assert_eq!(ml.context.text_location, Vector3::new(8.0, 5.0, 0.0));
         assert_eq!(ml.context.base_point, Vector3::new(8.0, 5.0, 0.0));
-        assert_eq!(ml.context.block_content_location, Vector3::new(8.0, 5.0, 0.0));
+        assert_eq!(
+            ml.context.block_content_location,
+            Vector3::new(8.0, 5.0, 0.0)
+        );
         assert_eq!(ml.context.content_base_point, Vector3::new(8.0, 5.0, 0.0));
     }
 }

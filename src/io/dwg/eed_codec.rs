@@ -35,18 +35,8 @@ use crate::xdata::XDataValue;
 /// layer name to its table handle for [`XDataValue::LayerName`] items (returns
 /// `0` when the layer is unknown).
 #[cfg(test)]
-fn encode_values(
-    wide: bool,
-    values: &[XDataValue],
-    layer_handle: impl Fn(&str) -> u64,
-) -> Vec<u8> {
-    encode_values_with_encoding(
-        wide,
-        values,
-        encoding_rs::WINDOWS_1252,
-        30,
-        layer_handle,
-    )
+fn encode_values(wide: bool, values: &[XDataValue], layer_handle: impl Fn(&str) -> u64) -> Vec<u8> {
+    encode_values_with_encoding(wide, values, encoding_rs::WINDOWS_1252, 30, layer_handle)
 }
 
 pub(crate) fn encode_values_with_encoding(
@@ -66,8 +56,7 @@ pub(crate) fn encode_values_with_encoding(
                 b.extend_from_slice(&u.to_le_bytes());
             }
         } else {
-            let encoded =
-                crate::io::dxf::code_page::encode_legacy_string(s, encoding);
+            let encoded = crate::io::dxf::code_page::encode_legacy_string(s, encoding);
             b.push(encoded.len() as u8);
             b.extend_from_slice(&code_page.to_le_bytes());
             b.extend_from_slice(&encoded);
@@ -285,7 +274,10 @@ mod tests {
             30,
             |_| 0,
         );
-        assert_eq!(&encoded[1..9], &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0xDA]);
+        assert_eq!(
+            &encoded[1..9],
+            &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0xDA]
+        );
         let back = decode_values(&encoded, false, |_| None).unwrap();
         match &back[0] {
             XDataValue::Handle(h) => assert_eq!(h.value(), 0x6DA),
@@ -331,10 +323,8 @@ mod tests {
     fn layer_name_resolves_through_handle() {
         let values = vec![XDataValue::LayerName("WALLS".to_string())];
         let bytes = encode_values(true, &values, |n| if n == "WALLS" { 7 } else { 0 });
-        let decoded = decode_values(&bytes, true, |h| {
-            (h == 7).then(|| "WALLS".to_string())
-        })
-        .expect("decode");
+        let decoded =
+            decode_values(&bytes, true, |h| (h == 7).then(|| "WALLS".to_string())).expect("decode");
         assert_eq!(decoded, values);
     }
 

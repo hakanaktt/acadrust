@@ -27,10 +27,10 @@ pub struct DxfCodePair {
 
     /// The DXF code enum
     pub dxf_code: DxfCode,
-    
+
     /// String representation of the value
     pub value_string: String,
-    
+
     /// Typed value (integer, double, or boolean)
     typed_value: CodePairValue,
 }
@@ -51,30 +51,27 @@ impl DxfCodePair {
         // variants for a subset of the legal ranges, so routing through the
         // enum turns valid values such as XRecord code 290 into `Invalid`.
         let value_type = GroupCodeValueType::from_raw_code(code);
-        
+
         // Parse value based on type
         let typed_value = match value_type {
-            GroupCodeValueType::Int16 | GroupCodeValueType::Int32 | GroupCodeValueType::Int64 | GroupCodeValueType::Byte => {
-                match value_string.trim().parse::<i64>() {
-                    Ok(v) => CodePairValue::Int(v),
-                    Err(_) => CodePairValue::None,
-                }
-            }
-            GroupCodeValueType::Double => {
-                match value_string.trim().parse::<f64>() {
-                    Ok(v) => CodePairValue::Double(v),
-                    Err(_) => CodePairValue::None,
-                }
-            }
-            GroupCodeValueType::Bool => {
-                match value_string.trim().parse::<i32>() {
-                    Ok(v) => CodePairValue::Bool(v != 0),
-                    Err(_) => CodePairValue::None,
-                }
-            }
+            GroupCodeValueType::Int16
+            | GroupCodeValueType::Int32
+            | GroupCodeValueType::Int64
+            | GroupCodeValueType::Byte => match value_string.trim().parse::<i64>() {
+                Ok(v) => CodePairValue::Int(v),
+                Err(_) => CodePairValue::None,
+            },
+            GroupCodeValueType::Double => match value_string.trim().parse::<f64>() {
+                Ok(v) => CodePairValue::Double(v),
+                Err(_) => CodePairValue::None,
+            },
+            GroupCodeValueType::Bool => match value_string.trim().parse::<i32>() {
+                Ok(v) => CodePairValue::Bool(v != 0),
+                Err(_) => CodePairValue::None,
+            },
             _ => CodePairValue::None,
         };
-        
+
         Self {
             code,
             dxf_code,
@@ -82,7 +79,7 @@ impl DxfCodePair {
             typed_value,
         }
     }
-    
+
     /// Create a code/value pair with a pre-computed typed value.
     /// Skips string→typed parsing, used by the binary DXF reader.
     pub(crate) fn new_typed(code: i32, value_string: String, typed_value: CodePairValue) -> Self {
@@ -126,7 +123,7 @@ impl DxfCodePair {
             _ => None,
         }
     }
-    
+
     /// Get value as double
     pub fn as_double(&self) -> Option<f64> {
         match self.typed_value {
@@ -134,7 +131,7 @@ impl DxfCodePair {
             _ => None,
         }
     }
-    
+
     /// Get value as boolean
     pub fn as_bool(&self) -> Option<bool> {
         match self.typed_value {
@@ -142,7 +139,7 @@ impl DxfCodePair {
             _ => None,
         }
     }
-    
+
     /// Get value as handle (hex string to u64)
     #[allow(dead_code)]
     pub fn as_handle(&self) -> Option<u64> {
@@ -197,19 +194,19 @@ impl PointReader {
             group: None,
         }
     }
-    
+
     /// Add a coordinate value
     pub fn add_coordinate(&mut self, pair: &DxfCodePair) -> bool {
         if let Some(axis) = GroupCodeValueType::coordinate_axis(pair.dxf_code) {
             let coord_group = GroupCodeValueType::coordinate_group(pair.dxf_code);
-            
+
             // If this is a new group, reset
             if self.group.is_some() && self.group != coord_group {
                 return false;
             }
-            
+
             self.group = coord_group;
-            
+
             if let Some(value) = pair.as_double() {
                 match axis {
                     0 => self.x = Some(value),
@@ -222,7 +219,7 @@ impl PointReader {
         }
         false
     }
-    
+
     /// Check if we have a complete point
     #[allow(dead_code)]
     pub fn is_complete(&self) -> bool {

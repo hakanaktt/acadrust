@@ -124,11 +124,7 @@ impl ImageDefinition {
     }
 
     /// Create with known dimensions
-    pub fn with_dimensions(
-        file_name: impl Into<String>,
-        width_px: u32,
-        height_px: u32,
-    ) -> Self {
+    pub fn with_dimensions(file_name: impl Into<String>, width_px: u32, height_px: u32) -> Self {
         Self {
             handle: Handle::NULL,
             owner: Handle::NULL,
@@ -208,9 +204,7 @@ impl ImageDefinition {
     /// Get resolution in DPI (if using inches)
     pub fn resolution_dpi(&self) -> Option<f64> {
         match self.resolution_unit {
-            ResolutionUnit::Inches if self.pixel_size.0 > 0.0 => {
-                Some(1.0 / self.pixel_size.0)
-            }
+            ResolutionUnit::Inches if self.pixel_size.0 > 0.0 => Some(1.0 / self.pixel_size.0),
             _ => None,
         }
     }
@@ -261,9 +255,8 @@ impl ImageDefinition {
     /// Check if this appears to be a supported image format
     pub fn is_supported_format(&self) -> bool {
         match self.file_extension().map(|s| s.to_lowercase()).as_deref() {
-            Some("bmp") | Some("jpg") | Some("jpeg") | Some("png") |
-            Some("tif") | Some("tiff") | Some("gif") | Some("pcx") |
-            Some("tga") => true,
+            Some("bmp") | Some("jpg") | Some("jpeg") | Some("png") | Some("tif") | Some("tiff")
+            | Some("gif") | Some("pcx") | Some("tga") => true,
             _ => false,
         }
     }
@@ -327,7 +320,7 @@ mod tests {
     fn test_image_definition_units() {
         let mut img_def = ImageDefinition::with_dimensions("test.jpg", 100, 50);
         img_def.set_pixel_size(0.1, 0.1);
-        
+
         assert!((img_def.width_units() - 10.0).abs() < 1e-10);
         assert!((img_def.height_units() - 5.0).abs() < 1e-10);
     }
@@ -336,14 +329,14 @@ mod tests {
     fn test_image_definition_aspect_ratio() {
         let img_def = ImageDefinition::with_dimensions("test.jpg", 1600, 900);
         let ratio = img_def.aspect_ratio().unwrap();
-        assert!((ratio - 16.0/9.0).abs() < 1e-10);
+        assert!((ratio - 16.0 / 9.0).abs() < 1e-10);
     }
 
     #[test]
     fn test_image_definition_dpi() {
         let mut img_def = ImageDefinition::new("test.jpg");
         img_def.set_resolution_dpi(72.0);
-        
+
         assert_eq!(img_def.resolution_unit, ResolutionUnit::Inches);
         let dpi = img_def.resolution_dpi().unwrap();
         assert!((dpi - 72.0).abs() < 1e-10);
@@ -353,7 +346,7 @@ mod tests {
     fn test_image_definition_ppcm() {
         let mut img_def = ImageDefinition::new("test.jpg");
         img_def.set_resolution_ppcm(100.0);
-        
+
         assert_eq!(img_def.resolution_unit, ResolutionUnit::Centimeters);
         assert!((img_def.pixel_size.0 - 0.01).abs() < 1e-10);
     }
@@ -363,7 +356,7 @@ mod tests {
         assert_eq!(ResolutionUnit::from_code(0), ResolutionUnit::None);
         assert_eq!(ResolutionUnit::from_code(2), ResolutionUnit::Centimeters);
         assert_eq!(ResolutionUnit::from_code(5), ResolutionUnit::Inches);
-        
+
         assert!(!ResolutionUnit::None.has_units());
         assert!(ResolutionUnit::Inches.has_units());
     }
@@ -410,7 +403,7 @@ mod tests {
         assert!(ImageDefinition::new("test.tif").is_supported_format());
         assert!(ImageDefinition::new("test.tiff").is_supported_format());
         assert!(ImageDefinition::new("test.gif").is_supported_format());
-        
+
         assert!(!ImageDefinition::new("test.pdf").is_supported_format());
         assert!(!ImageDefinition::new("test.doc").is_supported_format());
     }
@@ -422,7 +415,7 @@ mod tests {
             .with_pixel_size(0.05, 0.05)
             .with_resolution_unit(ResolutionUnit::Centimeters)
             .loaded();
-        
+
         assert_eq!(img_def.size_in_pixels, (800, 600));
         assert_eq!(img_def.pixel_size, (0.05, 0.05));
         assert_eq!(img_def.resolution_unit, ResolutionUnit::Centimeters);
@@ -436,4 +429,3 @@ mod tests {
         assert_eq!(ImageDefinitionReactor::OBJECT_TYPE, "IMAGEDEF_REACTOR");
     }
 }
-

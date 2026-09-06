@@ -202,7 +202,7 @@ pub struct DimStyle {
     pub dimtofl: bool,
     /// Cursor update (DIMUPT, code 288)
     pub dimupt: bool,
-    /// Dimension fit (DIMFIT, code 287) — obsolete 
+    /// Dimension fit (DIMFIT, code 287) — obsolete
     pub dimfit: i16,
 
     // ─── Formatting ───
@@ -277,7 +277,7 @@ impl DimStyle {
             dimclrt_true_color: None,
             dimtxt: 0.18,
             dimjust: 0,
-            dimtad: 1,    // Above
+            dimtad: 1, // Above
             dimtvp: 0.0,
             dimtih: false,
             dimtoh: false,

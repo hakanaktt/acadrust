@@ -117,12 +117,7 @@ impl DwgLZ77AC18Compressor {
     }
 
     /// Write an opcode with optional extended length encoding.
-    fn write_opcode(
-        dest: &mut Vec<u8>,
-        opcode: u8,
-        compression_offset: usize,
-        threshold: usize,
-    ) {
+    fn write_opcode(dest: &mut Vec<u8>, opcode: u8, compression_offset: usize, threshold: usize) {
         debug_assert!(compression_offset > 0);
         if compression_offset <= threshold {
             dest.push(opcode | (compression_offset as u8 - 2));
@@ -133,12 +128,7 @@ impl DwgLZ77AC18Compressor {
     }
 
     /// Write literal bytes with a length prefix.
-    fn write_literal_length(
-        dest: &mut Vec<u8>,
-        source: &[u8],
-        start: usize,
-        length: usize,
-    ) {
+    fn write_literal_length(dest: &mut Vec<u8>, source: &[u8], start: usize, length: usize) {
         if length == 0 {
             return;
         }
@@ -189,7 +179,8 @@ impl DwgLZ77AC18Compressor {
         } else {
             match_position -= 1;
             // compressed_bytes = ((opcode1 & 0xF0) >> 4) - 1
-            let mut c = ((compression_offset + 1) << 4) as u8 | ((match_position & 0x03) << 2) as u8;
+            let mut c =
+                ((compression_offset + 1) << 4) as u8 | ((match_position & 0x03) << 2) as u8;
             next = (match_position >> 2) as u8;
 
             if mask < 4 {

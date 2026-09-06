@@ -88,9 +88,7 @@ impl VbaDirectoryStream {
     }
 
     pub fn encode(&self) -> Vec<u8> {
-        if self.code_page == self.original_code_page
-            && self.records == self.original_records
-        {
+        if self.code_page == self.original_code_page && self.records == self.original_records {
             return BinaryRecord::join(&self.compressed);
         }
         let mut bytes = Vec::new();
@@ -190,7 +188,12 @@ fn raw_directory_records(data: &[u8]) -> Option<Vec<RawDirectoryRecord>> {
     let mut records = Vec::new();
     let mut offset = 0usize;
     while offset < data.len() {
-        if data.get(offset..).unwrap_or_default().iter().all(|byte| *byte == 0) {
+        if data
+            .get(offset..)
+            .unwrap_or_default()
+            .iter()
+            .all(|byte| *byte == 0)
+        {
             break;
         }
         let id = read_u16(data, offset)?;
@@ -211,10 +214,7 @@ fn raw_directory_records(data: &[u8]) -> Option<Vec<RawDirectoryRecord>> {
     Some(records)
 }
 
-fn decode_directory_record(
-    record: RawDirectoryRecord,
-    code_page: u16,
-) -> VbaDirectoryRecord {
+fn decode_directory_record(record: RawDirectoryRecord, code_page: u16) -> VbaDirectoryRecord {
     let id = record.id;
     let value = if id == 0x0009 && record.data.len() >= 6 {
         VbaDirectoryValue::ProjectVersion {
@@ -223,10 +223,7 @@ fn decode_directory_record(
         }
     } else if is_ansi_record(id) {
         let encoded = record.data;
-        let value = decode_code_page(
-            encoded.strip_suffix(&[0]).unwrap_or(&encoded),
-            code_page,
-        );
+        let value = decode_code_page(encoded.strip_suffix(&[0]).unwrap_or(&encoded), code_page);
         VbaDirectoryValue::AnsiString {
             original_value: value.clone(),
             value,
@@ -253,11 +250,7 @@ fn decode_directory_record(
     VbaDirectoryRecord { id, value }
 }
 
-fn encode_directory_record(
-    record: &VbaDirectoryRecord,
-    code_page: u16,
-    output: &mut Vec<u8>,
-) {
+fn encode_directory_record(record: &VbaDirectoryRecord, code_page: u16, output: &mut Vec<u8>) {
     output.extend_from_slice(&record.id.to_le_bytes());
     match &record.value {
         VbaDirectoryValue::ProjectVersion { major, minor } => {
@@ -469,9 +462,13 @@ fn decode_utf16(data: &[u8]) -> String {
 }
 
 fn read_u16(data: &[u8], offset: usize) -> Option<u16> {
-    Some(u16::from_le_bytes(data.get(offset..offset + 2)?.try_into().ok()?))
+    Some(u16::from_le_bytes(
+        data.get(offset..offset + 2)?.try_into().ok()?,
+    ))
 }
 
 fn read_u32(data: &[u8], offset: usize) -> Option<u32> {
-    Some(u32::from_le_bytes(data.get(offset..offset + 4)?.try_into().ok()?))
+    Some(u32::from_le_bytes(
+        data.get(offset..offset + 4)?.try_into().ok()?,
+    ))
 }

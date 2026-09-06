@@ -1,8 +1,8 @@
 use crate::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
-use crate::objects::*;
-use crate::types::Handle;
 use crate::io::dwg::dwg_version::DwgVersion;
+use crate::objects::*;
 use crate::types::DxfVersion;
+use crate::types::Handle;
 
 use super::safe_count;
 
@@ -182,9 +182,7 @@ fn read_constraint(reader: &mut DwgMergedReader) -> BlockConstraintParameter {
     }
 }
 
-fn read_linear_constraint(
-    reader: &mut DwgMergedReader,
-) -> BlockLinearConstraintParameter {
+fn read_linear_constraint(reader: &mut DwgMergedReader) -> BlockLinearConstraintParameter {
     BlockLinearConstraintParameter {
         constraint: read_constraint(reader),
         expression_name: reader.read_variable_text(),
@@ -282,11 +280,7 @@ fn read_history_sweep(
         has_align_start: reader.read_bit(),
         bank: reader.read_bit(),
         check_intersections: reader.read_bit(),
-        flags_294_296: [
-            reader.read_bit(),
-            reader.read_bit(),
-            reader.read_bit(),
-        ],
+        flags_294_296: [reader.read_bit(), reader.read_bit(), reader.read_bit()],
         reference_point: reader.read_3bit_double(),
     }
 }
@@ -346,23 +340,21 @@ pub fn read_solid_history_data(
                 SolidHistoryOperation::Wedge(value)
             }
         }
-        "ACSH_SPHERE_CLASS" => SolidHistoryOperation::Sphere(
-            SolidHistorySphere {
-                base,
-                operation_major: reader.read_bit_long(),
-                operation_minor: reader.read_bit_long(),
-                radius: reader.read_bit_double(),
-            },
-        ),
+        "ACSH_SPHERE_CLASS" => SolidHistoryOperation::Sphere(SolidHistorySphere {
+            base,
+            operation_major: reader.read_bit_long(),
+            operation_minor: reader.read_bit_long(),
+            radius: reader.read_bit_double(),
+        }),
         "ACSH_CYLINDER_CLASS" => SolidHistoryOperation::Cylinder(SolidHistoryCylinder {
-                base,
-                operation_major: reader.read_bit_long(),
-                operation_minor: reader.read_bit_long(),
-                height: reader.read_bit_double(),
-                major_radius: reader.read_bit_double(),
-                minor_radius: reader.read_bit_double(),
-                x_radius: reader.read_bit_double(),
-            }),
+            base,
+            operation_major: reader.read_bit_long(),
+            operation_minor: reader.read_bit_long(),
+            height: reader.read_bit_double(),
+            major_radius: reader.read_bit_double(),
+            minor_radius: reader.read_bit_double(),
+            x_radius: reader.read_bit_double(),
+        }),
         "ACSH_CONE_CLASS" => SolidHistoryOperation::Cone(SolidHistoryCone {
             base,
             operation_major: reader.read_bit_long(),
@@ -372,17 +364,15 @@ pub fn read_solid_history_data(
             base_y_radius: reader.read_bit_double(),
             top_radius: reader.read_bit_double(),
         }),
-        "ACSH_PYRAMID_CLASS" => SolidHistoryOperation::Pyramid(
-            SolidHistoryPyramid {
-                base,
-                operation_major: reader.read_bit_long(),
-                operation_minor: reader.read_bit_long(),
-                height: reader.read_bit_double(),
-                sides: reader.read_bit_long(),
-                radius: reader.read_bit_double(),
-                top_radius: reader.read_bit_double(),
-            },
-        ),
+        "ACSH_PYRAMID_CLASS" => SolidHistoryOperation::Pyramid(SolidHistoryPyramid {
+            base,
+            operation_major: reader.read_bit_long(),
+            operation_minor: reader.read_bit_long(),
+            height: reader.read_bit_double(),
+            sides: reader.read_bit_long(),
+            radius: reader.read_bit_double(),
+            top_radius: reader.read_bit_double(),
+        }),
         "ACSH_TORUS_CLASS" => SolidHistoryOperation::Torus(SolidHistoryTorus {
             base,
             operation_major: reader.read_bit_long(),
@@ -390,16 +380,14 @@ pub fn read_solid_history_data(
             major_radius: reader.read_bit_double(),
             minor_radius: reader.read_bit_double(),
         }),
-        "ACSH_BOOLEAN_CLASS" => {
-            SolidHistoryOperation::Boolean(SolidHistoryBoolean {
-                base,
-                operation_major: reader.read_bit_long(),
-                operation_minor: reader.read_bit_long(),
-                operation: reader.read_byte(),
-                first_operand: reader.read_bit_long(),
-                second_operand: reader.read_bit_long(),
-            })
-        }
+        "ACSH_BOOLEAN_CLASS" => SolidHistoryOperation::Boolean(SolidHistoryBoolean {
+            base,
+            operation_major: reader.read_bit_long(),
+            operation_minor: reader.read_bit_long(),
+            operation: reader.read_byte(),
+            first_operand: reader.read_bit_long(),
+            second_operand: reader.read_bit_long(),
+        }),
         "ACSH_CHAMFER_CLASS" => {
             let operation_major = reader.read_bit_long();
             let operation_minor = reader.read_bit_long();
@@ -460,8 +448,7 @@ pub fn read_solid_history_data(
         "ACSH_BREP_CLASS" => {
             let operation_major = reader.read_bit_long();
             let operation_minor = reader.read_bit_long();
-            let data =
-                super::entities::read_acis_entity(reader, version, dxf_version, false);
+            let data = super::entities::read_acis_entity(reader, version, dxf_version, false);
             let mut acis_data = crate::entities::AcisData::new();
             acis_data.sat_data = data.sat_data;
             acis_data.sab_data = data.sab_data;
@@ -482,20 +469,10 @@ pub fn read_solid_history_data(
             })
         }
         "ACSH_SWEEP_CLASS" => {
-            SolidHistoryOperation::Sweep(read_history_sweep(
-                reader,
-                base,
-                version,
-                dxf_version,
-            ))
+            SolidHistoryOperation::Sweep(read_history_sweep(reader, base, version, dxf_version))
         }
         "ACSH_EXTRUSION_CLASS" => {
-            SolidHistoryOperation::Extrusion(read_history_sweep(
-                reader,
-                base,
-                version,
-                dxf_version,
-            ))
+            SolidHistoryOperation::Extrusion(read_history_sweep(reader, base, version, dxf_version))
         }
         "ACSH_LOFT_CLASS" => {
             let operation_major = reader.read_bit_long();
@@ -587,7 +564,8 @@ pub fn read_dynamic_block_data(
     dxf_name: &str,
 ) -> Option<DynamicBlockData> {
     let data = match dxf_name.to_ascii_uppercase().as_str() {
-        "ACDB_BLOCKREPRESENTATION_DATA" | "BLOCKREPRESENTATION"
+        "ACDB_BLOCKREPRESENTATION_DATA"
+        | "BLOCKREPRESENTATION"
         | "ACDB_DYNAMICBLOCKPURGEPREVENTER_VERSION"
         | "DYNAMICBLOCKPURGEPREVENTER" => {
             DynamicBlockData::Representation(BlockRepresentationData {
@@ -623,9 +601,7 @@ pub fn read_dynamic_block_data(
         "BLOCKROTATIONGRIP" => DynamicBlockData::RotationGrip(read_grip(reader)),
         "BLOCKVISIBILITYGRIP" => DynamicBlockData::VisibilityGrip(read_grip(reader)),
         "BLOCKXYGRIP" => DynamicBlockData::XYGrip(read_grip(reader)),
-        "BLOCKPROPERTIESTABLEGRIP" => {
-            DynamicBlockData::PropertiesTableGrip(read_grip(reader))
-        }
+        "BLOCKPROPERTIESTABLEGRIP" => DynamicBlockData::PropertiesTableGrip(read_grip(reader)),
         "BLOCKALIGNMENTPARAMETER" => {
             DynamicBlockData::AlignmentParameter(BlockAlignmentParameter {
                 parameter: read_two_point(reader),
@@ -649,54 +625,44 @@ pub fn read_dynamic_block_data(
             flags_96: reader.read_bit_long(),
             tooltip: reader.read_variable_text(),
         }),
-        "BLOCKLINEARPARAMETER" => {
-            DynamicBlockData::LinearParameter(BlockLinearParameter {
-                parameter: read_two_point(reader),
-                distance_name: reader.read_variable_text(),
-                distance_description: reader.read_variable_text(),
-                distance: reader.read_bit_double(),
-                value_set: read_value_set(reader),
-            })
-        }
-        "BLOCKLOOKUPPARAMETER" => {
-            DynamicBlockData::LookupParameter(BlockLookupParameter {
-                parameter: read_one_point(reader),
-                index: reader.read_bit_long(),
-                lookup_name: reader.read_variable_text(),
-                lookup_description: reader.read_variable_text(),
-                unknown_text: reader.read_variable_text(),
-            })
-        }
-        "BLOCKPOINTPARAMETER" => {
-            DynamicBlockData::PointParameter(BlockPointParameter {
-                parameter: read_one_point(reader),
-                position_name: reader.read_variable_text(),
-                position_description: reader.read_variable_text(),
-                definition_label_point: reader.read_3bit_double(),
-            })
-        }
-        "BLOCKPOLARPARAMETER" => {
-            DynamicBlockData::PolarParameter(BlockPolarParameter {
-                parameter: read_two_point(reader),
-                angle_name: reader.read_variable_text(),
-                angle_description: reader.read_variable_text(),
-                distance_name: reader.read_variable_text(),
-                distance_description: reader.read_variable_text(),
-                offset: reader.read_bit_double(),
-                angle_value_set: read_value_set(reader),
-                distance_value_set: read_value_set(reader),
-            })
-        }
-        "BLOCKROTATIONPARAMETER" => {
-            DynamicBlockData::RotationParameter(BlockRotationParameter {
-                parameter: read_two_point(reader),
-                definition_base_angle_point: reader.read_3bit_double(),
-                angle_name: reader.read_variable_text(),
-                angle_description: reader.read_variable_text(),
-                angle: reader.read_bit_double(),
-                value_set: read_value_set(reader),
-            })
-        }
+        "BLOCKLINEARPARAMETER" => DynamicBlockData::LinearParameter(BlockLinearParameter {
+            parameter: read_two_point(reader),
+            distance_name: reader.read_variable_text(),
+            distance_description: reader.read_variable_text(),
+            distance: reader.read_bit_double(),
+            value_set: read_value_set(reader),
+        }),
+        "BLOCKLOOKUPPARAMETER" => DynamicBlockData::LookupParameter(BlockLookupParameter {
+            parameter: read_one_point(reader),
+            index: reader.read_bit_long(),
+            lookup_name: reader.read_variable_text(),
+            lookup_description: reader.read_variable_text(),
+            unknown_text: reader.read_variable_text(),
+        }),
+        "BLOCKPOINTPARAMETER" => DynamicBlockData::PointParameter(BlockPointParameter {
+            parameter: read_one_point(reader),
+            position_name: reader.read_variable_text(),
+            position_description: reader.read_variable_text(),
+            definition_label_point: reader.read_3bit_double(),
+        }),
+        "BLOCKPOLARPARAMETER" => DynamicBlockData::PolarParameter(BlockPolarParameter {
+            parameter: read_two_point(reader),
+            angle_name: reader.read_variable_text(),
+            angle_description: reader.read_variable_text(),
+            distance_name: reader.read_variable_text(),
+            distance_description: reader.read_variable_text(),
+            offset: reader.read_bit_double(),
+            angle_value_set: read_value_set(reader),
+            distance_value_set: read_value_set(reader),
+        }),
+        "BLOCKROTATIONPARAMETER" => DynamicBlockData::RotationParameter(BlockRotationParameter {
+            parameter: read_two_point(reader),
+            definition_base_angle_point: reader.read_3bit_double(),
+            angle_name: reader.read_variable_text(),
+            angle_description: reader.read_variable_text(),
+            angle: reader.read_bit_double(),
+            value_set: read_value_set(reader),
+        }),
         "BLOCKXYPARAMETER" => DynamicBlockData::XYParameter(BlockXYParameter {
             parameter: read_two_point(reader),
             x_label: reader.read_variable_text(),
@@ -739,60 +705,46 @@ pub fn read_dynamic_block_data(
             )
         }
         "BLOCKANGULARCONSTRAINTPARAMETER" => {
-            DynamicBlockData::AngularConstraintParameter(
-                BlockAngularConstraintParameter {
-                    constraint: read_constraint(reader),
-                    center_point: reader.read_3bit_double(),
-                    end_point: reader.read_3bit_double(),
-                    expression_name: reader.read_variable_text(),
-                    expression_description: reader.read_variable_text(),
-                    angle: reader.read_bit_double(),
-                    orientation_on_both_grips: reader.read_bit(),
-                    value_set: read_value_set(reader),
-                },
-            )
+            DynamicBlockData::AngularConstraintParameter(BlockAngularConstraintParameter {
+                constraint: read_constraint(reader),
+                center_point: reader.read_3bit_double(),
+                end_point: reader.read_3bit_double(),
+                expression_name: reader.read_variable_text(),
+                expression_description: reader.read_variable_text(),
+                angle: reader.read_bit_double(),
+                orientation_on_both_grips: reader.read_bit(),
+                value_set: read_value_set(reader),
+            })
         }
         "BLOCKDIAMETRICCONSTRAINTPARAMETER" => {
-            DynamicBlockData::DiametricConstraintParameter(
-                BlockDistanceConstraintParameter {
-                    constraint: read_constraint(reader),
-                    expression_name: reader.read_variable_text(),
-                    expression_description: reader.read_variable_text(),
-                    distance: reader.read_bit_double(),
-                    value_set: read_value_set(reader),
-                },
-            )
+            DynamicBlockData::DiametricConstraintParameter(BlockDistanceConstraintParameter {
+                constraint: read_constraint(reader),
+                expression_name: reader.read_variable_text(),
+                expression_description: reader.read_variable_text(),
+                distance: reader.read_bit_double(),
+                value_set: read_value_set(reader),
+            })
         }
         "BLOCKRADIALCONSTRAINTPARAMETER" => {
-            DynamicBlockData::RadialConstraintParameter(
-                BlockDistanceConstraintParameter {
-                    constraint: read_constraint(reader),
-                    expression_name: reader.read_variable_text(),
-                    expression_description: reader.read_variable_text(),
-                    distance: reader.read_bit_double(),
-                    value_set: read_value_set(reader),
-                },
-            )
+            DynamicBlockData::RadialConstraintParameter(BlockDistanceConstraintParameter {
+                constraint: read_constraint(reader),
+                expression_name: reader.read_variable_text(),
+                expression_description: reader.read_variable_text(),
+                distance: reader.read_bit_double(),
+                value_set: read_value_set(reader),
+            })
         }
         "BLOCKALIGNEDCONSTRAINTPARAMETER" => {
-            DynamicBlockData::AlignedConstraintParameter(
-                read_linear_constraint(reader),
-            )
+            DynamicBlockData::AlignedConstraintParameter(read_linear_constraint(reader))
         }
         "BLOCKLINEARCONSTRAINTPARAMETER" => {
-            DynamicBlockData::LinearConstraintParameter(
-                read_linear_constraint(reader),
-            )
+            DynamicBlockData::LinearConstraintParameter(read_linear_constraint(reader))
         }
         "BLOCKHORIZONTALCONSTRAINTPARAMETER" => {
-            DynamicBlockData::HorizontalConstraintParameter(
-                read_linear_constraint(reader),
-            )
+            DynamicBlockData::HorizontalConstraintParameter(read_linear_constraint(reader))
         }
         "BLOCKVERTICALCONSTRAINTPARAMETER" => {
-            DynamicBlockData::VerticalConstraintParameter(
-                read_linear_constraint(reader),
-            )
+            DynamicBlockData::VerticalConstraintParameter(read_linear_constraint(reader))
         }
         "ACDBBLOCKPARAMDEPENDENCYBODY" | "BLOCKPARAMDEPENDENCYBODY" => {
             DynamicBlockData::ParameterDependencyBody(BlockParameterDependencyBody {

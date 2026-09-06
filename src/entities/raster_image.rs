@@ -299,7 +299,12 @@ pub struct RasterImage {
 
 impl RasterImage {
     /// Creates a new raster image.
-    pub fn new(file_path: &str, insertion_point: Vector3, width_pixels: f64, height_pixels: f64) -> Self {
+    pub fn new(
+        file_path: &str,
+        insertion_point: Vector3,
+        width_pixels: f64,
+        height_pixels: f64,
+    ) -> Self {
         let size = Vector2::new(width_pixels, height_pixels);
 
         Self {
@@ -432,10 +437,10 @@ impl RasterImage {
         let v = self.v_vector * self.size.y;
 
         [
-            origin,               // bottom-left
-            origin + u,           // bottom-right
-            origin + u + v,       // top-right
-            origin + v,           // top-left
+            origin,         // bottom-left
+            origin + u,     // bottom-right
+            origin + u + v, // top-right
+            origin + v,     // top-left
         ]
     }
 
@@ -476,19 +481,11 @@ impl RasterImage {
 
         // Rotate u_vector
         let u = self.u_vector;
-        self.u_vector = Vector3::new(
-            u.x * cos_a - u.y * sin_a,
-            u.x * sin_a + u.y * cos_a,
-            u.z,
-        );
+        self.u_vector = Vector3::new(u.x * cos_a - u.y * sin_a, u.x * sin_a + u.y * cos_a, u.z);
 
         // Rotate v_vector
         let v = self.v_vector;
-        self.v_vector = Vector3::new(
-            v.x * cos_a - v.y * sin_a,
-            v.x * sin_a + v.y * cos_a,
-            v.z,
-        );
+        self.v_vector = Vector3::new(v.x * cos_a - v.y * sin_a, v.x * sin_a + v.y * cos_a, v.z);
     }
 
     /// Sets a rectangular clipping region.
@@ -602,7 +599,7 @@ impl Entity for RasterImage {
     fn entity_type(&self) -> &'static str {
         "IMAGE"
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_raster_image(self, transform);
     }
@@ -916,10 +913,7 @@ mod tests {
 
     #[test]
     fn test_clip_boundary_rectangular() {
-        let boundary = ClipBoundary::rectangular(
-            Vector2::new(0.0, 0.0),
-            Vector2::new(100.0, 50.0),
-        );
+        let boundary = ClipBoundary::rectangular(Vector2::new(0.0, 0.0), Vector2::new(100.0, 50.0));
 
         assert!(boundary.is_rectangular());
         assert!(!boundary.is_polygonal());
@@ -1002,4 +996,3 @@ mod tests {
         assert_eq!(ResolutionUnit::from(5), ResolutionUnit::Inches);
     }
 }
-

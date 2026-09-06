@@ -19,7 +19,9 @@ fn dwg_roundtrip(doc: &CadDocument) -> CadDocument {
 }
 
 fn dxf_roundtrip(doc: &CadDocument) -> CadDocument {
-    let bytes = DxfWriter::new(doc).write_to_vec().expect("DXF write failed");
+    let bytes = DxfWriter::new(doc)
+        .write_to_vec()
+        .expect("DXF write failed");
     DxfReader::from_reader(Cursor::new(bytes))
         .expect("DXF reader init failed")
         .read()

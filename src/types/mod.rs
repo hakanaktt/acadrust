@@ -20,12 +20,12 @@ pub mod transform;
 pub mod transparency;
 pub mod vector;
 
-pub use aci_table::{ACI_COLORS, aci_to_rgb, nearest_aci};
+pub use aci_table::{aci_to_rgb, nearest_aci, ACI_COLORS};
 pub use bounds::{BoundingBox2D, BoundingBox3D};
 pub use color::Color;
 pub use handle::Handle;
 pub use line_weight::LineWeight;
-pub use transform::{Matrix3, Matrix4, Transform, rotate_point_2d, is_zero_angle, normalize_angle};
+pub use transform::{is_zero_angle, normalize_angle, rotate_point_2d, Matrix3, Matrix4, Transform};
 pub use transparency::Transparency;
 pub use vector::{Vector2, Vector3};
 
@@ -143,10 +143,7 @@ mod tests {
 
     #[test]
     fn test_version_parse() {
-        assert_eq!(
-            DxfVersion::parse("AC1018"),
-            Some(DxfVersion::AC1018)
-        );
+        assert_eq!(DxfVersion::parse("AC1018"), Some(DxfVersion::AC1018));
         assert_eq!(DxfVersion::parse("INVALID"), None);
     }
 
@@ -155,5 +152,3 @@ mod tests {
         assert_eq!(DxfVersion::AC1021.version_code(), 1021);
     }
 }
-
-

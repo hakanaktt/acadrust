@@ -9,7 +9,7 @@
 //! cargo run --example viewport_layouts
 //! ```
 
-use acadrust::entities::{EntityType, Viewport, StandardView};
+use acadrust::entities::{EntityType, StandardView, Viewport};
 use acadrust::types::Vector3;
 use acadrust::{CadDocument, DxfVersion, DxfWriter};
 
@@ -50,11 +50,7 @@ fn main() -> acadrust::Result<()> {
     // ── Create a second layout and add a viewport to it ───────────────
     let _layout2_handle = doc.add_layout("Layout2")?;
 
-    let mut vp2 = Viewport::with_size(
-        Vector3::new(200.0, 150.0, 0.0),
-        400.0,
-        300.0,
-    );
+    let mut vp2 = Viewport::with_size(Vector3::new(200.0, 150.0, 0.0), 400.0, 300.0);
     vp2.id = 2;
     vp2.set_standard_view(StandardView::NEIsometric);
     vp2.set_scale(0.5);

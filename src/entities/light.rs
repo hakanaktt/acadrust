@@ -3,9 +3,7 @@
 //! Includes attenuation, shadow and optional photometric/IES data.
 
 use super::{Entity, EntityCommon};
-use crate::types::{
-    BoundingBox3D, Color, Handle, LineWeight, Transform, Transparency, Vector3,
-};
+use crate::types::{BoundingBox3D, Color, Handle, LineWeight, Transform, Transparency, Vector3};
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

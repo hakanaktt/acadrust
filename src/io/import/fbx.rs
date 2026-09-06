@@ -202,12 +202,7 @@ impl FbxImporter {
             if let Some(id) = node.prop_i64(0) {
                 let name = node.prop_str(1).unwrap_or("Model").to_string();
                 // FBX names often have "Model::" prefix
-                let clean = name
-                    .rsplit("::")
-                    .next()
-                    .unwrap_or(&name)
-                    .trim()
-                    .to_string();
+                let clean = name.rsplit("::").next().unwrap_or(&name).trim().to_string();
                 model_names.insert(id, clean);
             }
         }
@@ -220,9 +215,7 @@ impl FbxImporter {
         if let Some(conn_node) = connections {
             for c in conn_node.children_named("C") {
                 if c.properties.len() >= 3 {
-                    if let (Some(child_id), Some(parent_id)) =
-                        (c.prop_i64(1), c.prop_i64(2))
-                    {
+                    if let (Some(child_id), Some(parent_id)) = (c.prop_i64(1), c.prop_i64(2)) {
                         // Check if child is a geometry
                         if geometries.contains_key(&child_id) {
                             geom_to_model.insert(child_id, parent_id);
@@ -274,12 +267,8 @@ impl FbxImporter {
                 continue;
             }
 
-            let layer = create_material_layer(
-                &mut doc,
-                &self.config.layer_prefix,
-                &layer_label,
-                color,
-            );
+            let layer =
+                create_material_layer(&mut doc, &self.config.layer_prefix, &layer_label, color);
 
             let mut mesh_entity = mesh;
             mesh_entity.common.layer = layer;
@@ -301,18 +290,16 @@ fn is_binary_fbx(data: &[u8]) -> bool {
 
 fn parse_binary_fbx(data: &[u8]) -> Result<Vec<FbxNode>> {
     if !is_binary_fbx(data) {
-        return Err(DxfError::ImportError(
-            "Not a binary FBX file".to_string(),
-        ));
+        return Err(DxfError::ImportError("Not a binary FBX file".to_string()));
     }
 
     let mut cursor = Cursor::new(data);
     cursor.set_position(21);
     // Skip 2 padding bytes
     cursor.set_position(23);
-    let version = cursor.read_u32::<LittleEndian>().map_err(|e| {
-        DxfError::ImportError(format!("Cannot read FBX version: {}", e))
-    })?;
+    let version = cursor
+        .read_u32::<LittleEndian>()
+        .map_err(|e| DxfError::ImportError(format!("Cannot read FBX version: {}", e)))?;
 
     // Version >= 7500 uses 64-bit node offsets
     let use_64bit = version >= 7500;
@@ -361,7 +348,9 @@ fn read_fbx_node(
 
     let pos = cursor.position() as usize;
     if pos + name_len as usize > data.len() {
-        return Err(DxfError::ImportError("FBX node name out of bounds".to_string()));
+        return Err(DxfError::ImportError(
+            "FBX node name out of bounds".to_string(),
+        ));
     }
     let name = String::from_utf8_lossy(&data[pos..pos + name_len as usize]).to_string();
     cursor.set_position((pos + name_len as usize) as u64);
@@ -403,9 +392,9 @@ fn read_fbx_node(
 }
 
 fn read_fbx_property(data: &[u8], cursor: &mut Cursor<&[u8]>) -> Result<FbxProp> {
-    let type_code = cursor.read_u8().map_err(|e| {
-        DxfError::ImportError(format!("Cannot read FBX property type: {}", e))
-    })?;
+    let type_code = cursor
+        .read_u8()
+        .map_err(|e| DxfError::ImportError(format!("Cannot read FBX property type: {}", e)))?;
 
     match type_code {
         b'C' => {
@@ -436,7 +425,9 @@ fn read_fbx_property(data: &[u8], cursor: &mut Cursor<&[u8]>) -> Result<FbxProp>
             let len = cursor.read_u32::<LittleEndian>().unwrap_or(0) as usize;
             let pos = cursor.position() as usize;
             if pos + len > data.len() {
-                return Err(DxfError::ImportError("FBX string out of bounds".to_string()));
+                return Err(DxfError::ImportError(
+                    "FBX string out of bounds".to_string(),
+                ));
             }
             let bytes = &data[pos..pos + len];
             cursor.set_position((pos + len) as u64);
@@ -477,7 +468,9 @@ fn decompress_array_data(
     if encoding == 1 {
         // zlib/deflate compressed
         if pos + compressed_len as usize > data.len() {
-            return Err(DxfError::ImportError("FBX compressed array out of bounds".to_string()));
+            return Err(DxfError::ImportError(
+                "FBX compressed array out of bounds".to_string(),
+            ));
         }
         let compressed = &data[pos..pos + compressed_len as usize];
         cursor.set_position((pos + compressed_len as usize) as u64);
@@ -485,9 +478,9 @@ fn decompress_array_data(
         let mut decoder = flate2::read::ZlibDecoder::new(compressed);
         let expected = count as usize * element_size;
         let mut decompressed = vec![0u8; expected];
-        decoder.read_exact(&mut decompressed).map_err(|e| {
-            DxfError::ImportError(format!("FBX array decompression error: {}", e))
-        })?;
+        decoder
+            .read_exact(&mut decompressed)
+            .map_err(|e| DxfError::ImportError(format!("FBX array decompression error: {}", e)))?;
         Ok(decompressed)
     } else {
         // Uncompressed
@@ -746,9 +739,7 @@ fn skip_ws_no_newline(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
     }
 }
 
-fn parse_ascii_string(
-    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
-) -> Result<String> {
+fn parse_ascii_string(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Result<String> {
     chars.next(); // consume opening "
     let mut s = String::new();
     loop {
@@ -765,9 +756,7 @@ fn parse_ascii_string(
     }
 }
 
-fn parse_ascii_number_str(
-    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
-) -> String {
+fn parse_ascii_number_str(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> String {
     let mut s = String::new();
     while let Some(&c) = chars.peek() {
         if c.is_ascii_digit() || c == '.' || c == '-' || c == '+' || c == 'e' || c == 'E' {
@@ -780,9 +769,7 @@ fn parse_ascii_number_str(
     s
 }
 
-fn parse_ascii_array_values(
-    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
-) -> Vec<String> {
+fn parse_ascii_array_values(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Vec<String> {
     let mut values = Vec::new();
     let mut current = String::new();
 
@@ -807,7 +794,13 @@ fn parse_ascii_array_values(
                 chars.next();
                 // Continue reading the number
                 while let Some(&nc) = chars.peek() {
-                    if nc.is_ascii_digit() || nc == '.' || nc == '-' || nc == '+' || nc == 'e' || nc == 'E' {
+                    if nc.is_ascii_digit()
+                        || nc == '.'
+                        || nc == '-'
+                        || nc == '+'
+                        || nc == 'e'
+                        || nc == 'E'
+                    {
                         current.push(nc);
                         chars.next();
                     } else {
@@ -842,9 +835,7 @@ fn extract_geometry(node: &FbxNode) -> Option<FbxGeometry> {
     }
 
     // Get vertices (Vertices node with f64 array property)
-    let vertices_arr = node
-        .child("Vertices")
-        .and_then(|n| n.prop_f64_array(0))?;
+    let vertices_arr = node.child("Vertices").and_then(|n| n.prop_f64_array(0))?;
     if vertices_arr.len() < 3 {
         return None;
     }
@@ -952,11 +943,7 @@ fn build_fbx_mesh(
     }
 }
 
-fn build_unmerged_fbx(
-    positions: &[[f64; 3]],
-    triangles: &[[usize; 3]],
-    scale: f64,
-) -> Mesh {
+fn build_unmerged_fbx(positions: &[[f64; 3]], triangles: &[[usize; 3]], scale: f64) -> Mesh {
     let mut verts = Vec::with_capacity(triangles.len() * 3);
     let mut faces = Vec::with_capacity(triangles.len());
 
@@ -986,7 +973,11 @@ fn build_merged_fbx(
     scale: f64,
     tolerance: f64,
 ) -> Mesh {
-    let inv_tol = if tolerance > 0.0 { 1.0 / tolerance } else { 1e9 };
+    let inv_tol = if tolerance > 0.0 {
+        1.0 / tolerance
+    } else {
+        1e9
+    };
     let mut mesh_verts: Vec<Vector3> = Vec::new();
     let mut vert_map: HashMap<(i64, i64, i64), usize> = HashMap::new();
     let mut faces = Vec::with_capacity(triangles.len());
@@ -1011,9 +1002,21 @@ fn build_merged_fbx(
     };
 
     for tri in triangles {
-        let p0 = if tri[0] < positions.len() { positions[tri[0]] } else { [0.0; 3] };
-        let p1 = if tri[1] < positions.len() { positions[tri[1]] } else { [0.0; 3] };
-        let p2 = if tri[2] < positions.len() { positions[tri[2]] } else { [0.0; 3] };
+        let p0 = if tri[0] < positions.len() {
+            positions[tri[0]]
+        } else {
+            [0.0; 3]
+        };
+        let p1 = if tri[1] < positions.len() {
+            positions[tri[1]]
+        } else {
+            [0.0; 3]
+        };
+        let p2 = if tri[2] < positions.len() {
+            positions[tri[2]]
+        } else {
+            [0.0; 3]
+        };
         let i0 = get_or_insert(p0);
         let i1 = get_or_insert(p1);
         let i2 = get_or_insert(p2);

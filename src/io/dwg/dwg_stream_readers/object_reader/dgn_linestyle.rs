@@ -1,8 +1,8 @@
 use crate::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
 use crate::objects::{
     DgnLineStyleData, DgnLsComponentData, DgnLsComponentType, DgnLsCompoundComponent,
-    DgnLsCompoundEntry, DgnLsInternalComponent, DgnLsPhaseMode, DgnLsPointComponent,
-    DgnLsStroke, DgnLsStrokePattern, DgnLsSymbolComponent, DgnLsSymbolReference,
+    DgnLsCompoundEntry, DgnLsInternalComponent, DgnLsPhaseMode, DgnLsPointComponent, DgnLsStroke,
+    DgnLsStrokePattern, DgnLsSymbolComponent, DgnLsSymbolReference,
 };
 use crate::types::Handle;
 
@@ -40,15 +40,13 @@ pub fn read_dgn_line_style_data(
     let scale = reader.read_bit_double();
     let property_flags = read_byte(reader);
     let component = match kind {
-        DgnLsComponentType::Symbol => {
-            DgnLsComponentData::Symbol(DgnLsSymbolComponent {
-                stored_unit_scale: reader.read_bit_double(),
-                unit_scale: reader.read_bit_double(),
-                has_unit_scale: reader.read_bit(),
-                is_3d: reader.read_bit(),
-                block: Handle::from(reader.read_handle()),
-            })
-        }
+        DgnLsComponentType::Symbol => DgnLsComponentData::Symbol(DgnLsSymbolComponent {
+            stored_unit_scale: reader.read_bit_double(),
+            unit_scale: reader.read_bit_double(),
+            has_unit_scale: reader.read_bit(),
+            is_3d: reader.read_bit(),
+            block: Handle::from(reader.read_handle()),
+        }),
         DgnLsComponentType::Compound => {
             let count = safe_count(reader.read_bit_long());
             let offsets = (0..count)
@@ -63,9 +61,7 @@ pub fn read_dgn_line_style_data(
                 .collect();
             DgnLsComponentData::Compound(DgnLsCompoundComponent { entries })
         }
-        DgnLsComponentType::Stroke => {
-            DgnLsComponentData::Stroke(read_stroke_pattern(reader))
-        }
+        DgnLsComponentType::Stroke => DgnLsComponentData::Stroke(read_stroke_pattern(reader)),
         DgnLsComponentType::Point => {
             let count = safe_count(reader.read_bit_long());
             let mut symbols = Vec::with_capacity(count as usize);

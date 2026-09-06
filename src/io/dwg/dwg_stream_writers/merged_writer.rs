@@ -22,11 +22,11 @@
 //!
 //! Based on the reference `DwgMergedStreamWriter` and `DwgmMergedStreamWriterAC14`.
 
-use crate::types::{Color, DxfVersion, Vector2, Vector3};
-use crate::types::Transparency;
-use crate::io::dwg::dwg_version::DwgVersion;
-use crate::io::dwg::dwg_reference_type::DwgReferenceType;
 use super::bit_writer::DwgBitWriter;
+use crate::io::dwg::dwg_reference_type::DwgReferenceType;
+use crate::io::dwg::dwg_version::DwgVersion;
+use crate::types::Transparency;
+use crate::types::{Color, DxfVersion, Vector2, Vector3};
 
 /// Merged writer mode, determined by DWG version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -300,7 +300,8 @@ impl DwgMergedWriter {
             Color::Index(index) => (*index as u32) | (0xC3u32 << 24),
         };
         self.main.write_bit_long(color_long as i32);
-        self.main.write_byte(u8::from(color_name.is_some()) | (u8::from(book_name.is_some()) << 1));
+        self.main
+            .write_byte(u8::from(color_name.is_some()) | (u8::from(book_name.is_some()) << 1));
         if let Some(name) = color_name {
             self.write_variable_text(name);
         }
@@ -323,7 +324,8 @@ impl DwgMergedWriter {
         transparency: &Transparency,
         is_book_color: bool,
     ) {
-        self.main.write_en_color_with_book(color, transparency, is_book_color);
+        self.main
+            .write_en_color_with_book(color, transparency, is_book_color);
     }
 
     pub fn write_datetime(&mut self, julian_day: i32, milliseconds: i32) {
@@ -515,7 +517,8 @@ impl DwgMergedWriter {
             // At the text boundary we write the text-size flag and the
             // text-present bit.  This overwrites the zero-padding bits
             // that resulted from flushing the text stream.
-            self.main.set_position_in_bits(main_size_bits + text_size_bits);
+            self.main
+                .set_position_in_bits(main_size_bits + text_size_bits);
             self.main.set_position_by_flag(text_size_bits);
             self.main.write_bit(true); // text present
         } else {

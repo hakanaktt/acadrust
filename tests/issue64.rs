@@ -34,11 +34,7 @@ fn repro_issue64() {
 
     let ts_handle = loaded.text_styles.get("Standard").unwrap().handle;
     let ltype_handle = loaded.line_types.get("ByBlock").unwrap().handle;
-    let dimtxsty = loaded
-        .dim_styles
-        .get("Standard")
-        .unwrap()
-        .dimtxsty_handle;
+    let dimtxsty = loaded.dim_styles.get("Standard").unwrap().dimtxsty_handle;
     println!("text style Standard = {ts_handle:?}");
     println!("ByBlock LTYPE       = {ltype_handle:?}");
     println!("DIMSTYLE dimtxsty   = {dimtxsty:?}");
@@ -91,7 +87,8 @@ fn issue64_root_dict_handle_resolved_on_read() {
         _ => panic!("expected default NOD at #C"),
     };
     nod.handle = Handle::new(0x0A);
-    doc.objects.insert(Handle::new(0x0A), ObjectType::Dictionary(nod));
+    doc.objects
+        .insert(Handle::new(0x0A), ObjectType::Dictionary(nod));
 
     let decoy = Dictionary {
         handle: Handle::new(0x0C),
@@ -138,7 +135,10 @@ fn issue64_root_dict_handle_resolved_on_read() {
     let mut first_object = None;
     for i in 0..lines.len() - 3 {
         if lines[i] == "  0" && lines[i + 1] == "SECTION" && lines[i + 3] == "OBJECTS" {
-            first_object = Some((lines[i + 5].trim().to_string(), lines[i + 7].trim().to_string()));
+            first_object = Some((
+                lines[i + 5].trim().to_string(),
+                lines[i + 7].trim().to_string(),
+            ));
             break;
         }
     }

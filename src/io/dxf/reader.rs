@@ -1,13 +1,13 @@
 //! DXF file reader
 
-mod stream_reader;
-mod text_reader;
 mod binary_reader;
 mod section_reader;
+mod stream_reader;
+mod text_reader;
 
+pub use binary_reader::DxfBinaryReader;
 pub use stream_reader::DxfStreamReader;
 pub use text_reader::DxfTextReader;
-pub use binary_reader::DxfBinaryReader;
 
 use section_reader::SectionReader;
 
@@ -95,10 +95,10 @@ impl DxfReader {
         let stream_size = buf_reader.seek(std::io::SeekFrom::End(0)).unwrap_or(0);
         buf_reader.seek(std::io::SeekFrom::Start(0))?;
         let estimated_entities = (stream_size as usize / 300).max(16);
-        
+
         // Detect if binary
         let is_binary = Self::is_binary(&mut buf_reader)?;
-        
+
         // Create appropriate reader
         let reader: Box<dyn DxfStreamReader> = if is_binary {
             Box::new(DxfBinaryReader::new(buf_reader)?)
@@ -107,30 +107,30 @@ impl DxfReader {
             buf_reader.seek(std::io::SeekFrom::Start(0))?;
             Box::new(DxfTextReader::new(buf_reader)?)
         };
-        
+
         Ok(Self {
             reader,
             config: DxfReaderConfiguration::default(),
             estimated_entities,
         })
     }
-    
+
     /// Check if a stream contains binary DXF data
     fn is_binary<R: Read + Seek>(reader: &mut R) -> Result<bool> {
         const SENTINEL: &[u8] = b"AutoCAD Binary DXF";
         let mut buffer = vec![0u8; SENTINEL.len()];
-        
+
         // Try to read the sentinel bytes
         let bytes_read = reader.read(&mut buffer)?;
-        
+
         // Always seek back to start after checking
         reader.seek(std::io::SeekFrom::Start(0))?;
-        
+
         // If file is too small or doesn't match, it's not binary
         if bytes_read < SENTINEL.len() {
             return Ok(false);
         }
-        
+
         Ok(buffer == SENTINEL)
     }
 
@@ -201,11 +201,14 @@ impl DxfReader {
                         crate::notification::NotificationType::Error,
                         message.clone(),
                     );
-                    push_read_diagnostic(&mut diagnostics, self.read_diagnostic(
-                        "stream-ended-early",
-                        ReadStage::RecordStream,
-                        message,
-                    ));
+                    push_read_diagnostic(
+                        &mut diagnostics,
+                        self.read_diagnostic(
+                            "stream-ended-early",
+                            ReadStage::RecordStream,
+                            message,
+                        ),
+                    );
                     break;
                 }
                 Ok(None) => {
@@ -219,11 +222,14 @@ impl DxfReader {
                         crate::notification::NotificationType::Error,
                         message.clone(),
                     );
-                    push_read_diagnostic(&mut diagnostics, self.read_diagnostic(
-                        "stream-read-failed",
-                        ReadStage::RecordStream,
-                        message,
-                    ));
+                    push_read_diagnostic(
+                        &mut diagnostics,
+                        self.read_diagnostic(
+                            "stream-read-failed",
+                            ReadStage::RecordStream,
+                            message,
+                        ),
+                    );
                     break;
                 }
                 Err(error) => return Err(error),
@@ -238,11 +244,14 @@ impl DxfReader {
                             crate::notification::NotificationType::Error,
                             message.clone(),
                         );
-                        push_read_diagnostic(&mut diagnostics, self.read_diagnostic(
-                            "section-name-missing",
-                            ReadStage::Section,
-                            message,
-                        ));
+                        push_read_diagnostic(
+                            &mut diagnostics,
+                            self.read_diagnostic(
+                                "section-name-missing",
+                                ReadStage::Section,
+                                message,
+                            ),
+                        );
                         break;
                     }
                     Ok(None) => {
@@ -256,11 +265,14 @@ impl DxfReader {
                             crate::notification::NotificationType::Error,
                             message.clone(),
                         );
-                        push_read_diagnostic(&mut diagnostics, self.read_diagnostic(
-                            "section-name-read-failed",
-                            ReadStage::Section,
-                            message,
-                        ));
+                        push_read_diagnostic(
+                            &mut diagnostics,
+                            self.read_diagnostic(
+                                "section-name-read-failed",
+                                ReadStage::Section,
+                                message,
+                            ),
+                        );
                         break;
                     }
                     Err(error) => return Err(error),
@@ -276,22 +288,16 @@ impl DxfReader {
                         let result = match section_name.as_str() {
                             "HEADER" => self.read_header_section(&mut document),
                             "CLASSES" => self.read_classes_section(&mut document),
-                            "TABLES" => self.read_tables_section(
-                                &mut document,
-                                &mut decoded_source_records,
-                            ),
-                            "BLOCKS" => self.read_blocks_section(
-                                &mut document,
-                                &mut decoded_source_records,
-                            ),
-                            "ENTITIES" => self.read_entities_section(
-                                &mut document,
-                                &mut decoded_source_records,
-                            ),
-                            "OBJECTS" => self.read_objects_section(
-                                &mut document,
-                                &mut decoded_source_records,
-                            ),
+                            "TABLES" => {
+                                self.read_tables_section(&mut document, &mut decoded_source_records)
+                            }
+                            "BLOCKS" => {
+                                self.read_blocks_section(&mut document, &mut decoded_source_records)
+                            }
+                            "ENTITIES" => self
+                                .read_entities_section(&mut document, &mut decoded_source_records),
+                            "OBJECTS" => self
+                                .read_objects_section(&mut document, &mut decoded_source_records),
                             "ACDSDATA" => self.read_acdsdata_section(&mut document),
                             "THUMBNAILIMAGE" => {
                                 document.notifications.notify(
@@ -309,15 +315,15 @@ impl DxfReader {
                         if carries_records {
                             source_sections = source_sections.saturating_add(1);
                             record_stream_read = true;
-                            let decoded =
-                                decoded_source_records.saturating_sub(decoded_before);
+                            let decoded = decoded_source_records.saturating_sub(decoded_before);
                             source_records = source_records.saturating_add(decoded);
                         }
 
                         // In failsafe mode, catch errors and continue
                         if let Err(e) = result {
                             if failsafe {
-                                let message = format!("Error reading {} section: {}", section_name, e);
+                                let message =
+                                    format!("Error reading {} section: {}", section_name, e);
                                 document.notifications.notify(
                                     crate::notification::NotificationType::Error,
                                     message.clone(),
@@ -329,8 +335,7 @@ impl DxfReader {
                                 );
                                 diagnostic.section = Some(section_name.clone());
                                 push_read_diagnostic(&mut diagnostics, diagnostic);
-                                skipped_source_records =
-                                    skipped_source_records.saturating_add(1);
+                                skipped_source_records = skipped_source_records.saturating_add(1);
                                 // Try to skip to the end of the section
                                 let _ = self.skip_section();
                             } else {
@@ -380,7 +385,7 @@ impl DxfReader {
         );
         Ok(crate::io::read::ReadOutcome::new(document, stats))
     }
-    
+
     /// Read the HEADER section
     fn read_header_section(&mut self, document: &mut CadDocument) -> Result<()> {
         let mut section_reader = SectionReader::new(&mut self.reader);
@@ -440,7 +445,7 @@ impl DxfReader {
         *decoded_records = decoded_records.saturating_add(section_reader.decoded_records());
         result
     }
-    
+
     /// Read the ACDSDATA section (the AcDb data store).
     ///
     /// From R2013 (AC1027) on, a 3D solid / region / body / surface no longer
@@ -564,9 +569,7 @@ impl DxfReader {
 
 /// Snapshot the handles `initialize_defaults()` handed to its well-known
 /// table entries: (table, entry name) → handle.
-fn snapshot_default_entry_handles(
-    document: &CadDocument,
-) -> HashMap<(&'static str, String), u64> {
+fn snapshot_default_entry_handles(document: &CadDocument) -> HashMap<(&'static str, String), u64> {
     let mut map: HashMap<(&'static str, String), u64> = HashMap::new();
     macro_rules! snapshot {
         ($tag:literal, $table:expr) => {

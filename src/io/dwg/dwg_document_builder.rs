@@ -27,15 +27,11 @@ use crate::io::dwg::dwg_stream_readers::object_reader::tables;
 /// resolve as the base layer in AutoCAD's public layer table.
 fn viewport_override_base_layer(name: &str) -> Option<&str> {
     let (base, viewport) = name.rsplit_once(" @ ")?;
-    (!base.is_empty()
-        && !viewport.is_empty()
-        && viewport.bytes().all(|byte| byte.is_ascii_digit()))
-    .then_some(base)
+    (!base.is_empty() && !viewport.is_empty() && viewport.bytes().all(|byte| byte.is_ascii_digit()))
+        .then_some(base)
 }
 use crate::io::dwg::dwg_stream_readers::object_reader::{DwgObjectReader, EntityCommonData};
-use crate::io::dwg::parallel::{
-    filter_map_slice, for_each_mut, map_chunks, map_mut, worker_count,
-};
+use crate::io::dwg::parallel::{filter_map_slice, for_each_mut, map_chunks, map_mut, worker_count};
 use crate::io::read::{push_read_diagnostic, ReadDiagnostic, ReadStage};
 use crate::notification::{NotificationCollection, NotificationType};
 use crate::types::Handle;
@@ -249,11 +245,7 @@ impl HandleMaps {
     }
 }
 
-fn mtext_from_data(
-    data: entities::MTextData,
-    common: EntityCommon,
-    maps: &HandleMaps,
-) -> MText {
+fn mtext_from_data(data: entities::MTextData, common: EntityCommon, maps: &HandleMaps) -> MText {
     let mut e = MText::new();
     e.common = common;
     e.value = data.value;
@@ -435,40 +427,31 @@ impl DwgDocumentBuilder {
         }
         type CatalogResult =
             std::result::Result<(u64, usize, i16, i16), (u64, Option<u64>, CatalogFailure)>;
-        let catalog_results: Vec<CatalogResult> =
-            filter_map_slice(&handles, |&handle| {
-                let Some(offset) = self.obj_reader.offset_for(handle) else {
+        let catalog_results: Vec<CatalogResult> = filter_map_slice(&handles, |&handle| {
+            let Some(offset) = self.obj_reader.offset_for(handle) else {
+                return Some(Err((handle, None, CatalogFailure::MissingOffset)));
+            };
+            if offset < 0 {
+                return Some(Err((handle, None, CatalogFailure::NegativeOffset(offset))));
+            }
+            let source_offset = offset as usize;
+            let raw = match self.obj_reader.type_code_at(source_offset) {
+                Ok(raw) => raw,
+                Err(_error) => {
                     return Some(Err((
                         handle,
-                        None,
-                        CatalogFailure::MissingOffset,
-                    )));
-                };
-                if offset < 0 {
-                    return Some(Err((
-                        handle,
-                        None,
-                        CatalogFailure::NegativeOffset(offset),
+                        Some(source_offset as u64),
+                        CatalogFailure::RecordType,
                     )));
                 }
-                let source_offset = offset as usize;
-                let raw = match self.obj_reader.type_code_at(source_offset) {
-                    Ok(raw) => raw,
-                    Err(_error) => {
-                        return Some(Err((
-                            handle,
-                            Some(source_offset as u64),
-                            CatalogFailure::RecordType,
-                        )));
-                    }
-                };
-                Some(Ok((
-                    handle,
-                    source_offset,
-                    raw,
-                    Self::resolve_type_code(raw, &class_map),
-                )))
-            });
+            };
+            Some(Ok((
+                handle,
+                source_offset,
+                raw,
+                Self::resolve_type_code(raw, &class_map),
+            )))
+        });
         let mut record_catalog = Vec::with_capacity(catalog_results.len());
         let mut skipped_catalog = 0usize;
         for result in catalog_results {
@@ -567,7 +550,8 @@ impl DwgDocumentBuilder {
                                 message,
                             );
                             diagnostic.source_offset = Some(offset as u64);
-                            diagnostic.source_offset_basis = Some("object-section-byte".to_string());
+                            diagnostic.source_offset_basis =
+                                Some("object-section-byte".to_string());
                             diagnostic.section = Some("AcDb:AcDbObjects".to_string());
                             diagnostic.record_handle = Some(handle);
                             diagnostic.record_type = Some(type_code.to_string());
@@ -764,11 +748,8 @@ impl DwgDocumentBuilder {
                                 }
                             }
                             ParsedEntry::VxControl(handles) => {
-                                document.vx_control_entries = handles
-                                    .iter()
-                                    .copied()
-                                    .map(Handle::from)
-                                    .collect();
+                                document.vx_control_entries =
+                                    handles.iter().copied().map(Handle::from).collect();
                             }
                         }
                         // The block control is not a table record — don't store it.
@@ -783,9 +764,9 @@ impl DwgDocumentBuilder {
                     Err(_) => {
                         skipped_pass1 += 1;
                         let message = format!(
-                                "Skipped corrupt table record at handle {:#X}, type_code={}",
-                                handle, type_code
-                            );
+                            "Skipped corrupt table record at handle {:#X}, type_code={}",
+                            handle, type_code
+                        );
                         self.notifications
                             .notify(NotificationType::Error, message.clone());
                         let mut diagnostic = ReadDiagnostic::new(
@@ -916,20 +897,20 @@ impl DwgDocumentBuilder {
                     layer.color_name.clone_from(&data.color_name);
                     layer.book_name.clone_from(&data.book_name);
                     if let Some(app_handle) = layer_transparency_app_handle {
-                        if let Some(bytes) = document
-                            .eed_by_handle
-                            .get(&Handle::from(*h))
-                            .and_then(|blocks| {
-                                blocks
-                                    .iter()
-                                    .find(|(handle, _)| *handle == app_handle)
-                                    .map(|(_, bytes)| bytes.as_slice())
-                            })
+                        if let Some(bytes) =
+                            document
+                                .eed_by_handle
+                                .get(&Handle::from(*h))
+                                .and_then(|blocks| {
+                                    blocks
+                                        .iter()
+                                        .find(|(handle, _)| *handle == app_handle)
+                                        .map(|(_, bytes)| bytes.as_slice())
+                                })
                         {
                             if bytes.first() == Some(&71) && bytes.len() >= 5 {
-                                let raw = i32::from_le_bytes([
-                                    bytes[1], bytes[2], bytes[3], bytes[4],
-                                ]);
+                                let raw =
+                                    i32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]);
                                 layer.transparency =
                                     crate::types::Transparency::from_alpha_value(raw as u32);
                             }
@@ -1112,12 +1093,9 @@ impl DwgDocumentBuilder {
                     ds.dimclrd = data.dimclrd.approximate_index();
                     ds.dimclre = data.dimclre.approximate_index();
                     ds.dimclrt = data.dimclrt.approximate_index();
-                    ds.dimclrd_true_color =
-                        data.dimclrd.is_true_color().then_some(data.dimclrd);
-                    ds.dimclre_true_color =
-                        data.dimclre.is_true_color().then_some(data.dimclre);
-                    ds.dimclrt_true_color =
-                        data.dimclrt.is_true_color().then_some(data.dimclrt);
+                    ds.dimclrd_true_color = data.dimclrd.is_true_color().then_some(data.dimclrd);
+                    ds.dimclre_true_color = data.dimclre.is_true_color().then_some(data.dimclre);
+                    ds.dimclrt_true_color = data.dimclrt.is_true_color().then_some(data.dimclrt);
                     ds.dimsd1 = data.dimsd1;
                     ds.dimsd2 = data.dimsd2;
                     ds.dimtolj = data.dimtolj;
@@ -1340,11 +1318,9 @@ impl DwgDocumentBuilder {
                     record.is_on = data.is_on;
                     record.viewport = Handle::from(data.viewport);
                     record.previous_entry = Handle::from(data.previous_entry);
-                    record.legacy_viewport_entity_address =
-                        data.legacy_viewport_entity_address;
+                    record.legacy_viewport_entity_address = data.legacy_viewport_entity_address;
                     record.legacy_viewport_index = data.legacy_viewport_index;
-                    record.legacy_previous_entry_index =
-                        data.legacy_previous_entry_index;
+                    record.legacy_previous_entry_index = data.legacy_previous_entry_index;
                     document.vx_table.add_allow_duplicate(record);
                 }
                 // Block control is consumed during Pass 1 (header seeding); it is
@@ -1357,8 +1333,7 @@ impl DwgDocumentBuilder {
         // from the canonical entity_handles read from the DWG binary
         // (R2004+).  This is needed because entity_mode=1 only says
         // "paper space" without specifying WHICH paper space.
-        let mut binary_entity_owner: ahash::AHashMap<Handle, Handle> =
-            ahash::AHashMap::new();
+        let mut binary_entity_owner: ahash::AHashMap<Handle, Handle> = ahash::AHashMap::new();
         for entry in &parsed_entries {
             if let ParsedEntry::Block(h, data) = entry {
                 let br_handle = Handle::from(*h);
@@ -1460,19 +1435,18 @@ impl DwgDocumentBuilder {
         let mut pass2_done = 0usize;
         for batch in pass2_records.chunks(batch_size) {
             let decode_started = web_time::Instant::now();
-            let chunks: Vec<Pass2Chunk> =
-                map_chunks(batch, chunk_size, |records| {
-                    let mut chunk = Pass2Chunk::new(
-                        source_version,
-                        model_space_block_handle,
-                        paper_space_block_handle,
-                        records.len(),
-                    );
-                    for &(handle, offset, raw_type_code, type_code) in records {
-                        let (_, reader) = match self.obj_reader.read_record_at(offset) {
-                            Ok(record) => record,
-                            Err(error) => {
-                                chunk.failures.push(RecordFailure {
+            let chunks: Vec<Pass2Chunk> = map_chunks(batch, chunk_size, |records| {
+                let mut chunk = Pass2Chunk::new(
+                    source_version,
+                    model_space_block_handle,
+                    paper_space_block_handle,
+                    records.len(),
+                );
+                for &(handle, offset, raw_type_code, type_code) in records {
+                    let (_, reader) = match self.obj_reader.read_record_at(offset) {
+                        Ok(record) => record,
+                        Err(error) => {
+                            chunk.failures.push(RecordFailure {
                                     code: "record-read-failed",
                                     handle,
                                     offset,
@@ -1481,27 +1455,26 @@ impl DwgDocumentBuilder {
                                         "Could not read record at handle {handle:#X}, type_code={type_code}: {error}"
                                     ),
                                 });
-                                continue;
-                            }
-                        };
-                        let result =
-                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                self.process_pass2_record(
-                                    handle,
-                                    raw_type_code,
-                                    type_code,
-                                    reader,
-                                    &mut chunk.output,
-                                    &maps,
-                                    &mut chunk.pending,
-                                    &mut chunk.pending_attributes,
-                                    &entity_class_numbers,
-                                    &class_names,
-                                    photometric_lighting,
-                                );
-                            }));
-                        if result.is_err() {
-                            chunk.failures.push(RecordFailure {
+                            continue;
+                        }
+                    };
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        self.process_pass2_record(
+                            handle,
+                            raw_type_code,
+                            type_code,
+                            reader,
+                            &mut chunk.output,
+                            &maps,
+                            &mut chunk.pending,
+                            &mut chunk.pending_attributes,
+                            &entity_class_numbers,
+                            &class_names,
+                            photometric_lighting,
+                        );
+                    }));
+                    if result.is_err() {
+                        chunk.failures.push(RecordFailure {
                                 code: "record-decode-panicked",
                                 handle,
                                 offset,
@@ -1510,10 +1483,10 @@ impl DwgDocumentBuilder {
                                     "Skipped corrupt record at handle {handle:#X}, type_code={type_code} (panic recovered)"
                                 ),
                             });
-                        }
                     }
-                    chunk
-                });
+                }
+                chunk
+            });
             decode_seconds += decode_started.elapsed().as_secs_f64();
 
             let commit_started = web_time::Instant::now();
@@ -1578,11 +1551,8 @@ impl DwgDocumentBuilder {
                     skipped_pass2 += 1;
                     self.notifications
                         .notify(NotificationType::Error, failure.message.clone());
-                    let mut diagnostic = ReadDiagnostic::new(
-                        failure.code,
-                        ReadStage::RecordStream,
-                        failure.message,
-                    );
+                    let mut diagnostic =
+                        ReadDiagnostic::new(failure.code, ReadStage::RecordStream, failure.message);
                     diagnostic.source_offset = Some(failure.offset as u64);
                     diagnostic.source_offset_basis = Some("object-section-byte".to_string());
                     diagnostic.section = Some("AcDb:AcDbObjects".to_string());
@@ -1780,9 +1750,7 @@ impl DwgDocumentBuilder {
                         _ => None,
                     };
                     if let Some(style_name) = style_name {
-                        if let EntityType::Tolerance(tolerance) =
-                            std::sync::Arc::make_mut(entity)
-                        {
+                        if let EntityType::Tolerance(tolerance) = std::sync::Arc::make_mut(entity) {
                             tolerance.dimension_style_name = style_name;
                         }
                     }
@@ -1960,8 +1928,7 @@ impl DwgDocumentBuilder {
         occupied.extend(document.entities().filter_map(|entity| {
             (!matches!(
                 entity,
-                crate::entities::EntityType::Block(_)
-                    | crate::entities::EntityType::BlockEnd(_)
+                crate::entities::EntityType::Block(_) | crate::entities::EntityType::BlockEnd(_)
             ))
             .then_some(entity.common().handle)
         }));
@@ -2006,16 +1973,12 @@ impl DwgDocumentBuilder {
             if record.block_entity_handle.is_null()
                 || occupied.contains(&record.block_entity_handle)
             {
-                record.block_entity_handle =
-                    allocate_marker(&mut occupied, &mut next_handle);
+                record.block_entity_handle = allocate_marker(&mut occupied, &mut next_handle);
             } else {
                 occupied.insert(record.block_entity_handle);
             }
-            if record.block_end_handle.is_null()
-                || occupied.contains(&record.block_end_handle)
-            {
-                record.block_end_handle =
-                    allocate_marker(&mut occupied, &mut next_handle);
+            if record.block_end_handle.is_null() || occupied.contains(&record.block_end_handle) {
+                record.block_end_handle = allocate_marker(&mut occupied, &mut next_handle);
             } else {
                 occupied.insert(record.block_end_handle);
             }
@@ -2131,9 +2094,7 @@ impl DwgDocumentBuilder {
                             _ => {}
                         }
                     }
-                    if let Some(reactors) =
-                        document.reactors_by_handle.get_mut(&child_handle)
-                    {
+                    if let Some(reactors) = document.reactors_by_handle.get_mut(&child_handle) {
                         for reactor in reactors {
                             if *reactor == previous_root {
                                 *reactor = root_handle;
@@ -2163,10 +2124,9 @@ impl DwgDocumentBuilder {
                                 .iter()
                                 .filter_map(|(_, handle)| document.objects.get(handle))
                                 .collect();
-                            if values
-                                .iter()
-                                .any(|object| matches!(object, crate::objects::ObjectType::Layout(_)))
-                            {
+                            if values.iter().any(|object| {
+                                matches!(object, crate::objects::ObjectType::Layout(_))
+                            }) {
                                 "ACAD_LAYOUT".to_string()
                             } else if values.iter().any(|object| {
                                 matches!(object, crate::objects::ObjectType::MLineStyle(_))
@@ -2184,10 +2144,9 @@ impl DwgDocumentBuilder {
                                 matches!(object, crate::objects::ObjectType::TableStyle(_))
                             }) {
                                 "ACAD_TABLESTYLE".to_string()
-                            } else if values
-                                .iter()
-                                .any(|object| matches!(object, crate::objects::ObjectType::Scale(_)))
-                            {
+                            } else if values.iter().any(|object| {
+                                matches!(object, crate::objects::ObjectType::Scale(_))
+                            }) {
                                 "ACAD_SCALELIST".to_string()
                             } else if values.iter().any(|object| {
                                 matches!(object, crate::objects::ObjectType::VisualStyle(_))
@@ -2201,10 +2160,9 @@ impl DwgDocumentBuilder {
                                 matches!(object, crate::objects::ObjectType::BookColor(_))
                             }) {
                                 "ACAD_COLOR".to_string()
-                            } else if values
-                                .iter()
-                                .any(|object| matches!(object, crate::objects::ObjectType::Group(_)))
-                            {
+                            } else if values.iter().any(|object| {
+                                matches!(object, crate::objects::ObjectType::Group(_))
+                            }) {
                                 "ACAD_GROUP".to_string()
                             } else if dictionary.get("AcDsRecords").is_some()
                                 || dictionary.get("AcDsSchemas").is_some()
@@ -2231,9 +2189,7 @@ impl DwgDocumentBuilder {
                             dictionary.owner = root_handle;
                         }
                     }
-                    if let Some(reactors) =
-                        document.reactors_by_handle.get_mut(&child_handle)
-                    {
+                    if let Some(reactors) = document.reactors_by_handle.get_mut(&child_handle) {
                         for reactor in reactors {
                             if *reactor == previous_root {
                                 *reactor = root_handle;
@@ -2353,8 +2309,7 @@ impl DwgDocumentBuilder {
                             .collect()
                     };
                     if !records.is_empty() {
-                        let xd =
-                            &mut std::sync::Arc::make_mut(entity).common_mut().extended_data;
+                        let xd = &mut std::sync::Arc::make_mut(entity).common_mut().extended_data;
                         for record in records {
                             xd.add_record(record);
                         }
@@ -2422,11 +2377,10 @@ impl DwgDocumentBuilder {
             // keep one of their preallocated low handles when the source uses
             // that handle for a different record. Prefer the source record and
             // move only the synthetic table entry.
-            let source_records: HashSet<u64> =
-                record_catalog
-                    .iter()
-                    .map(|(handle, _, _, _)| *handle)
-                    .collect();
+            let source_records: HashSet<u64> = record_catalog
+                .iter()
+                .map(|(handle, _, _, _)| *handle)
+                .collect();
             let mut source_views = HashSet::new();
             let mut source_ucss = HashSet::new();
             let mut source_vports = HashSet::new();
@@ -2800,8 +2754,11 @@ impl DwgDocumentBuilder {
         binary_entity_owner: Option<&ahash::AHashMap<Handle, Handle>>,
         source_record_order: Option<&ahash::AHashMap<Handle, usize>>,
     ) {
-        let valid_owners: ahash::AHashSet<Handle> =
-            document.block_records.iter().map(|record| record.handle).collect();
+        let valid_owners: ahash::AHashSet<Handle> = document
+            .block_records
+            .iter()
+            .map(|record| record.handle)
+            .collect();
         let model_space = document.header.model_space_block_handle;
         let paper_space = document.header.paper_space_block_handle;
         let model_is_valid = valid_owners.contains(&model_space);
@@ -2810,9 +2767,7 @@ impl DwgDocumentBuilder {
             map_mut(&mut document.entities, |entity| {
                 if matches!(
                     entity.as_ref(),
-                    EntityType::AttributeEntity(_)
-                        | EntityType::Block(_)
-                        | EntityType::BlockEnd(_)
+                    EntityType::AttributeEntity(_) | EntityType::Block(_) | EntityType::BlockEnd(_)
                 ) {
                     return None;
                 }
@@ -2857,13 +2812,9 @@ impl DwgDocumentBuilder {
                     .enumerate()
                     .map(|(index, handle)| (handle, index))
                     .collect();
-                handles.sort_by_key(|handle| {
-                    order.get(handle).copied().unwrap_or(usize::MAX)
-                });
+                handles.sort_by_key(|handle| order.get(handle).copied().unwrap_or(usize::MAX));
             } else if let Some(order) = source_record_order {
-                handles.sort_by_key(|handle| {
-                    order.get(handle).copied().unwrap_or(usize::MAX)
-                });
+                handles.sort_by_key(|handle| order.get(handle).copied().unwrap_or(usize::MAX));
             }
             record.entity_handles = handles;
         }
@@ -2949,10 +2900,8 @@ impl DwgDocumentBuilder {
                     e.position = data.position;
                     e.target = data.target;
                     e.attenuation_type = data.attenuation_type;
-                    e.use_attenuation_limits =
-                        data.use_attenuation_limits;
-                    e.attenuation_start_limit =
-                        data.attenuation_start_limit;
+                    e.use_attenuation_limits = data.use_attenuation_limits;
+                    e.attenuation_start_limit = data.attenuation_start_limit;
                     e.attenuation_end_limit = data.attenuation_end_limit;
                     e.hotspot_angle = data.hotspot_angle;
                     e.falloff_angle = data.falloff_angle;
@@ -2981,8 +2930,7 @@ impl DwgDocumentBuilder {
                         OBJ_RTEXT => {
                             let mut data = entities::read_remote_text(&mut reader);
                             if let ExtendedEntityData::RemoteText(remote) = &mut data {
-                                remote.style_name =
-                                    maps.style_name(remote.style_handle.value());
+                                remote.style_name = maps.style_name(remote.style_handle.value());
                             }
                             data
                         }
@@ -2994,36 +2942,24 @@ impl DwgDocumentBuilder {
                             );
                             marker.data.embedded_mtext = marker
                                 .embedded_mtext
-                                .map(|mtext| {
-                                    mtext_from_data(
-                                        mtext,
-                                        EntityCommon::new(),
-                                        &maps,
-                                    )
-                                });
+                                .map(|mtext| mtext_from_data(mtext, EntityCommon::new(), &maps));
                             ExtendedEntityData::GeoPositionMarker(marker.data)
                         }
-                        OBJ_NAVISWORKSMODEL => {
-                            entities::read_coordination_model(&mut reader)
-                        }
+                        OBJ_NAVISWORKSMODEL => entities::read_coordination_model(&mut reader),
                         OBJ_POINTCLOUD => entities::read_point_cloud(
                             &mut reader,
                             self.obj_reader.version(),
                             self.obj_reader.dxf_version(),
                         ),
                         OBJ_POINTCLOUDEX => entities::read_point_cloud_ex(&mut reader),
-                        OBJ_OLEFRAME => entities::read_ole_frame(
-                            &mut reader,
-                            self.obj_reader.version(),
-                        ),
+                        OBJ_OLEFRAME => {
+                            entities::read_ole_frame(&mut reader, self.obj_reader.version())
+                        }
                         OBJ_PROXY_ENTITY => entities::read_proxy_entity(
                             &mut reader,
                             self.obj_reader.version(),
                             self.obj_reader.dxf_version(),
-                            entity_common
-                                .graphic_data
-                                .clone()
-                                .unwrap_or_default(),
+                            entity_common.graphic_data.clone().unwrap_or_default(),
                             entity_common.handle.value(),
                         ),
                         _ => unreachable!(),
@@ -3123,9 +3059,7 @@ impl DwgDocumentBuilder {
                     let view_rep_handle = class_names
                         .dxf
                         .get(&raw_type_code)
-                        .filter(|name| {
-                            name.eq_ignore_ascii_case("ACDBVIEWREPBLOCKREFERENCE")
-                        })
+                        .filter(|name| name.eq_ignore_ascii_case("ACDBVIEWREPBLOCKREFERENCE"))
                         .map(|_| Handle::from(reader.read_handle()));
                     let block_name = maps.block_name(data.block_handle);
                     let mut e = Insert::new(block_name, data.insert_point);
@@ -3183,9 +3117,7 @@ impl DwgDocumentBuilder {
                     e.field_handles = data.field_handles;
                     e.base_style = data.base_style;
                     e.merged_ranges = data.merged_ranges;
-                    e.break_options = BreakOptionFlags::from_bits_retain(
-                        data.break_options as u32,
-                    );
+                    e.break_options = BreakOptionFlags::from_bits_retain(data.break_options as u32);
                     e.break_flow_direction =
                         BreakFlowDirection::from(data.break_flow_direction as u8);
                     e.break_spacing = data.break_spacing;
@@ -3199,14 +3131,11 @@ impl DwgDocumentBuilder {
                     e.dwg_unknown_short = data.unknown_short;
                     e.override_flag = data.legacy_style_override.is_some();
                     e.override_border_color = data.legacy_border_colors.is_some();
-                    e.override_border_line_weight =
-                        data.legacy_border_line_weights.is_some();
-                    e.override_border_visibility =
-                        data.legacy_border_visibility.is_some();
+                    e.override_border_line_weight = data.legacy_border_line_weights.is_some();
+                    e.override_border_visibility = data.legacy_border_visibility.is_some();
                     e.legacy_style_override = data.legacy_style_override;
                     e.legacy_border_colors = data.legacy_border_colors;
-                    e.legacy_border_line_weights =
-                        data.legacy_border_line_weights;
+                    e.legacy_border_line_weights = data.legacy_border_line_weights;
                     e.legacy_border_visibility = data.legacy_border_visibility;
                     let _ = document.add_entity(EntityType::Table(e));
                 }
@@ -3382,8 +3311,8 @@ impl DwgDocumentBuilder {
                     e.dwg_unknown_bit4 = data.unknown_bit4;
                     e.dwg_unknown_bit5 = data.unknown_bit5;
                     e.dwg_unknown_short1 = data.unknown_short1;
-                    e.hookline_enabled = self.obj_reader.version().r13_14_only()
-                        && (data.arrowhead_type & 8) != 0;
+                    e.hookline_enabled =
+                        self.obj_reader.version().r13_14_only() && (data.arrowhead_type & 8) != 0;
                     let _ = document.add_entity(EntityType::Leader(e));
                 }
                 OBJ_TOLERANCE => {
@@ -3508,8 +3437,7 @@ impl DwgDocumentBuilder {
                     e.seed_points = data.seed_points;
                     e.mpolygon_hatch_color = data.mpolygon_hatch_color;
                     e.mpolygon_x_direction = data.mpolygon_x_direction;
-                    e.mpolygon_boundary_handle_count =
-                        data.mpolygon_boundary_handle_count;
+                    e.mpolygon_boundary_handle_count = data.mpolygon_boundary_handle_count;
                     // Map gradient data
                     e.gradient_color.enabled = data.gradient_enabled;
                     e.gradient_color.reserved = data.gradient_reserved;
@@ -3605,9 +3533,7 @@ impl DwgDocumentBuilder {
                         e.clip_boundary_handle = Handle::new(clip);
                     }
                     // R2000 carries an obsolete viewport-entity-header handle.
-                    if self.obj_reader.version()
-                        == crate::io::dwg::dwg_version::DwgVersion::AC15
-                    {
+                    if self.obj_reader.version() == crate::io::dwg::dwg_version::DwgVersion::AC15 {
                         let _ = reader.read_handle();
                     }
                     let ucs = reader.read_handle();
@@ -3812,8 +3738,7 @@ impl DwgDocumentBuilder {
                     dim.jog_angle = data.jog_angle;
                     dim.override_center = data.override_center;
                     dim.jog_point = data.jog_point;
-                    let _ =
-                        document.add_entity(EntityType::Dimension(Dimension::LargeRadial(dim)));
+                    let _ = document.add_entity(EntityType::Dimension(Dimension::LargeRadial(dim)));
                 }
 
                 OBJ_MLINE => {
@@ -4438,9 +4363,7 @@ impl DwgDocumentBuilder {
                     };
                     e.wires = data.wires;
                     e.silhouettes = data.silhouettes;
-                    if self.obj_reader.version().r2007_plus()
-                        && !e.common.has_ds_data
-                    {
+                    if self.obj_reader.version().r2007_plus() && !e.common.has_ds_data {
                         let h = reader.read_handle();
                         if h != 0 {
                             e.history_handle = Some(Handle::new(h));
@@ -4482,11 +4405,9 @@ impl DwgDocumentBuilder {
                     e.acis_data.materials = data.acis.materials;
                     e.acis_data.wireframe_data_present = data.acis.wireframe_data_present;
                     e.acis_data.wireframe_point_present = data.acis.wireframe_point_present;
-                    e.acis_data.wireframe_isoline_present =
-                        data.acis.wireframe_isoline_present;
+                    e.acis_data.wireframe_isoline_present = data.acis.wireframe_isoline_present;
                     e.acis_data.acis_empty_bit = data.acis.acis_empty_bit;
-                    e.acis_data.extra_acis_data =
-                        data.acis.extra_acis_data.map(Box::new);
+                    e.acis_data.extra_acis_data = data.acis.extra_acis_data.map(Box::new);
                     e.acis_data.wireframe_isolines = data.acis.isolines;
                     e.wires = data.acis.wires;
                     e.silhouettes = data.acis.silhouettes;
@@ -4495,8 +4416,8 @@ impl DwgDocumentBuilder {
                     e.u_isolines = data.u_isolines;
                     e.v_isolines = data.v_isolines;
                     e.surface_data = data.surface_data;
-                    e.history_handle = (data.history_handle != 0)
-                        .then(|| Handle::from(data.history_handle));
+                    e.history_handle =
+                        (data.history_handle != 0).then(|| Handle::from(data.history_handle));
                     let _ = document.add_entity(EntityType::Surface(e));
                 }
 
@@ -6907,8 +6828,7 @@ fn read_registered_payload(
     }
     let mut references = Vec::new();
     while reader.handle_remaining_bits() >= 8 {
-        let (handle, reference_type) =
-            reader.read_handle_reference(current_handle);
+        let (handle, reference_type) = reader.read_handle_reference(current_handle);
         if handle == 0 {
             break;
         }
@@ -7057,11 +6977,23 @@ fn decode_section_view_style(
         arrow_size,
         arrow_extension,
         label_height: identifier_height,
-        label_offset: if identifier_offset.is_finite() { identifier_offset } else { 0.0 },
+        label_offset: if identifier_offset.is_finite() {
+            identifier_offset
+        } else {
+            0.0
+        },
         label_position: identifier_position,
         arrow_position,
-        end_line_length: if end_line_length.is_finite() { end_line_length } else { 0.0 },
-        end_line_overshoot: if end_line_overshoot.is_finite() { end_line_overshoot } else { 0.0 },
+        end_line_length: if end_line_length.is_finite() {
+            end_line_length
+        } else {
+            0.0
+        },
+        end_line_overshoot: if end_line_overshoot.is_finite() {
+            end_line_overshoot
+        } else {
+            0.0
+        },
         arrow_start_handle: arrow_start,
         arrow_end_handle: arrow_end,
         arrow_is_default: arrow_start == 0 && arrow_end == 0,

@@ -1,14 +1,14 @@
 //! DXF writer module
 
-mod stream_writer;
-mod text_writer;
 mod binary_writer;
 mod section_writer;
+mod stream_writer;
+mod text_writer;
 
-pub use stream_writer::{DxfStreamWriter, DxfStreamWriterExt, value_type_for_code};
-pub use text_writer::DxfTextWriter;
 pub use binary_writer::DxfBinaryWriter;
 pub use section_writer::SectionWriter;
+pub use stream_writer::{value_type_for_code, DxfStreamWriter, DxfStreamWriterExt};
+pub use text_writer::DxfTextWriter;
 
 use crate::document::CadDocument;
 use crate::entities::EntityType;
@@ -45,7 +45,7 @@ impl<'a> DxfWriter<'a> {
     pub fn set_binary(&mut self, binary: bool) {
         self.binary = binary;
     }
-    
+
     /// Write to a file
     pub fn write_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let file = File::create(path)?;
@@ -198,34 +198,86 @@ fn compute_max_handle(document: &CadDocument) -> u64 {
 
     for entity in document.entities() {
         let h = entity.common().handle.value();
-        if h >= max { max = h + 1; }
+        if h >= max {
+            max = h + 1;
+        }
     }
     for (handle, _) in &document.objects {
         let h = handle.value();
-        if h >= max { max = h + 1; }
+        if h >= max {
+            max = h + 1;
+        }
     }
     for br in document.block_records.iter() {
         let h = br.handle.value();
-        if h >= max { max = h + 1; }
+        if h >= max {
+            max = h + 1;
+        }
         for eh in &br.entity_handles {
             let h = eh.value();
-            if h >= max { max = h + 1; }
+            if h >= max {
+                max = h + 1;
+            }
         }
         // BLOCK/ENDBLK markers are excluded from document.entities(), so scan
         // their handles here explicitly to avoid re-issuing them.
         let h = br.block_entity_handle.value();
-        if h >= max { max = h + 1; }
+        if h >= max {
+            max = h + 1;
+        }
         let h = br.block_end_handle.value();
-        if h >= max { max = h + 1; }
+        if h >= max {
+            max = h + 1;
+        }
     }
-    for r in document.layers.iter() { let h = r.handle.value(); if h >= max { max = h + 1; } }
-    for r in document.line_types.iter() { let h = r.handle.value(); if h >= max { max = h + 1; } }
-    for r in document.text_styles.iter() { let h = r.handle.value(); if h >= max { max = h + 1; } }
-    for r in document.dim_styles.iter() { let h = r.handle.value(); if h >= max { max = h + 1; } }
-    for r in document.app_ids.iter() { let h = r.handle.value(); if h >= max { max = h + 1; } }
-    for r in document.views.iter() { let h = r.handle.value(); if h >= max { max = h + 1; } }
-    for r in document.vports.iter() { let h = r.handle.value(); if h >= max { max = h + 1; } }
-    for r in document.ucss.iter() { let h = r.handle.value(); if h >= max { max = h + 1; } }
+    for r in document.layers.iter() {
+        let h = r.handle.value();
+        if h >= max {
+            max = h + 1;
+        }
+    }
+    for r in document.line_types.iter() {
+        let h = r.handle.value();
+        if h >= max {
+            max = h + 1;
+        }
+    }
+    for r in document.text_styles.iter() {
+        let h = r.handle.value();
+        if h >= max {
+            max = h + 1;
+        }
+    }
+    for r in document.dim_styles.iter() {
+        let h = r.handle.value();
+        if h >= max {
+            max = h + 1;
+        }
+    }
+    for r in document.app_ids.iter() {
+        let h = r.handle.value();
+        if h >= max {
+            max = h + 1;
+        }
+    }
+    for r in document.views.iter() {
+        let h = r.handle.value();
+        if h >= max {
+            max = h + 1;
+        }
+    }
+    for r in document.vports.iter() {
+        let h = r.handle.value();
+        if h >= max {
+            max = h + 1;
+        }
+    }
+    for r in document.ucss.iter() {
+        let h = r.handle.value();
+        if h >= max {
+            max = h + 1;
+        }
+    }
 
     max
 }
@@ -241,4 +293,3 @@ pub fn write_binary_dxf<P: AsRef<Path>>(document: &CadDocument, path: P) -> Resu
     let writer = DxfWriter::new_binary(document);
     writer.write_to_file(path)
 }
-

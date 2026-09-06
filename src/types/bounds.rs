@@ -88,14 +88,8 @@ impl BoundingBox2D {
     /// Merge with another bounding box
     pub fn merge(&self, other: &BoundingBox2D) -> BoundingBox2D {
         BoundingBox2D {
-            min: Vector2::new(
-                self.min.x.min(other.min.x),
-                self.min.y.min(other.min.y),
-            ),
-            max: Vector2::new(
-                self.max.x.max(other.max.x),
-                self.max.y.max(other.max.y),
-            ),
+            min: Vector2::new(self.min.x.min(other.min.x), self.min.y.min(other.min.y)),
+            max: Vector2::new(self.max.x.max(other.max.x), self.max.y.max(other.max.y)),
         }
     }
 }
@@ -310,15 +304,10 @@ mod tests {
 
     #[test]
     fn test_bbox3d_dimensions() {
-        let bbox = BoundingBox3D::new(
-            Vector3::new(0.0, 0.0, 0.0),
-            Vector3::new(10.0, 5.0, 3.0),
-        );
+        let bbox = BoundingBox3D::new(Vector3::new(0.0, 0.0, 0.0), Vector3::new(10.0, 5.0, 3.0));
         assert_eq!(bbox.width(), 10.0);
         assert_eq!(bbox.height(), 5.0);
         assert_eq!(bbox.depth(), 3.0);
         assert_eq!(bbox.center(), Vector3::new(5.0, 2.5, 1.5));
     }
 }
-
-

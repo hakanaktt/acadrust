@@ -35,7 +35,11 @@ use crate::types::DxfVersion;
 ///
 /// # Returns
 /// Complete section bytes including sentinels and CRC.
-pub fn write_classes(version: DxfVersion, classes: &[DxfClass], maintenance_version: u8) -> Vec<u8> {
+pub fn write_classes(
+    version: DxfVersion,
+    classes: &[DxfClass],
+    maintenance_version: u8,
+) -> Vec<u8> {
     write_classes_with_encoding(
         version,
         classes,
@@ -50,8 +54,7 @@ pub fn write_classes_with_encoding(
     maintenance_version: u8,
     encoding: &'static encoding_rs::Encoding,
 ) -> Vec<u8> {
-    let dwg_version =
-        DwgVersion::from_dxf_version(version).unwrap_or(DwgVersion::AC15);
+    let dwg_version = DwgVersion::from_dxf_version(version).unwrap_or(DwgVersion::AC15);
 
     // R2007+: Use DwgMergedWriter with three-stream merge.
     // Text (class names via WriteVariableText) goes to the text sub-stream,
@@ -60,18 +63,13 @@ pub fn write_classes_with_encoding(
     // DwgMergedStreamWriter for R2007+.
     // Pre-R2007: Use DwgMergedWriter in two-stream mode (text = main).
     if version >= DxfVersion::AC1021 {
-        let mut writer =
-            DwgMergedWriter::with_encoding(dwg_version, version, encoding);
+        let mut writer = DwgMergedWriter::with_encoding(dwg_version, version, encoding);
 
         // Save position for the size placeholder (4-byte RL = total data bits)
         writer.save_position_for_size();
 
         // Section header (R2004+)
-        let max_class_number = classes
-            .iter()
-            .map(|c| c.class_number)
-            .max()
-            .unwrap_or(0);
+        let max_class_number = classes.iter().map(|c| c.class_number).max().unwrap_or(0);
         writer.write_bit_short(max_class_number);
         writer.write_byte(0);
         writer.write_byte(0);
@@ -99,16 +97,11 @@ pub fn write_classes_with_encoding(
         write_size_and_crc(version, maintenance_version, &section_data)
     } else {
         // Pre-R2007: use DwgMergedWriter (two-stream mode, text inline)
-        let mut writer =
-            DwgMergedWriter::with_encoding(dwg_version, version, encoding);
+        let mut writer = DwgMergedWriter::with_encoding(dwg_version, version, encoding);
 
         // R2004+: section header
         if version >= DxfVersion::AC1018 {
-            let max_class_number = classes
-                .iter()
-                .map(|c| c.class_number)
-                .max()
-                .unwrap_or(0);
+            let max_class_number = classes.iter().map(|c| c.class_number).max().unwrap_or(0);
             writer.write_bit_short(max_class_number);
             writer.write_byte(0);
             writer.write_byte(0);
@@ -142,10 +135,12 @@ pub fn write_classes_with_encoding(
 /// Wrap section data with sentinels, size, and CRC-16.
 ///
 /// This implements the `writeSizeAndCrc()` pattern from C#.
-fn write_size_and_crc(version: DxfVersion, maintenance_version: u8, section_data: &[u8]) -> Vec<u8> {
-    let mut output = Vec::with_capacity(
-        16 + 4 + section_data.len() + 2 + 16 + 8,
-    );
+fn write_size_and_crc(
+    version: DxfVersion,
+    maintenance_version: u8,
+    section_data: &[u8],
+) -> Vec<u8> {
+    let mut output = Vec::with_capacity(16 + 4 + section_data.len() + 2 + 16 + 8);
 
     // Start sentinel (16 bytes)
     output.extend_from_slice(&start_sentinels::CLASSES);

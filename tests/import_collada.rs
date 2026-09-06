@@ -2,9 +2,9 @@
 
 #![cfg(feature = "import")]
 
+use acadrust::entities::EntityType;
 use acadrust::io::import::collada::ColladaImporter;
 use acadrust::io::import::ImportConfig;
-use acadrust::entities::EntityType;
 
 const TRIANGLE_DAE: &str = r##"<?xml version="1.0" encoding="utf-8"?>
 <COLLADA xmlns="http://www.collada.org/2005/11/COLLADASchema" version="1.4.1">
@@ -162,7 +162,11 @@ fn test_collada_multi_material() {
 
     let entities: Vec<_> = doc.entities().collect();
     // Should produce 2 Mesh entities — one per material
-    assert_eq!(entities.len(), 2, "Should produce 2 Mesh entities for 2 materials");
+    assert_eq!(
+        entities.len(),
+        2,
+        "Should produce 2 Mesh entities for 2 materials"
+    );
 
     let mut layers: Vec<String> = entities
         .iter()
@@ -194,8 +198,8 @@ fn test_collada_scale_factor() {
     config.scale_factor = 100.0;
     config.merge_vertices = false;
 
-    let importer = ColladaImporter::from_bytes(TRIANGLE_DAE.as_bytes().to_vec())
-        .with_config(config);
+    let importer =
+        ColladaImporter::from_bytes(TRIANGLE_DAE.as_bytes().to_vec()).with_config(config);
     let doc = importer.import().unwrap();
 
     let entities: Vec<_> = doc.entities().collect();
@@ -243,5 +247,9 @@ fn test_collada_no_visual_scene() {
     let doc = importer.import().unwrap();
 
     let entities: Vec<_> = doc.entities().collect();
-    assert_eq!(entities.len(), 1, "Should import geometry even without visual_scene");
+    assert_eq!(
+        entities.len(),
+        1,
+        "Should import geometry even without visual_scene"
+    );
 }

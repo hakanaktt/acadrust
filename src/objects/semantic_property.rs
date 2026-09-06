@@ -97,11 +97,7 @@ impl ProxyPayload {
         )
     }
 
-    fn from_data(
-        data: &[u8],
-        bit_count: u32,
-        encoding: ProxyPayloadEncoding,
-    ) -> Self {
+    fn from_data(data: &[u8], bit_count: u32, encoding: ProxyPayloadEncoding) -> Self {
         let mut records = Vec::new();
         let mut bit_offset = 0u32;
         for (sequence, bytes) in data.chunks(127).enumerate() {
@@ -136,8 +132,7 @@ impl ProxyPayload {
             let end = (byte_offset + byte_length)
                 .min(output.len())
                 .min(byte_offset + record.data.len());
-            output[byte_offset..end]
-                .copy_from_slice(&record.data[..end - byte_offset]);
+            output[byte_offset..end].copy_from_slice(&record.data[..end - byte_offset]);
         }
         if let Some(last) = output.last_mut() {
             let remainder = self.bit_count % 8;
@@ -207,9 +202,7 @@ pub(crate) fn encode_registered_class_envelope(
     data.extend_from_slice(&payload.bit_count.to_le_bytes());
     let payload_data = payload.data();
     write_envelope_bytes(&mut data, &payload_data);
-    data.extend_from_slice(
-        &(properties.len().min(u32::MAX as usize) as u32).to_le_bytes(),
-    );
+    data.extend_from_slice(&(properties.len().min(u32::MAX as usize) as u32).to_le_bytes());
     for property in properties.iter().take(u32::MAX as usize) {
         write_envelope_string(&mut data, &property.subclass);
         data.extend_from_slice(&property.code.to_le_bytes());
@@ -262,8 +255,7 @@ pub(crate) fn decode_registered_class_envelope(
     if !data.starts_with(REGISTERED_CLASS_MAGIC) {
         return None;
     }
-    let mut reader =
-        EnvelopeReader::new(&data[REGISTERED_CLASS_MAGIC.len()..]);
+    let mut reader = EnvelopeReader::new(&data[REGISTERED_CLASS_MAGIC.len()..]);
     if reader.byte()? != REGISTERED_CLASS_ENVELOPE_VERSION {
         return None;
     }
@@ -272,9 +264,7 @@ pub(crate) fn decode_registered_class_envelope(
     let payload_encoding = reader.byte()?;
     let payload_bit_count = reader.u32()?;
     let payload_data = reader.bytes()?;
-    if payload_bit_count as usize
-        > payload_data.len().saturating_mul(8)
-    {
+    if payload_bit_count as usize > payload_data.len().saturating_mul(8) {
         return None;
     }
     let original_payload = match payload_encoding {
@@ -299,9 +289,7 @@ pub(crate) fn decode_registered_class_envelope(
             3 => SemanticPropertyValue::Int16(reader.i16()?),
             4 => SemanticPropertyValue::Int32(reader.i32()?),
             5 => SemanticPropertyValue::Int64(reader.i64()?),
-            6 => SemanticPropertyValue::Double(f64::from_bits(
-                reader.u64()?,
-            )),
+            6 => SemanticPropertyValue::Double(f64::from_bits(reader.u64()?)),
             7 => SemanticPropertyValue::Handle(Handle::from(reader.u64()?)),
             8 => SemanticPropertyValue::Binary(reader.bytes()?.to_vec()),
             _ => return None,

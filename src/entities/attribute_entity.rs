@@ -1,9 +1,9 @@
 //! Attribute entity - Block attribute instance with actual values
 
-use crate::entities::{Entity, EntityCommon};
 use crate::entities::attribute_definition::{
-    AttributeFlags, HorizontalAlignment, VerticalAlignment, MTextFlag
+    AttributeFlags, HorizontalAlignment, MTextFlag, VerticalAlignment,
 };
+use crate::entities::{Entity, EntityCommon};
 use crate::types::{BoundingBox3D, Color, Handle, LineWeight, Transparency, Vector3};
 use std::f64::consts::PI;
 
@@ -210,12 +210,7 @@ impl AttributeEntity {
     }
 
     /// Apply a transformation from an INSERT entity
-    pub fn apply_insert_transform(
-        &mut self,
-        insert_point: Vector3,
-        scale: Vector3,
-        rotation: f64,
-    ) {
+    pub fn apply_insert_transform(&mut self, insert_point: Vector3, scale: Vector3, rotation: f64) {
         // Scale the position relative to origin
         let scaled = Vector3::new(
             self.insertion_point.x * scale.x,
@@ -234,7 +229,7 @@ impl AttributeEntity {
 
         // Translate to insert point
         self.insertion_point = rotated + insert_point;
-        
+
         // Scale the alignment point similarly
         let scaled_align = Vector3::new(
             self.alignment_point.x * scale.x,
@@ -357,7 +352,7 @@ impl Entity for AttributeEntity {
     fn bounding_box(&self) -> BoundingBox3D {
         let width = self.estimated_width();
         let height = self.height;
-        
+
         BoundingBox3D::new(
             self.insertion_point,
             Vector3::new(
@@ -376,7 +371,7 @@ impl Entity for AttributeEntity {
     fn entity_type(&self) -> &'static str {
         "ATTRIB"
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_attribute_entity(self, transform);
     }
@@ -389,10 +384,7 @@ mod tests {
 
     #[test]
     fn test_attrib_creation() {
-        let attrib = AttributeEntity::new(
-            "TAG".to_string(),
-            "value".to_string(),
-        );
+        let attrib = AttributeEntity::new("TAG".to_string(), "value".to_string());
         assert_eq!(attrib.tag, "TAG");
         assert_eq!(attrib.value, "value");
     }
@@ -411,12 +403,12 @@ mod tests {
             "Enter:".to_string(),
             "default".to_string(),
         );
-        
+
         // With custom value
         let attrib = AttributeEntity::from_definition(&attdef, Some("custom".to_string()));
         assert_eq!(attrib.tag, "TAG");
         assert_eq!(attrib.value, "custom");
-        
+
         // With default value
         let attrib2 = AttributeEntity::from_definition(&attdef, None);
         assert_eq!(attrib2.value, "default");
@@ -441,9 +433,9 @@ mod tests {
         let mut attrib = AttributeEntity::default();
         attrib.insertion_point = Vector3::new(10.0, 20.0, 0.0);
         attrib.alignment_point = Vector3::new(10.0, 20.0, 0.0);
-        
+
         attrib.translate(Vector3::new(5.0, 5.0, 0.0));
-        
+
         assert_eq!(attrib.insertion_point, Vector3::new(15.0, 25.0, 0.0));
         assert_eq!(attrib.alignment_point, Vector3::new(15.0, 25.0, 0.0));
     }
@@ -454,18 +446,18 @@ mod tests {
         attrib.insertion_point = Vector3::new(10.0, 0.0, 0.0);
         attrib.alignment_point = Vector3::new(10.0, 0.0, 0.0);
         attrib.height = 2.5;
-        
+
         // Apply scale of 2x and translate to (100, 100, 0)
         attrib.apply_insert_transform(
             Vector3::new(100.0, 100.0, 0.0),
             Vector3::new(2.0, 2.0, 1.0),
             0.0,
         );
-        
+
         // Position should be (10 * 2 + 100, 0 * 2 + 100, 0) = (120, 100, 0)
         assert!((attrib.insertion_point.x - 120.0).abs() < 1e-10);
         assert!((attrib.insertion_point.y - 100.0).abs() < 1e-10);
-        
+
         // Height should be scaled by average of X and Y scale = 2
         assert!((attrib.height - 5.0).abs() < 1e-10);
     }
@@ -475,15 +467,11 @@ mod tests {
         let mut attrib = AttributeEntity::simple("TAG", "value");
         attrib.insertion_point = Vector3::new(10.0, 0.0, 0.0);
         attrib.alignment_point = Vector3::new(10.0, 0.0, 0.0);
-        
+
         // Apply 90 degree rotation
         let rotation = PI / 2.0;
-        attrib.apply_insert_transform(
-            Vector3::ZERO,
-            Vector3::new(1.0, 1.0, 1.0),
-            rotation,
-        );
-        
+        attrib.apply_insert_transform(Vector3::ZERO, Vector3::new(1.0, 1.0, 1.0), rotation);
+
         // After 90 degree rotation, (10, 0) -> (0, 10)
         assert!(attrib.insertion_point.x.abs() < 1e-10);
         assert!((attrib.insertion_point.y - 10.0).abs() < 1e-10);
@@ -493,7 +481,7 @@ mod tests {
     fn test_attrib_visibility() {
         let mut attrib = AttributeEntity::default();
         assert!(attrib.is_visible());
-        
+
         attrib.flags.invisible = true;
         assert!(!attrib.is_visible());
     }
@@ -506,7 +494,7 @@ mod tests {
             .with_height(5.0)
             .with_rotation_degrees(45.0)
             .with_layer("ATTRIBUTES");
-        
+
         assert_eq!(attrib.value, "test_value");
         assert_eq!(attrib.insertion_point, Vector3::new(10.0, 10.0, 0.0));
         assert_eq!(attrib.height, 5.0);

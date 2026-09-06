@@ -49,5 +49,3 @@ impl TableEntry for AppId {
         self.name == "ACAD"
     }
 }
-
-

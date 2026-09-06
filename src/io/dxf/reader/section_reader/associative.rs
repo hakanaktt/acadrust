@@ -141,11 +141,7 @@ impl<'a> AssocCursor<'a> {
     }
 
     fn point3(&mut self, code: i32) -> Vector3 {
-        Vector3::new(
-            self.f64(code),
-            self.f64(code + 10),
-            self.f64(code + 20),
-        )
+        Vector3::new(self.f64(code), self.f64(code + 10), self.f64(code + 20))
     }
 
     fn peek_code(&self) -> Option<i32> {
@@ -191,17 +187,16 @@ fn read_eval(cursor: &mut AssocCursor<'_>) -> AssocEvalVariant {
         i16::MIN..=-1 | 5 | 105 | 320..=329 | 390..=399 => {
             AssocEvalValue::Handle(cursor.handle(code as i32))
         }
-        0..=9 | 100..=102 | 300..=309 | 410..=419 | 430..=439 | 470..=479
-        | 999 | 1000..=1009 => AssocEvalValue::Text(cursor.text(code as i32)),
+        0..=9 | 100..=102 | 300..=309 | 410..=419 | 430..=439 | 470..=479 | 999 | 1000..=1009 => {
+            AssocEvalValue::Text(cursor.text(code as i32))
+        }
         38..=59 | 140..=149 | 460..=469 | 1040..=1042 => {
             AssocEvalValue::Real(cursor.f64(code as i32))
         }
         60..=79 | 170..=179 | 270..=279 | 370..=389 | 400..=409 | 1070 => {
             AssocEvalValue::Short(cursor.i16(code as i32))
         }
-        80..=99 | 420..=429 | 440..=459 | 1071 => {
-            AssocEvalValue::Long(cursor.i32(code as i32))
-        }
+        80..=99 | 420..=429 | 440..=459 | 1071 => AssocEvalValue::Long(cursor.i32(code as i32)),
         280..=289 => AssocEvalValue::Byte(cursor.i32(code as i32) as u8),
         _ => AssocEvalValue::None,
     };
@@ -287,9 +282,7 @@ fn read_constraint_common(
     }
 }
 
-fn read_constraint_root(
-    cursor: &mut AssocCursor<'_>,
-) -> AssocConstraintNode {
+fn read_constraint_root(cursor: &mut AssocCursor<'_>) -> AssocConstraintNode {
     let node_id = cursor.i32(90);
     let connection_count = cursor.i32(90).max(0).min(100_000);
     let mut connections = Vec::with_capacity(connection_count as usize);
@@ -306,21 +299,12 @@ fn read_constraint_root(
     }
 }
 
-fn read_constraint_geometry(
-    cursor: &mut AssocCursor<'_>,
-) -> (i32, bool, bool) {
-    (
-        cursor.i32(90),
-        cursor.bool(290),
-        cursor.bool(290),
-    )
+fn read_constraint_geometry(cursor: &mut AssocCursor<'_>) -> (i32, bool, bool) {
+    (cursor.i32(90), cursor.bool(290), cursor.bool(290))
 }
 
-fn read_explicit_constraint(
-    cursor: &mut AssocCursor<'_>,
-) -> (i32, bool, bool, Handle, Handle) {
-    let (owner_id, is_implied, is_active) =
-        read_constraint_geometry(cursor);
+fn read_explicit_constraint(cursor: &mut AssocCursor<'_>) -> (i32, bool, bool, Handle, Handle) {
+    let (owner_id, is_implied, is_active) = read_constraint_geometry(cursor);
     (
         owner_id,
         is_implied,
@@ -354,10 +338,7 @@ fn is_dxf_plain_geometrical_constraint(class_name: &str) -> bool {
     )
 }
 
-fn read_constraint_data(
-    cursor: &mut AssocCursor<'_>,
-    class_name: &str,
-) -> AssocConstraintNodeData {
+fn read_constraint_data(cursor: &mut AssocCursor<'_>, class_name: &str) -> AssocConstraintNodeData {
     match class_name.to_ascii_uppercase().as_str() {
         "ACCONSTRAINEDCIRCLE" => AssocConstraintNodeData::Circle {
             geometry_dependency: cursor.handle(330),
@@ -386,9 +367,7 @@ fn read_constraint_data(
         "ACCONSTRAINEDIMPLICITPOINT" => {
             let geometry_dependency = cursor.handle(330);
             let geometry_node_id = cursor.i32(90);
-            let point = if !geometry_dependency.is_null()
-                && cursor.peek_code() == Some(10)
-            {
+            let point = if !geometry_dependency.is_null() && cursor.peek_code() == Some(10) {
                 Some(cursor.point3(10))
             } else {
                 None
@@ -405,9 +384,7 @@ fn read_constraint_data(
         "ACCONSTRAINEDPOINT" => {
             let geometry_dependency = cursor.handle(330);
             let geometry_node_id = cursor.i32(90);
-            let point = if !geometry_dependency.is_null()
-                && cursor.peek_code() == Some(10)
-            {
+            let point = if !geometry_dependency.is_null() && cursor.peek_code() == Some(10) {
                 Some(cursor.point3(10))
             } else {
                 None
@@ -427,25 +404,18 @@ fn read_constraint_data(
             point: cursor.point3(10),
             direction: cursor.point3(10),
         },
-        "ACCONSTRAINEDBOUNDEDLINE" => {
-            AssocConstraintNodeData::BoundedLine {
-                geometry_dependency: cursor.handle(330),
-                geometry_node_id: cursor.i32(90),
-                point: cursor.point3(10),
-                direction: cursor.point3(10),
-                is_ray: cursor.bool(290),
-                start_point: cursor.point3(10),
-                end_point: cursor.point3(11),
-            }
-        }
+        "ACCONSTRAINEDBOUNDEDLINE" => AssocConstraintNodeData::BoundedLine {
+            geometry_dependency: cursor.handle(330),
+            geometry_node_id: cursor.i32(90),
+            point: cursor.point3(10),
+            direction: cursor.point3(10),
+            is_ray: cursor.bool(290),
+            start_point: cursor.point3(10),
+            end_point: cursor.point3(11),
+        },
         "ACANGLECONSTRAINT" | "AC3POINTANGLECONSTRAINT" => {
-            let (
-                owner_id,
-                is_implied,
-                is_active,
-                value_dependency,
-                dimension_dependency,
-            ) = read_explicit_constraint(cursor);
+            let (owner_id, is_implied, is_active, value_dependency, dimension_dependency) =
+                read_explicit_constraint(cursor);
             AssocConstraintNodeData::Angle {
                 owner_id,
                 is_implied,
@@ -456,8 +426,7 @@ fn read_constraint_data(
             }
         }
         "ACPARALLELCONSTRAINT" => {
-            let (owner_id, is_implied, is_active) =
-                read_constraint_geometry(cursor);
+            let (owner_id, is_implied, is_active) = read_constraint_geometry(cursor);
             AssocConstraintNodeData::Parallel {
                 owner_id,
                 is_implied,
@@ -466,13 +435,8 @@ fn read_constraint_data(
             }
         }
         "ACDISTANCECONSTRAINT" => {
-            let (
-                owner_id,
-                is_implied,
-                is_active,
-                value_dependency,
-                dimension_dependency,
-            ) = read_explicit_constraint(cursor);
+            let (owner_id, is_implied, is_active, value_dependency, dimension_dependency) =
+                read_explicit_constraint(cursor);
             let direction_type = cursor.i32(280) as u8;
             AssocConstraintNodeData::Distance {
                 owner_id,
@@ -481,18 +445,12 @@ fn read_constraint_data(
                 value_dependency,
                 dimension_dependency,
                 direction_type,
-                distance: (direction_type != 0)
-                    .then(|| cursor.point3(10)),
+                distance: (direction_type != 0).then(|| cursor.point3(10)),
             }
         }
         "ACRADIUSDIAMETERCONSTRAINT" => {
-            let (
-                owner_id,
-                is_implied,
-                is_active,
-                value_dependency,
-                dimension_dependency,
-            ) = read_explicit_constraint(cursor);
+            let (owner_id, is_implied, is_active, value_dependency, dimension_dependency) =
+                read_explicit_constraint(cursor);
             AssocConstraintNodeData::RadiusDiameter {
                 owner_id,
                 is_implied,
@@ -503,8 +461,7 @@ fn read_constraint_data(
             }
         }
         "ACCONSTRAINEDELLIPSE" => {
-            let (owner_id, is_implied, is_active) =
-                read_constraint_geometry(cursor);
+            let (owner_id, is_implied, is_active) = read_constraint_geometry(cursor);
             AssocConstraintNodeData::Ellipse {
                 owner_id,
                 is_implied,
@@ -515,8 +472,7 @@ fn read_constraint_data(
             }
         }
         "ACCONSTRAINEDBOUNDEDELLIPSE" => {
-            let (owner_id, is_implied, is_active) =
-                read_constraint_geometry(cursor);
+            let (owner_id, is_implied, is_active) = read_constraint_geometry(cursor);
             AssocConstraintNodeData::BoundedEllipse {
                 owner_id,
                 is_implied,
@@ -529,8 +485,7 @@ fn read_constraint_data(
             }
         }
         _ if is_dxf_plain_geometrical_constraint(class_name) => {
-            let (owner_id, is_implied, is_active) =
-                read_constraint_geometry(cursor);
+            let (owner_id, is_implied, is_active) = read_constraint_geometry(cursor);
             AssocConstraintNodeData::Geometrical {
                 owner_id,
                 is_implied,
@@ -793,14 +748,10 @@ fn read_surface(record: &AssocDxfRecord, kind: AssocSurfaceActionKind) -> AssocS
         }
         AssocSurfaceActionKind::Fillet => {
             value.status = record.i16(section, 70, 0);
-            value.first_point = Vector2::new(
-                record.f64(section, 10, 0),
-                record.f64(section, 20, 0),
-            );
-            value.second_point = Vector2::new(
-                record.f64(section, 10, 1),
-                record.f64(section, 20, 1),
-            );
+            value.first_point =
+                Vector2::new(record.f64(section, 10, 0), record.f64(section, 20, 0));
+            value.second_point =
+                Vector2::new(record.f64(section, 10, 1), record.f64(section, 20, 1));
         }
         _ => {}
     }
@@ -875,9 +826,7 @@ fn read_array_parameters(record: &AssocDxfRecord) -> AssocArrayParameters {
     }
 }
 
-fn read_dimension_association_dxf(
-    record: &AssocDxfRecord,
-) -> AssocDimensionAssociation {
+fn read_dimension_association_dxf(record: &AssocDxfRecord) -> AssocDimensionAssociation {
     // AutoCAD writes the dimension handle before the scalar DIMASSOC fields,
     // while dwg2.spec lists it after them. Read it independently so both
     // orderings decode without advancing the positional reference cursor.
@@ -886,8 +835,7 @@ fn read_dimension_association_dxf(
     let associativity = cursor.i32(90);
     let trans_space = cursor.bool(70);
     let rotated_type = cursor.i32(71) as u8;
-    let mut references: [Vec<AssocDimensionReference>; 4] =
-        std::array::from_fn(|_| Vec::new());
+    let mut references: [Vec<AssocDimensionReference>; 4] = std::array::from_fn(|_| Vec::new());
     let mut total_references = 0usize;
     'slots: for slot in 0..4 {
         if associativity & (1 << slot) == 0 {
@@ -900,22 +848,13 @@ fn read_dimension_association_dxf(
             let class_name = cursor.text(1);
             let osnap_type = cursor.i32(72) as u8;
             let xrefs = cursor.consecutive_handles(331);
-            let (main_subent_type, main_gs_marker, xref_paths) =
-                if osnap_type != 0 {
-                    (
-                        cursor.i32(73),
-                        cursor.i32(91),
-                        cursor.consecutive_text(301),
-                    )
-                } else {
-                    (0, 0, Vec::new())
-                };
+            let (main_subent_type, main_gs_marker, xref_paths) = if osnap_type != 0 {
+                (cursor.i32(73), cursor.i32(91), cursor.consecutive_text(301))
+            } else {
+                (0, 0, Vec::new())
+            };
             let osnap_distance = cursor.f64(40);
-            let osnap_point = Vector3::new(
-                cursor.f64(10),
-                cursor.f64(20),
-                cursor.f64(30),
-            );
+            let osnap_point = Vector3::new(cursor.f64(10), cursor.f64(20), cursor.f64(30));
             let (
                 intersection_objects,
                 intersection_subent_type,
@@ -1012,8 +951,7 @@ impl<'a> SectionReader<'a> {
                     record.reactors.push(parse_dxf_handle(&pair.value_string));
                 }
                 360 if group == "{ACAD_XDICTIONARY" => {
-                    record.xdictionary_handle =
-                        Some(parse_dxf_handle(&pair.value_string));
+                    record.xdictionary_handle = Some(parse_dxf_handle(&pair.value_string));
                 }
                 330 if !owner_seen && group.is_empty() && section.is_empty() => {
                     record.owner = parse_dxf_handle(&pair.value_string);
@@ -1032,12 +970,9 @@ impl<'a> SectionReader<'a> {
         }
         let canonical = associative_canonical_name(dxf_name);
         let data = match canonical.as_str() {
-            "ASSOCDEPENDENCY" => {
-                AssociativeData::Dependency(read_dependency(&record))
-            }
+            "ASSOCDEPENDENCY" => AssociativeData::Dependency(read_dependency(&record)),
             "ASSOCVALUEDEPENDENCY" => {
-                let mut cursor =
-                    AssocCursor::new(&record, "AcDbAssocValueDependency");
+                let mut cursor = AssocCursor::new(&record, "AcDbAssocValueDependency");
                 AssociativeData::ValueDependency(AssocValueDependency {
                     dependency: read_dependency(&record),
                     class_version: cursor.i32(90),
@@ -1045,26 +980,23 @@ impl<'a> SectionReader<'a> {
                     value: read_eval(&mut cursor),
                 })
             }
-            "ASSOCGEOMDEPENDENCY" => {
-                AssociativeData::GeomDependency(AssocGeomDependency {
-                    dependency: read_dependency(&record),
-                    class_version: record.i16("AcDbAssocGeomDependency", 90, 0),
-                    enabled: record.bool("AcDbAssocGeomDependency", 290, 0),
-                    persistent_subent: AssocPersistentSubentId {
-                        class_name: {
-                            let value = record.text("AcDbAssocPersSubentId", 1, 0);
-                            if value.is_empty() {
-                                record.text("AcDbAssocAsmBasedEntityPersSubentId", 1, 0)
-                            } else {
-                                value
-                            }
-                        },
-                        dependent_on_compound_object: record
-                            .bool("AcDbAssocPersSubentId", 290, 0)
-                            || record.bool("AcDbAssocAsmBasedEntityPersSubentId", 290, 0),
+            "ASSOCGEOMDEPENDENCY" => AssociativeData::GeomDependency(AssocGeomDependency {
+                dependency: read_dependency(&record),
+                class_version: record.i16("AcDbAssocGeomDependency", 90, 0),
+                enabled: record.bool("AcDbAssocGeomDependency", 290, 0),
+                persistent_subent: AssocPersistentSubentId {
+                    class_name: {
+                        let value = record.text("AcDbAssocPersSubentId", 1, 0);
+                        if value.is_empty() {
+                            record.text("AcDbAssocAsmBasedEntityPersSubentId", 1, 0)
+                        } else {
+                            value
+                        }
                     },
-                })
-            }
+                    dependent_on_compound_object: record.bool("AcDbAssocPersSubentId", 290, 0)
+                        || record.bool("AcDbAssocAsmBasedEntityPersSubentId", 290, 0),
+                },
+            }),
             "ASSOCACTION" => AssociativeData::Action(read_action(&record)),
             "ASSOCNETWORK" => {
                 let mut cursor = AssocCursor::new(&record, "AcDbAssocNetwork");
@@ -1101,20 +1033,16 @@ impl<'a> SectionReader<'a> {
                     owned_actions,
                 })
             }
-            name if surface_kind(name).is_some() => {
-                AssociativeData::SurfaceActionBody(read_surface(
-                    &record,
-                    surface_kind(name).unwrap(),
-                ))
-            }
+            name if surface_kind(name).is_some() => AssociativeData::SurfaceActionBody(
+                read_surface(&record, surface_kind(name).unwrap()),
+            ),
             "ASSOCRESTOREENTITYSTATEACTIONBODY" => {
                 AssociativeData::AnnotationActionBody(AssocAnnotationActionBody {
                     kind: AssocAnnotationKind::RestoreEntityState,
                     action_body: AssocActionBody {
                         version: record.i32("AcDbAssocActionBody", 90, 0),
                     },
-                    class_version: record
-                        .i32("AcDbAssocRestoreEntityStateActionBody", 90, 0),
+                    class_version: record.i32("AcDbAssocRestoreEntityStateActionBody", 90, 0),
                     entity: record.handle("AcDbAssocRestoreEntityStateActionBody", 330, 0),
                     ..AssocAnnotationActionBody::default()
                 })
@@ -1222,10 +1150,12 @@ impl<'a> SectionReader<'a> {
             "ASSOCEDGEACTIONPARAM" => {
                 let single = AssocSingleDependencyActionParam {
                     action_param: read_action_param(&record),
-                    dependency_class_version: record
-                        .i32("AcDbAssocSingleDependencyActionParam", 90, 0),
-                    dependency: record
-                        .handle("AcDbAssocSingleDependencyActionParam", 330, 0),
+                    dependency_class_version: record.i32(
+                        "AcDbAssocSingleDependencyActionParam",
+                        90,
+                        0,
+                    ),
+                    dependency: record.handle("AcDbAssocSingleDependencyActionParam", 330, 0),
                     class_version: record.i32("AcDbAssocEdgeActionParam", 90, 0),
                 };
                 let action_type = record.i32("AcDbAssocEdgeActionParam", 90, 1);
@@ -1246,9 +1176,7 @@ impl<'a> SectionReader<'a> {
                 })
             }
             "ASSOC2DCONSTRAINTGROUP" => {
-                let has_group_section = record
-                    .sections
-                    .contains_key("AcDbAssoc2dConstraintGroup");
+                let has_group_section = record.sections.contains_key("AcDbAssoc2dConstraintGroup");
                 let section = if has_group_section {
                     "AcDbAssoc2dConstraintGroup"
                 } else {
@@ -1277,41 +1205,27 @@ impl<'a> SectionReader<'a> {
                 if node_count > 0 {
                     nodes.push(read_constraint_root(&mut cursor));
                     let after_root = cursor.position;
-                    let registered_count =
-                        cursor.i32(90).max(0).min(100_000);
-                    let has_registry = registered_count <= node_count
-                        && cursor.peek_code() == Some(1);
+                    let registered_count = cursor.i32(90).max(0).min(100_000);
+                    let has_registry =
+                        registered_count <= node_count && cursor.peek_code() == Some(1);
                     if has_registry {
-                        let mut registry =
-                            Vec::with_capacity(registered_count as usize);
+                        let mut registry = Vec::with_capacity(registered_count as usize);
                         for _ in 0..registered_count {
-                            registry.push((
-                                cursor.text(1),
-                                cursor.i32(90),
-                            ));
+                            registry.push((cursor.text(1), cursor.i32(90)));
                         }
                         for (class_name, registry_node_id) in registry {
-                            let mut node = read_constraint_common(
-                                &mut cursor,
-                                dxf_version,
-                            );
+                            let mut node = read_constraint_common(&mut cursor, dxf_version);
                             if node.node_id == 0 {
                                 node.node_id = registry_node_id;
                             }
                             node.class_name = class_name;
-                            node.data = read_constraint_data(
-                                &mut cursor,
-                                &node.class_name,
-                            );
+                            node.data = read_constraint_data(&mut cursor, &node.class_name);
                             nodes.push(node);
                         }
                     } else {
                         cursor.position = after_root;
                         for _ in 1..node_count {
-                            nodes.push(read_constraint_common(
-                                &mut cursor,
-                                dxf_version,
-                            ));
+                            nodes.push(read_constraint_common(&mut cursor, dxf_version));
                         }
                     }
                 }
@@ -1370,7 +1284,9 @@ impl<'a> SectionReader<'a> {
             "ASSOCPOINTREFACTIONPARAM" => {
                 AssociativeData::PointRefActionParam(read_compound(&record))
             }
-            "ASSOCOBJECTACTIONPARAM" | "ASSOCFACEACTIONPARAM" | "ASSOCVERTEXACTIONPARAM"
+            "ASSOCOBJECTACTIONPARAM"
+            | "ASSOCFACEACTIONPARAM"
+            | "ASSOCVERTEXACTIONPARAM"
             | "ASSOCASMBODYACTIONPARAM" => {
                 let (section, class_code) = match canonical.as_str() {
                     "ASSOCFACEACTIONPARAM" => ("AcDbAssocFaceActionParam", 90),
@@ -1380,10 +1296,12 @@ impl<'a> SectionReader<'a> {
                 };
                 let single = AssocSingleDependencyActionParam {
                     action_param: read_action_param(&record),
-                    dependency_class_version: record
-                        .i32("AcDbAssocSingleDependencyActionParam", 90, 0),
-                    dependency: record
-                        .handle("AcDbAssocSingleDependencyActionParam", 330, 0),
+                    dependency_class_version: record.i32(
+                        "AcDbAssocSingleDependencyActionParam",
+                        90,
+                        0,
+                    ),
+                    dependency: record.handle("AcDbAssocSingleDependencyActionParam", 330, 0),
                     class_version: record.i32(section, class_code, 0),
                 };
                 match canonical.as_str() {
@@ -1425,17 +1343,14 @@ impl<'a> SectionReader<'a> {
                     _ => AssociativeData::ObjectActionParam(single),
                 }
             }
-            "ASSOCPATHACTIONPARAM" => {
-                AssociativeData::PathActionParam(AssocPathActionParam {
-                    compound: read_compound(&record),
-                    version: record.i32("AcDbAssocPathActionParam", 90, 0),
-                })
-            }
+            "ASSOCPATHACTIONPARAM" => AssociativeData::PathActionParam(AssocPathActionParam {
+                compound: read_compound(&record),
+                version: record.i32("AcDbAssocPathActionParam", 90, 0),
+            }),
             "ASSOCDIMDEPENDENCYBODY" => {
                 AssociativeData::DimDependencyBody(AssocDimDependencyBody {
                     dependency_body_version: record.i16("AcDbAssocDependencyBody", 90, 0),
-                    base_version: record
-                        .i16("AcDbImpAssocDimDependencyBodyBase", 90, 0),
+                    base_version: record.i16("AcDbImpAssocDimDependencyBodyBase", 90, 0),
                     name: record.text("AcDbImpAssocDimDependencyBodyBase", 1, 0),
                     class_version: record.i16("AcDbAssocDimDependencyBody", 90, 0),
                 })
@@ -1465,17 +1380,12 @@ impl<'a> SectionReader<'a> {
                     transform: matrix,
                 };
                 if canonical == "ASSOCARRAYMODIFYACTIONBODY" {
-                    let mut cursor =
-                        AssocCursor::new(&record, "AcDbAssocArrayModifyActionBody");
+                    let mut cursor = AssocCursor::new(&record, "AcDbAssocArrayModifyActionBody");
                     let status = cursor.i16(70);
                     let count = cursor.i32(90).max(0).min(100_000);
                     let mut item_locations = Vec::with_capacity(count as usize);
                     for _ in 0..count {
-                        item_locations.push([
-                            cursor.i32(90),
-                            cursor.i32(90),
-                            cursor.i32(90),
-                        ]);
+                        item_locations.push([cursor.i32(90), cursor.i32(90), cursor.i32(90)]);
                     }
                     AssociativeData::ArrayModifyActionBody(AssocArrayModifyActionBody {
                         body,
@@ -1488,18 +1398,15 @@ impl<'a> SectionReader<'a> {
             }
             "ASSOCVIEWREPACTIONBODY" => {
                 let section = "AcDbAssocViewRepActionBody";
-                AssociativeData::ViewRepActionBody(
-                    AssocViewRepActionBody {
-                        action_body: AssocActionBody {
-                            version: record
-                                .i32("AcDbAssocActionBody", 90, 0),
-                        },
-                        class_version: record.i16(section, 70, 0),
-                        view_rep: record.handle(section, 360, 0),
-                        view_type: record.i32(section, 90, 0),
-                        rotation: record.f64(section, 40, 0),
+                AssociativeData::ViewRepActionBody(AssocViewRepActionBody {
+                    action_body: AssocActionBody {
+                        version: record.i32("AcDbAssocActionBody", 90, 0),
                     },
-                )
+                    class_version: record.i16(section, 70, 0),
+                    view_rep: record.handle(section, 360, 0),
+                    view_type: record.i32(section, 90, 0),
+                    rotation: record.f64(section, 40, 0),
+                })
             }
             "ASSOCVIEWBORDERACTIONPARAM"
             | "ASSOCVIEWREPACTIONPARAM"
@@ -1523,35 +1430,23 @@ impl<'a> SectionReader<'a> {
                         "AcDbAssocViewBorderActionParam",
                     ),
                 };
-                AssociativeData::ViewObjectActionParam(
-                    AssocViewObjectActionParam {
-                        kind,
-                        single_dependency:
-                            AssocSingleDependencyActionParam {
-                                action_param: read_action_param(&record),
-                                dependency_class_version: record.i32(
-                                    "AcDbAssocSingleDependencyActionParam",
-                                    90,
-                                    0,
-                                ),
-                                dependency: record.handle(
-                                    "AcDbAssocSingleDependencyActionParam",
-                                    330,
-                                    0,
-                                ),
-                                class_version: record.i32(
-                                    "AcDbAssocObjectActionParam",
-                                    90,
-                                    0,
-                                ),
-                            },
-                        class_version: record.i16(section, 70, 0),
+                AssociativeData::ViewObjectActionParam(AssocViewObjectActionParam {
+                    kind,
+                    single_dependency: AssocSingleDependencyActionParam {
+                        action_param: read_action_param(&record),
+                        dependency_class_version: record.i32(
+                            "AcDbAssocSingleDependencyActionParam",
+                            90,
+                            0,
+                        ),
+                        dependency: record.handle("AcDbAssocSingleDependencyActionParam", 330, 0),
+                        class_version: record.i32("AcDbAssocObjectActionParam", 90, 0),
                     },
-                )
+                    class_version: record.i16(section, 70, 0),
+                })
             }
             "ASSOCVIEWREPHATCHMANAGER" => {
-                let mut cursor =
-                    AssocCursor::new(&record, "AcDbAssocViewRepHatchManager");
+                let mut cursor = AssocCursor::new(&record, "AcDbAssocViewRepHatchManager");
                 let class_version = cursor.i16(70);
                 let count = cursor.i32(90).max(0).min(100_000);
                 let mut items = Vec::with_capacity(count as usize);
@@ -1563,87 +1458,56 @@ impl<'a> SectionReader<'a> {
                         parameter: cursor.handle(330),
                     });
                 }
-                AssociativeData::ViewRepHatchManager(
-                    AssocViewRepHatchManager {
-                        compound: read_compound(&record),
-                        class_version,
-                        items,
-                    },
-                )
+                AssociativeData::ViewRepHatchManager(AssocViewRepHatchManager {
+                    compound: read_compound(&record),
+                    class_version,
+                    items,
+                })
             }
             "ASSOCVIEWREPHATCHACTIONPARAM" => {
                 let section = "AcDbAssocViewRepHatchActionParam";
-                AssociativeData::ViewRepHatchActionParam(
-                    AssocViewRepHatchActionParam {
-                        single_dependency:
-                            AssocSingleDependencyActionParam {
-                                action_param: read_action_param(&record),
-                                dependency_class_version: record.i32(
-                                    "AcDbAssocSingleDependencyActionParam",
-                                    90,
-                                    0,
-                                ),
-                                dependency: record.handle(
-                                    "AcDbAssocSingleDependencyActionParam",
-                                    330,
-                                    0,
-                                ),
-                                class_version: record.i32(
-                                    "AcDbAssocObjectActionParam",
-                                    90,
-                                    0,
-                                ),
-                            },
-                        class_version: record.i16(section, 70, 0),
-                        normal: record.point(section, 210, 0),
-                        hatch_index: record.i32(section, 90, 0),
-                        flags: record.i32(section, 90, 1),
+                AssociativeData::ViewRepHatchActionParam(AssocViewRepHatchActionParam {
+                    single_dependency: AssocSingleDependencyActionParam {
+                        action_param: read_action_param(&record),
+                        dependency_class_version: record.i32(
+                            "AcDbAssocSingleDependencyActionParam",
+                            90,
+                            0,
+                        ),
+                        dependency: record.handle("AcDbAssocSingleDependencyActionParam", 330, 0),
+                        class_version: record.i32("AcDbAssocObjectActionParam", 90, 0),
                     },
-                )
+                    class_version: record.i16(section, 70, 0),
+                    normal: record.point(section, 210, 0),
+                    hatch_index: record.i32(section, 90, 0),
+                    flags: record.i32(section, 90, 1),
+                })
             }
             "ASSOCVIEWLABELACTIONPARAM" => {
                 let section = "AcDbAssocViewLabelActionParam";
-                AssociativeData::ViewLabelActionParam(
-                    AssocViewLabelActionParam {
-                        single_dependency:
-                            AssocSingleDependencyActionParam {
-                                action_param: read_action_param(&record),
-                                dependency_class_version: record.i32(
-                                    "AcDbAssocSingleDependencyActionParam",
-                                    90,
-                                    0,
-                                ),
-                                dependency: record.handle(
-                                    "AcDbAssocSingleDependencyActionParam",
-                                    330,
-                                    0,
-                                ),
-                                class_version: record.i32(
-                                    "AcDbAssocObjectActionParam",
-                                    90,
-                                    0,
-                                ),
-                            },
-                        class_version: record.i16(section, 70, 0),
-                        label_version: record.i16(section, 70, 1),
-                        offset: Vector2::new(
-                            record.f64(section, 210, 0),
-                            record.f64(section, 220, 0),
+                AssociativeData::ViewLabelActionParam(AssocViewLabelActionParam {
+                    single_dependency: AssocSingleDependencyActionParam {
+                        action_param: read_action_param(&record),
+                        dependency_class_version: record.i32(
+                            "AcDbAssocSingleDependencyActionParam",
+                            90,
+                            0,
                         ),
-                        flag: record.byte(section, 280, 0),
+                        dependency: record.handle("AcDbAssocSingleDependencyActionParam", 330, 0),
+                        class_version: record.i32("AcDbAssocObjectActionParam", 90, 0),
                     },
-                )
+                    class_version: record.i16(section, 70, 0),
+                    label_version: record.i16(section, 70, 1),
+                    offset: Vector2::new(record.f64(section, 210, 0), record.f64(section, 220, 0)),
+                    flag: record.byte(section, 280, 0),
+                })
             }
             "DIMASSOC" => {
-                AssociativeData::DimensionAssociation(
-                    read_dimension_association_dxf(&record),
-                )
+                AssociativeData::DimensionAssociation(read_dimension_association_dxf(&record))
             }
-            "PERSUBENTMGR" => {
-                AssociativeData::PersSubentManagerStatic(
-                    read_static_pers_subent_manager_dxf(&record),
-                )
-            }
+            "PERSUBENTMGR" => AssociativeData::PersSubentManagerStatic(
+                read_static_pers_subent_manager_dxf(&record),
+            ),
             _ => AssociativeData::Unknown,
         };
         Ok(AssociativeObject {

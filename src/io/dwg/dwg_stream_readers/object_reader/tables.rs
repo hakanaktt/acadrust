@@ -7,10 +7,10 @@
 //!
 //! Based on the reference `DwgObjectReader.cs` table entry methods.
 
-use crate::io::dwg::dwg_version::DwgVersion;
-use crate::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
-use crate::types::{DxfVersion, Color, Vector2, Vector3};
 use super::safe_count;
+use crate::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
+use crate::io::dwg::dwg_version::DwgVersion;
+use crate::types::{Color, DxfVersion, Vector2, Vector3};
 
 // ════════════════════════════════════════════════════════════════════════
 //  Result structs for each table entry type
@@ -407,10 +407,7 @@ struct XrefTableFlags {
     dependent: bool,
 }
 
-fn read_xref_table_flags(
-    reader: &mut DwgMergedReader,
-    version: DwgVersion,
-) -> XrefTableFlags {
+fn read_xref_table_flags(reader: &mut DwgMergedReader, version: DwgVersion) -> XrefTableFlags {
     if version.r2007_plus() {
         let resolved = reader.read_bit_short() == 256;
         XrefTableFlags {
@@ -432,9 +429,7 @@ fn read_xref_dependant_bits(reader: &mut DwgMergedReader, version: DwgVersion) -
 }
 
 /// Read a generic table control object (after non-entity common data).
-pub fn read_table_control(
-    reader: &mut DwgMergedReader,
-) -> TableControlData {
+pub fn read_table_control(reader: &mut DwgMergedReader) -> TableControlData {
     let entry_count = safe_count(reader.read_bit_long());
     let mut entry_handles = Vec::new();
     for _ in 0..entry_count {
@@ -486,9 +481,7 @@ pub fn read_vx_table_record(reader: &mut DwgMergedReader) -> VxTableRecordData {
 }
 
 /// Read BLOCK_CONTROL data (special: has *Model_Space and *Paper_Space).
-pub fn read_block_control(
-    reader: &mut DwgMergedReader,
-) -> BlockControlData {
+pub fn read_block_control(reader: &mut DwgMergedReader) -> BlockControlData {
     let entry_count = safe_count(reader.read_bit_long());
     let mut entry_handles = Vec::new();
     for _ in 0..entry_count {
@@ -569,17 +562,27 @@ pub fn read_layer(
     };
 
     LayerData {
-        name, frozen, off, frozen_in_new_vp, locked, plottable,
-        line_weight, color, color_name, book_name, xref_dependent, xref_handle, plotstyle_handle,
-        material_handle, linetype_handle, unknown_handle,
+        name,
+        frozen,
+        off,
+        frozen_in_new_vp,
+        locked,
+        plottable,
+        line_weight,
+        color,
+        color_name,
+        book_name,
+        xref_dependent,
+        xref_handle,
+        plotstyle_handle,
+        material_handle,
+        linetype_handle,
+        unknown_handle,
     }
 }
 
 /// Read text STYLE table entry data.
-pub fn read_text_style(
-    reader: &mut DwgMergedReader,
-    version: DwgVersion,
-) -> TextStyleData {
+pub fn read_text_style(reader: &mut DwgMergedReader, version: DwgVersion) -> TextStyleData {
     let name = reader.read_variable_text();
     let xref_dependent = read_xref_dependant_bits(reader, version);
 
@@ -596,9 +599,18 @@ pub fn read_text_style(
     let xref_handle = reader.read_handle();
 
     TextStyleData {
-        name, is_shape_file, is_vertical, height, width_factor,
-        oblique_angle, generation, last_height, font_file,
-        big_font_file, xref_dependent, xref_handle,
+        name,
+        is_shape_file,
+        is_vertical,
+        height,
+        width_factor,
+        oblique_angle,
+        generation,
+        last_height,
+        font_file,
+        big_font_file,
+        xref_dependent,
+        xref_handle,
     }
 }
 
@@ -649,10 +661,7 @@ fn extract_text_strings(
 }
 
 /// Read LTYPE table entry data.
-pub fn read_linetype(
-    reader: &mut DwgMergedReader,
-    version: DwgVersion,
-) -> LinetypeData {
+pub fn read_linetype(reader: &mut DwgMergedReader, version: DwgVersion) -> LinetypeData {
     let name = reader.read_variable_text();
     let xref_dependent = read_xref_dependant_bits(reader, version);
 
@@ -671,8 +680,13 @@ pub fn read_linetype(
         let rotation = reader.read_bit_double();
         let dwg_flags = reader.read_bit_short();
         segments.push(LinetypeSegment {
-            length, shape_number, offset_x, offset_y,
-            scale, rotation, dwg_flags,
+            length,
+            shape_number,
+            offset_x,
+            offset_y,
+            scale,
+            rotation,
+            dwg_flags,
             text: String::new(),
         });
     }
@@ -711,16 +725,19 @@ pub fn read_linetype(
     }
 
     LinetypeData {
-        name, description, pattern_length, alignment,
-        segments, xref_dependent, xref_handle, shape_handles,
+        name,
+        description,
+        pattern_length,
+        alignment,
+        segments,
+        xref_dependent,
+        xref_handle,
+        shape_handles,
     }
 }
 
 /// Read VIEW table entry data.
-pub fn read_view(
-    reader: &mut DwgMergedReader,
-    version: DwgVersion,
-) -> ViewData {
+pub fn read_view(reader: &mut DwgMergedReader, version: DwgVersion) -> ViewData {
     let name = reader.read_variable_text();
     let xref = read_xref_table_flags(reader, version);
 
@@ -762,44 +779,35 @@ pub fn read_view(
     let paper_space = reader.read_bit();
 
     let ucs_associated = version.r2000_plus() && reader.read_bit();
-    let (ucs_origin, ucs_x_axis, ucs_y_axis, ucs_elevation, ucs_ortho_type) =
-        if ucs_associated {
-            (
-                reader.read_3bit_double(),
-                reader.read_3bit_double(),
-                reader.read_3bit_double(),
-                reader.read_bit_double(),
-                reader.read_bit_short(),
-            )
-        } else {
-            (
-                Vector3::ZERO,
-                Vector3::UNIT_X,
-                Vector3::UNIT_Y,
-                0.0,
-                0,
-            )
-        };
+    let (ucs_origin, ucs_x_axis, ucs_y_axis, ucs_elevation, ucs_ortho_type) = if ucs_associated {
+        (
+            reader.read_3bit_double(),
+            reader.read_3bit_double(),
+            reader.read_3bit_double(),
+            reader.read_bit_double(),
+            reader.read_bit_short(),
+        )
+    } else {
+        (Vector3::ZERO, Vector3::UNIT_X, Vector3::UNIT_Y, 0.0, 0)
+    };
     let camera_plottable = version.r2007_plus() && reader.read_bit();
 
     // Handles are consumed in their object-handle-stream order.
     let xref_handle = reader.read_handle();
-    let (background_handle, visual_style_handle, sun_handle) =
-        if version.r2007_plus() {
-            (
-                reader.read_handle(),
-                reader.read_handle(),
-                reader.read_handle(),
-            )
-        } else {
-            (0, 0, 0)
-        };
-    let (base_ucs_handle, named_ucs_handle) =
-        if version.r2000_plus() && ucs_associated {
-            (reader.read_handle(), reader.read_handle())
-        } else {
-            (0, 0)
-        };
+    let (background_handle, visual_style_handle, sun_handle) = if version.r2007_plus() {
+        (
+            reader.read_handle(),
+            reader.read_handle(),
+            reader.read_handle(),
+        )
+    } else {
+        (0, 0, 0)
+    };
+    let (base_ucs_handle, named_ucs_handle) = if version.r2000_plus() && ucs_associated {
+        (reader.read_handle(), reader.read_handle())
+    } else {
+        (0, 0)
+    };
     let live_section_handle = if version.r2007_plus() {
         reader.read_handle()
     } else {
@@ -813,9 +821,19 @@ pub fn read_view(
         xref_resolved: xref.resolved,
         xref_dependent: xref.dependent,
         xref_handle,
-        height, width, center, target, direction,
-        twist_angle, lens_length, front_clip, back_clip,
-        perspective, front_clipping, back_clipping, front_clip_z,
+        height,
+        width,
+        center,
+        target,
+        direction,
+        twist_angle,
+        lens_length,
+        front_clip,
+        back_clip,
+        perspective,
+        front_clipping,
+        back_clipping,
+        front_clip_z,
         render_mode,
         use_default_lights,
         default_lighting_type,
@@ -841,10 +859,7 @@ pub fn read_view(
 }
 
 /// Read UCS table entry data.
-pub fn read_ucs(
-    reader: &mut DwgMergedReader,
-    version: DwgVersion,
-) -> UcsData {
+pub fn read_ucs(reader: &mut DwgMergedReader, version: DwgVersion) -> UcsData {
     let name = reader.read_variable_text();
     let xref = read_xref_table_flags(reader, version);
 
@@ -887,10 +902,7 @@ pub fn read_ucs(
 }
 
 /// Read VPORT table entry data.
-pub fn read_vport(
-    reader: &mut DwgMergedReader,
-    version: DwgVersion,
-) -> VPortData {
+pub fn read_vport(reader: &mut DwgMergedReader, version: DwgVersion) -> VPortData {
     let name = reader.read_variable_text();
     let xref = read_xref_table_flags(reader, version);
 
@@ -991,16 +1003,15 @@ pub fn read_vport(
     let xref_handle = reader.read_handle();
 
     // R2007+: extra handles
-    let (background_handle, visual_style_handle, sun_handle) =
-        if version.r2007_plus() {
-            (
-                reader.read_handle(),
-                reader.read_handle(),
-                reader.read_handle(),
-            )
-        } else {
-            (0, 0, 0)
-        };
+    let (background_handle, visual_style_handle, sun_handle) = if version.r2007_plus() {
+        (
+            reader.read_handle(),
+            reader.read_handle(),
+            reader.read_handle(),
+        )
+    } else {
+        (0, 0, 0)
+    };
 
     // R2000+: UCS handles
     let (named_ucs_handle, base_ucs_handle) = if version.r2000_plus() {
@@ -1067,10 +1078,7 @@ pub fn read_vport(
 }
 
 /// Read APPID table entry data.
-pub fn read_appid(
-    reader: &mut DwgMergedReader,
-    version: DwgVersion,
-) -> AppIdData {
+pub fn read_appid(reader: &mut DwgMergedReader, version: DwgVersion) -> AppIdData {
     let name = reader.read_variable_text();
     read_xref_dependant_bits(reader, version);
 
@@ -1078,7 +1086,9 @@ pub fn read_appid(
     let xref_handle = reader.read_handle();
 
     AppIdData {
-        name, unknown_byte, xref_handle,
+        name,
+        unknown_byte,
+        xref_handle,
     }
 }
 
@@ -1097,32 +1107,87 @@ pub fn read_dimstyle(
         xref_reference: xref.reference,
         xref_resolved: xref.resolved,
         xref_dependent: xref.dependent,
-        dimpost: String::new(), dimapost: String::new(),
-        dimscale: 1.0, dimasz: 0.18, dimexo: 0.0625, dimdli: 0.38,
-        dimexe: 0.18, dimrnd: 0.0, dimdle: 0.0, dimtp: 0.0, dimtm: 0.0,
-        dimtol: false, dimlim: false, dimtih: true, dimtoh: true,
-        dimse1: false, dimse2: false, dimtad: 0, dimzin: 0, dimazin: 0,
-        dimtxt: 0.18, dimcen: 0.09, dimtsz: 0.0, dimaltf: 25.4,
-        dimlfac: 1.0, dimtvp: 0.0, dimtfac: 1.0, dimgap: 0.09,
-        dimaltrnd: 0.0, dimalt: false, dimaltd: 2, dimtofl: false,
-        dimsah: false, dimtix: false, dimsoxd: false,
-        dimclrd: Color::from_index(0), dimclre: Color::from_index(0),
+        dimpost: String::new(),
+        dimapost: String::new(),
+        dimscale: 1.0,
+        dimasz: 0.18,
+        dimexo: 0.0625,
+        dimdli: 0.38,
+        dimexe: 0.18,
+        dimrnd: 0.0,
+        dimdle: 0.0,
+        dimtp: 0.0,
+        dimtm: 0.0,
+        dimtol: false,
+        dimlim: false,
+        dimtih: true,
+        dimtoh: true,
+        dimse1: false,
+        dimse2: false,
+        dimtad: 0,
+        dimzin: 0,
+        dimazin: 0,
+        dimtxt: 0.18,
+        dimcen: 0.09,
+        dimtsz: 0.0,
+        dimaltf: 25.4,
+        dimlfac: 1.0,
+        dimtvp: 0.0,
+        dimtfac: 1.0,
+        dimgap: 0.09,
+        dimaltrnd: 0.0,
+        dimalt: false,
+        dimaltd: 2,
+        dimtofl: false,
+        dimsah: false,
+        dimtix: false,
+        dimsoxd: false,
+        dimclrd: Color::from_index(0),
+        dimclre: Color::from_index(0),
         dimclrt: Color::from_index(0),
-        dimadec: 0, dimdec: 4, dimtdec: 4,
-        dimaltu: 2, dimalttd: 2, dimaunit: 0, dimfrac: 0,
-        dimlunit: 2, dimdsep: 46, dimtmove: 0, dimjust: 0,
-        dimsd1: false, dimsd2: false, dimtolj: 1, dimtzin: 0,
-        dimaltz: 0, dimalttz: 0, dimupt: false, dimfit: 0,
-        dimatfit: 3, dimunit: 2,
-        dimlwd: 0, dimlwe: 0,
-        xref_handle: 0, dimtxsty_handle: 0,
-        dimldrblk_handle: None, dimblk_handle: None,
-        dimblk1_handle: None, dimblk2_handle: None,
-        dimltype_handle: 0, dimltex1_handle: 0, dimltex2_handle: 0,
-        dimfxl: 0.0, dimjogang: 0.0, dimtfill: 0, dimtfillclr: Color::from_index(0),
-        dimarcsym: 0, dimfxlon: false, dimtxtdirection: false,
-        dimaltmzf: 0.0, dimaltmzs: String::new(),
-        dimmzf: 0.0, dimmzs: String::new(),
+        dimadec: 0,
+        dimdec: 4,
+        dimtdec: 4,
+        dimaltu: 2,
+        dimalttd: 2,
+        dimaunit: 0,
+        dimfrac: 0,
+        dimlunit: 2,
+        dimdsep: 46,
+        dimtmove: 0,
+        dimjust: 0,
+        dimsd1: false,
+        dimsd2: false,
+        dimtolj: 1,
+        dimtzin: 0,
+        dimaltz: 0,
+        dimalttz: 0,
+        dimupt: false,
+        dimfit: 0,
+        dimatfit: 3,
+        dimunit: 2,
+        dimlwd: 0,
+        dimlwe: 0,
+        xref_handle: 0,
+        dimtxsty_handle: 0,
+        dimldrblk_handle: None,
+        dimblk_handle: None,
+        dimblk1_handle: None,
+        dimblk2_handle: None,
+        dimltype_handle: 0,
+        dimltex1_handle: 0,
+        dimltex2_handle: 0,
+        dimfxl: 0.0,
+        dimjogang: 0.0,
+        dimtfill: 0,
+        dimtfillclr: Color::from_index(0),
+        dimarcsym: 0,
+        dimfxlon: false,
+        dimtxtdirection: false,
+        dimaltmzf: 0.0,
+        dimaltmzs: String::new(),
+        dimmzf: 0.0,
+        dimmzs: String::new(),
         dimblk_name: String::new(),
         dimblk1_name: String::new(),
         dimblk2_name: String::new(),
@@ -1318,10 +1383,7 @@ pub fn read_dimstyle(
 }
 
 /// Read BLOCK_HEADER (block record) table entry data.
-pub fn read_block_header(
-    reader: &mut DwgMergedReader,
-    version: DwgVersion,
-) -> BlockHeaderData {
+pub fn read_block_header(reader: &mut DwgMergedReader, version: DwgVersion) -> BlockHeaderData {
     let name = reader.read_variable_text();
     read_xref_dependant_bits(reader, version);
 
@@ -1353,7 +1415,9 @@ pub fn read_block_header(
         // Insert count bytes — read until 0
         loop {
             let b = reader.read_byte();
-            if b == 0 { break; }
+            if b == 0 {
+                break;
+            }
             insert_count_bytes.push(b);
         }
 
@@ -1416,11 +1480,28 @@ pub fn read_block_header(
     };
 
     BlockHeaderData {
-        name, anonymous, has_attributes, is_xref, is_xref_overlay,
-        is_loaded, owned_object_count, base_point, xref_path,
-        description, preview_data_size, insert_count_bytes, preview_data,
-        insert_handles, units, explodable, scale_uniformly, null_handle,
-        block_entity_handle, entity_handles, endblk_handle, layout_handle,
+        name,
+        anonymous,
+        has_attributes,
+        is_xref,
+        is_xref_overlay,
+        is_loaded,
+        owned_object_count,
+        base_point,
+        xref_path,
+        description,
+        preview_data_size,
+        insert_count_bytes,
+        preview_data,
+        insert_handles,
+        units,
+        explodable,
+        scale_uniformly,
+        null_handle,
+        block_entity_handle,
+        entity_handles,
+        endblk_handle,
+        layout_handle,
     }
 }
 
@@ -1447,9 +1528,7 @@ pub struct VPortEntityHeaderData {
 
 /// Read VPORT_ENTITY_CONTROL (type 70) — R13-R14 viewport entity control.
 /// Same structure as a generic table control.
-pub fn read_vport_entity_control(
-    reader: &mut DwgMergedReader,
-) -> VPortEntityControlData {
+pub fn read_vport_entity_control(reader: &mut DwgMergedReader) -> VPortEntityControlData {
     let entry_count = safe_count(reader.read_bit_long());
     let mut entry_handles = Vec::new();
     for _ in 0..entry_count {
@@ -1486,14 +1565,18 @@ pub fn read_vport_entity_header(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::dwg::dwg_version::DwgVersion;
-    use crate::io::dwg::dwg_stream_writers::merged_writer::DwgMergedWriter;
     use crate::io::dwg::dwg_reference_type::DwgReferenceType;
+    use crate::io::dwg::dwg_stream_writers::merged_writer::DwgMergedWriter;
+    use crate::io::dwg::dwg_version::DwgVersion;
 
     /// Helper: write merged data with a writer, produce a reader.
     /// Uses the writer's handle_start_bits to properly set up the reader's
     /// handle stream position.
-    fn make_reader(dwg: DwgVersion, dxf: DxfVersion, f: impl FnOnce(&mut DwgMergedWriter)) -> DwgMergedReader {
+    fn make_reader(
+        dwg: DwgVersion,
+        dxf: DxfVersion,
+        f: impl FnOnce(&mut DwgMergedWriter),
+    ) -> DwgMergedReader {
         let mut writer = DwgMergedWriter::new(dwg, dxf);
         f(&mut writer);
         let data = writer.merge();
@@ -1549,9 +1632,9 @@ mod tests {
             w.write_bit(false); // xref_64
             w.write_bit_short(0); // xrefindex+1
             w.write_bit(false); // xref_dep
-            // R2000+: packed values (lineweight=0, frozen=0, off=0, locked=0, plottable=1)
+                                // R2000+: packed values (lineweight=0, frozen=0, off=0, locked=0, plottable=1)
             w.write_bit_short(0b10000); // plottable only
-            // Color
+                                        // Color
             w.write_cm_color(&Color::from_index(7));
             // Xref handle
             w.write_handle(DwgReferenceType::HardPointer, 0);

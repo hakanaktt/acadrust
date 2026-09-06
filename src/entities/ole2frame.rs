@@ -97,21 +97,11 @@ impl Ole2Frame {
         Vector3,
         Vector3,
     ) {
-        let mut storage =
-            crate::compound_file::StructuredStoragePayload::decode(data);
-        let leading =
-            crate::compound_file::BinaryRecord::join(&storage.leading_records);
-        let default = (
-            Vector3::new(1.0, 1.0, 0.0),
-            Vector3::new(0.0, 0.0, 0.0),
-        );
+        let mut storage = crate::compound_file::StructuredStoragePayload::decode(data);
+        let leading = crate::compound_file::BinaryRecord::join(&storage.leading_records);
+        let default = (Vector3::new(1.0, 1.0, 0.0), Vector3::new(0.0, 0.0, 0.0));
         if leading.len() < 98 {
-            return (
-                storage,
-                OleFrameEnvelope::None,
-                default.0,
-                default.1,
-            );
+            return (storage, OleFrameEnvelope::None, default.0, default.1);
         }
         let read_f64 = |offset: usize| {
             leading
@@ -133,17 +123,11 @@ impl Ole2Frame {
             read_f64(82),
             read_f64(90),
         ];
-        let Some(values) = values
-            .into_iter()
-            .collect::<Option<Vec<f64>>>()
-        else {
-            let records =
-                std::mem::take(&mut storage.leading_records);
+        let Some(values) = values.into_iter().collect::<Option<Vec<f64>>>() else {
+            let records = std::mem::take(&mut storage.leading_records);
             return (
                 storage,
-                OleFrameEnvelope::Legacy {
-                    records,
-                },
+                OleFrameEnvelope::Legacy { records },
                 default.0,
                 default.1,
             );
@@ -152,21 +136,17 @@ impl Ole2Frame {
             .iter()
             .all(|value| value.is_finite() && value.abs() < 1e15);
         let close = |left: f64, right: f64| {
-            (left - right).abs()
-                <= 1e-6 * (1.0 + left.abs().max(right.abs()))
+            (left - right).abs() <= 1e-6 * (1.0 + left.abs().max(right.abs()))
         };
         let rectangle = close(values[1], values[4])
             && close(values[7], values[10])
             && close(values[0], values[9])
             && close(values[3], values[6]);
         if !finite || !rectangle {
-            let records =
-                std::mem::take(&mut storage.leading_records);
+            let records = std::mem::take(&mut storage.leading_records);
             return (
                 storage,
-                OleFrameEnvelope::Legacy {
-                    records,
-                },
+                OleFrameEnvelope::Legacy { records },
                 default.0,
                 default.1,
             );
@@ -176,10 +156,7 @@ impl Ole2Frame {
             storage,
             OleFrameEnvelope::Geometry {
                 marker: u16::from_le_bytes([leading[0], leading[1]]),
-                extension_records: crate::compound_file::BinaryRecord::split(
-                    &leading[98..],
-                    4096,
-                ),
+                extension_records: crate::compound_file::BinaryRecord::split(&leading[98..], 4096),
             },
             Vector3::new(values[0], values[1], values[2]),
             Vector3::new(values[6], values[7], values[8]),
@@ -217,11 +194,9 @@ impl Ole2Frame {
                     bytes.extend_from_slice(&point.y.to_le_bytes());
                     bytes.extend_from_slice(&point.z.to_le_bytes());
                 }
-                bytes.extend_from_slice(
-                    &crate::compound_file::BinaryRecord::join(
-                        extension_records,
-                    ),
-                );
+                bytes.extend_from_slice(&crate::compound_file::BinaryRecord::join(
+                    extension_records,
+                ));
                 bytes
             }
         };
@@ -237,18 +212,42 @@ impl Default for Ole2Frame {
 }
 
 impl Entity for Ole2Frame {
-    fn handle(&self) -> Handle { self.common.handle }
-    fn set_handle(&mut self, handle: Handle) { self.common.handle = handle; }
-    fn layer(&self) -> &str { &self.common.layer }
-    fn set_layer(&mut self, layer: String) { self.common.layer = layer; }
-    fn color(&self) -> Color { self.common.color }
-    fn set_color(&mut self, color: Color) { self.common.color = color; }
-    fn line_weight(&self) -> LineWeight { self.common.line_weight }
-    fn set_line_weight(&mut self, weight: LineWeight) { self.common.line_weight = weight; }
-    fn transparency(&self) -> Transparency { self.common.transparency }
-    fn set_transparency(&mut self, transparency: Transparency) { self.common.transparency = transparency; }
-    fn is_invisible(&self) -> bool { self.common.invisible }
-    fn set_invisible(&mut self, invisible: bool) { self.common.invisible = invisible; }
+    fn handle(&self) -> Handle {
+        self.common.handle
+    }
+    fn set_handle(&mut self, handle: Handle) {
+        self.common.handle = handle;
+    }
+    fn layer(&self) -> &str {
+        &self.common.layer
+    }
+    fn set_layer(&mut self, layer: String) {
+        self.common.layer = layer;
+    }
+    fn color(&self) -> Color {
+        self.common.color
+    }
+    fn set_color(&mut self, color: Color) {
+        self.common.color = color;
+    }
+    fn line_weight(&self) -> LineWeight {
+        self.common.line_weight
+    }
+    fn set_line_weight(&mut self, weight: LineWeight) {
+        self.common.line_weight = weight;
+    }
+    fn transparency(&self) -> Transparency {
+        self.common.transparency
+    }
+    fn set_transparency(&mut self, transparency: Transparency) {
+        self.common.transparency = transparency;
+    }
+    fn is_invisible(&self) -> bool {
+        self.common.invisible
+    }
+    fn set_invisible(&mut self, invisible: bool) {
+        self.common.invisible = invisible;
+    }
     fn bounding_box(&self) -> BoundingBox3D {
         BoundingBox3D::from_points(&[self.upper_left_corner, self.lower_right_corner])
             .unwrap_or_else(|| BoundingBox3D::from_point(self.upper_left_corner))
@@ -256,7 +255,9 @@ impl Entity for Ole2Frame {
     fn translate(&mut self, offset: Vector3) {
         super::translate::translate_ole2frame(self, offset);
     }
-    fn entity_type(&self) -> &'static str { "OLE2FRAME" }
+    fn entity_type(&self) -> &'static str {
+        "OLE2FRAME"
+    }
     fn apply_transform(&mut self, transform: &Transform) {
         super::transform::transform_ole2frame(self, transform);
     }

@@ -186,7 +186,9 @@ impl Entity for LwPolyline {
             .iter()
             .map(|v| Vector3::new(v.location.x, v.location.y, self.elevation))
             .collect();
-        BoundingBox3D::from_points(&points).unwrap().ocs_to_wcs(self.normal)
+        BoundingBox3D::from_points(&points)
+            .unwrap()
+            .ocs_to_wcs(self.normal)
     }
 
     fn translate(&mut self, offset: Vector3) {
@@ -196,11 +198,11 @@ impl Entity for LwPolyline {
     fn entity_type(&self) -> &'static str {
         "LWPOLYLINE"
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_lwpolyline(self, transform);
     }
-    
+
     fn apply_mirror(&mut self, transform: &crate::types::Transform) {
         super::mirror::mirror_lwpolyline(self, transform);
     }

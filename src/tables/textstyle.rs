@@ -195,12 +195,11 @@ mod tests {
         let mut style = TextStyle::new("Test");
         assert!(!style.is_backward());
         assert!(!style.is_upside_down());
-        
+
         style.set_backward(true);
         assert!(style.is_backward());
-        
+
         style.set_upside_down(true);
         assert!(style.is_upside_down());
     }
 }
-

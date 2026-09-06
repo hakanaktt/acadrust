@@ -138,7 +138,12 @@ fn rs_generator_poly(nsym: usize, fcr: usize, gf: &GfTables) -> Vec<u8> {
 /// Returns a 255-byte codeword: `[data (padded to k) | parity (nsym)]`.
 fn rs_encode_block(data: &[u8], nsym: usize, gen: &[u8], gf: &GfTables) -> [u8; RS_N] {
     let k = RS_N - nsym;
-    debug_assert!(data.len() <= k, "data block too large for RS({}, {})", RS_N, k);
+    debug_assert!(
+        data.len() <= k,
+        "data block too large for RS({}, {})",
+        RS_N,
+        k
+    );
     debug_assert_eq!(gen.len(), nsym + 1);
 
     // Working buffer: data in the first k positions, parity in the last nsym.
@@ -154,7 +159,7 @@ fn rs_encode_block(data: &[u8], nsym: usize, gen: &[u8], gf: &GfTables) -> [u8; 
     // gen is stored in descending-degree order: gen[0]=1, gen[nsym]=constant.
     for i in 0..k {
         let feedback = cw[i] ^ cw[k]; // cw[k] is parity[0] (shift register head)
-        // Shift the parity register left and fold in the generator.
+                                      // Shift the parity register left and fold in the generator.
         if feedback != 0 {
             for j in 0..nsym - 1 {
                 cw[k + j] = cw[k + j + 1] ^ gf.mul(feedback, gen[j + 1]);
@@ -317,7 +322,11 @@ pub fn reed_solomon_encode_compact(data: &[u8], block_size: usize) -> Vec<u8> {
     let nsym = 255 - block_size;
     let gf = GfTables::new(RS_DATA_PRIM_POLY);
     let gen = rs_generator_poly(nsym, rs_fcr_for_block_size(block_size), &gf);
-    let n_blocks = if data.is_empty() { 0 } else { (data.len() + block_size - 1) / block_size };
+    let n_blocks = if data.is_empty() {
+        0
+    } else {
+        (data.len() + block_size - 1) / block_size
+    };
 
     let mut result = Vec::with_capacity(data.len() + n_blocks * nsym);
 
@@ -465,7 +474,7 @@ mod tests {
 
         for i in 0..nsym {
             let alpha_i = gf.exp[(fcr + i) % RS_N]; // root
-            // Evaluate g(alpha_i) using Horner's method.
+                                                    // Evaluate g(alpha_i) using Horner's method.
             let mut val: u8 = 0;
             for &coeff in &gen {
                 val = gf.mul(val, alpha_i) ^ coeff;
@@ -559,9 +568,7 @@ mod tests {
     #[test]
     fn test_roundtrip_factor3_system_pages() {
         // File header configuration: RS(255,239), factor=3.
-        let data: Vec<u8> = (0..3 * RS_SYSTEM_K)
-            .map(|i| (i & 0xFF) as u8)
-            .collect();
+        let data: Vec<u8> = (0..3 * RS_SYSTEM_K).map(|i| (i & 0xFF) as u8).collect();
         let mut encoded = vec![0u8; 3 * RS_N]; // 765
         reed_solomon_encode(&data, &mut encoded, 3, RS_SYSTEM_K, RS_SYSTEM_PRIM_POLY);
 
@@ -593,7 +600,13 @@ mod tests {
         assert_eq!(factor, 3);
 
         let mut encoded = vec![0u8; factor * RS_N];
-        reed_solomon_encode(&data, &mut encoded, factor, RS_SYSTEM_K, RS_SYSTEM_PRIM_POLY);
+        reed_solomon_encode(
+            &data,
+            &mut encoded,
+            factor,
+            RS_SYSTEM_K,
+            RS_SYSTEM_PRIM_POLY,
+        );
 
         // The decoder outputs factor * block_size bytes, but only the first
         // data.len() bytes are meaningful.
@@ -615,7 +628,13 @@ mod tests {
 
         // Encode into the first 765 bytes of the page.
         let encoded_len = 3 * RS_N; // 765
-        reed_solomon_encode(&data, &mut page[..encoded_len], 3, RS_SYSTEM_K, RS_SYSTEM_PRIM_POLY);
+        reed_solomon_encode(
+            &data,
+            &mut page[..encoded_len],
+            3,
+            RS_SYSTEM_K,
+            RS_SYSTEM_PRIM_POLY,
+        );
 
         // Decode from the full 0x400-byte page (as the reader does).
         let mut decoded = vec![0u8; 3 * RS_SYSTEM_K]; // 717
@@ -660,7 +679,9 @@ mod tests {
         let gen = rs_generator_poly(nsym, fcr, &gf);
 
         // Random-ish data.
-        let data: Vec<u8> = (0..RS_SYSTEM_K).map(|i| ((i * 37 + 5) & 0xFF) as u8).collect();
+        let data: Vec<u8> = (0..RS_SYSTEM_K)
+            .map(|i| ((i * 37 + 5) & 0xFF) as u8)
+            .collect();
         let cw = rs_encode_block(&data, nsym, &gen, &gf);
 
         for r in 0..nsym {
@@ -680,10 +701,9 @@ mod tests {
         // LibreDWG's f256_power[] table (first 32 entries) for polynomial 0x169.
         // Source: LibreDWG/src/reedsolomon.c
         let libredwg_power: [u8; 32] = [
-            0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80,
-            0x69, 0xd2, 0xcd, 0xf3, 0x8f, 0x77, 0xee, 0xb5,
-            0x03, 0x06, 0x0c, 0x18, 0x30, 0x60, 0xc0, 0xe9,
-            0xbb, 0x1f, 0x3e, 0x7c, 0xf8, 0x99, 0x5b, 0xb6,
+            0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x69, 0xd2, 0xcd, 0xf3, 0x8f, 0x77,
+            0xee, 0xb5, 0x03, 0x06, 0x0c, 0x18, 0x30, 0x60, 0xc0, 0xe9, 0xbb, 0x1f, 0x3e, 0x7c,
+            0xf8, 0x99, 0x5b, 0xb6,
         ];
 
         let gf = GfTables::new(RS_SYSTEM_PRIM_POLY);
@@ -702,8 +722,8 @@ mod tests {
         // Source: LibreDWG/src/reedsolomon.c
         // Their coefficients are in ascending degree order (rsgen[0]=constant term).
         let libredwg_rsgen: [u8; 17] = [
-            0x6a, 0xe3, 0x63, 0x1f, 0xa1, 0x24, 0x9e, 0x44, 0x13,
-            0x1e, 0x2f, 0xfc, 0xfd, 0xce, 0xa9, 0xdb, 0x01,
+            0x6a, 0xe3, 0x63, 0x1f, 0xa1, 0x24, 0x9e, 0x44, 0x13, 0x1e, 0x2f, 0xfc, 0xfd, 0xce,
+            0xa9, 0xdb, 0x01,
         ];
 
         let gf = GfTables::new(RS_SYSTEM_PRIM_POLY);
@@ -714,9 +734,14 @@ mod tests {
         assert_eq!(gen.len(), 17);
         for i in 0..17 {
             assert_eq!(
-                gen[i], libredwg_rsgen[16 - i],
+                gen[i],
+                libredwg_rsgen[16 - i],
                 "gen[{}] (x^{} coeff): ours={:#04x} vs LibreDWG rsgen[{}]={:#04x}",
-                i, 16 - i, gen[i], 16 - i, libredwg_rsgen[16 - i]
+                i,
+                16 - i,
+                gen[i],
+                16 - i,
+                libredwg_rsgen[16 - i]
             );
         }
     }
@@ -739,12 +764,17 @@ mod tests {
         // Verify syndromes at α^1 through α^16 (matching LibreDWG's FCR=1 convention).
         for j in 0..16usize {
             let root = gf.exp[j + 1]; // α^(j+1)
-            // Evaluate codeword polynomial at root (Horner's method, MSB-first).
+                                      // Evaluate codeword polynomial at root (Horner's method, MSB-first).
             let mut val: u8 = 0;
             for &byte in cw.iter() {
                 val = gf.mul(val, root) ^ byte;
             }
-            assert_eq!(val, 0, "LibreDWG-compatible syndrome at α^{} must be 0", j + 1);
+            assert_eq!(
+                val,
+                0,
+                "LibreDWG-compatible syndrome at α^{} must be 0",
+                j + 1
+            );
         }
     }
 }

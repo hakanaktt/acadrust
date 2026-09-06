@@ -9,9 +9,7 @@ impl<'a> DwgObjectWriter<'a> {
     pub(super) fn write_data_object(&mut self, object: &DataObject) {
         let type_code = match &object.data {
             DataObjectData::Dummy => common::OBJ_DUMMY,
-            DataObjectData::LongTransaction => {
-                common::OBJ_LONG_TRANSACTION
-            }
+            DataObjectData::LongTransaction => common::OBJ_LONG_TRANSACTION,
             _ => self.class_type_code(object.dxf_name(), 500),
         };
         self.write_common_non_entity_data(
@@ -58,10 +56,7 @@ impl<'a> DwgObjectWriter<'a> {
                 handles.write_handle(DwgReferenceType::SoftPointer, reactor.value());
             }
             if let Some(xdictionary) = xdictionary {
-                handles.write_handle(
-                    DwgReferenceType::HardOwnership,
-                    xdictionary.value(),
-                );
+                handles.write_handle(DwgReferenceType::HardOwnership, xdictionary.value());
             } else if !self.version.r2004_plus() {
                 handles.write_handle(DwgReferenceType::HardOwnership, 0);
             }
@@ -79,8 +74,7 @@ impl<'a> DwgObjectWriter<'a> {
                     self.writer.write_bit_long(reference.identifier);
                     self.writer.write_3bit_double(reference.first_point);
                     self.writer.write_3bit_double(reference.second_point);
-                    self.writer
-                        .write_bit_short(reference.trailing_version);
+                    self.writer.write_bit_short(reference.trailing_version);
                 }
                 self.writer.write_handle(
                     DwgReferenceType::SoftPointer,
@@ -139,15 +133,11 @@ impl<'a> DwgObjectWriter<'a> {
                     self.writer.write_bit_long(cell.geometry_data_flag);
                     self.writer.write_bit_double(cell.width_with_gap);
                     self.writer.write_bit_double(cell.height_with_gap);
-                    self.writer.write_handle(
-                        DwgReferenceType::SoftPointer,
-                        cell.table_geometry.value(),
-                    );
                     self.writer
-                        .write_bit_long(cell.geometry.len() as i32);
+                        .write_handle(DwgReferenceType::SoftPointer, cell.table_geometry.value());
+                    self.writer.write_bit_long(cell.geometry.len() as i32);
                     for geometry in &cell.geometry {
-                        self.writer
-                            .write_3bit_double(geometry.distance_to_top_left);
+                        self.writer.write_3bit_double(geometry.distance_to_top_left);
                         self.writer.write_3bit_double(geometry.distance_to_center);
                         self.writer.write_bit_double(geometry.width);
                         self.writer.write_bit_double(geometry.height);

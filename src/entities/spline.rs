@@ -239,9 +239,8 @@ impl Entity for Spline {
     fn entity_type(&self) -> &'static str {
         "SPLINE"
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_spline(self, transform);
     }
 }
-

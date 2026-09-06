@@ -1012,7 +1012,8 @@ impl TableCell {
 
     /// Gets the text value of the first content.
     pub fn text_value(&self) -> &str {
-        self.contents.first()
+        self.contents
+            .first()
             .map(|c| c.value.display())
             .unwrap_or("")
     }
@@ -1235,8 +1236,10 @@ impl CellRange {
 
     /// Returns true if this range contains the given cell.
     pub fn contains(&self, row: usize, col: usize) -> bool {
-        row >= self.top_row && row <= self.bottom_row &&
-        col >= self.left_col && col <= self.right_col
+        row >= self.top_row
+            && row <= self.bottom_row
+            && col >= self.left_col
+            && col <= self.right_col
     }
 }
 
@@ -1395,28 +1398,19 @@ pub struct Table {
     pub dwg_unknown_short: i16,
 }
 
-fn visit_table_value_handles(
-    value: &mut CellValue,
-    visit: &mut impl FnMut(&mut Handle),
-) {
+fn visit_table_value_handles(value: &mut CellValue, visit: &mut impl FnMut(&mut Handle)) {
     if let Some(handle) = value.handle_value.as_mut() {
         visit(handle);
     }
 }
 
-fn visit_table_border_handles(
-    value: &mut CellBorder,
-    visit: &mut impl FnMut(&mut Handle),
-) {
+fn visit_table_border_handles(value: &mut CellBorder, visit: &mut impl FnMut(&mut Handle)) {
     if let Some(handle) = value.line_type_handle.as_mut() {
         visit(handle);
     }
 }
 
-fn visit_table_style_handles(
-    value: &mut CellStyle,
-    visit: &mut impl FnMut(&mut Handle),
-) {
+fn visit_table_style_handles(value: &mut CellStyle, visit: &mut impl FnMut(&mut Handle)) {
     if let Some(handle) = value.text_style_handle.as_mut() {
         visit(handle);
     }
@@ -1438,10 +1432,7 @@ fn visit_table_custom_data_handles(
     }
 }
 
-fn visit_table_cell_handles(
-    value: &mut TableCell,
-    visit: &mut impl FnMut(&mut Handle),
-) {
+fn visit_table_cell_handles(value: &mut TableCell, visit: &mut impl FnMut(&mut Handle)) {
     for content in &mut value.contents {
         visit_table_value_handles(&mut content.value, visit);
         if let Some(handle) = content.block_handle.as_mut() {
@@ -1510,9 +1501,7 @@ impl Table {
                     top_row: row_index,
                     left_col: column_index,
                     bottom_row: row_index.saturating_add(height - 1).min(row_count - 1),
-                    right_col: column_index
-                        .saturating_add(width - 1)
-                        .min(column_count - 1),
+                    right_col: column_index.saturating_add(width - 1).min(column_count - 1),
                 };
                 if range.cell_count() > 1 && !ranges.contains(&range) {
                     ranges.push(range);
@@ -1542,10 +1531,7 @@ impl Table {
         }
     }
 
-    pub(crate) fn visit_object_handles_mut(
-        &mut self,
-        visit: &mut impl FnMut(&mut Handle),
-    ) {
+    pub(crate) fn visit_object_handles_mut(&mut self, visit: &mut impl FnMut(&mut Handle)) {
         if let Some(handle) = self.common.linetype_handle.as_mut() {
             visit(handle);
         }
@@ -1589,10 +1575,7 @@ impl Table {
             if let Some(style) = row.style.as_mut() {
                 visit_table_style_handles(style, visit);
             }
-            visit_table_custom_data_handles(
-                &mut row.custom_data_items,
-                visit,
-            );
+            visit_table_custom_data_handles(&mut row.custom_data_items, visit);
             for cell in &mut row.cells {
                 visit_table_cell_handles(cell, visit);
             }
@@ -1601,10 +1584,7 @@ impl Table {
             if let Some(style) = column.style.as_mut() {
                 visit_table_style_handles(style, visit);
             }
-            visit_table_custom_data_handles(
-                &mut column.custom_data_items,
-                visit,
-            );
+            visit_table_custom_data_handles(&mut column.custom_data_items, visit);
         }
         for handle in &mut self.field_handles {
             visit(handle);
@@ -2006,7 +1986,7 @@ impl Entity for Table {
     fn entity_type(&self) -> &'static str {
         "ACAD_TABLE"
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_table(self, transform);
     }

@@ -132,7 +132,7 @@ impl Entity for Block {
     fn entity_type(&self) -> &'static str {
         "BLOCK"
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_block(self, transform);
     }
@@ -200,7 +200,7 @@ impl Entity for BlockEnd {
     fn entity_type(&self) -> &'static str {
         "ENDBLK"
     }
-    
+
     fn apply_transform(&mut self, _transform: &crate::types::Transform) {
         super::transform::transform_block_end(self, _transform);
     }
@@ -220,8 +220,8 @@ mod tests {
 
     #[test]
     fn test_block_with_description() {
-        let block = Block::new("MyBlock", Vector3::new(0.0, 0.0, 0.0))
-            .with_description("Test block");
+        let block =
+            Block::new("MyBlock", Vector3::new(0.0, 0.0, 0.0)).with_description("Test block");
         assert_eq!(block.description, "Test block");
     }
 
@@ -231,5 +231,3 @@ mod tests {
         assert!(block_end.common.handle.is_null());
     }
 }
-
-

@@ -176,8 +176,7 @@ fn parse_geometry<R: BufRead>(
     start: &quick_xml::events::BytesStart<'_>,
 ) -> Result<ColladaGeometry> {
     let id = attr_string(start, b"id").unwrap_or_default();
-    let name = attr_string(start, b"name")
-        .unwrap_or_else(|| id.clone());
+    let name = attr_string(start, b"name").unwrap_or_else(|| id.clone());
 
     let mut geom = ColladaGeometry {
         id,
@@ -244,19 +243,13 @@ fn parse_geometry<R: BufRead>(
     if let Some((_vert_id, source_ref)) = &vertices_source {
         let source_id = source_ref.strip_prefix('#').unwrap_or(source_ref);
         if let Some(floats) = sources.get(source_id) {
-            geom.vertices = floats
-                .chunks_exact(3)
-                .map(|c| [c[0], c[1], c[2]])
-                .collect();
+            geom.vertices = floats.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
         }
     } else {
         // Fallback: look for a source with "position" in the name
         for (sid, floats) in &sources {
             if sid.to_lowercase().contains("position") {
-                geom.vertices = floats
-                    .chunks_exact(3)
-                    .map(|c| [c[0], c[1], c[2]])
-                    .collect();
+                geom.vertices = floats.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
                 break;
             }
         }
@@ -265,10 +258,7 @@ fn parse_geometry<R: BufRead>(
     Ok(geom)
 }
 
-fn parse_source_floats<R: BufRead>(
-    xml: &mut Reader<R>,
-    depth: &mut u32,
-) -> Result<Vec<f64>> {
+fn parse_source_floats<R: BufRead>(xml: &mut Reader<R>, depth: &mut u32) -> Result<Vec<f64>> {
     let mut floats = Vec::new();
     let mut buf = Vec::new();
     let entry_depth = *depth;
@@ -306,10 +296,7 @@ fn parse_source_floats<R: BufRead>(
     Ok(floats)
 }
 
-fn parse_vertices_element<R: BufRead>(
-    xml: &mut Reader<R>,
-    depth: &mut u32,
-) -> Result<String> {
+fn parse_vertices_element<R: BufRead>(xml: &mut Reader<R>, depth: &mut u32) -> Result<String> {
     let mut source_ref = String::new();
     let mut buf = Vec::new();
     let entry_depth = *depth;
@@ -630,10 +617,7 @@ fn parse_material_element<R: BufRead>(xml: &mut Reader<R>) -> Result<Option<Stri
 
 // ─── Visual scene parsing ────────────────────────────────────────────────
 
-fn parse_visual_scene<R: BufRead>(
-    xml: &mut Reader<R>,
-    nodes: &mut Vec<ColladaNode>,
-) -> Result<()> {
+fn parse_visual_scene<R: BufRead>(xml: &mut Reader<R>, nodes: &mut Vec<ColladaNode>) -> Result<()> {
     let mut buf = Vec::new();
     let mut depth = 1u32;
 
@@ -725,10 +709,7 @@ fn parse_node<R: BufRead>(
             }
             Ok(Event::Eof) => break,
             Err(e) => {
-                return Err(DxfError::ImportError(format!(
-                    "Error parsing node: {}",
-                    e
-                )));
+                return Err(DxfError::ImportError(format!("Error parsing node: {}", e)));
             }
             _ => {}
         }
@@ -802,10 +783,7 @@ fn parse_instance_geometry_bindings<R: BufRead>(
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
-fn read_text_content<R: BufRead>(
-    xml: &mut Reader<R>,
-    depth: &mut u32,
-) -> Result<String> {
+fn read_text_content<R: BufRead>(xml: &mut Reader<R>, depth: &mut u32) -> Result<String> {
     let mut text = String::new();
     let mut buf = Vec::new();
 
@@ -813,8 +791,9 @@ fn read_text_content<R: BufRead>(
         match xml.read_event_into(&mut buf) {
             Ok(Event::Text(ref e)) => {
                 text.push_str(
-                    &e.unescape()
-                        .map_err(|er| DxfError::ImportError(format!("XML unescape error: {}", er)))?
+                    &e.unescape().map_err(|er| {
+                        DxfError::ImportError(format!("XML unescape error: {}", er))
+                    })?,
                 );
             }
             Ok(Event::End(_)) => {
@@ -883,8 +862,8 @@ fn attr_string(e: &quick_xml::events::BytesStart<'_>, key: &[u8]) -> Option<Stri
 /// Convert a row-major 4×4 matrix to column-major.
 fn row_to_col_major(row: &[f64]) -> [f64; 16] {
     [
-        row[0], row[4], row[8], row[12], row[1], row[5], row[9], row[13], row[2], row[6],
-        row[10], row[14], row[3], row[7], row[11], row[15],
+        row[0], row[4], row[8], row[12], row[1], row[5], row[9], row[13], row[2], row[6], row[10],
+        row[14], row[3], row[7], row[11], row[15],
     ]
 }
 
@@ -982,8 +961,7 @@ mod tests {
     #[test]
     fn test_row_to_col_major() {
         let row = [
-            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0,
-            16.0,
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0,
         ];
         let col = row_to_col_major(&row);
         // Column 0: row[0], row[4], row[8], row[12]

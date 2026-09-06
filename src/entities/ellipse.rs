@@ -122,7 +122,7 @@ impl Entity for Ellipse {
         let major_len = self.major_axis_length();
         let minor_len = self.minor_axis_length();
         let max_radius = major_len.max(minor_len);
-        
+
         BoundingBox3D::new(
             Vector3::new(
                 self.center.x - max_radius,
@@ -144,11 +144,11 @@ impl Entity for Ellipse {
     fn entity_type(&self) -> &'static str {
         "ELLIPSE"
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_ellipse(self, transform);
     }
-    
+
     fn apply_mirror(&mut self, transform: &crate::types::Transform) {
         super::mirror::mirror_ellipse(self, transform);
     }
@@ -167,14 +167,8 @@ mod tests {
 
     #[test]
     fn test_ellipse_axis_lengths() {
-        let ellipse = Ellipse::from_center_axes(
-            Vector3::ZERO,
-            Vector3::new(10.0, 0.0, 0.0),
-            0.5,
-        );
+        let ellipse = Ellipse::from_center_axes(Vector3::ZERO, Vector3::new(10.0, 0.0, 0.0), 0.5);
         assert_eq!(ellipse.major_axis_length(), 10.0);
         assert_eq!(ellipse.minor_axis_length(), 5.0);
     }
 }
-
-

@@ -409,9 +409,7 @@ impl AcisData {
     pub fn strip_sat_terminator(sat: &str) -> String {
         let mut result = String::with_capacity(sat.len());
         for line in sat.lines() {
-            if line.starts_with("End-of-ACIS-data")
-                || line.starts_with("End-of-ASM-data")
-            {
+            if line.starts_with("End-of-ACIS-data") || line.starts_with("End-of-ASM-data") {
                 break;
             }
             result.push_str(line);
@@ -764,7 +762,9 @@ impl Solid3D {
 
     /// Returns silhouette for a viewport.
     pub fn silhouette_for_viewport(&self, viewport_id: i64) -> Option<&Silhouette> {
-        self.silhouettes.iter().find(|s| s.viewport_id == viewport_id)
+        self.silhouettes
+            .iter()
+            .find(|s| s.viewport_id == viewport_id)
     }
 
     /// Clears all visualization data (wires and silhouettes).
@@ -869,7 +869,7 @@ impl Entity for Solid3D {
     fn entity_type(&self) -> &'static str {
         "3DSOLID"
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_solid3d(self, transform);
     }
@@ -1034,7 +1034,7 @@ impl Entity for Region {
     fn entity_type(&self) -> &'static str {
         "REGION"
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_region(self, transform);
     }
@@ -1199,7 +1199,7 @@ impl Entity for Body {
     fn entity_type(&self) -> &'static str {
         "BODY"
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_body(self, transform);
     }
@@ -1282,11 +1282,8 @@ mod tests {
 
     #[test]
     fn test_silhouette_with_view() {
-        let silhouette = Silhouette::with_view(
-            1,
-            Vector3::new(0.0, 0.0, -1.0),
-            Vector3::new(0.0, 1.0, 0.0),
-        );
+        let silhouette =
+            Silhouette::with_view(1, Vector3::new(0.0, 0.0, -1.0), Vector3::new(0.0, 1.0, 0.0));
         assert_eq!(silhouette.viewport_id, 1);
         assert_eq!(silhouette.view_direction.z, -1.0);
     }
@@ -1410,10 +1407,7 @@ mod tests {
         // Check faces
         let faces = doc.faces();
         assert_eq!(faces.len(), 1);
-        assert_eq!(
-            faces[0].sense(),
-            crate::entities::acis::Sense::Forward
-        );
+        assert_eq!(faces[0].sense(), crate::entities::acis::Sense::Forward);
 
         // Check plane surface
         let planes = doc.records_of_type("plane-surface");
@@ -1426,11 +1420,7 @@ mod tests {
     #[test]
     fn test_solid3d_set_sat_document() {
         let mut doc = crate::entities::acis::SatDocument::new_body();
-        doc.add_plane_surface(
-            [0.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0],
-            [1.0, 0.0, 0.0],
-        );
+        doc.add_plane_surface([0.0, 0.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
 
         let mut solid = Solid3D::new();
         solid.set_sat_document(&doc);

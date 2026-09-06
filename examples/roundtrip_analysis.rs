@@ -154,7 +154,8 @@ fn normalize_entity(entity: &mut EntityType) {
                     edge.crease = Some(0.0);
                 }
             }
-            m.edges.sort_by(|a, b| a.start.cmp(&b.start).then(a.end.cmp(&b.end)));
+            m.edges
+                .sort_by(|a, b| a.start.cmp(&b.start).then(a.end.cmp(&b.end)));
         }
         EntityType::Text(t) => {
             t.style = t.style.to_uppercase();
@@ -219,15 +220,29 @@ fn print_document_summary(label: &str, doc: &CadDocument) {
     if !notifs.is_empty() {
         println!("║  ─── Notifications ({}) ───", notifs.len());
         // Show all Error notifications
-        for n in notifs.iter().filter(|n| format!("{}", n.notification_type) == "Error") {
+        for n in notifs
+            .iter()
+            .filter(|n| format!("{}", n.notification_type) == "Error")
+        {
             println!("║    [{}] {}", n.notification_type, n.message);
         }
         // Show first 5 Warning notifications
-        for n in notifs.iter().filter(|n| format!("{}", n.notification_type) != "Error").take(5) {
-            println!("║    [{}] {}...", n.notification_type, &n.message[..n.message.len().min(80)]);
+        for n in notifs
+            .iter()
+            .filter(|n| format!("{}", n.notification_type) != "Error")
+            .take(5)
+        {
+            println!(
+                "║    [{}] {}...",
+                n.notification_type,
+                &n.message[..n.message.len().min(80)]
+            );
         }
         if notifs.len() > 5 {
-            println!("║    ... and {} more notifications", notifs.len().saturating_sub(5));
+            println!(
+                "║    ... and {} more notifications",
+                notifs.len().saturating_sub(5)
+            );
         }
     }
     println!("╚══════════════════════════════════════════════════════════════╝");
@@ -312,7 +327,10 @@ impl LossReport {
         }
 
         if !self.entity_diffs.is_empty() {
-            println!("\n  ── Entity Data Differences ({}) ──", self.entity_diffs.len());
+            println!(
+                "\n  ── Entity Data Differences ({}) ──",
+                self.entity_diffs.len()
+            );
             // Show up to 50 diffs, summarize the rest
             for (i, d) in self.entity_diffs.iter().enumerate() {
                 if i >= 50 {
@@ -360,10 +378,9 @@ fn compare_documents(orig: &CadDocument, rt: &CadDocument, format: &str) -> Loss
     }
     for (name, &rt_c) in &rt_types {
         if !orig_types.contains_key(name) {
-            report.count_diffs.push(format!(
-                "  {} appeared in roundtrip: 0 → {}",
-                name, rt_c
-            ));
+            report
+                .count_diffs
+                .push(format!("  {} appeared in roundtrip: 0 → {}", name, rt_c));
         }
     }
 
@@ -729,7 +746,10 @@ fn main() {
     println!("  Output files:");
     println!("    {}", dwg_out_path.display());
     println!("    {}", dxf_out_path.display());
-    println!("    {}", sibling_path(&source_path, "_rt2", "dwg").display());
+    println!(
+        "    {}",
+        sibling_path(&source_path, "_rt2", "dwg").display()
+    );
     println!("=================================================================");
 }
 
@@ -738,7 +758,10 @@ fn main() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn deep_analysis(orig: &CadDocument, rt: &CadDocument, format: &str) {
-    println!("─── Deep Analysis: {} ───────────────────────────────────────", format);
+    println!(
+        "─── Deep Analysis: {} ───────────────────────────────────────",
+        format
+    );
 
     deep_polyface_mesh(orig, rt);
     deep_solid3d(orig, rt);
@@ -754,27 +777,50 @@ fn deep_analysis(orig: &CadDocument, rt: &CadDocument, format: &str) {
 fn deep_polyface_mesh(orig: &CadDocument, rt: &CadDocument) {
     let orig_meshes: Vec<_> = orig
         .entities()
-        .filter_map(|e| if let EntityType::PolyfaceMesh(m) = e { Some(m) } else { None })
+        .filter_map(|e| {
+            if let EntityType::PolyfaceMesh(m) = e {
+                Some(m)
+            } else {
+                None
+            }
+        })
         .collect();
     let rt_meshes: Vec<_> = rt
         .entities()
-        .filter_map(|e| if let EntityType::PolyfaceMesh(m) = e { Some(m) } else { None })
+        .filter_map(|e| {
+            if let EntityType::PolyfaceMesh(m) = e {
+                Some(m)
+            } else {
+                None
+            }
+        })
         .collect();
 
     if orig_meshes.is_empty() {
         return;
     }
 
-    println!("\n  PolyfaceMesh ({} in original, {} after roundtrip):", orig_meshes.len(), rt_meshes.len());
+    println!(
+        "\n  PolyfaceMesh ({} in original, {} after roundtrip):",
+        orig_meshes.len(),
+        rt_meshes.len()
+    );
 
     if rt_meshes.is_empty() {
-        println!("    ALL PolyfaceMesh entities LOST — check if they were re-read as generic Polyline.");
+        println!(
+            "    ALL PolyfaceMesh entities LOST — check if they were re-read as generic Polyline."
+        );
         return;
     }
 
     // Build a handle→mesh map for rt so we can match by handle when possible.
-    let rt_by_handle: std::collections::HashMap<u64, &acadrust::entities::polyface_mesh::PolyfaceMesh> =
-        rt_meshes.iter().map(|m| (m.common.handle.value(), *m)).collect();
+    let rt_by_handle: std::collections::HashMap<
+        u64,
+        &acadrust::entities::polyface_mesh::PolyfaceMesh,
+    > = rt_meshes
+        .iter()
+        .map(|m| (m.common.handle.value(), *m))
+        .collect();
 
     let mut lost_vertices = 0usize;
     let mut lost_faces = 0usize;
@@ -790,7 +836,10 @@ fn deep_polyface_mesh(orig: &CadDocument, rt: &CadDocument) {
 
         let r = match r {
             Some(r) => r,
-            None => { unmatched += 1; continue; }
+            None => {
+                unmatched += 1;
+                continue;
+            }
         };
 
         let ov = o.vertices.len();
@@ -801,9 +850,16 @@ fn deep_polyface_mesh(orig: &CadDocument, rt: &CadDocument) {
         if ov != rv || of_ != rf {
             println!(
                 "    [{}] v:{}→{}  f:{}→{}  layer={:?}  handle={:#X}→{:#X}  owner={:#X}→{:#X}",
-                i, ov, rv, of_, rf, o.common.layer,
-                o.common.handle.value(), r.common.handle.value(),
-                o.common.owner_handle.value(), r.common.owner_handle.value()
+                i,
+                ov,
+                rv,
+                of_,
+                rf,
+                o.common.layer,
+                o.common.handle.value(),
+                r.common.handle.value(),
+                o.common.owner_handle.value(),
+                r.common.owner_handle.value()
             );
             lost_vertices += ov.saturating_sub(rv);
             lost_faces += of_.saturating_sub(rf);
@@ -811,7 +867,10 @@ fn deep_polyface_mesh(orig: &CadDocument, rt: &CadDocument) {
     }
 
     if unmatched > 0 {
-        println!("    {} original mesh(es) had no match in roundtrip output.", unmatched);
+        println!(
+            "    {} original mesh(es) had no match in roundtrip output.",
+            unmatched
+        );
     }
 
     if lost_vertices == 0 && lost_faces == 0 && unmatched == 0 {
@@ -829,21 +888,30 @@ fn deep_polyface_mesh(orig: &CadDocument, rt: &CadDocument) {
 fn deep_solid3d(orig: &CadDocument, rt: &CadDocument) {
     let orig_solids: Vec<_> = orig
         .entities()
-        .filter_map(|e| if let EntityType::Solid3D(s) = e { Some(s) } else { None })
+        .filter_map(|e| {
+            if let EntityType::Solid3D(s) = e {
+                Some(s)
+            } else {
+                None
+            }
+        })
         .collect();
     let rt_solids: Vec<_> = rt
         .entities()
-        .filter_map(|e| if let EntityType::Solid3D(s) = e { Some(s) } else { None })
+        .filter_map(|e| {
+            if let EntityType::Solid3D(s) = e {
+                Some(s)
+            } else {
+                None
+            }
+        })
         .collect();
 
     if orig_solids.is_empty() {
         return;
     }
 
-    println!(
-        "\n  Solid3D ({} entities):",
-        orig_solids.len()
-    );
+    println!("\n  Solid3D ({} entities):", orig_solids.len());
 
     let mut loss_categories: BTreeMap<String, usize> = BTreeMap::new();
 
@@ -861,13 +929,26 @@ fn deep_solid3d(orig: &CadDocument, rt: &CadDocument) {
             issues.push(format!("version {:?}→{:?}", o_acis.version, r_acis.version));
         }
         if o_acis.is_binary != r_acis.is_binary {
-            issues.push(format!("is_binary {}→{}", o_acis.is_binary, r_acis.is_binary));
+            issues.push(format!(
+                "is_binary {}→{}",
+                o_acis.is_binary, r_acis.is_binary
+            ));
         }
         if !o_acis.sab_data.is_empty() && r_acis.sab_data.is_empty() {
-            issues.push(format!("sab_data {} bytes → 0 bytes", o_acis.sab_data.len()));
+            issues.push(format!(
+                "sab_data {} bytes → 0 bytes",
+                o_acis.sab_data.len()
+            ));
         }
-        if o_acis.sab_data.len() != r_acis.sab_data.len() && !o_acis.sab_data.is_empty() && !r_acis.sab_data.is_empty() {
-            issues.push(format!("sab_data {} → {} bytes", o_acis.sab_data.len(), r_acis.sab_data.len()));
+        if o_acis.sab_data.len() != r_acis.sab_data.len()
+            && !o_acis.sab_data.is_empty()
+            && !r_acis.sab_data.is_empty()
+        {
+            issues.push(format!(
+                "sab_data {} → {} bytes",
+                o_acis.sab_data.len(),
+                r_acis.sab_data.len()
+            ));
         }
         if o_acis.sat_data != r_acis.sat_data {
             let o_lines = o_acis.sat_data.lines().count();
@@ -887,27 +968,48 @@ fn deep_solid3d(orig: &CadDocument, rt: &CadDocument) {
             issues.push(format!("wires {} → {}", o.wires.len(), r.wires.len()));
         }
         if o.silhouettes.len() != r.silhouettes.len() {
-            issues.push(format!("silhouettes {} → {}", o.silhouettes.len(), r.silhouettes.len()));
+            issues.push(format!(
+                "silhouettes {} → {}",
+                o.silhouettes.len(),
+                r.silhouettes.len()
+            ));
         }
 
         if !issues.is_empty() {
-            let key = issues.iter().map(|s| {
-                // strip specific values to get a category key
-                if s.starts_with("sab_data") { "sab_data_lost".to_string() }
-                else if s.starts_with("sat_data") { "sat_data_changed".to_string() }
-                else if s.starts_with("version") { "version_downgrade".to_string() }
-                else { s.clone() }
-            }).collect::<Vec<_>>().join("+");
+            let key = issues
+                .iter()
+                .map(|s| {
+                    // strip specific values to get a category key
+                    if s.starts_with("sab_data") {
+                        "sab_data_lost".to_string()
+                    } else if s.starts_with("sat_data") {
+                        "sat_data_changed".to_string()
+                    } else if s.starts_with("version") {
+                        "version_downgrade".to_string()
+                    } else {
+                        s.clone()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("+");
             *loss_categories.entry(key).or_insert(0) += 1;
 
             if i < 3 {
-                println!("    [{}] layer={:?}: {}", i, o.common.layer, issues.join(", "));
+                println!(
+                    "    [{}] layer={:?}: {}",
+                    i,
+                    o.common.layer,
+                    issues.join(", ")
+                );
             }
         }
     }
 
     if orig_solids.len() > rt_solids.len() {
-        println!("    MISSING: {} Solid3D entities not present after roundtrip", orig_solids.len() - rt_solids.len());
+        println!(
+            "    MISSING: {} Solid3D entities not present after roundtrip",
+            orig_solids.len() - rt_solids.len()
+        );
     }
 
     if !loss_categories.is_empty() {
@@ -925,11 +1027,23 @@ fn deep_solid3d(orig: &CadDocument, rt: &CadDocument) {
 fn deep_dimension(orig: &CadDocument, rt: &CadDocument) {
     let orig_dims: Vec<_> = orig
         .entities()
-        .filter_map(|e| if let EntityType::Dimension(d) = e { Some(d) } else { None })
+        .filter_map(|e| {
+            if let EntityType::Dimension(d) = e {
+                Some(d)
+            } else {
+                None
+            }
+        })
         .collect();
     let rt_dims: Vec<_> = rt
         .entities()
-        .filter_map(|e| if let EntityType::Dimension(d) = e { Some(d) } else { None })
+        .filter_map(|e| {
+            if let EntityType::Dimension(d) = e {
+                Some(d)
+            } else {
+                None
+            }
+        })
         .collect();
 
     if orig_dims.is_empty() {
@@ -952,9 +1066,17 @@ fn deep_dimension(orig: &CadDocument, rt: &CadDocument) {
         macro_rules! track {
             ($field:ident) => {
                 if ob.$field != rb.$field {
-                    *field_loss.entry(stringify!($field).to_string()).or_insert(0) += 1;
+                    *field_loss
+                        .entry(stringify!($field).to_string())
+                        .or_insert(0) += 1;
                     if i < 2 {
-                        println!("    [{}] {}: {:?} → {:?}", i, stringify!($field), ob.$field, rb.$field);
+                        println!(
+                            "    [{}] {}: {:?} → {:?}",
+                            i,
+                            stringify!($field),
+                            ob.$field,
+                            rb.$field
+                        );
                     }
                 }
             };
@@ -986,11 +1108,23 @@ fn deep_dimension(orig: &CadDocument, rt: &CadDocument) {
 fn deep_insert(orig: &CadDocument, rt: &CadDocument) {
     let orig_inserts: Vec<_> = orig
         .entities()
-        .filter_map(|e| if let EntityType::Insert(i) = e { Some(i) } else { None })
+        .filter_map(|e| {
+            if let EntityType::Insert(i) = e {
+                Some(i)
+            } else {
+                None
+            }
+        })
         .collect();
     let rt_inserts: Vec<_> = rt
         .entities()
-        .filter_map(|e| if let EntityType::Insert(i) = e { Some(i) } else { None })
+        .filter_map(|e| {
+            if let EntityType::Insert(i) = e {
+                Some(i)
+            } else {
+                None
+            }
+        })
         .collect();
 
     if orig_inserts.is_empty() {
@@ -1011,14 +1145,15 @@ fn deep_insert(orig: &CadDocument, rt: &CadDocument) {
             name_losses += 1;
             changed_names.push((o.block_name.clone(), r.block_name.clone()));
         }
-        if o.insert_point != r.insert_point { point_losses += 1; }
-        if o.attributes.len() != r.attributes.len() { attr_losses += 1; }
+        if o.insert_point != r.insert_point {
+            point_losses += 1;
+        }
+        if o.attributes.len() != r.attributes.len() {
+            attr_losses += 1;
+        }
     }
 
-    println!(
-        "\n  Insert ({} entities):",
-        orig_inserts.len()
-    );
+    println!("\n  Insert ({} entities):", orig_inserts.len());
     if name_losses == 0 && point_losses == 0 && attr_losses == 0 {
         println!("    All Insert block_name, insert_point, and attribute counts preserved.");
     } else {
@@ -1028,8 +1163,12 @@ fn deep_insert(orig: &CadDocument, rt: &CadDocument) {
                 println!("      {:?} -> {:?}", orig, rt);
             }
         }
-        if point_losses > 0 { println!("    insert_point changed: {} inserts", point_losses); }
-        if attr_losses > 0 { println!("    attribute count changed: {} inserts", attr_losses); }
+        if point_losses > 0 {
+            println!("    insert_point changed: {} inserts", point_losses);
+        }
+        if attr_losses > 0 {
+            println!("    attribute count changed: {} inserts", attr_losses);
+        }
     }
 }
 
@@ -1052,7 +1191,10 @@ fn deep_notifications(rt: &CadDocument, format: &str) {
         .collect();
 
     if errors.is_empty() {
-        println!("\n  {} re-read notifications: none (clean re-read).", format);
+        println!(
+            "\n  {} re-read notifications: none (clean re-read).",
+            format
+        );
         return;
     }
 
@@ -1063,7 +1205,11 @@ fn deep_notifications(rt: &CadDocument, format: &str) {
         *seen.entry(key).or_insert(0) += 1;
     }
 
-    println!("\n  {} re-read warnings/errors ({} unique types):", format, seen.len());
+    println!(
+        "\n  {} re-read warnings/errors ({} unique types):",
+        format,
+        seen.len()
+    );
     for (msg, count) in seen.iter().take(20) {
         if *count > 1 {
             println!("    [{} ×] {}", count, msg);

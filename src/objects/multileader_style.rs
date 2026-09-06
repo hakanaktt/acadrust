@@ -757,15 +757,27 @@ mod tests {
     #[test]
     fn test_path_type_enum() {
         assert_eq!(MultiLeaderPathType::from(0), MultiLeaderPathType::Invisible);
-        assert_eq!(MultiLeaderPathType::from(1), MultiLeaderPathType::StraightLineSegments);
+        assert_eq!(
+            MultiLeaderPathType::from(1),
+            MultiLeaderPathType::StraightLineSegments
+        );
         assert_eq!(MultiLeaderPathType::from(2), MultiLeaderPathType::Spline);
     }
 
     #[test]
     fn test_text_attachment_type() {
-        assert_eq!(TextAttachmentType::from(0), TextAttachmentType::TopOfTopLine);
-        assert_eq!(TextAttachmentType::from(2), TextAttachmentType::MiddleOfText);
-        assert_eq!(TextAttachmentType::from(9), TextAttachmentType::CenterOfText);
+        assert_eq!(
+            TextAttachmentType::from(0),
+            TextAttachmentType::TopOfTopLine
+        );
+        assert_eq!(
+            TextAttachmentType::from(2),
+            TextAttachmentType::MiddleOfText
+        );
+        assert_eq!(
+            TextAttachmentType::from(9),
+            TextAttachmentType::CenterOfText
+        );
     }
 
     #[test]
@@ -853,8 +865,8 @@ mod tests {
 
     #[test]
     fn test_leader_line_override_flags() {
-        let flags = LeaderLinePropertyOverrideFlags::PATH_TYPE
-            | LeaderLinePropertyOverrideFlags::ARROWHEAD;
+        let flags =
+            LeaderLinePropertyOverrideFlags::PATH_TYPE | LeaderLinePropertyOverrideFlags::ARROWHEAD;
 
         assert!(flags.contains(LeaderLinePropertyOverrideFlags::PATH_TYPE));
         assert!(flags.contains(LeaderLinePropertyOverrideFlags::ARROWHEAD));
@@ -870,24 +882,44 @@ mod tests {
 
     #[test]
     fn test_text_angle_enum() {
-        assert_eq!(TextAngleType::from(0), TextAngleType::ParallelToLastLeaderLine);
+        assert_eq!(
+            TextAngleType::from(0),
+            TextAngleType::ParallelToLastLeaderLine
+        );
         assert_eq!(TextAngleType::from(1), TextAngleType::Horizontal);
         assert_eq!(TextAngleType::from(2), TextAngleType::Optimized);
     }
 
     #[test]
     fn test_block_connection_enum() {
-        assert_eq!(BlockContentConnectionType::from(0), BlockContentConnectionType::BlockExtents);
-        assert_eq!(BlockContentConnectionType::from(1), BlockContentConnectionType::BasePoint);
+        assert_eq!(
+            BlockContentConnectionType::from(0),
+            BlockContentConnectionType::BlockExtents
+        );
+        assert_eq!(
+            BlockContentConnectionType::from(1),
+            BlockContentConnectionType::BasePoint
+        );
     }
 
     #[test]
     fn test_draw_order_enums() {
-        assert_eq!(LeaderDrawOrderType::from(0), LeaderDrawOrderType::LeaderHeadFirst);
-        assert_eq!(LeaderDrawOrderType::from(1), LeaderDrawOrderType::LeaderTailFirst);
+        assert_eq!(
+            LeaderDrawOrderType::from(0),
+            LeaderDrawOrderType::LeaderHeadFirst
+        );
+        assert_eq!(
+            LeaderDrawOrderType::from(1),
+            LeaderDrawOrderType::LeaderTailFirst
+        );
 
-        assert_eq!(MultiLeaderDrawOrderType::from(0), MultiLeaderDrawOrderType::ContentFirst);
-        assert_eq!(MultiLeaderDrawOrderType::from(1), MultiLeaderDrawOrderType::LeaderFirst);
+        assert_eq!(
+            MultiLeaderDrawOrderType::from(0),
+            MultiLeaderDrawOrderType::ContentFirst
+        );
+        assert_eq!(
+            MultiLeaderDrawOrderType::from(1),
+            MultiLeaderDrawOrderType::LeaderFirst
+        );
     }
 }
-

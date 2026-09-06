@@ -4,8 +4,8 @@
 //! behavior tiers. The DWG format has version-specific differences at
 //! the bit-stream level, file header format, and entity encoding.
 
-use crate::types::DxfVersion;
 use crate::error::DxfError;
+use crate::types::DxfVersion;
 
 /// DWG format version, determining which stream writer features are used.
 ///
@@ -148,8 +148,9 @@ impl DwgVersion {
             "AC1015" | "AD1015" => Some(DwgVersion::AC15),
             "AC1018" | "AD1018" => Some(DwgVersion::AC18),
             "AC1021" | "AD1021" => Some(DwgVersion::AC21),
-            "AC1024" | "AC1027" | "AC1032"
-            | "AD1024" | "AD1027" | "AD1032" => Some(DwgVersion::AC24),
+            "AC1024" | "AC1027" | "AC1032" | "AD1024" | "AD1027" | "AD1032" => {
+                Some(DwgVersion::AC24)
+            }
             _ => None,
         }
     }
@@ -172,14 +173,38 @@ mod tests {
 
     #[test]
     fn test_from_dxf_version() {
-        assert_eq!(DwgVersion::from_dxf_version(DxfVersion::AC1012).unwrap(), DwgVersion::AC12);
-        assert_eq!(DwgVersion::from_dxf_version(DxfVersion::AC1014).unwrap(), DwgVersion::AC12);
-        assert_eq!(DwgVersion::from_dxf_version(DxfVersion::AC1015).unwrap(), DwgVersion::AC15);
-        assert_eq!(DwgVersion::from_dxf_version(DxfVersion::AC1018).unwrap(), DwgVersion::AC18);
-        assert_eq!(DwgVersion::from_dxf_version(DxfVersion::AC1021).unwrap(), DwgVersion::AC21);
-        assert_eq!(DwgVersion::from_dxf_version(DxfVersion::AC1024).unwrap(), DwgVersion::AC24);
-        assert_eq!(DwgVersion::from_dxf_version(DxfVersion::AC1027).unwrap(), DwgVersion::AC24);
-        assert_eq!(DwgVersion::from_dxf_version(DxfVersion::AC1032).unwrap(), DwgVersion::AC24);
+        assert_eq!(
+            DwgVersion::from_dxf_version(DxfVersion::AC1012).unwrap(),
+            DwgVersion::AC12
+        );
+        assert_eq!(
+            DwgVersion::from_dxf_version(DxfVersion::AC1014).unwrap(),
+            DwgVersion::AC12
+        );
+        assert_eq!(
+            DwgVersion::from_dxf_version(DxfVersion::AC1015).unwrap(),
+            DwgVersion::AC15
+        );
+        assert_eq!(
+            DwgVersion::from_dxf_version(DxfVersion::AC1018).unwrap(),
+            DwgVersion::AC18
+        );
+        assert_eq!(
+            DwgVersion::from_dxf_version(DxfVersion::AC1021).unwrap(),
+            DwgVersion::AC21
+        );
+        assert_eq!(
+            DwgVersion::from_dxf_version(DxfVersion::AC1024).unwrap(),
+            DwgVersion::AC24
+        );
+        assert_eq!(
+            DwgVersion::from_dxf_version(DxfVersion::AC1027).unwrap(),
+            DwgVersion::AC24
+        );
+        assert_eq!(
+            DwgVersion::from_dxf_version(DxfVersion::AC1032).unwrap(),
+            DwgVersion::AC24
+        );
         assert!(DwgVersion::from_dxf_version(DxfVersion::Unknown).is_err());
     }
 

@@ -27,22 +27,22 @@
 //! ```
 
 use std::collections::{HashMap, HashSet};
-use std::io::{Read, Seek, SeekFrom, Cursor};
 use std::fs::File;
+use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::path::Path;
 
 use byteorder::{LittleEndian, ReadBytesExt};
 
 use crate::error::DxfError;
-use crate::notification::{NotificationCollection, NotificationType};
-use crate::io::dwg::dwg_version::DwgVersion;
-use crate::io::dwg::dwg21_metadata::Dwg21CompressedMetadata;
-use crate::io::dwg::reed_solomon::reed_solomon_decode;
+use crate::io::dwg::checksum::{apply_magic_sequence, apply_mask};
 use crate::io::dwg::decompressor_ac18::decompress_ac18;
 use crate::io::dwg::decompressor_ac21::decompress_ac21;
-use crate::io::dwg::checksum::{apply_mask, apply_magic_sequence};
+use crate::io::dwg::dwg21_metadata::Dwg21CompressedMetadata;
+use crate::io::dwg::dwg_version::DwgVersion;
 use crate::io::dwg::parallel::{map_ordered, worker_count};
+use crate::io::dwg::reed_solomon::reed_solomon_decode;
 use crate::io::read::{push_read_diagnostic, ReadDiagnostic, ReadStage, SourceFormat};
+use crate::notification::{NotificationCollection, NotificationType};
 
 fn report_read_error(
     notifications: &mut NotificationCollection,
@@ -134,7 +134,6 @@ pub struct DwgFileHeaderInfo {
     pub vba_project_addr: i32,
 
     // ── AC1021-specific data ──
-
     /// AC1021 compressed metadata (contains CRC-64 and section layout)
     pub ac21_metadata: Option<Dwg21CompressedMetadata>,
     /// Raw Reed-Solomon decoded values from file header
@@ -149,7 +148,6 @@ pub struct DwgFileHeaderInfo {
     pub section_descriptors: Vec<DwgSectionInfo>,
 
     // ── AC15-specific data ──
-
     /// Section locator records for AC15 format: name → (file_offset, size)
     pub section_locators: HashMap<String, (i64, i64)>,
     /// Base file offset of AcDb:AcDbObjects section (AC15 only).
@@ -309,12 +307,10 @@ fn find_acds_end(buf: &[u8], from: usize, to: usize) -> Option<(usize, usize)> {
 /// `off[r+1]`). Records with an empty range carry no geometry and are skipped.
 /// Empty when there is no such table (the caller then falls back to order-based
 /// attachment).
-fn extract_acds_record_blobs(
-    buf: &[u8],
-    modeler_handles: &HashSet<u64>,
-) -> Vec<(u64, Vec<u8>)> {
+fn extract_acds_record_blobs(buf: &[u8], modeler_handles: &HashSet<u64>) -> Vec<(u64, Vec<u8>)> {
     let rd = |p: usize| -> Option<u32> {
-        buf.get(p..p + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+        buf.get(p..p + 4)
+            .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
     };
     let marker = [0xACu8, 0xD5, 0x5F, 0x64, 0x61, 0x74, 0x61, 0x5F]; // "\xAC\xD5_data_"
     let mut out: Vec<(u64, Vec<u8>)> = Vec::new();
@@ -342,7 +338,9 @@ fn extract_acds_record_blobs(
         let mut recs: Vec<(u64, usize)> = Vec::new();
         let mut p = seg + 48;
         while rd(p) == Some(0x14) {
-            let (Some(handle), Some(off)) = (rd(p + 8), rd(p + 16)) else { break };
+            let (Some(handle), Some(off)) = (rd(p + 8), rd(p + 16)) else {
+                break;
+            };
             recs.push((handle as u64, off as usize));
             p += 20;
         }
@@ -575,7 +573,10 @@ fn attach_acds_record_blobs(
 /// Attach order-extracted AcDs SAB blobs when no record table is parseable: pair
 /// by the object-stream-ordered handle list (`document.acis_sab_handles`), else
 /// positionally in document order. Returns the number attached.
-fn attach_acds_sab_blobs(document: &mut crate::document::CadDocument, blobs: Vec<Vec<u8>>) -> usize {
+fn attach_acds_sab_blobs(
+    document: &mut crate::document::CadDocument,
+    blobs: Vec<Vec<u8>>,
+) -> usize {
     use crate::entities::EntityType;
 
     // Fallback A: attach by the object-stream-ordered handle list.
@@ -622,7 +623,10 @@ fn attach_acds_sab_blobs(document: &mut crate::document::CadDocument, blobs: Vec
 /// the junk that follows (e.g. `"AcDb:Handles\0t…"`), and the name would then
 /// fail to match when looking the section up.
 fn section_name_from_field(name_buf: &[u8; 64]) -> String {
-    let end = name_buf.iter().position(|&b| b == 0).unwrap_or(name_buf.len());
+    let end = name_buf
+        .iter()
+        .position(|&b| b == 0)
+        .unwrap_or(name_buf.len());
     String::from_utf8_lossy(&name_buf[..end]).into_owned()
 }
 
@@ -713,7 +717,10 @@ impl DwgReader<File> {
     }
 
     /// Open a DWG file from a filesystem path with custom options.
-    pub fn from_file_with_options<P: AsRef<Path>>(path: P, options: DwgReadOptions) -> Result<Self, DxfError> {
+    pub fn from_file_with_options<P: AsRef<Path>>(
+        path: P,
+        options: DwgReadOptions,
+    ) -> Result<Self, DxfError> {
         let path = path.as_ref();
         let file = File::open(path)?;
         Ok(Self {
@@ -821,10 +828,14 @@ impl<R: Read + Seek> DwgReader<R> {
                     "file-header-read-failed",
                     ReadStage::FileHeader,
                     None,
-                    format!("Failsafe: file header read failed, returning partial document: {}", e),
+                    format!(
+                        "Failsafe: file header read failed, returning partial document: {}",
+                        e
+                    ),
                 );
                 let mut doc = crate::document::CadDocument::default();
-                doc.notifications.extend(std::mem::take(&mut self.notifications));
+                doc.notifications
+                    .extend(std::mem::take(&mut self.notifications));
                 let stats = crate::io::read::ReadStats::from_document(
                     &doc,
                     SourceFormat::Dwg,
@@ -858,22 +869,24 @@ impl<R: Read + Seek> DwgReader<R> {
 
         // 2. Read Classes (AcDb:Classes)
         match self.get_section_buffer("AcDb:Classes", &info) {
-            Ok(classes_buf) => match crate::io::dwg::dwg_stream_readers::classes_reader::read_classes_with_encoding(
-                &classes_buf,
-                dxf_version,
-                info.acad_maintenance_version,
-                crate::io::dxf::code_page::encoding_from_dwg_code_page(info.code_page),
-            ) {
-                Ok(classes) => document.classes = classes,
-                Err(e) => report_read_error(
-                    &mut self.notifications,
-                    &mut diagnostics,
-                    "classes-decode-failed",
-                    ReadStage::Classes,
-                    Some("AcDb:Classes"),
-                    format!("Failed to read classes: {}", e),
-                ),
-            },
+            Ok(classes_buf) => {
+                match crate::io::dwg::dwg_stream_readers::classes_reader::read_classes_with_encoding(
+                    &classes_buf,
+                    dxf_version,
+                    info.acad_maintenance_version,
+                    crate::io::dxf::code_page::encoding_from_dwg_code_page(info.code_page),
+                ) {
+                    Ok(classes) => document.classes = classes,
+                    Err(e) => report_read_error(
+                        &mut self.notifications,
+                        &mut diagnostics,
+                        "classes-decode-failed",
+                        ReadStage::Classes,
+                        Some("AcDb:Classes"),
+                        format!("Failed to read classes: {}", e),
+                    ),
+                }
+            }
             Err(e) => report_read_error(
                 &mut self.notifications,
                 &mut diagnostics,
@@ -887,22 +900,24 @@ impl<R: Read + Seek> DwgReader<R> {
 
         // 3. Read Header Variables (AcDb:Header)
         match self.get_section_buffer("AcDb:Header", &info) {
-            Ok(header_buf) => match crate::io::dwg::dwg_stream_readers::header_reader::read_header_with_encoding(
-                &header_buf,
-                dxf_version,
-                info.acad_maintenance_version,
-                crate::io::dxf::code_page::encoding_from_dwg_code_page(info.code_page),
-            ) {
-                Ok(header_vars) => document.header = header_vars,
-                Err(e) => report_read_error(
-                    &mut self.notifications,
-                    &mut diagnostics,
-                    "header-decode-failed",
-                    ReadStage::Header,
-                    Some("AcDb:Header"),
-                    format!("Failed to read header: {}", e),
-                ),
-            },
+            Ok(header_buf) => {
+                match crate::io::dwg::dwg_stream_readers::header_reader::read_header_with_encoding(
+                    &header_buf,
+                    dxf_version,
+                    info.acad_maintenance_version,
+                    crate::io::dxf::code_page::encoding_from_dwg_code_page(info.code_page),
+                ) {
+                    Ok(header_vars) => document.header = header_vars,
+                    Err(e) => report_read_error(
+                        &mut self.notifications,
+                        &mut diagnostics,
+                        "header-decode-failed",
+                        ReadStage::Header,
+                        Some("AcDb:Header"),
+                        format!("Failed to read header: {}", e),
+                    ),
+                }
+            }
             Err(e) => report_read_error(
                 &mut self.notifications,
                 &mut diagnostics,
@@ -922,29 +937,29 @@ impl<R: Read + Seek> DwgReader<R> {
             Ok(handle_buf) => {
                 handles_section_read = true;
                 match crate::io::dwg::dwg_stream_readers::handle_reader::read_handles(&handle_buf) {
-                Ok(mut hm) => {
-                    // AC15: Handle offsets are absolute file positions.
-                    // Convert to buffer-relative by subtracting the objects
-                    // section base offset.
-                    if info.objects_base_offset != 0 {
-                        let base = info.objects_base_offset;
-                        for offset in hm.values_mut() {
-                            *offset -= base;
+                    Ok(mut hm) => {
+                        // AC15: Handle offsets are absolute file positions.
+                        // Convert to buffer-relative by subtracting the objects
+                        // section base offset.
+                        if info.objects_base_offset != 0 {
+                            let base = info.objects_base_offset;
+                            for offset in hm.values_mut() {
+                                *offset -= base;
+                            }
                         }
+                        hm
                     }
-                    hm
-                },
-                Err(e) => {
-                    report_read_error(
-                        &mut self.notifications,
-                        &mut diagnostics,
-                        "handles-decode-failed",
-                        ReadStage::Handles,
-                        Some("AcDb:Handles"),
-                        format!("Failed to read handles: {}", e),
-                    );
-                    std::collections::HashMap::new()
-                }
+                    Err(e) => {
+                        report_read_error(
+                            &mut self.notifications,
+                            &mut diagnostics,
+                            "handles-decode-failed",
+                            ReadStage::Handles,
+                            Some("AcDb:Handles"),
+                            format!("Failed to read handles: {}", e),
+                        );
+                        std::collections::HashMap::new()
+                    }
                 }
             }
             Err(e) => {
@@ -1058,22 +1073,26 @@ impl<R: Read + Seek> DwgReader<R> {
                 }
             };
             if attached > 0 {
-                let fingerprint = super::sab_fingerprint(document.entities().filter_map(|entity| {
-                    let acis = match entity {
-                        crate::entities::EntityType::Solid3D(entity) => &entity.acis_data,
-                        crate::entities::EntityType::Region(entity) => &entity.acis_data,
-                        crate::entities::EntityType::Body(entity) => &entity.acis_data,
-                        crate::entities::EntityType::Surface(entity) => &entity.acis_data,
-                        _ => return None,
-                    };
-                    (!acis.sab_data.is_empty())
-                        .then_some((entity.common().handle, acis.sab_data.as_slice()))
-                }));
+                let fingerprint =
+                    super::sab_fingerprint(document.entities().filter_map(|entity| {
+                        let acis = match entity {
+                            crate::entities::EntityType::Solid3D(entity) => &entity.acis_data,
+                            crate::entities::EntityType::Region(entity) => &entity.acis_data,
+                            crate::entities::EntityType::Body(entity) => &entity.acis_data,
+                            crate::entities::EntityType::Surface(entity) => &entity.acis_data,
+                            _ => return None,
+                        };
+                        (!acis.sab_data.is_empty())
+                            .then_some((entity.common().handle, acis.sab_data.as_slice()))
+                    }));
                 document.raw_acds_data = Some(std::sync::Arc::new(acds_buf));
                 document.raw_acds_fingerprint = fingerprint;
                 self.notifications.notify(
                     NotificationType::Warning,
-                    format!("AcDs: attached {} SAB blob(s) to modeler entities", attached),
+                    format!(
+                        "AcDs: attached {} SAB blob(s) to modeler entities",
+                        attached
+                    ),
                 );
             }
         }
@@ -1185,7 +1204,9 @@ impl<R: Read + Seek> DwgReader<R> {
 
         // Transfer reader notifications to the document so callers can
         // inspect them via `document.notifications`.
-        document.notifications.extend(std::mem::take(&mut self.notifications));
+        document
+            .notifications
+            .extend(std::mem::take(&mut self.notifications));
 
         if perf {
             eprintln!(
@@ -1197,8 +1218,8 @@ impl<R: Read + Seek> DwgReader<R> {
             );
         }
         self.report_progress(1000);
-        let source_sections = usize::from(handles_section_read)
-            .saturating_add(usize::from(objects_section_read));
+        let source_sections =
+            usize::from(handles_section_read).saturating_add(usize::from(objects_section_read));
         let stats = crate::io::read::ReadStats::from_document(
             &document,
             SourceFormat::Dwg,
@@ -1237,7 +1258,10 @@ impl<R: Read + Seek> DwgReader<R> {
 
         self.notifications.notify(
             NotificationType::Warning,
-            format!("Reading DWG file version: {} ({:?})", version_string, version),
+            format!(
+                "Reading DWG file version: {} ({:?})",
+                version_string, version
+            ),
         );
 
         let mut info = DwgFileHeaderInfo {
@@ -1403,7 +1427,8 @@ impl<R: Read + Seek> DwgReader<R> {
             let size = self.stream.read_i32::<LittleEndian>()? as i64;
 
             let name = section_name_for(number);
-            info.section_locators.insert(name.to_string(), (seeker, size));
+            info.section_locators
+                .insert(name.to_string(), (seeker, size));
 
             // Track offsets for AcDbObjects position calculation
             if number == 1 {
@@ -1447,7 +1472,13 @@ impl<R: Read + Seek> DwgReader<R> {
             if aux_header_end == 0 {
                 let file_header_size: i64 = 0x61;
                 let mut offset = file_header_size;
-                for &sect in &[names::HEADER, names::CLASSES, names::OBJ_FREE_SPACE, names::TEMPLATE, names::AUX_HEADER] {
+                for &sect in &[
+                    names::HEADER,
+                    names::CLASSES,
+                    names::OBJ_FREE_SPACE,
+                    names::TEMPLATE,
+                    names::AUX_HEADER,
+                ] {
                     if let Some(&(_, size)) = info.section_locators.get(sect) {
                         offset += size;
                     }
@@ -1556,7 +1587,8 @@ impl<R: Read + Seek> DwgReader<R> {
         // Read compressed data
         if comp_size <= 0 || comp_size > 10_000_000 {
             return Err(DxfError::InvalidFormat(format!(
-                "Invalid AC18 page map compressed size: {}", comp_size
+                "Invalid AC18 page map compressed size: {}",
+                comp_size
             )));
         }
         let mut compressed = vec![0u8; comp_size as usize];
@@ -1586,7 +1618,8 @@ impl<R: Read + Seek> DwgReader<R> {
             }
 
             if page_number > 0 {
-                info.page_records.insert(page_number, (file_offset, page_size as i64));
+                info.page_records
+                    .insert(page_number, (file_offset, page_size as i64));
             }
             // Only advance for positive sizes; negative/zero sizes in gap entries are
             // invalid and must not corrupt subsequent page offsets.
@@ -1615,10 +1648,12 @@ impl<R: Read + Seek> DwgReader<R> {
         info: &mut DwgFileHeaderInfo,
         section_map_id: i32,
     ) -> Result<(), DxfError> {
-        let &(page_offset, _) = info.page_records.get(&section_map_id)
-            .ok_or_else(|| DxfError::InvalidFormat(format!(
-                "AC18 section map page {} not found in page records", section_map_id
-            )))?;
+        let &(page_offset, _) = info.page_records.get(&section_map_id).ok_or_else(|| {
+            DxfError::InvalidFormat(format!(
+                "AC18 section map page {} not found in page records",
+                section_map_id
+            ))
+        })?;
 
         self.stream.seek(SeekFrom::Start(page_offset as u64))?;
 
@@ -1632,7 +1667,8 @@ impl<R: Read + Seek> DwgReader<R> {
         // Read compressed data
         if comp_size <= 0 || comp_size > 10_000_000 {
             return Err(DxfError::InvalidFormat(format!(
-                "Invalid AC18 section map compressed size: {}", comp_size
+                "Invalid AC18 section map compressed size: {}",
+                comp_size
             )));
         }
         let mut compressed = vec![0u8; comp_size as usize];
@@ -1768,8 +1804,11 @@ impl<R: Read + Seek> DwgReader<R> {
             // |ComprLen| = raw data length. Copy directly from offset 0x20.
             let raw_len = (-compr_len) as usize;
             let src_start = 32; // offset 0x20 in decoded data
-            let copy_len = raw_len.min(0x110).min(decoded_data.len().saturating_sub(src_start));
-            metadata_buffer[..copy_len].copy_from_slice(&decoded_data[src_start..src_start + copy_len]);
+            let copy_len = raw_len
+                .min(0x110)
+                .min(decoded_data.len().saturating_sub(src_start));
+            metadata_buffer[..copy_len]
+                .copy_from_slice(&decoded_data[src_start..src_start + copy_len]);
         } else {
             // Positive ComprLen means data is LZ77 compressed.
             // Decompress from byte offset 32 in decoded_data.
@@ -1868,7 +1907,10 @@ impl<R: Read + Seek> DwgReader<R> {
 
         self.notifications.notify(
             NotificationType::Warning,
-            format!("AC1021: Read {} page records from page map", info.page_records.len()),
+            format!(
+                "AC1021: Read {} page records from page map",
+                info.page_records.len()
+            ),
         );
 
         Ok(())
@@ -2033,7 +2075,8 @@ impl<R: Read + Seek> DwgReader<R> {
             ac21_page_layout(compressed_size, correction_factor, block_size)?;
 
         // Read encoded data from file
-        self.stream.seek(SeekFrom::Start(AC21_FILE_HEADER_SIZE + page_offset))?;
+        self.stream
+            .seek(SeekFrom::Start(AC21_FILE_HEADER_SIZE + page_offset))?;
         let mut encoded_buffer = vec![0u8; read_length];
         let bytes_read = self.stream.read(&mut encoded_buffer)?;
         if bytes_read < read_length {
@@ -2082,9 +2125,10 @@ impl<R: Read + Seek> DwgReader<R> {
         if !info.section_locators.is_empty() {
             if let Some(&(offset, size)) = info.section_locators.get(section_name) {
                 if size <= 0 {
-                    return Err(DxfError::Parse(
-                        format!("Section '{}' has zero size", section_name)
-                    ));
+                    return Err(DxfError::Parse(format!(
+                        "Section '{}' has zero size",
+                        section_name
+                    )));
                 }
                 self.stream.seek(SeekFrom::Start(offset as u64))?;
                 let mut buf = vec![0u8; size as usize];
@@ -2099,9 +2143,10 @@ impl<R: Read + Seek> DwgReader<R> {
                 }
                 return Ok(buf);
             } else {
-                return Err(DxfError::Parse(
-                    format!("Section '{}' not found in AC15 locator records", section_name)
-                ));
+                return Err(DxfError::Parse(format!(
+                    "Section '{}' not found in AC15 locator records",
+                    section_name
+                )));
             }
         }
 
@@ -2121,11 +2166,13 @@ impl<R: Read + Seek> DwgReader<R> {
 
         // ── AC21 path: page-based section descriptors ──
         // Find the section descriptor
-        let section = info.section_descriptors.iter()
+        let section = info
+            .section_descriptors
+            .iter()
             .find(|s| s.name == section_name)
-            .ok_or_else(|| DxfError::Parse(
-                format!("Section '{}' not found in file", section_name)
-            ))?;
+            .ok_or_else(|| {
+                DxfError::Parse(format!("Section '{}' not found in file", section_name))
+            })?;
 
         // Field 0x00 ("Data size") holds the total section data size.
         // Field 0x08 ("Max size") is the page partition size per spec §5.4.
@@ -2307,11 +2354,13 @@ impl<R: Read + Seek> DwgReader<R> {
         section_name: &str,
         info: &DwgFileHeaderInfo,
     ) -> Result<Vec<u8>, DxfError> {
-        let section = info.section_descriptors.iter()
+        let section = info
+            .section_descriptors
+            .iter()
             .find(|s| s.name == section_name)
-            .ok_or_else(|| DxfError::Parse(
-                format!("Section '{}' not found in AC18 file", section_name)
-            ))?;
+            .ok_or_else(|| {
+                DxfError::Parse(format!("Section '{}' not found in AC18 file", section_name))
+            })?;
 
         // compressed_size field actually holds the total uncompressed section data size
         let total_size = section.compressed_size as usize;
@@ -2326,11 +2375,13 @@ impl<R: Read + Seek> DwgReader<R> {
             for page in page_batch {
                 let page_number = page.page_number as i32;
 
-                let &(page_file_offset, _page_total_size) = info.page_records.get(&page_number)
-                    .ok_or_else(|| DxfError::Parse(
-                        format!("AC18 page {} not found in page records for section '{}'",
-                                page_number, section_name)
-                    ))?;
+                let &(page_file_offset, _page_total_size) =
+                    info.page_records.get(&page_number).ok_or_else(|| {
+                        DxfError::Parse(format!(
+                            "AC18 page {} not found in page records for section '{}'",
+                            page_number, section_name
+                        ))
+                    })?;
 
                 self.stream.seek(SeekFrom::Start(page_file_offset as u64))?;
 
@@ -2388,10 +2439,7 @@ impl<R: Read + Seek> DwgReader<R> {
     }
 
     /// Find a section descriptor by name.
-    pub fn find_section<'a>(
-        info: &'a DwgFileHeaderInfo,
-        name: &str,
-    ) -> Option<&'a DwgSectionInfo> {
+    pub fn find_section<'a>(info: &'a DwgFileHeaderInfo, name: &str) -> Option<&'a DwgSectionInfo> {
         info.section_descriptors.iter().find(|s| s.name == name)
     }
 
@@ -2597,7 +2645,10 @@ mod section_name_tests {
 
     #[test]
     fn clean_zero_padded_name() {
-        assert_eq!(section_name_from_field(&field(b"AcDb:Handles")), "AcDb:Handles");
+        assert_eq!(
+            section_name_from_field(&field(b"AcDb:Handles")),
+            "AcDb:Handles"
+        );
     }
 
     #[test]
@@ -2616,7 +2667,6 @@ mod section_name_tests {
         assert_eq!(section_name_from_field(&[0u8; 64]), "");
     }
 }
-
 
 /// Reconstruct a gradient hatch that was down-saved (R2000/R2004) as a solid
 /// fill plus round-trip metadata: the two colours live in EED
@@ -2692,7 +2742,13 @@ pub(crate) fn recover_roundtrip_gradients(document: &mut crate::document::CadDoc
                         let ascii: String = xr
                             .raw_data
                             .iter()
-                            .map(|&b| if (32..127).contains(&b) { b as char } else { ' ' })
+                            .map(|&b| {
+                                if (32..127).contains(&b) {
+                                    b as char
+                                } else {
+                                    ' '
+                                }
+                            })
                             .collect();
                         let up = ascii.to_ascii_uppercase();
                         for cand in GRADIENT_NAMES {
@@ -2810,8 +2866,7 @@ pub(crate) fn recover_mtext_bg_roundtrip(document: &mut crate::document::CadDocu
             continue;
         };
         // Walk the BBRT…BERT block as (Integer16 code, value) pairs.
-        let (mut flags, mut scale, mut color, mut transp) =
-            (0i32, 1.0f64, Color::ByLayer, 0i32);
+        let (mut flags, mut scale, mut color, mut transp) = (0i32, 1.0f64, Color::ByLayer, 0i32);
         let mut i = begin + 1;
         while i + 1 < vals.len() {
             if matches!(&vals[i], XDataValue::String(s) if s == "ACAD_MTEXT_BERT") {

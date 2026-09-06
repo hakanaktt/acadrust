@@ -142,7 +142,13 @@ impl StlImporter {
                     &format!("{}_{}_{}_{}", stl_mesh.name, r, g, b),
                     color,
                 );
-                let mesh = build_mesh(stl_mesh, tri_indices, scale, self.config.merge_vertices, self.config.merge_tolerance);
+                let mesh = build_mesh(
+                    stl_mesh,
+                    tri_indices,
+                    scale,
+                    self.config.merge_vertices,
+                    self.config.merge_tolerance,
+                );
                 let mut mesh_entity = mesh;
                 mesh_entity.common.layer = layer;
                 mesh_entity.common.color = color;
@@ -157,7 +163,13 @@ impl StlImporter {
                 self.config.default_color,
             );
             let all_indices: Vec<usize> = (0..stl_mesh.triangles.len()).collect();
-            let mut mesh = build_mesh(stl_mesh, &all_indices, scale, self.config.merge_vertices, self.config.merge_tolerance);
+            let mut mesh = build_mesh(
+                stl_mesh,
+                &all_indices,
+                scale,
+                self.config.merge_vertices,
+                self.config.merge_tolerance,
+            );
             mesh.common.layer = layer;
             doc.add_entity(EntityType::Mesh(mesh))?;
         }

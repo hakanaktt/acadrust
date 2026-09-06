@@ -52,7 +52,8 @@ fn xref_block_does_not_bind_owned_entities() {
         // Simulate the host merging the resolved xref geometry into the block
         // record for display: several entities owned by the xref block.
         for i in 0..5 {
-            let mut e = EntityType::Line(Line::from_coords(0.0, i as f64, 0.0, 10.0, i as f64, 0.0));
+            let mut e =
+                EntityType::Line(Line::from_coords(0.0, i as f64, 0.0, 10.0, i as f64, 0.0));
             e.common_mut().owner_handle = br_handle;
             doc.add_entity(e).unwrap();
         }

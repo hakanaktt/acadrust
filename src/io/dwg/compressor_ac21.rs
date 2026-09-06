@@ -473,7 +473,13 @@ fn encode_extended_long(length: u32, offset: u32, trailing_lit: u32) -> MatchEnc
     let next_op = (((len_adj >> 11) & 0x1F) << 3) | (trailing_lit & 0x07);
 
     MatchEncoding {
-        bytes: [opcode as u8, byte1 as u8, byte2 as u8, byte3 as u8, next_op as u8],
+        bytes: [
+            opcode as u8,
+            byte1 as u8,
+            byte2 as u8,
+            byte3 as u8,
+            next_op as u8,
+        ],
         len: 5,
     }
 }
@@ -503,8 +509,7 @@ fn encode_match(length: u32, offset: u32, trailing_lit: u32) -> MatchEncoding {
     // Verify encode→decode roundtrip in debug mode
     #[cfg(debug_assertions)]
     {
-        let (dec_len, dec_off, dec_trail) =
-            verify_decode_match(&enc.bytes[..enc.len as usize]);
+        let (dec_len, dec_off, dec_trail) = verify_decode_match(&enc.bytes[..enc.len as usize]);
         debug_assert_eq!(
             dec_len, length,
             "encode_match roundtrip length mismatch: encoded {}, decoded {} (offset={}, trail={})",
@@ -553,7 +558,9 @@ fn verify_decode_match(bytes: &[u8]) -> (u32, u32, u32) {
             si += 1;
             op = bytes[si as usize] as u32;
             #[allow(unused_assignments)]
-            { si += 1; }
+            {
+                si += 1;
+            }
             length = (op >> 3 & 0x10) + length;
             offset = ((op & 0x78) << 5) + 1 + offset;
         }
@@ -563,7 +570,9 @@ fn verify_decode_match(bytes: &[u8]) -> (u32, u32, u32) {
             si += 1;
             op = bytes[si as usize] as u32;
             #[allow(unused_assignments)]
-            { si += 1; }
+            {
+                si += 1;
+            }
             offset = ((op & 0xF8) << 5) + 1 + offset;
         }
         2 => {
@@ -575,7 +584,9 @@ fn verify_decode_match(bytes: &[u8]) -> (u32, u32, u32) {
             if (op & 8) == 0 {
                 op = bytes[si as usize] as u32;
                 #[allow(unused_assignments)]
-                { si += 1; }
+                {
+                    si += 1;
+                }
                 length = (op & 0xF8) + length;
             } else {
                 offset += 1;
@@ -583,7 +594,9 @@ fn verify_decode_match(bytes: &[u8]) -> (u32, u32, u32) {
                 si += 1;
                 op = bytes[si as usize] as u32;
                 #[allow(unused_assignments)]
-                { si += 1; }
+                {
+                    si += 1;
+                }
                 length = ((op & 0xF8) << 8) + length + 0x100;
             }
         }
@@ -592,7 +605,9 @@ fn verify_decode_match(bytes: &[u8]) -> (u32, u32, u32) {
             offset = op & 0x0F;
             op = bytes[si as usize] as u32;
             #[allow(unused_assignments)]
-            { si += 1; }
+            {
+                si += 1;
+            }
             offset = ((op & 0xF8) << 1) + offset + 1;
         }
     }
@@ -648,9 +663,8 @@ const MAX_CHAIN: usize = 64; // max chain length to check before giving up
 /// 3-byte hash for match finding.
 #[inline]
 fn hash3(data: &[u8], pos: usize) -> usize {
-    let h = (data[pos] as usize) * 31 * 31
-        + (data[pos + 1] as usize) * 31
-        + (data[pos + 2] as usize);
+    let h =
+        (data[pos] as usize) * 31 * 31 + (data[pos + 1] as usize) * 31 + (data[pos + 2] as usize);
     h & HASH_MASK
 }
 
@@ -1040,10 +1054,12 @@ impl<'a> Ac21Compressor<'a> {
         debug_assert!(
             offset as usize <= _pos,
             "emit_match_sequence: offset {} > pos {} (impossible back-reference)",
-            offset, _pos
+            offset,
+            _pos
         );
         let enc = encode_match(length, offset, 0);
-        self.output.extend_from_slice(&enc.bytes[..enc.len as usize]);
+        self.output
+            .extend_from_slice(&enc.bytes[..enc.len as usize]);
     }
 
     /// Emit a chained match (trailing_lit = 0, within the match chain loop).
@@ -1062,7 +1078,8 @@ impl<'a> Ac21Compressor<'a> {
             self.output
                 .extend_from_slice(&ext.bytes[..ext.len as usize]);
         } else {
-            self.output.extend_from_slice(&enc.bytes[..enc.len as usize]);
+            self.output
+                .extend_from_slice(&enc.bytes[..enc.len as usize]);
         }
     }
 
@@ -1156,12 +1173,7 @@ mod tests {
             let perm = &tables[n][..n];
             let mut seen = vec![false; n];
             for &v in perm {
-                assert!(
-                    (v as usize) < n,
-                    "length {}: value {} out of range",
-                    n,
-                    v
-                );
+                assert!((v as usize) < n, "length {}: value {} out of range", n, v);
                 assert!(!seen[v as usize], "length {}: duplicate value {}", n, v);
                 seen[v as usize] = true;
             }
@@ -1457,11 +1469,7 @@ mod tests {
             let compressed = compress_ac21(&data);
             let mut output = vec![0u8; size as usize];
             decompress_ac21(&compressed, 0, compressed.len() as u32, &mut output);
-            assert_eq!(
-                &output, &data,
-                "roundtrip failed for {}-byte input",
-                size
-            );
+            assert_eq!(&output, &data, "roundtrip failed for {}-byte input", size);
         }
     }
 
@@ -1593,8 +1601,8 @@ mod tests {
                 2 => {
                     source_offset = bytes[source_index as usize] as u32;
                     source_index += 1;
-                    source_offset = ((bytes[source_index as usize] as u32) << 8 & 0xFF00)
-                        | source_offset;
+                    source_offset =
+                        ((bytes[source_index as usize] as u32) << 8 & 0xFF00) | source_offset;
                     source_index += 1;
                     let base_len = op_code & 7;
                     if (op_code & 8) == 0 {
@@ -1623,31 +1631,66 @@ mod tests {
         for &(len, off, tl) in &[(3, 1, 0), (14, 512, 7), (7, 256, 3)] {
             let enc = encode_compact(len, off, tl);
             let (dl, do_, dt) = decode_match(&enc.bytes[..enc.len as usize]);
-            assert_eq!((dl, do_, dt), (len, off, tl), "compact({},{},{})", len, off, tl);
+            assert_eq!(
+                (dl, do_, dt),
+                (len, off, tl),
+                "compact({},{},{})",
+                len,
+                off,
+                tl
+            );
         }
         // Short edge cases
         for &(len, off, tl) in &[(3, 1, 0), (18, 8192, 7), (10, 4000, 5)] {
             let enc = encode_short(len, off, tl);
             let (dl, do_, dt) = decode_match(&enc.bytes[..enc.len as usize]);
-            assert_eq!((dl, do_, dt), (len, off, tl), "short({},{},{})", len, off, tl);
+            assert_eq!(
+                (dl, do_, dt),
+                (len, off, tl),
+                "short({},{},{})",
+                len,
+                off,
+                tl
+            );
         }
         // Long edge cases
         for &(len, off, tl) in &[(19, 1, 0), (34, 1, 0), (35, 1, 0), (50, 4096, 7)] {
             let enc = encode_long(len, off, tl);
             let (dl, do_, dt) = decode_match(&enc.bytes[..enc.len as usize]);
-            assert_eq!((dl, do_, dt), (len, off, tl), "long({},{},{})", len, off, tl);
+            assert_eq!(
+                (dl, do_, dt),
+                (len, off, tl),
+                "long({},{},{})",
+                len,
+                off,
+                tl
+            );
         }
         // Extended edge cases
         for &(len, off, tl) in &[(0, 0, 0), (255, 65535, 7), (100, 30000, 4)] {
             let enc = encode_extended(len, off, tl);
             let (dl, do_, dt) = decode_match(&enc.bytes[..enc.len as usize]);
-            assert_eq!((dl, do_, dt), (len, off, tl), "extended({},{},{})", len, off, tl);
+            assert_eq!(
+                (dl, do_, dt),
+                (len, off, tl),
+                "extended({},{},{})",
+                len,
+                off,
+                tl
+            );
         }
         // Extended-long edge cases
         for &(len, off, tl) in &[(256, 1, 0), (65791, 65536, 7), (1000, 32768, 3)] {
             let enc = encode_extended_long(len, off, tl);
             let (dl, do_, dt) = decode_match(&enc.bytes[..enc.len as usize]);
-            assert_eq!((dl, do_, dt), (len, off, tl), "ext-long({},{},{})", len, off, tl);
+            assert_eq!(
+                (dl, do_, dt),
+                (len, off, tl),
+                "ext-long({},{},{})",
+                len,
+                off,
+                tl
+            );
         }
     }
 

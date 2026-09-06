@@ -200,10 +200,7 @@ impl Wipeout {
             fade: 0,
             clip_mode: WipeoutClipMode::Outside,
             clip_type: WipeoutClipType::Rectangular,
-            clip_boundary_vertices: vec![
-                Vector2::new(-0.5, -0.5),
-                Vector2::new(0.5, 0.5),
-            ],
+            clip_boundary_vertices: vec![Vector2::new(-0.5, -0.5), Vector2::new(0.5, 0.5)],
             definition_handle: None,
             definition_reactor_handle: None,
         }
@@ -222,10 +219,7 @@ impl Wipeout {
             v_vector: Vector3::new(0.0, height, 0.0),
             size: Vector2::new(1.0, 1.0),
             clip_type: WipeoutClipType::Rectangular,
-            clip_boundary_vertices: vec![
-                Vector2::new(-0.5, -0.5),
-                Vector2::new(0.5, 0.5),
-            ],
+            clip_boundary_vertices: vec![Vector2::new(-0.5, -0.5), Vector2::new(0.5, 0.5)],
             ..Self::new()
         }
     }
@@ -272,8 +266,16 @@ impl Wipeout {
             .iter()
             .map(|v| {
                 Vector2::new(
-                    if width > 0.0 { (v.x - min_x) / width - 0.5 } else { 0.0 },
-                    if height > 0.0 { 0.5 - (v.y - min_y) / height } else { 0.0 },
+                    if width > 0.0 {
+                        (v.x - min_x) / width - 0.5
+                    } else {
+                        0.0
+                    },
+                    if height > 0.0 {
+                        0.5 - (v.y - min_y) / height
+                    } else {
+                        0.0
+                    },
                 )
             })
             .collect();
@@ -328,9 +330,7 @@ impl Wipeout {
     /// Returns the area in world units.
     pub fn area(&self) -> f64 {
         if self.clip_type == WipeoutClipType::Rectangular {
-            self.u_vector.cross(&self.v_vector).length()
-                * self.size.x.abs()
-                * self.size.y.abs()
+            self.u_vector.cross(&self.v_vector).length() * self.size.x.abs() * self.size.y.abs()
         } else {
             // Calculate polygon area using shoelace formula
             self.polygon_area()
@@ -383,16 +383,8 @@ impl Wipeout {
         let u = self.u_vector;
         let v = self.v_vector;
 
-        self.u_vector = Vector3::new(
-            u.x * cos_a - u.y * sin_a,
-            u.x * sin_a + u.y * cos_a,
-            u.z,
-        );
-        self.v_vector = Vector3::new(
-            v.x * cos_a - v.y * sin_a,
-            v.x * sin_a + v.y * cos_a,
-            v.z,
-        );
+        self.u_vector = Vector3::new(u.x * cos_a - u.y * sin_a, u.x * sin_a + u.y * cos_a, u.z);
+        self.v_vector = Vector3::new(v.x * cos_a - v.y * sin_a, v.x * sin_a + v.y * cos_a, v.z);
     }
 
     /// Scales the wipeout uniformly.
@@ -491,7 +483,8 @@ impl Wipeout {
         for i in 0..verts.len() {
             if ((verts[i].y > point.y) != (verts[j].y > point.y))
                 && (point.x
-                    < (verts[j].x - verts[i].x) * (point.y - verts[i].y) / (verts[j].y - verts[i].y)
+                    < (verts[j].x - verts[i].x) * (point.y - verts[i].y)
+                        / (verts[j].y - verts[i].y)
                         + verts[i].x)
             {
                 inside = !inside;
@@ -582,7 +575,7 @@ impl Entity for Wipeout {
     fn entity_type(&self) -> &'static str {
         Self::ENTITY_NAME
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_wipeout(self, transform);
     }
@@ -608,11 +601,7 @@ mod tests {
 
     #[test]
     fn test_rectangular_wipeout() {
-        let wipeout = Wipeout::rectangular(
-            Vector3::new(10.0, 20.0, 0.0),
-            100.0,
-            50.0,
-        );
+        let wipeout = Wipeout::rectangular(Vector3::new(10.0, 20.0, 0.0), 100.0, 50.0);
         assert_eq!(wipeout.insertion_point.x, 10.0);
         assert_eq!(wipeout.insertion_point.y, 20.0);
         assert!((wipeout.width() - 100.0).abs() < 1e-10);
@@ -622,10 +611,8 @@ mod tests {
 
     #[test]
     fn test_from_corners() {
-        let wipeout = Wipeout::from_corners(
-            Vector3::new(10.0, 20.0, 0.0),
-            Vector3::new(60.0, 70.0, 0.0),
-        );
+        let wipeout =
+            Wipeout::from_corners(Vector3::new(10.0, 20.0, 0.0), Vector3::new(60.0, 70.0, 0.0));
         assert!((wipeout.width() - 50.0).abs() < 1e-10);
         assert!((wipeout.height() - 50.0).abs() < 1e-10);
     }
@@ -645,11 +632,7 @@ mod tests {
 
     #[test]
     fn test_world_boundary_vertices() {
-        let wipeout = Wipeout::rectangular(
-            Vector3::new(10.0, 10.0, 0.0),
-            50.0,
-            30.0,
-        );
+        let wipeout = Wipeout::rectangular(Vector3::new(10.0, 10.0, 0.0), 50.0, 30.0);
         let verts = wipeout.world_boundary_vertices();
         assert_eq!(verts.len(), 2);
         assert!((verts[0].x - 10.0).abs() < 1e-10);
@@ -658,21 +641,13 @@ mod tests {
 
     #[test]
     fn test_area_rectangular() {
-        let wipeout = Wipeout::rectangular(
-            Vector3::ZERO,
-            10.0,
-            5.0,
-        );
+        let wipeout = Wipeout::rectangular(Vector3::ZERO, 10.0, 5.0);
         assert!((wipeout.area() - 50.0).abs() < 1e-10);
     }
 
     #[test]
     fn test_center() {
-        let wipeout = Wipeout::rectangular(
-            Vector3::new(0.0, 0.0, 0.0),
-            10.0,
-            10.0,
-        );
+        let wipeout = Wipeout::rectangular(Vector3::new(0.0, 0.0, 0.0), 10.0, 10.0);
         let center = wipeout.center();
         assert!((center.x - 5.0).abs() < 1e-10);
         assert!((center.y - 5.0).abs() < 1e-10);
@@ -680,11 +655,7 @@ mod tests {
 
     #[test]
     fn test_corners() {
-        let wipeout = Wipeout::rectangular(
-            Vector3::new(0.0, 0.0, 0.0),
-            10.0,
-            20.0,
-        );
+        let wipeout = Wipeout::rectangular(Vector3::new(0.0, 0.0, 0.0), 10.0, 20.0);
         let corners = wipeout.corners();
         assert_eq!(corners[0], Vector3::new(0.0, 0.0, 0.0));
         assert_eq!(corners[1], Vector3::new(10.0, 0.0, 0.0));
@@ -694,11 +665,7 @@ mod tests {
 
     #[test]
     fn test_rotate() {
-        let mut wipeout = Wipeout::rectangular(
-            Vector3::ZERO,
-            10.0,
-            0.0,
-        );
+        let mut wipeout = Wipeout::rectangular(Vector3::ZERO, 10.0, 0.0);
         wipeout.u_vector = Vector3::new(10.0, 0.0, 0.0);
         wipeout.v_vector = Vector3::new(0.0, 10.0, 0.0);
 
@@ -710,11 +677,7 @@ mod tests {
 
     #[test]
     fn test_scale() {
-        let mut wipeout = Wipeout::rectangular(
-            Vector3::ZERO,
-            10.0,
-            5.0,
-        );
+        let mut wipeout = Wipeout::rectangular(Vector3::ZERO, 10.0, 5.0);
         wipeout.scale(2.0);
 
         assert!((wipeout.width() - 20.0).abs() < 1e-10);
@@ -723,11 +686,7 @@ mod tests {
 
     #[test]
     fn test_translate() {
-        let mut wipeout = Wipeout::rectangular(
-            Vector3::ZERO,
-            10.0,
-            10.0,
-        );
+        let mut wipeout = Wipeout::rectangular(Vector3::ZERO, 10.0, 10.0);
         wipeout.translate(Vector3::new(5.0, 5.0, 0.0));
 
         assert_eq!(wipeout.insertion_point.x, 5.0);
@@ -736,11 +695,7 @@ mod tests {
 
     #[test]
     fn test_bounding_box() {
-        let wipeout = Wipeout::rectangular(
-            Vector3::new(10.0, 20.0, 0.0),
-            30.0,
-            40.0,
-        );
+        let wipeout = Wipeout::rectangular(Vector3::new(10.0, 20.0, 0.0), 30.0, 40.0);
         let bb = wipeout.bounding_box();
 
         assert!((bb.min.x - 10.0).abs() < 1e-10);
@@ -757,11 +712,7 @@ mod tests {
 
     #[test]
     fn test_set_size() {
-        let mut wipeout = Wipeout::rectangular(
-            Vector3::ZERO,
-            10.0,
-            10.0,
-        );
+        let mut wipeout = Wipeout::rectangular(Vector3::ZERO, 10.0, 10.0);
         wipeout.set_size(50.0, 25.0);
 
         assert!((wipeout.width() - 50.0).abs() < 1e-10);
@@ -784,8 +735,12 @@ mod tests {
     fn test_display_flags() {
         let wipeout = Wipeout::new();
         assert!(wipeout.flags.contains(WipeoutDisplayFlags::SHOW_IMAGE));
-        assert!(wipeout.flags.contains(WipeoutDisplayFlags::SHOW_NOT_ALIGNED));
-        assert!(wipeout.flags.contains(WipeoutDisplayFlags::USE_CLIPPING_BOUNDARY));
+        assert!(wipeout
+            .flags
+            .contains(WipeoutDisplayFlags::SHOW_NOT_ALIGNED));
+        assert!(wipeout
+            .flags
+            .contains(WipeoutDisplayFlags::USE_CLIPPING_BOUNDARY));
     }
 
     #[test]
@@ -805,11 +760,7 @@ mod tests {
 
     #[test]
     fn test_contains_point_rectangular() {
-        let wipeout = Wipeout::rectangular(
-            Vector3::new(10.0, 10.0, 0.0),
-            20.0,
-            20.0,
-        );
+        let wipeout = Wipeout::rectangular(Vector3::new(10.0, 10.0, 0.0), 20.0, 20.0);
 
         // Inside
         assert!(wipeout.contains_point(Vector3::new(20.0, 20.0, 0.0)));

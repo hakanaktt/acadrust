@@ -131,7 +131,7 @@ impl Entity for Line {
     fn entity_type(&self) -> &'static str {
         "LINE"
     }
-    
+
     fn apply_transform(&mut self, transform: &Transform) {
         super::transform::transform_line(self, transform);
     }
@@ -174,7 +174,7 @@ mod tests {
         assert_eq!(line.start, Vector3::new(5.0, 5.0, 5.0));
         assert_eq!(line.end, Vector3::new(15.0, 5.0, 5.0));
     }
-    
+
     #[test]
     fn test_line_mirror_x() {
         let mut line = Line::from_coords(1.0, 2.0, 0.0, 4.0, 6.0, 0.0);
@@ -184,18 +184,13 @@ mod tests {
         assert!((line.end.x - (-4.0)).abs() < 1e-10);
         assert!((line.end.y - 6.0).abs() < 1e-10);
     }
-    
+
     #[test]
     fn test_line_mirror_about_line() {
         // Mirror a horizontal line across x-axis — should negate Y
         let mut line = Line::from_coords(0.0, 5.0, 0.0, 10.0, 5.0, 0.0);
-        line.mirror_about_line(
-            Vector3::new(0.0, 0.0, 0.0),
-            Vector3::new(1.0, 0.0, 0.0),
-        );
+        line.mirror_about_line(Vector3::new(0.0, 0.0, 0.0), Vector3::new(1.0, 0.0, 0.0));
         assert!((line.start.y - (-5.0)).abs() < 1e-10);
         assert!((line.end.y - (-5.0)).abs() < 1e-10);
     }
 }
-
-

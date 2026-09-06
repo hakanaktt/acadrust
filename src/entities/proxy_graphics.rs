@@ -25,10 +25,7 @@ pub enum ProxyGraphicRecord {
     /// Type 36: a single-line UTF-16 text primitive.
     UnicodeText(ProxyUnicodeText),
     /// A record whose payload is not interpreted by this version of acadrust.
-    Unknown {
-        record_type: u32,
-        data: Vec<u8>,
-    },
+    Unknown { record_type: u32, data: Vec<u8> },
 }
 
 /// Type-36 Unicode text data.
@@ -145,9 +142,7 @@ fn encode_record(record: &ProxyGraphicRecord) -> Option<(u32, Vec<u8>)> {
             }
             Some((36, data))
         }
-        ProxyGraphicRecord::Unknown { record_type, data } => {
-            Some((*record_type, data.clone()))
-        }
+        ProxyGraphicRecord::Unknown { record_type, data } => Some((*record_type, data.clone())),
     }
 }
 
@@ -162,9 +157,7 @@ fn decode_unicode_text(data: &[u8]) -> Option<ProxyUnicodeText> {
     let width_factor = read_f64(data, 80)?;
     let oblique_angle = read_f64(data, 88)?;
     let tail = &data[UNICODE_TEXT_FIXED_SIZE..];
-    let terminator = tail
-        .chunks_exact(2)
-        .position(|value| value == [0, 0])?;
+    let terminator = tail.chunks_exact(2).position(|value| value == [0, 0])?;
     let units = tail[..terminator * 2]
         .chunks_exact(2)
         .map(|value| u16::from_le_bytes([value[0], value[1]]))

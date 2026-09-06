@@ -505,10 +505,7 @@ impl LeaderLine {
         if self.points.len() < 2 {
             return 0.0;
         }
-        self.points
-            .windows(2)
-            .map(|w| (w[1] - w[0]).length())
-            .sum()
+        self.points.windows(2).map(|w| (w[1] - w[0]).length()).sum()
     }
 }
 
@@ -1221,7 +1218,7 @@ impl Entity for MultiLeader {
         // Calculate bounding box from all leader line points and content location
         let mut min = Vector3::new(f64::MAX, f64::MAX, f64::MAX);
         let mut max = Vector3::new(f64::MIN, f64::MIN, f64::MIN);
-        
+
         // Include content location
         let loc = &self.context.content_base_point;
         min.x = min.x.min(loc.x);
@@ -1230,7 +1227,7 @@ impl Entity for MultiLeader {
         max.x = max.x.max(loc.x);
         max.y = max.y.max(loc.y);
         max.z = max.z.max(loc.z);
-        
+
         // Include all leader line points
         for root in &self.context.leader_roots {
             for line in &root.lines {
@@ -1244,7 +1241,7 @@ impl Entity for MultiLeader {
                 }
             }
         }
-        
+
         BoundingBox3D::new(min, max)
     }
 
@@ -1255,7 +1252,7 @@ impl Entity for MultiLeader {
     fn entity_type(&self) -> &'static str {
         "MULTILEADER"
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_multileader(self, transform);
     }
@@ -1403,10 +1400,7 @@ mod tests {
 
     #[test]
     fn test_multileader_with_text() {
-        let points = vec![
-            Vector3::new(0.0, 0.0, 0.0),
-            Vector3::new(5.0, 5.0, 0.0),
-        ];
+        let points = vec![Vector3::new(0.0, 0.0, 0.0), Vector3::new(5.0, 5.0, 0.0)];
         let mleader = MultiLeader::with_text("Note", Vector3::new(10.0, 10.0, 0.0), points);
 
         assert_eq!(mleader.content_type, LeaderContentType::MText);
@@ -1420,7 +1414,10 @@ mod tests {
         let mut mleader = MultiLeader::new();
         let root = mleader.add_leader_root();
         root.create_line(vec![Vector3::ZERO, Vector3::new(1.0, 1.0, 0.0)]);
-        root.create_line(vec![Vector3::new(0.0, 1.0, 0.0), Vector3::new(1.0, 1.0, 0.0)]);
+        root.create_line(vec![
+            Vector3::new(0.0, 1.0, 0.0),
+            Vector3::new(1.0, 1.0, 0.0),
+        ]);
 
         assert_eq!(mleader.leader_root_count(), 1);
         assert_eq!(mleader.total_leader_line_count(), 2);
@@ -1460,10 +1457,7 @@ mod tests {
         let mleader = MultiLeader::with_text(
             "Note",
             Vector3::new(10.0, 10.0, 0.0),
-            vec![
-                Vector3::new(0.0, 0.0, 0.0),
-                Vector3::new(5.0, 5.0, 0.0),
-            ],
+            vec![Vector3::new(0.0, 0.0, 0.0), Vector3::new(5.0, 5.0, 0.0)],
         );
 
         let bbox = mleader.bounding_box().unwrap();
@@ -1482,15 +1476,27 @@ mod tests {
     #[test]
     fn test_path_types() {
         assert_eq!(MultiLeaderPathType::from(0), MultiLeaderPathType::Invisible);
-        assert_eq!(MultiLeaderPathType::from(1), MultiLeaderPathType::StraightLineSegments);
+        assert_eq!(
+            MultiLeaderPathType::from(1),
+            MultiLeaderPathType::StraightLineSegments
+        );
         assert_eq!(MultiLeaderPathType::from(2), MultiLeaderPathType::Spline);
     }
 
     #[test]
     fn test_text_attachment_types() {
-        assert_eq!(TextAttachmentType::from(0), TextAttachmentType::TopOfTopLine);
-        assert_eq!(TextAttachmentType::from(2), TextAttachmentType::MiddleOfText);
-        assert_eq!(TextAttachmentType::from(9), TextAttachmentType::CenterOfText);
+        assert_eq!(
+            TextAttachmentType::from(0),
+            TextAttachmentType::TopOfTopLine
+        );
+        assert_eq!(
+            TextAttachmentType::from(2),
+            TextAttachmentType::MiddleOfText
+        );
+        assert_eq!(
+            TextAttachmentType::from(9),
+            TextAttachmentType::CenterOfText
+        );
     }
 
     #[test]

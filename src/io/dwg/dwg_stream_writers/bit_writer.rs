@@ -6,10 +6,10 @@
 //!
 //! Based on the reference `DwgStreamWriterBase` and version-specific subclasses.
 
-use crate::types::{Color, DxfVersion, Vector2, Vector3};
-use crate::types::Transparency;
-use crate::io::dwg::dwg_version::DwgVersion;
 use crate::io::dwg::dwg_reference_type::DwgReferenceType;
+use crate::io::dwg::dwg_version::DwgVersion;
+use crate::types::Transparency;
+use crate::types::{Color, DxfVersion, Vector2, Vector3};
 
 /// Bit-level writer for the DWG binary format.
 ///
@@ -710,11 +710,7 @@ impl DwgBitWriter {
     ///
     /// - R13/R14: Just writes color index as BS (no transparency)
     /// - R2004+: Flags bitfield with optional true color BL and transparency BL
-    pub fn write_en_color(
-        &mut self,
-        color: &Color,
-        transparency: &Transparency,
-    ) {
+    pub fn write_en_color(&mut self, color: &Color, transparency: &Transparency) {
         self.write_en_color_with_book(color, transparency, false);
     }
 
@@ -740,9 +736,9 @@ impl DwgBitWriter {
         // AcDbColor handle still supplies the RGB value, so no RGB BL follows.
         if is_book_color {
             flags |= 0xC000; // AcDbColor reference (handle written separately)
-            // ENC still carries the ACI fallback in the low 13 bits. Omitting
-            // it turns any indexed book color into ByBlock when the record is
-            // read before (or without) resolving the AcDbColor object.
+                             // ENC still carries the ACI fallback in the low 13 bits. Omitting
+                             // it turns any indexed book color into ByBlock when the record is
+                             // read before (or without) resolving the AcDbColor object.
             flags |= color.approximate_index() as u16 & 0x1FFF;
         } else if is_true_color {
             flags |= 0x8000; // Complex/true color follows
@@ -767,9 +763,7 @@ impl DwgBitWriter {
                 Color::Rgb { r, g, b } => {
                     (*b as u32) | ((*g as u32) << 8) | ((*r as u32) << 16) | (0xC2u32 << 24)
                 }
-                Color::Index(idx) => {
-                    (*idx as u32) | (0xC3u32 << 24)
-                }
+                Color::Index(idx) => (*idx as u32) | (0xC3u32 << 24),
                 Color::ByLayer => 0xC0u32 << 24,
                 Color::None => 0xC8u32 << 24,
                 Color::ByBlock => 0xC3u32 << 24,
@@ -1097,7 +1091,7 @@ mod tests {
         w.write_byte(0xFF);
         // First byte: 1 (our bit) + top 7 bits of 0xFF
         assert_eq!(w.buffer, vec![0xFF]); // 1_1111111
-        // Remaining bit of 0xFF is in last_byte
+                                          // Remaining bit of 0xFF is in last_byte
         assert_eq!(w.last_byte, 0x80); // 1_0000000
         assert_eq!(w.bit_shift, 1);
     }
@@ -1429,10 +1423,10 @@ mod tests {
     fn test_set_position_preserves_data() {
         // Critical test: seeking backward must NOT destroy buffer data.
         let mut w = writer();
-        w.write_byte(0xAA);       // byte 0
-        w.write_byte(0xBB);       // byte 1
-        w.write_byte(0xCC);       // byte 2
-        w.write_byte(0xDD);       // byte 3
+        w.write_byte(0xAA); // byte 0
+        w.write_byte(0xBB); // byte 1
+        w.write_byte(0xCC); // byte 2
+        w.write_byte(0xDD); // byte 3
 
         // Seek back to byte 1
         w.set_position_in_bits(8);
@@ -1459,17 +1453,17 @@ mod tests {
         // 5. Seek forward to data end
         // 6. Verify all data is intact
         let mut w = writer();
-        w.write_byte(0x01);                         // byte 0
-        let saved = w.position_in_bits();           // bit 8
-        w.write_int(0);                              // bytes 1-4: placeholder
-        w.write_byte(0x02);                         // byte 5
-        w.write_byte(0x03);                         // byte 6
-        let end_pos = w.position_in_bits();         // bit 56
+        w.write_byte(0x01); // byte 0
+        let saved = w.position_in_bits(); // bit 8
+        w.write_int(0); // bytes 1-4: placeholder
+        w.write_byte(0x02); // byte 5
+        w.write_byte(0x03); // byte 6
+        let end_pos = w.position_in_bits(); // bit 56
 
         // Patch the size
         w.set_position_in_bits(saved);
         w.write_raw_long(0x12345678);
-        w.write_shift_value();                       // no-op (byte-aligned)
+        w.write_shift_value(); // no-op (byte-aligned)
 
         // Seek back to end
         w.set_position_in_bits(end_pos);

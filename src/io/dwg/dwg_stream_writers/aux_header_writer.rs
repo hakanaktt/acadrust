@@ -34,10 +34,10 @@ fn dwg_internal_version(version: DxfVersion) -> i16 {
 /// Must match the file header metadata maintenance byte (0x0B, 0x12).
 pub fn dwg_maintenance_version(version: DxfVersion) -> i16 {
     match version {
-        DxfVersion::AC1021 => 25,  // 0x19
-        DxfVersion::AC1024 => 30,  // 0x1E
-        DxfVersion::AC1027 => 29,  // 0x1D
-        DxfVersion::AC1032 => 4,   // 0x04
+        DxfVersion::AC1021 => 25, // 0x19
+        DxfVersion::AC1024 => 30, // 0x1E
+        DxfVersion::AC1027 => 29, // 0x1D
+        DxfVersion::AC1032 => 4,  // 0x04
         _ => 0,
     }
 }
@@ -51,8 +51,7 @@ pub fn dwg_maintenance_version(version: DxfVersion) -> i16 {
 /// # Returns
 /// Raw section bytes.
 pub fn write_aux_header(version: DxfVersion, header: &HeaderVariables) -> Vec<u8> {
-    let dwg_version = DwgVersion::from_dxf_version(version)
-        .unwrap_or(DwgVersion::AC15);
+    let dwg_version = DwgVersion::from_dxf_version(version).unwrap_or(DwgVersion::AC15);
     let mut writer = DwgBitWriter::new(dwg_version, version);
 
     let internal_ver = dwg_internal_version(version);

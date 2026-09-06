@@ -77,11 +77,7 @@ where
     }
 }
 
-pub(crate) fn map_chunks_indexed<T, R, F>(
-    items: &[T],
-    chunk_size: usize,
-    map: F,
-) -> Vec<R>
+pub(crate) fn map_chunks_indexed<T, R, F>(items: &[T], chunk_size: usize, map: F) -> Vec<R>
 where
     T: Sync,
     R: Send,

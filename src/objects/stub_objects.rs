@@ -148,10 +148,27 @@ impl VisualStyle {
             values.clone_from_slice(&self.properties[..28]);
         } else if self.properties.len() == 24 {
             for (legacy, modern) in [
-                (0, 4), (1, 5), (2, 6), (3, 9), (4, 10), (5, 11),
-                (6, 13), (7, 14), (8, 15), (9, 16), (10, 17),
-                (11, 18), (12, 19), (13, 20), (14, 21), (15, 22),
-                (16, 23), (17, 24), (19, 12), (20, 25), (21, 26),
+                (0, 4),
+                (1, 5),
+                (2, 6),
+                (3, 9),
+                (4, 10),
+                (5, 11),
+                (6, 13),
+                (7, 14),
+                (8, 15),
+                (9, 16),
+                (10, 17),
+                (11, 18),
+                (12, 19),
+                (13, 20),
+                (14, 21),
+                (15, 22),
+                (16, 23),
+                (17, 24),
+                (19, 12),
+                (20, 25),
+                (21, 26),
                 (22, 27),
             ] {
                 values[modern] = self.properties[legacy].clone();
@@ -161,12 +178,9 @@ impl VisualStyle {
                 values[index] = property.clone();
             }
         }
-        values[0].value =
-            VisualStylePropertyValue::Long(self.face_lighting_model as i32);
-        values[1].value =
-            VisualStylePropertyValue::Long(self.face_lighting_quality as i32);
-        values[2].value =
-            VisualStylePropertyValue::Long(self.face_color_mode as i32);
+        values[0].value = VisualStylePropertyValue::Long(self.face_lighting_model as i32);
+        values[1].value = VisualStylePropertyValue::Long(self.face_lighting_quality as i32);
+        values[2].value = VisualStylePropertyValue::Long(self.face_color_mode as i32);
         values[3].value = VisualStylePropertyValue::Long(self.face_modifier);
         values[7].value = VisualStylePropertyValue::Long(self.edge_model);
         values[8].value = VisualStylePropertyValue::Long(self.edge_style);
@@ -277,7 +291,9 @@ impl VisualStyle {
 }
 
 impl Default for VisualStyle {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -466,7 +482,9 @@ impl Material {
 }
 
 impl Default for Material {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// GeoData — geographic location data for a drawing (AcDbGeoData).
@@ -622,7 +640,9 @@ impl GeoData {
 }
 
 impl Default for GeoData {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// SpatialFilter — the clip boundary (XCLIP) attached to a block reference.
@@ -681,7 +701,9 @@ impl SpatialFilter {
 }
 
 impl Default for SpatialFilter {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// RasterVariables — global raster image settings
@@ -717,7 +739,9 @@ impl RasterVariables {
 }
 
 impl Default for RasterVariables {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// BookColor (DBCOLOR) — named color definition
@@ -751,7 +775,9 @@ impl BookColor {
 }
 
 impl Default for BookColor {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// AcDbPlaceHolder — placeholder object (no data beyond handle)
@@ -775,7 +801,9 @@ impl PlaceHolder {
 }
 
 impl Default for PlaceHolder {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// DictionaryWithDefault — dictionary with a default entry handle
@@ -811,7 +839,9 @@ impl DictionaryWithDefault {
 }
 
 impl Default for DictionaryWithDefault {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// WipeoutVariables — global wipeout display settings
@@ -839,7 +869,9 @@ impl WipeoutVariables {
 }
 
 impl Default for WipeoutVariables {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // StubObject implementations for types that only need handle + owner parsing
@@ -847,10 +879,18 @@ impl Default for WipeoutVariables {
 macro_rules! impl_stub_object {
     ($ty:ident) => {
         impl StubObject for $ty {
-            fn new_stub() -> Self { Self::new() }
-            fn set_handle(&mut self, handle: Handle) { self.handle = handle; }
-            fn set_owner(&mut self, owner: Handle) { self.owner = owner; }
-            fn handle(&self) -> Handle { self.handle }
+            fn new_stub() -> Self {
+                Self::new()
+            }
+            fn set_handle(&mut self, handle: Handle) {
+                self.handle = handle;
+            }
+            fn set_owner(&mut self, owner: Handle) {
+                self.owner = owner;
+            }
+            fn handle(&self) -> Handle {
+                self.handle
+            }
         }
     };
 }

@@ -19,17 +19,19 @@
 //! DxfWriter::new(&doc).write_to_file("output.dxf")?;
 //! ```
 
+pub mod code_page;
 mod dxf_code;
 mod group_code_value;
 mod reader;
 mod writer;
-pub mod code_page;
 
 pub use dxf_code::DxfCode;
 pub use group_code_value::GroupCodeValueType;
 pub use reader::{DxfReader, DxfReaderConfiguration};
-pub use writer::{DxfWriter, DxfStreamWriter, DxfStreamWriterExt, DxfTextWriter, DxfBinaryWriter, SectionWriter};
-pub use writer::{write_dxf, write_binary_dxf, value_type_for_code};
+pub use writer::{value_type_for_code, write_binary_dxf, write_dxf};
+pub use writer::{
+    DxfBinaryWriter, DxfStreamWriter, DxfStreamWriterExt, DxfTextWriter, DxfWriter, SectionWriter,
+};
 
 pub(crate) fn split_color_book_name(value: &str) -> (Option<String>, Option<String>) {
     let optional = |value: &str| (!value.is_empty()).then(|| value.to_string());
@@ -52,4 +54,3 @@ pub(crate) fn join_color_book_name(
         (None, None) => None,
     }
 }
-

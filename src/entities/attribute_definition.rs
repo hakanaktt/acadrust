@@ -38,12 +38,24 @@ impl AttributeFlags {
     /// Convert to DXF bit flag value
     pub fn to_bits(&self) -> i32 {
         let mut bits = 0;
-        if self.invisible { bits |= 1; }
-        if self.constant { bits |= 2; }
-        if self.verify { bits |= 4; }
-        if self.preset { bits |= 8; }
-        if self.locked_position { bits |= 16; }
-        if self.annotative { bits |= 128; }
+        if self.invisible {
+            bits |= 1;
+        }
+        if self.constant {
+            bits |= 2;
+        }
+        if self.verify {
+            bits |= 4;
+        }
+        if self.preset {
+            bits |= 8;
+        }
+        if self.locked_position {
+            bits |= 16;
+        }
+        if self.annotative {
+            bits |= 128;
+        }
         bits
     }
 }
@@ -466,7 +478,7 @@ impl Entity for AttributeDefinition {
     fn bounding_box(&self) -> BoundingBox3D {
         let width = self.estimated_width();
         let height = self.height;
-        
+
         // Simple bounding box (doesn't account for rotation)
         BoundingBox3D::new(
             self.insertion_point,
@@ -486,7 +498,7 @@ impl Entity for AttributeDefinition {
     fn entity_type(&self) -> &'static str {
         "ATTDEF"
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_attribute_definition(self, transform);
     }
@@ -543,7 +555,7 @@ mod tests {
         assert!(flags.constant);
         assert!(flags.verify);
         assert!(!flags.preset);
-        
+
         assert_eq!(flags.to_bits(), 7);
     }
 
@@ -560,9 +572,9 @@ mod tests {
         let mut attdef = AttributeDefinition::default();
         attdef.insertion_point = Vector3::new(10.0, 20.0, 0.0);
         attdef.alignment_point = Vector3::new(10.0, 20.0, 0.0);
-        
+
         attdef.translate(Vector3::new(5.0, 5.0, 0.0));
-        
+
         assert_eq!(attdef.insertion_point, Vector3::new(15.0, 25.0, 0.0));
         assert_eq!(attdef.alignment_point, Vector3::new(15.0, 25.0, 0.0));
     }
@@ -575,7 +587,7 @@ mod tests {
             .with_rotation_degrees(90.0)
             .with_invisible()
             .with_layer("ATTRIBUTES");
-        
+
         assert_eq!(attdef.insertion_point, Vector3::new(10.0, 10.0, 0.0));
         assert_eq!(attdef.height, 5.0);
         assert!(attdef.flags.invisible);
@@ -584,15 +596,27 @@ mod tests {
 
     #[test]
     fn test_horizontal_alignment() {
-        assert_eq!(HorizontalAlignment::from_value(0), HorizontalAlignment::Left);
-        assert_eq!(HorizontalAlignment::from_value(1), HorizontalAlignment::Center);
-        assert_eq!(HorizontalAlignment::from_value(2), HorizontalAlignment::Right);
+        assert_eq!(
+            HorizontalAlignment::from_value(0),
+            HorizontalAlignment::Left
+        );
+        assert_eq!(
+            HorizontalAlignment::from_value(1),
+            HorizontalAlignment::Center
+        );
+        assert_eq!(
+            HorizontalAlignment::from_value(2),
+            HorizontalAlignment::Right
+        );
         assert_eq!(HorizontalAlignment::Center.to_value(), 1);
     }
 
     #[test]
     fn test_vertical_alignment() {
-        assert_eq!(VerticalAlignment::from_value(0), VerticalAlignment::Baseline);
+        assert_eq!(
+            VerticalAlignment::from_value(0),
+            VerticalAlignment::Baseline
+        );
         assert_eq!(VerticalAlignment::from_value(2), VerticalAlignment::Middle);
         assert_eq!(VerticalAlignment::Middle.to_value(), 2);
     }

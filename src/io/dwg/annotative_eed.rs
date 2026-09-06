@@ -69,14 +69,14 @@ pub(crate) fn decode_flag(bytes: &[u8], wide: bool) -> Option<bool> {
                     i += 1 + 2 + n; // length + codepage + chars
                 }
             }
-            2 => i += 1,            // control string
+            2 => i += 1, // control string
             4 => {
                 let n = *bytes.get(i)? as usize;
                 i += 1 + n;
             }
-            3 | 5 => i += 8,        // layer / entity handle
-            10..=13 => i += 24,     // points
-            40..=42 => i += 8,      // reals
+            3 | 5 => i += 8,    // layer / entity handle
+            10..=13 => i += 24, // points
+            40..=42 => i += 8,  // reals
             70 => {
                 last_short = Some(i16::from_le_bytes([*bytes.get(i)?, *bytes.get(i + 1)?]));
                 i += 2;

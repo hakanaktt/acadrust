@@ -43,7 +43,7 @@ pub enum AttachmentPointType {
 }
 
 /// Base dimension entity
-/// 
+///
 /// All dimension types share common properties and behavior.
 /// Specific dimension types extend this base with additional properties.
 #[derive(Debug, Clone, PartialEq)]
@@ -180,7 +180,7 @@ impl Default for DimensionBase {
 }
 
 /// Aligned dimension entity
-/// 
+///
 /// Measures the distance between two points along a line parallel to those points.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -268,7 +268,7 @@ impl DimensionLinear {
     pub fn new(first_point: Vector3, second_point: Vector3) -> Self {
         let mut base = DimensionBase::new(DimensionType::Linear);
         base.actual_measurement = first_point.distance(&second_point);
-        
+
         Self {
             base,
             first_point,
@@ -634,8 +634,8 @@ fn selected_line_sector_radians(
     }
 
     let cross = first_direction.cross(&second_direction);
-    let preferred_scale = preferred_normal.length()
-        * first_direction.length().max(second_direction.length());
+    let preferred_scale =
+        preferred_normal.length() * first_direction.length().max(second_direction.length());
     let preferred_is_normal = preferred_normal.length_squared() > f64::EPSILON
         && preferred_normal.dot(&first_direction).abs() <= preferred_scale * 1.0e-9
         && preferred_normal.dot(&second_direction).abs() <= preferred_scale * 1.0e-9;
@@ -1035,10 +1035,22 @@ impl super::Entity for Dimension {
     fn bounding_box(&self) -> crate::types::BoundingBox3D {
         use crate::types::BoundingBox3D;
         match self {
-            Dimension::Aligned(d) => BoundingBox3D::from_points(&[d.first_point, d.second_point, d.definition_point]).unwrap_or_default(),
-            Dimension::Linear(d) => BoundingBox3D::from_points(&[d.first_point, d.second_point, d.definition_point]).unwrap_or_default(),
-            Dimension::Radius(d) => BoundingBox3D::from_points(&[d.angle_vertex, d.definition_point]).unwrap_or_default(),
-            Dimension::Diameter(d) => BoundingBox3D::from_points(&[d.angle_vertex, d.definition_point]).unwrap_or_default(),
+            Dimension::Aligned(d) => {
+                BoundingBox3D::from_points(&[d.first_point, d.second_point, d.definition_point])
+                    .unwrap_or_default()
+            }
+            Dimension::Linear(d) => {
+                BoundingBox3D::from_points(&[d.first_point, d.second_point, d.definition_point])
+                    .unwrap_or_default()
+            }
+            Dimension::Radius(d) => {
+                BoundingBox3D::from_points(&[d.angle_vertex, d.definition_point])
+                    .unwrap_or_default()
+            }
+            Dimension::Diameter(d) => {
+                BoundingBox3D::from_points(&[d.angle_vertex, d.definition_point])
+                    .unwrap_or_default()
+            }
             Dimension::Angular2Ln(d) => BoundingBox3D::from_points(&[
                 d.dimension_arc,
                 d.angle_vertex,
@@ -1047,10 +1059,33 @@ impl super::Entity for Dimension {
                 d.definition_point,
             ])
             .unwrap_or_default(),
-            Dimension::Angular3Pt(d) => BoundingBox3D::from_points(&[d.angle_vertex, d.first_point, d.second_point, d.definition_point]).unwrap_or_default(),
-            Dimension::Ordinate(d) => BoundingBox3D::from_points(&[d.feature_location, d.leader_endpoint]).unwrap_or_default(),
-            Dimension::Arc(d) => BoundingBox3D::from_points(&[d.definition_point, d.first_extension_point, d.second_extension_point, d.center_point, d.first_leader_point, d.second_leader_point]).unwrap_or_default(),
-            Dimension::LargeRadial(d) => BoundingBox3D::from_points(&[d.definition_point, d.chord_point, d.override_center, d.jog_point]).unwrap_or_default(),
+            Dimension::Angular3Pt(d) => BoundingBox3D::from_points(&[
+                d.angle_vertex,
+                d.first_point,
+                d.second_point,
+                d.definition_point,
+            ])
+            .unwrap_or_default(),
+            Dimension::Ordinate(d) => {
+                BoundingBox3D::from_points(&[d.feature_location, d.leader_endpoint])
+                    .unwrap_or_default()
+            }
+            Dimension::Arc(d) => BoundingBox3D::from_points(&[
+                d.definition_point,
+                d.first_extension_point,
+                d.second_extension_point,
+                d.center_point,
+                d.first_leader_point,
+                d.second_leader_point,
+            ])
+            .unwrap_or_default(),
+            Dimension::LargeRadial(d) => BoundingBox3D::from_points(&[
+                d.definition_point,
+                d.chord_point,
+                d.override_center,
+                d.jog_point,
+            ])
+            .unwrap_or_default(),
         }
     }
 
@@ -1068,11 +1103,10 @@ impl super::Entity for Dimension {
         let old_normal = d.base.normal;
         let old_basis = Matrix3::arbitrary_axis(old_normal);
         let old_axis_angle = -d.base.horizontal_direction;
-        let old_axis = old_basis
-            * Vector3::new(old_axis_angle.cos(), old_axis_angle.sin(), 0.0);
+        let old_axis = old_basis * Vector3::new(old_axis_angle.cos(), old_axis_angle.sin(), 0.0);
         let old_text_angle = old_axis_angle + d.base.text_rotation;
-        let old_text_axis = old_basis
-            * Vector3::new(old_text_angle.cos(), old_text_angle.sin(), 0.0);
+        let old_text_axis =
+            old_basis * Vector3::new(old_text_angle.cos(), old_text_angle.sin(), 0.0);
 
         d.definition_point = transform.apply(d.definition_point);
         d.feature_location = transform.apply(d.feature_location);
@@ -1094,8 +1128,7 @@ impl super::Entity for Dimension {
         }
         let transformed_text_axis = new_wcs_to_ocs * transform.apply_rotation(old_text_axis);
         if transformed_text_axis.length() > 1e-12 {
-            let relative =
-                transformed_text_axis.y.atan2(transformed_text_axis.x) - new_axis_angle;
+            let relative = transformed_text_axis.y.atan2(transformed_text_axis.x) - new_axis_angle;
             d.base.text_rotation = relative.sin().atan2(relative.cos());
         }
         d.refresh_measurement();

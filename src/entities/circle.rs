@@ -80,9 +80,7 @@ impl Circle {
     pub fn point_at_angle_wcs(&self, angle: f64) -> Vector3 {
         let center = self.center_wcs();
         let (axis_x, axis_y) = self.axes_wcs();
-        center
-            + axis_x * (self.radius * angle.cos())
-            + axis_y * (self.radius * angle.sin())
+        center + axis_x * (self.radius * angle.cos()) + axis_y * (self.radius * angle.sin())
     }
 }
 
@@ -172,7 +170,7 @@ impl Entity for Circle {
     fn entity_type(&self) -> &'static str {
         "CIRCLE"
     }
-    
+
     fn apply_transform(&mut self, transform: &Transform) {
         super::transform::transform_circle(self, transform);
     }
@@ -218,5 +216,3 @@ mod tests {
         assert_eq!(circle.radius, 5.0);
     }
 }
-
-

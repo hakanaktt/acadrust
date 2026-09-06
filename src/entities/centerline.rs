@@ -72,26 +72,8 @@ impl CenterLineAssociation {
     /// Decode association metadata, rejecting incomplete or future payloads.
     pub fn read(data: &ExtendedData) -> Option<Self> {
         let values = &data.get_record(CENTERLINE_XDATA_APPLICATION)?.values;
-        let [
-            XDataValue::String(signature),
-            XDataValue::Integer16(version),
-            XDataValue::Handle(first_handle),
-            XDataValue::Integer16(first_kind),
-            XDataValue::Integer32(first_segment),
-            XDataValue::Point3D(first_pick),
-            XDataValue::Handle(second_handle),
-            XDataValue::Integer16(second_kind),
-            XDataValue::Integer32(second_segment),
-            XDataValue::Point3D(second_pick),
-            XDataValue::Point3D(plane_origin),
-            XDataValue::Direction3D(plane_x),
-            XDataValue::Direction3D(plane_y),
-            XDataValue::Distance(start_extension),
-            XDataValue::Distance(end_extension),
-            XDataValue::Distance(start_length_adjustment),
-            XDataValue::Distance(end_length_adjustment),
-            XDataValue::Integer16(flags),
-        ] = values.as_slice()
+        let [XDataValue::String(signature), XDataValue::Integer16(version), XDataValue::Handle(first_handle), XDataValue::Integer16(first_kind), XDataValue::Integer32(first_segment), XDataValue::Point3D(first_pick), XDataValue::Handle(second_handle), XDataValue::Integer16(second_kind), XDataValue::Integer32(second_segment), XDataValue::Point3D(second_pick), XDataValue::Point3D(plane_origin), XDataValue::Direction3D(plane_x), XDataValue::Direction3D(plane_y), XDataValue::Distance(start_extension), XDataValue::Distance(end_extension), XDataValue::Distance(start_length_adjustment), XDataValue::Distance(end_length_adjustment), XDataValue::Integer16(flags)] =
+            values.as_slice()
         else {
             return None;
         };
@@ -220,31 +202,8 @@ impl CenterMarkAssociation {
     /// Decode association metadata, rejecting incomplete or future payloads.
     pub fn read(data: &ExtendedData) -> Option<Self> {
         let values = &data.get_record(CENTERMARK_XDATA_APPLICATION)?.values;
-        let [
-            XDataValue::String(signature),
-            XDataValue::Integer16(version),
-            XDataValue::Handle(source_handle),
-            XDataValue::Integer16(source_kind),
-            XDataValue::Integer32(segment_index),
-            XDataValue::Point3D(pick_point),
-            XDataValue::Point3D(plane_origin),
-            XDataValue::Direction3D(plane_x),
-            XDataValue::Direction3D(plane_y),
-            XDataValue::Point3D(center),
-            XDataValue::Distance(radius),
-            XDataValue::Distance(cross_size),
-            XDataValue::Distance(cross_gap),
-            XDataValue::Distance(extension_length),
-            XDataValue::Distance(length_0),
-            XDataValue::Distance(length_1),
-            XDataValue::Distance(length_2),
-            XDataValue::Distance(length_3),
-            XDataValue::Distance(overshoot_0),
-            XDataValue::Distance(overshoot_1),
-            XDataValue::Distance(overshoot_2),
-            XDataValue::Distance(overshoot_3),
-            XDataValue::Integer16(flags),
-        ] = values.as_slice()
+        let [XDataValue::String(signature), XDataValue::Integer16(version), XDataValue::Handle(source_handle), XDataValue::Integer16(source_kind), XDataValue::Integer32(segment_index), XDataValue::Point3D(pick_point), XDataValue::Point3D(plane_origin), XDataValue::Direction3D(plane_x), XDataValue::Direction3D(plane_y), XDataValue::Point3D(center), XDataValue::Distance(radius), XDataValue::Distance(cross_size), XDataValue::Distance(cross_gap), XDataValue::Distance(extension_length), XDataValue::Distance(length_0), XDataValue::Distance(length_1), XDataValue::Distance(length_2), XDataValue::Distance(length_3), XDataValue::Distance(overshoot_0), XDataValue::Distance(overshoot_1), XDataValue::Distance(overshoot_2), XDataValue::Distance(overshoot_3), XDataValue::Integer16(flags)] =
+            values.as_slice()
         else {
             return None;
         };

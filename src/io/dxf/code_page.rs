@@ -167,8 +167,7 @@ pub fn dwg_code_page_index(code_page: &str) -> u16 {
 }
 
 pub fn encoding_from_dwg_code_page(index: u16) -> &'static Encoding {
-    encoding_from_code_page(dwg_code_page_name(index))
-        .unwrap_or(encoding_rs::WINDOWS_1252)
+    encoding_from_code_page(dwg_code_page_name(index)).unwrap_or(encoding_rs::WINDOWS_1252)
 }
 
 /// Encode a string to a legacy (pre-UTF-16) DWG code page.
@@ -243,8 +242,7 @@ pub fn decode_mif_escapes(text: &str) -> String {
                         }
                     }
                 }
-                if let Some(Ok(ch)) = std::char::decode_utf16(units[..count].iter().copied())
-                    .next()
+                if let Some(Ok(ch)) = std::char::decode_utf16(units[..count].iter().copied()).next()
                 {
                     out.push(ch);
                 }
@@ -295,7 +293,10 @@ mod tests {
     fn test_asian_encodings() {
         assert_eq!(encoding_from_code_page("GB2312"), Some(encoding_rs::GBK));
         assert_eq!(encoding_from_code_page("BIG5"), Some(encoding_rs::BIG5));
-        assert_eq!(encoding_from_code_page("ANSI_932"), Some(encoding_rs::SHIFT_JIS));
+        assert_eq!(
+            encoding_from_code_page("ANSI_932"),
+            Some(encoding_rs::SHIFT_JIS)
+        );
         assert_eq!(encoding_from_code_page("KOREAN"), Some(encoding_rs::EUC_KR));
     }
 

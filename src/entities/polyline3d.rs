@@ -48,13 +48,27 @@ impl Polyline3DFlags {
     /// Convert to DXF bit flag value
     pub fn to_bits(&self) -> i32 {
         let mut bits = 0;
-        if self.closed { bits |= 1; }
-        if self.spline_fit { bits |= 4; }
-        if self.is_3d { bits |= 8; }
-        if self.is_3d_mesh { bits |= 16; }
-        if self.mesh_closed_n { bits |= 32; }
-        if self.is_polyface_mesh { bits |= 64; }
-        if self.linetype_continuous { bits |= 128; }
+        if self.closed {
+            bits |= 1;
+        }
+        if self.spline_fit {
+            bits |= 4;
+        }
+        if self.is_3d {
+            bits |= 8;
+        }
+        if self.is_3d_mesh {
+            bits |= 16;
+        }
+        if self.mesh_closed_n {
+            bits |= 32;
+        }
+        if self.is_polyface_mesh {
+            bits |= 64;
+        }
+        if self.linetype_continuous {
+            bits |= 128;
+        }
         bits
     }
 }
@@ -253,12 +267,18 @@ impl Polyline3D {
 
         let mut total = 0.0;
         for i in 0..self.vertices.len() - 1 {
-            total += self.vertices[i].position.distance(&self.vertices[i + 1].position);
+            total += self.vertices[i]
+                .position
+                .distance(&self.vertices[i + 1].position);
         }
 
         // Add closing segment if closed
         if self.is_closed() && self.vertices.len() >= 2 {
-            total += self.vertices.last().unwrap().position
+            total += self
+                .vertices
+                .last()
+                .unwrap()
+                .position
                 .distance(&self.vertices.first().unwrap().position);
         }
 
@@ -271,7 +291,9 @@ impl Polyline3D {
             return Vector3::ZERO;
         }
 
-        let sum: Vector3 = self.vertices.iter()
+        let sum: Vector3 = self
+            .vertices
+            .iter()
             .fold(Vector3::ZERO, |acc, v| acc + v.position);
         sum * (1.0 / self.vertices.len() as f64)
     }
@@ -403,7 +425,7 @@ impl Entity for Polyline3D {
     fn entity_type(&self) -> &'static str {
         "POLYLINE"
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_polyline3d(self, transform);
     }
@@ -456,10 +478,10 @@ mod tests {
         polyline.add_vertex(Vector3::new(0.0, 0.0, 0.0));
         polyline.add_vertex(Vector3::new(10.0, 0.0, 0.0));
         polyline.add_vertex(Vector3::new(10.0, 10.0, 0.0));
-        
+
         // Open polyline: 10 + 10 = 20
         assert!((polyline.length() - 20.0).abs() < 1e-10);
-        
+
         // Closed polyline: 10 + 10 + sqrt(200) ≈ 34.14
         polyline.close();
         let expected = 20.0 + (200.0_f64).sqrt();
@@ -473,7 +495,7 @@ mod tests {
         polyline.add_vertex(Vector3::new(10.0, 0.0, 0.0));
         polyline.add_vertex(Vector3::new(10.0, 10.0, 0.0));
         polyline.add_vertex(Vector3::new(0.0, 10.0, 0.0));
-        
+
         let centroid = polyline.centroid();
         assert!((centroid.x - 5.0).abs() < 1e-10);
         assert!((centroid.y - 5.0).abs() < 1e-10);
@@ -485,9 +507,9 @@ mod tests {
         polyline.add_vertex(Vector3::new(0.0, 0.0, 0.0));
         polyline.add_vertex(Vector3::new(10.0, 0.0, 0.0));
         polyline.add_vertex(Vector3::new(20.0, 0.0, 0.0));
-        
+
         polyline.reverse();
-        
+
         assert_eq!(polyline.vertices[0].position.x, 20.0);
         assert_eq!(polyline.vertices[2].position.x, 0.0);
     }
@@ -497,9 +519,9 @@ mod tests {
         let mut polyline = Polyline3D::new();
         polyline.add_vertex(Vector3::new(0.0, 0.0, 0.0));
         polyline.add_vertex(Vector3::new(10.0, 0.0, 0.0));
-        
+
         polyline.translate(Vector3::new(5.0, 5.0, 5.0));
-        
+
         assert_eq!(polyline.vertices[0].position, Vector3::new(5.0, 5.0, 5.0));
         assert_eq!(polyline.vertices[1].position, Vector3::new(15.0, 5.0, 5.0));
     }
@@ -510,7 +532,7 @@ mod tests {
         assert!(flags.closed);
         assert!(flags.is_3d);
         assert!(!flags.spline_fit);
-        
+
         assert_eq!(flags.to_bits(), 9);
     }
 
@@ -519,12 +541,11 @@ mod tests {
         let mut polyline = Polyline3D::new();
         assert!(polyline.start_point().is_none());
         assert!(polyline.end_point().is_none());
-        
+
         polyline.add_vertex(Vector3::new(0.0, 0.0, 0.0));
         polyline.add_vertex(Vector3::new(10.0, 0.0, 0.0));
-        
+
         assert_eq!(polyline.start_point(), Some(Vector3::new(0.0, 0.0, 0.0)));
         assert_eq!(polyline.end_point(), Some(Vector3::new(10.0, 0.0, 0.0)));
     }
 }
-

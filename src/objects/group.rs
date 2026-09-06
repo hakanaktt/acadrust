@@ -200,7 +200,7 @@ mod tests {
         let mut group = Group::new("Test");
         group.add_entity(Handle::new(100));
         group.add_entity(Handle::new(101));
-        
+
         assert_eq!(group.len(), 2);
         assert!(group.contains(Handle::new(100)));
         assert!(group.contains(Handle::new(101)));
@@ -211,7 +211,7 @@ mod tests {
         let mut group = Group::new("Test");
         group.add_entity(Handle::new(100));
         group.add_entity(Handle::new(100)); // Duplicate
-        
+
         assert_eq!(group.len(), 1);
     }
 
@@ -219,7 +219,7 @@ mod tests {
     fn test_group_add_entities() {
         let mut group = Group::new("Test");
         group.add_entities(vec![Handle::new(100), Handle::new(101), Handle::new(102)]);
-        
+
         assert_eq!(group.len(), 3);
     }
 
@@ -228,11 +228,11 @@ mod tests {
         let mut group = Group::new("Test");
         group.add_entity(Handle::new(100));
         group.add_entity(Handle::new(101));
-        
+
         assert!(group.remove_entity(Handle::new(100)));
         assert_eq!(group.len(), 1);
         assert!(!group.contains(Handle::new(100)));
-        
+
         assert!(!group.remove_entity(Handle::new(999))); // Not found
     }
 
@@ -240,7 +240,7 @@ mod tests {
     fn test_group_clear() {
         let mut group = Group::new("Test");
         group.add_entities(vec![Handle::new(100), Handle::new(101)]);
-        
+
         group.clear();
         assert!(group.is_empty());
     }
@@ -250,7 +250,7 @@ mod tests {
         let mut group = Group::new("Test");
         group.add_entity(Handle::new(100));
         group.add_entity(Handle::new(101));
-        
+
         assert_eq!(group.get(0), Some(Handle::new(100)));
         assert_eq!(group.get(1), Some(Handle::new(101)));
         assert_eq!(group.get(2), None);
@@ -260,7 +260,7 @@ mod tests {
     fn test_group_selectable() {
         let mut group = Group::new("Test");
         assert!(group.selectable);
-        
+
         group.set_selectable(false);
         assert!(!group.selectable);
     }
@@ -272,7 +272,7 @@ mod tests {
             .with_selectable(false)
             .with_entity(Handle::new(100))
             .with_entities(vec![Handle::new(101), Handle::new(102)]);
-        
+
         assert_eq!(group.description, "Description");
         assert!(!group.selectable);
         assert_eq!(group.len(), 3);
@@ -282,7 +282,7 @@ mod tests {
     fn test_group_iter() {
         let mut group = Group::new("Test");
         group.add_entities(vec![Handle::new(100), Handle::new(101)]);
-        
+
         let handles: Vec<Handle> = group.iter().copied().collect();
         assert_eq!(handles, vec![Handle::new(100), Handle::new(101)]);
     }

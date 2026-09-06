@@ -117,14 +117,20 @@ pub fn import_file(path: impl AsRef<Path>, config: &ImportConfig) -> Result<CadD
     let format = detect_format(path)?;
 
     match format {
-        ImportFormat::Stl => StlImporter::from_file(path)?.with_config(config.clone()).import(),
-        ImportFormat::Collada => {
-            ColladaImporter::from_file(path)?.with_config(config.clone()).import()
-        }
-        ImportFormat::Obj => ObjImporter::from_file(path)?.with_config(config.clone()).import(),
-        ImportFormat::Gltf | ImportFormat::Glb => {
-            GltfImporter::from_file(path)?.with_config(config.clone()).import()
-        }
-        ImportFormat::Fbx => FbxImporter::from_file(path)?.with_config(config.clone()).import(),
+        ImportFormat::Stl => StlImporter::from_file(path)?
+            .with_config(config.clone())
+            .import(),
+        ImportFormat::Collada => ColladaImporter::from_file(path)?
+            .with_config(config.clone())
+            .import(),
+        ImportFormat::Obj => ObjImporter::from_file(path)?
+            .with_config(config.clone())
+            .import(),
+        ImportFormat::Gltf | ImportFormat::Glb => GltfImporter::from_file(path)?
+            .with_config(config.clone())
+            .import(),
+        ImportFormat::Fbx => FbxImporter::from_file(path)?
+            .with_config(config.clone())
+            .import(),
     }
 }

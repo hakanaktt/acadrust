@@ -86,28 +86,27 @@ impl XRecordValueType {
     pub fn from_code(code: i32) -> Self {
         match code {
             code if code < 0 => XRecordValueType::Handle,
-            5 | 105 | 320..=329 | 480..=481 => {
-                XRecordValueType::Handle
-            }
-            330..=369 => {
-                XRecordValueType::ObjectId
-            }
+            5 | 105 | 320..=329 | 480..=481 => XRecordValueType::Handle,
+            330..=369 => XRecordValueType::ObjectId,
             390..=399 | 1005 => XRecordValueType::Handle,
-            0..=4 | 6..=9 | 100..=102 | 300..=309 | 410..=419
-            | 430..=439 | 470..=479 | 999 | 1000..=1003 => {
-                XRecordValueType::String
+            0..=4
+            | 6..=9
+            | 100..=102
+            | 300..=309
+            | 410..=419
+            | 430..=439
+            | 470..=479
+            | 999
+            | 1000..=1003 => XRecordValueType::String,
+            10..=37 | 110..=139 | 210..=269 | 1010..=1039 | 1043..=1069 => {
+                XRecordValueType::Point3D
             }
-            10..=37 | 110..=139 | 210..=269 | 1010..=1039
-            | 1043..=1069 => XRecordValueType::Point3D,
-            38..=59 | 140..=149 | 460..=469 | 1040..=1042 => {
-                XRecordValueType::Double
-            }
+            38..=59 | 140..=149 | 460..=469 | 1040..=1042 => XRecordValueType::Double,
             280..=289 => XRecordValueType::Byte,
-            60..=79 | 170..=179 | 270..=279 | 370..=389
-            | 400..=409 | 1070 => XRecordValueType::Int16,
-            80..=99 | 420..=429 | 440..=459 | 1071 => {
-                XRecordValueType::Int32
+            60..=79 | 170..=179 | 270..=279 | 370..=389 | 400..=409 | 1070 => {
+                XRecordValueType::Int16
             }
+            80..=99 | 420..=429 | 440..=459 | 1071 => XRecordValueType::Int32,
             150..=169 => XRecordValueType::Int64,
             290..=299 => XRecordValueType::Bool,
             310..=319 | 1004 => XRecordValueType::Chunk,
@@ -310,7 +309,8 @@ impl KnownXRecordKind {
             "ADSK_XREC_LAYER_LINEWT_OVR" => Self::LayerViewportLineweightOverride,
             "ADSK_XREC_LAYER_RECONCILED" => Self::LayerReconciled,
             "ACADLAYERSTATEANNOSCALE" => Self::LayerStateAnnotationScale,
-            "ASDK_XREC_ANNOTATION_SCALE_INFO" | "ASDK_XREC_ANNO_SCALE_INFO"
+            "ASDK_XREC_ANNOTATION_SCALE_INFO"
+            | "ASDK_XREC_ANNO_SCALE_INFO"
             | "ADSK_XREC_VTR_ANNOSCALE_DATA" => Self::AnnotationScale,
             "ADSK_XREC_SUBDVERTEXTEXCOORDS" => Self::MeshTextureCoordinates,
             "ACAD_XREC_ROUNDTRIP" => Self::XrecordRoundTrip,
@@ -320,36 +320,46 @@ impl KnownXRecordKind {
             "ACAD_ENHANCEDBLOCKHISTORY" => Self::DynamicBlockHistory,
             "ASEBLOCKHIERARCHYINDEXRECORD" => Self::DynamicBlockHistory,
             "ADSK_XREC_LAYOUTTHUMBNAIL" => Self::LayoutThumbnail,
-            "ADSK_XREC_VTRANIMATIONINFO" | "ADSK_XREC_VTRTHUMBNAIL"
-            | "ADSK_XREC_VTRVIEWINFO" => Self::ViewTransition,
-            "ADSK_XREC_PHOTOMETRICLIGHTINFO" | "LIGHTINGQUALITY" => {
-                Self::PhotometricLight
+            "ADSK_XREC_VTRANIMATIONINFO" | "ADSK_XREC_VTRTHUMBNAIL" | "ADSK_XREC_VTRVIEWINFO" => {
+                Self::ViewTransition
             }
+            "ADSK_XREC_PHOTOMETRICLIGHTINFO" | "LIGHTINGQUALITY" => Self::PhotometricLight,
             "ACAD_LAST_SAVED_VERSION_INFO" => Self::LastSavedVersion,
             "ACAD_CIP_PREVIOUS_PRODUCT_INFO" => Self::PreviousProductInfo,
             "DWGPROPS" => Self::DrawingProperties,
             "FINGERPRINTGUID" => Self::FingerprintGuid,
-            "ACADDIM" | "DIMSTYLEDATA" | "DIMLTEX1" | "DIMLTEX2" | "DIMLTYPE"
-            | "TSTACKALIGN" | "TSTACKSIZE" => {
-                Self::DimensionStyleData
-            }
-            "PUCSBASE" | "PUCSORGBACK" | "PUCSORGBOTTOM" | "PUCSORGFRONT"
-            | "PUCSORGLEFT" | "PUCSORGRIGHT" | "PUCSORGTOP" | "PUCSORTHOREF"
-            | "PUCSORTHOVIEW" | "UCSBASE" | "UCSORGBACK" | "UCSORGBOTTOM"
-            | "UCSORGFRONT" | "UCSORGLEFT" | "UCSORGRIGHT" | "UCSORGTOP"
-            | "UCSORTHOREF" | "UCSORTHOVIEW" => Self::UcsData,
-            "ACAD_LAYOUTSELFREF" | "LAYOUTDICT" | "PLOTSETDICT"
-            | "PLOTSTYLNAMDICT" | "PSVPSCALE" | "STYLESHEET" => Self::PlotData,
+            "ACADDIM" | "DIMSTYLEDATA" | "DIMLTEX1" | "DIMLTEX2" | "DIMLTYPE" | "TSTACKALIGN"
+            | "TSTACKSIZE" => Self::DimensionStyleData,
+            "PUCSBASE" | "PUCSORGBACK" | "PUCSORGBOTTOM" | "PUCSORGFRONT" | "PUCSORGLEFT"
+            | "PUCSORGRIGHT" | "PUCSORGTOP" | "PUCSORTHOREF" | "PUCSORTHOVIEW" | "UCSBASE"
+            | "UCSORGBACK" | "UCSORGBOTTOM" | "UCSORGFRONT" | "UCSORGLEFT" | "UCSORGRIGHT"
+            | "UCSORGTOP" | "UCSORTHOREF" | "UCSORTHOVIEW" => Self::UcsData,
+            "ACAD_LAYOUTSELFREF" | "LAYOUTDICT" | "PLOTSETDICT" | "PLOTSTYLNAMDICT"
+            | "PSVPSCALE" | "STYLESHEET" => Self::PlotData,
             "HYPERLINKBASE" => Self::Hyperlink,
             "ADVMATERIAL" => Self::AdvancedMaterial,
-            "FBXASSET" | "BUMPTILE" | "DIFFUSETILE" | "OPACITYTILE"
-            | "REFLECTIONTILE" | "REFRACTIONTILE" | "SPECULARTILE" | "BUMP"
-            | "DIFFUSE" | "MATERIALDICT" | "VIZ XML MATERIAL DEFINITION" => {
-                Self::MaterialAsset
-            }
-            "ACAD_MLATT" | "ACAD_VIEWS_VIEW_CUSTOM" | "AECDEPRECATIONHISTORY"
-            | "CEPSNID" | "CEPSNTYPE" | "COLORDICT" | "INSUNITS" | "LWETCUNION"
-            | "MCS_DOCUMENT_ID" | "MCS_PARAMS_DATA" | "MC_VERSION_DATA"
+            "FBXASSET"
+            | "BUMPTILE"
+            | "DIFFUSETILE"
+            | "OPACITYTILE"
+            | "REFLECTIONTILE"
+            | "REFRACTIONTILE"
+            | "SPECULARTILE"
+            | "BUMP"
+            | "DIFFUSE"
+            | "MATERIALDICT"
+            | "VIZ XML MATERIAL DEFINITION" => Self::MaterialAsset,
+            "ACAD_MLATT"
+            | "ACAD_VIEWS_VIEW_CUSTOM"
+            | "AECDEPRECATIONHISTORY"
+            | "CEPSNID"
+            | "CEPSNTYPE"
+            | "COLORDICT"
+            | "INSUNITS"
+            | "LWETCUNION"
+            | "MCS_DOCUMENT_ID"
+            | "MCS_PARAMS_DATA"
+            | "MC_VERSION_DATA"
             | "VERSIONGUID" => Self::Metadata,
             _ => Self::Unknown,
         }
@@ -579,7 +589,8 @@ impl XRecord {
 
     /// Get all referenced handles
     pub fn get_references(&self) -> Vec<Handle> {
-        let mut references: Vec<Handle> = self.entries
+        let mut references: Vec<Handle> = self
+            .entries
             .iter()
             .filter_map(|e| e.value.as_handle())
             .collect();
@@ -608,10 +619,7 @@ impl XRecord {
         for entry in &self.entries {
             match (entry.code, &entry.value) {
                 (102, XRecordValue::String(value)) if value.starts_with('{') => {
-                    stack.push((
-                        value.trim_start_matches('{').to_string(),
-                        Vec::new(),
-                    ));
+                    stack.push((value.trim_start_matches('{').to_string(), Vec::new()));
                 }
                 (102, XRecordValue::String(value))
                     if stack.last().is_some_and(|(name, _)| {
@@ -624,10 +632,7 @@ impl XRecord {
                     if let Some((name, entries)) = stack.pop() {
                         let section = XRecordSection { name, entries };
                         if let Some((_, parent)) = stack.last_mut() {
-                            parent.push(XRecordEntry::string(
-                                102,
-                                format!("{{{}", section.name),
-                            ));
+                            parent.push(XRecordEntry::string(102, format!("{{{}", section.name)));
                             parent.extend(section.entries.clone());
                             parent.push(XRecordEntry::string(102, "}"));
                         }
@@ -659,9 +664,7 @@ impl XRecord {
         let mut end = None;
         for (index, entry) in self.entries.iter().enumerate() {
             match (entry.code, &entry.value) {
-                (102, XRecordValue::String(value))
-                    if value.eq_ignore_ascii_case(&start_text) =>
-                {
+                (102, XRecordValue::String(value)) if value.eq_ignore_ascii_case(&start_text) => {
                     if start.is_none() {
                         start = Some(index);
                         depth = 1;
@@ -669,15 +672,12 @@ impl XRecord {
                         depth += 1;
                     }
                 }
-                (102, XRecordValue::String(value))
-                    if start.is_some() && value.starts_with('{') =>
-                {
+                (102, XRecordValue::String(value)) if start.is_some() && value.starts_with('{') => {
                     depth += 1;
                 }
                 (102, XRecordValue::String(value))
                     if start.is_some()
-                        && (value == "}"
-                            || (!value.starts_with('{') && value.ends_with('}'))) =>
+                        && (value == "}" || (!value.starts_with('{') && value.ends_with('}'))) =>
                 {
                     depth = depth.saturating_sub(1);
                     if depth == 0 {
@@ -718,9 +718,7 @@ impl XRecord {
                 break;
             };
             if v_entry.code == 44 && w_entry.code == 45 {
-                if let (Some(v), Some(w)) =
-                    (v_entry.value.as_double(), w_entry.value.as_double())
-                {
+                if let (Some(v), Some(w)) = (v_entry.value.as_double(), w_entry.value.as_double()) {
                     result.push(Vector3::new(u, v, w));
                 }
             }
@@ -730,8 +728,7 @@ impl XRecord {
 
     /// Replace Autodesk mesh UVW triples without disturbing unrelated entries.
     pub fn set_mesh_texture_coordinates(&mut self, coordinates: &[Vector3]) {
-        self.entries
-            .retain(|entry| !matches!(entry.code, 43..=45));
+        self.entries.retain(|entry| !matches!(entry.code, 43..=45));
         for coordinate in coordinates {
             self.entries.push(XRecordEntry::double(43, coordinate.x));
             self.entries.push(XRecordEntry::double(44, coordinate.y));
@@ -763,10 +760,7 @@ impl XRecord {
     /// Decode viewport-specific layer override pairs. The viewport handle is
     /// code 335; `value_code` is 440 (alpha), 420 (color), 343 (linetype) or
     /// 91 (lineweight).
-    pub fn layer_viewport_overrides(
-        &self,
-        value_code: i32,
-    ) -> Vec<(Handle, XRecordValue)> {
+    pub fn layer_viewport_overrides(&self, value_code: i32) -> Vec<(Handle, XRecordValue)> {
         let mut result = Vec::new();
         let mut viewport = None;
         for entry in &self.entries {
@@ -837,15 +831,16 @@ impl XRecord {
             .enumerate()
             .map(|(index, (code, handle))| ProxyObjectReference {
                 handle,
-                kind: previous.get(index).map(|reference| reference.kind).unwrap_or(
-                    match code {
+                kind: previous
+                    .get(index)
+                    .map(|reference| reference.kind)
+                    .unwrap_or(match code {
                         330..=339 => ProxyReferenceKind::SoftPointer,
                         340..=349 => ProxyReferenceKind::HardPointer,
                         350..=359 => ProxyReferenceKind::SoftOwnership,
                         360..=369 => ProxyReferenceKind::HardOwnership,
                         _ => ProxyReferenceKind::Undefined,
-                    },
-                ),
+                    }),
             })
             .collect();
         self.preserve_object_reference_stream = false;
@@ -965,9 +960,18 @@ mod tests {
 
     #[test]
     fn test_cloning_flags() {
-        assert_eq!(DictionaryCloningFlags::from_value(0), DictionaryCloningFlags::NotApplicable);
-        assert_eq!(DictionaryCloningFlags::from_value(1), DictionaryCloningFlags::KeepExisting);
-        assert_eq!(DictionaryCloningFlags::from_value(2), DictionaryCloningFlags::UseClone);
+        assert_eq!(
+            DictionaryCloningFlags::from_value(0),
+            DictionaryCloningFlags::NotApplicable
+        );
+        assert_eq!(
+            DictionaryCloningFlags::from_value(1),
+            DictionaryCloningFlags::KeepExisting
+        );
+        assert_eq!(
+            DictionaryCloningFlags::from_value(2),
+            DictionaryCloningFlags::UseClone
+        );
         assert_eq!(DictionaryCloningFlags::KeepExisting.to_value(), 1);
     }
 

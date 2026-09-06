@@ -306,11 +306,7 @@ impl Underlay {
     }
 
     /// Creates an underlay with scale.
-    pub fn with_scale(
-        underlay_type: UnderlayType,
-        point: Vector3,
-        scale: f64,
-    ) -> Self {
+    pub fn with_scale(underlay_type: UnderlayType, point: Vector3, scale: f64) -> Self {
         Underlay {
             insertion_point: point,
             x_scale: scale,
@@ -542,7 +538,7 @@ impl Entity for Underlay {
     fn entity_type(&self) -> &'static str {
         self.underlay_type.entity_name()
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_underlay(self, transform);
     }
@@ -680,11 +676,7 @@ mod tests {
 
     #[test]
     fn test_with_scale() {
-        let underlay = Underlay::with_scale(
-            UnderlayType::Pdf,
-            Vector3::ZERO,
-            2.5,
-        );
+        let underlay = Underlay::with_scale(UnderlayType::Pdf, Vector3::ZERO, 2.5);
         assert_eq!(underlay.x_scale, 2.5);
         assert_eq!(underlay.y_scale, 2.5);
         assert_eq!(underlay.z_scale, 2.5);
@@ -731,10 +723,7 @@ mod tests {
     #[test]
     fn test_rectangular_clip() {
         let mut underlay = Underlay::pdf();
-        underlay.set_rectangular_clip(
-            Vector2::new(0.0, 0.0),
-            Vector2::new(100.0, 100.0),
-        );
+        underlay.set_rectangular_clip(Vector2::new(0.0, 0.0), Vector2::new(100.0, 100.0));
 
         assert_eq!(underlay.clip_vertex_count(), 4);
         assert!(underlay.is_clipping());
@@ -758,10 +747,7 @@ mod tests {
     #[test]
     fn test_clear_clip() {
         let mut underlay = Underlay::pdf();
-        underlay.set_rectangular_clip(
-            Vector2::new(0.0, 0.0),
-            Vector2::new(100.0, 100.0),
-        );
+        underlay.set_rectangular_clip(Vector2::new(0.0, 0.0), Vector2::new(100.0, 100.0));
         assert!(underlay.is_clipping());
 
         underlay.clear_clip();
@@ -793,7 +779,7 @@ mod tests {
     #[test]
     fn test_contrast_fade() {
         let mut underlay = Underlay::pdf();
-        
+
         underlay.set_contrast(75);
         assert_eq!(underlay.contrast, 75);
 
@@ -836,10 +822,7 @@ mod tests {
         underlay.x_scale = 2.0;
         underlay.y_scale = 2.0;
         underlay.rotation = 0.0;
-        underlay.set_rectangular_clip(
-            Vector2::new(0.0, 0.0),
-            Vector2::new(5.0, 5.0),
-        );
+        underlay.set_rectangular_clip(Vector2::new(0.0, 0.0), Vector2::new(5.0, 5.0));
 
         let world_verts = underlay.world_clip_boundary();
         assert_eq!(world_verts.len(), 4);
@@ -859,10 +842,7 @@ mod tests {
     fn test_bounding_box_with_clip() {
         let mut underlay = Underlay::pdf();
         underlay.insertion_point = Vector3::new(10.0, 10.0, 0.0);
-        underlay.set_rectangular_clip(
-            Vector2::new(0.0, 0.0),
-            Vector2::new(100.0, 50.0),
-        );
+        underlay.set_rectangular_clip(Vector2::new(0.0, 0.0), Vector2::new(100.0, 50.0));
 
         let bb = underlay.bounding_box();
         assert!((bb.min.x - 10.0).abs() < 1e-10);
@@ -885,4 +865,3 @@ mod tests {
         assert_eq!(underlay.underlay_type, UnderlayType::Pdf);
     }
 }
-

@@ -29,10 +29,7 @@ impl ClassObject {
         self.data.dxf_name()
     }
 
-    pub(crate) fn visit_handles_mut(
-        &mut self,
-        visit: &mut impl FnMut(&mut Handle),
-    ) {
+    pub(crate) fn visit_handles_mut(&mut self, visit: &mut impl FnMut(&mut Handle)) {
         visit(&mut self.owner);
         for handle in &mut self.reactors {
             visit(handle);
@@ -151,23 +148,14 @@ impl ClassObjectData {
             Self::ViewRepStandard(_) => "ACDBVIEWREPSTANDARD",
             Self::ViewRepOrientationDefinition => "ACDBVIEWREPORIENTATIONDEF",
             Self::ViewRepOrientation(_) => "ACDBVIEWREPORIENTATION",
-            Self::ViewRepSectionDefinition(_) => {
-                "ACDBVIEWREPSECTIONDEFINITION"
-            }
-            Self::ViewRepModelSpaceViewSelectionSet(_) => {
-                "ACDBSYMODELSPACEVIEWSELSET"
-            }
+            Self::ViewRepSectionDefinition(_) => "ACDBVIEWREPSECTIONDEFINITION",
+            Self::ViewRepModelSpaceViewSelectionSet(_) => "ACDBSYMODELSPACEVIEWSELSET",
             Self::ViewRep(_) => "ACDBVIEWREP",
-            Self::ViewRepModelSpaceSource(_) => {
-                "ACDBVIEWREPMODELSPACESOURCE"
-            }
+            Self::ViewRepModelSpaceSource(_) => "ACDBVIEWREPMODELSPACESOURCE",
         }
     }
 
-    pub(crate) fn visit_handles_mut(
-        &mut self,
-        visit: &mut impl FnMut(&mut Handle),
-    ) {
+    pub(crate) fn visit_handles_mut(&mut self, visit: &mut impl FnMut(&mut Handle)) {
         match self {
             Self::Empty
             | Self::LayerFilter(_)

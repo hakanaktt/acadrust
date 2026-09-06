@@ -37,8 +37,7 @@ const LIB_VERSION: &str = "0.1.0";
 /// # Returns
 /// Raw section bytes ready for `add_section("AcDb:AppInfo", ...)`.
 pub fn write_app_info(version: DxfVersion) -> Vec<u8> {
-    let dwg_version = DwgVersion::from_dxf_version(version)
-        .unwrap_or(DwgVersion::AC18);
+    let dwg_version = DwgVersion::from_dxf_version(version).unwrap_or(DwgVersion::AC18);
     let mut writer = DwgBitWriter::new(dwg_version, version);
 
     let empty_checksum = [0u8; 16];
@@ -82,7 +81,11 @@ mod tests {
     fn test_write_app_info_not_empty() {
         let data = write_app_info(DxfVersion::AC1018);
         // Should produce non-trivial output
-        assert!(data.len() > 80, "App info should be at least 80 bytes, got {}", data.len());
+        assert!(
+            data.len() > 80,
+            "App info should be at least 80 bytes, got {}",
+            data.len()
+        );
     }
 
     #[test]

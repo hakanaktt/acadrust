@@ -205,11 +205,7 @@ impl GltfImporter {
         Ok(None)
     }
 
-    fn build_document(
-        &self,
-        json: &JsonValue,
-        buffers: &[Vec<u8>],
-    ) -> Result<CadDocument> {
+    fn build_document(&self, json: &JsonValue, buffers: &[Vec<u8>]) -> Result<CadDocument> {
         let mut doc = CadDocument::new();
         let scale = self.config.scale_factor;
 
@@ -241,21 +237,14 @@ impl GltfImporter {
                 };
 
                 // Get POSITION accessor index
-                let pos_accessor_idx = match attributes
-                    .get("POSITION")
-                    .and_then(|v| v.as_usize())
-                {
+                let pos_accessor_idx = match attributes.get("POSITION").and_then(|v| v.as_usize()) {
                     Some(i) => i,
                     None => continue,
                 };
 
                 // Read positions
-                let positions = read_accessor_vec3(
-                    pos_accessor_idx,
-                    accessors,
-                    buffer_views,
-                    buffers,
-                )?;
+                let positions =
+                    read_accessor_vec3(pos_accessor_idx, accessors, buffer_views, buffers)?;
 
                 if positions.is_empty() {
                     continue;
@@ -270,13 +259,12 @@ impl GltfImporter {
                 };
 
                 // Get material color
-                let (mat_name, color) = if let Some(mat_idx) =
-                    prim.get("material").and_then(|v| v.as_usize())
-                {
-                    get_material_color(mat_idx, materials_arr)
-                } else {
-                    (String::new(), [0.8f32, 0.8, 0.8, 1.0])
-                };
+                let (mat_name, color) =
+                    if let Some(mat_idx) = prim.get("material").and_then(|v| v.as_usize()) {
+                        get_material_color(mat_idx, materials_arr)
+                    } else {
+                        (String::new(), [0.8f32, 0.8, 0.8, 1.0])
+                    };
 
                 // Build mesh
                 let mesh = build_gltf_mesh(
@@ -308,12 +296,8 @@ impl GltfImporter {
                     )
                 };
 
-                let layer = create_material_layer(
-                    &mut doc,
-                    &self.config.layer_prefix,
-                    &layer_label,
-                    c,
-                );
+                let layer =
+                    create_material_layer(&mut doc, &self.config.layer_prefix, &layer_label, c);
 
                 let mut mesh_entity = mesh;
                 mesh_entity.common.layer = layer;
@@ -333,8 +317,8 @@ fn read_accessor_vec3(
     buffer_views: Option<&[JsonValue]>,
     buffers: &[Vec<u8>],
 ) -> Result<Vec<[f32; 3]>> {
-    let accessors = accessors
-        .ok_or_else(|| DxfError::ImportError("Missing accessors array".to_string()))?;
+    let accessors =
+        accessors.ok_or_else(|| DxfError::ImportError("Missing accessors array".to_string()))?;
     let accessor = accessors
         .get(accessor_idx)
         .ok_or_else(|| DxfError::ImportError(format!("Accessor {} out of range", accessor_idx)))?;
@@ -347,9 +331,7 @@ fn read_accessor_vec3(
         .get("componentType")
         .and_then(|v| v.as_usize())
         .unwrap_or(0);
-    let bv_idx = accessor
-        .get("bufferView")
-        .and_then(|v| v.as_usize());
+    let bv_idx = accessor.get("bufferView").and_then(|v| v.as_usize());
     let byte_offset_acc = accessor
         .get("byteOffset")
         .and_then(|v| v.as_usize())
@@ -376,7 +358,10 @@ fn read_accessor_vec3(
 
     let buffer_idx = bv.get("buffer").and_then(|v| v.as_usize()).unwrap_or(0);
     let byte_offset_bv = bv.get("byteOffset").and_then(|v| v.as_usize()).unwrap_or(0);
-    let byte_stride = bv.get("byteStride").and_then(|v| v.as_usize()).unwrap_or(12); // 3 floats
+    let byte_stride = bv
+        .get("byteStride")
+        .and_then(|v| v.as_usize())
+        .unwrap_or(12); // 3 floats
 
     let buffer = buffers
         .get(buffer_idx)
@@ -421,8 +406,8 @@ fn read_accessor_scalar(
     buffer_views: Option<&[JsonValue]>,
     buffers: &[Vec<u8>],
 ) -> Result<Vec<usize>> {
-    let accessors = accessors
-        .ok_or_else(|| DxfError::ImportError("Missing accessors array".to_string()))?;
+    let accessors =
+        accessors.ok_or_else(|| DxfError::ImportError("Missing accessors array".to_string()))?;
     let accessor = accessors
         .get(accessor_idx)
         .ok_or_else(|| DxfError::ImportError(format!("Accessor {} out of range", accessor_idx)))?;
@@ -435,9 +420,7 @@ fn read_accessor_scalar(
         .get("componentType")
         .and_then(|v| v.as_usize())
         .unwrap_or(0);
-    let bv_idx = accessor
-        .get("bufferView")
-        .and_then(|v| v.as_usize());
+    let bv_idx = accessor.get("bufferView").and_then(|v| v.as_usize());
     let byte_offset_acc = accessor
         .get("byteOffset")
         .and_then(|v| v.as_usize())
@@ -514,10 +497,7 @@ fn read_accessor_scalar(
 }
 
 /// Extract material name and base color from a glTF material.
-fn get_material_color(
-    mat_idx: usize,
-    materials: Option<&[JsonValue]>,
-) -> (String, [f32; 4]) {
+fn get_material_color(mat_idx: usize, materials: Option<&[JsonValue]>) -> (String, [f32; 4]) {
     let default = (String::new(), [0.8f32, 0.8, 0.8, 1.0]);
 
     let materials = match materials {
@@ -567,7 +547,11 @@ fn build_gltf_mesh(
     }
 
     if merge {
-        let inv_tol = if tolerance > 0.0 { 1.0 / tolerance } else { 1e9 };
+        let inv_tol = if tolerance > 0.0 {
+            1.0 / tolerance
+        } else {
+            1e9
+        };
         let mut mesh_verts: Vec<Vector3> = Vec::new();
         let mut vert_map: HashMap<(i64, i64, i64), usize> = HashMap::new();
         let mut faces = Vec::with_capacity(num_tris);
@@ -665,7 +649,9 @@ fn base64_decode(input: &str) -> Result<Vec<u8>> {
         let mut buf = [0u32; 4];
         for (i, &b) in chunk.iter().enumerate() {
             if b >= 128 || DECODE[b as usize] == 255 {
-                return Err(DxfError::ImportError("Invalid base64 character".to_string()));
+                return Err(DxfError::ImportError(
+                    "Invalid base64 character".to_string(),
+                ));
             }
             buf[i] = DECODE[b as usize] as u32;
         }

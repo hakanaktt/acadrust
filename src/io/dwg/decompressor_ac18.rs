@@ -65,7 +65,9 @@ pub fn decompress_ac18(source: &[u8], decompressed_size: usize) -> Vec<u8> {
             // ── Short match ──
             // Offset ≤ 0x400, length 3–14
             let length = ((opcode >> 4) as usize) - 1;
-            if si >= source.len() { break; }
+            if si >= source.len() {
+                break;
+            }
             let b1 = source[si] as usize;
             si += 1;
             let offset = (((opcode as usize) & 0x0C) >> 2 | (b1 << 2)) + 1;
@@ -73,11 +75,12 @@ pub fn decompress_ac18(source: &[u8], decompressed_size: usize) -> Vec<u8> {
 
             copy_match(&mut output, offset, length, decompressed_size);
             copy_literals(source, &mut si, &mut output, trailing, decompressed_size);
-
         } else if opcode >= 0x21 {
             // ── Medium match, short length (0x21–0x3F) ──
             let length = (opcode & 0x1F) as usize + 2;
-            if si + 1 >= source.len() { break; }
+            if si + 1 >= source.len() {
+                break;
+            }
             let b1 = source[si] as usize;
             si += 1;
             let b2 = source[si] as usize;
@@ -87,11 +90,12 @@ pub fn decompress_ac18(source: &[u8], decompressed_size: usize) -> Vec<u8> {
 
             copy_match(&mut output, offset, length, decompressed_size);
             copy_literals(source, &mut si, &mut output, trailing, decompressed_size);
-
         } else if opcode == 0x20 {
             // ── Medium match, extended length ──
             let length = read_ext_length(source, &mut si) + 0x21;
-            if si + 1 >= source.len() { break; }
+            if si + 1 >= source.len() {
+                break;
+            }
             let b1 = source[si] as usize;
             si += 1;
             let b2 = source[si] as usize;
@@ -101,11 +105,9 @@ pub fn decompress_ac18(source: &[u8], decompressed_size: usize) -> Vec<u8> {
 
             copy_match(&mut output, offset, length, decompressed_size);
             copy_literals(source, &mut si, &mut output, trailing, decompressed_size);
-
         } else if opcode == 0x11 {
             // ── END marker ──
             break;
-
         } else if opcode >= 0x10 {
             // ── Long match (0x10, 0x12–0x1F) ──
             // Offset > 0x4000
@@ -115,7 +117,9 @@ pub fn decompress_ac18(source: &[u8], decompressed_size: usize) -> Vec<u8> {
             } else {
                 len_bits + 2
             };
-            if si + 1 >= source.len() { break; }
+            if si + 1 >= source.len() {
+                break;
+            }
             let b1 = source[si] as usize;
             si += 1;
             let b2 = source[si] as usize;
@@ -125,7 +129,6 @@ pub fn decompress_ac18(source: &[u8], decompressed_size: usize) -> Vec<u8> {
 
             copy_match(&mut output, offset, length, decompressed_size);
             copy_literals(source, &mut si, &mut output, trailing, decompressed_size);
-
         } else {
             // ── Literal run (0x00–0x0F, after match with trailing=0) ──
             let count = if opcode == 0x00 {

@@ -355,8 +355,7 @@ mod tests {
     fn test_apply_transform_translation() {
         // Translation by (10, 20, 30) in column-major
         let m = [
-            1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 10.0, 20.0, 30.0,
-            1.0,
+            1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 10.0, 20.0, 30.0, 1.0,
         ];
         let (x, y, z) = apply_transform(1.0, 2.0, 3.0, &m);
         assert!((x - 11.0).abs() < 1e-10);

@@ -651,19 +651,21 @@ fn default_classes() -> Vec<DxfClass> {
         ("MLINESTYLE", "AcDbMlineStyle", 0, "ObjectDBX Classes", false),
     ];
 
-    defs.iter().map(|&(dxf, cpp, flags, app, is_entity)| {
-        if is_entity {
-            let mut c = DxfClass::new_entity(dxf, cpp);
-            c.proxy_flags = ProxyFlags(flags);
-            c.application_name = app.to_string();
-            c
-        } else {
-            let mut c = DxfClass::new(dxf, cpp);
-            c.proxy_flags = ProxyFlags(flags);
-            c.application_name = app.to_string();
-            c
-        }
-    }).collect()
+    defs.iter()
+        .map(|&(dxf, cpp, flags, app, is_entity)| {
+            if is_entity {
+                let mut c = DxfClass::new_entity(dxf, cpp);
+                c.proxy_flags = ProxyFlags(flags);
+                c.application_name = app.to_string();
+                c
+            } else {
+                let mut c = DxfClass::new(dxf, cpp);
+                c.proxy_flags = ProxyFlags(flags);
+                c.application_name = app.to_string();
+                c
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]

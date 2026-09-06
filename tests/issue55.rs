@@ -24,8 +24,10 @@ fn sample_document() -> CadDocument {
         0.0, 0.0, 0.0, 100.0, 50.0, 0.0,
     )))
     .unwrap();
-    doc.add_entity(EntityType::Circle(Circle::from_coords(50.0, 50.0, 0.0, 25.0)))
-        .unwrap();
+    doc.add_entity(EntityType::Circle(Circle::from_coords(
+        50.0, 50.0, 0.0, 25.0,
+    )))
+    .unwrap();
     doc
 }
 
@@ -109,8 +111,11 @@ fn r2000_with_template_and_aux_header_after_handles_reads_fully() {
 fn text_document(code_page: &str, value: &str) -> CadDocument {
     let mut doc = CadDocument::with_version(DxfVersion::AC1015);
     doc.header.code_page = code_page.to_string();
-    doc.add_entity(EntityType::Text(Text::with_value(value, Vector3::new(0.0, 0.0, 0.0))))
-        .unwrap();
+    doc.add_entity(EntityType::Text(Text::with_value(
+        value,
+        Vector3::new(0.0, 0.0, 0.0),
+    )))
+    .unwrap();
     doc
 }
 
@@ -150,7 +155,10 @@ fn unmappable_text_is_written_as_mif_escapes() {
     let bytes = DwgWriter::write_to_vec(&doc).unwrap();
     let text = String::from_utf8_lossy(&bytes).into_owned();
     assert!(text.contains("\\U+4E2D"), "expected MIF escape in output");
-    assert!(!text.contains("&#"), "HTML character references are not valid DWG");
+    assert!(
+        !text.contains("&#"),
+        "HTML character references are not valid DWG"
+    );
 
     let rt = read_dwg(bytes);
     assert_eq!(first_text_value(&rt), "中文A");

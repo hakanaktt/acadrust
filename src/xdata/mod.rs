@@ -187,4 +187,3 @@ mod tests {
         assert!(xdata.get_record("APP2").is_none());
     }
 }
-

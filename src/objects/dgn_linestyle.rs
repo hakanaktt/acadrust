@@ -129,11 +129,7 @@ impl DgnLsComponentData {
     pub fn references(&self) -> Vec<Handle> {
         match self {
             Self::Symbol(value) => vec![value.block],
-            Self::Compound(value) => value
-                .entries
-                .iter()
-                .map(|entry| entry.component)
-                .collect(),
+            Self::Compound(value) => value.entries.iter().map(|entry| entry.component).collect(),
             Self::Stroke(_) | Self::Internal(_) => Vec::new(),
             Self::Point(value) => {
                 let mut result = Vec::with_capacity(value.symbols.len() + 1);

@@ -467,8 +467,7 @@ impl Mesh {
 
     /// Calculates the center of the bounding box.
     pub fn center(&self) -> Option<Vector3> {
-        self.bounding_box()
-            .map(|(min, max)| (min + max) * 0.5)
+        self.bounding_box().map(|(min, max)| (min + max) * 0.5)
     }
 
     /// Reverses all face winding orders.
@@ -505,10 +504,7 @@ impl Mesh {
 
     /// Creates a unit cube centered at origin.
     pub fn create_unit_cube() -> Self {
-        Self::create_box(
-            Vector3::new(-0.5, -0.5, -0.5),
-            Vector3::new(0.5, 0.5, 0.5),
-        )
+        Self::create_box(Vector3::new(-0.5, -0.5, -0.5), Vector3::new(0.5, 0.5, 0.5))
     }
 
     /// Creates a simple plane mesh.
@@ -616,7 +612,8 @@ impl Mesh {
 
         // Add faces with offset indices
         for face in &other.faces {
-            let new_vertices: Vec<usize> = face.vertices.iter().map(|v| v + vertex_offset).collect();
+            let new_vertices: Vec<usize> =
+                face.vertices.iter().map(|v| v + vertex_offset).collect();
             self.faces.push(MeshFace::new(new_vertices));
         }
 
@@ -714,11 +711,11 @@ impl Entity for Mesh {
     fn entity_type(&self) -> &'static str {
         "MESH"
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_mesh(self, transform);
     }
-    
+
     fn apply_mirror(&mut self, transform: &crate::types::Transform) {
         super::mirror::mirror_mesh(self, transform);
     }
@@ -1033,7 +1030,7 @@ mod tests {
         );
 
         assert_eq!(mesh.vertex_count(), 9); // 3x3 grid
-        assert_eq!(mesh.face_count(), 4);   // 2x2 quads
+        assert_eq!(mesh.face_count(), 4); // 2x2 quads
     }
 
     #[test]

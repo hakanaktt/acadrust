@@ -61,7 +61,6 @@ pub(crate) fn compose_acis_placement(acis: &mut AcisData, transform: &Transform)
     *acis = AcisData::from_sat(&doc.to_sat_string());
 }
 
-
 /// True when `transform` reverses orientation (negative upper-3×3
 /// determinant — an odd number of mirrors). Plane-curve direction data
 /// (polyline bulges, hatch boundary arc flags) must flip with it.
@@ -138,7 +137,9 @@ pub(crate) fn transform_arc(e: &mut Arc, transform: &Transform) {
     let we = transform.apply(endpoint(e.end_angle));
 
     let new_center = transform.apply(center_w);
-    let scale_factor = transform.apply_rotation(Vector3::new(1.0, 0.0, 0.0)).length();
+    let scale_factor = transform
+        .apply_rotation(Vector3::new(1.0, 0.0, 0.0))
+        .length();
     let new_normal = transform.apply_rotation(e.normal).normalize();
 
     let new_ocs_t = Matrix3::arbitrary_axis(new_normal).transpose();
@@ -304,21 +305,15 @@ pub(crate) fn transform_spline(e: &mut Spline, transform: &Transform) {
 
     let axes = [Vector3::UNIT_X, Vector3::UNIT_Y, Vector3::UNIT_Z]
         .map(|axis| transform.apply_rotation(axis));
-    let max_scale = axes
-        .iter()
-        .map(|axis| axis.length())
-        .fold(0.0, f64::max);
+    let max_scale = axes.iter().map(|axis| axis.length()).fold(0.0, f64::max);
     let orthogonal = [(0, 1), (0, 2), (1, 2)]
         .into_iter()
-        .all(|(left, right)| {
-            axes[left].dot(&axes[right]).abs() <= 1e-12 * max_scale.powi(2)
-        });
+        .all(|(left, right)| axes[left].dot(&axes[right]).abs() <= 1e-12 * max_scale.powi(2));
     // Exact for orthogonal axes; conservative for sheared transforms.
     let distance_scale = if orthogonal {
         max_scale
     } else {
-        axes
-            .iter()
+        axes.iter()
             .map(|axis| axis.length_squared())
             .sum::<f64>()
             .sqrt()
@@ -384,8 +379,7 @@ pub(crate) fn transform_hatch(e: &mut Hatch, transform: &Transform) {
 
     let x_in_new_ocs = new_wcs_to_ocs * trans_ocs_x_wcs;
     let y_in_new_ocs = new_wcs_to_ocs * trans_ocs_y_wcs;
-    let is_flipped =
-        (x_in_new_ocs.x * y_in_new_ocs.y - x_in_new_ocs.y * y_in_new_ocs.x) < 0.0;
+    let is_flipped = (x_in_new_ocs.x * y_in_new_ocs.y - x_in_new_ocs.y * y_in_new_ocs.x) < 0.0;
 
     let transform_ocs_point = |p: Vector2| -> Vector2 {
         let p_wcs = old_ocs_to_wcs * Vector3::new(p.x, p.y, old_elevation);
@@ -540,8 +534,7 @@ pub(crate) fn transform_hatch(e: &mut Hatch, transform: &Transform) {
                 }
                 BoundaryEdge::Spline(spline) => {
                     for cp in &mut spline.control_points {
-                        let p_wcs =
-                            old_ocs_to_wcs * Vector3::new(cp.x, cp.y, old_elevation);
+                        let p_wcs = old_ocs_to_wcs * Vector3::new(cp.x, cp.y, old_elevation);
                         let p_new_wcs = transform.apply(p_wcs);
                         let p_new_ocs = new_wcs_to_ocs * p_new_wcs;
                         cp.x = p_new_ocs.x;
@@ -604,10 +597,7 @@ pub(crate) fn transform_hatch(e: &mut Hatch, transform: &Transform) {
     }
 
     if e.gradient_color.enabled {
-        let g_dir = Vector2::new(
-            e.gradient_color.angle.cos(),
-            e.gradient_color.angle.sin(),
-        );
+        let g_dir = Vector2::new(e.gradient_color.angle.cos(), e.gradient_color.angle.sin());
         let g_wcs_dir = old_ocs_to_wcs * Vector3::new(g_dir.x, g_dir.y, 0.0);
         let transformed_g_wcs_dir = transform.apply_rotation(g_wcs_dir);
         let transformed_g_ocs_dir = new_wcs_to_ocs * transformed_g_wcs_dir;
@@ -684,8 +674,7 @@ pub(crate) fn transform_insert(e: &mut Insert, transform: &Transform) {
     let ocs_new = Matrix3::arbitrary_axis(new_normal);
     let new_position = ocs_new.transpose() * new_world_pos;
 
-    let trans_ow =
-        Matrix3::arbitrary_axis(e.normal) * Matrix3::rotation_z(e.rotation);
+    let trans_ow = Matrix3::arbitrary_axis(e.normal) * Matrix3::rotation_z(e.rotation);
 
     let trans_wo_base = Matrix3::arbitrary_axis(new_normal);
     let trans_wo = trans_wo_base.transpose();
@@ -702,8 +691,7 @@ pub(crate) fn transform_insert(e: &mut Insert, transform: &Transform) {
 
     let trans_wo_rot = Matrix3::rotation_z(new_rotation).transpose() * trans_wo;
     let s = trans_wo_rot
-        * (transformation
-            * (trans_ow * Vector3::new(e.x_scale(), e.y_scale(), e.z_scale())));
+        * (transformation * (trans_ow * Vector3::new(e.x_scale(), e.y_scale(), e.z_scale())));
 
     let clamp = |val: f64| -> f64 {
         if val.abs() < SCALE_EPSILON {
@@ -772,10 +760,7 @@ pub(crate) fn transform_viewport(e: &mut Viewport, transform: &Transform) {
 
 // ── AttributeDefinition ──────────────────────────────────────────────────────
 
-pub(crate) fn transform_attribute_definition(
-    e: &mut AttributeDefinition,
-    transform: &Transform,
-) {
+pub(crate) fn transform_attribute_definition(e: &mut AttributeDefinition, transform: &Transform) {
     // Insertion / alignment points are stored in OCS.
     let new_normal = transform.apply_rotation(e.normal).normalize();
     let (ocs, new_t) = ocs_pair(e.normal, new_normal);
@@ -828,9 +813,15 @@ pub(crate) fn transform_multileader(e: &mut MultiLeader, transform: &Transform) 
     e.context.base_point = transform.apply(e.context.base_point);
 
     e.context.text_normal = transform.apply_rotation(e.context.text_normal).normalize();
-    e.context.text_direction = transform.apply_rotation(e.context.text_direction).normalize();
-    e.context.base_direction = transform.apply_rotation(e.context.base_direction).normalize();
-    e.context.base_vertical = transform.apply_rotation(e.context.base_vertical).normalize();
+    e.context.text_direction = transform
+        .apply_rotation(e.context.text_direction)
+        .normalize();
+    e.context.base_direction = transform
+        .apply_rotation(e.context.base_direction)
+        .normalize();
+    e.context.base_vertical = transform
+        .apply_rotation(e.context.base_vertical)
+        .normalize();
 
     for root in &mut e.context.leader_roots {
         root.connection_point = transform.apply(root.connection_point);
@@ -906,8 +897,9 @@ pub(crate) fn transform_solid3d(e: &mut Solid3D, transform: &Transform) {
     }
     for silhouette in &mut e.silhouettes {
         silhouette.target = transform.apply(silhouette.target);
-        silhouette.view_direction =
-            transform.apply_rotation(silhouette.view_direction).normalize();
+        silhouette.view_direction = transform
+            .apply_rotation(silhouette.view_direction)
+            .normalize();
         silhouette.up_vector = transform.apply_rotation(silhouette.up_vector).normalize();
         for wire in &mut silhouette.wires {
             for pt in &mut wire.points {
@@ -929,8 +921,9 @@ pub(crate) fn transform_region(e: &mut Region, transform: &Transform) {
     }
     for silhouette in &mut e.silhouettes {
         silhouette.target = transform.apply(silhouette.target);
-        silhouette.view_direction =
-            transform.apply_rotation(silhouette.view_direction).normalize();
+        silhouette.view_direction = transform
+            .apply_rotation(silhouette.view_direction)
+            .normalize();
         silhouette.up_vector = transform.apply_rotation(silhouette.up_vector).normalize();
         for wire in &mut silhouette.wires {
             for pt in &mut wire.points {
@@ -952,8 +945,9 @@ pub(crate) fn transform_body(e: &mut Body, transform: &Transform) {
     }
     for silhouette in &mut e.silhouettes {
         silhouette.target = transform.apply(silhouette.target);
-        silhouette.view_direction =
-            transform.apply_rotation(silhouette.view_direction).normalize();
+        silhouette.view_direction = transform
+            .apply_rotation(silhouette.view_direction)
+            .normalize();
         silhouette.up_vector = transform.apply_rotation(silhouette.up_vector).normalize();
         for wire in &mut silhouette.wires {
             for pt in &mut wire.points {
@@ -973,8 +967,9 @@ pub(crate) fn transform_surface(e: &mut crate::entities::Surface, transform: &Tr
     }
     for silhouette in &mut e.silhouettes {
         silhouette.target = transform.apply(silhouette.target);
-        silhouette.view_direction =
-            transform.apply_rotation(silhouette.view_direction).normalize();
+        silhouette.view_direction = transform
+            .apply_rotation(silhouette.view_direction)
+            .normalize();
         silhouette.up_vector = transform.apply_rotation(silhouette.up_vector).normalize();
         for wire in &mut silhouette.wires {
             for pt in &mut wire.points {
@@ -1183,10 +1178,7 @@ mod tests {
 
     #[test]
     fn test_transform_line() {
-        let mut line = Line::from_points(
-            Vector3::new(1.0, 0.0, 0.0),
-            Vector3::new(2.0, 0.0, 0.0),
-        );
+        let mut line = Line::from_points(Vector3::new(1.0, 0.0, 0.0), Vector3::new(2.0, 0.0, 0.0));
         let t = Transform::from_scale(2.0);
         transform_line(&mut line, &t);
         assert!((line.start.x - 2.0).abs() < 1e-10);
@@ -1259,11 +1251,17 @@ mod tests {
         // Stored-angle convention: true point of a CW edge is at -θ.
         let pt = |theta: f64, ccw: bool| {
             let a = if ccw { theta } else { -theta };
-            (arc.center.x + arc.radius * a.cos(), arc.center.y + arc.radius * a.sin())
+            (
+                arc.center.x + arc.radius * a.cos(),
+                arc.center.y + arc.radius * a.sin(),
+            )
         };
         let (sx, sy) = pt(arc.start_angle, arc.counter_clockwise);
         let (ex, ey) = pt(arc.end_angle, arc.counter_clockwise);
-        assert!(!arc.counter_clockwise, "mirror must flip the direction flag");
+        assert!(
+            !arc.counter_clockwise,
+            "mirror must flip the direction flag"
+        );
         assert!(
             (sx - l1.end.x).abs() < 1e-9 && (sy - l1.end.y).abs() < 1e-9,
             "arc start {:?} must meet previous line end {:?}",
@@ -1279,14 +1277,29 @@ mod tests {
         // Midpoint sanity: the half-circle bulges DOWN after a y-axis mirror?
         // Original bulges up (+y); x-mirror keeps +y bulge at mirrored x.
         let mid_a = {
-            let s = if arc.counter_clockwise { arc.start_angle } else { -arc.start_angle };
-            let e = if arc.counter_clockwise { arc.end_angle } else { -arc.end_angle };
+            let s = if arc.counter_clockwise {
+                arc.start_angle
+            } else {
+                -arc.start_angle
+            };
+            let e = if arc.counter_clockwise {
+                arc.end_angle
+            } else {
+                -arc.end_angle
+            };
             let mut sweep = e - s;
-            if arc.counter_clockwise && sweep <= 0.0 { sweep += std::f64::consts::TAU; }
-            if !arc.counter_clockwise && sweep >= 0.0 { sweep -= std::f64::consts::TAU; }
+            if arc.counter_clockwise && sweep <= 0.0 {
+                sweep += std::f64::consts::TAU;
+            }
+            if !arc.counter_clockwise && sweep >= 0.0 {
+                sweep -= std::f64::consts::TAU;
+            }
             s + sweep / 2.0
         };
-        let (mx, my) = (arc.center.x + arc.radius * mid_a.cos(), arc.center.y + arc.radius * mid_a.sin());
+        let (mx, my) = (
+            arc.center.x + arc.radius * mid_a.cos(),
+            arc.center.y + arc.radius * mid_a.sin(),
+        );
         assert!(
             (mx - (-1.0)).abs() < 1e-9 && (my - 1.0).abs() < 1e-9,
             "arc midpoint {:?} must be the mirror of (1,1) → (-1,1)",
@@ -1316,16 +1329,34 @@ mod tests {
 
         // Pure translation: angles must be untouched.
         let mut h = mk();
-        transform_hatch(&mut h, &Transform::from_translation(Vector3::new(3.0, -2.0, 0.0)));
-        let BoundaryEdge::CircularArc(a) = &h.paths[0].edges[0] else { panic!() };
-        assert!((a.start_angle - 5.80985).abs() < 1e-9, "start changed: {}", a.start_angle);
-        assert!((a.end_angle - 6.63571).abs() < 1e-9, "end changed: {}", a.end_angle);
+        transform_hatch(
+            &mut h,
+            &Transform::from_translation(Vector3::new(3.0, -2.0, 0.0)),
+        );
+        let BoundaryEdge::CircularArc(a) = &h.paths[0].edges[0] else {
+            panic!()
+        };
+        assert!(
+            (a.start_angle - 5.80985).abs() < 1e-9,
+            "start changed: {}",
+            a.start_angle
+        );
+        assert!(
+            (a.end_angle - 6.63571).abs() < 1e-9,
+            "end changed: {}",
+            a.end_angle
+        );
         assert!(!a.counter_clockwise);
 
         // Mirror: sweep magnitude must survive (0.82586), direction flag flips.
         let mut h = mk();
-        transform_hatch(&mut h, &Transform::from_scaling(Vector3::new(-1.0, 1.0, 1.0)));
-        let BoundaryEdge::CircularArc(a) = &h.paths[0].edges[0] else { panic!() };
+        transform_hatch(
+            &mut h,
+            &Transform::from_scaling(Vector3::new(-1.0, 1.0, 1.0)),
+        );
+        let BoundaryEdge::CircularArc(a) = &h.paths[0].edges[0] else {
+            panic!()
+        };
         assert!(a.counter_clockwise, "mirror must flip the flag");
         let sweep = a.end_angle - a.start_angle;
         assert!(
@@ -1350,7 +1381,10 @@ mod tests {
 
         // Mirror across Y (x → -x): reflection, bulges must negate.
         let mut a = lw.clone();
-        transform_lwpolyline(&mut a, &Transform::from_scaling(Vector3::new(-1.0, 1.0, 1.0)));
+        transform_lwpolyline(
+            &mut a,
+            &Transform::from_scaling(Vector3::new(-1.0, 1.0, 1.0)),
+        );
         assert!((a.vertices[0].bulge - (-0.5)).abs() < 1e-12);
         assert!((a.vertices[1].bulge - 0.3).abs() < 1e-12);
 

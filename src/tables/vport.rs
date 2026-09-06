@@ -206,4 +206,3 @@ impl TableEntry for VPort {
         self.name == "*Active"
     }
 }
-

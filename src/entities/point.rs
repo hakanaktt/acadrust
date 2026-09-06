@@ -112,7 +112,7 @@ impl Entity for Point {
     fn entity_type(&self) -> &'static str {
         "POINT"
     }
-    
+
     fn apply_transform(&mut self, transform: &Transform) {
         super::transform::transform_point(self, transform);
     }
@@ -158,5 +158,3 @@ mod tests {
         assert_eq!(bbox.max, Vector3::new(5.0, 10.0, 15.0));
     }
 }
-
-

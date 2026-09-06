@@ -57,8 +57,7 @@ impl<'a> DwgObjectWriter<'a> {
         self.writer.write_bit(value.is_read_dependency);
         self.writer.write_bit(value.is_write_dependency);
         self.writer.write_bit(value.is_attached_to_object);
-        self.writer
-            .write_bit(value.is_delegating_to_owning_action);
+        self.writer.write_bit(value.is_delegating_to_owning_action);
         self.writer.write_bit_long(value.order);
         self.write_assoc_handle(DwgReferenceType::HardOwnership, value.dependent_on);
         self.writer.write_bit(value.name.is_some());
@@ -94,10 +93,7 @@ impl<'a> DwgObjectWriter<'a> {
             self.writer.write_bit_short(0);
             self.writer
                 .write_bit_long(value.owned_parameters.len() as i32);
-            self.write_assoc_handles(
-                DwgReferenceType::HardOwnership,
-                &value.owned_parameters,
-            );
+            self.write_assoc_handles(DwgReferenceType::HardOwnership, &value.owned_parameters);
             self.writer.write_bit_short(0);
             self.writer.write_bit_long(value.values.len() as i32);
             self.write_assoc_values(&value.values);
@@ -122,8 +118,7 @@ impl<'a> DwgObjectWriter<'a> {
         }
         self.writer.write_bit_long(value.version);
         self.writer.write_bit_long(value.minor);
-        self.writer
-            .write_bit_long(value.dependencies.len() as i32);
+        self.writer.write_bit_long(value.dependencies.len() as i32);
         self.write_assoc_handles(DwgReferenceType::SoftPointer, &value.dependencies);
         self.writer.write_bit_long(value.marker);
         self.writer.write_bit_long(value.values.len() as i32);
@@ -138,17 +133,12 @@ impl<'a> DwgObjectWriter<'a> {
         self.write_assoc_action_body(&value.action_body);
         self.write_assoc_parameter_body(&value.parameter_body);
         self.writer.write_bit_long(value.surface_body.version);
-        self.write_assoc_handle(
-            DwgReferenceType::HardPointer,
-            value.surface_body.dependency,
-        );
+        self.write_assoc_handle(DwgReferenceType::HardPointer, value.surface_body.dependency);
         self.writer
             .write_bit(value.surface_body.is_semi_associative);
         self.writer.write_bit_long(value.surface_body.marker);
-        self.writer
-            .write_bit(value.surface_body.is_semi_override);
-        self.writer
-            .write_bit_short(value.surface_body.grip_status);
+        self.writer.write_bit(value.surface_body.is_semi_override);
+        self.writer.write_bit_short(value.surface_body.grip_status);
         self.writer.write_bit_long(value.path_status);
         match value.kind {
             AssocSurfaceActionKind::Network
@@ -225,8 +215,7 @@ impl<'a> DwgObjectWriter<'a> {
                 self.write_assoc_handle(DwgReferenceType::SoftPointer, value.dimension_node);
                 self.write_assoc_handle(DwgReferenceType::HardPointer, value.dependency);
             }
-            AssocAnnotationKind::OrdinateDimension
-            | AssocAnnotationKind::RotatedDimension => {
+            AssocAnnotationKind::OrdinateDimension | AssocAnnotationKind::RotatedDimension => {
                 self.write_assoc_handle(DwgReferenceType::HardPointer, value.read_node);
                 self.write_assoc_handle(DwgReferenceType::HardPointer, value.dimension_node);
             }
@@ -236,8 +225,7 @@ impl<'a> DwgObjectWriter<'a> {
 
     fn write_assoc_single_dependency(&mut self, value: &AssocSingleDependencyActionParam) {
         self.write_assoc_action_param(&value.action_param);
-        self.writer
-            .write_bit_long(value.dependency_class_version);
+        self.writer.write_bit_long(value.dependency_class_version);
         self.write_assoc_handle(DwgReferenceType::SoftPointer, value.dependency);
         self.writer.write_bit_long(value.class_version);
     }
@@ -253,15 +241,9 @@ impl<'a> DwgObjectWriter<'a> {
             self.writer.write_bit_long(child.id);
             self.write_assoc_handle(DwgReferenceType::HardOwnership, child.parameter);
             if child.id != 0 {
-                self.write_assoc_handle(
-                    DwgReferenceType::HardOwnership,
-                    child.secondary_parameter,
-                );
+                self.write_assoc_handle(DwgReferenceType::HardOwnership, child.secondary_parameter);
                 self.writer.write_bit_long(child.marker);
-                self.write_assoc_handle(
-                    DwgReferenceType::HardOwnership,
-                    child.tertiary_parameter,
-                );
+                self.write_assoc_handle(DwgReferenceType::HardOwnership, child.tertiary_parameter);
             }
         }
     }
@@ -336,51 +318,36 @@ impl<'a> DwgObjectWriter<'a> {
             for (index, reference) in references.iter().enumerate() {
                 self.writer.write_variable_text(&reference.class_name);
                 self.writer.write_byte(reference.osnap_type);
-                self.writer
-                    .write_bit_long(reference.xrefs.len() as i32);
-                self.write_assoc_handles(
-                    DwgReferenceType::SoftPointer,
-                    &reference.xrefs,
-                );
+                self.writer.write_bit_long(reference.xrefs.len() as i32);
+                self.write_assoc_handles(DwgReferenceType::SoftPointer, &reference.xrefs);
                 if reference.osnap_type != 0 {
-                    self.writer
-                        .write_bit_long(reference.main_subent_type);
-                    self.writer
-                        .write_bit_long(reference.main_gs_marker);
+                    self.writer.write_bit_long(reference.main_subent_type);
+                    self.writer.write_bit_long(reference.main_gs_marker);
                     self.writer
                         .write_bit_long(reference.xref_paths.len() as i32);
                     for path in &reference.xref_paths {
                         self.writer.write_variable_text(path);
                     }
                 }
-                self.writer
-                    .write_bit_double(reference.osnap_distance);
+                self.writer.write_bit_double(reference.osnap_distance);
                 self.writer.write_3bit_double(reference.osnap_point);
-                if reference.osnap_type == 6
-                    || reference.osnap_type == 11
-                {
-                    self.writer.write_bit_long(
-                        reference.intersection_objects.len() as i32,
-                    );
+                if reference.osnap_type == 6 || reference.osnap_type == 11 {
+                    self.writer
+                        .write_bit_long(reference.intersection_objects.len() as i32);
                     self.write_assoc_handles(
                         DwgReferenceType::HardPointer,
                         &reference.intersection_objects,
                     );
-                    self.writer.write_bit_long(
-                        reference.intersection_subent_type,
-                    );
-                    self.writer.write_bit_long(
-                        reference.intersection_gs_marker,
-                    );
-                    self.writer.write_bit_long(
-                        reference.intersection_xref_paths.len() as i32,
-                    );
+                    self.writer
+                        .write_bit_long(reference.intersection_subent_type);
+                    self.writer.write_bit_long(reference.intersection_gs_marker);
+                    self.writer
+                        .write_bit_long(reference.intersection_xref_paths.len() as i32);
                     for path in &reference.intersection_xref_paths {
                         self.writer.write_variable_text(path);
                     }
                 }
-                self.writer
-                    .write_bit(index + 1 < references.len());
+                self.writer.write_bit(index + 1 < references.len());
             }
         }
     }
@@ -389,10 +356,8 @@ impl<'a> DwgObjectWriter<'a> {
         self.writer.write_bit_long(value.class_version);
         self.writer.write_bit_long(value.marker_zero);
         self.writer.write_bit_long(value.marker_two);
-        self.writer
-            .write_bit_long(value.associative_step_count);
-        self.writer
-            .write_bit_long(value.associative_subent_count);
+        self.writer.write_bit_long(value.associative_step_count);
+        self.writer.write_bit_long(value.associative_subent_count);
         self.writer.write_bit_long(value.steps.len() as i32);
         for step in &value.steps {
             self.writer.write_bit_long(*step);
@@ -419,12 +384,7 @@ impl<'a> DwgObjectWriter<'a> {
         }
     }
 
-    fn write_geometrical_constraint(
-        &mut self,
-        owner_id: i32,
-        is_implied: bool,
-        is_active: bool,
-    ) {
+    fn write_geometrical_constraint(&mut self, owner_id: i32, is_implied: bool, is_active: bool) {
         self.writer.write_bit_long(owner_id);
         self.writer.write_bit(is_implied);
         self.writer.write_bit(is_active);
@@ -439,14 +399,8 @@ impl<'a> DwgObjectWriter<'a> {
         dimension_dependency: Handle,
     ) {
         self.write_geometrical_constraint(owner_id, is_implied, is_active);
-        self.write_assoc_handle(
-            DwgReferenceType::HardOwnership,
-            value_dependency,
-        );
-        self.write_assoc_handle(
-            DwgReferenceType::HardOwnership,
-            dimension_dependency,
-        );
+        self.write_assoc_handle(DwgReferenceType::HardOwnership, value_dependency);
+        self.write_assoc_handle(DwgReferenceType::HardOwnership, dimension_dependency);
     }
 
     fn write_constraint_node_data(&mut self, data: &AssocConstraintNodeData) {
@@ -456,11 +410,7 @@ impl<'a> DwgObjectWriter<'a> {
                 owner_id,
                 is_implied,
                 is_active,
-            } => self.write_geometrical_constraint(
-                *owner_id,
-                *is_implied,
-                *is_active,
-            ),
+            } => self.write_geometrical_constraint(*owner_id, *is_implied, *is_active),
             AssocConstraintNodeData::Angle {
                 owner_id,
                 is_implied,
@@ -484,11 +434,7 @@ impl<'a> DwgObjectWriter<'a> {
                 is_active,
                 datum_line_index,
             } => {
-                self.write_geometrical_constraint(
-                    *owner_id,
-                    *is_implied,
-                    *is_active,
-                );
+                self.write_geometrical_constraint(*owner_id, *is_implied, *is_active);
                 if let Some(datum_line_index) = datum_line_index {
                     self.writer.write_bit_long(*datum_line_index);
                 }
@@ -511,9 +457,8 @@ impl<'a> DwgObjectWriter<'a> {
                 );
                 self.writer.write_byte(*direction_type);
                 if *direction_type != 0 {
-                    self.writer.write_3bit_double(
-                        distance.unwrap_or(crate::types::Vector3::ZERO),
-                    );
+                    self.writer
+                        .write_3bit_double(distance.unwrap_or(crate::types::Vector3::ZERO));
                 }
             }
             AssocConstraintNodeData::RadiusDiameter {
@@ -541,10 +486,7 @@ impl<'a> DwgObjectWriter<'a> {
                 point_index,
                 curve_id,
             } => {
-                self.write_assoc_handle(
-                    DwgReferenceType::SoftPointer,
-                    *geometry_dependency,
-                );
+                self.write_assoc_handle(DwgReferenceType::SoftPointer, *geometry_dependency);
                 self.writer.write_bit_long(*geometry_node_id);
                 if !geometry_dependency.is_null() {
                     self.writer
@@ -559,15 +501,11 @@ impl<'a> DwgObjectWriter<'a> {
                 geometry_node_id,
                 point,
             } => {
-                self.write_assoc_handle(
-                    DwgReferenceType::SoftPointer,
-                    *geometry_dependency,
-                );
+                self.write_assoc_handle(DwgReferenceType::SoftPointer, *geometry_dependency);
                 self.writer.write_bit_long(*geometry_node_id);
                 if !geometry_dependency.is_null() {
-                    self.writer.write_3bit_double(
-                        point.unwrap_or(crate::types::Vector3::ZERO),
-                    );
+                    self.writer
+                        .write_3bit_double(point.unwrap_or(crate::types::Vector3::ZERO));
                 }
             }
             AssocConstraintNodeData::Line {
@@ -576,10 +514,7 @@ impl<'a> DwgObjectWriter<'a> {
                 point,
                 direction,
             } => {
-                self.write_assoc_handle(
-                    DwgReferenceType::SoftPointer,
-                    *geometry_dependency,
-                );
+                self.write_assoc_handle(DwgReferenceType::SoftPointer, *geometry_dependency);
                 self.writer.write_bit_long(*geometry_node_id);
                 self.writer.write_3bit_double(*point);
                 self.writer.write_3bit_double(*direction);
@@ -593,10 +528,7 @@ impl<'a> DwgObjectWriter<'a> {
                 start_point,
                 end_point,
             } => {
-                self.write_assoc_handle(
-                    DwgReferenceType::SoftPointer,
-                    *geometry_dependency,
-                );
+                self.write_assoc_handle(DwgReferenceType::SoftPointer, *geometry_dependency);
                 self.writer.write_bit_long(*geometry_node_id);
                 self.writer.write_3bit_double(*point);
                 self.writer.write_3bit_double(*direction);
@@ -615,10 +547,7 @@ impl<'a> DwgObjectWriter<'a> {
                 end_parameter,
                 reserved,
             } => {
-                self.write_assoc_handle(
-                    DwgReferenceType::SoftPointer,
-                    *geometry_dependency,
-                );
+                self.write_assoc_handle(DwgReferenceType::SoftPointer, *geometry_dependency);
                 self.writer.write_bit_long(*geometry_node_id);
                 self.writer.write_3bit_double(*center);
                 self.writer.write_3bit_double(*normal);
@@ -641,10 +570,7 @@ impl<'a> DwgObjectWriter<'a> {
                 start_point,
                 end_point,
             } => {
-                self.write_assoc_handle(
-                    DwgReferenceType::SoftPointer,
-                    *geometry_dependency,
-                );
+                self.write_assoc_handle(DwgReferenceType::SoftPointer, *geometry_dependency);
                 self.writer.write_bit_long(*geometry_node_id);
                 self.writer.write_3bit_double(*center);
                 self.writer.write_3bit_double(*normal);
@@ -664,11 +590,7 @@ impl<'a> DwgObjectWriter<'a> {
                 short_axis,
                 axis_ratio,
             } => {
-                self.write_geometrical_constraint(
-                    *owner_id,
-                    *is_implied,
-                    *is_active,
-                );
+                self.write_geometrical_constraint(*owner_id, *is_implied, *is_active);
                 self.writer.write_3bit_double(*center);
                 self.writer.write_3bit_double(*short_axis);
                 self.writer.write_bit_double(*axis_ratio);
@@ -683,11 +605,7 @@ impl<'a> DwgObjectWriter<'a> {
                 start_point,
                 end_point,
             } => {
-                self.write_geometrical_constraint(
-                    *owner_id,
-                    *is_implied,
-                    *is_active,
-                );
+                self.write_geometrical_constraint(*owner_id, *is_implied, *is_active);
                 self.writer.write_3bit_double(*center);
                 self.writer.write_3bit_double(*short_axis);
                 self.writer.write_bit_double(*axis_ratio);
@@ -760,13 +678,10 @@ impl<'a> DwgObjectWriter<'a> {
                         action.dependency,
                     );
                 }
-                self.writer
-                    .write_bit_long(value.owned_actions.len() as i32);
+                self.writer.write_bit_long(value.owned_actions.len() as i32);
                 self.write_assoc_handles(DwgReferenceType::SoftPointer, &value.owned_actions);
             }
-            AssociativeData::AnnotationActionBody(value) => {
-                self.write_assoc_annotation(value)
-            }
+            AssociativeData::AnnotationActionBody(value) => self.write_assoc_annotation(value),
             AssociativeData::PersSubentManager(value) => {
                 self.writer.write_bit_long(value.class_version);
                 for marker in value.markers {
@@ -795,20 +710,13 @@ impl<'a> DwgObjectWriter<'a> {
                 for point in value.work_plane {
                     self.writer.write_3bit_double(point);
                 }
-                self.write_assoc_handle(
-                    DwgReferenceType::HardOwnership,
-                    value.dependency,
-                );
+                self.write_assoc_handle(DwgReferenceType::HardOwnership, value.dependency);
                 self.writer.write_bit_long(value.actions.len() as i32);
-                self.write_assoc_handles(
-                    DwgReferenceType::HardOwnership,
-                    &value.actions,
-                );
+                self.write_assoc_handles(DwgReferenceType::HardOwnership, &value.actions);
                 self.writer.write_bit_long(value.nodes.len() as i32);
                 if let Some(first) = value.nodes.first() {
                     self.writer.write_bit_long(first.node_id);
-                    self.writer
-                        .write_bit_long(first.connections.len() as i32);
+                    self.writer.write_bit_long(first.connections.len() as i32);
                     for connection in &first.connections {
                         self.writer.write_bit_long(*connection);
                     }
@@ -821,9 +729,10 @@ impl<'a> DwgObjectWriter<'a> {
                         .collect();
                     let mut class_types: Vec<&str> = Vec::new();
                     for node in &registered {
-                        if !class_types.iter().any(|name| {
-                            name.eq_ignore_ascii_case(&node.class_name)
-                        }) {
+                        if !class_types
+                            .iter()
+                            .any(|name| name.eq_ignore_ascii_case(&node.class_name))
+                        {
                             class_types.push(&node.class_name);
                         }
                     }
@@ -836,9 +745,7 @@ impl<'a> DwgObjectWriter<'a> {
                         self.writer.write_bit(node.registry_flag);
                         let class_index = class_types
                             .iter()
-                            .position(|name| {
-                                name.eq_ignore_ascii_case(&node.class_name)
-                            })
+                            .position(|name| name.eq_ignore_ascii_case(&node.class_name))
                             .map(|index| index as i32 + 1)
                             .unwrap_or(0);
                         self.writer.write_bit_long(class_index);
@@ -874,16 +781,13 @@ impl<'a> DwgObjectWriter<'a> {
                 self.writer.write_byte(value.osnap_mode);
                 self.writer.write_bit_double(value.parameter);
             }
-            AssociativeData::ObjectActionParam(value) => {
-                self.write_assoc_single_dependency(value)
-            }
+            AssociativeData::ObjectActionParam(value) => self.write_assoc_single_dependency(value),
             AssociativeData::PathActionParam(value) => {
                 self.write_assoc_compound(&value.compound);
                 self.writer.write_bit_long(value.version);
             }
             AssociativeData::DimDependencyBody(value) => {
-                self.writer
-                    .write_bit_short(value.dependency_body_version);
+                self.writer.write_bit_short(value.dependency_body_version);
                 self.writer.write_bit_short(value.base_version);
                 self.writer.write_variable_text(&value.name);
                 self.writer.write_bit_short(value.class_version);
@@ -908,9 +812,7 @@ impl<'a> DwgObjectWriter<'a> {
                     self.write_assoc_handle(DwgReferenceType::SoftPointer, value.history);
                 }
             }
-            AssociativeData::ArrayParameters(value) => {
-                self.write_assoc_array_parameters(value)
-            }
+            AssociativeData::ArrayParameters(value) => self.write_assoc_array_parameters(value),
             AssociativeData::ArrayActionBody(value) => self.write_assoc_array_body(value),
             AssociativeData::ArrayModifyActionBody(value) => {
                 self.write_assoc_array_body(&value.body);
@@ -923,19 +825,14 @@ impl<'a> DwgObjectWriter<'a> {
                     }
                 }
             }
-            AssociativeData::DimensionAssociation(value) => {
-                self.write_dimension_association(value)
-            }
+            AssociativeData::DimensionAssociation(value) => self.write_dimension_association(value),
             AssociativeData::PersSubentManagerStatic(value) => {
                 self.write_static_pers_subent_manager(value)
             }
             AssociativeData::ViewRepActionBody(value) => {
                 self.write_assoc_action_body(&value.action_body);
                 self.writer.write_bit_short(value.class_version);
-                self.write_assoc_handle(
-                    DwgReferenceType::HardOwnership,
-                    value.view_rep,
-                );
+                self.write_assoc_handle(DwgReferenceType::HardOwnership, value.view_rep);
                 self.writer.write_bit_long(value.view_type);
                 self.writer.write_bit_double(value.rotation);
             }
@@ -951,10 +848,7 @@ impl<'a> DwgObjectWriter<'a> {
                     self.writer.write_bit_long_long(item.first_id);
                     self.writer.write_bit_long_long(item.second_id);
                     self.writer.write_bit_long(item.status);
-                    self.write_assoc_handle(
-                        DwgReferenceType::SoftPointer,
-                        item.parameter,
-                    );
+                    self.write_assoc_handle(DwgReferenceType::SoftPointer, item.parameter);
                 }
             }
             AssociativeData::ViewRepHatchActionParam(value) => {

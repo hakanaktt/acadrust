@@ -106,4 +106,3 @@ impl TableEntry for Ucs {
         self.name = name;
     }
 }
-

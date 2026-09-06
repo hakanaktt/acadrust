@@ -12,155 +12,146 @@
 
 use crate::types::{BoundingBox3D, Color, Handle, LineWeight, Transform, Transparency, Vector3};
 
-pub mod point;
-pub mod line;
-pub mod circle;
+pub mod acis;
 pub mod arc;
-pub mod ellipse;
-pub mod polyline;
-pub mod polyline3d;
-pub mod lwpolyline;
-pub mod text;
-pub mod mtext;
-pub mod mtext_format;
-pub mod spline;
-pub mod helix;
-pub mod dimension;
-pub mod hatch;
-pub mod solid;
-pub mod face3d;
-pub mod insert;
-pub mod block;
-pub mod ray;
-pub mod xline;
-pub mod viewport;
 pub mod attribute_definition;
 pub mod attribute_entity;
+pub mod block;
+pub mod centerline;
+pub mod circle;
+pub mod dimension;
+pub mod ellipse;
+pub mod embedded_entity;
+pub mod explode;
+pub mod extended_entity;
+pub mod face3d;
+pub mod hatch;
+pub mod helix;
+pub mod insert;
 pub mod leader;
-pub mod multileader;
-pub mod mline;
+pub mod light;
+pub mod line;
+pub mod lwpolyline;
 pub mod mesh;
-pub mod raster_image;
-pub mod solid3d;
-pub mod surface;
-pub mod acis;
-pub mod table;
-pub mod tolerance;
-pub mod polyface_mesh;
-pub mod wipeout;
-pub mod shape;
-pub mod underlay;
-pub mod seqend;
+pub mod mirror;
+pub mod mline;
+pub mod mtext;
+pub mod mtext_format;
+pub mod multileader;
 pub mod ole2frame;
 pub mod ole_presentation;
+pub mod point;
+pub mod polyface_mesh;
 pub mod polygon_mesh;
-pub mod light;
-pub mod section_symbol;
+pub mod polyline;
+pub mod polyline3d;
 pub mod proxy_graphics;
+pub mod raster_image;
+pub mod ray;
+pub mod section_symbol;
+pub mod seqend;
+pub mod shape;
+pub mod solid;
+pub mod solid3d;
+pub mod spline;
+pub mod surface;
+pub mod table;
+pub mod text;
+pub mod tolerance;
+pub mod transform;
+pub mod translate;
+pub mod underlay;
 pub mod unknown_entity;
 pub mod view_border;
-pub mod extended_entity;
-pub mod explode;
-pub mod translate;
-pub mod transform;
-pub mod mirror;
-pub mod embedded_entity;
-pub mod centerline;
+pub mod viewport;
+pub mod wipeout;
+pub mod xline;
 
-pub use point::Point;
-pub use line::Line;
-pub use circle::Circle;
 pub use arc::Arc;
-pub use ellipse::Ellipse;
-pub use polyline::{Polyline, Polyline2D, Vertex2D, Vertex3D, PolylineFlags, VertexFlags, SmoothSurfaceType};
-pub use polyline3d::{Polyline3D, Vertex3DPolyline, Polyline3DFlags};
-pub use lwpolyline::{LwPolyline, LwVertex};
-pub use text::{Text, TextHorizontalAlignment, TextVerticalAlignment};
-pub use mtext::{MText, MTextColumnData, AttachmentPoint, DrawingDirection};
-pub use spline::{Spline, SplineFlags};
-pub use helix::{Helix, HelixConstraint};
-pub use dimension::*;
-pub use hatch::*;
-pub use solid::Solid;
-pub use face3d::{Face3D, InvisibleEdgeFlags};
-pub use insert::Insert;
-pub use block::{Block, BlockEnd};
-pub use ray::Ray;
-pub use xline::XLine;
-pub use viewport::{Viewport, ViewportStatusFlags, ViewportRenderMode, StandardView, GridFlags};
-pub use attribute_definition::{AttributeDefinition, AttributeFlags, HorizontalAlignment, VerticalAlignment, MTextFlag};
+pub use attribute_definition::{
+    AttributeDefinition, AttributeFlags, HorizontalAlignment, MTextFlag, VerticalAlignment,
+};
 pub use attribute_entity::AttributeEntity;
-pub use leader::{Leader, LeaderPathType, LeaderCreationType, HooklineDirection};
-pub use multileader::{
-    MultiLeader, MultiLeaderBuilder, MultiLeaderAnnotContext,
-    LeaderRoot, LeaderLine, BlockAttribute, MultiLeaderArrowheadOverride,
-    StartEndPointPair,
-    LeaderContentType, MultiLeaderPathType, TextAttachmentType, TextAngleType,
-    BlockContentConnectionType, TextAttachmentDirectionType, TextAttachmentPointType,
-    TextAlignmentType, FlowDirectionType, LineSpacingStyle,
-    MultiLeaderPropertyOverrideFlags, LeaderLinePropertyOverrideFlags,
+pub use block::{Block, BlockEnd};
+pub use centerline::{
+    CenterLineAssociation, CenterLineSource, CenterLineSourceKind, CenterMarkAssociation,
+    CenterMarkSource, CenterMarkSourceKind, CENTERLINE_XDATA_APPLICATION,
+    CENTERMARK_XDATA_APPLICATION,
 };
-pub use mline::{
-    MLine, MLineBuilder, MLineVertex, MLineSegment,
-    MLineStyle, MLineStyleElement, MLineJustification, MLineFlags, MLineStyleFlags,
-};
+pub use circle::Circle;
+pub use dimension::*;
+pub use ellipse::Ellipse;
+pub use embedded_entity::EmbeddedEntity;
+pub use extended_entity::*;
+pub use face3d::{Face3D, InvisibleEdgeFlags};
+pub use hatch::*;
+pub use helix::{Helix, HelixConstraint};
+pub use insert::Insert;
+pub use leader::{HooklineDirection, Leader, LeaderCreationType, LeaderPathType};
+pub use light::{Light, LightPhotometricData};
+pub use line::Line;
+pub use lwpolyline::{LwPolyline, LwVertex};
 pub use mesh::{Mesh, MeshBuilder, MeshEdge, MeshFace};
-pub use raster_image::{
-    RasterImage, RasterImageBuilder, ImageDefinition, ClipBoundary,
-    ClipMode, ClipType, ImageDisplayFlags, ImageDisplayQuality, ResolutionUnit,
+pub use mline::{
+    MLine, MLineBuilder, MLineFlags, MLineJustification, MLineSegment, MLineStyle,
+    MLineStyleElement, MLineStyleFlags, MLineVertex,
 };
-pub use solid3d::{
-    Solid3D, Region, Body, Wire, Silhouette, AcisData, AcisMaterial,
-    WireType, AcisVersion,
+pub use mtext::{AttachmentPoint, DrawingDirection, MText, MTextColumnData};
+pub use multileader::{
+    BlockAttribute, BlockContentConnectionType, FlowDirectionType, LeaderContentType, LeaderLine,
+    LeaderLinePropertyOverrideFlags, LeaderRoot, LineSpacingStyle, MultiLeader,
+    MultiLeaderAnnotContext, MultiLeaderArrowheadOverride, MultiLeaderBuilder, MultiLeaderPathType,
+    MultiLeaderPropertyOverrideFlags, StartEndPointPair, TextAlignmentType, TextAngleType,
+    TextAttachmentDirectionType, TextAttachmentPointType, TextAttachmentType,
 };
-pub use surface::{Surface, SurfaceData, SurfaceKind, SurfaceSweepOptions};
-pub use table::{
-    Table, TableBuilder, TableCell, TableRow, TableColumn,
-    CellContent, CellValue, CellStyle, CellBorder, CellRange,
-    CellType, CellValueType, ValueUnitType, BorderType,
-    TableCellContentType, CellStyleType, BreakFlowDirection,
-    CellEdgeFlags, CellStateFlags, CellStylePropertyFlags,
-    BorderPropertyFlags, ContentLayoutFlags, BreakOptionFlags,
-    TableAttribute, CellContentGeometry, TableCustomData,
-    TableBreakData, TableBreakRange, LegacyTableStyleOverride,
-    LegacyBorderOverrides,
-};
-pub use tolerance::{Tolerance, gdt_symbols};
-pub use polyface_mesh::{
-    PolyfaceMesh, PolyfaceVertex, PolyfaceFace,
-    PolyfaceMeshFlags, PolyfaceVertexFlags, PolyfaceSmoothType,
-};
-pub use wipeout::{
-    Wipeout, WipeoutDisplayFlags, WipeoutClipType, WipeoutClipMode,
-};
-pub use shape::{Shape, standard_shapes, gdt_shapes};
-pub use underlay::{
-    Underlay, UnderlayDefinition, UnderlayType, UnderlayDisplayFlags,
-    PdfUnderlay, DwfUnderlay, DgnUnderlay,
-    PdfUnderlayDefinition, DwfUnderlayDefinition, DgnUnderlayDefinition,
-};
-pub use seqend::Seqend;
 pub use ole2frame::{Ole2Frame, OleFrameEnvelope, OleObjectType};
 pub use ole_presentation::{extract_presentation, OlePresentation};
+pub use point::Point;
+pub use polyface_mesh::{
+    PolyfaceFace, PolyfaceMesh, PolyfaceMeshFlags, PolyfaceSmoothType, PolyfaceVertex,
+    PolyfaceVertexFlags,
+};
 pub use polygon_mesh::{
-    PolygonMesh as PolygonMeshEntity, PolygonMeshVertex, PolygonMeshFlags, SurfaceSmoothType,
+    PolygonMesh as PolygonMeshEntity, PolygonMeshFlags, PolygonMeshVertex, SurfaceSmoothType,
 };
-pub use light::{Light, LightPhotometricData};
-pub use section_symbol::{
-    SectionSymbol, SectionSymbolPoint, SectionViewStyle,
+pub use polyline::{
+    Polyline, Polyline2D, PolylineFlags, SmoothSurfaceType, Vertex2D, Vertex3D, VertexFlags,
 };
-pub use proxy_graphics::{
-    ProxyGraphicRecord, ProxyGraphics, ProxyUnicodeText,
+pub use polyline3d::{Polyline3D, Polyline3DFlags, Vertex3DPolyline};
+pub use proxy_graphics::{ProxyGraphicRecord, ProxyGraphics, ProxyUnicodeText};
+pub use raster_image::{
+    ClipBoundary, ClipMode, ClipType, ImageDefinition, ImageDisplayFlags, ImageDisplayQuality,
+    RasterImage, RasterImageBuilder, ResolutionUnit,
+};
+pub use ray::Ray;
+pub use section_symbol::{SectionSymbol, SectionSymbolPoint, SectionViewStyle};
+pub use seqend::Seqend;
+pub use shape::{gdt_shapes, standard_shapes, Shape};
+pub use solid::Solid;
+pub use solid3d::{
+    AcisData, AcisMaterial, AcisVersion, Body, Region, Silhouette, Solid3D, Wire, WireType,
+};
+pub use spline::{Spline, SplineFlags};
+pub use surface::{Surface, SurfaceData, SurfaceKind, SurfaceSweepOptions};
+pub use table::{
+    BorderPropertyFlags, BorderType, BreakFlowDirection, BreakOptionFlags, CellBorder, CellContent,
+    CellContentGeometry, CellEdgeFlags, CellRange, CellStateFlags, CellStyle,
+    CellStylePropertyFlags, CellStyleType, CellType, CellValue, CellValueType, ContentLayoutFlags,
+    LegacyBorderOverrides, LegacyTableStyleOverride, Table, TableAttribute, TableBreakData,
+    TableBreakRange, TableBuilder, TableCell, TableCellContentType, TableColumn, TableCustomData,
+    TableRow, ValueUnitType,
+};
+pub use text::{Text, TextHorizontalAlignment, TextVerticalAlignment};
+pub use tolerance::{gdt_symbols, Tolerance};
+pub use underlay::{
+    DgnUnderlay, DgnUnderlayDefinition, DwfUnderlay, DwfUnderlayDefinition, PdfUnderlay,
+    PdfUnderlayDefinition, Underlay, UnderlayDefinition, UnderlayDisplayFlags, UnderlayType,
 };
 pub use unknown_entity::UnknownEntity;
 pub use view_border::ViewBorder;
-pub use extended_entity::*;
-pub use embedded_entity::EmbeddedEntity;
-pub use centerline::{
-    CenterLineAssociation, CenterLineSource, CenterLineSourceKind,
-    CenterMarkAssociation, CenterMarkSource, CenterMarkSourceKind,
-    CENTERLINE_XDATA_APPLICATION, CENTERMARK_XDATA_APPLICATION,
-};
+pub use viewport::{GridFlags, StandardView, Viewport, ViewportRenderMode, ViewportStatusFlags};
+pub use wipeout::{Wipeout, WipeoutClipMode, WipeoutClipType, WipeoutDisplayFlags};
+pub use xline::XLine;
 
 /// Base trait for all CAD entities
 pub trait Entity {
@@ -208,9 +199,9 @@ pub trait Entity {
 
     /// Get the entity type name
     fn entity_type(&self) -> &'static str;
-    
+
     /// Apply a general transform to the entity
-    /// 
+    ///
     /// This is the main transformation method. Default implementation
     /// only supports translation for backward compatibility.
     fn apply_transform(&mut self, transform: &Transform) {
@@ -219,27 +210,27 @@ pub trait Entity {
         let translated = transform.apply(origin);
         self.translate(translated);
     }
-    
+
     /// Apply rotation around an axis
     fn apply_rotation(&mut self, axis: Vector3, angle: f64) {
         self.apply_transform(&Transform::from_rotation(axis, angle));
     }
-    
+
     /// Apply uniform scaling
     fn apply_scaling(&mut self, scale: f64) {
         self.apply_transform(&Transform::from_scale(scale));
     }
-    
+
     /// Apply non-uniform scaling
     fn apply_scaling_xyz(&mut self, scale: Vector3) {
         self.apply_transform(&Transform::from_scaling(scale));
     }
-    
+
     /// Apply scaling with a specific origin point
     fn apply_scaling_with_origin(&mut self, scale: Vector3, origin: Vector3) {
         self.apply_transform(&Transform::from_scaling_with_origin(scale, origin));
     }
-    
+
     /// Apply a mirror transform with entity-specific corrections
     ///
     /// Override this for entities that need post-processing after mirroring
@@ -247,27 +238,27 @@ pub trait Entity {
     fn apply_mirror(&mut self, transform: &Transform) {
         self.apply_transform(transform);
     }
-    
+
     /// Mirror the entity across the YZ plane (negate X coordinates)
     fn mirror_x(&mut self) {
         self.apply_mirror(&Transform::from_mirror_x());
     }
-    
+
     /// Mirror the entity across the XZ plane (negate Y coordinates)
     fn mirror_y(&mut self) {
         self.apply_mirror(&Transform::from_mirror_y());
     }
-    
+
     /// Mirror the entity across the XY plane (negate Z coordinates)
     fn mirror_z(&mut self) {
         self.apply_mirror(&Transform::from_mirror_z());
     }
-    
+
     /// Mirror the entity across a line defined by two points (in the XY plane)
     fn mirror_about_line(&mut self, p1: Vector3, p2: Vector3) {
         self.apply_mirror(&Transform::from_mirror_line(p1, p2));
     }
-    
+
     /// Mirror the entity across an arbitrary plane
     fn mirror_about_plane(&mut self, point: Vector3, normal: Vector3) {
         self.apply_mirror(&Transform::from_mirror_plane(point, normal));

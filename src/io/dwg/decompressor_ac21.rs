@@ -65,7 +65,13 @@ fn decompress_ac21_inner(source: &[u8], initial_offset: u32, length: u32, buffer
             read_literal_length(source, &mut source_index, &mut op_code, &mut match_length);
         }
 
-        copy_literal(source, &mut source_index, buffer, &mut dest_index, match_length);
+        copy_literal(
+            source,
+            &mut source_index,
+            buffer,
+            &mut dest_index,
+            match_length,
+        );
 
         if source_index >= end_index {
             break;
@@ -92,13 +98,7 @@ fn decompress_ac21_inner(source: &[u8], initial_offset: u32, length: u32, buffer
 ///
 /// For 32-byte chunks: groups of 8 bytes are reversed in order.
 /// For sub-32 chunks: each length (1–31) has a specific reordering pattern.
-fn copy_literal(
-    src: &[u8],
-    src_index: &mut u32,
-    dst: &mut [u8],
-    dst_index: &mut u32,
-    length: u32,
-) {
+fn copy_literal(src: &[u8], src_index: &mut u32, dst: &mut [u8], dst_index: &mut u32, length: u32) {
     let mut remaining = length;
 
     // Copy in chunks of 32 (with byte group reordering)
@@ -234,12 +234,7 @@ fn read_instructions(
 }
 
 /// Read the literal run length from the opcode stream.
-fn read_literal_length(
-    buffer: &[u8],
-    source_index: &mut u32,
-    op_code: &mut u32,
-    length: &mut u32,
-) {
+fn read_literal_length(buffer: &[u8], source_index: &mut u32, op_code: &mut u32, length: &mut u32) {
     *length = *op_code + 8;
     if *length == 0x17 {
         let mut n = buffer[*source_index as usize] as u32;
@@ -288,7 +283,13 @@ fn copy_back_reference(dst: &mut [u8], dst_index: u32, length: u32, src_offset: 
 ///
 /// Made public for cross-validation by the compressor's inverse permutation tests.
 #[doc(hidden)]
-pub fn decompress_copy_n_reordered(src: &[u8], si: usize, dst: &mut [u8], di: usize, length: usize) {
+pub fn decompress_copy_n_reordered(
+    src: &[u8],
+    si: usize,
+    dst: &mut [u8],
+    di: usize,
+    length: usize,
+) {
     copy_n_reordered(src, si, dst, di, length);
 }
 

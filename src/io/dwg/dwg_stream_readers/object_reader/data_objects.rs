@@ -1,11 +1,10 @@
 //! Native DWG readers for database data/index helper objects.
 
-use crate::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
 use crate::entities::CellContentGeometry;
+use crate::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
 use crate::objects::{
-    BreakData, BreakPointReference, CellStyleMap, DataObjectData, IdBuffer, Index,
-    LayerIndex, LayerIndexEntry, PartialViewingFilter, TableGeometry,
-    TableGeometryCell,
+    BreakData, BreakPointReference, CellStyleMap, DataObjectData, IdBuffer, Index, LayerIndex,
+    LayerIndexEntry, PartialViewingFilter, TableGeometry, TableGeometryCell,
 };
 use crate::types::Handle;
 
@@ -81,9 +80,7 @@ pub fn read_data_object_data(
                 entries,
             })
         }
-        "PARTIAL_VIEWING_FILTER" => {
-            DataObjectData::PartialViewingFilter(PartialViewingFilter)
-        }
+        "PARTIAL_VIEWING_FILTER" => DataObjectData::PartialViewingFilter(PartialViewingFilter),
         "LONG_TRANSACTION" => DataObjectData::LongTransaction,
         "TABLEGEOMETRY" => {
             let rows = reader.read_bit_long();

@@ -698,20 +698,12 @@ impl MTextParser {
                 other => {
                     let (flag, value) = other.split_at(1);
                     let parsed = match flag {
-                        "c" => value
-                            .trim()
-                            .parse::<u16>()
-                            .ok()
-                            .map(|v| {
-                                charset = Some(v);
-                            }),
-                        "p" => value
-                            .trim()
-                            .parse::<u8>()
-                            .ok()
-                            .map(|v| {
-                                pitch = Some(v);
-                            }),
+                        "c" => value.trim().parse::<u16>().ok().map(|v| {
+                            charset = Some(v);
+                        }),
+                        "p" => value.trim().parse::<u8>().ok().map(|v| {
+                            pitch = Some(v);
+                        }),
                         _ => None,
                     };
                     if parsed.is_none() {
@@ -1243,7 +1235,10 @@ mod tests {
         let doc = parse_mtext(input, false);
         let out = doc.to_mtext_string();
         assert!(out.contains("\\C256;"), "ByLayer override dropped: {out}");
-        assert!(out.contains("SimSun|b1|i0|c134|p2"), "font flags dropped: {out}");
+        assert!(
+            out.contains("SimSun|b1|i0|c134|p2"),
+            "font flags dropped: {out}"
+        );
 
         let rt = parse_mtext(&out, false);
         assert_eq!(rt.to_mtext_string(), out, "round-trip unstable");
@@ -1505,16 +1500,16 @@ mod tests {
             .iter()
             .any(|s| s.text == "X" && s.properties.overline()));
         // `%%d` still resolves to the degree symbol in plain text.
-        assert_eq!(parse_plain_text("90%%d").paragraphs[0].to_plain_text(), "90°");
+        assert_eq!(
+            parse_plain_text("90%%d").paragraphs[0].to_plain_text(),
+            "90°"
+        );
     }
 
     #[test]
     fn test_plain_text_decimal_char_code() {
         // `%%176` → decimal 176 → '°'.
-        assert_eq!(
-            parse_plain_text("%%176").paragraphs[0].to_plain_text(),
-            "°"
-        );
+        assert_eq!(parse_plain_text("%%176").paragraphs[0].to_plain_text(), "°");
     }
 
     #[test]

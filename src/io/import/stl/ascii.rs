@@ -67,8 +67,7 @@ pub fn parse_ascii_stl<R: Read>(reader: R) -> Result<StlMesh> {
 
             // Expect "outer loop"
             i += 1;
-            if i >= remaining.len()
-                || !remaining[i].to_ascii_lowercase().starts_with("outer loop")
+            if i >= remaining.len() || !remaining[i].to_ascii_lowercase().starts_with("outer loop")
             {
                 return Err(DxfError::ImportError(
                     "Expected 'outer loop' after 'facet normal'".into(),
@@ -89,17 +88,13 @@ pub fn parse_ascii_stl<R: Read>(reader: R) -> Result<StlMesh> {
 
             // Expect "endloop"
             i += 1;
-            if i >= remaining.len()
-                || !remaining[i].to_ascii_lowercase().starts_with("endloop")
-            {
+            if i >= remaining.len() || !remaining[i].to_ascii_lowercase().starts_with("endloop") {
                 return Err(DxfError::ImportError("Expected 'endloop'".into()));
             }
 
             // Expect "endfacet"
             i += 1;
-            if i >= remaining.len()
-                || !remaining[i].to_ascii_lowercase().starts_with("endfacet")
-            {
+            if i >= remaining.len() || !remaining[i].to_ascii_lowercase().starts_with("endfacet") {
                 return Err(DxfError::ImportError("Expected 'endfacet'".into()));
             }
 
@@ -155,9 +150,8 @@ fn parse_vertex(line: &str) -> Result<[f64; 3]> {
 }
 
 fn parse_f64(s: &str, context: &str) -> Result<f64> {
-    s.parse::<f64>().map_err(|_| {
-        DxfError::ImportError(format!("Invalid float '{}' in line: '{}'", s, context))
-    })
+    s.parse::<f64>()
+        .map_err(|_| DxfError::ImportError(format!("Invalid float '{}' in line: '{}'", s, context)))
 }
 
 #[cfg(test)]

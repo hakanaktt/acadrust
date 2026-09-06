@@ -4,8 +4,13 @@ fn main() {
     let input = "tests/issue64/byblock_repro_input.dxf";
     let output = "tests/issue64/byblock_repro_output.dxf";
 
-    let document = DxfReader::from_file(input).expect("open").read().expect("read");
-    DxfWriter::new(&document).write_to_file(output).expect("write");
+    let document = DxfReader::from_file(input)
+        .expect("open")
+        .read()
+        .expect("read");
+    DxfWriter::new(&document)
+        .write_to_file(output)
+        .expect("write");
     println!("round-trip written");
 
     let ts = document.text_styles.get("Standard").unwrap().handle;

@@ -341,11 +341,7 @@ fn build_mesh_from_faces(
     }
 }
 
-fn build_unmerged_obj(
-    positions: &[[f64; 3]],
-    triangles: &[[usize; 3]],
-    scale: f64,
-) -> Mesh {
+fn build_unmerged_obj(positions: &[[f64; 3]], triangles: &[[usize; 3]], scale: f64) -> Mesh {
     let mut verts = Vec::with_capacity(triangles.len() * 3);
     let mut faces = Vec::with_capacity(triangles.len());
 
@@ -375,7 +371,11 @@ fn build_merged_obj(
     scale: f64,
     tolerance: f64,
 ) -> Mesh {
-    let inv_tol = if tolerance > 0.0 { 1.0 / tolerance } else { 1e9 };
+    let inv_tol = if tolerance > 0.0 {
+        1.0 / tolerance
+    } else {
+        1e9
+    };
     let mut mesh_verts: Vec<Vector3> = Vec::new();
     let mut vert_map: HashMap<(i64, i64, i64), usize> = HashMap::new();
     let mut faces = Vec::with_capacity(triangles.len());
@@ -400,9 +400,21 @@ fn build_merged_obj(
     };
 
     for tri in triangles {
-        let p0 = if tri[0] < positions.len() { positions[tri[0]] } else { [0.0; 3] };
-        let p1 = if tri[1] < positions.len() { positions[tri[1]] } else { [0.0; 3] };
-        let p2 = if tri[2] < positions.len() { positions[tri[2]] } else { [0.0; 3] };
+        let p0 = if tri[0] < positions.len() {
+            positions[tri[0]]
+        } else {
+            [0.0; 3]
+        };
+        let p1 = if tri[1] < positions.len() {
+            positions[tri[1]]
+        } else {
+            [0.0; 3]
+        };
+        let p2 = if tri[2] < positions.len() {
+            positions[tri[2]]
+        } else {
+            [0.0; 3]
+        };
         let i0 = get_or_insert(p0);
         let i1 = get_or_insert(p1);
         let i2 = get_or_insert(p2);

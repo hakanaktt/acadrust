@@ -445,11 +445,9 @@ impl MLine {
 
     /// Adds a vertex at the given position.
     pub fn add_vertex(&mut self, position: Vector3) -> &mut MLineVertex {
-        if self
-            .vertices
-            .last()
-            .is_some_and(|last| (position - last.position).length_squared() <= Self::GEOMETRY_EPSILON_SQUARED)
-        {
+        if self.vertices.last().is_some_and(|last| {
+            (position - last.position).length_squared() <= Self::GEOMETRY_EPSILON_SQUARED
+        }) {
             return self.vertices.last_mut().unwrap();
         }
 
@@ -480,9 +478,17 @@ impl MLine {
         };
 
         let direction_after = |index: usize| -> Option<Vector3> {
-            let attempts = if closed { count - 1 } else { count.saturating_sub(index + 1) };
+            let attempts = if closed {
+                count - 1
+            } else {
+                count.saturating_sub(index + 1)
+            };
             for step in 1..=attempts {
-                let next = if closed { (index + step) % count } else { index + step };
+                let next = if closed {
+                    (index + step) % count
+                } else {
+                    index + step
+                };
                 let delta = positions[next] - positions[index];
                 if delta.length_squared() > Self::GEOMETRY_EPSILON_SQUARED {
                     return Some(delta.normalize());
@@ -749,7 +755,7 @@ impl Entity for MLine {
     fn entity_type(&self) -> &'static str {
         "MLINE"
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_mline(self, transform);
     }
@@ -910,10 +916,7 @@ mod tests {
 
     #[test]
     fn test_mline_translate() {
-        let points = vec![
-            Vector3::new(0.0, 0.0, 0.0),
-            Vector3::new(10.0, 0.0, 0.0),
-        ];
+        let points = vec![Vector3::new(0.0, 0.0, 0.0), Vector3::new(10.0, 0.0, 0.0)];
         let mut mline = MLine::from_points(&points);
 
         mline.translate(Vector3::new(5.0, 5.0, 0.0));

@@ -136,9 +136,7 @@ impl DwgWriter {
 /// Validate that the document version is supported for DWG writing.
 fn validate_version(version: DxfVersion) -> Result<()> {
     match version {
-        DxfVersion::Unknown => Err(DxfError::UnsupportedVersion(
-            "Unknown version".to_string(),
-        )),
+        DxfVersion::Unknown => Err(DxfError::UnsupportedVersion("Unknown version".to_string())),
         _ => Ok(()),
     }
 }
@@ -220,7 +218,9 @@ fn prepare_header(
         h.named_objects_dict_handle = find_root_dict_handle(&document.objects);
     }
     // Verify the root dict handle actually exists in objects
-    if !h.named_objects_dict_handle.is_null() && !document.objects.contains_key(&h.named_objects_dict_handle) {
+    if !h.named_objects_dict_handle.is_null()
+        && !document.objects.contains_key(&h.named_objects_dict_handle)
+    {
         // Handle points to nonexistent object — try to find the real root dict
         h.named_objects_dict_handle = find_root_dict_handle(&document.objects);
     }
@@ -280,7 +280,10 @@ fn prepare_header(
     // CLAYER: must point to an actual layer; fall back to "0" if invalid
     {
         let clayer_valid = !h.current_layer_handle.is_null()
-            && document.layers.iter().any(|l| l.handle == h.current_layer_handle);
+            && document
+                .layers
+                .iter()
+                .any(|l| l.handle == h.current_layer_handle);
         if !clayer_valid {
             if let Some(layer) = document.layers.get("0") {
                 h.current_layer_handle = layer.handle;
@@ -294,7 +297,10 @@ fn prepare_header(
     // with valid handles from the document model.
     {
         let text_valid = !h.current_text_style_handle.is_null()
-            && document.text_styles.iter().any(|s| s.handle == h.current_text_style_handle);
+            && document
+                .text_styles
+                .iter()
+                .any(|s| s.handle == h.current_text_style_handle);
         if !text_valid {
             h.current_text_style_handle = document
                 .text_styles
@@ -305,7 +311,10 @@ fn prepare_header(
     }
     {
         let ds_valid = !h.current_dimstyle_handle.is_null()
-            && document.dim_styles.iter().any(|ds| ds.handle == h.current_dimstyle_handle);
+            && document
+                .dim_styles
+                .iter()
+                .any(|ds| ds.handle == h.current_dimstyle_handle);
         if !ds_valid {
             h.current_dimstyle_handle = document
                 .dim_styles
@@ -316,7 +325,10 @@ fn prepare_header(
     }
     {
         let lt_valid = !h.current_linetype_handle.is_null()
-            && document.line_types.iter().any(|lt| lt.handle == h.current_linetype_handle);
+            && document
+                .line_types
+                .iter()
+                .any(|lt| lt.handle == h.current_linetype_handle);
         if !lt_valid {
             h.current_linetype_handle = h.bylayer_linetype_handle;
         }
@@ -354,7 +366,10 @@ fn prepare_header(
     // dim_text_style_handle — validate against text styles
     {
         let dts_valid = !h.dim_text_style_handle.is_null()
-            && document.text_styles.iter().any(|s| s.handle == h.dim_text_style_handle);
+            && document
+                .text_styles
+                .iter()
+                .any(|s| s.handle == h.dim_text_style_handle);
         if !dts_valid {
             h.dim_text_style_handle = document
                 .text_styles
@@ -429,7 +444,8 @@ fn find_root_dict_handle(
                 // Prefer the dictionary with more entries (richer = file's root dict);
                 // on tie, prefer higher handle (likely from file, not initialize_defaults)
                 if dict.entries.len() > best_entry_count
-                    || (dict.entries.len() == best_entry_count && handle.value() > best_handle.value())
+                    || (dict.entries.len() == best_entry_count
+                        && handle.value() > best_handle.value())
                 {
                     best_handle = *handle;
                     best_entry_count = dict.entries.len();
@@ -452,9 +468,9 @@ fn write_ac15<W: Write + Seek>(
 ) -> Result<()> {
     let mut fhw = DwgFileHeaderWriterAC15::new(version);
     fhw.set_maintenance_version(document.maintenance_version);
-    fhw.set_code_page(
-        crate::io::dxf::code_page::dwg_code_page_index(&document.header.code_page),
-    );
+    fhw.set_code_page(crate::io::dxf::code_page::dwg_code_page_index(
+        &document.header.code_page,
+    ));
 
     // ── Phase 1: Compute objects FIRST to get handle map ──
     let objects_started = web_time::Instant::now();
@@ -487,12 +503,8 @@ fn write_ac15<W: Write + Seek>(
 
     // ── Section: Classes ──
     let classes: Vec<_> = document.classes.iter().cloned().collect();
-    let classes_data = classes_writer::write_classes_with_encoding(
-        version,
-        &classes,
-        maint,
-        header_encoding,
-    );
+    let classes_data =
+        classes_writer::write_classes_with_encoding(version, &classes, maint, header_encoding);
     fhw.add_section(section_names::CLASSES, classes_data);
 
     // ── Section: AcDbObjects (pre-computed) ──
@@ -512,10 +524,8 @@ fn write_ac15<W: Write + Seek>(
 
     // ── Section: Handles (must be last — needs objects offset) ──
     let section_offset = fhw.handle_section_offset() as i32;
-    let handle_map_i64: Vec<(u64, i64)> = handle_map_u32
-        .iter()
-        .map(|&(h, o)| (h, o as i64))
-        .collect();
+    let handle_map_i64: Vec<(u64, i64)> =
+        handle_map_u32.iter().map(|&(h, o)| (h, o as i64)).collect();
     let handles_data = handle_writer::write_handles(&handle_map_i64, section_offset);
     fhw.add_section(section_names::HANDLES, handles_data);
 
@@ -553,9 +563,9 @@ fn write_ac18<W: Write + Seek>(
 
     // AC18 writer reserves 0x100 bytes at file start for metadata
     let mut fhw = DwgFileHeaderWriterAC18::new(version, maint, output)?;
-    fhw.set_code_page(
-        crate::io::dxf::code_page::dwg_code_page_index(&document.header.code_page),
-    );
+    fhw.set_code_page(crate::io::dxf::code_page::dwg_code_page_index(
+        &document.header.code_page,
+    ));
 
     // R2004+ default page size for most sections
     const PAGE_SIZE: usize = 0x7400;
@@ -592,13 +602,15 @@ fn write_ac18<W: Write + Seek>(
 
     // ── Section: Classes ──
     let classes: Vec<_> = document.classes.iter().cloned().collect();
-    let classes_data = classes_writer::write_classes_with_encoding(
-        version,
-        &classes,
-        maint,
-        header_encoding,
-    );
-    fhw.add_section(output, section_names::CLASSES, &classes_data, true, PAGE_SIZE)?;
+    let classes_data =
+        classes_writer::write_classes_with_encoding(version, &classes, maint, header_encoding);
+    fhw.add_section(
+        output,
+        section_names::CLASSES,
+        &classes_data,
+        true,
+        PAGE_SIZE,
+    )?;
 
     // ── Section: SummaryInfo ──
     let summary_data = build_summary_info(version);
@@ -625,36 +637,84 @@ fn write_ac18<W: Write + Seek>(
     // container across page headers): a decompressed size ≥ its length, rounded
     // up to a 0x20 multiple so the uncompressed page needs no compression pad.
     let preview_page = ((preview_data.len() + 0x1F) & !0x1F).max(0x20);
-    fhw.add_section(output, section_names::PREVIEW, &preview_data, false, preview_page)?;
+    fhw.add_section(
+        output,
+        section_names::PREVIEW,
+        &preview_data,
+        false,
+        preview_page,
+    )?;
 
     // ── Section: AppInfo ──
     let app_info_data = app_info_writer::write_app_info(version);
-    fhw.add_section(output, section_names::APP_INFO, &app_info_data, false, SMALL_PAGE)?;
+    fhw.add_section(
+        output,
+        section_names::APP_INFO,
+        &app_info_data,
+        false,
+        SMALL_PAGE,
+    )?;
 
     // ── Section: FileDepList ──
     let file_dep_data = build_file_dep_list();
-    fhw.add_section(output, section_names::FILE_DEP_LIST, &file_dep_data, false, SMALL_PAGE)?;
+    fhw.add_section(
+        output,
+        section_names::FILE_DEP_LIST,
+        &file_dep_data,
+        false,
+        SMALL_PAGE,
+    )?;
 
     // ── Section: RevHistory ──
     let rev_history_data = build_rev_history();
-    fhw.add_section(output, section_names::REV_HISTORY, &rev_history_data, true, PAGE_SIZE)?;
+    fhw.add_section(
+        output,
+        section_names::REV_HISTORY,
+        &rev_history_data,
+        true,
+        PAGE_SIZE,
+    )?;
 
     // ── Section: AuxHeader (uses corrected HANDSEED) ──
     let aux_data = aux_header_writer::write_aux_header(version, &corrected_header);
-    fhw.add_section(output, section_names::AUX_HEADER, &aux_data, true, PAGE_SIZE)?;
+    fhw.add_section(
+        output,
+        section_names::AUX_HEADER,
+        &aux_data,
+        true,
+        PAGE_SIZE,
+    )?;
 
     // ── Section: AcDbObjects (pre-computed) ──
-    fhw.add_section(output, section_names::ACDB_OBJECTS, &obj_data, true, PAGE_SIZE)?;
+    fhw.add_section(
+        output,
+        section_names::ACDB_OBJECTS,
+        &obj_data,
+        true,
+        PAGE_SIZE,
+    )?;
 
     // ── Section: AcDsPrototype_1b (AC1027+ ACIS SAB storage) ──
     if !sab_entries.is_empty() {
         let acds_data = acds_data(document, version, &sab_entries);
-        fhw.add_section(output, section_names::ACDS_PROTOTYPE, &acds_data, true, PAGE_SIZE)?;
+        fhw.add_section(
+            output,
+            section_names::ACDS_PROTOTYPE,
+            &acds_data,
+            true,
+            PAGE_SIZE,
+        )?;
     }
 
     // ── Section: ObjFreeSpace ──
     let obj_free_space = build_obj_free_space(version, document, handle_map_u32.len());
-    fhw.add_section(output, section_names::OBJ_FREE_SPACE, &obj_free_space, true, PAGE_SIZE)?;
+    fhw.add_section(
+        output,
+        section_names::OBJ_FREE_SPACE,
+        &obj_free_space,
+        true,
+        PAGE_SIZE,
+    )?;
 
     // ── Section: Template ──
     let template = build_template();
@@ -662,12 +722,16 @@ fn write_ac18<W: Write + Seek>(
 
     // ── Section: Handles (last — needs objects data) ──
     let section_offset = fhw.handle_section_offset() as i32;
-    let handle_map_i64: Vec<(u64, i64)> = handle_map_u32
-        .iter()
-        .map(|&(h, o)| (h, o as i64))
-        .collect();
+    let handle_map_i64: Vec<(u64, i64)> =
+        handle_map_u32.iter().map(|&(h, o)| (h, o as i64)).collect();
     let handles_data = handle_writer::write_handles(&handle_map_i64, section_offset);
-    fhw.add_section(output, section_names::HANDLES, &handles_data, true, PAGE_SIZE)?;
+    fhw.add_section(
+        output,
+        section_names::HANDLES,
+        &handles_data,
+        true,
+        PAGE_SIZE,
+    )?;
 
     // ── Write file header, section map, and page map ──
     fhw.write_file(output)?;
@@ -764,10 +828,8 @@ fn write_ac21_impl<W: Write + Seek>(
 
     // Handles (needs objects data for offsets)
     let section_offset = fhw.handle_section_offset() as i32;
-    let handle_map_i64: Vec<(u64, i64)> = handle_map_u32
-        .iter()
-        .map(|&(h, o)| (h, o as i64))
-        .collect();
+    let handle_map_i64: Vec<(u64, i64)> =
+        handle_map_u32.iter().map(|&(h, o)| (h, o as i64)).collect();
     let handles_data = handle_writer::write_handles(&handle_map_i64, section_offset);
     fhw.add_section(output, section_names::HANDLES, &handles_data)?;
 
@@ -777,12 +839,8 @@ fn write_ac21_impl<W: Write + Seek>(
     let header_encoding =
         crate::io::dxf::code_page::encoding_from_code_page(&document.header.code_page)
             .unwrap_or(encoding_rs::WINDOWS_1252);
-    let classes_data = classes_writer::write_classes_with_encoding(
-        version,
-        &classes,
-        maint,
-        header_encoding,
-    );
+    let classes_data =
+        classes_writer::write_classes_with_encoding(version, &classes, maint, header_encoding);
     fhw.add_section(output, section_names::CLASSES, &classes_data)?;
 
     // AuxHeader (uses corrected HANDSEED)
@@ -1007,13 +1065,20 @@ fn build_acds_prototype(sab_entries: &[(Handle, Vec<u8>)]) -> Vec<u8> {
     let segidx_size = 192u32;
 
     let segidx = build_acds_segidx(
-        off_segidx, segidx_size,
-        off_data2, data2.len() as u32,
-        off_data3, data3.len() as u32,
-        off_datidx, datidx.len() as u32,
-        off_schdat, schdat.len() as u32,
-        off_schidx, schidx.len() as u32,
-        off_search, search.len() as u32,
+        off_segidx,
+        segidx_size,
+        off_data2,
+        data2.len() as u32,
+        off_data3,
+        data3.len() as u32,
+        off_datidx,
+        datidx.len() as u32,
+        off_schdat,
+        schdat.len() as u32,
+        off_schidx,
+        schidx.len() as u32,
+        off_search,
+        search.len() as u32,
     );
 
     // ── Jard header ──────────────────────────────────────────────
@@ -1061,7 +1126,7 @@ fn build_acds_jard_header(segidx_offset: u32, file_size: u32) -> Vec<u8> {
     h[44..48].copy_from_slice(&7u32.to_le_bytes()); // search_segidx
     h[48..52].copy_from_slice(&0u32.to_le_bytes()); // prvsav_segidx
     h[52..56].copy_from_slice(&file_size.to_le_bytes()); // file_size
-    // Remaining bytes are zero (padding to file_header_size).
+                                                         // Remaining bytes are zero (padding to file_header_size).
     h
 }
 
@@ -1177,8 +1242,12 @@ fn build_acds_search_segment(handles: &[u32]) -> Vec<u8> {
     // handle so a reader can binary-search a handle to its SAB record.
     content.extend_from_slice(&0u32.to_le_bytes()); // schema_namidx
     content.extend_from_slice(&(n as u32).to_le_bytes()); // count
-    let mut by_handle: Vec<(u32, usize)> =
-        handles.iter().copied().enumerate().map(|(i, h)| (h, i)).collect();
+    let mut by_handle: Vec<(u32, usize)> = handles
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(i, h)| (h, i))
+        .collect();
     by_handle.sort_by_key(|&(h, _)| h);
     for &(handle, record_index) in &by_handle {
         content.extend_from_slice(&(handle as u64).to_le_bytes());
@@ -1201,43 +1270,57 @@ fn build_acds_search_segment(handles: &[u32]) -> Vec<u8> {
 /// Build `segidx` segment id=1 with offsets for all other segments.
 #[allow(clippy::too_many_arguments)]
 fn build_acds_segidx(
-    off_segidx: u32, sz_segidx: u32,
-    off_data2: u32, sz_data2: u32,
-    off_data3: u32, sz_data3: u32,
-    off_datidx: u32, sz_datidx: u32,
-    off_schdat: u32, sz_schdat: u32,
-    off_schidx: u32, sz_schidx: u32,
-    off_search: u32, sz_search: u32,
+    off_segidx: u32,
+    sz_segidx: u32,
+    off_data2: u32,
+    sz_data2: u32,
+    off_data3: u32,
+    sz_data3: u32,
+    off_datidx: u32,
+    sz_datidx: u32,
+    off_schdat: u32,
+    sz_schdat: u32,
+    off_schidx: u32,
+    sz_schidx: u32,
+    off_search: u32,
+    sz_search: u32,
 ) -> Vec<u8> {
     let mut seg = vec![0x70u8; sz_segidx as usize];
 
     // Segment header
     seg[0..8].copy_from_slice(&[0xAC, 0xD5, 0x73, 0x65, 0x67, 0x69, 0x64, 0x78]); // "segidx"
-    seg[8..12].copy_from_slice(&1u32.to_le_bytes());    // id=1
-    seg[12..16].copy_from_slice(&0u32.to_le_bytes());   // pad
+    seg[8..12].copy_from_slice(&1u32.to_le_bytes()); // id=1
+    seg[12..16].copy_from_slice(&0u32.to_le_bytes()); // pad
     seg[16..24].copy_from_slice(&(sz_segidx as u64).to_le_bytes()); // segment size
-    seg[24..32].copy_from_slice(&1u64.to_le_bytes());   // record count
-    seg[32..40].copy_from_slice(&0u64.to_le_bytes());   // meta
-    seg[40..48].copy_from_slice(&[0x55; 8]);             // fill
+    seg[24..32].copy_from_slice(&1u64.to_le_bytes()); // record count
+    seg[32..40].copy_from_slice(&0u64.to_le_bytes()); // meta
+    seg[40..48].copy_from_slice(&[0x55; 8]); // fill
 
     // Content: 8 entries × 12 bytes = 96 bytes
     // Entry format: (u32 offset, u32 pad=0, u32 size)
     let mut pos = 48;
 
     // Entry 0: null
-    write_segidx_entry(&mut seg, pos, 0, 0); pos += 12;
+    write_segidx_entry(&mut seg, pos, 0, 0);
+    pos += 12;
     // Entry 1: segidx
-    write_segidx_entry(&mut seg, pos, off_segidx, sz_segidx); pos += 12;
+    write_segidx_entry(&mut seg, pos, off_segidx, sz_segidx);
+    pos += 12;
     // Entry 2: _data_ id=2
-    write_segidx_entry(&mut seg, pos, off_data2, sz_data2); pos += 12;
+    write_segidx_entry(&mut seg, pos, off_data2, sz_data2);
+    pos += 12;
     // Entry 3: _data_ id=3
-    write_segidx_entry(&mut seg, pos, off_data3, sz_data3); pos += 12;
+    write_segidx_entry(&mut seg, pos, off_data3, sz_data3);
+    pos += 12;
     // Entry 4: datidx
-    write_segidx_entry(&mut seg, pos, off_datidx, sz_datidx); pos += 12;
+    write_segidx_entry(&mut seg, pos, off_datidx, sz_datidx);
+    pos += 12;
     // Entry 5: schdat
-    write_segidx_entry(&mut seg, pos, off_schdat, sz_schdat); pos += 12;
+    write_segidx_entry(&mut seg, pos, off_schdat, sz_schdat);
+    pos += 12;
     // Entry 6: schidx
-    write_segidx_entry(&mut seg, pos, off_schidx, sz_schidx); pos += 12;
+    write_segidx_entry(&mut seg, pos, off_schidx, sz_schidx);
+    pos += 12;
     // Entry 7: search
     write_segidx_entry(&mut seg, pos, off_search, sz_search);
     // Rest is padding (already 0x70)
@@ -1544,7 +1627,10 @@ mod tests {
         let result = DwgWriter::write_to_vec(&doc);
         assert!(result.is_ok(), "AC1021 writing should succeed");
         let bytes = result.unwrap();
-        assert!(bytes.len() > 0x480, "AC1021 file should be larger than header");
+        assert!(
+            bytes.len() > 0x480,
+            "AC1021 file should be larger than header"
+        );
         let magic = std::str::from_utf8(&bytes[0..6]).unwrap_or("");
         assert_eq!(magic, "AC1021");
     }
@@ -1625,56 +1711,98 @@ mod tests {
         let prepared = prepare_header(&doc, &handle_map, &None);
 
         // Table control handles must be synced from the actual table objects
-        assert_eq!(prepared.block_control_handle, correct_block_control,
-            "block_control_handle should be synced from block_records.handle()");
-        assert_eq!(prepared.layer_control_handle, correct_layer_control,
-            "layer_control_handle should be synced from layers.handle()");
-        assert_eq!(prepared.style_control_handle, correct_style_control,
-            "style_control_handle should be synced from text_styles.handle()");
-        assert_eq!(prepared.linetype_control_handle, correct_ltype_control,
-            "linetype_control_handle should be synced from line_types.handle()");
-        assert_eq!(prepared.view_control_handle, correct_view_control,
-            "view_control_handle should be synced from views.handle()");
-        assert_eq!(prepared.ucs_control_handle, correct_ucs_control,
-            "ucs_control_handle should be synced from ucss.handle()");
-        assert_eq!(prepared.vport_control_handle, correct_vport_control,
-            "vport_control_handle should be synced from vports.handle()");
-        assert_eq!(prepared.appid_control_handle, correct_appid_control,
-            "appid_control_handle should be synced from app_ids.handle()");
-        assert_eq!(prepared.dimstyle_control_handle, correct_dimstyle_control,
-            "dimstyle_control_handle should be synced from dim_styles.handle()");
+        assert_eq!(
+            prepared.block_control_handle, correct_block_control,
+            "block_control_handle should be synced from block_records.handle()"
+        );
+        assert_eq!(
+            prepared.layer_control_handle, correct_layer_control,
+            "layer_control_handle should be synced from layers.handle()"
+        );
+        assert_eq!(
+            prepared.style_control_handle, correct_style_control,
+            "style_control_handle should be synced from text_styles.handle()"
+        );
+        assert_eq!(
+            prepared.linetype_control_handle, correct_ltype_control,
+            "linetype_control_handle should be synced from line_types.handle()"
+        );
+        assert_eq!(
+            prepared.view_control_handle, correct_view_control,
+            "view_control_handle should be synced from views.handle()"
+        );
+        assert_eq!(
+            prepared.ucs_control_handle, correct_ucs_control,
+            "ucs_control_handle should be synced from ucss.handle()"
+        );
+        assert_eq!(
+            prepared.vport_control_handle, correct_vport_control,
+            "vport_control_handle should be synced from vports.handle()"
+        );
+        assert_eq!(
+            prepared.appid_control_handle, correct_appid_control,
+            "appid_control_handle should be synced from app_ids.handle()"
+        );
+        assert_eq!(
+            prepared.dimstyle_control_handle, correct_dimstyle_control,
+            "dimstyle_control_handle should be synced from dim_styles.handle()"
+        );
 
         // Root dictionary must be found
-        assert_eq!(prepared.named_objects_dict_handle, correct_root_dict,
-            "named_objects_dict_handle should be found by scanning objects");
-        assert!(!prepared.named_objects_dict_handle.is_null(),
-            "named_objects_dict_handle must not be NULL");
+        assert_eq!(
+            prepared.named_objects_dict_handle, correct_root_dict,
+            "named_objects_dict_handle should be found by scanning objects"
+        );
+        assert!(
+            !prepared.named_objects_dict_handle.is_null(),
+            "named_objects_dict_handle must not be NULL"
+        );
 
         // Dict handles from root dict entries must be resolved
-        assert!(!prepared.acad_group_dict_handle.is_null(),
-            "acad_group_dict_handle must be resolved from root dict");
-        assert!(!prepared.acad_mlinestyle_dict_handle.is_null(),
-            "acad_mlinestyle_dict_handle must be resolved from root dict");
-        assert!(!prepared.acad_layout_dict_handle.is_null(),
-            "acad_layout_dict_handle must be resolved from root dict");
+        assert!(
+            !prepared.acad_group_dict_handle.is_null(),
+            "acad_group_dict_handle must be resolved from root dict"
+        );
+        assert!(
+            !prepared.acad_mlinestyle_dict_handle.is_null(),
+            "acad_mlinestyle_dict_handle must be resolved from root dict"
+        );
+        assert!(
+            !prepared.acad_layout_dict_handle.is_null(),
+            "acad_layout_dict_handle must be resolved from root dict"
+        );
 
         // Linetype handles must be resolved
-        assert!(!prepared.bylayer_linetype_handle.is_null(),
-            "bylayer_linetype_handle must be resolved");
-        assert!(!prepared.byblock_linetype_handle.is_null(),
-            "byblock_linetype_handle must be resolved");
-        assert!(!prepared.continuous_linetype_handle.is_null(),
-            "continuous_linetype_handle must be resolved");
+        assert!(
+            !prepared.bylayer_linetype_handle.is_null(),
+            "bylayer_linetype_handle must be resolved"
+        );
+        assert!(
+            !prepared.byblock_linetype_handle.is_null(),
+            "byblock_linetype_handle must be resolved"
+        );
+        assert!(
+            !prepared.continuous_linetype_handle.is_null(),
+            "continuous_linetype_handle must be resolved"
+        );
 
         // Current style handles must be resolved
-        assert!(!prepared.current_layer_handle.is_null(),
-            "current_layer_handle must be resolved");
-        assert!(!prepared.current_text_style_handle.is_null(),
-            "current_text_style_handle must be resolved");
-        assert!(!prepared.current_dimstyle_handle.is_null(),
-            "current_dimstyle_handle must be resolved");
-        assert!(!prepared.current_linetype_handle.is_null(),
-            "current_linetype_handle must be resolved (default to ByLayer)");
+        assert!(
+            !prepared.current_layer_handle.is_null(),
+            "current_layer_handle must be resolved"
+        );
+        assert!(
+            !prepared.current_text_style_handle.is_null(),
+            "current_text_style_handle must be resolved"
+        );
+        assert!(
+            !prepared.current_dimstyle_handle.is_null(),
+            "current_dimstyle_handle must be resolved"
+        );
+        assert!(
+            !prepared.current_linetype_handle.is_null(),
+            "current_linetype_handle must be resolved (default to ByLayer)"
+        );
     }
 
     #[test]
@@ -1690,7 +1818,10 @@ mod tests {
 
         // Writing should succeed (prepare_header syncs handles)
         let result = DwgWriter::write_to_vec(&doc);
-        assert!(result.is_ok(), "Writing with NULL headers should succeed after sync");
+        assert!(
+            result.is_ok(),
+            "Writing with NULL headers should succeed after sync"
+        );
         let bytes = result.unwrap();
         assert!(bytes.len() > 200, "Output should be non-trivial");
     }
@@ -1732,13 +1863,26 @@ mod tests {
         let mut reader = DwgReader::from_stream(std::io::Cursor::new(bytes));
         let doc2 = reader.read().expect("read R2000 should succeed");
 
-        let solids: Vec<&Solid3D> = doc2.entities().filter_map(|e| {
-            if let EntityType::Solid3D(s) = e { Some(s) } else { None }
-        }).collect();
+        let solids: Vec<&Solid3D> = doc2
+            .entities()
+            .filter_map(|e| {
+                if let EntityType::Solid3D(s) = e {
+                    Some(s)
+                } else {
+                    None
+                }
+            })
+            .collect();
         assert_eq!(solids.len(), 1, "should have exactly one Solid3D");
         assert!(!solids[0].acis_data.is_binary, "R2000 should use SAT text");
-        assert!(solids[0].acis_data.sat_data.contains("body"), "SAT data must contain 'body'");
-        assert!(solids[0].acis_data.sat_data.contains("plane-surface"), "SAT data must contain 'plane-surface'");
+        assert!(
+            solids[0].acis_data.sat_data.contains("body"),
+            "SAT data must contain 'body'"
+        );
+        assert!(
+            solids[0].acis_data.sat_data.contains("plane-surface"),
+            "SAT data must contain 'plane-surface'"
+        );
     }
 
     /// Write a Solid3D with SAT data to DWG R2004, read back, verify SAT preserved.
@@ -1759,9 +1903,16 @@ mod tests {
         let mut reader = DwgReader::from_stream(std::io::Cursor::new(bytes));
         let doc2 = reader.read().expect("read R2004 should succeed");
 
-        let solids: Vec<&Solid3D> = doc2.entities().filter_map(|e| {
-            if let EntityType::Solid3D(s) = e { Some(s) } else { None }
-        }).collect();
+        let solids: Vec<&Solid3D> = doc2
+            .entities()
+            .filter_map(|e| {
+                if let EntityType::Solid3D(s) = e {
+                    Some(s)
+                } else {
+                    None
+                }
+            })
+            .collect();
         assert_eq!(solids.len(), 1, "should have exactly one Solid3D");
         assert!(!solids[0].acis_data.is_binary, "R2004 should use SAT text");
         assert!(solids[0].acis_data.sat_data.contains("body"));
@@ -1785,9 +1936,16 @@ mod tests {
         let mut reader = DwgReader::from_stream(std::io::Cursor::new(bytes));
         let doc2 = reader.read().expect("read R2007 should succeed");
 
-        let solids: Vec<&Solid3D> = doc2.entities().filter_map(|e| {
-            if let EntityType::Solid3D(s) = e { Some(s) } else { None }
-        }).collect();
+        let solids: Vec<&Solid3D> = doc2
+            .entities()
+            .filter_map(|e| {
+                if let EntityType::Solid3D(s) = e {
+                    Some(s)
+                } else {
+                    None
+                }
+            })
+            .collect();
         assert_eq!(solids.len(), 1, "should have exactly one Solid3D");
         // R2007 should use SAT text format since we provided SAT text —
         // the version in acis_data controls what's written, not the DWG version alone.
@@ -1811,9 +1969,16 @@ mod tests {
         let mut reader = DwgReader::from_stream(std::io::Cursor::new(bytes));
         let doc2 = reader.read().expect("read R2000 should succeed");
 
-        let regions: Vec<&Region> = doc2.entities().filter_map(|e| {
-            if let EntityType::Region(r) = e { Some(r) } else { None }
-        }).collect();
+        let regions: Vec<&Region> = doc2
+            .entities()
+            .filter_map(|e| {
+                if let EntityType::Region(r) = e {
+                    Some(r)
+                } else {
+                    None
+                }
+            })
+            .collect();
         assert_eq!(regions.len(), 1, "should have exactly one Region");
         assert!(regions[0].acis_data.sat_data.contains("body"));
     }
@@ -1835,9 +2000,16 @@ mod tests {
         let mut reader = DwgReader::from_stream(std::io::Cursor::new(bytes));
         let doc2 = reader.read().expect("read R2004 should succeed");
 
-        let bodies: Vec<&Body> = doc2.entities().filter_map(|e| {
-            if let EntityType::Body(b) = e { Some(b) } else { None }
-        }).collect();
+        let bodies: Vec<&Body> = doc2
+            .entities()
+            .filter_map(|e| {
+                if let EntityType::Body(b) = e {
+                    Some(b)
+                } else {
+                    None
+                }
+            })
+            .collect();
         assert_eq!(bodies.len(), 1, "should have exactly one Body");
         assert!(bodies[0].acis_data.sat_data.contains("body"));
     }
@@ -1845,7 +2017,7 @@ mod tests {
     /// Write multiple ACIS entities to a single DWG at R2010, read back all three.
     #[test]
     fn test_roundtrip_mixed_acis_r2010() {
-        use crate::entities::solid3d::{Solid3D, Region, Body};
+        use crate::entities::solid3d::{Body, Region, Solid3D};
         use crate::entities::EntityType;
         use crate::io::dwg::DwgReader;
 
@@ -1861,9 +2033,18 @@ mod tests {
         let mut reader = DwgReader::from_stream(std::io::Cursor::new(bytes));
         let doc2 = reader.read().expect("read R2010 should succeed");
 
-        let n_solid = doc2.entities().filter(|e| matches!(e, EntityType::Solid3D(_))).count();
-        let n_region = doc2.entities().filter(|e| matches!(e, EntityType::Region(_))).count();
-        let n_body = doc2.entities().filter(|e| matches!(e, EntityType::Body(_))).count();
+        let n_solid = doc2
+            .entities()
+            .filter(|e| matches!(e, EntityType::Solid3D(_)))
+            .count();
+        let n_region = doc2
+            .entities()
+            .filter(|e| matches!(e, EntityType::Region(_)))
+            .count();
+        let n_body = doc2
+            .entities()
+            .filter(|e| matches!(e, EntityType::Body(_)))
+            .count();
         assert_eq!(n_solid, 1, "should have 1 Solid3D");
         assert_eq!(n_region, 1, "should have 1 Region");
         assert_eq!(n_body, 1, "should have 1 Body");

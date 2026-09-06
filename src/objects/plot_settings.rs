@@ -350,20 +350,48 @@ impl PlotFlags {
     /// Convert to DXF bit value
     pub fn to_bits(&self) -> i32 {
         let mut bits = self.unknown_bits & !0x7EFF;
-        if self.plot_viewport_borders { bits |= 1; }
-        if self.show_plot_styles { bits |= 2; }
-        if self.plot_centered { bits |= 4; }
-        if self.plot_hidden { bits |= 8; }
-        if self.use_standard_scale { bits |= 16; }
-        if self.plot_plot_styles { bits |= 32; }
-        if self.scale_lineweights { bits |= 64; }
-        if self.print_lineweights { bits |= 128; }
-        if self.draw_viewports_first { bits |= 512; }
-        if self.model_type { bits |= 1024; }
-        if self.update_paper { bits |= 2048; }
-        if self.zoom_to_paper_on_update { bits |= 4096; }
-        if self.initializing { bits |= 8192; }
-        if self.prev_plot_init { bits |= 16384; }
+        if self.plot_viewport_borders {
+            bits |= 1;
+        }
+        if self.show_plot_styles {
+            bits |= 2;
+        }
+        if self.plot_centered {
+            bits |= 4;
+        }
+        if self.plot_hidden {
+            bits |= 8;
+        }
+        if self.use_standard_scale {
+            bits |= 16;
+        }
+        if self.plot_plot_styles {
+            bits |= 32;
+        }
+        if self.scale_lineweights {
+            bits |= 64;
+        }
+        if self.print_lineweights {
+            bits |= 128;
+        }
+        if self.draw_viewports_first {
+            bits |= 512;
+        }
+        if self.model_type {
+            bits |= 1024;
+        }
+        if self.update_paper {
+            bits |= 2048;
+        }
+        if self.zoom_to_paper_on_update {
+            bits |= 4096;
+        }
+        if self.initializing {
+            bits |= 8192;
+        }
+        if self.prev_plot_init {
+            bits |= 16384;
+        }
         bits
     }
 }
@@ -395,7 +423,12 @@ impl PaperMargin {
 
     /// Create a new margin with specified values
     pub fn new(left: f64, bottom: f64, right: f64, top: f64) -> Self {
-        Self { left, bottom, right, top }
+        Self {
+            left,
+            bottom,
+            right,
+            top,
+        }
     }
 
     /// Check if all margins are zero
@@ -591,7 +624,7 @@ impl PlotSettings {
         if let Some(cached) = self.cached_scale {
             return cached;
         }
-        
+
         if self.scale_denominator == 0.0 {
             1.0
         } else {
@@ -617,7 +650,7 @@ impl PlotSettings {
     pub fn set_standard_scale(&mut self, scale: ScaledType) {
         self.scale_type = scale;
         self.flags.use_standard_scale = true;
-        
+
         // Update numerator/denominator based on scale
         match scale {
             ScaledType::OneToOne => {
@@ -662,12 +695,7 @@ impl PlotSettings {
     }
 
     /// Set paper dimensions with margins
-    pub fn set_paper_with_margins(
-        &mut self,
-        width: f64,
-        height: f64,
-        margins: PaperMargin,
-    ) {
+    pub fn set_paper_with_margins(&mut self, width: f64, height: f64, margins: PaperMargin) {
         self.paper_width = width;
         self.paper_height = height;
         self.margins = margins;

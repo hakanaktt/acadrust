@@ -7,10 +7,10 @@ mod associative;
 mod block_visibility;
 mod class_object;
 mod data_objects;
-mod dynamic_block;
-mod field;
 mod dgn_linestyle;
 mod dictionary_variable;
+mod dynamic_block;
+mod field;
 mod group;
 mod image_definition;
 mod mlinestyle;
@@ -20,68 +20,61 @@ mod plot_settings;
 mod scale;
 pub(crate) mod semantic_property;
 mod sort_entities_table;
+mod stub_objects;
 mod table_style;
 mod xrecord;
-mod stub_objects;
 
 pub use associative::*;
 pub use block_visibility::{
-    BlockEvalValue, BlockParameterConnection, BlockParameterPropertyInfo,
-    BlockVisibilityParameter, BlockVisibilityState,
+    BlockEvalValue, BlockParameterConnection, BlockParameterPropertyInfo, BlockVisibilityParameter,
+    BlockVisibilityState,
 };
 pub use class_object::{
-    AcMeCommandHistory, AcMeScope, AcMeStateManager, ClassObject,
-    ClassObjectData, ContextDataEntry, ContextDataManager,
-    ContextDataSubManager, CsacDocumentOptions, CurvePath, DataLink,
-    DataLinkCustomData, DataTable, DataTableColumn, DataTableValue,
-    DetailViewStyle, GeoMapImage, GradientBackground,
-    GroundPlaneBackground, IblBackground, ImageBackground, LayerFilter,
-    LightList, LightListEntry, MentalRayRenderSettings, ModelDocViewStyle,
-    MotionPath, NavisworksModelDefinition, PartialViewingIndex,
-    PartialViewingIndexEntry, PersistentSubentityManager,
-    PointCloudColorMap, PointCloudColorRamp, PointCloudDefinition,
-    PointCloudDefinitionReactor, PointPath, RapidRtRenderSettings,
-    RenderEntry, RenderEnvironment, RenderGlobal, RenderSettings,
-    SectionGeometrySettings, SectionManager, SectionSettings,
-    SectionTypeSettings, SectionViewStyle, SkyLightBackground,
-    SolidBackground, SpatialIndex, Sun, SunStudy, SunStudyDate,
-    TvDeviceProperties, VbaProject, ViewRepModelSpaceViewSelectionSet,
-    ViewRepOrientation, ViewRepSectionDefinition, ViewRepSourceManager,
-    ViewRepStandard, ViewRep, ViewRepBlockPath, ViewRepBlockPathEntry,
-    ViewRepGuid, ViewRepModelSpaceSource, ViewRepObjectPath, ViewRepSketch,
-    ViewRepSketchGeometry, ViewRepSketchReference,
+    AcMeCommandHistory, AcMeScope, AcMeStateManager, ClassObject, ClassObjectData,
+    ContextDataEntry, ContextDataManager, ContextDataSubManager, CsacDocumentOptions, CurvePath,
+    DataLink, DataLinkCustomData, DataTable, DataTableColumn, DataTableValue, DetailViewStyle,
+    GeoMapImage, GradientBackground, GroundPlaneBackground, IblBackground, ImageBackground,
+    LayerFilter, LightList, LightListEntry, MentalRayRenderSettings, ModelDocViewStyle, MotionPath,
+    NavisworksModelDefinition, PartialViewingIndex, PartialViewingIndexEntry,
+    PersistentSubentityManager, PointCloudColorMap, PointCloudColorRamp, PointCloudDefinition,
+    PointCloudDefinitionReactor, PointPath, RapidRtRenderSettings, RenderEntry, RenderEnvironment,
+    RenderGlobal, RenderSettings, SectionGeometrySettings, SectionManager, SectionSettings,
+    SectionTypeSettings, SectionViewStyle, SkyLightBackground, SolidBackground, SpatialIndex, Sun,
+    SunStudy, SunStudyDate, TvDeviceProperties, VbaProject, ViewRep, ViewRepBlockPath,
+    ViewRepBlockPathEntry, ViewRepGuid, ViewRepModelSpaceSource, ViewRepModelSpaceViewSelectionSet,
+    ViewRepObjectPath, ViewRepOrientation, ViewRepSectionDefinition, ViewRepSketch,
+    ViewRepSketchGeometry, ViewRepSketchReference, ViewRepSourceManager, ViewRepStandard,
 };
 pub use data_objects::{
-    BreakData, BreakPointReference, CellStyleMap, DataObject, DataObjectData, IdBuffer,
-    Index, LayerIndex, LayerIndexEntry, PartialViewingFilter, TableGeometry,
-    TableGeometryCell,
+    BreakData, BreakPointReference, CellStyleMap, DataObject, DataObjectData, IdBuffer, Index,
+    LayerIndex, LayerIndexEntry, PartialViewingFilter, TableGeometry, TableGeometryCell,
 };
+pub use dgn_linestyle::{
+    DgnLineStyleData, DgnLineStyleObject, DgnLsComponent, DgnLsComponentData, DgnLsComponentType,
+    DgnLsCompoundComponent, DgnLsCompoundEntry, DgnLsDefinition, DgnLsInternalComponent,
+    DgnLsPhaseMode, DgnLsPointComponent, DgnLsStroke, DgnLsStrokePattern, DgnLsSymbolComponent,
+    DgnLsSymbolReference,
+};
+pub use dictionary_variable::DictionaryVariable;
 pub use dynamic_block::{
     BlockAction, BlockActionOffsets, BlockActionWithBasePoint, BlockAlignmentParameter,
     BlockAngularConstraintParameter, BlockAngularConstraintParameterEntity, BlockArrayAction,
     BlockBasePointAction, BlockBasePointParameter, BlockConnection, BlockConstraintParameter,
     BlockDistanceConstraintParameter, BlockElement, BlockEvalExpression, BlockEvaluationEdge,
-    BlockEvaluationGraph, BlockEvaluationNode, BlockFlipAction, BlockFlipGrip,
-    BlockFlipParameter, BlockGrip, BlockGripExpression, BlockLinearConstraintParameter,
-    BlockLinearParameter, BlockLookupAction, BlockLookupParameter, BlockLookupRow,
-    BlockMoveAction, BlockOnePointParameter, BlockOrientedGrip, BlockParameter,
-    BlockParameterDependencyBody, BlockParameterProperty, BlockParameterValueSet,
-    BlockPointParameter, BlockPolarParameter, BlockPolarStretchAction, BlockRepresentationData,
-    BlockRotationParameter, BlockStretchAction, BlockStretchCode, BlockStretchHandle,
-    BlockTwoPointParameter, BlockUserParameter, BlockXYParameter, DynamicBlockData,
-    DynamicBlockObject, SolidHistory, SolidHistoryBoolean, SolidHistoryBox, SolidHistoryBrep,
-    SolidHistoryChamfer, SolidHistoryCone, SolidHistoryCylinder, SolidHistoryFillet, SolidHistoryLoft,
-    SolidHistoryNodeBase, SolidHistoryOperation, SolidHistoryPyramid, SolidHistoryRevolve,
-    SolidHistorySphere, SolidHistorySweep, SolidHistoryTorus,
+    BlockEvaluationGraph, BlockEvaluationNode, BlockFlipAction, BlockFlipGrip, BlockFlipParameter,
+    BlockGrip, BlockGripExpression, BlockLinearConstraintParameter, BlockLinearParameter,
+    BlockLookupAction, BlockLookupParameter, BlockLookupRow, BlockMoveAction,
+    BlockOnePointParameter, BlockOrientedGrip, BlockParameter, BlockParameterDependencyBody,
+    BlockParameterProperty, BlockParameterValueSet, BlockPointParameter, BlockPolarParameter,
+    BlockPolarStretchAction, BlockRepresentationData, BlockRotationParameter, BlockStretchAction,
+    BlockStretchCode, BlockStretchHandle, BlockTwoPointParameter, BlockUserParameter,
+    BlockXYParameter, DynamicBlockData, DynamicBlockObject, SolidHistory, SolidHistoryBoolean,
+    SolidHistoryBox, SolidHistoryBrep, SolidHistoryChamfer, SolidHistoryCone, SolidHistoryCylinder,
+    SolidHistoryFillet, SolidHistoryLoft, SolidHistoryNodeBase, SolidHistoryOperation,
+    SolidHistoryPyramid, SolidHistoryRevolve, SolidHistorySphere, SolidHistorySweep,
+    SolidHistoryTorus,
 };
 pub use field::{Field, FieldChildValue, FieldList};
-pub use dgn_linestyle::{
-    DgnLineStyleData, DgnLineStyleObject, DgnLsComponent, DgnLsComponentData,
-    DgnLsComponentType, DgnLsCompoundComponent, DgnLsCompoundEntry, DgnLsDefinition,
-    DgnLsInternalComponent, DgnLsPhaseMode, DgnLsPointComponent, DgnLsStroke,
-    DgnLsStrokePattern, DgnLsSymbolComponent, DgnLsSymbolReference,
-};
-pub use dictionary_variable::DictionaryVariable;
 pub use group::Group;
 pub use image_definition::{ImageDefinition, ImageDefinitionReactor, ResolutionUnit};
 // UnderlayDefinition is a non-graphical object, defined alongside the underlay
@@ -89,16 +82,16 @@ pub use image_definition::{ImageDefinition, ImageDefinitionReactor, ResolutionUn
 // analogue ImageDefinition.
 pub use crate::entities::underlay::UnderlayDefinition;
 pub use mlinestyle::{MLineStyle, MLineStyleElement, MLineStyleFlags};
-pub use object_context_data::{
-    DimContext, DimSubtype, EmbeddedMTextContext, HatchScaleContext, HatchViewContext,
-    LeaderContext, MTextAttributeContext, MTextColumns, MTextContext, ObjectContextData,
-    ObjectContextKind,
-};
 pub use multileader_style::{
     BlockContentConnectionType, LeaderContentType, LeaderDrawOrderType,
     LeaderLinePropertyOverrideFlags, MultiLeaderDrawOrderType, MultiLeaderPathType,
     MultiLeaderPropertyOverrideFlags, MultiLeaderStyle, TextAlignmentType, TextAngleType,
     TextAttachmentDirectionType, TextAttachmentType,
+};
+pub use object_context_data::{
+    DimContext, DimSubtype, EmbeddedMTextContext, HatchScaleContext, HatchViewContext,
+    LeaderContext, MTextAttributeContext, MTextColumns, MTextContext, ObjectContextData,
+    ObjectContextKind,
 };
 pub use plot_settings::{
     PaperMargin, PlotFlags, PlotPaperUnits, PlotRotation, PlotSettings, PlotType, PlotWindow,
@@ -106,26 +99,24 @@ pub use plot_settings::{
 };
 pub use scale::Scale;
 pub use semantic_property::{
-    ProxyObject, ProxyObjectReference, ProxyPayload, ProxyPayloadEncoding,
-    ProxyPayloadRecord, ProxyReferenceKind,
-    RegisteredClassObject, SemanticProperty, SemanticPropertyValue,
+    ProxyObject, ProxyObjectReference, ProxyPayload, ProxyPayloadEncoding, ProxyPayloadRecord,
+    ProxyReferenceKind, RegisteredClassObject, SemanticProperty, SemanticPropertyValue,
 };
-pub use sort_entities_table::{SortEntsEntry, SortEntitiesTable};
+pub use sort_entities_table::{SortEntitiesTable, SortEntsEntry};
+pub use stub_objects::{
+    BookColor, DictionaryWithDefault, GeoData, GeoDataMeshFace, GeoDataMeshPoint, Material,
+    MaterialColor, MaterialMap, MaterialProceduralValue, MaterialTexture, PlaceHolder,
+    RasterVariables, SpatialFilter, StubObject, VisualStyle, VisualStyleProperty,
+    VisualStylePropertyValue, WipeoutVariables,
+};
 pub use table_style::{
-    CellAlignment, RowCellStyle, TableBorderPropertyFlags, TableBorderType, TableCellBorder,
-    TableCellStylePropertyFlags, TableFlowDirection, TableStyle, TableStyleFlags,
-    TableContentFormat, TableGridFormat, TableCellStyleData, NamedTableCellStyle,
+    CellAlignment, NamedTableCellStyle, RowCellStyle, TableBorderPropertyFlags, TableBorderType,
+    TableCellBorder, TableCellStyleData, TableCellStylePropertyFlags, TableContentFormat,
+    TableFlowDirection, TableGridFormat, TableStyle, TableStyleFlags,
 };
 pub use xrecord::{
-    DictionaryCloningFlags, KnownXRecordKind, XRecord, XRecordEntry, XRecordSection,
-    XRecordValue, XRecordValueType,
-};
-pub use stub_objects::{
-    VisualStyle, VisualStyleProperty, VisualStylePropertyValue,
-    Material, MaterialColor, MaterialMap, MaterialProceduralValue, MaterialTexture,
-    GeoData, GeoDataMeshFace, GeoDataMeshPoint,
-    SpatialFilter, RasterVariables, BookColor, PlaceHolder,
-    DictionaryWithDefault, WipeoutVariables, StubObject,
+    DictionaryCloningFlags, KnownXRecordKind, XRecord, XRecordEntry, XRecordSection, XRecordValue,
+    XRecordValueType,
 };
 
 use crate::types::Handle;
@@ -201,10 +192,7 @@ impl Dictionary {
     /// dictionary makes BricsCAD's audit reject the layers' PlotStyleName
     /// references (issue #51).
     pub fn is_canonical_hard_owner_key(key: &str) -> bool {
-        matches!(
-            key.to_ascii_uppercase().as_str(),
-            "ACAD_FIELD"
-        )
+        matches!(key.to_ascii_uppercase().as_str(), "ACAD_FIELD")
     }
 
     /// Get a handle by key
@@ -552,8 +540,7 @@ impl ObjectType {
             ObjectType::DgnLineStyle(value) => value.handle = handle,
             ObjectType::ProxyObject(value) => value.handle = handle,
             ObjectType::Unknown {
-                handle: old_handle,
-                ..
+                handle: old_handle, ..
             } => *old_handle = handle,
         }
     }

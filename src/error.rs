@@ -105,10 +105,7 @@ mod tests {
     #[test]
     fn test_error_display() {
         let err = DxfError::UnsupportedVersion("AC1009".to_string());
-        assert_eq!(
-            err.to_string(),
-            "Unsupported CAD version: \"AC1009\""
-        );
+        assert_eq!(err.to_string(), "Unsupported CAD version: \"AC1009\"");
     }
 
     #[test]
@@ -128,5 +125,3 @@ mod tests {
         assert!(matches!(dxf_err, DxfError::Io(_)));
     }
 }
-
-

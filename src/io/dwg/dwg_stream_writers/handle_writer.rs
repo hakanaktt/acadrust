@@ -39,10 +39,7 @@ const MAX_CHUNK_TOTAL: usize = 2032;
 ///
 /// # Returns
 /// Complete handle section bytes (all chunks including terminator).
-pub fn write_handles(
-    handle_map: &[(u64, i64)],
-    section_offset: i32,
-) -> Vec<u8> {
+pub fn write_handles(handle_map: &[(u64, i64)], section_offset: i32) -> Vec<u8> {
     // Sort by handle value
     let mut sorted: Vec<(u64, i64)> = handle_map.to_vec();
     sorted.sort_by_key(|&(h, _)| h);

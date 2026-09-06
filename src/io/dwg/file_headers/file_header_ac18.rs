@@ -20,17 +20,19 @@
 //!
 //! Based on the reference `DwgFileHeaderWriterAC18`.
 
-use std::io::{Write, Seek, SeekFrom, Cursor};
-use indexmap::IndexMap;
 use byteorder::{LittleEndian, WriteBytesExt};
+use indexmap::IndexMap;
+use std::io::{Cursor, Seek, SeekFrom, Write};
 
-use crate::error::DxfError;
-use crate::types::DxfVersion;
 use super::section_definition::{names, PAGE_TYPE_SECTION_MAP, PAGE_TYPE_SECTION_PAGE_MAP};
-use super::section_descriptor::{DwgSectionDescriptor, DwgLocalSectionMap};
-use crate::io::dwg::checksum::{adler32_checksum, compression_padding, magic_sequence, apply_mask, apply_magic_sequence};
+use super::section_descriptor::{DwgLocalSectionMap, DwgSectionDescriptor};
+use crate::error::DxfError;
+use crate::io::dwg::checksum::{
+    adler32_checksum, apply_magic_sequence, apply_mask, compression_padding, magic_sequence,
+};
 use crate::io::dwg::compression::DwgLZ77AC18Compressor;
 use crate::io::dwg::crc;
+use crate::types::DxfVersion;
 
 /// File header/metadata size in bytes for AC18 format.
 const FILE_HEADER_SIZE: usize = 0x100;
@@ -63,7 +65,6 @@ pub struct DwgFileHeaderWriterAC18 {
     next_section_id: i32,
 
     // ── File header metadata (filled during write_file) ──
-
     /// Number of page slots allocated.
     section_array_page_size: u32,
     /// Page ID of the section page map.
@@ -89,7 +90,11 @@ impl DwgFileHeaderWriterAC18 {
     ///
     /// Writes `0x100` zero bytes to the output stream to reserve space
     /// for the file metadata that will be filled in by `write_file`.
-    pub fn new<W: Write + Seek>(version: DxfVersion, maintenance_version: u8, output: &mut W) -> Result<Self, DxfError> {
+    pub fn new<W: Write + Seek>(
+        version: DxfVersion,
+        maintenance_version: u8,
+        output: &mut W,
+    ) -> Result<Self, DxfError> {
         // Reserve 0x100 bytes at the start for file metadata
         let zeroes = [0u8; FILE_HEADER_SIZE];
         output.write_all(&zeroes)?;
@@ -170,18 +175,17 @@ impl DwgFileHeaderWriterAC18 {
         use crate::io::dwg::parallel::{map_slice, worker_count};
         let batch_pages = worker_count().saturating_mul(2);
         for page_batch in page_inputs.chunks(batch_pages) {
-            let encoded: Vec<_> =
-                map_slice(page_batch, |&(offset, total_size, bytes)| {
-                    let mut padded = vec![0u8; decomp_size];
-                    padded[..total_size].copy_from_slice(bytes);
-                    let encoded = if compressed {
-                        let mut compressor = DwgLZ77AC18Compressor::new();
-                        compressor.compress(&padded, 0, decomp_size)
-                    } else {
-                        padded
-                    };
-                    (offset, total_size, encoded)
-                });
+            let encoded: Vec<_> = map_slice(page_batch, |&(offset, total_size, bytes)| {
+                let mut padded = vec![0u8; decomp_size];
+                padded[..total_size].copy_from_slice(bytes);
+                let encoded = if compressed {
+                    let mut compressor = DwgLZ77AC18Compressor::new();
+                    compressor.compress(&padded, 0, decomp_size)
+                } else {
+                    padded
+                };
+                (offset, total_size, encoded)
+            });
 
             for (offset, total_size, encoded) in encoded {
                 self.create_local_section(
@@ -472,7 +476,9 @@ impl DwgFileHeaderWriterAC18 {
         output.write_all(&[3u8])?;
 
         // 0x0D: Preview address (4 bytes) — points to preview page + 0x20 header
-        let preview_addr = self.descriptors.get(names::PREVIEW)
+        let preview_addr = self
+            .descriptors
+            .get(names::PREVIEW)
             .and_then(|d| d.local_sections.first())
             .map_or(0u32, |s| (s.seeker as u32) + 0x20);
         output.write_u32::<LittleEndian>(preview_addr)?;
@@ -499,7 +505,9 @@ impl DwgFileHeaderWriterAC18 {
         output.write_i32::<LittleEndian>(0)?;
 
         // 0x20: Summary info address (4 bytes) — points to page + 0x20
-        let summary_addr = self.descriptors.get(names::SUMMARY_INFO)
+        let summary_addr = self
+            .descriptors
+            .get(names::SUMMARY_INFO)
             .and_then(|d| d.local_sections.first())
             .map_or(0u32, |s| (s.seeker as u32) + 0x20);
         output.write_u32::<LittleEndian>(summary_addr)?;
@@ -511,7 +519,9 @@ impl DwgFileHeaderWriterAC18 {
         output.write_i32::<LittleEndian>(0x80)?;
 
         // 0x2C: App info address (4 bytes) — points to page + 0x20
-        let app_info_addr = self.descriptors.get(names::APP_INFO)
+        let app_info_addr = self
+            .descriptors
+            .get(names::APP_INFO)
             .and_then(|d| d.local_sections.first())
             .map_or(0u32, |s| (s.seeker as u32) + 0x20);
         output.write_u32::<LittleEndian>(app_info_addr)?;
@@ -671,7 +681,10 @@ impl DwgFileHeaderWriterAC18 {
     }
 
     /// Write a 20-byte page header for system pages (section map, page map).
-    fn write_page_header_data<W: Write>(output: &mut W, section: &DwgLocalSectionMap) -> Result<(), DxfError> {
+    fn write_page_header_data<W: Write>(
+        output: &mut W,
+        section: &DwgLocalSectionMap,
+    ) -> Result<(), DxfError> {
         // 0x00: Section page type (4 bytes)
         output.write_i32::<LittleEndian>(section.section_map)?;
         // 0x04: Decompressed size (4 bytes)
@@ -694,8 +707,8 @@ fn is_all_zeros(data: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::section_definition::PAGE_TYPE_DATA_SECTION;
+    use super::*;
     use std::io::Cursor;
 
     #[test]
@@ -730,7 +743,9 @@ mod tests {
 
         // Add a small section (less than one page)
         let data = vec![0xAA; 100];
-        writer.add_section(&mut output, names::HEADER, &data, true, DEFAULT_DECOMP_SIZE).unwrap();
+        writer
+            .add_section(&mut output, names::HEADER, &data, true, DEFAULT_DECOMP_SIZE)
+            .unwrap();
 
         // Should have 1 descriptor and 1 local section map
         assert_eq!(writer.descriptors.len(), 1);
@@ -749,7 +764,15 @@ mod tests {
 
         // Add section larger than one page (2 × 0x7400 + remainder)
         let data = vec![0xBB; 0x7400 * 2 + 1000];
-        writer.add_section(&mut output, names::ACDB_OBJECTS, &data, true, DEFAULT_DECOMP_SIZE).unwrap();
+        writer
+            .add_section(
+                &mut output,
+                names::ACDB_OBJECTS,
+                &data,
+                true,
+                DEFAULT_DECOMP_SIZE,
+            )
+            .unwrap();
 
         assert_eq!(writer.descriptors.len(), 1);
         let desc = &writer.descriptors[names::ACDB_OBJECTS];
@@ -762,8 +785,24 @@ mod tests {
         let mut output = Cursor::new(Vec::new());
         let mut writer = DwgFileHeaderWriterAC18::new(DxfVersion::AC1018, 0, &mut output).unwrap();
 
-        writer.add_section(&mut output, names::HEADER, &vec![0xAA; 100], true, DEFAULT_DECOMP_SIZE).unwrap();
-        writer.add_section(&mut output, names::CLASSES, &vec![0xBB; 200], true, DEFAULT_DECOMP_SIZE).unwrap();
+        writer
+            .add_section(
+                &mut output,
+                names::HEADER,
+                &vec![0xAA; 100],
+                true,
+                DEFAULT_DECOMP_SIZE,
+            )
+            .unwrap();
+        writer
+            .add_section(
+                &mut output,
+                names::CLASSES,
+                &vec![0xBB; 200],
+                true,
+                DEFAULT_DECOMP_SIZE,
+            )
+            .unwrap();
 
         assert_eq!(writer.descriptors.len(), 2);
         assert_eq!(writer.descriptors[names::HEADER].section_id, 0);
@@ -799,14 +838,78 @@ mod tests {
         let mut writer = DwgFileHeaderWriterAC18::new(DxfVersion::AC1018, 0, &mut output).unwrap();
 
         // Add minimal sections
-        writer.add_section(&mut output, names::HEADER, &vec![0xAA; 100], true, DEFAULT_DECOMP_SIZE).unwrap();
-        writer.add_section(&mut output, names::CLASSES, &vec![0xBB; 50], true, DEFAULT_DECOMP_SIZE).unwrap();
-        writer.add_section(&mut output, names::SUMMARY_INFO, &vec![0; 10], true, DEFAULT_DECOMP_SIZE).unwrap();
-        writer.add_section(&mut output, names::PREVIEW, &vec![0xCC; 20], true, DEFAULT_DECOMP_SIZE).unwrap();
-        writer.add_section(&mut output, names::APP_INFO, &vec![0xDD; 30], true, DEFAULT_DECOMP_SIZE).unwrap();
-        writer.add_section(&mut output, names::AUX_HEADER, &vec![0; 50], true, DEFAULT_DECOMP_SIZE).unwrap();
-        writer.add_section(&mut output, names::ACDB_OBJECTS, &vec![0xEE; 300], true, DEFAULT_DECOMP_SIZE).unwrap();
-        writer.add_section(&mut output, names::HANDLES, &vec![0xFF; 100], true, DEFAULT_DECOMP_SIZE).unwrap();
+        writer
+            .add_section(
+                &mut output,
+                names::HEADER,
+                &vec![0xAA; 100],
+                true,
+                DEFAULT_DECOMP_SIZE,
+            )
+            .unwrap();
+        writer
+            .add_section(
+                &mut output,
+                names::CLASSES,
+                &vec![0xBB; 50],
+                true,
+                DEFAULT_DECOMP_SIZE,
+            )
+            .unwrap();
+        writer
+            .add_section(
+                &mut output,
+                names::SUMMARY_INFO,
+                &vec![0; 10],
+                true,
+                DEFAULT_DECOMP_SIZE,
+            )
+            .unwrap();
+        writer
+            .add_section(
+                &mut output,
+                names::PREVIEW,
+                &vec![0xCC; 20],
+                true,
+                DEFAULT_DECOMP_SIZE,
+            )
+            .unwrap();
+        writer
+            .add_section(
+                &mut output,
+                names::APP_INFO,
+                &vec![0xDD; 30],
+                true,
+                DEFAULT_DECOMP_SIZE,
+            )
+            .unwrap();
+        writer
+            .add_section(
+                &mut output,
+                names::AUX_HEADER,
+                &vec![0; 50],
+                true,
+                DEFAULT_DECOMP_SIZE,
+            )
+            .unwrap();
+        writer
+            .add_section(
+                &mut output,
+                names::ACDB_OBJECTS,
+                &vec![0xEE; 300],
+                true,
+                DEFAULT_DECOMP_SIZE,
+            )
+            .unwrap();
+        writer
+            .add_section(
+                &mut output,
+                names::HANDLES,
+                &vec![0xFF; 100],
+                true,
+                DEFAULT_DECOMP_SIZE,
+            )
+            .unwrap();
 
         // Write the complete file
         writer.write_file(&mut output).unwrap();
@@ -822,24 +925,97 @@ mod tests {
 
     #[test]
     fn test_write_file_version_strings() {
-        for version in [DxfVersion::AC1018, DxfVersion::AC1024, DxfVersion::AC1027, DxfVersion::AC1032] {
+        for version in [
+            DxfVersion::AC1018,
+            DxfVersion::AC1024,
+            DxfVersion::AC1027,
+            DxfVersion::AC1032,
+        ] {
             let mut output = Cursor::new(Vec::new());
             let mut writer = DwgFileHeaderWriterAC18::new(version, 0, &mut output).unwrap();
 
-            writer.add_section(&mut output, names::HEADER, &vec![0; 10], true, DEFAULT_DECOMP_SIZE).unwrap();
-            writer.add_section(&mut output, names::CLASSES, &vec![0; 10], true, DEFAULT_DECOMP_SIZE).unwrap();
-            writer.add_section(&mut output, names::SUMMARY_INFO, &vec![0; 10], true, DEFAULT_DECOMP_SIZE).unwrap();
-            writer.add_section(&mut output, names::PREVIEW, &vec![0; 10], true, DEFAULT_DECOMP_SIZE).unwrap();
-            writer.add_section(&mut output, names::APP_INFO, &vec![0; 10], true, DEFAULT_DECOMP_SIZE).unwrap();
-            writer.add_section(&mut output, names::AUX_HEADER, &vec![0; 10], true, DEFAULT_DECOMP_SIZE).unwrap();
-            writer.add_section(&mut output, names::ACDB_OBJECTS, &vec![0; 10], true, DEFAULT_DECOMP_SIZE).unwrap();
-            writer.add_section(&mut output, names::HANDLES, &vec![0; 10], true, DEFAULT_DECOMP_SIZE).unwrap();
+            writer
+                .add_section(
+                    &mut output,
+                    names::HEADER,
+                    &vec![0; 10],
+                    true,
+                    DEFAULT_DECOMP_SIZE,
+                )
+                .unwrap();
+            writer
+                .add_section(
+                    &mut output,
+                    names::CLASSES,
+                    &vec![0; 10],
+                    true,
+                    DEFAULT_DECOMP_SIZE,
+                )
+                .unwrap();
+            writer
+                .add_section(
+                    &mut output,
+                    names::SUMMARY_INFO,
+                    &vec![0; 10],
+                    true,
+                    DEFAULT_DECOMP_SIZE,
+                )
+                .unwrap();
+            writer
+                .add_section(
+                    &mut output,
+                    names::PREVIEW,
+                    &vec![0; 10],
+                    true,
+                    DEFAULT_DECOMP_SIZE,
+                )
+                .unwrap();
+            writer
+                .add_section(
+                    &mut output,
+                    names::APP_INFO,
+                    &vec![0; 10],
+                    true,
+                    DEFAULT_DECOMP_SIZE,
+                )
+                .unwrap();
+            writer
+                .add_section(
+                    &mut output,
+                    names::AUX_HEADER,
+                    &vec![0; 10],
+                    true,
+                    DEFAULT_DECOMP_SIZE,
+                )
+                .unwrap();
+            writer
+                .add_section(
+                    &mut output,
+                    names::ACDB_OBJECTS,
+                    &vec![0; 10],
+                    true,
+                    DEFAULT_DECOMP_SIZE,
+                )
+                .unwrap();
+            writer
+                .add_section(
+                    &mut output,
+                    names::HANDLES,
+                    &vec![0; 10],
+                    true,
+                    DEFAULT_DECOMP_SIZE,
+                )
+                .unwrap();
 
             writer.write_file(&mut output).unwrap();
 
             let data = output.into_inner();
             let expected = version.as_str();
-            assert_eq!(&data[0..6], expected.as_bytes(), "Version mismatch for {version:?}");
+            assert_eq!(
+                &data[0..6],
+                expected.as_bytes(),
+                "Version mismatch for {version:?}"
+            );
         }
     }
 
@@ -848,7 +1024,13 @@ mod tests {
         let desc = DwgSectionDescriptor::new("test");
         let map = DwgLocalSectionMap::new();
         let mut buf = Vec::new();
-        DwgFileHeaderWriterAC18::write_data_section_header(&mut buf, &desc, &map, PAGE_TYPE_DATA_SECTION).unwrap();
+        DwgFileHeaderWriterAC18::write_data_section_header(
+            &mut buf,
+            &desc,
+            &map,
+            PAGE_TYPE_DATA_SECTION,
+        )
+        .unwrap();
         assert_eq!(buf.len(), 32);
     }
 
@@ -868,23 +1050,96 @@ mod tests {
         let mut output = Cursor::new(Vec::new());
         let mut writer = DwgFileHeaderWriterAC18::new(DxfVersion::AC1018, 0, &mut output).unwrap();
 
-        writer.add_section(&mut output, names::HEADER, &vec![0xAA; 100], true, DEFAULT_DECOMP_SIZE).unwrap();
-        writer.add_section(&mut output, names::CLASSES, &vec![0xBB; 50], true, DEFAULT_DECOMP_SIZE).unwrap();
-        writer.add_section(&mut output, names::SUMMARY_INFO, &vec![0; 10], true, DEFAULT_DECOMP_SIZE).unwrap();
-        writer.add_section(&mut output, names::PREVIEW, &vec![0xCC; 20], true, DEFAULT_DECOMP_SIZE).unwrap();
-        writer.add_section(&mut output, names::APP_INFO, &vec![0xDD; 30], true, DEFAULT_DECOMP_SIZE).unwrap();
-        writer.add_section(&mut output, names::AUX_HEADER, &vec![0; 50], true, DEFAULT_DECOMP_SIZE).unwrap();
-        writer.add_section(&mut output, names::ACDB_OBJECTS, &vec![0xEE; 300], true, DEFAULT_DECOMP_SIZE).unwrap();
-        writer.add_section(&mut output, names::HANDLES, &vec![0xFF; 100], true, DEFAULT_DECOMP_SIZE).unwrap();
+        writer
+            .add_section(
+                &mut output,
+                names::HEADER,
+                &vec![0xAA; 100],
+                true,
+                DEFAULT_DECOMP_SIZE,
+            )
+            .unwrap();
+        writer
+            .add_section(
+                &mut output,
+                names::CLASSES,
+                &vec![0xBB; 50],
+                true,
+                DEFAULT_DECOMP_SIZE,
+            )
+            .unwrap();
+        writer
+            .add_section(
+                &mut output,
+                names::SUMMARY_INFO,
+                &vec![0; 10],
+                true,
+                DEFAULT_DECOMP_SIZE,
+            )
+            .unwrap();
+        writer
+            .add_section(
+                &mut output,
+                names::PREVIEW,
+                &vec![0xCC; 20],
+                true,
+                DEFAULT_DECOMP_SIZE,
+            )
+            .unwrap();
+        writer
+            .add_section(
+                &mut output,
+                names::APP_INFO,
+                &vec![0xDD; 30],
+                true,
+                DEFAULT_DECOMP_SIZE,
+            )
+            .unwrap();
+        writer
+            .add_section(
+                &mut output,
+                names::AUX_HEADER,
+                &vec![0; 50],
+                true,
+                DEFAULT_DECOMP_SIZE,
+            )
+            .unwrap();
+        writer
+            .add_section(
+                &mut output,
+                names::ACDB_OBJECTS,
+                &vec![0xEE; 300],
+                true,
+                DEFAULT_DECOMP_SIZE,
+            )
+            .unwrap();
+        writer
+            .add_section(
+                &mut output,
+                names::HANDLES,
+                &vec![0xFF; 100],
+                true,
+                DEFAULT_DECOMP_SIZE,
+            )
+            .unwrap();
 
         writer.write_file(&mut output).unwrap();
 
         // After write_file, the last local section map (page map) must have non-zero seeker and size
         let page_map_entry = writer.local_section_maps.last().unwrap();
-        assert_ne!(page_map_entry.seeker, 0, "Page map entry seeker should be non-zero");
-        assert_ne!(page_map_entry.size, 0, "Page map entry size should be non-zero");
+        assert_ne!(
+            page_map_entry.seeker, 0,
+            "Page map entry seeker should be non-zero"
+        );
+        assert_ne!(
+            page_map_entry.size, 0,
+            "Page map entry size should be non-zero"
+        );
 
         // last_section_addr should depend on the actual seeker, not zero
-        assert!(writer.last_section_addr > 0, "last_section_addr should be > 0");
+        assert!(
+            writer.last_section_addr > 0,
+            "last_section_addr should be > 0"
+        );
     }
 }

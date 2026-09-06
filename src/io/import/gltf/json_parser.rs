@@ -341,6 +341,10 @@ mod tests {
         let res = JsonValue::parse(&s);
         assert!(res.is_err());
         let err = res.unwrap_err().to_string();
-        assert!(err.contains("depth limit exceeded"), "Unexpected error: {}", err);
+        assert!(
+            err.contains("depth limit exceeded"),
+            "Unexpected error: {}",
+            err
+        );
     }
 }

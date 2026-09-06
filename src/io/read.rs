@@ -64,10 +64,8 @@ impl ReadDiagnostic {
     pub fn new(code: impl Into<String>, stage: ReadStage, message: impl Into<String>) -> Self {
         let message = message.into();
         let message = if message.chars().count() > MAX_DIAGNOSTIC_MESSAGE_CHARS {
-            let mut shortened: String = message
-                .chars()
-                .take(MAX_DIAGNOSTIC_MESSAGE_CHARS)
-                .collect();
+            let mut shortened: String =
+                message.chars().take(MAX_DIAGNOSTIC_MESSAGE_CHARS).collect();
             shortened.push_str("… [message truncated]");
             shortened
         } else {
@@ -87,10 +85,7 @@ impl ReadDiagnostic {
     }
 }
 
-pub fn push_read_diagnostic(
-    diagnostics: &mut Vec<ReadDiagnostic>,
-    diagnostic: ReadDiagnostic,
-) {
+pub fn push_read_diagnostic(diagnostics: &mut Vec<ReadDiagnostic>, diagnostic: ReadDiagnostic) {
     if diagnostics.len() < MAX_READ_DIAGNOSTICS.saturating_sub(1) {
         diagnostics.push(diagnostic);
     } else if diagnostics.len() == MAX_READ_DIAGNOSTICS.saturating_sub(1) {
@@ -170,9 +165,7 @@ impl ReadStats {
     }
 
     pub fn has_usable_drawing_data(&self) -> bool {
-        self.record_stream_read
-            && self.source_records > 0
-            && self.decoded_source_records > 0
+        self.record_stream_read && self.source_records > 0 && self.decoded_source_records > 0
     }
 
     pub fn recovered(&self) -> bool {

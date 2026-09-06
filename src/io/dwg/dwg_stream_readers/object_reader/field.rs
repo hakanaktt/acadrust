@@ -7,10 +7,7 @@ fn safe_count(value: i32) -> usize {
     value.clamp(0, 20_000) as usize
 }
 
-pub fn read_field_object(
-    reader: &mut DwgMergedReader,
-    version: DwgVersion,
-) -> Field {
+pub fn read_field_object(reader: &mut DwgMergedReader, version: DwgVersion) -> Field {
     let evaluator_id = reader.read_variable_text();
     let code = reader.read_variable_text();
     let child_count = safe_count(reader.read_bit_long());

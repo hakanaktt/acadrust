@@ -57,8 +57,10 @@ fn read_dxf(bytes: &[u8]) -> CadDocument {
 /// an extension-style dictionary with the wide hard-owner flag set.
 fn sample_document(version: DxfVersion) -> CadDocument {
     let mut doc = CadDocument::with_version(version);
-    doc.add_entity(EntityType::Line(Line::from_coords(0.0, 0.0, 0.0, 10.0, 10.0, 0.0)))
-        .unwrap();
+    doc.add_entity(EntityType::Line(Line::from_coords(
+        0.0, 0.0, 0.0, 10.0, 10.0, 0.0,
+    )))
+    .unwrap();
     doc.add_entity(EntityType::Circle(Circle::from_coords(5.0, 5.0, 0.0, 2.0)))
         .unwrap();
 
@@ -202,7 +204,10 @@ fn acad_field_entry_is_canonicalized_on_read() {
 
     let bytes = write_dxf(&doc);
     let text = String::from_utf8(bytes.clone()).unwrap();
-    let patched = text.replace("  3\r\nACAD_FIELD\r\n360\r\n", "  3\r\nACAD_FIELD\r\n350\r\n");
+    let patched = text.replace(
+        "  3\r\nACAD_FIELD\r\n360\r\n",
+        "  3\r\nACAD_FIELD\r\n350\r\n",
+    );
     assert_ne!(text, patched, "expected a hard-owner ACAD_FIELD in output");
 
     let doc = read_dxf(patched.as_bytes());
@@ -258,9 +263,16 @@ fn mlinestyle_angles_stable_across_roundtrips() {
 
     // DXF carries degrees.
     let bytes = write_dxf(&doc);
-    let (start_deg, end_deg) = mlinestyle_angle_codes(&bytes, &format!("{:X}", style_handle.value()));
-    assert!((start_deg - 90.0).abs() < 1e-9, "start angle must be degrees, got {start_deg}");
-    assert!((end_deg - 45.0).abs() < 1e-9, "end angle must be degrees, got {end_deg}");
+    let (start_deg, end_deg) =
+        mlinestyle_angle_codes(&bytes, &format!("{:X}", style_handle.value()));
+    assert!(
+        (start_deg - 90.0).abs() < 1e-9,
+        "start angle must be degrees, got {start_deg}"
+    );
+    assert!(
+        (end_deg - 45.0).abs() < 1e-9,
+        "end angle must be degrees, got {end_deg}"
+    );
 
     // The model carries radians and must not drift across cycles.
     let doc1 = read_dxf(&bytes);
@@ -277,8 +289,16 @@ fn mlinestyle_angles_stable_across_roundtrips() {
     let b = get_angle(&doc2);
     let c = get_angle(&doc3);
 
-    assert!((a.0 - std::f64::consts::FRAC_PI_2).abs() < 1e-9, "start angle drifted: {:?}", a);
-    assert!((a.1 - std::f64::consts::FRAC_PI_4).abs() < 1e-9, "end angle drifted: {:?}", a);
+    assert!(
+        (a.0 - std::f64::consts::FRAC_PI_2).abs() < 1e-9,
+        "start angle drifted: {:?}",
+        a
+    );
+    assert!(
+        (a.1 - std::f64::consts::FRAC_PI_4).abs() < 1e-9,
+        "end angle drifted: {:?}",
+        a
+    );
     assert_eq!(a, b, "angles changed after one round-trip");
     assert_eq!(b, c, "angles changed after two round-trips");
 }
@@ -289,7 +309,9 @@ fn dwg_to_dxf_pipeline_is_stable() {
     // read the produced DXF repeatedly and round-trip it.
     let doc = sample_document(DxfVersion::AC1032);
     let dwg_bytes = DwgWriter::write_to_vec(&doc).unwrap();
-    let from_dwg = DwgReader::from_stream(Cursor::new(dwg_bytes)).read().unwrap();
+    let from_dwg = DwgReader::from_stream(Cursor::new(dwg_bytes))
+        .read()
+        .unwrap();
 
     let dxf_bytes = write_dxf(&from_dwg);
     let a = read_dxf(&dxf_bytes);
@@ -314,7 +336,6 @@ fn objects_maps_are_content_comparable() {
 }
 
 #[test]
-
 #[test]
 fn remaps_dictionary_with_default_handle() {
     // Issue #51 comment (Apicqq): resolve_references() remapped objects and
@@ -391,7 +412,10 @@ fn surviving_default_entries_are_rehandled_on_read() {
         .get("*Paper_Space")
         .expect("*Paper_Space lost")
         .handle;
-    assert_eq!(paper_space, standard_handle, "file handle must be preserved");
+    assert_eq!(
+        paper_space, standard_handle,
+        "file handle must be preserved"
+    );
 
     // The surviving default Standard dimstyle must have been moved off the
     // colliding handle.
@@ -463,8 +487,10 @@ fn handle_less_records_receive_handles_on_read() {
     // writer emitted invalid `5 / 0` handle records. resolve_references()
     // must assign handles to everything that arrived without one.
     let mut doc = CadDocument::with_version(DxfVersion::AC1012);
-    doc.add_entity(EntityType::Line(Line::from_coords(0.0, 0.0, 0.0, 1.0, 1.0, 0.0)))
-        .unwrap();
+    doc.add_entity(EntityType::Line(Line::from_coords(
+        0.0, 0.0, 0.0, 1.0, 1.0, 0.0,
+    )))
+    .unwrap();
 
     let mut layer = acadrust::tables::Layer::new("NULL_LAYER");
     layer.handle = Handle::NULL;
@@ -496,22 +522,45 @@ fn handle_less_records_receive_handles_on_read() {
     doc.resolve_references();
 
     for entry in doc.layers.iter() {
-        assert!(!entry.handle.is_null(), "layer {:?} still has no handle", entry.name);
+        assert!(
+            !entry.handle.is_null(),
+            "layer {:?} still has no handle",
+            entry.name
+        );
     }
     for entry in doc.text_styles.iter() {
-        assert!(!entry.handle.is_null(), "text style {:?} still has no handle", entry.name);
+        assert!(
+            !entry.handle.is_null(),
+            "text style {:?} still has no handle",
+            entry.name
+        );
     }
     for entry in doc.dim_styles.iter() {
-        assert!(!entry.handle.is_null(), "dim style {:?} still has no handle", entry.name);
+        assert!(
+            !entry.handle.is_null(),
+            "dim style {:?} still has no handle",
+            entry.name
+        );
     }
     for entry in doc.vports.iter() {
-        assert!(!entry.handle.is_null(), "vport {:?} still has no handle", entry.name);
+        assert!(
+            !entry.handle.is_null(),
+            "vport {:?} still has no handle",
+            entry.name
+        );
     }
     for entry in doc.app_ids.iter() {
-        assert!(!entry.handle.is_null(), "appid {:?} still has no handle", entry.name);
+        assert!(
+            !entry.handle.is_null(),
+            "appid {:?} still has no handle",
+            entry.name
+        );
     }
     for (handle, _) in doc.objects.iter() {
-        assert!(!handle.is_null(), "object still stored under the NULL handle key");
+        assert!(
+            !handle.is_null(),
+            "object still stored under the NULL handle key"
+        );
     }
 
     // The written output must not contain a single handle-valued 0.
@@ -601,15 +650,15 @@ fn unrestorable_assoc_objects_are_not_written() {
     // audit-skipped them and left dangling dictionary entries behind. The
     // writer must drop them together with every entry pointing at them.
     let mut doc = CadDocument::with_version(DxfVersion::AC1032);
-    doc.add_entity(EntityType::Line(Line::from_coords(0.0, 0.0, 0.0, 1.0, 1.0, 0.0)))
-        .unwrap();
+    doc.add_entity(EntityType::Line(Line::from_coords(
+        0.0, 0.0, 0.0, 1.0, 1.0, 0.0,
+    )))
+    .unwrap();
 
     let nod_handle = doc.header.named_objects_dict_handle;
     let assoc_handle = doc.allocate_handle();
-    let mut assoc = acadrust::objects::AssociativeObject::new(
-        "ACDBASSOCVARIABLE",
-        "AcDbAssocVariable",
-    );
+    let mut assoc =
+        acadrust::objects::AssociativeObject::new("ACDBASSOCVARIABLE", "AcDbAssocVariable");
     assoc.handle = assoc_handle;
     assoc.owner = nod_handle;
     doc.objects

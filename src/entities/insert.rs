@@ -1,10 +1,9 @@
 //! Insert entity (block reference)
 
-use crate::entities::{Entity, EntityCommon, EntityType, AttributeEntity};
 use crate::entities::{Arc, Ellipse};
+use crate::entities::{AttributeEntity, Entity, EntityCommon, EntityType};
 use crate::types::{
-    BoundingBox3D, Color, Handle, LineWeight, Matrix3, Matrix4, Transform,
-    Transparency, Vector3,
+    BoundingBox3D, Color, Handle, LineWeight, Matrix3, Matrix4, Transform, Transparency, Vector3,
 };
 
 /// Minimum absolute value accepted for scale factors (avoids degenerate geometry).
@@ -156,7 +155,13 @@ impl Insert {
     }
 
     /// Builder: Set array properties
-    pub fn with_array(mut self, columns: u16, rows: u16, col_spacing: f64, row_spacing: f64) -> Self {
+    pub fn with_array(
+        mut self,
+        columns: u16,
+        rows: u16,
+        col_spacing: f64,
+        row_spacing: f64,
+    ) -> Self {
         self.column_count = columns;
         self.row_count = rows;
         self.column_spacing = col_spacing;
@@ -219,8 +224,7 @@ impl Insert {
 
     /// Check if the insert has uniform scale
     pub fn has_uniform_scale(&self) -> bool {
-        (self.x_scale - self.y_scale).abs() < 1e-10
-            && (self.y_scale - self.z_scale).abs() < 1e-10
+        (self.x_scale - self.y_scale).abs() < 1e-10 && (self.y_scale - self.z_scale).abs() < 1e-10
     }
 
     /// Get the uniform scale factor (if uniform)
@@ -390,9 +394,9 @@ impl Insert {
     fn explode_single(&self, entity: &EntityType, transform: &Transform) -> Option<EntityType> {
         match entity {
             // Skip structural / meta entities
-            EntityType::Block(_)
-            | EntityType::BlockEnd(_)
-            | EntityType::AttributeDefinition(_) => None,
+            EntityType::Block(_) | EntityType::BlockEnd(_) | EntityType::AttributeDefinition(_) => {
+                None
+            }
 
             // Arc handling — uniform XY keeps Arc, non-uniform → Ellipse
             EntityType::Arc(arc) => {
@@ -569,8 +573,7 @@ impl Insert {
 
         // DXF convention: major_axis must be the longer axis.
         // If the minor became longer, swap them.
-        let (final_major_wcs, final_minor_wcs, swapped) = if new_minor_len > new_major_len + 1e-12
-        {
+        let (final_major_wcs, final_minor_wcs, swapped) = if new_minor_len > new_major_len + 1e-12 {
             (new_minor_wcs, new_major_wcs, true)
         } else {
             (new_major_wcs, new_minor_wcs, false)
@@ -608,13 +611,21 @@ impl Insert {
     /// calls [`explode`](Self::explode).
     ///
     /// Returns an empty `Vec` when the block record is not found.
-    pub fn explode_from_document(&self, document: &crate::document::CadDocument) -> Vec<EntityType> {
+    pub fn explode_from_document(
+        &self,
+        document: &crate::document::CadDocument,
+    ) -> Vec<EntityType> {
         match document.block_records.get(&self.block_name) {
             Some(br) => {
                 let entities: Vec<EntityType> = br
                     .entity_handles
                     .iter()
-                    .filter_map(|h| document.entity_index.get(h).map(|&idx| document.entities[idx].as_ref().clone()))
+                    .filter_map(|h| {
+                        document
+                            .entity_index
+                            .get(h)
+                            .map(|&idx| document.entities[idx].as_ref().clone())
+                    })
                     .collect();
                 self.explode(&entities)
             }
@@ -683,7 +694,11 @@ impl Entity for Insert {
     }
 
     fn entity_type(&self) -> &'static str {
-        if self.is_minsert() { "MINSERT" } else { "INSERT" }
+        if self.is_minsert() {
+            "MINSERT"
+        } else {
+            "INSERT"
+        }
     }
 
     fn apply_transform(&mut self, transform: &Transform) {
@@ -694,10 +709,7 @@ impl Entity for Insert {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entities::{
-        Block, BlockEnd, Circle, Line,
-        AttributeDefinition,
-    };
+    use crate::entities::{AttributeDefinition, Block, BlockEnd, Circle, Line};
     use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
     /// Helper – approximate equality for f64
@@ -747,10 +759,7 @@ mod tests {
 
     #[test]
     fn explode_identity_insert_preserves_line() {
-        let line = Line::from_points(
-            Vector3::new(0.0, 0.0, 0.0),
-            Vector3::new(10.0, 0.0, 0.0),
-        );
+        let line = Line::from_points(Vector3::new(0.0, 0.0, 0.0), Vector3::new(10.0, 0.0, 0.0));
         let block_entities = vec![EntityType::Line(line)];
 
         let insert = Insert::new("B", Vector3::ZERO);
@@ -824,8 +833,7 @@ mod tests {
         let line = Line::from_points(Vector3::ZERO, Vector3::new(1.0, 1.0, 0.0));
         let block_entities = vec![EntityType::Line(line)];
 
-        let insert = Insert::new("B", Vector3::new(5.0, 5.0, 0.0))
-            .with_scale(2.0, 3.0, 1.0);
+        let insert = Insert::new("B", Vector3::new(5.0, 5.0, 0.0)).with_scale(2.0, 3.0, 1.0);
         let result = insert.explode(&block_entities);
 
         if let EntityType::Line(l) = &result[0] {
@@ -901,12 +909,7 @@ mod tests {
 
     #[test]
     fn explode_arc_identity() {
-        let arc = Arc::from_center_radius_angles(
-            Vector3::ZERO,
-            5.0,
-            0.0,
-            FRAC_PI_2,
-        );
+        let arc = Arc::from_center_radius_angles(Vector3::ZERO, 5.0, 0.0, FRAC_PI_2);
         let block_entities = vec![EntityType::Arc(arc.clone())];
 
         let insert = Insert::new("B", Vector3::ZERO);
@@ -925,12 +928,7 @@ mod tests {
 
     #[test]
     fn explode_arc_with_translation() {
-        let arc = Arc::from_center_radius_angles(
-            Vector3::ZERO,
-            10.0,
-            0.0,
-            PI,
-        );
+        let arc = Arc::from_center_radius_angles(Vector3::ZERO, 10.0, 0.0, PI);
         let block_entities = vec![EntityType::Arc(arc)];
 
         let insert = Insert::new("B", Vector3::new(100.0, 200.0, 0.0));
@@ -946,12 +944,7 @@ mod tests {
 
     #[test]
     fn explode_arc_with_uniform_scale() {
-        let arc = Arc::from_center_radius_angles(
-            Vector3::new(1.0, 1.0, 0.0),
-            2.0,
-            0.0,
-            FRAC_PI_2,
-        );
+        let arc = Arc::from_center_radius_angles(Vector3::new(1.0, 1.0, 0.0), 2.0, 0.0, FRAC_PI_2);
         let block_entities = vec![EntityType::Arc(arc)];
 
         let insert = Insert::new("B", Vector3::ZERO).with_uniform_scale(3.0);
@@ -967,12 +960,7 @@ mod tests {
 
     #[test]
     fn explode_arc_non_uniform_becomes_ellipse() {
-        let arc = Arc::from_center_radius_angles(
-            Vector3::ZERO,
-            5.0,
-            0.0,
-            FRAC_PI_2,
-        );
+        let arc = Arc::from_center_radius_angles(Vector3::ZERO, 5.0, 0.0, FRAC_PI_2);
         let block_entities = vec![EntityType::Arc(arc)];
 
         // Non-uniform scale → arc must become an elliptical arc
@@ -1003,9 +991,7 @@ mod tests {
                 Vector3::new(1.0, 0.0, 0.0),
             )),
             EntityType::Circle(Circle::from_center_radius(Vector3::ZERO, 1.0)),
-            EntityType::Arc(Arc::from_center_radius_angles(
-                Vector3::ZERO, 1.0, 0.0, PI,
-            )),
+            EntityType::Arc(Arc::from_center_radius_angles(Vector3::ZERO, 1.0, 0.0, PI)),
         ];
 
         let insert = Insert::new("B", Vector3::new(10.0, 0.0, 0.0));
@@ -1014,7 +1000,7 @@ mod tests {
         assert_eq!(result.len(), 3);
         assert!(matches!(result[0], EntityType::Line(_)));
         assert!(matches!(result[1], EntityType::Ellipse(_))); // circle → ellipse
-        assert!(matches!(result[2], EntityType::Arc(_)));     // uniform scale → stays Arc
+        assert!(matches!(result[2], EntityType::Arc(_))); // uniform scale → stays Arc
     }
 
     // ── Layer "0" inheritance ───────────────────────────────────
@@ -1096,8 +1082,7 @@ mod tests {
         let block_entities = vec![EntityType::Line(line)];
 
         // 2 columns × 3 rows = 6 copies
-        let insert = Insert::new("B", Vector3::new(0.0, 0.0, 0.0))
-            .with_array(2, 3, 10.0, 20.0);
+        let insert = Insert::new("B", Vector3::new(0.0, 0.0, 0.0)).with_array(2, 3, 10.0, 20.0);
         let result = insert.explode(&block_entities);
 
         assert_eq!(result.len(), 6);
@@ -1113,8 +1098,7 @@ mod tests {
         let block_entities = vec![EntityType::Line(line)];
 
         // 2 columns, 1 row, spacing 10
-        let insert = Insert::new("B", Vector3::new(5.0, 0.0, 0.0))
-            .with_array(2, 1, 10.0, 0.0);
+        let insert = Insert::new("B", Vector3::new(5.0, 0.0, 0.0)).with_array(2, 1, 10.0, 0.0);
         let result = insert.explode(&block_entities);
 
         assert_eq!(result.len(), 2);
@@ -1207,8 +1191,7 @@ mod tests {
         };
         let mid = arc.start_angle + (ccw_end - arc.start_angle) * 0.5;
         let pt = |a: f64| {
-            center_wcs
-                + basis * Vector3::new(arc.radius * a.cos(), arc.radius * a.sin(), 0.0)
+            center_wcs + basis * Vector3::new(arc.radius * a.cos(), arc.radius * a.sin(), 0.0)
         };
         (pt(arc.start_angle), pt(mid), pt(arc.end_angle))
     }
@@ -1287,12 +1270,7 @@ mod tests {
         // position correctly. Earlier the center was stored as WCS, which made
         // the renderer apply the new OCS basis a second time and flip the X
         // back — placing the arc at the mirror of where it should be.
-        let arc = Arc::from_center_radius_angles(
-            Vector3::new(5.0, 3.0, 0.0),
-            1.0,
-            0.0,
-            FRAC_PI_2,
-        );
+        let arc = Arc::from_center_radius_angles(Vector3::new(5.0, 3.0, 0.0), 1.0, 0.0, FRAC_PI_2);
         let block_entities = vec![EntityType::Arc(arc)];
 
         let insert = Insert::new("B", Vector3::ZERO).with_scale(-1.0, 1.0, 1.0);
@@ -1319,12 +1297,7 @@ mod tests {
     fn explode_arc_mirror_x_with_translation_position_preserved() {
         // Same regression but with both mirror and INSERT translation —
         // catches any leftover confusion between WCS/OCS center.
-        let arc = Arc::from_center_radius_angles(
-            Vector3::new(2.0, 0.0, 0.0),
-            1.0,
-            0.0,
-            FRAC_PI_2,
-        );
+        let arc = Arc::from_center_radius_angles(Vector3::new(2.0, 0.0, 0.0), 1.0, 0.0, FRAC_PI_2);
         let block_entities = vec![EntityType::Arc(arc)];
 
         let insert = Insert::new("B", Vector3::new(10.0, 20.0, 0.0)).with_scale(-1.0, 1.0, 1.0);
@@ -1379,9 +1352,7 @@ mod tests {
         if t1 <= e.start_parameter {
             t1 += TAU;
         }
-        let pt = |t: f64| {
-            center_wcs + u * (major_len * t.cos()) + v * (minor_len * t.sin())
-        };
+        let pt = |t: f64| center_wcs + u * (major_len * t.cos()) + v * (minor_len * t.sin());
         let mid = e.start_parameter + (t1 - e.start_parameter) * 0.5;
         (pt(e.start_parameter), pt(mid), pt(t1))
     }
@@ -1404,7 +1375,10 @@ mod tests {
             //  end   (0,1) → (0,1)
             let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
             assert!(approx_vec(start, Vector3::new(-2.0, 0.0, 0.0)));
-            assert!(approx_vec(mid, Vector3::new(-2.0 * inv_sqrt2, inv_sqrt2, 0.0)));
+            assert!(approx_vec(
+                mid,
+                Vector3::new(-2.0 * inv_sqrt2, inv_sqrt2, 0.0)
+            ));
             assert!(approx_vec(end, Vector3::new(0.0, 1.0, 0.0)));
         } else {
             panic!("expected Ellipse for non-uniform mirrored scale");

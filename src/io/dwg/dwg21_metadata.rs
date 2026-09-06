@@ -10,9 +10,9 @@
 //!
 //! Based on the reference `Dwg21CompressedMetadata` class.
 
-use std::io::Cursor;
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use crate::error::DxfError;
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use std::io::Cursor;
 
 /// Decompressed metadata from the AC1021 file header.
 ///
@@ -212,36 +212,51 @@ impl Dwg21CompressedMetadata {
         // Write all 34 fields in order — must match from_bytes() exactly
         buf.write_u64::<LittleEndian>(self.header_size).unwrap();
         buf.write_u64::<LittleEndian>(self.file_size).unwrap();
-        buf.write_u64::<LittleEndian>(self.pages_map_crc_compressed).unwrap();
-        buf.write_u64::<LittleEndian>(self.pages_map_correction_factor).unwrap();
-        buf.write_u64::<LittleEndian>(self.pages_map_crc_seed).unwrap();
+        buf.write_u64::<LittleEndian>(self.pages_map_crc_compressed)
+            .unwrap();
+        buf.write_u64::<LittleEndian>(self.pages_map_correction_factor)
+            .unwrap();
+        buf.write_u64::<LittleEndian>(self.pages_map_crc_seed)
+            .unwrap();
         buf.write_u64::<LittleEndian>(self.map2_offset).unwrap();
         buf.write_u64::<LittleEndian>(self.map2_id).unwrap();
-        buf.write_u64::<LittleEndian>(self.pages_map_offset).unwrap();
+        buf.write_u64::<LittleEndian>(self.pages_map_offset)
+            .unwrap();
         buf.write_u64::<LittleEndian>(self.pages_map_id).unwrap();
         buf.write_u64::<LittleEndian>(self.header2_offset).unwrap();
-        buf.write_u64::<LittleEndian>(self.pages_map_size_compressed).unwrap();
-        buf.write_u64::<LittleEndian>(self.pages_map_size_uncompressed).unwrap();
+        buf.write_u64::<LittleEndian>(self.pages_map_size_compressed)
+            .unwrap();
+        buf.write_u64::<LittleEndian>(self.pages_map_size_uncompressed)
+            .unwrap();
         buf.write_u64::<LittleEndian>(self.pages_amount).unwrap();
         buf.write_u64::<LittleEndian>(self.pages_max_id).unwrap();
         buf.write_u64::<LittleEndian>(self.unknown_0x20).unwrap();
         buf.write_u64::<LittleEndian>(self.unknown_0x40).unwrap();
-        buf.write_u64::<LittleEndian>(self.pages_map_crc_uncompressed).unwrap();
+        buf.write_u64::<LittleEndian>(self.pages_map_crc_uncompressed)
+            .unwrap();
         buf.write_u64::<LittleEndian>(self.unknown_0xf800).unwrap();
         buf.write_u64::<LittleEndian>(self.unknown_4).unwrap();
         buf.write_u64::<LittleEndian>(self.unknown_1).unwrap();
         buf.write_u64::<LittleEndian>(self.sections_amount).unwrap();
-        buf.write_u64::<LittleEndian>(self.sections_map_crc_uncompressed).unwrap();
-        buf.write_u64::<LittleEndian>(self.sections_map_size_compressed).unwrap();
-        buf.write_u64::<LittleEndian>(self.sections_map2_id).unwrap();
+        buf.write_u64::<LittleEndian>(self.sections_map_crc_uncompressed)
+            .unwrap();
+        buf.write_u64::<LittleEndian>(self.sections_map_size_compressed)
+            .unwrap();
+        buf.write_u64::<LittleEndian>(self.sections_map2_id)
+            .unwrap();
         buf.write_u64::<LittleEndian>(self.sections_map_id).unwrap();
-        buf.write_u64::<LittleEndian>(self.sections_map_size_uncompressed).unwrap();
-        buf.write_u64::<LittleEndian>(self.sections_map_crc_compressed).unwrap();
-        buf.write_u64::<LittleEndian>(self.sections_map_correction_factor).unwrap();
-        buf.write_u64::<LittleEndian>(self.sections_map_crc_seed).unwrap();
+        buf.write_u64::<LittleEndian>(self.sections_map_size_uncompressed)
+            .unwrap();
+        buf.write_u64::<LittleEndian>(self.sections_map_crc_compressed)
+            .unwrap();
+        buf.write_u64::<LittleEndian>(self.sections_map_correction_factor)
+            .unwrap();
+        buf.write_u64::<LittleEndian>(self.sections_map_crc_seed)
+            .unwrap();
         buf.write_u64::<LittleEndian>(self.stream_version).unwrap();
         buf.write_u64::<LittleEndian>(self.crc_seed).unwrap();
-        buf.write_u64::<LittleEndian>(self.crc_seed_encoded).unwrap();
+        buf.write_u64::<LittleEndian>(self.crc_seed_encoded)
+            .unwrap();
         buf.write_u64::<LittleEndian>(self.random_seed).unwrap();
         buf.write_u64::<LittleEndian>(self.header_crc64).unwrap();
         debug_assert_eq!(buf.len(), METADATA_SIZE);
@@ -254,25 +269,65 @@ impl std::fmt::Display for Dwg21CompressedMetadata {
         writeln!(f, "AC1021 Compressed Metadata:")?;
         writeln!(f, "  Header Size:                {:#X}", self.header_size)?;
         writeln!(f, "  File Size:                  {}", self.file_size)?;
-        writeln!(f, "  Pages Map CRC (compressed): {:#018X}", self.pages_map_crc_compressed)?;
-        writeln!(f, "  Pages Map Correction Factor: {}", self.pages_map_correction_factor)?;
-        writeln!(f, "  Pages Map CRC Seed:         {:#018X}", self.pages_map_crc_seed)?;
+        writeln!(
+            f,
+            "  Pages Map CRC (compressed): {:#018X}",
+            self.pages_map_crc_compressed
+        )?;
+        writeln!(
+            f,
+            "  Pages Map Correction Factor: {}",
+            self.pages_map_correction_factor
+        )?;
+        writeln!(
+            f,
+            "  Pages Map CRC Seed:         {:#018X}",
+            self.pages_map_crc_seed
+        )?;
         writeln!(f, "  Map2 Offset:                {:#X}", self.map2_offset)?;
         writeln!(f, "  Map2 ID:                    {}", self.map2_id)?;
-        writeln!(f, "  Pages Map Offset:           {:#X}", self.pages_map_offset)?;
+        writeln!(
+            f,
+            "  Pages Map Offset:           {:#X}",
+            self.pages_map_offset
+        )?;
         writeln!(f, "  Pages Map ID:               {}", self.pages_map_id)?;
-        writeln!(f, "  Header2 Offset:             {:#X}", self.header2_offset)?;
-        writeln!(f, "  Pages Map Size Compressed:  {}", self.pages_map_size_compressed)?;
-        writeln!(f, "  Pages Map Size Uncompressed: {}", self.pages_map_size_uncompressed)?;
+        writeln!(
+            f,
+            "  Header2 Offset:             {:#X}",
+            self.header2_offset
+        )?;
+        writeln!(
+            f,
+            "  Pages Map Size Compressed:  {}",
+            self.pages_map_size_compressed
+        )?;
+        writeln!(
+            f,
+            "  Pages Map Size Uncompressed: {}",
+            self.pages_map_size_uncompressed
+        )?;
         writeln!(f, "  Pages Amount:               {}", self.pages_amount)?;
         writeln!(f, "  Pages Max ID:               {}", self.pages_max_id)?;
         writeln!(f, "  Sections Amount:            {}", self.sections_amount)?;
         writeln!(f, "  Sections Map ID:            {}", self.sections_map_id)?;
         writeln!(f, "  Stream Version:             {}", self.stream_version)?;
         writeln!(f, "  CRC Seed:                   {:#018X}", self.crc_seed)?;
-        writeln!(f, "  CRC Seed Encoded:           {:#018X}", self.crc_seed_encoded)?;
-        writeln!(f, "  Random Seed:                {:#018X}", self.random_seed)?;
-        writeln!(f, "  Header CRC-64:              {:#018X}", self.header_crc64)?;
+        writeln!(
+            f,
+            "  CRC Seed Encoded:           {:#018X}",
+            self.crc_seed_encoded
+        )?;
+        writeln!(
+            f,
+            "  Random Seed:                {:#018X}",
+            self.random_seed
+        )?;
+        writeln!(
+            f,
+            "  Header CRC-64:              {:#018X}",
+            self.header_crc64
+        )?;
         Ok(())
     }
 }
@@ -374,32 +429,62 @@ mod tests {
         // Verify all 34 fields survive the roundtrip
         assert_eq!(original.header_size, parsed.header_size);
         assert_eq!(original.file_size, parsed.file_size);
-        assert_eq!(original.pages_map_crc_compressed, parsed.pages_map_crc_compressed);
-        assert_eq!(original.pages_map_correction_factor, parsed.pages_map_correction_factor);
+        assert_eq!(
+            original.pages_map_crc_compressed,
+            parsed.pages_map_crc_compressed
+        );
+        assert_eq!(
+            original.pages_map_correction_factor,
+            parsed.pages_map_correction_factor
+        );
         assert_eq!(original.pages_map_crc_seed, parsed.pages_map_crc_seed);
         assert_eq!(original.map2_offset, parsed.map2_offset);
         assert_eq!(original.map2_id, parsed.map2_id);
         assert_eq!(original.pages_map_offset, parsed.pages_map_offset);
         assert_eq!(original.pages_map_id, parsed.pages_map_id);
         assert_eq!(original.header2_offset, parsed.header2_offset);
-        assert_eq!(original.pages_map_size_compressed, parsed.pages_map_size_compressed);
-        assert_eq!(original.pages_map_size_uncompressed, parsed.pages_map_size_uncompressed);
+        assert_eq!(
+            original.pages_map_size_compressed,
+            parsed.pages_map_size_compressed
+        );
+        assert_eq!(
+            original.pages_map_size_uncompressed,
+            parsed.pages_map_size_uncompressed
+        );
         assert_eq!(original.pages_amount, parsed.pages_amount);
         assert_eq!(original.pages_max_id, parsed.pages_max_id);
         assert_eq!(original.unknown_0x20, parsed.unknown_0x20);
         assert_eq!(original.unknown_0x40, parsed.unknown_0x40);
-        assert_eq!(original.pages_map_crc_uncompressed, parsed.pages_map_crc_uncompressed);
+        assert_eq!(
+            original.pages_map_crc_uncompressed,
+            parsed.pages_map_crc_uncompressed
+        );
         assert_eq!(original.unknown_0xf800, parsed.unknown_0xf800);
         assert_eq!(original.unknown_4, parsed.unknown_4);
         assert_eq!(original.unknown_1, parsed.unknown_1);
         assert_eq!(original.sections_amount, parsed.sections_amount);
-        assert_eq!(original.sections_map_crc_uncompressed, parsed.sections_map_crc_uncompressed);
-        assert_eq!(original.sections_map_size_compressed, parsed.sections_map_size_compressed);
+        assert_eq!(
+            original.sections_map_crc_uncompressed,
+            parsed.sections_map_crc_uncompressed
+        );
+        assert_eq!(
+            original.sections_map_size_compressed,
+            parsed.sections_map_size_compressed
+        );
         assert_eq!(original.sections_map2_id, parsed.sections_map2_id);
         assert_eq!(original.sections_map_id, parsed.sections_map_id);
-        assert_eq!(original.sections_map_size_uncompressed, parsed.sections_map_size_uncompressed);
-        assert_eq!(original.sections_map_crc_compressed, parsed.sections_map_crc_compressed);
-        assert_eq!(original.sections_map_correction_factor, parsed.sections_map_correction_factor);
+        assert_eq!(
+            original.sections_map_size_uncompressed,
+            parsed.sections_map_size_uncompressed
+        );
+        assert_eq!(
+            original.sections_map_crc_compressed,
+            parsed.sections_map_crc_compressed
+        );
+        assert_eq!(
+            original.sections_map_correction_factor,
+            parsed.sections_map_correction_factor
+        );
         assert_eq!(original.sections_map_crc_seed, parsed.sections_map_crc_seed);
         assert_eq!(original.stream_version, parsed.stream_version);
         assert_eq!(original.crc_seed, parsed.crc_seed);

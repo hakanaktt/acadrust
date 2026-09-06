@@ -2,9 +2,9 @@
 
 #![cfg(feature = "import")]
 
+use acadrust::entities::EntityType;
 use acadrust::io::import::stl::StlImporter;
 use acadrust::io::import::ImportConfig;
-use acadrust::entities::EntityType;
 use acadrust::types::Vector3;
 
 // ─── ASCII STL tests ─────────────────────────────────────────────────────
@@ -119,8 +119,7 @@ fn test_import_ascii_stl_no_merge() {
     let mut config = ImportConfig::default();
     config.merge_vertices = false;
 
-    let importer = StlImporter::from_bytes(ASCII_CUBE_STL.as_bytes().to_vec())
-        .with_config(config);
+    let importer = StlImporter::from_bytes(ASCII_CUBE_STL.as_bytes().to_vec()).with_config(config);
     let doc = importer.import().unwrap();
 
     let entities: Vec<_> = doc.entities().collect();
@@ -257,7 +256,11 @@ fn test_stl_roundtrip_through_dxf() {
         .expect("DXF read should succeed");
 
     let entities2: Vec<_> = doc2.entities().collect();
-    assert_eq!(entities2.len(), 1, "Should still have 1 entity after roundtrip");
+    assert_eq!(
+        entities2.len(),
+        1,
+        "Should still have 1 entity after roundtrip"
+    );
     if let EntityType::Mesh(mesh) = &entities2[0] {
         assert_eq!(mesh.faces.len(), 1, "Should still have 1 face");
     } else {

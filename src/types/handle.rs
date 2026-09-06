@@ -126,5 +126,3 @@ mod tests {
         assert!(h2 > h1);
     }
 }
-
-

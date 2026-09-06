@@ -239,7 +239,8 @@ impl<'a> Iterator for WmfRecords<'a> {
         if self.off + 6 > self.d.len() {
             return None;
         }
-        let size_w = u32::from_le_bytes(self.d[self.off..self.off + 4].try_into().unwrap()) as usize;
+        let size_w =
+            u32::from_le_bytes(self.d[self.off..self.off + 4].try_into().unwrap()) as usize;
         let func = u16::from_le_bytes(self.d[self.off + 4..self.off + 6].try_into().unwrap());
         let size_b = size_w.checked_mul(2)?;
         if size_b < 6 || self.off + size_b > self.d.len() {
@@ -258,13 +259,12 @@ impl<'a> Iterator for WmfRecords<'a> {
 /// records ("WMFC"). Returns the EMF byte stream if the wrapper carries one.
 fn extract_embedded_emf(data: &[u8]) -> Option<Vec<u8>> {
     // Skip a placeable header if present.
-    let data = if data.len() >= 22
-        && u32::from_le_bytes(data[0..4].try_into().unwrap()) == 0x9AC6_CDD7
-    {
-        &data[22..]
-    } else {
-        data
-    };
+    let data =
+        if data.len() >= 22 && u32::from_le_bytes(data[0..4].try_into().unwrap()) == 0x9AC6_CDD7 {
+            &data[22..]
+        } else {
+            data
+        };
     if data.len() < 18 {
         return None;
     }
@@ -273,7 +273,10 @@ fn extract_embedded_emf(data: &[u8]) -> Option<Vec<u8>> {
         return None;
     }
     let mut emf: Vec<u8> = Vec::new();
-    for (func, params) in (WmfRecords { d: data, off: hs * 2 }) {
+    for (func, params) in (WmfRecords {
+        d: data,
+        off: hs * 2,
+    }) {
         if func != 0x0626 || params.len() < 38 {
             continue;
         }
@@ -359,7 +362,9 @@ impl<'a> Cfb<'a> {
             let Some(sec) = sector(s) else { break };
             let n = sector_size / 4;
             for i in 0..n - 1 {
-                difat.push(u32::from_le_bytes(sec[i * 4..i * 4 + 4].try_into().unwrap()));
+                difat.push(u32::from_le_bytes(
+                    sec[i * 4..i * 4 + 4].try_into().unwrap(),
+                ));
             }
             s = u32::from_le_bytes(sec[(n - 1) * 4..n * 4].try_into().unwrap());
         }

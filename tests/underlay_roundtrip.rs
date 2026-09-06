@@ -23,7 +23,9 @@ fn dwg_roundtrip(doc: &CadDocument) -> CadDocument {
 }
 
 fn dxf_roundtrip(doc: &CadDocument) -> CadDocument {
-    let bytes = DxfWriter::new(doc).write_to_vec().expect("DXF write failed");
+    let bytes = DxfWriter::new(doc)
+        .write_to_vec()
+        .expect("DXF write failed");
     DxfReader::from_reader(Cursor::new(bytes))
         .expect("DXF reader init failed")
         .read()
@@ -82,7 +84,11 @@ fn assert_fields(u: &Underlay, kind: UnderlayType, label: &str) {
     );
     assert_eq!(u.contrast, 75, "{label}: contrast");
     assert_eq!(u.fade, 20, "{label}: fade");
-    assert_eq!(u.definition_handle, Handle::new(0x2A), "{label}: def handle");
+    assert_eq!(
+        u.definition_handle,
+        Handle::new(0x2A),
+        "{label}: def handle"
+    );
     assert_eq!(
         u.clip_boundary_vertices.len(),
         3,
@@ -133,7 +139,10 @@ fn extract_definition(doc: &CadDocument) -> UnderlayDefinition {
 
 fn assert_def(d: &UnderlayDefinition, kind: UnderlayType, label: &str) {
     assert_eq!(d.underlay_type, kind, "{label}: def underlay type");
-    assert_eq!(d.file_path, "C:/refs/site-plan.pdf", "{label}: def file path");
+    assert_eq!(
+        d.file_path, "C:/refs/site-plan.pdf",
+        "{label}: def file path"
+    );
     assert_eq!(d.page_name, "Sheet1", "{label}: def page name");
     assert_eq!(d.handle, Handle::new(0x400), "{label}: def handle");
 }

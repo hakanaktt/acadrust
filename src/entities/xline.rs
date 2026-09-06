@@ -245,7 +245,7 @@ impl Entity for XLine {
     fn entity_type(&self) -> &'static str {
         "XLINE"
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_xline(self, transform);
     }
@@ -257,10 +257,7 @@ mod tests {
 
     #[test]
     fn test_xline_creation() {
-        let xline = XLine::new(
-            Vector3::new(1.0, 2.0, 3.0),
-            Vector3::new(2.0, 0.0, 0.0),
-        );
+        let xline = XLine::new(Vector3::new(1.0, 2.0, 3.0), Vector3::new(2.0, 0.0, 0.0));
         assert_eq!(xline.base_point, Vector3::new(1.0, 2.0, 3.0));
         assert!((xline.direction.length() - 1.0).abs() < 1e-10);
         assert!((xline.direction.x - 1.0).abs() < 1e-10);
@@ -268,10 +265,7 @@ mod tests {
 
     #[test]
     fn test_xline_from_points() {
-        let xline = XLine::from_points(
-            Vector3::new(0.0, 0.0, 0.0),
-            Vector3::new(10.0, 0.0, 0.0),
-        );
+        let xline = XLine::from_points(Vector3::new(0.0, 0.0, 0.0), Vector3::new(10.0, 0.0, 0.0));
         assert_eq!(xline.base_point, Vector3::ZERO);
         assert!((xline.direction.x - 1.0).abs() < 1e-10);
     }
@@ -279,10 +273,10 @@ mod tests {
     #[test]
     fn test_xline_point_at() {
         let xline = XLine::horizontal(Vector3::ZERO);
-        
+
         let point_pos = xline.point_at(5.0);
         assert_eq!(point_pos, Vector3::new(5.0, 0.0, 0.0));
-        
+
         let point_neg = xline.point_at(-5.0);
         assert_eq!(point_neg, Vector3::new(-5.0, 0.0, 0.0));
     }
@@ -290,11 +284,11 @@ mod tests {
     #[test]
     fn test_xline_closest_point() {
         let xline = XLine::horizontal(Vector3::ZERO);
-        
+
         // Point above the line
         let closest = xline.closest_point(Vector3::new(5.0, 3.0, 0.0));
         assert_eq!(closest, Vector3::new(5.0, 0.0, 0.0));
-        
+
         // Point behind the base point (should still work for xlines)
         let closest = xline.closest_point(Vector3::new(-5.0, 3.0, 0.0));
         assert_eq!(closest, Vector3::new(-5.0, 0.0, 0.0));
@@ -325,7 +319,7 @@ mod tests {
     fn test_xline_intersection() {
         let xline1 = XLine::horizontal(Vector3::ZERO);
         let xline2 = XLine::vertical(Vector3::new(5.0, 0.0, 0.0));
-        
+
         let intersection = xline1.intersection(&xline2, 1e-10);
         assert!(intersection.is_some());
         let point = intersection.unwrap();
@@ -337,7 +331,7 @@ mod tests {
     fn test_xline_no_intersection_parallel() {
         let xline1 = XLine::horizontal(Vector3::ZERO);
         let xline2 = XLine::horizontal(Vector3::new(0.0, 5.0, 0.0));
-        
+
         let intersection = xline1.intersection(&xline2, 1e-10);
         assert!(intersection.is_none());
     }
@@ -357,4 +351,3 @@ mod tests {
         assert!((xline.direction.x - xline.direction.y).abs() < 1e-10);
     }
 }
-

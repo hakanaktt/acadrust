@@ -23,28 +23,22 @@
 //!
 //! Based on ODA spec sections 5.1–5.13.
 
-use std::io::{Write, Seek, SeekFrom, Cursor};
 use byteorder::{LittleEndian, WriteBytesExt};
+use std::io::{Cursor, Seek, SeekFrom, Write};
 
+use super::section_definition::{ac21_section_info, names};
 use crate::error::DxfError;
-use crate::types::DxfVersion;
-use super::section_definition::{names, ac21_section_info};
 use crate::io::dwg::compressor_ac21::compress_ac21;
 use crate::io::dwg::crc::{
-    dwg_ac21_normal_crc64,
-    dwg_ac21_normal_crc64_seed1,
-    dwg_ac21_mirrored_crc64,
-    dwg_ac21_check_data_normal_crc64,
-    dwg_ac21_check_data_mirrored_crc64,
-    dwg_ac21_header_crc64,
+    dwg_ac21_check_data_mirrored_crc64, dwg_ac21_check_data_normal_crc64, dwg_ac21_header_crc64,
+    dwg_ac21_mirrored_crc64, dwg_ac21_normal_crc64, dwg_ac21_normal_crc64_seed1,
     dwg_ac21_page_checksum,
 };
 use crate::io::dwg::dwg21_metadata::{Dwg21CompressedMetadata, METADATA_SIZE};
 use crate::io::dwg::reed_solomon::{
-    reed_solomon_encode,
-    RS_N, RS_SYSTEM_K, RS_SYSTEM_PRIM_POLY,
-    RS_DATA_K, RS_DATA_PRIM_POLY,
+    reed_solomon_encode, RS_DATA_K, RS_DATA_PRIM_POLY, RS_N, RS_SYSTEM_K, RS_SYSTEM_PRIM_POLY,
 };
+use crate::types::DxfVersion;
 
 // ════════════════════════════════════════════════════════════════════════════
 //  Constants
@@ -109,7 +103,9 @@ impl CrcRandomEncoder {
 
         // LCG init for entries 0 and 1 (MSLCG: val * 0x343FD + 0x269EC3)
         table[0] = (seed as u32).wrapping_mul(0x343fd).wrapping_add(0x269ec3);
-        table[1] = ((seed >> 32) as u32).wrapping_mul(0x343fd).wrapping_add(0x269ec3);
+        table[1] = ((seed >> 32) as u32)
+            .wrapping_mul(0x343fd)
+            .wrapping_add(0x269ec3);
 
         // MT-style init for entries 2..624
         let mut value = table[1];
@@ -144,8 +140,7 @@ impl CrcRandomEncoder {
         if self.index >= 0x270 {
             // Mersenne Twister twist step
             for i in 0..0x270 {
-                let y = (self.table[i] & 0x80000000)
-                    | (self.table[(i + 1) % 0x270] & 0x7FFFFFFF);
+                let y = (self.table[i] & 0x80000000) | (self.table[(i + 1) % 0x270] & 0x7FFFFFFF);
                 self.table[i] = self.table[(i + 0x18D) % 0x270] ^ (y >> 1);
                 if y & 1 != 0 {
                     self.table[i] ^= 0x9908B0DF;
@@ -175,16 +170,36 @@ impl CrcRandomEncoder {
         let mut hi = ((random >> 32) as u32) & 0xf7df7df7u32;
 
         // Place value bits at specific positions
-        if value & 0x200 != 0 { lo |= 0x20; }          // bit 9 → lo bit 5
-        if value & 0x100 != 0 { lo |= 0x800; }         // bit 8 → lo bit 11
-        if value & 0x80 != 0 { lo |= 0x20000; }        // bit 7 → lo bit 17
-        if value & 0x40 != 0 { lo |= 0x800000; }       // bit 6 → lo bit 23
-        if value & 0x20 != 0 { lo |= 0x20000000; }     // bit 5 → lo bit 29
-        if value & 0x10 != 0 { hi |= 0x08; }           // bit 4 → hi bit 3
-        if value & 0x8 != 0 { hi |= 0x200; }           // bit 3 → hi bit 9
-        if value & 0x4 != 0 { hi |= 0x8000; }          // bit 2 → hi bit 15
-        if value & 0x2 != 0 { hi |= 0x200000; }        // bit 1 → hi bit 21
-        if value & 0x1 != 0 { hi |= 0x8000000; }       // bit 0 → hi bit 27
+        if value & 0x200 != 0 {
+            lo |= 0x20;
+        } // bit 9 → lo bit 5
+        if value & 0x100 != 0 {
+            lo |= 0x800;
+        } // bit 8 → lo bit 11
+        if value & 0x80 != 0 {
+            lo |= 0x20000;
+        } // bit 7 → lo bit 17
+        if value & 0x40 != 0 {
+            lo |= 0x800000;
+        } // bit 6 → lo bit 23
+        if value & 0x20 != 0 {
+            lo |= 0x20000000;
+        } // bit 5 → lo bit 29
+        if value & 0x10 != 0 {
+            hi |= 0x08;
+        } // bit 4 → hi bit 3
+        if value & 0x8 != 0 {
+            hi |= 0x200;
+        } // bit 3 → hi bit 9
+        if value & 0x4 != 0 {
+            hi |= 0x8000;
+        } // bit 2 → hi bit 15
+        if value & 0x2 != 0 {
+            hi |= 0x200000;
+        } // bit 1 → hi bit 21
+        if value & 0x1 != 0 {
+            hi |= 0x8000000;
+        } // bit 0 → hi bit 27
 
         (lo as u64) | ((hi as u64) << 32)
     }
@@ -338,13 +353,11 @@ fn get_aligned_page_size(page_size: u64) -> u64 {
 #[allow(dead_code)]
 fn get_system_page_size(data_size: u64) -> u64 {
     // Align to CRC block size
-    let aligned = (data_size + CRC_BLOCK_SIZE as u64 - 1)
-        & !(CRC_BLOCK_SIZE as u64 - 1);
+    let aligned = (data_size + CRC_BLOCK_SIZE as u64 - 1) & !(CRC_BLOCK_SIZE as u64 - 1);
 
     // The page should fit the data at least 2 times (with RS overhead)
-    let file_page_size = ((aligned * 2) + RS_SYSTEM_K as u64 - 1)
-        / RS_SYSTEM_K as u64
-        * RS_N as u64;
+    let file_page_size =
+        ((aligned * 2) + RS_SYSTEM_K as u64 - 1) / RS_SYSTEM_K as u64 * RS_N as u64;
 
     if file_page_size < MIN_SYSTEM_PAGE_SIZE as u64 {
         MIN_SYSTEM_PAGE_SIZE as u64
@@ -390,7 +403,7 @@ fn rs_encode_data_page_interleaved(data: &[u8], _encoding: u64) -> Vec<u8> {
     // but those are encoded separately in write_system_page().
     // The encoding field (1=stored, 4=compressed) determines only whether
     // LZ77 compression is applied, NOT the RS block size.
-    let block_size = RS_DATA_K;      // 251
+    let block_size = RS_DATA_K; // 251
     let prim_poly = RS_DATA_PRIM_POLY;
 
     // Match reader's factor computation:
@@ -407,13 +420,7 @@ fn rs_encode_data_page_interleaved(data: &[u8], _encoding: u64) -> Vec<u8> {
 
     // RS-encode with interleaving
     let mut encoded = vec![0u8; factor * RS_N];
-    reed_solomon_encode(
-        &padded_data,
-        &mut encoded,
-        factor,
-        block_size,
-        prim_poly,
-    );
+    reed_solomon_encode(&padded_data, &mut encoded, factor, block_size, prim_poly);
 
     encoded
 }
@@ -488,16 +495,13 @@ impl DwgFileHeaderWriterAC21 {
         let perf = std::env::var_os("PERF").is_some();
         let started = web_time::Instant::now();
         let hash_code = ac21_section_info::hash_code(name)
-            .ok_or_else(|| DxfError::InvalidFormat(
-                format!("Unknown AC21 section: {}", name),
-            ))?;
+            .ok_or_else(|| DxfError::InvalidFormat(format!("Unknown AC21 section: {}", name)))?;
         let encoding = ac21_section_info::encoding(name).unwrap_or(1);
         // We don't implement XOR obfuscation (encryption=2), so always
         // store encryption=0 in the section map.  AutoCAD will read the
         // data without attempting to decrypt, which is correct.
         let encryption: u64 = 0;
-        let max_page_size = ac21_section_info::page_size(name)
-            .unwrap_or(0xF800); // Default for variable-size sections
+        let max_page_size = ac21_section_info::page_size(name).unwrap_or(0xF800); // Default for variable-size sections
 
         let mut section = AC21SectionInfo {
             name: name.to_string(),
@@ -519,13 +523,12 @@ impl DwgFileHeaderWriterAC21 {
         let batch_bytes = page_size.saturating_mul(batch_pages).max(page_size);
         for (batch_index, batch) in data.chunks(batch_bytes).enumerate() {
             let first_page = batch_index.saturating_mul(batch_pages);
-            let encoded: Vec<_> =
-                map_chunks_indexed(batch, page_size, |index, bytes| {
-                    (
-                        (first_page + index) as u64 * max_page_size,
-                        encode_data_page(bytes, encoding, skip_lz77),
-                    )
-                });
+            let encoded: Vec<_> = map_chunks_indexed(batch, page_size, |index, bytes| {
+                (
+                    (first_page + index) as u64 * max_page_size,
+                    encode_data_page(bytes, encoding, skip_lz77),
+                )
+            });
 
             for (offset, page) in encoded {
                 let page_record =
@@ -562,10 +565,7 @@ impl DwgFileHeaderWriterAC21 {
     /// [Section map copy]
     /// [0x400 File header copy]
     /// ```
-    pub fn write_file<W: Write + Seek>(
-        &mut self,
-        output: &mut W,
-    ) -> Result<(), DxfError> {
+    pub fn write_file<W: Write + Seek>(&mut self, output: &mut W) -> Result<(), DxfError> {
         // Initialize CRC seed (0 matches AutoCAD reference files)
         self.crc_seed = 0;
 
@@ -589,21 +589,22 @@ impl DwgFileHeaderWriterAC21 {
 
         // Build the page map: data pages first (lowest file offset after
         // header), then section map pages, then page map pages (at end).
-        let page_map_data = self.build_page_map_ordered(
-            page_map_page_id, page_map2_page_id, pm_page_size as i64,
-        );
+        let page_map_data =
+            self.build_page_map_ordered(page_map_page_id, page_map2_page_id, pm_page_size as i64);
 
         // Write page map pages at current end-of-file position
         let pm_abs_offset = output.seek(SeekFrom::Current(0))?;
         let page_map_result = self.write_system_page_at(
-            output, &page_map_data,
+            output,
+            &page_map_data,
             pm_abs_offset,
             page_map_page_id,
             pm_page_size,
         )?;
         let pm_abs_offset2 = output.seek(SeekFrom::Current(0))?;
         let _page_map2_result = self.write_system_page_at(
-            output, &page_map_data,
+            output,
+            &page_map_data,
             pm_abs_offset2,
             page_map2_page_id,
             pm_page_size,
@@ -726,7 +727,7 @@ impl DwgFileHeaderWriterAC21 {
         // Recompute with updated metadata (same RNG order as pass 1)
         let mut rng2 = CrcRandomEncoder::new(random_seed);
         metadata.sections_map_crc_seed = rng2.encode_crc_seed(self.crc_seed); // §5.2.1.1.3
-        metadata.pages_map_crc_seed = rng2.encode_crc_seed(self.crc_seed);    // §5.2.1.1.4
+        metadata.pages_map_crc_seed = rng2.encode_crc_seed(self.crc_seed); // §5.2.1.1.4
         let check_random1_2 = rng2.next_u64();
         let check_random2_2 = rng2.next_u64();
         let check_encoded_seed_2 = rng2.encode_crc_seed(self.crc_seed);
@@ -847,11 +848,7 @@ impl DwgFileHeaderWriterAC21 {
     ) -> (Vec<u8>, u64, u64, u64, u64, u64) {
         // CRCs on uncompressed data (Mirrored CRC-64 per spec §5.3, §7.2)
         let uncompressed_size = data.len() as u64;
-        let crc_uncompressed = dwg_ac21_mirrored_crc64(
-            self.crc_seed,
-            data.len() as u32,
-            data,
-        );
+        let crc_uncompressed = dwg_ac21_mirrored_crc64(self.crc_seed, data.len() as u32, data);
 
         // Compress
         let compressed = compress_ac21(data);
@@ -864,11 +861,8 @@ impl DwgFileHeaderWriterAC21 {
         };
 
         // Compressed CRC (Mirrored CRC-64 per spec §5.3, §7.2)
-        let crc_compressed = dwg_ac21_mirrored_crc64(
-            self.crc_seed,
-            page_data.len() as u32,
-            page_data,
-        );
+        let crc_compressed =
+            dwg_ac21_mirrored_crc64(self.crc_seed, page_data.len() as u32, page_data);
 
         // Compute correction factor to fill the target page size optimally.
         // max_factor = max RS blocks that fit in the page
@@ -900,7 +894,14 @@ impl DwgFileHeaderWriterAC21 {
             RS_SYSTEM_PRIM_POLY,
         );
 
-        (encoded, compressed_size, uncompressed_size, crc_compressed, crc_uncompressed, correction_factor)
+        (
+            encoded,
+            compressed_size,
+            uncompressed_size,
+            crc_compressed,
+            crc_uncompressed,
+            correction_factor,
+        )
     }
 
     /// Write a system page (section map) per spec §5.3.
@@ -917,8 +918,14 @@ impl DwgFileHeaderWriterAC21 {
 
         // Compute page size from uncompressed data size per spec §5.3.1
         let target_page_size = get_system_page_size(data.len() as u64) as usize;
-        let (encoded, compressed_size, uncompressed_size, crc_compressed, crc_uncompressed, correction_factor)
-            = self.encode_system_page(data, target_page_size);
+        let (
+            encoded,
+            compressed_size,
+            uncompressed_size,
+            crc_compressed,
+            crc_uncompressed,
+            correction_factor,
+        ) = self.encode_system_page(data, target_page_size);
 
         // Page size must accommodate the encoded data
         let page_size = align32(encoded.len()).max(target_page_size);
@@ -959,8 +966,14 @@ impl DwgFileHeaderWriterAC21 {
         page_id: i64,
         target_size: usize,
     ) -> Result<SystemPageResult, DxfError> {
-        let (encoded, compressed_size, uncompressed_size, crc_compressed, crc_uncompressed, correction_factor)
-            = self.encode_system_page(data, target_size);
+        let (
+            encoded,
+            compressed_size,
+            uncompressed_size,
+            crc_compressed,
+            crc_uncompressed,
+            correction_factor,
+        ) = self.encode_system_page(data, target_size);
 
         // Use the larger of encoded size and target size
         let actual_page_size = align32(encoded.len()).max(target_size);
@@ -999,7 +1012,10 @@ impl DwgFileHeaderWriterAC21 {
         // Sort sections by the spec section-map order.
         let mut sorted: Vec<&AC21SectionInfo> = self.sections.iter().collect();
         sorted.sort_by_key(|s| {
-            map_order.iter().position(|&n| n == s.name).unwrap_or(usize::MAX)
+            map_order
+                .iter()
+                .position(|&n| n == s.name)
+                .unwrap_or(usize::MAX)
         });
 
         for section in &sorted {
@@ -1020,7 +1036,7 @@ impl DwgFileHeaderWriterAC21 {
             let name_byte_len = if name_chars.is_empty() {
                 0u64
             } else {
-                (name_chars.len() as u64 + 1) * 2  // chars + null, each 2 bytes
+                (name_chars.len() as u64 + 1) * 2 // chars + null, each 2 bytes
             };
             stream.write_u64::<LittleEndian>(name_byte_len)?;
             // 0x28: Unknown (8 bytes)
@@ -1109,7 +1125,11 @@ impl DwgFileHeaderWriterAC21 {
         // Step 3: Compress metadata (spec §5.2.1.3)
         let compressed = compress_ac21(&meta_bytes);
         let use_compressed = compressed.len() < meta_bytes.len();
-        let compr_data = if use_compressed { &compressed } else { &meta_bytes };
+        let compr_data = if use_compressed {
+            &compressed
+        } else {
+            &meta_bytes
+        };
         let compr_len = if use_compressed {
             compr_data.len() as i32
         } else {
@@ -1144,7 +1164,7 @@ impl DwgFileHeaderWriterAC21 {
         // 0x18: Compressed data size (4 bytes) + Length2 (4 bytes)
         block.extend_from_slice(&compr_len.to_le_bytes());
         block.extend_from_slice(&0i32.to_le_bytes()); // Length2 = 0 per spec/reference
-        // 0x20: Compressed (or raw) data
+                                                      // 0x20: Compressed (or raw) data
         block.extend_from_slice(compr_data);
 
         // Pad block to multiple of 8 using random padding (spec §5.11)
@@ -1191,8 +1211,7 @@ impl DwgFileHeaderWriterAC21 {
         }
 
         // Step 7: Overwrite last 0x28 bytes with check data (spec §5.2.1.7)
-        page[RS_DATA_IN_HEADER..FILE_HEADER_PAGE_SIZE]
-            .copy_from_slice(check_data);
+        page[RS_DATA_IN_HEADER..FILE_HEADER_PAGE_SIZE].copy_from_slice(check_data);
 
         Ok(page)
     }
@@ -1358,7 +1377,10 @@ mod tests {
         // The encoding should be deterministic (same seed + RNG state = same result)
         let mut rng2 = CrcRandomEncoder::new(42);
         let encoded2 = rng2.encode_crc_seed(seed);
-        assert_eq!(encoded, encoded2, "Same RNG state should produce same encoding");
+        assert_eq!(
+            encoded, encoded2,
+            "Same RNG state should produce same encoding"
+        );
     }
 
     #[test]
@@ -1446,7 +1468,9 @@ mod tests {
         let mut writer = DwgFileHeaderWriterAC21::new(DxfVersion::AC1021, &mut output).unwrap();
 
         let data = vec![0xAA; 100];
-        writer.add_section(&mut output, names::HEADER, &data).unwrap();
+        writer
+            .add_section(&mut output, names::HEADER, &data)
+            .unwrap();
 
         assert_eq!(writer.sections.len(), 1);
         assert_eq!(writer.sections[0].pages.len(), 1);
@@ -1461,7 +1485,9 @@ mod tests {
         // AcDb:Header has page_size 0x800 = 2048
         // Data larger than 2 pages
         let data = vec![0xBB; 0x800 * 2 + 100];
-        writer.add_section(&mut output, names::HEADER, &data).unwrap();
+        writer
+            .add_section(&mut output, names::HEADER, &data)
+            .unwrap();
 
         assert_eq!(writer.sections.len(), 1);
         assert_eq!(writer.sections[0].pages.len(), 3);
@@ -1475,7 +1501,9 @@ mod tests {
 
         // Force multiple AcDbObjects pages so we exercise real data-page bookkeeping.
         let data = vec![0x5A; 0xF800 * 2 + 321];
-        writer.add_section(&mut output, names::ACDB_OBJECTS, &data).unwrap();
+        writer
+            .add_section(&mut output, names::ACDB_OBJECTS, &data)
+            .unwrap();
 
         let section = &writer.sections[0];
         assert_eq!(section.pages.len(), writer.page_records.len());
@@ -1485,8 +1513,10 @@ mod tests {
         // They are intentionally different (matches AutoCAD behavior: spec §5.2).
         let expected_max = section.max_page_size;
         for page in &section.pages {
-            assert_eq!(page.page_size, expected_max,
-                "section map page_size should be max_page_size");
+            assert_eq!(
+                page.page_size, expected_max,
+                "section map page_size should be max_page_size"
+            );
             let _record = writer
                 .page_records
                 .iter()
@@ -1500,8 +1530,12 @@ mod tests {
         let mut output = Cursor::new(Vec::new());
         let mut writer = DwgFileHeaderWriterAC21::new(DxfVersion::AC1021, &mut output).unwrap();
 
-        writer.add_section(&mut output, names::HEADER, &vec![0xAA; 100]).unwrap();
-        writer.add_section(&mut output, names::CLASSES, &vec![0xBB; 200]).unwrap();
+        writer
+            .add_section(&mut output, names::HEADER, &vec![0xAA; 100])
+            .unwrap();
+        writer
+            .add_section(&mut output, names::CLASSES, &vec![0xBB; 200])
+            .unwrap();
 
         assert_eq!(writer.sections.len(), 2);
         assert_eq!(writer.sections[0].name, names::HEADER);
@@ -1524,7 +1558,9 @@ mod tests {
         let mut output = Cursor::new(Vec::new());
         let mut writer = DwgFileHeaderWriterAC21::new(DxfVersion::AC1021, &mut output).unwrap();
 
-        writer.add_section(&mut output, names::HEADER, &vec![0xAA; 100]).unwrap();
+        writer
+            .add_section(&mut output, names::HEADER, &vec![0xAA; 100])
+            .unwrap();
 
         let map_data = writer.build_section_map().unwrap();
 
@@ -1541,7 +1577,10 @@ mod tests {
         // Verify SectionNameLength at offset 0x20 is byte count (not char count)
         // "AcDb:Header" = 11 chars + 1 null = 12 × 2 = 24 bytes
         let name_len = u64::from_le_bytes(map_data[0x20..0x28].try_into().unwrap());
-        assert_eq!(name_len, 24, "SectionNameLength should be byte count including null terminator");
+        assert_eq!(
+            name_len, 24,
+            "SectionNameLength should be byte count including null terminator"
+        );
     }
 
     #[test]
@@ -1551,7 +1590,9 @@ mod tests {
         let mut output = Cursor::new(Vec::new());
         let mut writer = DwgFileHeaderWriterAC21::new(DxfVersion::AC1021, &mut output).unwrap();
 
-        writer.add_section(&mut output, names::CLASSES, &vec![0xBB; 50]).unwrap();
+        writer
+            .add_section(&mut output, names::CLASSES, &vec![0xBB; 50])
+            .unwrap();
 
         let map_data = writer.build_section_map().unwrap();
 
@@ -1575,7 +1616,9 @@ mod tests {
         let mut output = Cursor::new(Vec::new());
         let mut writer = DwgFileHeaderWriterAC21::new(DxfVersion::AC1021, &mut output).unwrap();
 
-        writer.add_section(&mut output, names::HEADER, &vec![0xAA; 100]).unwrap();
+        writer
+            .add_section(&mut output, names::HEADER, &vec![0xAA; 100])
+            .unwrap();
 
         let map_data = writer.build_page_map_ordered(100, 101, 0x400);
 
@@ -1609,14 +1652,30 @@ mod tests {
         let mut writer = DwgFileHeaderWriterAC21::new(DxfVersion::AC1021, &mut output).unwrap();
 
         // Add minimal sections
-        writer.add_section(&mut output, names::HEADER, &vec![0xAA; 100]).unwrap();
-        writer.add_section(&mut output, names::CLASSES, &vec![0xBB; 50]).unwrap();
-        writer.add_section(&mut output, names::SUMMARY_INFO, &vec![0; 10]).unwrap();
-        writer.add_section(&mut output, names::PREVIEW, &vec![0xCC; 20]).unwrap();
-        writer.add_section(&mut output, names::APP_INFO, &vec![0xDD; 30]).unwrap();
-        writer.add_section(&mut output, names::AUX_HEADER, &vec![0; 50]).unwrap();
-        writer.add_section(&mut output, names::ACDB_OBJECTS, &vec![0xEE; 300]).unwrap();
-        writer.add_section(&mut output, names::HANDLES, &vec![0xFF; 100]).unwrap();
+        writer
+            .add_section(&mut output, names::HEADER, &vec![0xAA; 100])
+            .unwrap();
+        writer
+            .add_section(&mut output, names::CLASSES, &vec![0xBB; 50])
+            .unwrap();
+        writer
+            .add_section(&mut output, names::SUMMARY_INFO, &vec![0; 10])
+            .unwrap();
+        writer
+            .add_section(&mut output, names::PREVIEW, &vec![0xCC; 20])
+            .unwrap();
+        writer
+            .add_section(&mut output, names::APP_INFO, &vec![0xDD; 30])
+            .unwrap();
+        writer
+            .add_section(&mut output, names::AUX_HEADER, &vec![0; 50])
+            .unwrap();
+        writer
+            .add_section(&mut output, names::ACDB_OBJECTS, &vec![0xEE; 300])
+            .unwrap();
+        writer
+            .add_section(&mut output, names::HANDLES, &vec![0xFF; 100])
+            .unwrap();
 
         writer.write_file(&mut output).unwrap();
 
@@ -1638,9 +1697,15 @@ mod tests {
         let mut output = Cursor::new(Vec::new());
         let mut writer = DwgFileHeaderWriterAC21::new(DxfVersion::AC1021, &mut output).unwrap();
 
-        writer.add_section(&mut output, names::HEADER, &vec![0xAA; 100]).unwrap();
-        writer.add_section(&mut output, names::CLASSES, &vec![0xBB; 50]).unwrap();
-        writer.add_section(&mut output, names::PREVIEW, &vec![0xCC; 20]).unwrap();
+        writer
+            .add_section(&mut output, names::HEADER, &vec![0xAA; 100])
+            .unwrap();
+        writer
+            .add_section(&mut output, names::CLASSES, &vec![0xBB; 50])
+            .unwrap();
+        writer
+            .add_section(&mut output, names::PREVIEW, &vec![0xCC; 20])
+            .unwrap();
 
         writer.write_file(&mut output).unwrap();
 
@@ -1656,7 +1721,9 @@ mod tests {
         let mut output = Cursor::new(Vec::new());
         let mut writer = DwgFileHeaderWriterAC21::new(DxfVersion::AC1021, &mut output).unwrap();
 
-        writer.add_section(&mut output, names::HEADER, &vec![0xAA; 100]).unwrap();
+        writer
+            .add_section(&mut output, names::HEADER, &vec![0xAA; 100])
+            .unwrap();
 
         writer.write_file(&mut output).unwrap();
 
@@ -1664,8 +1731,10 @@ mod tests {
 
         // Check data at 0x80 + 0x3D8 = 0x458 should not be all zeros
         let check_data = &data[0x458..0x480];
-        assert!(!check_data.iter().all(|&b| b == 0),
-            "Check data should be non-zero");
+        assert!(
+            !check_data.iter().all(|&b| b == 0),
+            "Check data should be non-zero"
+        );
     }
 
     #[test]
@@ -1673,7 +1742,9 @@ mod tests {
         let mut output = Cursor::new(Vec::new());
         let mut writer = DwgFileHeaderWriterAC21::new(DxfVersion::AC1021, &mut output).unwrap();
 
-        writer.add_section(&mut output, names::HEADER, &vec![0xAA; 100]).unwrap();
+        writer
+            .add_section(&mut output, names::HEADER, &vec![0xAA; 100])
+            .unwrap();
 
         writer.write_file(&mut output).unwrap();
 
@@ -1682,8 +1753,10 @@ mod tests {
         // The last 0x400 bytes should be a copy of the file header at 0x80
         let file_header = &data[0x80..0x480];
         let header_copy = &data[data.len() - FILE_HEADER_PAGE_SIZE..];
-        assert_eq!(file_header, header_copy,
-            "File header copy at end should match header at 0x80");
+        assert_eq!(
+            file_header, header_copy,
+            "File header copy at end should match header at 0x80"
+        );
     }
 
     // ─── RS data page encoding test ─────────────────────────────────

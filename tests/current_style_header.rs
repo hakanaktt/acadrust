@@ -16,7 +16,10 @@ fn dxf_roundtrips_current_style_header_vars() {
     DxfWriter::new(&doc)
         .write_to_file(&path)
         .expect("write dxf");
-    let loaded = DxfReader::from_file(&path).expect("open").read().expect("read");
+    let loaded = DxfReader::from_file(&path)
+        .expect("open")
+        .read()
+        .expect("read");
     let _ = std::fs::remove_file(&path);
 
     assert_eq!(loaded.header.current_text_style_name, "MyText");

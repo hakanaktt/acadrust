@@ -30,5 +30,8 @@ fn main() {
         .read()
         .expect("read roundtrip2");
     println!("entities roundtrip2: {}", doc2.entity_count());
-    println!("objects equal r2 vs r3-read: {}", doc2.objects == doc3.objects);
+    println!(
+        "objects equal r2 vs r3-read: {}",
+        doc2.objects == doc3.objects
+    );
 }

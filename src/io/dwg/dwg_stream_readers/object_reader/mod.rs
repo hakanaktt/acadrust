@@ -13,14 +13,14 @@
 //! Based on the reference `DwgObjectReader.cs`.
 
 pub mod associative;
-pub mod common;
 pub mod class_object;
+pub mod common;
 pub mod data_objects;
 pub mod dgn_linestyle;
-pub mod entities;
-pub mod objects;
 pub mod dynamic_block;
+pub mod entities;
 pub mod field;
+pub mod objects;
 pub mod tables;
 
 use crate::error::{DxfError, Result};
@@ -160,12 +160,7 @@ impl DwgObjectReader {
         dxf_version: DxfVersion,
         handle_map: HashMap<u64, i64>,
     ) -> Result<Self> {
-        Self::with_encoding(
-            data,
-            dxf_version,
-            handle_map,
-            encoding_rs::WINDOWS_1252,
-        )
+        Self::with_encoding(data, dxf_version, handle_map, encoding_rs::WINDOWS_1252)
     }
 
     pub fn with_encoding(
@@ -318,8 +313,7 @@ impl DwgObjectReader {
                 self.dxf_version,
                 self.encoding,
             );
-            let main_data_end =
-                text_reader.set_position_by_flag(flag_position);
+            let main_data_end = text_reader.set_position_by_flag(flag_position);
 
             // Handle reader: starts at bit position handle_start (NOT byte-aligned).
             let mut handle_reader =
@@ -374,20 +368,22 @@ impl DwgObjectReader {
         };
 
         // Create main reader (reads from bit 0)
-        let main_reader = crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader::from_shared_with_encoding(
-            Arc::clone(&merged_data),
-            dwg,
-            self.dxf_version,
-            self.encoding,
-        );
+        let main_reader =
+            crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader::from_shared_with_encoding(
+                Arc::clone(&merged_data),
+                dwg,
+                self.dxf_version,
+                self.encoding,
+            );
 
         // Create handle reader positioned at handle_start_bits
-        let mut handle_reader = crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader::from_shared_with_encoding(
-            merged_data,
-            dwg,
-            self.dxf_version,
-            self.encoding,
-        );
+        let mut handle_reader =
+            crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader::from_shared_with_encoding(
+                merged_data,
+                dwg,
+                self.dxf_version,
+                self.encoding,
+            );
         handle_reader.set_position_in_bits(handle_start_bits);
 
         let mut reader = DwgMergedReader::from_readers(
@@ -888,13 +884,7 @@ impl<'a> PrefixBitReader<'a> {
 
     fn read_bit(&mut self) -> u8 {
         let shift = 7 - self.bit % 8;
-        let value = (self
-            .data
-            .get(self.bit / 8)
-            .copied()
-            .unwrap_or(0)
-            >> shift)
-            & 1;
+        let value = (self.data.get(self.bit / 8).copied().unwrap_or(0) >> shift) & 1;
         self.bit += 1;
         value
     }

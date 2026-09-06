@@ -215,13 +215,9 @@ impl Leader {
         let mut leader = Self::new();
         leader.vertices.push(arrow_point);
         leader.vertices.push(bend_point);
-        
+
         // Add horizontal landing
-        let landing_end = Vector3::new(
-            bend_point.x + landing_length,
-            bend_point.y,
-            bend_point.z,
-        );
+        let landing_end = Vector3::new(bend_point.x + landing_length, bend_point.y, bend_point.z);
         leader.vertices.push(landing_end);
         leader.hookline_enabled = true;
         leader
@@ -290,7 +286,7 @@ impl Leader {
         if self.vertices.len() < 2 {
             return None;
         }
-        
+
         let dir = self.vertices[1] - self.vertices[0];
         if dir.length_squared() > 0.0 {
             Some(dir.normalize())
@@ -450,7 +446,7 @@ impl Entity for Leader {
     fn entity_type(&self) -> &'static str {
         "LEADER"
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_leader(self, transform);
     }
@@ -481,10 +477,7 @@ mod tests {
 
     #[test]
     fn test_leader_two_point() {
-        let leader = Leader::two_point(
-            Vector3::new(0.0, 0.0, 0.0),
-            Vector3::new(10.0, 10.0, 0.0),
-        );
+        let leader = Leader::two_point(Vector3::new(0.0, 0.0, 0.0), Vector3::new(10.0, 10.0, 0.0));
         assert_eq!(leader.vertex_count(), 2);
         assert_eq!(leader.arrow_point(), Some(Vector3::new(0.0, 0.0, 0.0)));
         assert_eq!(leader.end_point(), Some(Vector3::new(10.0, 10.0, 0.0)));
@@ -516,10 +509,10 @@ mod tests {
             Vector3::new(0.0, 0.0, 0.0),
             Vector3::new(20.0, 0.0, 0.0),
         ]);
-        
+
         leader.insert_vertex(1, Vector3::new(10.0, 10.0, 0.0));
         assert_eq!(leader.vertex_count(), 3);
-        
+
         let removed = leader.remove_vertex(1);
         assert_eq!(removed, Some(Vector3::new(10.0, 10.0, 0.0)));
         assert_eq!(leader.vertex_count(), 2);
@@ -541,7 +534,7 @@ mod tests {
             Vector3::new(0.0, 0.0, 0.0),
             Vector3::new(10.0, 0.0, 0.0),
         ]);
-        
+
         let dir = leader.arrow_direction().unwrap();
         assert!((dir.x - 1.0).abs() < 1e-10);
         assert!(dir.y.abs() < 1e-10);
@@ -553,9 +546,9 @@ mod tests {
             Vector3::new(0.0, 0.0, 0.0),
             Vector3::new(10.0, 10.0, 0.0),
         ]);
-        
+
         leader.reverse();
-        
+
         assert_eq!(leader.arrow_point(), Some(Vector3::new(10.0, 10.0, 0.0)));
         assert_eq!(leader.end_point(), Some(Vector3::new(0.0, 0.0, 0.0)));
     }
@@ -566,9 +559,9 @@ mod tests {
             Vector3::new(0.0, 0.0, 0.0),
             Vector3::new(10.0, 10.0, 0.0),
         ]);
-        
+
         leader.translate(Vector3::new(5.0, 5.0, 0.0));
-        
+
         assert_eq!(leader.arrow_point(), Some(Vector3::new(5.0, 5.0, 0.0)));
         assert_eq!(leader.end_point(), Some(Vector3::new(15.0, 15.0, 0.0)));
     }
@@ -582,8 +575,14 @@ mod tests {
 
     #[test]
     fn test_leader_creation_type() {
-        assert_eq!(LeaderCreationType::from_value(0), LeaderCreationType::WithText);
-        assert_eq!(LeaderCreationType::from_value(2), LeaderCreationType::WithBlock);
+        assert_eq!(
+            LeaderCreationType::from_value(0),
+            LeaderCreationType::WithText
+        );
+        assert_eq!(
+            LeaderCreationType::from_value(2),
+            LeaderCreationType::WithBlock
+        );
         assert_eq!(LeaderCreationType::WithBlock.to_value(), 2);
     }
 
@@ -596,7 +595,7 @@ mod tests {
             .with_spline_path()
             .with_dimension_style("ISO-25")
             .with_layer("LEADERS");
-        
+
         assert_eq!(leader.vertex_count(), 2);
         assert!(leader.hookline_enabled);
         assert_eq!(leader.path_type, LeaderPathType::Spline);
@@ -611,7 +610,7 @@ mod tests {
             Vector3::new(10.0, 10.0, 0.0),
             Vector3::new(20.0, 5.0, 0.0),
         ]);
-        
+
         let bbox = leader.bounding_box();
         assert_eq!(bbox.min.x, 0.0);
         assert_eq!(bbox.min.y, 0.0);

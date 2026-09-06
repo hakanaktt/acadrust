@@ -18,19 +18,13 @@ impl Matrix3 {
     /// Create identity matrix
     pub fn identity() -> Self {
         Self {
-            m: [
-                [1.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0],
-                [0.0, 0.0, 1.0],
-            ],
+            m: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
         }
     }
 
     /// Create zero matrix
     pub fn zero() -> Self {
-        Self {
-            m: [[0.0; 3]; 3],
-        }
+        Self { m: [[0.0; 3]; 3] }
     }
 
     /// Create matrix from rows
@@ -45,48 +39,40 @@ impl Matrix3 {
         let cos = angle.cos();
         let sin = angle.sin();
         Self {
-            m: [
-                [cos, -sin, 0.0],
-                [sin, cos, 0.0],
-                [0.0, 0.0, 1.0],
-            ],
+            m: [[cos, -sin, 0.0], [sin, cos, 0.0], [0.0, 0.0, 1.0]],
         }
     }
 
     /// Create scaling matrix
     pub fn scaling(sx: f64, sy: f64, sz: f64) -> Self {
         Self {
-            m: [
-                [sx, 0.0, 0.0],
-                [0.0, sy, 0.0],
-                [0.0, 0.0, sz],
-            ],
+            m: [[sx, 0.0, 0.0], [0.0, sy, 0.0], [0.0, 0.0, sz]],
         }
     }
 
     /// Create arbitrary axis matrix for OCS to WCS conversion
-    /// 
+    ///
     /// Implements the AutoCAD arbitrary axis algorithm
     pub fn arbitrary_axis(normal: Vector3) -> Self {
         const ARBITRARY_AXIS_THRESHOLD: f64 = 1.0 / 64.0;
-        
+
         let normal = normal.normalize();
-        
+
         // Choose reference axis (Ax) based on normal direction
-        let ax = if normal.x.abs() < ARBITRARY_AXIS_THRESHOLD 
-            && normal.y.abs() < ARBITRARY_AXIS_THRESHOLD 
+        let ax = if normal.x.abs() < ARBITRARY_AXIS_THRESHOLD
+            && normal.y.abs() < ARBITRARY_AXIS_THRESHOLD
         {
             Vector3::new(0.0, 1.0, 0.0) // Use Y axis
         } else {
             Vector3::new(0.0, 0.0, 1.0) // Use Z axis
         };
-        
+
         // Calculate X direction (Ax × N normalized)
         let x_dir = ax.cross(&normal).normalize();
-        
+
         // Calculate Y direction (N × X normalized)
         let y_dir = normal.cross(&x_dir).normalize();
-        
+
         Self {
             m: [
                 [x_dir.x, y_dir.x, normal.x],
@@ -510,10 +496,25 @@ impl Transform {
         Self {
             matrix: Matrix4 {
                 m: [
-                    [1.0 - 2.0 * n.x * n.x, -2.0 * n.x * n.y,       -2.0 * n.x * n.z,       -2.0 * n.x * d],
-                    [-2.0 * n.y * n.x,       1.0 - 2.0 * n.y * n.y,  -2.0 * n.y * n.z,        -2.0 * n.y * d],
-                    [-2.0 * n.z * n.x,       -2.0 * n.z * n.y,       1.0 - 2.0 * n.z * n.z,   -2.0 * n.z * d],
-                    [0.0,                    0.0,                     0.0,                      1.0],
+                    [
+                        1.0 - 2.0 * n.x * n.x,
+                        -2.0 * n.x * n.y,
+                        -2.0 * n.x * n.z,
+                        -2.0 * n.x * d,
+                    ],
+                    [
+                        -2.0 * n.y * n.x,
+                        1.0 - 2.0 * n.y * n.y,
+                        -2.0 * n.y * n.z,
+                        -2.0 * n.y * d,
+                    ],
+                    [
+                        -2.0 * n.z * n.x,
+                        -2.0 * n.z * n.y,
+                        1.0 - 2.0 * n.z * n.z,
+                        -2.0 * n.z * d,
+                    ],
+                    [0.0, 0.0, 0.0, 1.0],
                 ],
             },
         }
@@ -624,10 +625,10 @@ mod tests {
         let t1 = Transform::from_translation(Vector3::new(1.0, 0.0, 0.0));
         let t2 = Transform::from_translation(Vector3::new(0.0, 1.0, 0.0));
         let combined = t1.then(&t2);
-        
+
         let origin = Vector3::new(0.0, 0.0, 0.0);
         let result = combined.apply(origin);
-        
+
         assert!((result.x - 1.0).abs() < 1e-10);
         assert!((result.y - 1.0).abs() < 1e-10);
     }
@@ -639,7 +640,7 @@ mod tests {
         let det = m.determinant();
         assert!((det - 1.0).abs() < 1e-10); // Should be orthonormal
     }
-    
+
     #[test]
     fn test_mirror_x() {
         let t = Transform::from_mirror_x();
@@ -649,7 +650,7 @@ mod tests {
         assert!((r.y - 5.0).abs() < 1e-10);
         assert!((r.z - 7.0).abs() < 1e-10);
     }
-    
+
     #[test]
     fn test_mirror_y() {
         let t = Transform::from_mirror_y();
@@ -659,7 +660,7 @@ mod tests {
         assert!((r.y - (-5.0)).abs() < 1e-10);
         assert!((r.z - 7.0).abs() < 1e-10);
     }
-    
+
     #[test]
     fn test_mirror_z() {
         let t = Transform::from_mirror_z();
@@ -669,7 +670,7 @@ mod tests {
         assert!((r.y - 5.0).abs() < 1e-10);
         assert!((r.z - (-7.0)).abs() < 1e-10);
     }
-    
+
     #[test]
     fn test_mirror_plane_through_origin() {
         // Mirror across YZ plane through origin = same as mirror_x
@@ -680,7 +681,7 @@ mod tests {
         assert!((r.y - 5.0).abs() < 1e-10);
         assert!((r.z - 7.0).abs() < 1e-10);
     }
-    
+
     #[test]
     fn test_mirror_plane_offset() {
         // Mirror across plane x=2 (normal X, point (2,0,0))
@@ -691,48 +692,41 @@ mod tests {
         assert!((r.y - 3.0).abs() < 1e-10);
         assert!((r.z - 1.0).abs() < 1e-10);
     }
-    
+
     #[test]
     fn test_mirror_line() {
         // Mirror across the X axis (line from (0,0,0) to (1,0,0))
-        let t = Transform::from_mirror_line(
-            Vector3::new(0.0, 0.0, 0.0),
-            Vector3::new(1.0, 0.0, 0.0),
-        );
+        let t =
+            Transform::from_mirror_line(Vector3::new(0.0, 0.0, 0.0), Vector3::new(1.0, 0.0, 0.0));
         let p = Vector3::new(3.0, 5.0, 0.0);
         let r = t.apply(p);
         assert!((r.x - 3.0).abs() < 1e-10);
         assert!((r.y - (-5.0)).abs() < 1e-10);
     }
-    
+
     #[test]
     fn test_mirror_line_diagonal() {
         // Mirror across the line y=x (45-degree line through origin)
-        let t = Transform::from_mirror_line(
-            Vector3::ZERO,
-            Vector3::new(1.0, 1.0, 0.0),
-        );
+        let t = Transform::from_mirror_line(Vector3::ZERO, Vector3::new(1.0, 1.0, 0.0));
         let p = Vector3::new(3.0, 0.0, 0.0);
         let r = t.apply(p);
         // Point (3,0) mirrored across y=x should give (0,3)
         assert!((r.x - 0.0).abs() < 1e-10);
         assert!((r.y - 3.0).abs() < 1e-10);
     }
-    
+
     #[test]
     fn test_mirror_is_involution() {
         // Applying a mirror twice should return the original point
-        let t = Transform::from_mirror_plane(
-            Vector3::new(1.0, 2.0, 3.0),
-            Vector3::new(1.0, 1.0, 0.0),
-        );
+        let t =
+            Transform::from_mirror_plane(Vector3::new(1.0, 2.0, 3.0), Vector3::new(1.0, 1.0, 0.0));
         let p = Vector3::new(7.0, -2.0, 4.0);
         let r = t.apply(t.apply(p));
         assert!((r.x - p.x).abs() < 1e-10);
         assert!((r.y - p.y).abs() < 1e-10);
         assert!((r.z - p.z).abs() < 1e-10);
     }
-    
+
     #[test]
     fn test_normalize_angle() {
         assert!((normalize_angle(0.0)).abs() < 1e-10);
@@ -741,4 +735,3 @@ mod tests {
         assert!((normalize_angle(3.0 * PI) - PI).abs() < 1e-10);
     }
 }
-

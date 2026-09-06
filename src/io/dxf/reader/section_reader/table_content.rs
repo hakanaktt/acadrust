@@ -1,10 +1,8 @@
 use crate::entities::table::{
-    BorderPropertyFlags, BorderType, CellBorder, CellContent,
-    CellContentGeometry, CellEdgeFlags, CellStateFlags, CellStyle,
-    CellStylePropertyFlags, CellStyleType, CellType, CellValue,
-    CellValueType, ContentLayoutFlags, TableAttribute, TableCell,
-    TableCellContentType, TableColumn, TableCustomData, TableRow,
-    ValueUnitType,
+    BorderPropertyFlags, BorderType, CellBorder, CellContent, CellContentGeometry, CellEdgeFlags,
+    CellStateFlags, CellStyle, CellStylePropertyFlags, CellStyleType, CellType, CellValue,
+    CellValueType, ContentLayoutFlags, TableAttribute, TableCell, TableCellContentType,
+    TableColumn, TableCustomData, TableRow, ValueUnitType,
 };
 use crate::entities::Table;
 use crate::error::Result;
@@ -27,8 +25,7 @@ impl<'a> SectionReader<'a> {
                 93 => value.flags = pair.as_i32().unwrap_or(0),
                 90 => {
                     value.raw_type_code = pair.as_i32().unwrap_or(0);
-                    value.value_type =
-                        CellValueType::from(value.raw_type_code as u32);
+                    value.value_type = CellValueType::from(value.raw_type_code as u32);
                 }
                 91 => value.numeric_value = pair.as_i32().unwrap_or(0) as f64,
                 140 => value.numeric_value = pair.as_double().unwrap_or(0.0),
@@ -39,8 +36,7 @@ impl<'a> SectionReader<'a> {
                 31 => value.point_value.z = pair.as_double().unwrap_or(0.0),
                 94 => {
                     value.raw_unit_type_code = pair.as_i32().unwrap_or(0);
-                    value.unit_type =
-                        ValueUnitType::from(value.raw_unit_type_code as u32);
+                    value.unit_type = ValueUnitType::from(value.raw_unit_type_code as u32);
                 }
                 300 => value.format = pair.value_string.clone(),
                 302 if value.raw_unit_type_code != 12 => {
@@ -104,13 +100,11 @@ impl<'a> SectionReader<'a> {
                 140 => content.scale = pair.as_double().unwrap_or(1.0),
                 94 => content.alignment = pair.as_i32().unwrap_or(0),
                 62 => {
-                    content.color =
-                        Color::from_index(pair.as_i16().unwrap_or(0));
+                    content.color = Color::from_index(pair.as_i16().unwrap_or(0));
                 }
                 340 => {
                     let handle = parse_dxf_handle(&pair.value_string);
-                    content.text_style_handle =
-                        (!handle.is_null()).then_some(handle);
+                    content.text_style_handle = (!handle.is_null()).then_some(handle);
                 }
                 7 => content.text_style_name = pair.value_string.clone(),
                 144 => content.text_height = pair.as_double().unwrap_or(0.18),
@@ -120,10 +114,7 @@ impl<'a> SectionReader<'a> {
         Ok(content)
     }
 
-    fn apply_table_content_format_to_style(
-        style: &mut CellStyle,
-        format: CellContent,
-    ) {
+    fn apply_table_content_format_to_style(style: &mut CellStyle, format: CellContent) {
         style.content_format_override_flags = format.format_override_flags;
         style.content_property_flags = format.format_property_flags;
         style.value_data_type = format.format_value_data_type;
@@ -150,27 +141,21 @@ impl<'a> SectionReader<'a> {
             }
             match pair.code {
                 90 => {
-                    border.override_flags = BorderPropertyFlags::from_bits_retain(
-                        pair.as_i32().unwrap_or(0) as u32,
-                    );
+                    border.override_flags =
+                        BorderPropertyFlags::from_bits_retain(pair.as_i32().unwrap_or(0) as u32);
                 }
                 91 => {
-                    border.border_type =
-                        BorderType::from(pair.as_i32().unwrap_or(1) as i16);
+                    border.border_type = BorderType::from(pair.as_i32().unwrap_or(1) as i16);
                 }
                 62 => {
-                    border.color =
-                        Color::from_index(pair.as_i16().unwrap_or(0));
+                    border.color = Color::from_index(pair.as_i16().unwrap_or(0));
                 }
                 92 => {
-                    border.line_weight = LineWeight::from_value(
-                        pair.as_i32().unwrap_or(-1) as i16,
-                    );
+                    border.line_weight = LineWeight::from_value(pair.as_i32().unwrap_or(-1) as i16);
                 }
                 340 => {
                     let handle = parse_dxf_handle(&pair.value_string);
-                    border.line_type_handle =
-                        (!handle.is_null()).then_some(handle);
+                    border.line_type_handle = (!handle.is_null()).then_some(handle);
                 }
                 93 => border.invisible = pair.as_bool().unwrap_or(false),
                 40 => border.double_spacing = pair.as_double().unwrap_or(0.0),
@@ -215,9 +200,7 @@ impl<'a> SectionReader<'a> {
         Ok(())
     }
 
-    fn read_table_cell_style_override_dxf(
-        &mut self,
-    ) -> Result<Option<CellStyle>> {
+    fn read_table_cell_style_override_dxf(&mut self) -> Result<Option<CellStyle>> {
         let mut style = CellStyle::new();
         let mut has_data = false;
         let mut current_edge = 0u32;
@@ -231,28 +214,22 @@ impl<'a> SectionReader<'a> {
             }
             match pair.code {
                 90 => {
-                    style.style_type =
-                        CellStyleType::from(pair.as_i32().unwrap_or(1) as u8);
+                    style.style_type = CellStyleType::from(pair.as_i32().unwrap_or(1) as u8);
                 }
                 170 => has_data = pair.as_i16().unwrap_or(0) != 0,
                 91 => style.override_flags = pair.as_i32().unwrap_or(0),
                 92 => {
-                    style.property_flags = CellStylePropertyFlags::from_bits_retain(
-                        pair.as_i32().unwrap_or(0) as u32,
-                    );
+                    style.property_flags =
+                        CellStylePropertyFlags::from_bits_retain(pair.as_i32().unwrap_or(0) as u32);
                 }
                 62 => {
-                    style.background_color =
-                        Color::from_index(pair.as_i16().unwrap_or(0));
-                    style.fill_enabled = !matches!(
-                        style.background_color,
-                        Color::ByBlock | Color::None
-                    );
+                    style.background_color = Color::from_index(pair.as_i16().unwrap_or(0));
+                    style.fill_enabled =
+                        !matches!(style.background_color, Color::ByBlock | Color::None);
                 }
                 93 => {
-                    style.layout_flags = ContentLayoutFlags::from_bits_retain(
-                        pair.as_i32().unwrap_or(0) as u32,
-                    );
+                    style.layout_flags =
+                        ContentLayoutFlags::from_bits_retain(pair.as_i32().unwrap_or(0) as u32);
                 }
                 300 if pair.value_string == "CONTENTFORMAT" => {
                     let format = self.read_table_content_format_dxf()?;
@@ -267,8 +244,7 @@ impl<'a> SectionReader<'a> {
                 95 => current_edge = pair.as_i32().unwrap_or(0) as u32,
                 302 if pair.value_string == "GRIDFORMAT" => {
                     let border = self.read_table_grid_format_dxf()?;
-                    style.applied_border_edges |=
-                        CellEdgeFlags::from_bits_retain(current_edge);
+                    style.applied_border_edges |= CellEdgeFlags::from_bits_retain(current_edge);
                     match current_edge {
                         1 => style.top_border = border,
                         2 => style.right_border = border,
@@ -312,9 +288,8 @@ impl<'a> SectionReader<'a> {
             if in_core {
                 match pair.code {
                     90 => {
-                        content.content_type = TableCellContentType::from(
-                            pair.as_i32().unwrap_or(0) as u8,
-                        );
+                        content.content_type =
+                            TableCellContentType::from(pair.as_i32().unwrap_or(0) as u8);
                     }
                     300 if pair.value_string == "VALUE" => {
                         content.value = self.read_table_value_dxf()?;
@@ -323,12 +298,10 @@ impl<'a> SectionReader<'a> {
                         let handle = parse_dxf_handle(&pair.value_string);
                         match content.content_type {
                             TableCellContentType::Field => {
-                                content.field_handle =
-                                    (!handle.is_null()).then_some(handle);
+                                content.field_handle = (!handle.is_null()).then_some(handle);
                             }
                             TableCellContentType::Block => {
-                                content.block_handle =
-                                    (!handle.is_null()).then_some(handle);
+                                content.block_handle = (!handle.is_null()).then_some(handle);
                             }
                             _ => {}
                         }
@@ -349,8 +322,7 @@ impl<'a> SectionReader<'a> {
                     }
                     92 => {
                         if let Some(index) = pending_attribute.take() {
-                            content.attributes[index].index =
-                                pair.as_i32().unwrap_or(index as i32);
+                            content.attributes[index].index = pair.as_i32().unwrap_or(index as i32);
                         }
                     }
                     _ => {}
@@ -410,9 +382,8 @@ impl<'a> SectionReader<'a> {
             if in_linked {
                 match pair.code {
                     90 => {
-                        cell.state = CellStateFlags::from_bits_retain(
-                            pair.as_i32().unwrap_or(0) as u32,
-                        );
+                        cell.state =
+                            CellStateFlags::from_bits_retain(pair.as_i32().unwrap_or(0) as u32);
                     }
                     300 => cell.tooltip = pair.value_string.clone(),
                     91 => cell.custom_data = pair.as_i32().unwrap_or(0),
@@ -446,12 +417,10 @@ impl<'a> SectionReader<'a> {
                     }
                     91 => cell.geometry_data_flag = pair.as_i32().unwrap_or(0),
                     40 => {
-                        cell.geometry_width_with_gap =
-                            pair.as_double().unwrap_or(0.0);
+                        cell.geometry_width_with_gap = pair.as_double().unwrap_or(0.0);
                     }
                     41 => {
-                        cell.geometry_height_with_gap =
-                            pair.as_double().unwrap_or(0.0);
+                        cell.geometry_height_with_gap = pair.as_double().unwrap_or(0.0);
                     }
                     330 => {
                         let handle = parse_dxf_handle(&pair.value_string);
@@ -459,8 +428,7 @@ impl<'a> SectionReader<'a> {
                     }
                     92 => {
                         cell.geometry_flags = pair.as_i32().unwrap_or(0).max(0);
-                        cell.geometries
-                            .reserve(cell.geometry_flags as usize);
+                        cell.geometries.reserve(cell.geometry_flags as usize);
                     }
                     10 => {
                         cell.geometries.push(CellContentGeometry {
@@ -479,32 +447,27 @@ impl<'a> SectionReader<'a> {
                     }
                     20 => {
                         if let Some(value) = cell.geometries.last_mut() {
-                            value.distance_to_top_left.y =
-                                pair.as_double().unwrap_or(0.0);
+                            value.distance_to_top_left.y = pair.as_double().unwrap_or(0.0);
                         }
                     }
                     30 => {
                         if let Some(value) = cell.geometries.last_mut() {
-                            value.distance_to_top_left.z =
-                                pair.as_double().unwrap_or(0.0);
+                            value.distance_to_top_left.z = pair.as_double().unwrap_or(0.0);
                         }
                     }
                     11 => {
                         if let Some(value) = cell.geometries.last_mut() {
-                            value.distance_to_center.x =
-                                pair.as_double().unwrap_or(0.0);
+                            value.distance_to_center.x = pair.as_double().unwrap_or(0.0);
                         }
                     }
                     21 => {
                         if let Some(value) = cell.geometries.last_mut() {
-                            value.distance_to_center.y =
-                                pair.as_double().unwrap_or(0.0);
+                            value.distance_to_center.y = pair.as_double().unwrap_or(0.0);
                         }
                     }
                     31 => {
                         if let Some(value) = cell.geometries.last_mut() {
-                            value.distance_to_center.z =
-                                pair.as_double().unwrap_or(0.0);
+                            value.distance_to_center.z = pair.as_double().unwrap_or(0.0);
                         }
                     }
                     43 => {
@@ -587,8 +550,7 @@ impl<'a> SectionReader<'a> {
                     300 => column.name = pair.value_string.clone(),
                     91 => column.custom_data = pair.as_i32().unwrap_or(0),
                     301 if pair.value_string == "CUSTOMDATA" => {
-                        column.custom_data_items =
-                            self.read_table_custom_data_dxf()?;
+                        column.custom_data_items = self.read_table_custom_data_dxf()?;
                     }
                     _ => {}
                 }
@@ -654,9 +616,7 @@ impl<'a> SectionReader<'a> {
         Ok(row)
     }
 
-    pub(super) fn read_table_content_object_typed_dxf(
-        &mut self,
-    ) -> Result<Option<Table>> {
+    pub(super) fn read_table_content_object_typed_dxf(&mut self) -> Result<Option<Table>> {
         let mut table = Table::new(Vector3::ZERO, 0, 0);
         table.rows.clear();
         table.columns.clear();
@@ -680,10 +640,7 @@ impl<'a> SectionReader<'a> {
                 self.try_read_common_entity_code(&pair, &mut table.common)?;
                 continue;
             }
-            if pair.code == 330
-                && section.is_empty()
-                && table.common.owner_handle.is_null()
-            {
+            if pair.code == 330 && section.is_empty() && table.common.owner_handle.is_null() {
                 table.common.owner_handle = parse_dxf_handle(&pair.value_string);
                 continue;
             }
@@ -696,8 +653,7 @@ impl<'a> SectionReader<'a> {
                 },
                 "AcDbLinkedTableData" => match pair.code {
                     90 if expected_columns.is_none() => {
-                        expected_columns =
-                            Some(pair.as_i32().unwrap_or(0).max(0) as usize);
+                        expected_columns = Some(pair.as_i32().unwrap_or(0).max(0) as usize);
                     }
                     300 if pair.value_string == "COLUMN" => {
                         table.columns.push(self.read_table_modern_column_dxf()?);
@@ -705,15 +661,13 @@ impl<'a> SectionReader<'a> {
                     91 if expected_rows.is_none()
                         && expected_columns == Some(table.columns.len()) =>
                     {
-                        expected_rows =
-                            Some(pair.as_i32().unwrap_or(0).max(0) as usize);
+                        expected_rows = Some(pair.as_i32().unwrap_or(0).max(0) as usize);
                     }
                     301 if pair.value_string == "ROW" => {
                         table.rows.push(self.read_table_modern_row_dxf()?);
                     }
                     92 if expected_rows == Some(table.rows.len()) => {
-                        field_refs_remaining =
-                            pair.as_i32().unwrap_or(0).max(0) as usize;
+                        field_refs_remaining = pair.as_i32().unwrap_or(0).max(0) as usize;
                     }
                     330 | 340 | 360 if field_refs_remaining > 0 => {
                         let handle = parse_dxf_handle(&pair.value_string);
@@ -727,12 +681,10 @@ impl<'a> SectionReader<'a> {
                 "AcDbFormattedTableData" => match pair.code {
                     300 if pair.value_string == "TABLEFORMAT" => {}
                     1 if pair.value_string == "TABLEFORMAT_BEGIN" => {
-                        table.base_style =
-                            self.read_table_cell_style_override_dxf()?;
+                        table.base_style = self.read_table_cell_style_override_dxf()?;
                     }
                     90 => {
-                        merged_ranges_remaining =
-                            pair.as_i32().unwrap_or(0).max(0) as usize;
+                        merged_ranges_remaining = pair.as_i32().unwrap_or(0).max(0) as usize;
                     }
                     91 => {
                         if merged_range.is_none() && merged_ranges_remaining > 0 {
@@ -755,13 +707,12 @@ impl<'a> SectionReader<'a> {
                     94 => {
                         if let Some(mut range) = merged_range.take() {
                             range[3] = pair.as_i32().unwrap_or(0).max(0) as usize;
-                            table.merged_ranges.push(
-                                crate::entities::table::CellRange::new(
+                            table
+                                .merged_ranges
+                                .push(crate::entities::table::CellRange::new(
                                     range[0], range[1], range[2], range[3],
-                                ),
-                            );
-                            merged_ranges_remaining =
-                                merged_ranges_remaining.saturating_sub(1);
+                                ));
+                            merged_ranges_remaining = merged_ranges_remaining.saturating_sub(1);
                         }
                     }
                     _ => {}
@@ -769,8 +720,7 @@ impl<'a> SectionReader<'a> {
                 "AcDbTableContent" => {
                     if pair.code == 340 {
                         let handle = parse_dxf_handle(&pair.value_string);
-                        table.table_style_handle =
-                            (!handle.is_null()).then_some(handle);
+                        table.table_style_handle = (!handle.is_null()).then_some(handle);
                     }
                 }
                 _ => {}

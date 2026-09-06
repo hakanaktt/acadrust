@@ -8,15 +8,15 @@
 //! The top-level re-exports [`DxfReader`], [`DxfWriter`], [`DwgReader`],
 //! and [`DwgWriter`] for quick access.
 
-pub mod dxf;
 pub mod dwg;
+pub mod dxf;
 pub mod read;
 
 #[cfg(feature = "import")]
 pub mod import;
 
-pub use dxf::{DxfReader, DxfWriter};
 pub use dwg::{DwgReader, DwgWriter};
+pub use dxf::{DxfReader, DxfWriter};
 pub use read::{
     push_read_diagnostic, ReadDiagnostic, ReadOutcome, ReadStage, ReadStats, SourceFormat,
     MAX_READ_DIAGNOSTICS,

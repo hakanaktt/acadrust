@@ -17,9 +17,7 @@ pub struct ExtendedEntity {
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ExtendedEntityData {
-    Camera {
-        view_handle: Handle,
-    },
+    Camera { view_handle: Handle },
     SectionObject(SectionObjectData),
     ArcAlignedText(ArcAlignedTextData),
     RemoteText(RemoteTextData),
@@ -396,9 +394,7 @@ impl Entity for ExtendedEntity {
             }
             ExtendedEntityData::ArcAlignedText(data) => data.center = data.center + offset,
             ExtendedEntityData::RemoteText(data) => data.position = data.position + offset,
-            ExtendedEntityData::GeoPositionMarker(data) => {
-                data.position = data.position + offset
-            }
+            ExtendedEntityData::GeoPositionMarker(data) => data.position = data.position + offset,
             ExtendedEntityData::PointCloud(data) => {
                 data.origin = data.origin + offset;
                 data.extents_min = data.extents_min + offset;

@@ -384,7 +384,7 @@ impl Entity for Tolerance {
     fn entity_type(&self) -> &'static str {
         Self::ENTITY_NAME
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_tolerance(self, transform);
     }

@@ -13,16 +13,16 @@
 pub enum DxfCode {
     /// Invalid code
     Invalid = -9999,
-    
+
     /// Extended dictionary (XDICTIONARY)
     XDictionary = -6,
-    
+
     /// Persistent reactor chain
     PReactors = -5,
-    
+
     /// Conditional operator (used only with ssget)
     Operator = -4,
-    
+
     /// Extended data (XDATA) sentinel (fixed)
     XDataStart = -3,
 
@@ -33,77 +33,75 @@ pub enum DxfCode {
     End = -1,
 
     // ===== 0-9: String values =====
-
     /// Text string indicating the entity type (fixed)
     Start = 0,
 
     /// Primary text value for an entity / XRef path name
     Text = 1,
-    
+
     /// Name (attribute tag, block name, etc.)
     Name = 2,
-    
+
     /// Other text or name values
     OtherName = 3,
     TextStyleName = 7,
     LayerName = 8,
     CLShapeText = 9,
-    
+
     // ===== 10-59: Floating-point values (coordinates, distances, etc.) =====
-    
     /// Primary X coordinate
     XCoordinate = 10,
     /// Primary Y coordinate  
     YCoordinate = 20,
     /// Primary Z coordinate
     ZCoordinate = 30,
-    
+
     /// Secondary X coordinate
     XCoordinate1 = 11,
     /// Secondary Y coordinate
     YCoordinate1 = 21,
     /// Secondary Z coordinate
     ZCoordinate1 = 31,
-    
+
     /// Tertiary X coordinate
     XCoordinate2 = 12,
     /// Tertiary Y coordinate
     YCoordinate2 = 22,
     /// Tertiary Z coordinate
     ZCoordinate2 = 32,
-    
+
     /// Quaternary X coordinate
     XCoordinate3 = 13,
     /// Quaternary Y coordinate
     YCoordinate3 = 23,
     /// Quaternary Z coordinate
     ZCoordinate3 = 33,
-    
+
     /// Additional coordinates (14-18, 24-28, 34-38)
     XCoordinate4 = 14,
     YCoordinate4 = 24,
     ZCoordinate4 = 34,
-    
+
     XCoordinate5 = 15,
     YCoordinate5 = 25,
     ZCoordinate5 = 35,
-    
+
     XCoordinate6 = 16,
     YCoordinate6 = 26,
     ZCoordinate6 = 36,
-    
+
     XCoordinate7 = 17,
     YCoordinate7 = 27,
     ZCoordinate7 = 37,
-    
+
     XCoordinate8 = 18,
     YCoordinate8 = 28,
     /// Z coordinate (8th) / Elevation
     ZCoordinate8 = 38,
-    
+
     /// Thickness
     Thickness = 39,
-    
+
     /// Floating-point values (40-59)
     Real40 = 40,
     Real41 = 41,
@@ -115,7 +113,7 @@ pub enum DxfCode {
     Real47 = 47,
     Real48 = 48,
     Real49 = 49,
-    
+
     /// Angles (50-58)
     Angle50 = 50,
     Angle51 = 51,
@@ -126,30 +124,29 @@ pub enum DxfCode {
     Angle56 = 56,
     Angle57 = 57,
     Angle58 = 58,
-    
+
     // ===== 60-79: Integer values =====
-    
     /// Visibility (0 = visible, 1 = invisible)
     Visibility = 60,
-    
+
     /// Parameter space curve type
     ParameterSpaceCurveType = 61,
-    
+
     /// Color number
     Color = 62,
-    
+
     /// Entities follow flag
     EntitiesFollow = 66,
-    
+
     /// Model/paper space flag
     ModelSpace = 67,
-    
+
     /// Viewport status field
     ViewportStatus = 68,
-    
+
     /// Viewport ID
     ViewportId = 69,
-    
+
     /// Integer values (70-79)
     Int70 = 70,
     Int71 = 71,
@@ -163,7 +160,6 @@ pub enum DxfCode {
     Int79 = 79,
 
     // ===== 90-99: 32-bit integer values =====
-
     Int90 = 90,
     Int91 = 91,
     Int92 = 92,
@@ -176,7 +172,6 @@ pub enum DxfCode {
     Int99 = 99,
 
     // ===== 100-109: Subclass markers and strings =====
-
     /// Subclass data marker
     SubclassMarker = 100,
 
@@ -205,7 +200,6 @@ pub enum DxfCode {
     UcsYAxisZ = 132,
 
     // ===== 140-149: Double precision floating-point values =====
-
     Real140 = 140,
     Real141 = 141,
     Real142 = 142,
@@ -218,7 +212,6 @@ pub enum DxfCode {
     Real149 = 149,
 
     // ===== 160-169: 64-bit integer values =====
-
     Int160 = 160,
     Int161 = 161,
     Int162 = 162,
@@ -231,7 +224,6 @@ pub enum DxfCode {
     Int169 = 169,
 
     // ===== 170-179: 16-bit integer values =====
-
     Int170 = 170,
     Int171 = 171,
     Int172 = 172,
@@ -244,7 +236,6 @@ pub enum DxfCode {
     Int179 = 179,
 
     // ===== 210-239: Extrusion direction and other vectors =====
-
     /// Extrusion direction X
     ExtrusionX = 210,
     /// Extrusion direction Y
@@ -253,7 +244,6 @@ pub enum DxfCode {
     ExtrusionZ = 230,
 
     // ===== 270-289: 8-bit integer values =====
-
     Int270 = 270,
     Int271 = 271,
     Int272 = 272,
@@ -277,7 +267,6 @@ pub enum DxfCode {
     Int289 = 289,
 
     // ===== 290-299: Boolean values =====
-
     Bool290 = 290,
     Bool291 = 291,
     Bool292 = 292,
@@ -290,7 +279,6 @@ pub enum DxfCode {
     Bool299 = 299,
 
     // ===== 300-309: Arbitrary text strings =====
-
     Text300 = 300,
     Text301 = 301,
     Text302 = 302,
@@ -303,7 +291,6 @@ pub enum DxfCode {
     Text309 = 309,
 
     // ===== 310-319: Binary data =====
-
     BinaryData310 = 310,
     BinaryData311 = 311,
     BinaryData312 = 312,
@@ -316,7 +303,6 @@ pub enum DxfCode {
     BinaryData319 = 319,
 
     // ===== 320-329: Arbitrary object handles =====
-
     Handle320 = 320,
     Handle321 = 321,
     Handle322 = 322,
@@ -329,7 +315,6 @@ pub enum DxfCode {
     Handle329 = 329,
 
     // ===== 330-339: Soft-pointer handle =====
-
     SoftPointerId330 = 330,
     SoftPointerId331 = 331,
     SoftPointerId332 = 332,
@@ -342,7 +327,6 @@ pub enum DxfCode {
     SoftPointerId339 = 339,
 
     // ===== 340-349: Hard-pointer handle =====
-
     HardPointerId340 = 340,
     HardPointerId341 = 341,
     HardPointerId342 = 342,
@@ -355,7 +339,6 @@ pub enum DxfCode {
     HardPointerId349 = 349,
 
     // ===== 350-359: Soft-owner handle =====
-
     SoftOwnerId350 = 350,
     SoftOwnerId351 = 351,
     SoftOwnerId352 = 352,
@@ -368,7 +351,6 @@ pub enum DxfCode {
     SoftOwnerId359 = 359,
 
     // ===== 360-369: Hard-owner handle =====
-
     HardOwnerId360 = 360,
     HardOwnerId361 = 361,
     HardOwnerId362 = 362,
@@ -381,7 +363,6 @@ pub enum DxfCode {
     HardOwnerId369 = 369,
 
     // ===== 370-379: Lineweight and plot style =====
-
     /// Lineweight enum value
     Lineweight = 370,
 
@@ -392,7 +373,6 @@ pub enum DxfCode {
     PlotStyleNameId = 390,
 
     // ===== 400-409: 16-bit integers =====
-
     Int400 = 400,
     Int401 = 401,
     Int402 = 402,
@@ -405,11 +385,9 @@ pub enum DxfCode {
     Int409 = 409,
 
     // ===== 410-419: String values =====
-
     LayoutName = 410,
 
     // ===== 420-429: 32-bit integer color values =====
-
     TrueColor = 420,
     ColorName = 430,
 
@@ -417,7 +395,6 @@ pub enum DxfCode {
     Transparency = 440,
 
     // ===== 450-459: Long values =====
-
     Int450 = 450,
     Int451 = 451,
     Int452 = 452,
@@ -430,7 +407,6 @@ pub enum DxfCode {
     Int459 = 459,
 
     // ===== 460-469: Double values =====
-
     Real460 = 460,
     Real461 = 461,
     Real462 = 462,
@@ -443,7 +419,6 @@ pub enum DxfCode {
     Real469 = 469,
 
     // ===== 470-479: String values =====
-
     Text470 = 470,
     Text471 = 471,
     Text472 = 472,
@@ -456,17 +431,14 @@ pub enum DxfCode {
     Text479 = 479,
 
     // ===== 480-481: Hard-pointer handle values =====
-
     Handle480 = 480,
     Handle481 = 481,
 
     // ===== 999: Comment =====
-
     /// Comment (string)
     Comment = 999,
 
     // ===== 1000-1071: Extended data (XDATA) =====
-
     /// Extended data string (255-byte maximum)
     XDataString = 1000,
 
@@ -839,5 +811,3 @@ impl DxfCode {
         self as i32
     }
 }
-
-

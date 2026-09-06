@@ -56,7 +56,11 @@ fn main() {
             }
         };
         let orig_version = doc.version;
-        println!("  Read OK  (version={:?}, entities={})", orig_version, doc.entities().count());
+        println!(
+            "  Read OK  (version={:?}, entities={})",
+            orig_version,
+            doc.entities().count()
+        );
 
         for &(ver, ver_str) in VERSIONS {
             let out_name = format!("{}_rt_{}.dwg", stem, ver_str);
@@ -69,7 +73,10 @@ fn main() {
                     let mut written = false;
                     for attempt in 0..5 {
                         match std::fs::write(&out_path, &bytes) {
-                            Ok(_) => { written = true; break; }
+                            Ok(_) => {
+                                written = true;
+                                break;
+                            }
                             Err(_e) if attempt < 4 => {
                                 std::thread::sleep(std::time::Duration::from_millis(200));
                                 continue;
@@ -80,17 +87,29 @@ fn main() {
                             }
                         }
                     }
-                    if !written { continue; }
+                    if !written {
+                        continue;
+                    }
                     // Verify: re-read
                     let mut r2 = DwgReader::from_stream(Cursor::new(&bytes));
                     match r2.read() {
                         Ok(doc2) => {
                             let ent_count = doc2.entities().count();
-                            println!("  {} → {} bytes, read-back OK ({} entities)", ver_str, bytes.len(), ent_count);
+                            println!(
+                                "  {} → {} bytes, read-back OK ({} entities)",
+                                ver_str,
+                                bytes.len(),
+                                ent_count
+                            );
                             total_ok += 1;
                         }
                         Err(e) => {
-                            println!("  {} → {} bytes, READ-BACK FAILED: {}", ver_str, bytes.len(), e);
+                            println!(
+                                "  {} → {} bytes, READ-BACK FAILED: {}",
+                                ver_str,
+                                bytes.len(),
+                                e
+                            );
                             total_err += 1;
                         }
                     }
@@ -114,7 +133,10 @@ fn main() {
                     let mut written = false;
                     for attempt in 0..5 {
                         match std::fs::write(&out_path, &bytes) {
-                            Ok(_) => { written = true; break; }
+                            Ok(_) => {
+                                written = true;
+                                break;
+                            }
                             Err(_e) if attempt < 4 => {
                                 std::thread::sleep(std::time::Duration::from_millis(200));
                                 continue;
@@ -125,22 +147,39 @@ fn main() {
                             }
                         }
                     }
-                    if !written { continue; }
+                    if !written {
+                        continue;
+                    }
                     // Verify: re-read
                     match DxfReader::from_reader(Cursor::new(bytes.clone())) {
                         Ok(r2) => match r2.read() {
                             Ok(doc2) => {
                                 let ent_count = doc2.entities().count();
-                                println!("  {} DXF → {} bytes, read-back OK ({} entities)", ver_str, bytes.len(), ent_count);
+                                println!(
+                                    "  {} DXF → {} bytes, read-back OK ({} entities)",
+                                    ver_str,
+                                    bytes.len(),
+                                    ent_count
+                                );
                                 total_ok += 1;
                             }
                             Err(e) => {
-                                println!("  {} DXF → {} bytes, READ-BACK FAILED: {}", ver_str, bytes.len(), e);
+                                println!(
+                                    "  {} DXF → {} bytes, READ-BACK FAILED: {}",
+                                    ver_str,
+                                    bytes.len(),
+                                    e
+                                );
                                 total_err += 1;
                             }
                         },
                         Err(e) => {
-                            println!("  {} DXF → {} bytes, READER INIT FAILED: {}", ver_str, bytes.len(), e);
+                            println!(
+                                "  {} DXF → {} bytes, READER INIT FAILED: {}",
+                                ver_str,
+                                bytes.len(),
+                                e
+                            );
                             total_err += 1;
                         }
                     }

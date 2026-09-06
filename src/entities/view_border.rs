@@ -9,9 +9,7 @@
 //! the last hop of the section-mark viewing-direction chain.
 
 use super::{Entity, EntityCommon};
-use crate::types::{
-    BoundingBox3D, Color, Handle, LineWeight, Transform, Transparency, Vector3,
-};
+use crate::types::{BoundingBox3D, Color, Handle, LineWeight, Transform, Transparency, Vector3};
 
 /// A Model-Documentation drawing-view border (`AcDbViewBorder`).
 ///
@@ -136,8 +134,7 @@ impl Entity for ViewBorder {
             max[0] = max[0].max(point.x);
             max[1] = max[1].max(point.y);
         }
-        let center =
-            transform.apply(Vector3::new(self.center[0], self.center[1], 0.0));
+        let center = transform.apply(Vector3::new(self.center[0], self.center[1], 0.0));
         self.min = min;
         self.max = max;
         self.center = [center.x, center.y];

@@ -44,17 +44,16 @@ pub fn parse_binary_stl<R: Read + Seek>(reader: &mut R) -> Result<StlMesh> {
                 expected, num_triangles, file_len
             )));
         }
-        reader.seek(SeekFrom::Start(84)).map_err(|e| {
-            DxfError::ImportError(format!("Failed to seek past header: {}", e))
-        })?;
+        reader
+            .seek(SeekFrom::Start(84))
+            .map_err(|e| DxfError::ImportError(format!("Failed to seek past header: {}", e)))?;
     }
 
     let mut triangles = Vec::with_capacity(num_triangles);
 
     for i in 0..num_triangles {
-        let tri = read_triangle(reader).map_err(|e| {
-            DxfError::ImportError(format!("Failed to read triangle {}: {}", i, e))
-        })?;
+        let tri = read_triangle(reader)
+            .map_err(|e| DxfError::ImportError(format!("Failed to read triangle {}: {}", i, e)))?;
         triangles.push(tri);
     }
 

@@ -1,7 +1,7 @@
 //! Color representation for CAD entities
 
-use std::fmt;
 use super::aci_table;
+use std::fmt;
 
 /// Represents a color in AutoCAD
 ///
@@ -34,8 +34,8 @@ impl Color {
             256 => Color::ByLayer,
             257 => Color::None,
             1..=255 => Color::Index(index as u8),
-            _ if index < 0 => Color::Index((-index).min(255) as u8),  // Negative means layer is off
-            _ => Color::Index(7), // Default to white
+            _ if index < 0 => Color::Index((-index).min(255) as u8), // Negative means layer is off
+            _ => Color::Index(7),                                    // Default to white
         }
     }
 
@@ -59,9 +59,7 @@ impl Color {
     /// Returns `None` for non-RGB colors.
     pub fn to_true_color_value(&self) -> Option<i32> {
         match self {
-            Color::Rgb { r, g, b } => {
-                Some(((*r as i32) << 16) | ((*g as i32) << 8) | (*b as i32))
-            }
+            Color::Rgb { r, g, b } => Some(((*r as i32) << 16) | ((*g as i32) << 8) | (*b as i32)),
             _ => None,
         }
     }
@@ -113,7 +111,7 @@ impl Color {
     pub const WHITE: Color = Color::Index(7);
     pub const GRAY: Color = Color::Index(8);
     pub const LIGHT_GRAY: Color = Color::Index(9);
-    
+
     /// Find the nearest ACI index for this color.
     ///
     /// For `Index` colors returns the index directly.
@@ -191,7 +189,14 @@ mod tests {
     #[test]
     fn test_from_true_color_value() {
         let color = Color::from_true_color_value(0xFF8040);
-        assert_eq!(color, Color::Rgb { r: 255, g: 128, b: 64 });
+        assert_eq!(
+            color,
+            Color::Rgb {
+                r: 255,
+                g: 128,
+                b: 64
+            }
+        );
     }
 
     #[test]
@@ -217,4 +222,3 @@ mod tests {
         assert!(!Color::ByLayer.is_true_color());
     }
 }
-

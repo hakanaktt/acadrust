@@ -5,9 +5,7 @@
 //! are decoded and encoded as native fields.
 
 use super::{Entity, EntityCommon};
-use crate::types::{
-    BoundingBox3D, Color, Handle, LineWeight, Transform, Transparency, Vector3,
-};
+use crate::types::{BoundingBox3D, Color, Handle, LineWeight, Transform, Transparency, Vector3};
 
 /// One repeated point record in an `AcDbSectionSymbol`.
 ///
@@ -134,11 +132,10 @@ impl SectionSymbol {
         self.end_b = [last.point.x, last.point.y];
         self.tick_a = first.label_offset.y;
         self.tick_b = last.label_offset.y;
-        self.label = self.points
+        self.label = self
+            .points
             .iter()
-            .find_map(|point| {
-                (!point.label.is_empty()).then(|| point.label.clone())
-            })
+            .find_map(|point| (!point.label.is_empty()).then(|| point.label.clone()))
             .unwrap_or_default();
     }
 }
@@ -196,7 +193,7 @@ impl Entity for SectionSymbol {
             self.points.iter().map(|point| point.point).collect()
         };
         BoundingBox3D::from_points(&points)
-        .unwrap_or_else(|| BoundingBox3D::from_point(Vector3::ZERO))
+            .unwrap_or_else(|| BoundingBox3D::from_point(Vector3::ZERO))
     }
     fn translate(&mut self, offset: Vector3) {
         for point in &mut self.points {
@@ -218,10 +215,8 @@ impl Entity for SectionSymbol {
             point.point = transformed;
             point.label_offset = offset_end - transformed;
         }
-        let end_a =
-            transform.apply(Vector3::new(self.end_a[0], self.end_a[1], 0.0));
-        let end_b =
-            transform.apply(Vector3::new(self.end_b[0], self.end_b[1], 0.0));
+        let end_a = transform.apply(Vector3::new(self.end_a[0], self.end_a[1], 0.0));
+        let end_b = transform.apply(Vector3::new(self.end_b[0], self.end_b[1], 0.0));
         self.end_a = [end_a.x, end_a.y];
         self.end_b = [end_b.x, end_b.y];
     }

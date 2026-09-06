@@ -31,10 +31,7 @@ impl DynamicBlockObject {
         }
     }
 
-    pub(crate) fn visit_handles_mut(
-        &mut self,
-        visit: &mut impl FnMut(&mut Handle),
-    ) {
+    pub(crate) fn visit_handles_mut(&mut self, visit: &mut impl FnMut(&mut Handle)) {
         visit(&mut self.owner);
         for handle in &mut self.reactors {
             visit(handle);
@@ -157,23 +154,13 @@ impl DynamicBlockData {
 
     pub fn entity_cpp_name(&self) -> Option<&'static str> {
         match self {
-            Self::AlignmentParameterEntity => {
-                Some("AcDbBlockAlignmentParameterEntity")
-            }
-            Self::BasePointParameterEntity => {
-                Some("AcDbBlockBasepointParameterEntity")
-            }
+            Self::AlignmentParameterEntity => Some("AcDbBlockAlignmentParameterEntity"),
+            Self::BasePointParameterEntity => Some("AcDbBlockBasepointParameterEntity"),
             Self::FlipParameterEntity => Some("AcDbBlockFlipParameterEntity"),
-            Self::LinearParameterEntity => {
-                Some("AcDbBlockLinearParameterEntity")
-            }
+            Self::LinearParameterEntity => Some("AcDbBlockLinearParameterEntity"),
             Self::PointParameterEntity => Some("AcDbBlockPointParameterEntity"),
-            Self::RotationParameterEntity => {
-                Some("AcDbBlockRotationParameterEntity")
-            }
-            Self::VisibilityParameterEntity => {
-                Some("AcDbBlockVisibilityParameterEntity")
-            }
+            Self::RotationParameterEntity => Some("AcDbBlockRotationParameterEntity"),
+            Self::VisibilityParameterEntity => Some("AcDbBlockVisibilityParameterEntity"),
             Self::XYParameterEntity => Some("AcDbBlockXYParameterEntity"),
             Self::AngularConstraintParameterEntity(_) => {
                 Some("AcDbBlockAngularConstraintParameterEntity")
@@ -188,10 +175,7 @@ impl DynamicBlockData {
         }
     }
 
-    pub(crate) fn visit_handles_mut(
-        &mut self,
-        visit: &mut impl FnMut(&mut Handle),
-    ) {
+    pub(crate) fn visit_handles_mut(&mut self, visit: &mut impl FnMut(&mut Handle)) {
         match self {
             Self::Unknown
             | Self::PropertiesTable
@@ -267,8 +251,7 @@ impl DynamicBlockData {
             Self::AngularConstraintParameter(value) => {
                 visit_constraint(&mut value.constraint, visit);
             }
-            Self::DiametricConstraintParameter(value)
-            | Self::RadialConstraintParameter(value) => {
+            Self::DiametricConstraintParameter(value) | Self::RadialConstraintParameter(value) => {
                 visit_constraint(&mut value.constraint, visit);
             }
             Self::AlignedConstraintParameter(value)
@@ -320,26 +303,17 @@ impl DynamicBlockData {
     }
 }
 
-fn visit_block_value(
-    value: &mut BlockEvalValue,
-    visit: &mut impl FnMut(&mut Handle),
-) {
+fn visit_block_value(value: &mut BlockEvalValue, visit: &mut impl FnMut(&mut Handle)) {
     if let BlockEvalValue::Handle(handle) = value {
         visit(handle);
     }
 }
 
-fn visit_block_eval(
-    value: &mut BlockEvalExpression,
-    visit: &mut impl FnMut(&mut Handle),
-) {
+fn visit_block_eval(value: &mut BlockEvalExpression, visit: &mut impl FnMut(&mut Handle)) {
     visit_block_value(&mut value.value, visit);
 }
 
-fn visit_block_element(
-    value: &mut BlockElement,
-    visit: &mut impl FnMut(&mut Handle),
-) {
+fn visit_block_element(value: &mut BlockElement, visit: &mut impl FnMut(&mut Handle)) {
     visit_block_eval(&mut value.eval, visit);
 }
 
@@ -357,17 +331,11 @@ fn visit_two_point_parameter(
     visit_block_element(&mut value.parameter.element, visit);
 }
 
-fn visit_block_grip(
-    value: &mut BlockGrip,
-    visit: &mut impl FnMut(&mut Handle),
-) {
+fn visit_block_grip(value: &mut BlockGrip, visit: &mut impl FnMut(&mut Handle)) {
     visit_block_element(&mut value.element, visit);
 }
 
-fn visit_block_action(
-    value: &mut BlockAction,
-    visit: &mut impl FnMut(&mut Handle),
-) {
+fn visit_block_action(value: &mut BlockAction, visit: &mut impl FnMut(&mut Handle)) {
     visit_block_element(&mut value.element, visit);
     for handle in &mut value.dependencies {
         visit(handle);
@@ -381,18 +349,12 @@ fn visit_action_with_base_point(
     visit_block_action(&mut value.action, visit);
 }
 
-fn visit_constraint(
-    value: &mut BlockConstraintParameter,
-    visit: &mut impl FnMut(&mut Handle),
-) {
+fn visit_constraint(value: &mut BlockConstraintParameter, visit: &mut impl FnMut(&mut Handle)) {
     visit_two_point_parameter(&mut value.parameter, visit);
     visit(&mut value.dependency);
 }
 
-fn visit_solid_history_base(
-    value: &mut SolidHistoryNodeBase,
-    visit: &mut impl FnMut(&mut Handle),
-) {
+fn visit_solid_history_base(value: &mut SolidHistoryNodeBase, visit: &mut impl FnMut(&mut Handle)) {
     visit_block_eval(&mut value.eval, visit);
     visit(&mut value.material);
 }
@@ -403,8 +365,7 @@ fn visit_solid_history_operation(
 ) {
     match value {
         SolidHistoryOperation::Unknown => {}
-        SolidHistoryOperation::Box(value)
-        | SolidHistoryOperation::Wedge(value) => {
+        SolidHistoryOperation::Box(value) | SolidHistoryOperation::Wedge(value) => {
             visit_solid_history_base(&mut value.base, visit);
         }
         SolidHistoryOperation::Sphere(value) => {
@@ -434,8 +395,7 @@ fn visit_solid_history_operation(
         SolidHistoryOperation::Chamfer(value) => {
             visit_solid_history_base(&mut value.base, visit);
         }
-        SolidHistoryOperation::Sweep(value)
-        | SolidHistoryOperation::Extrusion(value) => {
+        SolidHistoryOperation::Sweep(value) | SolidHistoryOperation::Extrusion(value) => {
             visit_solid_history_base(&mut value.base, visit);
         }
         SolidHistoryOperation::Loft(value) => {
@@ -911,10 +871,7 @@ impl SolidHistoryNodeBase {
             },
             major: 1,
             transform: [
-                1.0, 0.0, 0.0, 0.0,
-                0.0, 1.0, 0.0, 0.0,
-                0.0, 0.0, 1.0, 0.0,
-                0.0, 0.0, 0.0, 1.0,
+                1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
             ],
             step_id,
             ..Self::default()

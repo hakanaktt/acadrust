@@ -110,10 +110,7 @@ fn read_view_rep_sketch_geometry(
             reserved: reader.read_bit_double(),
         },
         42 => {
-            let flags = [
-                reader.read_bit(),
-                reader.read_bit(),
-            ];
+            let flags = [reader.read_bit(), reader.read_bit()];
             let degree = reader.read_bit_short() as i32;
             let tolerance = reader.read_bit_double();
             let knot_header = [
@@ -139,8 +136,7 @@ fn read_view_rep_sketch_geometry(
                 reader.read_bit_long(),
                 reader.read_bit_long(),
             ];
-            let mut control_points =
-                Vec::with_capacity(count(point_header[0]));
+            let mut control_points = Vec::with_capacity(count(point_header[0]));
             for _ in 0..count(point_header[0]) {
                 control_points.push(reader.read_3bit_double());
             }
@@ -213,28 +209,16 @@ fn read_view_rep(reader: &mut DwgMergedReader) -> ViewRep {
             final_flag,
         });
     }
-    let related_objects = [
-        read_view_rep_handle(reader),
-        read_view_rep_handle(reader),
-    ];
+    let related_objects = [read_view_rep_handle(reader), read_view_rep_handle(reader)];
     let source_manager = read_view_rep_handle(reader);
-    let owned_objects = [
-        read_view_rep_handle(reader),
-        read_view_rep_handle(reader),
-    ];
-    let optional_objects = [
-        read_view_rep_handle(reader),
-        read_view_rep_handle(reader),
-    ];
+    let owned_objects = [read_view_rep_handle(reader), read_view_rep_handle(reader)];
+    let optional_objects = [read_view_rep_handle(reader), read_view_rep_handle(reader)];
     let position = reader.read_2raw_double();
     let rotation = reader.read_bit_double();
     let orientation = read_view_rep_handle(reader);
     let is_active = reader.read_bit();
     let projection = reader.read_bit_short();
-    let linked_views = [
-        read_view_rep_handle(reader),
-        read_view_rep_handle(reader),
-    ];
+    let linked_views = [read_view_rep_handle(reader), read_view_rep_handle(reader)];
     let mut section_sketches = Vec::new();
     for _ in 0..count(reader.read_bit_long()) {
         let class_name = reader.read_variable_text();
@@ -354,71 +338,50 @@ pub fn read_class_object_data(
             let source_status = reader.read_bit_long();
             let model = Handle::from(reader.read_main_handle());
             let guid = read_view_rep_guid(reader);
-            let references = [
-                read_view_rep_handle(reader),
-                read_view_rep_handle(reader),
-            ];
-            let tail_values = [
-                reader.read_bit_long(),
-                reader.read_bit_long(),
-            ];
+            let references = [read_view_rep_handle(reader), read_view_rep_handle(reader)];
+            let tail_values = [reader.read_bit_long(), reader.read_bit_long()];
             let orientation = read_view_rep_handle(reader);
-            ClassObjectData::ViewRepModelSpaceSource(
-                ViewRepModelSpaceSource {
-                    enabled,
-                    header_values,
-                    transform,
-                    source_version,
-                    source_status,
-                    model,
-                    guid,
-                    references,
-                    tail_values,
-                    orientation,
-                },
-            )
+            ClassObjectData::ViewRepModelSpaceSource(ViewRepModelSpaceSource {
+                enabled,
+                header_values,
+                transform,
+                source_version,
+                source_status,
+                model,
+                guid,
+                references,
+                tail_values,
+                orientation,
+            })
         }
         "ACDBVIEWREP" => ClassObjectData::ViewRep(read_view_rep(reader)),
-        "ACDBVIEWREPSOURCEMGR" => {
-            ClassObjectData::ViewRepSourceManager(ViewRepSourceManager {
-                has_source: reader.read_bit(),
-                source: Handle::from(reader.read_handle()),
-                status: reader.read_bit_long(),
-            })
-        }
-        "ACDBVIEWREPSTANDARD" => {
-            ClassObjectData::ViewRepStandard(ViewRepStandard {
-                values: [
-                    reader.read_bit_long(),
-                    reader.read_bit_long(),
-                    reader.read_bit_long(),
-                    reader.read_bit_long(),
-                    reader.read_bit_long(),
-                    reader.read_bit_long(),
-                ],
-            })
-        }
-        "ACDBVIEWREPORIENTATIONDEF" => {
-            ClassObjectData::ViewRepOrientationDefinition
-        }
-        "ACDBVIEWREPORIENTATION" => {
-            ClassObjectData::ViewRepOrientation(ViewRepOrientation {
-                camera: reader.read_3bit_double(),
-                target: reader.read_3bit_double(),
-                normal: reader.read_3bit_double(),
-            })
-        }
+        "ACDBVIEWREPSOURCEMGR" => ClassObjectData::ViewRepSourceManager(ViewRepSourceManager {
+            has_source: reader.read_bit(),
+            source: Handle::from(reader.read_handle()),
+            status: reader.read_bit_long(),
+        }),
+        "ACDBVIEWREPSTANDARD" => ClassObjectData::ViewRepStandard(ViewRepStandard {
+            values: [
+                reader.read_bit_long(),
+                reader.read_bit_long(),
+                reader.read_bit_long(),
+                reader.read_bit_long(),
+                reader.read_bit_long(),
+                reader.read_bit_long(),
+            ],
+        }),
+        "ACDBVIEWREPORIENTATIONDEF" => ClassObjectData::ViewRepOrientationDefinition,
+        "ACDBVIEWREPORIENTATION" => ClassObjectData::ViewRepOrientation(ViewRepOrientation {
+            camera: reader.read_3bit_double(),
+            target: reader.read_3bit_double(),
+            normal: reader.read_3bit_double(),
+        }),
         "ACDBVIEWREPSECTIONDEFINITION" => {
-            ClassObjectData::ViewRepSectionDefinition(
-                ViewRepSectionDefinition {
-                    version: reader.read_bit_long(),
-                    section_depth: reader.read_bit_double(),
-                    flags: [
-                        reader.read_bit_long(),
-                        reader.read_bit_long(),
-                    ],
-                },
-            )
+            ClassObjectData::ViewRepSectionDefinition(ViewRepSectionDefinition {
+                version: reader.read_bit_long(),
+                section_depth: reader.read_bit_double(),
+                flags: [reader.read_bit_long(), reader.read_bit_long()],
+            })
         }
         "ACDBSYMODELSPACEVIEWSELSET" => {
             let version = reader.read_bit_long();
@@ -426,9 +389,10 @@ pub fn read_class_object_data(
             for _ in 0..count(reader.read_bit_long()) {
                 entities.push(Handle::from(reader.read_handle()));
             }
-            ClassObjectData::ViewRepModelSpaceViewSelectionSet(
-                ViewRepModelSpaceViewSelectionSet { version, entities },
-            )
+            ClassObjectData::ViewRepModelSpaceViewSelectionSet(ViewRepModelSpaceViewSelectionSet {
+                version,
+                entities,
+            })
         }
         "SPATIAL_INDEX" => {
             let last_updated_julian_day = reader.read_bit_long();
@@ -591,8 +555,7 @@ pub fn read_class_object_data(
             false,
         )),
         "MENTALRAYRENDERSETTINGS" => {
-            let base =
-                read_render_settings(reader, version, dxf_version, false);
+            let base = read_render_settings(reader, version, dxf_version, false);
             ClassObjectData::MentalRayRenderSettings(MentalRayRenderSettings {
                 base,
                 version: reader.read_bit_long(),
@@ -632,10 +595,7 @@ pub fn read_class_object_data(
                     reader.read_bit(),
                     reader.read_bit(),
                 ],
-                final_gathering_sample_radius: [
-                    reader.read_bit_double(),
-                    reader.read_bit_double(),
-                ],
+                final_gathering_sample_radius: [reader.read_bit_double(), reader.read_bit_double()],
                 light_luminance_scale: reader.read_bit_double(),
                 diagnostics_mode: reader.read_bit_short(),
                 diagnostics_grid_mode: reader.read_bit_short(),
@@ -652,8 +612,7 @@ pub fn read_class_object_data(
             })
         }
         "RAPIDRTRENDERSETTINGS" => {
-            let mut base =
-                read_render_settings(reader, version, dxf_version, true);
+            let mut base = read_render_settings(reader, version, dxf_version, true);
             let rapid_version = reader.read_bit_long();
             let render_target = reader.read_bit_long();
             let render_level = reader.read_bit_long();
@@ -714,12 +673,10 @@ pub fn read_class_object_data(
             offset: reader.read_2bit_double(),
             scale: reader.read_2bit_double(),
         }),
-        "SKYLIGHT_BACKGROUND" => {
-            ClassObjectData::SkyLightBackground(SkyLightBackground {
-                class_version: reader.read_bit_long(),
-                sun: Handle::from(reader.read_handle()),
-            })
-        }
+        "SKYLIGHT_BACKGROUND" => ClassObjectData::SkyLightBackground(SkyLightBackground {
+            class_version: reader.read_bit_long(),
+            sun: Handle::from(reader.read_handle()),
+        }),
         "SOLID_BACKGROUND" => ClassObjectData::SolidBackground(SolidBackground {
             class_version: reader.read_bit_long(),
             color: reader.read_bit_long() as u32,
@@ -752,20 +709,18 @@ pub fn read_class_object_data(
             triangle_count: reader.read_bit_long(),
             display_index: reader.read_bit_long(),
         }),
-        "RENDERENVIRONMENT" => {
-            ClassObjectData::RenderEnvironment(RenderEnvironment {
-                class_version: reader.read_bit_long(),
-                fog_enabled: reader.read_bit(),
-                fog_background_enabled: reader.read_bit(),
-                fog_color: [reader.read_byte(), reader.read_byte(), reader.read_byte()],
-                fog_density_near: reader.read_bit_double(),
-                fog_density_far: reader.read_bit_double(),
-                fog_distance_near: reader.read_bit_double(),
-                fog_distance_far: reader.read_bit_double(),
-                environment_image_enabled: reader.read_bit(),
-                environment_image_filename: reader.read_variable_text(),
-            })
-        }
+        "RENDERENVIRONMENT" => ClassObjectData::RenderEnvironment(RenderEnvironment {
+            class_version: reader.read_bit_long(),
+            fog_enabled: reader.read_bit(),
+            fog_background_enabled: reader.read_bit(),
+            fog_color: [reader.read_byte(), reader.read_byte(), reader.read_byte()],
+            fog_density_near: reader.read_bit_double(),
+            fog_density_far: reader.read_bit_double(),
+            fog_distance_near: reader.read_bit_double(),
+            fog_distance_far: reader.read_bit_double(),
+            environment_image_enabled: reader.read_bit(),
+            environment_image_filename: reader.read_variable_text(),
+        }),
         "RENDERGLOBAL" => ClassObjectData::RenderGlobal(RenderGlobal {
             class_version: reader.read_bit_long(),
             procedure: reader.read_bit_long(),
@@ -794,19 +749,17 @@ pub fn read_class_object_data(
             class_version: reader.read_bit_short(),
             point: reader.read_3bit_double(),
         }),
-        "TVDEVICEPROPERTIES" => {
-            ClassObjectData::TvDeviceProperties(TvDeviceProperties {
-                flags: reader.read_bit_long() as u32,
-                max_regen_threads: reader.read_bit_short(),
-                use_lut_palette: reader.read_bit_long(),
-                alternate_highlight: reader.read_bit_long_long(),
-                alternate_highlight_color: reader.read_bit_long_long(),
-                geometry_shader_usage: reader.read_bit_long_long(),
-                blending_mode: reader.read_bit_long(),
-                antialiasing_level: reader.read_bit_double(),
-                reserved_double: reader.read_bit_double(),
-            })
-        }
+        "TVDEVICEPROPERTIES" => ClassObjectData::TvDeviceProperties(TvDeviceProperties {
+            flags: reader.read_bit_long() as u32,
+            max_regen_threads: reader.read_bit_short(),
+            use_lut_palette: reader.read_bit_long(),
+            alternate_highlight: reader.read_bit_long_long(),
+            alternate_highlight_color: reader.read_bit_long_long(),
+            geometry_shader_usage: reader.read_bit_long_long(),
+            blending_mode: reader.read_bit_long(),
+            antialiasing_level: reader.read_bit_double(),
+            reserved_double: reader.read_bit_double(),
+        }),
         "ACDBPOINTCLOUDDEF" | "POINTCLOUDDEF" => {
             ClassObjectData::PointCloudDefinition(read_point_cloud_definition(reader))
         }
@@ -1017,17 +970,15 @@ pub fn read_class_object_data(
             for _ in 0..count(reader.read_bit_long()) {
                 subentities.push(reader.read_bit_long());
             }
-            ClassObjectData::PersistentSubentityManager(
-                PersistentSubentityManager {
-                    class_version,
-                    reserved_zero,
-                    reserved_two,
-                    associated_step_count,
-                    associated_subentity_count,
-                    steps,
-                    subentities,
-                },
-            )
+            ClassObjectData::PersistentSubentityManager(PersistentSubentityManager {
+                class_version,
+                reserved_zero,
+                reserved_two,
+                associated_step_count,
+                associated_subentity_count,
+                steps,
+                subentities,
+            })
         }
         "GEOMAPIMAGE" => ClassObjectData::GeoMapImage(GeoMapImage {
             class_version: reader.read_bit_long(),
@@ -1154,27 +1105,21 @@ pub fn read_class_object_data(
                 },
             })
         }
-        "ACMECOMMANDHISTORY" => {
-            ClassObjectData::AcMeCommandHistory(AcMeCommandHistory {
-                class_version: reader.read_bit_short(),
-            })
-        }
+        "ACMECOMMANDHISTORY" => ClassObjectData::AcMeCommandHistory(AcMeCommandHistory {
+            class_version: reader.read_bit_short(),
+        }),
         "ACMESCOPE" => ClassObjectData::AcMeScope(AcMeScope {
             class_version: reader.read_bit_short(),
         }),
-        "ACMESTATEMGR" => {
-            ClassObjectData::AcMeStateManager(AcMeStateManager {
-                class_version: reader.read_bit_short(),
-            })
-        }
-        "CSACDOCUMENTOPTIONS" => {
-            ClassObjectData::CsacDocumentOptions(CsacDocumentOptions {
-                class_version: reader.read_bit_short(),
-                raw_dwg_data: Some(reader.raw_merged_data()),
-                raw_dwg_handle_bits: reader.get_handle_bits(),
-                raw_dwg_version: Some(dxf_version),
-            })
-        }
+        "ACMESTATEMGR" => ClassObjectData::AcMeStateManager(AcMeStateManager {
+            class_version: reader.read_bit_short(),
+        }),
+        "CSACDOCUMENTOPTIONS" => ClassObjectData::CsacDocumentOptions(CsacDocumentOptions {
+            class_version: reader.read_bit_short(),
+            raw_dwg_data: Some(reader.raw_merged_data()),
+            raw_dwg_handle_bits: reader.get_handle_bits(),
+            raw_dwg_version: Some(dxf_version),
+        }),
         _ => return None,
     };
     Some(data)

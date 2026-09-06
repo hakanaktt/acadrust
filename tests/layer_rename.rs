@@ -70,7 +70,10 @@ fn rename_layer_updates_saved_state_and_xdata_references() {
 
     document.rename_layer("First", "Renamed").unwrap();
 
-    assert_eq!(document.layer_state("Saved").unwrap().current_layer, "Renamed");
+    assert_eq!(
+        document.layer_state("Saved").unwrap().current_layer,
+        "Renamed"
+    );
     let values = &document
         .get_entity(entity_handle)
         .unwrap()

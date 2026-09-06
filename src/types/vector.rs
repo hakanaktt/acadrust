@@ -1,7 +1,7 @@
 //! Vector types for geometric operations
 
 use std::fmt;
-use std::ops::{Add, Sub, Mul, Div, Neg};
+use std::ops::{Add, Div, Mul, Neg, Sub};
 
 /// 2D vector
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -126,7 +126,11 @@ impl Vector3 {
 
     /// Create a zero vector
     pub const fn zero() -> Self {
-        Vector3 { x: 0.0, y: 0.0, z: 0.0 }
+        Vector3 {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        }
     }
 
     /// Zero vector
@@ -303,5 +307,3 @@ mod tests {
         assert_eq!(neg, Vector3::new(-1.0, -2.0, -3.0));
     }
 }
-
-

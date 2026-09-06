@@ -42,10 +42,7 @@ pub struct FieldList {
 }
 
 impl Field {
-    pub(crate) fn visit_handles_mut(
-        &mut self,
-        visit: &mut impl FnMut(&mut Handle),
-    ) {
+    pub(crate) fn visit_handles_mut(&mut self, visit: &mut impl FnMut(&mut Handle)) {
         visit(&mut self.owner);
         for handle in &mut self.child_fields {
             visit(handle);
@@ -65,10 +62,7 @@ impl Field {
 }
 
 impl FieldList {
-    pub(crate) fn visit_handles_mut(
-        &mut self,
-        visit: &mut impl FnMut(&mut Handle),
-    ) {
+    pub(crate) fn visit_handles_mut(&mut self, visit: &mut impl FnMut(&mut Handle)) {
         visit(&mut self.owner);
         for handle in &mut self.fields {
             visit(handle);

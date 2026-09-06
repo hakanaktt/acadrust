@@ -189,14 +189,12 @@ impl Entity for Text {
     fn entity_type(&self) -> &'static str {
         "TEXT"
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_text(self, transform);
     }
-    
+
     fn apply_mirror(&mut self, transform: &crate::types::Transform) {
         super::mirror::mirror_text(self, transform);
     }
 }
-
-

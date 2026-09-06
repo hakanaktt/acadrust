@@ -16,7 +16,9 @@ pub struct StructuredStoragePayload {
 
 impl StructuredStoragePayload {
     pub fn decode(data: &[u8]) -> Self {
-        let Some(offset) = data.windows(CFB_MAGIC.len()).position(|window| window == CFB_MAGIC)
+        let Some(offset) = data
+            .windows(CFB_MAGIC.len())
+            .position(|window| window == CFB_MAGIC)
         else {
             return Self {
                 leading_records: BinaryRecord::split(data, 4096),
@@ -436,9 +438,7 @@ impl<'a> CompoundDecoder<'a> {
                 .iter()
                 .filter_map(|index| self.directory.get(*index))
                 .find(|child| child.kind == 2 && child.name.eq_ignore_ascii_case("dir"))
-                .and_then(|child| {
-                    crate::vba::VbaDirectoryStream::decode(&self.stream_data(child))
-                })
+                .and_then(|child| crate::vba::VbaDirectoryStream::decode(&self.stream_data(child)))
         } else {
             None
         };
@@ -536,12 +536,17 @@ impl<'a> CompoundDecoder<'a> {
             return Vec::new();
         }
         let mut output = if entry.size < self.mini_cutoff {
-            read_chain(entry.start, &self.mini_fat, self.mini_fat.len() + 1, |index| {
-                let offset = index as usize * self.mini_sector_size;
-                self.mini_stream
-                    .get(offset..offset + self.mini_sector_size)
-                    .map(|bytes| bytes.to_vec())
-            })
+            read_chain(
+                entry.start,
+                &self.mini_fat,
+                self.mini_fat.len() + 1,
+                |index| {
+                    let offset = index as usize * self.mini_sector_size;
+                    self.mini_stream
+                        .get(offset..offset + self.mini_sector_size)
+                        .map(|bytes| bytes.to_vec())
+                },
+            )
         } else {
             read_chain(entry.start, &self.fat, self.fat.len() + 1, |index| {
                 let offset = (index as usize + 1) * self.sector_size;
@@ -704,7 +709,8 @@ fn decode_property(data: &[u8]) -> CompoundPropertyValue {
         let mut values = Vec::new();
         let mut offset = 8usize;
         for _ in 0..count.min(1_000_000) {
-            let (value, consumed) = decode_scalar(element_type as u32, data.get(offset..).unwrap_or_default());
+            let (value, consumed) =
+                decode_scalar(element_type as u32, data.get(offset..).unwrap_or_default());
             values.push(value);
             offset = align4(offset.saturating_add(consumed));
         }
@@ -825,10 +831,7 @@ fn decode_scalar(variant_type: u32, data: &[u8]) -> (CompoundPropertyValue, usiz
             match bytes {
                 Some(bytes) => (
                     CompoundPropertyValue::AnsiString {
-                        value: decode_code_page(
-                            bytes.strip_suffix(&[0]).unwrap_or(bytes),
-                            1252,
-                        ),
+                        value: decode_code_page(bytes.strip_suffix(&[0]).unwrap_or(bytes), 1252),
                         code_page: 1252,
                         original_value: decode_code_page(
                             bytes.strip_suffix(&[0]).unwrap_or(bytes),
@@ -854,9 +857,7 @@ fn decode_scalar(variant_type: u32, data: &[u8]) -> (CompoundPropertyValue, usiz
                         .take_while(|unit| *unit != 0)
                         .collect();
                     (
-                        CompoundPropertyValue::UnicodeString(
-                            String::from_utf16_lossy(&units),
-                        ),
+                        CompoundPropertyValue::UnicodeString(String::from_utf16_lossy(&units)),
                         4 + byte_length,
                     )
                 }
@@ -968,9 +969,10 @@ fn encode_scalar(value: &CompoundPropertyValue) -> (u32, Vec<u8>) {
         CompoundPropertyValue::U64(value) => (21, value.to_le_bytes().to_vec()),
         CompoundPropertyValue::F32(value) => (4, value.to_bits().to_le_bytes().to_vec()),
         CompoundPropertyValue::F64(value) => (5, value.to_bits().to_le_bytes().to_vec()),
-        CompoundPropertyValue::Bool(value) => {
-            (11, if *value { 0xFFFFu16 } else { 0 }.to_le_bytes().to_vec())
-        }
+        CompoundPropertyValue::Bool(value) => (
+            11,
+            if *value { 0xFFFFu16 } else { 0 }.to_le_bytes().to_vec(),
+        ),
         CompoundPropertyValue::AnsiString {
             value,
             code_page,
@@ -1091,7 +1093,10 @@ impl<'a> CompoundEncoder<'a> {
                     let start = index * mini_sector_size;
                     let end = (start + mini_sector_size).min(entry.stream.len());
                     mini_stream.extend_from_slice(&entry.stream[start..end]);
-                    mini_stream.resize(mini_stream.len().div_ceil(mini_sector_size) * mini_sector_size, 0);
+                    mini_stream.resize(
+                        mini_stream.len().div_ceil(mini_sector_size) * mini_sector_size,
+                        0,
+                    );
                     mini_fat.push(if index + 1 == count {
                         END_OF_CHAIN
                     } else {
@@ -1116,21 +1121,16 @@ impl<'a> CompoundEncoder<'a> {
                 mini_fat_bytes.extend_from_slice(&FREE_SECTOR.to_le_bytes());
             }
         }
-        let mini_fat_start =
-            allocate_chain(&mini_fat_bytes, sector_size, &mut sectors, &mut fat);
+        let mini_fat_start = allocate_chain(&mini_fat_bytes, sector_size, &mut sectors, &mut fat);
         let mini_fat_sectors = mini_fat_bytes.len().div_ceil(sector_size);
         let directory_bytes = self.directory_bytes(root_start, mini_stream.len() as u64);
-        let directory_start =
-            allocate_chain(&directory_bytes, sector_size, &mut sectors, &mut fat);
+        let directory_start = allocate_chain(&directory_bytes, sector_size, &mut sectors, &mut fat);
 
         let non_allocation_sectors = sectors.len();
         let entries_per_fat = sector_size / 4;
         let entries_per_difat = entries_per_fat - 1;
-        let (fat_count, difat_count) = allocation_sector_counts(
-            non_allocation_sectors,
-            entries_per_fat,
-            entries_per_difat,
-        );
+        let (fat_count, difat_count) =
+            allocation_sector_counts(non_allocation_sectors, entries_per_fat, entries_per_difat);
         let difat_start = if difat_count == 0 {
             END_OF_CHAIN
         } else {
@@ -1160,8 +1160,8 @@ impl<'a> CompoundEncoder<'a> {
         let extra_fat = fat_sector_ids.get(109..).unwrap_or_default();
         for (index, sector_id) in difat_sector_ids.iter().enumerate() {
             let start = index * entries_per_difat;
-            let entries = &extra_fat[start.min(extra_fat.len())
-                ..(start + entries_per_difat).min(extra_fat.len())];
+            let entries = &extra_fat
+                [start.min(extra_fat.len())..(start + entries_per_difat).min(extra_fat.len())];
             let sector = &mut sectors[*sector_id as usize];
             for (entry_index, value) in entries.iter().enumerate() {
                 write_u32(sector, entry_index * 4, *value);
@@ -1258,11 +1258,7 @@ impl<'a> CompoundEncoder<'a> {
                 .encode_utf16()
                 .count()
                 .cmp(&right_name.encode_utf16().count())
-                .then_with(|| {
-                    left_name
-                        .to_uppercase()
-                        .cmp(&right_name.to_uppercase())
-                })
+                .then_with(|| left_name.to_uppercase().cmp(&right_name.to_uppercase()))
         });
         self.flat[index as usize].child = build_directory_tree(&mut self.flat, &children);
         index
@@ -1308,26 +1304,19 @@ fn build_directory_tree(flat: &mut [FlatEntry], entries: &[u32]) -> u32 {
         let middle = entries.len() / 2;
         let index = entries[middle];
         let (left, left_depth) = build(flat, &entries[..middle], depth + 1);
-        let (right, right_depth) =
-            build(flat, &entries[middle + 1..], depth + 1);
+        let (right, right_depth) = build(flat, &entries[middle + 1..], depth + 1);
         flat[index as usize].left = left;
         flat[index as usize].right = right;
         (index, depth.max(left_depth).max(right_depth))
     }
 
-    fn color_deepest(
-        flat: &mut [FlatEntry],
-        index: u32,
-        depth: usize,
-        deepest: usize,
-    ) {
+    fn color_deepest(flat: &mut [FlatEntry], index: u32, depth: usize, deepest: usize) {
         if index == FREE_SECTOR {
             return;
         }
         let left = flat[index as usize].left;
         let right = flat[index as usize].right;
-        flat[index as usize].color =
-            if depth == deepest && depth != 0 { 0 } else { 1 };
+        flat[index as usize].color = if depth == deepest && depth != 0 { 0 } else { 1 };
         color_deepest(flat, left, depth + 1, deepest);
         color_deepest(flat, right, depth + 1, deepest);
     }
@@ -1390,15 +1379,21 @@ fn align4(value: usize) -> usize {
 }
 
 fn read_u16(data: &[u8], offset: usize) -> Option<u16> {
-    Some(u16::from_le_bytes(data.get(offset..offset + 2)?.try_into().ok()?))
+    Some(u16::from_le_bytes(
+        data.get(offset..offset + 2)?.try_into().ok()?,
+    ))
 }
 
 fn read_u32(data: &[u8], offset: usize) -> Option<u32> {
-    Some(u32::from_le_bytes(data.get(offset..offset + 4)?.try_into().ok()?))
+    Some(u32::from_le_bytes(
+        data.get(offset..offset + 4)?.try_into().ok()?,
+    ))
 }
 
 fn read_u64(data: &[u8], offset: usize) -> Option<u64> {
-    Some(u64::from_le_bytes(data.get(offset..offset + 8)?.try_into().ok()?))
+    Some(u64::from_le_bytes(
+        data.get(offset..offset + 8)?.try_into().ok()?,
+    ))
 }
 
 fn write_u16(data: &mut [u8], offset: usize, value: u16) {

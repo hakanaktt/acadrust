@@ -1,9 +1,9 @@
 //! ASCII DXF writer
 
-use std::io::Write;
+use super::stream_writer::DxfStreamWriter;
 use crate::error::Result;
 use crate::types::Handle;
-use super::stream_writer::DxfStreamWriter;
+use std::io::Write;
 
 /// ASCII DXF stream writer.
 ///
@@ -237,7 +237,11 @@ impl<W: Write> DxfStreamWriter for DxfTextWriter<W> {
             while v > 0 {
                 pos -= 1;
                 let digit = (v & 0xF) as u8;
-                self.fmt_buf[pos] = if digit < 10 { b'0' + digit } else { b'A' + digit - 10 };
+                self.fmt_buf[pos] = if digit < 10 {
+                    b'0' + digit
+                } else {
+                    b'A' + digit - 10
+                };
                 v >>= 4;
             }
             let hex_len = 16 - pos;
@@ -276,10 +280,10 @@ impl<W: Write> DxfStreamWriter for DxfTextWriter<W> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::stream_writer::DxfStreamWriterExt;
     use super::*;
     use crate::types::Vector3;
-    use super::super::stream_writer::DxfStreamWriterExt;
-    
+
     #[test]
     fn test_write_string() {
         let mut buf = Vec::new();
@@ -290,7 +294,7 @@ mod tests {
         let output = String::from_utf8(buf).unwrap();
         assert_eq!(output, "  0\r\nLINE\r\n");
     }
-    
+
     #[test]
     fn test_write_code_formatting() {
         let mut buf = Vec::new();
@@ -306,13 +310,15 @@ mod tests {
         assert!(output.contains(" 62\r\n"));
         assert!(output.contains("100\r\n"));
     }
-    
+
     #[test]
     fn test_write_point3d() {
         let mut buf = Vec::new();
         {
             let mut writer = DxfTextWriter::new(&mut buf);
-            writer.write_point3d(10, Vector3::new(1.0, 2.0, 3.0)).unwrap();
+            writer
+                .write_point3d(10, Vector3::new(1.0, 2.0, 3.0))
+                .unwrap();
         }
         let output = String::from_utf8(buf).unwrap();
         assert!(output.contains(" 10\r\n"));
@@ -322,7 +328,7 @@ mod tests {
         assert!(output.contains(" 30\r\n"));
         assert!(output.contains("3.0\r\n"));
     }
-    
+
     #[test]
     fn test_write_handle() {
         let mut buf = Vec::new();

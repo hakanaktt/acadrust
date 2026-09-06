@@ -384,11 +384,11 @@ impl Entity for Shape {
     fn entity_type(&self) -> &'static str {
         Self::ENTITY_NAME
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_shape(self, transform);
     }
-    
+
     fn apply_mirror(&mut self, transform: &crate::types::Transform) {
         super::mirror::mirror_shape(self, transform);
     }
@@ -474,11 +474,7 @@ mod tests {
 
     #[test]
     fn test_with_name() {
-        let shape = Shape::with_name(
-            Vector3::new(10.0, 20.0, 0.0),
-            "ARROW",
-            5.0,
-        );
+        let shape = Shape::with_name(Vector3::new(10.0, 20.0, 0.0), "ARROW", 5.0);
         assert_eq!(shape.insertion_point.x, 10.0);
         assert_eq!(shape.shape_name, "ARROW");
         assert_eq!(shape.size, 5.0);
@@ -486,11 +482,7 @@ mod tests {
 
     #[test]
     fn test_with_number() {
-        let shape = Shape::with_number(
-            Vector3::new(10.0, 20.0, 0.0),
-            132,
-            5.0,
-        );
+        let shape = Shape::with_number(Vector3::new(10.0, 20.0, 0.0), 132, 5.0);
         assert_eq!(shape.shape_number, 132);
         assert_eq!(shape.size, 5.0);
     }
@@ -670,4 +662,3 @@ mod tests {
         assert_eq!(shape.size, 1.0);
     }
 }
-

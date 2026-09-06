@@ -7,20 +7,18 @@
 use super::{safe_count, MAX_MESH_FACES, MAX_MESH_FACE_INDICES};
 use crate::entities::multileader::*;
 use crate::entities::solid3d::{AcisMaterial, AcisRevision, Silhouette, Wire, WireType};
-use crate::entities::{
-    ArcAlignedTextData, CoordinationModelData, ExtendedEntityData,
-    GeoPositionMarkerData, LayoutPrintConfigData, LightPhotometricData, OleFrameData,
-    PointCloudClip, PointCloudData, PointCloudExCrop, PointCloudExData,
-    ProxyEntityData, RegisteredClassEntityData, RemoteTextData,
-    SectionObjectData, SurfaceData, SurfaceKind, SurfaceSweepOptions,
-};
 use crate::entities::table::{
     BorderPropertyFlags, BorderType, CellBorder, CellContent, CellContentGeometry, CellEdgeFlags,
-    CellStateFlags, CellStyle, CellStylePropertyFlags, CellStyleType,
-    CellType, CellValue, CellValueType, ContentLayoutFlags, TableAttribute,
-    LegacyBorderOverrides, LegacyTableStyleOverride, TableBreakData, TableBreakRange,
-    TableCell, TableCellContentType, TableColumn, TableCustomData, TableRow,
-    ValueUnitType,
+    CellStateFlags, CellStyle, CellStylePropertyFlags, CellStyleType, CellType, CellValue,
+    CellValueType, ContentLayoutFlags, LegacyBorderOverrides, LegacyTableStyleOverride,
+    TableAttribute, TableBreakData, TableBreakRange, TableCell, TableCellContentType, TableColumn,
+    TableCustomData, TableRow, ValueUnitType,
+};
+use crate::entities::{
+    ArcAlignedTextData, CoordinationModelData, ExtendedEntityData, GeoPositionMarkerData,
+    LayoutPrintConfigData, LightPhotometricData, OleFrameData, PointCloudClip, PointCloudData,
+    PointCloudExCrop, PointCloudExData, ProxyEntityData, RegisteredClassEntityData, RemoteTextData,
+    SectionObjectData, SurfaceData, SurfaceKind, SurfaceSweepOptions,
 };
 use crate::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
 use crate::io::dwg::dwg_version::DwgVersion;
@@ -812,10 +810,7 @@ pub fn read_point_cloud_ex(reader: &mut DwgMergedReader) -> ExtendedEntityData {
     })
 }
 
-pub fn read_ole_frame(
-    reader: &mut DwgMergedReader,
-    version: DwgVersion,
-) -> ExtendedEntityData {
+pub fn read_ole_frame(reader: &mut DwgMergedReader, version: DwgVersion) -> ExtendedEntityData {
     let flag = reader.read_bit_short();
     let mode = if version.r2000_plus() {
         reader.read_bit_short()
@@ -826,15 +821,11 @@ pub fn read_ole_frame(
     ExtendedEntityData::OleFrame(OleFrameData {
         flag,
         mode,
-        storage: crate::compound_file::StructuredStoragePayload::decode(
-            &reader.read_bytes(size),
-        ),
+        storage: crate::compound_file::StructuredStoragePayload::decode(&reader.read_bytes(size)),
     })
 }
 
-pub fn read_layout_print_config(
-    reader: &mut DwgMergedReader,
-) -> ExtendedEntityData {
+pub fn read_layout_print_config(reader: &mut DwgMergedReader) -> ExtendedEntityData {
     ExtendedEntityData::LayoutPrintConfig(LayoutPrintConfigData {
         class_version: reader.read_bit_short(),
         flag: reader.read_bit_short(),
@@ -857,19 +848,14 @@ pub fn read_proxy_entity(
     } else {
         String::new()
     };
-    let (version_value, dwg_version, maintenance_version) =
-        if version.r2018_plus(dxf_version) {
-            let dwg = reader.read_bit_long();
-            let maintenance = reader.read_bit_long();
-            (
-                (maintenance << 16) | (dwg & 0xffff),
-                dwg,
-                maintenance,
-            )
-        } else {
-            let combined = reader.read_bit_long();
-            (combined, combined & 0xffff, combined >> 16)
-        };
+    let (version_value, dwg_version, maintenance_version) = if version.r2018_plus(dxf_version) {
+        let dwg = reader.read_bit_long();
+        let maintenance = reader.read_bit_long();
+        ((maintenance << 16) | (dwg & 0xffff), dwg, maintenance)
+    } else {
+        let combined = reader.read_bit_long();
+        (combined, combined & 0xffff, combined >> 16)
+    };
     let from_dxf = if version.r2000_plus() {
         reader.read_bit()
     } else {
@@ -883,8 +869,7 @@ pub fn read_proxy_entity(
         }
     }
     let text_data_bits = reader.text_remaining_bits() as u32;
-    let mut text_data =
-        vec![0u8; text_data_bits.div_ceil(8) as usize];
+    let mut text_data = vec![0u8; text_data_bits.div_ceil(8) as usize];
     for bit_index in 0..text_data_bits as usize {
         if reader.read_text_bit() {
             text_data[bit_index / 8] |= 0x80 >> (bit_index % 8);
@@ -892,8 +877,7 @@ pub fn read_proxy_entity(
     }
     let mut object_ids = Vec::new();
     while reader.handle_remaining_bits() >= 8 {
-        let (handle, reference_type) =
-            reader.read_handle_reference(current_handle);
+        let (handle, reference_type) = reader.read_handle_reference(current_handle);
         let kind = match reference_type {
             crate::io::dwg::dwg_reference_type::DwgReferenceType::SoftOwnership => {
                 crate::objects::ProxyReferenceKind::SoftOwnership
@@ -916,24 +900,17 @@ pub fn read_proxy_entity(
             kind,
         });
     }
-    let payload = crate::objects::ProxyPayload::from_bits(
-        &object_data,
-        object_data_bits,
-    );
+    let payload = crate::objects::ProxyPayload::from_bits(&object_data, object_data_bits);
     if let Some(envelope) =
-        crate::objects::semantic_property::decode_registered_class_envelope(
-            &payload,
-        )
+        crate::objects::semantic_property::decode_registered_class_envelope(&payload)
     {
-        return ExtendedEntityData::RegisteredClass(
-            RegisteredClassEntityData {
-                dxf_name: envelope.dxf_name,
-                cpp_class_name: envelope.cpp_class_name,
-                properties: envelope.properties,
-                payload: envelope.payload,
-                object_ids,
-            },
-        );
+        return ExtendedEntityData::RegisteredClass(RegisteredClassEntityData {
+            dxf_name: envelope.dxf_name,
+            cpp_class_name: envelope.cpp_class_name,
+            properties: envelope.properties,
+            payload: envelope.payload,
+            object_ids,
+        });
     }
     ExtendedEntityData::Proxy(ProxyEntityData {
         proxy_id: 498,
@@ -945,10 +922,7 @@ pub fn read_proxy_entity(
         from_dxf,
         graphics: crate::objects::ProxyPayload::from_bytes(&proxy_data),
         payload,
-        text_payload: crate::objects::ProxyPayload::from_bits(
-            &text_data,
-            text_data_bits,
-        ),
+        text_payload: crate::objects::ProxyPayload::from_bits(&text_data, text_data_bits),
         object_ids,
     })
 }
@@ -2707,8 +2681,13 @@ fn read_hatch_kind(
         }
     }
 
-    let (pixel_size, seed_points, mpolygon_hatch_color, mpolygon_x_direction,
-        mpolygon_boundary_handle_count) = if is_mpolygon {
+    let (
+        pixel_size,
+        seed_points,
+        mpolygon_hatch_color,
+        mpolygon_x_direction,
+        mpolygon_boundary_handle_count,
+    ) = if is_mpolygon {
         (
             0.0,
             Vec::new(),
@@ -2817,16 +2796,17 @@ pub fn read_viewport(
     } else {
         0
     };
-    let (default_lighting, default_lighting_type, brightness, contrast, ambient_color) = if version.r2007_plus() {
-        let dl = reader.read_bit();
-        let dlt = reader.read_byte();
-        let br = reader.read_bit_double();
-        let co = reader.read_bit_double();
-        let ambient = reader.read_cm_color();
-        (dl, dlt, br, co, ambient)
-    } else {
-        (false, 0, 0.0, 0.0, crate::types::Color::from_index(0))
-    };
+    let (default_lighting, default_lighting_type, brightness, contrast, ambient_color) =
+        if version.r2007_plus() {
+            let dl = reader.read_bit();
+            let dlt = reader.read_byte();
+            let br = reader.read_bit_double();
+            let co = reader.read_bit_double();
+            let ambient = reader.read_cm_color();
+            (dl, dlt, br, co, ambient)
+        } else {
+            (false, 0, 0.0, 0.0, crate::types::Color::from_index(0))
+        };
 
     ViewportData {
         center,
@@ -3375,14 +3355,12 @@ fn read_cad_value_with_schema(
 
 fn read_border(reader: &mut DwgMergedReader) -> CellBorder {
     let mut border = CellBorder::new();
-    border.override_flags =
-        BorderPropertyFlags::from_bits_retain(reader.read_bit_long() as u32);
+    border.override_flags = BorderPropertyFlags::from_bits_retain(reader.read_bit_long() as u32);
     border.border_type = BorderType::from(reader.read_bit_long() as i16);
     // Linked/formatted table data always carries the full CMTC payload,
     // including when the object is down-saved into an AC1014/AC1015 file.
     border.color = reader.read_cm_true_color();
-    border.line_weight =
-        crate::types::LineWeight::from_value(reader.read_bit_long() as i16);
+    border.line_weight = crate::types::LineWeight::from_value(reader.read_bit_long() as i16);
     let line_type = reader.read_handle();
     border.line_type_handle = (line_type != 0).then(|| Handle::from(line_type));
     border.invisible = reader.read_bit_long() != 0;
@@ -3452,12 +3430,10 @@ fn read_cell_style(reader: &mut DwgMergedReader) -> Option<CellStyle> {
     let mut style = CellStyle::new();
     style.style_type = CellStyleType::from(style_type as u8);
     style.override_flags = reader.read_bit_long();
-    style.property_flags =
-        CellStylePropertyFlags::from_bits_retain(reader.read_bit_long() as u32);
+    style.property_flags = CellStylePropertyFlags::from_bits_retain(reader.read_bit_long() as u32);
     style.background_color = reader.read_cm_true_color();
     style.fill_enabled = style.background_color != Color::ByBlock;
-    style.layout_flags =
-        ContentLayoutFlags::from_bits_retain(reader.read_bit_long() as u32);
+    style.layout_flags = ContentLayoutFlags::from_bits_retain(reader.read_bit_long() as u32);
     let format = read_cell_content_format(reader);
     style.content_format_override_flags = format.override_flags;
     style.content_property_flags = format.property_flags;
@@ -3498,16 +3474,10 @@ fn read_cell_style(reader: &mut DwgMergedReader) -> Option<CellStyle> {
     Some(style)
 }
 
-fn read_custom_table_data(
-    reader: &mut DwgMergedReader,
-    version: DwgVersion,
-) -> TableCustomData {
+fn read_custom_table_data(reader: &mut DwgMergedReader, version: DwgVersion) -> TableCustomData {
     let name = reader.read_variable_text();
     let value = read_cad_value_with_schema(reader, version, true);
-    TableCustomData {
-        name,
-        value,
-    }
+    TableCustomData { name, value }
 }
 
 fn read_table_cell_content(reader: &mut DwgMergedReader, version: DwgVersion) -> CellContent {
@@ -3791,8 +3761,7 @@ fn read_table_cell_data(
                 border.color = reader.read_cm_color();
             }
             if flags & lw_bit != 0 {
-                border.line_weight =
-                    crate::types::LineWeight::from_value(reader.read_bit_short());
+                border.line_weight = crate::types::LineWeight::from_value(reader.read_bit_short());
             }
             if flags & lw_bit != 0 {
                 border.invisible = reader.read_bit_short() == 0;
@@ -3813,9 +3782,7 @@ fn read_table_cell_data(
     cell
 }
 
-fn read_legacy_table_style_override(
-    reader: &mut DwgMergedReader,
-) -> LegacyTableStyleOverride {
+fn read_legacy_table_style_override(reader: &mut DwgMergedReader) -> LegacyTableStyleOverride {
     let flags = reader.read_bit_long();
     let mut value = LegacyTableStyleOverride {
         flags,
@@ -3871,9 +3838,7 @@ fn read_legacy_table_style_override(
     value
 }
 
-fn read_legacy_border_colors(
-    reader: &mut DwgMergedReader,
-) -> LegacyBorderOverrides<Color> {
+fn read_legacy_border_colors(reader: &mut DwgMergedReader) -> LegacyBorderOverrides<Color> {
     let flags = reader.read_bit_long();
     let mut values = Vec::new();
     for bit in 0..18 {
@@ -3897,9 +3862,7 @@ fn read_legacy_border_line_weights(
     LegacyBorderOverrides { flags, values }
 }
 
-fn read_legacy_border_visibility(
-    reader: &mut DwgMergedReader,
-) -> LegacyBorderOverrides<bool> {
+fn read_legacy_border_visibility(reader: &mut DwgMergedReader) -> LegacyBorderOverrides<bool> {
     let flags = reader.read_bit_long();
     let mut values = Vec::new();
     for bit in 0..18 {
@@ -4034,12 +3997,10 @@ pub fn read_table(
             legacy_border_colors = Some(read_legacy_border_colors(reader));
         }
         if reader.read_bit() {
-            legacy_border_line_weights =
-                Some(read_legacy_border_line_weights(reader));
+            legacy_border_line_weights = Some(read_legacy_border_line_weights(reader));
         }
         if reader.read_bit() {
-            legacy_border_visibility =
-                Some(read_legacy_border_visibility(reader));
+            legacy_border_visibility = Some(read_legacy_border_visibility(reader));
         }
     }
 
@@ -4219,8 +4180,7 @@ pub(crate) fn read_embedded_mtext(
     let mut background_color = Color::ByLayer;
     let mut background_transparency = 0;
     if background_flags & 1 != 0
-        || (_version.r2018_plus(_dxf_version)
-            && background_flags & 0x10 != 0)
+        || (_version.r2018_plus(_dxf_version) && background_flags & 0x10 != 0)
     {
         background_scale = reader.read_bit_double();
         background_color = reader.read_cm_color();
@@ -4482,8 +4442,7 @@ pub fn read_multileader(
     };
 
     // Annotation context (inline)
-    let mut context =
-        read_multileader_annotation_context(reader, version, dxf_version, false);
+    let mut context = read_multileader_annotation_context(reader, version, dxf_version, false);
 
     // Common data
     let style_handle = reader.read_handle();
@@ -5057,9 +5016,7 @@ fn read_extra_acis_data(
             reader.set_position_in_bits(prefix_start);
             return None;
         }
-        if let Ok((_, used)) =
-            crate::entities::acis::SabReader::read_with_consumed(&probe)
-        {
+        if let Ok((_, used)) = crate::entities::acis::SabReader::read_with_consumed(&probe) {
             if used <= probe.len() {
                 reader.set_position_in_bits(data_start + used as i64 * 8);
                 return Some(crate::entities::solid3d::AcisData::from_sab(
@@ -5327,8 +5284,7 @@ fn read_acis_entity_impl(
                 materials.push(AcisMaterial {
                     array_index,
                     absolute_reference,
-                    material_handle: (material_handle != 0)
-                        .then(|| Handle::from(material_handle)),
+                    material_handle: (material_handle != 0).then(|| Handle::from(material_handle)),
                 });
             }
         } else {
@@ -5453,13 +5409,7 @@ pub fn read_surface(
     has_ds_data: bool,
     kind: SurfaceKind,
 ) -> SurfaceEntityData {
-    let acis = read_acis_entity_impl(
-        reader,
-        version,
-        dxf_version,
-        has_ds_data,
-        true,
-    );
+    let acis = read_acis_entity_impl(reader, version, dxf_version, has_ds_data, true);
     // Surface records do not have the 3DSOLID history-id handle slot.
     let history_handle = 0;
     let mut modeler_format_version = 1;
@@ -5481,14 +5431,13 @@ pub fn read_surface(
             let sweep_transform = read_surface_matrix(reader);
             let type_code = reader.read_bit_long();
             let bit_length = safe_count(reader.read_bit_long()) as usize;
-            let sweep_entity =
-                crate::io::dwg::embedded_entity::read_embedded_entity_bits(
-                    reader,
-                    type_code,
-                    bit_length,
-                    version,
-                    dxf_version,
-                );
+            let sweep_entity = crate::io::dwg::embedded_entity::read_embedded_entity_bits(
+                reader,
+                type_code,
+                bit_length,
+                version,
+                dxf_version,
+            );
             SurfaceData::Extruded {
                 sweep_entity,
                 options,
@@ -5577,37 +5526,23 @@ pub fn read_surface(
                 cross_section_entities.reserve(cross_count as usize);
                 guide_entities.reserve(guide_count as usize);
                 for _ in 0..cross_count {
-                    if let Some(entity) =
-                        read_surface_embedded_entity(reader, version, dxf_version)
+                    if let Some(entity) = read_surface_embedded_entity(reader, version, dxf_version)
                     {
                         cross_section_entities.push(entity);
                     }
                 }
                 for _ in 0..guide_count {
-                    if let Some(entity) =
-                        read_surface_embedded_entity(reader, version, dxf_version)
+                    if let Some(entity) = read_surface_embedded_entity(reader, version, dxf_version)
                     {
                         guide_entities.push(entity);
                     }
                 }
                 if has_path {
-                    path_entity =
-                        read_surface_embedded_entity(reader, version, dxf_version);
+                    path_entity = read_surface_embedded_entity(reader, version, dxf_version);
                 }
                 (
-                    values.12,
-                    values.0,
-                    values.1,
-                    values.2,
-                    values.3,
-                    values.4,
-                    values.5,
-                    values.6,
-                    values.7,
-                    values.8,
-                    values.9,
-                    values.10,
-                    values.11,
+                    values.12, values.0, values.1, values.2, values.3, values.4, values.5,
+                    values.6, values.7, values.8, values.9, values.10, values.11,
                 )
             };
             SurfaceData::Lofted {
@@ -5634,38 +5569,51 @@ pub fn read_surface(
             }
         }
         SurfaceKind::Revolved => {
-            let (class_version, entity_id, draft_angle, draft_start_distance,
-                draft_end_distance, twist_angle, solid, close_to_axis) =
-                if version.r2007_plus() {
-                    (
-                        reader.read_bit_long(),
-                        reader.read_bit_long(),
-                        0.0,
-                        0.0,
-                        0.0,
-                        0.0,
-                        false,
-                        false,
-                    )
-                } else {
-                    (
-                        0,
-                        0,
-                        reader.read_bit_double(),
-                        reader.read_bit_double(),
-                        reader.read_bit_double(),
-                        reader.read_bit_double(),
-                        reader.read_bit(),
-                        reader.read_bit(),
-                    )
-                };
+            let (
+                class_version,
+                entity_id,
+                draft_angle,
+                draft_start_distance,
+                draft_end_distance,
+                twist_angle,
+                solid,
+                close_to_axis,
+            ) = if version.r2007_plus() {
+                (
+                    reader.read_bit_long(),
+                    reader.read_bit_long(),
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    false,
+                    false,
+                )
+            } else {
+                (
+                    0,
+                    0,
+                    reader.read_bit_double(),
+                    reader.read_bit_double(),
+                    reader.read_bit_double(),
+                    reader.read_bit_double(),
+                    reader.read_bit(),
+                    reader.read_bit(),
+                )
+            };
             let axis_point = reader.read_3bit_double();
             let axis_vector = reader.read_3bit_double();
             let revolve_angle = reader.read_bit_double();
             let start_angle = reader.read_bit_double();
             let entity_transform = read_surface_matrix(reader);
-            let (draft_angle, draft_start_distance, draft_end_distance,
-                twist_angle, solid, close_to_axis) = if version.r2007_plus() {
+            let (
+                draft_angle,
+                draft_start_distance,
+                draft_end_distance,
+                twist_angle,
+                solid,
+                close_to_axis,
+            ) = if version.r2007_plus() {
                 (
                     reader.read_bit_double(),
                     reader.read_bit_double(),
@@ -5712,19 +5660,18 @@ pub fn read_surface(
             } else {
                 0
             };
-            let (sweep_transform, path_transform, early_options) =
-                if version.r2007_pre() {
-                    let options = read_surface_sweep_options(reader);
-                    let sweep_transform = read_surface_matrix(reader);
-                    let path_transform = read_surface_matrix(reader);
-                    (sweep_transform, path_transform, Some(options))
-                } else {
-                    (
-                        crate::entities::surface::identity_matrix(),
-                        crate::entities::surface::identity_matrix(),
-                        None,
-                    )
-                };
+            let (sweep_transform, path_transform, early_options) = if version.r2007_pre() {
+                let options = read_surface_sweep_options(reader);
+                let sweep_transform = read_surface_matrix(reader);
+                let path_transform = read_surface_matrix(reader);
+                (sweep_transform, path_transform, Some(options))
+            } else {
+                (
+                    crate::entities::surface::identity_matrix(),
+                    crate::entities::surface::identity_matrix(),
+                    None,
+                )
+            };
             let sweep_entity_id = reader.read_bit_long();
             let sweep_size = safe_count(reader.read_bit_long()) as usize;
             let sweep_entity = crate::io::dwg::embedded_entity::read_embedded_entity_bits(
@@ -5743,8 +5690,7 @@ pub fn read_surface(
                 version,
                 dxf_version,
             );
-            let options = early_options
-                .unwrap_or_else(|| read_surface_sweep_options(reader));
+            let options = early_options.unwrap_or_else(|| read_surface_sweep_options(reader));
             SurfaceData::Swept {
                 class_version,
                 sweep_entity,

@@ -18,13 +18,34 @@ use crate::types::{DxfVersion, Handle};
 //  Version-range helpers (same as header_writer)
 // ════════════════════════════════════════════════════════════════════════════
 
-#[inline] fn r13_14_only(v: DxfVersion) -> bool { v >= DxfVersion::AC1012 && v <= DxfVersion::AC1014 }
-#[inline] fn r13_15_only(v: DxfVersion) -> bool { v >= DxfVersion::AC1012 && v <= DxfVersion::AC1015 }
-#[inline] fn r2000_plus(v: DxfVersion) -> bool { v >= DxfVersion::AC1015 }
-#[inline] fn r2004_plus(v: DxfVersion) -> bool { v >= DxfVersion::AC1018 }
-#[inline] fn r2007_plus(v: DxfVersion) -> bool { v >= DxfVersion::AC1021 }
-#[inline] fn r2010_plus(v: DxfVersion) -> bool { v >= DxfVersion::AC1024 }
-#[inline] fn r2013_plus(v: DxfVersion) -> bool { v >= DxfVersion::AC1027 }
+#[inline]
+fn r13_14_only(v: DxfVersion) -> bool {
+    v >= DxfVersion::AC1012 && v <= DxfVersion::AC1014
+}
+#[inline]
+fn r13_15_only(v: DxfVersion) -> bool {
+    v >= DxfVersion::AC1012 && v <= DxfVersion::AC1015
+}
+#[inline]
+fn r2000_plus(v: DxfVersion) -> bool {
+    v >= DxfVersion::AC1015
+}
+#[inline]
+fn r2004_plus(v: DxfVersion) -> bool {
+    v >= DxfVersion::AC1018
+}
+#[inline]
+fn r2007_plus(v: DxfVersion) -> bool {
+    v >= DxfVersion::AC1021
+}
+#[inline]
+fn r2010_plus(v: DxfVersion) -> bool {
+    v >= DxfVersion::AC1024
+}
+#[inline]
+fn r2013_plus(v: DxfVersion) -> bool {
+    v >= DxfVersion::AC1027
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 //  Julian date helpers
@@ -70,17 +91,20 @@ impl SectionReader {
             // The section data starts with an RL (total size in bits).
             // Create a DwgMergedReader in ThreeStream mode and set up
             // text/handle sub-streams from the RL.
-            let mut merged =
-                DwgMergedReader::new_with_encoding(data, version, 0, encoding);
+            let mut merged = DwgMergedReader::new_with_encoding(data, version, 0, encoding);
             // Read the RL (total_size_bits) stored by save_position_for_size
             let total_size_bits = merged.main_mut().read_raw_long() as i64;
             merged.setup_text_and_handle(total_size_bits);
-            Ok(SectionReader { inner: SectionReaderInner::MergedReader(merged) })
+            Ok(SectionReader {
+                inner: SectionReaderInner::MergedReader(merged),
+            })
         } else {
             // Pre-R2007: single stream, everything inline
             let dwg = DwgVersion::from_dxf_version(version)?;
             let reader = DwgBitReader::with_encoding(data, dwg, version, encoding);
-            Ok(SectionReader { inner: SectionReaderInner::BitReader(reader) })
+            Ok(SectionReader {
+                inner: SectionReaderInner::BitReader(reader),
+            })
         }
     }
 
@@ -182,7 +206,11 @@ impl SectionReader {
 ///
 /// # Returns
 /// `HeaderVariables` populated with all header variables.
-pub fn read_header(data: &[u8], version: DxfVersion, maintenance_version: u8) -> Result<HeaderVariables> {
+pub fn read_header(
+    data: &[u8],
+    version: DxfVersion,
+    maintenance_version: u8,
+) -> Result<HeaderVariables> {
     read_header_with_encoding(
         data,
         version,
@@ -202,14 +230,18 @@ pub fn read_header_with_encoding(
         return Err(DxfError::Parse("Header section too short".to_string()));
     }
     if &data[..16] != &start_sentinels::HEADER {
-        return Err(DxfError::InvalidSentinel("Header section start sentinel mismatch".to_string()));
+        return Err(DxfError::InvalidSentinel(
+            "Header section start sentinel mismatch".to_string(),
+        ));
     }
 
     // ── Read section size ──
     let mut size_offset = 16;
     let section_size = i32::from_le_bytes([
-        data[size_offset], data[size_offset + 1],
-        data[size_offset + 2], data[size_offset + 3],
+        data[size_offset],
+        data[size_offset + 1],
+        data[size_offset + 2],
+        data[size_offset + 3],
     ]) as usize;
     size_offset += 4;
 
@@ -220,11 +252,7 @@ pub fn read_header_with_encoding(
 
     let section_data = &data[size_offset..size_offset + section_size];
 
-    let mut r = SectionReader::with_encoding(
-        section_data.to_vec(),
-        version,
-        encoding,
-    )?;
+    let mut r = SectionReader::with_encoding(section_data.to_vec(), version, encoding)?;
     let mut h = HeaderVariables::default();
 
     read_header_fields(&mut r, version, &mut h);
@@ -548,10 +576,10 @@ fn read_header_fields(r: &mut SectionReader, v: DxfVersion, h: &mut HeaderVariab
 
     // R2007+ dimension extras
     if r2007_plus(v) {
-        let _ = r.read_bit_double();   // DIMFXL
-        let _ = r.read_bit_double();   // DIMJOGANG
-        let _ = r.read_bit_short();    // DIMTFILL
-        let _ = r.read_cm_color();     // DIMTFILLCLR
+        let _ = r.read_bit_double(); // DIMFXL
+        let _ = r.read_bit_double(); // DIMJOGANG
+        let _ = r.read_bit_short(); // DIMTFILL
+        let _ = r.read_cm_color(); // DIMTFILLCLR
     }
 
     // R2000+ dimension flags
@@ -636,10 +664,10 @@ fn read_header_fields(r: &mut SectionReader, v: DxfVersion, h: &mut HeaderVariab
 
     // R2010+: extra dimension fields
     if r2010_plus(v) {
-        let _ = r.read_bit();          // DIMTXTDIRECTION
-        let _ = r.read_bit_double();   // DIMALTMZF
+        let _ = r.read_bit(); // DIMTXTDIRECTION
+        let _ = r.read_bit_double(); // DIMALTMZF
         let _ = r.read_variable_text(); // DIMALTMZS
-        let _ = r.read_bit_double();   // DIMMZF
+        let _ = r.read_bit_double(); // DIMMZF
         let _ = r.read_variable_text(); // DIMMZS
     }
 
@@ -869,25 +897,40 @@ mod tests {
         // Verify numeric/boolean header variables
         assert_eq!(read.fill_mode, original.fill_mode);
         assert_eq!(read.ortho_mode, original.ortho_mode);
-        assert_eq!(read.linear_unit_format, original.linear_unit_format,
-            "LUNITS should survive roundtrip");
+        assert_eq!(
+            read.linear_unit_format, original.linear_unit_format,
+            "LUNITS should survive roundtrip"
+        );
         assert_eq!(read.angular_unit_format, original.angular_unit_format);
-        assert!((read.text_height - original.text_height).abs() < 1e-10,
-            "TEXTSIZE should survive roundtrip: got {} expected {}", read.text_height, original.text_height);
+        assert!(
+            (read.text_height - original.text_height).abs() < 1e-10,
+            "TEXTSIZE should survive roundtrip: got {} expected {}",
+            read.text_height,
+            original.text_height
+        );
         assert!((read.linetype_scale - original.linetype_scale).abs() < 1e-10);
-        assert_eq!(read.attribute_visibility, original.attribute_visibility,
-            "ATTMODE should survive roundtrip");
-        assert!((read.current_entity_linetype_scale - original.current_entity_linetype_scale).abs() < 1e-10,
-            "CELTSCALE should survive roundtrip");
+        assert_eq!(
+            read.attribute_visibility, original.attribute_visibility,
+            "ATTMODE should survive roundtrip"
+        );
+        assert!(
+            (read.current_entity_linetype_scale - original.current_entity_linetype_scale).abs()
+                < 1e-10,
+            "CELTSCALE should survive roundtrip"
+        );
         assert_eq!(read.insertion_units, original.insertion_units);
         assert_eq!(read.spline_segments, original.spline_segments);
         assert_eq!(read.sort_entities, original.sort_entities);
         // Verify TEXT values survive the three-stream roundtrip (these go in the
         // separate text sub-stream in R2007+, not inline in main).
-        assert_eq!(read.fingerprint_guid, original.fingerprint_guid,
-            "FINGERPRINTGUID should survive three-stream roundtrip");
-        assert_eq!(read.version_guid, original.version_guid,
-            "VERSIONGUID should survive three-stream roundtrip");
+        assert_eq!(
+            read.fingerprint_guid, original.fingerprint_guid,
+            "FINGERPRINTGUID should survive three-stream roundtrip"
+        );
+        assert_eq!(
+            read.version_guid, original.version_guid,
+            "VERSIONGUID should survive three-stream roundtrip"
+        );
         assert_eq!(read.current_layer_handle, original.current_layer_handle);
     }
 

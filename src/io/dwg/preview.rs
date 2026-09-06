@@ -66,8 +66,18 @@ pub fn parse_preview(bytes: &[u8], base: u64) -> Option<Preview> {
             break;
         }
         let code = bytes[off];
-        let start = u32::from_le_bytes([bytes[off + 1], bytes[off + 2], bytes[off + 3], bytes[off + 4]]) as u64;
-        let size = u32::from_le_bytes([bytes[off + 5], bytes[off + 6], bytes[off + 7], bytes[off + 8]]) as usize;
+        let start = u32::from_le_bytes([
+            bytes[off + 1],
+            bytes[off + 2],
+            bytes[off + 3],
+            bytes[off + 4],
+        ]) as u64;
+        let size = u32::from_le_bytes([
+            bytes[off + 5],
+            bytes[off + 6],
+            bytes[off + 7],
+            bytes[off + 8],
+        ]) as usize;
         off += 9;
         let format = match code {
             CODE_BMP => PreviewFormat::Bmp,
@@ -81,7 +91,10 @@ pub fn parse_preview(bytes: &[u8], base: u64) -> Option<Preview> {
         if size == 0 || end > bytes.len() {
             continue;
         }
-        return Some(Preview { format, data: bytes[rel..end].to_vec() });
+        return Some(Preview {
+            format,
+            data: bytes[rel..end].to_vec(),
+        });
     }
     None
 }
@@ -119,7 +132,12 @@ pub fn build_preview(preview: Option<&Preview>, base: u64) -> Vec<u8> {
     if with_header {
         let hstart = base + data_rel as u64;
         push_descriptor(&mut out, CODE_HEADER, hstart, HEADER_LEN as u32);
-        push_descriptor(&mut out, code, hstart + HEADER_LEN as u64, p.data.len() as u32);
+        push_descriptor(
+            &mut out,
+            code,
+            hstart + HEADER_LEN as u64,
+            p.data.len() as u32,
+        );
         out.extend_from_slice(&[0u8; HEADER_LEN]);
         out.extend_from_slice(&p.data);
     } else {
@@ -162,7 +180,10 @@ mod tests {
     #[test]
     fn png_roundtrips() {
         let base = 0x300;
-        let img = Preview { format: PreviewFormat::Png, data: vec![0x89, b'P', b'N', b'G', 1, 2, 3, 4, 5] };
+        let img = Preview {
+            format: PreviewFormat::Png,
+            data: vec![0x89, b'P', b'N', b'G', 1, 2, 3, 4, 5],
+        };
         let bytes = build_preview(Some(&img), base);
         // one descriptor, no header
         assert_eq!(bytes[20], 1);
@@ -173,7 +194,10 @@ mod tests {
     fn bmp_roundtrips_with_header() {
         let base = 0x1c0;
         let dib = vec![0x28u8; 1200];
-        let img = Preview { format: PreviewFormat::Bmp, data: dib };
+        let img = Preview {
+            format: PreviewFormat::Bmp,
+            data: dib,
+        };
         let bytes = build_preview(Some(&img), base);
         // two descriptors: header + BMP
         assert_eq!(bytes[20], 2);
@@ -187,7 +211,10 @@ mod tests {
     fn absolute_start_offsets() {
         // Mirrors the real AC1024 file: header at data_rel, BMP after it.
         let base = 0x1c0;
-        let img = Preview { format: PreviewFormat::Bmp, data: vec![7u8; 100] };
+        let img = Preview {
+            format: PreviewFormat::Bmp,
+            data: vec![7u8; 100],
+        };
         let bytes = build_preview(Some(&img), base);
         // descriptor[1] (BMP) start field at container offset 21 + 9 + 1.
         let s = u32::from_le_bytes([bytes[31], bytes[32], bytes[33], bytes[34]]) as u64;

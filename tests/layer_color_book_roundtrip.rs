@@ -97,7 +97,8 @@ fn book_color_object_survives_dxf_roundtrip() {
         .expect("DXF reader")
         .read()
         .expect("DXF read");
-    let ObjectType::BookColor(color) = roundtripped.objects.get(&handle).expect("book color") else {
+    let ObjectType::BookColor(color) = roundtripped.objects.get(&handle).expect("book color")
+    else {
         panic!("book color object");
     };
 

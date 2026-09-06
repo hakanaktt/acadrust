@@ -23,11 +23,11 @@ impl PolylineFlags {
     pub fn new() -> Self {
         Self { bits: 0 }
     }
-    
+
     pub fn from_bits(bits: u16) -> Self {
         Self { bits }
     }
-    
+
     pub fn bits(&self) -> u16 {
         self.bits
     }
@@ -39,11 +39,11 @@ impl PolylineFlags {
     pub fn is_3d(&self) -> bool {
         self.bits & 8 != 0
     }
-    
+
     pub fn is_spline_fit(&self) -> bool {
         self.bits & 4 != 0
     }
-    
+
     pub fn set_closed(&mut self, value: bool) {
         if value {
             self.bits |= 1;
@@ -51,7 +51,7 @@ impl PolylineFlags {
             self.bits &= !1;
         }
     }
-    
+
     pub fn set_3d(&mut self, value: bool) {
         if value {
             self.bits |= 8;
@@ -64,7 +64,9 @@ impl PolylineFlags {
 impl std::ops::BitOr for PolylineFlags {
     type Output = Self;
     fn bitor(self, rhs: Self) -> Self::Output {
-        Self { bits: self.bits | rhs.bits }
+        Self {
+            bits: self.bits | rhs.bits,
+        }
     }
 }
 
@@ -93,11 +95,11 @@ impl VertexFlags {
     pub fn new() -> Self {
         Self { bits: 0 }
     }
-    
+
     pub fn from_bits(bits: u8) -> Self {
         Self { bits }
     }
-    
+
     pub fn bits(&self) -> u8 {
         self.bits
     }
@@ -157,16 +159,16 @@ impl Vertex2D {
             id: 0,
         }
     }
-    
+
     pub fn from_point(point: Vector2) -> Self {
         Self::new(Vector3::new(point.x, point.y, 0.0))
     }
-    
+
     pub fn with_bulge(mut self, bulge: f64) -> Self {
         self.bulge = bulge;
         self
     }
-    
+
     pub fn with_width(mut self, start_width: f64, end_width: f64) -> Self {
         self.start_width = start_width;
         self.end_width = end_width;
@@ -237,15 +239,15 @@ impl Polyline2D {
             vertices: Vec::new(),
         }
     }
-    
+
     pub fn add_vertex(&mut self, vertex: Vertex2D) {
         self.vertices.push(vertex);
     }
-    
+
     pub fn is_closed(&self) -> bool {
         self.flags.is_closed()
     }
-    
+
     pub fn close(&mut self) {
         self.flags.set_closed(true);
     }
@@ -376,7 +378,9 @@ impl Entity for Polyline2D {
         }
 
         let points: Vec<Vector3> = self.vertices.iter().map(|v| v.location).collect();
-        BoundingBox3D::from_points(&points).unwrap().ocs_to_wcs(self.normal)
+        BoundingBox3D::from_points(&points)
+            .unwrap()
+            .ocs_to_wcs(self.normal)
     }
 
     fn translate(&mut self, offset: Vector3) {
@@ -386,11 +390,11 @@ impl Entity for Polyline2D {
     fn entity_type(&self) -> &'static str {
         "POLYLINE"
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_polyline2d(self, transform);
     }
-    
+
     fn apply_mirror(&mut self, transform: &crate::types::Transform) {
         super::mirror::mirror_polyline2d(self, transform);
     }
@@ -461,10 +465,8 @@ impl Entity for Polyline {
     fn entity_type(&self) -> &'static str {
         "POLYLINE"
     }
-    
+
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_polyline(self, transform);
     }
 }
-
-

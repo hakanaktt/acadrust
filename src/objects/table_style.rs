@@ -82,12 +82,18 @@ impl CellAlignment {
 
     /// Returns true if alignment is middle-aligned.
     pub fn is_middle(&self) -> bool {
-        matches!(self, Self::MiddleLeft | Self::MiddleCenter | Self::MiddleRight)
+        matches!(
+            self,
+            Self::MiddleLeft | Self::MiddleCenter | Self::MiddleRight
+        )
     }
 
     /// Returns true if alignment is bottom-aligned.
     pub fn is_bottom(&self) -> bool {
-        matches!(self, Self::BottomLeft | Self::BottomCenter | Self::BottomRight)
+        matches!(
+            self,
+            Self::BottomLeft | Self::BottomCenter | Self::BottomRight
+        )
     }
 
     /// Returns true if alignment is left-aligned.
@@ -97,7 +103,10 @@ impl CellAlignment {
 
     /// Returns true if alignment is center-aligned.
     pub fn is_center(&self) -> bool {
-        matches!(self, Self::TopCenter | Self::MiddleCenter | Self::BottomCenter)
+        matches!(
+            self,
+            Self::TopCenter | Self::MiddleCenter | Self::BottomCenter
+        )
     }
 
     /// Returns true if alignment is right-aligned.

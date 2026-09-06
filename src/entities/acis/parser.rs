@@ -31,24 +31,27 @@ impl SatParser {
         // every pointer resolved two records off and the solid never meshed.
         // A record line always carries `$` pointers; the header lines never
         // do, so peek: `$` in the next line means the extras are absent.
-        let has_header_extras = lines
-            .peek_line()
-            .map(|l| !l.contains('$'))
-            .unwrap_or(false);
+        let has_header_extras = lines.peek_line().map(|l| !l.contains('$')).unwrap_or(false);
         let (product_id, product_version, date, spatial_res, normal_tol, resfit_tol) =
             if has_header_extras {
                 let product_line = lines
                     .next_line()
                     .ok_or(SatParseError::InvalidProductInfo("missing".to_string()))?;
-                let (pid, pver, date) =
-                    Self::parse_product_line(product_line, &header.version)?;
+                let (pid, pver, date) = Self::parse_product_line(product_line, &header.version)?;
                 let tol_line = lines
                     .next_line()
                     .ok_or(SatParseError::InvalidTolerances("missing".to_string()))?;
                 let (sr, nt, rt) = Self::parse_tolerance_line(tol_line)?;
                 (pid, pver, date, sr, nt, rt)
             } else {
-                (String::new(), String::new(), String::new(), 1e-6, 1e-10, None)
+                (
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    1e-6,
+                    1e-10,
+                    None,
+                )
             };
 
         let sat_header = SatHeader {
@@ -93,7 +96,11 @@ impl SatParser {
 
         let num_records = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
         let num_bodies = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
-        let has_history = parts.get(3).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0) != 0;
+        let has_history = parts
+            .get(3)
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(0)
+            != 0;
 
         Ok(HeaderInfo {
             version: SatVersion::from_sat_number(version_num),
@@ -149,8 +156,8 @@ impl SatParser {
         let product_id = read_legacy_string(bytes, &mut pos).unwrap_or_default();
         let product_version = read_legacy_string(bytes, &mut pos).unwrap_or_default();
         // Remaining text is the date (or another counted string)
-        let date = read_legacy_string(bytes, &mut pos)
-            .unwrap_or_else(|| line[pos..].trim().to_string());
+        let date =
+            read_legacy_string(bytes, &mut pos).unwrap_or_else(|| line[pos..].trim().to_string());
 
         Ok((product_id, product_version, date))
     }
@@ -158,17 +165,12 @@ impl SatParser {
     /// Parse the tolerance line: `<spatial_resolution> <normal_tolerance> [<resfit_tolerance>]`
     fn parse_tolerance_line(line: &str) -> Result<(f64, f64, Option<f64>), SatParseError> {
         let parts: Vec<&str> = line.split_whitespace().collect();
-        let spatial = parts
-            .first()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(1e-06);
+        let spatial = parts.first().and_then(|s| s.parse().ok()).unwrap_or(1e-06);
         let normal = parts
             .get(1)
             .and_then(|s| s.parse().ok())
             .unwrap_or(9.9999999999999995e-07);
-        let resfit = parts
-            .get(2)
-            .and_then(|s| s.parse().ok());
+        let resfit = parts.get(2).and_then(|s| s.parse().ok());
         Ok((spatial, normal, resfit))
     }
 
@@ -222,9 +224,7 @@ impl SatParser {
             }
 
             // Check for end-of-data markers
-            if trimmed.starts_with("End-of-ACIS-data")
-                || trimmed.starts_with("End-of-ASM-data")
-            {
+            if trimmed.starts_with("End-of-ACIS-data") || trimmed.starts_with("End-of-ASM-data") {
                 break;
             }
 
@@ -291,10 +291,12 @@ impl SatParser {
         };
 
         // Entity type
-        let entity_type = tokenizer.next_raw_token().ok_or(SatParseError::InvalidRecord {
-            line: 0,
-            message: format!("missing entity type in: {}", text),
-        })?;
+        let entity_type = tokenizer
+            .next_raw_token()
+            .ok_or(SatParseError::InvalidRecord {
+                line: 0,
+                message: format!("missing entity type in: {}", text),
+            })?;
 
         // Skip if it's a numeric subtype indicator that's part of the entity type
         // (e.g., "plane-surface" is one entity type)
@@ -318,9 +320,15 @@ impl SatParser {
         // Only present in ACIS 7.0+ (SAT version 700+)
         let subtype_id = if version.major >= 7 {
             match tokenizer.peek_token() {
-                Some(tok) if !tok.starts_with('$') && !tok.starts_with('@') && !tok.starts_with('#') => {
+                Some(tok)
+                    if !tok.starts_with('$') && !tok.starts_with('@') && !tok.starts_with('#') =>
+                {
                     // Check if it looks like a bare integer (digits, possibly negative)
-                    if tok.parse::<i64>().is_ok() && !tok.contains('.') && !tok.contains('e') && !tok.contains('E') {
+                    if tok.parse::<i64>().is_ok()
+                        && !tok.contains('.')
+                        && !tok.contains('e')
+                        && !tok.contains('E')
+                    {
                         // Consume it as the subtype_id
                         match tokenizer.next_token() {
                             Some(SatToken::Integer(v)) => v as i32,
@@ -649,8 +657,8 @@ pub(crate) fn normalize_v400_tokens(entity_type: &str, tokens: &mut Vec<SatToken
     let position = match base {
         "lump" => 1.min(tokens.len()),
         "shell" => 2.min(tokens.len()),
-        "body" | "subshell" | "wire" | "face" | "loop" | "vertex" | "coedge"
-        | "edge" | "point" | "transform" | "surface" | "curve" | "pcurve" => 0,
+        "body" | "subshell" | "wire" | "face" | "loop" | "vertex" | "coedge" | "edge" | "point"
+        | "transform" | "surface" | "curve" | "pcurve" => 0,
         // Unknown entity types (attributes, etc.): leave unchanged.
         _ => return,
     };
@@ -1001,10 +1009,7 @@ mod tests {
             classify_entity_type("transform"),
             SatEntityCategory::Transform
         );
-        assert_eq!(
-            classify_entity_type("asmheader"),
-            SatEntityCategory::Header
-        );
+        assert_eq!(classify_entity_type("asmheader"), SatEntityCategory::Header);
     }
 
     #[test]
@@ -1031,7 +1036,9 @@ mod tests {
     #[test]
     fn test_parse_sample_sat_1() {
         let path = "examples/sat v7 samples/sample_sat_1.sat";
-        let Ok(sat) = std::fs::read_to_string(path) else { return; };
+        let Ok(sat) = std::fs::read_to_string(path) else {
+            return;
+        };
         let doc = SatDocument::parse(&sat).unwrap();
 
         assert_eq!(doc.header.version, SatVersion::V7_0);
@@ -1072,7 +1079,9 @@ mod tests {
     #[test]
     fn test_parse_sample_sat_2() {
         let path = "examples/sat v7 samples/sample_sat_2.sat";
-        let Ok(sat) = std::fs::read_to_string(path) else { return; };
+        let Ok(sat) = std::fs::read_to_string(path) else {
+            return;
+        };
         let doc = SatDocument::parse(&sat).unwrap();
 
         assert_eq!(doc.header.version, SatVersion::V7_0);

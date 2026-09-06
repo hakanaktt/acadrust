@@ -27,7 +27,11 @@ fn build_doc() -> CadDocument {
 fn model_space_entities_excludes_block_geometry() {
     let doc = build_doc();
 
-    assert_eq!(doc.entities().count(), 2, "flat storage holds both entities");
+    assert_eq!(
+        doc.entities().count(),
+        2,
+        "flat storage holds both entities"
+    );
     assert_eq!(
         doc.model_space_entities().count(),
         1,
