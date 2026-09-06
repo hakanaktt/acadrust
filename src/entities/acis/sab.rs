@@ -196,6 +196,7 @@ impl SabWriter {
     ) {
         let mut i = 0;
         let mut step_index = 0; // tracks position in layout.steps
+        let mut subtype_depth = 0usize;
 
         // Skip the first Pointer token (v700 unknown/$-1) to count geometry tokens
         let geom_start = tokens.iter().position(|t| Self::is_numeric(t));
@@ -214,14 +215,14 @@ impl SabWriter {
                 ) {
                     step_index += 1;
                 }
-                Self::write_token(buf, &tokens[i], ints_as_doubles);
+                Self::write_token(buf, &tokens[i], ints_as_doubles && subtype_depth == 0);
                 i += 1;
                 continue;
             }
 
             // Explicit semantic positions are already grouped.
             if matches!(&tokens[i], SatToken::Position(_, _, _)) {
-                Self::write_token(buf, &tokens[i], ints_as_doubles);
+                Self::write_token(buf, &tokens[i], ints_as_doubles && subtype_depth == 0);
                 step_index += 1;
                 i += 1;
                 continue;
@@ -252,20 +253,30 @@ impl SabWriter {
                             step_index += 1;
                         } else {
                             // Not enough numeric tokens for a triplet — write individually
-                            Self::write_token(buf, &tokens[i], ints_as_doubles);
+                            Self::write_token(
+                                buf,
+                                &tokens[i],
+                                ints_as_doubles && subtype_depth == 0,
+                            );
                             i += 1;
                         }
                     }
                     None => {
                         // This step expects a scalar double (single float value)
-                        Self::write_token(buf, &tokens[i], ints_as_doubles);
+                        Self::write_token(buf, &tokens[i], ints_as_doubles && subtype_depth == 0);
                         i += 1;
                         step_index += 1;
                     }
                 }
             } else {
-                Self::write_token(buf, &tokens[i], ints_as_doubles);
+                Self::write_token(buf, &tokens[i], ints_as_doubles && subtype_depth == 0);
                 i += 1;
+            }
+
+            match tokens[i - 1].as_ident() {
+                Some("{") => subtype_depth += 1,
+                Some("}") => subtype_depth = subtype_depth.saturating_sub(1),
+                _ => {}
             }
         }
     }
@@ -287,10 +298,9 @@ impl SabWriter {
     fn write_token(buf: &mut Vec<u8>, token: &SatToken, ints_as_doubles: bool) {
         match token {
             SatToken::Pointer(p) => Self::write_pointer(buf, p.0),
-            // For geometric entities (edge, surface, curve, point), integer-looking
-            // values in SAT are actually doubles (e.g., edge start/end parameters,
-            // cone ratio). For attribute entities (eye_refinement, vertex_template,
-            // *-attrib), integer values are real integers.
+            // Direct geometry parameters such as edge start/end values are
+            // doubles. NURBS subtype fields are routed here with `false` so
+            // their degree and multiplicities stay integer-tagged in SAB.
             SatToken::Integer(v) => {
                 if ints_as_doubles {
                     Self::write_double(buf, *v as f64);
@@ -361,19 +371,24 @@ impl SabWriter {
         buf.extend_from_slice(name.as_bytes());
     }
 
-    /// Determine whether integer body tokens should be written as doubles.
+    /// Determine whether direct geometry integer literals are scalar doubles.
     ///
-    /// Geometric entities (surfaces, curves, edges, points) have numeric
-    /// parameters that appear as integers in SAT text (e.g., `1`, `0`) but
-    /// are actually double-precision values in SAB. Attribute and utility
-    /// entities have true integer fields that must stay as INTEGER tags.
+    /// NURBS subtype blocks are handled separately in
+    /// [`Self::write_tokens_with_coord_grouping`]: their degree, knot counts,
+    /// and knot multiplicities are SAB integers even when the enclosing
+    /// entity is a curve, surface, or pcurve.
     fn integers_are_doubles(entity_type: &str) -> bool {
-        let base = if let Some(pos) = entity_type.rfind('-') {
-            &entity_type[pos + 1..]
-        } else {
-            entity_type
-        };
-        matches!(base, "surface" | "curve" | "edge" | "pcurve" | "point")
+        matches!(
+            entity_type,
+            "point"
+                | "straight-curve"
+                | "ellipse-curve"
+                | "plane-surface"
+                | "cone-surface"
+                | "sphere-surface"
+                | "torus-surface"
+                | "edge"
+        )
     }
 
     fn write_subtype(buf: &mut Vec<u8>, name: &str) {
@@ -463,14 +478,22 @@ impl CoordLayout {
 
     /// Position + direction + direction (e.g., `plane-surface`)
     const POS_DIR_DIR: Self = Self {
-        steps: &[Some(tags::POSITION), Some(tags::DIRECTION), Some(tags::DIRECTION)],
+        steps: &[
+            Some(tags::POSITION),
+            Some(tags::DIRECTION),
+            Some(tags::DIRECTION),
+        ],
     };
 
     /// Position + direction + position (e.g., future entity types where
     /// the 3rd triplet's magnitude carries meaning).
     #[allow(dead_code)]
     const POS_DIR_POS: Self = Self {
-        steps: &[Some(tags::POSITION), Some(tags::DIRECTION), Some(tags::POSITION)],
+        steps: &[
+            Some(tags::POSITION),
+            Some(tags::DIRECTION),
+            Some(tags::POSITION),
+        ],
     };
 
     /// Position + scalar + direction + direction (e.g., `sphere-surface`)
@@ -647,10 +670,7 @@ impl SabReader {
         // the v700 layout, so we must add sentinels here.
         if version.major < 7 {
             for record in &mut records {
-                super::parser::normalize_v400_tokens(
-                    &record.entity_type,
-                    &mut record.tokens,
-                );
+                super::parser::normalize_v400_tokens(&record.entity_type, &mut record.tokens);
             }
         }
 
@@ -665,13 +685,7 @@ impl SabReader {
             convert_sab_booleans(&record.entity_type, &mut record.tokens);
         }
 
-        Ok((
-            SatDocument {
-                header,
-                records,
-            },
-            pos,
-        ))
+        Ok((SatDocument { header, records }, pos))
     }
 
     fn read_record(
@@ -721,10 +735,7 @@ impl SabReader {
         };
 
         // Check for ACIS/ASM end marker (no record body)
-        if matches!(
-            entity_type.as_str(),
-            "End-of-ACIS-data" | "End-of-ASM-data"
-        ) {
+        if matches!(entity_type.as_str(), "End-of-ACIS-data" | "End-of-ASM-data") {
             return Ok((
                 SatRecord {
                     index,
@@ -801,9 +812,7 @@ impl SabReader {
             tags::END_OF_RECORD => Ok((SatToken::Terminator, pos)),
             tags::CHARACTER => Self::read_raw_fixed(data, tag, pos, 1),
             tags::SHORT => Self::read_raw_fixed(data, tag, pos, 2),
-            tags::INTEGER | tags::FLOAT | tags::ENUM => {
-                Self::read_raw_fixed(data, tag, pos, 4)
-            }
+            tags::INTEGER | tags::FLOAT | tags::ENUM => Self::read_raw_fixed(data, tag, pos, 4),
             tags::DOUBLE | tags::INTEGER64 => Self::read_raw_fixed(data, tag, pos, 8),
             tags::POSITION | tags::DIRECTION => Self::read_raw_fixed(data, tag, pos, 24),
             tags::UV => Self::read_raw_fixed(data, tag, pos, 16),
@@ -811,9 +820,7 @@ impl SabReader {
                 Self::read_raw_string(data, tag, pos, 1)
             }
             tags::SHORT_STRING => Self::read_raw_string(data, tag, pos, 2),
-            tags::LONG_STRING | tags::ASM_LONG_STRING => {
-                Self::read_raw_string(data, tag, pos, 4)
-            }
+            tags::LONG_STRING | tags::ASM_LONG_STRING => Self::read_raw_string(data, tag, pos, 4),
             // Keep nested subtype delimiters as their original zero-payload
             // SAB tags. `SatToken::as_ident` exposes them as `{` and `}` to
             // geometry consumers without losing binary identity.
@@ -853,23 +860,18 @@ impl SabReader {
         pos: usize,
         prefix_len: usize,
     ) -> Result<(SatToken, usize), SabError> {
-        let prefix_end = pos
-            .checked_add(prefix_len)
-            .ok_or(SabError::UnexpectedEof)?;
+        let prefix_end = pos.checked_add(prefix_len).ok_or(SabError::UnexpectedEof)?;
         if prefix_end > data.len() {
             return Err(SabError::UnexpectedEof);
         }
         let len = match prefix_len {
             1 => data[pos] as usize,
             2 => u16::from_le_bytes([data[pos], data[pos + 1]]) as usize,
-            4 => u32::from_le_bytes([
-                data[pos], data[pos + 1], data[pos + 2], data[pos + 3],
-            ]) as usize,
+            4 => u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
+                as usize,
             _ => return Err(SabError::UnexpectedEof),
         };
-        let end = prefix_end
-            .checked_add(len)
-            .ok_or(SabError::UnexpectedEof)?;
+        let end = prefix_end.checked_add(len).ok_or(SabError::UnexpectedEof)?;
         if end > data.len() {
             return Err(SabError::UnexpectedEof);
         }
@@ -908,16 +910,14 @@ fn convert_sab_booleans(entity_type: &str, tokens: &mut Vec<SatToken>) {
                 // sense: True=forward, False=reversed
                 if matches!(tokens[len - 2], SatToken::True | SatToken::False) {
                     let is_forward = matches!(tokens[len - 2], SatToken::True);
-                    tokens[len - 2] = SatToken::Enum(
-                        if is_forward { "forward" } else { "reversed" }.to_string(),
-                    );
+                    tokens[len - 2] =
+                        SatToken::Enum(if is_forward { "forward" } else { "reversed" }.to_string());
                 }
                 // side: True=single, False=double
                 if matches!(tokens[len - 1], SatToken::True | SatToken::False) {
                     let is_single = matches!(tokens[len - 1], SatToken::True);
-                    tokens[len - 1] = SatToken::Enum(
-                        if is_single { "single" } else { "double" }.to_string(),
-                    );
+                    tokens[len - 1] =
+                        SatToken::Enum(if is_single { "single" } else { "double" }.to_string());
                 }
             }
         }
@@ -927,9 +927,8 @@ fn convert_sab_booleans(entity_type: &str, tokens: &mut Vec<SatToken>) {
             for token in tokens.iter_mut() {
                 if matches!(token, SatToken::True | SatToken::False) {
                     let is_forward = matches!(token, SatToken::True);
-                    *token = SatToken::Enum(
-                        if is_forward { "forward" } else { "reversed" }.to_string(),
-                    );
+                    *token =
+                        SatToken::Enum(if is_forward { "forward" } else { "reversed" }.to_string());
                     break; // only the first boolean is sense
                 }
             }
@@ -940,9 +939,8 @@ fn convert_sab_booleans(entity_type: &str, tokens: &mut Vec<SatToken>) {
             for token in tokens.iter_mut() {
                 if matches!(token, SatToken::True | SatToken::False) {
                     let is_forward = matches!(token, SatToken::True);
-                    *token = SatToken::Enum(
-                        if is_forward { "forward" } else { "reversed" }.to_string(),
-                    );
+                    *token =
+                        SatToken::Enum(if is_forward { "forward" } else { "reversed" }.to_string());
                     break;
                 }
             }
@@ -959,9 +957,7 @@ fn convert_sab_booleans(entity_type: &str, tokens: &mut Vec<SatToken>) {
                 if matches!(token, SatToken::True | SatToken::False) {
                     let is_true = matches!(token, SatToken::True);
                     *token = if bool_idx == 2 {
-                        SatToken::Enum(
-                            if is_true { "forward" } else { "reversed" }.to_string(),
-                        )
+                        SatToken::Enum(if is_true { "forward" } else { "reversed" }.to_string())
                     } else {
                         SatToken::Enum(if is_true { "I" } else { "F" }.to_string())
                     };
@@ -984,9 +980,7 @@ fn convert_sab_booleans(entity_type: &str, tokens: &mut Vec<SatToken>) {
                         first = false;
                     } else {
                         let is_infinite = matches!(token, SatToken::True);
-                        *token = SatToken::Enum(
-                            if is_infinite { "I" } else { "F" }.to_string(),
-                        );
+                        *token = SatToken::Enum(if is_infinite { "I" } else { "F" }.to_string());
                     }
                 }
             }
@@ -998,8 +992,7 @@ fn convert_sab_booleans(entity_type: &str, tokens: &mut Vec<SatToken>) {
             //   In v400, ellipse-curve has no sense — just 2 bounds.
             //
             // intcurve-curve, bs2-curve, bs3-curve: first bool = sense, rest = bounds.
-            let has_sense =
-                entity_type != "straight-curve" && entity_type != "ellipse-curve";
+            let has_sense = entity_type != "straight-curve" && entity_type != "ellipse-curve";
             let mut found_sense = false;
             for token in tokens.iter_mut() {
                 if matches!(token, SatToken::True | SatToken::False) {
@@ -1013,9 +1006,7 @@ fn convert_sab_booleans(entity_type: &str, tokens: &mut Vec<SatToken>) {
                     } else {
                         // Bound: True=Infinite(I), False=Finite(F)
                         let is_infinite = matches!(token, SatToken::True);
-                        *token = SatToken::Enum(
-                            if is_infinite { "I" } else { "F" }.to_string(),
-                        );
+                        *token = SatToken::Enum(if is_infinite { "I" } else { "F" }.to_string());
                     }
                 }
             }
@@ -1081,10 +1072,7 @@ fn read_length_string(data: &[u8], pos: usize) -> Result<(String, usize), SabErr
 
 fn read_tagged_string(data: &[u8], pos: &mut usize) -> Result<String, SabError> {
     if *pos >= data.len() {
-        return Err(SabError::UnknownTag(
-            0,
-            *pos,
-        ));
+        return Err(SabError::UnknownTag(0, *pos));
     }
     let tag = data[*pos];
     *pos += 1;
@@ -1103,14 +1091,11 @@ fn read_tagged_string(data: &[u8], pos: &mut usize) -> Result<String, SabError> 
     let len = match prefix_len {
         1 => data[*pos] as usize,
         2 => u16::from_le_bytes([data[*pos], data[*pos + 1]]) as usize,
-        4 => u32::from_le_bytes([
-            data[*pos], data[*pos + 1], data[*pos + 2], data[*pos + 3],
-        ]) as usize,
+        4 => u32::from_le_bytes([data[*pos], data[*pos + 1], data[*pos + 2], data[*pos + 3]])
+            as usize,
         _ => return Err(SabError::UnexpectedEof),
     };
-    let end = prefix_end
-        .checked_add(len)
-        .ok_or(SabError::UnexpectedEof)?;
+    let end = prefix_end.checked_add(len).ok_or(SabError::UnexpectedEof)?;
     if end > data.len() {
         return Err(SabError::UnexpectedEof);
     }
@@ -1230,5 +1215,66 @@ mod tests {
         let last_two: Vec<_> = face2.tokens.iter().rev().take(2).collect();
         assert_eq!(last_two[0], &SatToken::Enum("double".to_string()));
         assert_eq!(last_two[1], &SatToken::Enum("reversed".to_string()));
+    }
+
+    #[test]
+    fn sab_preserves_nurbs_integer_fields() {
+        let mut doc = SatDocument::new_body();
+        let knots = [(0.0, 3), (1.0, 3)];
+        let _curve = doc.add_spline_curve(
+            true,
+            2,
+            false,
+            &knots,
+            &[[0.0, 0.0, 0.0], [1.0, 1.0, 0.0], [2.0, 0.0, 0.0]],
+            Some(&[1.0, 0.5, 1.0]),
+            1.0e-9,
+        );
+        let _surface = doc.add_spline_surface(
+            false,
+            false,
+            1,
+            1,
+            false,
+            false,
+            &[(0.0, 2), (1.0, 2)],
+            &[(0.0, 2), (1.0, 2)],
+            &[
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [1.0, 1.0, 0.0],
+            ],
+            None,
+            1.0e-9,
+        );
+        let _pcurve = doc.add_pcurve(
+            false,
+            1,
+            false,
+            &[(0.0, 2), (1.0, 2)],
+            &[[0.0, 0.0], [1.0, 1.0]],
+            None,
+            1.0e-9,
+            (0.0, 1.0),
+        );
+
+        let roundtrip = SabReader::read(&SabWriter::write(&doc)).unwrap();
+        let curve = SatIntCurve::from_record(roundtrip.records_of_type("intcurve-curve")[0])
+            .expect("NURBS curve record");
+        assert_eq!(curve.bspline().expect("decoded NURBS curve").0, 2);
+        let surface = SatSplineSurface::from_record(roundtrip.records_of_type("spline-surface")[0])
+            .expect("NURBS surface record");
+        let decoded_surface = surface.bspline(&roundtrip).expect("decoded NURBS surface");
+        assert_eq!((decoded_surface.degree_u, decoded_surface.degree_v), (1, 1));
+        let pcurve = SatPCurve::from_record(roundtrip.records_of_type("pcurve")[0])
+            .expect("NURBS pcurve record");
+        assert_eq!(
+            pcurve
+                .bspline_in(&roundtrip)
+                .expect("decoded NURBS pcurve")
+                .0,
+            1
+        );
     }
 }
