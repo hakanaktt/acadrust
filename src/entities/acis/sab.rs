@@ -202,6 +202,17 @@ impl SabWriter {
         let geom_start = tokens.iter().position(|t| Self::is_numeric(t));
 
         while i < tokens.len() {
+            // ACIS subtype names and geometry keywords use identifier tags,
+            // not counted strings. Keep explicit String tokens as strings.
+            if subtype_depth > 0 {
+                if let SatToken::Ident(name) = &tokens[i] {
+                    if name != "{" && name != "}" && Self::string_to_boolean(name).is_none() {
+                        Self::write_entity_type(buf, name);
+                        i += 1;
+                        continue;
+                    }
+                }
+            }
             // A token decoded from SAB already carries its original tag and
             // payload. Re-emit it byte-for-byte instead of applying SAT
             // coordinate grouping or numeric coercion.
@@ -358,6 +369,15 @@ impl SabWriter {
 
     fn write_enum_token(buf: &mut Vec<u8>, name: &str) {
         match name {
+            "full" | "open" | "none" | "closed" | "periodic" => {
+                let value: i32 = match name {
+                    "closed" => 1,
+                    "periodic" => 2,
+                    _ => 0,
+                };
+                buf.push(tags::ENUM);
+                buf.extend_from_slice(&value.to_le_bytes());
+            }
             "forward" | "single" | "in" => buf.push(tags::TRUE),
             "reversed" | "double" | "out" => buf.push(tags::FALSE),
             // "unknown" and other enum values → string
@@ -1230,9 +1250,9 @@ mod tests {
             Some(&[1.0, 0.5, 1.0]),
             1.0e-9,
         );
-        let _surface = doc.add_spline_surface(
+        let surface = doc.add_spline_surface(
             false,
-            false,
+            true,
             1,
             1,
             false,
@@ -1245,7 +1265,7 @@ mod tests {
                 [0.0, 1.0, 0.0],
                 [1.0, 1.0, 0.0],
             ],
-            None,
+            Some(&[1.0, 0.5, 0.75, 1.0]),
             1.0e-9,
         );
         let _pcurve = doc.add_pcurve(
@@ -1256,7 +1276,8 @@ mod tests {
             &[[0.0, 0.0], [1.0, 1.0]],
             None,
             1.0e-9,
-            (0.0, 1.0),
+            surface,
+            (0.0, 0.0),
         );
 
         let roundtrip = SabReader::read(&SabWriter::write(&doc)).unwrap();
@@ -1267,6 +1288,64 @@ mod tests {
             .expect("NURBS surface record");
         let decoded_surface = surface.bspline(&roundtrip).expect("decoded NURBS surface");
         assert_eq!((decoded_surface.degree_u, decoded_surface.degree_v), (1, 1));
+        assert_eq!(
+            (
+                decoded_surface.control_count_u,
+                decoded_surface.control_count_v
+            ),
+            (2, 2)
+        );
+        assert_eq!(decoded_surface.u_knots, vec![0.0, 0.0, 1.0, 1.0]);
+        assert_eq!(
+            decoded_surface.control_points,
+            vec![
+                [0.0, 0.0, 0.0, 1.0],
+                [0.5, 0.0, 0.0, 0.5],
+                [0.0, 0.75, 0.0, 0.75],
+                [1.0, 1.0, 0.0, 1.0]
+            ]
+        );
+        let tokens = &roundtrip.records_of_type("spline-surface")[0].tokens;
+        let block = tokens
+            .iter()
+            .position(|t| t.as_ident() == Some("nurbs"))
+            .unwrap();
+        assert!(matches!(
+            tokens[block],
+            SatToken::Sab {
+                tag: tags::ENTITY_TYPE,
+                ..
+            }
+        ));
+        assert!(matches!(
+            tokens[block + 1],
+            SatToken::Sab {
+                tag: tags::INTEGER,
+                ..
+            }
+        ));
+        assert_eq!(tokens[block + 3].as_ident(), Some("both"));
+        assert!(matches!(
+            tokens[block + 4],
+            SatToken::Sab {
+                tag: tags::ENUM,
+                ..
+            }
+        ));
+        assert!(matches!(
+            tokens[block + 10],
+            SatToken::Sab {
+                tag: tags::DOUBLE,
+                ..
+            }
+        ));
+        assert!(matches!(
+            tokens[block + 11],
+            SatToken::Sab {
+                tag: tags::INTEGER,
+                ..
+            }
+        ));
         let pcurve = SatPCurve::from_record(roundtrip.records_of_type("pcurve")[0])
             .expect("NURBS pcurve record");
         assert_eq!(
