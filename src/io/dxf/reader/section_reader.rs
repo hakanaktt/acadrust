@@ -3447,7 +3447,13 @@ impl<'a> SectionReader<'a> {
             // Entities start with code 0
             if pair.code == 0 {
                 let entity_type = pair.value_string.clone();
-                let before = document.entities().count();
+                // Raw vector length, not `entities().count()`: the latter is a
+                // filtered scan of every entity read so far, which turns this
+                // per-record bookkeeping into an O(n^2) walk (a 64k-entity file
+                // spent ~95% of its load time here). No arm below adds a
+                // Block/BlockEnd marker — those come from block records, not the
+                // ENTITIES section — so the delta is the same either way.
+                let before = document.entities.len();
 
                 match entity_type.as_str() {
                     "POINT" => {
@@ -3717,7 +3723,7 @@ impl<'a> SectionReader<'a> {
                 }
                 self.decoded_records = self
                     .decoded_records
-                    .saturating_add(document.entities().count().saturating_sub(before));
+                    .saturating_add(document.entities.len().saturating_sub(before));
             }
         }
 
