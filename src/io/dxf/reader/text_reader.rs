@@ -13,8 +13,11 @@ pub struct DxfTextReader<R: Read + Seek> {
     peeked_pair: Option<DxfCodePair>,
     /// Non-UTF8 fallback encoding.  `None` means use Latin-1 (byte-to-char).
     encoding: Option<&'static Encoding>,
-    /// Reusable buffer for line reading to avoid per-line allocation.
+    /// Reusable buffer for the code line, to avoid per-line allocation.
     line_buf: Vec<u8>,
+    /// Reusable buffer for the value line. Kept separate from `line_buf` so
+    /// neither read has to surrender its allocation to the other.
+    value_buf: Vec<u8>,
     context: DxfStreamContext,
 }
 
@@ -28,61 +31,62 @@ impl<R: Read + Seek> DxfTextReader<R> {
             peeked_pair: None,
             encoding: None,
             line_buf: Vec::with_capacity(256),
+            value_buf: Vec::with_capacity(256),
             context: DxfStreamContext::default(),
         })
     }
 
-    /// Read a single line from the stream into a new String, handling non-UTF8
-    /// bytes gracefully.  Uses the configured encoding for fallback, or Latin-1
-    /// if none set.
-    fn read_line(&mut self) -> Result<Option<String>> {
-        // Reuse a temporary buffer from line_buf to avoid per-line Vec allocation.
-        // We must swap it out because read_line_raw also uses line_buf.
-        let mut buf = std::mem::take(&mut self.line_buf);
-        buf.clear();
-        let bytes_read = self.reader.read_until(b'\n', &mut buf)?;
+    /// Read the value line into the reusable `value_buf`, keeping the buffer's
+    /// allocation. Returns `Ok(true)` if a line was read, `Ok(false)` on EOF.
+    fn read_value_line_raw(&mut self) -> Result<bool> {
+        self.value_buf.clear();
+        let bytes_read = self.reader.read_until(b'\n', &mut self.value_buf)?;
         if bytes_read == 0 {
-            self.line_buf = buf; // give it back
-            return Ok(None);
+            return Ok(false);
         }
 
         self.line_number += 1;
         self.stream_offset = self.stream_offset.saturating_add(bytes_read as u64);
 
         // Strip trailing \n and \r in-place
-        if buf.last() == Some(&b'\n') {
-            buf.pop();
+        if self.value_buf.last() == Some(&b'\n') {
+            self.value_buf.pop();
         }
-        if buf.last() == Some(&b'\r') {
-            buf.pop();
+        if self.value_buf.last() == Some(&b'\r') {
+            self.value_buf.pop();
         }
+        Ok(true)
+    }
 
-        // Try UTF-8 first (takes ownership to avoid copy), then use configured encoding or Latin-1 fallback
-        let line = match String::from_utf8(buf) {
-            Ok(s) => {
-                // Reclaim the allocation for next time
-                self.line_buf = Vec::with_capacity(256);
-                s
-            }
-            Err(e) => {
-                let bytes = e.into_bytes();
-                let result = if let Some(enc) = self.encoding {
-                    let (decoded, _, malformed) = enc.decode(&bytes);
-                    if malformed {
-                        // If we had a specific encoding but it's malformed, we might want to know.
-                        // However, DXF sometimes has junk. For now, we still return what we can.
-                    }
+    /// Decode `value_buf` into the owned `String` the code pair carries,
+    /// handling non-UTF8 bytes via the configured encoding (Latin-1 if none).
+    ///
+    /// One allocation per code pair — the `String` the pair must own anyway.
+    /// The previous version allocated twice: once to hand `line_buf`'s
+    /// allocation to a `String` (forcing a fresh buffer for the next line),
+    /// and again to copy that `String` in `process_string_value`.
+    fn decode_value_string(&self) -> String {
+        match std::str::from_utf8(&self.value_buf) {
+            Ok(text) => self.process_string_value(text),
+            Err(_) => {
+                let decoded = if let Some(enc) = self.encoding {
+                    // DXF carries junk bytes often enough that a malformed
+                    // sequence is not worth failing the read over; take the
+                    // replacement characters and keep going.
+                    let (decoded, _, _) = enc.decode(&self.value_buf);
                     decoded.into_owned()
                 } else {
-                    // Fallback to Latin-1
-                    bytes.iter().map(|&b| b as char).collect()
+                    // Fallback to Latin-1: each byte is its own code point.
+                    self.value_buf.iter().map(|&b| b as char).collect()
                 };
-                self.line_buf = bytes; // reclaim Vec allocation
-                result
+                // Already owned, so only re-copy when there is an escape to expand.
+                if decoded.contains('^') {
+                    self.process_string_value(&decoded)
+                } else {
+                    decoded
+                }
             }
-        };
-
-        Ok(Some(line))
+        }
     }
 
     /// Read a line into the reusable `line_buf` without allocating a String.
@@ -129,19 +133,14 @@ impl<R: Read + Seek> DxfTextReader<R> {
             ))
         })?;
 
-        // Read value line
-        let value_line = match self.read_line()? {
-            Some(line) => line,
-            None => {
-                return Err(DxfError::Parse(format!(
-                    "Unexpected EOF after code {} at line {}",
-                    code, self.line_number
-                )))
-            }
-        };
-
-        // Process special character sequences in strings
-        let value = self.process_string_value(&value_line);
+        // Read the value line into its own reusable buffer, then decode once.
+        if !self.read_value_line_raw()? {
+            return Err(DxfError::Parse(format!(
+                "Unexpected EOF after code {} at line {}",
+                code, self.line_number
+            )));
+        }
+        let value = self.decode_value_string();
 
         let pair = DxfCodePair::new(code, value);
         self.observe_pair(&pair, pair_offset);
