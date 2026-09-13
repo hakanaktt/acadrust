@@ -858,9 +858,40 @@ impl<R: Read + Seek> DwgReader<R> {
         self.read_with_stats().map(|outcome| outcome.document)
     }
 
+    /// Like [`read`], but each pass-2 entity is offered to `visit` before it
+    /// is stored on the document. Return `None` to keep it out of
+    /// `CadDocument::entities` (the visitor may consume the value).
+    pub fn read_visiting<F>(
+        &mut self,
+        mut visit: F,
+    ) -> std::result::Result<crate::document::CadDocument, DxfError>
+    where
+        F: FnMut(
+            &crate::document::CadDocument,
+            crate::entities::EntityType,
+        ) -> Option<crate::entities::EntityType>,
+    {
+        self.read_with_optional_visitor(Some(&mut visit))
+            .map(|outcome| outcome.document)
+    }
+
     /// Read the file and return the document with source/decode statistics.
     pub fn read_with_stats(
         &mut self,
+    ) -> std::result::Result<crate::io::read::ReadOutcome, DxfError> {
+        self.read_with_optional_visitor(
+            None::<&mut dyn FnMut(&crate::document::CadDocument, crate::entities::EntityType) -> Option<crate::entities::EntityType>>,
+        )
+    }
+
+    fn read_with_optional_visitor(
+        &mut self,
+        visit: Option<
+            &mut dyn FnMut(
+                &crate::document::CadDocument,
+                crate::entities::EntityType,
+            ) -> Option<crate::entities::EntityType>,
+        >,
     ) -> std::result::Result<crate::io::read::ReadOutcome, DxfError> {
         let failsafe = self.options.failsafe;
         let perf = std::env::var_os("PERF").is_some();
@@ -1068,7 +1099,10 @@ impl<R: Read + Seek> DwgReader<R> {
                         if let Some(progress) = &self.progress {
                             builder.set_progress_callback(progress.clone());
                         }
-                        let build_outcome = builder.build_with_stats(&mut document);
+                        let build_outcome = match visit {
+                            Some(visit) => builder.build_with_visitor_stats(&mut document, visit),
+                            None => builder.build_with_stats(&mut document),
+                        };
                         decoded_source_records = build_outcome.decoded_records;
                         skipped_source_records = build_outcome.skipped_records;
                         diagnostics.extend(build_outcome.diagnostics);

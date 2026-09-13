@@ -417,6 +417,31 @@ pub struct DwgDocumentBuilder {
     progress: Option<std::sync::Arc<dyn Fn(u16) + Send + Sync>>,
 }
 
+fn accept_loaded_entity(
+    document: &mut CadDocument,
+    visit: &mut dyn FnMut(&CadDocument, EntityType) -> Option<EntityType>,
+    entity: EntityType,
+) {
+    if let Some(entity) = visit(document, entity) {
+        document.add_loaded_entity(entity);
+    }
+}
+
+fn accept_loaded_entity_batch(
+    document: &mut CadDocument,
+    visit: &mut dyn FnMut(&CadDocument, EntityType) -> Option<EntityType>,
+    entities: &mut Vec<std::sync::Arc<EntityType>>,
+) {
+    let mut kept = Vec::with_capacity(entities.len());
+    for entity in entities.drain(..) {
+        let owned = std::sync::Arc::try_unwrap(entity).unwrap_or_else(|arc| (*arc).clone());
+        if let Some(entity) = visit(document, owned) {
+            kept.push(std::sync::Arc::new(entity));
+        }
+    }
+    document.add_loaded_entity_batch(&mut kept);
+}
+
 impl DwgDocumentBuilder {
     /// Create a new builder wrapping the object reader.
     pub fn new(obj_reader: DwgObjectReader) -> Self {
@@ -458,7 +483,38 @@ impl DwgDocumentBuilder {
         self.build_with_stats(document).notifications
     }
 
-    pub fn build_with_stats(mut self, document: &mut CadDocument) -> DwgBuildOutcome {
+    /// Like [`build`], but each decoded entity is offered to `visit` before
+    /// it is stored. Return `None` to drop it from the document (the visitor
+    /// may consume it). Default [`build`] keeps every entity.
+    pub fn build_with_visitor<F>(
+        self,
+        document: &mut CadDocument,
+        visit: &mut F,
+    ) -> NotificationCollection
+    where
+        F: FnMut(&CadDocument, EntityType) -> Option<EntityType>,
+    {
+        self.build_with_optional_visitor(document, Some(visit))
+            .notifications
+    }
+
+    pub fn build_with_stats(self, document: &mut CadDocument) -> DwgBuildOutcome {
+        self.build_with_optional_visitor(document, None)
+    }
+
+    pub fn build_with_visitor_stats(
+        self,
+        document: &mut CadDocument,
+        visit: &mut dyn FnMut(&CadDocument, EntityType) -> Option<EntityType>,
+    ) -> DwgBuildOutcome {
+        self.build_with_optional_visitor(document, Some(visit))
+    }
+
+    fn build_with_optional_visitor(
+        mut self,
+        document: &mut CadDocument,
+        mut visit: Option<&mut dyn FnMut(&CadDocument, EntityType) -> Option<EntityType>>,
+    ) -> DwgBuildOutcome {
         let perf = std::env::var_os("PERF").is_some();
         let build_started = web_time::Instant::now();
         document
@@ -1643,7 +1699,11 @@ impl DwgDocumentBuilder {
                     document.section_view_style = chunk.output.section_view_style.take();
                 }
                 document.objects.extend(chunk.output.objects.drain());
-                document.add_loaded_entity_batch(&mut chunk.output.entities);
+                if let Some(visit) = visit.as_deref_mut() {
+                    accept_loaded_entity_batch(document, visit, &mut chunk.output.entities);
+                } else {
+                    document.add_loaded_entity_batch(&mut chunk.output.entities);
+                }
                 for (owner, mut vertices) in chunk.pending.vertices.drain() {
                     pending
                         .vertices
@@ -1790,7 +1850,11 @@ impl DwgDocumentBuilder {
                 }
             }
             decoded_pass2 = decoded_pass2.saturating_add(1);
-            document.add_loaded_entity(entity);
+            if let Some(visit) = visit.as_deref_mut() {
+                accept_loaded_entity(document, visit, entity);
+            } else {
+                document.add_loaded_entity(entity);
+            }
         }
 
         // ── Post-pass: Attach pending attribute entities to parent INSERTs ──
