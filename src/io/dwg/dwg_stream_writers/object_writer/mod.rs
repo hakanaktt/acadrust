@@ -128,6 +128,11 @@ pub struct DwgObjectWriter<'a> {
     /// Populated before writing any table controls so controls and records agree.
     #[allow(dead_code)]
     pub(super) linetype_handles: std::collections::HashMap<String, Handle>,
+    /// owner handle → extension dictionary handle, built once from `document.objects`.
+    /// `CadDocument::extension_dictionary_handle` falls back to a linear scan of every
+    /// object when the owner carries no xdictionary handle; called once per written
+    /// object that is O(objects²) — ~0.35 s of a 1.9 s write on a 5 500-object drawing.
+    pub(super) xdic_owner_index: std::sync::Arc<std::collections::HashMap<Handle, Handle>>,
 }
 
 struct ParallelEntityBatch {
@@ -258,7 +263,53 @@ impl<'a> DwgObjectWriter<'a> {
             class_counts_complete: true,
             owner_overrides: std::collections::HashMap::new(),
             linetype_handles: std::collections::HashMap::new(),
+            xdic_owner_index: std::sync::Arc::new(Self::build_xdic_owner_index(document)),
         })
+    }
+
+    /// owner → child dictionary (see `xdic_owner_index`). Mirrors the fallback in
+    /// `CadDocument::extension_dictionary_handle`: only dictionaries with a non-null
+    /// handle count, and a dictionary owned by another dictionary is *not* treated as
+    /// that dictionary's extension dictionary (ordinary child dictionaries live there).
+    fn build_xdic_owner_index(document: &CadDocument) -> std::collections::HashMap<Handle, Handle> {
+        let mut index = std::collections::HashMap::new();
+        for (handle, object) in &document.objects {
+            if let crate::objects::ObjectType::Dictionary(dictionary) = object {
+                if handle.is_null() || dictionary.owner.is_null() { continue }
+                if matches!(document.objects.get(&dictionary.owner), Some(crate::objects::ObjectType::Dictionary(_))) { continue }
+                index.entry(dictionary.owner).or_insert(*handle);
+            }
+        }
+        index
+    }
+
+    /// Same answer as `document.extension_dictionary_handle(owner)`, without the
+    /// per-call linear scan of every object.
+    pub(super) fn extension_dictionary_handle(&self, owner: Handle) -> Option<Handle> {
+        use crate::objects::ObjectType;
+        let document = self.document;
+        if let Some(entity) = document.get_entity(owner) {
+            if let Some(handle) = entity.common().xdictionary_handle {
+                return (!handle.is_null()).then_some(handle);
+            }
+        }
+        if let Some(handle) = document.xdic_by_handle.get(&owner).copied() {
+            return (!handle.is_null()).then_some(handle);
+        }
+        if let Some(handle) = match document.objects.get(&owner) {
+            Some(ObjectType::Dictionary(value)) => value.xdictionary_handle,
+            Some(ObjectType::Layout(value)) => value.xdictionary_handle,
+            Some(ObjectType::XRecord(value)) => value.xdictionary_handle,
+            Some(ObjectType::PlotSettings(value)) => value.xdictionary_handle,
+            Some(ObjectType::VisualStyle(value)) => value.xdictionary_handle,
+            Some(ObjectType::Material(value)) => value.xdictionary_handle,
+            Some(ObjectType::ProxyObject(value)) => value.xdictionary_handle,
+            _ => None,
+        } {
+            if !handle.is_null() { return Some(handle); }
+        }
+        if matches!(document.objects.get(&owner), Some(ObjectType::Dictionary(_))) { return None; }
+        self.xdic_owner_index.get(&owner).copied()
     }
 
     // ── Main entry point ────────────────────────────────────────────
@@ -1893,6 +1944,7 @@ impl<'a> DwgObjectWriter<'a> {
             pending_type_code: None,
             class_counts_complete: true,
             registered_handles: HashSet::with_capacity(handles.len()),
+            xdic_owner_index: self.xdic_owner_index.clone(),
             owner_overrides: std::collections::HashMap::new(),
             linetype_handles: std::collections::HashMap::new(),
         };
