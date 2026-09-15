@@ -483,12 +483,12 @@ fn default_classes() -> Vec<DxfClass> {
 
         // ── Object classes ──────────────────────────────────────────
         ("ACDBASSOCDEPENDENCY", "AcDbAssocDependency", 0, "ObjectDBX Classes", false),
-        ("ACDBASSOCVALUEDEPENDENCY", "AcDbAssocValueDependency", 0, "ObjectDBX Classes", false),
-        ("ACDBASSOCGEOMDEPENDENCY", "AcDbAssocGeomDependency", 0, "ObjectDBX Classes", false),
+        ("ACDBASSOCVALUEDEPENDENCY", "AcDbAssocValueDependency", 1025, "ObjectDBX Classes", false),
+        ("ACDBASSOCGEOMDEPENDENCY", "AcDbAssocGeomDependency", 1025, "ObjectDBX Classes", false),
         ("ACDBASSOCACTION", "AcDbAssocAction", 0, "ObjectDBX Classes", false),
-        ("ACDBASSOCNETWORK", "AcDbAssocNetwork", 0, "ObjectDBX Classes", false),
-        ("ACDBASSOC2DCONSTRAINTGROUP", "AcDbAssoc2dConstraintGroup", 0, "ObjectDBX Classes", false),
-        ("ACDBASSOCVARIABLE", "AcDbAssocVariable", 0, "ObjectDBX Classes", false),
+        ("ACDBASSOCNETWORK", "AcDbAssocNetwork", 1025, "ObjectDBX Classes", false),
+        ("ACDBASSOC2DCONSTRAINTGROUP", "AcDbAssoc2dConstraintGroup", 1025, "ObjectDBX Classes", false),
+        ("ACDBASSOCVARIABLE", "AcDbAssocVariable", 1025, "ObjectDBX Classes", false),
         ("ACDBASSOCPERSSUBENTMANAGER", "AcDbAssocPersSubentManager", 0, "ObjectDBX Classes", false),
         // Abstract action-parameter bases have no persistent instances.
         // Registering them in a fresh file makes strict readers reject the
@@ -715,7 +715,7 @@ fn default_classes() -> Vec<DxfClass> {
 
     defs.iter()
         .map(|&(dxf, cpp, flags, app, is_entity)| {
-            if is_entity {
+            let mut class = if is_entity {
                 let mut c = DxfClass::new_entity(dxf, cpp);
                 c.proxy_flags = ProxyFlags(flags);
                 c.application_name = app.to_string();
@@ -725,7 +725,19 @@ fn default_classes() -> Vec<DxfClass> {
                 c.proxy_flags = ProxyFlags(flags);
                 c.application_name = app.to_string();
                 c
+            };
+            match dxf {
+                "ACDBASSOCNETWORK" | "ACDBASSOC2DCONSTRAINTGROUP" | "ACDBASSOCVARIABLE" => {
+                    class.dwg_version = 27;
+                    class.maintenance_version = 45;
+                }
+                "ACDBASSOCVALUEDEPENDENCY" | "ACDBASSOCGEOMDEPENDENCY" => {
+                    class.dwg_version = 27;
+                    class.maintenance_version = 29;
+                }
+                _ => {}
             }
+            class
         })
         .collect()
 }
@@ -781,6 +793,18 @@ mod tests {
         assert!(!coll.contains("ACDBASSOCPOINTREFACTIONPARAM"));
         assert!(coll.contains("ACDBASSOCCOMPOUNDACTIONPARAM"));
         assert!(coll.contains("ACDBASSOCOSNAPPOINTREFACTIONPARAM"));
+        for name in [
+            "ACDBASSOCVALUEDEPENDENCY",
+            "ACDBASSOCGEOMDEPENDENCY",
+            "ACDBASSOCNETWORK",
+            "ACDBASSOC2DCONSTRAINTGROUP",
+            "ACDBASSOCVARIABLE",
+        ] {
+            let class = coll.get_by_name(name).unwrap();
+            assert_eq!(class.proxy_flags, ProxyFlags(1025));
+            assert_eq!(class.dwg_version, 27);
+            assert!(class.maintenance_version > 0);
+        }
     }
 
     #[test]

@@ -43,29 +43,6 @@ impl<'a> DwgObjectWriter<'a> {
 
     /// Write a single entity record.
     pub(super) fn write_entity(&mut self, entity: &EntityType) {
-        // Verbatim passthrough: the entity still carries the exact bytes it was read
-        // from, the target is the same version, and nothing the writer would
-        // rewrite differs. Skipped for pre-R2004 (records embed prev/next entity
-        // links there) and for ACIS entities on R2013+ (their SAB bodies live in
-        // the AcDs section, which is assembled from what gets written).
-        if let Some(raw) = &entity.common().raw_record {
-            let handle = entity.common().handle;
-            let acis = matches!(entity, EntityType::Solid3D(_) | EntityType::Region(_) | EntityType::Body(_) | EntityType::Surface(_));
-            // Compound entities own follow-up records (VERTEX…/ATTRIB…/SEQEND) that the
-            // reader folded into them; the writer emits those alongside, so they must
-            // go through the normal path.
-            let compound = matches!(entity, EntityType::Polyline(_) | EntityType::Polyline2D(_) | EntityType::Polyline3D(_)
-                | EntityType::PolyfaceMesh(_) | EntityType::PolygonMesh(_) | EntityType::Insert(_));
-            let ok = self.version.r2004_plus()
-                && raw.version == self.dxf_version
-                && !compound
-                && !(acis && self.version.r2013_plus(self.dxf_version))
-                && !self.owner_overrides.contains_key(&handle);
-            if ok {
-                self.register_raw_object(handle, &raw.data, raw.handle_bits);
-                return;
-            }
-        }
         match entity {
             EntityType::Point(e) => self.write_point(e),
             EntityType::Line(e) => self.write_line(e),

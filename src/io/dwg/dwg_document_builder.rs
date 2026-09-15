@@ -432,14 +432,10 @@ fn accept_loaded_entity_batch(
     visit: &mut dyn FnMut(&CadDocument, EntityType) -> Option<EntityType>,
     entities: &mut Vec<std::sync::Arc<EntityType>>,
 ) {
-    let mut kept = Vec::with_capacity(entities.len());
     for entity in entities.drain(..) {
         let owned = std::sync::Arc::try_unwrap(entity).unwrap_or_else(|arc| (*arc).clone());
-        if let Some(entity) = visit(document, owned) {
-            kept.push(std::sync::Arc::new(entity));
-        }
+        accept_loaded_entity(document, visit, owned);
     }
-    document.add_loaded_entity_batch(&mut kept);
 }
 
 impl DwgDocumentBuilder {
@@ -2901,9 +2897,7 @@ impl DwgDocumentBuilder {
                     }
                     for entity in &mut document.entities {
                         if entity.common().owner_handle == original_handle {
-                            let common = std::sync::Arc::make_mut(entity).common_mut();
-                            common.owner_handle = fresh;
-                            common.raw_record = None;
+                            std::sync::Arc::make_mut(entity).common_mut().owner_handle = fresh;
                         }
                     }
                     fresh
@@ -3096,19 +3090,12 @@ impl DwgDocumentBuilder {
             let entity_data = self
                 .obj_reader
                 .read_common_entity_data(&mut reader, type_code);
-            let mut entity_common = map_entity_common(
+            let entity_common = map_entity_common(
                 &entity_data,
                 maps,
                 document.header.model_space_block_handle,
                 document.header.paper_space_block_handle,
             );
-            // Keep the verbatim record so an untouched entity can be copied on write
-            // instead of re-encoded (see EntityCommon::raw_record).
-            entity_common.raw_record = Some(std::sync::Arc::new(crate::entities::RawRecord {
-                data: reader.raw_merged_data(),
-                handle_bits: reader.get_handle_bits(),
-                version: self.obj_reader.dxf_version(),
-            }));
 
             match type_code {
                 // ── Simple entities ────────────────────────────────

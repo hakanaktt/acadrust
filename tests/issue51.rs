@@ -646,11 +646,7 @@ fn acad_regapp_record_is_written_first() {
 }
 
 #[test]
-fn unrestorable_assoc_objects_are_not_written() {
-    // Issue #51 BricsCAD audit: the associative-framework objects written
-    // from raw records could not be restored by CAD applications, which
-    // audit-skipped them and left dangling dictionary entries behind. The
-    // writer must drop them together with every entry pointing at them.
+fn supported_assoc_objects_are_written() {
     let mut doc = CadDocument::with_version(DxfVersion::AC1032);
     doc.add_entity(EntityType::Line(Line::from_coords(
         0.0, 0.0, 0.0, 1.0, 1.0, 0.0,
@@ -672,11 +668,11 @@ fn unrestorable_assoc_objects_are_not_written() {
 
     let text = String::from_utf8(write_dxf(&doc)).unwrap();
     assert!(
-        !text.contains("\r\nACDBASSOCVARIABLE\r\n  5\r\n"),
-        "unrestorable assoc object must not be written"
+        text.contains("\r\nACDBASSOCVARIABLE\r\n  5\r\n"),
+        "supported associative objects must be written"
     );
     assert!(
-        !text.contains("  3\r\nACDBASSOC2DCONSTRAINTGROUP\r\n"),
-        "dictionary entries pointing at dropped assoc objects must be filtered"
+        text.contains("  3\r\nACDBASSOC2DCONSTRAINTGROUP\r\n"),
+        "dictionary entries pointing at supported objects must be retained"
     );
 }

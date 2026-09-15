@@ -59,14 +59,14 @@ impl<'a> DwgObjectWriter<'a> {
         self.writer.write_bit(value.is_attached_to_object);
         self.writer.write_bit(value.is_delegating_to_owning_action);
         self.writer.write_bit_long(value.order);
-        self.write_assoc_handle(DwgReferenceType::HardOwnership, value.dependent_on);
+        self.write_assoc_handle(DwgReferenceType::SoftPointer, value.dependent_on);
         self.writer.write_bit(value.name.is_some());
         if let Some(name) = &value.name {
             self.writer.write_variable_text(name);
         }
         self.write_assoc_handle(DwgReferenceType::SoftPointer, value.read_dependency);
-        self.write_assoc_handle(DwgReferenceType::HardOwnership, value.node);
-        self.write_assoc_handle(DwgReferenceType::SoftPointer, value.dependency_body);
+        self.write_assoc_handle(DwgReferenceType::SoftPointer, value.node);
+        self.write_assoc_handle(DwgReferenceType::HardOwnership, value.dependency_body);
         self.writer.write_bit_long(value.dependency_body_id);
     }
 
@@ -399,8 +399,8 @@ impl<'a> DwgObjectWriter<'a> {
         dimension_dependency: Handle,
     ) {
         self.write_geometrical_constraint(owner_id, is_implied, is_active);
-        self.write_assoc_handle(DwgReferenceType::HardOwnership, value_dependency);
-        self.write_assoc_handle(DwgReferenceType::HardOwnership, dimension_dependency);
+        self.write_assoc_handle(DwgReferenceType::HardPointer, value_dependency);
+        self.write_assoc_handle(DwgReferenceType::HardPointer, dimension_dependency);
     }
 
     fn write_constraint_node_data(&mut self, data: &AssocConstraintNodeData) {
@@ -411,6 +411,23 @@ impl<'a> DwgObjectWriter<'a> {
                 is_implied,
                 is_active,
             } => self.write_geometrical_constraint(*owner_id, *is_implied, *is_active),
+            AssocConstraintNodeData::Composite {
+                owner_id,
+                is_implied,
+                is_active,
+                owned_constraint_ids,
+            } => {
+                self.write_geometrical_constraint(*owner_id, *is_implied, *is_active);
+                self.writer
+                    .write_bit_long(owned_constraint_ids.len() as i32);
+                for constraint_id in owned_constraint_ids {
+                    self.writer.write_bit_long(*constraint_id);
+                }
+            }
+            AssocConstraintNodeData::HelpParameter { value, reserved } => {
+                self.writer.write_bit_double(*value);
+                self.writer.write_bit(*reserved);
+            }
             AssocConstraintNodeData::Angle {
                 owner_id,
                 is_implied,
@@ -508,6 +525,24 @@ impl<'a> DwgObjectWriter<'a> {
                         .write_3bit_double(point.unwrap_or(crate::types::Vector3::ZERO));
                 }
             }
+            AssocConstraintNodeData::RigidSet {
+                geometry_dependency,
+                geometry_node_id,
+                reserved,
+                transform,
+                geometry_ids,
+            } => {
+                self.write_assoc_handle(DwgReferenceType::SoftPointer, *geometry_dependency);
+                self.writer.write_bit_long(*geometry_node_id);
+                self.writer.write_bit(*reserved);
+                for value in transform {
+                    self.writer.write_bit_double(*value);
+                }
+                self.writer.write_bit_long(geometry_ids.len() as i32);
+                for geometry_id in geometry_ids {
+                    self.writer.write_bit_long(*geometry_id);
+                }
+            }
             AssocConstraintNodeData::Line {
                 geometry_dependency,
                 geometry_node_id,
@@ -583,34 +618,81 @@ impl<'a> DwgObjectWriter<'a> {
                 self.writer.write_3bit_double(*end_point);
             }
             AssocConstraintNodeData::Ellipse {
-                owner_id,
-                is_implied,
-                is_active,
+                geometry_dependency,
+                geometry_node_id,
                 center,
-                short_axis,
+                major_axis,
                 axis_ratio,
             } => {
-                self.write_geometrical_constraint(*owner_id, *is_implied, *is_active);
+                self.write_assoc_handle(DwgReferenceType::SoftPointer, *geometry_dependency);
+                self.writer.write_bit_long(*geometry_node_id);
                 self.writer.write_3bit_double(*center);
-                self.writer.write_3bit_double(*short_axis);
+                self.writer.write_3bit_double(*major_axis);
                 self.writer.write_bit_double(*axis_ratio);
             }
             AssocConstraintNodeData::BoundedEllipse {
-                owner_id,
-                is_implied,
-                is_active,
+                geometry_dependency,
+                geometry_node_id,
                 center,
-                short_axis,
+                major_axis,
                 axis_ratio,
                 start_point,
                 end_point,
             } => {
-                self.write_geometrical_constraint(*owner_id, *is_implied, *is_active);
+                self.write_assoc_handle(DwgReferenceType::SoftPointer, *geometry_dependency);
+                self.writer.write_bit_long(*geometry_node_id);
                 self.writer.write_3bit_double(*center);
-                self.writer.write_3bit_double(*short_axis);
+                self.writer.write_3bit_double(*major_axis);
                 self.writer.write_bit_double(*axis_ratio);
                 self.writer.write_3bit_double(*start_point);
                 self.writer.write_3bit_double(*end_point);
+            }
+            AssocConstraintNodeData::Spline {
+                geometry_dependency,
+                geometry_node_id,
+                rational,
+                periodic,
+                degree,
+                knot_tolerance,
+                knot_physical_length,
+                knot_grow_length,
+                knots,
+                weight_physical_length,
+                weight_grow_length,
+                weights,
+                control_point_physical_length,
+                control_point_grow_length,
+                control_points,
+                implicit_point_ids,
+            } => {
+                self.write_assoc_handle(DwgReferenceType::SoftPointer, *geometry_dependency);
+                self.writer.write_bit_long(*geometry_node_id);
+                self.writer.write_bit(*rational);
+                self.writer.write_bit(*periodic);
+                self.writer.write_bit_long(*degree);
+                self.writer.write_bit_double(*knot_tolerance);
+                self.writer.write_bit_long(knots.len() as i32);
+                self.writer.write_bit_long(*knot_physical_length);
+                self.writer.write_bit_long(*knot_grow_length);
+                for knot in knots {
+                    self.writer.write_bit_double(*knot);
+                }
+                self.writer.write_bit_long(weights.len() as i32);
+                self.writer.write_bit_long(*weight_physical_length);
+                self.writer.write_bit_long(*weight_grow_length);
+                for weight in weights {
+                    self.writer.write_bit_double(*weight);
+                }
+                self.writer.write_bit_long(control_points.len() as i32);
+                self.writer.write_bit_long(*control_point_physical_length);
+                self.writer.write_bit_long(*control_point_grow_length);
+                for point in control_points {
+                    self.writer.write_3bit_double(*point);
+                }
+                self.writer.write_bit_long(implicit_point_ids.len() as i32);
+                for point_id in implicit_point_ids {
+                    self.writer.write_bit_long(*point_id);
+                }
             }
         }
     }
@@ -713,20 +795,20 @@ impl<'a> DwgObjectWriter<'a> {
                 self.write_assoc_handle(DwgReferenceType::HardOwnership, value.dependency);
                 self.writer.write_bit_long(value.actions.len() as i32);
                 self.write_assoc_handles(DwgReferenceType::HardOwnership, &value.actions);
-                self.writer.write_bit_long(value.nodes.len() as i32);
                 if let Some(first) = value.nodes.first() {
-                    self.writer.write_bit_long(first.node_id);
-                    self.writer.write_bit_long(first.connections.len() as i32);
-                    for connection in &first.connections {
-                        self.writer.write_bit_long(*connection);
-                    }
-                    self.writer.write_bit(first.status != 0);
                     let registered: Vec<&AssocConstraintNode> = value
                         .nodes
                         .iter()
                         .skip(1)
                         .filter(|node| !node.class_name.is_empty())
                         .collect();
+                    self.writer.write_bit_long(registered.len() as i32);
+                    self.writer.write_bit_long(first.node_id);
+                    self.writer.write_bit_long(first.connections.len() as i32);
+                    for connection in &first.connections {
+                        self.writer.write_bit_long(*connection);
+                    }
+                    self.writer.write_bit(first.status != 0);
                     let mut class_types: Vec<&str> = Vec::new();
                     for node in &registered {
                         if !class_types
@@ -755,6 +837,8 @@ impl<'a> DwgObjectWriter<'a> {
                         self.write_constraint_node_common(node);
                         self.write_constraint_node_data(&node.data);
                     }
+                } else {
+                    self.writer.write_bit_long(0);
                 }
             }
             AssociativeData::Variable(value) => {

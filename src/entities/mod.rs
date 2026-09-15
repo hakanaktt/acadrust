@@ -265,17 +265,6 @@ pub trait Entity {
     }
 }
 
-/// Verbatim DWG record bytes of an entity (see [`EntityCommon::raw_record`]).
-#[derive(Debug, Clone, PartialEq)]
-pub struct RawRecord {
-    /// Payload between the ModularShort length prefix and the CRC-16 trailer.
-    pub data: Vec<u8>,
-    /// R2010+ MC handle-stream size framing value.
-    pub handle_bits: i64,
-    /// Version the bytes were encoded for; passthrough is only valid for this exact target.
-    pub version: crate::types::DxfVersion,
-}
-
 /// Common entity data shared by all entities
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -353,14 +342,6 @@ pub struct EntityCommon {
     /// model, so skipped for serde.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub has_ds_data: bool,
-    /// The exact merged-stream bytes this entity was decoded from (DWG only),
-    /// with the framing the writer needs to re-emit them verbatim.
-    /// Set by the DWG reader; cleared by every mutable access (`get_entity_mut`,
-    /// `entities_mut`) and by `add_entity`, so it is only ever present on an
-    /// entity that is byte-for-byte what the source file contained. The writer
-    /// copies such records instead of re-encoding them (same target version only).
-    #[cfg_attr(feature = "serde", serde(skip))]
-    pub raw_record: Option<std::sync::Arc<RawRecord>>,
 }
 
 impl EntityCommon {
@@ -382,7 +363,6 @@ impl EntityCommon {
     /// Create new common entity data with defaults
     pub fn new() -> Self {
         EntityCommon {
-            raw_record: None,
             handle: Handle::NULL,
             layer: "0".to_string(),
             color: Color::ByLayer,

@@ -44,8 +44,10 @@ fn read_visiting_drops_model_lines_from_the_document() {
 #[test]
 fn read_keeps_every_entity() {
     let mut doc = CadDocument::default();
-    doc.add_entity(EntityType::Line(Line::from_coords(0.0, 0.0, 0.0, 1.0, 0.0, 0.0)))
-        .expect("line");
+    doc.add_entity(EntityType::Line(Line::from_coords(
+        0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+    )))
+    .expect("line");
     let bytes = DwgWriter::write_to_vec(&doc).expect("write dwg");
     let rebuilt = DwgReader::from_stream(Cursor::new(bytes))
         .read()
@@ -56,4 +58,39 @@ fn read_keeps_every_entity() {
             .any(|entity| matches!(entity, EntityType::Line(_))),
         "default read() must keep entities"
     );
+}
+
+#[test]
+fn visitor_sees_previously_kept_entities() {
+    let mut doc = CadDocument::default();
+    for i in 0..64 {
+        doc.add_entity(EntityType::Line(Line::from_coords(
+            i as f64,
+            0.0,
+            0.0,
+            i as f64 + 1.0,
+            0.0,
+            0.0,
+        )))
+        .expect("line");
+    }
+
+    let bytes = DwgWriter::write_to_vec(&doc).expect("write dwg");
+    let mut seen = 0;
+    DwgReader::from_stream(Cursor::new(bytes))
+        .read_visiting(|document, entity| {
+            if matches!(entity, EntityType::Line(_)) {
+                assert_eq!(
+                    document
+                        .entities()
+                        .filter(|entity| matches!(entity, EntityType::Line(_)))
+                        .count(),
+                    seen
+                );
+                seen += 1;
+            }
+            Some(entity)
+        })
+        .expect("read_visiting");
+    assert_eq!(seen, 64);
 }

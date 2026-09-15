@@ -546,42 +546,9 @@ fn build(version: DxfVersion, assets: &Path) -> Sheet {
         AC1012,
         EntityType::Body(Body::from_sat(&polygon_sat())),
     );
-    let native_surfaces = DwgReader::from_stream(Cursor::new(include_bytes!(
-        "entity_atlas_assets/native_surfaces.dwg"
-    )))
-    .read()
-    .expect("native surface fixtures");
-    for kind in [
-        SurfaceKind::Generic,
-        SurfaceKind::Plane,
-        SurfaceKind::Extruded,
-        SurfaceKind::Lofted,
-        SurfaceKind::Revolved,
-        SurfaceKind::Swept,
-        SurfaceKind::Nurb,
-    ] {
-        let surface = if matches!(
-            kind,
-            SurfaceKind::Extruded
-                | SurfaceKind::Lofted
-                | SurfaceKind::Revolved
-                | SurfaceKind::Swept
-        ) {
-            let mut surface = native_surfaces
-                .entities()
-                .find_map(|entity| match entity {
-                    EntityType::Surface(surface) if surface.kind == kind => Some(surface.clone()),
-                    _ => None,
-                })
-                .expect("native construction subtype");
-            surface.common = EntityCommon::default();
-            surface.history_handle = None;
-            surface
-        } else {
-            let mut surface = Surface::new(kind);
-            surface.acis_data = Region::from_sat(&polygon_sat()).acis_data;
-            surface
-        };
+    for kind in [SurfaceKind::Generic, SurfaceKind::Plane, SurfaceKind::Nurb] {
+        let mut surface = Surface::new(kind);
+        surface.acis_data = Region::from_sat(&polygon_sat()).acis_data;
         s.add(
             &format!("SURFACE_{kind:?}").to_uppercase(),
             AC1021,
@@ -896,10 +863,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let assets = output.join("assets");
     std::fs::create_dir_all(&assets)?;
     checker(&assets.join("checker.bmp"));
-    let shape_font = Path::new("C:/Program Files/Autodesk/AutoCAD 2027/Fonts/ltypeshp.shx");
-    if shape_font.exists() {
-        std::fs::copy(shape_font, assets.join("ltypeshp.shx"))?;
-    }
     DwgWriter::write_to_file(
         output.join("validation-control.dwg"),
         &CadDocument::with_version(DxfVersion::AC1015),
@@ -1036,6 +999,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         output.join("manifest.json"),
         serde_json::to_vec_pretty(&manifest)?,
     )?;
-    std::fs::write(output.join("coverage-notes.md"),"# Entity atlas\n\nEach file contains the same numbered grid. E### layers hold test entities; _ATLAS layers hold labels and frames. RAY and XLINE occupy separate rows below the grid. VIEWPORT is on Layout1. Version-ineligible cases retain their label but contain no entity.\n\nBLOCK, ENDBLK, ATTRIB, VERTEX and SEQEND are exercised through valid INSERT/polyline ownership. Extruded, lofted, revolved and swept surfaces use authored native construction fixtures with embedded profiles; see examples/entity_atlas_assets/native_surfaces.md. Generic, plane and NURB cases use a planar ACIS sheet. Native type and audit checks do not certify arbitrary geometry or editing history.\n\nNot synthesized: OLEFRAME/OLE2FRAME (requires an embedded application payload), point clouds and coordination models (requires indexed external data), model-documentation SECTIONLINE/DRAWINGVIEW (requires a complete view-representation graph), third-party registered/proxy/unknown entities and dynamic-block internals (require an existing class payload or authoring graph), pre-R13 REPEAT/ENDREP/LOAD/JUMP (outside supported output versions). These are coverage exclusions, not passing tests.\n\nUnderlay paths are listed in the per-file manifests. A missing dependency is reported separately from a missing entity.\n")?;
+    std::fs::write(output.join("coverage-notes.md"),"# Entity atlas\n\nEach file contains the same numbered grid. E### layers hold test entities; _ATLAS layers hold labels and frames. RAY and XLINE occupy separate rows below the grid. VIEWPORT is on Layout1. Version-ineligible cases retain their label but contain no entity.\n\nBLOCK, ENDBLK, ATTRIB, VERTEX and SEQEND are exercised through valid INSERT/polyline ownership. Generic, plane and NURB surface cases use a planar ACIS sheet. Native type checks do not certify arbitrary geometry or editing history.\n\nNot synthesized: extruded, lofted, revolved and swept surfaces (require native construction fixtures), OLEFRAME/OLE2FRAME (requires an embedded application payload), point clouds and coordination models (requires indexed external data), model-documentation SECTIONLINE/DRAWINGVIEW (requires a complete view-representation graph), third-party registered/proxy/unknown entities and dynamic-block internals (require an existing class payload or authoring graph), pre-R13 REPEAT/ENDREP/LOAD/JUMP (outside supported output versions). These are coverage exclusions, not passing tests.\n\nUnderlay paths are listed in the per-file manifests. A missing dependency is reported separately from a missing entity.\n")?;
     Ok(())
 }

@@ -118,7 +118,7 @@ pub struct DwgObjectWriter<'a> {
     /// Every handle actually emitted to the object map. Central guard against
     /// writing the same handle twice (e.g. an xdictionary XRECORD reachable
     /// from more than one path): a duplicate handle is a hard DWG integrity
-    /// error that AutoCAD's audit rejects, so register_* skips repeats.
+    /// error that strict audits reject, so register_* skips repeats.
     pub(super) registered_handles: HashSet<u64>,
     /// Owner handle overrides for extension dictionaries whose parent entity
     /// was re-allocated (e.g. ATTRIB children of INSERT).
@@ -128,10 +128,7 @@ pub struct DwgObjectWriter<'a> {
     /// Populated before writing any table controls so controls and records agree.
     #[allow(dead_code)]
     pub(super) linetype_handles: std::collections::HashMap<String, Handle>,
-    /// owner handle → extension dictionary handle, built once from `document.objects`.
-    /// `CadDocument::extension_dictionary_handle` falls back to a linear scan of every
-    /// object when the owner carries no xdictionary handle; called once per written
-    /// object that is O(objects²) — ~0.35 s of a 1.9 s write on a 5 500-object drawing.
+    /// Cached fallback for owners without a direct extension-dictionary handle.
     pub(super) xdic_owner_index: std::sync::Arc<std::collections::HashMap<Handle, Handle>>,
 }
 
@@ -267,24 +264,27 @@ impl<'a> DwgObjectWriter<'a> {
         })
     }
 
-    /// owner → child dictionary (see `xdic_owner_index`). Mirrors the fallback in
-    /// `CadDocument::extension_dictionary_handle`: only dictionaries with a non-null
-    /// handle count, and a dictionary owned by another dictionary is *not* treated as
-    /// that dictionary's extension dictionary (ordinary child dictionaries live there).
+    /// Index the fallback ownership lookup used by `extension_dictionary_handle`.
     fn build_xdic_owner_index(document: &CadDocument) -> std::collections::HashMap<Handle, Handle> {
         let mut index = std::collections::HashMap::new();
         for (handle, object) in &document.objects {
             if let crate::objects::ObjectType::Dictionary(dictionary) = object {
-                if handle.is_null() || dictionary.owner.is_null() { continue }
-                if matches!(document.objects.get(&dictionary.owner), Some(crate::objects::ObjectType::Dictionary(_))) { continue }
+                if handle.is_null() || dictionary.owner.is_null() {
+                    continue;
+                }
+                if matches!(
+                    document.objects.get(&dictionary.owner),
+                    Some(crate::objects::ObjectType::Dictionary(_))
+                ) {
+                    continue;
+                }
                 index.entry(dictionary.owner).or_insert(*handle);
             }
         }
         index
     }
 
-    /// Same answer as `document.extension_dictionary_handle(owner)`, without the
-    /// per-call linear scan of every object.
+    /// Resolve an extension dictionary without scanning every object per call.
     pub(super) fn extension_dictionary_handle(&self, owner: Handle) -> Option<Handle> {
         use crate::objects::ObjectType;
         let document = self.document;
@@ -306,9 +306,16 @@ impl<'a> DwgObjectWriter<'a> {
             Some(ObjectType::ProxyObject(value)) => value.xdictionary_handle,
             _ => None,
         } {
-            if !handle.is_null() { return Some(handle); }
+            if !handle.is_null() {
+                return Some(handle);
+            }
         }
-        if matches!(document.objects.get(&owner), Some(ObjectType::Dictionary(_))) { return None; }
+        if matches!(
+            document.objects.get(&owner),
+            Some(ObjectType::Dictionary(_))
+        ) {
+            return None;
+        }
         self.xdic_owner_index.get(&owner).copied()
     }
 
@@ -2377,6 +2384,8 @@ impl<'a> DwgObjectWriter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::entities::Line;
+    use crate::objects::{Dictionary, ObjectType};
 
     #[test]
     fn object_writer_creates_for_default_document() {
@@ -2406,5 +2415,28 @@ mod tests {
             let marker = i32::from_le_bytes([output[0], output[1], output[2], output[3]]);
             assert_eq!(marker, 0x0DCA);
         }
+    }
+
+    #[test]
+    fn extension_dictionary_index_matches_document_fallback() {
+        let mut document = CadDocument::new();
+        let owner = document
+            .add_entity(EntityType::Line(Line::from_coords(
+                0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+            )))
+            .expect("line");
+        let dictionary_handle = document.allocate_handle();
+        let dictionary = Dictionary {
+            handle: dictionary_handle,
+            owner,
+            ..Dictionary::new()
+        };
+        document
+            .objects
+            .insert(dictionary_handle, ObjectType::Dictionary(dictionary));
+
+        let expected = document.extension_dictionary_handle(owner);
+        let writer = DwgObjectWriter::new(&document).expect("writer");
+        assert_eq!(writer.extension_dictionary_handle(owner), expected);
     }
 }

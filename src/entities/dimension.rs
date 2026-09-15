@@ -300,7 +300,8 @@ impl DimensionLinear {
 
     /// Get the measurement value (projected onto rotation axis)
     pub fn measurement(&self) -> f64 {
-        let diff = self.second_point - self.first_point;
+        let wcs_to_ocs = Matrix3::arbitrary_axis(self.base.normal).transpose();
+        let diff = wcs_to_ocs * (self.second_point - self.first_point);
         let projected = diff.x * self.rotation.cos() + diff.y * self.rotation.sin();
         if projected.is_finite() {
             projected.abs()
@@ -1094,44 +1095,7 @@ impl super::Entity for Dimension {
     }
 
     fn apply_transform(&mut self, transform: &Transform) {
-        let Dimension::Ordinate(d) = self else {
-            let translated = transform.apply(Vector3::ZERO);
-            self.translate(translated);
-            return;
-        };
-
-        let old_normal = d.base.normal;
-        let old_basis = Matrix3::arbitrary_axis(old_normal);
-        let old_axis_angle = -d.base.horizontal_direction;
-        let old_axis = old_basis * Vector3::new(old_axis_angle.cos(), old_axis_angle.sin(), 0.0);
-        let old_text_angle = old_axis_angle + d.base.text_rotation;
-        let old_text_axis =
-            old_basis * Vector3::new(old_text_angle.cos(), old_text_angle.sin(), 0.0);
-
-        d.definition_point = transform.apply(d.definition_point);
-        d.feature_location = transform.apply(d.feature_location);
-        d.leader_endpoint = transform.apply(d.leader_endpoint);
-        d.base.definition_point = d.definition_point;
-        d.base.text_middle_point = transform.apply(d.base.text_middle_point);
-        d.base.insertion_point = transform.apply(d.base.insertion_point);
-
-        let transformed_normal = transform.apply_rotation(old_normal);
-        if transformed_normal.length() > 1e-12 {
-            d.base.normal = transformed_normal.normalize();
-        }
-        let new_wcs_to_ocs = Matrix3::arbitrary_axis(d.base.normal).transpose();
-        let transformed_axis = new_wcs_to_ocs * transform.apply_rotation(old_axis);
-        let mut new_axis_angle = old_axis_angle;
-        if transformed_axis.length() > 1e-12 {
-            new_axis_angle = transformed_axis.y.atan2(transformed_axis.x);
-            d.base.horizontal_direction = -new_axis_angle;
-        }
-        let transformed_text_axis = new_wcs_to_ocs * transform.apply_rotation(old_text_axis);
-        if transformed_text_axis.length() > 1e-12 {
-            let relative = transformed_text_axis.y.atan2(transformed_text_axis.x) - new_axis_angle;
-            d.base.text_rotation = relative.sin().atan2(relative.cos());
-        }
-        d.refresh_measurement();
+        super::transform::transform_dimension(self, transform);
     }
 
     fn entity_type(&self) -> &'static str {

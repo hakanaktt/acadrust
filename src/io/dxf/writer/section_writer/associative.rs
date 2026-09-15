@@ -120,6 +120,25 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 self.writer.write_bool(290, *is_implied)?;
                 self.writer.write_bool(290, *is_active)?;
             }
+            AssocConstraintNodeData::Composite {
+                owner_id,
+                is_implied,
+                is_active,
+                owned_constraint_ids,
+            } => {
+                self.writer.write_i32(90, *owner_id)?;
+                self.writer.write_bool(290, *is_implied)?;
+                self.writer.write_bool(290, *is_active)?;
+                self.writer
+                    .write_i32(90, owned_constraint_ids.len() as i32)?;
+                for constraint_id in owned_constraint_ids {
+                    self.writer.write_i32(90, *constraint_id)?;
+                }
+            }
+            AssocConstraintNodeData::HelpParameter { value, reserved } => {
+                self.writer.write_double(40, *value)?;
+                self.writer.write_bool(290, *reserved)?;
+            }
             AssocConstraintNodeData::Angle {
                 owner_id,
                 is_implied,
@@ -210,6 +229,24 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                     self.writer.write_point3d(10, *point)?;
                 }
             }
+            AssocConstraintNodeData::RigidSet {
+                geometry_dependency,
+                geometry_node_id,
+                reserved,
+                transform,
+                geometry_ids,
+            } => {
+                self.writer.write_handle(330, *geometry_dependency)?;
+                self.writer.write_i32(90, *geometry_node_id)?;
+                self.writer.write_bool(290, *reserved)?;
+                for value in transform {
+                    self.writer.write_double(40, *value)?;
+                }
+                self.writer.write_i32(90, geometry_ids.len() as i32)?;
+                for geometry_id in geometry_ids {
+                    self.writer.write_i32(90, *geometry_id)?;
+                }
+            }
             AssocConstraintNodeData::Line {
                 geometry_dependency,
                 geometry_node_id,
@@ -285,38 +322,81 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 self.writer.write_point3d(11, *end_point)?;
             }
             AssocConstraintNodeData::Ellipse {
-                owner_id,
-                is_implied,
-                is_active,
+                geometry_dependency,
+                geometry_node_id,
                 center,
-                short_axis,
+                major_axis,
                 axis_ratio,
             } => {
-                self.writer.write_i32(90, *owner_id)?;
-                self.writer.write_bool(290, *is_implied)?;
-                self.writer.write_bool(290, *is_active)?;
+                self.writer.write_handle(330, *geometry_dependency)?;
+                self.writer.write_i32(90, *geometry_node_id)?;
                 self.writer.write_point3d(10, *center)?;
-                self.writer.write_point3d(11, *short_axis)?;
+                self.writer.write_point3d(11, *major_axis)?;
                 self.writer.write_double(40, *axis_ratio)?;
             }
             AssocConstraintNodeData::BoundedEllipse {
-                owner_id,
-                is_implied,
-                is_active,
+                geometry_dependency,
+                geometry_node_id,
                 center,
-                short_axis,
+                major_axis,
                 axis_ratio,
                 start_point,
                 end_point,
             } => {
-                self.writer.write_i32(90, *owner_id)?;
-                self.writer.write_bool(290, *is_implied)?;
-                self.writer.write_bool(290, *is_active)?;
+                self.writer.write_handle(330, *geometry_dependency)?;
+                self.writer.write_i32(90, *geometry_node_id)?;
                 self.writer.write_point3d(10, *center)?;
-                self.writer.write_point3d(11, *short_axis)?;
+                self.writer.write_point3d(11, *major_axis)?;
                 self.writer.write_double(40, *axis_ratio)?;
                 self.writer.write_point3d(10, *start_point)?;
                 self.writer.write_point3d(11, *end_point)?;
+            }
+            AssocConstraintNodeData::Spline {
+                geometry_dependency,
+                geometry_node_id,
+                rational,
+                periodic,
+                degree,
+                knot_tolerance,
+                knot_physical_length,
+                knot_grow_length,
+                knots,
+                weight_physical_length,
+                weight_grow_length,
+                weights,
+                control_point_physical_length,
+                control_point_grow_length,
+                control_points,
+                implicit_point_ids,
+            } => {
+                self.writer.write_handle(330, *geometry_dependency)?;
+                self.writer.write_i32(90, *geometry_node_id)?;
+                self.writer.write_bool(70, *rational)?;
+                self.writer.write_bool(70, *periodic)?;
+                self.writer.write_i32(90, *degree)?;
+                self.writer.write_double(40, *knot_tolerance)?;
+                self.writer.write_i32(90, knots.len() as i32)?;
+                self.writer.write_i32(90, *knot_physical_length)?;
+                self.writer.write_i32(90, *knot_grow_length)?;
+                for knot in knots {
+                    self.writer.write_double(40, *knot)?;
+                }
+                self.writer.write_i32(90, weights.len() as i32)?;
+                self.writer.write_i32(90, *weight_physical_length)?;
+                self.writer.write_i32(90, *weight_grow_length)?;
+                for weight in weights {
+                    self.writer.write_double(40, *weight)?;
+                }
+                self.writer.write_i32(90, control_points.len() as i32)?;
+                self.writer.write_i32(90, *control_point_physical_length)?;
+                self.writer.write_i32(90, *control_point_grow_length)?;
+                for point in control_points {
+                    self.writer.write_point3d(10, *point)?;
+                }
+                self.writer.write_i32(90, implicit_point_ids.len() as i32)?;
+                for point_id in implicit_point_ids {
+                    self.writer.write_i32(90, *point_id)?;
+                }
             }
         }
         Ok(())
@@ -764,7 +844,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                     .iter()
                     .filter(|node| !node.class_name.is_empty())
                     .collect();
-                self.writer.write_i32(90, registered.len() as i32 + 1)?;
+                self.writer.write_i32(90, registered.len() as i32)?;
                 if let Some(root) = root {
                     self.writer.write_i32(90, root.node_id)?;
                     self.writer.write_i32(90, root.connections.len() as i32)?;
