@@ -798,14 +798,19 @@ impl DwgDocumentBuilder {
                 let table_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     match type_code {
                         OBJ_LAYER => {
-                            let mut data = tables::read_layer(
+                            let data = tables::read_layer(
                                 &mut reader,
                                 self.obj_reader.version(),
                                 self.obj_reader.dxf_version(),
                             );
-                            if let Some(base) = viewport_override_base_layer(&data.name) {
-                                data.name = base.to_owned();
-                            }
+                            // Per-viewport override records keep their full
+                            // `<base> @ <viewport>` name in the table so they are
+                            // written back with their own handle: entities in
+                            // paper space / block definitions reference these
+                            // records directly, and dropping them leaves those
+                            // entities with a dangling layer handle (read back as
+                            // layer "0"). Entities still resolve to the base name
+                            // via `maps.layers` below.
                             Some(ParsedEntry::Layer(obj_handle, data))
                         }
                         OBJ_BLOCK_HEADER => {
@@ -873,7 +878,10 @@ impl DwgDocumentBuilder {
                         // Populate handle→name maps (needed by Pass 2)
                         match &entry {
                             ParsedEntry::Layer(h, data) => {
-                                maps.layers.insert(*h, data.name.clone());
+                                let name = viewport_override_base_layer(&data.name)
+                                    .map(str::to_owned)
+                                    .unwrap_or_else(|| data.name.clone());
+                                maps.layers.insert(*h, name);
                             }
                             ParsedEntry::Block(h, data) => {
                                 maps.blocks.insert(*h, data.name.clone());
