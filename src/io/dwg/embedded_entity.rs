@@ -482,18 +482,21 @@ fn write_spline(
     } else {
         writer.write_bit_long(scenario);
     }
-    writer.write_bit_long(entity.degree);
+    // Knots generated for a knot-less record must be written with the
+    // effective degree they were generated for.
+    let (degree, knots) =
+        if scenario == 1 && entity.knots.is_empty() && !entity.control_points.is_empty() {
+            Spline::clamped_knots_with_degree(entity.degree, entity.control_points.len())
+        } else {
+            (entity.degree, entity.knots.clone())
+        };
+    writer.write_bit_long(degree);
     if scenario == 1 {
         writer.write_bit(entity.flags.rational);
         writer.write_bit(entity.flags.closed);
         writer.write_bit(entity.flags.periodic);
         writer.write_bit_double(entity.knot_tolerance);
         writer.write_bit_double(entity.control_tolerance);
-        let knots = if entity.knots.is_empty() && !entity.control_points.is_empty() {
-            Spline::generate_clamped_knots(entity.degree as usize, entity.control_points.len())
-        } else {
-            entity.knots.clone()
-        };
         writer.write_bit_long(knots.len() as i32);
         writer.write_bit_long(entity.control_points.len() as i32);
         let has_weights = !entity.weights.is_empty();

@@ -51,12 +51,7 @@ pub(crate) fn polyline2d_downsaves_to_lwpolyline(polyline: &Polyline2D) -> bool 
         && polyline.vertices.iter().all(|v| v.flags.bits() == 0)
 }
 
-/// Associative-framework object classes that CAD applications cannot
-/// restore from the raw records this writer produces (the dependency
-/// payloads need data the DWG reader does not capture). Writing them makes
-/// applications flag the file for recovery while skipping the objects
-/// anyway, which also leaves dangling dictionary entries behind. Dropping
-/// them keeps round-tripped files clean (issue #51 BricsCAD audit).
+/// Legacy application objects that have no complete DXF representation.
 fn is_unrestorable_assoc_object(type_name: &str) -> bool {
     // Normalize: the DWG class names carry underscores (e.g.
     // ACDB_DYNAMICBLOCKPURGEPREVENTER_VERSION) while the DXF records do not.
@@ -65,14 +60,7 @@ fn is_unrestorable_assoc_object(type_name: &str) -> bool {
         .filter(|c| c.is_ascii_alphanumeric())
         .map(|c| c.to_ascii_uppercase())
         .collect();
-    matches!(
-        normalized.as_str(),
-        "ACDBASSOCDEPENDENCY"
-            | "ACDBASSOCVALUEDEPENDENCY"
-            | "ACDBASSOCGEOMDEPENDENCY"
-            | "ACDBASSOCVARIABLE"
-            | "ACDBASSOC2DCONSTRAINTGROUP"
-    ) || normalized.starts_with("ACDBDYNAMICBLOCKPURGEPREVENTER")
+    normalized.starts_with("ACDBDYNAMICBLOCKPURGEPREVENTER")
 }
 
 /// Writes all DXF sections
@@ -151,7 +139,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         // file on audit. Unknown associative-framework objects are excluded
         // as well: applications cannot restore them from the records this
         // writer produces and audit-skip them, which would leave dangling
-        // dictionary entries behind (issue #51 BricsCAD audit).
+        // dictionary entries behind.
         for (h, obj) in document.objects.iter() {
             match obj {
                 ObjectType::Unknown {

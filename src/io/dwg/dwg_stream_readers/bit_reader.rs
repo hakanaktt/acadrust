@@ -441,12 +441,6 @@ impl DwgBitReader {
 
     /// Read a raw double (RD type) — 8 bytes, little-endian IEEE 754.
     pub fn read_raw_double(&mut self) -> f64 {
-        // Read directly into a stack array: this is the hottest primitive in
-        // pass-2 decoding (every coordinate goes through here), and the
-        // previous `read_bytes(8)` did a heap allocation per double. On a
-        // 9 MB drawing (~82k records, ~1.6M doubles) that was ~45% of load
-        // time and, with rayon workers contending on the allocator lock,
-        // dominated the profile. Behaviour is byte-for-byte identical.
         let mut arr = [0u8; 8];
         self.apply_shift_to_arr(&mut arr);
         f64::from_le_bytes(arr)

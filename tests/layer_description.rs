@@ -1,6 +1,6 @@
 //! A layer's description survives a round-trip.
 //!
-//! AutoCAD keeps it in the layer's extended data under the
+//! The format keeps it in the layer's extended data under the
 //! `AcAecLayerStandard` application, as two strings of which the second is the
 //! text -- the same place, and on DWG the same mechanism, the layer
 //! transparency comes from. Until now it was parsed and dropped on both

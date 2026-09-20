@@ -20,8 +20,8 @@
 use crate::classes::DxfClassCollection;
 use crate::entities::{EntityCommon, EntityType};
 use crate::objects::{
-    DataObjectData, DynamicBlockData, DynamicBlockObject, ObjectType, SolidHistory,
-    SolidHistoryOperation,
+    DataObjectData, DynamicBlockData, DynamicBlockObject, MaterialColor, MaterialTexture,
+    ObjectType, SolidHistory, SolidHistoryOperation, XRecordEntry,
 };
 use crate::tables::*;
 use crate::types::{Color, DxfVersion, Handle, Vector2, Vector3};
@@ -29,6 +29,49 @@ use crate::xdata::XDataValue;
 use crate::Result;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
+
+fn material_checker_texture(entries: &[XRecordEntry]) -> Option<MaterialTexture> {
+    if !entries.iter().any(|entry| {
+        entry.code == 301
+            && entry
+                .value
+                .as_string()
+                .is_some_and(|value| value.eq_ignore_ascii_case("Checker"))
+    }) {
+        return None;
+    }
+
+    let mut active_color = None;
+    let mut colors = [None, None];
+    for entry in entries {
+        if entry.code == 300 {
+            active_color = match entry.value.as_string() {
+                Some(value) if value.eq_ignore_ascii_case("Map1") => Some(0),
+                Some(value) if value.eq_ignore_ascii_case("Map2") => Some(1),
+                Some(value) if value.eq_ignore_ascii_case("Mapper") => None,
+                _ => active_color,
+            };
+        } else if entry.code == 420 {
+            if let (Some(index), Some(value)) = (active_color, entry.value.as_i32()) {
+                colors[index] = Some(value);
+            }
+        }
+    }
+
+    Some(MaterialTexture {
+        color1: MaterialColor {
+            flag: 1,
+            factor: 1.0,
+            rgb: Some(colors[0]?),
+        },
+        color2: MaterialColor {
+            flag: 1,
+            factor: 1.0,
+            rgb: Some(colors[1]?),
+        },
+        ..MaterialTexture::default()
+    })
+}
 
 mod semantic_inventory;
 pub use semantic_inventory::*;
@@ -3346,29 +3389,32 @@ impl CadDocument {
         }
     }
 
+    /// Ensure an extension dictionary exists for `owner`.
+    pub fn ensure_extension_dictionary(&mut self, owner: Handle) -> Handle {
+        if let Some(handle) = self.extension_dictionary_handle(owner) {
+            return handle;
+        }
+        let handle = self.allocate_handle();
+        let mut dictionary = crate::objects::Dictionary::new();
+        dictionary.handle = handle;
+        dictionary.owner = owner;
+        dictionary.hard_owner = true;
+        self.objects
+            .insert(handle, ObjectType::Dictionary(dictionary));
+        if let Some(entity) = self.get_entity_mut(owner) {
+            entity.common_mut().xdictionary_handle = Some(handle);
+        }
+        self.xdic_by_handle.insert(owner, handle);
+        handle
+    }
+
     /// Ensure a named XRecord and its extension dictionary exist.
     ///
     /// The created dictionary owns its records and is attached through both
     /// the entity common data and the non-entity side map so DWG and DXF
     /// writers observe the same graph.
     pub fn ensure_xrecord(&mut self, owner: Handle, key: &str) -> Handle {
-        let dictionary_handle = match self.extension_dictionary_handle(owner) {
-            Some(handle) => handle,
-            None => {
-                let handle = self.allocate_handle();
-                let mut dictionary = crate::objects::Dictionary::new();
-                dictionary.handle = handle;
-                dictionary.owner = owner;
-                dictionary.hard_owner = true;
-                self.objects
-                    .insert(handle, ObjectType::Dictionary(dictionary));
-                if let Some(entity) = self.get_entity_mut(owner) {
-                    entity.common_mut().xdictionary_handle = Some(handle);
-                }
-                self.xdic_by_handle.insert(owner, handle);
-                handle
-            }
-        };
+        let dictionary_handle = self.ensure_extension_dictionary(owner);
 
         if let Some(ObjectType::Dictionary(dictionary)) = self.objects.get(&dictionary_handle) {
             if let Some(handle) = dictionary.get(key) {
@@ -3426,7 +3472,7 @@ impl CadDocument {
     /// Project typed properties whose authoritative storage is a named
     /// XRecord onto their public object models.
     pub fn resolve_xrecord_backed_properties(&mut self) {
-        let advanced_values: HashMap<Handle, Vec<crate::objects::XRecordEntry>> = self
+        let advanced_values: HashMap<Handle, Vec<XRecordEntry>> = self
             .objects
             .values()
             .filter_map(|object| match object {
@@ -3443,6 +3489,31 @@ impl CadDocument {
                 _ => None,
             })
             .collect();
+        let mut material_maps = HashMap::new();
+        for object in self.objects.values() {
+            let ObjectType::Dictionary(dictionary) = object else {
+                continue;
+            };
+            for name in [
+                "DIFFUSE",
+                "SPECULAR",
+                "REFLECTION",
+                "OPACITY",
+                "BUMP",
+                "REFRACTION",
+                "NORMAL",
+            ] {
+                let Some(record) = dictionary.get(name) else {
+                    continue;
+                };
+                let Some(ObjectType::XRecord(xrecord)) = self.objects.get(&record) else {
+                    continue;
+                };
+                if let Some(texture) = material_checker_texture(&xrecord.entries) {
+                    material_maps.insert((dictionary.handle, name), texture);
+                }
+            }
+        }
         for object in self.objects.values_mut() {
             let ObjectType::Material(material) = object else {
                 continue;
@@ -3450,43 +3521,58 @@ impl CadDocument {
             let Some(dictionary) = material.xdictionary_handle else {
                 continue;
             };
-            let Some(entries) = advanced_values.get(&dictionary) else {
-                continue;
-            };
-            material.advanced_data_present = true;
-            for entry in entries {
-                match (entry.code, &entry.value) {
-                    (460, crate::objects::XRecordValue::Double(value)) => {
-                        material.color_bleed_scale = *value / 100.0;
+            if let Some(entries) = advanced_values.get(&dictionary) {
+                material.advanced_data_present = true;
+                for entry in entries {
+                    match (entry.code, &entry.value) {
+                        (460, crate::objects::XRecordValue::Double(value)) => {
+                            material.color_bleed_scale = *value / 100.0;
+                        }
+                        (461, crate::objects::XRecordValue::Double(value)) => {
+                            material.indirect_bump_scale = *value / 100.0;
+                        }
+                        (462, crate::objects::XRecordValue::Double(value)) => {
+                            material.reflectance_scale = *value / 100.0;
+                        }
+                        (463, crate::objects::XRecordValue::Double(value)) => {
+                            material.transmittance_scale = *value / 100.0;
+                        }
+                        (464, crate::objects::XRecordValue::Double(value)) => {
+                            material.luminance = *value;
+                        }
+                        (270, crate::objects::XRecordValue::Int16(value)) => {
+                            material.luminance_mode = *value;
+                        }
+                        (290, crate::objects::XRecordValue::Bool(value)) => {
+                            material.two_sided_material = *value;
+                        }
+                        (293, crate::objects::XRecordValue::Bool(value)) => {
+                            material.is_anonymous = *value;
+                        }
+                        (272, crate::objects::XRecordValue::Int16(value)) => {
+                            material.global_illumination = *value;
+                        }
+                        (273, crate::objects::XRecordValue::Int16(value)) => {
+                            material.final_gather = *value;
+                        }
+                        _ => {}
                     }
-                    (461, crate::objects::XRecordValue::Double(value)) => {
-                        material.indirect_bump_scale = *value / 100.0;
-                    }
-                    (462, crate::objects::XRecordValue::Double(value)) => {
-                        material.reflectance_scale = *value / 100.0;
-                    }
-                    (463, crate::objects::XRecordValue::Double(value)) => {
-                        material.transmittance_scale = *value / 100.0;
-                    }
-                    (464, crate::objects::XRecordValue::Double(value)) => {
-                        material.luminance = *value;
-                    }
-                    (270, crate::objects::XRecordValue::Int16(value)) => {
-                        material.luminance_mode = *value;
-                    }
-                    (290, crate::objects::XRecordValue::Bool(value)) => {
-                        material.two_sided_material = *value;
-                    }
-                    (293, crate::objects::XRecordValue::Bool(value)) => {
-                        material.is_anonymous = *value;
-                    }
-                    (272, crate::objects::XRecordValue::Int16(value)) => {
-                        material.global_illumination = *value;
-                    }
-                    (273, crate::objects::XRecordValue::Int16(value)) => {
-                        material.final_gather = *value;
-                    }
-                    _ => {}
+                }
+            }
+
+            for (name, map) in [
+                ("DIFFUSE", &mut material.diffuse_map),
+                ("SPECULAR", &mut material.specular_map),
+                ("REFLECTION", &mut material.reflection_map),
+                ("OPACITY", &mut material.opacity_map),
+                ("BUMP", &mut material.bump_map),
+                ("REFRACTION", &mut material.refraction_map),
+                ("NORMAL", &mut material.normal_map),
+            ] {
+                if let Some(texture) = material_maps.get(&(dictionary, name)) {
+                    map.source = 2;
+                    map.file_name.clear();
+                    map.texture = Some(texture.clone());
                 }
             }
         }
@@ -3690,8 +3776,8 @@ impl CadDocument {
     /// Tables key entries by the normalized name captured at insertion.
     /// Assigning `layer.name` directly leaves the entry reachable only under
     /// its old name, and every later name lookup misses — the DWG writer then
-    /// emits a NULL layer hard pointer for entities on that layer, which
-    /// AutoCAD reports as a drawing needing recovery (issue #80). The DWG and
+    /// emits a NULL layer hard pointer for entities on that layer, leaving an
+    /// invalid drawing (issue #80). The DWG and
     /// DXF writers call this on their output copy; call it directly after an
     /// in-place rename to repair the live document too.
     ///

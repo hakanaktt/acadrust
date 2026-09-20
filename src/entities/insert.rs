@@ -196,12 +196,20 @@ impl Insert {
 
     /// Get the total number of instances in the array
     pub fn instance_count(&self) -> usize {
-        (self.column_count as usize) * (self.row_count as usize)
+        (self.column_count as usize).saturating_mul(self.row_count as usize)
+    }
+
+    /// Initial capacity for per-instance vectors. Large MINSERT arrays grow
+    /// on demand instead of reserving `rows * columns` elements up front,
+    /// which can abort the process for arrays such as 65535 x 65535.
+    fn array_capacity_hint(&self) -> usize {
+        const MAX_PRERESERVE: usize = 4096;
+        self.instance_count().min(MAX_PRERESERVE)
     }
 
     /// Get all insertion points for array instances
     pub fn array_points(&self) -> Vec<Vector3> {
-        let mut points = Vec::with_capacity(self.instance_count());
+        let mut points = Vec::with_capacity(self.array_capacity_hint());
 
         for row in 0..self.row_count {
             for col in 0..self.column_count {
@@ -372,7 +380,7 @@ impl Insert {
         let rotation = Matrix4::rotation_z(self.rotation);
         let scale = Matrix4::scaling(self.x_scale, self.y_scale, self.z_scale);
 
-        let mut transforms = Vec::with_capacity(self.instance_count());
+        let mut transforms = Vec::with_capacity(self.array_capacity_hint());
         for row in 0..self.row_count {
             for col in 0..self.column_count {
                 let offset_x = col as f64 * self.column_spacing;
@@ -711,6 +719,15 @@ mod tests {
     use super::*;
     use crate::entities::{AttributeDefinition, Block, BlockEnd, Circle, Line};
     use std::f64::consts::{FRAC_PI_2, PI, TAU};
+
+    #[test]
+    fn huge_minsert_does_not_prereserve_full_array() {
+        let mut insert = Insert::new("B", Vector3::ZERO);
+        insert.row_count = u16::MAX;
+        insert.column_count = u16::MAX;
+        assert_eq!(insert.instance_count(), 65535 * 65535);
+        assert!(insert.array_capacity_hint() <= 4096);
+    }
 
     /// Helper – approximate equality for f64
     fn approx(a: f64, b: f64) -> bool {

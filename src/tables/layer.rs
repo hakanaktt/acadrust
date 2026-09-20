@@ -46,8 +46,8 @@ impl Default for LayerFlags {
 
 /// The extended-data application a layer's description is stored under.
 ///
-/// AutoCAD's AEC products put it there and every reader since has followed
-/// them, so the name is load-bearing rather than descriptive.
+/// The application name is part of the file schema and is therefore
+/// load-bearing rather than descriptive.
 pub const LAYER_DESCRIPTION_APP: &str = "AcAecLayerStandard";
 
 /// A layer table entry

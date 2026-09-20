@@ -235,13 +235,3 @@ Every contribution helps keep this project active and well-maintained. Thank you
 ## License
 
 MPL-2.0 — see [LICENSE](LICENSE).
-
-## Trademarks
-
-Autodesk, AutoCAD, DWG, and DXF are registered trademarks or trademarks of
-Autodesk, Inc. ACIS, SAT, and SAB are trademarks of Spatial Corporation.
-acadrust is a free, independent, unofficial open-source project. It has no
-business connection to, and is not affiliated with, endorsed by, or
-sponsored by, Autodesk, Inc. or Spatial Corporation. All other trademarks,
-product names, and company names or logos mentioned herein are the property
-of their respective owners and are used for identification purposes only.

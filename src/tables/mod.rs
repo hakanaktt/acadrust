@@ -130,7 +130,7 @@ impl<T: TableEntry> Table<T> {
     }
 
     /// Add an entry while preserving existing entries with the same display
-    /// name. This is needed for AutoCAD VPORT tables, where tiled model-space
+    /// name. This is needed for VPORT tables, where tiled model-space
     /// viewports can all be named "*Active".
     pub fn add_allow_duplicate(&mut self, entry: T) {
         let name = normalize_name(entry.name());
@@ -209,8 +209,8 @@ impl<T: TableEntry> Table<T> {
     /// Lookups are keyed by the normalized name captured at insertion, so
     /// assigning `entry.name` directly leaves the entry reachable only under
     /// its old name. Every name-based resolution then misses: the DWG/DXF
-    /// writers turn an unresolved entity layer into a NULL hard pointer, which
-    /// AutoCAD reports as a damaged drawing. A rename colliding with another
+    /// writers turn an unresolved entity layer into a NULL hard pointer and
+    /// produce an invalid drawing. A rename colliding with another
     /// entry keeps the suffixed form `add_allow_duplicate` uses, so no entry is
     /// ever dropped.
     ///

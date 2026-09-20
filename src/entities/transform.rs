@@ -354,7 +354,138 @@ pub(crate) fn transform_helix(e: &mut Helix, transform: &Transform) {
 
 // ── Dimension ────────────────────────────────────────────────────────────────
 
-// Dimension uses the default Entity trait implementation (extract translation).
+fn transform_dimension_angle(
+    old_normal: Vector3,
+    new_normal: Vector3,
+    angle: f64,
+    transform: &Transform,
+) -> f64 {
+    let old_direction =
+        Matrix3::arbitrary_axis(old_normal) * Vector3::new(angle.cos(), angle.sin(), 0.0);
+    let new_direction =
+        Matrix3::arbitrary_axis(new_normal).transpose() * transform.apply_rotation(old_direction);
+    if new_direction.length_squared() > 1e-24 {
+        new_direction.y.atan2(new_direction.x)
+    } else {
+        angle
+    }
+}
+
+pub(crate) fn transform_dimension(e: &mut Dimension, transform: &Transform) {
+    if let Dimension::Ordinate(d) = e {
+        let old_normal = d.base.normal;
+        let old_basis = Matrix3::arbitrary_axis(old_normal);
+        let old_axis_angle = -d.base.horizontal_direction;
+        let old_axis = old_basis * Vector3::new(old_axis_angle.cos(), old_axis_angle.sin(), 0.0);
+        let old_text_angle = old_axis_angle + d.base.text_rotation;
+        let old_text_axis =
+            old_basis * Vector3::new(old_text_angle.cos(), old_text_angle.sin(), 0.0);
+
+        d.definition_point = transform.apply(d.definition_point);
+        d.feature_location = transform.apply(d.feature_location);
+        d.leader_endpoint = transform.apply(d.leader_endpoint);
+        d.base.definition_point = d.definition_point;
+        d.base.text_middle_point = transform.apply(d.base.text_middle_point);
+
+        let new_normal = transform_normal(transform, old_normal);
+        let (old_ocs, new_wcs_to_ocs) = ocs_pair(old_normal, new_normal);
+        d.base.insertion_point = new_wcs_to_ocs * transform.apply(old_ocs * d.base.insertion_point);
+        d.base.normal = new_normal;
+
+        let transformed_axis = new_wcs_to_ocs * transform.apply_rotation(old_axis);
+        let mut new_axis_angle = old_axis_angle;
+        if transformed_axis.length_squared() > 1e-24 {
+            new_axis_angle = transformed_axis.y.atan2(transformed_axis.x);
+            d.base.horizontal_direction = -new_axis_angle;
+        }
+        let transformed_text_axis = new_wcs_to_ocs * transform.apply_rotation(old_text_axis);
+        if transformed_text_axis.length_squared() > 1e-24 {
+            let relative = transformed_text_axis.y.atan2(transformed_text_axis.x) - new_axis_angle;
+            d.base.text_rotation = relative.sin().atan2(relative.cos());
+        }
+        d.refresh_measurement();
+        return;
+    }
+
+    let old_normal = e.base().normal;
+    let new_normal = transform_normal(transform, old_normal);
+    let text_rotation =
+        transform_dimension_angle(old_normal, new_normal, e.base().text_rotation, transform);
+    let horizontal_direction = transform_dimension_angle(
+        old_normal,
+        new_normal,
+        e.base().horizontal_direction,
+        transform,
+    );
+    let insertion_rotation = transform_dimension_angle(
+        old_normal,
+        new_normal,
+        e.base().insertion_rotation,
+        transform,
+    );
+    let linear_angles = match e {
+        Dimension::Linear(d) => Some((
+            transform_dimension_angle(old_normal, new_normal, d.rotation, transform),
+            transform_dimension_angle(old_normal, new_normal, d.ext_line_rotation, transform),
+        )),
+        _ => None,
+    };
+
+    let definition_point = transform.apply(e.definition_point());
+    e.set_definition_point(definition_point);
+    {
+        let base = e.base_mut();
+        base.text_middle_point = transform.apply(base.text_middle_point);
+        let (old_ocs, new_wcs_to_ocs) = ocs_pair(old_normal, new_normal);
+        base.insertion_point = new_wcs_to_ocs * transform.apply(old_ocs * base.insertion_point);
+        base.normal = new_normal;
+        base.text_rotation = text_rotation;
+        base.horizontal_direction = horizontal_direction;
+        base.insertion_rotation = insertion_rotation;
+    }
+
+    match e {
+        Dimension::Aligned(d) => {
+            d.first_point = transform.apply(d.first_point);
+            d.second_point = transform.apply(d.second_point);
+        }
+        Dimension::Linear(d) => {
+            d.first_point = transform.apply(d.first_point);
+            d.second_point = transform.apply(d.second_point);
+            if let Some((rotation, ext_line_rotation)) = linear_angles {
+                d.rotation = rotation;
+                d.ext_line_rotation = ext_line_rotation;
+            }
+        }
+        Dimension::Radius(d) => d.angle_vertex = transform.apply(d.angle_vertex),
+        Dimension::Diameter(d) => d.angle_vertex = transform.apply(d.angle_vertex),
+        Dimension::Angular2Ln(d) => {
+            d.dimension_arc = transform.apply(d.dimension_arc);
+            d.first_point = transform.apply(d.first_point);
+            d.second_point = transform.apply(d.second_point);
+            d.angle_vertex = transform.apply(d.angle_vertex);
+        }
+        Dimension::Angular3Pt(d) => {
+            d.first_point = transform.apply(d.first_point);
+            d.second_point = transform.apply(d.second_point);
+            d.angle_vertex = transform.apply(d.angle_vertex);
+        }
+        Dimension::Arc(d) => {
+            d.first_extension_point = transform.apply(d.first_extension_point);
+            d.second_extension_point = transform.apply(d.second_extension_point);
+            d.center_point = transform.apply(d.center_point);
+            d.first_leader_point = transform.apply(d.first_leader_point);
+            d.second_leader_point = transform.apply(d.second_leader_point);
+        }
+        Dimension::LargeRadial(d) => {
+            d.chord_point = transform.apply(d.chord_point);
+            d.override_center = transform.apply(d.override_center);
+            d.jog_point = transform.apply(d.jog_point);
+        }
+        Dimension::Ordinate(_) => unreachable!(),
+    }
+    e.base_mut().actual_measurement = e.measurement();
+}
 
 // ── Hatch ────────────────────────────────────────────────────────────────────
 
@@ -1233,6 +1364,55 @@ mod tests {
         } else {
             panic!("Expected Circle");
         }
+    }
+
+    fn assert_vector_near(actual: Vector3, expected: Vector3) {
+        assert!(
+            actual.distance(&expected) < 1e-9,
+            "expected {expected:?}, got {actual:?}"
+        );
+    }
+
+    #[test]
+    fn test_transform_linear_dimension_rotates_out_of_world_plane() {
+        let mut linear = DimensionLinear::horizontal(Vector3::ZERO, Vector3::new(10.0, 0.0, 0.0));
+        linear.definition_point = Vector3::new(0.0, 5.0, 0.0);
+        linear.base.definition_point = linear.definition_point;
+        let mut dimension = Dimension::Linear(linear);
+
+        transform_dimension(
+            &mut dimension,
+            &Transform::from_rotation(Vector3::UNIT_Y, std::f64::consts::FRAC_PI_2),
+        );
+
+        let Dimension::Linear(linear) = dimension else {
+            unreachable!()
+        };
+        assert_vector_near(linear.second_point, Vector3::new(0.0, 0.0, -10.0));
+        assert_vector_near(linear.base.normal, Vector3::UNIT_X);
+        assert!((linear.measurement() - 10.0).abs() < 1e-9);
+        assert!((linear.base.actual_measurement - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_transform_linear_dimension_mirrors_about_offset_plane() {
+        let mut linear = DimensionLinear::horizontal(Vector3::ZERO, Vector3::new(10.0, 0.0, 0.0));
+        linear.definition_point = Vector3::new(0.0, 5.0, 0.0);
+        linear.base.definition_point = linear.definition_point;
+        let mut dimension = Dimension::Linear(linear);
+        let plane_point = Vector3::new(0.0, 2.0, 0.0);
+        let reflection = Transform::from_translation(-plane_point)
+            .then(&Transform::from_scaling(Vector3::new(1.0, -1.0, 1.0)))
+            .then(&Transform::from_translation(plane_point));
+
+        transform_dimension(&mut dimension, &reflection);
+
+        let Dimension::Linear(linear) = dimension else {
+            unreachable!()
+        };
+        assert_vector_near(linear.definition_point, Vector3::new(0.0, -1.0, 0.0));
+        assert!((linear.measurement() - 10.0).abs() < 1e-9);
+        assert!((linear.base.actual_measurement - 10.0).abs() < 1e-9);
     }
 
     // Mirrored boundary arcs must remain continuous with adjacent lines.

@@ -1559,8 +1559,18 @@ impl<'a> DwgObjectWriter<'a> {
             self.writer.write_bit_long(scenario);
         }
 
+        // Generate a clamped uniform knot vector if not provided. The
+        // degree written below must match the degree the knots were
+        // generated for, so both come from the same helper.
+        let (degree, knots): (i32, Vec<f64>) =
+            if scenario == 1 && e.knots.is_empty() && !e.control_points.is_empty() {
+                Spline::clamped_knots_with_degree(e.degree, e.control_points.len())
+            } else {
+                (e.degree, e.knots.clone())
+            };
+
         // Degree BL (common, before scenario switch)
-        self.writer.write_bit_long(e.degree);
+        self.writer.write_bit_long(degree);
 
         let has_weights = !e.weights.is_empty();
 
@@ -1578,13 +1588,6 @@ impl<'a> DwgObjectWriter<'a> {
                 self.writer.write_bit_double(e.knot_tolerance);
                 // Ctrl tol BD 43
                 self.writer.write_bit_double(e.control_tolerance);
-
-                // Generate clamped uniform knot vector if not provided
-                let knots: Vec<f64> = if e.knots.is_empty() && !e.control_points.is_empty() {
-                    Spline::generate_clamped_knots(e.degree as usize, e.control_points.len())
-                } else {
-                    e.knots.clone()
-                };
 
                 // Numknots BL 72
                 self.writer.write_bit_long(knots.len() as i32);

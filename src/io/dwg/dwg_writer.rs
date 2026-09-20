@@ -86,16 +86,7 @@ impl DwgWriter {
             if owned.has_null_table_entries() {
                 owned.assign_table_entry_handles();
             }
-            // Pruning the class table to the legacy whitelist renumbers every
-            // surviving class (500 + index). Unknown objects/entities carried
-            // verbatim from a same-version source still embed their *original*
-            // class numbers, so after pruning they point at a missing class or
-            // — worse — at a different one. Only prune when nothing is being
-            // passed through raw, i.e. the source was not this exact version.
-            let raw_passthrough = owned.dwg_source_version == Some(owned.version);
-            if owned.version < DxfVersion::AC1027 && raw_passthrough {
-                prepare_legacy_document(&mut owned);
-            } else if owned.version < DxfVersion::AC1027 {
+            if owned.version < DxfVersion::AC1027 {
                 let required: Vec<_> = owned
                     .entities()
                     .filter_map(|entity| {
@@ -508,8 +499,8 @@ fn prepare_surface_classes(document: &mut std::borrow::Cow<'_, CadDocument>) {
 /// assigns `layer.name` through `layers.iter_mut()` leaves the entry reachable
 /// only under its old name. The entity writer resolves an entity's layer by
 /// name, so every entity on that layer would be written with a NULL layer hard
-/// pointer — a required reference — and AutoCAD asks to recover the drawing
-/// (issue #80). Repair the output copy only; the caller's document is untouched.
+/// pointer — a required reference — and produces an invalid drawing (issue
+/// #80). Repair the output copy only; the caller's document is untouched.
 ///
 /// Shared with the DXF writer: the stale key desyncs the same name lookups
 /// there, leaving entities pointing at a layer name the LAYER table no longer

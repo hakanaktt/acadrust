@@ -3489,7 +3489,12 @@ impl<'a> SectionReader<'a> {
             // Entities start with code 0
             if pair.code == 0 {
                 let entity_type = pair.value_string.clone();
-                let before = document.entities().count();
+                // The entity list length stands in for the filtered
+                // `entities()` count: the ENTITIES section never adds the
+                // BLOCK / ENDBLK markers that the filter excludes, so the
+                // two agree, and the length does not walk the whole list
+                // for every record.
+                let before = document.entities.len();
 
                 match entity_type.as_str() {
                     "POINT" => {
@@ -3759,7 +3764,7 @@ impl<'a> SectionReader<'a> {
                 }
                 self.decoded_records = self
                     .decoded_records
-                    .saturating_add(document.entities().count().saturating_sub(before));
+                    .saturating_add(document.entities.len().saturating_sub(before));
             }
         }
 
@@ -9060,8 +9065,7 @@ impl<'a> SectionReader<'a> {
                             crate::types::Transparency::from_alpha_value(value as u32);
                     }
                     // The description is the *second* string under
-                    // `AcAecLayerStandard`; the first is an empty placeholder
-                    // that AutoCAD and BricsCAD both write ahead of it.
+                    // `AcAecLayerStandard`; the first is an empty placeholder.
                     if let Some(text) = xdata
                         .get_record(LAYER_DESCRIPTION_APP)
                         .map(|record| layer_description_from(&record.values))
@@ -9465,7 +9469,8 @@ impl<'a> SectionReader<'a> {
 
     /// Read a single DIMSTYLE entry
     fn read_dimstyle_entry(&mut self) -> Result<Option<DimStyle>> {
-        let mut ds = DimStyle::new("Standard");
+        // Omitted groups use the DXF format's built-in defaults.
+        let mut ds = DimStyle::dxf_defaults("Standard");
         let mut seen_table_flags = false;
 
         while let Some(pair) = self.reader.read_pair()? {

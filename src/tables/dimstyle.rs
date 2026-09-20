@@ -349,6 +349,33 @@ impl DimStyle {
     pub fn standard() -> Self {
         Self::new("Standard")
     }
+
+    /// The built-in values used for DIMSTYLE groups that a DXF leaves out.
+    ///
+    /// Writers may omit groups equal to the format's imperial defaults, so a
+    /// reader must start from those, not from the metric values [`Self::new`]
+    /// uses for freshly created styles. The differences affect zero
+    /// suppression, text orientation, precision, placement and line offsets.
+    pub fn dxf_defaults(name: impl Into<String>) -> Self {
+        DimStyle {
+            dimdli: 0.38,
+            dimgap: 0.09,
+            dimexe: 0.18,
+            dimexo: 0.0625,
+            dimsah: false,
+            dimtad: 0,
+            dimtih: true,
+            dimtoh: true,
+            dimdec: 4,
+            dimtdec: 4,
+            dimzin: 0,
+            dimtzin: 0,
+            dimaltd: 2,
+            dimalttd: 2,
+            dimtolj: 1,
+            ..Self::new(name)
+        }
+    }
 }
 
 impl TableEntry for DimStyle {

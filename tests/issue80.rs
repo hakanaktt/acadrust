@@ -1,5 +1,5 @@
 //! Repro for issue #80: a document read from DWG, mutated in place, then
-//! written back triggers AutoCAD's "Drawing Recovery".
+//! written back contains invalid layer references.
 //!
 //! The reporter renamed a layer through `layers.iter_mut()`. Tables key entries
 //! by the normalized name captured at insertion, so assigning `layer.name`
@@ -53,7 +53,7 @@ fn dwg_roundtrip(doc: &CadDocument) -> CadDocument {
 }
 
 /// Every entity's layer must name a layer the written table actually defines.
-/// An unresolvable one is the corruption AutoCAD reports as damage.
+/// An unresolvable one is invalid file data.
 fn assert_layers_resolve(doc: &CadDocument, label: &str) {
     for entity in doc.entities() {
         let layer = &entity.common().layer;
@@ -123,8 +123,7 @@ fn repro_issue80_entity_on_undefined_layer_is_not_a_null_pointer() {
     //
     // This pins the behaviour rather than reproducing the failure: acadrust's
     // own reader maps a NULL layer pointer back to "0", so a round-trip through
-    // it cannot distinguish the two. AutoCAD is the strict reader that rejects
-    // the NULL pointer, so the guarantee lives in the writer.
+    // it cannot distinguish the two. The guarantee therefore lives in the writer.
     let mut doc = source_document(DxfVersion::AC1027);
     let mut line = Line::from_coords(4.0, 4.0, 0.0, 5.0, 5.0, 0.0);
     line.common.layer = "GHOST".to_string();

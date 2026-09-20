@@ -34,8 +34,8 @@ impl Color {
             256 => Color::ByLayer,
             257 => Color::None,
             1..=255 => Color::Index(index as u8),
-            _ if index < 0 => Color::Index((-index).min(255) as u8), // Negative means layer is off
-            _ => Color::Index(7),                                    // Default to white
+            _ if index < 0 => Color::Index(index.unsigned_abs().min(255) as u8), // Negative means layer is off
+            _ => Color::Index(7),                                                // Default to white
         }
     }
 
@@ -149,6 +149,13 @@ mod tests {
         assert_eq!(Color::from_index(0), Color::ByBlock);
         assert_eq!(Color::from_index(256), Color::ByLayer);
         assert_eq!(Color::from_index(1), Color::Index(1));
+    }
+
+    #[test]
+    fn test_color_from_negative_index() {
+        assert_eq!(Color::from_index(-5), Color::Index(5));
+        assert_eq!(Color::from_index(-300), Color::Index(255));
+        assert_eq!(Color::from_index(i16::MIN), Color::Index(255));
     }
 
     #[test]

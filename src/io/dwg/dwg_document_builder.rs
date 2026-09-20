@@ -435,14 +435,10 @@ fn accept_loaded_entity_batch(
     visit: &mut dyn FnMut(&CadDocument, EntityType) -> Option<EntityType>,
     entities: &mut Vec<std::sync::Arc<EntityType>>,
 ) {
-    let mut kept = Vec::with_capacity(entities.len());
     for entity in entities.drain(..) {
         let owned = std::sync::Arc::try_unwrap(entity).unwrap_or_else(|arc| (*arc).clone());
-        if let Some(entity) = visit(document, owned) {
-            kept.push(std::sync::Arc::new(entity));
-        }
+        accept_loaded_entity(document, visit, owned);
     }
-    document.add_loaded_entity_batch(&mut kept);
 }
 
 impl DwgDocumentBuilder {
