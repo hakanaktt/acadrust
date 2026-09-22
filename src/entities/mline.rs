@@ -535,6 +535,19 @@ impl MLine {
         }
     }
 
+    /// Return the flags that should be serialized for this entity.
+    ///
+    /// `HAS_VERTICES` is a derived bit (DXF group 71 bit 1); its value must
+    /// agree with the vertex count written as group 72.
+    pub(crate) fn serialized_flags(&self) -> MLineFlags {
+        let has_vertices = if self.vertices.is_empty() {
+            MLineFlags::empty()
+        } else {
+            MLineFlags::HAS_VERTICES
+        };
+        (self.flags & !MLineFlags::HAS_VERTICES) | has_vertices
+    }
+
     /// Moves one vertex and rebuilds the dependent direction/miter data.
     pub fn set_vertex_position(&mut self, index: usize, position: Vector3) -> bool {
         let Some(vertex) = self.vertices.get_mut(index) else {
@@ -857,6 +870,20 @@ mod tests {
         assert_eq!(mline.scale_factor, 1.0);
         assert_eq!(mline.vertex_count(), 0);
         assert!(!mline.is_closed());
+    }
+
+    #[test]
+    fn serialized_flags_derive_vertex_presence() {
+        let mut empty = MLine::new();
+        empty.flags = MLineFlags::CLOSED | MLineFlags::NO_START_CAPS;
+        assert_eq!(empty.serialized_flags().bits(), 6);
+
+        let mut populated = MLine::from_points(&[
+            Vector3::ZERO,
+            Vector3::new(1.0, 0.0, 0.0),
+        ]);
+        populated.flags.remove(MLineFlags::HAS_VERTICES);
+        assert_eq!(populated.serialized_flags().bits(), 1);
     }
 
     #[test]

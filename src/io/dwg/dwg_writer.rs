@@ -1026,9 +1026,9 @@ fn write_ac15<W: Write + Seek>(
 
     // ── Section: Header (uses synced + corrected header) ──
     let maint = document.maintenance_version;
-    let header_encoding =
-        crate::io::dxf::code_page::encoding_from_code_page(&document.header.code_page)
-            .unwrap_or(encoding_rs::WINDOWS_1252);
+    let header_encoding = crate::io::dxf::code_page::encoding_from_dwg_code_page(
+        crate::io::dxf::code_page::dwg_code_page_index(&document.header.code_page),
+    );
     let header_data = header_writer::write_header_with_encoding(
         version,
         &corrected_header,
@@ -1132,9 +1132,9 @@ fn write_ac18<W: Write + Seek>(
     let corrected_header = prepare_header(document, &handle_map_u32, &extents);
 
     // ── Section: Header (uses synced + corrected header) ──
-    let header_encoding =
-        crate::io::dxf::code_page::encoding_from_code_page(&document.header.code_page)
-            .unwrap_or(encoding_rs::WINDOWS_1252);
+    let header_encoding = crate::io::dxf::code_page::encoding_from_dwg_code_page(
+        crate::io::dxf::code_page::dwg_code_page_index(&document.header.code_page),
+    );
     let header_data = header_writer::write_header_with_encoding(
         version,
         &corrected_header,
@@ -1387,9 +1387,9 @@ fn write_ac21_impl<W: Write + Seek>(
     // Classes
     let classes = reconciled_classes(document, &class_instance_counts, class_counts_complete);
     let maint = document.maintenance_version;
-    let header_encoding =
-        crate::io::dxf::code_page::encoding_from_code_page(&document.header.code_page)
-            .unwrap_or(encoding_rs::WINDOWS_1252);
+    let header_encoding = crate::io::dxf::code_page::encoding_from_dwg_code_page(
+        crate::io::dxf::code_page::dwg_code_page_index(&document.header.code_page),
+    );
     let classes_data =
         classes_writer::write_classes_with_encoding(version, &classes, maint, header_encoding);
     fhw.add_section(output, section_names::CLASSES, &classes_data)?;

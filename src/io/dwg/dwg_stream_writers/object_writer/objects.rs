@@ -185,7 +185,7 @@ fn transcode_xrecord_xdata(
                 .0
                 .into_owned();
             p += len;
-            crate::io::dxf::code_page::decode_mif_escapes(&s)
+            crate::io::dxf::code_page::decode_legacy_escapes(&s)
         };
         if tgt_unicode {
             let utf16: Vec<u16> = text.encode_utf16().take(u16::MAX as usize).collect();
@@ -2546,12 +2546,10 @@ impl<'a> DwgObjectWriter<'a> {
         let xrecord_entries = advanced_material_entries
             .as_deref()
             .unwrap_or(&xrec.entries);
-        let encoding =
-            crate::io::dxf::code_page::encoding_from_code_page(&self.document.header.code_page)
-                .unwrap_or(encoding_rs::WINDOWS_1252);
         let code_page =
             crate::io::dxf::code_page::dwg_code_page_index(&self.document.header.code_page)
                 .min(u8::MAX as u16) as u8;
+        let encoding = crate::io::dxf::code_page::encoding_from_dwg_code_page(code_page as u16);
 
         // Write xdata bytes first (per spec: data before cloning flags). The
         // blob is captured verbatim from the source version; when saving to a

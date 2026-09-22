@@ -426,6 +426,29 @@ impl MTextParser {
                 }
             }
 
+            // Legacy MIF escape: \M+nxxyy. The code-page selector is part of
+            // the escape, so it can be decoded before the text reaches the
+            // structured span model.
+            'M' if self.pos + 1 < self.chars.len() && self.chars[self.pos + 1] == '+' => {
+                let end = self.pos + 6;
+                if end < self.chars.len() {
+                    let token: String = self.chars[self.pos - 1..=end].iter().collect();
+                    let decoded = crate::io::dxf::code_page::decode_mif_escapes(&token);
+                    if decoded != token {
+                        self.text_buf.push_str(&decoded);
+                        self.pos = end + 1;
+                    } else {
+                        self.text_buf.push('\\');
+                        self.text_buf.push(code);
+                        self.pos += 1;
+                    }
+                } else {
+                    self.text_buf.push('\\');
+                    self.text_buf.push(code);
+                    self.pos += 1;
+                }
+            }
+
             // Paragraph break: \P (uppercase) is always a paragraph break.
             // \p followed by content is paragraph properties; \p alone is a paragraph break.
             'P' => {
@@ -1768,6 +1791,12 @@ mod tests {
     fn test_parse_unicode_escape() {
         let doc = parse_mtext(r"{\U+00B0}", false);
         assert_eq!(doc.paragraphs[0].to_plain_text(), "°");
+    }
+
+    #[test]
+    fn test_parse_mif_escape() {
+        let doc = parse_mtext(r"\M+5BCFE\M+5BAC5", false);
+        assert_eq!(doc.to_plain_text(), "件号");
     }
 
     // ========================================================================

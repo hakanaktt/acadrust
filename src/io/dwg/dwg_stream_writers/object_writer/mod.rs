@@ -152,9 +152,9 @@ impl<'a> DwgObjectWriter<'a> {
     pub fn new(document: &'a CadDocument) -> crate::error::Result<Self> {
         let version = DwgVersion::from_dxf_version(document.version)?;
         let dxf_version = document.version;
-        let encoding =
-            crate::io::dxf::code_page::encoding_from_code_page(&document.header.code_page)
-                .unwrap_or(encoding_rs::WINDOWS_1252);
+        let encoding = crate::io::dxf::code_page::encoding_from_dwg_code_page(
+            crate::io::dxf::code_page::dwg_code_page_index(&document.header.code_page),
+        );
         let writer = DwgMergedWriter::with_encoding(version, dxf_version, encoding);
 
         // Compute safe starting handle for allocation.
@@ -780,10 +780,8 @@ impl<'a> DwgObjectWriter<'a> {
                     let code_page = crate::io::dxf::code_page::dwg_code_page_index(
                         &self.document.header.code_page,
                     );
-                    let encoding = crate::io::dxf::code_page::encoding_from_code_page(
-                        &self.document.header.code_page,
-                    )
-                    .unwrap_or(encoding_rs::WINDOWS_1252);
+                    let encoding =
+                        crate::io::dxf::code_page::encoding_from_dwg_code_page(code_page);
                     let values = [
                         crate::xdata::XDataValue::String(String::new()),
                         crate::xdata::XDataValue::String(layer.description.clone()),
@@ -1988,9 +1986,9 @@ impl<'a> DwgObjectWriter<'a> {
     }
 
     fn serialize_parallel_entity_batch(&self, handles: &[Handle]) -> ParallelEntityBatch {
-        let encoding =
-            crate::io::dxf::code_page::encoding_from_code_page(&self.document.header.code_page)
-                .unwrap_or(encoding_rs::WINDOWS_1252);
+        let encoding = crate::io::dxf::code_page::encoding_from_dwg_code_page(
+            crate::io::dxf::code_page::dwg_code_page_index(&self.document.header.code_page),
+        );
         let mut worker = Self {
             version: self.version,
             dxf_version: self.dxf_version,

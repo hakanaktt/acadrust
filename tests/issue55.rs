@@ -100,13 +100,13 @@ fn r2000_with_template_and_aux_header_after_handles_reads_fully() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  Secondary issue: legacy string encoding (code page + MIF escapes)
+//  Secondary issue: legacy string encoding (code page + CIF escapes)
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // Pre-Unicode DWG (R13–R2004) strings are stored in the code page recorded
 // in the file header (e.g. ANSI_936 / GBK), and characters outside that code
-// page are stored as MIF `\U+XXXX` escapes. The reader must apply both; the
-// writer must emit MIF escapes rather than `&#NNNNN;` references.
+// page are stored as CIF `\U+XXXX` escapes. The reader must apply both; the
+// writer must emit CIF escapes rather than `&#NNNNN;` references.
 
 fn text_document(code_page: &str, value: &str) -> CadDocument {
     let mut doc = CadDocument::with_version(DxfVersion::AC1015);
@@ -138,8 +138,8 @@ fn gbk_codepage_text_roundtrip() {
 }
 
 #[test]
-fn mif_escapes_in_dwg_strings_are_decoded() {
-    // A file whose strings contain literal MIF \U+XXXX sequences (ASCII-safe
+fn cif_escapes_in_dwg_strings_are_decoded() {
+    // A file whose strings contain literal CIF \U+XXXX sequences (ASCII-safe
     // for any code page) must decode them into the actual characters.
     let doc = text_document("ANSI_936", "\\U+4E2D\\U+6587");
     let rt = read_dwg(DwgWriter::write_to_vec(&doc).unwrap());
@@ -147,14 +147,21 @@ fn mif_escapes_in_dwg_strings_are_decoded() {
 }
 
 #[test]
-fn unmappable_text_is_written_as_mif_escapes() {
-    // Characters outside the (western) code page must be stored as MIF
+fn mif_escapes_in_dwg_strings_are_decoded() {
+    let doc = text_document("ANSI_936", r"\M+5BCFE\M+5BAC5");
+    let rt = read_dwg(DwgWriter::write_to_vec(&doc).unwrap());
+    assert_eq!(first_text_value(&rt), "件号");
+}
+
+#[test]
+fn unmappable_text_is_written_as_cif_escapes() {
+    // Characters outside the (western) code page must be stored as CIF
     // escapes — not encoding_rs' HTML `&#NNNNN;` references — and must
     // decode back to the original text on read.
     let doc = text_document("ANSI_1252", "中文A");
     let bytes = DwgWriter::write_to_vec(&doc).unwrap();
     let text = String::from_utf8_lossy(&bytes).into_owned();
-    assert!(text.contains("\\U+4E2D"), "expected MIF escape in output");
+    assert!(text.contains("\\U+4E2D"), "expected CIF escape in output");
     assert!(
         !text.contains("&#"),
         "HTML character references are not valid DWG"
@@ -162,6 +169,17 @@ fn unmappable_text_is_written_as_mif_escapes() {
 
     let rt = read_dwg(bytes);
     assert_eq!(first_text_value(&rt), "中文A");
+}
+
+#[test]
+fn unsupported_code_page_uses_the_emitted_dwg_fallback() {
+    // KOI8-R has no DWG code-page index. The writer must encode using the
+    // ANSI_1252 fallback it declares in the file header, then preserve text
+    // through CIF escapes for characters that fallback cannot represent.
+    let doc = text_document("KOI8-R", "Привет");
+    let rt = read_dwg(DwgWriter::write_to_vec(&doc).unwrap());
+    assert_eq!(rt.header.code_page, "ANSI_1252");
+    assert_eq!(first_text_value(&rt), "Привет");
 }
 
 #[test]

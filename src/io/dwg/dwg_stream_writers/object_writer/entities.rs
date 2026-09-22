@@ -3147,37 +3147,13 @@ impl<'a> DwgObjectWriter<'a> {
         // entity MLINE (47), `include/dwg.h`), and writes that raw short
         // straight back out at group 71.
         //
-        // Deliberately not `e.flags.bits()` — which is what the DXF writer
-        // emits at `src/io/dxf/writer/section_writer.rs:9373` — because the
-        // in-memory flags can hold combinations the documented contract
-        // excludes: `MLineFlags::empty()`, or `CLOSED` without `HAS_VERTICES`
-        // from a DXF file whose group 71 said 2. A `0` or `2` on this short is
-        // a value no AutoCAD drawing contains, and ACadSharp's reader resolves
-        // it as open by `== 3` (`DwgObjectReader.cs:3374`). So the open/closed
-        // pair is always rebuilt from `CLOSED` into one of the two documented
-        // patterns, and only the cap bits are carried across verbatim. That
-        // makes a DWG write lossless for every flag set a conforming file can
-        // hold, which is the four-bit space with `HAS_VERTICES` set. It does
-        // not make the two writers byte-identical: for the two excluded sets
-        // the DXF writer emits the raw bits, so an in-memory `0` crosses DXF as
-        // `0` and DWG as `1`, and a `2` crosses as `2` and `3` respectively.
-        //
-        // ACadSharp <= 3.7.1 is the one known reader this costs, and citing its
-        // `== 3` above without saying so would be one-sided: `DwgObjectReader.cs:3374`
-        // resolves the short by equality, so a closed multiline that also
-        // suppresses a cap (7, 11, 15) reads back OPEN there — while 4 and 8
-        // already die on any DWG it reads. That is its own defect: its model
-        // declares `[DxfCodeValue(71)] MLineFlags` with all four bits and its
-        // DXF path carries them. Real AutoCAD drawings settle the question —
-        // ACadSharp 3.7.1's `samples/sample_AC1018.dwg` and
-        // `samples/sample_AC1032.dwg` carry 5 on handle `3A6`, which libredwg
-        // 0.14 decodes as HAS_VERTEX | SUPPRESS_START_CAPS.
+        // HAS_VERTICES is derived from the vertex list in the record. Preserve
+        // the closed and cap-suppression bits supplied by the model while
+        // making group 71 agree with group 72 in every output format.
         let caps = e.flags & (MLineFlags::NO_START_CAPS | MLineFlags::NO_END_CAPS);
-        let open_closed: i16 = if e.flags.contains(MLineFlags::CLOSED) {
-            3
-        } else {
-            1
-        };
+        let open_closed: i16 = (e.serialized_flags()
+            & (MLineFlags::HAS_VERTICES | MLineFlags::CLOSED))
+            .bits();
         self.writer.write_bit_short(open_closed | caps.bits());
 
         // Linesinstyle RC 73 — number of segments from first vertex

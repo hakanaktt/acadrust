@@ -70,7 +70,7 @@ impl DwgBitWriter {
 
     /// Encode text using the document's legacy text code page.
     ///
-    /// Characters the code page cannot represent become MIF `\U+XXXX`
+    /// Characters the code page cannot represent become CIF `\U+XXXX`
     /// escapes instead of `&#NNNNN;` references.
     pub fn encode_legacy_text(&self, text: &str) -> Vec<u8> {
         crate::io::dxf::code_page::encode_legacy_string(text, self.encoding)

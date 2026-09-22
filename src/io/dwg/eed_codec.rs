@@ -171,7 +171,7 @@ pub(crate) fn decode_values(
                         .decode(slice)
                         .0
                         .into_owned();
-                    crate::io::dxf::code_page::decode_mif_escapes(&decoded)
+                    crate::io::dxf::code_page::decode_legacy_escapes(&decoded)
                 };
                 values.push(XDataValue::String(s));
             }

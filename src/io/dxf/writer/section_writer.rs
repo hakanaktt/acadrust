@@ -9357,8 +9357,8 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         // Justification
         self.writer.write_i16(70, mline.justification as i16)?;
 
-        // Flags
-        self.writer.write_i16(71, mline.flags.bits())?;
+        // Flags: HAS_VERTICES is derived from the serialized vertex list.
+        self.writer.write_i16(71, mline.serialized_flags().bits())?;
 
         // Number of vertices
         self.writer.write_i16(72, mline.vertices.len() as i16)?;

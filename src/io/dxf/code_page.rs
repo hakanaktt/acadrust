@@ -172,11 +172,11 @@ pub fn encoding_from_dwg_code_page(index: u16) -> &'static Encoding {
 
 /// Encode a string to a legacy (pre-UTF-16) DWG code page.
 ///
-/// Characters the code page cannot represent are emitted as AutoCAD MIF
+/// Characters the code page cannot represent are emitted as AutoCAD CIF
 /// `\U+XXXX` escapes (astral-plane characters as a surrogate pair of
 /// escapes) instead of `encoding_rs`'s HTML `&#NNNNN;` references, which
-/// no CAD application understands. Well-formed MIF escapes round-trip
-/// through [`decode_mif_escapes`].
+/// no CAD application understands. Well-formed CIF escapes round-trip
+/// through [`decode_cif_escapes`].
 pub fn encode_legacy_string(text: &str, encoding: &'static Encoding) -> Vec<u8> {
     let (encoded, _, unmappable) = encoding.encode(text);
     if !unmappable {
@@ -199,14 +199,14 @@ pub fn encode_legacy_string(text: &str, encoding: &'static Encoding) -> Vec<u8> 
     out
 }
 
-/// Decode AutoCAD MIF `\U+XXXX` escapes (exactly four hex digits) into
+/// Decode AutoCAD CIF `\U+XXXX` escapes (exactly four hex digits) into
 /// Unicode characters.
 ///
 /// A high-surrogate escape followed by a low-surrogate escape combines into
 /// a scalar value. Malformed or unterminated escapes are left as literal
 /// text, and invalid code points are dropped — matching the MTEXT
 /// formatter's behavior for the same escapes.
-pub fn decode_mif_escapes(text: &str) -> String {
+pub fn decode_cif_escapes(text: &str) -> String {
     if !text.contains("\\U+") {
         return text.to_string();
     }
@@ -255,6 +255,55 @@ pub fn decode_mif_escapes(text: &str) -> String {
     out
 }
 
+/// Decode AutoCAD MIF `\M+nxxyy` escapes into Unicode characters.
+///
+/// The digit `n` selects the legacy double-byte code page: 1 is Shift-JIS,
+/// 2 is Big5, 3 is EUC-KR, 4 is Johab, and 5 is GB2312/GBK. The following
+/// four hexadecimal digits are decoded as the two bytes in that code page.
+/// Malformed escapes and byte sequences that the selected encoding cannot
+/// decode are left as literal text.
+pub fn decode_mif_escapes(text: &str) -> String {
+    if !text.contains("\\M+") {
+        return text.to_string();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let len = chars.len();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < len {
+        if i + 8 <= len && chars[i] == '\\' && chars[i + 1] == 'M' && chars[i + 2] == '+' {
+            let encoding = match chars[i + 3] {
+                '1' => Some(encoding_rs::SHIFT_JIS),
+                '2' => Some(encoding_rs::BIG5),
+                '3' => Some(encoding_rs::EUC_KR),
+                '4' => Some(encoding_rs::EUC_KR),
+                '5' => Some(encoding_rs::GBK),
+                _ => None,
+            };
+            if let Some(encoding) = encoding {
+                let hex: String = chars[i + 4..i + 8].iter().collect();
+                if let Ok(value) = u16::from_str_radix(&hex, 16) {
+                    let bytes = value.to_be_bytes();
+                    let (decoded, _, had_errors) = encoding.decode(&bytes);
+                    if !had_errors {
+                        out.push_str(&decoded);
+                        i += 8;
+                        continue;
+                    }
+                }
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
+}
+
+/// Decode both legacy AutoCAD escape formats found in pre-Unicode strings.
+pub fn decode_legacy_escapes(text: &str) -> String {
+    decode_cif_escapes(&decode_mif_escapes(text))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,26 +350,50 @@ mod tests {
     }
 
     #[test]
-    fn test_decode_mif_escapes() {
-        assert_eq!(decode_mif_escapes("ab\\U+4E2Dcd"), "ab中cd");
-        assert_eq!(decode_mif_escapes("\\U+0041\\U+0042"), "AB");
-        // Exactly four hex digits: a fifth character stays literal.
-        assert_eq!(decode_mif_escapes("\\U+00412"), "A2");
-        // Malformed escapes stay literal.
-        assert_eq!(decode_mif_escapes("\\U+GGGG"), "\\U+GGGG");
-        assert_eq!(decode_mif_escapes("\\U+4E"), "\\U+4E");
-        assert_eq!(decode_mif_escapes("no escapes here"), "no escapes here");
-        // Invalid code points are dropped.
-        assert_eq!(decode_mif_escapes("\\U+D800"), "");
-        // Surrogate pair combines into a scalar.
-        assert_eq!(decode_mif_escapes("\\U+D83D\\U+DE00"), "😀");
+    fn unsupported_dwg_pages_use_the_declared_fallback_encoding() {
+        for page in [
+            "KOI8-R",
+            "KOI8-U",
+            "ISO8859-10",
+            "ISO8859-13",
+            "ISO8859-14",
+            "ISO8859-15",
+        ] {
+            let index = dwg_code_page_index(page);
+            assert_eq!(index, 30);
+            assert_eq!(encoding_from_dwg_code_page(index), encoding_rs::WINDOWS_1252);
+        }
     }
 
     #[test]
-    fn test_encode_legacy_string_mif_escapes() {
+    fn test_decode_cif_escapes() {
+        assert_eq!(decode_cif_escapes("ab\\U+4E2Dcd"), "ab中cd");
+        assert_eq!(decode_cif_escapes("\\U+0041\\U+0042"), "AB");
+        // Exactly four hex digits: a fifth character stays literal.
+        assert_eq!(decode_cif_escapes("\\U+00412"), "A2");
+        // Malformed escapes stay literal.
+        assert_eq!(decode_cif_escapes("\\U+GGGG"), "\\U+GGGG");
+        assert_eq!(decode_cif_escapes("\\U+4E"), "\\U+4E");
+        assert_eq!(decode_cif_escapes("no escapes here"), "no escapes here");
+        // Invalid code points are dropped.
+        assert_eq!(decode_cif_escapes("\\U+D800"), "");
+        // Surrogate pair combines into a scalar.
+        assert_eq!(decode_cif_escapes("\\U+D83D\\U+DE00"), "😀");
+    }
+
+    #[test]
+    fn test_decode_mif_escapes() {
+        assert_eq!(decode_mif_escapes(r"\M+5BCFE\M+5BAC5"), "件号");
+        assert_eq!(decode_legacy_escapes(r"\M+5BCFE\U+0021"), "件!");
+        assert_eq!(decode_mif_escapes(r"\M+9BCFE"), r"\M+9BCFE");
+        assert_eq!(decode_mif_escapes(r"\M+5GGGG"), r"\M+5GGGG");
+    }
+
+    #[test]
+    fn test_encode_legacy_string_cif_escapes() {
         // Mappable chars encode directly.
         assert_eq!(encode_legacy_string("AB", encoding_rs::WINDOWS_1252), b"AB");
-        // Unmappable chars become MIF escapes, not HTML references.
+        // Unmappable chars become CIF escapes, not HTML references.
         let encoded = encode_legacy_string("中", encoding_rs::WINDOWS_1252);
         assert_eq!(String::from_utf8(encoded).unwrap(), "\\U+4E2D");
         // Astral-plane chars become a surrogate pair of escapes.
@@ -331,6 +404,6 @@ mod tests {
         // Round-trip through the decoder.
         let encoded = encode_legacy_string("a中b😀c", encoding_rs::WINDOWS_1252);
         let text = String::from_utf8(encoded).unwrap();
-        assert_eq!(decode_mif_escapes(&text), "a中b😀c");
+        assert_eq!(decode_cif_escapes(&text), "a中b😀c");
     }
 }
