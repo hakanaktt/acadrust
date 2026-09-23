@@ -417,23 +417,150 @@ fn explode_leader(leader: &Leader) -> Vec<EntityType> {
     result
 }
 
+/// Length-to-half-width ratio of AutoCAD's default `_ClosedFilled` arrowhead:
+/// a unit-long triangle whose base spans `[-1/6, 1/6]`.
+const CLOSED_FILLED_HALF_WIDTH: f64 = 1.0 / 6.0;
+
+/// Whether an arrowhead handle names a real block. A null handle is how a
+/// file says "no block": the default `_ClosedFilled` arrowhead.
+fn names_arrow_block(handle: Option<Handle>) -> bool {
+    handle.is_some_and(|handle| handle != Handle::NULL)
+}
+
+/// The arrowhead block a leader line uses: its own when it overrides the
+/// entity's, the entity's otherwise.
+fn line_arrowhead_handle(ml: &MultiLeader, line: &LeaderLine) -> Option<Handle> {
+    if line
+        .override_flags
+        .contains(LeaderLinePropertyOverrideFlags::ARROWHEAD)
+    {
+        line.arrowhead_handle
+    } else {
+        ml.arrowhead_handle
+    }
+}
+
+/// The arrowhead size a leader line uses, already scaled by the annotation.
+fn line_arrowhead_size(ml: &MultiLeader, line: &LeaderLine) -> f64 {
+    if line
+        .override_flags
+        .contains(LeaderLinePropertyOverrideFlags::ARROWHEAD_SIZE)
+    {
+        line.arrowhead_size
+    } else {
+        ml.context.arrowhead_size
+    }
+}
+
+/// A leader line's full path: its own vertices, arrow tip first, then the
+/// root's connection point, where the landing starts. AutoCAD stores that last
+/// point on the root only, so a straight leader is a single-vertex line.
+fn leader_line_path(root: &LeaderRoot, line: &LeaderLine) -> Vec<Vector3> {
+    let mut path = line.points.clone();
+
+    if path
+        .last()
+        .is_some_and(|last| last.distance(&root.connection_point) > f64::EPSILON)
+    {
+        path.push(root.connection_point);
+    }
+
+    path
+}
+
+/// The default `_ClosedFilled` arrowhead at the start of `path`, pointing
+/// away from the second vertex, and the point where the shaft now starts.
+///
+/// No arrowhead when the size is not positive or when the first segment is
+/// shorter than the arrow itself, which is also what keeps the shaft from
+/// being trimmed past its own end.
+fn closed_filled_arrowhead(
+    path: &[Vector3],
+    size: f64,
+    common: &EntityCommon,
+) -> Option<(EntityType, Vector3)> {
+    let (tip, next) = (*path.first()?, *path.get(1)?);
+    let first_segment = tip - next;
+    let length = first_segment.length();
+
+    if size <= 0.0 || length < size {
+        return None;
+    }
+
+    let direction = first_segment * (1.0 / length);
+    let normal = Vector3::new(-direction.y, direction.x, 0.0) * (size * CLOSED_FILLED_HALF_WIDTH);
+    let base = tip - direction * size;
+    let mut solid = Solid::triangle(tip, base + normal, base - normal);
+    solid.common = inherit_common(common);
+
+    Some((EntityType::Solid(solid), base))
+}
+
+/// The landing: from the connection point, along the root's direction, for
+/// the landing distance. Nothing when the dogleg is disabled, has no length,
+/// or has no direction.
+fn landing_line(ml: &MultiLeader, root: &LeaderRoot) -> Option<EntityType> {
+    let direction_length = root.direction.length();
+
+    if !ml.enable_dogleg || root.landing_distance <= 0.0 || direction_length <= f64::EPSILON {
+        return None;
+    }
+
+    let end = root.connection_point + root.direction * (root.landing_distance / direction_length);
+
+    Some(line_entity(
+        root.connection_point,
+        end,
+        0.0,
+        Vector3::UNIT_Z,
+        &ml.common,
+    ))
+}
+
+/// Explode one leader line: its arrowhead (default arrowhead only: a custom
+/// block is left to the caller, which knows the document) and its segments.
+fn explode_leader_line(
+    ml: &MultiLeader,
+    root: &LeaderRoot,
+    line: &LeaderLine,
+    result: &mut Vec<EntityType>,
+) {
+    let mut path = leader_line_path(root, line);
+    let arrowhead = if names_arrow_block(line_arrowhead_handle(ml, line)) {
+        None
+    } else {
+        closed_filled_arrowhead(&path, line_arrowhead_size(ml, line), &ml.common)
+    };
+
+    if let Some((solid, base)) = arrowhead {
+        result.push(solid);
+        path[0] = base;
+    }
+
+    for pair in path.windows(2) {
+        result.push(line_entity(
+            pair[0],
+            pair[1],
+            0.0,
+            Vector3::UNIT_Z,
+            &ml.common,
+        ));
+    }
+}
+
 fn explode_multileader(ml: &MultiLeader) -> Vec<EntityType> {
-    // Decompose MultiLeader into line segments from all leader lines.
+    // Decompose MultiLeader the way AutoCAD's EXPLODE does: per leader line,
+    // the arrowhead and the segments down to the root's connection point;
+    // per root, the landing; then the text.
     let mut result = Vec::new();
 
-    for root in &ml.context.leader_roots {
-        for line in &root.lines {
-            if line.points.len() >= 2 {
-                for pair in line.points.windows(2) {
-                    result.push(line_entity(
-                        pair[0],
-                        pair[1],
-                        0.0,
-                        Vector3::UNIT_Z,
-                        &ml.common,
-                    ));
-                }
+    if ml.path_type != MultiLeaderPathType::Invisible {
+        for root in &ml.context.leader_roots {
+            for line in &root.lines {
+                explode_leader_line(ml, root, line, &mut result);
             }
+
+            result.extend(landing_line(ml, root));
         }
     }
 
@@ -1125,6 +1252,192 @@ mod tests {
         let parts = entity.explode();
         assert_eq!(parts.len(), 2);
         assert!(matches!(&parts[0], EntityType::Line(_)));
+    }
+
+    /// A callout the way AutoCAD stores it: the leader line holds only the
+    /// arrow tip, the root holds the bend (connection point) and the landing.
+    fn callout(tips: &[Vector3]) -> MultiLeader {
+        let mut ml = MultiLeader::new();
+        ml.context.arrowhead_size = 1.0;
+        let mut root = LeaderRoot::new(0);
+        root.connection_point = Vector3::new(10.0, 10.0, 0.0);
+        root.direction = Vector3::new(2.0, 0.0, 0.0);
+        root.landing_distance = 5.0;
+
+        for (index, tip) in tips.iter().enumerate() {
+            let mut line = LeaderLine::new(index as i32);
+            line.points.push(*tip);
+            root.lines.push(line);
+        }
+
+        ml.context.leader_roots.push(root);
+        ml
+    }
+
+    fn line_ends(parts: &[EntityType]) -> Vec<(Vector3, Vector3)> {
+        parts
+            .iter()
+            .filter_map(|part| match part {
+                EntityType::Line(line) => Some((line.start, line.end)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn solids(parts: &[EntityType]) -> Vec<&Solid> {
+        parts
+            .iter()
+            .filter_map(|part| match part {
+                EntityType::Solid(solid) => Some(solid),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_explode_multileader_single_vertex_line() {
+        let parts = EntityType::MultiLeader(callout(&[Vector3::ZERO])).explode();
+        let arrows = solids(&parts);
+        let lines = line_ends(&parts);
+
+        // The arrowhead: tip at the first point, one unit long, 1/3 wide.
+        assert_eq!(arrows.len(), 1);
+        let base = Vector3::new(1.0, 1.0, 0.0) * (1.0 / 2f64.sqrt());
+        assert_eq!(arrows[0].first_corner, Vector3::ZERO);
+        let half_width = arrows[0].second_corner.distance(&arrows[0].third_corner) / 2.0;
+        assert!((half_width - 1.0 / 6.0).abs() < 1e-9);
+        assert!(((arrows[0].second_corner + arrows[0].third_corner) * 0.5).distance(&base) < 1e-9);
+
+        // The shaft starts at the arrow base and reaches the connection
+        // point; the landing follows the normalized direction.
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].0.distance(&base) < 1e-9);
+        assert_eq!(lines[0].1, Vector3::new(10.0, 10.0, 0.0));
+        assert_eq!(
+            lines[1],
+            (Vector3::new(10.0, 10.0, 0.0), Vector3::new(15.0, 10.0, 0.0))
+        );
+    }
+
+    #[test]
+    fn test_explode_multileader_does_not_repeat_the_connection_point() {
+        let mut ml = callout(&[Vector3::ZERO]);
+        ml.context.arrowhead_size = 0.0;
+        ml.context.leader_roots[0].lines[0]
+            .points
+            .extend([Vector3::new(5.0, 0.0, 0.0), Vector3::new(10.0, 10.0, 0.0)]);
+
+        let lines = line_ends(&EntityType::MultiLeader(ml).explode());
+
+        assert_eq!(
+            lines,
+            vec![
+                (Vector3::ZERO, Vector3::new(5.0, 0.0, 0.0)),
+                (Vector3::new(5.0, 0.0, 0.0), Vector3::new(10.0, 10.0, 0.0)),
+                (Vector3::new(10.0, 10.0, 0.0), Vector3::new(15.0, 10.0, 0.0)),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_explode_multileader_lines_share_one_landing() {
+        let ml = callout(&[Vector3::ZERO, Vector3::new(20.0, 0.0, 0.0)]);
+        let parts = EntityType::MultiLeader(ml).explode();
+
+        // One arrowhead per leader line, never one on the landing.
+        assert_eq!(solids(&parts).len(), 2);
+        let landings = line_ends(&parts)
+            .into_iter()
+            .filter(|(start, _)| *start == Vector3::new(10.0, 10.0, 0.0))
+            .count();
+        assert_eq!(landings, 1);
+    }
+
+    #[test]
+    fn test_explode_multileader_each_root_draws_its_own_path() {
+        let mut ml = callout(&[Vector3::ZERO]);
+        let mut second = ml.context.leader_roots[0].clone();
+        second.connection_point = Vector3::new(30.0, 10.0, 0.0);
+        ml.context.leader_roots.push(second);
+
+        let parts = EntityType::MultiLeader(ml).explode();
+
+        assert_eq!(solids(&parts).len(), 2);
+        assert_eq!(line_ends(&parts).len(), 4);
+    }
+
+    #[test]
+    fn test_explode_multileader_invisible_path_keeps_only_the_text() {
+        let mut ml = callout(&[Vector3::ZERO]);
+        ml.path_type = MultiLeaderPathType::Invisible;
+        ml.context.has_text_contents = true;
+        ml.context.text_string = "NOTE".to_string();
+
+        let parts = EntityType::MultiLeader(ml).explode();
+
+        assert_eq!(parts.len(), 1);
+        assert!(matches!(&parts[0], EntityType::MText(_)));
+    }
+
+    #[test]
+    fn test_explode_multileader_without_dogleg_has_no_landing() {
+        let mut ml = callout(&[Vector3::ZERO]);
+        ml.enable_dogleg = false;
+
+        let lines = line_ends(&EntityType::MultiLeader(ml).explode());
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].1, Vector3::new(10.0, 10.0, 0.0));
+    }
+
+    #[test]
+    fn test_explode_multileader_custom_arrow_block_is_not_drawn_as_the_default() {
+        let mut entity_level = callout(&[Vector3::ZERO]);
+        entity_level.arrowhead_handle = Some(Handle::new(0x2A));
+
+        let mut line_level = callout(&[Vector3::ZERO]);
+        let line = &mut line_level.context.leader_roots[0].lines[0];
+        line.arrowhead_handle = Some(Handle::new(0x2A));
+        line.override_flags = LeaderLinePropertyOverrideFlags::ARROWHEAD;
+
+        for ml in [entity_level, line_level] {
+            let parts = EntityType::MultiLeader(ml).explode();
+            assert!(solids(&parts).is_empty());
+            // The shaft is not trimmed when no arrowhead covers its start.
+            assert_eq!(line_ends(&parts)[0].0, Vector3::ZERO);
+        }
+    }
+
+    #[test]
+    fn test_explode_multileader_null_arrow_handle_is_the_default_arrow() {
+        let mut ml = callout(&[Vector3::ZERO]);
+        ml.arrowhead_handle = Some(Handle::NULL);
+
+        assert_eq!(solids(&EntityType::MultiLeader(ml).explode()).len(), 1);
+    }
+
+    #[test]
+    fn test_explode_multileader_line_overrides_the_arrow_size() {
+        let mut ml = callout(&[Vector3::ZERO]);
+        let line = &mut ml.context.leader_roots[0].lines[0];
+        line.arrowhead_size = 2.0;
+        line.override_flags = LeaderLinePropertyOverrideFlags::ARROWHEAD_SIZE;
+
+        let parts = EntityType::MultiLeader(ml).explode();
+        let base = (solids(&parts)[0].second_corner + solids(&parts)[0].third_corner) * 0.5;
+
+        assert!((base.length() - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_explode_multileader_arrow_longer_than_its_segment_is_dropped() {
+        let mut ml = callout(&[Vector3::new(9.5, 10.0, 0.0)]);
+        ml.context.arrowhead_size = 1.0;
+
+        let parts = EntityType::MultiLeader(ml).explode();
+
+        assert!(solids(&parts).is_empty());
+        assert_eq!(line_ends(&parts)[0].0, Vector3::new(9.5, 10.0, 0.0));
     }
 
     #[test]
