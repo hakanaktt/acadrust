@@ -90,16 +90,15 @@ impl DwgWriter {
                 let required: Vec<_> = owned
                     .entities()
                     .filter_map(|entity| {
-                        let name = match entity {
-                            crate::entities::EntityType::Surface(surface) => {
-                                surface.kind.dxf_name()
-                            }
-                            crate::entities::EntityType::Extended(entity) => entity.class_name(),
-                            crate::entities::EntityType::Underlay(entity) => entity.entity_name(),
-                            _ => entity.as_entity().entity_type(),
-                        };
-                        owned.classes.get_by_name(name).cloned()
+                        owned
+                            .classes
+                            .get_by_name(entity_class_name(entity))
+                            .cloned()
                     })
+                    .collect();
+                let source_numbers: std::collections::HashMap<String, i16> = required
+                    .iter()
+                    .map(|class| (class.dxf_name.clone(), class.class_number))
                     .collect();
                 owned.classes.retain_legacy_dwg_classes();
                 for mut class in required {
@@ -108,6 +107,7 @@ impl DwgWriter {
                         owned.classes.add_or_update(class);
                     }
                 }
+                drop_renumbered_raw_records(&mut owned, &source_numbers);
                 prepare_legacy_document(&mut owned);
             }
             &owned
@@ -510,6 +510,46 @@ pub(crate) fn prepare_table_keys(document: &mut std::borrow::Cow<'_, CadDocument
         return;
     }
     document.to_mut().resync_table_keys();
+}
+
+/// The DXF class name an entity is declared under in the CLASSES section.
+fn entity_class_name(entity: &crate::entities::EntityType) -> &str {
+    match entity {
+        crate::entities::EntityType::Surface(surface) => surface.kind.dxf_name(),
+        crate::entities::EntityType::Extended(entity) => entity.class_name(),
+        crate::entities::EntityType::Underlay(entity) => entity.entity_name(),
+        _ => entity.as_entity().entity_type(),
+    }
+}
+
+/// Re-encode the entities whose class the legacy class table renumbered.
+///
+/// A verbatim record encodes its class number as its object type, so it only
+/// stays valid while the class keeps the number the source file gave it.
+/// Rebuilding the table for a pre-R2013 target can renumber a class (a
+/// MULTILEADER read as 521 is written as 511): copied as is, such a record
+/// points at a number no class declares, and the reader drops the entity.
+fn drop_renumbered_raw_records(
+    document: &mut CadDocument,
+    source_numbers: &std::collections::HashMap<String, i16>,
+) {
+    let renumbered: std::collections::HashSet<&str> = source_numbers
+        .iter()
+        .filter(|(name, number)| {
+            document.classes.get_by_name(name).map(|class| class.class_number) != Some(**number)
+        })
+        .map(|(name, _)| name.as_str())
+        .collect();
+
+    if renumbered.is_empty() {
+        return;
+    }
+
+    for entity in document.entities_mut_keep_raw() {
+        if renumbered.contains(entity_class_name(entity)) {
+            entity.common_mut().raw_record = None;
+        }
+    }
 }
 
 /// Remove style dictionaries only before the versions introducing their
@@ -2047,6 +2087,7 @@ mod tests {
     use super::*;
     use crate::document::CadDocument;
     use crate::types::{DxfVersion, Handle};
+    use std::collections::HashMap;
 
     #[test]
     fn acds_record_table_indexes_each_length_prefixed_blob() {
@@ -2086,6 +2127,80 @@ mod tests {
                 expected_offset += 4 + blob.len();
             }
         }
+    }
+
+    fn raw_record() -> Option<std::sync::Arc<crate::entities::RawRecord>> {
+        Some(std::sync::Arc::new(crate::entities::RawRecord {
+            data: vec![0; 4],
+            handle_bits: 0,
+            version: DxfVersion::AC1032,
+        }))
+    }
+
+    fn document_with_raw_multileader_and_line() -> CadDocument {
+        use crate::entities::{EntityType, Line, MultiLeader};
+        use crate::types::Vector3;
+
+        let mut document = CadDocument::new();
+        document
+            .add_entity(EntityType::MultiLeader(MultiLeader::new()))
+            .unwrap();
+        document
+            .add_entity(EntityType::Line(Line::from_points(
+                Vector3::ZERO,
+                Vector3::UNIT_X,
+            )))
+            .unwrap();
+
+        for entity in document.entities_mut_keep_raw() {
+            entity.common_mut().raw_record = raw_record();
+        }
+
+        document
+    }
+
+    fn raw_records_by_type(document: &CadDocument) -> Vec<(&str, bool)> {
+        document
+            .entities()
+            .map(|entity| {
+                (
+                    entity.as_entity().entity_type(),
+                    entity.common().raw_record.is_some(),
+                )
+            })
+            .collect()
+    }
+
+    fn multileader_class_number(document: &CadDocument) -> i16 {
+        document
+            .classes
+            .get_by_name("MULTILEADER")
+            .unwrap()
+            .class_number
+    }
+
+    #[test]
+    fn renumbered_class_drops_the_verbatim_records_of_its_entities() {
+        let mut document = document_with_raw_multileader_and_line();
+        let source_number = multileader_class_number(&document) + 10;
+        let source_numbers = HashMap::from([("MULTILEADER".to_string(), source_number)]);
+        drop_renumbered_raw_records(&mut document, &source_numbers);
+        assert_eq!(
+            raw_records_by_type(&document),
+            [("MULTILEADER", false), ("LINE", true)]
+        );
+    }
+
+    #[test]
+    fn unchanged_class_number_keeps_the_verbatim_records() {
+        let mut document = document_with_raw_multileader_and_line();
+        let source_number = multileader_class_number(&document);
+        let source_numbers = HashMap::from([("MULTILEADER".to_string(), source_number)]);
+        drop_renumbered_raw_records(&mut document, &source_numbers);
+        assert_eq!(
+            raw_records_by_type(&document),
+            [("MULTILEADER", true), ("LINE", true)]
+        );
     }
 
     #[test]
