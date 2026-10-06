@@ -165,7 +165,7 @@ pub const CRC32_TABLE: [u32; 256] = [
 ///
 /// # Examples
 /// ```
-/// use opencadcodec::io::dwg::crc::crc16;
+/// use acadrust::io::dwg::crc::crc16;
 /// let crc = crc16(0xC0C1, &[0x01, 0x02, 0x03]);
 /// ```
 pub fn crc16(seed: u16, data: &[u8]) -> u16 {

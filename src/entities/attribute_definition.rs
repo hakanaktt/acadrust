@@ -171,8 +171,8 @@ impl MTextFlag {
 ///
 /// # Example
 /// ```ignore
-/// use opencadcodec::entities::AttributeDefinition;
-/// use opencadcodec::types::Vector3;
+/// use acadrust::entities::AttributeDefinition;
+/// use acadrust::types::Vector3;
 ///
 /// let mut attdef = AttributeDefinition::new(
 ///     "PART_NUMBER".to_string(),

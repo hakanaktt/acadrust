@@ -2,8 +2,8 @@
 //! definitions are not part of the model-space drawable set, the way CAD
 //! applications do not render unreferenced block geometry.
 
-use opencadcodec::entities::{EntityType, Line};
-use opencadcodec::{CadDocument, DxfReader, DxfWriter};
+use acadrust::entities::{EntityType, Line};
+use acadrust::{CadDocument, DxfReader, DxfWriter};
 
 fn build_doc() -> CadDocument {
     let mut doc = CadDocument::new();

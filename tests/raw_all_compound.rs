@@ -1,8 +1,8 @@
-use opencadcodec::entities::{AttributeEntity, EntityType, Insert, Polyline2D, Polyline3D, Vertex2D};
-use opencadcodec::io::dwg::dwg_stream_readers::object_reader::DwgObjectReader;
-use opencadcodec::io::dwg::dwg_stream_writers::object_writer::DwgObjectWriter;
-use opencadcodec::tables::BlockRecord;
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfVersion, Handle, Vector3};
+use acadrust::entities::{AttributeEntity, EntityType, Insert, Polyline2D, Polyline3D, Vertex2D};
+use acadrust::io::dwg::dwg_stream_readers::object_reader::DwgObjectReader;
+use acadrust::io::dwg::dwg_stream_writers::object_writer::DwgObjectWriter;
+use acadrust::tables::BlockRecord;
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfVersion, Handle, Vector3};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::io::Cursor;

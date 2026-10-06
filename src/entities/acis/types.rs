@@ -125,14 +125,11 @@ pub struct SatHeader {
     pub product_version: String,
     /// File creation date string.
     pub date: String,
-    /// First value of the tolerance line: millimetres per model unit (1 for
-    /// millimetres, 25.4 for inches) — not a tolerance, despite the name.
+    /// Spatial resolution (minimum edge length, typically 1e-06).
     pub spatial_resolution: f64,
-    /// Second value: resabs, the absolute (distance) tolerance, typically
-    /// 1e-06. This is the one to fit geometry to.
+    /// Normal tolerance (angular tolerance in radians, typically ~1e-07).
     pub normal_tolerance: f64,
-    /// Third value (ACIS 7.0+): resnor, the normal/angular tolerance,
-    /// typically 1e-10.
+    /// Fit tolerance for approximation (ACIS 7.0+, typically 1e-10).
     pub resfit_tolerance: Option<f64>,
 }
 
@@ -1431,12 +1428,6 @@ impl<'a> SatIntCurve<'a> {
         })
     }
 
-    /// The first support surface, the curve's image on it, and how far the
-    /// curve stands off it along its normal, for a procedural curve (an
-    /// offset or a blend boundary) saved without its own spline. The curve is
-    /// the surface evaluated along the pcurve, whose parameter is the
-    /// curve's, pushed out by the distance — nonzero only for a curve on an
-    /// offset surface. Controls are homogeneous `[uw, vw, w]`.
     pub fn support_in(
         &self,
         document: &SatDocument,
@@ -1962,9 +1953,6 @@ impl<'a> SatSplineSurface<'a> {
         decode_spline_definition(document, self.definition_tokens(document)?)
     }
 
-    /// An offset surface saved without its fitted spline: the spline of the
-    /// surface it is offset from, and the signed distance along that
-    /// surface's normal.
     pub fn offset_in(&self, document: &SatDocument) -> Option<(SatBSplineSurface, f64)> {
         let tokens = self.definition_tokens(document)?;
         let name = tokens.iter().position(|t| t.as_ident() == Some("off_spl_sur"))?;
@@ -1980,7 +1968,6 @@ impl<'a> SatSplineSurface<'a> {
     }
 }
 
-/// Decodes a spline surface definition: the tokens of its `{ ... }` block.
 fn decode_spline_definition(
     document: &SatDocument,
     tokens: &[SatToken],
@@ -2004,8 +1991,6 @@ fn decode_spline_definition(
     }
 }
 
-/// Whether an ident names a surface kind, as a curve's support surfaces are
-/// written.
 fn is_surface_kind(ident: &str) -> bool {
     matches!(
         ident,
@@ -2013,7 +1998,6 @@ fn is_surface_kind(ident: &str) -> bool {
     )
 }
 
-/// The index of the `}` closing the block opened at `open`.
 fn block_close(tokens: &[SatToken], open: usize) -> Option<usize> {
     let mut depth = 0usize;
     for (index, token) in tokens.iter().enumerate().skip(open) {
@@ -2031,8 +2015,6 @@ fn block_close(tokens: &[SatToken], open: usize) -> Option<usize> {
     None
 }
 
-/// The contents of the block opened at `open`, or the shared definition a
-/// `{ ref n }` block names.
 fn subtype_definition<'a>(
     document: &'a SatDocument,
     tokens: &'a [SatToken],
@@ -2045,7 +2027,6 @@ fn subtype_definition<'a>(
     Some(&tokens[open + 1..block_close(tokens, open)?])
 }
 
-/// SAB groups a position into one token; SAT writes three numbers.
 fn scalar_tokens(source: &[SatToken]) -> Vec<SatToken> {
     source
         .iter()
@@ -2059,8 +2040,6 @@ fn scalar_tokens(source: &[SatToken]) -> Vec<SatToken> {
         .collect()
 }
 
-/// An extrusion saved with its fitted spline, which follows the profile's
-/// block; the profile's own spline is not the surface.
 fn decode_fitted_extrusion(tokens: &[SatToken]) -> Option<SatBSplineSurface> {
     let name = tokens.iter().position(|t| t.as_ident() == Some("cyl_spl_sur"))?;
     let open = (name..tokens.len()).find(|&i| tokens[i].as_ident() == Some("{"))?;
@@ -2071,10 +2050,6 @@ fn decode_fitted_extrusion(tokens: &[SatToken]) -> Option<SatBSplineSurface> {
     (last > close).then(|| decode_bspline_surface(tokens)).flatten()
 }
 
-/// A profile swept along a straight direction: `S(u,v) = C(u) + v·d`, which
-/// is the profile's spline times a linear one in `v` — exact, no fitting.
-/// Saved as the profile curve, its interval, `d`, a reference point, and the
-/// `u`/`v` ranges.
 fn decode_extruded_surface(
     document: &SatDocument,
     source: &[SatToken],
@@ -2679,7 +2654,7 @@ impl<'a> SatTransform<'a> {
 /// # Example
 ///
 /// ```rust
-/// use opencadcodec::entities::acis::SatDocument;
+/// use acadrust::entities::acis::SatDocument;
 ///
 /// let sat_text = "700 0 1 0\n\
 ///     @8 acadrust @8 ACIS 7.0 @24 Thu Jan 01 00:00:00 2023\n\
@@ -3167,18 +3142,6 @@ impl SatDocument {
         self.header.spatial_resolution = 1.0;
     }
 
-    /// A copy completed to the record forms an ACIS 7.0+ restore requires,
-    /// or `None` when the document already has them.
-    ///
-    /// Minimal builders may leave off what the modeler reads unconditionally:
-    /// the sense and parameter range closing every analytic surface, the
-    /// range closing straight and elliptic curves, and the convexity closing
-    /// every edge. Restore also takes the first `num_bodies` records as the
-    /// saved roots, so a document that never counted its bodies gets them
-    /// moved to the front. Without these the reference application rejects
-    /// the whole drawing (modeling error 75004/75005). Records that already
-    /// carry the fields — everything the reference application writes — are
-    /// left alone.
     pub fn completed_for_restore(&self) -> Option<SatDocument> {
         if self.header.version.major < 7 {
             return None;
@@ -3201,7 +3164,6 @@ impl SatDocument {
         Some(doc)
     }
 
-    /// The closing tokens a 7.0+ record of this kind needs and lacks.
     fn missing_tail(record: &SatRecord) -> Option<Vec<SatToken>> {
         let ident = |name: &str| SatToken::Ident(name.to_string());
         // Everything after the leading `$-1` that is neither a pointer nor a
@@ -3239,8 +3201,6 @@ impl SatDocument {
         }
     }
 
-    /// Moves every `body` record to the front, remapping pointers, and
-    /// counts them as the document's roots.
     fn bodies_first(&mut self) {
         let mut order: Vec<usize> = (0..self.records.len()).collect();
         order.sort_by_key(|&at| self.records[at].entity_type != "body");

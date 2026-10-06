@@ -30,9 +30,6 @@ pub(crate) struct EncodedEmbeddedEntity {
     pub bytes: Vec<u8>,
 }
 
-/// Profile types the modeler stores as a wire body (2D and 3D polylines):
-/// the record carries a modeler block where other types carry a bit length
-/// and an entity body.
 pub(crate) fn is_body_profile(type_code: i32) -> bool {
     type_code == common::OBJ_POLYLINE_2D as i32 || type_code == common::OBJ_POLYLINE_3D as i32
 }

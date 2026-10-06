@@ -2597,10 +2597,6 @@ pub fn read_hatch_boundary_path_contents(
     }
 }
 
-/// Reads one MPOLYGON loop. Unlike a HATCH boundary path it has no flags,
-/// no typed edges and no boundary handles: it is always a closed polyline.
-/// Invalid loops carry one extra bit of unknown meaning (from the public DXF
-/// description of degenerate loops; not observed in any sample file).
 fn read_mpolygon_loop(reader: &mut DwgMergedReader, invalid: bool) -> HatchBoundaryPath {
     // Per-loop flag of unconfirmed meaning; BoundaryPath has no field for it.
     let _loop_flag = reader.read_bit();
@@ -3268,7 +3264,7 @@ pub fn read_underlay(reader: &mut DwgMergedReader) -> UnderlayData {
 //
 // The table entity is INSERT-derived; after the insert base the R2010+ record
 // carries the full table content inline (equivalent to the TABLECONTENT
-// object). This ports the reference readTableContent + sub-parsers. opencadcodec's
+// object). This ports the reference readTableContent + sub-parsers. acadrust's
 // model does not hold every cell-style / border / geometry detail, so those
 // sub-structures are read (to stay positioned) but only their meaningful data
 // (column widths, row heights, cell text/value) is retained.

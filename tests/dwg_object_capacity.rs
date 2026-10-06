@@ -1,4 +1,4 @@
-use opencadcodec::{
+use acadrust::{
     entities::{EntityType, Line},
     types::Vector3,
     CadDocument, DwgReader, DwgWriter,
@@ -23,7 +23,7 @@ fn entity_heavy_drawings_keep_non_entity_storage_bounded() {
     // Empty hash buckets contain a full ObjectType value. A small object table
     // must not retain megabytes solely because the drawing has many lines.
     let object_storage_bytes =
-        loaded.objects.capacity() * size_of::<opencadcodec::objects::ObjectType>();
+        loaded.objects.capacity() * size_of::<acadrust::objects::ObjectType>();
     assert!(
         object_storage_bytes < 1_048_576,
         "{} objects reserve at least {object_storage_bytes} bytes across {} slots",

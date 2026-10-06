@@ -171,7 +171,7 @@ pub struct ProxyObjectReference {
 }
 
 /// Lossless application payload used when a registered class must be emitted
-/// as a standard proxy object/entity.  The wrapper is private to opencadcodec; CAD
+/// as a standard proxy object/entity.  The wrapper is private to acadrust; CAD
 /// hosts only need to preserve the ordinary proxy payload and references.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct RegisteredClassEnvelope {

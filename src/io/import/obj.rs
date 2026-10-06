@@ -6,7 +6,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use opencadcodec::io::import::obj::ObjImporter;
+//! use acadrust::io::import::obj::ObjImporter;
 //!
 //! let doc = ObjImporter::from_file("model.obj")?.import()?;
 //! ```

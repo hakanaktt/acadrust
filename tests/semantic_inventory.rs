@@ -1,4 +1,4 @@
-use opencadcodec::{
+use acadrust::{
     CadDocument, EntityType, Line, SemanticEntityV1, SemanticPartV1, SEMANTIC_INVENTORY_VERSION,
 };
 

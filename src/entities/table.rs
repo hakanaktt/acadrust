@@ -1319,8 +1319,8 @@ impl<T> Default for LegacyBorderOverrides<T> {
 /// # Example
 ///
 /// ```ignore
-/// use opencadcodec::entities::{Table, TableRow};
-/// use opencadcodec::types::Vector3;
+/// use acadrust::entities::{Table, TableRow};
+/// use acadrust::types::Vector3;
 ///
 /// // Create a 3x4 table
 /// let mut table = Table::new(Vector3::new(0.0, 0.0, 0.0), 3, 4);
@@ -1468,11 +1468,6 @@ fn visit_table_cell_handles(value: &mut TableCell, visit: &mut impl FnMut(&mut H
 }
 
 impl Table {
-    /// Rebuild `merged_ranges` from the per-cell merge dimensions.
-    ///
-    /// DXF stores a merge as the origin cell's `merge_width`/`merge_height`
-    /// (groups 175/176); readers that only see those fields call this so the
-    /// range list agrees with the cells, as it does after a DWG read.
     pub fn sync_merged_ranges_from_cells(&mut self) {
         let ranges = self.canonical_merged_ranges();
         self.merged_ranges = ranges;
@@ -2274,8 +2269,6 @@ mod tests {
     }
 }
 
-/// The cell style override bit a DXF group code of a table cell sets (the
-/// bit layout the binary format stores in `CellStyle::override_flags`).
 pub fn cell_override_bit(code: i32) -> Option<i32> {
     Some(match code {
         170 => 0x01,

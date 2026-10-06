@@ -53,6 +53,8 @@ pub struct TextStyle {
     pub big_font_file: String,
     /// True Type font name
     pub true_type_font: String,
+    #[cfg_attr(feature = "serde", serde(default = "default_true_type_font_flags"))]
+    pub true_type_font_flags: i32,
     /// Whether this style is xref-dependent
     pub xref_dependent: bool,
     /// Block record of the xref this style came from (NULL when local).
@@ -65,6 +67,10 @@ pub struct TextStyle {
     /// Persisted as XDATA under the `AcadAnnotative` application:
     /// `AnnotativeData { 1 <flag> }`.
     pub annotative: bool,
+}
+
+fn default_true_type_font_flags() -> i32 {
+    34
 }
 
 impl TextStyle {
@@ -81,6 +87,7 @@ impl TextStyle {
             font_file: "txt".to_string(),
             big_font_file: String::new(),
             true_type_font: String::new(),
+            true_type_font_flags: default_true_type_font_flags(),
             xref_dependent: false,
             xref_block_record_handle: Handle::NULL,
             is_shape_file: false,
@@ -102,6 +109,7 @@ impl TextStyle {
             font_file: "txt".to_string(),
             big_font_file: String::new(),
             true_type_font: String::new(),
+            true_type_font_flags: default_true_type_font_flags(),
             xref_dependent: false,
             xref_block_record_handle: Handle::NULL,
             is_shape_file: false,

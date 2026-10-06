@@ -2,12 +2,12 @@
 //! the layout AutoCAD itself writes. Expected layouts were taken from
 //! AutoCAD 2027 DXFOUT of the same drawings at each version.
 
-use opencadcodec::entities::*;
-use opencadcodec::objects::{
+use acadrust::entities::*;
+use acadrust::objects::{
     ObjectType, ProxyObject, ProxyObjectReference, ProxyPayload, ProxyReferenceKind, Scale,
 };
-use opencadcodec::types::{DxfVersion, Handle, Vector2, Vector3};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
+use acadrust::types::{DxfVersion, Handle, Vector2, Vector3};
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
 
 type Pairs = Vec<(i32, String)>;
 
@@ -241,7 +241,7 @@ fn active_layout_viewports_get_ids_starting_at_one() {
 
 #[test]
 fn mtext_context_data_has_no_subclass_marker_and_autocad_point_codes() {
-    use opencadcodec::objects::{MTextContext, ObjectContextData, ObjectContextKind};
+    use acadrust::objects::{MTextContext, ObjectContextData, ObjectContextKind};
     let mut doc = CadDocument::new();
     let handle = doc.allocate_handle();
     let context = ObjectContextData {

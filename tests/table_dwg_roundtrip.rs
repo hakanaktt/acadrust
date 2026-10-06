@@ -7,12 +7,12 @@
 
 use std::io::Cursor;
 
-use opencadcodec::entities::{EntityType, Table, TableCell};
-use opencadcodec::objects::{
+use acadrust::entities::{EntityType, Table, TableCell};
+use acadrust::objects::{
     CellStyleMap, DataObject, DataObjectData, NamedTableCellStyle, ObjectType, TableCellStyleData,
 };
-use opencadcodec::types::{DxfVersion, Handle, Vector3};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter};
+use acadrust::types::{DxfVersion, Handle, Vector3};
+use acadrust::{CadDocument, DwgReader, DwgWriter};
 
 fn sample_table() -> Table {
     let mut t = Table::new(Vector3::new(1.0, 2.0, 0.0), 2, 3);

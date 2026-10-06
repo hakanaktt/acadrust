@@ -129,9 +129,6 @@ impl GroupCodeValueType {
         Self::coordinate_axis_raw(code.to_i32())
     }
 
-    /// Like [`coordinate_axis`](Self::coordinate_axis) but keyed on the raw
-    /// integer group code, which survives codes the `DxfCode` enum lacks
-    /// (211-213, 221-223, 231-233, ...).
     pub fn coordinate_axis_raw(code_num: i32) -> Option<usize> {
 
         // X coordinates (10-18, 110-112, 210, 1010-1013)
@@ -157,7 +154,6 @@ impl GroupCodeValueType {
         Self::coordinate_group_raw(code.to_i32())
     }
 
-    /// Raw-integer variant of [`coordinate_group`](Self::coordinate_group).
     pub fn coordinate_group_raw(code_num: i32) -> Option<usize> {
 
         match code_num {

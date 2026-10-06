@@ -916,7 +916,7 @@ impl<'a> DwgObjectWriter<'a> {
                     crate::io::dwg::typeface_eed::encode(
                         self.version.r2007_plus(),
                         style.true_type_font.trim(),
-                        crate::io::dwg::typeface_eed::DEFAULT_FONT_FLAGS,
+                        style.true_type_font_flags,
                     ),
                 ));
             }
@@ -2456,7 +2456,7 @@ impl<'a> DwgObjectWriter<'a> {
             registered += 1;
         }
         eprintln!(
-            "[opencadcodec raw-all] registered={registered} excluded={excluded} version-skipped={skipped} exclude={exclude:?}"
+            "[acadrust raw-all] registered={registered} excluded={excluded} version-skipped={skipped} exclude={exclude:?}"
         );
     }
 

@@ -46,9 +46,8 @@ pub struct Insert {
     dwg_minsert: bool,
     /// Attribute entities attached to this insert
     pub attributes: Vec<AttributeEntity>,
-    /// Viewport referenced by `AcDbViewRepBlockReference` (model
-    /// documentation) or `AcIdBlockReference` (Inventor drawing views); the
-    /// reference is drawn only in that viewport. `None` for ordinary INSERTs.
+    /// Model-documentation viewport referenced by
+    /// `AcDbViewRepBlockReference`; `None` for ordinary INSERT entities.
     pub view_rep_handle: Option<Handle>,
     /// SEQEND handle terminating the attribute sequence.
     ///
@@ -1123,7 +1122,7 @@ mod tests {
     // ── Mirrored INSERT arc handedness ──────────────────────────
     //
     // The visual sweep direction of an arc inside a mirrored block must match
-    // the mirror of the original sweep. opencadcodec encodes this by emitting a
+    // the mirror of the original sweep. acadrust encodes this by emitting a
     // flipped normal so that the CCW (around-normal) parameterization traces
     // the mirrored geometry.
 

@@ -1,18 +1,18 @@
 use std::io::Cursor;
 
-use opencadcodec::io::dwg::dwg_stream_readers::{
+use acadrust::io::dwg::dwg_stream_readers::{
     handle_reader::read_handles, merged_reader::DwgMergedReader, object_reader::DwgObjectReader,
 };
-use opencadcodec::io::dwg::dwg_stream_writers::bit_writer::DwgBitWriter;
-use opencadcodec::io::dwg::dwg_version::DwgVersion;
-use opencadcodec::objects::{
+use acadrust::io::dwg::dwg_stream_writers::bit_writer::DwgBitWriter;
+use acadrust::io::dwg::dwg_version::DwgVersion;
+use acadrust::objects::{
     ClassObject, ClassObjectData, DataTable, DataTableCellType, DataTableColumn, DataTableValue,
     LayerFilter, ObjectType,
 };
-use opencadcodec::tables::Layer;
-use opencadcodec::types::DxfVersion;
-use opencadcodec::types::Vector3;
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter, Handle};
+use acadrust::tables::Layer;
+use acadrust::types::DxfVersion;
+use acadrust::types::Vector3;
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter, Handle};
 
 fn table(document: &CadDocument) -> &DataTable {
     document
@@ -142,7 +142,7 @@ fn dwg_writer_uses_native_point_and_soft_pointer_encodings() {
     assert_eq!(record.read_variable_text(), "ObjectId");
     assert_eq!(
         record.read_typed_handle(),
-        (2, opencadcodec::io::dwg::DwgReferenceType::SoftPointer)
+        (2, acadrust::io::dwg::DwgReferenceType::SoftPointer)
     );
 }
 

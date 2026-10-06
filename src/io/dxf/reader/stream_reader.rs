@@ -204,21 +204,13 @@ pub trait DxfStreamReader {
         DxfStreamContext::default()
     }
 
-    /// Start (or stop) recording the extended-data pairs read from the
-    /// stream: each 1001 group and the 1000..=1071 groups after it, plus the
-    /// first handle (5) group. Starting clears what was recorded before.
     fn record_xdata(&mut self, _on: bool) {}
 
-    /// The recorded handle group value and extended-data pairs.
     fn take_recorded_xdata(&mut self) -> (Option<String>, Vec<DxfCodePair>) {
         (None, Vec::new())
     }
 }
 
-/// Stream wrapper that records extended data while the objects of the
-/// OBJECTS section are read, so it reaches the document whatever the object
-/// reader does with the trailing groups. Pushed-back pairs are kept on a
-/// stack, so several pairs can be replayed.
 pub(crate) struct XDataRecorder {
     inner: Box<dyn DxfStreamReader>,
     pending: Vec<DxfCodePair>,

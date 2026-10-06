@@ -1,6 +1,6 @@
 import ezdxf
 
-# 1. opencadcodec round-trip already produced output.dxf; validate it the way the reporter did
+# 1. acadrust round-trip already produced output.dxf; validate it the way the reporter did
 document = ezdxf.readfile("tests/issue64/byblock_repro_output.dxf")
 document.saveas("tests/issue64/resaved.dxf")
 print("saveas OK - no DXFTableEntryError")

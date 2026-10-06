@@ -6,14 +6,14 @@ use std::f64::consts::{FRAC_PI_2, PI, TAU};
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
-use opencadcodec::entities::acis::primitives;
-use opencadcodec::entities::*;
-use opencadcodec::objects::{
+use acadrust::entities::acis::primitives;
+use acadrust::entities::*;
+use acadrust::objects::{
     Dictionary, ImageDefinition as ImageDef, ImageDefinitionReactor, ObjectType,
 };
-use opencadcodec::tables::{Layer, TextStyle, View};
-use opencadcodec::types::{Color, DxfVersion, Handle, Vector2, Vector3};
-use opencadcodec::{BlockRecord, CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
+use acadrust::tables::{Layer, TextStyle, View};
+use acadrust::types::{Color, DxfVersion, Handle, Vector2, Vector3};
+use acadrust::{BlockRecord, CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
 use serde_json::{json, Value};
 
 const VERSIONS: [DxfVersion; 8] = [

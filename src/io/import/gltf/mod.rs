@@ -6,7 +6,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use opencadcodec::io::import::gltf::GltfImporter;
+//! use acadrust::io::import::gltf::GltfImporter;
 //!
 //! let doc = GltfImporter::from_file("model.glb")?.import()?;
 //! ```

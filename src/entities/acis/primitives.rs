@@ -20,7 +20,7 @@
 //! # Example
 //!
 //! ```rust
-//! use opencadcodec::entities::acis::primitives;
+//! use acadrust::entities::acis::primitives;
 //!
 //! let sat = primitives::build_box([0.0, 0.0, 0.0], 10.0, 10.0, 10.0);
 //! assert_eq!(sat.faces().len(), 6);

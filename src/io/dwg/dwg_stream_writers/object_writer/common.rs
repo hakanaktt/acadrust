@@ -881,10 +881,6 @@ impl<'a> DwgObjectWriter<'a> {
     /// are encoded into EED bytes and appended for any application not already
     /// carried verbatim, so they survive a save instead of being dropped.
     /// When neither is present a lone BS 0 terminator is written (no EED).
-    /// Encode one XDATA record as an EED block `(app_handle, bytes)` in this
-    /// version's string encoding. `None` when its application is not in the
-    /// APPID table (the block references it by handle) or the block is too
-    /// large for its BS length.
     pub fn encode_xdata_record(
         &self,
         rec: &crate::xdata::ExtendedDataRecord,
@@ -915,8 +911,6 @@ impl<'a> DwgObjectWriter<'a> {
         self.write_extended_data_with(xdata, &[]);
     }
 
-    /// As [`write_extended_data`], plus blocks already encoded for the target
-    /// version (written even on a cross-version save).
     pub fn write_extended_data_with(
         &mut self,
         xdata: &crate::xdata::ExtendedData,

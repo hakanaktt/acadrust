@@ -1311,8 +1311,6 @@ mod tests {
     }
 }
 
-/// Unicode strings (R2007+) can still carry MIF escapes, written by
-/// producers that encode double-byte text as `\M+nXXXX`.
 fn decode_mif(text: String) -> String {
     if crate::io::dxf::code_page::has_legacy_escape(&text) {
         crate::io::dxf::code_page::decode_legacy_escapes(&text)

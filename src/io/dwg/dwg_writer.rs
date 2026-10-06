@@ -10,8 +10,8 @@
 //! ## Usage
 //!
 //! ```no_run
-//! use opencadcodec::document::CadDocument;
-//! use opencadcodec::io::dwg::DwgWriter;
+//! use acadrust::document::CadDocument;
+//! use acadrust::io::dwg::DwgWriter;
 //!
 //! let doc = CadDocument::new();
 //! DwgWriter::write_to_file("output.dwg", &doc).unwrap();
@@ -503,11 +503,6 @@ pub(crate) fn prepare_table_keys(document: &mut std::borrow::Cow<'_, CadDocument
     document.to_mut().resync_table_keys();
 }
 
-/// An R2010+ record carries the visual style and table style data that
-/// pre-R2010 files keep in round-trip extension records, so an R2010+ save
-/// drops those records: a visual style's `ACAD_XREC_ROUNDTRIP` (and its
-/// extension dictionary when nothing else is in it), and a table style's
-/// cell style map and data-type group (its extension dictionary stays).
 fn prepare_roundtrip_records(document: &mut std::borrow::Cow<'_, CadDocument>) {
     use crate::objects::{ObjectType, XRecordValue};
     if document.version < DxfVersion::AC1024 {

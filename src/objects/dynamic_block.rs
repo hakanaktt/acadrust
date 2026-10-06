@@ -420,9 +420,6 @@ pub struct BlockEvalExpression {
 }
 
 impl BlockEvalExpression {
-    /// Parent id the reference application stores in DWG for an expression
-    /// without a parent. DXF does not carry the parent id, so expressions read
-    /// from DXF get this value; a 0 parent makes the drawing unreadable there.
     pub const NO_PARENT: i32 = -1;
 }
 
@@ -545,7 +542,7 @@ pub struct BlockAction {
     pub element: BlockElement,
     pub display_location: Vector3,
     pub dependencies: Vec<Handle>,
-    pub parameter_ids: Vec<i32>,
+    pub action_ids: Vec<i32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -870,9 +867,6 @@ pub struct BlockEvaluationGraph {
 pub struct SolidHistory {
     pub major: i32,
     pub minor: i32,
-    /// DXF 360: the hard-owned evaluation graph (AcDbEvalGraph) that links
-    /// the history nodes. Histories written by older releases of this crate
-    /// stored the solid here.
     pub owner: Handle,
     pub history_node_id: i32,
     pub show_history: bool,
@@ -885,7 +879,6 @@ pub struct SolidHistoryNodeBase {
     pub eval: BlockEvalExpression,
     pub major: i32,
     pub minor: i32,
-    /// Column-major 4x4 matrix (translation in elements 12, 13, 14).
     pub transform: [f64; 16],
     pub color: Color,
     pub step_id: i32,
@@ -893,9 +886,7 @@ pub struct SolidHistoryNodeBase {
 }
 
 impl SolidHistoryNodeBase {
-    /// Parent id of a root history node.
     pub const ROOT_PARENT: i32 = BlockEvalExpression::NO_PARENT;
-    /// Expression value code meaning "no value".
     pub const NO_VALUE: i16 = -9999;
 
     pub fn new(step_id: i32) -> Self {
@@ -916,11 +907,6 @@ impl SolidHistoryNodeBase {
         }
     }
 
-    /// The evaluation header as stored on disk. The reference application
-    /// rejects the whole drawing when a history node's expression has parent
-    /// 0 or value code 0 without a value; it writes -1 and -9999. Nodes built
-    /// with those defaults by earlier releases of this crate are saved in the
-    /// reference form.
     pub(crate) fn saved_eval(&self) -> BlockEvalExpression {
         let mut eval = self.eval.clone();
         if eval.parent_id == 0 {
@@ -1148,25 +1134,15 @@ pub struct SolidHistorySweep {
     pub scale_factor: f64,
     pub twist_angle: f64,
     pub align_angle: f64,
-    /// Column-major 4x4 matrix (translation in elements 12, 13, 14).
     pub sweep_entity_transform: [f64; 16],
-    /// Column-major 4x4 matrix (translation in elements 12, 13, 14).
     pub path_entity_transform: [f64; 16],
     pub align_option: u8,
     pub miter_option: u8,
     pub has_align_start: bool,
     pub bank: bool,
     pub check_intersections: bool,
-    /// DXF groups 294, 295 and 296. The reference application sets 295 and
-    /// 296 on every sweep it records: 295 says `sweep_entity` is already
-    /// placed on the path start and aligned to it (the profile is used as
-    /// stored, `sweep_entity_transform` identity). A sweep node with
-    /// 295 clear fails to evaluate there and the drawing is rejected.
     pub flags_294_296: [bool; 3],
-    /// DXF group 11.
     pub reference_point: Vector3,
-    /// Vector stored only in DWG, between flags 295 and 296. The reference
-    /// application writes (1, 1, 1) and does not export it to DXF.
     #[cfg_attr(feature = "serde", serde(default = "unit_xyz"))]
     pub dwg_vector: Vector3,
 }
@@ -1217,17 +1193,13 @@ pub struct SolidHistoryLoft {
     /// The native history stream remains unchanged for other consumers.
     #[cfg_attr(feature = "serde", serde(default))]
     pub parameters: Option<SolidHistoryLoftParameters>,
-    /// Path curve stored in the native record (DXF 98/99).
     #[cfg_attr(feature = "serde", serde(default))]
     pub path_entity: Option<crate::entities::EmbeddedEntity>,
-    /// Remaining native record fields (DXF 70, 41..44, 290..297).
     #[cfg_attr(feature = "serde", serde(default))]
     pub options: SolidHistoryLoftOptions,
 }
 
 impl SolidHistoryLoft {
-    /// Path and native options as saved. Settings in `parameters` win for the
-    /// fields both describe, so lofts built with parameters save them natively.
     pub(crate) fn native(
         &self,
     ) -> (
@@ -1249,21 +1221,15 @@ impl SolidHistoryLoft {
     }
 }
 
-/// Native loft record fields. The default is what the reference application
-/// stores for a loft made with its default settings.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(default))]
 pub struct SolidHistoryLoftOptions {
-    /// DXF 70.
     pub surface_option: i32,
-    /// DXF 41/42, radians.
     pub start_draft_angle: f64,
     pub end_draft_angle: f64,
-    /// DXF 43/44.
     pub start_magnitude: f64,
     pub end_magnitude: f64,
-    /// DXF 290..297.
     pub flags: [bool; 8],
 }
 

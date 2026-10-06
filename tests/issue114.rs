@@ -1,8 +1,8 @@
 use std::io::Cursor;
 
-use opencadcodec::entities::{EntityType, Spline};
-use opencadcodec::types::{DxfVersion, Vector3};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter};
+use acadrust::entities::{EntityType, Spline};
+use acadrust::types::{DxfVersion, Vector3};
+use acadrust::{CadDocument, DwgReader, DwgWriter};
 
 #[test]
 fn dwg_spline_exposes_form_when_flags_are_not_stored() {

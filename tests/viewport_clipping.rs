@@ -1,4 +1,4 @@
-use opencadcodec::entities::ViewportStatusFlags;
+use acadrust::entities::ViewportStatusFlags;
 
 #[test]
 fn activation_is_not_boundary_presence() {
@@ -26,7 +26,7 @@ fn omitted_clipping_flag_defaults_to_disabled() {
 
 #[test]
 fn literal_dxf_keeps_activation_and_boundary_independently() {
-    use opencadcodec::{DxfReader, EntityType};
+    use acadrust::{DxfReader, EntityType};
     let doc = DxfReader::from_reader(std::io::Cursor::new(include_bytes!(
         "fixtures/viewports/reference-clip-activation.dxf"
     )))
@@ -46,8 +46,8 @@ fn literal_dxf_keeps_activation_and_boundary_independently() {
 
 #[test]
 fn dxf_and_dwg_preserve_active_dormant_and_missing_clip() {
-    use opencadcodec::entities::Viewport;
-    use opencadcodec::{
+    use acadrust::entities::Viewport;
+    use acadrust::{
         CadDocument, Circle, DwgReader, DwgWriter, DxfReader, DxfWriter, EntityType, Vector3,
     };
     use std::io::Cursor;
@@ -64,7 +64,7 @@ fn dxf_and_dwg_preserve_active_dormant_and_missing_clip() {
                 )
                 .unwrap()
             } else {
-                opencadcodec::Handle::NULL
+                acadrust::Handle::NULL
             };
             let mut view = Viewport::new();
             view.id = 2;

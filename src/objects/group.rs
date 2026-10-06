@@ -12,8 +12,8 @@ use crate::types::Handle;
 ///
 /// # Example
 /// ```ignore
-/// use opencadcodec::objects::Group;
-/// use opencadcodec::types::Handle;
+/// use acadrust::objects::Group;
+/// use acadrust::types::Handle;
 ///
 /// let mut group = Group::new("MyGroup");
 /// group.description = "A collection of related entities".to_string();

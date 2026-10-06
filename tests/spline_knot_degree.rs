@@ -4,9 +4,9 @@
 
 use std::io::Cursor;
 
-use opencadcodec::entities::{EntityType, Spline};
-use opencadcodec::types::{DxfVersion, Vector3};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter};
+use acadrust::entities::{EntityType, Spline};
+use acadrust::types::{DxfVersion, Vector3};
+use acadrust::{CadDocument, DwgReader, DwgWriter};
 
 #[test]
 fn knotless_two_point_cubic_spline_roundtrips_through_dwg() {

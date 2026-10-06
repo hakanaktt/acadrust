@@ -5,8 +5,8 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use opencadcodec::io::import::stl::StlImporter;
-//! use opencadcodec::io::import::ImportConfig;
+//! use acadrust::io::import::stl::StlImporter;
+//! use acadrust::io::import::ImportConfig;
 //!
 //! let doc = StlImporter::from_file("model.stl")?
 //!     .with_config(ImportConfig::default())

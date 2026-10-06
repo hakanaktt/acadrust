@@ -201,10 +201,7 @@ pub struct PointCloudExData {
     pub name: String,
     pub show_intensity: bool,
     pub show_cropping: bool,
-    /// Scans turned off, by the scan identifier ("{…}") the scan file and
-    /// its project carry.
     pub hidden_scans: Vec<String>,
-    /// Regions turned off, by index (the unassigned points are region 0).
     pub hidden_regions: Vec<i32>,
     pub stylization_type: i16,
     pub intensity_color_scheme: String,
@@ -433,14 +430,10 @@ impl Entity for ExtendedEntity {
     }
 }
 
-/// A PointCloudEx point in the scan's own coordinates, placed in the
-/// drawing: origin + x·X + y·Y + z·Z, where X, Y and Z are the placement
-/// axes (scaled by the cloud's scale).
 pub fn point_cloud_ex_to_world(data: &PointCloudExData, p: Vector3) -> Vector3 {
     data.ucs_origin + data.ucs_x_direction * p.x + data.ucs_y_direction * p.y + data.ucs_z_direction * p.z
 }
 
-/// The eight corners of a PointCloudEx's extents, placed in the drawing.
 pub fn point_cloud_ex_corners(data: &PointCloudExData) -> [Vector3; 8] {
     let (a, b) = (data.extents_min, data.extents_max);
     let mut out = [Vector3::ZERO; 8];

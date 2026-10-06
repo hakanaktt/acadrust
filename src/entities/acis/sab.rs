@@ -118,7 +118,6 @@ impl SabWriter {
         buf
     }
 
-    /// ShapeManager-era data (ASM 218 and later, as stored in R2013+ AcDs).
     fn is_asm(header: &SatHeader) -> bool {
         header.version.sat_version_number() >= 21800
     }
@@ -740,15 +739,11 @@ impl SabWriter {
         Some(doubles)
     }
 
-    /// A logical written as a keyword (`I`, `F`, `T`) or a boolean literal.
     fn is_logical(token: &SatToken) -> bool {
         matches!(token, SatToken::True | SatToken::False)
             || matches!(token.as_ident(), Some("I" | "F" | "T"))
     }
 
-    /// `groups` discontinuity lists from `start`: each an integer count
-    /// followed by that many parameter values, which are doubles. Nothing
-    /// when the tokens do not have that shape.
     fn discontinuity_doubles(tokens: &[SatToken], start: usize, groups: usize) -> Vec<usize> {
         let mut doubles = Vec::new();
         let mut position = start;
@@ -1004,7 +999,7 @@ impl SabReader {
         let version_num = read_u32(data, &mut pos)?;
         let num_records = read_u32(data, &mut pos)? as usize;
         let num_bodies = read_u32(data, &mut pos)? as usize;
-        let has_history = read_u32(data, &mut pos)? != 0;
+        let has_history = read_u32(data, &mut pos)? & 1 != 0;
 
         let version = SatVersion::from_sat_number(version_num);
 
@@ -1295,10 +1290,6 @@ impl SabReader {
 // SAB boolean → SAT keyword conversion
 // ============================================================================
 
-/// Name the enumeration tags of an exact spline curve the way SAT text
-/// writes them: `exact_int_cur <version> full nubs <degree> open ...
-/// UNEXTENDED UNEXTENDED }` (completeness, closure, then the two end
-/// extensions). Values not seen in reference output stay numeric.
 fn name_curve_enums(tokens: &mut [SatToken]) {
     let mut depth = 0usize;
     let mut role = None;
@@ -1372,11 +1363,6 @@ fn name_curve_enums(tokens: &mut [SatToken]) {
     }
 }
 
-/// Name the senses and enumerations of spline records the way SAT text
-/// writes them: the sense of a spline surface or pcurve and of the support
-/// surfaces stored inline in an interpolated curve (`forward_v` for plane,
-/// sphere and torus, `forward` for cone and spline), and the `exactsur` /
-/// `exppc` spline enumerations (completeness, closures, singularities).
 fn name_spline_keywords(entity_type: &str, tokens: &mut [SatToken]) {
     if !matches!(entity_type, "intcurve-curve" | "spline-surface" | "pcurve") {
         return;
@@ -1772,6 +1758,22 @@ fn read_tagged_double(data: &[u8], pos: &mut usize) -> Result<f64, SabError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn asm_flags_preserve_the_history_bit() {
+        for version in [21800, 22300] {
+            for history in [false, true] {
+                let mut doc = SatDocument::new();
+                doc.header.version = SatVersion::from_sat_number(version);
+                doc.header.has_history = history;
+                let bytes = SabWriter::write(&doc);
+                assert_eq!(u32::from_le_bytes(bytes[27..31].try_into().unwrap()), 12 | u32::from(history));
+                let loaded = SabReader::read(&bytes).unwrap();
+                assert_eq!(loaded.header.has_history, history);
+                assert_eq!(SabWriter::write(&loaded), bytes);
+            }
+        }
+    }
 
     #[test]
     fn test_sat_to_sab_header() {

@@ -1,5 +1,5 @@
-use opencadcodec::objects::{Dictionary, Material, ObjectType, XRecord, XRecordEntry};
-use opencadcodec::{CadDocument, Handle};
+use acadrust::objects::{Dictionary, Material, ObjectType, XRecord, XRecordEntry};
+use acadrust::{CadDocument, Handle};
 
 fn checker_record(name: &str, handle: Handle, owner: Handle) -> XRecord {
     let mut record = XRecord::named(name);

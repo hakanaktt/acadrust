@@ -15,10 +15,10 @@
 
 use std::io::Cursor;
 
-use opencadcodec::entities::{EntityType, Polyline2D, PolylineFlags, Vertex2D};
-use opencadcodec::objects::{FieldList, ObjectType};
-use opencadcodec::types::{DxfVersion, Handle, Vector3};
-use opencadcodec::{CadDocument, DxfReader, DxfWriter};
+use acadrust::entities::{EntityType, Polyline2D, PolylineFlags, Vertex2D};
+use acadrust::objects::{FieldList, ObjectType};
+use acadrust::types::{DxfVersion, Handle, Vector3};
+use acadrust::{CadDocument, DxfReader, DxfWriter};
 
 fn write_text(doc: &CadDocument) -> String {
     String::from_utf8(

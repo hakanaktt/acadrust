@@ -1,10 +1,10 @@
-use opencadcodec::entities::{solid3d::Solid3D, EntityType};
-use opencadcodec::objects::{
+use acadrust::entities::{solid3d::Solid3D, EntityType};
+use acadrust::objects::{
     SolidHistoryBox, SolidHistoryBrep, SolidHistoryFillet, SolidHistoryNodeBase,
     SolidHistoryOperation,
 };
-use opencadcodec::types::DxfVersion;
-use opencadcodec::{CadDocument, DwgReader, DwgWriter};
+use acadrust::types::DxfVersion;
+use acadrust::{CadDocument, DwgReader, DwgWriter};
 use std::io::Cursor;
 
 fn box_step(step_id: i32) -> SolidHistoryOperation {
@@ -79,7 +79,7 @@ fn updating_a_step_preserves_its_graph_identity() {
 
 #[test]
 fn binary_brep_history_survives_r2018_dwg_roundtrip() {
-    let sat = opencadcodec::entities::acis::primitives::build_planar_body(
+    let sat = acadrust::entities::acis::primitives::build_planar_body(
         &[
             [0.0, 0.0, 0.0],
             [1.0, 0.0, 0.0],
@@ -100,10 +100,10 @@ fn binary_brep_history_survives_r2018_dwg_roundtrip() {
         ],
     )
     .unwrap();
-    let sab = opencadcodec::SabWriter::write(&sat);
+    let sab = acadrust::SabWriter::write(&sat);
     let operation = SolidHistoryOperation::Brep(SolidHistoryBrep {
         base: SolidHistoryNodeBase::new(1),
-        acis_data: opencadcodec::entities::AcisData::from_sab(sab.clone()),
+        acis_data: acadrust::entities::AcisData::from_sab(sab.clone()),
         ..SolidHistoryBrep::default()
     });
     let mut document = CadDocument::with_version(DxfVersion::AC1032);

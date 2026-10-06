@@ -10,9 +10,9 @@
 //!
 //! A field-hosting entity (usually an MTEXT) stores only the *cached* evaluated
 //! text, frozen at the last save. [`resolve`] recomputes it against the current
-//! context. Anything it can't evaluate — an unknown `getvar`, a table cell
-//! that isn't a number, an unsupported evaluator — yields `None`, and the
-//! caller keeps the cached text.
+//! context. Anything it can't evaluate — an unknown `getvar`, an unsupported
+//! evaluator (`AcExpr` table sums, `AcObjProp` object properties) — yields
+//! `None`, and the caller keeps the cached text.
 
 use crate::document::{CadDocument, FieldDef};
 use crate::entities::table::{CellValue, CellValueType, Table};
@@ -24,22 +24,13 @@ use crate::types::Handle;
 /// Implemented by the host application; every method has a "don't know" default
 /// (`None` / epoch) so a minimal host only needs [`now_julian`](FieldContext::now_julian).
 pub trait FieldContext {
-    /// "Now" in **local** wall-clock time, as an astronomical Julian date
-    /// (day fraction counted from noon: Unix seconds / 86400 + 2440587.5,
-    /// after adding the local UTC offset). The reference application shows
-    /// every date in local time. Drives the `Date` field, `PlotDate` while
-    /// plotting, `$(getvar,date)` / `$(getvar,cdate)`, `$(edtime,...)` and
-    /// `$(time)`.
+    /// "Now" as an astronomical Julian date. Drives `$(getvar,date)` /
+    /// `$(getvar,cdate)`, `$(edtime,...)` on the current time, `$(time)`, and
+    /// the `Date` AcVar field.
     fn now_julian(&self) -> f64;
-    /// Creation and last-write times of the drawing file, local time, as
-    /// astronomical Julian dates — the reference application's `CreateDate`
-    /// and `SaveDate` fields show these file-system times (not TDCREATE /
-    /// TDUPDATE). `None` falls back to the header's local TDCREATE / TDUPDATE.
     fn file_times(&self) -> Option<(f64, f64)> {
         None
     }
-    /// True while the host plots: `PlotDate` then evaluates to now. Outside a
-    /// plot it keeps its cached text (`----` until the first plot).
     fn plotting(&self) -> bool {
         false
     }
@@ -56,18 +47,12 @@ pub trait FieldContext {
     fn getvar(&self, _name: &str) -> Option<String> {
         None
     }
-    /// Size of the drawing file in bytes (`\AcVar Filesize`).
     fn file_size(&self) -> Option<u64> {
         None
     }
-    /// Month/day names and regional pictures for date fields (the reference
-    /// application follows the OS locale). Defaults to US English.
     fn date_locale(&self) -> DateLocale {
         DateLocale::default()
     }
-    /// The open sheet sets, for `\AcSm` fields: call `f` on each in turn and
-    /// return its first answer. A host without sheet sets answers `None`
-    /// (sheet set fields then show `####`).
     fn sheet_sets(
         &self,
         _f: &mut dyn FnMut(&crate::sheet_set::SheetSetDatabase) -> Option<String>,
@@ -76,25 +61,16 @@ pub trait FieldContext {
     }
 }
 
-/// Names and regional pictures used by date-field formats.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DateLocale {
-    /// January … December (`MMMM`).
     pub months: [String; 12],
-    /// Abbreviated months (`MMM`).
     pub months_abbr: [String; 12],
-    /// Sunday … Saturday (`dddd`).
     pub days: [String; 7],
-    /// Abbreviated days (`ddd`).
     pub days_abbr: [String; 7],
-    /// AM / PM designators (`tt`).
     pub am: String,
     pub pm: String,
-    /// Short date picture (`%x`; `%c` = short date + long time).
     pub short_date: String,
-    /// Long date picture (`%#x`; `%#c` = long date + long time).
     pub long_date: String,
-    /// Long time picture (`%X`).
     pub long_time: String,
 }
 
@@ -260,19 +236,6 @@ fn eval_template(
 
 // ── AcExpr: formulas ─────────────────────────────────────────────────────────
 
-/// Evaluate an `AcExpr` field — a formula such as `((12+3)*2)`, a table-cell
-/// formula such as `(Sum(A3:B3))` / `(A3*2+B4)` whose cell references resolve
-/// against the ACAD_TABLE that owns the host cell (found via the host's
-/// block-record), or a formula that names its table:
-/// `(Table(%<\_ObjIdx 0>%).Evaluate(Sum(A3:B5)))`, `(Table(%<\_ObjIdx 0>%).B4)`.
-/// An invalid formula (syntax, division by zero, integer overflow, a cell that
-/// holds no number, `Sum`/`Average`/`Count` outside a table) shows `####` as in
-/// the reference application; a table the drawing does not hold yields `None`
-/// (→ keep the cached text).
-///
-/// Without a format an integer result shows as an integer and a real one with
-/// six decimals (`30`, `3.333333`, `8.000000`); a `\f` picture formats the
-/// number like any unit field (`%lu2%pr2` → `3.33`).
 fn eval_acexpr(doc: &CadDocument, field: &FieldDef, host: Handle) -> Option<String> {
     let code = &field.code;
     let body = code.trim().strip_prefix("\\AcExpr").unwrap_or(code);
@@ -335,13 +298,9 @@ fn table_for_host(doc: &CadDocument, host: Handle) -> Option<&Table> {
     tables.next().is_none().then_some(first)
 }
 
-/// What a table cell holds for a formula.
 enum CellNum {
     Num(Num),
-    /// Text, an empty cell or a cell outside the table: skipped by ranges,
-    /// `####` when referenced alone.
     Blank,
-    /// A field the engine can't evaluate — keep the cached text.
     Unknown,
 }
 
@@ -378,8 +337,6 @@ fn parse_cellref(s: &[u8], i: &mut usize) -> Option<(usize, usize)> {
     }
 }
 
-/// A formula value: integer arithmetic stays integer (32-bit, as in the
-/// reference application); division, `^`, real literals and functions give reals.
 #[derive(Clone, Copy)]
 enum Num {
     Int(i64),
@@ -396,9 +353,7 @@ impl Num {
 }
 
 enum ExprError {
-    /// Syntax error, division by zero or overflow — shows `####`.
     Invalid,
-    /// A table cell or table the engine can't resolve — keep the cached text.
     Unresolved,
 }
 
@@ -411,24 +366,14 @@ fn int_checked(n: Option<i64>) -> ExprResult {
     }
 }
 
-/// A recursive-descent formula evaluator: `+ - * / ^` (`^` left-associative,
-/// a unary sign binds tighter), parentheses, numbers, `pi`, `abs/sqrt/round`,
-/// and in a table context cell references, ranges (`A3:B3`) and the
-/// `Sum` / `Average` / `Count` functions.
 struct ExprParser<'a> {
     doc: &'a CadDocument,
     s: &'a [u8],
     i: usize,
-    /// The field's referenced objects (`%<\_ObjIdx n>%`).
     objects: &'a [Handle],
-    /// The table bare cell references address: the host table of a cell
-    /// formula, or the table of an enclosing `Table(…).Evaluate(…)`.
     table: Option<&'a Table>,
-    /// `table` is the host table of a cell formula.
     host_cells: bool,
-    /// A host-table cell was referenced.
     used_cells: bool,
-    /// Nesting of formula cells evaluated for this one.
     depth: u8,
 }
 
@@ -503,7 +448,6 @@ impl<'a> ExprParser<'a> {
         }
         Ok(v)
     }
-    /// One optional sign, then a primary (`--3` is invalid).
     fn parse_unary(&mut self) -> ExprResult {
         if self.eat(b'-') {
             return Ok(match self.parse_primary()? {
@@ -555,8 +499,6 @@ impl<'a> ExprParser<'a> {
             int_checked(text.parse().ok())
         }
     }
-    /// A letter run is a function call `Name(...)`, a `Table(…)` reference,
-    /// the constant `pi`, or a cell reference of the current table.
     fn parse_name(&mut self) -> ExprResult {
         let start = self.i;
         while matches!(self.peek(), Some(b) if b.is_ascii_alphabetic()) {
@@ -587,8 +529,6 @@ impl<'a> ExprParser<'a> {
             CellNum::Unknown => Err(ExprError::Unresolved),
         }
     }
-    /// `Table(%<\_ObjIdx n>%)` (or `%<\_ObjId n>%`, n the handle value)
-    /// followed by `.Evaluate(<formula over its cells>)` or `.<cell>`.
     fn parse_table_ref(&mut self) -> ExprResult {
         self.skip_ws();
         let rest = std::str::from_utf8(&self.s[self.i..]).map_err(|_| ExprError::Invalid)?;
@@ -631,7 +571,6 @@ impl<'a> ExprParser<'a> {
         (self.table, self.host_cells) = saved;
         r
     }
-    /// The value of a cell of the current table (`Unknown` without a table).
     fn cell(&mut self, col: usize, row: usize) -> Result<CellNum, ExprError> {
         let Some(table) = self.table else {
             return Err(ExprError::Unresolved);
@@ -641,8 +580,6 @@ impl<'a> ExprParser<'a> {
         }
         Ok(cell_value(self.doc, table, col, row, self.depth))
     }
-    /// Function arguments: comma-separated ranges (`A3:B3`, whose numeric
-    /// cells are taken) and/or expressions.
     fn parse_args(&mut self) -> Result<Vec<Num>, ExprError> {
         let mut vals = Vec::new();
         loop {
@@ -675,8 +612,6 @@ impl<'a> ExprParser<'a> {
     }
 }
 
-/// A table cell as a formula number: Long / Double values, number text
-/// (`10` integer, `1.5` real), or the result of the cell's own formula.
 fn cell_value(doc: &CadDocument, table: &Table, col: usize, row: usize, depth: u8) -> CellNum {
     let Some(content) = table
         .rows
@@ -738,9 +673,6 @@ fn cell_value(doc: &CadDocument, table: &Table, col: usize, row: usize, depth: u
     }
 }
 
-/// Functions: `abs`, `sqrt`, `round`, and in a table context `Sum` (integer
-/// when every value is), `Average` (real; `####` without values) and `Count`
-/// (the number of numeric cells).
 fn apply_func(name: &str, vals: &[Num], table: bool) -> ExprResult {
     let xs: Vec<f64> = vals.iter().map(|v| v.real()).collect();
     let one = || match xs.as_slice() {
@@ -755,8 +687,11 @@ fn apply_func(name: &str, vals: &[Num], table: bool) -> ExprResult {
             }
             xs.iter().sum()
         }
-        "average" if table && !xs.is_empty() => xs.iter().sum::<f64>() / xs.len() as f64,
+        "average" | "mean" if table && !xs.is_empty() => xs.iter().sum::<f64>() / xs.len() as f64,
         "count" if table => return Ok(Num::Int(xs.len() as i64)),
+        "min" if table => xs.iter().copied().reduce(f64::min).ok_or(ExprError::Invalid)?,
+        "max" if table => xs.iter().copied().reduce(f64::max).ok_or(ExprError::Invalid)?,
+        "product" if table => xs.iter().product(),
         "abs" => one()?.abs(),
         "sqrt" if one()? >= 0.0 => one()?.sqrt(),
         // `round` gives an integer (`round(2.5)` shows `3`).
@@ -771,23 +706,13 @@ fn apply_func(name: &str, vals: &[Num], table: bool) -> ExprResult {
 /// A resolved object-property value, before formatting.
 enum PropVal {
     Num(f64),
-    /// Radians: `%au` pictures format it as an angle.
     Angle(f64),
     Point([f64; 3]),
     Text(String),
-    /// Hundredths of a millimetre; -1 ByLayer, -2 ByBlock, -3 Default.
     Lineweight(i16),
 }
 
 /// Evaluate an `AcObjProp` field — a property of a referenced object, e.g.
-/// `Object(%<\_ObjIdx 0>%).Center \f "%lu2%pt3"`. The object is the field's
-/// `objects[N]` handle. Geometry properties (Center / Area / Length / Radius /
-/// …), the common entity properties and the block-reference properties are
-/// computed from the entity; others yield `None` (→ cached text).
-///
-/// A block placeholder (`Object(?BlockRefId,1).<property>`) resolves against
-/// the INSERT that owns the host ATTRIB. Anywhere else — the ATTDEF or MTEXT
-/// in the block definition — it shows its temporary value, the property name.
 fn eval_acobjprop(doc: &CadDocument, field: &FieldDef, host: Handle) -> Option<String> {
     let code = &field.code;
     let prop = code.split(").").nth(1)?.split([' ', '\\']).next()?.trim();
@@ -828,7 +753,6 @@ fn eval_acobjprop(doc: &CadDocument, field: &FieldDef, host: Handle) -> Option<S
     Some(format_propval(doc, val, &fmt))
 }
 
-/// The INSERT whose ATTRIB is `host`.
 fn attribute_insert(doc: &CadDocument, host: Handle) -> Option<Handle> {
     doc.entities().find_map(|e| match e {
         EntityType::Insert(i) if i.attributes.iter().any(|a| a.common.handle == host) => {
@@ -838,8 +762,6 @@ fn attribute_insert(doc: &CadDocument, host: Handle) -> Option<Handle> {
     })
 }
 
-/// Name of a symbol-table record or of an object kept in a named dictionary
-/// (table style, multileader style, group, material, …).
 fn named_object_name(doc: &CadDocument, h: Handle) -> Option<String> {
     use crate::tables::TableEntry;
     macro_rules! find_in {
@@ -991,7 +913,6 @@ fn object_property(doc: &CadDocument, e: &EntityType, prop: &str) -> Option<Prop
     })
 }
 
-/// Unit names (`InsUnits`) and metres per unit, indexed by INSUNITS code.
 const INSERT_UNITS: [(&str, f64); 25] = [
     ("Unitless", 1.0),
     ("Inches", 0.0254),
@@ -1020,7 +941,6 @@ const INSERT_UNITS: [(&str, f64); 25] = [
     ("US Survey Mile", 6336000.0 / 3937.0),
 ];
 
-/// Block units ÷ drawing units (INSUNITS); 1 when either is unitless.
 fn insert_unit_factor(doc: &CadDocument, i: &crate::entities::Insert) -> f64 {
     let block = doc.block_records.get(&i.block_name).map_or(0, |b| b.units);
     let drawing = doc.header.insertion_units;
@@ -1030,8 +950,6 @@ fn insert_unit_factor(doc: &CadDocument, i: &crate::entities::Insert) -> f64 {
     }
 }
 
-/// `TrueColor` text: `BYLAYER`, `BYBLOCK`, the standard colour names in lower
-/// case (`red` … `white`), other indexes as numbers, true colours as `r,g,b`.
 fn color_text(c: &crate::types::Color) -> String {
     use crate::types::Color;
     const NAMES: [&str; 7] = ["red", "yellow", "green", "cyan", "blue", "magenta", "white"];
@@ -1097,9 +1015,6 @@ fn length(e: &EntityType) -> Option<f64> {
     }
 }
 
-/// Format a property value. Without a picture numbers show six decimals,
-/// angles six-decimal radians, points `x, y, z` with six decimals and
-/// lineweights their raw value; a picture formats them like any unit field.
 fn format_propval(doc: &CadDocument, val: PropVal, pic: &str) -> String {
     let empty = pic.trim().is_empty();
     match val {
@@ -1113,11 +1028,8 @@ fn format_propval(doc: &CadDocument, val: PropVal, pic: &str) -> String {
     }
 }
 
-/// What the reference application shows for a field with no value (an empty
-/// document property, a drawing never saved or plotted, no page setup, …).
 const NO_VALUE: &str = "----";
 
-/// The `\f "…"` picture text with its `\"` escapes resolved.
 fn format_of(s: &str) -> String {
     let s = s.trim();
     let s = s.strip_prefix('"').unwrap_or(s);
@@ -1125,7 +1037,6 @@ fn format_of(s: &str) -> String {
     s.replace("\\\"", "\"")
 }
 
-/// Backslashes are escaped in MTEXT contents.
 fn mtext_escape(s: &str) -> String {
     s.replace('\\', "\\\\")
 }
@@ -1279,8 +1190,6 @@ fn eval_acvar(
     Some(text_case(value, &fmt))
 }
 
-/// The reference Field dialog's PlotScale formats, in its order: the list
-/// label and the complete field code it produces.
 pub const PLOT_SCALE_FORMATS: [(&str, &str); 7] = [
     ("(none)", r#"\AcVar PlotScale \f "%lu2%qf2816""#),
     ("#:1", r#"\AcVar PlotScale \f "%lu2%qf2816:1""#),
@@ -1294,9 +1203,6 @@ pub const PLOT_SCALE_FORMATS: [(&str, &str); 7] = [
     ("Use scale name", r#"\AcVar.16.2 PlotScale \f "%sn""#),
 ];
 
-/// The reference Field dialog's Formula formats, in its order: the list label
-/// and the `\f` picture (`\AcExpr (<formula>) \f "<picture>"`, no `\f` for
-/// "(none)"). A chosen precision N (0–8) appends `%prN`.
 pub const FORMULA_FORMATS: [(&str, &str); 7] = [
     ("(none)", ""),
     ("Current units", "%lu6"),
@@ -1307,7 +1213,6 @@ pub const FORMULA_FORMATS: [(&str, &str); 7] = [
     ("Scientific", "%lu1"),
 ];
 
-/// `PlotOrientation` text for plot rotation 0, 90, 180 and 270 degrees.
 const PLOT_ORIENTATIONS: [&str; 4] = [
     "Portrait",
     "Landscape",
@@ -1315,8 +1220,6 @@ const PLOT_ORIENTATIONS: [&str; 4] = [
     "Landscape (upside-down)",
 ];
 
-/// The layout whose plot settings a host's plot fields show: the layout of
-/// the block the host lies in, else the current layout (CTAB), else Model.
 fn host_layout<'a>(
     doc: &'a CadDocument,
     host: Handle,
@@ -1338,9 +1241,6 @@ fn host_layout<'a>(
         .or_else(|| layouts().find(|l| l.name.eq_ignore_ascii_case("Model")))
 }
 
-/// `PlotScale`: plain six decimals; `%sn` the name of the first entry of the
-/// drawing's scale list with the same ratio (six decimals when none); any
-/// other picture formats the ratio as a number.
 pub(crate) fn plot_scale_text(doc: &CadDocument, scale: f64, fmt: &str) -> String {
     if fmt.is_empty() {
         return format!("{:.6}", scale);
@@ -1358,7 +1258,6 @@ pub(crate) fn plot_scale_text(doc: &CadDocument, scale: f64, fmt: &str) -> Strin
     format_number(doc, scale, fmt)
 }
 
-/// The scales of the `ACAD_SCALELIST` dictionary, in dictionary order.
 fn scale_list(doc: &CadDocument) -> Vec<&crate::objects::Scale> {
     let scale = |h: &Handle| match doc.objects.get(h) {
         Some(ObjectType::Scale(s)) => Some(s),
@@ -1375,12 +1274,9 @@ fn scale_list(doc: &CadDocument) -> Vec<&crate::objects::Scale> {
         .unwrap_or_default()
 }
 
-/// A parsed field unit picture: the codes plus the literal text around them
-/// (`1:%lu2%ct1` keeps `1:` before the number).
 #[derive(Default)]
 struct Picture {
     lit: String,
-    /// Where the value goes in `lit` (at the first code).
     slot: Option<usize>,
     lu: Option<i64>,
     au: Option<i64>,
@@ -1393,11 +1289,9 @@ struct Picture {
     pt: Option<i64>,
     bl: Option<i64>,
     lw: Option<i64>,
-    /// `%.Nf` printf precision.
     printf: Option<usize>,
     pre: String,
     suf: String,
-    /// The `%ctN[factor]` conversion (the last one in the picture applies).
     conv: Option<(i64, Option<f64>)>,
 }
 
@@ -1463,8 +1357,6 @@ impl Picture {
         p
     }
 
-    /// Zero suppression: `%zs` bits 1 zero feet, 2 zero inches, 4 leading,
-    /// 8 trailing; `%qf` bits 256, 512, 1024, 2048 the same.
     fn zeros(&self) -> Zeros {
         let bit = |zs: i64, qf: i64| self.zs & zs != 0 || self.qf & qf != 0;
         Zeros {
@@ -1475,10 +1367,6 @@ impl Picture {
         }
     }
 
-    /// The value after the `%ct` conversion, a bit set: 1 reciprocal; 8 ×
-    /// factor (after the reciprocal; 1 without a factor); without 8, exactly
-    /// 2 × 12, 3 1 ÷ (12 × value) and 4 ÷ 144 — any other bit drops the
-    /// 12 / 144 conversion and keeps only the reciprocal.
     fn convert(&self, v: f64) -> f64 {
         let Some((n, f)) = self.conv else { return v };
         let r = if n & 1 != 0 { 1.0 / v } else { v };
@@ -1493,7 +1381,6 @@ impl Picture {
         }
     }
 
-    /// Place the formatted value into the literal text.
     fn wrap(&self, value: &str) -> String {
         let num = format!("{}{value}{}", self.pre, self.suf);
         match self.slot {
@@ -1502,8 +1389,6 @@ impl Picture {
         }
     }
 
-    /// The linear unit mode: `%lu6` is the drawing's LUNITS, and with `%qf1`
-    /// (areas) engineering and architectural LUNITS show as decimal.
     fn linear_mode(&self, doc: &CadDocument) -> i64 {
         match self.lu.unwrap_or(2) {
             6 => match doc.header.linear_unit_format as i64 {
@@ -1523,17 +1408,6 @@ struct Zeros {
     trailing: bool,
 }
 
-/// Format a number with a field unit picture. Literal text in the picture is
-/// kept around the number (`1:%lu2%ct1` → `1:50`). Codes:
-/// `%lu1..5` scientific / decimal / engineering / architectural / fractional,
-/// `%lu6` the drawing's LUNITS (`%qf1`: decimal instead of feet and inches);
-/// `%au0..4` decimal degrees / deg-min-sec / grads / radians / surveyor's,
-/// `%au5` the drawing's AUNITS, for a value in radians; `%prN` precision
-/// (LUPREC / AUPREC when absent); `%zsN` / `%qfN` zero suppression;
-/// `%ps[pre,suf]`; `%dsN` / `%thN` decimal / thousands separator (character
-/// code); `%ctN[f]` conversions; `%blN` booleans (1 True/False, 2 Yes/No,
-/// 3 On/Off, 4 Enabled/Disabled); `%lw1` / `%lw2` a lineweight (hundredths
-/// of a millimetre) in millimetres / inches, `%.Nf` its decimals.
 fn format_number(doc: &CadDocument, value: f64, pic: &str) -> String {
     let p = Picture::parse(pic);
     if let Some(mode) = p.bl {
@@ -1567,7 +1441,6 @@ fn format_number(doc: &CadDocument, value: f64, pic: &str) -> String {
     p.wrap(&number_text(doc, &p, v))
 }
 
-/// One number in the picture's unit mode, without literal text.
 fn number_text(doc: &CadDocument, p: &Picture, v: f64) -> String {
     let z = p.zeros();
     if let Some(au) = p.au {
@@ -1584,9 +1457,6 @@ fn number_text(doc: &CadDocument, p: &Picture, v: f64) -> String {
     unit_text(v, p.linear_mode(doc), prec, z, p.ds.unwrap_or('.'), p.th)
 }
 
-/// A point in a field picture: the coordinates `%pt` selects (bits 1 X, 2 Y,
-/// 4 Z; all by default), each formatted as a number and separated by the
-/// `%ls` character (comma) and a space; prefix / suffix wrap the whole text.
 fn format_point(doc: &CadDocument, pt: [f64; 3], pic: &str) -> String {
     let p = Picture::parse(pic);
     let bits = p.pt.unwrap_or(7);
@@ -1598,8 +1468,6 @@ fn format_point(doc: &CadDocument, pt: [f64; 3], pic: &str) -> String {
     p.wrap(&parts.join(&sep))
 }
 
-/// A distance in LUNITS-style notation (`mode` 1–5) with `prec` decimals or,
-/// for architectural / fractional, a 1/2^prec fraction.
 fn unit_text(v: f64, mode: i64, prec: usize, z: Zeros, ds: char, th: Option<char>) -> String {
     let sign = if v < 0.0 { "-" } else { "" };
     let a = v.abs();
@@ -1699,12 +1567,6 @@ fn unit_text(v: f64, mode: i64, prec: usize, z: Zeros, ds: char, th: Option<char
     }
 }
 
-/// An angle (radians, normalised to 0–360° unless `normalize` is false) in AUNITS-style notation:
-/// 0 decimal degrees, 1 degrees/minutes/seconds (`30d0'0"`; precision 0
-/// degrees, 1–2 minutes, 3–4 seconds, more adds decimals to the seconds),
-/// 2 grads (`33g`), 3 radians (`1r`), 4 surveyor's bearing (`N 60d E`; an
-/// exact east / west bearing shows `E` / `W` when a precision is given).
-/// Trailing and leading zero suppression apply to the decimal modes.
 fn angle_text(rad: f64, mode: i64, prec: usize, z: Zeros, normalize: bool) -> String {
     use std::f64::consts::TAU;
     let a = if normalize { rad.rem_euclid(TAU) } else { rad };
@@ -1762,7 +1624,6 @@ fn angle_text(rad: f64, mode: i64, prec: usize, z: Zeros, normalize: bool) -> St
     }
 }
 
-/// The number following `key` in a format picture (`%fn6` → 6).
 fn picture_number(pic: &str, key: &str) -> Option<u32> {
     after(pic, key)?
         .chars()
@@ -1772,8 +1633,6 @@ fn picture_number(pic: &str, key: &str) -> Option<u32> {
         .ok()
 }
 
-/// `%tc1` upper, `%tc2` lower, `%tc3` first character upper, `%tc4` first
-/// character of every whitespace-separated word upper (the rest unchanged).
 fn text_case(s: String, pic: &str) -> String {
     match picture_number(pic, "%tc") {
         Some(1) => s.to_uppercase(),
@@ -1808,8 +1667,6 @@ fn nonempty(s: &str) -> Option<String> {
 }
 
 
-/// `%fnN` filename: bit 1 folder (no trailing separator), bit 2 name, bit 4
-/// extension — `%fn7` full path, `%fn6` name.ext, `%fn5` folder.ext.
 fn filename_parts(p: &str, bits: u32) -> Option<String> {
     let (dir, sep, base) = match p.rfind(['/', '\\']) {
         Some(i) => (&p[..i], &p[i..i + 1], &p[i + 1..]),
@@ -1837,14 +1694,12 @@ fn filename_parts(p: &str, bits: u32) -> Option<String> {
     }
     nonempty(&s)
 }
-/// The full path the drawing was read from (`FilePath`).
 fn filepath(doc: &CadDocument) -> Option<String> {
     doc.source_path.as_deref().and_then(nonempty)
 }
 
 // ── DIESEL ─────────────────────────────────────────────────────────────────
 
-/// Evaluate a DIESEL string (literals interspersed with `$(func,args)`).
 fn diesel_eval(doc: &CadDocument, s: &str, ctx: &dyn FieldContext) -> Option<String> {
     let chars: Vec<char> = s.chars().collect();
     let mut out = String::new();
@@ -2053,7 +1908,7 @@ fn rtos(val: f64, prec: Option<usize>) -> String {
     format!("{:.*}", prec.unwrap_or(4), val)
 }
 
-/// `$(angtos,value[,mode,prec])` — `value` in radians, `mode` as AUNITS.
+/// `$(angtos,value[,mode,prec])` — `value` in radians; mode 3 = radians, else degrees.
 fn angtos(val: f64, mode: i64, prec: Option<usize>) -> String {
     angle_text(val, mode, prec.unwrap_or(0), Zeros::default(), true)
 }
@@ -2094,9 +1949,6 @@ pub fn format_dt(dt: (i64, u32, u32, u32, u32, u32), fmt: &str) -> String {
     format_dt_in(dt, fmt, &DateLocale::default())
 }
 
-/// [`format_dt`] with locale names. Handles the .NET custom tokens (`d`…`dddd`,
-/// `M`…`MMMM`, `y`/`yy`/`yyyy`, `h`/`hh`, `H`/`HH`, `m`/`mm`, `s`/`ss`,
-/// `t`/`tt`, quoted literals) and the regional `%x`, `%#x`, `%c`, `%#c`, `%X`.
 pub fn format_dt_in(dt: (i64, u32, u32, u32, u32, u32), fmt: &str, loc: &DateLocale) -> String {
     let regional = match fmt {
         "%x" => Some(loc.short_date.clone()),
@@ -2265,26 +2117,16 @@ fn edtime(jd: f64, pic: &str) -> String {
 
 // ── authoring ──────────────────────────────────────────────────────────────
 
-/// A child field for [`CadDocument::set_text_field`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct NewField {
-    /// Evaluator id: `AcVar`, `AcDiesel`, `AcObjProp`, `AcExpr`, …
     pub evaluator: String,
-    /// Field code as stored, e.g. `\AcVar Date \f "yyyy-MM-dd"`.
     pub code: String,
-    /// Objects referenced by `%<\_ObjIdx n>%` markers in `code` (AcObjProp).
     pub objects: Vec<Handle>,
-    /// Cached value; `formatted_value` is the text shown in the host.
     pub value: CellValue,
-    /// Evaluation option bits: 1 open, 2 save, 4 plot, 8 eTransmit,
-    /// 16 regen, 32 on demand (63 = automatic).
     pub evaluation_option: i32,
 }
 
 impl NewField {
-    /// A field from its code and current display text. The evaluator is the
-    /// code's first word (`\AcVar Login` → `AcVar`); the cached value is a
-    /// string carrying the code's `\f "…"` format.
     pub fn new(code: impl Into<String>, display: impl Into<String>) -> Self {
         let code = code.into();
         let display = display.into();
@@ -2315,7 +2157,6 @@ impl NewField {
     }
 }
 
-/// `\AcVar Login` → `AcVar`.
 fn code_evaluator(code: &str) -> &str {
     code_word(code, 0).unwrap_or("")
 }
@@ -2324,15 +2165,12 @@ fn code_word(code: &str, n: usize) -> Option<&str> {
     code.trim().trim_start_matches('\\').split_whitespace().nth(n)
 }
 
-/// The `\f "…"` format picture of a field code (empty when absent).
 fn code_format(code: &str) -> &str {
     code.find("\\f ")
         .map(|p| code[p + 3..].trim().trim_matches('"'))
         .unwrap_or("")
 }
 
-/// Field-text checksum the reference application stores with a container:
-/// Σ (position + 1) × UTF-16 code unit of the host text.
 fn field_text_checksum(text: &str) -> f64 {
     text.encode_utf16()
         .enumerate()
@@ -2349,16 +2187,6 @@ enum TextHostKind {
 }
 
 impl CadDocument {
-    /// Attach a field to a text host (MTEXT, TEXT, ATTDEF or ATTRIB),
-    /// replacing any field it already has.
-    ///
-    /// `template` is the host's field text with `%<\_FldIdx n>%` markers for
-    /// `children[n]` and literal text between them (e.g. `A %<\_FldIdx 0>% B`).
-    /// The host's text becomes the template with every marker replaced by the
-    /// child's cached display text. Builds ACAD_XDICTIONARY → ACAD_FIELD →
-    /// TEXT → `_text` container → children and registers every field in the
-    /// drawing's FIELDLIST. Returns the container handle, or `None` when
-    /// `host` is not a text host or a marker has no child.
     pub fn set_text_field(
         &mut self,
         host: Handle,
@@ -2460,15 +2288,6 @@ impl CadDocument {
         Some(container)
     }
 
-    /// The entities a table's `*T` block holds, as the reference draws them:
-    /// one MTEXT per filled cell (row, column; a merged region as one cell)
-    /// placed by its alignment inside the cell margins, with the
-    /// row style's text height and alignment (named `_TITLE` / `_HEADER` /
-    /// `_DATA` cell styles first, the cell's own alignment when it overrides
-    /// it) and the column width less both horizontal margins; then the row
-    /// lines top to bottom, the column lines left to right (both broken where
-    /// they would cross a merged region) and a hidden point
-    /// on `Defpoints`. `extra` cells get an MTEXT even when empty (fields).
     fn table_block_plan(&self, t: &Table, extra: &[(usize, usize)]) -> (Vec<((usize, usize), crate::entities::MText)>, Vec<crate::entities::Line>) {
         use crate::entities::{Line, MText};
         use crate::types::{Color, LineWeight, Transparency, Vector3};
@@ -2558,7 +2377,7 @@ impl CadDocument {
                     continue;
                 }
                 let cell = row.cells.get(c);
-                let text = cell.and_then(|cell| cell.contents.first()).map(|ct| ct.value.text.clone()).unwrap_or_default();
+                let text = cell.and_then(|cell| cell.contents.first()).map(|ct| ct.value.display().to_string()).unwrap_or_default();
                 let has_field = cell.and_then(|cell| cell.contents.first()).is_some_and(|ct| ct.field_handle.is_some());
                 if text.is_empty() && !has_field && !extra.contains(&(r, c)) {
                     continue;
@@ -2639,11 +2458,6 @@ impl CadDocument {
         (texts, lines)
     }
 
-    /// Draw a table into its anonymous `*T` block the way the reference keeps
-    /// it (see `table_block_plan`). Each of `fields` (row, column, template,
-    /// children) puts a field into that cell: the cell's MTEXT holds it under
-    /// `ACAD_FIELD` and the cell's content refers to the same container.
-    /// Returns the containers in `fields` order.
     pub fn build_table_block(
         &mut self,
         table: Handle,
@@ -2654,8 +2468,19 @@ impl CadDocument {
         let mut out = Vec::new();
         for (r, c, template, children) in fields {
             let container = texts.get(&(r, c)).and_then(|h| self.set_text_field(*h, &template, children));
+            let display = texts.get(&(r, c)).and_then(|h| match self.get_entity(*h) {
+                Some(EntityType::MText(text)) => Some(text.value.clone()),
+                _ => None,
+            }).unwrap_or_default();
             if let (Some(container), Some(EntityType::Table(t))) = (container, self.get_entity_mut(table)) {
-                if let Some(content) = t.rows.get_mut(r).and_then(|row| row.cells.get_mut(c)).and_then(|cell| cell.contents.first_mut()) {
+                if let Some(cell) = t.rows.get_mut(r).and_then(|row| row.cells.get_mut(c)) {
+                    if cell.contents.is_empty() {
+                        cell.contents.push(crate::entities::table::CellContent::new());
+                    }
+                    let content = &mut cell.contents[0];
+                    content.content_type = crate::entities::table::TableCellContentType::Field;
+                    content.value = CellValue::text(&display);
+                    content.block_handle = None;
                     content.field_handle = Some(container);
                 }
                 t.field_handles.push(container);
@@ -2665,9 +2490,6 @@ impl CadDocument {
         Some(out)
     }
 
-    /// Bring a table's `*T` block up to date after the table changed (cells,
-    /// sizes, styles). Nothing happens when the block already shows the table;
-    /// the cells' fields stay with their texts. Returns whether it redrew.
     pub fn refresh_table_block(&mut self, table: Handle) -> bool {
         self.redraw_table_block(table, &[], false).is_some()
     }
@@ -2815,7 +2637,6 @@ impl CadDocument {
         Some(handles)
     }
 
-    /// Add fields to the document and its FIELDLIST.
     fn register_fields(&mut self, all: Vec<Field>) {
         let list = self.field_list_handle();
         if let Some(ObjectType::FieldList(l)) = self.objects.get_mut(&list) {
@@ -2836,10 +2657,6 @@ impl CadDocument {
         }
     }
 
-    /// Detach the field from a text host, keeping its current text as plain
-    /// text. Removes the ACAD_FIELD dictionary with every field under it (and
-    /// their FIELDLIST entries), and the host's extension dictionary when it
-    /// is left empty. Returns `false` when the host had no field.
     pub fn remove_text_field(&mut self, host: Handle) -> bool {
         let Some(Some(xdict)) = self.text_host(host, |common, _, _| common.xdictionary_handle)
         else {
@@ -2880,12 +2697,6 @@ impl CadDocument {
         true
     }
 
-    /// Give the ATTRIBs of `insert` the fields of their ATTDEFs, as the
-    /// reference application does on insertion: an ATTRIB whose ATTDEF (same
-    /// tag in the block definition) hosts a field gets a copy of it — a block
-    /// placeholder `Object(?BlockRefId,1)` then names the INSERT as
-    /// `Object(%<\_ObjIdx 0>%,1)` — and shows its evaluated text. Returns the
-    /// ATTRIBs that received a field.
     pub fn attach_attribute_fields(
         &mut self,
         insert: Handle,
@@ -2894,9 +2705,6 @@ impl CadDocument {
         self.attach_attribute_fields_mapped(insert, ctx, &|code: &str| code.to_string())
     }
 
-    /// [`Self::attach_attribute_fields`] with each field code passed through
-    /// `map` first — a sheet set view label turns its `?View.` / `?Sheet.`
-    /// placeholders into the placed view's and sheet's navigation fields.
     pub fn attach_attribute_fields_mapped(
         &mut self,
         insert: Handle,
@@ -2970,26 +2778,11 @@ impl CadDocument {
             .collect()
     }
 
-    /// What the reference application does to fields when it plots: every
-    /// field evaluated on plot (evaluation option bit 4) is re-evaluated with
-    /// [`FieldContext::plotting`] true — `PlotDate` takes the plot time — and
-    /// its value is stored in the field object and the host text. Fields
-    /// evaluated only on demand (a `Date` field) keep their value. `ctx` is the
-    /// host's ordinary context. Returns the hosts whose text changed.
     pub fn stamp_plot_fields(&mut self, ctx: &dyn FieldContext) -> Vec<Handle> {
         let plot = Plotting(ctx);
         self.restamp_fields(&plot, ctx, &|_, f| f.evaluation_option & 4 != 0, None).0
     }
 
-    /// What the reference application does to fields on an evaluation event:
-    /// `event` is an evaluation option bit — 1 open, 2 save, 16 regen, 32 an
-    /// explicit update (UPDATEFIELD) — and every field whose own evaluation
-    /// option holds it is re-evaluated, its value stored in the field object
-    /// and the host text. A `Date` field (option 32) keeps its value through
-    /// open, save and regen; `PlotDate` only changes when plotting. The caller
-    /// masks `event` with FIELDEVAL. `hosts` limits the update to those host
-    /// entities. Returns the hosts whose text changed and how many fields
-    /// the hosts hold.
     pub fn update_fields(
         &mut self,
         ctx: &dyn FieldContext,
@@ -2999,16 +2792,10 @@ impl CadDocument {
         self.restamp_fields(ctx, ctx, &|_, f| f.evaluation_option & event != 0, hosts)
     }
 
-    /// Re-evaluate the sheet set (`AcSm`) fields — after a sheet set changed —
-    /// storing their values in the field objects and host texts, as the
-    /// reference does when it updates fields. Returns the hosts whose text changed.
     pub fn refresh_sheet_set_fields(&mut self, ctx: &dyn FieldContext) -> Vec<Handle> {
         self.restamp_fields(ctx, ctx, &|kid, _| kid.evaluator.starts_with("AcSm"), None).0
     }
 
-    /// Re-evaluate (with `eval_ctx`) the fields `pick` selects — of the
-    /// `only` hosts when given — and store the changed values. Returns the
-    /// hosts whose text changed and the number of fields the hosts hold.
     fn restamp_fields(
         &mut self,
         eval_ctx: &dyn FieldContext,
@@ -3085,8 +2872,6 @@ impl CadDocument {
         (changed, found)
     }
 
-    /// Owner walk over objects *and* fields (`object_owner` does not know
-    /// FIELD objects).
     fn object_or_field_reaches(&self, start: Handle, target: Handle) -> bool {
         let mut cur = start;
         for _ in 0..16 {
@@ -3105,7 +2890,6 @@ impl CadDocument {
         false
     }
 
-    /// The drawing's FIELDLIST (NOD entry `ACAD_FIELDLIST`), created on demand.
     fn field_list_handle(&mut self) -> Handle {
         let nod = self.header.named_objects_dict_handle;
         let in_nod = match self.objects.get(&nod) {
@@ -3137,8 +2921,6 @@ impl CadDocument {
         h
     }
 
-    /// Run `f` on a text host's common data and text. ATTRIBs are found inside
-    /// their INSERT.
     fn text_host<R>(
         &mut self,
         host: Handle,
@@ -3173,7 +2955,6 @@ impl CadDocument {
     }
 }
 
-/// A child FIELD of `owner` (a `_text` container) from its description.
 fn child_field(child: NewField, handle: Handle, owner: Handle) -> Field {
     let mut child_values = Vec::new();
     if child.evaluator.starts_with("AcVar") {
@@ -3320,16 +3101,11 @@ fn child_field(child: NewField, handle: Handle, owner: Handle) -> Field {
     }
 }
 
-/// The host text for a container template: every `%<\_FldIdx n>%` replaced by
-/// `children[n]`'s display text (escaped for MTEXT). `None` when a marker has
-/// no child.
 fn template_display(template: &str, children: &[NewField], mtext: bool) -> Option<String> {
     let shown: Vec<&str> = children.iter().map(|c| c.value.display()).collect();
     fill_template(template, &shown, mtext)
 }
 
-/// `template` with every `%<\_FldIdx n>%` replaced by `shown[n]` (escaped
-/// for MTEXT). `None` when a marker has no text.
 fn fill_template<S: AsRef<str>>(template: &str, shown: &[S], mtext: bool) -> Option<String> {
     let mut out = String::new();
     let mut rest = template;
@@ -3346,10 +3122,6 @@ fn fill_template<S: AsRef<str>>(template: &str, shown: &[S], mtext: bool) -> Opt
     Some(out)
 }
 
-/// Byte ranges of each field's shown value in `text`, the stored text of
-/// `host` (its container template filled with the fields' cached values):
-/// where the host draws its field background. `None` when the host holds no
-/// field or `text` no longer matches the template.
 pub fn field_spans(
     doc: &CadDocument,
     host: Handle,
@@ -3376,7 +3148,6 @@ pub fn field_spans(
     (out == text).then_some(spans)
 }
 
-/// A field's stored value, as last evaluated (the value, else its string).
 fn cached_value(doc: &CadDocument, field: Handle) -> String {
     match doc.objects.get(&field) {
         Some(ObjectType::Field(stored)) => match stored.value.display() {
@@ -3387,7 +3158,6 @@ fn cached_value(doc: &CadDocument, field: Handle) -> String {
     }
 }
 
-/// The stored values of a container's child fields, in `_FldIdx` order.
 fn cached_children(doc: &CadDocument, container: &FieldDef) -> Vec<String> {
     let mut kids: Vec<&FieldDef> =
         doc.fields.values().filter(|f| f.owner == container.handle).collect();
@@ -3395,10 +3165,6 @@ fn cached_children(doc: &CadDocument, container: &FieldDef) -> Vec<String> {
     kids.iter().map(|kid| cached_value(doc, kid.handle)).collect()
 }
 
-/// The text a table cell shows for its field `field`: a formula (`AcExpr`,
-/// which reads other cells) is evaluated live, as the reference recomputes
-/// it when the table changes; any other field shows its stored value, which
-/// only an evaluation event ([`CadDocument::update_fields`]) changes.
 pub fn cell_field_text(
     doc: &CadDocument,
     field: Handle,
@@ -3420,7 +3186,6 @@ pub fn cell_field_text(
     fill_template(&def.code, &cached_children(doc, def), false)
 }
 
-/// A host context that is plotting.
 struct Plotting<'a>(&'a dyn FieldContext);
 
 impl FieldContext for Plotting<'_> {
@@ -3448,11 +3213,14 @@ impl FieldContext for Plotting<'_> {
     fn date_locale(&self) -> DateLocale {
         self.0.date_locale()
     }
+    fn sheet_sets(
+        &self,
+        f: &mut dyn FnMut(&crate::sheet_set::SheetSetDatabase) -> Option<String>,
+    ) -> Option<String> {
+        self.0.sheet_sets(f)
+    }
 }
 
-/// The cached value of a field evaluated on plot: `PlotDate` keeps the plot
-/// time as a date value (SYSTEMTIME, format `%x` when the code has none), as
-/// the reference application stores it; other fields keep their text.
 fn plot_value(field: &FieldDef, shown: &str, jd: f64) -> CellValue {
     let format = code_format(&field.code);
     let mut v = CellValue::text(shown);
@@ -3477,11 +3245,6 @@ fn plot_value(field: &FieldDef, shown: &str, jd: f64) -> CellValue {
     v
 }
 
-/// The reference Field dialog's BlockPlaceholder "Block reference property"
-/// list (block editor), in its order: label, property and default `\f`
-/// picture. The code is `\AcObjProp.16.2 Object(?BlockRefId,1).<property>
-/// \f "<picture>"` (`Object(?BlockRefId)` with "Display value for block
-/// reference" cleared); the temporary value is the property name.
 pub const BLOCK_PLACEHOLDER_PROPERTIES: [(&str, &str, &str); 17] = [
     ("Block Unit", "InsUnits", "%tc4"),
     ("Color", "TrueColor", "%tc4"),
@@ -3502,8 +3265,6 @@ pub const BLOCK_PLACEHOLDER_PROPERTIES: [(&str, &str, &str); 17] = [
     ("Unit factor", "InsUnitsFactor", "%lu6"),
 ];
 
-/// The reference Field dialog's angle formats, in its order: label and `\f`
-/// picture (none for "(none)"). A chosen precision N appends `%prN`.
 pub const ANGLE_FORMATS: [(&str, &str); 7] = [
     ("(none)", ""),
     ("Current units", "%au5"),
@@ -3514,13 +3275,9 @@ pub const ANGLE_FORMATS: [(&str, &str); 7] = [
     ("Surveyor's units", "%au4"),
 ];
 
-/// The reference Field dialog's lineweight formats: label and `\f` picture.
 pub const LINEWEIGHT_FORMATS: [(&str, &str); 2] =
     [("Millimeters", "%.2f mm%lw1"), ("Inches", "%.3f\"%lw2")];
 
-/// The `PE_URL` XDATA the reference application keeps on a hyperlink field
-/// (`\AcVar \href "url#location#text#flags"`): the address, then a group with
-/// the text and the location (each only when present) and the flags.
 fn hyperlink_xdata(code: &str) -> Option<crate::xdata::ExtendedData> {
     use crate::xdata::{ExtendedData, ExtendedDataRecord, XDataValue};
     let rest = code.split_once("\\href")?.1.trim_start().strip_prefix('"')?;
@@ -3545,12 +3302,6 @@ fn hyperlink_xdata(code: &str) -> Option<crate::xdata::ExtendedData> {
     Some(xdata)
 }
 
-/// Evaluate one field code without any field objects in the document — e.g.
-/// for a live preview. Accepts the stored child code
-/// (`\AcVar Date \f "yyyy-MM-dd"`, `\AcDiesel $(getvar,dimscale)`) or the same
-/// wrapped in `%<…>%`. `objects` are the AcObjProp references named by
-/// `%<\_ObjIdx n>%`; a code may instead name its object with `%<\_ObjId n>%`,
-/// `n` being the handle value in decimal.
 pub fn evaluate_code(
     doc: &CadDocument,
     code: &str,
@@ -3602,7 +3353,6 @@ mod tests {
     }
 }
 
-/// The MTEXT attachment for a table cell alignment (1 top left … 9 bottom right).
 fn attachment(align: i32) -> crate::entities::AttachmentPoint {
     use crate::entities::AttachmentPoint as A;
     match align {

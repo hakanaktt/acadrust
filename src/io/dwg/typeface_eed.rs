@@ -1,18 +1,6 @@
-//! Encode / decode the TrueType typeface a STYLE record carries in `ACAD` EED.
-//!
-//! STYLE records have no native field for the typeface of a TrueType font;
-//! it is stored as extended data under the `ACAD` application, mirroring the
-//! DXF XDATA form `1001 ACAD / 1000 <typeface> / 1071 <font flags>`.
-//!
-//! Same raw EED data-item layout as [`super::annotative_eed`]: code `0`
-//! string (R2007+: 2-byte char count then UTF-16LE; earlier: 1-byte length,
-//! 2-byte codepage, then single-byte chars) and code `71` long (4 bytes LE).
 
-/// Pitch-and-family byte of a regular, default-charset TrueType face — what
-/// the reference writes for a plain typeface.
 pub(crate) const DEFAULT_FONT_FLAGS: i32 = 34;
 
-/// Build the `ACAD` EED data-item bytes for `typeface`.
 pub(crate) fn encode(wide: bool, typeface: &str, flags: i32) -> Vec<u8> {
     let mut b = vec![0];
     if wide {
@@ -32,8 +20,6 @@ pub(crate) fn encode(wide: bool, typeface: &str, flags: i32) -> Vec<u8> {
     b
 }
 
-/// The typeface (first string) and font flags (first long) of an `ACAD` EED
-/// data-item block, or `None` when it holds no string.
 pub(crate) fn decode(bytes: &[u8], wide: bool) -> Option<(String, i32)> {
     let mut i = 0usize;
     let mut typeface: Option<String> = None;

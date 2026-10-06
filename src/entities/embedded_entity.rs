@@ -21,9 +21,6 @@ pub enum EmbeddedEntity {
     Region(Region),
     Ray(Ray),
     XLine(XLine),
-    /// 2D or 3D polyline profile, which the modeler keeps as a wire body:
-    /// the entity type (15 or 16) and the body's modeler data instead of
-    /// an entity body.
     Body {
         type_code: i32,
         acis_data: AcisData,

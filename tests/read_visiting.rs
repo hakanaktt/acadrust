@@ -2,8 +2,8 @@
 
 use std::io::Cursor;
 
-use opencadcodec::entities::{EntityType, Line};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter};
+use acadrust::entities::{EntityType, Line};
+use acadrust::{CadDocument, DwgReader, DwgWriter};
 
 #[test]
 fn read_visiting_drops_model_lines_from_the_document() {

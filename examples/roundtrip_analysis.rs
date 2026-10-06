@@ -18,9 +18,9 @@ use std::collections::BTreeMap;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
-use opencadcodec::entities::EntityType;
-use opencadcodec::types::Handle;
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
+use acadrust::entities::EntityType;
+use acadrust::types::Handle;
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  DISK I/O HELPERS
@@ -65,7 +65,7 @@ fn entity_type_counts(doc: &CadDocument) -> BTreeMap<String, usize> {
     map
 }
 
-fn normalize_common(common: &mut opencadcodec::entities::EntityCommon) {
+fn normalize_common(common: &mut acadrust::entities::EntityCommon) {
     common.handle = Handle::NULL;
     common.owner_handle = Handle::NULL;
     common.reactors.clear();
@@ -436,8 +436,8 @@ fn compare_documents(orig: &CadDocument, rt: &CadDocument, format: &str) -> Loss
 
 fn compare_header(
     report: &mut LossReport,
-    orig: &opencadcodec::document::HeaderVariables,
-    rt: &opencadcodec::document::HeaderVariables,
+    orig: &acadrust::document::HeaderVariables,
+    rt: &acadrust::document::HeaderVariables,
 ) {
     macro_rules! cmp {
         ($field:ident) => {
@@ -816,7 +816,7 @@ fn deep_polyface_mesh(orig: &CadDocument, rt: &CadDocument) {
     // Build a handle→mesh map for rt so we can match by handle when possible.
     let rt_by_handle: std::collections::HashMap<
         u64,
-        &opencadcodec::entities::polyface_mesh::PolyfaceMesh,
+        &acadrust::entities::polyface_mesh::PolyfaceMesh,
     > = rt_meshes
         .iter()
         .map(|m| (m.common.handle.value(), *m))
@@ -1181,8 +1181,8 @@ fn deep_notifications(rt: &CadDocument, format: &str) {
         .filter(|n| {
             matches!(
                 n.notification_type,
-                opencadcodec::notification::NotificationType::Error
-                    | opencadcodec::notification::NotificationType::Warning
+                acadrust::notification::NotificationType::Error
+                    | acadrust::notification::NotificationType::Warning
             ) && !n.message.starts_with("Reading DWG file")
                 && !n.message.starts_with("AC1021")
                 && !n.message.starts_with("AC18")

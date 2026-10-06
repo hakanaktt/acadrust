@@ -1,7 +1,7 @@
 //! DXF round-trip of the current table / multileader style header variables
 //! ($CTABLESTYLE / $CMLEADERSTYLE), plus the existing text/dim/mline ones.
 
-use opencadcodec::{CadDocument, DxfReader, DxfWriter};
+use acadrust::{CadDocument, DxfReader, DxfWriter};
 
 #[test]
 fn dxf_roundtrips_current_style_header_vars() {

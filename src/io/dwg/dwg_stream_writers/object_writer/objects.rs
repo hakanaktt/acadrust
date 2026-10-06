@@ -266,10 +266,6 @@ fn encode_xrecord_entries(
     output
 }
 
-/// Flatten a [`Matrix4`](crate::types::Matrix4) into 12 doubles in column-major
-/// 4×3 order (X axis, Y axis, Z axis, translation); the bottom row is dropped.
-/// DWG stores the spatial-filter transforms in the same column-major layout as
-/// DXF code 40.
 fn matrix_to_column_major(m: &crate::types::Matrix4) -> [f64; 12] {
     let mut out = [0.0; 12];
     let mut i = 0;
@@ -338,8 +334,6 @@ pub(crate) fn object_class_names(object: &ObjectType) -> Vec<std::borrow::Cow<'_
     vec![Cow::Borrowed(name)]
 }
 
-/// Table style flag bit 8 is found in older files but never written back:
-/// a re-save of such a style stores the flags without it.
 const STALE_TABLE_STYLE_FLAG: i16 = 8;
 
 impl<'a> DwgObjectWriter<'a> {
@@ -373,13 +367,19 @@ impl<'a> DwgObjectWriter<'a> {
         if self.lacks_object_class(obj) {
             return;
         }
-        let preserved_handle = match obj {
-            ObjectType::DynamicBlock(value) => Some(value.handle),
-            ObjectType::Associative(value) => Some(value.handle),
+        let preserved_record = match obj {
+            ObjectType::DynamicBlock(value) => Some((value.handle, value.xdictionary_handle)),
+            ObjectType::Associative(value) => Some((value.handle, value.xdictionary_handle)),
             _ => None,
         };
-        if let Some(handle) = preserved_handle {
-            if self.document.original_objects.get(&handle) == Some(obj) {
+        if let Some((handle, source_dictionary)) = preserved_record {
+            let effective_dictionary = source_dictionary.or_else(|| {
+                self.extension_dictionary_handle(handle)
+                    .filter(|dictionary| self.document.objects.contains_key(dictionary))
+            });
+            if self.document.original_objects.get(&handle) == Some(obj)
+                && effective_dictionary == source_dictionary
+            {
                 if let Some((_, raw)) = self.document.raw_records.get(&handle.value()) {
                     if raw.version == self.dxf_version {
                         let raw = raw.clone();
@@ -1309,9 +1309,6 @@ impl<'a> DwgObjectWriter<'a> {
         self.write_named_table_cell_style(&value);
     }
 
-    /// The base "Table" cell style of a style without one: only the margins
-    /// come from the style; content, fill and borders are left to the named
-    /// cell styles.
     fn write_default_modern_table_cell_style(&mut self, value: &TableStyle) {
         let cell_style = TableCellStyleData {
             style_type: 5,

@@ -11,10 +11,10 @@
 
 use std::io::Cursor;
 
-use opencadcodec::entities::*;
-use opencadcodec::tables::BlockRecord;
-use opencadcodec::types::DxfVersion;
-use opencadcodec::{CadDocument, DwgReader, DwgWriter};
+use acadrust::entities::*;
+use acadrust::tables::BlockRecord;
+use acadrust::types::DxfVersion;
+use acadrust::{CadDocument, DwgReader, DwgWriter};
 
 fn dwg_roundtrip(doc: &CadDocument) -> CadDocument {
     let bytes = DwgWriter::write_to_vec(doc).expect("DWG write failed");

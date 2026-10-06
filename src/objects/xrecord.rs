@@ -381,7 +381,7 @@ pub struct XRecordSection {
 ///
 /// # Example
 /// ```ignore
-/// use opencadcodec::objects::XRecord;
+/// use acadrust::objects::XRecord;
 ///
 /// let mut xrecord = XRecord::new();
 /// xrecord.add_string(1, "Custom Data");

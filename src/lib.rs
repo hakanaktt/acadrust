@@ -1,4 +1,4 @@
-//! # opencadcodec
+//! # acadrust
 //!
 //! A pure Rust library for reading, writing, and inspecting CAD files in DXF
 //! (ASCII and binary) and native binary DWG formats. DXF support spans R12
@@ -27,16 +27,16 @@
 //!
 //! ```toml
 //! [dependencies]
-//! opencadcodec = { version = "0.6.0", features = ["serde", "import"] }
+//! acadrust = { version = "0.6.0", features = ["serde", "import"] }
 //! ```
 //!
 //! ## Quick Start — DXF
 //!
 //! ```rust,no_run
-//! use opencadcodec::DxfReader;
-//! use opencadcodec::DxfWriter;
+//! use acadrust::DxfReader;
+//! use acadrust::DxfWriter;
 //!
-//! # fn main() -> opencadcodec::Result<()> {
+//! # fn main() -> acadrust::Result<()> {
 //! let doc = DxfReader::from_file("input.dxf")?.read()?;
 //! println!("Entities: {}", doc.entities().count());
 //! DxfWriter::new(&doc).write_to_file("output.dxf")?;
@@ -47,9 +47,9 @@
 //! ## Quick Start — DWG
 //!
 //! ```rust,no_run
-//! use opencadcodec::{CadDocument, Color, DwgReader, DwgWriter, EntityType, Line};
+//! use acadrust::{CadDocument, Color, DwgReader, DwgWriter, EntityType, Line};
 //!
-//! # fn main() -> opencadcodec::Result<()> {
+//! # fn main() -> acadrust::Result<()> {
 //! let mut reader = DwgReader::from_file("input.dwg")?;
 //! let doc = reader.read()?;
 //! println!("Entities: {}", doc.entities().count());
@@ -71,9 +71,9 @@
 //! default.
 //!
 //! ```rust,no_run
-//! use opencadcodec::{DxfReader, DxfReaderConfiguration};
+//! use acadrust::{DxfReader, DxfReaderConfiguration};
 //!
-//! # fn main() -> opencadcodec::Result<()> {
+//! # fn main() -> acadrust::Result<()> {
 //! let config = DxfReaderConfiguration { failsafe: true, ..Default::default() };
 //! let outcome = DxfReader::from_file("drawing.dxf")?
 //!     .with_configuration(config)
@@ -90,10 +90,10 @@
 //! OBJ, glTF/GLB, and FBX by extension and converts them to a [`CadDocument`].
 //!
 //! ```rust,no_run
-//! # fn main() -> opencadcodec::Result<()> {
+//! # fn main() -> acadrust::Result<()> {
 //! # #[cfg(feature = "import")]
 //! # {
-//! use opencadcodec::{import_file, ImportConfig};
+//! use acadrust::{import_file, ImportConfig};
 //!
 //! let doc = import_file("model.glb", &ImportConfig::default())?;
 //! println!("Imported {} entities", doc.entities().count());
@@ -108,10 +108,10 @@
 //! be serialized to JSON using your chosen JSON crate.
 //!
 //! ```rust,no_run
-//! # fn main() -> opencadcodec::Result<()> {
+//! # fn main() -> acadrust::Result<()> {
 //! # #[cfg(feature = "serde")]
 //! # {
-//! use opencadcodec::{CadDocument, DxfReader};
+//! use acadrust::{CadDocument, DxfReader};
 //!
 //! let doc = DxfReader::from_file("drawing.dxf")?.read()?;
 //! let json = serde_json::to_string(&doc).unwrap();

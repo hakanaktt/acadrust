@@ -334,12 +334,6 @@ impl VisualStyle {
         ]
     }
 
-    /// Complete a style read from a pre-R2010 record with the R2010+
-    /// properties a pre-R2010 file keeps in the style's `ACAD_XREC_ROUNDTRIP`
-    /// record: `RTVSPost2010Prop<n>` values (colors as `…ColorIndex` and
-    /// `…ColorRGB`) with their `RTVSPost2010PropOp<n>` flags, and
-    /// `RTVSPropertyOp<n>` flags for every property. Returns whether the
-    /// record held any of them.
     pub(crate) fn restore_post_2010_properties(
         &mut self,
         entries: &[crate::objects::XRecordEntry],
@@ -435,10 +429,6 @@ impl VisualStyle {
     }
 }
 
-/// Before an R2004 or R2007 save, keep each visual style's R2010+ properties
-/// in its `ACAD_XREC_ROUNDTRIP` extension record, as pre-R2010 files do.
-/// A color is stored as an ACI index and an RGB value: true colors as their
-/// nearest ACI and 24-bit RGB, other colors as their index and `0xFF000000`.
 pub(crate) fn store_visual_style_roundtrip(document: &mut crate::document::CadDocument) {
     use crate::objects::{ObjectType, XRecordEntry, XRecordValue};
     use crate::types::DxfVersion;
@@ -550,8 +540,6 @@ pub(crate) fn store_visual_style_roundtrip(document: &mut crate::document::CadDo
     }
 }
 
-/// Fold the R2010+ properties that pre-R2010 files keep in each visual
-/// style's `ACAD_XREC_ROUNDTRIP` extension record into the style.
 pub(crate) fn restore_visual_style_roundtrip(document: &mut crate::document::CadDocument) {
     use crate::objects::ObjectType;
     let records: Vec<_> = document

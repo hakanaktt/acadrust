@@ -12,10 +12,10 @@
 
 use std::io::Cursor;
 
-use opencadcodec::entities::{EntityType, Line};
-use opencadcodec::tables::Layer;
-use opencadcodec::types::{Color, DxfVersion};
-use opencadcodec::{CadDocument, DxfReader, DxfWriter};
+use acadrust::entities::{EntityType, Line};
+use acadrust::tables::Layer;
+use acadrust::types::{Color, DxfVersion};
+use acadrust::{CadDocument, DxfReader, DxfWriter};
 
 const ORANGE: Color = Color::Rgb {
     r: 255,

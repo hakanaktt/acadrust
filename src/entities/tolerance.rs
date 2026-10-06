@@ -34,8 +34,8 @@ use crate::types::{BoundingBox3D, Color, Handle, LineWeight, Transparency, Vecto
 /// # Example
 ///
 /// ```ignore
-/// use opencadcodec::entities::Tolerance;
-/// use opencadcodec::types::Vector3;
+/// use acadrust::entities::Tolerance;
+/// use acadrust::types::Vector3;
 ///
 /// let mut tol = Tolerance::new();
 /// tol.insertion_point = Vector3::new(10.0, 10.0, 0.0);

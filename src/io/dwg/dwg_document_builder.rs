@@ -253,7 +253,7 @@ struct Pass2Chunk {
     pending: PendingPolylines,
     pending_attributes: HashMap<u64, Vec<AttributeEntity>>,
     failures: Vec<RecordFailure>,
-    /// Source records retained for guarded passthrough or debug bisection.
+    /// (handle, type code, merged bytes, handle bits) — only with ACADRUST_RAW_ALL.
     raw_records: Vec<(u64, i16, Vec<u8>, i64)>,
 }
 
@@ -478,13 +478,6 @@ impl DwgDocumentBuilder {
     /// 2. Read entities and objects → resolve handle references
     ///
     /// Returns collected notifications (skipped records, warnings).
-    /// Give every BLOCK marker the name and base point of the record that
-    /// owns it.
-    ///
-    /// The marker and the `BlockRecord` are two views of one definition, and
-    /// a consumer that reads both must not see them disagree. Pre-R2010
-    /// anonymous copies of a dynamic block keep the source block's name on
-    /// the marker; the record's name is the one inserts resolve to.
     fn hydrate_block_markers(document: &mut CadDocument) {
         let records: Vec<(Handle, String, crate::types::Vector3)> = document
             .block_records
@@ -500,7 +493,6 @@ impl DwgDocumentBuilder {
         }
     }
 
-    /// The name a BLOCK begin marker stores, read straight from its record.
     fn block_marker_name(&self, handle: u64) -> Option<String> {
         let offset = self.obj_reader.offset_for(handle)?;
         let offset = usize::try_from(offset).ok()?;
@@ -516,10 +508,6 @@ impl DwgDocumentBuilder {
         .ok()
     }
 
-    /// Number the active layout's viewports 1, 2, … in entity order (1 is
-    /// the overall paper-space viewport), as the DXF writer does. DWG keeps
-    /// no viewport IDs; a consumer telling the overall viewport from the
-    /// authored ones needs them (#67). Other layouts keep 0.
     fn number_active_viewports(document: &mut CadDocument) {
         let Some(paper) = document.block_records.get("*Paper_Space") else {
             return;
@@ -2669,7 +2657,7 @@ impl DwgDocumentBuilder {
                 let Some(index) = blocks.iter().position(|(app, _)| *app == acad) else {
                     continue;
                 };
-                let Some((typeface, _)) =
+                let Some((typeface, flags)) =
                     crate::io::dwg::typeface_eed::decode(&blocks[index].1, wide)
                 else {
                     continue;
@@ -2677,6 +2665,7 @@ impl DwgDocumentBuilder {
                 blocks.remove(index);
                 if let Some(style) = document.text_styles.iter_mut().find(|s| s.handle == handle) {
                     style.true_type_font = typeface;
+                    style.true_type_font_flags = flags;
                 }
             }
         }
@@ -3187,7 +3176,6 @@ impl DwgDocumentBuilder {
             .filter(|(handle, _)| document.raw_records.contains_key(&handle.value()))
             .map(|(handle, object)| (*handle, object.clone()))
             .collect();
-
         if perf {
             eprintln!(
                 "[perf] dwg-build repair={:.1}ms",
@@ -7234,7 +7222,6 @@ mod tests {
         );
     }
 
-    /// DWG spatial-filter transforms share DXF's column-major 4×3 layout.
     #[test]
     fn spatial_filter_matrix_is_column_major() {
         let v = [
@@ -7444,6 +7431,8 @@ fn decode_section_view_style(
     })
 }
 
+/// DWG stores the spatial-filter transforms row-major (unlike DXF code 40,
+/// which is column-major).
 /// Unique block record names for `Table<BlockRecord>`, which compares names
 /// case-insensitively.
 ///
@@ -7595,8 +7584,6 @@ mod dedupe_block_names_tests {
     }
 }
 
-/// DWG stores the spatial-filter transforms in the same column-major 4×3
-/// layout as DXF code 40 (X axis, Y axis, Z axis, translation).
 fn matrix_from_column_major(v: &[f64; 12]) -> crate::types::Matrix4 {
     crate::types::Matrix4 {
         m: [

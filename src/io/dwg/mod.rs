@@ -7,7 +7,7 @@
 //! # Reading
 //!
 //! ```rust,ignore
-//! use opencadcodec::DwgReader;
+//! use acadrust::DwgReader;
 //!
 //! let doc = DwgReader::from_file("drawing.dwg")?.read()?;
 //! ```
@@ -15,7 +15,7 @@
 //! # Writing
 //!
 //! ```rust,ignore
-//! use opencadcodec::DwgWriter;
+//! use acadrust::DwgWriter;
 //!
 //! DwgWriter::write_to_file("output.dwg", &doc)?;
 //! ```

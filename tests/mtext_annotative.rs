@@ -9,9 +9,9 @@
 
 use std::io::Cursor;
 
-use opencadcodec::entities::{EntityType, MText, MultiLeader};
-use opencadcodec::types::{DxfVersion, Vector3};
-use opencadcodec::{CadDocument, DxfReader, DxfWriter};
+use acadrust::entities::{EntityType, MText, MultiLeader};
+use acadrust::types::{DxfVersion, Vector3};
+use acadrust::{CadDocument, DxfReader, DxfWriter};
 
 fn dxf_roundtrip(doc: &CadDocument) -> CadDocument {
     let bytes = DxfWriter::new(doc)

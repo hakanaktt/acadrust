@@ -1,12 +1,12 @@
-use opencadcodec::entities::acis::{SatDocument, SatPointer, SatToken, Sense, Sidedness};
-use opencadcodec::entities::dimension::DimensionLinear;
-use opencadcodec::entities::hatch::{
+use acadrust::entities::acis::{SatDocument, SatPointer, SatToken, Sense, Sidedness};
+use acadrust::entities::dimension::DimensionLinear;
+use acadrust::entities::hatch::{
     BoundaryEdge, BoundaryPath, BoundaryPathFlags, LineEdge, PolylineEdge,
 };
-use opencadcodec::entities::mesh::Mesh;
-use opencadcodec::entities::mline::MLine;
-use opencadcodec::entities::multileader::MultiLeader;
-use opencadcodec::entities::polyface_mesh::PolyfaceMesh;
+use acadrust::entities::mesh::Mesh;
+use acadrust::entities::mline::MLine;
+use acadrust::entities::multileader::MultiLeader;
+use acadrust::entities::polyface_mesh::PolyfaceMesh;
 /// Generate DWG files for every supported entity type × every DWG version.
 ///
 /// Output structure:  target/entities_dwg/<VERSION>/entity_<VERSION>_<TYPE>.dwg
@@ -16,9 +16,9 @@ use opencadcodec::entities::polyface_mesh::PolyfaceMesh;
 ///
 /// Some entity types are only available from certain versions onwards.
 /// MESH and MULTILEADER require class-based type codes (R2000+).
-use opencadcodec::entities::*;
-use opencadcodec::types::{DxfVersion, Vector2, Vector3};
-use opencadcodec::{BlockRecord, CadDocument, DwgWriter, TableEntry};
+use acadrust::entities::*;
+use acadrust::types::{DxfVersion, Vector2, Vector3};
+use acadrust::{BlockRecord, CadDocument, DwgWriter, TableEntry};
 
 /// All DWG versions to test
 const VERSIONS: &[(DxfVersion, &str)] = &[

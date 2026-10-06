@@ -23,7 +23,7 @@ use crate::types::Handle;
 /// # Example
 ///
 /// ```ignore
-/// use opencadcodec::objects::DictionaryVariable;
+/// use acadrust::objects::DictionaryVariable;
 ///
 /// let var = DictionaryVariable::new("CTAB", "Model");
 /// assert_eq!(var.value, "Model");

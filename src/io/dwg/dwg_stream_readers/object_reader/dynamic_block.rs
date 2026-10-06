@@ -133,15 +133,15 @@ fn read_action(reader: &mut DwgMergedReader) -> BlockAction {
         dependencies.push(Handle::from(reader.read_handle()));
     }
     let parameter_count = safe_count(reader.read_bit_long());
-    let mut parameter_ids = Vec::with_capacity(parameter_count as usize);
+    let mut action_ids = Vec::with_capacity(parameter_count as usize);
     for _ in 0..parameter_count {
-        parameter_ids.push(reader.read_bit_long());
+        action_ids.push(reader.read_bit_long());
     }
     BlockAction {
         element,
         display_location,
         dependencies,
-        parameter_ids,
+        action_ids,
     }
 }
 
@@ -219,8 +219,6 @@ fn read_history_node_base(reader: &mut DwgMergedReader) -> SolidHistoryNodeBase 
     }
 }
 
-/// Embedded construction entity of a history node: type, then (unless the
-/// type is 0) its body length in bits and the body itself.
 fn read_history_entity(
     reader: &mut DwgMergedReader,
     version: DwgVersion,

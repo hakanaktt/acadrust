@@ -1,6 +1,6 @@
-use opencadcodec::tables::Layer;
-use opencadcodec::types::{Color, DxfVersion};
-use opencadcodec::{CadDocument, DxfWriter};
+use acadrust::tables::Layer;
+use acadrust::types::{Color, DxfVersion};
+use acadrust::{CadDocument, DxfWriter};
 
 fn layer_table(text: &str) -> &str {
     let start = text.find("TABLE\r\n  2\r\nLAYER\r\n").expect("LAYER table");

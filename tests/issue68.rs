@@ -2,9 +2,9 @@
 //! `UNKNOWN` and leaves the default MLEADERSTYLE pointing at a text style
 //! handle the input reassigned to another record.
 
-use opencadcodec::objects::ObjectType;
-use opencadcodec::types::DxfVersion;
-use opencadcodec::{DxfReader, DxfWriter};
+use acadrust::objects::ObjectType;
+use acadrust::types::DxfVersion;
+use acadrust::{DxfReader, DxfWriter};
 
 /// The reporter's minimal R12 file: handle-less STYLE records, no entities.
 const R12_REPRO: &str = "tests/issue68/r12_mleaderstyle_repro.dxf";

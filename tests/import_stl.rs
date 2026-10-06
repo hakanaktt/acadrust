@@ -2,10 +2,10 @@
 
 #![cfg(feature = "import")]
 
-use opencadcodec::entities::EntityType;
-use opencadcodec::io::import::stl::StlImporter;
-use opencadcodec::io::import::ImportConfig;
-use opencadcodec::types::Vector3;
+use acadrust::entities::EntityType;
+use acadrust::io::import::stl::StlImporter;
+use acadrust::io::import::ImportConfig;
+use acadrust::types::Vector3;
 
 // ─── ASCII STL tests ─────────────────────────────────────────────────────
 
@@ -245,12 +245,12 @@ fn test_stl_roundtrip_through_dxf() {
 
     // Write to in-memory DXF
     let mut dxf_buf = Vec::new();
-    opencadcodec::DxfWriter::new(&doc)
+    acadrust::DxfWriter::new(&doc)
         .write_to_writer(&mut dxf_buf)
         .expect("DXF write should succeed");
 
     // Read back
-    let doc2 = opencadcodec::DxfReader::from_reader(std::io::Cursor::new(dxf_buf))
+    let doc2 = acadrust::DxfReader::from_reader(std::io::Cursor::new(dxf_buf))
         .expect("DXF reader creation should succeed")
         .read()
         .expect("DXF read should succeed");

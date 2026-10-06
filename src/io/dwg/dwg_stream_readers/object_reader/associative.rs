@@ -6,7 +6,6 @@ use crate::types::{DxfVersion, Handle};
 
 use super::safe_count;
 
-/// Read the curve an edge action parameter stores after its type code.
 fn read_edge_curve(
     reader: &mut DwgMergedReader,
     curve_type: i32,
@@ -490,9 +489,6 @@ fn read_array_action_body(
     }
 }
 
-/// One item of an array action body: class version, location (BL x3),
-/// flags, a matrix (flag 4) or a point, the relative matrix (flag 2), the
-/// item's entity and, with flag 0x10, a second handle.
 fn read_array_item(reader: &mut DwgMergedReader) -> AssocArrayItem {
     let class_version = reader.read_bit_long();
     let location = [

@@ -874,8 +874,8 @@ impl Default for MultiLeaderAnnotContext {
 /// # Example
 ///
 /// ```ignore
-/// use opencadcodec::entities::MultiLeader;
-/// use opencadcodec::types::Vector3;
+/// use acadrust::entities::MultiLeader;
+/// use acadrust::types::Vector3;
 ///
 /// // Create a multileader with text content
 /// let mut mleader = MultiLeader::new();

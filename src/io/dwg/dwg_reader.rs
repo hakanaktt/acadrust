@@ -15,7 +15,7 @@
 //! ## Usage
 //!
 //! ```rust,ignore
-//! use opencadcodec::io::dwg::dwg_reader::DwgReader;
+//! use acadrust::io::dwg::dwg_reader::DwgReader;
 //!
 //! let reader = DwgReader::from_file("drawing.dwg")?;
 //! let info = reader.read_file_header()?;
@@ -321,7 +321,7 @@ fn find_acds_magic(buf: &[u8], from: usize) -> Option<usize> {
 /// This is what AutoCAD 2013+ / BricsCAD emit.
 const ASM_END_MARKER: &[u8] = b"\x0E\x03End\x0E\x02of\x0E\x03ASM\x0D\x04data";
 /// End-of-body terminator for a classic ACIS SAB blob, written as one tagged
-/// identifier string. This is what opencadcodec's own `SabWriter` emits, so the
+/// identifier string. This is what acadrust's own `SabWriter` emits, so the
 /// reader must recognise it to round-trip natively-built solids (primitives and
 /// the exact planar/NURBS export), not just ASM bodies read from other apps.
 const ACIS_END_MARKER: &[u8] = b"End-of-ACIS-data";
@@ -399,7 +399,7 @@ fn extract_acds_record_blobs(buf: &[u8], modeler_handles: &HashSet<u64>) -> Vec<
             p += 20;
         }
         // A single entry can also be the interleaved layout emitted by older
-        // opencadcodec versions. Use the order-based fallback for those files.
+        // acadrust versions. Use the order-based fallback for those files.
         if recs.len() < 2 {
             continue;
         }
@@ -712,8 +712,6 @@ fn read_t16(cur: &mut &[u8], utf16: bool) -> String {
     }
 }
 
-/// Decode the EED of FIELD objects into their `xdata` (a hyperlink field's
-/// `PE_URL` record) so it survives a save to DXF or to another DWG version.
 fn decode_field_xdata(document: &mut crate::document::CadDocument) {
     let wide = document.version >= crate::types::DxfVersion::AC1021;
     let fields: Vec<_> = document
@@ -746,9 +744,6 @@ fn decode_field_xdata(document: &mut crate::document::CadDocument) {
     }
 }
 
-/// Before R2007 a block record's insertion units live in its ACAD
-/// `DesignCenter Data` EED. Move them into `BlockRecord::units`; the writer
-/// regenerates the EED for older versions and stores the field for newer.
 fn decode_block_units_xdata(document: &mut crate::document::CadDocument) {
     if document.version >= crate::types::DxfVersion::AC1021 {
         return;
@@ -1627,7 +1622,7 @@ impl<R: Read + Seek> DwgReader<R> {
         // the end of the Classes section and the start of the Handles section,
         // regardless of where Template/AuxHeader are physically placed: many
         // real-world R2000 files store Template/AuxHeader *after* Handles (and
-        // opencadcodec's own R13/R14 writer places ObjFreeSpace/Template after
+        // acadrust's own R13/R14 writer places ObjFreeSpace/Template after
         // Handles too), so inferring the region from the AuxHeader end yields
         // a negative size and an empty document (issue #55).
         //

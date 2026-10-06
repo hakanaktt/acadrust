@@ -74,7 +74,7 @@ impl ImageDefinitionReactor {
 ///
 /// # Example
 /// ```ignore
-/// use opencadcodec::objects::ImageDefinition;
+/// use acadrust::objects::ImageDefinition;
 ///
 /// let mut img_def = ImageDefinition::new("C:\\Images\\photo.jpg");
 /// img_def.size_in_pixels = (1024, 768);

@@ -1,7 +1,7 @@
-use opencadcodec::entities::Line;
-use opencadcodec::objects::{Dictionary, ObjectType};
-use opencadcodec::types::{Handle, Vector3};
-use opencadcodec::{CadDocument, EntityType};
+use acadrust::entities::Line;
+use acadrust::objects::{Dictionary, ObjectType};
+use acadrust::types::{Handle, Vector3};
+use acadrust::{CadDocument, EntityType};
 
 #[test]
 fn remaps_entity_xdictionary_reference_with_colliding_object() {

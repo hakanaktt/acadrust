@@ -23,7 +23,7 @@
 //! # Example
 //!
 //! ```rust
-//! use opencadcodec::entities::acis::{SatDocument, SatVersion};
+//! use acadrust::entities::acis::{SatDocument, SatVersion};
 //!
 //! // Parse SAT text from a 3DSOLID entity
 //! let sat_text = "700 0 1 0\n\

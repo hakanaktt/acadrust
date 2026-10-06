@@ -1,6 +1,6 @@
-use opencadcodec::entities::{EntityType, Helix, Line};
-use opencadcodec::objects::{DictionaryCloningFlags, ObjectType, XRecord};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfVersion, Handle};
+use acadrust::entities::{EntityType, Helix, Line};
+use acadrust::objects::{DictionaryCloningFlags, ObjectType, XRecord};
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfVersion, Handle};
 use std::ffi::OsString;
 use std::io::Cursor;
 

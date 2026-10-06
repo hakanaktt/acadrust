@@ -24,7 +24,7 @@ pub enum ProxyGraphicRecord {
     FillOff,
     /// Type 36: a single-line UTF-16 text primitive.
     UnicodeText(ProxyUnicodeText),
-    /// A record whose payload is not interpreted by this version of opencadcodec.
+    /// A record whose payload is not interpreted by this version of acadrust.
     Unknown { record_type: u32, data: Vec<u8> },
 }
 

@@ -18,14 +18,6 @@ use crate::types::*;
 use crate::xdata::{ExtendedData, ExtendedDataRecord, XDataValue};
 
 /// Build a [`Matrix4`] from 12 doubles holding a 4×3 transform in DXF
-/// column-major order (4 columns of 3 rows each: X axis, Y axis, Z axis,
-/// translation). The implied bottom row is `[0, 0, 0, 1]`.
-///
-/// Per the Autodesk DXF reference, `SPATIAL_FILTER` group-40 matrices are
-/// written column-major: `[c00, c10, c20, c01, c11, c21, c02, c12, c22,
-/// Tx, Ty, Tz]`. [`Matrix4`] stores row-major, so this maps columns into
-/// rows: row 0 = `[v0, v3, v6, v9]`, row 1 = `[v1, v4, v7, v10]`,
-/// row 2 = `[v2, v5, v8, v11]`.
 fn matrix_from_column_major(v: &[f64]) -> Matrix4 {
     Matrix4 {
         m: [
@@ -1034,7 +1026,7 @@ impl DynamicDxfFields {
             .unwrap_or(Handle::NULL)
     }
 
-    /// Vector stored as 140/141/142 (AutoCAD) or 140/150/160 (older opencadcodec output).
+    /// Vector stored as 140/141/142 (AutoCAD) or 140/150/160 (older acadrust output).
     fn vector_140(&self, section: &str) -> Vector3 {
         let pick = |a: i32, b: i32| if self.values(section, a).is_empty() { self.f64(section, b) } else { self.f64(section, a) };
         Vector3::new(self.f64(section, 140), pick(141, 150), pick(142, 160))
@@ -1058,7 +1050,7 @@ fn dynamic_dxf_eval(fields: &DynamicDxfFields) -> BlockEvalExpression {
         // No 70 group means "no value" (-9999).
         .unwrap_or(-9999);
     let value = match value_code {
-        // AutoCAD writes a real value as 140; older opencadcodec output used 40.
+        // AutoCAD writes a real value as 140; older acadrust output used 40.
         40 if !fields.values(section, 140).is_empty() => BlockEvalValue::Real(fields.f64(section, 140)),
         40 => BlockEvalValue::Real(fields.f64(section, 40)),
         10 | 11 => BlockEvalValue::Point([
@@ -1224,7 +1216,7 @@ fn dynamic_dxf_action(fields: &DynamicDxfFields) -> BlockAction {
             .into_iter()
             .map(parse_dxf_handle)
             .collect(),
-        parameter_ids: fields
+        action_ids: fields
             .values(section, 91)
             .into_iter()
             .filter_map(|value| value.parse().ok())
@@ -4887,7 +4879,7 @@ impl<'a> SectionReader<'a> {
             "ACDB_MTEXTOBJECTCONTEXTDATA_CLASS" => {
                 // AutoCAD: no subclass marker, fields follow the annotation
                 // scale groups, 10 = x-axis direction, 11 = insertion point.
-                // Older opencadcodec output: an AcDbMTextObjectContextData marker
+                // Older acadrust output: an AcDbMTextObjectContextData marker
                 // with the two points the other way round.
                 let legacy = fields.has("AcDbMTextObjectContextData", 70);
                 let section = if legacy {
@@ -9500,6 +9492,14 @@ impl<'a> SectionReader<'a> {
                     }) {
                         style.true_type_font = face;
                     }
+                    if let Some(flags) = xdata.get_record("ACAD").and_then(|record| {
+                        record.values.iter().find_map(|value| match value {
+                            XDataValue::Integer32(flags) => Some(*flags),
+                            _ => None,
+                        })
+                    }) {
+                        style.true_type_font_flags = flags;
+                    }
                 }
                 _ => {}
             }
@@ -9588,8 +9588,6 @@ impl<'a> SectionReader<'a> {
         Ok(())
     }
 
-    /// Read a single BLOCK_RECORD entry and its reactors
-    /// (`{ACAD_REACTORS`, e.g. the dependencies of an associative array).
     fn read_block_record_entry(&mut self) -> Result<Option<(BlockRecord, Vec<Handle>)>> {
         let mut block_record = BlockRecord::new("*Model_Space");
         let mut reactors = Vec::new();
@@ -10874,9 +10872,9 @@ impl<'a> SectionReader<'a> {
 
     // ===== Common Entity/Object Code Helpers =====
 
-    /// Read an ATTRIB/ATTDEF R2018+ embedded MTEXT object (code 101 block). A
-    /// multiline attribute keeps its real text here (the entity's own code 1
-    /// is empty), so the caller adopts the value when non-empty.
+    /// Read an ATTRIB/ATTDEF R2018+ embedded MTEXT object (code 101 block) and
+    /// return its text. A multiline attribute keeps its real text here (the
+    /// entity's own code 1 is empty), so the caller adopts this when non-empty.
     /// MTEXT splits long text into 250-char `3` continuation chunks ending in a
     /// final `1` chunk; concatenate in that order.
     fn read_attrib_embedded_mtext(&mut self) -> Result<MText> {
@@ -21052,8 +21050,6 @@ impl<'a> SectionReader<'a> {
         Ok(Some(scale))
     }
 
-    /// Store the XDATA recorded while an object was read in
-    /// `object_xdata`, unless the object keeps it in its own form.
     fn read_object_xdata(&mut self, document: &mut CadDocument) -> Result<()> {
         let (handle, pairs) = self.reader.take_recorded_xdata();
         self.reader.record_xdata(false);
@@ -21849,11 +21845,6 @@ mod tests {
         }
     }
 
-    /// SPATIAL_FILTER group-40 matrices are column-major on disk:
-    /// `[c00, c10, c20, c01, c11, c21, c02, c12, c22, Tx, Ty, Tz]`.
-    /// A pure translation (-200, -150, 0) must land in the last column,
-    /// not scattered across row 2 (the old row-major misread collapsed
-    /// every 2D boundary point onto the x == y diagonal).
     #[test]
     fn spatial_filter_matrix_is_column_major() {
         let v = [
@@ -21879,8 +21870,6 @@ mod tests {
         assert!((p.y - 10.0).abs() < 1e-9, "y={}", p.y);
     }
 
-    /// A SPATIAL_FILTER with a translated inverse must survive a DXF
-    /// write/read round-trip with its translation intact.
     #[test]
     fn spatial_filter_dxf_roundtrip_preserves_translation() {
         use crate::objects::{ObjectType, SpatialFilter};

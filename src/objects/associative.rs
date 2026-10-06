@@ -90,8 +90,6 @@ pub enum AssociativeData {
     ViewRepHatchManager(AssocViewRepHatchManager),
     ViewRepHatchActionParam(AssocViewRepHatchActionParam),
     ViewLabelActionParam(AssocViewLabelActionParam),
-    /// Center mark and center line action bodies (`AcDbCenterMarkActionBody`,
-    /// `AcDbCenterLineActionBody`).
     SmartCenterActionBody(AssocSmartCenterActionBody),
 }
 
@@ -223,14 +221,14 @@ impl AssociativeData {
                 single_dependency_references(&value.single_dependency, target)
                     || value.history == target
             }
-            Self::ArrayParameters(value) => value.items.iter().any(|item| {
-                item.first_handle == Some(target) || item.second_handle == Some(target)
-            }),
+            Self::ArrayParameters(value) => array_items_reference(&value.items, target),
             Self::ArrayActionBody(value) => {
                 parameter_body_references(&value.parameter_body, target)
+                    || array_items_reference(&value.items, target)
             }
             Self::ArrayModifyActionBody(value) => {
                 parameter_body_references(&value.body.parameter_body, target)
+                    || array_items_reference(&value.body.items, target)
             }
             Self::DimensionAssociation(value) => {
                 value.dimension == target
@@ -399,20 +397,15 @@ impl AssociativeData {
                 ..
             }) => visit_single_dependency(value, visit),
             Self::ArrayParameters(value) => {
-                for item in &mut value.items {
-                    if let Some(handle) = item.first_handle.as_mut() {
-                        visit(handle);
-                    }
-                    if let Some(handle) = item.second_handle.as_mut() {
-                        visit(handle);
-                    }
-                }
+                visit_array_items(&mut value.items, visit);
             }
             Self::ArrayActionBody(value) => {
                 visit_parameter_body(&mut value.parameter_body, visit);
+                visit_array_items(&mut value.items, visit);
             }
             Self::ArrayModifyActionBody(value) => {
                 visit_parameter_body(&mut value.body.parameter_body, visit);
+                visit_array_items(&mut value.body.items, visit);
             }
             Self::DimensionAssociation(value) => {
                 visit(&mut value.dimension);
@@ -453,6 +446,20 @@ impl AssociativeData {
 
 fn eval_references(value: &AssocEvalVariant, target: Handle) -> bool {
     matches!(value.value, AssocEvalValue::Handle(handle) if handle == target)
+}
+
+fn array_items_reference(items: &[AssocArrayItem], target: Handle) -> bool {
+    items.iter().any(|item| {
+        item.first_handle == Some(target) || item.second_handle == Some(target)
+    })
+}
+
+fn visit_array_items(items: &mut [AssocArrayItem], visit: &mut impl FnMut(&mut Handle)) {
+    for item in items {
+        for handle in item.first_handle.iter_mut().chain(item.second_handle.iter_mut()) {
+            visit(handle);
+        }
+    }
 }
 
 fn value_param_references(value: &AssocValueParam, target: Handle) -> bool {
@@ -599,30 +606,22 @@ pub struct AssocValueDependency {
     pub value: AssocEvalVariant,
 }
 
-/// Persistent subentity id of a geometry dependency. DWG writes a flag,
-/// the class code, the class's integer fields and the compound-object bit;
-/// DXF writes the class name, the fields (90) and the bit (290).
 #[derive(Debug, Clone, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AssocPersistentSubentId {
     pub class_name: String,
     pub dependent_on_compound_object: bool,
-    /// DWG class code: 1 single edge, 5 modeler-body subentity.
     pub class_code: i32,
-    /// Class fields; a modeler-body subentity has three.
     pub values: Vec<i32>,
-    /// DWG bit before the class code (clear in reference output).
     pub leading_flag: bool,
 }
 
-/// DWG class codes of persistent subentity ids and their DXF class names.
 const PERS_SUBENT_CLASSES: [(i32, &str); 2] = [
     (1, "AcDbAssocSingleEdgePersSubentId"),
     (5, "AcDbAssocAsmBasedEntityPersSubentId"),
 ];
 
 impl AssocPersistentSubentId {
-    /// DXF class name for a DWG class code.
     pub fn class_name_for_code(code: i32) -> Option<&'static str> {
         PERS_SUBENT_CLASSES
             .iter()
@@ -630,7 +629,6 @@ impl AssocPersistentSubentId {
             .map(|(_, name)| *name)
     }
 
-    /// DWG class code for a DXF class name.
     pub fn code_for_class_name(name: &str) -> Option<i32> {
         PERS_SUBENT_CLASSES
             .iter()
@@ -839,9 +837,6 @@ pub struct AssocAnnotationActionBody {
 pub struct AssocPersSubentManager {
     pub class_version: i32,
     pub markers: [i32; 3],
-    /// The integers after the markers, in file order. Their grouping
-    /// depends on the class version: version 1 records hold
-    /// `next id, 0, 0, 0`, version 2 records add count-prefixed id lists.
     pub values: Vec<i32>,
     pub final_flag: bool,
 }
@@ -857,10 +852,6 @@ pub struct AssocSingleDependencyActionParam {
 
 #[derive(Debug, Clone, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-/// Action body of an associative center mark or center line: the action
-/// body version, the parameter-based body (before R2013) and the
-/// `AcDbSmartCenterActionBody` version. Its parameters are value parameters
-/// of the owning action.
 pub struct AssocSmartCenterActionBody {
     pub action_body: AssocActionBody,
     pub parameter_body: AssocParamBasedActionBody,
@@ -953,19 +944,9 @@ pub struct AssocEdgeActionParam {
     pub has_action: bool,
     pub action_type: i32,
     pub subcurve_kind: AssocSubcurveKind,
-    /// The referenced edge's curve, stored after the action type, value by
-    /// value. Arc (11): centre, normal, reference axis, radius, start and end
-    /// angle, one more real. Ellipse (17): centre, major and minor axis
-    /// directions, major and minor radius, start and end parameter, one more
-    /// real. Line segment (23): start point, vector to the end. NURBS (42):
-    /// two flags, degree, tolerance, then knots, weights and control points,
-    /// each as length, physical length, grow length and the items. Composite
-    /// (47): count, then a type and its curve for each part.
     pub curve: Vec<AssocCurveValue>,
 }
 
-/// One stored value of an edge action parameter's curve: DXF groups 70, 90,
-/// 40 and 10 (DWG B, BL, BD and 3BD).
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum AssocCurveValue {
@@ -1293,12 +1274,8 @@ pub struct AssocArrayActionBody {
     pub parameter_body: AssocParamBasedActionBody,
     pub version: i32,
     pub parameter_block: String,
-    /// Version of the item list that follows the parameters class name.
     pub item_list_version: i32,
-    /// Class name of the items (`AcDbAssocArrayItem`).
     pub item_class: String,
-    /// One record per array item: its location, flags, placement (a matrix
-    /// when flag 4 is set, otherwise a point) and the item's entity.
     pub items: Vec<AssocArrayItem>,
     pub transform: [f64; 16],
 }
@@ -1365,8 +1342,6 @@ pub struct PersSubentManager {
     pub marker_two: i32,
     pub associative_step_count: i32,
     pub associative_subent_count: i32,
-    /// Every integer after the five header fields, in file order (the
-    /// persistent subentity records, then the step list).
     pub values: Vec<i32>,
 }
 

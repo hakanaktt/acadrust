@@ -368,8 +368,8 @@ impl Default for MLineVertex {
 /// # Example
 ///
 /// ```ignore
-/// use opencadcodec::entities::{MLine, MLineStyle};
-/// use opencadcodec::types::Vector3;
+/// use acadrust::entities::{MLine, MLineStyle};
+/// use acadrust::types::Vector3;
 ///
 /// // Create a style with 3 parallel lines
 /// let mut style = MLineStyle::new("Triple");

@@ -68,9 +68,7 @@ pub struct SurfaceSweepOptions {
     pub twist_angle: f64,
     pub scale_factor: f64,
     pub align_angle: f64,
-    /// Column-major 4x4 matrix (translation in elements 12, 13, 14).
     pub sweep_entity_transform: [f64; 16],
-    /// Column-major 4x4 matrix (translation in elements 12, 13, 14).
     pub path_entity_transform: [f64; 16],
     pub is_solid: bool,
     pub sweep_alignment_flags: i16,
@@ -178,9 +176,6 @@ pub enum SurfaceData {
     },
 }
 
-/// DWG and DXF store 4x4 matrices row by row (translation in elements 3, 7
-/// and 11); in memory they are column-major (translation in 12, 13, 14).
-/// Transposing converts either way.
 pub(crate) fn transpose_matrix(value: [f64; 16]) -> [f64; 16] {
     std::array::from_fn(|index| value[(index % 4) * 4 + index / 4])
 }

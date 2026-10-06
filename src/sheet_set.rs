@@ -1,15 +1,3 @@
-//! Sheet sets: the sheet set data file (`.dst`), a drawing's link to the
-//! sheet it holds (`AcSheetSetData` in the named-object dictionary) and the
-//! `\AcSm` field evaluator.
-//!
-//! A `.dst` file is UTF-8 XML put through a fixed one-to-one byte
-//! substitution ([`encode`] / [`decode`]). The XML is a tree of components:
-//! `AcSmDatabase` → `AcSmSheetSet` → `AcSmSubset`* → `AcSmSheet`, each with
-//! `AcSmProp` values and object-valued properties (custom property bags,
-//! layout and file references, …). Elements are kept as a generic tree so
-//! everything the library does not model survives a read → write round trip.
-//! Named children (those with a `propname`) stay sorted by name ahead of the
-//! unnamed ones (subsets and sheets), as the reference writes them.
 
 use crate::document::CadDocument;
 use crate::fields::FieldContext;
@@ -45,20 +33,16 @@ const DECODE: [u8; 256] = {
     t
 };
 
-/// Plain XML bytes → `.dst` bytes.
 pub fn encode(plain: &[u8]) -> Vec<u8> {
     plain.iter().map(|b| ENCODE[*b as usize]).collect()
 }
 
-/// `.dst` bytes → plain XML bytes.
 pub fn decode(data: &[u8]) -> Vec<u8> {
     data.iter().map(|b| DECODE[*b as usize]).collect()
 }
 
 // ── XML tree ─────────────────────────────────────────────────────────────────
 
-/// An XML element: attributes in file order, its text (leaf values) and its
-/// child elements.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Element {
     pub name: String,
@@ -76,7 +60,6 @@ impl Element {
         self.attrs.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
     }
 
-    /// The component id (`ID` attribute).
     pub fn id(&self) -> &str {
         self.attr("ID").unwrap_or("")
     }
@@ -85,7 +68,6 @@ impl Element {
         self.attr("propname")
     }
 
-    /// The child holding property `name` (an `AcSmProp` or an object).
     pub fn named(&self, name: &str) -> Option<&Element> {
         self.children.iter().find(|c| c.propname() == Some(name))
     }
@@ -94,17 +76,14 @@ impl Element {
         self.children.iter_mut().find(|c| c.propname() == Some(name))
     }
 
-    /// A value property (`<AcSmProp propname="name">value</AcSmProp>`).
     pub fn prop(&self, name: &str) -> Option<&str> {
         self.named(name).filter(|c| c.name == "AcSmProp").map(|c| c.text.as_str())
     }
 
-    /// Set a string property (vt 8), keeping the named children sorted.
     pub fn set_prop(&mut self, name: &str, value: &str) {
         self.set_prop_vt(name, 8, value);
     }
 
-    /// Set a property of the given variant type (8 string, 3 int, 2 short).
     pub fn set_prop_vt(&mut self, name: &str, vt: i32, value: &str) {
         if let Some(c) = self.named_mut(name).filter(|c| c.name == "AcSmProp") {
             c.text = value.into();
@@ -113,8 +92,6 @@ impl Element {
         self.put_named(prop(name, vt, value));
     }
 
-    /// Insert or replace the named child `child`, keeping named children in
-    /// name order ahead of the unnamed ones.
     pub fn put_named(&mut self, child: Element) {
         let name = child.propname().unwrap_or("").to_string();
         if let Some(i) = self.children.iter().position(|c| c.propname() == Some(&name)) {
@@ -245,7 +222,6 @@ impl Parser<'_> {
         }
     }
 
-    /// Skip the declaration, processing instructions and comments.
     fn skip_misc(&mut self) {
         loop {
             self.skip_ws();
@@ -326,14 +302,11 @@ impl Parser<'_> {
     }
 }
 
-/// Parse an XML document's root element.
 pub fn parse_xml(text: &str) -> Result<Element, String> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     Parser { s: text, i: 0 }.element()
 }
 
-/// Serialize as the reference does: declaration, CRLF, the elements back to
-/// back, CRLF.
 pub fn write_xml(root: &Element) -> String {
     let mut out = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n");
     root.write(&mut out);
@@ -358,7 +331,6 @@ pub const CLSID_VIEW_CATEGORIES: &str = "g021730DF-5BEA-48E9-BC7A-35087A674FD0";
 pub const CLSID_LAYOUT_REFERENCE: &str = "g94910E94-4FCA-427C-B6ED-2EC9E1C900C7";
 pub const CLSID_SHEET_VIEWS: &str = "gF40F931B-64BC-4B90-9FC8-A11A77D6815B";
 pub const CLSID_FILE_REFERENCE: &str = "g6BF87AE7-1BEC-4BDB-98BB-5B91F7772793";
-/// The reference spells the element `AcSmSimpleFileReferece`.
 pub const CLSID_SIMPLE_FILE_REFERENCE: &str = "gD15A03C2-C39B-428A-9BBA-C031347C496F";
 pub const CLSID_SHEET_VIEW: &str = "gB6E09611-4659-4F0D-981D-D62B11FD8426";
 pub const CLSID_VIEW_REFERENCE: &str = "g9BEA33B1-05AD-419F-B680-BC7FF6A4F41D";
@@ -367,12 +339,9 @@ pub const CLSID_CALLOUT_BLOCK_REFERENCES: &str = "g67C52FE4-0A6B-4C82-A4CC-5E685
 pub const CLSID_OBJECT_REFERENCE: &str = "g00DEB7FB-A073-4ECD-BCE0-121B45C6864D";
 pub const CLSID_BLOCK_RECORD_REFERENCE: &str = "g11782523-474B-4C83-9646-57C052847FBB";
 
-/// Custom property flags: owned by the sheet set, or a sheet property whose
-/// set-level value is the default for new sheets.
 pub const CUSTOM_SHEET_SET_PROP: i32 = 1;
 pub const CUSTOM_SHEET_PROP: i32 = 2;
 
-/// A new component id: `g` + an upper-case GUID without braces.
 pub fn new_id() -> String {
     use std::collections::hash_map::RandomState;
     use std::hash::{BuildHasher, Hasher};
@@ -403,7 +372,6 @@ pub fn new_id() -> String {
     )
 }
 
-/// `<AcSmProp propname="…" vt="…">value</AcSmProp>`.
 pub fn prop(name: &str, vt: i32, value: &str) -> Element {
     Element {
         name: "AcSmProp".into(),
@@ -413,8 +381,6 @@ pub fn prop(name: &str, vt: i32, value: &str) -> Element {
     }
 }
 
-/// A component object with a fresh id; `propname` makes it an object-valued
-/// property (vt 13) of its parent.
 pub fn object(tag: &str, clsid: &str, propname: Option<&str>) -> Element {
     let mut el = Element::new(tag);
     el.attrs.push(("clsid".into(), clsid.into()));
@@ -426,7 +392,6 @@ pub fn object(tag: &str, clsid: &str, propname: Option<&str>) -> Element {
     el
 }
 
-/// What a tree component is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComponentKind {
     SheetSet,
@@ -445,27 +410,20 @@ impl ComponentKind {
     }
 }
 
-/// A layout reference (`AcSmAcDbLayoutReference`): a layout in a drawing.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct LayoutReference {
-    /// The drawing (absolute path as stored, or resolved from the relative one).
     pub file_name: String,
-    /// The layout's name.
     pub name: String,
-    /// The layout object's handle, upper-case hex (empty when unknown).
     pub handle: String,
 }
 
-/// The `.dst` sheet set database.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SheetSetDatabase {
     pub root: Element,
-    /// Where the database was read from / last written to.
     pub path: Option<String>,
 }
 
 impl SheetSetDatabase {
-    /// A new, empty sheet set named `name`.
     pub fn new(name: &str, description: &str) -> Self {
         let mut root = object("AcSmDatabase", CLSID_DATABASE, None);
         root.children.push(prop("DbFingerPrint", 8, &new_id()));
@@ -492,7 +450,6 @@ impl SheetSetDatabase {
         Self { root, path: None }
     }
 
-    /// Parse decoded XML.
     pub fn from_xml(text: &str) -> Result<Self, String> {
         let root = parse_xml(text)?;
         if root.name != "AcSmDatabase" {
@@ -501,7 +458,6 @@ impl SheetSetDatabase {
         Ok(Self { root, path: None })
     }
 
-    /// Parse a `.dst` file's bytes.
     pub fn from_bytes(data: &[u8]) -> Result<Self, String> {
         let plain = decode(data);
         let text = String::from_utf8(plain).map_err(|e| e.to_string())?;
@@ -524,7 +480,6 @@ impl SheetSetDatabase {
         Ok(db)
     }
 
-    /// Write to `path`, counting a new file revision.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn write(&mut self, path: &str) -> Result<(), String> {
         // The publish options always carry the (empty) default output folder.
@@ -542,8 +497,6 @@ impl SheetSetDatabase {
         Ok(())
     }
 
-    /// `FileRevision` — counted up on every save; drawings record it as
-    /// `ShSetVersion`.
     pub fn file_revision(&self) -> i32 {
         self.root.prop("FileRevision").and_then(|v| v.trim().parse().ok()).unwrap_or(0)
     }
@@ -576,20 +529,15 @@ impl SheetSetDatabase {
         self.root.find_mut(id)
     }
 
-    /// The subset or sheet set that holds component `id`.
     pub fn parent_of(&self, id: &str) -> Option<&Element> {
         self.root.parent_of(id)
     }
 
-    /// The folder the `.dst` lives in.
     fn folder(&self) -> Option<std::path::PathBuf> {
         let path = std::path::Path::new(self.path.as_deref()?);
         Some(path.parent()?.to_path_buf())
     }
 
-    /// Add a subset under `parent` (the sheet set or a subset); returns its id.
-    /// It inherits the parent's sheet storage location, template and
-    /// prompt for template (a subset keeps the prompt as a short, -1 = yes).
     pub fn add_subset(&mut self, parent: &str, name: &str, description: &str) -> Option<String> {
         let prompt = self.find(parent)?.prop("PromptForDwt").is_some_and(|v| !matches!(v.trim(), "" | "0"));
         let inherited: Vec<Element> = {
@@ -617,7 +565,6 @@ impl SheetSetDatabase {
         Some(id)
     }
 
-    /// Add a sheet under `parent`; returns its id.
     pub fn add_sheet(&mut self, parent: &str, number: &str, title: &str, description: &str) -> Option<String> {
         // Empty fields are left out; the property bag comes with the first
         // sheet property.
@@ -642,7 +589,6 @@ impl SheetSetDatabase {
         Some(id)
     }
 
-    /// Remove a subset (with everything in it) or a sheet.
     pub fn remove(&mut self, id: &str) -> bool {
         fn go(el: &mut Element, id: &str) -> bool {
             if let Some(i) = el.children.iter().position(|c| c.id() == id) {
@@ -654,8 +600,6 @@ impl SheetSetDatabase {
         go(&mut self.root, id)
     }
 
-    /// Point `component`'s file reference property (`NewSheetLocation`,
-    /// `AltPageSetups`, …) at `file`.
     pub fn set_file_reference(&mut self, component: &str, propname: &str, file: &str) -> bool {
         let folder = self.folder();
         let Some(el) = self.find_mut(component) else {
@@ -671,14 +615,11 @@ impl SheetSetDatabase {
         true
     }
 
-    /// A file reference property resolved against the `.dst` folder.
     pub fn file_reference(&self, component: &str, propname: &str) -> Option<String> {
         let r = self.find(component)?.named(propname)?;
         Some(self.resolve_file(r))
     }
 
-    /// Point a sheet's `Layout` (or a set's / subset's `DefDwtLayout`) at
-    /// `layout` of `file`.
     pub fn set_layout_reference(&mut self, component: &str, propname: &str, reference: &LayoutReference) -> bool {
         let folder = self.folder();
         let Some(el) = self.find_mut(component) else {
@@ -701,8 +642,6 @@ impl SheetSetDatabase {
         true
     }
 
-    /// A component's layout reference property (`Layout` of a sheet,
-    /// `DefDwtLayout` of a set / subset).
     pub fn layout_reference(&self, component: &str, propname: &str) -> Option<LayoutReference> {
         let r = self.find(component)?.named(propname)?;
         Some(LayoutReference {
@@ -712,9 +651,6 @@ impl SheetSetDatabase {
         })
     }
 
-    /// The file a reference names: the relative path resolved against the
-    /// `.dst` folder when that file exists (a moved set folder keeps
-    /// working), else the stored absolute path.
     pub fn resolve_file(&self, reference: &Element) -> String {
         let absolute = reference.prop("FileName").unwrap_or("").to_string();
         #[cfg(not(target_arch = "wasm32"))]
@@ -729,7 +665,6 @@ impl SheetSetDatabase {
         absolute
     }
 
-    /// Every sheet in tree order with the subset path above it.
     pub fn sheets(&self) -> Vec<&Element> {
         fn go<'a>(el: &'a Element, out: &mut Vec<&'a Element>) {
             for c in &el.children {
@@ -745,8 +680,6 @@ impl SheetSetDatabase {
         out
     }
 
-    /// The sheet for layout `layout` of drawing `drawing` (any of the
-    /// drawing's sheets when `layout` is `None` or matches none).
     pub fn sheet_for(&self, drawing: &str, layout: Option<&str>) -> Option<&Element> {
         let want = path_key(drawing);
         let of_drawing: Vec<&Element> = self
@@ -770,7 +703,6 @@ impl SheetSetDatabase {
             .or_else(|| of_drawing.first().copied())
     }
 
-    /// The value a `\AcSm` field shows for `component.property` of `sheet`.
     pub fn sheet_value(&self, sheet: &Element, component: &str, property: &str) -> Option<String> {
         let set = self.sheet_set();
         let custom = |el: &Element, name: &str| {
@@ -808,7 +740,6 @@ impl SheetSetDatabase {
 }
 
 impl SheetSetDatabase {
-    /// A property of the sheet set itself.
     pub fn set_value(&self, property: &str) -> Option<String> {
         let set = self.sheet_set();
         Some(match property {
@@ -820,8 +751,6 @@ impl SheetSetDatabase {
         })
     }
 
-    /// A Field-dialog navigation field: `property` of the set `set_id`, or
-    /// of its sheet, subset or view category `component`.
     pub fn navigation_value(&self, set_id: &str, component: Option<&str>, property: &str) -> Option<String> {
         if !self.sheet_set().id().eq_ignore_ascii_case(set_id) {
             return None;
@@ -850,7 +779,6 @@ impl SheetSetDatabase {
 }
 
 impl SheetSetDatabase {
-    /// The set's named view categories.
     pub fn view_categories(&self) -> Vec<&Element> {
         self.sheet_set()
             .named("ViewCategories")
@@ -858,12 +786,10 @@ impl SheetSetDatabase {
             .unwrap_or_default()
     }
 
-    /// The set's callout blocks (`AcSmAcDbBlockRecordReference`).
     pub fn callout_blocks(&self) -> Vec<&Element> {
         self.sheet_set().named("CalloutBlocks").map(|v| v.children.iter().collect()).unwrap_or_default()
     }
 
-    /// Add a callout block (a block of `file`) to the set; returns its id.
     pub fn add_callout_block(&mut self, file: &str, name: &str, handle: &str) -> Option<String> {
         let folder = self.folder();
         let mut r = object("AcSmAcDbBlockRecordReference", CLSID_BLOCK_RECORD_REFERENCE, None);
@@ -879,7 +805,6 @@ impl SheetSetDatabase {
         Some(id)
     }
 
-    /// The callout block ids a view category uses.
     pub fn category_blocks(&self, id: &str) -> Vec<String> {
         self.find(id)
             .and_then(|c| c.named("CalloutBlocks"))
@@ -887,8 +812,6 @@ impl SheetSetDatabase {
             .unwrap_or_default()
     }
 
-    /// Create (`id` = None) or change a view category: its name and the
-    /// callout blocks it uses. Returns its id.
     pub fn set_view_category(&mut self, id: Option<&str>, name: &str, blocks: &[String]) -> Option<String> {
         let mut refs = object("AcSmCalloutBlockReferences", CLSID_CALLOUT_BLOCK_REFERENCES, Some("CalloutBlocks"));
         for b in blocks {
@@ -914,19 +837,14 @@ impl SheetSetDatabase {
         Some(new)
     }
 
-    /// A sheet's views (`AcSmSheetView`).
     pub fn sheet_views<'a>(&'a self, sheet: &'a Element) -> Vec<&'a Element> {
         sheet.named("SheetViews").map(|v| v.children.iter().filter(|c| c.name == "AcSmSheetView").collect()).unwrap_or_default()
     }
 
-    /// The view category a sheet view belongs to (its `Category` reference).
     pub fn view_category_of(view: &Element) -> Option<&str> {
         view.named("Category").and_then(|c| c.prop("ReferencedObject"))
     }
 
-    /// Add a sheet view to `sheet`, as Place on Sheet records it: the view
-    /// category, the paper-space named view (`AcSmAcDbViewReference`: handle,
-    /// drawing, name) and the title. Returns its id.
     pub fn add_sheet_view(&mut self, sheet: &str, category: Option<&str>, view: &LayoutReference, title: &str) -> Option<String> {
         let folder = self.folder();
         let mut v = object("AcSmSheetView", CLSID_SHEET_VIEW, None);
@@ -950,7 +868,6 @@ impl SheetSetDatabase {
         Some(id)
     }
 
-    /// Add a model view location (a folder) to the set's resources.
     pub fn add_resource(&mut self, folder: &str) -> Option<String> {
         let base = self.folder();
         let mut r = object("AcSmFileReference", CLSID_FILE_REFERENCE, None);
@@ -965,8 +882,6 @@ impl SheetSetDatabase {
     }
 }
 
-/// How the sheet list shows a sheet: `Number - Title` (the title alone
-/// without a number).
 pub fn number_and_title(sheet: &Element) -> String {
     let number = sheet.prop("Number").unwrap_or("");
     let title = sheet.prop("Title").unwrap_or("");
@@ -986,7 +901,6 @@ fn renew_ids(el: &mut Element) {
     }
 }
 
-/// The custom properties of a set or sheet: name, value and flags.
 pub fn custom_properties(el: &Element) -> Vec<(String, String, i32)> {
     el.named("CustomPropertyBag")
         .map(|bag| {
@@ -1005,7 +919,6 @@ pub fn custom_properties(el: &Element) -> Vec<(String, String, i32)> {
         .unwrap_or_default()
 }
 
-/// Add or change a custom property of a set or sheet.
 pub fn set_custom_property(el: &mut Element, name: &str, value: &str, flags: i32) {
     if el.named("CustomPropertyBag").is_none() {
         el.put_named(object("AcSmCustomPropertyBag", CLSID_CUSTOM_PROPERTY_BAG, Some("CustomPropertyBag")));
@@ -1040,8 +953,6 @@ fn set_file_props(r: &mut Element, file: &str, folder: Option<&std::path::Path>)
     }
 }
 
-/// `file` relative to `folder` in the reference's form (`.\a.dwg`,
-/// `..\x\a.dwg`, `.` for the folder itself); `None` across drives.
 pub fn relative_path(folder: &std::path::Path, file: &std::path::Path) -> Option<String> {
     use std::path::Component;
     let parts = |p: &std::path::Path| -> Vec<String> {
@@ -1079,7 +990,6 @@ fn normalize_path(p: &std::path::Path) -> String {
     out.to_string_lossy().to_string()
 }
 
-/// A path as the reference stores it: Windows separators on Windows.
 pub fn native_path(p: &str) -> String {
     if cfg!(windows) {
         p.replace('/', "\\")
@@ -1088,37 +998,26 @@ pub fn native_path(p: &str) -> String {
     }
 }
 
-/// Case- and separator-insensitive key for comparing drawing paths.
 pub fn path_key(p: &str) -> String {
     p.replace('/', "\\").trim_end_matches('\\').to_lowercase()
 }
 
 // ── the drawing's sheet link (AcSheetSetData) ────────────────────────────────
 
-/// The NOD dictionary a drawing saved as a sheet keeps.
 pub const SHEET_SET_DATA: &str = "AcSheetSetData";
 
-/// What a sheet drawing records about its sheet set (each value an XRECORD
-/// in the `AcSheetSetData` dictionary).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SheetSetData {
-    /// Layout object handle, lower-case hex (`6f`).
     pub layout_handle: String,
     pub layout_name: String,
-    /// The drawing's own full path.
     pub sheet_dwg_name: String,
-    /// The `.dst` full path.
     pub sheet_set_file_name: String,
-    /// The `.dst` file revision when the drawing was saved.
     pub sheet_set_version: i32,
-    /// Saves of the drawing as a sheet.
     pub update_count: i32,
-    /// UTC time of the last such save, `yyyy/MM/dd HH:mm:ss.fff`.
     pub update_time: String,
 }
 
 impl CadDocument {
-    /// The drawing's sheet set link, when it was saved as a sheet.
     pub fn sheet_set_data(&self) -> Option<SheetSetData> {
         let ObjectType::Dictionary(nod) = self.objects.get(&self.header.named_objects_dict_handle)? else {
             return None;
@@ -1145,7 +1044,6 @@ impl CadDocument {
         })
     }
 
-    /// Write (or replace) the drawing's sheet set link.
     pub fn set_sheet_set_data(&mut self, data: &SheetSetData) {
         let nod = self.header.named_objects_dict_handle;
         let existing = match self.objects.get(&nod) {
@@ -1205,7 +1103,6 @@ impl CadDocument {
 
 // ── \AcSm fields ─────────────────────────────────────────────────────────────
 
-/// The temporary value a sheet set placeholder field shows: its type name.
 pub fn placeholder_type_name(component: &str, property: &str) -> String {
     match (component, property) {
         ("Sheet", "NumberAndTitle" | "Title" | "Number" | "Description") => format!("Sheet{property}"),
@@ -1217,9 +1114,6 @@ pub fn placeholder_type_name(component: &str, property: &str) -> String {
     }
 }
 
-/// Split a `\AcSm` field code into its component, property and format:
-/// `\AcSm.16.2 ?Sheet.Drawn By \f "%tc4"` → (`?Sheet`, `Drawn By`, `%tc4`).
-/// `None` for the bare `\AcSm` code.
 pub fn parse_code(code: &str) -> Option<(String, String, String)> {
     let body = code.trim().trim_start_matches('\\');
     let body = body.split_once(char::is_whitespace)?.1.trim();
@@ -1245,8 +1139,6 @@ pub fn parse_code(code: &str) -> Option<(String, String, String)> {
     Some((component.to_string(), property.to_string(), fmt))
 }
 
-/// The file, set id and component id of a navigation target
-/// `Database("file").SheetSet("id")[.Component("id")]`.
 pub fn parse_navigation(component: &str) -> Option<(String, String, Option<String>)> {
     let arg = |s: &str, call: &str| -> Option<(String, usize)> {
         let start = s.find(call)? + call.len();
@@ -1259,8 +1151,6 @@ pub fn parse_navigation(component: &str) -> Option<(String, String, Option<Strin
     Some((file, set, comp))
 }
 
-/// The child values a `\AcSm` field stores: the file, set and component of a
-/// navigation field, or the current sheet's component and property.
 pub fn field_child_values(code: &str) -> Vec<(&'static str, String)> {
     let Some((component, property, _)) = parse_code(code) else {
         return Vec::new();
@@ -1281,8 +1171,6 @@ pub fn field_child_values(code: &str) -> Vec<(&'static str, String)> {
     }
 }
 
-/// Evaluate a `\AcSm` field. A drawing that is no sheet of an open sheet set
-/// shows `####`; a placeholder shows its type name.
 pub(crate) fn eval_acsm(
     doc: &CadDocument,
     code: &str,
@@ -1343,7 +1231,6 @@ pub(crate) fn eval_acsm(
     })
 }
 
-/// `drawing|handle|name` of a sheet view's named view.
 fn view_named_ref(db: &SheetSetDatabase, set: &str, comp: &str) -> Option<String> {
     if !db.sheet_set().id().eq_ignore_ascii_case(set) {
         return None;
@@ -1367,8 +1254,6 @@ fn read_view_named_ref(_: &str, _: &str, _: &str) -> Option<String> {
     None
 }
 
-/// The custom scale of the paper-space viewport showing named view
-/// `handle` / `name` of `drawing` (the host drawing itself, or read from disk).
 fn view_scale(doc: &CadDocument, drawing: &str, handle: &str, name: &str) -> Option<f64> {
     let in_doc = doc.source_path.as_deref().is_some_and(|p| path_key(p) == path_key(drawing));
     #[cfg(not(target_arch = "wasm32"))]

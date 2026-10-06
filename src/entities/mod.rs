@@ -806,10 +806,6 @@ mod storage_data_tests {
         assert_eq!(edited.raw_dxf_codes, Some(vec![(100, "payload".into())]));
     }
 
-    /// Every entity pays the enum's width. The rare wide kinds are boxed so
-    /// a `Line` is not stored at a `Surface`'s size (#69); one new wide
-    /// field must not quietly undo that. (856 since every entity's common
-    /// data gained its DWG layer handle.)
     #[test]
     fn entity_type_stays_narrow() {
         let size = std::mem::size_of::<EntityType>();

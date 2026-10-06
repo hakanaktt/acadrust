@@ -84,10 +84,7 @@ pub struct Wire {
 }
 
 impl Wire {
-    /// Creates a new wire with default transform: a visible edge in the
-    /// block color with no ACIS index or selection marker, as the reference
-    /// application writes its wireframe. (An unknown-type wire, or one in
-    /// the layer color, makes it reject or hang on the drawing.)
+    /// Creates a new wire with default transform.
     pub fn new() -> Self {
         Self {
             acis_index: -1,
@@ -445,10 +442,6 @@ impl AcisData {
         Self::from_sat(&doc.to_sat_string())
     }
 
-    /// The SAB bytes to save. A body this crate encoded itself (the default
-    /// header's product id) is re-encoded so drawings saved before the writer
-    /// completed record forms open in the reference application; any other
-    /// body is kept byte for byte.
     pub(crate) fn sab_for_save(&self) -> std::borrow::Cow<'_, [u8]> {
         use crate::entities::acis::{SabReader, SabWriter, SatHeader};
         let id = SatHeader::new().product_id;
@@ -629,8 +622,8 @@ impl Default for AcisData {
 /// # Example
 ///
 /// ```ignore
-/// use opencadcodec::entities::Solid3D;
-/// use opencadcodec::types::Vector3;
+/// use acadrust::entities::Solid3D;
+/// use acadrust::types::Vector3;
 ///
 /// // Create a 3D solid (typically from DXF/DWG import)
 /// let mut solid = Solid3D::new();

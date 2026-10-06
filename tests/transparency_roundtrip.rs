@@ -1,8 +1,8 @@
 use std::io::Cursor;
 
-use opencadcodec::entities::{EntityType, Line};
-use opencadcodec::types::{DxfVersion, Handle, Transparency};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
+use acadrust::entities::{EntityType, Line};
+use acadrust::types::{DxfVersion, Handle, Transparency};
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
 
 fn document() -> (CadDocument, Vec<(Handle, Transparency)>) {
     let mut document = CadDocument::with_version(DxfVersion::AC1032);

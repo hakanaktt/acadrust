@@ -1,9 +1,9 @@
-use opencadcodec::entities::{
+use acadrust::entities::{
     EntityCommon, EntityType, ExtendedEntity, ExtendedEntityData, SectionObjectData,
 };
-use opencadcodec::objects::{ClassObject, ClassObjectData, ObjectType, SectionManager};
-use opencadcodec::types::{Color, Vector3};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter, Handle};
+use acadrust::objects::{ClassObject, ClassObjectData, ObjectType, SectionManager};
+use acadrust::types::{Color, Vector3};
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter, Handle};
 use std::io::Cursor;
 
 #[test]

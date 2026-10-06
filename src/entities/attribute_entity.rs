@@ -18,8 +18,8 @@ use std::f64::consts::PI;
 ///
 /// # Example
 /// ```ignore
-/// use opencadcodec::entities::AttributeEntity;
-/// use opencadcodec::types::Vector3;
+/// use acadrust::entities::AttributeEntity;
+/// use acadrust::types::Vector3;
 ///
 /// let mut attrib = AttributeEntity::new(
 ///     "PART_NUMBER".to_string(),

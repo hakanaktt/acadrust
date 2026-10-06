@@ -3,9 +3,6 @@
 use super::{Entity, EntityCommon};
 use crate::types::{BoundingBox3D, Color, Handle, LineWeight, Transparency, Vector3};
 
-/// Rough string width in text heights, without font metrics: 0.6 per
-/// character, 1.0 per full-width (CJK / Hangul / fullwidth-form) character,
-/// whose big-font glyphs fill a square one height wide.
 pub(crate) fn estimated_width_in_heights(s: &str) -> f64 {
     s.chars()
         .map(|c| match c as u32 {

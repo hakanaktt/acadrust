@@ -1,12 +1,12 @@
 //! Import external 3D file formats into [`CadDocument`].
 //!
 //! This module provides importers that convert common 3D interchange formats
-//! into opencadcodec entities.  Tessellated formats produce [`Mesh`] entities.
+//! into acadrust entities.  Tessellated formats produce [`Mesh`] entities.
 //!
 //! # Quick start
 //!
 //! ```rust,ignore
-//! use opencadcodec::io::import::{import_file, ImportConfig};
+//! use acadrust::io::import::{import_file, ImportConfig};
 //!
 //! let doc = import_file("model.stl", &ImportConfig::default())?;
 //! println!("Imported {} entities", doc.entities().count());

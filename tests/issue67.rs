@@ -4,8 +4,8 @@
 use std::collections::HashSet;
 use std::io::Cursor;
 
-use opencadcodec::types::DxfVersion;
-use opencadcodec::{CadDocument, DxfReader, DxfWriter};
+use acadrust::types::DxfVersion;
+use acadrust::{CadDocument, DxfReader, DxfWriter};
 
 #[derive(Debug)]
 struct DxfPair {

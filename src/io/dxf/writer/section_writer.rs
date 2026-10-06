@@ -1258,7 +1258,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer.write_string(1000, style.true_type_font.trim())?;
             self.writer.write_i32(
                 1071,
-                crate::io::dwg::typeface_eed::DEFAULT_FONT_FLAGS,
+                style.true_type_font_flags,
             )?;
         }
         self.write_annotative_xdata(style.annotative)?;
@@ -2618,8 +2618,8 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.write_dynamic_element_dxf(&value.element)?;
         self.writer.write_subclass("AcDbBlockAction")?;
         self.writer
-            .write_i32(70, value.parameter_ids.len() as i32)?;
-        for id in &value.parameter_ids {
+            .write_i32(70, value.action_ids.len() as i32)?;
+        for id in &value.action_ids {
             self.writer.write_i32(91, *id)?;
         }
         self.writer.write_i32(71, value.dependencies.len() as i32)?;
@@ -2928,9 +2928,6 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         Ok(())
     }
 
-    /// Embedded construction entity: its type, then (unless absent) the body
-    /// length in bits, padded to whole bytes like the reference application
-    /// does, and the body in 310 chunks.
     fn write_history_entity_dxf(
         &mut self,
         type_code: i32,
@@ -4022,7 +4019,6 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         Ok(())
     }
 
-    /// Write an MTEXT text value (may need to be split for long text).
     fn write_mtext_value(&mut self, value: &str) -> Result<()> {
         // DXF text format is line-based, so literal \n / \r in the value would
         // corrupt the file.  Replace them with the MText paragraph mark \P.
@@ -5126,15 +5122,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         Ok(())
     }
 
-    /// Whether an ATTDEF/ATTRIB is written as a multiline attribute (R2018+).
     fn attribute_is_multiline(&self, is_multiline: bool, embedded: Option<&MText>) -> bool {
         self.dxf_version >= DxfVersion::AC1032 && (is_multiline || embedded.is_some())
     }
 
-    /// Write the multiline tail of an ATTDEF/ATTRIB: MTEXT flag, `72` 0, the
-    /// alignment point and the `101` embedded MTEXT object. Without a stored
-    /// embedded MTEXT one is built from the attribute's own text geometry,
-    /// as the DWG writer does.
     #[allow(clippy::too_many_arguments)]
     fn write_attribute_mtext(
         &mut self,
@@ -5339,16 +5330,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         Ok(())
     }
 
-    /// Table cell values: as in AcDbField values only flag bit 0 suppresses
-    /// the body (the reference application writes it with flags 2 and 6).
     fn write_field_cell_value_dxf(&mut self, value: &CellValue) -> Result<()> {
         self.write_cell_value_dxf_masked(value, 1, true)
     }
 
-    /// `body_mask`: R2007+ value flags that suppress the value body. AcDbField
-    /// values use bit 0 only (flag 2 still carries a body).
-    /// `point_size`: write the size (92) before a point (table cells; AcDbField
-    /// values have none).
     fn write_cell_value_dxf_masked(
         &mut self,
         value: &CellValue,
@@ -8940,7 +8925,6 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         Ok(())
     }
 
-    /// Write the XDATA of a non-entity object after its groups.
     fn write_object_xdata(
         &mut self,
         document: &CadDocument,
@@ -10025,9 +10009,6 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     ///
     /// When only SAB binary data is present (no SAT text), attempts to
     /// convert via `SabReader` before falling back to an empty entry.
-    /// One profile of a surface record: the type under `type_group`, then
-    /// the body bit length and chunks; a polyline the modeler keeps as a body
-    /// writes the SAT version (1) and the encrypted SAT text instead.
     fn write_surface_profile(
         &mut self,
         type_group: i32,
@@ -11523,8 +11504,6 @@ fn get_boundary_path_bits(flags: &BoundaryPathFlags) -> u32 {
     flags.bits()
 }
 
-/// Split a SAT text line into pieces of at most 255 characters at token
-/// boundaries; a counted string (`@<n> <text>`) is never split.
 fn wrap_sat_line(line: &str) -> Vec<&str> {
     const LIMIT: usize = 240;
     let bytes = line.as_bytes();

@@ -1,7 +1,7 @@
-use opencadcodec::entities::Line;
-use opencadcodec::tables::Layer;
-use opencadcodec::xdata::{ExtendedDataRecord, XDataValue};
-use opencadcodec::{CadDocument, EntityType, Handle};
+use acadrust::entities::Line;
+use acadrust::tables::Layer;
+use acadrust::xdata::{ExtendedDataRecord, XDataValue};
+use acadrust::{CadDocument, EntityType, Handle};
 
 #[test]
 fn rename_layer_updates_references_and_current_handle() {

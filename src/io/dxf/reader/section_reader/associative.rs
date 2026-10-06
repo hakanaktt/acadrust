@@ -172,7 +172,13 @@ impl<'a> AssocCursor<'a> {
     }
 }
 
-fn read_eval(cursor: &mut AssocCursor<'_>) -> AssocEvalVariant {
+fn read_eval(
+    cursor: &mut AssocCursor<'_>,
+    handle_values_remaining: Option<usize>,
+) -> AssocEvalVariant {
+    if cursor.peek_code().is_none() {
+        return AssocEvalVariant::default();
+    }
     let code = if cursor.peek_code() == Some(70) {
         let marker = cursor
             .entries
@@ -190,22 +196,15 @@ fn read_eval(cursor: &mut AssocCursor<'_>) -> AssocEvalVariant {
     } else {
         cursor.peek_code().unwrap_or_default() as i16
     };
-    // A value without data writes no group, so the next 330 is the variable
-    // handle; a handle value (330-369) is followed by that handle and the
-    // controlled-object dependency.
-    let is_handle = |index: usize| {
-        cursor
+    if let Some(handle_values_remaining) = handle_values_remaining.filter(|_| code == 330) {
+        let followed_by_variable_handle = cursor
             .entries
-            .get(index)
-            .is_some_and(|entry| (330..=369).contains(&entry.0))
-    };
-    let code = if (330..=369).contains(&code)
-        && !(is_handle(cursor.position + 1) && is_handle(cursor.position + 2))
-    {
-        0
-    } else {
-        code
-    };
+            .get(cursor.position + 1)
+            .is_some_and(|(code, _)| *code == 330);
+        if handle_values_remaining == 0 || !followed_by_variable_handle {
+            return AssocEvalVariant::default();
+        }
+    }
     let value = match code {
         i16::MIN..=-1 | 5 | 105 | 320..=369 | 390..=399 => {
             AssocEvalValue::Handle(cursor.handle(code as i32))
@@ -231,10 +230,26 @@ fn read_value_param(cursor: &mut AssocCursor<'_>) -> AssocValueParam {
     let name = cursor.text(1);
     let unit_type = cursor.i32(90);
     let count = cursor.i32(90).max(0).min(100_000);
+    let tail = &cursor.entries[cursor.position..];
+    // Each variable and the controlled dependency require one handle; any
+    // additional handles are values. The next parameter starts with 90, 1.
+    let end = tail
+        .windows(2)
+        .position(|pair| pair[0].0 == 90 && pair[1].0 == 1)
+        .unwrap_or(tail.len());
+    let mut handle_values_remaining = tail[..end]
+        .iter()
+        .filter(|(code, _)| (330..=369).contains(code))
+        .count()
+        .saturating_sub(count as usize + 1);
     let mut variables = Vec::with_capacity(count as usize);
     for _ in 0..count {
+        let value = read_eval(cursor, Some(handle_values_remaining));
+        if (330..=369).contains(&value.code) && matches!(value.value, AssocEvalValue::Handle(_)) {
+            handle_values_remaining = handle_values_remaining.saturating_sub(1);
+        }
         variables.push(AssocValueParamVariable {
-            value: read_eval(cursor),
+            value,
             handle: cursor.handle(330),
         });
     }
@@ -685,8 +700,6 @@ fn skip_action(cursor: &mut AssocCursor<'_>) {
     }
 }
 
-/// The curve groups an edge action parameter writes after its type code
-/// (the second 90 group of the subclass).
 fn read_edge_curve(record: &AssocDxfRecord) -> Vec<AssocCurveValue> {
     let Some(pairs) = record.sections.get("AcDbAssocEdgeActionParam") else {
         return Vec::new();
@@ -927,9 +940,6 @@ fn read_array_parameters(record: &AssocDxfRecord) -> AssocArrayParameters {
     }
 }
 
-/// One array item: 90 class version, 90 x3 location, 90 flags, a point (11)
-/// or a matrix (40 x16), the relative matrix (flag 2), then the entity and,
-/// with flag 0x10, a second handle (330).
 fn read_array_item(cursor: &mut AssocCursor<'_>) -> AssocArrayItem {
     {
         let class_version = cursor.i32(90);
@@ -1128,7 +1138,7 @@ impl<'a> SectionReader<'a> {
                     dependency: read_dependency(&record),
                     class_version: cursor.i32(90),
                     name: cursor.text(1),
-                    value: read_eval(&mut cursor),
+                    value: read_eval(&mut cursor, None),
                 })
             }
             "ASSOCGEOMDEPENDENCY" => {
@@ -1410,7 +1420,7 @@ impl<'a> SectionReader<'a> {
                 let expression = cursor.text(1);
                 let evaluator = cursor.text(1);
                 let description = cursor.text(1);
-                let value = read_eval(&mut cursor);
+                let value = read_eval(&mut cursor, None);
                 let has_cached_value = cursor.bool(290);
                 let cached_value = if has_cached_value {
                     cursor.text(1)

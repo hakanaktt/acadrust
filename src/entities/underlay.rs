@@ -116,8 +116,6 @@ pub struct UnderlayDefinition {
     /// Reactors (entities referencing this definition).
     pub reactors: Vec<Handle>,
 
-    /// The file is unloaded: its underlays show no content. Stored as the
-    /// `NOLOAD` string in the definition's `ACAD` extended data.
     pub unloaded: bool,
 }
 
@@ -248,7 +246,7 @@ pub struct Underlay {
     /// DXF code: 281
     pub contrast: u8,
 
-    /// Fade value (0-100).
+    /// Fade value (0-80).
     /// DXF code: 282
     pub fade: u8,
 
@@ -429,13 +427,11 @@ impl Underlay {
         self.contrast = value.min(100);
     }
 
-    /// Sets fade (0-100).
+    /// Sets fade (0-80).
     pub fn set_fade(&mut self, value: u8) {
         self.fade = value.min(100);
     }
 
-    /// Display flags as written to a file: `clip_inverted` is the source of
-    /// the clip-inside bit, so an inversion set on the entity survives a save.
     pub fn display_flags(&self) -> UnderlayDisplayFlags {
         if self.clip_inverted {
             self.flags | UnderlayDisplayFlags::CLIP_INSIDE

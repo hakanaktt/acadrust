@@ -9,8 +9,8 @@
 //! The fixtures are written by the crate itself: no sample drawing is needed
 //! and none is referenced.
 
-use opencadcodec::tables::Layer;
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
+use acadrust::tables::Layer;
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
 
 const DESCRIPTION: &str = "Roadways: profile geometry points";
 

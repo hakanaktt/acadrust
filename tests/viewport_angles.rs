@@ -1,5 +1,5 @@
-use opencadcodec::entities::Viewport;
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter, EntityType, Vector3};
+use acadrust::entities::Viewport;
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter, EntityType, Vector3};
 use std::io::Cursor;
 
 fn assert_angle(actual: f64, expected: f64) {

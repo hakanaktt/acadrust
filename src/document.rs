@@ -7,13 +7,13 @@
 //! # Creating a document
 //!
 //! ```rust
-//! use opencadcodec::CadDocument;
+//! use acadrust::CadDocument;
 //!
 //! // Default version (R2018 / AC1032)
 //! let doc = CadDocument::new();
 //!
 //! // Specific version
-//! use opencadcodec::types::DxfVersion;
+//! use acadrust::types::DxfVersion;
 //! let doc = CadDocument::with_version(DxfVersion::AC1015); // R2000
 //! ```
 
@@ -137,15 +137,10 @@ thread_local! {
 pub struct SolidHistoryGraph {
     pub root: Handle,
     pub nodes: Vec<Handle>,
-    /// The root's evaluation graph (AcDbEvalGraph), which links the nodes.
-    /// Histories written by older releases of this crate have none and link
-    /// their nodes through parent ids.
     #[cfg_attr(feature = "serde", serde(default))]
     pub evaluation_graph: Option<Handle>,
 }
 
-/// Evaluation node flags the reference application stores on every solid
-/// history node.
 const SOLID_HISTORY_NODE_FLAGS: i32 = 32;
 
 fn solid_history_node_id(base: &SolidHistoryNodeBase) -> i32 {
@@ -282,10 +277,7 @@ pub struct HeaderVariables {
     pub hide_text: i16,
     /// XCLIPFRAME - Xref clipping frame visibility
     pub xclip_frame: i16,
-    /// DWFFRAME - DWF underlay frame visibility (0 hidden, 1 shown and
-    /// plotted, 2 shown but not plotted)
     pub dwf_frame: i16,
-    /// DGNFRAME - DGN underlay frame visibility (same values as DWFFRAME)
     pub dgn_frame: i16,
     /// HALOGAP - Halo gap percentage
     pub halo_gap: i16,
@@ -681,16 +673,11 @@ pub struct HeaderVariables {
     pub continuous_linetype_handle: Handle,
 
     // ==================== Date/Time ====================
-    /// TDCREATE: creation time in local time (Julian day, fraction from
-    /// midnight). DWG files store only the universal time; their reader
-    /// copies it here because the file carries no time zone.
+    /// Document creation time (Julian date)
     pub create_date_julian: f64,
-    /// TDUPDATE: last save in local time (Julian day, fraction from midnight).
+    /// Document update time (Julian date)
     pub update_date_julian: f64,
-    /// TDUCREATE: creation time in universal time — the value DWG files store.
-    /// 0 = unknown; writers then fall back to the local value.
     pub universal_create_date_julian: f64,
-    /// TDUUPDATE: last save in universal time; 0 = unknown.
     pub universal_update_date_julian: f64,
     /// Total editing time in days
     pub total_editing_time: f64,
@@ -737,7 +724,6 @@ pub struct HeaderVariables {
 }
 
 impl HeaderVariables {
-    /// TDUCREATE, or TDCREATE when the universal value is unknown.
     pub fn universal_create_or_local(&self) -> f64 {
         if self.universal_create_date_julian != 0.0 {
             self.universal_create_date_julian
@@ -746,7 +732,6 @@ impl HeaderVariables {
         }
     }
 
-    /// TDUUPDATE, or TDUPDATE when the universal value is unknown.
     pub fn universal_update_or_local(&self) -> f64 {
         if self.universal_update_date_julian != 0.0 {
             self.universal_update_date_julian
@@ -1263,10 +1248,6 @@ pub struct CadDocument {
     /// Keyed by the object/table-entry handle. Not serialized.
     pub(crate) eed_by_handle: HashMap<Handle, Vec<(u64, Vec<u8>)>>,
 
-    /// Extended data (XDATA) of non-entity objects as application records,
-    /// keyed by object handle: read from DXF, or decoded from the DWG EED in
-    /// `eed_by_handle`. The DWG writer encodes the records whose application
-    /// has no verbatim EED block; the DXF writer writes them after the object.
     pub(crate) object_xdata: HashMap<Handle, crate::xdata::ExtendedData>,
 
     /// Non-entity object xdictionary handles — populated during DWG read, consumed during DWG write.
@@ -1305,12 +1286,13 @@ pub struct CadDocument {
     /// Shared so document snapshots do not duplicate large modeler data.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub(crate) raw_acds_data: Option<Arc<Vec<u8>>>,
-    /// Original extrusion history and dimension-association records, keyed by
-    /// handle (type code, bytes). Their semantic snapshots guard passthrough.
-    /// `ACADRUST_RAW_ALL` additionally captures every record for debug bisection.
+    /// Debug aid: every record of the source DWG, verbatim, keyed by handle
+    /// (type code, bytes). Only filled when `ACADRUST_RAW_ALL` is set in the
+    /// environment; the writer then re-emits these instead of re-serialising
+    /// so that a writer defect can be bisected by object type
+    /// (`ACADRUST_RAW_EXCLUDE`).
     #[cfg_attr(feature = "serde", serde(skip))]
     pub(crate) raw_records: HashMap<u64, (i16, Arc<crate::entities::RawRecord>)>,
-    /// Semantic snapshots guarding same-version passthrough of retained objects.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub(crate) original_objects: HashMap<Handle, ObjectType>,
     /// Child record -> compound entity handle, captured with `raw_records`.
@@ -2288,7 +2270,6 @@ impl CadDocument {
         })
     }
 
-    /// The evaluation graph a history root owns, if any.
     fn solid_history_evaluation_graph(&self, root: Handle) -> Option<Handle> {
         let ObjectType::DynamicBlock(root_object) = self.objects.get(&root)? else {
             return None;
@@ -2316,7 +2297,6 @@ impl CadDocument {
         }
     }
 
-    /// Node handle whose evaluation id is the root's active id.
     fn solid_history_active_node(&self, graph: &SolidHistoryGraph) -> Option<Handle> {
         let active = match self.objects.get(&graph.root)? {
             ObjectType::DynamicBlock(value) => match &value.data {
@@ -2334,8 +2314,6 @@ impl CadDocument {
         matches.next().is_none().then_some(node)
     }
 
-    /// Node handles from the root to the active node, following each node's
-    /// first incoming edge (its primary operand) in the evaluation graph.
     fn solid_history_graph_chain(&self, graph: &SolidHistoryGraph) -> Option<Vec<Handle>> {
         let ObjectType::DynamicBlock(object) = self.objects.get(&graph.evaluation_graph?)? else {
             return None;
@@ -2369,9 +2347,6 @@ impl CadDocument {
         Some(chain)
     }
 
-    /// Give a history written without an evaluation graph (older releases of
-    /// this crate) one, built from its parent-linked chain, so new steps can
-    /// be linked the way the reference application links them.
     pub(crate) fn ensure_solid_history_evaluation_graph(
         &mut self,
         entity: Handle,
@@ -2443,9 +2418,6 @@ impl CadDocument {
         self.solid_history_graph(entity)
     }
 
-    /// Entities whose solid history has no evaluation graph. The reference
-    /// application rejects a drawing holding a multi-step history in that
-    /// form, so writers save it with one.
     pub(crate) fn legacy_solid_history_entities(&self) -> Vec<Handle> {
         self.entities()
             .map(|entity| entity.common().handle)
@@ -2533,9 +2505,7 @@ impl CadDocument {
 
     /// Return the active solid-history chain in root-to-active order.
     ///
-    /// The evaluation graph determines the chain: from the active node back
-    /// through each node's first operand. Histories without a graph (older
-    /// releases of this crate) are linked through parent evaluation ids.
+    /// Parent evaluation ids, rather than step ordering, determine the chain.
     /// Missing, cyclic, or ambiguous links make the graph unusable.
     pub fn solid_history_operations(&self, entity: Handle) -> Option<Vec<SolidHistoryOperation>> {
         let graph = self.solid_history_graph(entity)?;
@@ -2697,10 +2667,9 @@ impl CadDocument {
 
     /// Append a new operation to an entity's existing solid-history graph.
     ///
-    /// The existing root and nodes remain intact. The appended operation gets
-    /// the next evaluation id, takes the active node as its operand through a
-    /// new evaluation-graph edge and becomes the graph's active operation.
-    /// Like every history node it stores the root parent id.
+    /// The existing root and nodes remain intact. The appended operation is
+    /// assigned a new step/evaluation id, linked to the active node, and made
+    /// the graph's active operation.
     pub fn append_solid_history(
         &mut self,
         entity: Handle,
@@ -3285,7 +3254,7 @@ impl CadDocument {
     ///
     /// # Example
     /// ```ignore
-    /// use opencadcodec::entities::{Viewport, EntityType};
+    /// use acadrust::entities::{Viewport, EntityType};
     ///
     /// let vp = Viewport::new();
     /// document.add_entity_to_layout(EntityType::Viewport(vp), "Layout1")?;
@@ -3525,13 +3494,6 @@ impl CadDocument {
         Ok(layout_handle)
     }
 
-    /// Give the model block a `Model` layout when the source had none.
-    ///
-    /// R13/R14 files predate LAYOUT objects, so a reader otherwise returns a
-    /// `*Model_Space` record with no layout, or one naming a handle that
-    /// resolves to nothing (#65). Only the model layout is synthesized: paper
-    /// settings the source does not carry are not invented, and dangling
-    /// record → layout handles are cleared.
     pub fn ensure_model_layout(&mut self) {
         // Layouts name their record; a record left without the back link
         // (R13/R14 block headers have none) takes it from its layout.
@@ -4150,9 +4112,6 @@ impl CadDocument {
             .map(|record| record.handle)
     }
 
-    /// Copy the native source-definition tag of an evaluated anonymous block.
-    /// Nonempty extension dictionaries need a full object-graph clone and are
-    /// deliberately rejected here rather than shared between block records.
     pub fn copy_evaluated_block_metadata(&mut self, source: Handle, target: Handle) -> Result<()> {
         for handle in [source, target] {
             if !self.block_records.iter().any(|b| b.handle == handle && b.name.starts_with("*U")) {

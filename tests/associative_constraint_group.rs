@@ -1,11 +1,11 @@
 use std::io::Cursor;
 
-use opencadcodec::objects::{
+use acadrust::objects::{
     Assoc2dConstraintGroup, AssocAction, AssocConstraintNode, AssocConstraintNodeData,
     AssociativeData, AssociativeObject, ObjectType,
 };
-use opencadcodec::types::Vector3;
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
+use acadrust::types::Vector3;
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
 
 #[test]
 fn dwg_constraint_group_counts_only_registered_nodes() {

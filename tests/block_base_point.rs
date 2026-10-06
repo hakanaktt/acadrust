@@ -1,6 +1,6 @@
-use opencadcodec::tables::TableEntry;
-use opencadcodec::types::{DxfVersion, Vector3};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter};
+use acadrust::tables::TableEntry;
+use acadrust::types::{DxfVersion, Vector3};
+use acadrust::{CadDocument, DwgReader, DwgWriter};
 use std::io::Cursor;
 
 #[test]
@@ -23,8 +23,8 @@ fn reserved_space_markers_roundtrip_without_entity_index_entries() {
             assert_eq!(actual.block_end_handle, expected.block_end_handle);
             let begin = result.get_entity(actual.block_entity_handle).unwrap();
             let end = result.get_entity(actual.block_end_handle).unwrap();
-            assert!(matches!(begin, opencadcodec::entities::EntityType::Block(_)));
-            assert!(matches!(end, opencadcodec::entities::EntityType::BlockEnd(_)));
+            assert!(matches!(begin, acadrust::entities::EntityType::Block(_)));
+            assert!(matches!(end, acadrust::entities::EntityType::BlockEnd(_)));
             assert_eq!(begin.common().owner_handle, actual.handle);
             assert_eq!(end.common().owner_handle, actual.handle);
         }
@@ -42,7 +42,7 @@ fn writes_block_record_base_point_without_a_block_marker() {
         DxfVersion::AC1032,
     ] {
         let mut document = CadDocument::with_version(version);
-        let mut record = opencadcodec::tables::BlockRecord::new("Desk");
+        let mut record = acadrust::tables::BlockRecord::new("Desk");
         record.set_handle(document.allocate_handle());
         record.block_end_handle = document.allocate_handle();
         record.base_point = Vector3::new(50.0, 25.0, 0.0);

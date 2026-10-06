@@ -1,9 +1,9 @@
-use opencadcodec::entities::acis::primitives::build_box;
-use opencadcodec::entities::solid3d::{AcisData, Body, Region, Solid3D};
-use opencadcodec::entities::surface::{Surface, SurfaceKind};
-use opencadcodec::entities::EntityType;
-use opencadcodec::types::DxfVersion;
-use opencadcodec::{CadDocument, DwgReader, DwgWriter};
+use acadrust::entities::acis::primitives::build_box;
+use acadrust::entities::solid3d::{AcisData, Body, Region, Solid3D};
+use acadrust::entities::surface::{Surface, SurfaceKind};
+use acadrust::entities::EntityType;
+use acadrust::types::DxfVersion;
+use acadrust::{CadDocument, DwgReader, DwgWriter};
 use std::ffi::OsString;
 use std::io::Cursor;
 

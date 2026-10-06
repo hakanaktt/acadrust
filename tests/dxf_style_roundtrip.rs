@@ -1,12 +1,9 @@
-//! DXF write -> read round-trip for text styles and dimension styles: each test
-//! builds a style with non-default values, round-trips it through the DXF writer
-//! and reader, and checks what the writer emits comes back.
 
 use std::io::Cursor;
 
-use opencadcodec::tables::{DimStyle, TextStyle};
-use opencadcodec::types::DxfVersion;
-use opencadcodec::{CadDocument, DxfReader, DxfWriter};
+use acadrust::tables::{DimStyle, TextStyle};
+use acadrust::types::DxfVersion;
+use acadrust::{CadDocument, DxfReader, DxfWriter};
 
 fn dxf_roundtrip(doc: &CadDocument) -> CadDocument {
     let bytes = DxfWriter::new(doc).write_to_vec().expect("DXF write failed");

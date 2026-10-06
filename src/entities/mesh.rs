@@ -186,8 +186,8 @@ impl From<Vec<usize>> for MeshFace {
 /// # Example
 ///
 /// ```ignore
-/// use opencadcodec::entities::{Mesh, MeshFace};
-/// use opencadcodec::types::Vector3;
+/// use acadrust::entities::{Mesh, MeshFace};
+/// use acadrust::types::Vector3;
 ///
 /// // Create a simple cube mesh
 /// let mut mesh = Mesh::new();

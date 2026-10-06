@@ -1,9 +1,9 @@
 use std::io::Cursor;
 
-use opencadcodec::entities::acis::{primitives, SatCoedge, SatDocument, SatPlaneSurface};
-use opencadcodec::entities::*;
-use opencadcodec::tables::TextStyle;
-use opencadcodec::{
+use acadrust::entities::acis::{primitives, SatCoedge, SatDocument, SatPlaneSurface};
+use acadrust::entities::*;
+use acadrust::tables::TextStyle;
+use acadrust::{
     CadDocument, DwgReader, DwgWriter, DxfReader, DxfVersion, DxfWriter, Handle, Vector3,
 };
 
@@ -74,9 +74,9 @@ fn shape_file_style_has_no_dxf_name() {
 
 #[test]
 fn underlay_definitions_keep_reactor_back_references() {
-    use opencadcodec::objects::ObjectType;
+    use acadrust::objects::ObjectType;
     let mut doc = CadDocument::with_version(DxfVersion::AC1021);
-    let mut definition = opencadcodec::objects::UnderlayDefinition::dwf("test.dwf", "Model");
+    let mut definition = acadrust::objects::UnderlayDefinition::dwf("test.dwf", "Model");
     definition.handle = doc.allocate_handle();
     definition.owner_handle = doc.header.named_objects_dict_handle;
     let def_handle = definition.handle;
@@ -87,7 +87,7 @@ fn underlay_definitions_keep_reactor_back_references() {
     {
         root.add_entry("UNDERLAY_TEST", def_handle);
     }
-    let mut underlay = Underlay::new(opencadcodec::entities::underlay::UnderlayType::Dwf);
+    let mut underlay = Underlay::new(acadrust::entities::underlay::UnderlayType::Dwf);
     underlay.definition_handle = def_handle;
     let handle = doc.add_entity(EntityType::Underlay(underlay)).unwrap();
     let loaded = DxfReader::from_reader(Cursor::new(DxfWriter::new(&doc).write_to_vec().unwrap()))
@@ -166,7 +166,7 @@ fn missing_table_block_is_serialized_without_mutating_source() {
 fn existing_table_block_gets_missing_record_and_marker_handles() {
     let mut doc = CadDocument::with_version(DxfVersion::AC1021);
     doc.block_records
-        .add(opencadcodec::BlockRecord::new("*T1"))
+        .add(acadrust::BlockRecord::new("*T1"))
         .unwrap();
     let mut table = Table::new(Vector3::ZERO, 2, 2);
     table.block_name = "*T1".into();
@@ -198,7 +198,7 @@ fn r2007_mleader_and_table_styles_remain_reachable() {
         .read()
         .unwrap();
     for name in ["ACAD_MLEADERSTYLE", "ACAD_TABLESTYLE"] {
-        let opencadcodec::objects::ObjectType::Dictionary(root) = decoded
+        let acadrust::objects::ObjectType::Dictionary(root) = decoded
             .objects
             .get(&decoded.header.named_objects_dict_handle)
             .unwrap()
@@ -206,7 +206,7 @@ fn r2007_mleader_and_table_styles_remain_reachable() {
             panic!()
         };
         let dictionary = root.get(name).unwrap();
-        let opencadcodec::objects::ObjectType::Dictionary(styles) =
+        let acadrust::objects::ObjectType::Dictionary(styles) =
             decoded.objects.get(&dictionary).unwrap()
         else {
             panic!()
@@ -277,7 +277,7 @@ fn sat_origin_bodies_survive_dwg_modeler_encoding() {
         let mut doc = CadDocument::with_version(version);
         let mut region =
             Region::from_sat(include_str!("../examples/entity_atlas_assets/region.sat"));
-        region.apply_transform(&opencadcodec::types::Transform::from_translation(Vector3::new(
+        region.apply_transform(&acadrust::types::Transform::from_translation(Vector3::new(
             20., 30., 0.,
         )));
         let h = doc.add_entity(EntityType::Region(region)).unwrap();
@@ -423,11 +423,11 @@ fn old_dwg_modelers_select_compatible_sat_or_sab() {
                 assert_eq!(record.tokens.len(), 8);
                 assert!(matches!(
                     record.tokens[1],
-                    opencadcodec::entities::acis::SatToken::Pointer(_)
+                    acadrust::entities::acis::SatToken::Pointer(_)
                 ));
                 assert!(matches!(
                     record.tokens[3],
-                    opencadcodec::entities::acis::SatToken::Pointer(_)
+                    acadrust::entities::acis::SatToken::Pointer(_)
                 ));
             }
         }
@@ -442,7 +442,7 @@ fn legacy_viewport_eed_and_header_ids_roundtrip_without_mutating_source() {
         overview.id = 1;
         doc.add_paper_space_entity(EntityType::Viewport(overview))
             .unwrap();
-        let mut layer = opencadcodec::tables::Layer::new("FROZEN_TEST");
+        let mut layer = acadrust::tables::Layer::new("FROZEN_TEST");
         layer.handle = doc.allocate_handle();
         let layer_handle = layer.handle;
         doc.layers.add(layer).unwrap();
@@ -509,7 +509,7 @@ fn arc_text_fixture() -> ArcAlignedTextData {
 
 #[test]
 fn arc_text_numeric_strings_roundtrip_in_every_dwg_version() {
-    use opencadcodec::io::dwg::dwg_stream_readers::{
+    use acadrust::io::dwg::dwg_stream_readers::{
         handle_reader::read_handles, object_reader::DwgObjectReader,
     };
 
@@ -611,7 +611,7 @@ fn arc_text_dxf_angles_use_degrees_and_api_uses_radians() {
 
 #[test]
 fn class_mapped_entities_are_dispatched_as_entities() {
-    use opencadcodec::io::dwg::dwg_stream_readers::object_reader::common::*;
+    use acadrust::io::dwg::dwg_stream_readers::object_reader::common::*;
     for name in [
         "ARC_DIMENSION",
         "LARGE_RADIAL_DIMENSION",
@@ -647,7 +647,7 @@ fn class_mapped_entities_are_dispatched_as_entities() {
 
 #[test]
 fn surface_and_light_dxf_common_properties_survive_all_encodings() {
-    use opencadcodec::types::{Color, LineWeight};
+    use acadrust::types::{Color, LineWeight};
 
     for version in [
         DxfVersion::AC1021,
@@ -672,7 +672,7 @@ fn surface_and_light_dxf_common_properties_survive_all_encodings() {
         let mut handles = Vec::new();
         for (index, mut entity) in entities.into_iter().enumerate() {
             let layer_name = format!("COMMON_TEST_{index}");
-            let mut layer = opencadcodec::tables::Layer::new(&layer_name);
+            let mut layer = acadrust::tables::Layer::new(&layer_name);
             layer.handle = doc.allocate_handle();
             doc.layers.add(layer).unwrap();
             let common = entity.common_mut();

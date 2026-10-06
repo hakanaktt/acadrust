@@ -357,7 +357,7 @@ bitflags! {
 /// # Example
 ///
 /// ```ignore
-/// use opencadcodec::objects::MultiLeaderStyle;
+/// use acadrust::objects::MultiLeaderStyle;
 ///
 /// let mut style = MultiLeaderStyle::new("MyStyle");
 /// style.text_height = 0.25;

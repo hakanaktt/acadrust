@@ -1,7 +1,7 @@
 use std::io::Cursor;
 
-use opencadcodec::entities::{BoundaryEdge, BoundaryPath, Hatch};
-use opencadcodec::{CadDocument, Color, DwgReadOptions, DwgReader, DwgWriter, EntityType};
+use acadrust::entities::{BoundaryEdge, BoundaryPath, Hatch};
+use acadrust::{CadDocument, Color, DwgReadOptions, DwgReader, DwgWriter, EntityType};
 
 // Six MPOLYGONs generated as DXF and re-saved as a 2013 DWG by AutoCAD; see
 // mpolygon-fixture.md for the shapes and their expected values.
@@ -24,7 +24,6 @@ fn mpolygons() -> Vec<Hatch> {
     mpolygons_of(&read(include_bytes!("mpolygon-fixture.dwg").to_vec()))
 }
 
-/// Loop vertices as (x, y, bulge).
 fn vertices(path: &BoundaryPath) -> Vec<(f64, f64, f64)> {
     assert_eq!(path.edges.len(), 1, "an MPOLYGON loop is a single polyline");
     let BoundaryEdge::Polyline(polyline) = &path.edges[0] else {
@@ -34,7 +33,6 @@ fn vertices(path: &BoundaryPath) -> Vec<(f64, f64, f64)> {
     polyline.vertices.iter().map(|v| (v.x, v.y, v.z)).collect()
 }
 
-/// Shape 1: square (0,0)-(10,10), solid, entity colour 1, fill colour 5.
 fn square(mpolygons: &[Hatch]) -> &Hatch {
     mpolygons
         .iter()
@@ -111,7 +109,6 @@ fn square_with_hole_reads_two_loops() {
     );
 }
 
-/// Shape 3: (40,10), (50,10), (50,0) with bulge -1, (40,0).
 #[test]
 fn arc_shape_carries_a_non_zero_bulge() {
     let mpolygons = mpolygons();
@@ -159,7 +156,6 @@ fn true_color_fill_and_bylayer_entity() {
     assert_eq!(hatch.common.linetype, "DASHED");
 }
 
-/// Shape 6: AutoCAD keeps the self-intersecting bow-tie as a valid loop.
 #[test]
 fn bow_tie_stays_a_valid_loop() {
     let mpolygons = mpolygons();

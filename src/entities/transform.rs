@@ -173,15 +173,6 @@ pub(crate) fn transform_arc(e: &mut Arc, transform: &Transform) {
 
 // ── Ellipse ──────────────────────────────────────────────────────────────────
 
-/// Maps an ellipse through any affine transform, returning the exact image.
-///
-/// The two conjugate semi-diameters `M` and `V = (N × M)·ratio` map linearly,
-/// but under rotation-with-scale, shear or non-uniform scale their images are
-/// no longer the principal axes. The principal pair is found by turning the
-/// images by θ = ½·atan2(2·M′·V′, |M′|² − |V′|²), which always lands the
-/// longer axis first, so the ratio stays ≤ 1 without a separate swap; the
-/// parameters shift by −θ. The normal is `M × V` of the result, so a
-/// reflection flips it and the sweep still traces the mirrored curve.
 pub(crate) fn transform_ellipse(e: &mut Ellipse, transform: &Transform) {
     use std::f64::consts::TAU;
     let fallback = |e: &mut Ellipse| {

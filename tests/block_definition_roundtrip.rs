@@ -1,13 +1,10 @@
-//! A block definition's description and base point are one definition seen
-//! from two sides: the `BlockRecord` and the public BLOCK marker. These check
-//! that neither codec drops the description and that the two views agree.
 
 use std::io::Cursor;
 
-use opencadcodec::entities::{EntityType, Line};
-use opencadcodec::tables::BlockRecord;
-use opencadcodec::types::{DxfVersion, Vector3};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
+use acadrust::entities::{EntityType, Line};
+use acadrust::tables::BlockRecord;
+use acadrust::types::{DxfVersion, Vector3};
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
 
 fn dxf_roundtrip(doc: &CadDocument) -> CadDocument {
     let bytes = DxfWriter::new(doc).write_to_vec().expect("DXF write failed");
@@ -17,7 +14,6 @@ fn dxf_roundtrip(doc: &CadDocument) -> CadDocument {
         .expect("DXF read failed")
 }
 
-/// A `Door` block with one line inside it, a base point and a description.
 fn door(description: &str) -> CadDocument {
     let mut doc = CadDocument::with_version(DxfVersion::AC1032);
     let mut record = BlockRecord::new("Door");

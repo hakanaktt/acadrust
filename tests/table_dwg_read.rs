@@ -7,9 +7,9 @@
 
 use std::io::Cursor;
 
-use opencadcodec::entities::EntityType;
-use opencadcodec::types::Handle;
-use opencadcodec::{CadDocument, DwgReader, DwgWriter};
+use acadrust::entities::EntityType;
+use acadrust::types::Handle;
+use acadrust::{CadDocument, DwgReader, DwgWriter};
 
 fn load_doc() -> Option<CadDocument> {
     let path = concat!(
@@ -24,7 +24,7 @@ fn load_doc() -> Option<CadDocument> {
     Some(reader.read().expect("read fixture"))
 }
 
-fn tables_of(doc: &CadDocument) -> Vec<opencadcodec::entities::Table> {
+fn tables_of(doc: &CadDocument) -> Vec<acadrust::entities::Table> {
     doc.entities()
         .filter_map(|e| match e {
             EntityType::Table(t) => Some((**t).clone()),
@@ -33,7 +33,7 @@ fn tables_of(doc: &CadDocument) -> Vec<opencadcodec::entities::Table> {
         .collect()
 }
 
-fn load_tables() -> Option<Vec<opencadcodec::entities::Table>> {
+fn load_tables() -> Option<Vec<acadrust::entities::Table>> {
     load_doc().map(|d| tables_of(&d))
 }
 
@@ -53,7 +53,7 @@ fn table_cell_content_is_parsed() {
     let Some(tables) = load_tables() else { return };
 
     // Collect each table's first-row title so order doesn't matter.
-    let title = |t: &opencadcodec::entities::Table| -> String {
+    let title = |t: &acadrust::entities::Table| -> String {
         t.rows
             .first()
             .and_then(|r| r.cells.first())

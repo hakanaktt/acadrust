@@ -1997,9 +1997,6 @@ impl<'a> DwgObjectWriter<'a> {
         self.register_object(e.common.handle);
     }
 
-    /// Writes a count followed by MPOLYGON loops: closed polylines without
-    /// flags, typed edges or boundary handles. Paths that are not a single
-    /// polyline edge cannot be expressed in this format and are skipped.
     fn write_mpolygon_loops(&mut self, paths: &[BoundaryPath], invalid: bool) {
         let loops: Vec<&PolylineEdge> = paths
             .iter()
@@ -3229,7 +3226,7 @@ impl<'a> DwgObjectWriter<'a> {
     ///
     // ── Table (ACAD_TABLE) ──────────────────────────────────────────
     //
-    // Inverse of the table reader. Cell styles / borders opencadcodec does not
+    // Inverse of the table reader. Cell styles / borders acadrust does not
     // model are written as empty presence-flag stubs (the anonymous block
     // renders the visual), and the retained data — dimensions, cell contents
     // (text/number) — is written in full so it round-trips.
@@ -5392,7 +5389,6 @@ impl<'a> DwgObjectWriter<'a> {
     ///
     /// For R2013 and later, ACIS data lives in the AcDsPrototype_1b section.
     /// The entity stream indicates that modeler geometry is not inline, but its
-    /// native COMMON_3DSOLID wireframe cache header still remains in the entity.
     fn write_acis_empty(&mut self, acis: &AcisData) {
         // R2013+ AcDs-backed records no longer carry the legacy leading
         // `acis_empty` bit.  Their first modeler-geometry bit is the
@@ -5453,8 +5449,6 @@ impl<'a> DwgObjectWriter<'a> {
         }
     }
 
-    /// Modeler block: B, then BS 2 and SAB bytes, or BS 1 and the
-    /// encrypted SAT text in length-prefixed blocks ending with 0.
     fn write_modeler_block(&mut self, extra: &AcisData) {
         self.writer.write_bit(false);
         if extra.is_binary && !extra.sab_data.is_empty() {
@@ -5495,9 +5489,6 @@ impl<'a> DwgObjectWriter<'a> {
         self.queue_sab_entry(acis, entity.common().handle);
     }
 
-    /// SAT text to SAB. A body whose text carries no save date gets the
-    /// drawing's save date (TDUPDATE), as the reference application stamps
-    /// its save time there.
     fn sab_from_sat(&self, sat: &crate::entities::acis::SatDocument) -> Vec<u8> {
         let julian = self.document.header.update_date_julian;
         if !sat.header.date.is_empty() || julian <= 0.0 {
@@ -5551,8 +5542,6 @@ impl<'a> DwgObjectWriter<'a> {
         self.write_acis_data_impl(point, acis, wires, silhouettes, false)
     }
 
-    /// Modeler data of a B-rep history node. From R2007 on the record ends
-    /// with the SAB stream: no wireframe cache, materials or revision follow.
     pub(super) fn write_history_acis_data(&mut self, acis: &AcisData) {
         if !self.version.r2007_plus() {
             self.write_acis_data(Vector3::ZERO, acis, &[], &[]);

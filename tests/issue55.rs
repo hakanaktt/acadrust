@@ -13,10 +13,10 @@
 
 use std::io::Cursor;
 
-use opencadcodec::entities::{Circle, EntityType, Line, Text};
-use opencadcodec::tables::Layer;
-use opencadcodec::types::{Color, DxfVersion, Vector3};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter};
+use acadrust::entities::{Circle, EntityType, Line, Text};
+use acadrust::tables::Layer;
+use acadrust::types::{Color, DxfVersion, Vector3};
+use acadrust::{CadDocument, DwgReader, DwgWriter};
 
 fn sample_document() -> CadDocument {
     let mut doc = CadDocument::with_version(DxfVersion::AC1015);
@@ -82,7 +82,7 @@ fn r2000_with_template_and_aux_header_after_handles_reads_fully() {
     let doc = sample_document();
     let bytes = DwgWriter::write_to_vec(&doc).expect("DWG write failed");
 
-    // Baseline: opencadcodec's own layout (Template/AuxHeader before Handles).
+    // Baseline: acadrust's own layout (Template/AuxHeader before Handles).
     let baseline = read_dwg(bytes.clone());
     let expected = baseline.entities().count();
     assert!(expected > 0, "baseline DWG must contain entities");

@@ -59,7 +59,7 @@
 //! # Example
 //!
 //! ```
-//! use opencadcodec::entities::mtext_format::{
+//! use acadrust::entities::mtext_format::{
 //!     parse_mtext, MTextDocument, MTextParagraph, MTextSpan, SpanProperties, MTextColor,
 //! };
 //!

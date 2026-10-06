@@ -1,47 +1,19 @@
-//! Block counting: the instances behind the `AcCount` / `AcCount2` fields and
-//! the COUNT feature of a host application.
-//!
-//! A count looks at the block references (INSERTs) of model space. References
-//! of the same block with the same position, rotation and scale overlap each
-//! other: the first one counts, every further copy is a *duplicate* (an error
-//! of the count that is reported, not counted).
-//!
-//! Count field codes carry their query as JSON:
-//!
-//! - `\AcCount {"key":{},"name":"CHAIR","type":"block"}` — the references of a
-//!   block; `key` narrows them by `layer`, `scale` (`{"x":..,"y":..,"z":..}`,
-//!   magnitudes) and `mirrorState`.
-//! - `\AcCount2 {"boundaryObjectHandle":"8D6C","evaluatorId":"AcCount2",...}`
-//!   — the same, only the references lying wholly inside a closed polyline.
-//! - `\AcCount {"groupCondition":{...},"targets":["8D1A"],"type":"single"}` —
-//!   the references of the block the target reference shows; several targets
-//!   (or one that is not a reference) count the copies of the group.
-//!
-//! JSON that does not parse, or names no block, counts `0`; a code without
-//! JSON shows `####`.
 
 use crate::document::CadDocument;
 use crate::entities::{EntityType, Insert};
 use crate::types::{Handle, Vector3};
 use std::collections::{HashMap, HashSet};
 
-/// One block reference taking part in a count.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BlockInstance {
     pub handle: Handle,
-    /// Block name as the block table spells it.
     pub name: String,
     pub layer: String,
-    /// Scale magnitudes (a mirrored reference counts with its positive scale).
     pub scale: [f64; 3],
-    /// The reference is mirrored (an odd number of negative scale factors).
     pub mirrored: bool,
-    /// The earlier reference this one overlaps exactly; such a duplicate is
-    /// not counted.
     pub duplicate_of: Option<Handle>,
 }
 
-/// What narrows a count beyond the block name. `None` matches any value.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct CountKey {
     pub layer: Option<String>,
@@ -50,7 +22,6 @@ pub struct CountKey {
 }
 
 impl CountKey {
-    /// The key of `instance` restricted to the chosen properties.
     pub fn of(instance: &BlockInstance, layer: bool, scale: bool, mirror: bool) -> Self {
         Self {
             layer: layer.then(|| instance.layer.clone()),
@@ -65,8 +36,6 @@ impl CountKey {
             && self.mirror_state.is_none_or(|m| m == instance.mirrored)
     }
 
-    /// The key object as the reference writes it (`{}` when empty; members in
-    /// name order).
     pub fn json(&self) -> String {
         let mut parts = Vec::new();
         if let Some(layer) = &self.layer {
@@ -81,8 +50,6 @@ impl CountKey {
         format!("{{{}}}", parts.join(","))
     }
 
-    /// Row label for an expanded count: the chosen values joined by `_`
-    /// (`0_1.0000_Default`).
     pub fn label(&self) -> String {
         let mut parts = Vec::new();
         if let Some(layer) = &self.layer {
@@ -106,11 +73,8 @@ fn same_scale(a: [f64; 3], b: [f64; 3]) -> bool {
     a.iter().zip(b).all(|(a, b)| (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1.0))
 }
 
-/// The counted block references of model space, in drawing order. `area`
-/// (a closed WCS polygon) keeps only references whose extents lie wholly
-/// inside it. Anonymous, layout and external-reference blocks take no part.
 pub fn block_instances(doc: &CadDocument, area: Option<&[[f64; 2]]>) -> Vec<BlockInstance> {
-    let mut seen: HashMap<(String, [i64; 7]), Handle> = HashMap::new();
+    let mut seen: HashMap<(String, [i64; 10]), Handle> = HashMap::new();
     let mut out = Vec::new();
     for entity in doc.model_space_entities() {
         let EntityType::Insert(insert) = entity else {
@@ -136,9 +100,10 @@ pub fn block_instances(doc: &CadDocument, area: Option<&[[f64; 2]]>) -> Vec<Bloc
         // ponytail: duplicates are exact overlaps (same transform), rounded to 1e-6.
         let r = |v: f64| (v * 1e6).round() as i64;
         let p = insert.insert_point;
+        let n = insert.normal;
         let key = (
             record.name.to_ascii_uppercase(),
-            [r(p.x), r(p.y), r(p.z), r(insert.rotation), r(sx), r(sy), r(sz)],
+            [r(p.x), r(p.y), r(p.z), r(insert.rotation), r(sx), r(sy), r(sz), r(n.x), r(n.y), r(n.z)],
         );
         let handle = insert.common.handle;
         let duplicate_of = match seen.get(&key) {
@@ -160,7 +125,6 @@ pub fn block_instances(doc: &CadDocument, area: Option<&[[f64; 2]]>) -> Vec<Bloc
     out
 }
 
-/// One block's line of a count: the counted references and the duplicates.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BlockCount {
     pub name: String,
@@ -168,8 +132,6 @@ pub struct BlockCount {
     pub duplicates: Vec<Handle>,
 }
 
-/// Every block of `instances` with its counted and duplicate references,
-/// sorted by name (case-insensitively).
 pub fn block_counts(instances: &[BlockInstance]) -> Vec<BlockCount> {
     let mut map: HashMap<String, BlockCount> = HashMap::new();
     for i in instances {
@@ -189,7 +151,6 @@ pub fn block_counts(instances: &[BlockInstance]) -> Vec<BlockCount> {
     out
 }
 
-/// The counted (non-duplicate) references of block `name` matching `key`.
 pub fn count_of(instances: &[BlockInstance], name: &str, key: &CountKey) -> usize {
     instances
         .iter()
@@ -197,8 +158,6 @@ pub fn count_of(instances: &[BlockInstance], name: &str, key: &CountKey) -> usiz
         .count()
 }
 
-/// The distinct keys of block `name` when expanded by the chosen properties,
-/// each with its count, in the order the drawing first shows them.
 pub fn expanded_counts(
     instances: &[BlockInstance],
     name: &str,
@@ -217,12 +176,10 @@ pub fn expanded_counts(
     out
 }
 
-/// `{"key":{...},"name":"CHAIR","type":"block"}`.
 pub fn block_json(name: &str, key: &CountKey) -> String {
     format!("{{\"key\":{},\"name\":{},\"type\":\"block\"}}", key.json(), json_string(name))
 }
 
-/// `{"boundaryObjectHandle":"8D6C","evaluatorId":"AcCount2","key":{...},...}`.
 pub fn area_json(name: &str, key: &CountKey, boundary: Handle) -> String {
     format!(
         "{{\"boundaryObjectHandle\":\"{:X}\",\"evaluatorId\":\"AcCount2\",\"key\":{},\"name\":{},\"type\":\"block\"}}",
@@ -232,7 +189,6 @@ pub fn area_json(name: &str, key: &CountKey, boundary: Handle) -> String {
     )
 }
 
-/// `{"groupCondition":{...},"targets":["8D1A"],"type":"single"}`.
 pub fn single_json(targets: &[Handle]) -> String {
     let targets: Vec<String> = targets.iter().map(|h| format!("\"{:X}\"", h.value())).collect();
     format!(
@@ -241,10 +197,6 @@ pub fn single_json(targets: &[Handle]) -> String {
     )
 }
 
-/// The objects like one picked object that is not a block reference, in
-/// model space and inside the counted block references (nested ones too).
-/// Objects match at any position, rotation and size (see [`similar`]). Each match is listed as the top-level
-/// object it is drawn by (a reference repeats once per match inside it).
 pub fn similar_matches(doc: &CadDocument, target: &EntityType, area: Option<&[[f64; 2]]>) -> Vec<Vec<Handle>> {
     let duplicates: Vec<Handle> =
         block_instances(doc, None).into_iter().filter(|i| i.duplicate_of.is_some()).map(|i| i.handle).collect();
@@ -266,8 +218,6 @@ pub fn similar_matches(doc: &CadDocument, target: &EntityType, area: Option<&[[f
     out
 }
 
-/// Outlines (in WCS) of the objects under `e` that `matches` accepts; `chain`
-/// holds the references `e` is drawn through, outermost first.
 fn nested_matches(
     doc: &CadDocument,
     e: &EntityType,
@@ -321,9 +271,6 @@ fn nested_matches(
     found.push(outline);
 }
 
-/// A polyline's shape independent of size, rotation and position: per
-/// vertex the segment's share of the length, the turn to the next segment
-/// and the bulge.
 fn polyline_shape(e: &EntityType) -> Option<Vec<[f64; 3]>> {
     let EntityType::LwPolyline(pl) = e else {
         return None;
@@ -354,8 +301,6 @@ fn polyline_shape(e: &EntityType) -> Option<Vec<[f64; 3]>> {
     )
 }
 
-/// Two polyline shapes are alike when one is the other started at another
-/// vertex (closed ones).
 fn same_shape(a: Option<&[[f64; 3]]>, b: Option<&[[f64; 3]]>, closed: bool) -> bool {
     let (Some(a), Some(b)) = (a, b) else {
         return false;
@@ -370,13 +315,6 @@ fn same_shape(a: Option<&[[f64; 3]]>, b: Option<&[[f64; 3]]>, closed: bool) -> b
             .any(|b| (0..shifts).any(|k| a.iter().enumerate().all(|(i, x)| close(x, &b[(i + k) % b.len()]))))
 }
 
-/// Whether `e` counts as a copy of the single picked `target` (as measured
-/// on the reference): circles always; arcs, ellipses, polylines, splines and
-/// hatches when their boundary runs the same way at any position, rotation,
-/// size or mirror and their pattern lands the same way on it; texts and
-/// multiline texts with the same string; lines always; anything else
-/// objects of its kind. Polylines and solid hatches may be mirrored; pattern
-/// hatches and splines not.
 fn similar(target: &EntityType, e: &EntityType) -> bool {
     let eq = |a: f64, b: f64| (a - b).abs() < 1e-6;
     let sweep = |a: f64, b: f64| (b - a).rem_euclid(std::f64::consts::TAU);
@@ -415,8 +353,6 @@ fn similar(target: &EntityType, e: &EntityType) -> bool {
     }
 }
 
-/// Points moved, turned and scaled so the first lies at the origin and the
-/// first distinct one at (1, 0).
 fn normalized(points: &[Vector3]) -> Vec<[f64; 2]> {
     let Some(first) = points.first() else {
         return Vec::new();
@@ -435,12 +371,6 @@ fn normalized(points: &[Vector3]) -> Vec<[f64; 2]> {
         .collect()
 }
 
-/// The copies of a group of picked objects (one object that is not a block
-/// reference: [`similar_matches`]): every arrangement of model-space
-/// objects that repeats the targets moved by one translation (same kind and
-/// shape; references of the same block with the same rotation and scale).
-/// Duplicate references take no part, and with `area` every member must lie
-/// inside it. Each arrangement lists its members in the targets' order.
 pub fn group_matches(doc: &CadDocument, targets: &[Handle], area: Option<&[[f64; 2]]>) -> Vec<Vec<Handle>> {
     if let [one] = targets {
         match doc.get_entity(*one) {
@@ -516,8 +446,6 @@ pub fn group_matches(doc: &CadDocument, targets: &[Handle], area: Option<&[[f64;
     out
 }
 
-/// What an object must repeat to match in a group, and the point it is
-/// placed by. `None` for objects without a comparable shape.
 fn shape_signature(entity: &EntityType) -> Option<(String, Vector3)> {
     let f = |v: f64| format!("{:.6}", v + 0.0);
     let v = |p: Vector3| format!("{},{},{}", f(p.x), f(p.y), f(p.z));
@@ -556,8 +484,6 @@ fn shape_signature(entity: &EntityType) -> Option<(String, Vector3)> {
     })
 }
 
-/// Evaluate an `AcCount` / `AcCount2` field code (`\AcCount {json}`, with
-/// or without the `%<…>%` wrapper).
 pub fn evaluate(doc: &CadDocument, code: &str) -> String {
     let mut code = code.trim();
     if let Some(inner) = code.strip_prefix("%<").and_then(|c| c.strip_suffix(">%")) {
@@ -607,17 +533,12 @@ fn evaluate_json(doc: &CadDocument, json: &str) -> Option<usize> {
     }
 }
 
-/// What a count field's JSON asks for.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CountQuery {
-    /// A block's references (`type` `block`), in a boundary polyline for
-    /// `AcCount2`.
     Block { name: String, key: CountKey, boundary: Option<Handle> },
-    /// The picked objects (`type` `single`).
     Single(Vec<Handle>),
 }
 
-/// Read a count field's JSON; `None` when it does not parse.
 pub fn parse_query(json: &str) -> Option<CountQuery> {
     let value = Json::parse(json.trim())?;
     let obj = value.object()?;
@@ -663,8 +584,6 @@ fn parse_key(key: Option<&Json>) -> Option<CountKey> {
     })
 }
 
-/// The WCS outline of a closed LWPOLYLINE used as a count area; `None` when
-/// the object cannot be one (see [`valid_boundary`]).
 pub fn boundary_polygon(doc: &CadDocument, handle: Handle) -> Option<Vec<[f64; 2]>> {
     match doc.get_entity(handle)? {
         EntityType::LwPolyline(pl) if valid_boundary(pl) => {
@@ -674,14 +593,11 @@ pub fn boundary_polygon(doc: &CadDocument, handle: Handle) -> Option<Vec<[f64; 2
     }
 }
 
-/// A count area boundary: a closed polyline of at least three vertices made
-/// of line segments only (no bulge) that does not intersect itself.
 pub fn valid_boundary(pl: &crate::entities::LwPolyline) -> bool {
     let ring: Vec<[f64; 2]> = pl.vertices.iter().map(|v| [v.location.x, v.location.y]).collect();
     pl.is_closed && ring.len() >= 3 && pl.vertices.iter().all(|v| v.bulge.abs() < 1e-12) && !self_intersects(&ring)
 }
 
-/// Whether a closed ring crosses itself.
 pub fn self_intersects(ring: &[[f64; 2]]) -> bool {
     let n = ring.len();
     (0..n).any(|i| {
@@ -692,7 +608,6 @@ pub fn self_intersects(ring: &[[f64; 2]]) -> bool {
     })
 }
 
-/// Segments ab and cd meet (touching counts).
 fn segments_cross(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> bool {
     let orient = |p: [f64; 2], q: [f64; 2], r: [f64; 2]| (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
     let on = |p: [f64; 2], q: [f64; 2], r: [f64; 2]| {
@@ -706,7 +621,6 @@ fn segments_cross(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> bool {
         || (d4 == 0.0 && on(a, b, d))
 }
 
-/// Even-odd point-in-polygon test.
 pub fn point_in_polygon(p: [f64; 2], polygon: &[[f64; 2]]) -> bool {
     let mut inside = false;
     let n = polygon.len();
@@ -719,11 +633,6 @@ pub fn point_in_polygon(p: [f64; 2], polygon: &[[f64; 2]]) -> bool {
     inside
 }
 
-/// A piece of drawn geometry in WCS: a straight segment, an elliptic arc
-/// `c + u·cos t + v·sin t` for `t` in `t0..=t1` (circles, arcs, ellipses and
-/// bulges, also as references stretch them), or a rational Bézier curve
-/// (homogeneous control points `[w·x, w·y, w·z, w]`; splines are split into
-/// these).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Piece {
     Segment(Vector3, Vector3),
@@ -735,7 +644,6 @@ fn dehomog(p: &[f64; 4]) -> Vector3 {
     Vector3::new(p[0] / p[3], p[1] / p[3], p[2] / p[3])
 }
 
-/// De Casteljau split of a homogeneous Bézier at `t`.
 fn bezier_split(cp: &[[f64; 4]], t: f64) -> (Vec<[f64; 4]>, Vec<[f64; 4]>) {
     let mut work = cp.to_vec();
     let n = work.len();
@@ -754,8 +662,6 @@ fn bezier_split(cp: &[[f64; 4]], t: f64) -> (Vec<[f64; 4]>, Vec<[f64; 4]>) {
     (left, right)
 }
 
-/// Whether a Bézier meets segment ab in plan: hull tests and halving until
-/// the piece is flatter than `tol` (exact to rounding).
 fn bezier_meets(cp: &[[f64; 4]], a: [f64; 2], b: [f64; 2], tol: f64, depth: usize) -> bool {
     let pts: Vec<Vector3> = cp.iter().map(dehomog).collect();
     let d = [b[0] - a[0], b[1] - a[1]];
@@ -780,8 +686,6 @@ fn bezier_meets(cp: &[[f64; 4]], a: [f64; 2], b: [f64; 2], tol: f64, depth: usiz
     bezier_meets(&l, a, b, tol, depth + 1) || bezier_meets(&r, a, b, tol, depth + 1)
 }
 
-/// A B-spline as rational Bézier pieces (knots raised to full multiplicity
-/// by Boehm insertion).
 fn spline_beziers(degree: usize, knots: &[f64], points: &[Vector3], weights: &[f64]) -> Vec<Piece> {
     let p = degree.max(1);
     if points.len() <= p || knots.len() != points.len() + p + 1 {
@@ -839,7 +743,6 @@ impl Piece {
         }
     }
 
-    /// The piece moved by a reference (`p ↦ t(p − base)`); curves stay exact.
     fn placed(self, t: &crate::types::Transform, base: Vector3) -> Piece {
         let at = |p: Vector3| t.apply(p - base);
         match self {
@@ -859,7 +762,6 @@ impl Piece {
         }
     }
 
-    /// Points along the piece (for extents and zooming).
     pub fn points(&self) -> Vec<Vector3> {
         match self {
             Piece::Segment(a, b) => vec![*a, *b],
@@ -876,7 +778,6 @@ impl Piece {
         }
     }
 
-    /// Whether the piece meets the segment ab (in plan).
     fn meets(&self, a: [f64; 2], b: [f64; 2]) -> bool {
         match self {
             Piece::Segment(p, q) => segments_cross([p.x, p.y], [q.x, q.y], a, b),
@@ -911,8 +812,6 @@ impl Piece {
     }
 }
 
-/// Whether drawn geometry lies wholly inside the polygon: each piece starts
-/// inside it and meets none of its edges.
 pub fn inside_polygon(pieces: &[Piece], polygon: &[[f64; 2]]) -> bool {
     let n = polygon.len();
     !pieces.is_empty()
@@ -922,8 +821,6 @@ pub fn inside_polygon(pieces: &[Piece], polygon: &[[f64; 2]]) -> bool {
         })
 }
 
-/// WCS corners of a reference's extents: the box of its geometry as it lies
-/// in the drawing. `None` for an empty block.
 pub fn insert_corners(doc: &CadDocument, insert: &Insert, depth: usize) -> Option<Vec<Vector3>> {
     let pts: Vec<Vector3> = insert_outline(doc, insert, depth).iter().flat_map(Piece::points).collect();
     let first = *pts.first()?;
@@ -944,7 +841,6 @@ pub fn insert_corners(doc: &CadDocument, insert: &Insert, depth: usize) -> Optio
     Some(out)
 }
 
-/// The geometry of a reference in WCS.
 pub fn insert_outline(doc: &CadDocument, insert: &Insert, depth: usize) -> Vec<Piece> {
     let Some(record) = doc.block_records.get(&insert.block_name) else {
         return Vec::new();
@@ -963,8 +859,6 @@ pub fn insert_outline(doc: &CadDocument, insert: &Insert, depth: usize) -> Vec<P
     out
 }
 
-/// Pieces of a plane run of vertices with bulges (`(x, y, bulge)` in the
-/// plane `m`, at `elevation`).
 fn bulge_pieces(v: &[(f64, f64, f64)], closed: bool, elevation: f64, m: &crate::types::Matrix3) -> Vec<Piece> {
     let n = v.len();
     if n == 0 {
@@ -999,7 +893,6 @@ fn bulge_pieces(v: &[(f64, f64, f64)], closed: bool, elevation: f64, m: &crate::
     out
 }
 
-/// The pieces of a hatch's boundary loops, in WCS.
 pub fn hatch_outline(h: &crate::entities::Hatch) -> Vec<Piece> {
     use crate::entities::hatch::BoundaryEdge;
     use crate::types::Matrix3;
@@ -1053,9 +946,6 @@ pub fn hatch_outline(h: &crate::entities::Hatch) -> Vec<Piece> {
     out
 }
 
-/// The geometry of an entity in WCS: lines, circles, arcs, ellipses,
-/// polyline bulges and splines exactly, hatches by their boundary loops,
-/// references through their block, anything else as its box.
 pub fn entity_outline(doc: &CadDocument, entity: &EntityType) -> Vec<Piece> {
     use crate::types::Matrix3;
     let tau = std::f64::consts::TAU;
@@ -1105,9 +995,6 @@ pub fn entity_outline(doc: &CadDocument, entity: &EntityType) -> Vec<Piece> {
     }
 }
 
-/// A hatch's boundary paths, each as dense points along its curves (arcs
-/// every degree, splines every 1/128 of each Bézier piece) with the indices
-/// where its edges start.
 fn hatch_loops(h: &crate::entities::Hatch) -> Vec<(Vec<Vector3>, Vec<usize>)> {
     let mut one = h.clone();
     h.paths
@@ -1138,7 +1025,6 @@ fn hatch_loops(h: &crate::entities::Hatch) -> Vec<(Vec<Vector3>, Vec<usize>)> {
         .collect()
 }
 
-/// `n` points evenly spaced by length around the closed run `pts`, from index `from`.
 fn resampled(pts: &[Vector3], from: usize, n: usize) -> Vec<Vector3> {
     let m = pts.len();
     let ring: Vec<Vector3> = (0..=m).map(|i| pts[(from + i) % m]).collect();
@@ -1158,7 +1044,6 @@ fn resampled(pts: &[Vector3], from: usize, n: usize) -> Vec<Vector3> {
     out
 }
 
-/// Distance in plan from `p` to the closed run `pts`.
 fn distance_to_ring(p: Vector3, pts: &[Vector3]) -> f64 {
     let m = pts.len();
     (0..m)
@@ -1173,8 +1058,6 @@ fn distance_to_ring(p: Vector3, pts: &[Vector3]) -> f64 {
         .fold(f64::MAX, f64::min)
 }
 
-/// A plan similarity: optional mirror (y ↦ −y) about the origin, then
-/// `p ↦ to + s·R(p − from)`.
 #[derive(Clone, Copy)]
 struct Similarity {
     mirror: bool,
@@ -1197,9 +1080,6 @@ impl Similarity {
     }
 }
 
-/// Whether two hatches are copies of one another: their boundaries run the
-/// same way (compared along the curves, at any position, rotation, size or
-/// mirror) and, for patterns, the pattern lands the same way on the copy.
 fn same_hatch(a: &crate::entities::Hatch, b: &crate::entities::Hatch) -> bool {
     const N: usize = 96;
     let (la, lb) = (hatch_loops(a), hatch_loops(b));
@@ -1239,9 +1119,6 @@ fn same_hatch(a: &crate::entities::Hatch, b: &crate::entities::Hatch) -> bool {
     false
 }
 
-/// The pattern of `b`, carried onto `a` by `t`, lands on `a`'s pattern:
-/// same line directions, spacings and dashes, and base points apart by a
-/// step the pattern repeats on.
 fn same_pattern(a: &crate::entities::Hatch, b: &crate::entities::Hatch, t: &Similarity) -> bool {
     let (pa, pb) = (&a.pattern.lines, &b.pattern.lines);
     if pa.len() != pb.len() {

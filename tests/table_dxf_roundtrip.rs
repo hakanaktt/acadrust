@@ -7,9 +7,9 @@
 
 use std::io::Cursor;
 
-use opencadcodec::entities::{EntityType, Table, TableCell};
-use opencadcodec::types::{DxfVersion, Vector3};
-use opencadcodec::{CadDocument, DxfReader, DxfWriter};
+use acadrust::entities::{EntityType, Table, TableCell};
+use acadrust::types::{DxfVersion, Vector3};
+use acadrust::{CadDocument, DxfReader, DxfWriter};
 
 #[test]
 fn table_cell_content_dxf_roundtrip() {

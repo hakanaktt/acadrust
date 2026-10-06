@@ -2,9 +2,9 @@
 //! (degrees<->radians), radial centre/arc point group codes, and the ordinate
 //! X/Y datum bit. Regression tests for the reader/writer pairing.
 
-use opencadcodec::entities::{Dimension, DimensionLinear, DimensionOrdinate, DimensionRadius};
-use opencadcodec::types::Vector3;
-use opencadcodec::{CadDocument, DxfReader, DxfWriter, EntityType};
+use acadrust::entities::{Dimension, DimensionLinear, DimensionOrdinate, DimensionRadius};
+use acadrust::types::Vector3;
+use acadrust::{CadDocument, DxfReader, DxfWriter, EntityType};
 
 fn roundtrip(doc: &CadDocument, tag: &str) -> CadDocument {
     let path = std::env::temp_dir().join(format!("acadrust_dim_rt_{tag}.dxf"));

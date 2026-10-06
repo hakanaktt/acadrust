@@ -458,12 +458,8 @@ pub struct Hatch {
     pub gradient_color: HatchGradientPattern,
     /// MPOLYGON-only fill colour.
     pub mpolygon_hatch_color: Color,
-    /// MPOLYGON-only offset vector (DXF group code 11). Loop vertices are
-    /// stored relative to it; it is kept as read and not applied to `paths`.
+    /// MPOLYGON-only hatch X direction.
     pub mpolygon_x_direction: Vector2,
-    /// MPOLYGON-only: loops the producing application flagged as invalid
-    /// (e.g. self-intersecting). Stored as closed polyline paths; they are
-    /// displayed as edges only, never filled.
     pub mpolygon_invalid_loops: Vec<BoundaryPath>,
 }
 

@@ -228,8 +228,8 @@ impl Default for ClipBoundary {
 /// # Example
 ///
 /// ```ignore
-/// use opencadcodec::entities::RasterImage;
-/// use opencadcodec::types::Vector3;
+/// use acadrust::entities::RasterImage;
+/// use acadrust::types::Vector3;
 ///
 /// // Create a raster image at a specific location
 /// let mut image = RasterImage::new(

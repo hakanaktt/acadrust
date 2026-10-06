@@ -1,10 +1,10 @@
 use std::io::Cursor;
 
-use opencadcodec::entities::{EntityType, Line};
-use opencadcodec::nested_copy::NestedCopyMode;
-use opencadcodec::tables::{BlockRecord, Layer, LineType};
-use opencadcodec::types::{DxfVersion, Handle};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter};
+use acadrust::entities::{EntityType, Line};
+use acadrust::nested_copy::NestedCopyMode;
+use acadrust::tables::{BlockRecord, Layer, LineType};
+use acadrust::types::{DxfVersion, Handle};
+use acadrust::{CadDocument, DwgReader, DwgWriter};
 
 fn assert_localized_linetype_survives_detach(
     mode: NestedCopyMode,

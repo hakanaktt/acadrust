@@ -1,15 +1,15 @@
 //! Repro for issue #64: a DXF round-trip writes a ByBlock linetype handle
 //! as the DIMSTYLE text style (group 340).
 
-use opencadcodec::entities::EntityType;
-use opencadcodec::types::{DxfVersion, Handle};
-use opencadcodec::{CadDocument, DxfReader, DxfWriter};
+use acadrust::entities::EntityType;
+use acadrust::types::{DxfVersion, Handle};
+use acadrust::{CadDocument, DxfReader, DxfWriter};
 
 #[test]
 fn repro_issue64() {
     // Input mirroring the reporter's file: a Standard text style at #11,
     // a ByBlock linetype at #14 (which collides with the handle that
-    // opencadcodec's DEFAULT Standard dimstyle uses for its text style), and
+    // acadrust's DEFAULT Standard dimstyle uses for its text style), and
     // no Standard dimstyle of its own (the default one survives).
     let mut doc = CadDocument::with_version(DxfVersion::AC1024);
 
@@ -19,7 +19,7 @@ fn repro_issue64() {
     // No Standard DIMSTYLE in the input: the default one survives, still
     // pointing its dimtxsty at the DEFAULT text style handle (0x14) - which
     // the input has now given to the ByBlock linetype.
-    doc.add_entity(EntityType::Line(opencadcodec::entities::Line::from_coords(
+    doc.add_entity(EntityType::Line(acadrust::entities::Line::from_coords(
         0.0, 0.0, 0.0, 1.0, 1.0, 0.0,
     )))
     .unwrap();
@@ -73,7 +73,7 @@ fn repro_issue64() {
 
 #[test]
 fn issue64_root_dict_handle_resolved_on_read() {
-    use opencadcodec::objects::{Dictionary, ObjectType};
+    use acadrust::objects::{Dictionary, ObjectType};
 
     // The reporter's file keeps its NAMED OBJECTS DICTIONARY at #A while
     // an unrelated dictionary (ACAD_GROUP) sits at #C - the handle the

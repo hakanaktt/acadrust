@@ -1,10 +1,10 @@
 use std::io::Cursor;
 
-use opencadcodec::entities::{EntityType, Line};
-use opencadcodec::objects::{BookColor, ObjectType};
-use opencadcodec::tables::Layer;
-use opencadcodec::types::{Color, DxfVersion, Handle};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
+use acadrust::entities::{EntityType, Line};
+use acadrust::objects::{BookColor, ObjectType};
+use acadrust::tables::Layer;
+use acadrust::types::{Color, DxfVersion, Handle};
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
 
 #[test]
 fn layer_color_book_identity_survives_dwg_roundtrip() {

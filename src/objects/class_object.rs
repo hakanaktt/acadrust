@@ -973,12 +973,9 @@ pub struct PointCloudDefinitionReactor {
 #[derive(Debug, Clone, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PointCloudColorRamp {
-    /// Identifier of the ramp (a GUID string).
     pub id: String,
     pub class_version: i16,
-    /// The ramp's colours, each with its visibility.
     pub colors: Vec<PointCloudRampColor>,
-    /// Display name ("Blues", "LIDAR Classifications", ...).
     pub name: String,
 }
 
@@ -1265,9 +1262,6 @@ pub struct ModelDocViewStyle {
 }
 
 impl ModelDocViewStyle {
-    /// The R2018+ display name. Older files carry none; the reference
-    /// application then shows the style name, which the description holds
-    /// (an empty one makes it reject an R2018 DXF).
     pub fn display_name_or_description(&self) -> &str {
         if self.display_name.is_empty() {
             &self.description

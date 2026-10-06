@@ -162,8 +162,7 @@ impl SatParser {
         Ok((product_id, product_version, date))
     }
 
-    /// Parse the tolerance line: `<mm per unit> <resabs> [<resnor>]`, kept in
-    /// `spatial_resolution`, `normal_tolerance` and `resfit_tolerance`.
+    /// Parse the tolerance line: `<spatial_resolution> <normal_tolerance> [<resfit_tolerance>]`
     fn parse_tolerance_line(line: &str) -> Result<(f64, f64, Option<f64>), SatParseError> {
         let parts: Vec<&str> = line.split_whitespace().collect();
         let spatial = parts.first().and_then(|s| s.parse().ok()).unwrap_or(1e-06);

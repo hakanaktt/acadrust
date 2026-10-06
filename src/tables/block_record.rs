@@ -169,11 +169,8 @@ impl BlockRecord {
     }
 }
 
-/// Name of the ACAD xdata record that carries a block's insertion units in
-/// files older than R2007, which have no units field in the block record.
 const DESIGN_CENTER_DATA: &str = "DesignCenter Data";
 
-/// ACAD xdata values `DesignCenter Data { 1 <units> }`.
 pub(crate) fn design_center_units_values(units: i16) -> Vec<crate::xdata::XDataValue> {
     use crate::xdata::XDataValue;
     vec![
@@ -185,7 +182,6 @@ pub(crate) fn design_center_units_values(units: i16) -> Vec<crate::xdata::XDataV
     ]
 }
 
-/// The insertion units stored in ACAD `DesignCenter Data` xdata values.
 pub(crate) fn design_center_units(values: &[crate::xdata::XDataValue]) -> Option<i16> {
     use crate::xdata::XDataValue;
     match values {

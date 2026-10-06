@@ -92,8 +92,8 @@ impl From<u8> for WipeoutClipMode {
 /// # Example
 ///
 /// ```ignore
-/// use opencadcodec::entities::Wipeout;
-/// use opencadcodec::types::{Vector2, Vector3};
+/// use acadrust::entities::Wipeout;
+/// use acadrust::types::{Vector2, Vector3};
 ///
 /// // Create a rectangular wipeout
 /// let wipeout = Wipeout::rectangular(

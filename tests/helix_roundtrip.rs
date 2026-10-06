@@ -7,9 +7,9 @@
 
 use std::io::Cursor;
 
-use opencadcodec::entities::{EntityType, Helix, HelixConstraint, Spline};
-use opencadcodec::types::{DxfVersion, Vector3};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
+use acadrust::entities::{EntityType, Helix, HelixConstraint, Spline};
+use acadrust::types::{DxfVersion, Vector3};
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
 
 fn dwg_roundtrip(doc: &CadDocument) -> CadDocument {
     let bytes = DwgWriter::write_to_vec(doc).expect("DWG write failed");

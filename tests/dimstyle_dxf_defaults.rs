@@ -7,8 +7,8 @@
 
 use std::io::Cursor;
 
-use opencadcodec::tables::DimStyle;
-use opencadcodec::{CadDocument, DxfReader, DxfWriter};
+use acadrust::tables::DimStyle;
+use acadrust::{CadDocument, DxfReader, DxfWriter};
 
 /// Groups writers may omit when they hold the built-in value, by DXF code.
 const OMITTED_GROUPS: &[&str] = &[

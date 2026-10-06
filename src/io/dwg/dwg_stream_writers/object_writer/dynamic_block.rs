@@ -93,8 +93,8 @@ impl<'a> DwgObjectWriter<'a> {
             self.writer
                 .write_handle(DwgReferenceType::SoftPointer, handle.value());
         }
-        self.writer.write_bit_long(value.parameter_ids.len() as i32);
-        for id in &value.parameter_ids {
+        self.writer.write_bit_long(value.action_ids.len() as i32);
+        for id in &value.action_ids {
             self.writer.write_bit_long(*id);
         }
     }
@@ -169,9 +169,6 @@ impl<'a> DwgObjectWriter<'a> {
             .write_handle(DwgReferenceType::HardPointer, value.material.value());
     }
 
-    /// Embedded construction entity: type, then (unless absent) the body
-    /// length in bits and the body, padded to whole bytes like the reference
-    /// application does.
     fn write_history_entity(&mut self, entity: Option<&crate::entities::EmbeddedEntity>) {
         let Some(entity) = entity else {
             self.writer.write_bit_long(0);

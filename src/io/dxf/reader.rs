@@ -56,8 +56,6 @@ pub struct DxfReader {
     config: DxfReaderConfiguration,
     /// Estimated entity count based on stream size (used for pre-allocation).
     estimated_entities: usize,
-    /// Source path, when opened from a file — copied onto the document so the
-    /// `Filename` / `Filesize` / date fields can resolve.
     source_path: Option<String>,
 }
 
@@ -758,13 +756,6 @@ fn rehandle_colliding_default_entries(
     }
 }
 
-/// Re-point LAYOUT objects whose block-record reference resolves to nothing.
-///
-/// Some exporters (QGIS) write the LAYOUT objects of a template with that
-/// template's handles while the BLOCK_RECORD table carries fresh ones, so the
-/// Model layout names a record that does not exist and model space reads as
-/// empty. Model goes back to `*Model_Space`; paper layouts, in tab order, take
-/// the `*Paper_Space*` records no valid layout already owns.
 fn rewire_dangling_layout_block_records(document: &mut CadDocument) {
     use crate::objects::ObjectType;
 

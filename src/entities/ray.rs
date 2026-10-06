@@ -14,8 +14,8 @@ use crate::types::{BoundingBox3D, Color, Handle, LineWeight, Transparency, Vecto
 ///
 /// # Example
 /// ```ignore
-/// use opencadcodec::entities::Ray;
-/// use opencadcodec::types::Vector3;
+/// use acadrust::entities::Ray;
+/// use acadrust::types::Vector3;
 ///
 /// let ray = Ray::new(
 ///     Vector3::new(0.0, 0.0, 0.0),

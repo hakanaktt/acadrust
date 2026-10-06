@@ -1,6 +1,6 @@
 use std::io::Cursor;
 
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfVersion};
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfVersion};
 
 #[test]
 fn current_lineweight_roundtrips_as_a_table_index() {

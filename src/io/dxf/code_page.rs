@@ -299,7 +299,6 @@ pub fn decode_mif_escapes(text: &str) -> String {
     out
 }
 
-/// Whether `text` holds a legacy escape (`\U+XXXX` or `\M+nXXXX`).
 pub fn has_legacy_escape(text: &str) -> bool {
     text.contains("\\U+") || text.contains("\\M+")
 }

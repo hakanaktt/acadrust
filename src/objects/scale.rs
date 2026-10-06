@@ -25,7 +25,7 @@ use crate::types::Handle;
 /// # Example
 ///
 /// ```ignore
-/// use opencadcodec::objects::Scale;
+/// use acadrust::objects::Scale;
 ///
 /// let scale = Scale::new("1:50", 1.0, 50.0);
 /// assert!((scale.factor() - 0.02).abs() < 1e-10);

@@ -15,8 +15,8 @@ use crate::types::{BoundingBox3D, Color, Handle, LineWeight, Transparency, Vecto
 ///
 /// # Example
 /// ```ignore
-/// use opencadcodec::entities::XLine;
-/// use opencadcodec::types::Vector3;
+/// use acadrust::entities::XLine;
+/// use acadrust::types::Vector3;
 ///
 /// let xline = XLine::new(
 ///     Vector3::new(0.0, 0.0, 0.0),

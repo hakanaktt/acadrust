@@ -6,8 +6,8 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use opencadcodec::io::import::collada::ColladaImporter;
-//! use opencadcodec::io::import::ImportConfig;
+//! use acadrust::io::import::collada::ColladaImporter;
+//! use acadrust::io::import::ImportConfig;
 //!
 //! let doc = ColladaImporter::from_file("scene.dae")?
 //!     .with_config(ImportConfig::default())

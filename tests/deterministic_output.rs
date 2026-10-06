@@ -1,7 +1,7 @@
 //! Writing the same document repeatedly must produce identical bytes.
 
-use opencadcodec::objects::{Dictionary, ObjectType};
-use opencadcodec::{CadDocument, DwgWriter, DxfWriter};
+use acadrust::objects::{Dictionary, ObjectType};
+use acadrust::{CadDocument, DwgWriter, DxfWriter};
 
 // Exercise orphaned objects in both writers.
 const ORPHANED_DICTIONARIES: usize = 32;
