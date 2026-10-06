@@ -27,7 +27,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! acadrust = { version = "0.6.0", features = ["serde", "import"] }
+//! acadrust = { version = "0.6.1", features = ["serde", "import"] }
 //! ```
 //!
 //! ## Quick Start — DXF

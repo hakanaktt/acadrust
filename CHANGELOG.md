@@ -1,5 +1,17 @@
 ## Changelog
 
+### 0.6.1
+
+- **Fields and tables** - Added sheet-set, count, object-property, and table
+  formula support, including numeric cell rendering and refresh-safe table
+  formatting.
+- **DWG/DXF fidelity** - Improved associative data, ACIS/SAB, summary info,
+  table styles, legacy text, viewport metadata, spatial filters, and retained
+  TrueType font flags and object references.
+- **Round-trip reliability** - Preserved opaque records and extension data,
+  repaired empty associative values, table-cell overrides, and legacy border
+  visibility across conversions.
+
 ### 0.6.0
 
 - **DXF color and class parsing** - Preserved unsigned `AcCmColor` values and

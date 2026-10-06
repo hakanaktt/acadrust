@@ -14,7 +14,7 @@ R13 through R2018+.
 
 ```toml
 [dependencies]
-acadrust = "0.6.0"
+acadrust = "0.6.1"
 ```
 
 ```rust
@@ -43,7 +43,7 @@ Enable optional features as needed:
 
 ```toml
 [dependencies]
-acadrust = { version = "0.6.0", features = ["serde", "import"] }
+acadrust = { version = "0.6.1", features = ["serde", "import"] }
 ```
 
 ## Features
