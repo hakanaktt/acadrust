@@ -19949,13 +19949,13 @@ impl<'a> SectionReader<'a> {
                 }
                 284..=289 if cur.is_none() => {
                     if let (Some(overrides), Some(value)) =
-                        (table.legacy_border_visibility.as_mut(), pair.as_bool())
+                        (table.legacy_border_visibility.as_mut(), pair.as_i16().map(|value| value != 0))
                     {
                         overrides.values.push(value);
                     }
                 }
                 285 | 286 | 288 | 289 => {
-                    if let (Some(c), Some(value)) = (cur.as_mut(), pair.as_bool()) {
+                    if let (Some(c), Some(value)) = (cur.as_mut(), pair.as_i16().map(|value| value != 0)) {
                         let style = c.style.get_or_insert_with(crate::entities::CellStyle::new);
                         let border = match pair.code {
                             285 => &mut style.right_border,

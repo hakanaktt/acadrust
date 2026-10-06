@@ -75,6 +75,7 @@ fn legacy_cell_borders_survive_modern_dwg_conversion() {
         style.override_flags = 0x40 | 0x800 | 0x100 | 0x1000;
         style.top_border.color = Color::from_index(3);
         style.right_border.line_weight = LineWeight::from_value(25);
+        style.right_border.invisible = true;
         style.bottom_border.color = Color::from_index(5);
         style.bottom_border.line_weight = LineWeight::from_value(35);
         let (source, handle) = dxf_document_with_style(version, style);
@@ -85,7 +86,7 @@ fn legacy_cell_borders_survive_modern_dwg_conversion() {
             original.right_border.line_weight,
             LineWeight::from_value(25)
         );
-        assert!(!original.right_border.invisible);
+        assert!(original.right_border.invisible);
         assert_eq!(original.bottom_border.color, Color::from_index(5));
         assert_eq!(
             original.bottom_border.line_weight,
@@ -111,7 +112,7 @@ fn legacy_cell_borders_survive_modern_dwg_conversion() {
             converted.right_border.line_weight,
             original.right_border.line_weight
         );
-        assert!(!converted.right_border.invisible);
+        assert!(converted.right_border.invisible);
         assert_eq!(
             converted.bottom_border.override_flags,
             weight_flags | BorderPropertyFlags::COLOR
