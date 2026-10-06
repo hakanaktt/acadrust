@@ -23,7 +23,7 @@ use std::fs::File;
 use std::io::{BufWriter, Cursor, Seek, Write};
 use std::path::Path;
 
-use crate::document::{CadDocument, HeaderVariables};
+use crate::document::{CadDocument, HeaderVariables, SummaryInfo};
 use crate::error::{DxfError, Result};
 use crate::types::{DxfVersion, Handle};
 
@@ -1271,7 +1271,8 @@ fn write_ac18<W: Write + Seek>(
     )?;
 
     // ── Section: SummaryInfo ──
-    let summary_data = build_summary_info(version);
+    let summary_data =
+        build_summary_info(version, &document.summary_info, summary_encoding(document));
     fhw.add_section(
         output,
         section_names::SUMMARY_INFO,
@@ -1449,7 +1450,8 @@ fn write_ac21_impl<W: Write + Seek>(
     // from ac21_section_info, so no page_size or compressed flag needed.
 
     // SummaryInfo
-    let summary_data = build_summary_info(version);
+    let summary_data =
+        build_summary_info(version, &document.summary_info, summary_encoding(document));
     fhw.add_section(output, section_names::SUMMARY_INFO, &summary_data)?;
 
     // Preview
@@ -1594,7 +1596,12 @@ fn build_template(description: &[u8], measurement: i16) -> Result<Vec<u8>> {
     Ok(data)
 }
 
-/// Build SummaryInfo section data (AC18+ only).
+fn summary_encoding(document: &CadDocument) -> &'static encoding_rs::Encoding {
+    crate::io::dxf::code_page::encoding_from_dwg_code_page(
+        crate::io::dxf::code_page::dwg_code_page_index(&document.header.code_page),
+    )
+}
+
 ///
 /// Writes empty summary info fields (all empty strings).
 ///
@@ -1605,22 +1612,45 @@ fn build_template(description: &[u8], measurement: i16) -> Result<Vec<u8>> {
 /// **AC1021 (R2007)**: UTF-16LE strings.
 ///   Format: UInt16(char_count_incl_null) + UTF-16LE chars.
 ///   Empty → UInt16(1) + 0x00 0x00 = 4 bytes.
-fn build_summary_info(version: DxfVersion) -> Vec<u8> {
+fn build_summary_info(
+    version: DxfVersion,
+    info: &SummaryInfo,
+    encoding: &'static encoding_rs::Encoding,
+) -> Vec<u8> {
     let mut data = Vec::with_capacity(128);
     let is_utf16 = version >= DxfVersion::AC1021;
 
-    // 8 × empty strings
-    // Title, Subject, Author, Keywords, Comments, LastSavedBy, RevisionNumber, HyperlinkBase
-    for _ in 0..8 {
-        data.extend_from_slice(&1u16.to_le_bytes()); // char/byte count including null
+    // The UInt16 count includes the terminating null; longer text is cut.
+    let push_text = |data: &mut Vec<u8>, text: &str| {
         if is_utf16 {
+            let units: Vec<u16> = text.encode_utf16().take(u16::MAX as usize - 1).collect();
+            data.extend_from_slice(&(units.len() as u16 + 1).to_le_bytes());
+            for unit in units {
+                data.extend_from_slice(&unit.to_le_bytes());
+            }
             // UTF-16LE null terminator: 2 bytes
-            data.push(0);
-            data.push(0);
+            data.extend_from_slice(&[0, 0]);
         } else {
+            let mut bytes = crate::io::dxf::code_page::encode_legacy_string(text, encoding);
+            bytes.truncate(u16::MAX as usize - 1);
+            data.extend_from_slice(&(bytes.len() as u16 + 1).to_le_bytes());
+            data.extend_from_slice(&bytes);
             // ANSI null terminator: 1 byte
             data.push(0);
         }
+    };
+
+    for text in [
+        &info.title,
+        &info.subject,
+        &info.author,
+        &info.keywords,
+        &info.comments,
+        &info.last_saved_by,
+        &info.revision_number,
+        &info.hyperlink_base,
+    ] {
+        push_text(&mut data, text);
     }
 
     // Total editing time: 2 × Int32 (zeros)
@@ -1635,8 +1665,18 @@ fn build_summary_info(version: DxfVersion) -> Vec<u8> {
     data.extend_from_slice(&0i32.to_le_bytes());
     data.extend_from_slice(&0i32.to_le_bytes());
 
-    // Property count: Int16 (0)
-    data.extend_from_slice(&0u16.to_le_bytes());
+    // Custom properties: Int16 count, then name/value string pairs
+    let properties: Vec<&(String, String)> = info
+        .custom_properties
+        .iter()
+        .filter(|(name, value)| !(name.is_empty() && value.is_empty()))
+        .take(u16::MAX as usize)
+        .collect();
+    data.extend_from_slice(&(properties.len() as u16).to_le_bytes());
+    for (name, value) in properties {
+        push_text(&mut data, name);
+        push_text(&mut data, value);
+    }
 
     // 2 × Int32 (trailing zeros)
     data.extend_from_slice(&0i32.to_le_bytes());
@@ -2544,7 +2584,11 @@ mod tests {
 
     #[test]
     fn test_build_summary_info_ac18() {
-        let d = build_summary_info(DxfVersion::AC1018);
+        let d = build_summary_info(
+            DxfVersion::AC1018,
+            &SummaryInfo::default(),
+            encoding_rs::WINDOWS_1252,
+        );
         // 8 × 3 bytes (u16(1) + ANSI null) + 8 + 16 + 2 + 8 = 58
         assert_eq!(d.len(), 58);
         assert_eq!(u16::from_le_bytes([d[0], d[1]]), 1);
@@ -2555,7 +2599,11 @@ mod tests {
 
     #[test]
     fn test_build_summary_info_ac21() {
-        let d = build_summary_info(DxfVersion::AC1021);
+        let d = build_summary_info(
+            DxfVersion::AC1021,
+            &SummaryInfo::default(),
+            encoding_rs::WINDOWS_1252,
+        );
         // 8 × 4 bytes (u16(1) + UTF-16LE null) + 8 + 16 + 2 + 8 = 66
         assert_eq!(d.len(), 66);
         // First string: u16(1) + 00 00
@@ -2564,6 +2612,31 @@ mod tests {
         assert_eq!(d[3], 0);
         // Next string starts at offset 4
         assert_eq!(u16::from_le_bytes([d[4], d[5]]), 1);
+    }
+
+    #[test]
+    fn test_build_summary_info_writes_properties() {
+        let info = SummaryInfo {
+            title: "Kanal S\u{fc}d".into(),
+            custom_properties: vec![
+                ("Plan".into(), "B-1".into()),
+                (String::new(), String::new()),
+            ],
+            ..SummaryInfo::default()
+        };
+        // R2004: drawing code page, one byte per character
+        let d = build_summary_info(DxfVersion::AC1018, &info, encoding_rs::WINDOWS_1252);
+        assert_eq!(u16::from_le_bytes([d[0], d[1]]), 10);
+        assert_eq!(&d[2..12], b"Kanal S\xfcd\0");
+        // Seven empty strings, 24 bytes of timers, then one property (the empty pair is skipped)
+        let count_at = 12 + 7 * 3 + 24;
+        assert_eq!(u16::from_le_bytes([d[count_at], d[count_at + 1]]), 1);
+        assert_eq!(&d[count_at + 2..count_at + 9], b"\x05\0Plan\0");
+        assert_eq!(d.len(), count_at + 2 + 7 + 6 + 8);
+        // R2007+: UTF-16LE, count in code units
+        let d = build_summary_info(DxfVersion::AC1021, &info, encoding_rs::WINDOWS_1252);
+        assert_eq!(u16::from_le_bytes([d[0], d[1]]), 10);
+        assert_eq!(u16::from_le_bytes([d[16], d[17]]), 0xfc);
     }
 
     #[test]

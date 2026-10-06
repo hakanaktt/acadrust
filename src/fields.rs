@@ -1732,7 +1732,6 @@ fn diesel_eval(doc: &CadDocument, s: &str, ctx: &dyn FieldContext) -> Option<Str
     Some(out)
 }
 
-/// Evaluate one `func,args` DIESEL macro. Implements the full standard function
 /// set; an unknown function concatenates its arguments (DIESEL's own fallback).
 fn diesel_macro(doc: &CadDocument, inner: &str, ctx: &dyn FieldContext) -> Option<String> {
     let parts = split_top_commas(inner);
@@ -2288,8 +2287,13 @@ impl CadDocument {
         Some(container)
     }
 
-    fn table_block_plan(&self, t: &Table, extra: &[(usize, usize)]) -> (Vec<((usize, usize), crate::entities::MText)>, Vec<crate::entities::Line>) {
-        use crate::entities::{Line, MText};
+    fn table_block_plan(
+        &self,
+        t: &Table,
+        extra: &[(usize, usize)],
+    ) -> (Vec<((usize, usize), crate::entities::MText)>, Vec<crate::entities::Line>, Vec<crate::entities::Solid>) {
+        use crate::entities::table::CellStylePropertyFlags as P;
+        use crate::entities::{Line, MText, Solid};
         use crate::types::{Color, LineWeight, Transparency, Vector3};
         let style = t.table_style_handle.and_then(|h| match self.objects.get(&h) {
             Some(ObjectType::TableStyle(s)) => Some(s.clone()),
@@ -2371,24 +2375,47 @@ impl CadDocument {
         }
         let vmargin = style.as_ref().map_or(0.06, |s| s.vertical_margin);
         let mut texts = Vec::new();
+        let mut fills = Vec::new();
         for (r, row) in t.rows.iter().enumerate() {
             for c in 0..nc {
                 if owner[r][c] != (r, c) {
                     continue;
                 }
                 let cell = row.cells.get(c);
+                // A cell's own override (text height, style, colour, alignment,
+                // background) wins over its row's style.
+                // (DXF and binary cells say it differently; the binary layout
+                // keeps text height, style and colour on the content.)
+                let laid = cell.map(|cell| cell.binary_layout());
+                let own = laid.as_deref().and_then(|cell| cell.style.as_ref());
+                let own_content = laid.as_deref().and_then(|cell| cell.contents.first());
+                let style_sets = |p: P| own.filter(|s| s.sets(p));
+                let content_sets = |p: P| own_content.filter(|c| c.sets(p));
+                if let Some(s) = style_sets(P::BACKGROUND_COLOR).filter(|s| s.fill_enabled) {
+                    let (w, h) = span[r][c];
+                    let (x0, x1, y0, y1) = (xs[c], xs[c + w], -ys[r], -ys[r + h]);
+                    let mut solid = Solid::new(
+                        Vector3::new(x0, y0, 0.0),
+                        Vector3::new(x1, y0, 0.0),
+                        Vector3::new(x0, y1, 0.0),
+                        Vector3::new(x1, y1, 0.0),
+                    );
+                    by_block(&mut solid.common);
+                    solid.common.color = s.background_color.clone();
+                    fills.push(solid);
+                }
                 let text = cell.and_then(|cell| cell.contents.first()).map(|ct| ct.value.display().to_string()).unwrap_or_default();
                 let has_field = cell.and_then(|cell| cell.contents.first()).is_some_and(|ct| ct.field_handle.is_some());
                 if text.is_empty() && !has_field && !extra.contains(&(r, c)) {
                     continue;
                 }
-                let (height, mut align) = row_style(r);
+                let (mut height, mut align) = row_style(r);
                 // A cell overriding its style brings its own alignment.
-                if let Some(s) = cell
-                    .and_then(|cell| cell.style.as_ref())
-                    .filter(|s| s.override_flags != 0 && (1..=9).contains(&s.alignment))
-                {
+                if let Some(s) = style_sets(P::ALIGNMENT).filter(|s| (1..=9).contains(&s.alignment)) {
                     align = s.alignment;
+                }
+                if let Some(c) = content_sets(P::TEXT_HEIGHT).filter(|c| c.text_height > 0.0) {
+                    height = c.text_height;
                 }
                 let (w, h) = span[r][c];
                 let (x0, x1, y0, y1) = (xs[c], xs[c + w], ys[r], ys[r + h]);
@@ -2404,6 +2431,22 @@ impl CadDocument {
                 m.insertion_point = Vector3::new(x, y, 0.0);
                 m.attachment_point = attachment(align);
                 m.drawing_direction = crate::entities::DrawingDirection::ByStyle;
+                if let Some(c) = content_sets(P::CONTENT_COLOR) {
+                    m.common.color = c.color.clone();
+                }
+                if let Some(s) = content_sets(P::TEXT_STYLE) {
+                    let name = if s.text_style_name.is_empty() {
+                        s.text_style_handle
+                            .and_then(|h| self.text_styles.iter().find(|st| st.handle == h))
+                            .map(|st| st.name.clone())
+                            .unwrap_or_default()
+                    } else {
+                        s.text_style_name.clone()
+                    };
+                    if !name.is_empty() {
+                        m.style = name;
+                    }
+                }
                 texts.push(((r, c), m));
             }
         }
@@ -2455,7 +2498,7 @@ impl CadDocument {
         point.common.transparency = Transparency::ByBlock;
         point.common.line_weight = LineWeight::from_value(0);
         lines.push(point);
-        (texts, lines)
+        (texts, lines, fills)
     }
 
     pub fn build_table_block(
@@ -2504,27 +2547,34 @@ impl CadDocument {
             return None;
         };
         let t = (**t).clone();
-        let (texts, lines) = self.table_block_plan(&t, extra);
+        let (texts, lines, fills) = self.table_block_plan(&t, extra);
         let record = t
             .block_record_handle
             .and_then(|h| self.block_records.iter().find(|r| r.handle == h))
             .or_else(|| self.block_records.get(&t.block_name).filter(|_| !t.block_name.is_empty()))
             .map(|r| (r.handle, r.name.clone(), r.entity_handles.clone()));
+        // A table that let go of its block (found by name) keeps drawing from
+        // its own data, which shows more than the block plan does (borders,
+        // block cells, row and table backgrounds); only the block is brought
+        // up to date for readers that draw it.
 
         // What the block shows now, against what it should show.
         let key = |e: &EntityType| -> Option<String> {
             let r = |v: f64| format!("{:.9}", v + 0.0);
             match e {
                 EntityType::MText(m) => Some(format!(
-                    "T {} {} {} {} {} {:?}",
+                    "T {} {} {} {} {} {:?} {:?} {:?}",
                     r(m.insertion_point.x),
                     r(m.insertion_point.y),
                     r(m.height),
                     r(m.rectangle_width),
                     m.attachment_point as i32,
+                    m.common.color,
+                    m.style,
                     if m.common.xdictionary_handle.is_some() { "" } else { m.value.as_str() }
                 )),
                 EntityType::Line(l) => Some(format!("L {} {} {} {} {}", r(l.start.x), r(l.start.y), r(l.end.x), r(l.end.y), l.common.layer)),
+                EntityType::Solid(f) => Some(format!("S {} {} {} {} {:?}", r(f.first_corner.x), r(f.first_corner.y), r(f.fourth_corner.x), r(f.fourth_corner.y), f.common.color)),
                 _ => None,
             }
         };
@@ -2552,6 +2602,7 @@ impl CadDocument {
                     key(&EntityType::MText(m)).unwrap_or_default()
                 })
                 .chain(lines.iter().filter_map(|l| key(&EntityType::Line(l.clone()))))
+                .chain(fills.iter().filter_map(|f| key(&EntityType::Solid(f.clone()))))
                 .collect();
             now.sort();
             want.sort();
@@ -2615,6 +2666,11 @@ impl CadDocument {
             self.layers.add_or_replace(layer);
         }
         let mut handles = std::collections::HashMap::new();
+        // Cell backgrounds first, under the texts and the grid.
+        for mut f in fills {
+            f.common.owner_handle = owner;
+            let _ = self.add_entity(EntityType::Solid(f));
+        }
         for (cell, mut m) in texts {
             m.common.owner_handle = owner;
             if let Some((xdict, value)) = carried.get(&cell) {
@@ -2792,6 +2848,20 @@ impl CadDocument {
         self.restamp_fields(ctx, ctx, &|_, f| f.evaluation_option & event != 0, hosts)
     }
 
+    pub fn refresh_table_formulas(&mut self, ctx: &dyn FieldContext, table: Handle) -> Vec<Handle> {
+        let hosts = match self.get_entity(table) {
+            Some(EntityType::Table(t)) => t
+                .block_record_handle
+                .and_then(|h| self.block_records.iter().find(|r| r.handle == h))
+                .map(|r| r.entity_handles.clone()),
+            _ => None,
+        };
+        match hosts {
+            Some(hosts) => self.restamp_fields(ctx, ctx, &|kid, _| kid.evaluator == "AcExpr", Some(&hosts)).0,
+            None => Vec::new(),
+        }
+    }
+
     pub fn refresh_sheet_set_fields(&mut self, ctx: &dyn FieldContext) -> Vec<Handle> {
         self.restamp_fields(ctx, ctx, &|kid, _| kid.evaluator.starts_with("AcSm"), None).0
     }
@@ -2833,8 +2903,11 @@ impl CadDocument {
                     shown => shown.to_string(),
                 };
                 let fresh = pick(kid, stored).then(|| eval_field(self, kid, plot, host)).flatten();
+                // A sheet set field with no set open to answer it keeps the
+                // value it was saved with rather than `####`.
+                let unanswered = |text: &str| kid.evaluator.starts_with("AcSm") && text == "####";
                 match fresh {
-                    Some(text) if text != cached => {
+                    Some(text) if text != cached && !unanswered(&text) => {
                         changed = true;
                         values.push((kid.handle, plot_value(kid, &text, ctx.now_julian())));
                         shown.push(text);

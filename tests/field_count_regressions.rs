@@ -1,9 +1,9 @@
-use acadrust::entities::table::CellValue;
+use acadrust::entities::table::{CellStylePropertyFlags, CellValue};
 use acadrust::entities::{Insert, Line, MText, Table};
 use acadrust::fields::{self, FieldContext, NewField};
 use acadrust::sheet_set::SheetSetDatabase;
-use acadrust::tables::BlockRecord;
-use acadrust::types::{Handle, Vector3};
+use acadrust::tables::{BlockRecord, TextStyle};
+use acadrust::types::{Color, Handle, Vector3};
 use acadrust::{count, CadDocument, EntityType};
 
 struct Context {
@@ -31,6 +31,22 @@ fn table_texts(doc: &CadDocument, table: Handle) -> Vec<String> {
         .iter()
         .filter_map(|handle| match doc.get_entity(*handle) {
             Some(EntityType::MText(text)) => Some(text.value.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn table_text_formats(doc: &CadDocument, table: Handle) -> Vec<(Color, String)> {
+    let EntityType::Table(table) = doc.get_entity(table).unwrap() else {
+        panic!("expected table");
+    };
+    doc.block_records
+        .get(&table.block_name)
+        .unwrap()
+        .entity_handles
+        .iter()
+        .filter_map(|handle| match doc.get_entity(*handle) {
+            Some(EntityType::MText(text)) => Some((text.common.color, text.style.clone())),
             _ => None,
         })
         .collect()
@@ -81,6 +97,42 @@ fn table_block_renders_numeric_and_formatted_cell_values() {
 
     assert!(doc.refresh_table_block(handle));
     assert_eq!(table_texts(&doc, handle), ["42", "7", "3.00 mm"]);
+    assert!(!doc.refresh_table_block(handle));
+}
+
+#[test]
+fn table_block_refreshes_cell_color_and_text_style() {
+    let mut doc = CadDocument::new();
+    let mut text_style = TextStyle::new("Alternate");
+    text_style.handle = doc.allocate_handle();
+    doc.text_styles.add(text_style).unwrap();
+    let mut table = Table::new(Vector3::ZERO, 1, 1);
+    table.set_cell_text(0, 0, "formatted text");
+    let content = &mut table.rows[0].cells[0].contents[0];
+    content.format_override_flags =
+        (CellStylePropertyFlags::CONTENT_COLOR | CellStylePropertyFlags::TEXT_STYLE).bits() as i32;
+    content.color = Color::from_index(1);
+    content.text_style_name = "Standard".into();
+    let handle = doc.add_entity(EntityType::Table(Box::new(table))).unwrap();
+
+    assert!(doc.refresh_table_block(handle));
+    assert_eq!(table_text_formats(&doc, handle), [(Color::from_index(1), "Standard".into())]);
+    assert!(!doc.refresh_table_block(handle));
+
+    let EntityType::Table(table) = doc.get_entity_mut(handle).unwrap() else {
+        panic!("expected table");
+    };
+    table.rows[0].cells[0].contents[0].color = Color::from_index(2);
+    assert!(doc.refresh_table_block(handle));
+    assert_eq!(table_text_formats(&doc, handle), [(Color::from_index(2), "Standard".into())]);
+    assert!(!doc.refresh_table_block(handle));
+
+    let EntityType::Table(table) = doc.get_entity_mut(handle).unwrap() else {
+        panic!("expected table");
+    };
+    table.rows[0].cells[0].contents[0].text_style_name = "Alternate".into();
+    assert!(doc.refresh_table_block(handle));
+    assert_eq!(table_text_formats(&doc, handle), [(Color::from_index(2), "Alternate".into())]);
     assert!(!doc.refresh_table_block(handle));
 }
 

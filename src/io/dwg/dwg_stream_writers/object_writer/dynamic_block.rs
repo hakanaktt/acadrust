@@ -174,19 +174,9 @@ impl<'a> DwgObjectWriter<'a> {
             self.writer.write_bit_long(0);
             return;
         };
-        let encoded = crate::io::dwg::embedded_entity::encode_embedded_entity(
-            entity,
-            self.version,
-            self.dxf_version,
-        );
-        let bit_length = encoded.bytes.len() * 8;
-        self.writer.write_bit_long(encoded.type_code);
-        self.writer.write_bit_long(bit_length as i32);
-        crate::io::dwg::embedded_entity::write_embedded_bits_with_length(
-            &mut self.writer,
-            &encoded,
-            bit_length,
-        );
+        // A polyline kept as a wire body writes its modeler block, as in
+        // surface records.
+        self.write_surface_embedded_entity(entity, true);
     }
 
     fn write_solid_history_sweep(&mut self, value: &SolidHistorySweep) {
@@ -203,8 +193,8 @@ impl<'a> DwgObjectWriter<'a> {
         self.writer.write_bit(value.has_align_start);
         self.writer.write_bit_short(value.align_option.into());
         self.writer.write_bit_short(value.miter_option.into());
+        self.writer.write_bit(value.align_start);
         self.writer.write_bit(value.bank);
-        self.writer.write_bit(value.check_intersections);
         self.writer.write_bit(value.flags_294_296[0]);
         self.writer.write_bit(value.flags_294_296[1]);
         self.writer.write_3bit_double(value.dwg_vector);

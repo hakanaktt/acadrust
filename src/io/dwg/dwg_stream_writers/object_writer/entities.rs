@@ -3486,6 +3486,8 @@ impl<'a> DwgObjectWriter<'a> {
 
     /// R2010+ inline cell.
     fn write_table_cell_r2010(&mut self, cell: &TableCell) {
+        let cell = cell.binary_layout();
+        let cell: &TableCell = &cell;
         self.writer.write_bit_long(cell.state.bits() as i32);
         self.writer.write_variable_text(&cell.tooltip);
         self.writer.write_bit_long(cell.custom_data);
@@ -3565,7 +3567,22 @@ impl<'a> DwgObjectWriter<'a> {
             self.writer.write_bit_double(col.width);
         }
         self.writer.write_bit_long(e.rows.len() as i32);
-        for row in &e.rows {
+        // Rows read from DXF name no cell style; the binary format names the
+        // title, header and data rows (1, 2, 3).
+        let unnamed = e.rows.iter().all(|row| row.style_id == 0);
+        let legacy = e.legacy_style_override.clone().unwrap_or_default();
+        let title = !legacy.title_suppressed.unwrap_or(false);
+        let header = !legacy.header_suppressed.unwrap_or(false);
+        for (r, row) in e.rows.iter().enumerate() {
+            let style_id = if !unnamed {
+                row.style_id
+            } else if title && r == 0 {
+                1
+            } else if header && r == usize::from(title) {
+                2
+            } else {
+                3
+            };
             self.writer.write_bit_long(row.cells.len() as i32);
             for cell in &row.cells {
                 self.write_table_cell_r2010(cell);
@@ -3577,7 +3594,7 @@ impl<'a> DwgObjectWriter<'a> {
                 self.write_table_custom_data(data);
             }
             self.write_table_cell_style(row.style.as_ref());
-            self.writer.write_bit_long(row.style_id);
+            self.writer.write_bit_long(style_id);
             self.writer.write_bit_double(row.height);
         }
         self.writer.write_bit_long(e.field_handles.len() as i32);
@@ -5157,7 +5174,7 @@ impl<'a> DwgObjectWriter<'a> {
         }
     }
 
-    fn write_surface_embedded_entity(
+    pub(super) fn write_surface_embedded_entity(
         &mut self,
         entity: &crate::entities::EmbeddedEntity,
         byte_aligned: bool,

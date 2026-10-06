@@ -1332,15 +1332,31 @@ fn dynamic_dxf_history_sweep(
     // Group 90 is reused for the operation version and both embedded body
     // sizes. Keep the profile/path boundaries explicit, including absent
     // entities, and accept the padded integer text emitted by DXF writers.
+    // A polyline the modeler keeps as a wire body writes its SAT version
+    // (group 70) and encrypted SAT text (groups 1/3) instead, as in surface
+    // records; group 70 after group 290 is the alignment option.
     let mut bodies = [(0, 0usize, Vec::new()), (0, 0usize, Vec::new())];
+    let mut sats = [String::new(), String::new()];
     let mut current_body = None;
     let mut operation_major = 0;
+    let mut align_option = 0;
+    let mut options_started = false;
     for (code, value) in fields.sections.get(section).into_iter().flatten() {
         match *code {
             92 | 93 => {
                 let index = usize::from(*code == 93);
                 bodies[index].0 = value.trim().parse().unwrap_or(0);
                 current_body = Some(index);
+            }
+            290 => options_started = true,
+            70 if options_started => align_option = value.trim().parse().unwrap_or(0),
+            1 | 3 => {
+                if let Some(index) = current_body {
+                    if *code == 1 && !sats[index].is_empty() {
+                        sats[index].push('\n');
+                    }
+                    sats[index].push_str(value);
+                }
             }
             90 => {
                 if let Some(index) = current_body {
@@ -1357,23 +1373,18 @@ fn dynamic_dxf_history_sweep(
             _ => {}
         }
     }
-    let [(profile_type, profile_bits, profile_bytes), (path_type, path_bits, path_bytes)] = bodies;
     let dwg_version = crate::io::dwg::DwgVersion::from_dxf_version(dxf_version)
         .unwrap_or(crate::io::dwg::DwgVersion::AC24);
-    let sweep_entity = crate::io::dwg::embedded_entity::decode_embedded_entity(
-        profile_type,
-        profile_bits,
-        profile_bytes,
-        dwg_version,
-        dxf_version,
-    );
-    let path_entity = crate::io::dwg::embedded_entity::decode_embedded_entity(
-        path_type,
-        path_bits,
-        path_bytes,
-        dwg_version,
-        dxf_version,
-    );
+    let [sweep_entity, path_entity] = [0, 1].map(|index| {
+        let (type_code, bits, bytes) = std::mem::take(&mut bodies[index]);
+        if crate::io::dwg::embedded_entity::is_body_profile(type_code) {
+            return (!sats[index].is_empty()).then(|| crate::entities::EmbeddedEntity::Body {
+                type_code,
+                acis_data: AcisData::from_sat(&AcisData::decode_sat_binary(&sats[index])),
+            });
+        }
+        crate::io::dwg::embedded_entity::decode_embedded_entity(type_code, bits, bytes, dwg_version, dxf_version)
+    });
     SolidHistorySweep {
         base: dynamic_dxf_history_base(fields),
         operation_major,
@@ -1389,11 +1400,11 @@ fn dynamic_dxf_history_sweep(
         align_angle: fields.f64(section, 49),
         sweep_entity_transform: crate::entities::surface::transpose_matrix(sweep_entity_transform),
         path_entity_transform: crate::entities::surface::transpose_matrix(path_entity_transform),
-        align_option: fields.i16(section, 70).clamp(0, 255) as u8,
+        align_option: align_option.clamp(0, 255) as u8,
         miter_option: fields.i16(section, 71).clamp(0, 255) as u8,
         has_align_start: fields.bool(section, 290),
-        bank: fields.bool(section, 292),
-        check_intersections: fields.bool(section, 293),
+        align_start: fields.bool(section, 292),
+        bank: fields.bool(section, 293),
         flags_294_296: [
             fields.bool(section, 294),
             fields.bool(section, 295),
@@ -17088,7 +17099,7 @@ impl<'a> SectionReader<'a> {
                     }
                 }
                 // Multiline attribute's embedded MTEXT (R2018+) — carries the
-                // real text; the entity's own code 1 is empty in that case.
+                // real text, whatever the entity's own code 1 holds.
                 101 => {
                     let mtext = self.read_attrib_embedded_mtext()?;
                     if !mtext.value.is_empty() {
@@ -19391,7 +19402,12 @@ impl<'a> SectionReader<'a> {
             // writes back only what it overrides.
             if let (Some(c), false) = (cur.as_mut(), in_value) {
                 if let Some(bit) = crate::entities::table::cell_override_bit(pair.code) {
-                    c.style.get_or_insert_with(crate::entities::CellStyle::new).override_flags |= bit;
+                    let style = c.style.get_or_insert_with(crate::entities::CellStyle::new);
+                    style.override_flags |= bit;
+                    style.legacy_override_bits = true;
+                    // The overridden properties, so the cell's own values win
+                    // over the row, column and table styles.
+                    style.property_flags |= crate::entities::table::legacy_override_properties(bit);
                 }
             }
             match pair.code {
@@ -19924,10 +19940,11 @@ impl<'a> SectionReader<'a> {
                     }
                 }
                 283 => {
-                    if let (Some(c), Some(value)) = (cur.as_mut(), pair.as_bool()) {
+                    let value = pair.as_bool().or_else(|| pair.as_i16().map(|v| v != 0));
+                    if let (Some(c), Some(value)) = (cur.as_mut(), value) {
                         c.style
                             .get_or_insert_with(crate::entities::CellStyle::new)
-                            .fill_enabled = value;
+                            .fill_enabled = !value; // 283: background colour none
                     }
                 }
                 284..=289 if cur.is_none() => {

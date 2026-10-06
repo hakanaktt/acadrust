@@ -724,6 +724,10 @@ impl SatDocument {
                 let name = support.entity_type.strip_suffix("-surface").unwrap();
                 let mut tokens = vec![id(name)];
                 tokens.extend_from_slice(&support.tokens[1..]);
+                // Kernel-built surfaces gain their parameter sense and
+                // interval markers only when the document is completed;
+                // the embedded copy needs them now.
+                tokens.extend(SatDocument::missing_tail(support).unwrap_or_default());
                 tokens
             }
             _ => panic!(

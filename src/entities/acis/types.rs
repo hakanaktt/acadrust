@@ -3164,7 +3164,7 @@ impl SatDocument {
         Some(doc)
     }
 
-    fn missing_tail(record: &SatRecord) -> Option<Vec<SatToken>> {
+    pub(crate) fn missing_tail(record: &SatRecord) -> Option<Vec<SatToken>> {
         let ident = |name: &str| SatToken::Ident(name.to_string());
         // Everything after the leading `$-1` that is neither a pointer nor a
         // number: senses, range markers, convexity.

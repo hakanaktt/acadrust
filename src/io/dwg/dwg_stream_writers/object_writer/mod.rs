@@ -134,6 +134,7 @@ pub struct DwgObjectWriter<'a> {
     pub(super) linetype_handles: std::collections::HashMap<String, Handle>,
     /// Cached fallback for owners without a direct extension-dictionary handle.
     pub(super) xdic_owner_index: std::sync::Arc<std::collections::HashMap<Handle, Handle>>,
+    pub(super) block_users: std::sync::Arc<std::collections::HashMap<Handle, Vec<Handle>>>,
 }
 
 struct ParallelEntityBatch {
@@ -273,7 +274,43 @@ impl<'a> DwgObjectWriter<'a> {
             owner_overrides: std::collections::HashMap::new(),
             linetype_handles: std::collections::HashMap::new(),
             xdic_owner_index: std::sync::Arc::new(Self::build_xdic_owner_index(document)),
+            block_users: std::sync::Arc::new(Self::build_block_users(document)),
         })
+    }
+
+    fn build_block_users(document: &CadDocument) -> std::collections::HashMap<Handle, Vec<Handle>> {
+        let mut users: std::collections::HashMap<Handle, Vec<Handle>> = std::collections::HashMap::new();
+        for entity in document.entities() {
+            let record = match entity {
+                EntityType::Insert(insert) => document.block_records.get(&insert.block_name).map(|r| r.handle),
+                EntityType::Table(table) => table
+                    .block_record_handle
+                    .or_else(|| document.block_records.get(&table.block_name).map(|r| r.handle)),
+                _ => None,
+            };
+            if let Some(record) = record.filter(|h| !h.is_null()) {
+                users.entry(record).or_default().push(entity.common().handle);
+            }
+        }
+        for list in users.values_mut() {
+            list.sort();
+        }
+        users
+    }
+
+    fn block_insert_handles(&self, record: &BlockRecord) -> Vec<Handle> {
+        let mut out: Vec<Handle> = record
+            .insert_handles
+            .iter()
+            .copied()
+            .filter(|h| self.document.get_entity(*h).is_some())
+            .collect();
+        for h in self.block_users.get(&record.handle).into_iter().flatten() {
+            if !out.contains(h) {
+                out.push(*h);
+            }
+        }
+        out
     }
 
     /// Index the fallback ownership lookup used by `extension_dictionary_handle`.
@@ -2024,6 +2061,7 @@ impl<'a> DwgObjectWriter<'a> {
             registered_handles: HashSet::with_capacity(handles.len()),
             raw_excluded_handles: self.raw_excluded_handles.clone(),
             xdic_owner_index: self.xdic_owner_index.clone(),
+            block_users: self.block_users.clone(),
             owner_overrides: std::collections::HashMap::new(),
             linetype_handles: std::collections::HashMap::new(),
         };
@@ -2141,8 +2179,10 @@ impl<'a> DwgObjectWriter<'a> {
 
         // R2000+: insert count bytes + block description + preview data
         if self.version.r2000_plus() {
-            // Insert count bytes (non-zero bytes followed by zero terminator)
-            for &b in &record.insert_count_bytes {
+            // Insert count bytes: one non-zero byte per insert handle written
+            // below, then a zero terminator.
+            for (i, _) in self.block_insert_handles(record).iter().enumerate() {
+                let b = record.insert_count_bytes.get(i).copied().filter(|b| *b != 0).unwrap_or(1);
                 self.writer.write_byte(b);
             }
             self.writer.write_byte(0);
@@ -2206,7 +2246,7 @@ impl<'a> DwgObjectWriter<'a> {
         // desyncs the handle stream for any block that is referenced by an
         // insert, making AutoCAD discard the block record (eWrongObjectType).
         if self.version.r2000_plus() {
-            for &ih in &record.insert_handles {
+            for ih in self.block_insert_handles(record) {
                 self.writer
                     .write_handle(DwgReferenceType::SoftPointer, ih.value());
             }
