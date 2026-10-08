@@ -95,7 +95,7 @@ impl Transparency {
         match self {
             Self::ByLayer => 0,
             Self::ByBlock => (1u32 << 24) as i32,
-            Self::Explicit(alpha) => ((3u32 << 24) | (255 - *alpha) as u32) as i32,
+            Self::Explicit(alpha) => ((2u32 << 24) | (255 - *alpha) as u32) as i32,
         }
     }
 
