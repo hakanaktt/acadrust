@@ -222,6 +222,7 @@ cargo check --all-targets --all-features
 
 ## Used By
 - [Open CAD Studio](https://github.com/HakanSeven12/OpenCADStudio) An open-source (GPLv3) CAD application that uses acadrust as its core native DWG/DXF engine for read/write operations and 3D modeling.
+- [CADCraft](https://github.com/storytold/cadcraft) An open-source, AutoCAD-style drafting application written in Rust that uses acadrust for DWG read/write operations.
 
 ## Support & Sponsorship
 
