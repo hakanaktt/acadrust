@@ -1112,16 +1112,14 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             Color::ByLayer => 7,
             Color::None => 7,
             Color::ByBlock => 0,
-            Color::Rgb { .. } => 7,
+            Color::Rgb { .. } => layer.color.approximate_index(),
         };
         if !layer.is_off() {
             self.writer.write_i16(62, color_index)?;
         } else {
             self.writer.write_i16(62, -color_index)?;
         }
-        // True color (code 420) for an RGB layer — code 62 above can only carry
-        // 7 for it, so without this the RGB is lost on save and the reader (which
-        // now honours 420) round-trips the layer to Index(7)/white. (#223)
+        // Preserve the exact RGB value alongside the nearest ACI fallback.
         if let Some(tc) = layer.color.to_true_color_value() {
             self.writer.write_i32(420, tc)?;
         }
