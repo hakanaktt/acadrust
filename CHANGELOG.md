@@ -1,5 +1,12 @@
 ## Changelog
 
+### 0.6.3
+
+- **DXF color interoperability** - Layers now emit the nearest ACI fallback
+  alongside their exact true color.
+- **DWG transparency interoperability** - Explicit transparency uses the
+  standard `kByAlpha` method byte while legacy method-3 values remain readable.
+
 ### 0.6.2
 
 - **AC1009/R12 DWG support** - Added native pre-R13 DWG read/write support,
