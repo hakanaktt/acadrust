@@ -13,7 +13,7 @@ an installed CAD application. File support spans DXF and DWG R12 through R2018+.
 
 ```toml
 [dependencies]
-acadrust = "0.6.1"
+acadrust = "0.6.2"
 ```
 
 ```rust
@@ -42,7 +42,7 @@ Enable optional features as needed:
 
 ```toml
 [dependencies]
-acadrust = { version = "0.6.1", features = ["serde", "import"] }
+acadrust = { version = "0.6.2", features = ["serde", "import"] }
 ```
 
 ## Features

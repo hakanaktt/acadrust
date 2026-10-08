@@ -1,5 +1,11 @@
 ## Changelog
 
+### 0.6.2
+
+- **AC1009/R12 DWG support** - Added native pre-R13 DWG read/write support,
+  including fixed-layout headers, symbol tables, entity records, CRC checks,
+  XDATA, compound sequences, and exhaustive entity coverage.
+
 ### 0.6.1
 
 - **Fields and tables** - Added sheet-set, count, object-property, and table
