@@ -2,7 +2,7 @@
 //!
 //! A pure Rust library for reading, writing, and inspecting CAD files in DXF
 //! (ASCII and binary) and native binary DWG formats. DXF support spans R12
-//! through R2018+; DWG support spans R13 through R2018+.
+//! through R2018+; DWG support spans R12 through R2018+.
 //!
 //! ## Highlights
 //!
@@ -139,7 +139,7 @@
 //!
 //! | Code | AutoCAD | DXF | DWG |
 //! |------|---------|-----|-----|
-//! | AC1009 | R12 | R/W | — |
+//! | AC1009 | R12 | R/W | R/W |
 //! | AC1012 | R13 | R/W | R/W |
 //! | AC1014 | R14 | R/W | R/W |
 //! | AC1015 | 2000 | R/W | R/W |

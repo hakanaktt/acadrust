@@ -35,10 +35,9 @@ pub use vector::{Vector2, Vector3};
 pub enum DxfVersion {
     /// Unknown version
     Unknown,
-    /// R12-era DXF (AC1009)
+    /// AutoCAD R12 (AC1009).
     ///
-    /// DXF only. R12 predates the handle-based object model, so DWG I/O
-    /// rejects this version.
+    /// DWG uses the pre-R13 file layout for this version.
     AC1009,
     /// AutoCAD R13 (AC1012)
     AC1012,

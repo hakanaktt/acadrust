@@ -61,6 +61,11 @@ impl DwgWriter {
 
     /// Write a DWG file to any `Write + Seek` output.
     pub fn write_to_writer<W: Write + Seek>(mut output: W, document: &CadDocument) -> Result<()> {
+        if document.version == DxfVersion::AC1009 {
+            let bytes = crate::io::dwg::r12::write_document(document)?;
+            output.write_all(&bytes)?;
+            return Ok(());
+        }
         let mut prepared = crate::io::loft_parameters::prepared(document);
         prepare_surface_classes(&mut prepared);
         prepare_database_references(&mut prepared);
