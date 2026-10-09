@@ -3109,10 +3109,14 @@ pub(crate) fn recover_roundtrip_gradients(document: &mut crate::document::CadDoc
                 crate::entities::hatch::GradientColorEntry {
                     value: 0.0,
                     color: Color::from_index(c1 as i16),
+                    color_name: None,
+                    book_name: None,
                 },
                 crate::entities::hatch::GradientColorEntry {
                     value: 1.0,
                     color: Color::from_index(c2 as i16),
+                    color_name: None,
+                    book_name: None,
                 },
             ];
             h.gradient_color.name = name;

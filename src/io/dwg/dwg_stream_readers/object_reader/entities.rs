@@ -2010,7 +2010,12 @@ pub struct HatchData {
     pub gradient_shift: f64,
     pub gradient_single_color: bool,
     pub gradient_tint: f64,
-    pub gradient_colors: Vec<(f64, crate::types::Color)>,
+    pub gradient_colors: Vec<(
+        f64,
+        crate::types::Color,
+        Option<String>,
+        Option<String>,
+    )>,
     pub gradient_name: String,
     pub elevation: f64,
     pub normal: Vector3,
@@ -2669,8 +2674,8 @@ fn read_hatch_kind(
         let num_colors = safe_count(reader.read_bit_long());
         for _ in 0..num_colors {
             let value = reader.read_bit_double();
-            let color = reader.read_cm_color();
-            gradient_colors.push((value, color));
+            let (color, color_name, book_name) = reader.read_cm_color_with_names();
+            gradient_colors.push((value, color, color_name, book_name));
         }
         gradient_name = reader.read_variable_text();
     }

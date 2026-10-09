@@ -15311,14 +15311,17 @@ impl<'a> SectionReader<'a> {
                                 hatch.gradient_color.colors.push(GradientColorEntry {
                                     value,
                                     color: Color::ByLayer,
+                                    color_name: None,
+                                    book_name: None,
                                 });
                             }
                             63 => {
-                                if let (Some(entry), Ok(aci)) = (
-                                    hatch.gradient_color.colors.last_mut(),
-                                    gp.value_string.trim().parse::<i16>(),
-                                ) {
-                                    entry.color = Color::from_index(aci);
+                                if let Some(entry) = hatch.gradient_color.colors.last_mut() {
+                                    if let Ok(aci) = gp.value_string.trim().parse::<i16>() {
+                                        if !matches!(entry.color, Color::Rgb { .. }) {
+                                            entry.color = Color::from_index(aci);
+                                        }
+                                    }
                                 }
                             }
                             421 => {

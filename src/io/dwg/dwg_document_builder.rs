@@ -3970,9 +3970,13 @@ impl DwgDocumentBuilder {
                         .gradient_colors
                         .into_iter()
                         .map(
-                            |(value, color)| crate::entities::hatch::GradientColorEntry {
+                            |(value, color, color_name, book_name)| {
+                                crate::entities::hatch::GradientColorEntry {
                                 value,
                                 color,
+                                color_name,
+                                book_name,
+                            }
                             },
                         )
                         .collect();

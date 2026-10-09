@@ -1868,7 +1868,11 @@ impl<'a> DwgObjectWriter<'a> {
                 .write_bit_long(e.gradient_color.colors.len() as i32);
             for entry in &e.gradient_color.colors {
                 self.writer.write_bit_double(entry.value);
-                self.writer.write_cm_color(&entry.color);
+                self.writer.write_cm_color_with_names(
+                    &entry.color,
+                    entry.color_name.as_deref(),
+                    entry.book_name.as_deref(),
+                );
             }
 
             self.writer.write_variable_text(&e.gradient_color.name);
@@ -1964,7 +1968,11 @@ impl<'a> DwgObjectWriter<'a> {
                 .write_bit_long(e.gradient_color.colors.len() as i32);
             for entry in &e.gradient_color.colors {
                 self.writer.write_bit_double(entry.value);
-                self.writer.write_cm_color(&entry.color);
+                self.writer.write_cm_color_with_names(
+                    &entry.color,
+                    entry.color_name.as_deref(),
+                    entry.book_name.as_deref(),
+                );
             }
             self.writer.write_variable_text(&e.gradient_color.name);
         }

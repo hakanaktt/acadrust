@@ -364,6 +364,12 @@ pub struct GradientColorEntry {
     pub value: f64,
     /// Color at this position
     pub color: Color,
+    /// Optional authored color name from a DWG CMC value.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub color_name: Option<String>,
+    /// Optional authored color-book name from a DWG CMC value.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub book_name: Option<String>,
 }
 
 /// Gradient color pattern
@@ -409,7 +415,12 @@ impl HatchGradientPattern {
 
     /// Add a color to the gradient
     pub fn add_color(&mut self, value: f64, color: Color) {
-        self.colors.push(GradientColorEntry { value, color });
+        self.colors.push(GradientColorEntry {
+            value,
+            color,
+            color_name: None,
+            book_name: None,
+        });
     }
 }
 
