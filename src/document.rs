@@ -3477,7 +3477,7 @@ impl CadDocument {
         self.record_entity_before(overall_vp_handle, None);
         let idx = self.entities.len();
         self.entities
-            .push(Arc::new(EntityType::Viewport(overall_vp)));
+            .push(Arc::new(EntityType::Viewport(Box::new(overall_vp))));
         self.entity_index.insert(overall_vp_handle, idx);
 
         // Register in ACAD_LAYOUT dictionary

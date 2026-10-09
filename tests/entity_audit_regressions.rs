@@ -246,10 +246,10 @@ fn mline_and_wipeout_use_valid_dxf_references_and_subclasses() {
 #[test]
 fn light_binary_field_widths_and_viewport_id_match_group_codes() {
     let mut doc = CadDocument::with_version(DxfVersion::AC1021);
-    let light = doc.add_entity(EntityType::Light(Light::new())).unwrap();
+    let light = doc.add_entity(EntityType::Light(Box::new(Light::new()))).unwrap();
     let mut viewport = Viewport::new();
     viewport.id = 7;
-    let viewport = doc.add_entity(EntityType::Viewport(viewport)).unwrap();
+    let viewport = doc.add_entity(EntityType::Viewport(Box::new(viewport))).unwrap();
     let data = DxfWriter::new_binary(&doc).write_to_vec().unwrap();
     let loaded = DxfReader::from_reader(Cursor::new(data))
         .unwrap()
@@ -371,7 +371,7 @@ fn legacy_mtext_omits_post_r14_spacing_fields() {
         let mut text = MText::new();
         text.value = "Legacy paragraphs\\PSecond line".into();
         text.line_spacing_factor = 1.5;
-        let handle = doc.add_entity(EntityType::MText(text)).unwrap();
+        let handle = doc.add_entity(EntityType::MText(Box::new(text))).unwrap();
         let loaded = DwgReader::from_stream(Cursor::new(DwgWriter::write_to_vec(&doc).unwrap()))
             .read()
             .unwrap();
@@ -440,7 +440,7 @@ fn legacy_viewport_eed_and_header_ids_roundtrip_without_mutating_source() {
         let mut doc = CadDocument::with_version(version);
         let mut overview = Viewport::new();
         overview.id = 1;
-        doc.add_paper_space_entity(EntityType::Viewport(overview))
+        doc.add_paper_space_entity(EntityType::Viewport(Box::new(overview)))
             .unwrap();
         let mut layer = acadrust::tables::Layer::new("FROZEN_TEST");
         layer.handle = doc.allocate_handle();
@@ -454,7 +454,7 @@ fn legacy_viewport_eed_and_header_ids_roundtrip_without_mutating_source() {
         viewport.status.grid_on = true;
         viewport.frozen_layers.push(layer_handle);
         let handle = doc
-            .add_paper_space_entity(EntityType::Viewport(viewport))
+            .add_paper_space_entity(EntityType::Viewport(Box::new(viewport)))
             .unwrap();
         let loaded = DwgReader::from_stream(Cursor::new(DwgWriter::write_to_vec(&doc).unwrap()))
             .read()
@@ -668,7 +668,7 @@ fn surface_and_light_dxf_common_properties_survive_all_encodings() {
         .into_iter()
         .map(|kind| EntityType::Surface(Box::new(Surface::new(kind))))
         .collect();
-        entities.push(EntityType::Light(Light::new()));
+        entities.push(EntityType::Light(Box::new(Light::new())));
         let mut handles = Vec::new();
         for (index, mut entity) in entities.into_iter().enumerate() {
             let layer_name = format!("COMMON_TEST_{index}");

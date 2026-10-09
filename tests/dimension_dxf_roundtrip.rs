@@ -24,13 +24,16 @@ fn linear_rotation_survives_dxf_roundtrip() {
         DimensionLinear::vertical(Vector3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 10.0, 0.0));
     d.definition_point = Vector3::new(5.0, 5.0, 0.0);
     d.base.definition_point = d.definition_point;
-    doc.add_entity(EntityType::Dimension(Dimension::Linear(d)))
+    doc.add_entity(EntityType::Dimension(Box::new(Dimension::Linear(d))))
         .unwrap();
     let loaded = roundtrip(&doc, "lin");
     let dim = loaded
         .entities()
         .find_map(|e| match e {
-            EntityType::Dimension(Dimension::Linear(d)) => Some(d),
+            EntityType::Dimension(dim) => match dim.as_ref() {
+                Dimension::Linear(d) => Some(d),
+                _ => None,
+            },
             _ => None,
         })
         .expect("linear dim");
@@ -51,13 +54,16 @@ fn block_name_survives_dxf_roundtrip() {
     let mut d =
         DimensionLinear::vertical(Vector3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 10.0, 0.0));
     d.base.block_name = "*D42".to_string();
-    doc.add_entity(EntityType::Dimension(Dimension::Linear(d)))
+    doc.add_entity(EntityType::Dimension(Box::new(Dimension::Linear(d))))
         .unwrap();
     let loaded = roundtrip(&doc, "blk");
     let dim = loaded
         .entities()
         .find_map(|e| match e {
-            EntityType::Dimension(Dimension::Linear(d)) => Some(d),
+            EntityType::Dimension(dim) => match dim.as_ref() {
+                Dimension::Linear(d) => Some(d),
+                _ => None,
+            },
             _ => None,
         })
         .expect("linear dim");
@@ -74,13 +80,16 @@ fn radius_points_survive_dxf_roundtrip() {
     let arc = Vector3::new(8.0, 4.0, 0.0);
     let mut d = DimensionRadius::new(center, arc);
     d.base.definition_point = d.definition_point; // group 10 = arc point
-    doc.add_entity(EntityType::Dimension(Dimension::Radius(d)))
+    doc.add_entity(EntityType::Dimension(Box::new(Dimension::Radius(d))))
         .unwrap();
     let loaded = roundtrip(&doc, "rad");
     let dim = loaded
         .entities()
         .find_map(|e| match e {
-            EntityType::Dimension(Dimension::Radius(d)) => Some(d),
+            EntityType::Dimension(dim) => match dim.as_ref() {
+                Dimension::Radius(d) => Some(d),
+                _ => None,
+            },
             _ => None,
         })
         .expect("radius dim");
@@ -99,13 +108,16 @@ fn ordinate_xy_and_elbow_survive_dxf_roundtrip() {
         DimensionOrdinate::y_ordinate(Vector3::new(2.0, 3.0, 0.0), Vector3::new(2.0, 9.0, 0.0));
     d.definition_point = Vector3::new(2.0, 7.0, 0.0); // leader elbow
     d.base.definition_point = d.definition_point;
-    doc.add_entity(EntityType::Dimension(Dimension::Ordinate(d)))
+    doc.add_entity(EntityType::Dimension(Box::new(Dimension::Ordinate(d))))
         .unwrap();
     let loaded = roundtrip(&doc, "ord");
     let dim = loaded
         .entities()
         .find_map(|e| match e {
-            EntityType::Dimension(Dimension::Ordinate(d)) => Some(d),
+            EntityType::Dimension(dim) => match dim.as_ref() {
+                Dimension::Ordinate(d) => Some(d),
+                _ => None,
+            },
             _ => None,
         })
         .expect("ordinate dim");

@@ -8,7 +8,7 @@ use acadrust::{CadDocument, Color, DwgReadOptions, DwgReader, DwgWriter, EntityT
 fn mpolygons_of(doc: &CadDocument) -> Vec<Hatch> {
     doc.model_space_entities()
         .filter_map(|entity| match entity {
-            EntityType::Hatch(hatch) if hatch.is_mpolygon => Some(hatch.clone()),
+            EntityType::Hatch(hatch) if hatch.is_mpolygon => Some(hatch.as_ref().clone()),
             _ => None,
         })
         .collect()
@@ -175,7 +175,7 @@ fn bow_tie_stays_a_valid_loop() {
 fn write_and_read(mpolygons: &[Hatch]) -> Vec<Hatch> {
     let mut doc = CadDocument::new();
     for hatch in mpolygons {
-        doc.add_entity(EntityType::Hatch(hatch.clone())).unwrap();
+        doc.add_entity(EntityType::Hatch(Box::new(hatch.clone()))).unwrap();
     }
     mpolygons_of(&read(DwgWriter::write_to_vec(&doc).unwrap()))
 }

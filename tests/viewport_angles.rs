@@ -27,7 +27,7 @@ fn drawing(snap: f64, twist: f64) -> CadDocument {
     view.height = 100.0;
     view.snap_angle = snap;
     view.twist_angle = twist;
-    doc.add_entity_to_layout(EntityType::Viewport(view), "Layout1")
+    doc.add_entity_to_layout(EntityType::Viewport(Box::new(view)), "Layout1")
         .unwrap();
     doc
 }

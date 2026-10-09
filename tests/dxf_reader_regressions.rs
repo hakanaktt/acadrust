@@ -86,7 +86,7 @@ fn light_boolean_flags_survive_dxf_roundtrip() {
     l.use_attenuation_limits = true;
     l.cast_shadows = true;
     let mut doc = CadDocument::with_version(DxfVersion::AC1032);
-    doc.add_entity(EntityType::Light(l)).unwrap();
+    doc.add_entity(EntityType::Light(Box::new(l))).unwrap();
     let rt = dxf_roundtrip(&doc);
     let l = rt
         .entities()

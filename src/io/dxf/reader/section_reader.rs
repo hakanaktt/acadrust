@@ -3294,7 +3294,7 @@ impl<'a> SectionReader<'a> {
                     }
                     "MTEXT" => {
                         if let Some(entity) = self.read_mtext()? {
-                            block_entities.push(EntityType::MText(entity));
+                            block_entities.push(EntityType::MText(Box::new(entity)));
                         }
                     }
                     "SPLINE" => {
@@ -3309,22 +3309,22 @@ impl<'a> SectionReader<'a> {
                     }
                     "DIMENSION" => {
                         if let Some(entity) = self.read_dimension()? {
-                            block_entities.push(EntityType::Dimension(entity));
+                            block_entities.push(EntityType::Dimension(Box::new(entity)));
                         }
                     }
                     "ARC_DIMENSION" | "LARGE_RADIAL_DIMENSION" => {
                         if let Some(entity) = self.read_extended_dimension(&pair.value_string)? {
-                            block_entities.push(EntityType::Dimension(entity));
+                            block_entities.push(EntityType::Dimension(Box::new(entity)));
                         }
                     }
                     "HATCH" => {
                         if let Some(entity) = self.read_hatch()? {
-                            block_entities.push(EntityType::Hatch(entity));
+                            block_entities.push(EntityType::Hatch(Box::new(entity)));
                         }
                     }
                     "MPOLYGON" => {
                         if let Some(entity) = self.read_mpolygon()? {
-                            block_entities.push(EntityType::Hatch(entity));
+                            block_entities.push(EntityType::Hatch(Box::new(entity)));
                         }
                     }
                     "SOLID" => {
@@ -3385,7 +3385,7 @@ impl<'a> SectionReader<'a> {
                     }
                     "VIEWPORT" => {
                         if let Some(entity) = self.read_viewport()? {
-                            block_entities.push(EntityType::Viewport(entity));
+                            block_entities.push(EntityType::Viewport(Box::new(entity)));
                         }
                     }
                     "LEADER" => {
@@ -3440,7 +3440,7 @@ impl<'a> SectionReader<'a> {
                     }
                     "OLE2FRAME" => {
                         if let Some(entity) = self.read_ole2frame()? {
-                            block_entities.push(EntityType::Ole2Frame(entity));
+                            block_entities.push(EntityType::Ole2Frame(Box::new(entity)));
                         }
                     }
                     "SECTIONLINE" => {
@@ -3603,7 +3603,7 @@ impl<'a> SectionReader<'a> {
                     }
                     "MTEXT" => {
                         if let Some(entity) = self.read_mtext()? {
-                            let _ = document.add_entity(EntityType::MText(entity));
+                            let _ = document.add_entity(EntityType::MText(Box::new(entity)));
                         }
                     }
                     "SPLINE" => {
@@ -3618,22 +3618,22 @@ impl<'a> SectionReader<'a> {
                     }
                     "DIMENSION" => {
                         if let Some(entity) = self.read_dimension()? {
-                            let _ = document.add_entity(EntityType::Dimension(entity));
+                            let _ = document.add_entity(EntityType::Dimension(Box::new(entity)));
                         }
                     }
                     "ARC_DIMENSION" | "LARGE_RADIAL_DIMENSION" => {
                         if let Some(entity) = self.read_extended_dimension(&entity_type)? {
-                            let _ = document.add_entity(EntityType::Dimension(entity));
+                            let _ = document.add_entity(EntityType::Dimension(Box::new(entity)));
                         }
                     }
                     "HATCH" => {
                         if let Some(entity) = self.read_hatch()? {
-                            let _ = document.add_entity(EntityType::Hatch(entity));
+                            let _ = document.add_entity(EntityType::Hatch(Box::new(entity)));
                         }
                     }
                     "MPOLYGON" => {
                         if let Some(entity) = self.read_mpolygon()? {
-                            let _ = document.add_entity(EntityType::Hatch(entity));
+                            let _ = document.add_entity(EntityType::Hatch(Box::new(entity)));
                         }
                     }
                     "SOLID" => {
@@ -3689,7 +3689,7 @@ impl<'a> SectionReader<'a> {
                     }
                     "VIEWPORT" => {
                         if let Some(entity) = self.read_viewport()? {
-                            let _ = document.add_entity(EntityType::Viewport(entity));
+                            let _ = document.add_entity(EntityType::Viewport(Box::new(entity)));
                         }
                     }
                     "ATTRIB" => {
@@ -3739,7 +3739,7 @@ impl<'a> SectionReader<'a> {
                     }
                     "LIGHT" => {
                         if let Some(entity) = self.read_light_entity()? {
-                            let _ = document.add_entity(EntityType::Light(entity));
+                            let _ = document.add_entity(EntityType::Light(Box::new(entity)));
                         }
                     }
                     "SURFACE" | "PLANESURFACE" | "EXTRUDEDSURFACE" | "LOFTEDSURFACE"
@@ -3770,7 +3770,7 @@ impl<'a> SectionReader<'a> {
                     }
                     "OLE2FRAME" => {
                         if let Some(entity) = self.read_ole2frame()? {
-                            let _ = document.add_entity(EntityType::Ole2Frame(entity));
+                            let _ = document.add_entity(EntityType::Ole2Frame(Box::new(entity)));
                         }
                     }
                     "CAMERA"
@@ -21478,7 +21478,7 @@ mod tests {
         mtext.drawing_direction = DrawingDirection::TopToBottom;
         mtext.line_spacing_factor = 1.5;
         mtext.normal = Vector3::new(0.0, 0.0, -1.0);
-        let _ = doc.add_entity(EntityType::MText(mtext));
+        let _ = doc.add_entity(EntityType::MText(Box::new(mtext)));
 
         let doc2 = roundtrip(doc);
         let entities: Vec<_> = doc2.entities().collect();
@@ -21821,7 +21821,7 @@ mod tests {
         let mut mtext = crate::entities::mtext::MText::new();
         mtext.value = "Hello\nWorld".to_string();
         mtext.insertion_point = Vector3::new(10.0, 20.0, 0.0);
-        let _ = doc.add_entity(EntityType::MText(mtext));
+        let _ = doc.add_entity(EntityType::MText(Box::new(mtext)));
 
         let doc2 = roundtrip_binary(doc);
         let entities: Vec<_> = doc2.entities().collect();

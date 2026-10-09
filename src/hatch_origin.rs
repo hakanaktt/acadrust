@@ -222,7 +222,7 @@ mod tests {
                 .raw_dwg_eed
                 .push((app_handle, stale.clone()));
             assert!(hatch.record_pattern_origin(Vector2::new(origin[0], origin[1])));
-            document.add_entity(EntityType::Hatch(hatch)).unwrap();
+            document.add_entity(EntityType::Hatch(Box::new(hatch))).unwrap();
         }
 
         let bytes = DwgWriter::write_to_vec(&document).unwrap();

@@ -63,7 +63,7 @@ fn plotting_evaluates_against_the_open_sheet_set() {
         sheet_set.sheet_set().id()
     );
     let ctx = Context { sheet_set };
-    let host = doc.add_entity(EntityType::MText(MText::new())).unwrap();
+    let host = doc.add_entity(EntityType::MText(Box::new(MText::new()))).unwrap();
     doc.set_text_field(
         host,
         "%<\\_FldIdx 0>%",

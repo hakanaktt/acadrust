@@ -464,15 +464,15 @@ pub enum EntityType {
     /// Text entity
     Text(Text),
     /// Multi-line text entity
-    MText(MText),
+    MText(Box<MText>),
     /// Spline entity
     Spline(Spline),
     /// Helix entity (spline-derived 3D spiral)
     Helix(Box<Helix>),
     /// Dimension entity
-    Dimension(Dimension),
+    Dimension(Box<Dimension>),
     /// Hatch entity
-    Hatch(Hatch),
+    Hatch(Box<Hatch>),
     /// Solid entity
     Solid(Solid),
     /// 3D Face entity
@@ -488,7 +488,7 @@ pub enum EntityType {
     /// XLine entity (construction line, infinite)
     XLine(XLine),
     /// Viewport entity (paper space viewport)
-    Viewport(Viewport),
+    Viewport(Box<Viewport>),
     /// Attribute definition entity
     AttributeDefinition(AttributeDefinition),
     /// Attribute entity (block attribute instance)
@@ -526,11 +526,11 @@ pub enum EntityType {
     /// End-of-sequence marker
     Seqend(Seqend),
     /// OLE2 embedded object
-    Ole2Frame(Ole2Frame),
+    Ole2Frame(Box<Ole2Frame>),
     /// Polygon mesh (3D surface mesh)
     PolygonMesh(PolygonMeshEntity),
     /// Light entity (point / spot / distant light source)
-    Light(Light),
+    Light(Box<Light>),
     SectionSymbol(SectionSymbol),
     ViewBorder(ViewBorder),
     /// Structured class-based and legacy entities.
@@ -572,11 +572,11 @@ impl EntityType {
             EntityType::Polyline3D(e) => e,
             EntityType::LwPolyline(e) => e,
             EntityType::Text(e) => e,
-            EntityType::MText(e) => e,
+            EntityType::MText(e) => e.as_ref(),
             EntityType::Spline(e) => e,
             EntityType::Helix(e) => e.as_ref(),
-            EntityType::Dimension(e) => e,
-            EntityType::Hatch(e) => e,
+            EntityType::Dimension(e) => e.as_ref(),
+            EntityType::Hatch(e) => e.as_ref(),
             EntityType::Solid(e) => e,
             EntityType::Face3D(e) => e,
             EntityType::Insert(e) => e,
@@ -584,7 +584,7 @@ impl EntityType {
             EntityType::BlockEnd(e) => e,
             EntityType::Ray(e) => e,
             EntityType::XLine(e) => e,
-            EntityType::Viewport(e) => e,
+            EntityType::Viewport(e) => e.as_ref(),
             EntityType::AttributeDefinition(e) => e,
             EntityType::AttributeEntity(e) => e,
             EntityType::Leader(e) => e,
@@ -603,9 +603,9 @@ impl EntityType {
             EntityType::Shape(e) => e,
             EntityType::Underlay(e) => e,
             EntityType::Seqend(e) => e,
-            EntityType::Ole2Frame(e) => e,
+            EntityType::Ole2Frame(e) => e.as_ref(),
             EntityType::PolygonMesh(e) => e,
-            EntityType::Light(e) => e,
+            EntityType::Light(e) => e.as_ref(),
             EntityType::SectionSymbol(e) => e,
             EntityType::ViewBorder(e) => e,
             EntityType::Extended(e) => e.as_ref(),
@@ -625,12 +625,12 @@ impl EntityType {
             EntityType::Polyline2D(e) => e,
             EntityType::Polyline3D(e) => e,
             EntityType::LwPolyline(e) => e,
-            EntityType::MText(e) => e,
+            EntityType::MText(e) => e.as_mut(),
             EntityType::Text(e) => e,
             EntityType::Spline(e) => e,
             EntityType::Helix(e) => e.as_mut(),
-            EntityType::Dimension(e) => e,
-            EntityType::Hatch(e) => e,
+            EntityType::Dimension(e) => e.as_mut(),
+            EntityType::Hatch(e) => e.as_mut(),
             EntityType::Solid(e) => e,
             EntityType::Face3D(e) => e,
             EntityType::Insert(e) => e,
@@ -638,7 +638,7 @@ impl EntityType {
             EntityType::BlockEnd(e) => e,
             EntityType::Ray(e) => e,
             EntityType::XLine(e) => e,
-            EntityType::Viewport(e) => e,
+            EntityType::Viewport(e) => e.as_mut(),
             EntityType::AttributeDefinition(e) => e,
             EntityType::AttributeEntity(e) => e,
             EntityType::Leader(e) => e,
@@ -657,9 +657,9 @@ impl EntityType {
             EntityType::Shape(e) => e,
             EntityType::Underlay(e) => e,
             EntityType::Seqend(e) => e,
-            EntityType::Ole2Frame(e) => e,
+            EntityType::Ole2Frame(e) => e.as_mut(),
             EntityType::PolygonMesh(e) => e,
-            EntityType::Light(e) => e,
+            EntityType::Light(e) => e.as_mut(),
             EntityType::SectionSymbol(e) => e,
             EntityType::ViewBorder(e) => e,
             EntityType::Extended(e) => e.as_mut(),

@@ -3407,7 +3407,7 @@ impl DwgDocumentBuilder {
                     e.shadow_map_softness = data.shadow_map_softness;
                     e.photometric_mode = data.photometric_mode;
                     e.photometric_data = data.photometric_data;
-                    let _ = document.add_entity(EntityType::Light(e));
+                    let _ = document.add_entity(EntityType::Light(Box::new(e)));
                 }
                 OBJ_CAMERA
                 | OBJ_SECTIONOBJECT
@@ -3780,7 +3780,7 @@ impl DwgDocumentBuilder {
                         self.obj_reader.dxf_version(),
                     );
                     let e = mtext_from_data(data, entity_common, &maps);
-                    let _ = document.add_entity(EntityType::MText(e));
+                    let _ = document.add_entity(EntityType::MText(Box::new(e)));
                 }
                 OBJ_LEADER => {
                     let data = entities::read_leader(
@@ -3920,7 +3920,7 @@ impl DwgDocumentBuilder {
                             }
                         }
                     }
-                    let _ = document.add_entity(EntityType::Hatch(e));
+                    let _ = document.add_entity(EntityType::Hatch(Box::new(e)));
                 }
                 OBJ_VIEWPORT => {
                     let data = entities::read_viewport(
@@ -4023,7 +4023,7 @@ impl DwgDocumentBuilder {
                             e.sun_handle = Handle::new(sun);
                         }
                     }
-                    let _ = document.add_entity(EntityType::Viewport(e));
+                    let _ = document.add_entity(EntityType::Viewport(Box::new(e)));
                 }
                 OBJ_POLYLINE_2D => {
                     let data = entities::read_polyline2d(&mut reader, self.obj_reader.version());
@@ -4069,7 +4069,7 @@ impl DwgDocumentBuilder {
                     dim.base.definition_point = data.definition_point;
                     dim.rotation = data.rotation;
                     dim.ext_line_rotation = data.ext_line_rotation;
-                    let _ = document.add_entity(EntityType::Dimension(Dimension::Linear(dim)));
+                    let _ = document.add_entity(EntityType::Dimension(Box::new(Dimension::Linear(dim))));
                 }
                 OBJ_DIMENSION_ALIGNED => {
                     let data = entities::read_dimension_aligned(
@@ -4083,7 +4083,7 @@ impl DwgDocumentBuilder {
                     dim.definition_point = data.definition_point;
                     dim.base.definition_point = data.definition_point;
                     dim.ext_line_rotation = data.ext_line_rotation;
-                    let _ = document.add_entity(EntityType::Dimension(Dimension::Aligned(dim)));
+                    let _ = document.add_entity(EntityType::Dimension(Box::new(Dimension::Aligned(dim))));
                 }
                 OBJ_DIMENSION_RADIUS => {
                     let data = entities::read_dimension_radius(
@@ -4096,7 +4096,7 @@ impl DwgDocumentBuilder {
                     map_dimension_common(&mut dim.base, &data.common, &maps);
                     dim.base.definition_point = data.definition_point;
                     dim.leader_length = data.leader_length;
-                    let _ = document.add_entity(EntityType::Dimension(Dimension::Radius(dim)));
+                    let _ = document.add_entity(EntityType::Dimension(Box::new(Dimension::Radius(dim))));
                 }
                 OBJ_DIMENSION_DIAMETER => {
                     let data = entities::read_dimension_diameter(
@@ -4109,7 +4109,7 @@ impl DwgDocumentBuilder {
                     map_dimension_common(&mut dim.base, &data.common, &maps);
                     dim.base.definition_point = data.definition_point;
                     dim.leader_length = data.leader_length;
-                    let _ = document.add_entity(EntityType::Dimension(Dimension::Diameter(dim)));
+                    let _ = document.add_entity(EntityType::Dimension(Box::new(Dimension::Diameter(dim))));
                 }
                 OBJ_DIMENSION_ANG_2LN => {
                     let data = entities::read_dimension_angular_2ln(
@@ -4127,7 +4127,7 @@ impl DwgDocumentBuilder {
                     dim.angle_vertex = data.angle_vertex;
                     dim.definition_point = data.definition_point;
                     dim.base.definition_point = data.definition_point;
-                    let _ = document.add_entity(EntityType::Dimension(Dimension::Angular2Ln(dim)));
+                    let _ = document.add_entity(EntityType::Dimension(Box::new(Dimension::Angular2Ln(dim))));
                 }
                 OBJ_DIMENSION_ANG_3PT => {
                     let data = entities::read_dimension_angular_3pt(
@@ -4143,7 +4143,7 @@ impl DwgDocumentBuilder {
                     dim.angle_vertex = data.angle_vertex;
                     dim.definition_point = data.definition_point;
                     dim.base.definition_point = data.definition_point;
-                    let _ = document.add_entity(EntityType::Dimension(Dimension::Angular3Pt(dim)));
+                    let _ = document.add_entity(EntityType::Dimension(Box::new(Dimension::Angular3Pt(dim))));
                 }
                 OBJ_DIMENSION_ORDINATE => {
                     let data = entities::read_dimension_ordinate(
@@ -4161,7 +4161,7 @@ impl DwgDocumentBuilder {
                     dim.definition_point = data.definition_point;
                     dim.base.definition_point = data.definition_point;
                     dim.refresh_measurement();
-                    let _ = document.add_entity(EntityType::Dimension(Dimension::Ordinate(dim)));
+                    let _ = document.add_entity(EntityType::Dimension(Box::new(Dimension::Ordinate(dim))));
                 }
                 OBJ_ARC_DIMENSION => {
                     let data = entities::read_dimension_arc(
@@ -4183,7 +4183,7 @@ impl DwgDocumentBuilder {
                     dim.has_leader = data.has_leader;
                     dim.first_leader_point = data.first_leader_point;
                     dim.second_leader_point = data.second_leader_point;
-                    let _ = document.add_entity(EntityType::Dimension(Dimension::Arc(dim)));
+                    let _ = document.add_entity(EntityType::Dimension(Box::new(Dimension::Arc(dim))));
                 }
                 OBJ_LARGE_RADIAL_DIMENSION => {
                     let data = entities::read_dimension_large_radial(
@@ -4200,7 +4200,7 @@ impl DwgDocumentBuilder {
                     dim.jog_angle = data.jog_angle;
                     dim.override_center = data.override_center;
                     dim.jog_point = data.jog_point;
-                    let _ = document.add_entity(EntityType::Dimension(Dimension::LargeRadial(dim)));
+                    let _ = document.add_entity(EntityType::Dimension(Box::new(Dimension::LargeRadial(dim))));
                 }
 
                 OBJ_MLINE => {
@@ -4689,7 +4689,7 @@ impl DwgDocumentBuilder {
                     e.dwg_mode = data.mode;
                     e.is_paper_space = data.mode == 1;
                     e.lock_aspect = data.lock_aspect;
-                    let _ = document.add_entity(EntityType::Ole2Frame(e));
+                    let _ = document.add_entity(EntityType::Ole2Frame(Box::new(e)));
                 }
 
                 // ── Polygon mesh (POLYLINE with mesh flag) ──────────

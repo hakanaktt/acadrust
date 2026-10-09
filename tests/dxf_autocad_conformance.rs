@@ -213,7 +213,7 @@ fn hatch_with_a_derived_boundary_writes_pixel_size_before_seed_points() {
     }
     hatch.paths.push(path);
     hatch.pixel_size = 0.0725;
-    let handle = doc.add_entity(EntityType::Hatch(hatch)).unwrap();
+    let handle = doc.add_entity(EntityType::Hatch(Box::new(hatch))).unwrap();
     let rec = record(&write_pairs(&doc), handle);
     let p47 = rec.iter().position(|(c, _)| *c == 47).expect("47 written");
     let p98 = rec.iter().position(|(c, _)| *c == 98).expect("98 written");
@@ -225,10 +225,10 @@ fn hatch_with_a_derived_boundary_writes_pixel_size_before_seed_points() {
 fn active_layout_viewports_get_ids_starting_at_one() {
     let mut doc = CadDocument::new();
     let first = doc
-        .add_paper_space_entity(EntityType::Viewport(Viewport::new()))
+        .add_paper_space_entity(EntityType::Viewport(Box::new(Viewport::new())))
         .unwrap();
     let second = doc
-        .add_paper_space_entity(EntityType::Viewport(Viewport::new()))
+        .add_paper_space_entity(EntityType::Viewport(Box::new(Viewport::new())))
         .unwrap();
     let pairs = write_pairs(&doc);
     for (handle, id) in [(first, "1"), (second, "2")] {
