@@ -321,6 +321,8 @@ pub enum TabStop {
     Right(f64),
     /// Decimal (dot-aligned) tab at position (`D` prefix)
     Decimal(f64),
+    /// Decimal tab with an explicit alignment character (`D.2` or `D,2`).
+    DecimalWithCharacter { position: f64, character: char },
 }
 
 impl TabStop {
@@ -328,6 +330,7 @@ impl TabStop {
     pub fn position(&self) -> f64 {
         match self {
             TabStop::Left(p) | TabStop::Center(p) | TabStop::Right(p) | TabStop::Decimal(p) => *p,
+            TabStop::DecimalWithCharacter { position, .. } => *position,
         }
     }
 }
@@ -339,6 +342,9 @@ impl core::fmt::Display for TabStop {
             TabStop::Center(p) => write!(f, "c{}", p),
             TabStop::Right(p) => write!(f, "r{}", p),
             TabStop::Decimal(p) => write!(f, "D{}", p),
+            TabStop::DecimalWithCharacter { position, character } => {
+                write!(f, "D{}{}", character, position)
+            }
         }
     }
 }

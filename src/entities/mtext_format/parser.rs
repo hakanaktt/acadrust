@@ -1038,8 +1038,10 @@ impl MTextParser {
                 }
                 let segment: String = chars[start..k].iter().collect();
                 let mut tab_stops = self.current_paragraph.properties.tab_stops.clone();
-                for part in segment.split(',') {
-                    let part = part.trim();
+                let parts: Vec<_> = segment.split(',').map(str::trim).collect();
+                let mut part_index = 0;
+                while part_index < parts.len() {
+                    let part = parts[part_index];
                     let (prefix, num) = match part.chars().next() {
                         Some('c') | Some('C') => (b'c', &part[1..]),
                         Some('r') | Some('R') => (b'r', &part[1..]),
@@ -1048,11 +1050,19 @@ impl MTextParser {
                         // `D.2` is a decimal stop at 2 (aligning on `.`), not 0.2.
                         Some('d') | Some('D') => {
                             let rest = &part[1..];
-                            (
-                                b'D',
-                                rest.strip_prefix(|c: char| c == '.' || c == ',')
-                                    .unwrap_or(rest),
-                            )
+                            if rest.is_empty()
+                                && part_index + 1 < parts.len()
+                                && parts[part_index + 1]
+                                    .parse::<f64>()
+                                    .is_ok()
+                            {
+                                part_index += 1;
+                                (b',', parts[part_index])
+                            } else if let Some(num) = rest.strip_prefix('.') {
+                                (b'.', num)
+                            } else {
+                                (b'D', rest.strip_prefix(',').unwrap_or(rest))
+                            }
                         }
                         _ => (0, part),
                     };
@@ -1061,9 +1071,14 @@ impl MTextParser {
                             b'c' => TabStop::Center(v),
                             b'r' => TabStop::Right(v),
                             b'D' => TabStop::Decimal(v),
+                            b'.' | b',' => TabStop::DecimalWithCharacter {
+                                position: v,
+                                character: prefix as char,
+                            },
                             _ => TabStop::Left(v),
                         });
                     }
+                    part_index += 1;
                 }
                 self.current_paragraph.properties.tab_stops = tab_stops;
                 i = k;
@@ -1947,8 +1962,28 @@ mod tests {
         let doc = parse_mtext("{\\ptD.2;Text}", false);
         assert_eq!(
             doc.paragraphs[0].properties.tab_stops,
-            vec![TabStop::Decimal(2.0)]
+            vec![TabStop::DecimalWithCharacter {
+                position: 2.0,
+                character: '.',
+            }]
         );
+    }
+
+    #[test]
+    fn test_parse_and_serialize_decimal_tab_characters() {
+        let comma = parse_mtext("{\\ptD,2;Comma}", false);
+        assert_eq!(
+            comma.paragraphs[0].properties.tab_stops,
+            vec![TabStop::DecimalWithCharacter {
+                position: 2.0,
+                character: ',',
+            }]
+        );
+        assert!(comma.to_mtext_string().contains(",tD,2"));
+
+        let legacy = parse_mtext("{\\ptD2;Dot}", false);
+        assert_eq!(legacy.paragraphs[0].properties.tab_stops, vec![TabStop::Decimal(2.0)]);
+        assert!(legacy.to_mtext_string().contains(",tD2"));
     }
 
     #[test]
