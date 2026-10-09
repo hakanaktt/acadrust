@@ -579,7 +579,7 @@ impl CadDocument {
             line_weight: LineWeight::from_value(entry_i32(entries, 370).unwrap_or(-3) as i16),
             plot_style: entry_string(entries, 1).unwrap_or_default().to_string(),
             transparency: entry_i32(entries, 440)
-                .map(|value| Transparency::from_alpha_value(value as u32)),
+                .and_then(|value| Transparency::from_layer_alpha_value(value as u32)),
         })
     }
 

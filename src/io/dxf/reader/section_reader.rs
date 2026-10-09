@@ -9225,8 +9225,11 @@ impl<'a> SectionReader<'a> {
                             _ => None,
                         })
                     }) {
-                        layer.transparency =
-                            crate::types::Transparency::from_alpha_value(value as u32);
+                        if let Some(transparency) =
+                            crate::types::Transparency::from_layer_alpha_value(value as u32)
+                        {
+                            layer.transparency = transparency;
+                        }
                     }
                     // The description is the *second* string under
                     // `AcAecLayerStandard`; the first is an empty placeholder.

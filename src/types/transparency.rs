@@ -41,6 +41,23 @@ impl Transparency {
         }
     }
 
+    /// Decode a layer's `AcCmTransparency` value.
+    ///
+    /// Layer records use packed zero for an opaque default, whereas zero on
+    /// an entity means inheritance from its layer. Unknown method bytes are
+    /// rejected so callers do not turn unsupported source data into a known
+    /// inheritance mode.
+    pub fn from_layer_alpha_value(value: u32) -> Option<Self> {
+        if value == 0 {
+            return Some(Self::OPAQUE);
+        }
+        match (value >> 24) as u8 {
+            1 => Some(Self::ByBlock),
+            2 | 3 => Some(Self::Explicit(255 - (value & 0xFF) as u8)),
+            _ => None,
+        }
+    }
+
     /// Return the explicit amount, or zero for inherited values.
     pub const fn alpha(&self) -> u8 {
         match self {

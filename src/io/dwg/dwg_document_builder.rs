@@ -1177,8 +1177,11 @@ impl DwgDocumentBuilder {
                             if bytes.first() == Some(&71) && bytes.len() >= 5 {
                                 let raw =
                                     i32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]);
-                                layer.transparency =
-                                    crate::types::Transparency::from_alpha_value(raw as u32);
+                                if let Some(transparency) =
+                                    crate::types::Transparency::from_layer_alpha_value(raw as u32)
+                                {
+                                    layer.transparency = transparency;
+                                }
                             }
                         }
                     }
