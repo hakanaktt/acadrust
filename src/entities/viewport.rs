@@ -257,6 +257,13 @@ pub struct Viewport {
     pub status: ViewportStatusFlags,
     /// Viewport ID (unique within the drawing)
     pub id: i16,
+    /// DXF group 68 status/stacking value when it was present in the source.
+    ///
+    /// `None` means the viewport was created in memory or came from a format
+    /// that does not expose the DXF value. In that case the DXF writer derives
+    /// the legacy value from `status.is_on`, `off_screen`, and `id`.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub dxf_status: Option<i16>,
     pub off_screen: bool,
     /// View center point (DCS - Display Coordinate System)
     pub view_center: Vector3,
@@ -352,6 +359,7 @@ impl Viewport {
             height: 210.0, // A4 height in mm
             status: ViewportStatusFlags::default_on(),
             id: 0,
+            dxf_status: None,
             off_screen: false,
             view_center: Vector3::ZERO,
             snap_base: Vector3::ZERO,

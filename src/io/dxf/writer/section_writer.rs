@@ -4981,11 +4981,13 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 .copied()
                 .unwrap_or(0)
         };
-        let status = match (viewport.status.is_on, viewport.off_screen) {
-            (false, _) => 0,
-            (true, true) => -1,
-            (true, false) => id,
-        };
+        let status = viewport.dxf_status.unwrap_or_else(|| {
+            match (viewport.status.is_on, viewport.off_screen) {
+                (false, _) => 0,
+                (true, true) => -1,
+                (true, false) => id,
+            }
+        });
         self.writer.write_i16(68, status)?;
         self.writer.write_i16(69, id)?;
 

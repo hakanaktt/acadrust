@@ -16801,7 +16801,12 @@ impl<'a> SectionReader<'a> {
                         vp.status = crate::entities::viewport::ViewportStatusFlags::from_bits(v);
                     }
                 }
-                68 => vp.off_screen = pair.as_i16() == Some(-1),
+                68 => {
+                    if let Some(value) = pair.as_i16() {
+                        vp.dxf_status = Some(value);
+                        vp.off_screen = value == -1;
+                    }
+                }
                 69 => {
                     if let Some(v) = pair.as_i16() {
                         vp.id = v;
