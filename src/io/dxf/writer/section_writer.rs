@@ -1011,7 +1011,8 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             // 75 = shape number. These used to be emitted swapped — AutoCAD
             // then read every element as complex (OCS#314).
             if let Some(c) = &element.complex {
-                let mut flags: i16 = 0;
+                let mut flags: i16 = c.source_flags as i16;
+                flags &= !(0x01 | 0x02 | 0x04);
                 if c.is_absolute_rotation() {
                     flags |= 0x01;
                 }

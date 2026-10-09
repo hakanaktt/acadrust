@@ -225,6 +225,10 @@ pub struct LineTypeComplexData {
     pub rotation: f64,
     /// Rotation is world-absolute rather than relative to the line tangent.
     pub absolute_rotation: bool,
+    /// Raw source element flags, including mode bits not yet modeled by the
+    /// public API. Known content/absolute bits are kept synchronized on write.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub source_flags: u8,
     /// Offset from the element's position on the line (DXF 44, 45):
     /// `[along-line, perpendicular]` in drawing units.
     pub offset: [f64; 2],
@@ -238,6 +242,7 @@ impl Default for LineTypeComplexData {
             scale: 1.0,
             rotation: 0.0,
             absolute_rotation: false,
+            source_flags: 0,
             offset: [0.0, 0.0],
         }
     }
@@ -316,6 +321,7 @@ impl LineTypeComplexData {
 
     /// Classify content from DXF element-type flags (code 75).
     pub(crate) fn apply_dxf_flags(&mut self, flags: i16) {
+        self.source_flags = flags as u8;
         self.absolute_rotation = flags & 0x01 != 0;
         // DXF: 0x04 = shape, 0x02 = text
         if flags & 0x04 != 0 {
@@ -368,6 +374,7 @@ mod tests {
             scale: 2.0,
             rotation: 45.0,
             absolute_rotation: false,
+            source_flags: 0,
             offset: [1.0, 2.0],
         };
         assert!(c.is_shape());
@@ -387,6 +394,7 @@ mod tests {
             scale: 1.0,
             rotation: 0.0,
             absolute_rotation: false,
+            source_flags: 0,
             offset: [0.0, 0.5],
         };
         assert!(!c.is_shape());
@@ -404,6 +412,7 @@ mod tests {
             scale: 1.0,
             rotation: 90.0,
             absolute_rotation: true,
+            source_flags: 1,
             offset: [0.0, 0.0],
         };
         assert!(c.is_shape());

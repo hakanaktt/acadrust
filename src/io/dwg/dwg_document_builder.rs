@@ -1342,6 +1342,7 @@ impl DwgDocumentBuilder {
                                     scale: s.scale,
                                     rotation: s.rotation,
                                     absolute_rotation: s.dwg_flags & 0x01 != 0,
+                                    source_flags: s.dwg_flags as u8,
                                     offset: [s.offset_x, s.offset_y],
                                 })
                             } else {
