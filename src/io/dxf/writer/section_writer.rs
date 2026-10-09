@@ -74,9 +74,9 @@ pub struct SectionWriter<'a, W: DxfStreamWriter> {
     sab_entries: Vec<(Handle, Vec<u8>)>,
     /// Whether currently writing paper space entities (for group code 67)
     writing_paper_space: bool,
-    /// Viewport IDs (69) for viewports of the active paper-space layout whose
-    /// source (DWG) does not store one: 1, 2, ... in entity order.
-    active_viewport_ids: HashMap<Handle, i16>,
+    /// Viewport IDs (69) derived per paper-space block when the source does
+    /// not store them, reserving explicit IDs before filling gaps.
+    paper_viewport_ids: HashMap<Handle, i16>,
     /// Set of all handles that will exist in the output DXF.
     /// Used to filter reactor/xdictionary references to non-existent objects.
     valid_handles: HashSet<Handle>,
@@ -114,7 +114,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             dxf_version: DxfVersion::AC1024,
             sab_entries: Vec::new(),
             writing_paper_space: false,
-            active_viewport_ids: HashMap::new(),
+            paper_viewport_ids: HashMap::new(),
             valid_handles: HashSet::new(),
             bylayer_linetype_handle: Handle::NULL,
             byblock_linetype_handle: Handle::NULL,
@@ -1869,6 +1869,28 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         Ok(())
     }
 
+    fn number_paper_space_viewports(&mut self, block: &BlockRecord, document: &CadDocument) {
+        let viewports = block
+            .entity_handles
+            .iter()
+            .filter_map(|handle| match document.get_entity(*handle) {
+                Some(EntityType::Viewport(viewport)) => Some(viewport),
+                _ => None,
+            });
+        let used_ids: HashSet<i16> = viewports
+            .clone()
+            .map(|viewport| viewport.id)
+            .filter(|id| *id > 0)
+            .collect();
+        let mut available_ids = (1..=i16::MAX).filter(|id| !used_ids.contains(id));
+        for viewport in viewports {
+            if viewport.id == 0 {
+                self.paper_viewport_ids
+                    .insert(viewport.common.handle, available_ids.next().unwrap_or(0));
+            }
+        }
+    }
+
     /// Write a complete block definition (BLOCK...entities...ENDBLK)
     fn write_block_definition(
         &mut self,
@@ -1879,6 +1901,9 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         // Block names are case-insensitive: drawings written by other tools
         // use "*MODEL_SPACE" / "*PAPER_SPACE".
         let is_paper_space = block_record.is_paper_space();
+        if is_paper_space {
+            self.number_paper_space_viewports(block_record, document);
+        }
 
         // Determine block flags from stored BlockFlags
         let mut flags: i16 = 0;
@@ -1987,19 +2012,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writing_paper_space = true;
         if let Some(paper_space) = document.block_records.get("*Paper_Space") {
             let owner = paper_space.handle();
-            // DWG does not store viewport IDs. AutoCAD numbers the active
-            // layout's viewports 1, 2, ... in entity order (1 = the overall
-            // paper-space viewport); an ID of 0 there makes it create another
-            // overall viewport when the DXF is opened.
-            let mut next_id = 1i16;
-            for eh in &paper_space.entity_handles {
-                if let Some(&idx) = document.entity_index.get(eh) {
-                    if let EntityType::Viewport(vp) = document.entities[idx].as_ref() {
-                        self.active_viewport_ids.insert(vp.common.handle, next_id);
-                        next_id = next_id.saturating_add(1);
-                    }
-                }
-            }
+            self.number_paper_space_viewports(paper_space, document);
             for eh in &paper_space.entity_handles {
                 if let Some(&idx) = document.entity_index.get(eh) {
                     self.write_entity_with_owner(&document.entities[idx], owner)?;
@@ -4957,12 +4970,13 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_double(40, viewport.width)?;
         self.writer.write_double(41, viewport.height)?;
 
-        // Status / stacking order (68) and viewport ID (69). IDs are only
-        // meaningful in the active layout; AutoCAD writes 0/0 elsewhere.
+        // Status / stacking order (68) and viewport ID (69). Every paper-space
+        // layout needs IDs: an on-screen viewport with ID 0 would emit 68=0
+        // and be interpreted as switched off.
         let id = if viewport.id != 0 {
             viewport.id
         } else {
-            self.active_viewport_ids
+            self.paper_viewport_ids
                 .get(&viewport.common.handle)
                 .copied()
                 .unwrap_or(0)

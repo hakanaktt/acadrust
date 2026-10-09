@@ -387,6 +387,9 @@ pub struct BlockHeaderData {
     pub scale_uniformly: Option<u8>,
     pub null_handle: u64,
     pub block_entity_handle: u64,
+    /// R13-R2000 endpoints of the block's entity chain.
+    pub first_entity_handle: Option<u64>,
+    pub last_entity_handle: Option<u64>,
     pub entity_handles: Vec<u64>,
     pub endblk_handle: u64,
     pub layout_handle: Option<u64>,
@@ -1453,13 +1456,15 @@ pub fn read_block_header(reader: &mut DwgMergedReader, version: DwgVersion) -> B
     let block_entity_handle = reader.read_handle();
 
     // R13-R2000: first/last entity handles
-    let mut entity_handles = Vec::new();
-    if version.r13_15_only() && !is_xref && !is_xref_overlay {
-        let _first = reader.read_handle();
-        let _last = reader.read_handle();
-    }
+    let (first_entity_handle, last_entity_handle) =
+        if version.r13_15_only() && !is_xref && !is_xref_overlay {
+            (Some(reader.read_handle()), Some(reader.read_handle()))
+        } else {
+            (None, None)
+        };
 
     // R2004+: entity handles
+    let mut entity_handles = Vec::new();
     if version.r2004_plus() {
         let count = owned_object_count.unwrap_or(0);
         for _ in 0..count {
@@ -1504,6 +1509,8 @@ pub fn read_block_header(reader: &mut DwgMergedReader, version: DwgVersion) -> B
         scale_uniformly,
         null_handle,
         block_entity_handle,
+        first_entity_handle,
+        last_entity_handle,
         entity_handles,
         endblk_handle,
         layout_handle,

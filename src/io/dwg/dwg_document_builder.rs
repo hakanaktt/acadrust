@@ -172,6 +172,7 @@ struct Pass2Output {
     version: crate::types::DxfVersion,
     header: Pass2Header,
     entities: Vec<std::sync::Arc<EntityType>>,
+    entity_next_handles: HashMap<Handle, Handle>,
     objects: HashMap<Handle, crate::objects::ObjectType>,
     eed_by_handle: HashMap<Handle, Vec<(u64, Vec<u8>)>>,
     xdic_by_handle: HashMap<Handle, Handle>,
@@ -202,6 +203,7 @@ impl Pass2Output {
                 paper_space_block_handle,
             },
             entities: Vec::with_capacity(capacity),
+            entity_next_handles: HashMap::new(),
             objects: HashMap::with_capacity(capacity / 8),
             eed_by_handle: HashMap::new(),
             xdic_by_handle: HashMap::new(),
@@ -508,17 +510,28 @@ impl DwgDocumentBuilder {
         .ok()
     }
 
-    fn number_active_viewports(document: &mut CadDocument) {
-        let Some(paper) = document.block_records.get("*Paper_Space") else {
-            return;
-        };
-        let mut next_id = 1i16;
-        for handle in paper.entity_handles.clone() {
-            if let Some(EntityType::Viewport(viewport)) = document.get_entity_mut(handle) {
-                if viewport.id == 0 {
-                    viewport.id = next_id;
+    fn number_paper_space_viewports(document: &mut CadDocument) {
+        let blocks: Vec<Vec<Handle>> = document
+            .block_records
+            .iter()
+            .filter(|block| block.is_paper_space())
+            .map(|block| block.entity_handles.clone())
+            .collect();
+        for handles in blocks {
+            let used_ids: HashSet<i16> = handles
+                .iter()
+                .filter_map(|handle| match document.get_entity(*handle) {
+                    Some(EntityType::Viewport(viewport)) if viewport.id > 0 => Some(viewport.id),
+                    _ => None,
+                })
+                .collect();
+            let mut available_ids = (1..=i16::MAX).filter(|id| !used_ids.contains(id));
+            for handle in handles {
+                if let Some(EntityType::Viewport(viewport)) = document.get_entity_mut(handle) {
+                    if viewport.id == 0 {
+                        viewport.id = available_ids.next().unwrap_or(0);
+                    }
                 }
-                next_id = next_id.saturating_add(1);
             }
         }
     }
@@ -1619,9 +1632,9 @@ impl DwgDocumentBuilder {
         }
 
         // Build a reverse map: entity_handle → block_record_handle
-        // from the canonical entity_handles read from the DWG binary
-        // (R2004+).  This is needed because entity_mode=1 only says
-        // "paper space" without specifying WHICH paper space.
+        // from the canonical entity_handles (R2004+). R13-R2000 chains
+        // are resolved after Pass 2 supplies their entity links below.
+        // entity_mode=1 identifies paper space but not a particular layout.
         let mut binary_entity_owner: foldhash::HashMap<Handle, Handle> =
             foldhash::HashMap::default();
         for entry in &parsed_entries {
@@ -1668,6 +1681,7 @@ impl DwgDocumentBuilder {
         };
         // Pending attribute entities keyed by owner (INSERT) handle.
         let mut pending_attributes: HashMap<u64, Vec<AttributeEntity>> = HashMap::new();
+        let mut entity_next_handles = HashMap::new();
         let pass2_records: Vec<(u64, usize, i16, i16)> = record_catalog
             .iter()
             .copied()
@@ -1873,6 +1887,7 @@ impl DwgDocumentBuilder {
                     document.section_view_style = chunk.output.section_view_style.take();
                 }
                 document.objects.extend(chunk.output.objects.drain());
+                entity_next_handles.extend(chunk.output.entity_next_handles.drain());
                 if let Some(visit) = visit.as_deref_mut() {
                     accept_loaded_entity_batch(document, visit, &mut chunk.output.entities);
                 } else {
@@ -2225,9 +2240,8 @@ impl DwgDocumentBuilder {
         // The DWG entity_mode=1 flag means "paper space entity" but does
         // NOT specify WHICH paper space.  During Pass 2, all entity_mode=1
         // entities were routed to the single *Paper_Space block record.
-        // Use the canonical entity_handle lists from the binary block
-        // records (R2004+) to correct ownership for entities that belong
-        // to non-active paper spaces (*Paper_Space0, *Paper_Space1, etc.).
+        // Use the block's entity list (R2004+) or first/last linked chain
+        // (R13-R2000) to identify each paper space and restore its order.
         if perf {
             eprintln!(
                 "[perf] dwg-build post={:.1}ms",
@@ -2236,6 +2250,22 @@ impl DwgDocumentBuilder {
         }
         self.report_progress(925);
         let ownership_started = web_time::Instant::now();
+        if !self.obj_reader.version().r2004_plus() {
+            for entry in &parsed_entries {
+                if let ParsedEntry::Block(handle, data) = entry {
+                    let owner = Handle::from(*handle);
+                    let chain = Self::block_entity_chain(
+                        data.first_entity_handle.unwrap_or(0),
+                        data.last_entity_handle.unwrap_or(0),
+                        &entity_next_handles,
+                    );
+                    for entity in &chain {
+                        binary_entity_owner.insert(*entity, owner);
+                    }
+                    document.block_entity_handles.insert(owner, chain);
+                }
+            }
+        }
         // Rebuild block membership in O(entities + blocks). The ordinary
         // add-entity path scans every block record for every entity, which
         // dominates load time in block-heavy drawings. Owner correction and
@@ -3167,7 +3197,7 @@ impl DwgDocumentBuilder {
         // its own BlockRecord. Copy the record's value across now that both
         // are assembled.
         Self::hydrate_block_markers(document);
-        Self::number_active_viewports(document);
+        Self::number_paper_space_viewports(document);
         document.ensure_model_layout();
 
         document.original_objects = document
@@ -3233,6 +3263,30 @@ impl DwgDocumentBuilder {
         if let Some(v) = value {
             document.header.annotation_scale_value = v;
         }
+    }
+
+    fn block_entity_chain(
+        first: u64,
+        last: u64,
+        next_handles: &HashMap<Handle, Handle>,
+    ) -> Vec<Handle> {
+        let mut chain = Vec::new();
+        let mut visited = HashSet::new();
+        let mut current = Handle::from(first);
+        if first == 0 || last == 0 {
+            return chain;
+        }
+        while !current.is_null() && visited.insert(current) {
+            let Some(next) = next_handles.get(&current) else {
+                break;
+            };
+            chain.push(current);
+            if current.value() == last {
+                break;
+            }
+            current = *next;
+        }
+        chain
     }
 
     fn rebuild_block_membership(
@@ -3336,6 +3390,15 @@ impl DwgDocumentBuilder {
             let entity_data = self
                 .obj_reader
                 .read_common_entity_data(&mut reader, type_code);
+            if !self.obj_reader.version().r2004_plus() {
+                let next = entity_data
+                    .next_entity_handle
+                    .unwrap_or_else(|| entity_data.common.handle.saturating_add(1));
+                document.entity_next_handles.insert(
+                    Handle::from(entity_data.common.handle),
+                    Handle::from(next),
+                );
+            }
             let mut entity_common = map_entity_common(
                 &entity_data,
                 maps,
@@ -7700,6 +7763,48 @@ fn map_entity_common(
     // right modeler entity in object-stream order.
     common.has_ds_data = data.has_ds_data;
     common
+}
+
+#[cfg(test)]
+mod block_entity_chain_tests {
+    use super::DwgDocumentBuilder;
+    use crate::types::Handle;
+    use std::collections::HashMap;
+
+    #[test]
+    fn damaged_block_entity_chains_terminate_at_cycles_nulls_and_missing_records() {
+        for next in [10, 0, 30] {
+            let links = HashMap::from([
+                (Handle::new(10), Handle::new(20)),
+                (Handle::new(20), Handle::new(next)),
+            ]);
+            assert_eq!(
+                DwgDocumentBuilder::block_entity_chain(10, 40, &links),
+                [Handle::new(10), Handle::new(20)]
+            );
+        }
+        let links = HashMap::from([(Handle::new(10), Handle::new(20))]);
+        assert!(DwgDocumentBuilder::block_entity_chain(0, 10, &links).is_empty());
+        assert!(DwgDocumentBuilder::block_entity_chain(10, 0, &links).is_empty());
+        assert!(DwgDocumentBuilder::block_entity_chain(30, 40, &links).is_empty());
+    }
+
+    #[test]
+    fn block_entity_chain_stops_at_last_even_when_a_next_link_exists() {
+        let links = HashMap::from([
+            (Handle::new(10), Handle::new(20)),
+            (Handle::new(20), Handle::new(30)),
+            (Handle::new(30), Handle::NULL),
+        ]);
+        assert_eq!(
+            DwgDocumentBuilder::block_entity_chain(10, 10, &links),
+            [Handle::new(10)]
+        );
+        assert_eq!(
+            DwgDocumentBuilder::block_entity_chain(10, 20, &links),
+            [Handle::new(10), Handle::new(20)]
+        );
+    }
 }
 
 #[cfg(test)]
