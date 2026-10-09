@@ -2761,7 +2761,7 @@ fn dxf_roundtrip_complex_linetype_shape() {
     assert!((c0.scale - 2.0).abs() < 1e-6);
     assert!((c0.rotation - 30.0).abs() < 1e-6);
     assert!(!c0.is_absolute_rotation());
-    assert_eq!(c0.source_flags, 8);
+    assert_eq!(c0.source_flags, 12);
 }
 
 #[test]

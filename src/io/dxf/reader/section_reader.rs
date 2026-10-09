@@ -16776,6 +16776,7 @@ impl<'a> SectionReader<'a> {
         let mut ucs_origin = PointReader::new();
         let mut ucs_x_axis = PointReader::new();
         let mut ucs_y_axis = PointReader::new();
+        let mut dxf_status: Option<i16> = None;
 
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 {
@@ -16809,7 +16810,7 @@ impl<'a> SectionReader<'a> {
                 }
                 68 => {
                     if let Some(value) = pair.as_i16() {
-                        vp.dxf_status = Some(value);
+                        dxf_status = Some(value);
                         vp.off_screen = value == -1;
                     }
                 }
@@ -16986,6 +16987,7 @@ impl<'a> SectionReader<'a> {
             grid_spacing_y.unwrap_or(10.0),
             0.0,
         );
+        vp.dxf_status = dxf_status.filter(|value| *value != vp.id);
 
         Ok(Some(vp))
     }
