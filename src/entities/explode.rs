@@ -582,7 +582,7 @@ fn explode_multileader(ml: &MultiLeader) -> Vec<EntityType> {
             normal: ml.context.text_normal,
             ..MText::new()
         };
-        result.push(EntityType::MText(text));
+        result.push(EntityType::MText(Box::new(text)));
     }
 
     result
@@ -1444,7 +1444,7 @@ mod tests {
     #[test]
     fn test_explode_mtext() {
         let mtext = MText::with_value("Hello World", Vector3::new(5.0, 5.0, 0.0));
-        let entity = EntityType::MText(mtext);
+        let entity = EntityType::MText(Box::new(mtext));
         let parts = entity.explode();
         assert_eq!(parts.len(), 1);
         match &parts[0] {
@@ -1516,7 +1516,7 @@ mod tests {
     #[test]
     fn test_explode_dimension() {
         let dim = DimensionLinear::new(Vector3::new(0.0, 0.0, 0.0), Vector3::new(10.0, 0.0, 0.0));
-        let entity = EntityType::Dimension(Dimension::Linear(dim));
+        let entity = EntityType::Dimension(Box::new(Dimension::Linear(dim)));
         let parts = entity.explode();
         // Should contain dimension lines + text
         assert!(parts.len() >= 2);

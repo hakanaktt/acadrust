@@ -74,7 +74,7 @@ fn dxf_and_dwg_preserve_active_dormant_and_missing_clip() {
             view.status =
                 ViewportStatusFlags::from_bits(0x8000 | if enabled { 0x10000 } else { 0 });
             view.clip_boundary_handle = circle;
-            doc.add_entity_to_layout(EntityType::Viewport(view), "Layout1")
+            doc.add_entity_to_layout(EntityType::Viewport(Box::new(view)), "Layout1")
                 .unwrap();
             for dwg in [false, true] {
                 let restored = if dwg {

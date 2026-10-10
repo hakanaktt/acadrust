@@ -2599,7 +2599,7 @@ impl CadDocument {
                     if field_cells.contains(cell) {
                         m.common.xdictionary_handle = Some(Handle::NULL);
                     }
-                    key(&EntityType::MText(m)).unwrap_or_default()
+                    key(&EntityType::MText(Box::new(m))).unwrap_or_default()
                 })
                 .chain(lines.iter().filter_map(|l| key(&EntityType::Line(l.clone()))))
                 .chain(fills.iter().filter_map(|f| key(&EntityType::Solid(f.clone()))))
@@ -2677,7 +2677,7 @@ impl CadDocument {
                 m.common.xdictionary_handle = Some(*xdict);
                 m.value = value.clone();
             }
-            if let Ok(h) = self.add_entity(EntityType::MText(m)) {
+            if let Ok(h) = self.add_entity(EntityType::MText(Box::new(m))) {
                 if let Some((xdict, _)) = carried.get(&cell) {
                     if let Some(ObjectType::Dictionary(d)) = self.objects.get_mut(xdict) {
                         d.owner = h;

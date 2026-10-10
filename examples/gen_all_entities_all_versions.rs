@@ -218,10 +218,10 @@ fn main() {
             &mut fail,
             &mut skip,
             || {
-                EntityType::MText(MText::with_value(
+                EntityType::MText(Box::new(MText::with_value(
                     "Multi\\Pline\\PText",
                     Vector3::new(0.0, 0.0, 0.0),
-                ))
+                )))
             },
         );
 
@@ -327,10 +327,10 @@ fn main() {
             &mut fail,
             &mut skip,
             || {
-                EntityType::Dimension(Dimension::Linear(DimensionLinear::new(
+                EntityType::Dimension(Box::new(Dimension::Linear(DimensionLinear::new(
                     Vector3::new(0.0, 0.0, 0.0),
                     Vector3::new(100.0, 0.0, 0.0),
-                )))
+                ))))
             },
         );
 
@@ -369,7 +369,7 @@ fn main() {
             &mut ok,
             &mut fail,
             &mut skip,
-            || EntityType::Viewport(Viewport::new()),
+            || EntityType::Viewport(Box::new(Viewport::new())),
         );
 
         gen_insert(
@@ -399,7 +399,7 @@ fn main() {
                     true,
                 )));
                 hatch.add_path(path);
-                EntityType::Hatch(hatch)
+                EntityType::Hatch(Box::new(hatch))
             },
         );
 
@@ -427,7 +427,7 @@ fn main() {
                     end: Vector2::new(0.0, 0.0),
                 }));
                 hatch.add_path(path);
-                EntityType::Hatch(hatch)
+                EntityType::Hatch(Box::new(hatch))
             },
         );
 

@@ -2480,7 +2480,7 @@ mod tests {
         path.boundary_handles.push(boundary);
         hatch.paths.push(path);
         let hatch_handle = document
-            .add_entity(EntityType::Hatch(hatch))
+            .add_entity(EntityType::Hatch(Box::new(hatch)))
             .expect("hatch");
 
         let mut prepared = std::borrow::Cow::Borrowed(&document);
