@@ -2710,11 +2710,33 @@ fn clip_viewport_depth(
     if !viewport.status.front_clipping && !viewport.status.back_clipping {
         return;
     }
-    let inverse = paper_transform.inverse();
+    let linear = Matrix3::from_rows(
+        [
+            paper_transform.matrix.m[0][0],
+            paper_transform.matrix.m[0][1],
+            paper_transform.matrix.m[0][2],
+        ],
+        [
+            paper_transform.matrix.m[1][0],
+            paper_transform.matrix.m[1][1],
+            paper_transform.matrix.m[1][2],
+        ],
+        [
+            paper_transform.matrix.m[2][0],
+            paper_transform.matrix.m[2][1],
+            paper_transform.matrix.m[2][2],
+        ],
+    );
+    let inverse = linear.inverse();
+    let translation = Vector3::new(
+        paper_transform.matrix.m[0][3],
+        paper_transform.matrix.m[1][3],
+        paper_transform.matrix.m[2][3],
+    );
     let depth = |point: Vector3| {
         let model = inverse
             .as_ref()
-            .map(|transform| transform.apply(point))
+            .map(|transform| *transform * (point - translation))
             .unwrap_or(point);
         (model - viewport.view_target).dot(&viewport.view_direction)
     };
