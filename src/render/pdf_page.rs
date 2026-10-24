@@ -160,12 +160,32 @@ fn interpret(stream: &[u8]) -> PdfVectors {
     let mut subpath: Vec<(f64, f64)> = Vec::new();
     let mut path: Vec<Vec<(f64, f64)>> = Vec::new();
     let mut cursor = (0.0, 0.0);
+    let mut ctm = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+    let mut ctm_stack = Vec::new();
     for token in tokens {
         if let Ok(number) = token.parse::<f64>() {
             stack.push(number);
             continue;
         }
         match token.as_str() {
+            "q" => ctm_stack.push(ctm),
+            "Q" => {
+                if let Some(saved) = ctm_stack.pop() {
+                    ctm = saved;
+                }
+            }
+            "cm" => {
+                if stack.len() >= 6 {
+                    let f = stack.pop().unwrap();
+                    let e = stack.pop().unwrap();
+                    let d = stack.pop().unwrap();
+                    let c = stack.pop().unwrap();
+                    let b = stack.pop().unwrap();
+                    let a = stack.pop().unwrap();
+                    ctm = concat_ctm(ctm, [a, b, c, d, e, f]);
+                }
+                stack.clear();
+            }
             "m" => {
                 if stack.len() >= 2 {
                     let y = stack.pop().unwrap();
@@ -175,7 +195,7 @@ fn interpret(stream: &[u8]) -> PdfVectors {
                     } else {
                         subpath.clear();
                     }
-                    cursor = (x, y);
+                    cursor = apply_ctm(ctm, (x, y));
                     subpath.push(cursor);
                 }
             }
@@ -183,7 +203,7 @@ fn interpret(stream: &[u8]) -> PdfVectors {
                 if stack.len() >= 2 {
                     let y = stack.pop().unwrap();
                     let x = stack.pop().unwrap();
-                    cursor = (x, y);
+                    cursor = apply_ctm(ctm, (x, y));
                     if subpath.is_empty() {
                         subpath.push(cursor);
                     } else {
@@ -202,7 +222,13 @@ fn interpret(stream: &[u8]) -> PdfVectors {
                     let start = cursor;
                     for step in 1..=8 {
                         let t = step as f64 / 8.0;
-                        subpath.push(cubic(start, (x1, y1), (x2, y2), (x3, y3), t));
+                    subpath.push(cubic(
+                        start,
+                        apply_ctm(ctm, (x1, y1)),
+                        apply_ctm(ctm, (x2, y2)),
+                        apply_ctm(ctm, (x3, y3)),
+                        t,
+                    ));
                     }
                     cursor = (x3, y3);
                 }
@@ -222,13 +248,13 @@ fn interpret(stream: &[u8]) -> PdfVectors {
                         path.push(std::mem::take(&mut subpath));
                     }
                     path.push(vec![
-                        (x, y),
-                        (x + width, y),
-                        (x + width, y + height),
-                        (x, y + height),
-                        (x, y),
+                        apply_ctm(ctm, (x, y)),
+                        apply_ctm(ctm, (x + width, y)),
+                        apply_ctm(ctm, (x + width, y + height)),
+                        apply_ctm(ctm, (x, y + height)),
+                        apply_ctm(ctm, (x, y)),
                     ]);
-                    cursor = (x, y);
+                    cursor = apply_ctm(ctm, (x, y));
                 }
             }
             "S" | "s" => {
@@ -279,6 +305,24 @@ fn cubic(p0: (f64, f64), p1: (f64, f64), p2: (f64, f64), p3: (f64, f64), t: f64)
         b0 * p0.0 + b1 * p1.0 + b2 * p2.0 + b3 * p3.0,
         b0 * p0.1 + b1 * p1.1 + b2 * p2.1 + b3 * p3.1,
     )
+}
+
+fn apply_ctm(matrix: [f64; 6], point: (f64, f64)) -> (f64, f64) {
+    (
+        matrix[0] * point.0 + matrix[2] * point.1 + matrix[4],
+        matrix[1] * point.0 + matrix[3] * point.1 + matrix[5],
+    )
+}
+
+fn concat_ctm(left: [f64; 6], right: [f64; 6]) -> [f64; 6] {
+    [
+        left[0] * right[0] + left[2] * right[1],
+        left[1] * right[0] + left[3] * right[1],
+        left[0] * right[2] + left[2] * right[3],
+        left[1] * right[2] + left[3] * right[3],
+        left[0] * right[4] + left[2] * right[5] + left[4],
+        left[1] * right[4] + left[3] * right[5] + left[5],
+    ]
 }
 
 fn tokenize(text: &str) -> Vec<String> {
