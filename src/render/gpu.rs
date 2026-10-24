@@ -689,7 +689,13 @@ impl Renderer {
                 push_f32(&mut bytes, normal.x as f32);
                 push_f32(&mut bytes, normal.y as f32);
                 push_f32(&mut bytes, normal.z as f32);
-                push_f32(&mut bytes, 0.0);
+                let lighting = match fill.lighting {
+                    super::visual_style::LightingModel::None => 0.0,
+                    super::visual_style::LightingModel::Constant => 1.0,
+                    super::visual_style::LightingModel::Phong => 2.0,
+                    super::visual_style::LightingModel::Gooch => 3.0,
+                };
+                push_f32(&mut bytes, lighting);
             }
         }
         let size = (bytes.len() as u64).max(FILL_STRIDE);

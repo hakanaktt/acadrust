@@ -53,6 +53,7 @@ pub struct Fill {
     /// One world-space normal per triangle vertex. Empty means the fill is
     /// unlit, which is how hatches and wipeouts stay flat.
     pub normals: Vec<Vector3>,
+    pub lighting: super::visual_style::LightingModel,
 }
 
 /// One solid run of a stroked curve, after linetype fitting.

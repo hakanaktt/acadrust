@@ -1392,6 +1392,7 @@ impl Compiler<'_> {
             background,
             vertex_rgb,
             normals: Vec::new(),
+            lighting: visual.lighting,
         });
     }
 

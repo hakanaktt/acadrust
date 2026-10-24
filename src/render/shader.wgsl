@@ -81,11 +81,22 @@ fn vs_fill(in: FillIn) -> VertexOut {
     let clip = camera.view_proj * vec4<f32>(in.pos.xyz, 1.0);
     let depth = clamp(camera.z_scale * in.pos.z + camera.z_bias, 0.0, 1.0);
     var rgb = in.color.rgb;
-    if length(in.normal.xyz) > 1e-4 {
+    if length(in.normal.xyz) > 1e-4 && in.normal.w > 0.5 {
         let n = normalize(in.normal.xyz);
         let light = normalize(vec3<f32>(0.22, 0.42, 0.88));
-        let shade = 0.28 + 0.72 * abs(dot(n, light));
-        rgb = rgb * shade;
+        let diffuse = dot(n, light);
+        if in.normal.w > 2.5 {
+            let warm = vec3<f32>(1.0, 0.72, 0.42);
+            let cool = vec3<f32>(0.35, 0.55, 1.0);
+            let factor = diffuse * 0.5 + 0.5;
+            rgb = mix(cool, warm, factor) * rgb;
+        } else {
+            var shade = 0.28 + 0.72 * abs(diffuse);
+            if in.normal.w < 1.5 {
+                shade = 0.72;
+            }
+            rgb = rgb * shade;
+        }
     }
     return VertexOut(vec4<f32>(clip.x, clip.y, depth * clip.w, clip.w), vec4<f32>(rgb, in.color.a));
 }
