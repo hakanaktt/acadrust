@@ -122,3 +122,25 @@ fn fs_glyph(in: GlyphOut) -> @location(0) vec4<f32> {
     let coverage = textureSample(atlas_texture, atlas_sampler, in.uv).r;
     return vec4<f32>(in.color.rgb, in.color.a * coverage);
 }
+
+struct PictureIn {
+    @location(0) pos: vec4<f32>,
+    @location(1) uv: vec2<f32>,
+}
+
+struct PictureOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+}
+
+@vertex
+fn vs_picture(in: PictureIn) -> PictureOut {
+    let clip = camera.view_proj * vec4<f32>(in.pos.xyz, 1.0);
+    let depth = clamp(camera.z_scale * in.pos.z + camera.z_bias, 0.0, 1.0);
+    return PictureOut(vec4<f32>(clip.x, clip.y, depth * clip.w, clip.w), in.uv);
+}
+
+@fragment
+fn fs_picture(in: PictureOut) -> @location(0) vec4<f32> {
+    return textureSample(atlas_texture, atlas_sampler, in.uv);
+}

@@ -43,6 +43,7 @@ pub(crate) fn compile(doc: &CadDocument, options: &CompileOptions) -> Scene {
         scene: blank_scene(doc, options, visual, sheet),
         stack: HashSet::new(),
         font_dirs: &options.font_dirs,
+        resource_dirs: &options.resource_dirs,
         fonts: HashMap::new(),
         sheet,
         pattern_scale: 1.0,
@@ -63,6 +64,7 @@ fn blank_scene(
         strokes: Vec::new(),
         fills: Vec::new(),
         glyphs: Vec::new(),
+        pictures: Vec::new(),
         fallbacks: Vec::new(),
         skipped: Vec::new(),
         visual_style: visual,
@@ -80,6 +82,7 @@ struct Compiler<'a> {
     scene: Scene,
     stack: HashSet<String>,
     font_dirs: &'a [std::path::PathBuf],
+    resource_dirs: &'a [std::path::PathBuf],
     fonts: HashMap<String, Option<FaceFont>>,
     /// Layout tab. Lineweights are paper millimetres, and viewports open model space.
     sheet: bool,
@@ -505,6 +508,15 @@ impl Compiler<'_> {
                 crate::entities::ExtendedEntityData::Camera { view_handle } => {
                     self.draw_camera(*view_handle, entity, frame, transform, source);
                 }
+                crate::entities::ExtendedEntityData::ArcAlignedText(data) => {
+                    self.draw_arc_text(data, entity, frame, transform, source);
+                }
+                crate::entities::ExtendedEntityData::RemoteText(data) => {
+                    self.draw_remote_text(data, entity, frame, transform, source);
+                }
+                crate::entities::ExtendedEntityData::GeoPositionMarker(data) => {
+                    self.draw_geo_marker(data, entity, frame, transform, source);
+                }
                 _ => self.fallback(entity, frame, source),
             },
             EntityType::Viewport(viewport) => {
@@ -536,12 +548,18 @@ impl Compiler<'_> {
                 self.draw_polygon_mesh(mesh, entity, frame, transform, source);
             }
             EntityType::Light(light) => self.draw_light(light, entity, frame, transform, source),
-            EntityType::Ray(_)
-            | EntityType::XLine(_)
-            | EntityType::RasterImage(_)
-            | EntityType::Underlay(_)
-            | EntityType::Ole2Frame(_)
-            | EntityType::Unknown(_) => self.fallback(entity, frame, source),
+            EntityType::RasterImage(image) => {
+                self.draw_raster(image, entity, frame, transform, source);
+            }
+            EntityType::Ole2Frame(frame_entity) => {
+                self.draw_ole(frame_entity, entity, frame, transform, source);
+            }
+            EntityType::Underlay(underlay) => {
+                self.draw_underlay(underlay, entity, frame, transform, source);
+            }
+            EntityType::Ray(_) | EntityType::XLine(_) | EntityType::Unknown(_) => {
+                self.fallback(entity, frame, source)
+            }
         }
     }
 
@@ -601,10 +619,18 @@ impl Compiler<'_> {
         let stroke_from = self.scene.strokes.len();
         let fill_from = self.scene.fills.len();
         let glyph_from = self.scene.glyphs.len();
+        let picture_from = self.scene.pictures.len();
         self.walk_block("*Model_Space", &Frame::model(), &to_paper, &[]);
         self.pattern_scale = saved_scale;
         self.viewport_frozen = saved_frozen;
-        clip_recent_geometry(&mut self.scene, stroke_from, fill_from, glyph_from, &clip);
+        clip_recent_geometry(
+            &mut self.scene,
+            stroke_from,
+            fill_from,
+            glyph_from,
+            picture_from,
+            &clip,
+        );
         if let Some(rect) = border {
             let mut points: Vec<Vector3> = rect
                 .into_iter()
@@ -890,6 +916,7 @@ impl Compiler<'_> {
         let stroke_from = self.scene.strokes.len();
         let fill_from = self.scene.fills.len();
         let glyph_from = self.scene.glyphs.len();
+        let picture_from = self.scene.pictures.len();
         let handles = self.ordered_handles(record);
         for cell in cells {
             let to_world = base.then(&cell).then(transform);
@@ -913,6 +940,7 @@ impl Compiler<'_> {
                 stroke_from,
                 fill_from,
                 glyph_from,
+                picture_from,
                 &polygon,
             );
         }
@@ -1540,6 +1568,502 @@ impl Compiler<'_> {
         }
     }
 
+    fn draw_raster(
+        &mut self,
+        image: &crate::entities::RasterImage,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        if !image
+            .flags
+            .contains(crate::entities::ImageDisplayFlags::SHOW_IMAGE)
+        {
+            self.scene.skipped.push(SkippedEntity {
+                kind: "RasterImage".to_string(),
+                reason: "image display is off".to_string(),
+                source,
+            });
+            return;
+        }
+        self.draw_image_frame(image.corners(), entity, frame, transform, source.clone());
+        let path = self.image_file_path(image);
+        let Some(bytes) = self.read_resource(&path) else {
+            self.scene.skipped.push(SkippedEntity {
+                kind: "RasterImage".to_string(),
+                reason: format!("image file {path} was not found"),
+                source,
+            });
+            return;
+        };
+        match super::bitmap::decode(&bytes) {
+            Ok(mut decoded) => {
+                let opacity = super::bitmap::adjust(
+                    &mut decoded,
+                    image.brightness,
+                    image.contrast,
+                    image.fade,
+                );
+                self.push_raster(image, &decoded, opacity, transform, source);
+            }
+            Err(reason) => {
+                self.scene.skipped.push(SkippedEntity {
+                    kind: "RasterImage".to_string(),
+                    reason: reason.to_string(),
+                    source,
+                });
+            }
+        }
+    }
+
+    fn draw_ole(
+        &mut self,
+        ole: &crate::entities::Ole2Frame,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        let corners = ole_corners(ole.upper_left_corner, ole.lower_right_corner);
+        self.draw_image_frame(corners, entity, frame, transform, source.clone());
+        let Some(presentation) = ole.presentation() else {
+            self.scene.skipped.push(SkippedEntity {
+                kind: "Ole2Frame".to_string(),
+                reason: "ole frame had no picture".to_string(),
+                source,
+            });
+            return;
+        };
+        match presentation {
+            crate::entities::OlePresentation::Raster(bytes)
+            | crate::entities::OlePresentation::Dib(bytes) => match super::bitmap::decode(&bytes) {
+                Ok(decoded) => {
+                    self.push_picture(&decoded, corners, 1.0, transform, source);
+                }
+                Err(reason) => {
+                    self.scene.skipped.push(SkippedEntity {
+                        kind: "Ole2Frame".to_string(),
+                        reason: reason.to_string(),
+                        source,
+                    });
+                }
+            },
+            crate::entities::OlePresentation::Emf(bytes) => {
+                self.draw_metafile(
+                    super::metafile::parse_emf(&bytes),
+                    corners,
+                    entity,
+                    frame,
+                    transform,
+                    source,
+                );
+            }
+            crate::entities::OlePresentation::Wmf(bytes) => {
+                self.draw_metafile(
+                    super::metafile::parse_wmf(&bytes),
+                    corners,
+                    entity,
+                    frame,
+                    transform,
+                    source,
+                );
+            }
+        }
+    }
+
+    fn draw_underlay(
+        &mut self,
+        underlay: &crate::entities::Underlay,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        if underlay.underlay_type != crate::entities::UnderlayType::Pdf {
+            self.fallback(entity, frame, source);
+            return;
+        }
+        if !underlay
+            .flags
+            .contains(crate::entities::UnderlayDisplayFlags::ON)
+        {
+            self.scene.skipped.push(SkippedEntity {
+                kind: "Underlay".to_string(),
+                reason: "pdf underlay is off".to_string(),
+                source,
+            });
+            return;
+        }
+        let path = self.underlay_path(underlay);
+        let Some(bytes) = self.read_resource(&path) else {
+            self.scene.skipped.push(SkippedEntity {
+                kind: "Underlay".to_string(),
+                reason: format!("pdf file {path} was not found"),
+                source,
+            });
+            return;
+        };
+        let page = underlay_page(self.doc, underlay);
+        match super::pdf_page::read_page(&bytes, page) {
+            Ok(vectors) => {
+                let empty = vectors.strokes.is_empty() && vectors.fills.is_empty();
+                let map = |point: (f64, f64)| {
+                    underlay_point(underlay, vectors.media_min, vectors.media_max, point)
+                };
+                for stroke in vectors.strokes {
+                    let points = world(transform, stroke.into_iter().map(map).collect());
+                    self.emit_dedicated(&points, entity, frame, source.clone());
+                }
+                for fill in vectors.fills {
+                    let ring: Vec<Vector3> = fill.into_iter().map(map).collect();
+                    let triangles = super::curves::fan_triangles(&world(transform, ring));
+                    self.emit_fill(&triangles, entity, frame, source.clone(), false);
+                }
+                let page_frame = [
+                    map((vectors.media_min.0, vectors.media_min.1)),
+                    map((vectors.media_max.0, vectors.media_min.1)),
+                    map((vectors.media_max.0, vectors.media_max.1)),
+                    map((vectors.media_min.0, vectors.media_max.1)),
+                    map((vectors.media_min.0, vectors.media_min.1)),
+                ];
+                self.emit_dedicated(
+                    &world(transform, page_frame.to_vec()),
+                    entity,
+                    frame,
+                    source.clone(),
+                );
+                if empty {
+                    self.scene.skipped.push(SkippedEntity {
+                        kind: "Underlay".to_string(),
+                        reason: "pdf page had no supported path operators".to_string(),
+                        source,
+                    });
+                }
+            }
+            Err(reason) => {
+                self.scene.skipped.push(SkippedEntity {
+                    kind: "Underlay".to_string(),
+                    reason: reason.to_string(),
+                    source,
+                });
+            }
+        }
+    }
+
+    fn draw_arc_text(
+        &mut self,
+        data: &crate::entities::ArcAlignedTextData,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        let style_name = if data.style_name.is_empty() {
+            "Standard"
+        } else {
+            data.style_name.as_str()
+        };
+        let (advances, above) = {
+            let Some(face) = self.font_for(style_name) else {
+                self.scene.skipped.push(SkippedEntity {
+                    kind: "ArcAlignedText".to_string(),
+                    reason: format!("font for style {style_name} was not found"),
+                    source,
+                });
+                return;
+            };
+            match face {
+                FaceFont::Shape(font) => (
+                    data.text
+                        .chars()
+                        .map(|ch| font.glyph_for_char(ch).1)
+                        .collect::<Vec<_>>(),
+                    font.above(),
+                ),
+                FaceFont::TrueType(_) => (vec![0.5; data.text.chars().count()], 1.0),
+            }
+        };
+        let unit = if data.text_size > 0.0 && above > 0.0 {
+            data.text_size / above
+        } else {
+            data.text_size.abs().max(1.0)
+        };
+        let widths: Vec<f64> = advances
+            .iter()
+            .map(|advance| advance * unit * data.x_scale.abs().max(1e-6) + data.character_spacing)
+            .collect();
+        let anchors = arc_anchors(
+            data.center,
+            data.radius + data.offset_from_arc,
+            data.start_angle,
+            &widths,
+            data.reverse,
+        );
+        for (ch, anchor) in data.text.chars().zip(anchors) {
+            let text = ch.to_string();
+            self.draw_label(
+                &super::text_draw::GlyphLabel {
+                    text: &text,
+                    shape_number: None,
+                    insertion: anchor.position,
+                    alignment: anchor.position,
+                    use_alignment: false,
+                    height: data.text_size.abs().max(1e-6),
+                    rotation: anchor.rotation,
+                    width_factor: data.x_scale.abs().max(1e-6),
+                    oblique: 0.0,
+                    horizontal: 0,
+                    vertical: 0,
+                    normal: data.normal,
+                    backward: false,
+                    upside_down: false,
+                },
+                style_name,
+                entity,
+                frame,
+                transform,
+                source.clone(),
+            );
+        }
+    }
+
+    fn draw_remote_text(
+        &mut self,
+        data: &crate::entities::RemoteTextData,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        let style_name = if data.style_name.is_empty() {
+            "Standard"
+        } else {
+            data.style_name.as_str()
+        };
+        self.draw_label(
+            &super::text_draw::GlyphLabel {
+                text: &data.text,
+                shape_number: None,
+                insertion: data.position,
+                alignment: data.position,
+                use_alignment: false,
+                height: data.height.abs().max(1e-6),
+                rotation: data.rotation,
+                width_factor: 1.0,
+                oblique: 0.0,
+                horizontal: 0,
+                vertical: 0,
+                normal: data.normal,
+                backward: false,
+                upside_down: false,
+            },
+            style_name,
+            entity,
+            frame,
+            transform,
+            source,
+        );
+    }
+
+    fn draw_geo_marker(
+        &mut self,
+        data: &crate::entities::GeoPositionMarkerData,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        let radius = if data.radius > 1e-9 { data.radius } else { 1.0 };
+        let circle = crate::entities::Circle::from_coords(
+            data.position.x,
+            data.position.y,
+            data.position.z,
+            radius,
+        );
+        self.emit_dedicated(
+            &world(transform, super::curves::circle_points(&circle)),
+            entity,
+            frame,
+            source.clone(),
+        );
+        if data.landing_gap.abs() > 1e-9 {
+            self.emit_dedicated(
+                &world(
+                    transform,
+                    vec![
+                        data.position,
+                        data.position + Vector3::new(0.0, 0.0, -data.landing_gap),
+                    ],
+                ),
+                entity,
+                frame,
+                source.clone(),
+            );
+        }
+        if data.mtext_visible {
+            if let Some(mtext) = &data.embedded_mtext {
+                let mtext = EntityType::MText(Box::new(mtext.clone()));
+                self.draw(&mtext, frame, transform, &[]);
+            }
+        }
+    }
+
+    fn draw_metafile(
+        &mut self,
+        picture: Option<super::metafile::MetaPicture>,
+        corners: [Vector3; 4],
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        let Some(picture) = picture else {
+            self.scene.skipped.push(SkippedEntity {
+                kind: "Ole2Frame".to_string(),
+                reason: "metafile was not recognized".to_string(),
+                source,
+            });
+            return;
+        };
+        if picture.strokes.is_empty() && picture.fills.is_empty() {
+            self.scene.skipped.push(SkippedEntity {
+                kind: "Ole2Frame".to_string(),
+                reason: "metafile had no supported records".to_string(),
+                source,
+            });
+            return;
+        }
+        let map = |point: (f64, f64)| meta_point(picture.bounds, corners, point);
+        for stroke in picture.strokes {
+            self.emit_dedicated(
+                &world(transform, stroke.into_iter().map(map).collect()),
+                entity,
+                frame,
+                source.clone(),
+            );
+        }
+        for fill in picture.fills {
+            let ring: Vec<Vector3> = fill.into_iter().map(map).collect();
+            self.emit_fill(
+                &super::curves::fan_triangles(&world(transform, ring)),
+                entity,
+                frame,
+                source.clone(),
+                false,
+            );
+        }
+    }
+
+    fn draw_image_frame(
+        &mut self,
+        corners: [Vector3; 4],
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        let mut points = corners.to_vec();
+        points.push(corners[0]);
+        self.emit_dedicated(&world(transform, points), entity, frame, source);
+    }
+
+    fn push_raster(
+        &mut self,
+        image: &crate::entities::RasterImage,
+        decoded: &super::bitmap::RgbaImage,
+        opacity: f32,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        let clipped = image.clipping_enabled
+            && image
+                .flags
+                .contains(crate::entities::ImageDisplayFlags::USE_CLIPPING_BOUNDARY)
+            && image.clip_boundary.vertices.len() >= 2;
+        let (triangles, uvs) = if clipped {
+            clip_triangles(image)
+        } else {
+            quad_triangles(image.corners(), image.size.x as f32, image.size.y as f32)
+        };
+        self.scene.pictures.push(super::scene::Picture {
+            triangles: world(transform, triangles),
+            uvs,
+            rgba: decoded.pixels.clone(),
+            width: decoded.width,
+            height: decoded.height,
+            opacity,
+            source,
+        });
+    }
+
+    fn push_picture(
+        &mut self,
+        decoded: &super::bitmap::RgbaImage,
+        corners: [Vector3; 4],
+        opacity: f32,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        let (triangles, uvs) = quad_triangles(corners, decoded.width as f32, decoded.height as f32);
+        self.scene.pictures.push(super::scene::Picture {
+            triangles: world(transform, triangles),
+            uvs,
+            rgba: decoded.pixels.clone(),
+            width: decoded.width,
+            height: decoded.height,
+            opacity,
+            source,
+        });
+    }
+
+    fn image_file_path(&self, image: &crate::entities::RasterImage) -> String {
+        if !image.file_path.is_empty() {
+            return image.file_path.clone();
+        }
+        image
+            .definition_handle
+            .and_then(|handle| self.doc.objects.get(&handle))
+            .and_then(|object| match object {
+                crate::objects::ObjectType::ImageDefinition(definition) => {
+                    Some(definition.file_name.clone())
+                }
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    fn underlay_path(&self, underlay: &crate::entities::Underlay) -> String {
+        self.doc
+            .objects
+            .get(&underlay.definition_handle)
+            .and_then(|object| match object {
+                crate::objects::ObjectType::UnderlayDefinition(definition) => {
+                    Some(definition.file_path.clone())
+                }
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    fn read_resource(&self, path: &str) -> Option<Vec<u8>> {
+        if path.is_empty() {
+            return None;
+        }
+        let direct = std::path::Path::new(path);
+        if direct.is_file() {
+            return std::fs::read(direct).ok();
+        }
+        let name = direct.file_name()?;
+        for dir in self.resource_dirs {
+            let candidate = dir.join(name);
+            if candidate.is_file() {
+                return std::fs::read(candidate).ok();
+            }
+        }
+        None
+    }
+
     fn fallback(&mut self, entity: &EntityType, frame: &Frame, source: EntityRef) {
         let kind = kind_of(entity).to_string();
         let bounds = entity.as_entity().bounding_box();
@@ -1649,6 +2173,157 @@ fn transform_normals(transform: &Transform, normals: &[Vector3]) -> Vec<Vector3>
             }
         })
         .collect()
+}
+
+pub(crate) struct ArcAnchor {
+    pub position: Vector3,
+    pub rotation: f64,
+}
+
+pub(crate) fn arc_anchors(
+    center: Vector3,
+    radius: f64,
+    start: f64,
+    widths: &[f64],
+    reverse: bool,
+) -> Vec<ArcAnchor> {
+    let radius = if radius.abs() < 1e-9 { 1.0 } else { radius };
+    let direction = if reverse { -1.0 } else { 1.0 };
+    let mut angle = start;
+    let mut anchors = Vec::with_capacity(widths.len());
+    for width in widths {
+        let step = width / radius;
+        let middle = angle + direction * step * 0.5;
+        anchors.push(ArcAnchor {
+            position: center + Vector3::new(middle.cos(), middle.sin(), 0.0) * radius.abs(),
+            rotation: middle + direction * std::f64::consts::FRAC_PI_2,
+        });
+        angle += direction * step;
+    }
+    anchors
+}
+
+fn ole_corners(upper_left: Vector3, lower_right: Vector3) -> [Vector3; 4] {
+    [
+        Vector3::new(upper_left.x, lower_right.y, upper_left.z),
+        Vector3::new(lower_right.x, lower_right.y, lower_right.z),
+        Vector3::new(lower_right.x, upper_left.y, lower_right.z),
+        upper_left,
+    ]
+}
+
+fn quad_triangles(
+    corners: [Vector3; 4],
+    _width: f32,
+    _height: f32,
+) -> (Vec<Vector3>, Vec<[f32; 2]>) {
+    let uvs = [
+        [0.0, 1.0],
+        [1.0, 1.0],
+        [1.0, 0.0],
+        [0.0, 1.0],
+        [1.0, 0.0],
+        [0.0, 0.0],
+    ];
+    let triangles = vec![
+        corners[0], corners[1], corners[2], corners[0], corners[2], corners[3],
+    ];
+    (triangles, uvs.to_vec())
+}
+
+fn clip_triangles(image: &crate::entities::RasterImage) -> (Vec<Vector3>, Vec<[f32; 2]>) {
+    let boundary = &image.clip_boundary;
+    let polygon = if boundary.vertices.len() == 2 {
+        let min = boundary.vertices[0];
+        let max = boundary.vertices[1];
+        vec![
+            crate::types::Vector2::new(min.x.min(max.x), min.y.min(max.y)),
+            crate::types::Vector2::new(max.x.max(min.x), min.y.min(max.y)),
+            crate::types::Vector2::new(max.x.max(min.x), max.y.max(min.y)),
+            crate::types::Vector2::new(min.x.min(max.x), max.y.max(min.y)),
+        ]
+    } else {
+        boundary.vertices.clone()
+    };
+    let map = |point: crate::types::Vector2| {
+        (
+            image.insertion_point + image.u_vector * point.x + image.v_vector * point.y,
+            [
+                (point.x / image.size.x.max(1.0)) as f32,
+                1.0 - (point.y / image.size.y.max(1.0)) as f32,
+            ],
+        )
+    };
+    let mut flat = Vec::new();
+    let mut located = Vec::new();
+    for point in &polygon {
+        let (world, uv) = map(*point);
+        flat.push(point.x);
+        flat.push(point.y);
+        located.push((world, uv));
+    }
+    let indices = earcutr::earcut(&flat, &[], 2).unwrap_or_default();
+    let mut triangles = Vec::new();
+    let mut uvs = Vec::new();
+    for index in indices {
+        if let Some((point, uv)) = located.get(index) {
+            triangles.push(*point);
+            uvs.push(*uv);
+        }
+    }
+    if triangles.is_empty() {
+        return quad_triangles(image.corners(), image.size.x as f32, image.size.y as f32);
+    }
+    (triangles, uvs)
+}
+
+fn meta_point(bounds: (f64, f64, f64, f64), corners: [Vector3; 4], point: (f64, f64)) -> Vector3 {
+    let (left, top, right, bottom) = bounds;
+    let width = (right - left).abs().max(1e-9);
+    let height = (bottom - top).abs().max(1e-9);
+    let u = ((point.0 - left) / width).clamp(0.0, 1.0);
+    let v = ((point.1 - top) / height).clamp(0.0, 1.0);
+    let bottom_left = corners[0];
+    let across = corners[1] - corners[0];
+    let up = corners[3] - corners[0];
+    bottom_left + across * u + up * (1.0 - v)
+}
+
+fn underlay_page(
+    doc: &crate::document::CadDocument,
+    underlay: &crate::entities::Underlay,
+) -> usize {
+    let name = doc
+        .objects
+        .get(&underlay.definition_handle)
+        .and_then(|object| match object {
+            crate::objects::ObjectType::UnderlayDefinition(definition) => {
+                Some(definition.page_name.as_str())
+            }
+            _ => None,
+        })
+        .unwrap_or("");
+    name.parse::<usize>()
+        .ok()
+        .filter(|page| *page > 0)
+        .map(|page| page - 1)
+        .unwrap_or(0)
+}
+
+fn underlay_point(
+    underlay: &crate::entities::Underlay,
+    media_min: (f64, f64),
+    _media_max: (f64, f64),
+    point: (f64, f64),
+) -> Vector3 {
+    let local_x = (point.0 - media_min.0) * underlay.x_scale;
+    let local_y = (point.1 - media_min.1) * underlay.y_scale;
+    let (sin, cos) = underlay.rotation.sin_cos();
+    Vector3::new(
+        underlay.insertion_point.x + cos * local_x - sin * local_y,
+        underlay.insertion_point.y + sin * local_x + cos * local_y,
+        underlay.insertion_point.z,
+    )
 }
 
 fn world(transform: &Transform, points: Vec<Vector3>) -> Vec<Vector3> {
@@ -1764,6 +2439,7 @@ fn clip_recent_geometry(
     stroke_from: usize,
     fill_from: usize,
     glyph_from: usize,
+    picture_from: usize,
     polygon: &[crate::types::Vector2],
 ) {
     let fresh = scene
@@ -1796,6 +2472,32 @@ fn clip_recent_geometry(
             fill.vertex_rgb.clear();
         }
         fill.normals.clear();
+    }
+    let pictures = scene
+        .pictures
+        .split_off(picture_from.min(scene.pictures.len()));
+    for mut picture in pictures {
+        let mut triangles = Vec::new();
+        let mut uvs = Vec::new();
+        for (triangle, uv) in picture
+            .triangles
+            .chunks_exact(3)
+            .zip(picture.uvs.chunks_exact(3))
+        {
+            let inside = triangle.iter().all(|point| {
+                super::clip::clip_segment(*point, *point + Vector3::new(1e-3, 0.0, 0.0), polygon)
+                    .is_some()
+            });
+            if inside {
+                triangles.extend_from_slice(triangle);
+                uvs.extend_from_slice(uv);
+            }
+        }
+        picture.triangles = triangles;
+        picture.uvs = uvs;
+        if !picture.triangles.is_empty() {
+            scene.pictures.push(picture);
+        }
     }
     let glyphs = scene.glyphs.split_off(glyph_from.min(scene.glyphs.len()));
     scene.glyphs.extend(glyphs.into_iter().filter(|glyph| {
@@ -2286,12 +2988,7 @@ fn kind_of(entity: &EntityType) -> &'static str {
 pub const FALLBACK_KINDS: &[&str] = &[
     "Ray",
     "XLine",
-    "RasterImage",
     "Underlay",
-    "Ole2Frame",
-    "ArcAlignedText",
-    "RemoteText",
-    "GeoPositionMarker",
     "CoordinationModel",
     "PointCloud",
     "PointCloudEx",

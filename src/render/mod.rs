@@ -9,12 +9,15 @@
 //! including Realistic, Conceptual, Shades of Gray, Sketchy, and X-Ray.
 //! A custom style uses the object's face and edge fields.
 
+mod bitmap;
 mod clip;
 mod compile;
 mod curves;
 mod dash;
 mod gpu;
 mod hatch_fill;
+mod metafile;
+mod pdf_page;
 mod scene;
 mod sheet;
 mod shx;
@@ -26,7 +29,9 @@ mod visual_style;
 
 pub use compile::FALLBACK_KINDS;
 pub use gpu::{render_rgba, render_rgba_with, RenderError, Renderer, RendererConfig, RgbaImage};
-pub use scene::{DrawPath, EntityRef, FallbackEntry, Fill, Scene, SkippedEntity, Stroke, Style};
+pub use scene::{
+    DrawPath, EntityRef, FallbackEntry, Fill, Picture, Scene, SkippedEntity, Stroke, Style,
+};
 pub use visual_style::{
     EdgeMode, FaceColorMode, FaceShading, LightingModel, ResolvedVisualStyle, StandardVisualStyle,
     VisualStyleRequest,

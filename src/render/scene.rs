@@ -100,12 +100,26 @@ pub struct GlyphRun {
     pub source: EntityRef,
 }
 
+/// A decoded raster placed on a quad, or on the clip polygon's triangles.
+/// `uvs` matches `triangles` one to one. Texture v of 0 is the top row.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Picture {
+    pub triangles: Vec<Vector3>,
+    pub uvs: Vec<[f32; 2]>,
+    pub rgba: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    pub opacity: f32,
+    pub source: EntityRef,
+}
+
 /// Camera-independent display list.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Scene {
     pub strokes: Vec<Stroke>,
     pub fills: Vec<Fill>,
     pub glyphs: Vec<GlyphRun>,
+    pub pictures: Vec<Picture>,
     pub fallbacks: Vec<FallbackEntry>,
     pub skipped: Vec<SkippedEntity>,
     pub visual_style: ResolvedVisualStyle,
@@ -134,6 +148,12 @@ impl Scene {
         }
         for fill in &self.fills {
             for point in &fill.triangles {
+                any = true;
+                include(&mut min, &mut max, *point);
+            }
+        }
+        for picture in &self.pictures {
+            for point in &picture.triangles {
                 any = true;
                 include(&mut min, &mut max, *point);
             }

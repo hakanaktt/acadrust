@@ -69,6 +69,8 @@ pub struct Renderer {
     glyphs: wgpu::Buffer,
     glyph_capacity: u64,
     glyph_count: u32,
+    picture_pipeline: wgpu::RenderPipeline,
+    pictures: Vec<PreparedPicture>,
     atlas: wgpu::Texture,
     atlas_view: wgpu::TextureView,
     atlas_bind: wgpu::BindGroup,
@@ -263,6 +265,38 @@ impl Renderer {
             multiview_mask: None,
             cache: None,
         });
+        let picture_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("acadrust-pictures"),
+            layout: Some(&glyph_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_picture"),
+                compilation_options: Default::default(),
+                buffers: &[Some(picture_layout())],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(depth_state()),
+            multisample: wgpu::MultisampleState {
+                count: samples,
+                ..Default::default()
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_picture"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
         let glyphs = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("acadrust-glyphs"),
             size: GLYPH_STRIDE * 6,
@@ -295,6 +329,8 @@ impl Renderer {
             glyphs,
             glyph_capacity: GLYPH_STRIDE * 6,
             glyph_count: 0,
+            picture_pipeline,
+            pictures: Vec::new(),
             atlas,
             atlas_view,
             atlas_bind,
@@ -405,6 +441,7 @@ impl Renderer {
         self.instance_count = (bytes.len() as u64 / INSTANCE_STRIDE) as u32;
         self.prepare_fills(device, queue, scene);
         self.prepare_glyphs(device, queue, scene, _view, _viewport_px);
+        self.prepare_pictures(device, queue, scene);
     }
 
     fn prepare_glyphs(
@@ -508,6 +545,105 @@ impl Renderer {
             queue.write_buffer(&self.glyphs, 0, &bytes);
         }
         self.glyph_count = (bytes.len() as u64 / GLYPH_STRIDE) as u32;
+    }
+
+    fn prepare_pictures(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, scene: &Scene) {
+        self.pictures.clear();
+        for picture in &scene.pictures {
+            if picture.width == 0
+                || picture.height == 0
+                || picture.rgba.len() < picture.width as usize * picture.height as usize * 4
+                || picture.triangles.len() < 3
+                || picture.uvs.len() != picture.triangles.len()
+            {
+                continue;
+            }
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("acadrust-picture"),
+                size: wgpu::Extent3d {
+                    width: picture.width,
+                    height: picture.height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            let row = picture.width * 4;
+            let padded = row.div_ceil(256) * 256;
+            let mut upload = vec![0u8; padded as usize * picture.height as usize];
+            for y in 0..picture.height as usize {
+                let source = y * row as usize;
+                let dest = y * padded as usize;
+                let next = source + row as usize;
+                upload[dest..dest + row as usize].copy_from_slice(&picture.rgba[source..next]);
+                if picture.opacity < 0.999 {
+                    for pixel in upload[dest..dest + row as usize].chunks_exact_mut(4) {
+                        pixel[3] = (pixel[3] as f32 * picture.opacity).round() as u8;
+                    }
+                }
+            }
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &upload,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded),
+                    rows_per_image: Some(picture.height),
+                },
+                wgpu::Extent3d {
+                    width: picture.width,
+                    height: picture.height,
+                    depth_or_array_layers: 1,
+                },
+            );
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("acadrust-picture"),
+                layout: &self.glyph_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.atlas_sampler),
+                    },
+                ],
+            });
+            let mut bytes = Vec::new();
+            for (point, uv) in picture.triangles.iter().zip(&picture.uvs) {
+                push_f32(&mut bytes, point.x as f32);
+                push_f32(&mut bytes, point.y as f32);
+                push_f32(&mut bytes, point.z as f32);
+                push_f32(&mut bytes, 1.0);
+                push_f32(&mut bytes, uv[0]);
+                push_f32(&mut bytes, uv[1]);
+            }
+            let vertices = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("acadrust-picture-vertices"),
+                size: bytes.len() as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            queue.write_buffer(&vertices, 0, &bytes);
+            self.pictures.push(PreparedPicture {
+                _texture: texture,
+                _view: view,
+                bind,
+                vertices,
+                count: picture.triangles.len() as u32,
+            });
+        }
     }
 
     fn prepare_fills(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, scene: &Scene) {
@@ -618,6 +754,14 @@ impl Renderer {
             multiview_mask: None,
         });
         pass.set_bind_group(0, &self.camera_bind, &[]);
+        if !self.pictures.is_empty() {
+            pass.set_pipeline(&self.picture_pipeline);
+            for picture in &self.pictures {
+                pass.set_bind_group(1, &picture.bind, &[]);
+                pass.set_vertex_buffer(0, picture.vertices.slice(..));
+                pass.draw(0..picture.count, 0..1);
+            }
+        }
         if self.fill_count > 0 {
             pass.set_pipeline(&self.fill_pipeline);
             pass.set_vertex_buffer(0, self.fills.slice(..));
@@ -983,6 +1127,11 @@ fn depth_map(scene: &Scene) -> (f32, f32) {
     for glyph in &scene.glyphs {
         include(glyph.anchor.z);
     }
+    for picture in &scene.pictures {
+        for point in &picture.triangles {
+            include(point.z);
+        }
+    }
     if !min_z.is_finite() || !max_z.is_finite() || max_z - min_z < 1e-4 {
         min_z = -0.5;
         max_z = 0.5;
@@ -993,6 +1142,33 @@ fn depth_map(scene: &Scene) -> (f32, f32) {
     let span = (max_z - min_z).max(1e-4);
     // Larger world Z is closer to a plan camera, so it gets the smaller depth.
     (-1.0 / span, max_z / span)
+}
+
+struct PreparedPicture {
+    _texture: wgpu::Texture,
+    _view: wgpu::TextureView,
+    bind: wgpu::BindGroup,
+    vertices: wgpu::Buffer,
+    count: u32,
+}
+
+fn picture_layout() -> wgpu::VertexBufferLayout<'static> {
+    wgpu::VertexBufferLayout {
+        array_stride: 24,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &[
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 0,
+                shader_location: 0,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x2,
+                offset: 16,
+                shader_location: 1,
+            },
+        ],
+    }
 }
 
 fn depth_texture(device: &wgpu::Device, width: u32, height: u32, samples: u32) -> wgpu::Texture {

@@ -210,7 +210,7 @@ fn unfinished_entities_stay_on_the_fallback_list() {
         .strokes
         .iter()
         .all(|stroke| stroke.path == DrawPath::Fallback));
-    assert!(super::FALLBACK_KINDS.contains(&"RasterImage"));
+    assert!(super::FALLBACK_KINDS.contains(&"XLine"));
     assert!(!super::FALLBACK_KINDS.contains(&"Solid3D"));
     assert!(!super::FALLBACK_KINDS.contains(&"Circle"));
 }
@@ -1612,4 +1612,142 @@ fn closer_face_wins_the_depth_test() {
         pixel[0] > pixel[2] + 40,
         "the higher face should cover the lower one, pixel {pixel:?}"
     );
+}
+
+#[test]
+fn arc_text_characters_follow_the_circle() {
+    let anchors = super::compile::arc_anchors(
+        Vector3::ZERO,
+        10.0,
+        0.0,
+        &[std::f64::consts::PI * 5.0, std::f64::consts::PI * 5.0],
+        false,
+    );
+    assert_eq!(anchors.len(), 2);
+    assert!((anchors[0].position.x - 10.0 * (std::f64::consts::FRAC_PI_4).cos()).abs() < 1e-6);
+    assert!((anchors[0].position.y - 10.0 * (std::f64::consts::FRAC_PI_4).sin()).abs() < 1e-6);
+    assert!((anchors[1].position.y - anchors[0].position.x).abs() < 1e-5);
+}
+
+#[test]
+fn a_bmp_image_keeps_its_pixel_and_its_frame() {
+    let dir = std::env::temp_dir().join(format!("acadrust-image-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("swatch.bmp");
+    let mut bytes = vec![0u8; 54 + 4];
+    bytes[0..2].copy_from_slice(b"BM");
+    bytes[2..6].copy_from_slice(&58u32.to_le_bytes());
+    bytes[10..14].copy_from_slice(&54u32.to_le_bytes());
+    bytes[14..18].copy_from_slice(&40u32.to_le_bytes());
+    bytes[18..22].copy_from_slice(&1u32.to_le_bytes());
+    bytes[22..26].copy_from_slice(&1u32.to_le_bytes());
+    bytes[26..28].copy_from_slice(&1u16.to_le_bytes());
+    bytes[28..30].copy_from_slice(&24u16.to_le_bytes());
+    bytes[54] = 0;
+    bytes[55] = 0;
+    bytes[56] = 255;
+    std::fs::write(&path, &bytes).unwrap();
+    let mut doc = doc();
+    let image = crate::entities::RasterImage::with_size(
+        path.to_str().unwrap(),
+        Vector3::ZERO,
+        1.0,
+        1.0,
+        8.0,
+        4.0,
+    );
+    doc.add_entity(EntityType::RasterImage(image)).unwrap();
+    let mut options = CompileOptions::default();
+    options.resource_dirs.push(dir.clone());
+    let scene = compile(&doc, &options);
+    assert!(scene.fallbacks.is_empty());
+    assert_eq!(scene.pictures.len(), 1);
+    assert_eq!(&scene.pictures[0].rgba[0..3], &[255, 0, 0]);
+    assert!((scene.pictures[0].triangles[1].x - 8.0).abs() < 1e-6);
+    let absent = crate::entities::RasterImage::new("missing-photo.png", Vector3::ZERO, 4.0, 4.0);
+    let mut bare = CadDocument::new();
+    bare.add_entity(EntityType::RasterImage(absent)).unwrap();
+    let missing_scene = compile(&bare, &CompileOptions::default());
+    assert!(missing_scene.pictures.is_empty());
+    assert!(missing_scene
+        .skipped
+        .iter()
+        .any(|entry| entry.reason.contains("was not found")));
+    assert!(!missing_scene.strokes.is_empty());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn pdf_underlay_draws_the_page_line_in_paper_coordinates() {
+    let dir = std::env::temp_dir().join(format!("acadrust-pdf-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("sheet.pdf");
+    std::fs::write(
+        &path,
+        b"%PDF-1.4\n\
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n\
+2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n\
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R >> endobj\n\
+4 0 obj << /Length 28 >> stream\n\
+10 10 m 40 10 l S\n\
+endstream\n\
+endobj\n\
+trailer << /Root 1 0 R >>\n",
+    )
+    .unwrap();
+    let mut doc = doc();
+    let mut definition = crate::entities::UnderlayDefinition::pdf(path.to_str().unwrap(), "1");
+    definition.handle = doc.allocate_handle();
+    let handle = definition.handle;
+    doc.objects.insert(
+        handle,
+        crate::objects::ObjectType::UnderlayDefinition(definition),
+    );
+    let mut underlay = crate::entities::Underlay::pdf();
+    underlay.definition_handle = handle;
+    underlay.insertion_point = Vector3::new(5.0, 6.0, 0.0);
+    doc.add_entity(EntityType::Underlay(underlay)).unwrap();
+    let mut options = CompileOptions::default();
+    options.resource_dirs.push(dir.clone());
+    let scene = compile(&doc, &options);
+    assert!(scene.fallbacks.is_empty());
+    let line = scene
+        .strokes
+        .iter()
+        .find(|stroke| stroke.points.len() == 2)
+        .expect("pdf line");
+    assert!((line.points[0].x - 15.0).abs() < 1e-4 && (line.points[0].y - 16.0).abs() < 1e-4);
+    assert!((line.points[1].x - 45.0).abs() < 1e-4 && (line.points[1].y - 16.0).abs() < 1e-4);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn geo_marker_draws_its_circle() {
+    let mut doc = doc();
+    doc.add_entity(EntityType::Extended(Box::new(
+        crate::entities::ExtendedEntity {
+            common: crate::entities::EntityCommon::default(),
+            data: crate::entities::ExtendedEntityData::GeoPositionMarker(
+                crate::entities::GeoPositionMarkerData {
+                    class_version: 0,
+                    position: Vector3::new(3.0, 4.0, 0.0),
+                    radius: 2.0,
+                    notes: String::new(),
+                    landing_gap: 0.0,
+                    mtext_visible: false,
+                    text_alignment: 0,
+                    enable_frame_text: false,
+                    embedded_mtext: None,
+                },
+            ),
+        },
+    )))
+    .unwrap();
+    let scene = compile(&doc, &CompileOptions::default());
+    assert!(scene.fallbacks.is_empty());
+    assert!(scene.strokes[0].points.len() > 8);
+    assert!(scene.strokes[0]
+        .points
+        .iter()
+        .any(|point| { ((point.x - 5.0).abs() < 1e-4) && ((point.y - 4.0).abs() < 1e-4) }));
 }
