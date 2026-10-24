@@ -3,10 +3,11 @@ use std::f64::consts::FRAC_PI_2;
 use crate::document::CadDocument;
 use crate::entities::ViewportRenderMode;
 use crate::entities::{
-    Arc, BoundaryEdge, BoundaryPath, Circle, EntityCommon, EntityType, ExtendedEntity,
-    ExtendedEntityData, Face3D, Hatch, Insert, InvisibleEdgeFlags, Line, LwPolyline, LwVertex,
-    Point, Polyline, Polyline2D, Polyline3D, PolylineEdge, SectionObjectData, SectionSymbol,
-    SectionSymbolPoint, SectionViewStyle, Solid, Spline, Text, Vertex2D, ViewBorder, Viewport,
+    Arc, AttributeDefinition, BoundaryEdge, BoundaryPath, Circle, EntityCommon, EntityType,
+    ExtendedEntity, ExtendedEntityData, Face3D, Hatch, Insert, InvisibleEdgeFlags, Line,
+    LwPolyline, LwVertex, Point, Polyline, Polyline2D, Polyline3D, PolylineEdge, SectionObjectData,
+    SectionSymbol, SectionSymbolPoint, SectionViewStyle, Solid, Spline, Text, Vertex2D, ViewBorder,
+    Viewport,
 };
 use crate::objects::{ObjectType, SortEntitiesTable, VisualStyle};
 use crate::tables::{BlockRecord, Layer, LineType, LineTypeElement, TableEntry};
@@ -698,6 +699,33 @@ fn shp_text_draws_the_letter_strokes() {
         .iter()
         .flat_map(|stroke| &stroke.points)
         .any(|point| (point.y - 6.0).abs() < 1e-4));
+}
+
+#[test]
+fn standalone_attdef_draws_the_tag_instead_of_default_value() {
+    let dir = std::env::temp_dir().join("acadrust-render-attdef-font");
+    std::fs::create_dir_all(&dir).unwrap();
+    // A and T each produce one stroke; G produces two. The fixture's tag
+    // (TAG) therefore produces four strokes, while its default value
+    // (ATTDEF) would produce only three because D, E and F are absent.
+    std::fs::write(
+        dir.join("mini.shp"),
+        "*0,4,TEST\n6,2,0,0\n*65,8,A\n1,8,(0,6),0\n*84,8,T\n1,8,(0,6),0\n*71,14,G\n1,8,(0,6),2,1,8,(4,0),0\n",
+    )
+    .unwrap();
+    let mut doc = doc();
+    doc.text_styles.get_mut("Standard").unwrap().font_file = "mini".to_string();
+    doc.add_entity(EntityType::AttributeDefinition(
+        AttributeDefinition::constant("TAG", "ATTDEF"),
+    ))
+    .unwrap();
+    let mut options = CompileOptions::default();
+    options.font_dirs.push(dir.clone());
+    let scene = compile(&doc, &options);
+    assert!(scene.fallbacks.is_empty());
+    assert!(scene.skipped.is_empty(), "{:?}", scene.skipped);
+    assert_eq!(scene.strokes.len(), 4);
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
