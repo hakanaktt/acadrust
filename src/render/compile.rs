@@ -1423,13 +1423,17 @@ impl Compiler<'_> {
         let depth_only = !wireframe
             && visual.faces == super::visual_style::FaceShading::None
             && visual.edges == super::visual_style::EdgeMode::Facet;
-        let draw_faces = !wireframe && visual.faces != super::visual_style::FaceShading::None;
+        let draw_faces = !wireframe
+            && (visual.faces != super::visual_style::FaceShading::None
+                || visual.kind == super::visual_style::StandardVisualStyle::Wireframe2D);
         if draw_faces && !tess.triangles.is_empty() {
             let triangles = world(transform, tess.triangles);
             self.emit_fill(&triangles, entity, frame, source.clone(), false);
             if let Some(fill) = self.scene.fills.last_mut() {
                 fill.normals = transform_normals(transform, &tess.normals);
-                if visual.lighting == super::visual_style::LightingModel::None {
+                if visual.lighting == super::visual_style::LightingModel::None
+                    && self.solid_style == super::SolidStyle::Wireframe
+                {
                     fill.normals.clear();
                 }
                 if depth_only {
@@ -1439,7 +1443,9 @@ impl Compiler<'_> {
                 }
             }
         }
-        let draw_edges = wireframe || visual.edges != super::visual_style::EdgeMode::None;
+        let draw_edges = wireframe
+            || self.solid_style == super::SolidStyle::ShadedWithEdges
+            || visual.edges != super::visual_style::EdgeMode::None;
         if draw_edges {
             for edge in &tess.edges {
                 if edge.len() >= 2 {
@@ -1597,17 +1603,24 @@ impl Compiler<'_> {
             return;
         }
         let visual = self.scene.visual_style.clone();
-        if visual.faces != super::visual_style::FaceShading::None && !tess.triangles.is_empty() {
+        let draw_faces = self.solid_style != super::SolidStyle::Wireframe
+            && (visual.faces != super::visual_style::FaceShading::None
+                || visual.kind == super::visual_style::StandardVisualStyle::Wireframe2D);
+        if draw_faces && !tess.triangles.is_empty() {
             let triangles = world(transform, tess.triangles.clone());
             self.emit_fill(&triangles, entity, frame, source.clone(), false);
             if let Some(fill) = self.scene.fills.last_mut() {
                 fill.normals = transform_normals(transform, &tess.normals);
-                if visual.lighting == super::visual_style::LightingModel::None {
+                if visual.lighting == super::visual_style::LightingModel::None
+                    && self.solid_style == super::SolidStyle::Wireframe
+                {
                     fill.normals.clear();
                 }
             }
         }
-        if visual.edges == super::visual_style::EdgeMode::None {
+        if self.solid_style == super::SolidStyle::Wireframe
+            && visual.edges == super::visual_style::EdgeMode::None
+        {
             return;
         }
         for edge in tess.edges.iter().chain(extra_edges.iter()) {
