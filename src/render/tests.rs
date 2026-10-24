@@ -3,11 +3,10 @@ use std::f64::consts::FRAC_PI_2;
 use crate::document::CadDocument;
 use crate::entities::ViewportRenderMode;
 use crate::entities::{
-    Arc, BoundaryEdge, BoundaryPath, Circle, EntityCommon, EntityType,
-    ExtendedEntity, ExtendedEntityData, Face3D, Hatch, Insert, InvisibleEdgeFlags, Line,
-    LwPolyline, LwVertex, Point, Polyline, Polyline2D, Polyline3D, PolylineEdge, SectionObjectData,
-    SectionSymbol, SectionSymbolPoint, SectionViewStyle, Solid, Spline, Text, Vertex2D, ViewBorder,
-    Viewport,
+    Arc, BoundaryEdge, BoundaryPath, Circle, EntityCommon, EntityType, ExtendedEntity,
+    ExtendedEntityData, Face3D, Hatch, Insert, InvisibleEdgeFlags, Line, LwPolyline, LwVertex,
+    Point, Polyline, Polyline2D, Polyline3D, PolylineEdge, SectionObjectData, SectionSymbol,
+    SectionSymbolPoint, SectionViewStyle, Solid, Spline, Text, Vertex2D, ViewBorder, Viewport,
 };
 use crate::objects::{ObjectType, SortEntitiesTable, VisualStyle};
 use crate::tables::{BlockRecord, Layer, LineType, LineTypeElement, TableEntry};
