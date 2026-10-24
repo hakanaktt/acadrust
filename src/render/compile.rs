@@ -2608,7 +2608,8 @@ impl Compiler<'_> {
     fn fallback(&mut self, entity: &EntityType, frame: &Frame, source: EntityRef) {
         let kind = kind_of(entity).to_string();
         let bounds = entity.as_entity().bounding_box();
-        let corners = box_corners(bounds.min, bounds.max);
+        let local_corners = box_corners(bounds.min, bounds.max);
+        let corners = std::array::from_fn(|index| self.active_transform.apply(local_corners[index]));
         let style = resolve_style(
             self.doc,
             entity.common(),
@@ -2702,10 +2703,31 @@ fn sort_table<'a>(
 }
 
 fn transform_normals(transform: &Transform, normals: &[Vector3]) -> Vec<Vector3> {
+    let linear = Matrix3::from_rows(
+        [
+            transform.matrix.m[0][0],
+            transform.matrix.m[0][1],
+            transform.matrix.m[0][2],
+        ],
+        [
+            transform.matrix.m[1][0],
+            transform.matrix.m[1][1],
+            transform.matrix.m[1][2],
+        ],
+        [
+            transform.matrix.m[2][0],
+            transform.matrix.m[2][1],
+            transform.matrix.m[2][2],
+        ],
+    );
+    let normal_matrix = linear.inverse().map(|matrix| matrix.transpose());
     normals
         .iter()
         .map(|normal| {
-            let turned = transform.apply_rotation(*normal);
+            let turned = normal_matrix
+                .as_ref()
+                .map(|matrix| *matrix * *normal)
+                .unwrap_or_else(|| transform.apply_rotation(*normal));
             let length = turned.length();
             if length > 1e-12 {
                 turned * (1.0 / length)
