@@ -2138,6 +2138,14 @@ impl Compiler<'_> {
                     image.contrast,
                     image.fade,
                 );
+                if !image
+                    .flags
+                    .contains(crate::entities::ImageDisplayFlags::TRANSPARENCY_ON)
+                {
+                    for pixel in decoded.pixels.chunks_exact_mut(4) {
+                        pixel[3] = 255;
+                    }
+                }
                 self.push_raster(image, &decoded, opacity, transform, source);
             }
             Err(reason) => {
@@ -2830,15 +2838,27 @@ fn clip_triangles(image: &crate::entities::RasterImage) -> (Vec<Vector3>, Vec<[f
             ],
         )
     };
+    let inverted = boundary.clip_mode == crate::entities::ClipMode::Inside;
+    let outer = if inverted {
+        vec![
+            crate::types::Vector2::new(0.0, 0.0),
+            crate::types::Vector2::new(image.size.x, 0.0),
+            crate::types::Vector2::new(image.size.x, image.size.y),
+            crate::types::Vector2::new(0.0, image.size.y),
+        ]
+    } else {
+        Vec::new()
+    };
     let mut flat = Vec::new();
     let mut located = Vec::new();
-    for point in &polygon {
+    for point in outer.iter().chain(polygon.iter()) {
         let (world, uv) = map(*point);
         flat.push(point.x);
         flat.push(point.y);
         located.push((world, uv));
     }
-    let indices = earcutr::earcut(&flat, &[], 2).unwrap_or_default();
+    let holes = if inverted { vec![outer.len()] } else { Vec::new() };
+    let indices = earcutr::earcut(&flat, &holes, 2).unwrap_or_default();
     let mut triangles = Vec::new();
     let mut uvs = Vec::new();
     for index in indices {
