@@ -137,6 +137,18 @@ fn plinegen_continues_the_pattern_across_vertices() {
 }
 
 #[test]
+fn default_model_lineweight_matches_the_chart() {
+    let scale = super::DEFAULT_MODEL_LINEWEIGHT_PX_PER_MM;
+    assert_eq!(scale, 8.0);
+    assert_eq!(super::model_lineweight_pixels(0.00, scale), 1);
+    assert_eq!(super::model_lineweight_pixels(0.13, scale), 1);
+    assert_eq!(super::model_lineweight_pixels(0.25, scale), 2);
+    assert_eq!(super::model_lineweight_pixels(0.50, scale), 4);
+    assert_eq!(super::model_lineweight_pixels(1.00, scale), 8);
+    assert_eq!(super::model_lineweight_pixels(2.11, scale), 17);
+}
+
+#[test]
 fn lineweight_display_uses_millimetres() {
     let mut doc = doc();
     doc.header.lineweight_display = true;
@@ -321,6 +333,60 @@ fn offscreen_frame_draws_a_red_line() {
         "expected a red stroke across the frame, found {red_pixels} red pixels"
     );
     assert_eq!(&image.pixels[0..3], &[33, 40, 48]);
+}
+
+fn red_rows(image: &super::RgbaImage) -> u32 {
+    let x = image.width / 2;
+    let mut rows = 0;
+    for y in 0..image.height {
+        let index = ((y * image.width + x) * 4) as usize;
+        if image.pixels[index] > 180 && image.pixels[index + 1] < 80 {
+            rows += 1;
+        }
+    }
+    rows
+}
+
+#[test]
+fn model_lineweight_keeps_its_pixel_width_when_zooming() {
+    let mut doc = doc();
+    doc.header.lineweight_display = true;
+    let mut line = Line::from_coords(-50.0, 0.0, 0.0, 50.0, 0.0, 0.0);
+    line.common.color = Color::RED;
+    line.common.line_weight = LineWeight::Value(50);
+    doc.add_entity(EntityType::Line(line)).unwrap();
+    let config = super::RendererConfig {
+        samples: 1,
+        ..super::RendererConfig::default()
+    };
+    let render_at = |height: f64| {
+        let view = View {
+            target: Vector3::ZERO,
+            height,
+            ..View::default()
+        };
+        pollster::block_on(super::render_rgba_with(
+            &doc,
+            &view,
+            80,
+            40,
+            &CompileOptions::default(),
+            &config,
+        ))
+    };
+    let near = match render_at(20.0) {
+        Err(super::RenderError::NoAdapter) => return,
+        Err(error) => panic!("{error}"),
+        Ok(image) => image,
+    };
+    let far = render_at(200.0).expect("adapter already opened");
+    let near_rows = red_rows(&near);
+    let far_rows = red_rows(&far);
+    assert_eq!(near_rows, far_rows, "zoom changed a cosmetic lineweight");
+    assert!(
+        (3..=5).contains(&near_rows),
+        "0.50 mm at 8 px/mm should cover about 4 rows, found {near_rows}"
+    );
 }
 
 #[test]

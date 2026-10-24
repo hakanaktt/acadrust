@@ -21,7 +21,7 @@ mod text_draw;
 mod visual_style;
 
 pub use compile::FALLBACK_KINDS;
-pub use gpu::{render_rgba, RenderError, Renderer, RendererConfig, RgbaImage};
+pub use gpu::{render_rgba, render_rgba_with, RenderError, Renderer, RendererConfig, RgbaImage};
 pub use scene::{DrawPath, EntityRef, FallbackEntry, Fill, Scene, SkippedEntity, Stroke, Style};
 pub use visual_style::{
     EdgeMode, FaceColorMode, FaceShading, LightingModel, ResolvedVisualStyle, StandardVisualStyle,
@@ -31,11 +31,20 @@ pub use visual_style::{
 use crate::document::CadDocument;
 use crate::types::{Handle, Vector3};
 
-/// Provisional model-space lineweight scale, in pixels per millimetre.
+/// Model-space lineweight scale, in pixels per millimetre.
 ///
-/// AutoCAD's Options slider is not stored in the file. This stands in until
-/// a lineweight chart captured from AutoCAD replaces it.
-pub const DEFAULT_MODEL_LINEWEIGHT_PX_PER_MM: f64 = 2.0;
+/// AutoCAD stores `LWDISPLAY` in the file and keeps the Options "Adjust Display
+/// Scale" slider on the machine. At that slider's default position a 0.25 mm
+/// stroke is 2 pixels wide, which is 8 pixels per millimetre. The width does
+/// not change when the view zooms. Callers who moved the slider pass a
+/// different [`CompileOptions::model_lineweight_px_per_mm`].
+pub const DEFAULT_MODEL_LINEWEIGHT_PX_PER_MM: f64 = 8.0;
+
+/// Device pixels for a model-space lineweight. The result is at least 1.
+pub fn model_lineweight_pixels(millimetres: f64, px_per_mm: f64) -> u32 {
+    let pixels = millimetres.max(0.0) * px_per_mm.max(0.0);
+    pixels.round().max(1.0) as u32
+}
 
 /// What to compile, independent of the camera.
 #[derive(Debug, Clone)]

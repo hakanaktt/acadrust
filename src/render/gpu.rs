@@ -397,6 +397,26 @@ pub async fn render_rgba(
     height: u32,
     options: &CompileOptions,
 ) -> Result<RgbaImage, RenderError> {
+    render_rgba_with(
+        doc,
+        view,
+        width,
+        height,
+        options,
+        &RendererConfig::default(),
+    )
+    .await
+}
+
+/// [`render_rgba`] with an explicit clear color and sample count.
+pub async fn render_rgba_with(
+    doc: &CadDocument,
+    view: &View,
+    width: u32,
+    height: u32,
+    options: &CompileOptions,
+    config: &RendererConfig,
+) -> Result<RgbaImage, RenderError> {
     let width = width.max(1);
     let height = height.max(1);
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
@@ -414,7 +434,8 @@ pub async fn render_rgba(
         &queue,
         &RendererConfig {
             format,
-            ..RendererConfig::default()
+            samples: config.samples,
+            background: config.background,
         },
     );
     let scene = super::compile(doc, options);
