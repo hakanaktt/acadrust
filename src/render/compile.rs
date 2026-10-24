@@ -3023,6 +3023,9 @@ fn clip_polygon_world(
     parent: &Transform,
 ) -> Option<Vec<crate::types::Vector2>> {
     let filter = spatial_filter(doc, insert)?;
+    if !filter.display_enabled {
+        return None;
+    }
     if filter.boundary_points.len() < 2 {
         return None;
     }
@@ -3031,7 +3034,7 @@ fn clip_polygon_world(
     } else {
         filter.boundary_points.clone()
     };
-    let polygon = local
+    let polygon: Vec<crate::types::Vector2> = local
         .into_iter()
         .map(|point| {
             let placed = filter
@@ -3041,6 +3044,21 @@ fn clip_polygon_world(
             crate::types::Vector2::new(world.x, world.y)
         })
         .collect();
+    if polygon.len() >= 3 {
+        let area: f64 = polygon
+            .iter()
+            .enumerate()
+            .map(|(index, point)| {
+                let next = polygon[(index + 1) % polygon.len()];
+                point.x * next.y - next.x * point.y
+            })
+            .sum();
+        if area < 0.0 {
+            let mut polygon = polygon;
+            polygon.reverse();
+            return Some(polygon);
+        }
+    }
     Some(polygon)
 }
 
@@ -3123,13 +3141,10 @@ fn clip_recent_geometry(
             .chunks_exact(3)
             .zip(picture.uvs.chunks_exact(3))
         {
-            let inside = triangle.iter().all(|point| {
-                super::clip::clip_segment(*point, *point + Vector3::new(1e-3, 0.0, 0.0), polygon)
-                    .is_some()
-            });
-            if inside {
-                triangles.extend_from_slice(triangle);
-                uvs.extend_from_slice(uv);
+            let clipped = clip_picture_triangle(triangle, uv, polygon);
+            for (points, coords) in clipped {
+                triangles.extend(points);
+                uvs.extend(coords);
             }
         }
         picture.triangles = triangles;
@@ -3140,13 +3155,98 @@ fn clip_recent_geometry(
     }
     let glyphs = scene.glyphs.split_off(glyph_from.min(scene.glyphs.len()));
     scene.glyphs.extend(glyphs.into_iter().filter(|glyph| {
-        super::clip::clip_segment(
+        let width = glyph.height
+            * glyph.width_factor.abs()
+            * glyph.text.chars().count().max(1) as f64
+            * 0.6;
+        let corners = [
             glyph.anchor,
-            glyph.anchor + Vector3::new(1e-3, 0.0, 0.0),
-            polygon,
-        )
-        .is_some()
+            glyph.anchor + glyph.axis_x * width,
+            glyph.anchor + glyph.axis_x * width + glyph.axis_y * glyph.height,
+            glyph.anchor + glyph.axis_y * glyph.height,
+        ];
+        corners.iter().any(|point| {
+            super::clip::clip_segment(
+                *point,
+                *point + Vector3::new(1e-3, 0.0, 0.0),
+                polygon,
+            )
+            .is_some()
+        })
     }));
+}
+
+fn clip_picture_triangle(
+    triangle: &[Vector3],
+    uv: &[[f32; 2]],
+    polygon: &[crate::types::Vector2],
+) -> Vec<(Vec<Vector3>, Vec<[f32; 2]>)> {
+    if triangle.len() != 3 || uv.len() != 3 || polygon.len() < 3 {
+        return Vec::new();
+    }
+    let mut output: Vec<(Vector3, [f32; 2])> = triangle
+        .iter()
+        .copied()
+        .zip(uv.iter().copied())
+        .collect();
+    for index in 0..polygon.len() {
+        if output.is_empty() {
+            break;
+        }
+        let start = polygon[index];
+        let end = polygon[(index + 1) % polygon.len()];
+        let input = output;
+        output = Vec::new();
+        let mut previous = *input.last().unwrap();
+        for current in input {
+            let previous_inside = clip_inside(previous.0, start, end);
+            let current_inside = clip_inside(current.0, start, end);
+            if current_inside != previous_inside {
+                output.push(clip_picture_intersection(previous, current, start, end));
+            }
+            if current_inside {
+                output.push(current);
+            }
+            previous = current;
+        }
+    }
+    let mut result = Vec::new();
+    for index in 1..output.len().saturating_sub(1) {
+        result.push((
+            vec![output[0].0, output[index].0, output[index + 1].0],
+            vec![output[0].1, output[index].1, output[index + 1].1],
+        ));
+    }
+    result
+}
+
+fn clip_inside(point: Vector3, start: crate::types::Vector2, end: crate::types::Vector2) -> bool {
+    (end.x - start.x) * (point.y - start.y) - (end.y - start.y) * (point.x - start.x)
+        >= -1e-8
+}
+
+fn clip_picture_intersection(
+    start: (Vector3, [f32; 2]),
+    end: (Vector3, [f32; 2]),
+    edge_start: crate::types::Vector2,
+    edge_end: crate::types::Vector2,
+) -> (Vector3, [f32; 2]) {
+    let segment = end.0 - start.0;
+    let edge = crate::types::Vector2::new(edge_end.x - edge_start.x, edge_end.y - edge_start.y);
+    let denom = segment.x * edge.y - segment.y * edge.x;
+    let t = if denom.abs() <= 1e-12 {
+        0.0
+    } else {
+        ((edge_start.x - start.0.x) * edge.y - (edge_start.y - start.0.y) * edge.x) / denom
+    }
+    .clamp(0.0, 1.0);
+    (
+        start.0 + segment * t,
+        [
+            start.1[0] + (end.1[0] - start.1[0]) * t as f32,
+            start.1[1] + (end.1[1] - start.1[1]) * t as f32,
+        ],
+    )
 }
 
 fn cell_transforms(insert: &Insert) -> Vec<Transform> {
