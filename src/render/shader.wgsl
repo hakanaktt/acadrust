@@ -64,6 +64,9 @@ fn vs_main(
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    if in.color.a <= 0.001 {
+        discard;
+    }
     return in.color;
 }
 
@@ -89,6 +92,9 @@ fn vs_fill(in: FillIn) -> VertexOut {
 
 @fragment
 fn fs_fill(in: VertexOut) -> @location(0) vec4<f32> {
+    if in.color.a <= 0.001 {
+        discard;
+    }
     return in.color;
 }
 
@@ -120,7 +126,11 @@ fn vs_glyph(in: GlyphIn) -> GlyphOut {
 @fragment
 fn fs_glyph(in: GlyphOut) -> @location(0) vec4<f32> {
     let coverage = textureSample(atlas_texture, atlas_sampler, in.uv).r;
-    return vec4<f32>(in.color.rgb, in.color.a * coverage);
+    let alpha = in.color.a * coverage;
+    if alpha <= 0.001 {
+        discard;
+    }
+    return vec4<f32>(in.color.rgb, alpha);
 }
 
 struct PictureIn {
@@ -142,5 +152,9 @@ fn vs_picture(in: PictureIn) -> PictureOut {
 
 @fragment
 fn fs_picture(in: PictureOut) -> @location(0) vec4<f32> {
-    return textureSample(atlas_texture, atlas_sampler, in.uv);
+    let color = textureSample(atlas_texture, atlas_sampler, in.uv);
+    if color.a <= 0.001 {
+        discard;
+    }
+    return color;
 }

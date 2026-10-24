@@ -144,7 +144,7 @@ impl Renderer {
                 cull_mode: None,
                 ..Default::default()
             },
-            depth_stencil: Some(depth_state()),
+            depth_stencil: Some(depth_state(true)),
             multisample: wgpu::MultisampleState {
                 count: samples,
                 ..Default::default()
@@ -176,7 +176,7 @@ impl Renderer {
                 cull_mode: None,
                 ..Default::default()
             },
-            depth_stencil: Some(depth_state()),
+            depth_stencil: Some(depth_state(true)),
             multisample: wgpu::MultisampleState {
                 count: samples,
                 ..Default::default()
@@ -247,7 +247,7 @@ impl Renderer {
                 cull_mode: None,
                 ..Default::default()
             },
-            depth_stencil: Some(depth_state()),
+            depth_stencil: Some(depth_state(false)),
             multisample: wgpu::MultisampleState {
                 count: samples,
                 ..Default::default()
@@ -279,7 +279,7 @@ impl Renderer {
                 cull_mode: None,
                 ..Default::default()
             },
-            depth_stencil: Some(depth_state()),
+            depth_stencil: Some(depth_state(false)),
             multisample: wgpu::MultisampleState {
                 count: samples,
                 ..Default::default()
@@ -1188,10 +1188,10 @@ fn depth_texture(device: &wgpu::Device, width: u32, height: u32, samples: u32) -
     })
 }
 
-fn depth_state() -> wgpu::DepthStencilState {
+fn depth_state(write: bool) -> wgpu::DepthStencilState {
     wgpu::DepthStencilState {
         format: DEPTH_FORMAT,
-        depth_write_enabled: Some(true),
+        depth_write_enabled: Some(write),
         depth_compare: Some(wgpu::CompareFunction::LessEqual),
         stencil: wgpu::StencilState::default(),
         bias: wgpu::DepthBiasState::default(),
