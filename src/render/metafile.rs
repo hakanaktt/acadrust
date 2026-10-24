@@ -125,6 +125,10 @@ fn pointls_after_bounds(body: &[u8]) -> Option<Vec<(f64, f64)>> {
         return None;
     }
     let count = u32::from_le_bytes(body[16..20].try_into().ok()?) as usize;
+    let available = body.len().saturating_sub(20) / 8;
+    if count > available {
+        return None;
+    }
     let mut points = Vec::with_capacity(count);
     for index in 0..count {
         let offset = 20 + index * 8;

@@ -88,7 +88,15 @@ fn decode_dib(dib: &[u8], pixel_at: Option<usize>) -> Option<RgbaImage> {
         0
     };
     let palette_at = header;
-    let pixels_at = pixel_at.unwrap_or(palette_at + colors * 4);
+    let palette_bytes = colors.checked_mul(4)?;
+    let palette_end = palette_at.checked_add(palette_bytes)?;
+    if palette_end > dib.len() {
+        return None;
+    }
+    let pixels_at = pixel_at.unwrap_or(palette_end);
+    if pixels_at > dib.len() {
+        return None;
+    }
     let mut palette = Vec::with_capacity(colors);
     for index in 0..colors {
         let offset = palette_at + index * 4;
