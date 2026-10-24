@@ -25,7 +25,7 @@ pub(crate) fn build_atlas(
     viewport_px: (u32, u32),
     mut font_at: impl FnMut(&std::path::Path) -> Option<fontdue::Font>,
 ) -> BuiltAtlas {
-    let size = 2048u32;
+    let size = 4096u32;
     let mut pixels = vec![0u8; (size * size) as usize];
     let mut cursor_x = 1u32;
     let mut cursor_y = 1u32;
