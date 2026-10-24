@@ -709,7 +709,7 @@ impl Compiler<'_> {
             glyph_from,
             picture_from,
             viewport,
-            scale,
+            &to_paper,
         );
         clip_recent_geometry(
             &mut self.scene,
@@ -2705,13 +2705,19 @@ fn clip_viewport_depth(
     glyph_from: usize,
     picture_from: usize,
     viewport: &crate::entities::Viewport,
-    scale: f64,
+    paper_transform: &Transform,
 ) {
     if !viewport.status.front_clipping && !viewport.status.back_clipping {
         return;
     }
-    let depth =
-        |point: Vector3| (point - viewport.center).dot(&viewport.view_direction) / scale.max(1e-12);
+    let inverse = paper_transform.inverse();
+    let depth = |point: Vector3| {
+        let model = inverse
+            .as_ref()
+            .map(|transform| transform.apply(point))
+            .unwrap_or(point);
+        (model - viewport.view_target).dot(&viewport.view_direction)
+    };
     let visible = |point: Vector3| {
         let value = depth(point);
         (!viewport.status.front_clipping || value <= viewport.front_clip_z)
