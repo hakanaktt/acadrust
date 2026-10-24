@@ -17,6 +17,8 @@ default = ["parallel"]
 parallel = ["dep:rayon"]
 serde = ["dep:serde", "bitflags/serde", "indexmap/serde"]
 import = ["dep:quick-xml", "dep:serde_json"]
+# CPU scene compiler. wgpu and image join this feature with the GPU pipelines.
+render = []
 
 [dependencies]
 # Error handling

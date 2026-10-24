@@ -302,6 +302,9 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub mod audit;
 
+#[cfg(feature = "render")]
+pub mod render;
+
 #[cfg(test)]
 mod tests {
     use super::*;
