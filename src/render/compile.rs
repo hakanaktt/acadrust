@@ -2352,7 +2352,22 @@ impl Compiler<'_> {
                         .collect::<Vec<_>>(),
                     font.above(),
                 ),
-                FaceFont::TrueType(_) => (vec![0.5; data.text.chars().count()], 1.0),
+                FaceFont::TrueType(path) => {
+                    let advances = std::fs::read(path)
+                        .ok()
+                        .and_then(|bytes| {
+                            fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default())
+                                .ok()
+                        })
+                        .map(|font| {
+                            data.text
+                                .chars()
+                                .map(|ch| font.metrics(ch, 1.0).advance_width as f64)
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_else(|| vec![0.5; data.text.chars().count()]);
+                    (advances, 1.0)
+                }
             }
         };
         let unit = if data.text_size > 0.0 && above > 0.0 {
