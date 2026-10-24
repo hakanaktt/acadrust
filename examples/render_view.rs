@@ -8,10 +8,13 @@
 //! Drag with the left button to pan. Scroll to zoom.
 
 use std::sync::Arc;
-use std::{error::Error, path::PathBuf};
+use std::{
+    error::Error,
+    path::{Path, PathBuf},
+};
 
 use acadrust::entities::{EntityType, Line};
-use acadrust::render::{compile, Renderer, RendererConfig, View};
+use acadrust::render::{compile, CompileOptions, Renderer, RendererConfig, View};
 use acadrust::types::{Color, LineWeight};
 use acadrust::{CadDocument, DwgReader, DxfReader};
 use winit::application::ApplicationHandler;
@@ -37,8 +40,12 @@ fn drawing() -> CadDocument {
     doc
 }
 
-fn load_document() -> Result<CadDocument, Box<dyn Error>> {
-    let Some(path) = std::env::args_os().nth(1).map(PathBuf::from) else {
+fn input_path() -> Option<PathBuf> {
+    std::env::args_os().nth(1).map(PathBuf::from)
+}
+
+fn load_document(path: Option<&Path>) -> Result<CadDocument, Box<dyn Error>> {
+    let Some(path) = path else {
         return Ok(drawing());
     };
     let is_dxf = path
@@ -52,8 +59,66 @@ fn load_document() -> Result<CadDocument, Box<dyn Error>> {
     }
 }
 
+fn compile_options(path: Option<&Path>) -> CompileOptions {
+    let mut options = CompileOptions::default();
+    options.font_dirs = font_directories();
+    if let Some(path) = path {
+        if let Some(parent) = path.parent() {
+            options.resource_dirs.push(parent.to_path_buf());
+            for ancestor in parent.ancestors() {
+                let assets = ancestor.join("assets");
+                if assets.is_dir() {
+                    options.resource_dirs.push(assets);
+                }
+            }
+        }
+    }
+    options
+}
+
+fn font_directories() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(value) = std::env::var_os("ACADRUST_FONT_DIRS") {
+        dirs.extend(std::env::split_paths(&value));
+    }
+    for path in [
+        PathBuf::from(r"C:\Windows\Fonts"),
+        PathBuf::from(r"C:\Program Files\Autodesk"),
+        PathBuf::from(r"C:\Program Files (x86)\Autodesk"),
+    ] {
+        collect_font_directories(&path, 2, &mut dirs);
+    }
+    dirs.retain(|path| path.is_dir());
+    dirs.sort();
+    dirs.dedup();
+    dirs
+}
+
+fn collect_font_directories(root: &Path, depth: usize, output: &mut Vec<PathBuf>) {
+    if !root.is_dir() {
+        return;
+    }
+    if root
+        .file_name()
+        .is_some_and(|name| name.eq_ignore_ascii_case("Fonts"))
+    {
+        output.push(root.to_path_buf());
+        return;
+    }
+    if depth == 0 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        collect_font_directories(&entry.path(), depth - 1, output);
+    }
+}
+
 struct App {
     doc: CadDocument,
+    options: CompileOptions,
     gpu: Option<Gpu>,
 }
 
@@ -72,7 +137,7 @@ struct Gpu {
 }
 
 impl Gpu {
-    fn new(window: Arc<Window>, doc: &CadDocument) -> Self {
+    fn new(window: Arc<Window>, doc: &CadDocument, options: &CompileOptions) -> Self {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let surface = instance
             .create_surface(window.clone())
@@ -98,7 +163,7 @@ impl Gpu {
                 ..RendererConfig::default()
             },
         );
-        let scene = compile(doc, &acadrust::render::CompileOptions::default());
+        let scene = compile(doc, options);
         let view = View::zoom_extents(&scene, config.width, config.height);
         Self {
             window,
@@ -190,7 +255,7 @@ impl ApplicationHandler for App {
                 .create_window(Window::default_attributes().with_title("acadrust render"))
                 .expect("window"),
         );
-        self.gpu = Some(Gpu::new(window, &self.doc));
+        self.gpu = Some(Gpu::new(window, &self.doc, &self.options));
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -233,8 +298,10 @@ impl ApplicationHandler for App {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let event_loop = EventLoop::new().expect("event loop");
+    let path = input_path();
     let mut app = App {
-        doc: load_document()?,
+        doc: load_document(path.as_deref())?,
+        options: compile_options(path.as_deref()),
         gpu: None,
     };
     event_loop.run_app(&mut app).expect("run");
