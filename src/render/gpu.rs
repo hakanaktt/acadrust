@@ -340,7 +340,7 @@ impl Renderer {
             msaa_view: None,
             format: config.format,
             samples,
-            background: to_color(config.background),
+            background: to_color(clear_color(config.format, config.background)),
             background_rgba: config.background,
             width: 0,
             height: 0,
@@ -1221,6 +1221,26 @@ fn to_color(rgba: [f32; 4]) -> wgpu::Color {
         g: rgba[1] as f64,
         b: rgba[2] as f64,
         a: rgba[3] as f64,
+    }
+}
+
+pub(super) fn clear_color(format: wgpu::TextureFormat, rgba: [f32; 4]) -> [f32; 4] {
+    if !format.is_srgb() {
+        return rgba;
+    }
+    [
+        srgb_to_linear(rgba[0]),
+        srgb_to_linear(rgba[1]),
+        srgb_to_linear(rgba[2]),
+        rgba[3],
+    ]
+}
+
+fn srgb_to_linear(channel: f32) -> f32 {
+    if channel <= 0.04045 {
+        channel / 12.92
+    } else {
+        ((channel + 0.055) / 1.055).powf(2.4)
     }
 }
 

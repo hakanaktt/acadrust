@@ -361,6 +361,19 @@ fn offscreen_frame_draws_a_red_line() {
 }
 
 #[test]
+fn srgb_clear_colors_are_linearized_for_the_swapchain() {
+    let srgb = [33.0 / 255.0, 40.0 / 255.0, 48.0 / 255.0, 1.0];
+    let linear = super::gpu::clear_color(wgpu::TextureFormat::Rgba8UnormSrgb, srgb);
+    assert!(linear[0] < srgb[0]);
+    assert!(linear[1] < srgb[1]);
+    assert!(linear[2] < srgb[2]);
+    assert_eq!(
+        super::gpu::clear_color(wgpu::TextureFormat::Rgba8Unorm, srgb),
+        srgb
+    );
+}
+
+#[test]
 fn offscreen_frame_draws_a_zero_length_point() {
     let mut doc = doc();
     let mut point = Point::from_coords(0.0, 0.0, 0.0);
