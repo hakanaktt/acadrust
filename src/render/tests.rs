@@ -670,3 +670,134 @@ fn aligned_dimension_explodes_into_strokes() {
     assert!(!scene.fallback_kinds().contains(&"Dimension"));
     assert!(!scene.strokes.is_empty());
 }
+
+#[test]
+fn complex_linetype_places_text_on_the_gap() {
+    let dir = std::env::temp_dir().join("acadrust-render-complex");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("mini.shp"),
+        "*0,4,TEST\n6,2,0,0\n*65,12,A\n1,8,(4,6),8,(4,-6),2,8,(2,0),0\n",
+    )
+    .unwrap();
+    let mut doc = doc();
+    doc.text_styles.get_mut("Standard").unwrap().font_file = "mini".to_string();
+    let mut linetype = LineType::new("GAS");
+    let mut gap = LineTypeElement::space(4.0);
+    gap.complex = Some(crate::tables::LineTypeComplexData {
+        content: crate::tables::LineTypeComplexContent::Text {
+            text: "A".to_string(),
+        },
+        scale: 6.0,
+        ..crate::tables::LineTypeComplexData::default()
+    });
+    linetype.elements = vec![LineTypeElement::dash(4.0), gap];
+    linetype.pattern_length = 8.0;
+    doc.line_types.add(linetype).unwrap();
+    let mut line = Line::from_coords(0.0, 0.0, 0.0, 8.0, 0.0, 0.0);
+    line.common.linetype = "GAS".to_string();
+    doc.add_entity(EntityType::Line(line)).unwrap();
+    let mut options = CompileOptions::default();
+    options.font_dirs.push(dir);
+    let scene = compile(&doc, &options);
+    assert!(scene
+        .strokes
+        .iter()
+        .flat_map(|stroke| &stroke.points)
+        .any(|point| point.y > 1.0));
+}
+
+#[test]
+fn insert_clip_cuts_a_line_to_the_rectangle() {
+    let mut doc = doc();
+    let mut record = BlockRecord::new("CLIPPED");
+    let block_handle = doc.allocate_handle();
+    record.set_handle(block_handle);
+    doc.block_records.add(record).unwrap();
+    let mut line = Line::from_coords(0.0, 0.0, 0.0, 10.0, 0.0, 0.0);
+    line.common.owner_handle = block_handle;
+    doc.add_entity(EntityType::Line(line)).unwrap();
+
+    let mut filter = crate::objects::SpatialFilter::new();
+    filter.handle = doc.allocate_handle();
+    filter.boundary_points = vec![Vector2::new(0.0, -1.0), Vector2::new(5.0, 1.0)];
+    let mut spatial = crate::objects::Dictionary::new();
+    spatial.handle = doc.allocate_handle();
+    spatial.entries.push(("SPATIAL".to_string(), filter.handle));
+    let mut filters = crate::objects::Dictionary::new();
+    filters.handle = doc.allocate_handle();
+    filters
+        .entries
+        .push(("ACAD_FILTER".to_string(), spatial.handle));
+    doc.objects
+        .insert(filter.handle, ObjectType::SpatialFilter(filter));
+    doc.objects
+        .insert(spatial.handle, ObjectType::Dictionary(spatial));
+    let filters_handle = filters.handle;
+    doc.objects
+        .insert(filters_handle, ObjectType::Dictionary(filters));
+
+    let mut insert = Insert::new("CLIPPED", Vector3::ZERO);
+    insert.common.xdictionary_handle = Some(filters_handle);
+    doc.add_entity(EntityType::Insert(insert)).unwrap();
+    let scene = compile(&doc, &CompileOptions::default());
+    assert!(!scene.strokes.is_empty());
+    let max_x = scene
+        .strokes
+        .iter()
+        .flat_map(|stroke| &stroke.points)
+        .map(|point| point.x)
+        .fold(0.0_f64, f64::max);
+    assert!(max_x < 5.1, "clipped line reached x={max_x}");
+    assert!(max_x > 4.0, "clipped line was too short, max x={max_x}");
+}
+
+#[test]
+fn ttf_style_becomes_a_glyph_run() {
+    let Some(path) = [
+        r"C:\Windows\Fonts\arial.ttf",
+        r"C:\Windows\Fonts\calibri.ttf",
+    ]
+    .into_iter()
+    .map(std::path::PathBuf::from)
+    .find(|path| path.is_file()) else {
+        return;
+    };
+    let dir = path.parent().unwrap().to_path_buf();
+    let file = path.file_name().unwrap().to_string_lossy().to_string();
+    let mut doc = doc();
+    doc.text_styles.get_mut("Standard").unwrap().font_file = file;
+    doc.add_entity(EntityType::Text(
+        Text::with_value("A", Vector3::ZERO).with_height(10.0),
+    ))
+    .unwrap();
+    let mut options = CompileOptions::default();
+    options.font_dirs.push(dir);
+    let scene = compile(&doc, &options);
+    assert_eq!(scene.glyphs.len(), 1);
+    assert!(scene.strokes.is_empty());
+    let image = match pollster::block_on(super::render_rgba(
+        &doc,
+        &View {
+            target: Vector3::new(4.0, 4.0, 0.0),
+            height: 20.0,
+            ..View::default()
+        },
+        64,
+        64,
+        &options,
+    )) {
+        Err(super::RenderError::NoAdapter) => return,
+        Err(error) => panic!("{error}"),
+        Ok(image) => image,
+    };
+    let ink = image
+        .pixels
+        .chunks_exact(4)
+        .filter(|pixel| pixel[0] > 200)
+        .count();
+    assert!(
+        ink > 8,
+        "true type glyph did not cover the frame, ink={ink}"
+    );
+}

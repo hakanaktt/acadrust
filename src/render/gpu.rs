@@ -12,6 +12,7 @@ use super::{CompileOptions, View, DEFAULT_MODEL_LINEWEIGHT_PX_PER_MM};
 
 const INSTANCE_STRIDE: u64 = 64;
 const FILL_STRIDE: u64 = 32;
+const GLYPH_STRIDE: u64 = 48;
 const CAMERA_SIZE: u64 = 256;
 const SHADER: &str = include_str!("shader.wgsl");
 
@@ -62,6 +63,16 @@ pub struct Renderer {
     fills: wgpu::Buffer,
     fill_capacity: u64,
     fill_count: u32,
+    glyph_pipeline: wgpu::RenderPipeline,
+    glyph_layout: wgpu::BindGroupLayout,
+    glyphs: wgpu::Buffer,
+    glyph_capacity: u64,
+    glyph_count: u32,
+    atlas: wgpu::Texture,
+    atlas_view: wgpu::TextureView,
+    atlas_bind: wgpu::BindGroup,
+    atlas_sampler: wgpu::Sampler,
+    ttf_fonts: std::collections::HashMap<std::path::PathBuf, fontdue::Font>,
     msaa: Option<wgpu::Texture>,
     msaa_view: Option<wgpu::TextureView>,
     format: wgpu::TextureFormat,
@@ -188,6 +199,79 @@ impl Renderer {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let glyph_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("acadrust-atlas"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let glyph_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("acadrust-glyphs"),
+                bind_group_layouts: &[Some(&layout), Some(&glyph_layout)],
+                immediate_size: 0,
+            });
+        let glyph_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("acadrust-glyphs"),
+            layout: Some(&glyph_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_glyph"),
+                compilation_options: Default::default(),
+                buffers: &[Some(glyph_layout_vertices())],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: samples,
+                ..Default::default()
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_glyph"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+        let glyphs = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("acadrust-glyphs"),
+            size: GLYPH_STRIDE * 6,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let atlas_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("acadrust-atlas"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let (atlas, atlas_view, atlas_bind) =
+            atlas_resources(device, &glyph_layout, &atlas_sampler, 1, &[255]);
         Self {
             pipeline,
             fill_pipeline,
@@ -199,6 +283,16 @@ impl Renderer {
             fills,
             fill_capacity: FILL_STRIDE,
             fill_count: 0,
+            glyph_pipeline,
+            glyph_layout,
+            glyphs,
+            glyph_capacity: GLYPH_STRIDE * 6,
+            glyph_count: 0,
+            atlas,
+            atlas_view,
+            atlas_bind,
+            atlas_sampler,
+            ttf_fonts: std::collections::HashMap::new(),
             msaa: None,
             msaa_view: None,
             format: config.format,
@@ -284,6 +378,110 @@ impl Renderer {
         }
         self.instance_count = (bytes.len() as u64 / INSTANCE_STRIDE) as u32;
         self.prepare_fills(device, queue, scene);
+        self.prepare_glyphs(device, queue, scene, _view, _viewport_px);
+    }
+
+    fn prepare_glyphs(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        scene: &Scene,
+        view: &View,
+        viewport_px: (u32, u32),
+    ) {
+        let built = super::ttf_atlas::build_atlas(&scene.glyphs, view, viewport_px, |path| {
+            if !self.ttf_fonts.contains_key(path) {
+                let bytes = std::fs::read(path).ok()?;
+                let font =
+                    fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default()).ok()?;
+                self.ttf_fonts.insert(path.to_path_buf(), font);
+            }
+            self.ttf_fonts.get(path).cloned()
+        });
+        let (atlas, atlas_view, atlas_bind) = atlas_resources(
+            device,
+            &self.glyph_layout,
+            &self.atlas_sampler,
+            built.size,
+            &built.pixels,
+        );
+        let padded_stride = (built.size as usize).div_ceil(256) * 256;
+        let mut padded = vec![0u8; padded_stride * built.size as usize];
+        for row in 0..built.size as usize {
+            let src = row * built.size as usize;
+            let dst = row * padded_stride;
+            padded[dst..dst + built.size as usize]
+                .copy_from_slice(&built.pixels[src..src + built.size as usize]);
+        }
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &atlas,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &padded,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(padded_stride as u32),
+                rows_per_image: Some(built.size),
+            },
+            wgpu::Extent3d {
+                width: built.size,
+                height: built.size,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.atlas = atlas;
+        self.atlas_view = atlas_view;
+        self.atlas_bind = atlas_bind;
+        let mut bytes = Vec::new();
+        for quad in &built.quads {
+            let corners = [
+                quad.corners[0],
+                quad.corners[1],
+                quad.corners[2],
+                quad.corners[0],
+                quad.corners[2],
+                quad.corners[3],
+            ];
+            let uvs = [
+                (quad.uv[0], quad.uv[1]),
+                (quad.uv[2], quad.uv[1]),
+                (quad.uv[2], quad.uv[3]),
+                (quad.uv[0], quad.uv[1]),
+                (quad.uv[2], quad.uv[3]),
+                (quad.uv[0], quad.uv[3]),
+            ];
+            for (corner, uv) in corners.iter().zip(uvs) {
+                push_f32(&mut bytes, corner.x as f32);
+                push_f32(&mut bytes, corner.y as f32);
+                push_f32(&mut bytes, corner.z as f32);
+                push_f32(&mut bytes, 1.0);
+                push_f32(&mut bytes, uv.0);
+                push_f32(&mut bytes, uv.1);
+                push_f32(&mut bytes, 0.0);
+                push_f32(&mut bytes, 0.0);
+                push_f32(&mut bytes, quad.rgb[0] as f32 / 255.0);
+                push_f32(&mut bytes, quad.rgb[1] as f32 / 255.0);
+                push_f32(&mut bytes, quad.rgb[2] as f32 / 255.0);
+                push_f32(&mut bytes, quad.opacity);
+            }
+        }
+        let size = (bytes.len() as u64).max(GLYPH_STRIDE * 6);
+        if size > self.glyph_capacity {
+            self.glyphs = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("acadrust-glyphs"),
+                size,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.glyph_capacity = size;
+        }
+        if !bytes.is_empty() {
+            queue.write_buffer(&self.glyphs, 0, &bytes);
+        }
+        self.glyph_count = (bytes.len() as u64 / GLYPH_STRIDE) as u32;
     }
 
     fn prepare_fills(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, scene: &Scene) {
@@ -384,6 +582,12 @@ impl Renderer {
         if self.instance_count > 0 {
             pass.set_vertex_buffer(0, self.instances.slice(..));
             pass.draw(0..6, 0..self.instance_count);
+        }
+        if self.glyph_count > 0 {
+            pass.set_pipeline(&self.glyph_pipeline);
+            pass.set_bind_group(1, &self.atlas_bind, &[]);
+            pass.set_vertex_buffer(0, self.glyphs.slice(..));
+            pass.draw(0..self.glyph_count, 0..1);
         }
     }
 }
@@ -511,6 +715,74 @@ pub async fn render_rgba_with(
         height,
         pixels,
     })
+}
+
+fn glyph_layout_vertices() -> wgpu::VertexBufferLayout<'static> {
+    wgpu::VertexBufferLayout {
+        array_stride: GLYPH_STRIDE,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &[
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 0,
+                shader_location: 0,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x2,
+                offset: 16,
+                shader_location: 1,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 32,
+                shader_location: 2,
+            },
+        ],
+    }
+}
+
+fn atlas_resources(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    size: u32,
+    pixels: &[u8],
+) -> (wgpu::Texture, wgpu::TextureView, wgpu::BindGroup) {
+    let size = size.max(1);
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("acadrust-atlas"),
+        size: wgpu::Extent3d {
+            width: size,
+            height: size,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::R8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    if pixels.len() as u32 >= size * size {
+        // Uploaded by the caller through the queue after this returns. The
+        // initial 1x1 atlas is left blank; prepare writes the real image.
+    }
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("acadrust-atlas"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    });
+    (texture, view, bind)
 }
 
 fn fill_layout() -> wgpu::VertexBufferLayout<'static> {

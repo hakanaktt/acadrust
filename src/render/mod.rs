@@ -9,6 +9,7 @@
 //! including Realistic, Conceptual, Shades of Gray, Sketchy, and X-Ray.
 //! A custom style uses the object's face and edge fields.
 
+mod clip;
 mod compile;
 mod curves;
 mod dash;
@@ -18,6 +19,7 @@ mod scene;
 mod shx;
 mod style;
 mod text_draw;
+mod ttf_atlas;
 mod visual_style;
 
 pub use compile::FALLBACK_KINDS;

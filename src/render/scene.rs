@@ -76,11 +76,30 @@ pub struct SkippedEntity {
     pub source: EntityRef,
 }
 
+/// A TrueType run. The atlas is built when the scene is prepared for a view.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GlyphRun {
+    pub text: String,
+    pub anchor: Vector3,
+    pub rotation: f64,
+    pub height: f64,
+    pub width_factor: f64,
+    pub horizontal: u8,
+    pub vertical: u8,
+    pub normal: Vector3,
+    pub font_path: std::path::PathBuf,
+    pub rgb: [u8; 3],
+    pub aci7: bool,
+    pub opacity: f32,
+    pub source: EntityRef,
+}
+
 /// Camera-independent display list.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Scene {
     pub strokes: Vec<Stroke>,
     pub fills: Vec<Fill>,
+    pub glyphs: Vec<GlyphRun>,
     pub fallbacks: Vec<FallbackEntry>,
     pub skipped: Vec<SkippedEntity>,
     pub visual_style: ResolvedVisualStyle,
@@ -108,13 +127,21 @@ impl Scene {
         for fill in &self.fills {
             for point in &fill.triangles {
                 any = true;
-                min.x = min.x.min(point.x);
-                min.y = min.y.min(point.y);
-                min.z = min.z.min(point.z);
-                max.x = max.x.max(point.x);
-                max.y = max.y.max(point.y);
-                max.z = max.z.max(point.z);
+                include(&mut min, &mut max, *point);
             }
+        }
+        for glyph in &self.glyphs {
+            any = true;
+            include(&mut min, &mut max, glyph.anchor);
+            include(
+                &mut min,
+                &mut max,
+                Vector3::new(
+                    glyph.anchor.x + glyph.height,
+                    glyph.anchor.y + glyph.height,
+                    glyph.anchor.z,
+                ),
+            );
         }
         any.then_some((min, max))
     }
@@ -148,6 +175,15 @@ impl Scene {
         }
         best.map(|(source, _)| source)
     }
+}
+
+fn include(min: &mut Vector3, max: &mut Vector3, point: Vector3) {
+    min.x = min.x.min(point.x);
+    min.y = min.y.min(point.y);
+    min.z = min.z.min(point.z);
+    max.x = max.x.max(point.x);
+    max.y = max.y.max(point.y);
+    max.z = max.z.max(point.z);
 }
 
 fn segment_distance(point: Vector2, start: Vector3, end: Vector3) -> f64 {

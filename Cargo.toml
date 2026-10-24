@@ -18,7 +18,7 @@ parallel = ["dep:rayon"]
 serde = ["dep:serde", "bitflags/serde", "indexmap/serde"]
 import = ["dep:quick-xml", "dep:serde_json"]
 # Scene compiler plus the wgpu draw path.
-render = ["dep:wgpu", "dep:pollster", "dep:earcutr"]
+render = ["dep:wgpu", "dep:pollster", "dep:earcutr", "dep:fontdue"]
 
 [dependencies]
 # Error handling
@@ -62,6 +62,7 @@ ryu = "1"
 wgpu = { version = "30", optional = true }
 pollster = { version = "0.4", optional = true }
 earcutr = { version = "0.4", optional = true }
+fontdue = { version = "0.9", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 memmap2 = "0.9"

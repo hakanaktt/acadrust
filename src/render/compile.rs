@@ -22,6 +22,7 @@ pub(crate) fn compile(doc: &CadDocument, options: &CompileOptions) -> Scene {
         scene: Scene {
             strokes: Vec::new(),
             fills: Vec::new(),
+            glyphs: Vec::new(),
             fallbacks: Vec::new(),
             skipped: Vec::new(),
             visual_style: visual,
@@ -40,7 +41,17 @@ struct Compiler<'a> {
     scene: Scene,
     stack: HashSet<String>,
     font_dirs: &'a [std::path::PathBuf],
-    fonts: HashMap<String, Option<super::shx::ShapeFont>>,
+    fonts: HashMap<String, Option<FaceFont>>,
+}
+
+enum FaceFont {
+    Shape(super::shx::ShapeFont),
+    TrueType(std::path::PathBuf),
+}
+
+enum PreparedLabel {
+    Strokes(Vec<Vec<Vector3>>),
+    TrueType(std::path::PathBuf),
 }
 
 impl Compiler<'_> {
@@ -516,6 +527,9 @@ impl Compiler<'_> {
         child_path.push(insert.common.handle);
         let base = Transform::from_translation(record.base_point * -1.0);
         self.stack.insert(key.clone());
+        let stroke_from = self.scene.strokes.len();
+        let fill_from = self.scene.fills.len();
+        let glyph_from = self.scene.glyphs.len();
         let handles = self.ordered_handles(record);
         for cell in cells {
             let to_world = base.then(&cell).then(transform);
@@ -533,6 +547,15 @@ impl Compiler<'_> {
             let attribute = EntityType::AttributeEntity(attribute.clone());
             self.draw(&attribute, frame, transform, path);
         }
+        if let Some(polygon) = clip_polygon_world(self.doc, insert, transform) {
+            clip_recent_geometry(
+                &mut self.scene,
+                stroke_from,
+                fill_from,
+                glyph_from,
+                &polygon,
+            );
+        }
         self.stack.remove(&key);
     }
 
@@ -547,10 +570,19 @@ impl Compiler<'_> {
     ) {
         if self.doc.header.quick_text_mode {
             let points = world(transform, super::text_draw::quick_box(label));
-            self.emit_dedicated(&points, entity, frame, source);
+            let visual = self.scene.visual_style.clone();
+            let style = resolve_style(self.doc, entity.common(), frame, &visual);
+            self.emit_plain(&points, &[], style, source);
             return;
         }
-        let Some(font) = self.font_for(style_name) else {
+        let produced = match self.font_for(style_name) {
+            None => None,
+            Some(FaceFont::Shape(font)) => Some(PreparedLabel::Strokes(
+                super::text_draw::place_label(font, label),
+            )),
+            Some(FaceFont::TrueType(path)) => Some(PreparedLabel::TrueType(path.clone())),
+        };
+        let Some(produced) = produced else {
             self.scene.skipped.push(SkippedEntity {
                 kind: kind_of(entity).to_string(),
                 reason: format!("font for style {style_name} was not found"),
@@ -558,12 +590,43 @@ impl Compiler<'_> {
             });
             return;
         };
-        for chain in super::text_draw::place_label(font, label) {
-            self.emit_dedicated(&world(transform, chain), entity, frame, source.clone());
+        let visual = self.scene.visual_style.clone();
+        let style = resolve_style(self.doc, entity.common(), frame, &visual);
+        match produced {
+            PreparedLabel::Strokes(chains) => {
+                for chain in chains {
+                    self.emit_plain(&world(transform, chain), &[], style.clone(), source.clone());
+                }
+            }
+            PreparedLabel::TrueType(path) => {
+                let anchor = world(
+                    transform,
+                    vec![if label.use_alignment {
+                        label.alignment
+                    } else {
+                        label.insertion
+                    }],
+                );
+                self.scene.glyphs.push(super::scene::GlyphRun {
+                    text: label.text.to_string(),
+                    anchor: anchor.first().copied().unwrap_or(label.insertion),
+                    rotation: label.rotation,
+                    height: label.height,
+                    width_factor: label.width_factor,
+                    horizontal: label.horizontal,
+                    vertical: label.vertical,
+                    normal: label.normal,
+                    font_path: path,
+                    rgb: style.rgb,
+                    aci7: style.aci7,
+                    opacity: style.opacity,
+                    source,
+                });
+            }
         }
     }
 
-    fn font_for(&mut self, style_name: &str) -> Option<&super::shx::ShapeFont> {
+    fn font_for(&mut self, style_name: &str) -> Option<&FaceFont> {
         if !self.fonts.contains_key(style_name) {
             let loaded = self.load_font(style_name);
             self.fonts.insert(style_name.to_string(), loaded);
@@ -571,25 +634,37 @@ impl Compiler<'_> {
         self.fonts.get(style_name).and_then(|font| font.as_ref())
     }
 
-    fn load_font(&self, style_name: &str) -> Option<super::shx::ShapeFont> {
+    fn load_font(&self, style_name: &str) -> Option<FaceFont> {
         let style = self.doc.text_styles.get(style_name)?;
         let mut names = Vec::new();
         if !style.font_file.is_empty() {
             names.push(style.font_file.clone());
         }
+        if !style.true_type_font.is_empty() {
+            names.push(style.true_type_font.clone());
+        }
         if !style.big_font_file.is_empty() {
             names.push(style.big_font_file.clone());
         }
-        for name in names {
-            for dir in self.font_dirs {
-                for candidate in [
-                    dir.join(&name),
-                    dir.join(format!("{name}.shp")),
-                    dir.join(format!("{name}.shx")),
-                ] {
-                    if let Some(font) = super::shx::ShapeFont::load(&candidate) {
-                        return Some(font);
+        let prefer_ttf = style.font_file.to_ascii_lowercase().ends_with(".ttf");
+        if !prefer_ttf {
+            for name in &names {
+                if let Some(path) = find_font_file(self.font_dirs, name, &["shp", "shx", ""]) {
+                    if let Some(font) = super::shx::ShapeFont::load(&path) {
+                        return Some(FaceFont::Shape(font));
                     }
+                }
+            }
+        }
+        for name in &names {
+            if let Some(path) = find_font_file(self.font_dirs, name, &["ttf", ""]) {
+                if path
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("ttf"))
+                    || name.to_ascii_lowercase().ends_with(".ttf")
+                {
+                    return Some(FaceFont::TrueType(path));
                 }
             }
         }
@@ -644,15 +719,99 @@ impl Compiler<'_> {
     ) {
         let visual = self.scene.visual_style.clone();
         let style = resolve_style(self.doc, entity.common(), frame, &visual);
-        let elements = pattern_elements(self.doc, entity.common(), frame, &visual);
+        let marks = pattern_elements(self.doc, entity.common(), frame, &visual);
+        let lengths: Vec<f64> = marks.iter().map(|mark| mark.length).collect();
+        self.emit_plain(points, &lengths, style, source.clone());
+        self.place_complex(points, &marks, entity, frame, source);
+    }
+
+    fn emit_plain(
+        &mut self,
+        points: &[Vector3],
+        lengths: &[f64],
+        style: super::scene::Style,
+        source: EntityRef,
+    ) {
         emit_chain(
             &mut self.scene.strokes,
             points,
-            &elements,
+            lengths,
             style,
             source,
             DrawPath::Dedicated,
         );
+    }
+
+    fn place_complex(
+        &mut self,
+        points: &[Vector3],
+        marks: &[super::style::PatternMark],
+        entity: &EntityType,
+        frame: &Frame,
+        source: EntityRef,
+    ) {
+        if !marks
+            .iter()
+            .any(|mark| mark.text.is_some() || mark.shape_number.is_some())
+        {
+            return;
+        }
+        let length = super::dash::polyline_length(points);
+        let period: f64 = marks.iter().map(|mark| mark.length.abs()).sum();
+        if length <= 1e-9 || period <= 1e-12 {
+            return;
+        }
+        let repeats = (length / period).round().max(1.0);
+        let stretch = length / (repeats * period);
+        let mut cursor = 0.0;
+        for _ in 0..repeats as usize {
+            for mark in marks {
+                let span = mark.length.abs() * stretch;
+                if mark.text.is_some() || mark.shape_number.is_some() {
+                    if let Some((position, tangent)) = point_along(points, cursor + span * 0.5) {
+                        let mut angle = if mark.absolute {
+                            mark.rotation
+                        } else {
+                            tangent.y.atan2(tangent.x) + mark.rotation
+                        };
+                        if mark.upright {
+                            let turned = angle.sin().abs();
+                            if angle.cos() < 0.0 && turned < 0.999 {
+                                angle += std::f64::consts::PI;
+                            }
+                        }
+                        let side = Vector3::new(-tangent.y, tangent.x, 0.0);
+                        let anchor =
+                            position + tangent * mark.offset_along + side * mark.offset_perp;
+                        let text = mark.text.clone().unwrap_or_default();
+                        self.draw_label(
+                            &super::text_draw::GlyphLabel {
+                                text: &text,
+                                shape_number: mark.shape_number,
+                                insertion: anchor,
+                                alignment: anchor,
+                                use_alignment: false,
+                                height: mark.scale.abs().max(1e-6),
+                                rotation: angle,
+                                width_factor: 1.0,
+                                oblique: 0.0,
+                                horizontal: 1,
+                                vertical: 2,
+                                normal: Vector3::UNIT_Z,
+                                backward: false,
+                                upside_down: false,
+                            },
+                            &mark.style_name,
+                            entity,
+                            frame,
+                            &Transform::identity(),
+                            source.clone(),
+                        );
+                    }
+                }
+                cursor += span;
+            }
+        }
     }
 
     fn emit_dot(
@@ -810,6 +969,155 @@ fn world(transform: &Transform, points: Vec<Vector3>) -> Vec<Vector3> {
         .into_iter()
         .map(|point| transform.apply(point))
         .collect()
+}
+
+fn find_font_file(
+    dirs: &[std::path::PathBuf],
+    name: &str,
+    extensions: &[&str],
+) -> Option<std::path::PathBuf> {
+    for dir in dirs {
+        for extension in extensions {
+            let path = if extension.is_empty() {
+                dir.join(name)
+            } else {
+                dir.join(format!("{name}.{extension}"))
+            };
+            if path.is_file() {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+fn point_along(points: &[Vector3], distance: f64) -> Option<(Vector3, Vector3)> {
+    let mut remaining = distance.max(0.0);
+    for pair in points.windows(2) {
+        let delta = pair[1] - pair[0];
+        let length = delta.length();
+        if length <= 1e-12 {
+            continue;
+        }
+        if remaining <= length {
+            let t = remaining / length;
+            let tangent = delta * (1.0 / length);
+            return Some((pair[0] + delta * t, tangent));
+        }
+        remaining -= length;
+    }
+    let last = points.last()?;
+    let prev = points.get(points.len().saturating_sub(2))?;
+    let delta = *last - *prev;
+    let length = delta.length();
+    if length <= 1e-12 {
+        return None;
+    }
+    Some((*last, delta * (1.0 / length)))
+}
+
+fn clip_polygon_world(
+    doc: &CadDocument,
+    insert: &Insert,
+    parent: &Transform,
+) -> Option<Vec<crate::types::Vector2>> {
+    let filter = spatial_filter(doc, insert)?;
+    if filter.boundary_points.len() < 2 {
+        return None;
+    }
+    let local = if filter.boundary_points.len() == 2 {
+        super::clip::rectangle(filter.boundary_points[0], filter.boundary_points[1])
+    } else {
+        filter.boundary_points.clone()
+    };
+    let polygon = local
+        .into_iter()
+        .map(|point| {
+            let placed = filter
+                .clip_bound_transform
+                .transform_point(Vector3::new(point.x, point.y, 0.0));
+            let world = parent.apply(placed);
+            crate::types::Vector2::new(world.x, world.y)
+        })
+        .collect();
+    Some(polygon)
+}
+
+fn spatial_filter<'a>(
+    doc: &'a CadDocument,
+    insert: &Insert,
+) -> Option<&'a crate::objects::SpatialFilter> {
+    let dictionary = insert.common.xdictionary_handle?;
+    let crate::objects::ObjectType::Dictionary(dictionary) = doc.objects.get(&dictionary)? else {
+        return None;
+    };
+    let filter_dictionary = dictionary
+        .entries
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("ACAD_FILTER"))
+        .map(|(_, handle)| *handle)?;
+    let crate::objects::ObjectType::Dictionary(filter_dictionary) =
+        doc.objects.get(&filter_dictionary)?
+    else {
+        return None;
+    };
+    let spatial = filter_dictionary
+        .entries
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("SPATIAL"))
+        .map(|(_, handle)| *handle)?;
+    match doc.objects.get(&spatial)? {
+        crate::objects::ObjectType::SpatialFilter(filter) => Some(filter),
+        _ => None,
+    }
+}
+
+fn clip_recent_geometry(
+    scene: &mut Scene,
+    stroke_from: usize,
+    fill_from: usize,
+    glyph_from: usize,
+    polygon: &[crate::types::Vector2],
+) {
+    let fresh = scene
+        .strokes
+        .split_off(stroke_from.min(scene.strokes.len()));
+    for stroke in fresh {
+        for pair in stroke.points.windows(2) {
+            if let Some((start, end)) = super::clip::clip_segment(pair[0], pair[1], polygon) {
+                scene.strokes.push(Stroke {
+                    points: vec![start, end],
+                    closed: false,
+                    dot: stroke.dot,
+                    style: stroke.style.clone(),
+                    source: stroke.source.clone(),
+                    path: stroke.path,
+                });
+            }
+        }
+    }
+    for fill in &mut scene.fills[fill_from..] {
+        let mut triangles = Vec::new();
+        for corner in fill.triangles.chunks_exact(3) {
+            let clipped = super::clip::clip_polygon(corner, polygon);
+            for index in 1..clipped.len().saturating_sub(1) {
+                triangles.extend([clipped[0], clipped[index], clipped[index + 1]]);
+            }
+        }
+        fill.triangles = triangles;
+        if !fill.vertex_rgb.is_empty() {
+            fill.vertex_rgb.clear();
+        }
+    }
+    let glyphs = scene.glyphs.split_off(glyph_from.min(scene.glyphs.len()));
+    scene.glyphs.extend(glyphs.into_iter().filter(|glyph| {
+        super::clip::clip_segment(
+            glyph.anchor,
+            glyph.anchor + Vector3::new(1e-3, 0.0, 0.0),
+            polygon,
+        )
+        .is_some()
+    }));
 }
 
 fn cell_transforms(insert: &Insert) -> Vec<Transform> {

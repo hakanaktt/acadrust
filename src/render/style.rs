@@ -113,12 +113,28 @@ pub(crate) fn resolve_style(
     }
 }
 
+/// One fitted linetype element. Length is already multiplied by `LTSCALE`
+/// and the entity scale. Positive is a dash, negative a gap, zero a dot.
+#[derive(Debug, Clone)]
+pub(crate) struct PatternMark {
+    pub length: f64,
+    pub text: Option<String>,
+    pub shape_number: Option<u16>,
+    pub style_name: String,
+    pub scale: f64,
+    pub rotation: f64,
+    pub absolute: bool,
+    pub upright: bool,
+    pub offset_along: f64,
+    pub offset_perp: f64,
+}
+
 pub(crate) fn pattern_elements(
     doc: &CadDocument,
     common: &EntityCommon,
     frame: &Frame,
     visual: &ResolvedVisualStyle,
-) -> Vec<f64> {
+) -> Vec<PatternMark> {
     if !visual.linetypes {
         return Vec::new();
     }
@@ -142,7 +158,43 @@ pub(crate) fn pattern_elements(
     linetype
         .elements
         .iter()
-        .map(|element| element.length * scale)
+        .map(|element| {
+            let mut mark = PatternMark {
+                length: element.length * scale,
+                text: None,
+                shape_number: None,
+                style_name: "Standard".to_string(),
+                scale: scale,
+                rotation: 0.0,
+                absolute: false,
+                upright: false,
+                offset_along: 0.0,
+                offset_perp: 0.0,
+            };
+            if let Some(complex) = &element.complex {
+                mark.style_name = doc
+                    .text_styles
+                    .iter()
+                    .find(|style| style.handle == complex.style_handle)
+                    .map(|style| style.name.clone())
+                    .unwrap_or_else(|| "Standard".to_string());
+                mark.scale = complex.scale * scale;
+                mark.rotation = complex.rotation;
+                mark.absolute = complex.absolute_rotation;
+                mark.upright = complex.upright;
+                mark.offset_along = complex.offset[0] * scale;
+                mark.offset_perp = complex.offset[1] * scale;
+                match &complex.content {
+                    crate::tables::LineTypeComplexContent::Text { text } => {
+                        mark.text = Some(text.clone());
+                    }
+                    crate::tables::LineTypeComplexContent::Shape { shape_number } => {
+                        mark.shape_number = Some(*shape_number as u16);
+                    }
+                }
+            }
+            mark
+        })
         .collect()
 }
 

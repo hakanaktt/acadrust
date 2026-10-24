@@ -70,3 +70,33 @@ fn vs_fill(in: FillIn) -> VertexOut {
 fn fs_fill(in: VertexOut) -> @location(0) vec4<f32> {
     return in.color;
 }
+
+@group(1) @binding(0)
+var atlas_texture: texture_2d<f32>;
+
+@group(1) @binding(1)
+var atlas_sampler: sampler;
+
+struct GlyphIn {
+    @location(0) pos: vec4<f32>,
+    @location(1) uv: vec2<f32>,
+    @location(2) color: vec4<f32>,
+}
+
+struct GlyphOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+    @location(1) color: vec4<f32>,
+}
+
+@vertex
+fn vs_glyph(in: GlyphIn) -> GlyphOut {
+    let clip = camera.view_proj * vec4<f32>(in.pos.xyz, 1.0);
+    return GlyphOut(clip, in.uv, in.color);
+}
+
+@fragment
+fn fs_glyph(in: GlyphOut) -> @location(0) vec4<f32> {
+    let coverage = textureSample(atlas_texture, atlas_sampler, in.uv).r;
+    return vec4<f32>(in.color.rgb, in.color.a * coverage);
+}
