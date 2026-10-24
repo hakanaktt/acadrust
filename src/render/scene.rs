@@ -50,6 +50,9 @@ pub struct Fill {
     pub background: bool,
     /// One RGB triple per triangle vertex. Empty means `style` colors the fill.
     pub vertex_rgb: Vec<[u8; 3]>,
+    /// One world-space normal per triangle vertex. Empty means the fill is
+    /// unlit, which is how hatches and wipeouts stay flat.
+    pub normals: Vec<Vector3>,
 }
 
 /// One solid run of a stroked curve, after linetype fitting.

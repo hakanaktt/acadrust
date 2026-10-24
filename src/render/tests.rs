@@ -15,7 +15,7 @@ use crate::types::{Color, Handle, LineWeight, Vector2, Vector3};
 use super::visual_style::{
     EdgeMode, FaceColorMode, FaceShading, LightingModel, StandardVisualStyle, VisualStyleRequest,
 };
-use super::{compile, CompileOptions, DisplaySpace, DrawPath, View};
+use super::{compile, CompileOptions, DisplaySpace, DrawPath, SolidStyle, View};
 
 fn doc() -> CadDocument {
     CadDocument::new()
@@ -210,8 +210,8 @@ fn unfinished_entities_stay_on_the_fallback_list() {
         .strokes
         .iter()
         .all(|stroke| stroke.path == DrawPath::Fallback));
-    assert!(super::FALLBACK_KINDS.contains(&"Solid3D"));
-    assert!(super::FALLBACK_KINDS.contains(&"Region"));
+    assert!(super::FALLBACK_KINDS.contains(&"RasterImage"));
+    assert!(!super::FALLBACK_KINDS.contains(&"Solid3D"));
     assert!(!super::FALLBACK_KINDS.contains(&"Circle"));
 }
 
@@ -1350,5 +1350,266 @@ fn sheet_lineweight_grows_when_zooming() {
     assert!(
         (4..=7).contains(&near_rows),
         "0.50 mm on a 4-unit-tall, 40-pixel view should cover about 5 rows, found {near_rows}"
+    );
+}
+
+fn solid_from(document: crate::entities::acis::SatDocument) -> crate::entities::Solid3D {
+    let mut solid = crate::entities::Solid3D::new();
+    solid.acis_data = crate::entities::AcisData::from_sat_document(&document);
+    solid.common.color = Color::RED;
+    solid
+}
+
+#[test]
+fn shaded_box_has_outward_normals_and_shared_edges() {
+    let mut doc = doc();
+    doc.add_entity(EntityType::Solid3D(solid_from(
+        crate::entities::acis::primitives::build_box([0.0, 0.0, 0.0], 10.0, 10.0, 10.0),
+    )))
+    .unwrap();
+    let scene = compile(&doc, &CompileOptions::default());
+    assert!(scene.fallbacks.is_empty());
+    assert!(!super::FALLBACK_KINDS.contains(&"Solid3D"));
+    let fill = &scene.fills[0];
+    assert_eq!(fill.triangles.len(), fill.normals.len());
+    assert!(
+        fill.triangles.len() >= 36,
+        "triangles {}",
+        fill.triangles.len()
+    );
+    let top = fill
+        .normals
+        .iter()
+        .zip(&fill.triangles)
+        .find(|(_, point)| point.z > 4.9)
+        .expect("top face");
+    assert!(top.0.z > 0.9, "top normal {:?}", top.0);
+    assert!(
+        scene.strokes.len() >= 12,
+        "boundary edges {}",
+        scene.strokes.len()
+    );
+}
+
+#[test]
+fn cylinder_side_stays_on_the_surface_and_matches_the_cap() {
+    let tess = super::tess::tessellate(&crate::entities::acis::primitives::build_cylinder(
+        [0.0, 0.0, 0.0],
+        5.0,
+        12.0,
+    ));
+    assert!(!tess.triangles.is_empty());
+    let mut cap_tops = Vec::new();
+    let mut side_tops = Vec::new();
+    for corner in tess.triangles.chunks_exact(3) {
+        let on_top = corner
+            .iter()
+            .filter(|point| (point.z - 12.0).abs() < 1e-6)
+            .count();
+        if on_top == 3 {
+            cap_tops.extend(corner.iter().copied());
+        } else if on_top > 0 {
+            side_tops.extend(
+                corner
+                    .iter()
+                    .filter(|point| (point.z - 12.0).abs() < 1e-6)
+                    .copied(),
+            );
+        }
+        for point in corner {
+            let radial = (point.x * point.x + point.y * point.y).sqrt();
+            let on_wall = (radial - 5.0).abs() < 0.05 && point.z >= -1e-6 && point.z <= 12.0 + 1e-6;
+            let on_cap = point.z.abs() < 1e-5 || (point.z - 12.0).abs() < 1e-5;
+            assert!(
+                on_wall || on_cap && radial <= 5.05,
+                "point off the cylinder: {point:?}"
+            );
+        }
+    }
+    assert!(!cap_tops.is_empty() && !side_tops.is_empty());
+    for side in &side_tops {
+        assert!(
+            cap_tops.iter().any(|cap| (*cap - *side).length() < 1e-8),
+            "side vertex {side:?} is not on the cap"
+        );
+    }
+}
+
+#[test]
+fn sphere_samples_lie_on_the_sphere() {
+    let tess = super::tess::tessellate(&crate::entities::acis::primitives::build_sphere(
+        [1.0, 2.0, 3.0],
+        4.0,
+    ));
+    assert!(tess.triangles.len() > 200);
+    for (point, normal) in tess.triangles.iter().zip(&tess.normals) {
+        let radius = (*point - Vector3::new(1.0, 2.0, 3.0)).length();
+        assert!((radius - 4.0).abs() < 1e-6, "radius {radius}");
+        let expected = (*point - Vector3::new(1.0, 2.0, 3.0)).normalize();
+        assert!(
+            normal.dot(&expected) > 0.99,
+            "normal {normal:?} expected {expected:?}"
+        );
+    }
+}
+
+#[test]
+fn cone_reaches_its_apex_and_base() {
+    let tess = super::tess::tessellate(&crate::entities::acis::primitives::build_cone(
+        [0.0, 0.0, 0.0],
+        4.0,
+        9.0,
+    ));
+    assert!(tess
+        .triangles
+        .iter()
+        .any(|point| (point.z - 9.0).abs() < 1e-5 && point.x.abs() < 1e-4 && point.y.abs() < 1e-4));
+    assert!(tess.triangles.iter().any(|point| {
+        point.z.abs() < 1e-5 && (point.x * point.x + point.y * point.y).sqrt() > 3.5
+    }));
+}
+
+#[test]
+fn torus_samples_satisfy_the_tube_equation() {
+    let tess = super::tess::tessellate(&crate::entities::acis::primitives::build_torus(
+        [0.0, 0.0, 0.0],
+        6.0,
+        1.5,
+    ));
+    assert!(tess.triangles.len() > 100);
+    for point in &tess.triangles {
+        let radial = (point.x * point.x + point.y * point.y).sqrt();
+        let tube = ((radial - 6.0).powi(2) + point.z * point.z).sqrt();
+        assert!((tube - 1.5).abs() < 1e-5, "tube radius {tube} at {point:?}");
+    }
+}
+
+#[test]
+fn bilinear_spline_patch_interpolates_its_corners() {
+    use crate::entities::acis::{SatDocument, SatPointer, Sense, Sidedness};
+    let mut sat = SatDocument::new_body();
+    let control = [
+        [0.0, 0.0, 0.0],
+        [4.0, 0.0, 0.0],
+        [0.0, 4.0, 0.0],
+        [4.0, 4.0, 2.0],
+    ];
+    let knots = [(0.0, 2), (1.0, 2)];
+    let surface = sat.add_spline_surface(
+        false, false, 1, 1, false, false, &knots, &knots, &control, None, 0.0,
+    );
+    let base = sat.records.len() as i32;
+    sat.add_face(
+        SatPointer::NULL,
+        SatPointer::NULL,
+        SatPointer::new(base + 1),
+        SatPointer::new(surface),
+        Sense::Forward,
+        Sidedness::Single,
+    );
+    sat.add_shell(SatPointer::new(base), SatPointer::new(base + 2));
+    sat.add_lump(SatPointer::new(base + 1), SatPointer::new(0));
+    if let Some(body) = sat.record_mut(0) {
+        body.tokens[1] = crate::entities::acis::SatToken::Pointer(SatPointer::new(base + 2));
+    }
+    sat.complete_brep_links();
+    let tess = super::tess::tessellate(&sat);
+    let has = |x: f64, y: f64, z: f64| {
+        tess.triangles.iter().any(|point| {
+            (point.x - x).abs() < 1e-4 && (point.y - y).abs() < 1e-4 && (point.z - z).abs() < 1e-4
+        })
+    };
+    assert!(has(0.0, 0.0, 0.0), "missing origin corner");
+    assert!(has(4.0, 4.0, 2.0), "missing far corner");
+}
+
+#[test]
+fn wireframe_style_draws_isolines_instead_of_faces() {
+    let mut doc = doc();
+    doc.add_entity(EntityType::Solid3D(solid_from(
+        crate::entities::acis::primitives::build_sphere([0.0, 0.0, 0.0], 5.0),
+    )))
+    .unwrap();
+    let mut options = CompileOptions::default();
+    options.solid_style = SolidStyle::Wireframe;
+    let scene = compile(&doc, &options);
+    assert!(scene.fills.is_empty());
+    assert!(scene.strokes.len() > 6, "isolines {}", scene.strokes.len());
+    assert!(scene.fallbacks.is_empty());
+}
+
+#[test]
+fn mesh_and_light_have_dedicated_pictures() {
+    let mut doc = doc();
+    let mut mesh = crate::entities::Mesh::new();
+    mesh.common.color = Color::RED;
+    mesh.vertices = vec![
+        Vector3::new(0.0, 0.0, 0.0),
+        Vector3::new(2.0, 0.0, 0.0),
+        Vector3::new(2.0, 2.0, 1.0),
+        Vector3::new(0.0, 2.0, 1.0),
+    ];
+    mesh.faces.push(crate::entities::MeshFace::quad(0, 1, 2, 3));
+    doc.add_entity(EntityType::Mesh(mesh)).unwrap();
+    let mut light = crate::entities::Light::new();
+    light.position = Vector3::new(5.0, 5.0, 5.0);
+    light.target = Vector3::new(0.0, 0.0, 0.0);
+    doc.add_entity(EntityType::Light(Box::new(light))).unwrap();
+    let scene = compile(&doc, &CompileOptions::default());
+    assert!(scene.fallbacks.is_empty());
+    assert!(!super::FALLBACK_KINDS
+        .iter()
+        .any(|kind| { matches!(*kind, "Mesh" | "Light" | "Solid3D" | "Camera") }));
+    assert_eq!(scene.fills[0].triangles.len(), 6);
+    assert!(scene.fills[0]
+        .normals
+        .iter()
+        .any(|normal| normal.z.abs() > 0.2));
+    assert!(scene.strokes.len() >= 4);
+}
+
+#[test]
+fn closer_face_wins_the_depth_test() {
+    let mut doc = doc();
+    let mut near = crate::entities::Mesh::new();
+    near.common.color = Color::RED;
+    near.vertices = vec![
+        Vector3::new(-8.0, -8.0, 4.0),
+        Vector3::new(8.0, -8.0, 4.0),
+        Vector3::new(8.0, 8.0, 4.0),
+        Vector3::new(-8.0, 8.0, 4.0),
+    ];
+    near.faces.push(crate::entities::MeshFace::quad(0, 1, 2, 3));
+    let mut far = crate::entities::Mesh::new();
+    far.common.color = Color::from_index(5);
+    far.vertices = vec![
+        Vector3::new(-8.0, -8.0, 0.0),
+        Vector3::new(8.0, -8.0, 0.0),
+        Vector3::new(8.0, 8.0, 0.0),
+        Vector3::new(-8.0, 8.0, 0.0),
+    ];
+    far.faces.push(crate::entities::MeshFace::quad(0, 1, 2, 3));
+    doc.add_entity(EntityType::Mesh(near)).unwrap();
+    doc.add_entity(EntityType::Mesh(far)).unwrap();
+    let image = match pollster::block_on(super::render_rgba(
+        &doc,
+        &View {
+            target: Vector3::ZERO,
+            height: 20.0,
+            ..View::default()
+        },
+        48,
+        48,
+        &CompileOptions::default(),
+    )) {
+        Err(super::RenderError::NoAdapter) => return,
+        Err(error) => panic!("{error}"),
+        Ok(image) => image,
+    };
+    let center = ((24 * image.width + 24) * 4) as usize;
+    let pixel = &image.pixels[center..center + 3];
+    assert!(
+        pixel[0] > pixel[2] + 40,
+        "the higher face should cover the lower one, pixel {pixel:?}"
     );
 }

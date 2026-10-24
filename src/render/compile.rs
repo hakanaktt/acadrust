@@ -47,6 +47,7 @@ pub(crate) fn compile(doc: &CadDocument, options: &CompileOptions) -> Scene {
         sheet,
         pattern_scale: 1.0,
         viewport_frozen: HashSet::new(),
+        solid_style: options.solid_style,
     };
     compiler.walk_block(&block, &Frame::model(), &Transform::identity(), &[]);
     compiler.scene
@@ -87,6 +88,7 @@ struct Compiler<'a> {
     /// in paper units.
     pattern_scale: f64,
     viewport_frozen: HashSet<Handle>,
+    solid_style: super::SolidStyle,
 }
 
 enum FaceFont {
@@ -500,6 +502,9 @@ impl Compiler<'_> {
                 crate::entities::ExtendedEntityData::SectionObject(data) => {
                     self.draw_section_object(data, entity, frame, transform, source);
                 }
+                crate::entities::ExtendedEntityData::Camera { view_handle } => {
+                    self.draw_camera(*view_handle, entity, frame, transform, source);
+                }
                 _ => self.fallback(entity, frame, source),
             },
             EntityType::Viewport(viewport) => {
@@ -511,19 +516,31 @@ impl Compiler<'_> {
             EntityType::SectionSymbol(symbol) => {
                 self.draw_section_symbol(symbol, entity, frame, transform, source);
             }
+            EntityType::Solid3D(solid) => {
+                self.draw_acis(&solid.acis_data, entity, frame, transform, source);
+            }
+            EntityType::Region(region) => {
+                self.draw_acis(&region.acis_data, entity, frame, transform, source);
+            }
+            EntityType::Body(body) => {
+                self.draw_acis(&body.acis_data, entity, frame, transform, source);
+            }
+            EntityType::Surface(surface) => {
+                self.draw_acis(&surface.acis_data, entity, frame, transform, source);
+            }
+            EntityType::Mesh(mesh) => self.draw_mesh_entity(mesh, entity, frame, transform, source),
+            EntityType::PolyfaceMesh(mesh) => {
+                self.draw_polyface(mesh, entity, frame, transform, source);
+            }
+            EntityType::PolygonMesh(mesh) => {
+                self.draw_polygon_mesh(mesh, entity, frame, transform, source);
+            }
+            EntityType::Light(light) => self.draw_light(light, entity, frame, transform, source),
             EntityType::Ray(_)
             | EntityType::XLine(_)
-            | EntityType::Mesh(_)
             | EntityType::RasterImage(_)
-            | EntityType::Solid3D(_)
-            | EntityType::Region(_)
-            | EntityType::Body(_)
-            | EntityType::Surface(_)
-            | EntityType::PolyfaceMesh(_)
             | EntityType::Underlay(_)
             | EntityType::Ole2Frame(_)
-            | EntityType::PolygonMesh(_)
-            | EntityType::Light(_)
             | EntityType::Unknown(_) => self.fallback(entity, frame, source),
         }
     }
@@ -1215,7 +1232,312 @@ impl Compiler<'_> {
             path: DrawPath::Dedicated,
             background,
             vertex_rgb,
+            normals: Vec::new(),
         });
+    }
+
+    fn draw_acis(
+        &mut self,
+        data: &crate::entities::solid3d::AcisData,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        let Some(document) = data.parse() else {
+            self.fallback(entity, frame, source);
+            return;
+        };
+        let tess = super::tess::tessellate(&document);
+        if tess.triangles.is_empty() && tess.edges.is_empty() {
+            self.fallback(entity, frame, source);
+            return;
+        }
+        let visual = self.scene.visual_style.clone();
+        let wireframe = self.solid_style == super::SolidStyle::Wireframe;
+        let depth_only = !wireframe
+            && visual.faces == super::visual_style::FaceShading::None
+            && visual.edges == super::visual_style::EdgeMode::Facet;
+        if !wireframe && !tess.triangles.is_empty() {
+            let triangles = world(transform, tess.triangles);
+            self.emit_fill(&triangles, entity, frame, source.clone(), false);
+            if let Some(fill) = self.scene.fills.last_mut() {
+                fill.normals = transform_normals(transform, &tess.normals);
+                if depth_only {
+                    fill.style.opacity = 0.0;
+                } else {
+                    fill.style.opacity *= visual.face_opacity as f32;
+                }
+            }
+        }
+        let draw_edges = wireframe || visual.edges != super::visual_style::EdgeMode::None;
+        if draw_edges {
+            for edge in &tess.edges {
+                if edge.len() >= 2 {
+                    self.emit_dedicated(
+                        &world(transform, edge.clone()),
+                        entity,
+                        frame,
+                        source.clone(),
+                    );
+                }
+            }
+        }
+        if wireframe {
+            for line in &tess.isolines {
+                if line.len() >= 2 {
+                    self.emit_dedicated(
+                        &world(transform, line.clone()),
+                        entity,
+                        frame,
+                        source.clone(),
+                    );
+                }
+            }
+        }
+    }
+
+    fn draw_mesh_entity(
+        &mut self,
+        mesh: &crate::entities::Mesh,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        let faces = mesh
+            .faces
+            .iter()
+            .map(|face| face.indices().to_vec())
+            .collect::<Vec<_>>();
+        self.draw_faceted(&mesh.vertices, &faces, entity, frame, transform, source);
+    }
+
+    fn draw_polyface(
+        &mut self,
+        mesh: &crate::entities::PolyfaceMesh,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        let vertices = mesh
+            .vertices
+            .iter()
+            .map(|vertex| vertex.location)
+            .collect::<Vec<_>>();
+        let mut faces = Vec::new();
+        let mut edges = Vec::new();
+        for face in &mesh.faces {
+            let indices = [
+                face.index1,
+                face.index2,
+                face.index3,
+                if face.is_quad() { face.index4 } else { 0 },
+            ];
+            let mut polygon = Vec::new();
+            for (edge_index, index) in indices.into_iter().enumerate() {
+                if index == 0 {
+                    continue;
+                }
+                let slot = index.unsigned_abs() as usize;
+                if slot == 0 || slot > vertices.len() {
+                    continue;
+                }
+                polygon.push(slot - 1);
+                let invisible = match edge_index {
+                    0 => face.is_edge1_invisible(),
+                    1 => face.is_edge2_invisible(),
+                    2 => face.is_edge3_invisible(),
+                    _ => face.is_edge4_invisible(),
+                };
+                if !invisible {
+                    let next = indices
+                        .iter()
+                        .cycle()
+                        .skip(edge_index + 1)
+                        .find(|candidate| **candidate != 0)
+                        .copied()
+                        .unwrap_or(0);
+                    let next_slot = next.unsigned_abs() as usize;
+                    if next_slot > 0 && next_slot <= vertices.len() {
+                        edges.push(vec![vertices[slot - 1], vertices[next_slot - 1]]);
+                    }
+                }
+            }
+            if polygon.len() >= 3 {
+                faces.push(polygon);
+            }
+        }
+        let mut tess = super::tess::facet_faces(&vertices, &faces);
+        tess.edges.clear();
+        self.emit_tess(&tess, edges, entity, frame, transform, source);
+    }
+
+    fn draw_polygon_mesh(
+        &mut self,
+        mesh: &crate::entities::polygon_mesh::PolygonMesh,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        let vertices = mesh
+            .vertices
+            .iter()
+            .map(|vertex| vertex.location)
+            .collect::<Vec<_>>();
+        let tess = super::tess::facet_grid(
+            &vertices,
+            mesh.m_vertex_count.max(0) as usize,
+            mesh.n_vertex_count.max(0) as usize,
+            mesh.is_closed_m(),
+            mesh.is_closed_n(),
+        );
+        self.emit_tess(&tess, Vec::new(), entity, frame, transform, source);
+    }
+
+    fn draw_faceted(
+        &mut self,
+        vertices: &[Vector3],
+        faces: &[Vec<usize>],
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        if faces.is_empty() {
+            self.fallback(entity, frame, source);
+            return;
+        }
+        let tess = super::tess::facet_faces(vertices, faces);
+        self.emit_tess(&tess, Vec::new(), entity, frame, transform, source);
+    }
+
+    fn emit_tess(
+        &mut self,
+        tess: &super::tess::Tessellation,
+        extra_edges: Vec<Vec<Vector3>>,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        if tess.triangles.is_empty() && tess.edges.is_empty() && extra_edges.is_empty() {
+            self.fallback(entity, frame, source);
+            return;
+        }
+        if !tess.triangles.is_empty() {
+            let triangles = world(transform, tess.triangles.clone());
+            self.emit_fill(&triangles, entity, frame, source.clone(), false);
+            if let Some(fill) = self.scene.fills.last_mut() {
+                fill.normals = transform_normals(transform, &tess.normals);
+            }
+        }
+        for edge in tess.edges.iter().chain(extra_edges.iter()) {
+            if edge.len() >= 2 {
+                self.emit_dedicated(
+                    &world(transform, edge.clone()),
+                    entity,
+                    frame,
+                    source.clone(),
+                );
+            }
+        }
+    }
+
+    fn draw_light(
+        &mut self,
+        light: &crate::entities::Light,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        let position = light.position;
+        let size = 1.0;
+        let arms = [
+            vec![
+                position + Vector3::new(-size, 0.0, 0.0),
+                position + Vector3::new(size, 0.0, 0.0),
+            ],
+            vec![
+                position + Vector3::new(0.0, -size, 0.0),
+                position + Vector3::new(0.0, size, 0.0),
+            ],
+            vec![
+                position + Vector3::new(0.0, 0.0, -size),
+                position + Vector3::new(0.0, 0.0, size),
+            ],
+        ];
+        for arm in arms {
+            self.emit_dedicated(&world(transform, arm), entity, frame, source.clone());
+        }
+        if (light.target - position).length_squared() > 1e-8 {
+            self.emit_dedicated(
+                &world(transform, vec![position, light.target]),
+                entity,
+                frame,
+                source,
+            );
+        }
+    }
+
+    fn draw_camera(
+        &mut self,
+        view_handle: crate::types::Handle,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        let Some(view) = self
+            .doc
+            .views
+            .iter()
+            .find(|view| view.handle == view_handle)
+        else {
+            self.scene.skipped.push(SkippedEntity {
+                kind: "Camera".to_string(),
+                reason: "camera view was not found".to_string(),
+                source,
+            });
+            return;
+        };
+        let direction = if view.direction.length_squared() > 1e-12 {
+            view.direction.normalize()
+        } else {
+            Vector3::UNIT_Z
+        };
+        let distance = view.lens_length.abs().max(1.0);
+        let eye = view.target + direction * distance;
+        let side = if direction.x.abs() < 0.9 {
+            direction.cross(&Vector3::UNIT_X).normalize()
+        } else {
+            direction.cross(&Vector3::UNIT_Y).normalize()
+        };
+        let up = side.cross(&direction).normalize();
+        let span = distance * 0.2;
+        let corners = [
+            view.target + side * span + up * span,
+            view.target - side * span + up * span,
+            view.target - side * span - up * span,
+            view.target + side * span - up * span,
+        ];
+        for index in 0..4 {
+            self.emit_dedicated(
+                &world(transform, vec![eye, corners[index]]),
+                entity,
+                frame,
+                source.clone(),
+            );
+            self.emit_dedicated(
+                &world(transform, vec![corners[index], corners[(index + 1) % 4]]),
+                entity,
+                frame,
+                source.clone(),
+            );
+        }
     }
 
     fn fallback(&mut self, entity: &EntityType, frame: &Frame, source: EntityRef) {
@@ -1312,6 +1634,21 @@ fn sort_table<'a>(
         }
         _ => None,
     })
+}
+
+fn transform_normals(transform: &Transform, normals: &[Vector3]) -> Vec<Vector3> {
+    normals
+        .iter()
+        .map(|normal| {
+            let turned = transform.apply_rotation(*normal);
+            let length = turned.length();
+            if length > 1e-12 {
+                turned * (1.0 / length)
+            } else {
+                *normal
+            }
+        })
+        .collect()
 }
 
 fn world(transform: &Transform, points: Vec<Vector3>) -> Vec<Vector3> {
@@ -1458,6 +1795,7 @@ fn clip_recent_geometry(
         if !fill.vertex_rgb.is_empty() {
             fill.vertex_rgb.clear();
         }
+        fill.normals.clear();
     }
     let glyphs = scene.glyphs.split_off(glyph_from.min(scene.glyphs.len()));
     scene.glyphs.extend(glyphs.into_iter().filter(|glyph| {
@@ -1948,18 +2286,9 @@ fn kind_of(entity: &EntityType) -> &'static str {
 pub const FALLBACK_KINDS: &[&str] = &[
     "Ray",
     "XLine",
-    "Mesh",
     "RasterImage",
-    "Solid3D",
-    "Region",
-    "Body",
-    "Surface",
-    "PolyfaceMesh",
     "Underlay",
     "Ole2Frame",
-    "PolygonMesh",
-    "Light",
-    "Camera",
     "ArcAlignedText",
     "RemoteText",
     "GeoPositionMarker",

@@ -19,6 +19,7 @@ mod scene;
 mod sheet;
 mod shx;
 mod style;
+mod tess;
 mod text_draw;
 mod ttf_atlas;
 mod visual_style;
@@ -49,6 +50,16 @@ pub fn model_lineweight_pixels(millimetres: f64, px_per_mm: f64) -> u32 {
     pixels.round().max(1.0) as u32
 }
 
+/// How ACIS solids, regions, bodies, and surfaces are drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SolidStyle {
+    /// Faces in the entity color, with the face boundary on top.
+    #[default]
+    ShadedWithEdges,
+    /// Boundary edges and parameter isolines. No faces.
+    Wireframe,
+}
+
 /// Model space, or one layout tab.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DisplaySpace {
@@ -68,6 +79,8 @@ pub struct CompileOptions {
     pub visual_style: VisualStyleRequest,
     /// Model space, or the named layout tab.
     pub space: DisplaySpace,
+    /// Solids are shaded with their edges unless this asks for isolines.
+    pub solid_style: SolidStyle,
 }
 
 impl Default for CompileOptions {
@@ -78,6 +91,7 @@ impl Default for CompileOptions {
             model_lineweight_px_per_mm: DEFAULT_MODEL_LINEWEIGHT_PX_PER_MM,
             visual_style: VisualStyleRequest::ActiveViewport,
             space: DisplaySpace::Model,
+            solid_style: SolidStyle::ShadedWithEdges,
         }
     }
 }

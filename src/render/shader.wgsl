@@ -3,6 +3,8 @@ struct Camera {
     viewport: vec2<f32>,
     px_per_mm: f32,
     _pad: f32,
+    z_scale: f32,
+    z_bias: f32,
 }
 
 @group(0) @binding(0)
@@ -53,7 +55,11 @@ fn vs_main(
     let px_ndc = vec2<f32>(2.0, 2.0) / max(camera.viewport, vec2<f32>(1.0, 1.0));
     let offset = normal * corner.y * width_px * 0.5 * px_ndc;
     let pos = mix(start_ndc, end_ndc, corner.x) + offset;
-    return VertexOut(vec4<f32>(pos, 0.0, 1.0), color);
+    let z0 = clamp(camera.z_scale * start.z + camera.z_bias, 0.0, 1.0);
+    let z1 = clamp(camera.z_scale * end.z + camera.z_bias, 0.0, 1.0);
+    // A small pull toward the camera keeps an edge from flickering on its face.
+    let depth = max(mix(z0, z1, corner.x) - 0.0015, 0.0);
+    return VertexOut(vec4<f32>(pos, depth, 1.0), color);
 }
 
 @fragment
@@ -64,12 +70,21 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 struct FillIn {
     @location(0) pos: vec4<f32>,
     @location(1) color: vec4<f32>,
+    @location(2) normal: vec4<f32>,
 }
 
 @vertex
 fn vs_fill(in: FillIn) -> VertexOut {
     let clip = camera.view_proj * vec4<f32>(in.pos.xyz, 1.0);
-    return VertexOut(clip, in.color);
+    let depth = clamp(camera.z_scale * in.pos.z + camera.z_bias, 0.0, 1.0);
+    var rgb = in.color.rgb;
+    if length(in.normal.xyz) > 1e-4 {
+        let n = normalize(in.normal.xyz);
+        let light = normalize(vec3<f32>(0.22, 0.42, 0.88));
+        let shade = 0.28 + 0.72 * abs(dot(n, light));
+        rgb = rgb * shade;
+    }
+    return VertexOut(vec4<f32>(clip.x, clip.y, depth * clip.w, clip.w), vec4<f32>(rgb, in.color.a));
 }
 
 @fragment
@@ -98,7 +113,8 @@ struct GlyphOut {
 @vertex
 fn vs_glyph(in: GlyphIn) -> GlyphOut {
     let clip = camera.view_proj * vec4<f32>(in.pos.xyz, 1.0);
-    return GlyphOut(clip, in.uv, in.color);
+    let depth = clamp(camera.z_scale * in.pos.z + camera.z_bias, 0.0, 1.0);
+    return GlyphOut(vec4<f32>(clip.x, clip.y, depth * clip.w, clip.w), in.uv, in.color);
 }
 
 @fragment

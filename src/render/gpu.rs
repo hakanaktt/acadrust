@@ -11,7 +11,8 @@ use super::scene::Scene;
 use super::{CompileOptions, View, DEFAULT_MODEL_LINEWEIGHT_PX_PER_MM};
 
 const INSTANCE_STRIDE: u64 = 64;
-const FILL_STRIDE: u64 = 32;
+const FILL_STRIDE: u64 = 48;
+const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
 const GLYPH_STRIDE: u64 = 48;
 const CAMERA_SIZE: u64 = 256;
 const SHADER: &str = include_str!("shader.wgsl");
@@ -82,6 +83,10 @@ pub struct Renderer {
     width: u32,
     height: u32,
     px_per_mm: f32,
+    z_scale: f32,
+    z_bias: f32,
+    depth: wgpu::Texture,
+    depth_view: wgpu::TextureView,
 }
 
 impl Renderer {
@@ -137,7 +142,7 @@ impl Renderer {
                 cull_mode: None,
                 ..Default::default()
             },
-            depth_stencil: None,
+            depth_stencil: Some(depth_state()),
             multisample: wgpu::MultisampleState {
                 count: samples,
                 ..Default::default()
@@ -169,7 +174,7 @@ impl Renderer {
                 cull_mode: None,
                 ..Default::default()
             },
-            depth_stencil: None,
+            depth_stencil: Some(depth_state()),
             multisample: wgpu::MultisampleState {
                 count: samples,
                 ..Default::default()
@@ -240,7 +245,7 @@ impl Renderer {
                 cull_mode: None,
                 ..Default::default()
             },
-            depth_stencil: None,
+            depth_stencil: Some(depth_state()),
             multisample: wgpu::MultisampleState {
                 count: samples,
                 ..Default::default()
@@ -272,6 +277,8 @@ impl Renderer {
         });
         let (atlas, atlas_view, atlas_bind) =
             atlas_resources(device, &glyph_layout, &atlas_sampler, 1, &[255]);
+        let depth = depth_texture(device, 1, 1, samples);
+        let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
         Self {
             pipeline,
             fill_pipeline,
@@ -302,12 +309,20 @@ impl Renderer {
             width: 0,
             height: 0,
             px_per_mm: DEFAULT_MODEL_LINEWEIGHT_PX_PER_MM as f32,
+            z_scale: 0.0,
+            z_bias: 0.5,
+            depth,
+            depth_view,
         }
     }
 
     pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
         self.width = width.max(1);
         self.height = height.max(1);
+        self.depth = depth_texture(device, self.width, self.height, self.samples);
+        self.depth_view = self
+            .depth
+            .create_view(&wgpu::TextureViewDescriptor::default());
         if self.samples == 1 {
             self.msaa = None;
             self.msaa_view = None;
@@ -341,6 +356,9 @@ impl Renderer {
         _viewport_px: (u32, u32),
     ) {
         self.px_per_mm = scene.model_lineweight_px_per_mm as f32;
+        let (z_scale, z_bias) = depth_map(scene);
+        self.z_scale = z_scale;
+        self.z_bias = z_bias;
         let mut bytes = Vec::new();
         for stroke in &scene.strokes {
             let rgb = if stroke.style.aci7 {
@@ -519,6 +537,7 @@ impl Renderer {
                         fill.style.opacity
                     },
                 ];
+                let normal = fill.normals.get(index).copied().unwrap_or(Vector3::ZERO);
                 push_f32(&mut bytes, point.x as f32);
                 push_f32(&mut bytes, point.y as f32);
                 push_f32(&mut bytes, point.z as f32);
@@ -526,6 +545,10 @@ impl Renderer {
                 for channel in color {
                     push_f32(&mut bytes, channel);
                 }
+                push_f32(&mut bytes, normal.x as f32);
+                push_f32(&mut bytes, normal.y as f32);
+                push_f32(&mut bytes, normal.z as f32);
+                push_f32(&mut bytes, 0.0);
             }
         }
         let size = (bytes.len() as u64).max(FILL_STRIDE);
@@ -557,7 +580,14 @@ impl Renderer {
         queue.write_buffer(
             &self.camera_buf,
             0,
-            &camera_bytes(view, width, height, self.px_per_mm),
+            &camera_bytes(
+                view,
+                width,
+                height,
+                self.px_per_mm,
+                self.z_scale,
+                self.z_bias,
+            ),
         );
         let (attachment, resolve) = if let Some(msaa) = self.msaa_view.as_ref() {
             (msaa, Some(color))
@@ -575,7 +605,14 @@ impl Renderer {
                     store: wgpu::StoreOp::Store,
                 },
             })],
-            depth_stencil_attachment: None,
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &self.depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
             timestamp_writes: None,
             occlusion_query_set: None,
             multiview_mask: None,
@@ -808,6 +845,11 @@ fn fill_layout() -> wgpu::VertexBufferLayout<'static> {
                 offset: 16,
                 shader_location: 1,
             },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 32,
+                shader_location: 2,
+            },
         ],
     }
 }
@@ -870,7 +912,14 @@ fn push_f32(bytes: &mut Vec<u8>, value: f32) {
     bytes.extend_from_slice(&value.to_le_bytes());
 }
 
-fn camera_bytes(view: &View, width: u32, height: u32, px_per_mm: f32) -> Vec<u8> {
+fn camera_bytes(
+    view: &View,
+    width: u32,
+    height: u32,
+    px_per_mm: f32,
+    z_scale: f32,
+    z_bias: f32,
+) -> Vec<u8> {
     let aspect = width as f64 / height.max(1) as f64;
     let world_h = view.height.max(1e-9);
     let world_w = world_h * aspect;
@@ -905,8 +954,72 @@ fn camera_bytes(view: &View, width: u32, height: u32, px_per_mm: f32) -> Vec<u8>
     push_f32(&mut bytes, height as f32);
     push_f32(&mut bytes, px_per_mm);
     push_f32(&mut bytes, 0.0);
+    push_f32(&mut bytes, z_scale);
+    push_f32(&mut bytes, z_bias);
     bytes.resize(CAMERA_SIZE as usize, 0);
     bytes
+}
+
+fn depth_map(scene: &Scene) -> (f32, f32) {
+    let mut min_z = f32::INFINITY;
+    let mut max_z = f32::NEG_INFINITY;
+    let mut include = |z: f64| {
+        let z = z as f32;
+        if z.is_finite() {
+            min_z = min_z.min(z);
+            max_z = max_z.max(z);
+        }
+    };
+    for stroke in &scene.strokes {
+        for point in &stroke.points {
+            include(point.z);
+        }
+    }
+    for fill in &scene.fills {
+        for point in &fill.triangles {
+            include(point.z);
+        }
+    }
+    for glyph in &scene.glyphs {
+        include(glyph.anchor.z);
+    }
+    if !min_z.is_finite() || !max_z.is_finite() || max_z - min_z < 1e-4 {
+        min_z = -0.5;
+        max_z = 0.5;
+    }
+    let pad = (max_z - min_z) * 0.02;
+    min_z -= pad;
+    max_z += pad;
+    let span = (max_z - min_z).max(1e-4);
+    // Larger world Z is closer to a plan camera, so it gets the smaller depth.
+    (-1.0 / span, max_z / span)
+}
+
+fn depth_texture(device: &wgpu::Device, width: u32, height: u32, samples: u32) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("acadrust-depth"),
+        size: wgpu::Extent3d {
+            width: width.max(1),
+            height: height.max(1),
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: samples.max(1),
+        dimension: wgpu::TextureDimension::D2,
+        format: DEPTH_FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    })
+}
+
+fn depth_state() -> wgpu::DepthStencilState {
+    wgpu::DepthStencilState {
+        format: DEPTH_FORMAT,
+        depth_write_enabled: Some(true),
+        depth_compare: Some(wgpu::CompareFunction::LessEqual),
+        stencil: wgpu::StencilState::default(),
+        bias: wgpu::DepthBiasState::default(),
+    }
 }
 
 fn padded_bytes_per_row(width: u32) -> u64 {
