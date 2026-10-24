@@ -1978,12 +1978,25 @@ impl Compiler<'_> {
         transform: &Transform,
         source: EntityRef,
     ) {
+        if !underlay
+            .flags
+            .contains(crate::entities::UnderlayDisplayFlags::ON)
+        {
+            self.scene.skipped.push(SkippedEntity {
+                kind: "Underlay".to_string(),
+                reason: "underlay is off".to_string(),
+                source,
+            });
+            return;
+        }
         let kind = if underlay.underlay_type == crate::entities::UnderlayType::Dgn {
             "dgn"
         } else {
             "dwf"
         };
-        if underlay.clip_boundary_vertices.len() >= 2 {
+        if underlay.flags.contains(crate::entities::UnderlayDisplayFlags::CLIPPING)
+            && underlay.clip_boundary_vertices.len() >= 2
+        {
             let mut points: Vec<Vector3> = underlay
                 .clip_boundary_vertices
                 .iter()
@@ -2011,6 +2024,10 @@ impl Compiler<'_> {
         }
         match super::external::read_dwf(&bytes) {
             Ok(vectors) => {
+                let stroke_from = self.scene.strokes.len();
+                let fill_from = self.scene.fills.len();
+                let glyph_from = self.scene.glyphs.len();
+                let picture_from = self.scene.pictures.len();
                 for stroke in vectors.strokes {
                     let points = world(
                         transform,
@@ -2020,6 +2037,25 @@ impl Compiler<'_> {
                             .collect(),
                     );
                     self.emit_dedicated(&points, entity, frame, source.clone());
+                }
+                if underlay.flags.contains(crate::entities::UnderlayDisplayFlags::CLIPPING)
+                    && !underlay.clip_inverted
+                {
+                    let boundary = world(
+                        transform,
+                        underlay.world_clip_boundary(),
+                    )
+                    .into_iter()
+                    .map(|point| crate::types::Vector2::new(point.x, point.y))
+                    .collect::<Vec<_>>();
+                    clip_recent_geometry(
+                        &mut self.scene,
+                        stroke_from,
+                        fill_from,
+                        glyph_from,
+                        picture_from,
+                        &boundary,
+                    );
                 }
             }
             Err(reason) => {
@@ -2192,6 +2228,10 @@ impl Compiler<'_> {
         match super::pdf_page::read_page(&bytes, page) {
             Ok(vectors) => {
                 let empty = vectors.strokes.is_empty() && vectors.fills.is_empty();
+                let stroke_from = self.scene.strokes.len();
+                let fill_from = self.scene.fills.len();
+                let glyph_from = self.scene.glyphs.len();
+                let picture_from = self.scene.pictures.len();
                 let map = |point: (f64, f64)| {
                     underlay_point(underlay, vectors.media_min, vectors.media_max, point)
                 };
@@ -2217,6 +2257,23 @@ impl Compiler<'_> {
                     frame,
                     source.clone(),
                 );
+                if underlay.flags.contains(crate::entities::UnderlayDisplayFlags::CLIPPING)
+                    && !underlay.clip_inverted
+                    && underlay.clip_boundary_vertices.len() >= 3
+                {
+                    let boundary = world(transform, underlay.world_clip_boundary())
+                        .into_iter()
+                        .map(|point| crate::types::Vector2::new(point.x, point.y))
+                        .collect::<Vec<_>>();
+                    clip_recent_geometry(
+                        &mut self.scene,
+                        stroke_from,
+                        fill_from,
+                        glyph_from,
+                        picture_from,
+                        &boundary,
+                    );
+                }
                 if empty {
                     self.scene.skipped.push(SkippedEntity {
                         kind: "Underlay".to_string(),
@@ -2903,11 +2960,9 @@ fn underlay_point(
     let local_x = (point.0 - media_min.0) * underlay.x_scale;
     let local_y = (point.1 - media_min.1) * underlay.y_scale;
     let (sin, cos) = underlay.rotation.sin_cos();
-    Vector3::new(
-        underlay.insertion_point.x + cos * local_x - sin * local_y,
-        underlay.insertion_point.y + sin * local_x + cos * local_y,
-        underlay.insertion_point.z,
-    )
+    underlay.insertion_point
+        + Matrix3::arbitrary_axis(underlay.normal)
+            * Vector3::new(cos * local_x - sin * local_y, sin * local_x + cos * local_y, 0.0)
 }
 
 fn world(transform: &Transform, points: Vec<Vector3>) -> Vec<Vector3> {
