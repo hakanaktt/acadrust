@@ -2625,11 +2625,16 @@ impl Compiler<'_> {
         if direct.is_file() {
             return std::fs::read(direct).ok();
         }
-        let name = direct.file_name()?;
         for dir in self.resource_dirs {
-            let candidate = dir.join(name);
+            let candidate = dir.join(direct);
             if candidate.is_file() {
                 return std::fs::read(candidate).ok();
+            }
+            if let Some(name) = direct.file_name() {
+                let candidate = dir.join(name);
+                if candidate.is_file() {
+                    return std::fs::read(candidate).ok();
+                }
             }
         }
         None
