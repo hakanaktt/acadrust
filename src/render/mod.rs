@@ -14,6 +14,7 @@ mod clip;
 mod compile;
 mod curves;
 mod dash;
+mod external;
 mod gpu;
 mod hatch_fill;
 mod metafile;

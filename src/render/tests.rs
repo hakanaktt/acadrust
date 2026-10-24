@@ -197,22 +197,22 @@ fn frozen_layer_is_skipped() {
 }
 
 #[test]
-fn unfinished_entities_stay_on_the_fallback_list() {
+fn fallback_list_is_empty_and_a_ray_is_a_line() {
+    assert!(super::FALLBACK_KINDS.is_empty());
     let mut doc = doc();
     doc.add_entity(EntityType::Ray(crate::entities::Ray::new(
-        Vector3::ZERO,
+        Vector3::new(2.0, 3.0, 0.0),
         Vector3::new(1.0, 0.0, 0.0),
     )))
     .unwrap();
     let scene = compile(&doc, &CompileOptions::default());
-    assert_eq!(scene.fallback_kinds(), vec!["Ray"]);
-    assert!(scene
-        .strokes
-        .iter()
-        .all(|stroke| stroke.path == DrawPath::Fallback));
-    assert!(super::FALLBACK_KINDS.contains(&"XLine"));
-    assert!(!super::FALLBACK_KINDS.contains(&"Solid3D"));
-    assert!(!super::FALLBACK_KINDS.contains(&"Circle"));
+    assert!(scene.fallbacks.is_empty());
+    assert_eq!(scene.strokes.len(), 1);
+    assert_eq!(scene.strokes[0].path, DrawPath::Dedicated);
+    assert!((scene.strokes[0].points[0].x - 2.0).abs() < 1e-9);
+    assert!((scene.strokes[0].points[0].y - 3.0).abs() < 1e-9);
+    assert!(scene.strokes[0].points[1].x > 2.0);
+    assert!((scene.strokes[0].points[1].y - 3.0).abs() < 1e-9);
 }
 
 #[test]
@@ -1750,4 +1750,169 @@ fn geo_marker_draws_its_circle() {
         .points
         .iter()
         .any(|point| { ((point.x - 5.0).abs() < 1e-4) && ((point.y - 4.0).abs() < 1e-4) }));
+}
+
+#[test]
+fn dwf_line_is_placed_at_the_underlay_insertion() {
+    let dir = std::env::temp_dir().join(format!("acadrust-dwf-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("sheet.dwf");
+    std::fs::write(&path, b"(DWF V06.00)\n(Line 1,2 4,2)\n").unwrap();
+    let mut doc = doc();
+    let mut definition = crate::entities::UnderlayDefinition::dwf(path.to_str().unwrap(), "");
+    definition.handle = doc.allocate_handle();
+    let handle = definition.handle;
+    doc.objects.insert(
+        handle,
+        crate::objects::ObjectType::UnderlayDefinition(definition),
+    );
+    let mut underlay = crate::entities::Underlay::dwf();
+    underlay.definition_handle = handle;
+    underlay.insertion_point = Vector3::new(10.0, 20.0, 0.0);
+    doc.add_entity(EntityType::Underlay(underlay)).unwrap();
+    let mut options = CompileOptions::default();
+    options.resource_dirs.push(dir.clone());
+    let scene = compile(&doc, &options);
+    assert!(scene.fallbacks.is_empty());
+    let line = scene
+        .strokes
+        .iter()
+        .find(|stroke| stroke.points.len() == 2)
+        .expect("dwf line");
+    assert!((line.points[0].x - 11.0).abs() < 1e-6 && (line.points[0].y - 22.0).abs() < 1e-6);
+    assert!((line.points[1].x - 14.0).abs() < 1e-6 && (line.points[1].y - 22.0).abs() < 1e-6);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn point_cloud_draws_its_stored_extents() {
+    let mut doc = doc();
+    doc.add_entity(EntityType::Extended(Box::new(
+        crate::entities::ExtendedEntity {
+            common: crate::entities::EntityCommon::default(),
+            data: crate::entities::ExtendedEntityData::PointCloud(
+                crate::entities::PointCloudData {
+                    class_version: 0,
+                    origin: Vector3::ZERO,
+                    saved_filename: String::new(),
+                    source_files: Vec::new(),
+                    extents_min: Vector3::new(1.0, 2.0, 3.0),
+                    extents_max: Vector3::new(4.0, 5.0, 6.0),
+                    point_count: 0,
+                    ucs_name: String::new(),
+                    ucs_origin: Vector3::ZERO,
+                    ucs_x_direction: Vector3::UNIT_X,
+                    ucs_y_direction: Vector3::UNIT_Y,
+                    ucs_z_direction: Vector3::UNIT_Z,
+                    definition_handle: Handle::NULL,
+                    reactor_handle: Handle::NULL,
+                    show_intensity: false,
+                    intensity_scheme: 0,
+                    minimum_intensity: 0.0,
+                    maximum_intensity: 0.0,
+                    low_intensity_threshold: 0.0,
+                    high_intensity_threshold: 0.0,
+                    show_clipping: false,
+                    clippings: Vec::new(),
+                },
+            ),
+        },
+    )))
+    .unwrap();
+    let scene = compile(&doc, &CompileOptions::default());
+    assert!(scene.fallbacks.is_empty());
+    assert_eq!(scene.strokes.len(), 12);
+    assert!(scene.strokes.iter().any(|stroke| {
+        stroke.points.contains(&Vector3::new(1.0, 2.0, 3.0))
+            && stroke.points.contains(&Vector3::new(4.0, 2.0, 3.0))
+    }));
+}
+
+#[test]
+fn coordination_model_draws_the_definition_box() {
+    let mut doc = doc();
+    let mut definition = crate::objects::ClassObject::new(
+        crate::objects::ClassObjectData::NavisworksModelDefinition(
+            crate::objects::NavisworksModelDefinition {
+                extents_min: Vector3::ZERO,
+                extents_max: Vector3::new(2.0, 2.0, 2.0),
+                ..crate::objects::NavisworksModelDefinition::default()
+            },
+        ),
+    );
+    definition.handle = doc.allocate_handle();
+    let handle = definition.handle;
+    doc.objects
+        .insert(handle, crate::objects::ObjectType::ClassObject(definition));
+    doc.add_entity(EntityType::Extended(Box::new(
+        crate::entities::ExtendedEntity {
+            common: crate::entities::EntityCommon::default(),
+            data: crate::entities::ExtendedEntityData::CoordinationModel(
+                crate::entities::CoordinationModelData {
+                    flags: 0,
+                    definition_handle: handle,
+                    transform: [
+                        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0,
+                        1.0,
+                    ],
+                    unit_factor: 1.0,
+                },
+            ),
+        },
+    )))
+    .unwrap();
+    let scene = compile(&doc, &CompileOptions::default());
+    assert!(scene.fallbacks.is_empty());
+    assert!(scene
+        .strokes
+        .iter()
+        .any(|stroke| stroke.points.contains(&Vector3::new(2.0, 2.0, 2.0))));
+}
+
+#[test]
+fn arch_profile_and_proxy_polyline_are_dedicated() {
+    let mut doc = doc();
+    doc.add_entity(EntityType::Extended(Box::new(
+        crate::entities::ExtendedEntity {
+            common: crate::entities::EntityCommon::default(),
+            data: crate::entities::ExtendedEntityData::Arch(crate::classes::arch::ArchEntityData {
+                dxf_name: "AEC_WALL".to_string(),
+                cpp_class_name: String::new(),
+                kind: crate::classes::arch::ArchKind::Wall,
+                profiles: vec![vec![Vector3::ZERO, Vector3::new(4.0, 0.0, 0.0)]],
+                dwg_type_code: 0,
+                dwg_handle_bits: 0,
+                dwg_source_version: None,
+                raw_dwg_data: None,
+                raw_dxf_codes: None,
+                fields: Vec::new(),
+                preview: Vec::new(),
+            }),
+        },
+    )))
+    .unwrap();
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&2u32.to_le_bytes());
+    for value in [0.0_f64, 1.0, 0.0, 6.0, 1.0, 0.0] {
+        payload.extend_from_slice(&value.to_le_bytes());
+    }
+    let graphics = crate::entities::ProxyGraphics {
+        records: vec![crate::entities::ProxyGraphicRecord::Unknown {
+            record_type: 6,
+            data: payload,
+        }],
+    };
+    let mut unknown = crate::entities::UnknownEntity::new("CUSTOM");
+    unknown.common.graphic_data = graphics.encode();
+    doc.add_entity(EntityType::Unknown(unknown)).unwrap();
+    let scene = compile(&doc, &CompileOptions::default());
+    assert!(scene.fallbacks.is_empty());
+    assert!(scene.strokes.iter().any(|stroke| {
+        stroke.points.first() == Some(&Vector3::ZERO)
+            && stroke.points.last() == Some(&Vector3::new(4.0, 0.0, 0.0))
+    }));
+    assert!(scene.strokes.iter().any(|stroke| {
+        stroke.points.first() == Some(&Vector3::new(0.0, 1.0, 0.0))
+            && stroke.points.last() == Some(&Vector3::new(6.0, 1.0, 0.0))
+    }));
 }

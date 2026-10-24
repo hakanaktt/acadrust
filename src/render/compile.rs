@@ -494,14 +494,13 @@ impl Compiler<'_> {
                 crate::entities::ExtendedEntityData::LayoutPrintConfig(_)
                 | crate::entities::ExtendedEntityData::Format(_)
                 | crate::entities::ExtendedEntityData::DynamicBlock(_) => {}
-                crate::entities::ExtendedEntityData::Legacy(data) => match data {
-                    crate::entities::LegacyEntityData::Load { .. }
-                    | crate::entities::LegacyEntityData::Jump { .. } => {}
-                    crate::entities::LegacyEntityData::Repeat
-                    | crate::entities::LegacyEntityData::EndRepeat { .. } => {
-                        self.fallback(entity, frame, source);
-                    }
-                },
+                crate::entities::ExtendedEntityData::Legacy(_) => {
+                    self.scene.skipped.push(SkippedEntity {
+                        kind: "Legacy".to_string(),
+                        reason: "legacy command is not graphical".to_string(),
+                        source,
+                    });
+                }
                 crate::entities::ExtendedEntityData::SectionObject(data) => {
                     self.draw_section_object(data, entity, frame, transform, source);
                 }
@@ -517,7 +516,39 @@ impl Compiler<'_> {
                 crate::entities::ExtendedEntityData::GeoPositionMarker(data) => {
                     self.draw_geo_marker(data, entity, frame, transform, source);
                 }
-                _ => self.fallback(entity, frame, source),
+                crate::entities::ExtendedEntityData::PointCloud(data) => {
+                    self.draw_point_cloud_box(
+                        data.extents_min,
+                        data.extents_max,
+                        &data.clippings,
+                        entity,
+                        frame,
+                        transform,
+                        source,
+                    );
+                }
+                crate::entities::ExtendedEntityData::PointCloudEx(data) => {
+                    self.draw_point_cloud_box(
+                        data.extents_min,
+                        data.extents_max,
+                        &[],
+                        entity,
+                        frame,
+                        transform,
+                        source,
+                    );
+                }
+                crate::entities::ExtendedEntityData::CoordinationModel(data) => {
+                    self.draw_coordination(data, entity, frame, transform, source);
+                }
+                crate::entities::ExtendedEntityData::Proxy(_)
+                | crate::entities::ExtendedEntityData::RegisteredClass(_)
+                | crate::entities::ExtendedEntityData::OleFrame(_) => {
+                    self.draw_cached_graphics(entity, frame, transform, source);
+                }
+                crate::entities::ExtendedEntityData::Arch(data) => {
+                    self.draw_arch(data, entity, frame, transform, source);
+                }
             },
             EntityType::Viewport(viewport) => {
                 self.draw_viewport(viewport, entity, frame, transform, source);
@@ -557,9 +588,9 @@ impl Compiler<'_> {
             EntityType::Underlay(underlay) => {
                 self.draw_underlay(underlay, entity, frame, transform, source);
             }
-            EntityType::Ray(_) | EntityType::XLine(_) | EntityType::Unknown(_) => {
-                self.fallback(entity, frame, source)
-            }
+            EntityType::Ray(ray) => self.draw_ray(ray, entity, frame, transform, source),
+            EntityType::XLine(line) => self.draw_xline(line, entity, frame, transform, source),
+            EntityType::Unknown(_) => self.draw_cached_graphics(entity, frame, transform, source),
         }
     }
 
@@ -1568,6 +1599,371 @@ impl Compiler<'_> {
         }
     }
 
+    fn draw_ray(
+        &mut self,
+        ray: &crate::entities::Ray,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        self.draw_infinite(
+            ray.base_point,
+            ray.direction,
+            false,
+            entity,
+            frame,
+            transform,
+            source,
+        );
+    }
+
+    fn draw_xline(
+        &mut self,
+        line: &crate::entities::XLine,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        self.draw_infinite(
+            line.base_point,
+            line.direction,
+            true,
+            entity,
+            frame,
+            transform,
+            source,
+        );
+    }
+
+    fn draw_infinite(
+        &mut self,
+        origin: Vector3,
+        direction: Vector3,
+        both_ways: bool,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        if direction.length_squared() <= 1e-18 {
+            self.scene.skipped.push(SkippedEntity {
+                kind: kind_of(entity).to_string(),
+                reason: "direction is zero".to_string(),
+                source,
+            });
+            return;
+        }
+        let direction = direction.normalize();
+        let reach = infinite_reach(self.doc);
+        let start = if both_ways {
+            origin - direction * reach
+        } else {
+            origin
+        };
+        let end = origin + direction * reach;
+        self.emit_dedicated(&world(transform, vec![start, end]), entity, frame, source);
+    }
+
+    fn draw_point_cloud_box(
+        &mut self,
+        min: Vector3,
+        max: Vector3,
+        clips: &[crate::entities::PointCloudClip],
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        if !extent_is_real(min, max) {
+            self.scene.skipped.push(SkippedEntity {
+                kind: kind_of(entity).to_string(),
+                reason: "point cloud extents were not stored".to_string(),
+                source,
+            });
+            return;
+        }
+        self.draw_extent_edges(min, max, entity, frame, transform, source.clone());
+        for clip in clips {
+            if clip.vertices.len() < 2 {
+                continue;
+            }
+            let mut points: Vec<Vector3> = clip
+                .vertices
+                .iter()
+                .map(|point| Vector3::new(point.x, point.y, min.z))
+                .collect();
+            points.push(points[0]);
+            self.emit_dedicated(&world(transform, points), entity, frame, source.clone());
+        }
+    }
+
+    fn draw_coordination(
+        &mut self,
+        data: &crate::entities::CoordinationModelData,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        let definition = self
+            .doc
+            .objects
+            .get(&data.definition_handle)
+            .and_then(|object| match object {
+                crate::objects::ObjectType::ClassObject(class) => match &class.data {
+                    crate::objects::ClassObjectData::NavisworksModelDefinition(definition) => {
+                        Some(definition)
+                    }
+                    _ => None,
+                },
+                _ => None,
+            });
+        let Some(definition) = definition else {
+            self.scene.skipped.push(SkippedEntity {
+                kind: "CoordinationModel".to_string(),
+                reason: "coordination model extents were not stored".to_string(),
+                source,
+            });
+            return;
+        };
+        if !extent_is_real(definition.extents_min, definition.extents_max) {
+            self.scene.skipped.push(SkippedEntity {
+                kind: "CoordinationModel".to_string(),
+                reason: "coordination model extents were not stored".to_string(),
+                source,
+            });
+            return;
+        }
+        let scale = if data.unit_factor.is_finite() && data.unit_factor.abs() > 1e-12 {
+            data.unit_factor
+        } else {
+            1.0
+        };
+        let placement = matrix_from_rows(&data.transform);
+        let corners = box_corners(definition.extents_min, definition.extents_max)
+            .map(|corner| placement.transform_point(corner * scale));
+        for edge in box_edges(&corners) {
+            self.emit_dedicated(
+                &world(transform, edge.to_vec()),
+                entity,
+                frame,
+                source.clone(),
+            );
+        }
+    }
+
+    fn draw_cached_graphics(
+        &mut self,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        let kind = kind_of(entity).to_string();
+        let Some(graphics) = entity.common().proxy_graphics() else {
+            self.scene.skipped.push(SkippedEntity {
+                kind,
+                reason: "proxy graphics were not stored".to_string(),
+                source,
+            });
+            return;
+        };
+        if !self.draw_proxy_records(&graphics, entity, frame, transform, source.clone()) {
+            self.scene.skipped.push(SkippedEntity {
+                kind,
+                reason: "proxy graphics had no supported records".to_string(),
+                source,
+            });
+        }
+    }
+
+    fn draw_arch(
+        &mut self,
+        data: &crate::classes::arch::ArchEntityData,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        let mut drew = false;
+        for profile in &data.profiles {
+            if profile.len() >= 2 {
+                self.emit_dedicated(
+                    &world(transform, profile.clone()),
+                    entity,
+                    frame,
+                    source.clone(),
+                );
+                drew = true;
+            }
+        }
+        if let Some(wall) = data.straight_wall_geometry() {
+            let direction = wall.end - wall.start;
+            let mut side = Vector3::new(-direction.y, direction.x, 0.0);
+            if side.length_squared() > 1e-18 {
+                side = side.normalize() * wall.width;
+                let ring = vec![
+                    wall.start,
+                    wall.end,
+                    wall.end + side,
+                    wall.start + side,
+                    wall.start,
+                ];
+                self.emit_dedicated(&world(transform, ring), entity, frame, source.clone());
+                drew = true;
+            }
+        }
+        if !drew {
+            self.draw_cached_graphics(entity, frame, transform, source);
+        }
+    }
+
+    fn draw_proxy_records(
+        &mut self,
+        graphics: &crate::entities::ProxyGraphics,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) -> bool {
+        let mut drew = false;
+        for record in &graphics.records {
+            match record {
+                crate::entities::ProxyGraphicRecord::UnicodeText(text) => {
+                    self.draw_label(
+                        &super::text_draw::GlyphLabel {
+                            text: &text.text,
+                            shape_number: None,
+                            insertion: text.position,
+                            alignment: text.position,
+                            use_alignment: false,
+                            height: text.height.abs().max(1e-6),
+                            rotation: text.direction.y.atan2(text.direction.x),
+                            width_factor: if text.width_factor == 0.0 {
+                                1.0
+                            } else {
+                                text.width_factor
+                            },
+                            oblique: text.oblique_angle,
+                            horizontal: 0,
+                            vertical: 0,
+                            normal: text.normal,
+                            backward: false,
+                            upside_down: false,
+                        },
+                        "Standard",
+                        entity,
+                        frame,
+                        transform,
+                        source.clone(),
+                    );
+                    drew = true;
+                }
+                crate::entities::ProxyGraphicRecord::Unknown {
+                    record_type: 6,
+                    data,
+                } => {
+                    if let Some(points) = crate::classes::arch::polyline_from_type6(data) {
+                        self.emit_dedicated(
+                            &world(transform, points),
+                            entity,
+                            frame,
+                            source.clone(),
+                        );
+                        drew = true;
+                    }
+                }
+                crate::entities::ProxyGraphicRecord::FillOff
+                | crate::entities::ProxyGraphicRecord::Unknown { .. } => {}
+            }
+        }
+        drew
+    }
+
+    fn draw_placed_underlay(
+        &mut self,
+        underlay: &crate::entities::Underlay,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        let kind = if underlay.underlay_type == crate::entities::UnderlayType::Dgn {
+            "dgn"
+        } else {
+            "dwf"
+        };
+        if underlay.clip_boundary_vertices.len() >= 2 {
+            let mut points: Vec<Vector3> = underlay
+                .clip_boundary_vertices
+                .iter()
+                .map(|point| place_underlay_local(underlay, point.x, point.y))
+                .collect();
+            points.push(points[0]);
+            self.emit_dedicated(&world(transform, points), entity, frame, source.clone());
+        }
+        let path = self.underlay_path(underlay);
+        let Some(bytes) = self.read_resource(&path) else {
+            self.scene.skipped.push(SkippedEntity {
+                kind: "Underlay".to_string(),
+                reason: format!("{kind} file {path} was not found"),
+                source,
+            });
+            return;
+        };
+        if underlay.underlay_type == crate::entities::UnderlayType::Dgn {
+            self.scene.skipped.push(SkippedEntity {
+                kind: "Underlay".to_string(),
+                reason: "dgn elements were not decoded".to_string(),
+                source,
+            });
+            return;
+        }
+        match super::external::read_dwf(&bytes) {
+            Ok(vectors) => {
+                for stroke in vectors.strokes {
+                    let points = world(
+                        transform,
+                        stroke
+                            .into_iter()
+                            .map(|(x, y)| place_underlay_local(underlay, x, y))
+                            .collect(),
+                    );
+                    self.emit_dedicated(&points, entity, frame, source.clone());
+                }
+            }
+            Err(reason) => {
+                self.scene.skipped.push(SkippedEntity {
+                    kind: "Underlay".to_string(),
+                    reason: reason.to_string(),
+                    source,
+                });
+            }
+        }
+    }
+
+    fn draw_extent_edges(
+        &mut self,
+        min: Vector3,
+        max: Vector3,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        let corners = box_corners(min, max);
+        for edge in box_edges(&corners) {
+            self.emit_dedicated(
+                &world(transform, edge.to_vec()),
+                entity,
+                frame,
+                source.clone(),
+            );
+        }
+    }
+
     fn draw_raster(
         &mut self,
         image: &crate::entities::RasterImage,
@@ -1681,7 +2077,7 @@ impl Compiler<'_> {
         source: EntityRef,
     ) {
         if underlay.underlay_type != crate::entities::UnderlayType::Pdf {
-            self.fallback(entity, frame, source);
+            self.draw_placed_underlay(underlay, entity, frame, transform, source);
             return;
         }
         if !underlay
@@ -2308,6 +2704,39 @@ fn underlay_page(
         .filter(|page| *page > 0)
         .map(|page| page - 1)
         .unwrap_or(0)
+}
+
+fn place_underlay_local(underlay: &crate::entities::Underlay, x: f64, y: f64) -> Vector3 {
+    underlay_point(underlay, (0.0, 0.0), (1.0, 1.0), (x, y))
+}
+
+fn infinite_reach(doc: &crate::document::CadDocument) -> f64 {
+    let min = doc.header.model_space_extents_min;
+    let max = doc.header.model_space_extents_max;
+    if min.x < max.x && min.y < max.y {
+        (max - min).length().max(1.0) * 2.0
+    } else {
+        1000.0
+    }
+}
+
+fn extent_is_real(min: Vector3, max: Vector3) -> bool {
+    min.x <= max.x
+        && min.y <= max.y
+        && min.z <= max.z
+        && (min.x < max.x || min.y < max.y || min.z < max.z)
+        && min.x.is_finite()
+        && max.x.is_finite()
+        && min.y.is_finite()
+        && max.y.is_finite()
+}
+
+fn matrix_from_rows(values: &[f64; 16]) -> crate::types::Matrix4 {
+    let mut matrix = crate::types::Matrix4::zero();
+    for row in 0..4 {
+        matrix.m[row].copy_from_slice(&values[row * 4..row * 4 + 4]);
+    }
+    matrix
 }
 
 fn underlay_point(
@@ -2984,18 +3413,5 @@ fn kind_of(entity: &EntityType) -> &'static str {
     }
 }
 
-/// Kinds whose only picture today is the extents box.
-pub const FALLBACK_KINDS: &[&str] = &[
-    "Ray",
-    "XLine",
-    "Underlay",
-    "CoordinationModel",
-    "PointCloud",
-    "PointCloudEx",
-    "Proxy",
-    "OleFrame",
-    "Legacy",
-    "RegisteredClass",
-    "Arch",
-    "Unknown",
-];
+/// Kinds whose only picture is still an extents box. Phase 8 leaves this empty.
+pub const FALLBACK_KINDS: &[&str] = &[];
