@@ -340,9 +340,14 @@ impl Compiler<'_> {
                 }
             }
             EntityType::Wipeout(wipeout) => {
-                let corners = wipeout.corners();
-                let ring = world(transform, corners.to_vec());
-                self.emit_fill(&fan_triangles(&ring), entity, frame, source, true);
+                if !wipeout
+                    .flags
+                    .contains(crate::entities::WipeoutDisplayFlags::SHOW_IMAGE)
+                {
+                    return;
+                }
+                let triangles = wipeout_triangles(wipeout);
+                self.emit_fill(&world(transform, triangles), entity, frame, source, true);
             }
             EntityType::Hatch(hatch) => {
                 if hatch.is_solid || hatch.gradient_color.is_enabled() {
@@ -2801,6 +2806,73 @@ fn infinite_reach(doc: &crate::document::CadDocument) -> f64 {
     } else {
         1000.0
     }
+}
+
+fn wipeout_triangles(wipeout: &crate::entities::Wipeout) -> Vec<Vector3> {
+    let outer = wipeout.corners().to_vec();
+    if !wipeout.clipping_enabled
+        || !wipeout
+            .flags
+            .contains(crate::entities::WipeoutDisplayFlags::USE_CLIPPING_BOUNDARY)
+        || wipeout.clip_boundary_vertices.len() < 2
+    {
+        return fan_triangles(&outer);
+    }
+    let boundary = if wipeout.clip_type == crate::entities::WipeoutClipType::Rectangular
+        && wipeout.clip_boundary_vertices.len() >= 2
+    {
+        let min = wipeout.clip_boundary_vertices[0];
+        let max = wipeout.clip_boundary_vertices[1];
+        [
+            crate::types::Vector2::new(min.x.min(max.x), min.y.min(max.y)),
+            crate::types::Vector2::new(max.x.max(min.x), min.y.min(max.y)),
+            crate::types::Vector2::new(max.x.max(min.x), max.y.max(min.y)),
+            crate::types::Vector2::new(min.x.min(max.x), max.y.max(min.y)),
+        ]
+        .to_vec()
+    } else {
+        wipeout.clip_boundary_vertices.clone()
+    };
+    let to_world = |point: crate::types::Vector2| {
+        wipeout.insertion_point
+            + wipeout.u_vector * (point.x + wipeout.size.x * 0.5)
+            + wipeout.v_vector * (wipeout.size.y * 0.5 - point.y)
+    };
+    let hole: Vec<Vector3> = boundary.into_iter().map(to_world).collect();
+    if hole.len() < 3 {
+        return fan_triangles(&outer);
+    }
+    let mut rings = outer.clone();
+    let mut flat = Vec::with_capacity((outer.len() + hole.len()) * 2);
+    for point in &outer {
+        flat.extend([point.x, point.y]);
+    }
+    let hole_start = outer.len();
+    rings.extend(hole.iter().copied());
+    for point in &hole {
+        flat.extend([point.x, point.y]);
+    }
+    let indices = if wipeout.clip_mode == crate::entities::WipeoutClipMode::Inside {
+        earcutr::earcut(&flat, &[hole_start], 2).unwrap_or_default()
+    } else {
+        let mut clipped = Vec::new();
+        let hole_flat: Vec<f64> = hole.iter().flat_map(|point| [point.x, point.y]).collect();
+        let indices = earcutr::earcut(&hole_flat, &[], 2).unwrap_or_default();
+        for index in indices {
+            if let Some(point) = hole.get(index) {
+                clipped.push(*point);
+            }
+        }
+        return if clipped.is_empty() {
+            fan_triangles(&outer)
+        } else {
+            clipped
+        };
+    };
+    indices
+        .into_iter()
+        .filter_map(|index| rings.get(index).copied())
+        .collect()
 }
 
 fn extent_is_real(min: Vector3, max: Vector3) -> bool {
