@@ -702,6 +702,15 @@ impl Compiler<'_> {
         self.pattern_scale = saved_scale;
         self.viewport_frozen = saved_frozen;
         self.scene.visual_style = saved_visual;
+        clip_viewport_depth(
+            &mut self.scene,
+            stroke_from,
+            fill_from,
+            glyph_from,
+            picture_from,
+            viewport,
+            scale,
+        );
         clip_recent_geometry(
             &mut self.scene,
             stroke_from,
@@ -2650,6 +2659,42 @@ impl Compiler<'_> {
         }
         self.scene.fallbacks.push(FallbackEntry { kind, source });
     }
+}
+
+fn clip_viewport_depth(
+    scene: &mut Scene,
+    stroke_from: usize,
+    fill_from: usize,
+    glyph_from: usize,
+    picture_from: usize,
+    viewport: &crate::entities::Viewport,
+    scale: f64,
+) {
+    if !viewport.status.front_clipping && !viewport.status.back_clipping {
+        return;
+    }
+    let depth = |point: Vector3| {
+        (point - viewport.center).dot(&viewport.view_direction) / scale.max(1e-12)
+    };
+    let visible = |point: Vector3| {
+        let value = depth(point);
+        (!viewport.status.front_clipping || value <= viewport.front_clip_z)
+            && (!viewport.status.back_clipping || value >= viewport.back_clip_z)
+    };
+    let strokes = scene.strokes.split_off(stroke_from.min(scene.strokes.len()));
+    scene
+        .strokes
+        .extend(strokes.into_iter().filter(|stroke| stroke.points.iter().any(|point| visible(*point))));
+    let fills = scene.fills.split_off(fill_from.min(scene.fills.len()));
+    scene
+        .fills
+        .extend(fills.into_iter().filter(|fill| fill.triangles.iter().any(|point| visible(*point))));
+    let pictures = scene.pictures.split_off(picture_from.min(scene.pictures.len()));
+    scene
+        .pictures
+        .extend(pictures.into_iter().filter(|picture| picture.triangles.iter().any(|point| visible(*point))));
+    let glyphs = scene.glyphs.split_off(glyph_from.min(scene.glyphs.len()));
+    scene.glyphs.extend(glyphs.into_iter().filter(|glyph| visible(glyph.anchor)));
 }
 
 fn emit_chain(
