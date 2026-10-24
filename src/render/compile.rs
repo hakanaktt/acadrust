@@ -1001,18 +1001,28 @@ impl Compiler<'_> {
         child_path.push(insert.common.handle);
         let base = Transform::from_translation(record.base_point * -1.0);
         self.stack.insert(key.clone());
-        let stroke_from = self.scene.strokes.len();
-        let fill_from = self.scene.fills.len();
-        let glyph_from = self.scene.glyphs.len();
-        let picture_from = self.scene.pictures.len();
         let handles = self.ordered_handles(record);
         for cell in cells {
             let to_world = base.then(&cell).then(transform);
+            let stroke_from = self.scene.strokes.len();
+            let fill_from = self.scene.fills.len();
+            let glyph_from = self.scene.glyphs.len();
+            let picture_from = self.scene.pictures.len();
             for handle in &handles {
                 let Some(entity) = self.doc.get_entity(*handle) else {
                     continue;
                 };
                 self.draw(entity, &child, &to_world, &child_path);
+            }
+            if let Some(polygon) = clip_polygon_world(self.doc, insert, &to_world) {
+                clip_recent_geometry(
+                    &mut self.scene,
+                    stroke_from,
+                    fill_from,
+                    glyph_from,
+                    picture_from,
+                    &polygon,
+                );
             }
         }
         for attribute in &insert.attributes {
@@ -1021,16 +1031,6 @@ impl Compiler<'_> {
             }
             let attribute = EntityType::AttributeEntity(attribute.clone());
             self.draw(&attribute, frame, transform, path);
-        }
-        if let Some(polygon) = clip_polygon_world(self.doc, insert, transform) {
-            clip_recent_geometry(
-                &mut self.scene,
-                stroke_from,
-                fill_from,
-                glyph_from,
-                picture_from,
-                &polygon,
-            );
         }
         self.stack.remove(&key);
     }
