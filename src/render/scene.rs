@@ -18,6 +18,11 @@ pub enum DrawPath {
     Dedicated,
     /// Extents stand-in. The kind stays unfinished until this disappears.
     Fallback,
+    /// A ray or construction line rendered to a finite view-sized reach.
+    ///
+    /// The endpoints are intentionally excluded from scene extents because
+    /// they are synthetic and must not dominate `View::zoom_extents`.
+    Infinite,
 }
 
 /// Resolved stroke appearance. Dash lengths are already multiplied by
@@ -144,6 +149,9 @@ impl Scene {
         let mut max = Vector3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
         let mut any = false;
         for stroke in &self.strokes {
+            if stroke.path == DrawPath::Infinite {
+                continue;
+            }
             for point in &stroke.points {
                 any = true;
                 min.x = min.x.min(point.x);

@@ -208,11 +208,34 @@ fn fallback_list_is_empty_and_a_ray_is_a_line() {
     let scene = compile(&doc, &CompileOptions::default());
     assert!(scene.fallbacks.is_empty());
     assert_eq!(scene.strokes.len(), 1);
-    assert_eq!(scene.strokes[0].path, DrawPath::Dedicated);
+    assert_eq!(scene.strokes[0].path, DrawPath::Infinite);
     assert!((scene.strokes[0].points[0].x - 2.0).abs() < 1e-9);
     assert!((scene.strokes[0].points[0].y - 3.0).abs() < 1e-9);
     assert!(scene.strokes[0].points[1].x > 2.0);
     assert!((scene.strokes[0].points[1].y - 3.0).abs() < 1e-9);
+}
+
+#[test]
+fn infinite_entities_do_not_dominate_zoom_extents() {
+    let mut doc = doc();
+    doc.add_entity(EntityType::Line(Line::from_coords(
+        0.0, 0.0, 0.0, 10.0, 0.0, 0.0,
+    )))
+    .unwrap();
+    doc.add_entity(EntityType::Ray(crate::entities::Ray::new(
+        Vector3::new(0.0, 20.0, 0.0),
+        Vector3::new(1.0, 0.0, 0.0),
+    )))
+    .unwrap();
+    let scene = compile(&doc, &CompileOptions::default());
+    let view = View::zoom_extents(&scene, 800, 600);
+    assert!(
+        view.height < 20.0,
+        "synthetic ray endpoint dominated view: {}",
+        view.height
+    );
+    assert!((view.target.x - 5.0).abs() < 1e-6);
+    assert!((view.target.y).abs() < 1e-6);
 }
 
 #[test]

@@ -1234,6 +1234,17 @@ impl Compiler<'_> {
         frame: &Frame,
         source: EntityRef,
     ) {
+        self.emit_path(points, entity, frame, source, DrawPath::Dedicated);
+    }
+
+    fn emit_path(
+        &mut self,
+        points: &[Vector3],
+        entity: &EntityType,
+        frame: &Frame,
+        source: EntityRef,
+        path: DrawPath,
+    ) {
         let visual = self.scene.visual_style.clone();
         let style = resolve_style(self.doc, entity.common(), frame, &visual, self.sheet);
         let marks = pattern_elements(
@@ -1244,7 +1255,14 @@ impl Compiler<'_> {
             self.pattern_scale,
         );
         let lengths: Vec<f64> = marks.iter().map(|mark| mark.length).collect();
-        self.emit_plain(points, &lengths, style, source.clone());
+        emit_chain(
+            &mut self.scene.strokes,
+            points,
+            &lengths,
+            style,
+            source.clone(),
+            path,
+        );
         self.place_complex(points, &marks, entity, frame, source);
     }
 
@@ -1799,7 +1817,13 @@ impl Compiler<'_> {
             origin
         };
         let end = origin + direction * reach;
-        self.emit_dedicated(&world(transform, vec![start, end]), entity, frame, source);
+        self.emit_path(
+            &world(transform, vec![start, end]),
+            entity,
+            frame,
+            source,
+            DrawPath::Infinite,
+        );
     }
 
     fn draw_point_cloud_box(
