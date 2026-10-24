@@ -3293,7 +3293,17 @@ fn clip_recent_geometry(
         if !fill.vertex_rgb.is_empty() {
             fill.vertex_rgb.clear();
         }
-        fill.normals.clear();
+        let mut normals = Vec::with_capacity(fill.triangles.len());
+        for triangle in fill.triangles.chunks_exact(3) {
+            let normal = (triangle[1] - triangle[0]).cross(&(triangle[2] - triangle[0]));
+            let normal = if normal.length_squared() > 1e-18 {
+                normal * (1.0 / normal.length())
+            } else {
+                Vector3::ZERO
+            };
+            normals.extend([normal; 3]);
+        }
+        fill.normals = normals;
     }
     let pictures = scene
         .pictures
