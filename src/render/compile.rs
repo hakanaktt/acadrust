@@ -1308,6 +1308,17 @@ impl Compiler<'_> {
                             position + tangent * mark.offset_along + side * mark.offset_perp;
                         let text = mark.text.clone().unwrap_or_default();
                         let glyph_transform = self.active_transform.clone();
+                        let shape_scale = if matches!(
+                            self.font_for(&mark.style_name),
+                            Some(FaceFont::Shape(_))
+                        ) {
+                            glyph_transform
+                                .apply_rotation(Vector3::UNIT_X)
+                                .length()
+                                .max(1e-9)
+                        } else {
+                            1.0
+                        };
                         self.draw_label_with_transforms(
                             &super::text_draw::GlyphLabel {
                                 text: &text,
@@ -1315,7 +1326,7 @@ impl Compiler<'_> {
                                 insertion: anchor,
                                 alignment: anchor,
                                 use_alignment: false,
-                                height: mark.scale.abs().max(1e-6),
+                                height: mark.scale.abs().max(1e-6) * shape_scale,
                                 rotation: angle,
                                 width_factor: 1.0,
                                 oblique: 0.0,
