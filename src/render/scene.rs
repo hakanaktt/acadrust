@@ -168,15 +168,17 @@ impl Scene {
         for glyph in &self.glyphs {
             any = true;
             include(&mut min, &mut max, glyph.anchor);
-            include(
-                &mut min,
-                &mut max,
-                Vector3::new(
-                    glyph.anchor.x + glyph.height,
-                    glyph.anchor.y + glyph.height,
-                    glyph.anchor.z,
-                ),
-            );
+            let width = glyph.height
+                * glyph.width_factor.abs()
+                * glyph.text.chars().count().max(1) as f64
+                * 0.6;
+            for point in [
+                glyph.anchor + glyph.axis_x * width,
+                glyph.anchor + glyph.axis_x * width + glyph.axis_y * glyph.height,
+                glyph.anchor + glyph.axis_y * glyph.height,
+            ] {
+                include(&mut min, &mut max, point);
+            }
         }
         any.then_some((min, max))
     }
