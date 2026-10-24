@@ -9,6 +9,7 @@ pub(crate) struct AtlasQuad {
     pub corners: [Vector3; 4],
     pub uv: [f32; 4],
     pub rgb: [u8; 3],
+    pub aci7: bool,
     pub opacity: f32,
 }
 
@@ -24,7 +25,7 @@ pub(crate) fn build_atlas(
     viewport_px: (u32, u32),
     mut font_at: impl FnMut(&std::path::Path) -> Option<fontdue::Font>,
 ) -> BuiltAtlas {
-    let size = 512u32;
+    let size = 2048u32;
     let mut pixels = vec![0u8; (size * size) as usize];
     let mut cursor_x = 1u32;
     let mut cursor_y = 1u32;
@@ -92,10 +93,29 @@ pub(crate) fn build_atlas(
         for (x, y, metrics, pen) in placed {
             let left = pen * world_per_pixel + metrics.xmin as f32 * world_per_pixel + shift_x;
             let bottom = metrics.ymin as f32 * world_per_pixel + shift_y;
-            let right = left + metrics.width as f32 * world_per_pixel;
+            let right = left + metrics.width as f32 * run.width_factor.abs() as f32 * world_per_pixel;
             let top = bottom + metrics.height as f32 * world_per_pixel;
             let corner = |x: f32, y: f32| {
-                run.anchor + basis * (rotation * Vector3::new(x as f64, y as f64, 0.0))
+                let mut x = x as f64;
+                let mut y = y as f64;
+                if run.backward {
+                    x = -x;
+                }
+                if run.upside_down {
+                    y = -y;
+                }
+                x += y * run.oblique.tan();
+                let axis_x = if run.axis_x.length_squared() > 1e-12 {
+                    run.axis_x
+                } else {
+                    basis * (rotation * Vector3::UNIT_X)
+                };
+                let axis_y = if run.axis_y.length_squared() > 1e-12 {
+                    run.axis_y
+                } else {
+                    basis * (rotation * Vector3::UNIT_Y)
+                };
+                run.anchor + axis_x * x + axis_y * y
             };
             let u0 = x as f32 / size as f32;
             let v0 = y as f32 / size as f32;
@@ -110,6 +130,7 @@ pub(crate) fn build_atlas(
                 ],
                 uv: [u0, v0, u1, v1],
                 rgb: run.rgb,
+                aci7: run.aci7,
                 opacity: run.opacity,
             });
         }

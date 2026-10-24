@@ -525,9 +525,14 @@ impl Renderer {
                 push_f32(&mut bytes, uv.1);
                 push_f32(&mut bytes, 0.0);
                 push_f32(&mut bytes, 0.0);
-                push_f32(&mut bytes, quad.rgb[0] as f32 / 255.0);
-                push_f32(&mut bytes, quad.rgb[1] as f32 / 255.0);
-                push_f32(&mut bytes, quad.rgb[2] as f32 / 255.0);
+                let rgb = if quad.aci7 {
+                    contrast(self.background_rgba)
+                } else {
+                    quad.rgb
+                };
+                push_f32(&mut bytes, rgb[0] as f32 / 255.0);
+                push_f32(&mut bytes, rgb[1] as f32 / 255.0);
+                push_f32(&mut bytes, rgb[2] as f32 / 255.0);
                 push_f32(&mut bytes, quad.opacity);
             }
         }

@@ -49,6 +49,7 @@ pub(crate) fn compile(doc: &CadDocument, options: &CompileOptions) -> Scene {
         pattern_scale: 1.0,
         viewport_frozen: HashSet::new(),
         solid_style: options.solid_style,
+        active_transform: Transform::identity(),
     };
     compiler.walk_block(&block, &Frame::model(), &Transform::identity(), &[]);
     compiler.scene
@@ -92,6 +93,9 @@ struct Compiler<'a> {
     pattern_scale: f64,
     viewport_frozen: HashSet<Handle>,
     solid_style: super::SolidStyle,
+    /// Transform of the entity currently being emitted. This lets helpers
+    /// that receive already-world-space points still inherit insert scale.
+    active_transform: Transform,
 }
 
 enum FaceFont {
@@ -137,6 +141,19 @@ impl Compiler<'_> {
     }
 
     fn draw(
+        &mut self,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        path: &[crate::types::Handle],
+    ) {
+        let saved = self.active_transform.clone();
+        self.active_transform = transform.clone();
+        self.draw_inner(entity, frame, transform, path);
+        self.active_transform = saved;
+    }
+
+    fn draw_inner(
         &mut self,
         entity: &EntityType,
         frame: &Frame,
@@ -987,8 +1004,29 @@ impl Compiler<'_> {
         transform: &Transform,
         source: EntityRef,
     ) {
+        self.draw_label_with_transforms(
+            label,
+            style_name,
+            entity,
+            frame,
+            transform,
+            transform,
+            source,
+        );
+    }
+
+    fn draw_label_with_transforms(
+        &mut self,
+        label: &super::text_draw::GlyphLabel<'_>,
+        style_name: &str,
+        entity: &EntityType,
+        frame: &Frame,
+        anchor_transform: &Transform,
+        glyph_transform: &Transform,
+        source: EntityRef,
+    ) {
         if self.doc.header.quick_text_mode {
-            let points = world(transform, super::text_draw::quick_box(label));
+            let points = world(anchor_transform, super::text_draw::quick_box(label));
             let visual = self.scene.visual_style.clone();
             let style = resolve_style(self.doc, entity.common(), frame, &visual, self.sheet);
             self.emit_plain(&points, &[], style, source);
@@ -1014,27 +1052,52 @@ impl Compiler<'_> {
         match produced {
             PreparedLabel::Strokes(chains) => {
                 for chain in chains {
-                    self.emit_plain(&world(transform, chain), &[], style.clone(), source.clone());
+                    self.emit_plain(
+                        &world(anchor_transform, chain),
+                        &[],
+                        style.clone(),
+                        source.clone(),
+                    );
                 }
             }
             PreparedLabel::TrueType(path) => {
                 let anchor = world(
-                    transform,
+                    anchor_transform,
                     vec![if label.use_alignment {
                         label.alignment
                     } else {
                         label.insertion
                     }],
                 );
+                let local_x = Matrix3::arbitrary_axis(label.normal)
+                    * (Matrix3::rotation_z(label.rotation) * Vector3::UNIT_X);
+                let local_y = Matrix3::arbitrary_axis(label.normal)
+                    * (Matrix3::rotation_z(label.rotation) * Vector3::UNIT_Y);
+                let axis_x = glyph_transform.apply_rotation(local_x);
+                let axis_y = glyph_transform.apply_rotation(local_y);
+                let scale_x = axis_x.length().max(1e-9);
+                let scale_y = axis_y.length().max(1e-9);
                 self.scene.glyphs.push(super::scene::GlyphRun {
                     text: label.text.to_string(),
                     anchor: anchor.first().copied().unwrap_or(label.insertion),
-                    rotation: label.rotation,
-                    height: label.height,
-                    width_factor: label.width_factor,
+                    rotation: 0.0,
+                    height: label.height * scale_y,
+                    width_factor: label.width_factor * scale_x / scale_y,
                     horizontal: label.horizontal,
                     vertical: label.vertical,
-                    normal: label.normal,
+                    normal: {
+                        let normal = axis_x.cross(&axis_y);
+                        if normal.length_squared() > 1e-18 {
+                            normal * (1.0 / normal.length())
+                        } else {
+                            Vector3::UNIT_Z
+                        }
+                    },
+                    axis_x: axis_x * (1.0 / scale_x),
+                    axis_y: axis_y * (1.0 / scale_y),
+                    oblique: label.oblique,
+                    backward: label.backward,
+                    upside_down: label.upside_down,
                     font_path: path,
                     rgb: style.rgb,
                     aci7: style.aci7,
@@ -1209,7 +1272,8 @@ impl Compiler<'_> {
                         let anchor =
                             position + tangent * mark.offset_along + side * mark.offset_perp;
                         let text = mark.text.clone().unwrap_or_default();
-                        self.draw_label(
+                        let glyph_transform = self.active_transform.clone();
+                        self.draw_label_with_transforms(
                             &super::text_draw::GlyphLabel {
                                 text: &text,
                                 shape_number: mark.shape_number,
@@ -1230,6 +1294,7 @@ impl Compiler<'_> {
                             entity,
                             frame,
                             &Transform::identity(),
+                            &glyph_transform,
                             source.clone(),
                         );
                     }

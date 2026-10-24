@@ -93,6 +93,13 @@ pub struct GlyphRun {
     pub horizontal: u8,
     pub vertical: u8,
     pub normal: Vector3,
+    /// World-space unit vectors for the text's local X/Y axes. These preserve
+    /// insert and viewport transforms, including non-uniform scale.
+    pub axis_x: Vector3,
+    pub axis_y: Vector3,
+    pub oblique: f64,
+    pub backward: bool,
+    pub upside_down: bool,
     pub font_path: std::path::PathBuf,
     pub rgb: [u8; 3],
     pub aci7: bool,
