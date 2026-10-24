@@ -43,6 +43,12 @@ fn vs_main(
     var width_px = 1.0;
     if params.y < 0.5 {
         width_px = max(params.x * 2.0 * camera.px_per_mm, 1.0);
+    } else if params.y > 1.5 {
+        // params.x is the half-width in drawing units. Column 1 is the
+        // camera's image of world +Y, so its pixel length is the zoom.
+        let axis = vec2<f32>(camera.view_proj[1][0], camera.view_proj[1][1]);
+        let axis_px = vec2<f32>(axis.x * camera.viewport.x, axis.y * camera.viewport.y) * 0.5;
+        width_px = max(params.x * 2.0 * max(length(axis_px), 1e-6), 1.0);
     }
     let px_ndc = vec2<f32>(2.0, 2.0) / max(camera.viewport, vec2<f32>(1.0, 1.0));
     let offset = normal * corner.y * width_px * 0.5 * px_ndc;

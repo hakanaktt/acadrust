@@ -16,6 +16,7 @@ mod dash;
 mod gpu;
 mod hatch_fill;
 mod scene;
+mod sheet;
 mod shx;
 mod style;
 mod text_draw;
@@ -48,6 +49,16 @@ pub fn model_lineweight_pixels(millimetres: f64, px_per_mm: f64) -> u32 {
     pixels.round().max(1.0) as u32
 }
 
+/// Model space, or one layout tab.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DisplaySpace {
+    /// `*Model_Space`. Lineweights are pixels.
+    Model,
+    /// A layout tab. `"Model"` is model space. Any other name draws that sheet:
+    /// paper geometry, then each viewport's model picture.
+    Layout(String),
+}
+
 /// What to compile, independent of the camera.
 #[derive(Debug, Clone)]
 pub struct CompileOptions {
@@ -55,6 +66,8 @@ pub struct CompileOptions {
     pub resource_dirs: Vec<std::path::PathBuf>,
     pub model_lineweight_px_per_mm: f64,
     pub visual_style: VisualStyleRequest,
+    /// Model space, or the named layout tab.
+    pub space: DisplaySpace,
 }
 
 impl Default for CompileOptions {
@@ -64,6 +77,7 @@ impl Default for CompileOptions {
             resource_dirs: Vec::new(),
             model_lineweight_px_per_mm: DEFAULT_MODEL_LINEWEIGHT_PX_PER_MM,
             visual_style: VisualStyleRequest::ActiveViewport,
+            space: DisplaySpace::Model,
         }
     }
 }
@@ -117,7 +131,11 @@ impl View {
     }
 }
 
-/// Resolve `doc` into a display list for model space.
+/// Resolve `doc` into a display list.
+///
+/// [`CompileOptions::space`] selects model space or a named layout. A layout
+/// is compiled in paper coordinates. Paper entities are drawn where they sit.
+/// Each viewport window receives model space, scaled, twisted, and clipped.
 pub fn compile(doc: &CadDocument, options: &CompileOptions) -> Scene {
     compile::compile(doc, options)
 }

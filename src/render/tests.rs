@@ -3,9 +3,10 @@ use std::f64::consts::FRAC_PI_2;
 use crate::document::CadDocument;
 use crate::entities::ViewportRenderMode;
 use crate::entities::{
-    Arc, BoundaryEdge, BoundaryPath, Circle, EntityType, Face3D, Hatch, Insert, InvisibleEdgeFlags,
-    Line, LwPolyline, LwVertex, Point, Polyline, Polyline2D, Polyline3D, PolylineEdge, Solid,
-    Spline, Text, Vertex2D,
+    Arc, BoundaryEdge, BoundaryPath, Circle, EntityCommon, EntityType, ExtendedEntity,
+    ExtendedEntityData, Face3D, Hatch, Insert, InvisibleEdgeFlags, Line, LwPolyline, LwVertex,
+    Point, Polyline, Polyline2D, Polyline3D, PolylineEdge, SectionObjectData, SectionSymbol,
+    SectionSymbolPoint, SectionViewStyle, Solid, Spline, Text, Vertex2D, ViewBorder, Viewport,
 };
 use crate::objects::{ObjectType, SortEntitiesTable, VisualStyle};
 use crate::tables::{BlockRecord, Layer, LineType, LineTypeElement, TableEntry};
@@ -14,7 +15,7 @@ use crate::types::{Color, Handle, LineWeight, Vector2, Vector3};
 use super::visual_style::{
     EdgeMode, FaceColorMode, FaceShading, LightingModel, StandardVisualStyle, VisualStyleRequest,
 };
-use super::{compile, CompileOptions, DrawPath, View};
+use super::{compile, CompileOptions, DisplaySpace, DrawPath, View};
 
 fn doc() -> CadDocument {
     CadDocument::new()
@@ -799,5 +800,555 @@ fn ttf_style_becomes_a_glyph_run() {
     assert!(
         ink > 8,
         "true type glyph did not cover the frame, ink={ink}"
+    );
+}
+
+fn layout(name: &str) -> CompileOptions {
+    CompileOptions {
+        space: DisplaySpace::Layout(name.to_string()),
+        ..CompileOptions::default()
+    }
+}
+
+fn model_window(center: Vector3, width: f64, height: f64, view_height: f64) -> Viewport {
+    let mut viewport = Viewport::new();
+    viewport.id = 2;
+    viewport.center = center;
+    viewport.width = width;
+    viewport.height = height;
+    viewport.view_height = view_height;
+    viewport.view_target = Vector3::ZERO;
+    viewport.view_center = Vector3::ZERO;
+    viewport.view_direction = Vector3::new(0.0, 0.0, 1.0);
+    viewport
+}
+
+fn two_point_strokes(scene: &super::Scene) -> Vec<&super::Stroke> {
+    scene
+        .strokes
+        .iter()
+        .filter(|stroke| stroke.points.len() == 2 && stroke.path == DrawPath::Dedicated)
+        .collect()
+}
+
+#[test]
+fn layout_draws_paper_geometry_and_a_scaled_viewport() {
+    let mut doc = doc();
+    doc.add_entity(EntityType::Line(Line::from_coords(
+        0.0, 0.0, 0.0, 4.0, 0.0, 0.0,
+    )))
+    .unwrap();
+    let mut paper = Line::from_coords(0.0, 30.0, 0.0, 6.0, 30.0, 0.0);
+    paper.common.color = Color::RED;
+    doc.add_paper_space_entity(EntityType::Line(paper)).unwrap();
+
+    let model_only = compile(&doc, &CompileOptions::default());
+    assert_eq!(model_only.strokes.len(), 1);
+    assert!(model_only.strokes[0]
+        .points
+        .iter()
+        .all(|point| point.y.abs() < 1e-6));
+
+    let bare = compile(&doc, &layout("Layout1"));
+    assert_eq!(two_point_strokes(&bare).len(), 1);
+    assert!((two_point_strokes(&bare)[0].points[0].y - 30.0).abs() < 1e-6);
+
+    let mut viewport = model_window(Vector3::ZERO, 30.0, 20.0, 10.0);
+    viewport.view_center = Vector3::new(2.0, 0.0, 0.0);
+    doc.add_entity_to_layout(EntityType::Viewport(Box::new(viewport)), "Layout1")
+        .unwrap();
+    let scene = compile(&doc, &layout("Layout1"));
+    assert!(scene.fallbacks.is_empty());
+    let window: Vec<_> = two_point_strokes(&scene)
+        .into_iter()
+        .filter(|stroke| stroke.points[0].y.abs() < 1e-6)
+        .collect();
+    assert_eq!(window.len(), 1);
+    let start = window[0].points[0];
+    let end = window[0].points[1];
+    assert!((start.x + 4.0).abs() < 1e-6 && start.y.abs() < 1e-6);
+    assert!((end.x - 4.0).abs() < 1e-6 && end.y.abs() < 1e-6);
+    assert!(scene.strokes.iter().any(|stroke| stroke.points.len() == 5));
+}
+
+#[test]
+fn viewport_twist_rotates_model_geometry_clockwise() {
+    let mut doc = doc();
+    doc.add_entity(EntityType::Line(Line::from_coords(
+        0.0, 0.0, 0.0, 4.0, 0.0, 0.0,
+    )))
+    .unwrap();
+    let mut viewport = model_window(Vector3::new(10.0, 20.0, 0.0), 40.0, 40.0, 20.0);
+    viewport.twist_angle = std::f64::consts::FRAC_PI_2;
+    doc.add_entity_to_layout(EntityType::Viewport(Box::new(viewport)), "Layout1")
+        .unwrap();
+    let scene = compile(&doc, &layout("Layout1"));
+    let segment = two_point_strokes(&scene)
+        .into_iter()
+        .find(|stroke| (stroke.points[1] - stroke.points[0]).length() > 1.0)
+        .expect("twisted segment");
+    let start = segment.points[0];
+    let end = segment.points[1];
+    assert!((start.x - 10.0).abs() < 1e-5 && (start.y - 20.0).abs() < 1e-5);
+    assert!((end.x - 10.0).abs() < 1e-5 && (end.y - 12.0).abs() < 1e-5);
+}
+
+#[test]
+fn viewport_side_view_maps_world_z_onto_the_sheet() {
+    let mut doc = doc();
+    doc.add_entity(EntityType::Line(Line::from_coords(
+        0.0, 0.0, 0.0, 0.0, 0.0, 4.0,
+    )))
+    .unwrap();
+    let mut viewport = model_window(Vector3::new(5.0, 6.0, 0.0), 20.0, 20.0, 10.0);
+    viewport.view_direction = Vector3::new(0.0, -1.0, 0.0);
+    doc.add_entity_to_layout(EntityType::Viewport(Box::new(viewport)), "Layout1")
+        .unwrap();
+    let scene = compile(&doc, &layout("Layout1"));
+    let segment = two_point_strokes(&scene)
+        .into_iter()
+        .find(|stroke| (stroke.points[1] - stroke.points[0]).length() > 1.0)
+        .expect("side view");
+    let start = segment.points[0];
+    let end = segment.points[1];
+    assert!((start.x - 5.0).abs() < 1e-5 && (start.y - 6.0).abs() < 1e-5);
+    assert!((end.x - 5.0).abs() < 1e-5 && (end.y - 14.0).abs() < 1e-5);
+}
+
+#[test]
+fn viewport_clips_model_geometry_to_the_window() {
+    let mut doc = doc();
+    doc.add_entity(EntityType::Line(Line::from_coords(
+        -10.0, 0.0, 0.0, 10.0, 0.0, 0.0,
+    )))
+    .unwrap();
+    doc.add_entity_to_layout(
+        EntityType::Viewport(Box::new(model_window(Vector3::ZERO, 4.0, 4.0, 4.0))),
+        "Layout1",
+    )
+    .unwrap();
+    let scene = compile(&doc, &layout("Layout1"));
+    let segment = two_point_strokes(&scene)
+        .into_iter()
+        .find(|stroke| stroke.points.iter().all(|point| point.y.abs() < 1e-6))
+        .expect("clipped line");
+    let xs = [segment.points[0].x, segment.points[1].x];
+    assert!(xs.iter().any(|x| (*x + 2.0).abs() < 1e-5));
+    assert!(xs.iter().any(|x| (*x - 2.0).abs() < 1e-5));
+}
+
+#[test]
+fn viewport_clip_boundary_replaces_the_rectangle() {
+    let mut doc = doc();
+    doc.add_entity(EntityType::Line(Line::from_coords(
+        -10.0, 0.0, 0.0, 10.0, 0.0, 0.0,
+    )))
+    .unwrap();
+    let mut boundary = LwPolyline::new();
+    boundary.is_closed = true;
+    boundary.vertices = vec![
+        LwVertex::new(Vector2::new(-1.0, -1.0)),
+        LwVertex::new(Vector2::new(1.0, -1.0)),
+        LwVertex::new(Vector2::new(1.0, 1.0)),
+        LwVertex::new(Vector2::new(-1.0, 1.0)),
+    ];
+    let boundary_handle = doc
+        .add_entity_to_layout(EntityType::LwPolyline(boundary), "Layout1")
+        .unwrap();
+    let mut viewport = model_window(Vector3::ZERO, 40.0, 40.0, 40.0);
+    viewport.clip_boundary_handle = boundary_handle;
+    viewport.status.non_rectangular_clipping = true;
+    doc.add_entity_to_layout(EntityType::Viewport(Box::new(viewport)), "Layout1")
+        .unwrap();
+    let scene = compile(&doc, &layout("Layout1"));
+    let segment = two_point_strokes(&scene)
+        .into_iter()
+        .find(|stroke| {
+            stroke.points.iter().all(|point| point.y.abs() < 1e-6)
+                && (stroke.points[1].x - stroke.points[0].x).abs() < 3.0
+        })
+        .expect("boundary clip");
+    let xs = [segment.points[0].x, segment.points[1].x];
+    assert!(xs.iter().any(|x| (*x + 1.0).abs() < 1e-4));
+    assert!(xs.iter().any(|x| (*x - 1.0).abs() < 1e-4));
+    assert!(scene.strokes.iter().all(|stroke| {
+        stroke
+            .points
+            .iter()
+            .all(|point| point.x.abs() < 2.0 && point.y.abs() < 2.0)
+    }));
+}
+
+#[test]
+fn viewport_freeze_hides_only_the_model_picture() {
+    let mut doc = doc();
+    let mut hidden = Layer::new("Hide");
+    hidden.set_handle(doc.allocate_handle());
+    doc.layers.add(hidden).unwrap();
+    let hidden_handle = doc.layers.get("Hide").unwrap().handle;
+    let mut hidden_line = Line::from_coords(0.0, 0.0, 0.0, 2.0, 0.0, 0.0);
+    hidden_line.common.layer = "Hide".to_string();
+    doc.add_entity(EntityType::Line(hidden_line)).unwrap();
+    doc.add_entity(EntityType::Line(Line::from_coords(
+        0.0, 3.0, 0.0, 2.0, 3.0, 0.0,
+    )))
+    .unwrap();
+    let mut paper = Line::from_coords(0.0, 0.0, 0.0, 5.0, 0.0, 0.0);
+    paper.common.layer = "Hide".to_string();
+    doc.add_paper_space_entity(EntityType::Line(paper)).unwrap();
+    let mut viewport = model_window(Vector3::ZERO, 40.0, 40.0, 40.0);
+    viewport.frozen_layers = vec![hidden_handle];
+    doc.add_entity_to_layout(EntityType::Viewport(Box::new(viewport)), "Layout1")
+        .unwrap();
+
+    let scene = compile(&doc, &layout("Layout1"));
+    let horizontal: Vec<_> = two_point_strokes(&scene)
+        .into_iter()
+        .filter(|stroke| stroke.points.iter().all(|point| point.y.abs() < 1e-6))
+        .collect();
+    assert_eq!(horizontal.len(), 1);
+    assert!((horizontal[0].points[1].x - horizontal[0].points[0].x).abs() - 5.0 < 1e-6);
+    assert!(two_point_strokes(&scene).iter().any(|stroke| {
+        stroke
+            .points
+            .iter()
+            .all(|point| (point.y - 3.0).abs() < 1e-6)
+    }));
+    assert!(scene
+        .skipped
+        .iter()
+        .any(|entry| { entry.reason.contains("frozen in this viewport") }));
+}
+
+#[test]
+fn psltscale_keeps_paper_dash_lengths() {
+    let mut doc = doc();
+    add_dashed(&mut doc);
+    doc.header.linetype_scale = 1.0;
+    doc.header.paper_space_linetype_scaling = true;
+    let mut line = Line::from_coords(0.0, 0.0, 0.0, 4.0, 0.0, 0.0);
+    line.common.linetype = "DASHED".to_string();
+    doc.add_entity(EntityType::Line(line)).unwrap();
+    let mut viewport = model_window(Vector3::ZERO, 40.0, 20.0, 10.0);
+    viewport.view_center = Vector3::new(2.0, 0.0, 0.0);
+    doc.add_entity_to_layout(EntityType::Viewport(Box::new(viewport)), "Layout1")
+        .unwrap();
+    let scene = compile(&doc, &layout("Layout1"));
+    let dashes: Vec<_> = scene
+        .strokes
+        .iter()
+        .filter(|stroke| {
+            !stroke.dot
+                && stroke.points.len() == 2
+                && stroke.points.iter().all(|point| point.y.abs() < 1e-6)
+                && stroke.points[1].x > stroke.points[0].x
+        })
+        .collect();
+    assert_eq!(dashes.len(), 4);
+    for dash in dashes {
+        let length = dash.points[1].x - dash.points[0].x;
+        assert!((length - 1.0).abs() < 1e-5, "paper dash was {length}");
+    }
+}
+
+#[test]
+fn psltscale_off_scales_dashes_with_the_viewport() {
+    let mut doc = doc();
+    add_dashed(&mut doc);
+    doc.header.linetype_scale = 1.0;
+    doc.header.paper_space_linetype_scaling = false;
+    let mut line = Line::from_coords(0.0, 0.0, 0.0, 4.0, 0.0, 0.0);
+    line.common.linetype = "DASHED".to_string();
+    doc.add_entity(EntityType::Line(line)).unwrap();
+    let mut viewport = model_window(Vector3::ZERO, 40.0, 20.0, 10.0);
+    viewport.view_center = Vector3::new(2.0, 0.0, 0.0);
+    doc.add_entity_to_layout(EntityType::Viewport(Box::new(viewport)), "Layout1")
+        .unwrap();
+    let scene = compile(&doc, &layout("Layout1"));
+    let dashes: Vec<_> = scene
+        .strokes
+        .iter()
+        .filter(|stroke| {
+            !stroke.dot
+                && stroke.points.len() == 2
+                && stroke.points.iter().all(|point| point.y.abs() < 1e-6)
+                && (stroke.points[1].x - stroke.points[0].x).abs() > 1.5
+        })
+        .collect();
+    assert_eq!(dashes.len(), 2);
+    for dash in dashes {
+        let length = (dash.points[1].x - dash.points[0].x).abs();
+        assert!(
+            (length - 2.0).abs() < 1e-5,
+            "model dash was {length} paper units"
+        );
+    }
+}
+
+#[test]
+fn sheet_lineweights_use_paper_units() {
+    let mut doc = doc();
+    doc.header.measurement = 1;
+    doc.header.lineweight_display = true;
+    let mut paper = Line::from_coords(0.0, 0.0, 0.0, 10.0, 0.0, 0.0);
+    paper.common.line_weight = LineWeight::Value(50);
+    doc.add_paper_space_entity(EntityType::Line(paper)).unwrap();
+    let mut model = Line::from_coords(0.0, 1.0, 0.0, 2.0, 1.0, 0.0);
+    model.common.line_weight = LineWeight::Value(25);
+    doc.add_entity(EntityType::Line(model)).unwrap();
+    doc.add_entity_to_layout(
+        EntityType::Viewport(Box::new(model_window(Vector3::ZERO, 20.0, 20.0, 20.0))),
+        "Layout1",
+    )
+    .unwrap();
+
+    let scene = compile(&doc, &layout("Layout1"));
+    assert!((scene.sheet_units_per_mm - 1.0).abs() < 1e-12);
+    assert!(scene
+        .strokes
+        .iter()
+        .any(|stroke| { stroke.style.sheet && (stroke.style.lineweight_mm - 0.50).abs() < 1e-9 }));
+    assert!(scene
+        .strokes
+        .iter()
+        .any(|stroke| { stroke.style.sheet && (stroke.style.lineweight_mm - 0.25).abs() < 1e-9 }));
+
+    let model_scene = compile(&doc, &CompileOptions::default());
+    assert_eq!(model_scene.sheet_units_per_mm, 0.0);
+    assert!(model_scene.strokes.iter().all(|stroke| !stroke.style.sheet));
+}
+
+#[test]
+fn english_sheets_convert_lineweight_millimetres() {
+    let mut doc = doc();
+    doc.header.measurement = 0;
+    doc.header.lineweight_display = true;
+    let mut paper = Line::from_coords(0.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+    paper.common.line_weight = LineWeight::Value(25);
+    doc.add_paper_space_entity(EntityType::Line(paper)).unwrap();
+    let scene = compile(&doc, &layout("Layout1"));
+    assert!((scene.sheet_units_per_mm - (1.0 / 25.4)).abs() < 1e-12);
+    assert!(scene.strokes[0].style.sheet);
+    assert!((scene.strokes[0].style.lineweight_mm - 0.25).abs() < 1e-9);
+}
+
+#[test]
+fn off_and_paper_viewports_do_not_show_model_space() {
+    let mut doc = doc();
+    doc.add_entity(EntityType::Line(Line::from_coords(
+        0.0, 0.0, 0.0, 8.0, 0.0, 0.0,
+    )))
+    .unwrap();
+    doc.add_paper_space_entity(EntityType::Line(Line::from_coords(
+        0.0, 40.0, 0.0, 4.0, 40.0, 0.0,
+    )))
+    .unwrap();
+    let mut paper_viewport = model_window(Vector3::ZERO, 500.0, 500.0, 100.0);
+    paper_viewport.id = 1;
+    doc.add_entity_to_layout(EntityType::Viewport(Box::new(paper_viewport)), "Layout1")
+        .unwrap();
+    let mut off = model_window(Vector3::ZERO, 80.0, 80.0, 20.0);
+    off.id = 3;
+    off.status.is_on = false;
+    off.status.is_off = true;
+    doc.add_entity_to_layout(EntityType::Viewport(Box::new(off)), "Layout1")
+        .unwrap();
+    let scene = compile(&doc, &layout("Layout1"));
+    assert!(!scene.strokes.is_empty());
+    assert!(scene.strokes.iter().all(|stroke| {
+        stroke
+            .points
+            .iter()
+            .all(|point| (point.y - 40.0).abs() < 1e-6)
+    }));
+    assert!(scene
+        .skipped
+        .iter()
+        .any(|entry| entry.reason == "paper-space viewport"));
+    assert!(scene
+        .skipped
+        .iter()
+        .any(|entry| entry.reason == "viewport is off"));
+}
+
+#[test]
+fn missing_layout_compiles_nothing() {
+    let doc = doc();
+    let scene = compile(&doc, &layout("NotALayout"));
+    assert!(scene.strokes.is_empty());
+    assert!(scene.skipped.iter().any(|entry| entry.kind == "Layout"));
+}
+
+#[test]
+fn view_border_draws_its_rectangle() {
+    let mut doc = doc();
+    let mut border = ViewBorder::new();
+    border.min = [1.0, 2.0];
+    border.max = [11.0, 8.0];
+    doc.add_entity(EntityType::ViewBorder(border)).unwrap();
+    let scene = compile(&doc, &CompileOptions::default());
+    assert!(scene.fallbacks.is_empty());
+    assert!(!super::FALLBACK_KINDS.contains(&"ViewBorder"));
+    assert_eq!(scene.strokes.len(), 1);
+    assert_eq!(scene.strokes[0].points.len(), 5);
+    assert!((scene.strokes[0].points[0].x - 1.0).abs() < 1e-9);
+    assert!((scene.strokes[0].points[0].y - 2.0).abs() < 1e-9);
+    assert!(scene.strokes[0]
+        .points
+        .iter()
+        .any(|point| { (point.x - 11.0).abs() < 1e-9 && (point.y - 8.0).abs() < 1e-9 }));
+}
+
+#[test]
+fn section_symbol_draws_the_cut_line() {
+    let mut doc = doc();
+    let mut symbol = SectionSymbol::new();
+    symbol.end_a = [0.0, 0.0];
+    symbol.end_b = [10.0, 0.0];
+    doc.add_entity(EntityType::SectionSymbol(symbol)).unwrap();
+    let scene = compile(&doc, &CompileOptions::default());
+    assert!(scene.fallbacks.is_empty());
+    assert!(!super::FALLBACK_KINDS.contains(&"SectionSymbol"));
+    assert_eq!(scene.strokes.len(), 1);
+    assert!((scene.strokes[0].points[0].x).abs() < 1e-9);
+    assert!((scene.strokes[0].points.last().unwrap().x - 10.0).abs() < 1e-9);
+}
+
+#[test]
+fn section_symbol_broken_style_draws_stubs_and_arrows() {
+    let mut doc = doc();
+    let mut symbol = SectionSymbol::new();
+    symbol.points = vec![
+        SectionSymbolPoint {
+            point: Vector3::new(0.0, 0.0, 0.0),
+            bulge: 0.0,
+            label: String::new(),
+            label_offset: Vector3::ZERO,
+            raw_flag_280: 0,
+        },
+        SectionSymbolPoint {
+            point: Vector3::new(20.0, 0.0, 0.0),
+            bulge: 0.0,
+            label: String::new(),
+            label_offset: Vector3::ZERO,
+            raw_flag_280: 0,
+        },
+    ];
+    doc.section_view_style = Some(SectionViewStyle {
+        show_arrows: true,
+        show_plane_line: false,
+        show_end_lines: true,
+        arrow_size: 1.0,
+        arrow_extension: 0.0,
+        label_height: 2.5,
+        label_offset: 0.0,
+        label_position: 0,
+        arrow_position: 0,
+        end_line_length: 2.0,
+        end_line_overshoot: 0.0,
+        arrow_start_handle: 0,
+        arrow_end_handle: 0,
+        arrow_is_default: true,
+    });
+    doc.add_entity(EntityType::SectionSymbol(symbol)).unwrap();
+    let scene = compile(&doc, &CompileOptions::default());
+    assert!(scene.fallbacks.is_empty());
+    assert_eq!(scene.fills.len(), 2);
+    let stubs: Vec<_> = scene
+        .strokes
+        .iter()
+        .filter(|stroke| stroke.path == DrawPath::Dedicated)
+        .collect();
+    assert_eq!(stubs.len(), 2);
+    for stub in stubs {
+        let length = (stub.points.last().unwrap().x - stub.points[0].x).abs();
+        assert!((length - 2.0).abs() < 1e-5, "stub length {length}");
+    }
+}
+
+#[test]
+fn section_object_draws_the_cutting_plane() {
+    let mut doc = doc();
+    doc.add_entity(EntityType::Extended(Box::new(ExtendedEntity {
+        common: EntityCommon::default(),
+        data: ExtendedEntityData::SectionObject(SectionObjectData {
+            state: 0,
+            flags: 0,
+            name: "A".to_string(),
+            vertical_direction: Vector3::new(0.0, 0.0, 1.0),
+            top_height: 1.0,
+            bottom_height: 0.0,
+            indicator_alpha: 0,
+            indicator_color: Color::WHITE,
+            vertices: vec![
+                Vector3::new(0.0, 0.0, 0.0),
+                Vector3::new(10.0, 0.0, 0.0),
+                Vector3::new(10.0, 4.0, 0.0),
+            ],
+            back_line_vertices: vec![
+                Vector3::new(0.0, 0.0, 1.0),
+                Vector3::new(10.0, 0.0, 1.0),
+                Vector3::new(10.0, 4.0, 1.0),
+            ],
+            settings_handle: Handle::NULL,
+        }),
+    })))
+    .unwrap();
+    let scene = compile(&doc, &CompileOptions::default());
+    assert!(scene.fallbacks.is_empty());
+    assert!(!super::FALLBACK_KINDS.contains(&"SectionObject"));
+    assert!(scene.strokes.len() >= 5);
+    assert!(scene.strokes.iter().any(|stroke| {
+        stroke.points.len() == 4
+            && stroke
+                .points
+                .iter()
+                .any(|point| (point.x - 10.0).abs() < 1e-9 && (point.y - 4.0).abs() < 1e-9)
+    }));
+}
+
+#[test]
+fn sheet_lineweight_grows_when_zooming() {
+    let mut doc = doc();
+    doc.header.measurement = 1;
+    doc.header.lineweight_display = true;
+    let mut line = Line::from_coords(-30.0, 0.0, 0.0, 30.0, 0.0, 0.0);
+    line.common.color = Color::RED;
+    line.common.line_weight = LineWeight::Value(50);
+    doc.add_paper_space_entity(EntityType::Line(line)).unwrap();
+    let options = layout("Layout1");
+    let config = super::RendererConfig {
+        samples: 1,
+        ..super::RendererConfig::default()
+    };
+    let render_at = |height: f64| {
+        pollster::block_on(super::render_rgba_with(
+            &doc,
+            &View {
+                target: Vector3::ZERO,
+                height,
+                ..View::default()
+            },
+            80,
+            40,
+            &options,
+            &config,
+        ))
+    };
+    let near = match render_at(4.0) {
+        Err(super::RenderError::NoAdapter) => return,
+        Err(error) => panic!("{error}"),
+        Ok(image) => image,
+    };
+    let far = render_at(40.0).expect("adapter already opened");
+    let near_rows = red_rows(&near);
+    let far_rows = red_rows(&far);
+    assert!(
+        near_rows > far_rows,
+        "sheet lineweight did not grow with zoom: near={near_rows} far={far_rows}"
+    );
+    assert!(
+        (4..=7).contains(&near_rows),
+        "0.50 mm on a 4-unit-tall, 40-pixel view should cover about 5 rows, found {near_rows}"
     );
 }

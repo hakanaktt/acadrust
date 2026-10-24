@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::document::CadDocument;
 use crate::entities::{EntityType, Insert, LwPolyline};
-use crate::types::{Matrix3, Matrix4, Transform, Vector3};
+use crate::types::{Handle, Matrix3, Matrix4, Transform, Vector2, Vector3};
 
 use super::curves::{
     arc_points, circle_points, ellipse_points, fan_triangles, point_chains, spline_points,
@@ -17,23 +17,61 @@ use super::CompileOptions;
 
 pub(crate) fn compile(doc: &CadDocument, options: &CompileOptions) -> Scene {
     let visual = visual_style::resolve(doc, &options.visual_style);
+    let block = match &options.space {
+        super::DisplaySpace::Model => Some("*Model_Space".to_string()),
+        super::DisplaySpace::Layout(name) => super::sheet::layout_block_name(doc, name),
+    };
+    let Some(block) = block else {
+        let mut scene = blank_scene(doc, options, visual, false);
+        let name = match &options.space {
+            super::DisplaySpace::Layout(name) => name.clone(),
+            super::DisplaySpace::Model => "Model".to_string(),
+        };
+        scene.skipped.push(SkippedEntity {
+            kind: "Layout".to_string(),
+            reason: format!("layout {name} was not found"),
+            source: EntityRef {
+                handle: Handle::NULL,
+                insert_path: Vec::new(),
+            },
+        });
+        return scene;
+    };
+    let sheet = super::sheet::is_sheet_block(&block);
     let mut compiler = Compiler {
         doc,
-        scene: Scene {
-            strokes: Vec::new(),
-            fills: Vec::new(),
-            glyphs: Vec::new(),
-            fallbacks: Vec::new(),
-            skipped: Vec::new(),
-            visual_style: visual,
-            model_lineweight_px_per_mm: options.model_lineweight_px_per_mm,
-        },
+        scene: blank_scene(doc, options, visual, sheet),
         stack: HashSet::new(),
         font_dirs: &options.font_dirs,
         fonts: HashMap::new(),
+        sheet,
+        pattern_scale: 1.0,
+        viewport_frozen: HashSet::new(),
     };
-    compiler.walk_block("*Model_Space", &Frame::model(), &Transform::identity(), &[]);
+    compiler.walk_block(&block, &Frame::model(), &Transform::identity(), &[]);
     compiler.scene
+}
+
+fn blank_scene(
+    doc: &CadDocument,
+    options: &CompileOptions,
+    visual: super::visual_style::ResolvedVisualStyle,
+    sheet: bool,
+) -> Scene {
+    Scene {
+        strokes: Vec::new(),
+        fills: Vec::new(),
+        glyphs: Vec::new(),
+        fallbacks: Vec::new(),
+        skipped: Vec::new(),
+        visual_style: visual,
+        model_lineweight_px_per_mm: options.model_lineweight_px_per_mm,
+        sheet_units_per_mm: if sheet {
+            super::sheet::units_per_mm(doc.header.measurement)
+        } else {
+            0.0
+        },
+    }
 }
 
 struct Compiler<'a> {
@@ -42,6 +80,13 @@ struct Compiler<'a> {
     stack: HashSet<String>,
     font_dirs: &'a [std::path::PathBuf],
     fonts: HashMap<String, Option<FaceFont>>,
+    /// Layout tab. Lineweights are paper millimetres, and viewports open model space.
+    sheet: bool,
+    /// Extra multiplier for linetype lengths. Viewport contents use the
+    /// viewport scale when `PSLTSCALE` is off, because the picture is already
+    /// in paper units.
+    pattern_scale: f64,
+    viewport_frozen: HashSet<Handle>,
 }
 
 enum FaceFont {
@@ -105,6 +150,14 @@ impl Compiler<'_> {
             self.scene.skipped.push(SkippedEntity {
                 kind: kind_of(entity).to_string(),
                 reason: format!("layer {layer} is off or frozen"),
+                source,
+            });
+            return;
+        }
+        if self.layer_frozen_in_viewport(&layer) {
+            self.scene.skipped.push(SkippedEntity {
+                kind: kind_of(entity).to_string(),
+                reason: format!("layer {layer} is frozen in this viewport"),
                 source,
             });
             return;
@@ -263,6 +316,7 @@ impl Compiler<'_> {
                         entity.common(),
                         frame,
                         &self.scene.visual_style.clone(),
+                        self.sheet,
                     );
                     let color_of =
                         |color: crate::types::Color| match color {
@@ -443,11 +497,22 @@ impl Compiler<'_> {
                         self.fallback(entity, frame, source);
                     }
                 },
+                crate::entities::ExtendedEntityData::SectionObject(data) => {
+                    self.draw_section_object(data, entity, frame, transform, source);
+                }
                 _ => self.fallback(entity, frame, source),
             },
+            EntityType::Viewport(viewport) => {
+                self.draw_viewport(viewport, entity, frame, transform, source);
+            }
+            EntityType::ViewBorder(border) => {
+                self.draw_view_border(border, entity, frame, transform, source);
+            }
+            EntityType::SectionSymbol(symbol) => {
+                self.draw_section_symbol(symbol, entity, frame, transform, source);
+            }
             EntityType::Ray(_)
             | EntityType::XLine(_)
-            | EntityType::Viewport(_)
             | EntityType::Mesh(_)
             | EntityType::RasterImage(_)
             | EntityType::Solid3D(_)
@@ -459,9 +524,287 @@ impl Compiler<'_> {
             | EntityType::Ole2Frame(_)
             | EntityType::PolygonMesh(_)
             | EntityType::Light(_)
-            | EntityType::SectionSymbol(_)
-            | EntityType::ViewBorder(_)
             | EntityType::Unknown(_) => self.fallback(entity, frame, source),
+        }
+    }
+
+    fn layer_frozen_in_viewport(&self, name: &str) -> bool {
+        if self.viewport_frozen.is_empty() {
+            return false;
+        }
+        self.doc.layers.get(name).is_some_and(|layer| {
+            !layer.handle.is_null() && self.viewport_frozen.contains(&layer.handle)
+        })
+    }
+
+    fn draw_viewport(
+        &mut self,
+        viewport: &crate::entities::Viewport,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        if !self.sheet {
+            self.scene.skipped.push(SkippedEntity {
+                kind: "Viewport".to_string(),
+                reason: "viewport belongs to a layout".to_string(),
+                source,
+            });
+            return;
+        }
+        if !super::sheet::viewport_shows_model(viewport) {
+            let reason = if viewport.id == 1 {
+                "paper-space viewport"
+            } else {
+                "viewport is off"
+            };
+            self.scene.skipped.push(SkippedEntity {
+                kind: "Viewport".to_string(),
+                reason: reason.to_string(),
+                source,
+            });
+            return;
+        }
+        let scale = super::sheet::viewport_scale(viewport);
+        let frozen: HashSet<Handle> = viewport.frozen_layers.iter().copied().collect();
+        let custom = self.boundary_polygon(viewport.clip_boundary_handle);
+        let rect = super::sheet::viewport_rectangle(viewport);
+        let clip = super::sheet::map_polygon(transform, custom.as_deref().unwrap_or(&rect));
+        let border = custom.is_none().then_some(rect);
+        let center_z = viewport.center.z;
+        let to_paper = super::sheet::model_to_paper(viewport).then(transform);
+        let saved_scale = self.pattern_scale;
+        let saved_frozen = std::mem::replace(&mut self.viewport_frozen, frozen);
+        self.pattern_scale = if self.doc.header.paper_space_linetype_scaling {
+            1.0
+        } else {
+            scale.abs()
+        };
+        let stroke_from = self.scene.strokes.len();
+        let fill_from = self.scene.fills.len();
+        let glyph_from = self.scene.glyphs.len();
+        self.walk_block("*Model_Space", &Frame::model(), &to_paper, &[]);
+        self.pattern_scale = saved_scale;
+        self.viewport_frozen = saved_frozen;
+        clip_recent_geometry(&mut self.scene, stroke_from, fill_from, glyph_from, &clip);
+        if let Some(rect) = border {
+            let mut points: Vec<Vector3> = rect
+                .into_iter()
+                .map(|point| Vector3::new(point.x, point.y, center_z))
+                .collect();
+            if let Some(first) = points.first().copied() {
+                points.push(first);
+            }
+            let points = world(transform, points);
+            self.emit_dedicated(&points, entity, frame, source);
+        }
+    }
+
+    fn boundary_polygon(&self, handle: Handle) -> Option<Vec<Vector2>> {
+        if handle.is_null() {
+            return None;
+        }
+        let entity = self.doc.get_entity(handle)?;
+        let points = match entity {
+            EntityType::LwPolyline(poly) => lwpolyline_points(poly),
+            EntityType::Polyline2D(poly) => polyline2d_points(poly),
+            EntityType::Circle(circle) => super::curves::circle_points(circle),
+            EntityType::Ellipse(ellipse) => super::curves::ellipse_points(ellipse),
+            EntityType::Polyline(poly) => {
+                poly.vertices.iter().map(|vertex| vertex.location).collect()
+            }
+            _ => return None,
+        };
+        if points.len() < 3 {
+            return None;
+        }
+        Some(
+            points
+                .into_iter()
+                .map(|point| Vector2::new(point.x, point.y))
+                .collect(),
+        )
+    }
+
+    fn draw_view_border(
+        &mut self,
+        border: &crate::entities::ViewBorder,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        let width = border.max[0] - border.min[0];
+        let height = border.max[1] - border.min[1];
+        if width.abs() <= 1e-9 && height.abs() <= 1e-9 {
+            self.fallback(entity, frame, source);
+            return;
+        }
+        let points = world(
+            transform,
+            vec![
+                Vector3::new(border.min[0], border.min[1], 0.0),
+                Vector3::new(border.max[0], border.min[1], 0.0),
+                Vector3::new(border.max[0], border.max[1], 0.0),
+                Vector3::new(border.min[0], border.max[1], 0.0),
+                Vector3::new(border.min[0], border.min[1], 0.0),
+            ],
+        );
+        self.emit_dedicated(&points, entity, frame, source);
+    }
+
+    fn draw_section_symbol(
+        &mut self,
+        symbol: &crate::entities::SectionSymbol,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        let vertices = section_vertices(symbol);
+        if vertices.len() < 2 {
+            self.fallback(entity, frame, source);
+            return;
+        }
+        let path = section_path(&vertices);
+        if path.len() < 2 {
+            self.fallback(entity, frame, source);
+            return;
+        }
+        let style = self.doc.section_view_style.clone();
+        let symbol_scale = if symbol.symbol_scale.abs() > 1e-9 {
+            symbol.symbol_scale.abs()
+        } else {
+            1.0
+        };
+        let show_plane = style
+            .as_ref()
+            .map(|item| item.show_plane_line)
+            .unwrap_or(true);
+        let show_ends = style
+            .as_ref()
+            .map(|item| item.show_end_lines)
+            .unwrap_or(true);
+        let mut drew = false;
+        if show_plane {
+            let points = world(transform, path.clone());
+            self.emit_dedicated(&points, entity, frame, source.clone());
+            drew = true;
+        } else if show_ends {
+            let length = style
+                .as_ref()
+                .map(|item| (item.end_line_length + item.end_line_overshoot).abs())
+                .unwrap_or(0.0)
+                * symbol_scale;
+            for stub in [
+                take_length(&path, length, false),
+                take_length(&path, length, true),
+            ] {
+                if stub.len() >= 2 {
+                    let points = world(transform, stub);
+                    self.emit_dedicated(&points, entity, frame, source.clone());
+                    drew = true;
+                }
+            }
+        }
+        if style.as_ref().is_some_and(|item| item.show_arrows) {
+            let size = style
+                .as_ref()
+                .map(|item| item.arrow_size.abs())
+                .unwrap_or(0.0)
+                .max(1e-6)
+                * symbol_scale;
+            if let Some(direction) = path_side(&path, false) {
+                let triangle = arrow_triangle(path[0], direction, size);
+                self.emit_fill(
+                    &world(transform, triangle),
+                    entity,
+                    frame,
+                    source.clone(),
+                    false,
+                );
+                drew = true;
+            }
+            if let Some(direction) = path_side(&path, true) {
+                let origin = *path.last().unwrap();
+                let triangle = arrow_triangle(origin, direction, size);
+                self.emit_fill(
+                    &world(transform, triangle),
+                    entity,
+                    frame,
+                    source.clone(),
+                    false,
+                );
+                drew = true;
+            }
+        }
+        let label_height = style
+            .as_ref()
+            .map(|item| item.label_height)
+            .filter(|height| *height > 1e-9)
+            .unwrap_or(2.5)
+            * symbol_scale;
+        for vertex in &vertices {
+            if vertex.label.is_empty() {
+                continue;
+            }
+            let anchor = vertex.point + vertex.label_offset;
+            self.draw_label(
+                &super::text_draw::GlyphLabel {
+                    text: &vertex.label,
+                    shape_number: None,
+                    insertion: anchor,
+                    alignment: anchor,
+                    use_alignment: false,
+                    height: label_height,
+                    rotation: 0.0,
+                    width_factor: 1.0,
+                    oblique: 0.0,
+                    horizontal: 0,
+                    vertical: 0,
+                    normal: Vector3::UNIT_Z,
+                    backward: false,
+                    upside_down: false,
+                },
+                "Standard",
+                entity,
+                frame,
+                transform,
+                source.clone(),
+            );
+            drew = true;
+        }
+        if !drew {
+            self.fallback(entity, frame, source);
+        }
+    }
+
+    fn draw_section_object(
+        &mut self,
+        data: &crate::entities::SectionObjectData,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        let mut chains = Vec::new();
+        if let Some(chain) = closed_chain(&data.vertices) {
+            chains.push(chain);
+        }
+        if let Some(chain) = closed_chain(&data.back_line_vertices) {
+            chains.push(chain);
+        }
+        let count = data.vertices.len().min(data.back_line_vertices.len());
+        for index in 0..count {
+            chains.push(vec![data.vertices[index], data.back_line_vertices[index]]);
+        }
+        if chains.is_empty() {
+            self.fallback(entity, frame, source);
+            return;
+        }
+        for chain in chains {
+            self.emit_dedicated(&world(transform, chain), entity, frame, source.clone());
         }
     }
 
@@ -571,7 +914,7 @@ impl Compiler<'_> {
         if self.doc.header.quick_text_mode {
             let points = world(transform, super::text_draw::quick_box(label));
             let visual = self.scene.visual_style.clone();
-            let style = resolve_style(self.doc, entity.common(), frame, &visual);
+            let style = resolve_style(self.doc, entity.common(), frame, &visual, self.sheet);
             self.emit_plain(&points, &[], style, source);
             return;
         }
@@ -591,7 +934,7 @@ impl Compiler<'_> {
             return;
         };
         let visual = self.scene.visual_style.clone();
-        let style = resolve_style(self.doc, entity.common(), frame, &visual);
+        let style = resolve_style(self.doc, entity.common(), frame, &visual, self.sheet);
         match produced {
             PreparedLabel::Strokes(chains) => {
                 for chain in chains {
@@ -718,8 +1061,14 @@ impl Compiler<'_> {
         source: EntityRef,
     ) {
         let visual = self.scene.visual_style.clone();
-        let style = resolve_style(self.doc, entity.common(), frame, &visual);
-        let marks = pattern_elements(self.doc, entity.common(), frame, &visual);
+        let style = resolve_style(self.doc, entity.common(), frame, &visual, self.sheet);
+        let marks = pattern_elements(
+            self.doc,
+            entity.common(),
+            frame,
+            &visual,
+            self.pattern_scale,
+        );
         let lengths: Vec<f64> = marks.iter().map(|mark| mark.length).collect();
         self.emit_plain(points, &lengths, style, source.clone());
         self.place_complex(points, &marks, entity, frame, source);
@@ -822,7 +1171,7 @@ impl Compiler<'_> {
         source: EntityRef,
     ) {
         let visual = self.scene.visual_style.clone();
-        let style = resolve_style(self.doc, entity.common(), frame, &visual);
+        let style = resolve_style(self.doc, entity.common(), frame, &visual, self.sheet);
         self.scene.strokes.push(Stroke {
             points: points.to_vec(),
             closed: false,
@@ -858,7 +1207,7 @@ impl Compiler<'_> {
             return;
         }
         let visual = self.scene.visual_style.clone();
-        let style = resolve_style(self.doc, entity.common(), frame, &visual);
+        let style = resolve_style(self.doc, entity.common(), frame, &visual, self.sheet);
         self.scene.fills.push(super::scene::Fill {
             triangles: triangles.to_vec(),
             style,
@@ -878,6 +1227,7 @@ impl Compiler<'_> {
             entity.common(),
             frame,
             &self.scene.visual_style.clone(),
+            self.sheet,
         );
         for edge in box_edges(&corners) {
             self.scene.strokes.push(Stroke {
@@ -1397,6 +1747,133 @@ fn box_edges(corners: &[Vector3; 8]) -> [[Vector3; 2]; 12] {
     ]
 }
 
+struct SymbolVertex {
+    point: Vector3,
+    bulge: f64,
+    label: String,
+    label_offset: Vector3,
+}
+
+fn section_vertices(symbol: &crate::entities::SectionSymbol) -> Vec<SymbolVertex> {
+    if !symbol.points.is_empty() {
+        return symbol
+            .points
+            .iter()
+            .map(|point| SymbolVertex {
+                point: point.point,
+                bulge: point.bulge,
+                label: point.label.clone(),
+                label_offset: point.label_offset,
+            })
+            .collect();
+    }
+    if symbol.end_a == [0.0; 2] && symbol.end_b == [0.0; 2] {
+        return Vec::new();
+    }
+    vec![
+        SymbolVertex {
+            point: Vector3::new(symbol.end_a[0], symbol.end_a[1], 0.0),
+            bulge: 0.0,
+            label: symbol.label.clone(),
+            label_offset: Vector3::ZERO,
+        },
+        SymbolVertex {
+            point: Vector3::new(symbol.end_b[0], symbol.end_b[1], 0.0),
+            bulge: 0.0,
+            label: String::new(),
+            label_offset: Vector3::ZERO,
+        },
+    ]
+}
+
+fn section_path(vertices: &[SymbolVertex]) -> Vec<Vector3> {
+    let mut path = Vec::new();
+    for index in 0..vertices.len().saturating_sub(1) {
+        let mut segment = tessellate_bulge(
+            vertices[index].point,
+            vertices[index + 1].point,
+            vertices[index].bulge,
+        );
+        if index > 0 {
+            segment.drain(..1.min(segment.len()));
+        }
+        path.extend(segment);
+    }
+    path
+}
+
+fn take_length(points: &[Vector3], length: f64, from_end: bool) -> Vec<Vector3> {
+    if points.len() < 2 || length <= 1e-9 {
+        return Vec::new();
+    }
+    let owned: Vec<Vector3> = if from_end {
+        points.iter().rev().copied().collect()
+    } else {
+        points.to_vec()
+    };
+    let mut taken = vec![owned[0]];
+    let mut remaining = length;
+    for pair in owned.windows(2) {
+        let delta = pair[1] - pair[0];
+        let span = delta.length();
+        if span <= 1e-12 {
+            continue;
+        }
+        if remaining <= span {
+            taken.push(pair[0] + delta * (remaining / span));
+            break;
+        }
+        taken.push(pair[1]);
+        remaining -= span;
+    }
+    if from_end {
+        taken.reverse();
+    }
+    taken
+}
+
+fn path_side(path: &[Vector3], at_end: bool) -> Option<Vector3> {
+    let (start, end) = if at_end {
+        let end = *path.last()?;
+        let start = *path.get(path.len().saturating_sub(2))?;
+        (start, end)
+    } else {
+        (*path.first()?, *path.get(1)?)
+    };
+    let delta = end - start;
+    let length = delta.length();
+    if length <= 1e-12 {
+        return None;
+    }
+    let tangent = delta * (1.0 / length);
+    Some(Vector3::new(-tangent.y, tangent.x, 0.0))
+}
+
+fn arrow_triangle(origin: Vector3, direction: Vector3, size: f64) -> Vec<Vector3> {
+    let tangent = Vector3::new(direction.y, -direction.x, 0.0);
+    let half = size * 0.3;
+    vec![
+        origin + direction * size,
+        origin + tangent * half,
+        origin - tangent * half,
+    ]
+}
+
+fn closed_chain(points: &[Vector3]) -> Option<Vec<Vector3>> {
+    if points.len() < 2 {
+        return None;
+    }
+    let mut chain = points.to_vec();
+    if points.len() >= 3 {
+        let first = points[0];
+        let last = *points.last().unwrap();
+        if (first - last).length_squared() > 1e-12 {
+            chain.push(first);
+        }
+    }
+    Some(chain)
+}
+
 fn kind_of(entity: &EntityType) -> &'static str {
     match entity {
         EntityType::Point(_) => "Point",
@@ -1471,7 +1948,6 @@ fn kind_of(entity: &EntityType) -> &'static str {
 pub const FALLBACK_KINDS: &[&str] = &[
     "Ray",
     "XLine",
-    "Viewport",
     "Mesh",
     "RasterImage",
     "Solid3D",
@@ -1483,10 +1959,7 @@ pub const FALLBACK_KINDS: &[&str] = &[
     "Ole2Frame",
     "PolygonMesh",
     "Light",
-    "SectionSymbol",
-    "ViewBorder",
     "Camera",
-    "SectionObject",
     "ArcAlignedText",
     "RemoteText",
     "GeoPositionMarker",

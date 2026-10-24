@@ -34,6 +34,9 @@ pub struct Style {
     /// Millimetres. Zero when the stroke is a one-pixel cosmetic hairline.
     pub lineweight_mm: f64,
     pub cosmetic: bool,
+    /// Paper-space width. The millimetres become drawing units on the sheet
+    /// and grow with zoom. Model space leaves this false and uses pixels.
+    pub sheet: bool,
 }
 
 /// A filled triangle list. `triangles.len()` is a multiple of three.
@@ -106,6 +109,8 @@ pub struct Scene {
     /// Provisional model-space pixels per millimetre of lineweight.
     /// Replaced when the AutoCAD lineweight chart is calibrated.
     pub model_lineweight_px_per_mm: f64,
+    /// Drawing units per millimetre of lineweight. Zero in model space.
+    pub sheet_units_per_mm: f64,
 }
 
 impl Scene {

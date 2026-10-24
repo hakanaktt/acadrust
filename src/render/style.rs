@@ -54,6 +54,7 @@ pub(crate) fn resolve_style(
     common: &EntityCommon,
     frame: &Frame,
     visual: &ResolvedVisualStyle,
+    sheet: bool,
 ) -> Style {
     let layer_name = effective_layer(&common.layer, frame);
     let layer = doc.layers.get(&layer_name);
@@ -110,6 +111,7 @@ pub(crate) fn resolve_style(
         opacity,
         lineweight_mm,
         cosmetic,
+        sheet: sheet && !cosmetic,
     }
 }
 
@@ -134,6 +136,7 @@ pub(crate) fn pattern_elements(
     common: &EntityCommon,
     frame: &Frame,
     visual: &ResolvedVisualStyle,
+    pattern_scale: f64,
 ) -> Vec<PatternMark> {
     if !visual.linetypes {
         return Vec::new();
@@ -154,7 +157,7 @@ pub(crate) fn pattern_elements(
     if linetype.is_continuous() || is_inherited_name(&linetype.name) {
         return Vec::new();
     }
-    let scale = doc.header.linetype_scale * common.linetype_scale;
+    let scale = doc.header.linetype_scale * common.linetype_scale * pattern_scale.abs();
     linetype
         .elements
         .iter()

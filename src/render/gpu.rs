@@ -354,13 +354,21 @@ impl Renderer {
                 rgb[2] as f32 / 255.0,
                 stroke.style.opacity,
             ];
-            let cosmetic = if stroke.style.cosmetic { 1.0 } else { 0.0 };
-            let half_mm = (stroke.style.lineweight_mm * 0.5) as f32;
+            let (half_width, mode) = if stroke.style.sheet && scene.sheet_units_per_mm > 0.0 {
+                (
+                    (stroke.style.lineweight_mm * 0.5 * scene.sheet_units_per_mm) as f32,
+                    2.0,
+                )
+            } else if stroke.style.cosmetic {
+                (0.0, 1.0)
+            } else {
+                ((stroke.style.lineweight_mm * 0.5) as f32, 0.0)
+            };
             for pair in stroke.points.windows(2) {
                 if !stroke.dot && (pair[1] - pair[0]).length_squared() <= 1e-18 {
                     continue;
                 }
-                push_segment(&mut bytes, pair[0], pair[1], color, half_mm, cosmetic);
+                push_segment(&mut bytes, pair[0], pair[1], color, half_width, mode);
             }
         }
         let size = (bytes.len() as u64).max(INSTANCE_STRIDE);
