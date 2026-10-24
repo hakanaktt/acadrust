@@ -2,16 +2,18 @@
 //!
 //! ```text
 //! cargo run --example render_view --features render
+//! cargo run --example render_view --features render -- target/entity-atlas/AC1032/entity_atlas_AC1032_dwg.dwg
 //! ```
 //!
 //! Drag with the left button to pan. Scroll to zoom.
 
 use std::sync::Arc;
+use std::{error::Error, path::PathBuf};
 
 use acadrust::entities::{EntityType, Line};
 use acadrust::render::{compile, Renderer, RendererConfig, View};
 use acadrust::types::{Color, LineWeight};
-use acadrust::CadDocument;
+use acadrust::{CadDocument, DwgReader, DxfReader};
 use winit::application::ApplicationHandler;
 use winit::event::{MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -33,6 +35,21 @@ fn drawing() -> CadDocument {
         doc.add_entity(EntityType::Line(line)).unwrap();
     }
     doc
+}
+
+fn load_document() -> Result<CadDocument, Box<dyn Error>> {
+    let Some(path) = std::env::args_os().nth(1).map(PathBuf::from) else {
+        return Ok(drawing());
+    };
+    let is_dxf = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("dxf"));
+    if is_dxf {
+        Ok(DxfReader::from_file(path)?.read()?)
+    } else {
+        Ok(DwgReader::from_file(path)?.read()?)
+    }
 }
 
 struct App {
@@ -214,11 +231,12 @@ impl ApplicationHandler for App {
     }
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn Error>> {
     let event_loop = EventLoop::new().expect("event loop");
     let mut app = App {
-        doc: drawing(),
+        doc: load_document()?,
         gpu: None,
     };
     event_loop.run_app(&mut app).expect("run");
+    Ok(())
 }
