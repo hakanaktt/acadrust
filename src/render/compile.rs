@@ -1,6 +1,6 @@
 //! Walk a drawing into a [`Scene`](super::Scene).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::document::CadDocument;
 use crate::entities::{EntityType, Insert, LwPolyline};
@@ -28,6 +28,8 @@ pub(crate) fn compile(doc: &CadDocument, options: &CompileOptions) -> Scene {
             model_lineweight_px_per_mm: options.model_lineweight_px_per_mm,
         },
         stack: HashSet::new(),
+        font_dirs: &options.font_dirs,
+        fonts: HashMap::new(),
     };
     compiler.walk_block("*Model_Space", &Frame::model(), &Transform::identity(), &[]);
     compiler.scene
@@ -37,6 +39,8 @@ struct Compiler<'a> {
     doc: &'a CadDocument,
     scene: Scene,
     stack: HashSet<String>,
+    font_dirs: &'a [std::path::PathBuf],
+    fonts: HashMap<String, Option<super::shx::ShapeFont>>,
 }
 
 impl Compiler<'_> {
@@ -291,6 +295,129 @@ impl Compiler<'_> {
                     }
                 }
             }
+            EntityType::Text(text) => self.draw_label(
+                &super::text_draw::GlyphLabel {
+                    text: &text.value,
+                    shape_number: None,
+                    insertion: text.insertion_point,
+                    alignment: text.alignment_point.unwrap_or(text.insertion_point),
+                    use_alignment: text.horizontal_alignment
+                        != crate::entities::TextHorizontalAlignment::Left
+                        || text.vertical_alignment
+                            != crate::entities::TextVerticalAlignment::Baseline,
+                    height: text.height,
+                    rotation: text.rotation,
+                    width_factor: text.width_factor,
+                    oblique: text.oblique_angle,
+                    horizontal: text.horizontal_alignment as u8,
+                    vertical: text.vertical_alignment as u8,
+                    normal: text.normal,
+                    backward: text.generation_flags & 2 != 0,
+                    upside_down: text.generation_flags & 4 != 0,
+                },
+                &text.style,
+                entity,
+                frame,
+                transform,
+                source,
+            ),
+            EntityType::AttributeDefinition(attribute) => {
+                if frame.in_insert || attribute.flags.invisible {
+                    return;
+                }
+                self.draw_label(
+                    &super::text_draw::GlyphLabel {
+                        text: &attribute.default_value,
+                        shape_number: None,
+                        insertion: attribute.insertion_point,
+                        alignment: attribute.alignment_point,
+                        use_alignment: attribute.horizontal_alignment as u8 != 0
+                            || attribute.vertical_alignment as u8 != 0,
+                        height: attribute.height,
+                        rotation: attribute.rotation,
+                        width_factor: attribute.width_factor,
+                        oblique: attribute.oblique_angle,
+                        horizontal: attribute.horizontal_alignment as u8,
+                        vertical: attribute.vertical_alignment as u8,
+                        normal: attribute.normal,
+                        backward: attribute.text_generation_flags & 2 != 0,
+                        upside_down: attribute.text_generation_flags & 4 != 0,
+                    },
+                    &attribute.text_style,
+                    entity,
+                    frame,
+                    transform,
+                    source,
+                );
+            }
+            EntityType::AttributeEntity(attribute) => {
+                if attribute.flags.invisible {
+                    return;
+                }
+                let text = if attribute.is_multiline {
+                    attribute
+                        .embedded_mtext
+                        .as_ref()
+                        .map(|mtext| mtext.value.as_str())
+                        .unwrap_or(attribute.value.as_str())
+                } else {
+                    attribute.value.as_str()
+                };
+                self.draw_label(
+                    &super::text_draw::GlyphLabel {
+                        text,
+                        shape_number: None,
+                        insertion: attribute.insertion_point,
+                        alignment: attribute.alignment_point,
+                        use_alignment: attribute.horizontal_alignment as u8 != 0
+                            || attribute.vertical_alignment as u8 != 0,
+                        height: attribute.height,
+                        rotation: attribute.rotation,
+                        width_factor: attribute.width_factor,
+                        oblique: attribute.oblique_angle,
+                        horizontal: attribute.horizontal_alignment as u8,
+                        vertical: attribute.vertical_alignment as u8,
+                        normal: attribute.normal,
+                        backward: attribute.text_generation_flags & 2 != 0,
+                        upside_down: attribute.text_generation_flags & 4 != 0,
+                    },
+                    &attribute.text_style,
+                    entity,
+                    frame,
+                    transform,
+                    source,
+                );
+            }
+            EntityType::Shape(shape) => self.draw_label(
+                &super::text_draw::GlyphLabel {
+                    text: &shape.shape_name,
+                    shape_number: Some(shape.shape_number as u16),
+                    insertion: shape.insertion_point,
+                    alignment: shape.insertion_point,
+                    use_alignment: false,
+                    height: shape.size,
+                    rotation: shape.rotation,
+                    width_factor: shape.relative_x_scale,
+                    oblique: shape.oblique_angle,
+                    horizontal: 0,
+                    vertical: 0,
+                    normal: shape.normal,
+                    backward: false,
+                    upside_down: false,
+                },
+                &shape.style_name,
+                entity,
+                frame,
+                transform,
+                source,
+            ),
+            EntityType::MText(_)
+            | EntityType::Dimension(_)
+            | EntityType::Leader(_)
+            | EntityType::MultiLeader(_)
+            | EntityType::Tolerance(_)
+            | EntityType::MLine(_)
+            | EntityType::Table(_) => self.draw_exploded(entity, frame, transform, path, source),
             EntityType::Insert(insert) => self.draw_insert(insert, frame, transform, path),
             EntityType::Block(_) | EntityType::BlockEnd(_) | EntityType::Seqend(_) => {}
             EntityType::Extended(extended) => match &extended.data {
@@ -307,27 +434,16 @@ impl Compiler<'_> {
                 },
                 _ => self.fallback(entity, frame, source),
             },
-            EntityType::Text(_)
-            | EntityType::MText(_)
-            | EntityType::Dimension(_)
-            | EntityType::Ray(_)
+            EntityType::Ray(_)
             | EntityType::XLine(_)
             | EntityType::Viewport(_)
-            | EntityType::AttributeDefinition(_)
-            | EntityType::AttributeEntity(_)
-            | EntityType::Leader(_)
-            | EntityType::MultiLeader(_)
-            | EntityType::MLine(_)
             | EntityType::Mesh(_)
             | EntityType::RasterImage(_)
             | EntityType::Solid3D(_)
             | EntityType::Region(_)
             | EntityType::Body(_)
             | EntityType::Surface(_)
-            | EntityType::Table(_)
-            | EntityType::Tolerance(_)
             | EntityType::PolyfaceMesh(_)
-            | EntityType::Shape(_)
             | EntityType::Underlay(_)
             | EntityType::Ole2Frame(_)
             | EntityType::PolygonMesh(_)
@@ -410,7 +526,93 @@ impl Compiler<'_> {
                 self.draw(entity, &child, &to_world, &child_path);
             }
         }
+        for attribute in &insert.attributes {
+            if attribute.flags.invisible {
+                continue;
+            }
+            let attribute = EntityType::AttributeEntity(attribute.clone());
+            self.draw(&attribute, frame, transform, path);
+        }
         self.stack.remove(&key);
+    }
+
+    fn draw_label(
+        &mut self,
+        label: &super::text_draw::GlyphLabel<'_>,
+        style_name: &str,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: EntityRef,
+    ) {
+        if self.doc.header.quick_text_mode {
+            let points = world(transform, super::text_draw::quick_box(label));
+            self.emit_dedicated(&points, entity, frame, source);
+            return;
+        }
+        let Some(font) = self.font_for(style_name) else {
+            self.scene.skipped.push(SkippedEntity {
+                kind: kind_of(entity).to_string(),
+                reason: format!("font for style {style_name} was not found"),
+                source,
+            });
+            return;
+        };
+        for chain in super::text_draw::place_label(font, label) {
+            self.emit_dedicated(&world(transform, chain), entity, frame, source.clone());
+        }
+    }
+
+    fn font_for(&mut self, style_name: &str) -> Option<&super::shx::ShapeFont> {
+        if !self.fonts.contains_key(style_name) {
+            let loaded = self.load_font(style_name);
+            self.fonts.insert(style_name.to_string(), loaded);
+        }
+        self.fonts.get(style_name).and_then(|font| font.as_ref())
+    }
+
+    fn load_font(&self, style_name: &str) -> Option<super::shx::ShapeFont> {
+        let style = self.doc.text_styles.get(style_name)?;
+        let mut names = Vec::new();
+        if !style.font_file.is_empty() {
+            names.push(style.font_file.clone());
+        }
+        if !style.big_font_file.is_empty() {
+            names.push(style.big_font_file.clone());
+        }
+        for name in names {
+            for dir in self.font_dirs {
+                for candidate in [
+                    dir.join(&name),
+                    dir.join(format!("{name}.shp")),
+                    dir.join(format!("{name}.shx")),
+                ] {
+                    if let Some(font) = super::shx::ShapeFont::load(&candidate) {
+                        return Some(font);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn draw_exploded(
+        &mut self,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        path: &[crate::types::Handle],
+        source: EntityRef,
+    ) {
+        let parts = entity.explode();
+        if parts.is_empty() {
+            self.fallback(entity, frame, source);
+            return;
+        }
+        for part in &parts {
+            self.draw(part, frame, transform, path);
+        }
+        let _ = source;
     }
 
     fn ordered_handles(&self, record: &crate::tables::BlockRecord) -> Vec<crate::types::Handle> {
@@ -959,27 +1161,16 @@ fn kind_of(entity: &EntityType) -> &'static str {
 
 /// Kinds whose only picture today is the extents box.
 pub const FALLBACK_KINDS: &[&str] = &[
-    "Text",
-    "MText",
-    "Dimension",
     "Ray",
     "XLine",
     "Viewport",
-    "AttributeDefinition",
-    "AttributeEntity",
-    "Leader",
-    "MultiLeader",
-    "MLine",
     "Mesh",
     "RasterImage",
     "Solid3D",
     "Region",
     "Body",
     "Surface",
-    "Table",
-    "Tolerance",
     "PolyfaceMesh",
-    "Shape",
     "Underlay",
     "Ole2Frame",
     "PolygonMesh",

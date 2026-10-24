@@ -186,9 +186,13 @@ fn frozen_layer_is_skipped() {
 #[test]
 fn unfinished_entities_stay_on_the_fallback_list() {
     let mut doc = doc();
-    doc.add_entity(EntityType::Text(Text::new())).unwrap();
+    doc.add_entity(EntityType::Ray(crate::entities::Ray::new(
+        Vector3::ZERO,
+        Vector3::new(1.0, 0.0, 0.0),
+    )))
+    .unwrap();
     let scene = compile(&doc, &CompileOptions::default());
-    assert_eq!(scene.fallback_kinds(), vec!["Text"]);
+    assert_eq!(scene.fallback_kinds(), vec!["Ray"]);
     assert!(scene
         .strokes
         .iter()
@@ -549,4 +553,54 @@ fn sortents_draws_the_lower_handle_first() {
     let scene = compile(&doc, &CompileOptions::default());
     assert_eq!(scene.strokes[0].source.handle, second_handle);
     assert_eq!(scene.strokes[1].source.handle, first_handle);
+}
+
+#[test]
+fn shp_text_draws_the_letter_strokes() {
+    let dir = std::env::temp_dir().join("acadrust-render-font");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("mini.shp"),
+        "*0,4,TEST\n6,2,0,0\n*65,12,A\n1,8,(4,6),8,(4,-6),2,8,(2,0),0\n",
+    )
+    .unwrap();
+    let mut doc = doc();
+    doc.text_styles.get_mut("Standard").unwrap().font_file = "mini".to_string();
+    let mut text = Text::with_value("A", Vector3::ZERO).with_height(6.0);
+    text.style = "Standard".to_string();
+    doc.add_entity(EntityType::Text(text)).unwrap();
+    let mut options = CompileOptions::default();
+    options.font_dirs.push(dir);
+    let scene = compile(&doc, &options);
+    assert!(scene.fallbacks.is_empty());
+    assert!(scene.skipped.is_empty(), "{:?}", scene.skipped);
+    assert!(scene
+        .strokes
+        .iter()
+        .flat_map(|stroke| &stroke.points)
+        .any(|point| (point.y - 6.0).abs() < 1e-4));
+}
+
+#[test]
+fn missing_font_is_reported_and_not_invented() {
+    let mut doc = doc();
+    doc.add_entity(EntityType::Text(Text::with_value("Hi", Vector3::ZERO)))
+        .unwrap();
+    let scene = compile(&doc, &CompileOptions::default());
+    assert!(scene.strokes.is_empty());
+    assert!(scene.skipped[0].reason.contains("font"));
+}
+
+#[test]
+fn aligned_dimension_explodes_into_strokes() {
+    let mut doc = doc();
+    let dimension =
+        crate::entities::DimensionAligned::new(Vector3::ZERO, Vector3::new(20.0, 0.0, 0.0));
+    doc.add_entity(EntityType::Dimension(Box::new(
+        crate::entities::Dimension::Aligned(dimension),
+    )))
+    .unwrap();
+    let scene = compile(&doc, &CompileOptions::default());
+    assert!(!scene.fallback_kinds().contains(&"Dimension"));
+    assert!(!scene.strokes.is_empty());
 }

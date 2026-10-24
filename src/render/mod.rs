@@ -15,7 +15,9 @@ mod dash;
 mod gpu;
 mod hatch_fill;
 mod scene;
+mod shx;
 mod style;
+mod text_draw;
 mod visual_style;
 
 pub use compile::FALLBACK_KINDS;
