@@ -3260,19 +3260,53 @@ fn find_font_file(
     name: &str,
     extensions: &[&str],
 ) -> Option<std::path::PathBuf> {
+    // Drawings often preserve the absolute path from the machine that wrote
+    // them. When that machine's path is unavailable, the configured font
+    // directories should still be able to resolve the same file by basename.
+    let basename = std::path::Path::new(name)
+        .file_name()
+        .and_then(|file| file.to_str())
+        .filter(|file| *file != name);
     for dir in dirs {
-        for extension in extensions {
-            let path = if extension.is_empty() {
-                dir.join(name)
-            } else {
-                dir.join(format!("{name}.{extension}"))
-            };
-            if path.is_file() {
-                return Some(path);
+        for candidate in [Some(name), basename].into_iter().flatten() {
+            for extension in extensions {
+                let path = if extension.is_empty() {
+                    dir.join(candidate)
+                } else {
+                    dir.join(format!("{candidate}.{extension}"))
+                };
+                if path.is_file() {
+                    return Some(path);
+                }
             }
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::find_font_file;
+
+    #[test]
+    fn font_lookup_retries_an_absolute_path_by_basename() {
+        let root = std::env::temp_dir().join(format!(
+            "acadrust-render-font-lookup-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let expected = root.join("mini.shx");
+        std::fs::write(&expected, b"font").unwrap();
+        let missing_path = root.join("other-machine").join("mini.shx");
+        let found = find_font_file(
+            std::slice::from_ref(&root),
+            &missing_path.to_string_lossy(),
+            &["shp", "shx", ""],
+        );
+        assert_eq!(found, Some(expected));
+        let _ = std::fs::remove_file(root.join("mini.shx"));
+        let _ = std::fs::remove_dir(root);
+    }
 }
 
 fn point_along(points: &[Vector3], distance: f64) -> Option<(Vector3, Vector3)> {
