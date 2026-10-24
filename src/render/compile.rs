@@ -677,6 +677,18 @@ impl Compiler<'_> {
         let to_paper = super::sheet::model_to_paper(viewport).then(transform);
         let saved_scale = self.pattern_scale;
         let saved_frozen = std::mem::replace(&mut self.viewport_frozen, frozen);
+        let saved_visual = self.scene.visual_style.clone();
+        self.scene.visual_style = if !viewport.visual_style_handle.is_null() {
+            visual_style::resolve(
+                self.doc,
+                &visual_style::VisualStyleRequest::Object(viewport.visual_style_handle),
+            )
+        } else {
+            visual_style::resolve(
+                self.doc,
+                &visual_style::VisualStyleRequest::RenderMode(viewport.render_mode),
+            )
+        };
         self.pattern_scale = if self.doc.header.paper_space_linetype_scaling {
             1.0
         } else {
@@ -689,6 +701,7 @@ impl Compiler<'_> {
         self.walk_block("*Model_Space", &Frame::model(), &to_paper, &[]);
         self.pattern_scale = saved_scale;
         self.viewport_frozen = saved_frozen;
+        self.scene.visual_style = saved_visual;
         clip_recent_geometry(
             &mut self.scene,
             stroke_from,
