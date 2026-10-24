@@ -146,20 +146,22 @@ fn parse_shx(data: &[u8]) -> Option<ShapeFont> {
     if count == 0 || count > 100_000 {
         return None;
     }
+    // AutoCAD's binary SHX format stores the shape directory as a sequence of
+    // records. Each record starts with its shape number and byte length,
+    // followed immediately by the record payload. The old implementation
+    // first consumed all record headers as an index and then tried to read the
+    // payloads, which works for neither the native Unicode SHX layout nor
+    // `txt.shx` (the first payload is the font name and copyright string).
     let mut offset = 2;
-    let mut index = Vec::with_capacity(count);
+    let mut shapes = HashMap::new();
+    let mut names = HashMap::new();
     for _ in 0..count {
         if offset + 4 > rest.len() {
             return None;
         }
         let number = u16::from_le_bytes([rest[offset], rest[offset + 1]]);
         let length = u16::from_le_bytes([rest[offset + 2], rest[offset + 3]]) as usize;
-        index.push((number, length));
         offset += 4;
-    }
-    let mut shapes = HashMap::new();
-    let mut names = HashMap::new();
-    for (number, length) in index {
         if offset + length > rest.len() {
             return None;
         }
@@ -374,5 +376,27 @@ mod tests {
         assert!((advance - 10.0).abs() < 1e-6);
         assert_eq!(strokes.len(), 1);
         assert!(strokes[0].iter().any(|point| (point.y - 6.0).abs() < 1e-6));
+    }
+
+    #[test]
+    fn binary_shx_reads_sequential_shape_records() {
+        let mut data = b"AutoCAD-86 unifont 1.0\r\n".to_vec();
+        data.push(0x1a);
+        data.extend_from_slice(&2_u16.to_le_bytes());
+        // Shape 0 carries the font name in its payload.
+        data.extend_from_slice(&0_u16.to_le_bytes());
+        data.extend_from_slice(&4_u16.to_le_bytes());
+        data.extend_from_slice(b"TXT\0");
+        // Shape 65 (A): pen down, one unit to the right, end.
+        data.extend_from_slice(&65_u16.to_le_bytes());
+        data.extend_from_slice(&4_u16.to_le_bytes());
+        data.extend_from_slice(&[0, 1, 0x10, 0]);
+
+        let font = parse_shx(&data).expect("valid sequential SHX records");
+        let (strokes, advance) = font.glyph_for_char('A');
+        assert_eq!(strokes.len(), 1);
+        assert!((advance - 1.0).abs() < 1e-6);
+        assert_eq!(strokes[0][0], Vector2::new(0.0, 0.0));
+        assert_eq!(strokes[0][1], Vector2::new(1.0, 0.0));
     }
 }
