@@ -53,8 +53,18 @@ fn vs_main(
         width_px = max(params.x * 2.0 * max(length(axis_px), 1e-6), 1.0);
     }
     let px_ndc = vec2<f32>(2.0, 2.0) / max(camera.viewport, vec2<f32>(1.0, 1.0));
-    let offset = normal * corner.y * width_px * 0.5 * px_ndc;
-    let pos = mix(start_ndc, end_ndc, corner.x) + offset;
+    var pos = mix(start_ndc, end_ndc, corner.x);
+    if len <= 1e-5 {
+        // A point is uploaded as a zero-length segment.  Expanding only along
+        // `normal` would leave both triangles edge-on, so make all four
+        // corners of a small screen-space square around the point.
+        let half = width_px * 0.5 * px_ndc;
+        pos = start_ndc
+            + vec2<f32>((corner.x * 2.0 - 1.0) * half.x, corner.y * half.y);
+    } else {
+        let offset = normal * corner.y * width_px * 0.5 * px_ndc;
+        pos += offset;
+    }
     let z0 = clamp(camera.z_scale * start.z + camera.z_bias, 0.0, 1.0);
     let z1 = clamp(camera.z_scale * end.z + camera.z_bias, 0.0, 1.0);
     // A small pull toward the camera keeps an edge from flickering on its face.

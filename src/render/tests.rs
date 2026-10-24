@@ -3,10 +3,11 @@ use std::f64::consts::FRAC_PI_2;
 use crate::document::CadDocument;
 use crate::entities::ViewportRenderMode;
 use crate::entities::{
-    Arc, BoundaryEdge, BoundaryPath, Circle, EntityCommon, EntityType, ExtendedEntity,
-    ExtendedEntityData, Face3D, Hatch, Insert, InvisibleEdgeFlags, Line, LwPolyline, LwVertex,
-    Point, Polyline, Polyline2D, Polyline3D, PolylineEdge, SectionObjectData, SectionSymbol,
-    SectionSymbolPoint, SectionViewStyle, Solid, Spline, Text, Vertex2D, ViewBorder, Viewport,
+    Arc, BoundaryEdge, BoundaryPath, Circle, EntityCommon, EntityType,
+    ExtendedEntity, ExtendedEntityData, Face3D, Hatch, Insert, InvisibleEdgeFlags, Line,
+    LwPolyline, LwVertex, Point, Polyline, Polyline2D, Polyline3D, PolylineEdge, SectionObjectData,
+    SectionSymbol, SectionSymbolPoint, SectionViewStyle, Solid, Spline, Text, Vertex2D, ViewBorder,
+    Viewport,
 };
 use crate::objects::{ObjectType, SortEntitiesTable, VisualStyle};
 use crate::tables::{BlockRecord, Layer, LineType, LineTypeElement, TableEntry};
@@ -357,6 +358,35 @@ fn offscreen_frame_draws_a_red_line() {
         "expected a red stroke across the frame, found {red_pixels} red pixels"
     );
     assert_eq!(&image.pixels[0..3], &[33, 40, 48]);
+}
+
+#[test]
+fn offscreen_frame_draws_a_zero_length_point() {
+    let mut doc = doc();
+    let mut point = Point::from_coords(0.0, 0.0, 0.0);
+    point.common.color = Color::RED;
+    doc.add_entity(EntityType::Point(point)).unwrap();
+    let image = match pollster::block_on(super::render_rgba(
+        &doc,
+        &View {
+            target: Vector3::ZERO,
+            height: 20.0,
+            ..View::default()
+        },
+        64,
+        64,
+        &CompileOptions::default(),
+    )) {
+        Err(super::RenderError::NoAdapter) => return,
+        Err(error) => panic!("{error}"),
+        Ok(image) => image,
+    };
+    let red_pixels = image
+        .pixels
+        .chunks_exact(4)
+        .filter(|pixel| pixel[0] > 80 && pixel[1] < 80 && pixel[2] < 80)
+        .count();
+    assert!(red_pixels > 0, "zero-length point produced no red pixels");
 }
 
 fn red_rows(image: &super::RgbaImage) -> u32 {
