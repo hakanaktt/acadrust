@@ -2,7 +2,11 @@ use std::f64::consts::FRAC_PI_2;
 
 use crate::document::CadDocument;
 use crate::entities::ViewportRenderMode;
-use crate::entities::{Circle, EntityType, Insert, Line, LwPolyline, LwVertex};
+use crate::entities::{
+    Arc, BoundaryEdge, BoundaryPath, Circle, EntityType, Face3D, Hatch, Insert, InvisibleEdgeFlags,
+    Line, LwPolyline, LwVertex, Point, Polyline, Polyline2D, Polyline3D, PolylineEdge, Solid,
+    Spline, Text, Vertex2D,
+};
 use crate::objects::{ObjectType, VisualStyle};
 use crate::tables::{BlockRecord, Layer, LineType, LineTypeElement, TableEntry};
 use crate::types::{Color, Handle, LineWeight, Vector2, Vector3};
@@ -182,17 +186,16 @@ fn frozen_layer_is_skipped() {
 #[test]
 fn unfinished_entities_stay_on_the_fallback_list() {
     let mut doc = doc();
-    doc.add_entity(EntityType::Circle(Circle::from_coords(0.0, 0.0, 0.0, 2.0)))
-        .unwrap();
+    doc.add_entity(EntityType::Text(Text::new())).unwrap();
     let scene = compile(&doc, &CompileOptions::default());
-    assert_eq!(scene.fallback_kinds(), vec!["Circle"]);
+    assert_eq!(scene.fallback_kinds(), vec!["Text"]);
     assert!(scene
         .strokes
         .iter()
         .all(|stroke| stroke.path == DrawPath::Fallback));
     assert!(super::FALLBACK_KINDS.contains(&"Solid3D"));
     assert!(super::FALLBACK_KINDS.contains(&"Region"));
-    assert!(super::FALLBACK_KINDS.contains(&"XRay") == false);
+    assert!(!super::FALLBACK_KINDS.contains(&"Circle"));
 }
 
 #[test]
@@ -314,4 +317,116 @@ fn offscreen_frame_draws_a_red_line() {
         "expected a red stroke across the frame, found {red_pixels} red pixels"
     );
     assert_eq!(&image.pixels[0..3], &[33, 40, 48]);
+}
+
+#[test]
+fn circle_and_arc_sample_their_endpoints() {
+    let mut doc = doc();
+    doc.add_entity(EntityType::Circle(Circle::from_coords(0.0, 0.0, 0.0, 5.0)))
+        .unwrap();
+    doc.add_entity(EntityType::Arc(Arc::from_center_radius_angles(
+        Vector3::new(20.0, 0.0, 0.0),
+        5.0,
+        0.0,
+        std::f64::consts::FRAC_PI_2,
+    )))
+    .unwrap();
+    let scene = compile(&doc, &CompileOptions::default());
+    assert!(scene.fallbacks.is_empty());
+    let circle = &scene.strokes[0];
+    assert!(circle.points.len() > 8);
+    let first = circle.points[0];
+    let last = circle.points.last().unwrap();
+    assert!((first.x - 5.0).abs() < 1e-6 && first.y.abs() < 1e-6);
+    assert!((last.x - first.x).abs() < 1e-6 && (last.y - first.y).abs() < 1e-6);
+    let arc = &scene.strokes[1];
+    let start = arc.points[0];
+    let end = arc.points.last().unwrap();
+    assert!((start.x - 25.0).abs() < 1e-5 && start.y.abs() < 1e-5);
+    assert!((end.x - 20.0).abs() < 1e-5 && (end.y - 5.0).abs() < 1e-5);
+}
+
+#[test]
+fn point_plus_and_solid_fill() {
+    let mut doc = doc();
+    doc.header.point_display_mode = 2;
+    doc.header.point_display_size = 4.0;
+    doc.header.fill_mode = true;
+    doc.add_entity(EntityType::Point(Point::from_coords(0.0, 0.0, 0.0)))
+        .unwrap();
+    doc.add_entity(EntityType::Solid(Solid::triangle(
+        Vector3::new(0.0, 0.0, 0.0),
+        Vector3::new(10.0, 0.0, 0.0),
+        Vector3::new(0.0, 10.0, 0.0),
+    )))
+    .unwrap();
+    let mut face = Face3D::triangle(
+        Vector3::new(0.0, 0.0, 1.0),
+        Vector3::new(1.0, 0.0, 1.0),
+        Vector3::new(0.0, 1.0, 1.0),
+    );
+    face.invisible_edges = InvisibleEdgeFlags::FIRST;
+    doc.add_entity(EntityType::Face3D(face)).unwrap();
+
+    let scene = compile(&doc, &CompileOptions::default());
+    assert!(scene.fallbacks.is_empty());
+    assert_eq!(
+        scene
+            .strokes
+            .iter()
+            .filter(|stroke| stroke.points.len() == 2)
+            .count(),
+        2 + 2
+    );
+    assert_eq!(scene.fills.len(), 1);
+    assert_eq!(scene.fills[0].triangles.len(), 3);
+}
+
+#[test]
+fn polyline_spline_and_solid_hatch() {
+    let mut doc = doc();
+    let mut heavy = Polyline2D::new();
+    heavy.vertices = vec![
+        Vertex2D::new(Vector3::new(0.0, 0.0, 0.0)),
+        Vertex2D::new(Vector3::new(5.0, 0.0, 0.0)),
+    ];
+    doc.add_entity(EntityType::Polyline2D(heavy)).unwrap();
+    doc.add_entity(EntityType::Polyline(Polyline::from_points(vec![
+        Vector3::new(0.0, 1.0, 0.0),
+        Vector3::new(4.0, 1.0, 2.0),
+    ])))
+    .unwrap();
+    let mut poly3 = Polyline3D::new();
+    poly3.add_vertex(Vector3::new(0.0, 2.0, 0.0));
+    poly3.add_vertex(Vector3::new(3.0, 2.0, 1.0));
+    doc.add_entity(EntityType::Polyline3D(poly3)).unwrap();
+    doc.add_entity(EntityType::Spline(Spline::from_control_points(
+        3,
+        vec![
+            Vector3::new(0.0, 3.0, 0.0),
+            Vector3::new(1.0, 4.0, 0.0),
+            Vector3::new(2.0, 3.0, 0.0),
+            Vector3::new(3.0, 4.0, 0.0),
+        ],
+    )))
+    .unwrap();
+
+    let mut hatch = Hatch::solid();
+    let mut path = BoundaryPath::new();
+    path.add_edge(BoundaryEdge::Polyline(PolylineEdge::new(
+        vec![
+            Vector2::new(0.0, 0.0),
+            Vector2::new(10.0, 0.0),
+            Vector2::new(0.0, 10.0),
+        ],
+        true,
+    )));
+    hatch.paths.push(path);
+    doc.add_entity(EntityType::Hatch(Box::new(hatch))).unwrap();
+
+    let scene = compile(&doc, &CompileOptions::default());
+    assert!(scene.fallbacks.is_empty(), "{:?}", scene.fallback_kinds());
+    assert!(scene.strokes.len() >= 4);
+    assert_eq!(scene.fills.len(), 1);
+    assert_eq!(scene.fills[0].triangles.len(), 3);
 }

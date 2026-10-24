@@ -36,6 +36,17 @@ pub struct Style {
     pub cosmetic: bool,
 }
 
+/// A filled triangle list. `triangles.len()` is a multiple of three.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Fill {
+    pub triangles: Vec<Vector3>,
+    pub style: Style,
+    pub source: EntityRef,
+    pub path: DrawPath,
+    /// Paint the view background. Wipeouts use this so they cover earlier fills.
+    pub background: bool,
+}
+
 /// One solid run of a stroked curve, after linetype fitting.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Stroke {
@@ -67,6 +78,7 @@ pub struct SkippedEntity {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Scene {
     pub strokes: Vec<Stroke>,
+    pub fills: Vec<Fill>,
     pub fallbacks: Vec<FallbackEntry>,
     pub skipped: Vec<SkippedEntity>,
     pub visual_style: ResolvedVisualStyle,
@@ -82,6 +94,17 @@ impl Scene {
         let mut any = false;
         for stroke in &self.strokes {
             for point in &stroke.points {
+                any = true;
+                min.x = min.x.min(point.x);
+                min.y = min.y.min(point.y);
+                min.z = min.z.min(point.z);
+                max.x = max.x.max(point.x);
+                max.y = max.y.max(point.y);
+                max.z = max.z.max(point.z);
+            }
+        }
+        for fill in &self.fills {
+            for point in &fill.triangles {
                 any = true;
                 min.x = min.x.min(point.x);
                 min.y = min.y.min(point.y);

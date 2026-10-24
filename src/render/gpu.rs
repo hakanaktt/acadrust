@@ -11,6 +11,7 @@ use super::scene::Scene;
 use super::{CompileOptions, View, DEFAULT_MODEL_LINEWEIGHT_PX_PER_MM};
 
 const INSTANCE_STRIDE: u64 = 64;
+const FILL_STRIDE: u64 = 32;
 const CAMERA_SIZE: u64 = 256;
 const SHADER: &str = include_str!("shader.wgsl");
 
@@ -52,11 +53,15 @@ pub enum RenderError {
 /// Stroke pipeline. Faces, glyphs, and images are later passes over the same scene.
 pub struct Renderer {
     pipeline: wgpu::RenderPipeline,
+    fill_pipeline: wgpu::RenderPipeline,
     camera_bind: wgpu::BindGroup,
     camera_buf: wgpu::Buffer,
     instances: wgpu::Buffer,
     instance_capacity: u64,
     instance_count: u32,
+    fills: wgpu::Buffer,
+    fill_capacity: u64,
+    fill_count: u32,
     msaa: Option<wgpu::Texture>,
     msaa_view: Option<wgpu::TextureView>,
     format: wgpu::TextureFormat,
@@ -107,6 +112,38 @@ impl Renderer {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
+        let fill_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("acadrust-fills"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_fill"),
+                compilation_options: Default::default(),
+                buffers: &[Some(fill_layout())],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: samples,
+                ..Default::default()
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_fill"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("acadrust-strokes"),
             layout: Some(&pipeline_layout),
@@ -145,13 +182,23 @@ impl Renderer {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let fills = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("acadrust-fills"),
+            size: FILL_STRIDE,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         Self {
             pipeline,
+            fill_pipeline,
             camera_bind,
             camera_buf,
             instances,
             instance_capacity: INSTANCE_STRIDE,
             instance_count: 0,
+            fills,
+            fill_capacity: FILL_STRIDE,
+            fill_count: 0,
             msaa: None,
             msaa_view: None,
             format: config.format,
@@ -236,6 +283,57 @@ impl Renderer {
             queue.write_buffer(&self.instances, 0, &bytes);
         }
         self.instance_count = (bytes.len() as u64 / INSTANCE_STRIDE) as u32;
+        self.prepare_fills(device, queue, scene);
+    }
+
+    fn prepare_fills(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, scene: &Scene) {
+        let mut bytes = Vec::new();
+        for fill in &scene.fills {
+            let rgb = if fill.background {
+                [
+                    (self.background_rgba[0] * 255.0) as u8,
+                    (self.background_rgba[1] * 255.0) as u8,
+                    (self.background_rgba[2] * 255.0) as u8,
+                ]
+            } else if fill.style.aci7 {
+                contrast(self.background_rgba)
+            } else {
+                fill.style.rgb
+            };
+            let color = [
+                rgb[0] as f32 / 255.0,
+                rgb[1] as f32 / 255.0,
+                rgb[2] as f32 / 255.0,
+                if fill.background {
+                    1.0
+                } else {
+                    fill.style.opacity
+                },
+            ];
+            for point in &fill.triangles {
+                push_f32(&mut bytes, point.x as f32);
+                push_f32(&mut bytes, point.y as f32);
+                push_f32(&mut bytes, point.z as f32);
+                push_f32(&mut bytes, 1.0);
+                for channel in color {
+                    push_f32(&mut bytes, channel);
+                }
+            }
+        }
+        let size = (bytes.len() as u64).max(FILL_STRIDE);
+        if size > self.fill_capacity {
+            self.fills = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("acadrust-fills"),
+                size,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.fill_capacity = size;
+        }
+        if !bytes.is_empty() {
+            queue.write_buffer(&self.fills, 0, &bytes);
+        }
+        self.fill_count = (bytes.len() as u64 / FILL_STRIDE) as u32;
     }
 
     pub fn render(
@@ -274,8 +372,13 @@ impl Renderer {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.camera_bind, &[]);
+        if self.fill_count > 0 {
+            pass.set_pipeline(&self.fill_pipeline);
+            pass.set_vertex_buffer(0, self.fills.slice(..));
+            pass.draw(0..self.fill_count, 0..1);
+        }
+        pass.set_pipeline(&self.pipeline);
         if self.instance_count > 0 {
             pass.set_vertex_buffer(0, self.instances.slice(..));
             pass.draw(0..6, 0..self.instance_count);
@@ -385,6 +488,25 @@ pub async fn render_rgba(
         height,
         pixels,
     })
+}
+
+fn fill_layout() -> wgpu::VertexBufferLayout<'static> {
+    wgpu::VertexBufferLayout {
+        array_stride: FILL_STRIDE,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &[
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 0,
+                shader_location: 0,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 16,
+                shader_location: 1,
+            },
+        ],
+    }
 }
 
 fn instance_layout() -> wgpu::VertexBufferLayout<'static> {

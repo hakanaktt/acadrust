@@ -54,3 +54,19 @@ fn vs_main(
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     return in.color;
 }
+
+struct FillIn {
+    @location(0) pos: vec4<f32>,
+    @location(1) color: vec4<f32>,
+}
+
+@vertex
+fn vs_fill(in: FillIn) -> VertexOut {
+    let clip = camera.view_proj * vec4<f32>(in.pos.xyz, 1.0);
+    return VertexOut(clip, in.color);
+}
+
+@fragment
+fn fs_fill(in: VertexOut) -> @location(0) vec4<f32> {
+    return in.color;
+}

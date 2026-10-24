@@ -10,6 +10,7 @@
 //! A custom style uses the object's face and edge fields.
 
 mod compile;
+mod curves;
 mod dash;
 mod gpu;
 mod scene;
@@ -18,7 +19,7 @@ mod visual_style;
 
 pub use compile::FALLBACK_KINDS;
 pub use gpu::{render_rgba, RenderError, Renderer, RendererConfig, RgbaImage};
-pub use scene::{DrawPath, EntityRef, FallbackEntry, Scene, SkippedEntity, Stroke, Style};
+pub use scene::{DrawPath, EntityRef, FallbackEntry, Fill, Scene, SkippedEntity, Stroke, Style};
 pub use visual_style::{
     EdgeMode, FaceColorMode, FaceShading, LightingModel, ResolvedVisualStyle, StandardVisualStyle,
     VisualStyleRequest,

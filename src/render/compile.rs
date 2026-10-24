@@ -6,6 +6,10 @@ use crate::document::CadDocument;
 use crate::entities::{EntityType, Insert, LwPolyline};
 use crate::types::{Matrix3, Matrix4, Transform, Vector3};
 
+use super::curves::{
+    arc_points, circle_points, ellipse_points, fan_triangles, hatch_ring, point_chains,
+    spline_points,
+};
 use super::dash::{fit_runs, polyline_length, runs_on_segments, SegmentPiece};
 use super::scene::{DrawPath, EntityRef, FallbackEntry, Scene, SkippedEntity, Stroke};
 use super::style::{layer_is_hidden, pattern_elements, resolve_style, Frame};
@@ -18,6 +22,7 @@ pub(crate) fn compile(doc: &CadDocument, options: &CompileOptions) -> Scene {
         doc,
         scene: Scene {
             strokes: Vec::new(),
+            fills: Vec::new(),
             fallbacks: Vec::new(),
             skipped: Vec::new(),
             visual_style: visual,
@@ -104,6 +109,158 @@ impl Compiler<'_> {
                 let points = world(transform, lwpolyline_points(poly));
                 self.emit_dedicated(&points, entity, frame, source);
             }
+            EntityType::Circle(circle) => {
+                let points = world(transform, circle_points(circle));
+                self.emit_dedicated(&points, entity, frame, source);
+            }
+            EntityType::Arc(arc) => {
+                let points = world(transform, arc_points(arc));
+                self.emit_dedicated(&points, entity, frame, source);
+            }
+            EntityType::Ellipse(ellipse) => {
+                let points = world(transform, ellipse_points(ellipse));
+                self.emit_dedicated(&points, entity, frame, source);
+            }
+            EntityType::Spline(spline) => {
+                let mut points = world(transform, spline_points(spline));
+                if spline.flags.closed || spline.cv_frame_visible {
+                    if points.len() >= 2 {
+                        points.push(points[0]);
+                    }
+                }
+                if self.doc.header.spline_frame && spline.control_points.len() >= 2 {
+                    let frame_points = world(transform, spline.control_points.clone());
+                    self.emit_dedicated(&frame_points, entity, frame, source.clone());
+                }
+                self.emit_dedicated(&points, entity, frame, source);
+            }
+            EntityType::Helix(helix) => {
+                let points = world(transform, spline_points(&helix.spline));
+                self.emit_dedicated(&points, entity, frame, source.clone());
+                let height = helix.turns * helix.turn_height;
+                let axis = helix.axis_vector;
+                if axis.length_squared() > 1e-18 && height.abs() > 1e-12 {
+                    let end = helix.axis_base_point + axis.normalize() * height;
+                    let axis_points = world(transform, vec![helix.axis_base_point, end]);
+                    self.emit_dedicated(&axis_points, entity, frame, source);
+                }
+            }
+            EntityType::Point(point) => {
+                let mut size = self.doc.header.point_display_size;
+                if size <= 1e-9 {
+                    size = 1.0;
+                }
+                for chain in point_chains(point, self.doc.header.point_display_mode, size) {
+                    let points = world(transform, chain);
+                    if points.len() >= 2 && (points[1] - points[0]).length_squared() <= 1e-18 {
+                        self.emit_dot(&points, entity, frame, source.clone());
+                    } else {
+                        self.emit_dedicated(&points, entity, frame, source.clone());
+                    }
+                }
+            }
+            EntityType::Polyline2D(poly) => {
+                if poly.start_width.abs() > 1e-9
+                    || poly.end_width.abs() > 1e-9
+                    || poly.vertices.iter().any(|vertex| {
+                        vertex.start_width.abs() > 1e-9 || vertex.end_width.abs() > 1e-9
+                    })
+                {
+                    self.fallback(entity, frame, source);
+                    return;
+                }
+                let points = world(transform, polyline2d_points(poly));
+                self.emit_dedicated(&points, entity, frame, source);
+            }
+            EntityType::Polyline(poly) => {
+                let mut points: Vec<Vector3> =
+                    poly.vertices.iter().map(|vertex| vertex.location).collect();
+                if poly.flags.is_closed() && points.len() >= 2 {
+                    points.push(points[0]);
+                }
+                self.emit_dedicated(&world(transform, points), entity, frame, source);
+            }
+            EntityType::Polyline3D(poly) => {
+                let mut points: Vec<Vector3> =
+                    poly.vertices.iter().map(|vertex| vertex.position).collect();
+                if poly.flags.closed && points.len() >= 2 {
+                    points.push(points[0]);
+                }
+                self.emit_dedicated(&world(transform, points), entity, frame, source);
+            }
+            EntityType::Solid(solid) => {
+                let basis = Matrix3::arbitrary_axis(solid.normal);
+                let corners: Vec<Vector3> = solid
+                    .boundary_corners()
+                    .into_iter()
+                    .map(|corner| basis * corner)
+                    .collect();
+                let corners = world(transform, corners);
+                if self.doc.header.fill_mode {
+                    self.emit_fill(&fan_triangles(&corners), entity, frame, source, false);
+                } else if corners.len() >= 2 {
+                    let mut outline = corners;
+                    outline.push(outline[0]);
+                    self.emit_dedicated(&outline, entity, frame, source);
+                }
+            }
+            EntityType::Face3D(face) => {
+                let corners = [
+                    face.first_corner,
+                    face.second_corner,
+                    face.third_corner,
+                    face.fourth_corner,
+                ];
+                let hidden = [
+                    face.invisible_edges.is_first_invisible(),
+                    face.invisible_edges.is_second_invisible(),
+                    face.invisible_edges.is_third_invisible(),
+                    face.invisible_edges.is_fourth_invisible(),
+                ];
+                for index in 0..4 {
+                    if hidden[index] {
+                        continue;
+                    }
+                    let start = corners[index];
+                    let end = corners[(index + 1) % 4];
+                    if (end - start).length_squared() <= 1e-18 {
+                        continue;
+                    }
+                    let points = world(transform, vec![start, end]);
+                    self.emit_dedicated(&points, entity, frame, source.clone());
+                }
+            }
+            EntityType::Wipeout(wipeout) => {
+                let corners = wipeout.corners();
+                let ring = world(transform, corners.to_vec());
+                self.emit_fill(&fan_triangles(&ring), entity, frame, source, true);
+            }
+            EntityType::Hatch(hatch) => {
+                if hatch.gradient_color.is_enabled() {
+                    self.fallback(entity, frame, source);
+                    return;
+                }
+                if hatch.is_solid {
+                    if hatch.paths.len() != 1 {
+                        self.fallback(entity, frame, source);
+                        return;
+                    }
+                    let ring = world(transform, hatch_ring(hatch));
+                    self.emit_fill(&fan_triangles(&ring), entity, frame, source, false);
+                    return;
+                }
+                let lines = entity.explode();
+                if lines.is_empty() {
+                    self.fallback(entity, frame, source);
+                    return;
+                }
+                for line in lines {
+                    if let EntityType::Line(segment) = line {
+                        let points = world(transform, vec![segment.start, segment.end]);
+                        self.emit_dedicated(&points, entity, frame, source.clone());
+                    }
+                }
+            }
             EntityType::Insert(insert) => self.draw_insert(insert, frame, transform, path),
             EntityType::Block(_) | EntityType::BlockEnd(_) | EntityType::Seqend(_) => {}
             EntityType::Extended(extended) => match &extended.data {
@@ -120,21 +277,9 @@ impl Compiler<'_> {
                 },
                 _ => self.fallback(entity, frame, source),
             },
-            EntityType::Point(_)
-            | EntityType::Circle(_)
-            | EntityType::Arc(_)
-            | EntityType::Ellipse(_)
-            | EntityType::Polyline(_)
-            | EntityType::Polyline2D(_)
-            | EntityType::Polyline3D(_)
-            | EntityType::Text(_)
+            EntityType::Text(_)
             | EntityType::MText(_)
-            | EntityType::Spline(_)
-            | EntityType::Helix(_)
             | EntityType::Dimension(_)
-            | EntityType::Hatch(_)
-            | EntityType::Solid(_)
-            | EntityType::Face3D(_)
             | EntityType::Ray(_)
             | EntityType::XLine(_)
             | EntityType::Viewport(_)
@@ -152,7 +297,6 @@ impl Compiler<'_> {
             | EntityType::Table(_)
             | EntityType::Tolerance(_)
             | EntityType::PolyfaceMesh(_)
-            | EntityType::Wipeout(_)
             | EntityType::Shape(_)
             | EntityType::Underlay(_)
             | EntityType::Ole2Frame(_)
@@ -257,6 +401,48 @@ impl Compiler<'_> {
             source,
             DrawPath::Dedicated,
         );
+    }
+
+    fn emit_dot(
+        &mut self,
+        points: &[Vector3],
+        entity: &EntityType,
+        frame: &Frame,
+        source: EntityRef,
+    ) {
+        let visual = self.scene.visual_style.clone();
+        let style = resolve_style(self.doc, entity.common(), frame, &visual);
+        self.scene.strokes.push(Stroke {
+            points: points.to_vec(),
+            closed: false,
+            dot: true,
+            style,
+            source,
+            path: DrawPath::Dedicated,
+        });
+    }
+
+    fn emit_fill(
+        &mut self,
+        triangles: &[Vector3],
+        entity: &EntityType,
+        frame: &Frame,
+        source: EntityRef,
+        background: bool,
+    ) {
+        if triangles.len() < 3 {
+            self.fallback(entity, frame, source);
+            return;
+        }
+        let visual = self.scene.visual_style.clone();
+        let style = resolve_style(self.doc, entity.common(), frame, &visual);
+        self.scene.fills.push(super::scene::Fill {
+            triangles: triangles.to_vec(),
+            style,
+            source,
+            path: DrawPath::Dedicated,
+            background,
+        });
     }
 
     fn fallback(&mut self, entity: &EntityType, frame: &Frame, source: EntityRef) {
@@ -385,7 +571,33 @@ fn lwpolyline_points(poly: &LwPolyline) -> Vec<Vector3> {
     raw.into_iter().map(|point| ocs * point).collect()
 }
 
-fn tessellate_bulge(start: Vector3, end: Vector3, bulge: f64) -> Vec<Vector3> {
+fn polyline2d_points(poly: &crate::entities::Polyline2D) -> Vec<Vector3> {
+    let verts = &poly.vertices;
+    if verts.is_empty() {
+        return Vec::new();
+    }
+    let ocs = Matrix3::arbitrary_axis(poly.normal);
+    let segments = if poly.is_closed() && verts.len() >= 2 {
+        verts.len()
+    } else {
+        verts.len().saturating_sub(1)
+    };
+    let mut raw = Vec::new();
+    for index in 0..segments {
+        let from = &verts[index];
+        let to = &verts[(index + 1) % verts.len()];
+        let start = Vector3::new(from.location.x, from.location.y, poly.elevation);
+        let end = Vector3::new(to.location.x, to.location.y, poly.elevation);
+        let mut segment = tessellate_bulge(start, end, from.bulge);
+        if index > 0 {
+            segment.drain(..1.min(segment.len()));
+        }
+        raw.extend(segment);
+    }
+    raw.into_iter().map(|point| ocs * point).collect()
+}
+
+pub(crate) fn tessellate_bulge(start: Vector3, end: Vector3, bulge: f64) -> Vec<Vector3> {
     if bulge.abs() < 1e-10 {
         return vec![start, end];
     }
@@ -536,21 +748,9 @@ fn kind_of(entity: &EntityType) -> &'static str {
 
 /// Kinds whose only picture today is the extents box.
 pub const FALLBACK_KINDS: &[&str] = &[
-    "Point",
-    "Circle",
-    "Arc",
-    "Ellipse",
-    "Polyline",
-    "Polyline2D",
-    "Polyline3D",
     "Text",
     "MText",
-    "Spline",
-    "Helix",
     "Dimension",
-    "Hatch",
-    "Solid",
-    "Face3D",
     "Ray",
     "XLine",
     "Viewport",
@@ -568,7 +768,6 @@ pub const FALLBACK_KINDS: &[&str] = &[
     "Table",
     "Tolerance",
     "PolyfaceMesh",
-    "Wipeout",
     "Shape",
     "Underlay",
     "Ole2Frame",
