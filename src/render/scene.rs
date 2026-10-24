@@ -45,6 +45,8 @@ pub struct Fill {
     pub path: DrawPath,
     /// Paint the view background. Wipeouts use this so they cover earlier fills.
     pub background: bool,
+    /// One RGB triple per triangle vertex. Empty means `style` colors the fill.
+    pub vertex_rgb: Vec<[u8; 3]>,
 }
 
 /// One solid run of a stroked curve, after linetype fitting.

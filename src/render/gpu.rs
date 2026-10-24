@@ -289,28 +289,30 @@ impl Renderer {
     fn prepare_fills(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, scene: &Scene) {
         let mut bytes = Vec::new();
         for fill in &scene.fills {
-            let rgb = if fill.background {
-                [
-                    (self.background_rgba[0] * 255.0) as u8,
-                    (self.background_rgba[1] * 255.0) as u8,
-                    (self.background_rgba[2] * 255.0) as u8,
-                ]
-            } else if fill.style.aci7 {
-                contrast(self.background_rgba)
-            } else {
-                fill.style.rgb
-            };
-            let color = [
-                rgb[0] as f32 / 255.0,
-                rgb[1] as f32 / 255.0,
-                rgb[2] as f32 / 255.0,
-                if fill.background {
-                    1.0
+            for (index, point) in fill.triangles.iter().enumerate() {
+                let rgb = if fill.background {
+                    [
+                        (self.background_rgba[0] * 255.0) as u8,
+                        (self.background_rgba[1] * 255.0) as u8,
+                        (self.background_rgba[2] * 255.0) as u8,
+                    ]
+                } else if let Some(rgb) = fill.vertex_rgb.get(index) {
+                    *rgb
+                } else if fill.style.aci7 {
+                    contrast(self.background_rgba)
                 } else {
-                    fill.style.opacity
-                },
-            ];
-            for point in &fill.triangles {
+                    fill.style.rgb
+                };
+                let color = [
+                    rgb[0] as f32 / 255.0,
+                    rgb[1] as f32 / 255.0,
+                    rgb[2] as f32 / 255.0,
+                    if fill.background {
+                        1.0
+                    } else {
+                        fill.style.opacity
+                    },
+                ];
                 push_f32(&mut bytes, point.x as f32);
                 push_f32(&mut bytes, point.y as f32);
                 push_f32(&mut bytes, point.z as f32);

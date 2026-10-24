@@ -7,7 +7,7 @@ use crate::entities::{
     Line, LwPolyline, LwVertex, Point, Polyline, Polyline2D, Polyline3D, PolylineEdge, Solid,
     Spline, Text, Vertex2D,
 };
-use crate::objects::{ObjectType, VisualStyle};
+use crate::objects::{ObjectType, SortEntitiesTable, VisualStyle};
 use crate::tables::{BlockRecord, Layer, LineType, LineTypeElement, TableEntry};
 use crate::types::{Color, Handle, LineWeight, Vector2, Vector3};
 
@@ -453,4 +453,100 @@ fn polyline_spline_and_solid_hatch() {
     assert!(scene.strokes.len() >= 4);
     assert_eq!(scene.fills.len(), 1);
     assert_eq!(scene.fills[0].triangles.len(), 3);
+}
+
+fn ring(points: &[(f64, f64)]) -> BoundaryPath {
+    let mut path = BoundaryPath::new();
+    path.add_edge(BoundaryEdge::Polyline(PolylineEdge::new(
+        points.iter().map(|(x, y)| Vector2::new(*x, *y)).collect(),
+        true,
+    )));
+    path
+}
+
+fn covered(fill: &super::Fill, x: f64, y: f64) -> bool {
+    fill.triangles.chunks_exact(3).any(|triangle| {
+        let a = triangle[0];
+        let b = triangle[1];
+        let c = triangle[2];
+        let ab = (b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x);
+        let bc = (c.x - b.x) * (y - b.y) - (c.y - b.y) * (x - b.x);
+        let ca = (a.x - c.x) * (y - c.y) - (a.y - c.y) * (x - c.x);
+        (ab >= -1e-6 && bc >= -1e-6 && ca >= -1e-6) || (ab <= 1e-6 && bc <= 1e-6 && ca <= 1e-6)
+    })
+}
+
+#[test]
+fn solid_hatch_leaves_a_hole_and_keeps_an_island() {
+    let mut doc = doc();
+    let mut hatch = Hatch::solid();
+    hatch.style = crate::entities::HatchStyleType::Normal;
+    hatch.paths = vec![
+        ring(&[(0.0, 0.0), (30.0, 0.0), (30.0, 30.0), (0.0, 30.0)]),
+        ring(&[(5.0, 5.0), (25.0, 5.0), (25.0, 25.0), (5.0, 25.0)]),
+        ring(&[(10.0, 10.0), (15.0, 10.0), (15.0, 15.0), (10.0, 15.0)]),
+    ];
+    doc.add_entity(EntityType::Hatch(Box::new(hatch))).unwrap();
+    let scene = compile(&doc, &CompileOptions::default());
+    assert!(scene.fallbacks.is_empty(), "{:?}", scene.fallback_kinds());
+    let fill = &scene.fills[0];
+    assert!(covered(fill, 1.0, 1.0));
+    assert!(!covered(fill, 7.0, 7.0));
+    assert!(covered(fill, 12.0, 12.0));
+}
+
+#[test]
+fn linear_gradient_runs_from_red_to_blue() {
+    let mut doc = doc();
+    let mut hatch = Hatch::solid();
+    hatch.gradient_color.enabled = true;
+    hatch.gradient_color.name = "LINEAR".to_string();
+    hatch.gradient_color.angle = 0.0;
+    hatch.gradient_color.add_color(0.0, Color::RED);
+    hatch
+        .gradient_color
+        .add_color(1.0, Color::from_rgb(0, 0, 255));
+    hatch.paths = vec![ring(&[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)])];
+    doc.add_entity(EntityType::Hatch(Box::new(hatch))).unwrap();
+    let scene = compile(&doc, &CompileOptions::default());
+    let fill = &scene.fills[0];
+    assert_eq!(fill.vertex_rgb.len(), fill.triangles.len());
+    let left = fill
+        .triangles
+        .iter()
+        .zip(&fill.vertex_rgb)
+        .find(|(point, _)| point.x < 1.0)
+        .unwrap()
+        .1;
+    let right = fill
+        .triangles
+        .iter()
+        .zip(&fill.vertex_rgb)
+        .find(|(point, _)| point.x > 9.0)
+        .unwrap()
+        .1;
+    assert!(left[0] > left[2]);
+    assert!(right[2] > right[0]);
+}
+
+#[test]
+fn sortents_draws_the_lower_handle_first() {
+    let mut doc = doc();
+    let mut first = Line::from_coords(0.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+    first.common.color = Color::RED;
+    let mut second = Line::from_coords(0.0, 2.0, 0.0, 1.0, 2.0, 0.0);
+    second.common.color = Color::from_rgb(0, 0, 255);
+    let first_handle = doc.add_entity(EntityType::Line(first)).unwrap();
+    let second_handle = doc.add_entity(EntityType::Line(second)).unwrap();
+    let block = doc.block_records.get("*Model_Space").unwrap().handle;
+    let mut table = SortEntitiesTable::for_block(block);
+    table.handle = doc.allocate_handle();
+    table.add_entry(second_handle, Handle::new(1));
+    table.add_entry(first_handle, Handle::new(20));
+    doc.objects
+        .insert(table.handle, ObjectType::SortEntitiesTable(table));
+
+    let scene = compile(&doc, &CompileOptions::default());
+    assert_eq!(scene.strokes[0].source.handle, second_handle);
+    assert_eq!(scene.strokes[1].source.handle, first_handle);
 }

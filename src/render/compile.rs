@@ -7,8 +7,7 @@ use crate::entities::{EntityType, Insert, LwPolyline};
 use crate::types::{Matrix3, Matrix4, Transform, Vector3};
 
 use super::curves::{
-    arc_points, circle_points, ellipse_points, fan_triangles, hatch_ring, point_chains,
-    spline_points,
+    arc_points, circle_points, ellipse_points, fan_triangles, point_chains, spline_points,
 };
 use super::dash::{fit_runs, polyline_length, runs_on_segments, SegmentPiece};
 use super::scene::{DrawPath, EntityRef, FallbackEntry, Scene, SkippedEntity, Stroke};
@@ -62,7 +61,7 @@ impl Compiler<'_> {
         if !self.stack.insert(key.clone()) {
             return;
         }
-        let handles = record.entity_handles.clone();
+        let handles = self.ordered_handles(record);
         for handle in handles {
             let Some(entity) = self.doc.get_entity(handle) else {
                 continue;
@@ -243,17 +242,41 @@ impl Compiler<'_> {
                 self.emit_fill(&fan_triangles(&ring), entity, frame, source, true);
             }
             EntityType::Hatch(hatch) => {
-                if hatch.gradient_color.is_enabled() {
-                    self.fallback(entity, frame, source);
-                    return;
-                }
-                if hatch.is_solid {
-                    if hatch.paths.len() != 1 {
-                        self.fallback(entity, frame, source);
-                        return;
+                if hatch.is_solid || hatch.gradient_color.is_enabled() {
+                    let style = resolve_style(
+                        self.doc,
+                        entity.common(),
+                        frame,
+                        &self.scene.visual_style.clone(),
+                    );
+                    let color_of =
+                        |color: crate::types::Color| match color {
+                            crate::types::Color::Rgb { r, g, b } => [r, g, b],
+                            crate::types::Color::Index(index) => {
+                                let (r, g, b) = crate::types::aci_table::aci_to_rgb(index)
+                                    .unwrap_or((style.rgb[0], style.rgb[1], style.rgb[2]));
+                                [r, g, b]
+                            }
+                            _ => style.rgb,
+                        };
+                    let (triangles, colors) = super::hatch_fill::solid_hatch(hatch, &color_of);
+                    let triangles = world(transform, triangles);
+                    if self.doc.header.fill_mode {
+                        self.emit_fill_colors(&triangles, colors, entity, frame, source, false);
+                    } else {
+                        for ring in super::curves::path_rings(hatch) {
+                            let mut points = world(
+                                transform,
+                                ring.into_iter()
+                                    .map(|point| super::curves::to_world(hatch, point))
+                                    .collect(),
+                            );
+                            if points.len() >= 2 {
+                                points.push(points[0]);
+                                self.emit_dedicated(&points, entity, frame, source.clone());
+                            }
+                        }
                     }
-                    let ring = world(transform, hatch_ring(hatch));
-                    self.emit_fill(&fan_triangles(&ring), entity, frame, source, false);
                     return;
                 }
                 let lines = entity.explode();
@@ -377,7 +400,7 @@ impl Compiler<'_> {
         child_path.push(insert.common.handle);
         let base = Transform::from_translation(record.base_point * -1.0);
         self.stack.insert(key.clone());
-        let handles = record.entity_handles.clone();
+        let handles = self.ordered_handles(record);
         for cell in cells {
             let to_world = base.then(&cell).then(transform);
             for handle in &handles {
@@ -388,6 +411,26 @@ impl Compiler<'_> {
             }
         }
         self.stack.remove(&key);
+    }
+
+    fn ordered_handles(&self, record: &crate::tables::BlockRecord) -> Vec<crate::types::Handle> {
+        let handles = record.entity_handles.clone();
+        if self.doc.header.sort_entities & (4 | 16) == 0 {
+            return handles;
+        }
+        let Some(table) = sort_table(self.doc, record) else {
+            return handles;
+        };
+        let mut ordered: Vec<(u64, usize, crate::types::Handle)> = handles
+            .into_iter()
+            .enumerate()
+            .map(|(index, handle)| {
+                let key = table.get_sort_handle(handle).unwrap_or(handle).value();
+                (key, index, handle)
+            })
+            .collect();
+        ordered.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
+        ordered.into_iter().map(|(_, _, handle)| handle).collect()
     }
 
     fn emit_dedicated(
@@ -437,6 +480,18 @@ impl Compiler<'_> {
         source: EntityRef,
         background: bool,
     ) {
+        self.emit_fill_colors(triangles, Vec::new(), entity, frame, source, background);
+    }
+
+    fn emit_fill_colors(
+        &mut self,
+        triangles: &[Vector3],
+        vertex_rgb: Vec<[u8; 3]>,
+        entity: &EntityType,
+        frame: &Frame,
+        source: EntityRef,
+        background: bool,
+    ) {
         if triangles.len() < 3 {
             self.fallback(entity, frame, source);
             return;
@@ -449,6 +504,7 @@ impl Compiler<'_> {
             source,
             path: DrawPath::Dedicated,
             background,
+            vertex_rgb,
         });
     }
 
@@ -514,6 +570,37 @@ fn emit_chain(
             path,
         });
     }
+}
+
+fn sort_table<'a>(
+    doc: &'a CadDocument,
+    record: &crate::tables::BlockRecord,
+) -> Option<&'a crate::objects::SortEntitiesTable> {
+    if let Some(entity) = doc.get_entity(record.block_entity_handle) {
+        if let Some(dictionary) = entity.common().xdictionary_handle {
+            if let Some(crate::objects::ObjectType::Dictionary(dictionary)) =
+                doc.objects.get(&dictionary)
+            {
+                if let Some((_, handle)) = dictionary.entries.iter().find(|(name, _)| {
+                    name.eq_ignore_ascii_case(crate::objects::SortEntitiesTable::DICTIONARY_KEY)
+                }) {
+                    if let Some(crate::objects::ObjectType::SortEntitiesTable(table)) =
+                        doc.objects.get(handle)
+                    {
+                        return Some(table);
+                    }
+                }
+            }
+        }
+    }
+    doc.objects.values().find_map(|object| match object {
+        crate::objects::ObjectType::SortEntitiesTable(table)
+            if table.block_owner_handle == record.handle =>
+        {
+            Some(table)
+        }
+        _ => None,
+    })
 }
 
 fn world(transform: &Transform, points: Vec<Vector3>) -> Vec<Vector3> {

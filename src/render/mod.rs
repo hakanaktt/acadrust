@@ -13,6 +13,7 @@ mod compile;
 mod curves;
 mod dash;
 mod gpu;
+mod hatch_fill;
 mod scene;
 mod style;
 mod visual_style;

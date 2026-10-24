@@ -135,10 +135,16 @@ pub(crate) fn point_chains(point: &Point, mode: i16, size: f64) -> Vec<Vec<Vecto
     chains
 }
 
-pub(crate) fn hatch_ring(hatch: &Hatch) -> Vec<Vector3> {
-    let Some(path) = hatch.paths.first() else {
-        return Vec::new();
-    };
+pub(crate) fn path_rings(hatch: &Hatch) -> Vec<Vec<Vector3>> {
+    hatch
+        .paths
+        .iter()
+        .map(|path| path_ring(hatch, path))
+        .filter(|ring| ring.len() >= 3)
+        .collect()
+}
+
+pub(crate) fn path_ring(hatch: &Hatch, path: &crate::entities::BoundaryPath) -> Vec<Vector3> {
     let mut raw = Vec::new();
     for edge in &path.edges {
         match edge {
@@ -229,8 +235,11 @@ pub(crate) fn hatch_ring(hatch: &Hatch) -> Vec<Vector3> {
     if raw.len() >= 2 && (raw[0] - *raw.last().unwrap()).length_squared() < 1e-16 {
         raw.pop();
     }
-    let basis = Matrix3::arbitrary_axis(hatch.normal);
-    raw.into_iter().map(|point| basis * point).collect()
+    raw
+}
+
+pub(crate) fn to_world(hatch: &Hatch, point: Vector3) -> Vector3 {
+    Matrix3::arbitrary_axis(hatch.normal) * point
 }
 
 pub(crate) fn fan_triangles(ring: &[Vector3]) -> Vec<Vector3> {
