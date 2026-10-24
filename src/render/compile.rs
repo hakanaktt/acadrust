@@ -1088,7 +1088,8 @@ impl Compiler<'_> {
             return;
         };
         let visual = self.scene.visual_style.clone();
-        let style = resolve_style(self.doc, entity.common(), frame, &visual, self.sheet);
+        let mut style = resolve_style(self.doc, entity.common(), frame, &visual, self.sheet);
+        apply_face_color(&mut style.rgb, visual.face_color);
         match produced {
             PreparedLabel::Strokes(chains) => {
                 for chain in chains {
@@ -1428,6 +1429,9 @@ impl Compiler<'_> {
             self.emit_fill(&triangles, entity, frame, source.clone(), false);
             if let Some(fill) = self.scene.fills.last_mut() {
                 fill.normals = transform_normals(transform, &tess.normals);
+                if visual.lighting == super::visual_style::LightingModel::None {
+                    fill.normals.clear();
+                }
                 if depth_only {
                     fill.style.opacity = 0.0;
                 } else {
@@ -1598,6 +1602,9 @@ impl Compiler<'_> {
             self.emit_fill(&triangles, entity, frame, source.clone(), false);
             if let Some(fill) = self.scene.fills.last_mut() {
                 fill.normals = transform_normals(transform, &tess.normals);
+                if visual.lighting == super::visual_style::LightingModel::None {
+                    fill.normals.clear();
+                }
             }
         }
         if visual.edges == super::visual_style::EdgeMode::None {
@@ -2822,6 +2829,31 @@ fn transform_normals(transform: &Transform, normals: &[Vector3]) -> Vec<Vector3>
             }
         })
         .collect()
+}
+
+fn apply_face_color(rgb: &mut [u8; 3], mode: super::visual_style::FaceColorMode) {
+    match mode {
+        super::visual_style::FaceColorMode::Object => {}
+        super::visual_style::FaceColorMode::Mono => {
+            let gray = (0.299 * rgb[0] as f64 + 0.587 * rgb[1] as f64 + 0.114 * rgb[2] as f64)
+                .round()
+                .clamp(0.0, 255.0) as u8;
+            *rgb = [gray, gray, gray];
+        }
+        super::visual_style::FaceColorMode::Tint => {
+            rgb[0] = ((rgb[0] as f64 * 0.7 + 255.0 * 0.3).round()).clamp(0.0, 255.0) as u8;
+            rgb[1] = ((rgb[1] as f64 * 0.75 + 180.0 * 0.25).round()).clamp(0.0, 255.0) as u8;
+        }
+        super::visual_style::FaceColorMode::Desaturate => {
+            let gray = (rgb[0] as u16 + rgb[1] as u16 + rgb[2] as u16) / 3;
+            for channel in rgb.iter_mut() {
+                *channel = ((*channel as u16 + gray) / 2) as u8;
+            }
+        }
+        super::visual_style::FaceColorMode::Background => {
+            *rgb = [0, 0, 0];
+        }
+    }
 }
 
 pub(crate) struct ArcAnchor {
