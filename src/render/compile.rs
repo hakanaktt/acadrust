@@ -2863,9 +2863,9 @@ fn apply_face_color(rgb: &mut [u8; 3], mode: super::visual_style::FaceColorMode)
                 *channel = ((*channel as u16 + gray) / 2) as u8;
             }
         }
-        super::visual_style::FaceColorMode::Background => {
-            *rgb = [0, 0, 0];
-        }
+        // The actual background is supplied by the GPU at render time; keep
+        // the object color here rather than baking an arbitrary background.
+        super::visual_style::FaceColorMode::Background => {}
     }
 }
 
