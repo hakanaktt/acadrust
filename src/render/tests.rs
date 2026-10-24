@@ -10,7 +10,7 @@ use crate::types::{Color, Handle, LineWeight, Vector2, Vector3};
 use super::visual_style::{
     EdgeMode, FaceColorMode, FaceShading, LightingModel, StandardVisualStyle, VisualStyleRequest,
 };
-use super::{compile, CompileOptions, DrawPath};
+use super::{compile, CompileOptions, DrawPath, View};
 
 fn doc() -> CadDocument {
     CadDocument::new()
@@ -278,4 +278,40 @@ fn shaded_styles_drop_linetype_patterns() {
     assert_eq!(scene.visual_style.kind, StandardVisualStyle::GouraudShaded);
     assert_eq!(scene.strokes.len(), 1);
     assert!((scene.strokes[0].points[1].x - 4.0).abs() < 1e-6);
+}
+
+#[test]
+fn offscreen_frame_draws_a_red_line() {
+    let mut doc = doc();
+    let mut line = Line::from_coords(0.0, 0.0, 0.0, 100.0, 0.0, 0.0);
+    line.common.color = Color::RED;
+    doc.add_entity(EntityType::Line(line)).unwrap();
+    let view = View {
+        target: Vector3::new(50.0, 0.0, 0.0),
+        height: 100.0,
+        ..View::default()
+    };
+    let image = pollster::block_on(super::render_rgba(
+        &doc,
+        &view,
+        64,
+        64,
+        &CompileOptions::default(),
+    ));
+    let image = match image {
+        Err(super::RenderError::NoAdapter) => return,
+        Err(error) => panic!("{error}"),
+        Ok(image) => image,
+    };
+    let mut red_pixels = 0u32;
+    for pixel in image.pixels.chunks_exact(4) {
+        if pixel[0] > 80 && pixel[1] < 80 {
+            red_pixels += 1;
+        }
+    }
+    assert!(
+        red_pixels >= 16,
+        "expected a red stroke across the frame, found {red_pixels} red pixels"
+    );
+    assert_eq!(&image.pixels[0..3], &[33, 40, 48]);
 }

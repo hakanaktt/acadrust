@@ -1,8 +1,7 @@
 //! Display compiler for an AutoCAD-style view of a [`CadDocument`](crate::CadDocument).
 //!
 //! `compile` resolves visual style, layer color, linetype, and block inserts
-//! into a camera-independent [`Scene`]. GPU drawing is the next step. The
-//! feature does not pull in wgpu until those pipelines land.
+//! into a camera-independent [`Scene`]. [`Renderer`] draws that scene with wgpu.
 //!
 //! Every built-in AutoCAD visual style has a recipe in [`StandardVisualStyle`].
 //! A viewport render mode selects one of the seven classic modes. A named
@@ -12,11 +11,13 @@
 
 mod compile;
 mod dash;
+mod gpu;
 mod scene;
 mod style;
 mod visual_style;
 
 pub use compile::FALLBACK_KINDS;
+pub use gpu::{render_rgba, RenderError, Renderer, RendererConfig, RgbaImage};
 pub use scene::{DrawPath, EntityRef, FallbackEntry, Scene, SkippedEntity, Stroke, Style};
 pub use visual_style::{
     EdgeMode, FaceColorMode, FaceShading, LightingModel, ResolvedVisualStyle, StandardVisualStyle,

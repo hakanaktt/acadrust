@@ -17,8 +17,8 @@ default = ["parallel"]
 parallel = ["dep:rayon"]
 serde = ["dep:serde", "bitflags/serde", "indexmap/serde"]
 import = ["dep:quick-xml", "dep:serde_json"]
-# CPU scene compiler. wgpu and image join this feature with the GPU pipelines.
-render = []
+# Scene compiler plus the wgpu draw path.
+render = ["dep:wgpu", "dep:pollster"]
 
 [dependencies]
 # Error handling
@@ -57,6 +57,10 @@ web-time = "1"
 # Fast number formatting
 itoa = "1"
 ryu = "1"
+
+# Offscreen and interactive drawing (optional `render` feature)
+wgpu = { version = "30", optional = true }
+pollster = { version = "0.4", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 memmap2 = "0.9"
