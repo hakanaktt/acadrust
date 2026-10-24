@@ -1747,10 +1747,7 @@ impl<'a> DwgObjectWriter<'a> {
             self.writer.write_bit_double(ds.dimfxl);
             // DIMJOGANG BD 50 — clamp to valid range [5°..90°]
             self.writer
-                .write_bit_double(
-                    ds.dimjogang
-                        .clamp(0.0873, std::f64::consts::FRAC_PI_2),
-                );
+                .write_bit_double(ds.dimjogang.clamp(0.0873, std::f64::consts::FRAC_PI_2));
             // DIMTFILL BS 69
             self.writer.write_bit_short(ds.dimtfill);
             // DIMTFILLCLR CMC 70
