@@ -93,7 +93,8 @@ pub(crate) fn build_atlas(
         for (x, y, metrics, pen) in placed {
             let left = pen * world_per_pixel + metrics.xmin as f32 * world_per_pixel + shift_x;
             let bottom = metrics.ymin as f32 * world_per_pixel + shift_y;
-            let right = left + metrics.width as f32 * run.width_factor.abs() as f32 * world_per_pixel;
+            let right =
+                left + metrics.width as f32 * run.width_factor.abs() as f32 * world_per_pixel;
             let top = bottom + metrics.height as f32 * world_per_pixel;
             let corner = |x: f32, y: f32| {
                 let mut x = x as f64;

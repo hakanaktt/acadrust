@@ -222,13 +222,13 @@ fn interpret(stream: &[u8]) -> PdfVectors {
                     let start = cursor;
                     for step in 1..=8 {
                         let t = step as f64 / 8.0;
-                    subpath.push(cubic(
-                        start,
-                        apply_ctm(ctm, (x1, y1)),
-                        apply_ctm(ctm, (x2, y2)),
-                        apply_ctm(ctm, (x3, y3)),
-                        t,
-                    ));
+                        subpath.push(cubic(
+                            start,
+                            apply_ctm(ctm, (x1, y1)),
+                            apply_ctm(ctm, (x2, y2)),
+                            apply_ctm(ctm, (x3, y3)),
+                            t,
+                        ));
                     }
                     cursor = (x3, y3);
                 }

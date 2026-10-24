@@ -316,16 +316,16 @@ impl Compiler<'_> {
                 ];
                 if visual.edges != super::visual_style::EdgeMode::None {
                     for index in 0..4 {
-                    if hidden[index] {
-                        continue;
-                    }
-                    let start = corners[index];
-                    let end = corners[(index + 1) % 4];
-                    if (end - start).length_squared() <= 1e-18 {
-                        continue;
-                    }
-                    let points = world(transform, vec![start, end]);
-                    self.emit_dedicated(&points, entity, frame, source.clone());
+                        if hidden[index] {
+                            continue;
+                        }
+                        let start = corners[index];
+                        let end = corners[(index + 1) % 4];
+                        if (end - start).length_squared() <= 1e-18 {
+                            continue;
+                        }
+                        let points = world(transform, vec![start, end]);
+                        self.emit_dedicated(&points, entity, frame, source.clone());
                     }
                 }
                 if visual.faces != super::visual_style::FaceShading::None {
@@ -1045,13 +1045,7 @@ impl Compiler<'_> {
         source: EntityRef,
     ) {
         self.draw_label_with_transforms(
-            label,
-            style_name,
-            entity,
-            frame,
-            transform,
-            transform,
-            source,
+            label, style_name, entity, frame, transform, transform, source,
         );
     }
 
@@ -2036,7 +2030,9 @@ impl Compiler<'_> {
         } else {
             "dwf"
         };
-        if underlay.flags.contains(crate::entities::UnderlayDisplayFlags::CLIPPING)
+        if underlay
+            .flags
+            .contains(crate::entities::UnderlayDisplayFlags::CLIPPING)
             && underlay.clip_boundary_vertices.len() >= 2
         {
             let mut points: Vec<Vector3> = underlay
@@ -2080,16 +2076,15 @@ impl Compiler<'_> {
                     );
                     self.emit_dedicated(&points, entity, frame, source.clone());
                 }
-                if underlay.flags.contains(crate::entities::UnderlayDisplayFlags::CLIPPING)
+                if underlay
+                    .flags
+                    .contains(crate::entities::UnderlayDisplayFlags::CLIPPING)
                     && !underlay.clip_inverted
                 {
-                    let boundary = world(
-                        transform,
-                        underlay.world_clip_boundary(),
-                    )
-                    .into_iter()
-                    .map(|point| crate::types::Vector2::new(point.x, point.y))
-                    .collect::<Vec<_>>();
+                    let boundary = world(transform, underlay.world_clip_boundary())
+                        .into_iter()
+                        .map(|point| crate::types::Vector2::new(point.x, point.y))
+                        .collect::<Vec<_>>();
                     clip_recent_geometry(
                         &mut self.scene,
                         stroke_from,
@@ -2307,7 +2302,9 @@ impl Compiler<'_> {
                     frame,
                     source.clone(),
                 );
-                if underlay.flags.contains(crate::entities::UnderlayDisplayFlags::CLIPPING)
+                if underlay
+                    .flags
+                    .contains(crate::entities::UnderlayDisplayFlags::CLIPPING)
                     && !underlay.clip_inverted
                     && underlay.clip_boundary_vertices.len() >= 3
                 {
@@ -2376,8 +2373,7 @@ impl Compiler<'_> {
                     let advances = std::fs::read(path)
                         .ok()
                         .and_then(|bytes| {
-                            fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default())
-                                .ok()
+                            fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default()).ok()
                         })
                         .map(|font| {
                             data.text
@@ -2679,7 +2675,8 @@ impl Compiler<'_> {
         let kind = kind_of(entity).to_string();
         let bounds = entity.as_entity().bounding_box();
         let local_corners = box_corners(bounds.min, bounds.max);
-        let corners = std::array::from_fn(|index| self.active_transform.apply(local_corners[index]));
+        let corners =
+            std::array::from_fn(|index| self.active_transform.apply(local_corners[index]));
         let style = resolve_style(
             self.doc,
             entity.common(),
@@ -2713,28 +2710,39 @@ fn clip_viewport_depth(
     if !viewport.status.front_clipping && !viewport.status.back_clipping {
         return;
     }
-    let depth = |point: Vector3| {
-        (point - viewport.center).dot(&viewport.view_direction) / scale.max(1e-12)
-    };
+    let depth =
+        |point: Vector3| (point - viewport.center).dot(&viewport.view_direction) / scale.max(1e-12);
     let visible = |point: Vector3| {
         let value = depth(point);
         (!viewport.status.front_clipping || value <= viewport.front_clip_z)
             && (!viewport.status.back_clipping || value >= viewport.back_clip_z)
     };
-    let strokes = scene.strokes.split_off(stroke_from.min(scene.strokes.len()));
-    scene
+    let strokes = scene
         .strokes
-        .extend(strokes.into_iter().filter(|stroke| stroke.points.iter().any(|point| visible(*point))));
+        .split_off(stroke_from.min(scene.strokes.len()));
+    scene.strokes.extend(
+        strokes
+            .into_iter()
+            .filter(|stroke| stroke.points.iter().any(|point| visible(*point))),
+    );
     let fills = scene.fills.split_off(fill_from.min(scene.fills.len()));
-    scene
-        .fills
-        .extend(fills.into_iter().filter(|fill| fill.triangles.iter().any(|point| visible(*point))));
-    let pictures = scene.pictures.split_off(picture_from.min(scene.pictures.len()));
-    scene
+    scene.fills.extend(
+        fills
+            .into_iter()
+            .filter(|fill| fill.triangles.iter().any(|point| visible(*point))),
+    );
+    let pictures = scene
         .pictures
-        .extend(pictures.into_iter().filter(|picture| picture.triangles.iter().any(|point| visible(*point))));
+        .split_off(picture_from.min(scene.pictures.len()));
+    scene.pictures.extend(
+        pictures
+            .into_iter()
+            .filter(|picture| picture.triangles.iter().any(|point| visible(*point))),
+    );
     let glyphs = scene.glyphs.split_off(glyph_from.min(scene.glyphs.len()));
-    scene.glyphs.extend(glyphs.into_iter().filter(|glyph| visible(glyph.anchor)));
+    scene
+        .glyphs
+        .extend(glyphs.into_iter().filter(|glyph| visible(glyph.anchor)));
 }
 
 fn emit_chain(
@@ -2967,7 +2975,11 @@ fn clip_triangles(image: &crate::entities::RasterImage) -> (Vec<Vector3>, Vec<[f
         flat.push(point.y);
         located.push((world, uv));
     }
-    let holes = if inverted { vec![outer.len()] } else { Vec::new() };
+    let holes = if inverted {
+        vec![outer.len()]
+    } else {
+        Vec::new()
+    };
     let indices = earcutr::earcut(&flat, &holes, 2).unwrap_or_default();
     let mut triangles = Vec::new();
     let mut uvs = Vec::new();
@@ -3127,7 +3139,11 @@ fn underlay_point(
     let (sin, cos) = underlay.rotation.sin_cos();
     underlay.insertion_point
         + Matrix3::arbitrary_axis(underlay.normal)
-            * Vector3::new(cos * local_x - sin * local_y, sin * local_x + cos * local_y, 0.0)
+            * Vector3::new(
+                cos * local_x - sin * local_y,
+                sin * local_x + cos * local_y,
+                0.0,
+            )
 }
 
 fn world(transform: &Transform, points: Vec<Vector3>) -> Vec<Vector3> {
@@ -3341,12 +3357,8 @@ fn clip_recent_geometry(
             glyph.anchor + glyph.axis_y * glyph.height,
         ];
         corners.iter().any(|point| {
-            super::clip::clip_segment(
-                *point,
-                *point + Vector3::new(1e-3, 0.0, 0.0),
-                polygon,
-            )
-            .is_some()
+            super::clip::clip_segment(*point, *point + Vector3::new(1e-3, 0.0, 0.0), polygon)
+                .is_some()
         })
     }));
 }
@@ -3359,11 +3371,8 @@ fn clip_picture_triangle(
     if triangle.len() != 3 || uv.len() != 3 || polygon.len() < 3 {
         return Vec::new();
     }
-    let mut output: Vec<(Vector3, [f32; 2])> = triangle
-        .iter()
-        .copied()
-        .zip(uv.iter().copied())
-        .collect();
+    let mut output: Vec<(Vector3, [f32; 2])> =
+        triangle.iter().copied().zip(uv.iter().copied()).collect();
     for index in 0..polygon.len() {
         if output.is_empty() {
             break;
@@ -3396,8 +3405,7 @@ fn clip_picture_triangle(
 }
 
 fn clip_inside(point: Vector3, start: crate::types::Vector2, end: crate::types::Vector2) -> bool {
-    (end.x - start.x) * (point.y - start.y) - (end.y - start.y) * (point.x - start.x)
-        >= -1e-8
+    (end.x - start.x) * (point.y - start.y) - (end.y - start.y) * (point.x - start.x) >= -1e-8
 }
 
 fn clip_picture_intersection(
