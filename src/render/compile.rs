@@ -432,7 +432,11 @@ impl Compiler<'_> {
                 }
                 self.draw_label(
                     &super::text_draw::GlyphLabel {
-                        text: &attribute.default_value,
+                        // Standalone ATTDEFs are labels for the attribute tag.
+                        // The default value is shown on an inserted ATTRIB,
+                        // while AutoCAD displays the tag while editing the
+                        // block definition itself.
+                        text: &attribute.tag,
                         shape_number: None,
                         insertion: attribute.insertion_point,
                         alignment: attribute.alignment_point,
