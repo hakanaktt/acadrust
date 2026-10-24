@@ -2094,6 +2094,7 @@ impl Compiler<'_> {
                         &boundary,
                     );
                 }
+                apply_underlay_appearance(&mut self.scene, stroke_from, fill_from, underlay);
             }
             Err(reason) => {
                 self.scene.skipped.push(SkippedEntity {
@@ -2321,6 +2322,7 @@ impl Compiler<'_> {
                         &boundary,
                     );
                 }
+                apply_underlay_appearance(&mut self.scene, stroke_from, fill_from, underlay);
                 if empty {
                     self.scene.skipped.push(SkippedEntity {
                         kind: "Underlay".to_string(),
@@ -3058,6 +3060,42 @@ fn underlay_page(
 
 fn place_underlay_local(underlay: &crate::entities::Underlay, x: f64, y: f64) -> Vector3 {
     underlay_point(underlay, (0.0, 0.0), (1.0, 1.0), (x, y))
+}
+
+fn apply_underlay_appearance(
+    scene: &mut Scene,
+    stroke_from: usize,
+    fill_from: usize,
+    underlay: &crate::entities::Underlay,
+) {
+    let opacity = (1.0 - underlay.fade as f32 / 100.0).clamp(0.0, 1.0);
+    let monochrome = underlay
+        .flags
+        .contains(crate::entities::UnderlayDisplayFlags::MONOCHROME);
+    let stroke_start = stroke_from.min(scene.strokes.len());
+    for stroke in &mut scene.strokes[stroke_start..] {
+        stroke.style.opacity *= opacity;
+        if monochrome {
+            let gray = (0.299 * stroke.style.rgb[0] as f64
+                + 0.587 * stroke.style.rgb[1] as f64
+                + 0.114 * stroke.style.rgb[2] as f64)
+                .round()
+                .clamp(0.0, 255.0) as u8;
+            stroke.style.rgb = [gray, gray, gray];
+        }
+    }
+    let fill_start = fill_from.min(scene.fills.len());
+    for fill in &mut scene.fills[fill_start..] {
+        fill.style.opacity *= opacity;
+        if monochrome {
+            let gray = (0.299 * fill.style.rgb[0] as f64
+                + 0.587 * fill.style.rgb[1] as f64
+                + 0.114 * fill.style.rgb[2] as f64)
+                .round()
+                .clamp(0.0, 255.0) as u8;
+            fill.style.rgb = [gray, gray, gray];
+        }
+    }
 }
 
 fn infinite_reach(doc: &crate::document::CadDocument) -> f64 {
