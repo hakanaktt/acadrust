@@ -320,6 +320,30 @@ fn offscreen_frame_draws_a_red_line() {
 }
 
 #[test]
+fn wide_lwpolyline_becomes_a_fill() {
+    let mut doc = doc();
+    doc.header.fill_mode = true;
+    let mut poly = LwPolyline::new();
+    poly.constant_width = 2.0;
+    poly.vertices = vec![
+        LwVertex::new(Vector2::new(0.0, 0.0)),
+        LwVertex::new(Vector2::new(10.0, 0.0)),
+    ];
+    doc.add_entity(EntityType::LwPolyline(poly)).unwrap();
+    let scene = compile(&doc, &CompileOptions::default());
+    assert!(scene.fallbacks.is_empty());
+    assert_eq!(scene.fills.len(), 1);
+    assert_eq!(scene.fills[0].triangles.len(), 6);
+    let ys: Vec<f64> = scene.fills[0]
+        .triangles
+        .iter()
+        .map(|point| point.y)
+        .collect();
+    assert!(ys.iter().any(|y| (*y - 1.0).abs() < 1e-6));
+    assert!(ys.iter().any(|y| (*y + 1.0).abs() < 1e-6));
+}
+
+#[test]
 fn circle_and_arc_sample_their_endpoints() {
     let mut doc = doc();
     doc.add_entity(EntityType::Circle(Circle::from_coords(0.0, 0.0, 0.0, 5.0)))

@@ -103,7 +103,13 @@ impl Compiler<'_> {
             }
             EntityType::LwPolyline(poly) => {
                 if has_width(poly) {
-                    self.fallback(entity, frame, source);
+                    let triangles = world(transform, lwpolyline_wide_triangles(poly));
+                    if self.doc.header.fill_mode {
+                        self.emit_fill(&triangles, entity, frame, source, false);
+                    } else {
+                        let points = world(transform, lwpolyline_points(poly));
+                        self.emit_dedicated(&points, entity, frame, source);
+                    }
                     return;
                 }
                 let points = world(transform, lwpolyline_points(poly));
@@ -160,13 +166,14 @@ impl Compiler<'_> {
                 }
             }
             EntityType::Polyline2D(poly) => {
-                if poly.start_width.abs() > 1e-9
-                    || poly.end_width.abs() > 1e-9
-                    || poly.vertices.iter().any(|vertex| {
-                        vertex.start_width.abs() > 1e-9 || vertex.end_width.abs() > 1e-9
-                    })
-                {
-                    self.fallback(entity, frame, source);
+                if polyline2d_has_width(poly) {
+                    let triangles = world(transform, polyline2d_wide_triangles(poly));
+                    if self.doc.header.fill_mode {
+                        self.emit_fill(&triangles, entity, frame, source, false);
+                    } else {
+                        let points = world(transform, polyline2d_points(poly));
+                        self.emit_dedicated(&points, entity, frame, source);
+                    }
                     return;
                 }
                 let points = world(transform, polyline2d_points(poly));
@@ -569,6 +576,123 @@ fn lwpolyline_points(poly: &LwPolyline) -> Vec<Vector3> {
         ));
     }
     raw.into_iter().map(|point| ocs * point).collect()
+}
+
+fn segment_widths(start_width: f64, end_width: f64, constant: f64) -> (f64, f64) {
+    let start = if start_width.abs() > 1e-9 {
+        start_width
+    } else {
+        constant
+    };
+    let end = if end_width.abs() > 1e-9 {
+        end_width
+    } else if start_width.abs() > 1e-9 {
+        start_width
+    } else {
+        constant
+    };
+    (start.abs(), end.abs())
+}
+
+fn wide_triangles(
+    samples: &[Vector3],
+    start_width: f64,
+    end_width: f64,
+    normal: Vector3,
+) -> Vec<Vector3> {
+    if samples.len() < 2 || (start_width <= 1e-9 && end_width <= 1e-9) {
+        return Vec::new();
+    }
+    let mut triangles = Vec::new();
+    let steps = samples.len() - 1;
+    for index in 0..steps {
+        let t0 = index as f64 / steps as f64;
+        let t1 = (index + 1) as f64 / steps as f64;
+        let width0 = start_width + (end_width - start_width) * t0;
+        let width1 = start_width + (end_width - start_width) * t1;
+        let a = samples[index];
+        let b = samples[index + 1];
+        let direction = b - a;
+        let mut side = normal.cross(&direction);
+        if side.length_squared() <= 1e-18 {
+            side = Vector3::new(-direction.y, direction.x, 0.0);
+        }
+        if side.length_squared() <= 1e-18 {
+            continue;
+        }
+        side = side.normalize();
+        let a_left = a + side * (width0 * 0.5);
+        let a_right = a - side * (width0 * 0.5);
+        let b_left = b + side * (width1 * 0.5);
+        let b_right = b - side * (width1 * 0.5);
+        triangles.extend([a_left, b_left, b_right, a_left, b_right, a_right]);
+    }
+    triangles
+}
+
+fn lwpolyline_wide_triangles(poly: &LwPolyline) -> Vec<Vector3> {
+    let verts = &poly.vertices;
+    if verts.len() < 2 {
+        return Vec::new();
+    }
+    let ocs = Matrix3::arbitrary_axis(poly.normal);
+    let segments = if poly.is_closed {
+        verts.len()
+    } else {
+        verts.len() - 1
+    };
+    let mut triangles = Vec::new();
+    for index in 0..segments {
+        let from = &verts[index];
+        let to = &verts[(index + 1) % verts.len()];
+        let (start_width, end_width) =
+            segment_widths(from.start_width, from.end_width, poly.constant_width);
+        let start = Vector3::new(from.location.x, from.location.y, poly.elevation);
+        let end = Vector3::new(to.location.x, to.location.y, poly.elevation);
+        let samples = tessellate_bulge(start, end, from.bulge);
+        let local = wide_triangles(&samples, start_width, end_width, Vector3::UNIT_Z);
+        triangles.extend(local.into_iter().map(|point| ocs * point));
+    }
+    triangles
+}
+
+fn polyline2d_has_width(poly: &crate::entities::Polyline2D) -> bool {
+    poly.start_width.abs() > 1e-9
+        || poly.end_width.abs() > 1e-9
+        || poly
+            .vertices
+            .iter()
+            .any(|vertex| vertex.start_width.abs() > 1e-9 || vertex.end_width.abs() > 1e-9)
+}
+
+fn polyline2d_wide_triangles(poly: &crate::entities::Polyline2D) -> Vec<Vector3> {
+    let verts = &poly.vertices;
+    if verts.len() < 2 {
+        return Vec::new();
+    }
+    let ocs = Matrix3::arbitrary_axis(poly.normal);
+    let segments = if poly.is_closed() {
+        verts.len()
+    } else {
+        verts.len() - 1
+    };
+    let mut triangles = Vec::new();
+    for index in 0..segments {
+        let from = &verts[index];
+        let to = &verts[(index + 1) % verts.len()];
+        let constant = if index == 0 {
+            poly.start_width
+        } else {
+            poly.end_width
+        };
+        let (start_width, end_width) = segment_widths(from.start_width, from.end_width, constant);
+        let start = Vector3::new(from.location.x, from.location.y, poly.elevation);
+        let end = Vector3::new(to.location.x, to.location.y, poly.elevation);
+        let samples = tessellate_bulge(start, end, from.bulge);
+        let local = wide_triangles(&samples, start_width, end_width, Vector3::UNIT_Z);
+        triangles.extend(local.into_iter().map(|point| ocs * point));
+    }
+    triangles
 }
 
 fn polyline2d_points(poly: &crate::entities::Polyline2D) -> Vec<Vector3> {
