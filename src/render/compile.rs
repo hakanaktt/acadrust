@@ -2959,9 +2959,9 @@ fn infinite_reach(doc: &crate::document::CadDocument) -> f64 {
     let min = doc.header.model_space_extents_min;
     let max = doc.header.model_space_extents_max;
     if min.x < max.x && min.y < max.y {
-        (max - min).length().max(1.0) * 2.0
+        (max - min).length().max(1.0) * 1_000_000.0
     } else {
-        1000.0
+        1.0e9
     }
 }
 
