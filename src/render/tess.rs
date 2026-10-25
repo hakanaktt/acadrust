@@ -12,8 +12,9 @@ use std::collections::HashMap;
 use std::f64::consts::{PI, TAU};
 
 use crate::entities::acis::{
-    SatBSplineSurface, SatConeSurface, SatDocument, SatEllipseCurve, SatFace, SatIntCurve, SatLoop,
-    SatPlaneSurface, SatSphereSurface, SatSplineSurface, SatStraightCurve, SatTorusSurface, Sense,
+    SatBSplineSurface, SatCoedge, SatConeSurface, SatDocument, SatEllipseCurve, SatFace,
+    SatIntCurve, SatLoop, SatPCurve, SatPlaneSurface, SatSphereSurface, SatSplineSurface,
+    SatStraightCurve, SatTorusSurface, Sense,
 };
 use crate::types::{Matrix3, Vector3};
 
@@ -194,7 +195,19 @@ fn facet_face(
             .bspline(document)
             .or_else(|| spline.offset_in(document).map(|(patch, _)| patch))
         {
-            facet_spline(&patch, sense, place, tolerance, tess);
+            if let Some((parameters, boundaries)) = spline_face_parameters(document, face, edges) {
+                facet_trimmed_spline(
+                    &patch,
+                    &parameters,
+                    &boundaries,
+                    sense,
+                    place,
+                    tolerance,
+                    tess,
+                );
+            } else {
+                facet_spline(&patch, sense, place, tolerance, tess);
+            }
         }
     }
 }
@@ -267,6 +280,95 @@ fn loop_polyline(
         points.pop();
     }
     points
+}
+
+/// Decode the UV boundary of a spline face from its coedge p-curves.
+///
+/// The ordinary edge samples are retained as the source points passed to the
+/// parameter triangulator. This keeps every trimmed spline face on the exact
+/// same sampled boundary as adjacent faces, while the p-curves provide the
+/// surface parameters needed to evaluate the interior.
+fn spline_face_parameters(
+    document: &SatDocument,
+    face: &SatFace<'_>,
+    edges: &HashMap<usize, Vec<Vector3>>,
+) -> Option<(Vec<Vec<(f64, f64)>>, Vec<Vec<Vector3>>)> {
+    let mut parameters = Vec::new();
+    let mut boundaries = Vec::new();
+    for loop_pointer in face_loops(document, face) {
+        let loop_record = document.resolve(loop_pointer)?;
+        let loop_ = SatLoop::from_record(loop_record)?;
+        let start = loop_.first_coedge();
+        let mut cursor = start;
+        let mut parameter_ring: Vec<(f64, f64)> = Vec::new();
+        let mut boundary_ring: Vec<Vector3> = Vec::new();
+        let mut guard = 0;
+        while !cursor.is_null() && guard < 256 {
+            let coedge_record = document.resolve(cursor)?;
+            let coedge = SatCoedge::from_record(coedge_record)?;
+            let edge_index = coedge.edge().index()?;
+            let edge_points = edges.get(&edge_index)?;
+            if edge_points.len() < 2 {
+                return None;
+            }
+            let pcurve_record = document.resolve(coedge.pcurve())?;
+            let pcurve = SatPCurve::from_record(pcurve_record)?;
+            let mut uv = pcurve.sample_in(document, edge_points.len().saturating_sub(1).max(1));
+            if uv.len() < 2 || uv.len() != edge_points.len() {
+                return None;
+            }
+            let mut boundary = edge_points.clone();
+            // Edge samples are oriented from the edge's start vertex. A
+            // reversed coedge walks both the 3-D edge and its p-curve back.
+            if coedge.sense() == Sense::Reversed {
+                uv.reverse();
+                boundary.reverse();
+            }
+            if parameter_ring
+                .last()
+                .zip(uv.first())
+                .is_some_and(|(last, first)| {
+                    (last.0 - first.0).abs() <= 1e-8 && (last.1 - first.1).abs() <= 1e-8
+                })
+            {
+                uv.remove(0);
+                boundary.remove(0);
+            }
+            parameter_ring.extend(uv);
+            boundary_ring.extend(boundary);
+            cursor = coedge.next();
+            if cursor == start {
+                break;
+            }
+            guard += 1;
+        }
+        if parameter_ring.len() >= 2
+            && parameter_ring
+                .first()
+                .zip(parameter_ring.last())
+                .is_some_and(|(first, last)| {
+                    (first.0 - last.0).abs() <= 1e-8 && (first.1 - last.1).abs() <= 1e-8
+                })
+        {
+            parameter_ring.pop();
+            boundary_ring.pop();
+        }
+        if parameter_ring.len() < 3 || parameter_ring.len() != boundary_ring.len() {
+            return None;
+        }
+        if parameter_ring
+            .iter()
+            .any(|(u, v)| !u.is_finite() || !v.is_finite())
+            || boundary_ring
+                .iter()
+                .any(|point| !point.x.is_finite() || !point.y.is_finite() || !point.z.is_finite())
+        {
+            return None;
+        }
+        parameters.push(parameter_ring);
+        boundaries.push(boundary_ring);
+    }
+    (!parameters.is_empty()).then_some((parameters, boundaries))
 }
 
 fn triangulate_plane(loops: &[Vec<Vector3>], normal: Vector3) -> (Vec<Vector3>, Vec<Vector3>) {
@@ -1533,6 +1635,96 @@ fn periodic_parameter_ring(
     result
 }
 
+fn facet_trimmed_spline(
+    patch: &SatBSplineSurface,
+    parameters: &[Vec<(f64, f64)>],
+    boundaries: &[Vec<Vector3>],
+    sense: Sense,
+    place: &Placement,
+    tolerance: f64,
+    tess: &mut Tessellation,
+) {
+    let u0 = knot_start(&patch.u_knots, patch.degree_u);
+    let u1 = knot_end(&patch.u_knots, patch.degree_u);
+    let v0 = knot_start(&patch.v_knots, patch.degree_v);
+    let v1 = knot_end(&patch.v_knots, patch.degree_v);
+    if u1 <= u0 || v1 <= v0 || parameters.len() != boundaries.len() {
+        facet_spline(patch, sense, place, tolerance, tess);
+        return;
+    }
+    // A malformed or periodic p-curve should never make the evaluator clamp
+    // an entire trim to one side of the patch. Let the untrimmed fallback
+    // handle such data at the caller when no usable p-curves are available.
+    let in_domain = |(u, v): &(f64, f64)| {
+        *u >= u0 - 1e-7 && *u <= u1 + 1e-7 && *v >= v0 - 1e-7 && *v <= v1 + 1e-7
+    };
+    if parameters
+        .iter()
+        .any(|ring| ring.len() < 3 || ring.iter().any(|uv| !in_domain(uv)))
+    {
+        facet_spline(patch, sense, place, tolerance, tess);
+        return;
+    }
+    let at = |u: f64, v: f64| place.point(eval_spline(patch, u, v));
+    let normal_at = |u: f64, v: f64| spline_normal_at(patch, u, v, u0, u1, v0, v1, sense, place);
+    for group in parameter_regions(parameters) {
+        let rings = group
+            .iter()
+            .map(|&index| parameters[index].clone())
+            .collect::<Vec<_>>();
+        let source_rings = group
+            .iter()
+            .map(|&index| boundaries[index].clone())
+            .collect::<Vec<_>>();
+        let Some((parameters, indices, sources)) =
+            triangulate_parameters(&rings, at, tolerance, Some(&source_rings))
+        else {
+            continue;
+        };
+        for triangle in indices {
+            let points = triangle.map(|index| {
+                let (u, v) = parameters[index];
+                sources[index].unwrap_or_else(|| at(u, v))
+            });
+            let normals = triangle.map(|index| {
+                let (u, v) = parameters[index];
+                normal_at(u, v)
+            });
+            push_triangle(
+                tess, points[0], points[1], points[2], normals[0], normals[1], normals[2],
+            );
+        }
+    }
+}
+
+fn spline_normal_at(
+    patch: &SatBSplineSurface,
+    u: f64,
+    v: f64,
+    u0: f64,
+    u1: f64,
+    v0: f64,
+    v1: f64,
+    sense: Sense,
+    place: &Placement,
+) -> Vector3 {
+    // Use central differences in the interior and a one-sided difference at
+    // the domain boundary. The old forward-only estimate collapsed to zero
+    // on the final row/column, producing UNIT_Z fallback normals and visible
+    // dark triangular fans on ruled spline faces.
+    let du_step = ((u1 - u0) * 1e-4).max(1e-7);
+    let dv_step = ((v1 - v0) * 1e-4).max(1e-7);
+    let (u_left, u_right) = ((u - du_step).max(u0), (u + du_step).min(u1));
+    let (v_left, v_right) = ((v - dv_step).max(v0), (v + dv_step).min(v1));
+    let du = eval_spline(patch, u_right, v) - eval_spline(patch, u_left, v);
+    let dv = eval_spline(patch, u, v_right) - eval_spline(patch, u, v_left);
+    let mut normal = unit(place.normal(du.cross(&dv))).unwrap_or(Vector3::UNIT_Z);
+    if sense == Sense::Reversed {
+        normal = normal * -1.0;
+    }
+    normal
+}
+
 fn facet_spline(
     patch: &SatBSplineSurface,
     sense: Sense,
@@ -1551,20 +1743,8 @@ fn facet_spline(
     while divisions < 64 && !spline_grid_flat(patch, u0, u1, v0, v1, divisions, tolerance) {
         divisions *= 2;
     }
-    let flip = sense == Sense::Reversed;
     let at = |u: f64, v: f64| place.point(eval_spline(patch, u, v));
-    let normal_at = |u: f64, v: f64| {
-        let delta_u = (u1 - u0) / divisions as f64;
-        let delta_v = (v1 - v0) / divisions as f64;
-        let point = eval_spline(patch, u, v);
-        let du = eval_spline(patch, (u + delta_u).min(u1), v) - point;
-        let dv = eval_spline(patch, u, (v + delta_v).min(v1)) - point;
-        let mut normal = unit(place.normal(du.cross(&dv))).unwrap_or(Vector3::UNIT_Z);
-        if flip {
-            normal = normal * -1.0;
-        }
-        normal
-    };
+    let normal_at = |u: f64, v: f64| spline_normal_at(patch, u, v, u0, u1, v0, v1, sense, place);
     for row in 0..divisions {
         for column in 0..divisions {
             let u_a = u0 + (u1 - u0) * (column as f64 / divisions as f64);

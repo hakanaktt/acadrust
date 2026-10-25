@@ -2756,6 +2756,21 @@ fn bilinear_spline_patch_interpolates_its_corners() {
     };
     assert!(has(0.0, 0.0, 0.0), "missing origin corner");
     assert!(has(4.0, 4.0, 2.0), "missing far corner");
+    let corner_normal = tess
+        .triangles
+        .iter()
+        .zip(&tess.normals)
+        .find_map(|(point, normal)| {
+            ((point.x - 4.0).abs() < 1e-4
+                && (point.y - 4.0).abs() < 1e-4
+                && (point.z - 2.0).abs() < 1e-4)
+                .then_some(*normal)
+        })
+        .expect("missing far corner normal");
+    assert!(
+        corner_normal.x < -0.2 && corner_normal.y < -0.2 && corner_normal.z > 0.5,
+        "boundary normal collapsed at spline corner: {corner_normal:?}"
+    );
 }
 
 #[test]
