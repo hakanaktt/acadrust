@@ -155,6 +155,77 @@ pub(super) fn styled_dimension_line_segments(
     result
 }
 
+fn midpoint(first: Vector3, second: Vector3) -> Vector3 {
+    (first + second) * 0.5
+}
+
+fn angular_text_point(vertex: Vector3, first: Vector3, second: Vector3) -> Vector3 {
+    let first_direction = first - vertex;
+    let second_direction = second - vertex;
+    let first_length = first_direction.length();
+    let second_length = second_direction.length();
+    if first_length <= 1.0e-12 || second_length <= 1.0e-12 {
+        return midpoint(first, second);
+    }
+    let bisector = first_direction / first_length + second_direction / second_length;
+    let bisector_length = bisector.length();
+    if bisector_length <= 1.0e-12 {
+        return midpoint(first, second);
+    }
+    let radius = first_length.min(second_length);
+    vertex + bisector / bisector_length * radius
+}
+
+fn default_dimension_text_point(dim: &Dimension) -> Vector3 {
+    match dim {
+        Dimension::Linear(d) => {
+            let direction = Matrix3::arbitrary_axis(d.base.normal)
+                * Vector3::new(d.rotation.cos(), d.rotation.sin(), 0.0);
+            let direction = direction.normalize();
+            if direction.length_squared() <= 1.0e-20 {
+                midpoint(d.first_point, d.second_point)
+            } else {
+                let project = |point: Vector3| {
+                    d.definition_point + direction * (point - d.definition_point).dot(&direction)
+                };
+                midpoint(project(d.first_point), project(d.second_point))
+            }
+        }
+        Dimension::Aligned(d) => {
+            let direction = (d.second_point - d.first_point).normalize();
+            if direction.length_squared() <= 1.0e-20 {
+                midpoint(d.first_point, d.second_point)
+            } else {
+                let project = |point: Vector3| {
+                    d.definition_point + direction * (point - d.definition_point).dot(&direction)
+                };
+                midpoint(project(d.first_point), project(d.second_point))
+            }
+        }
+        Dimension::Radius(d) => midpoint(d.angle_vertex, d.definition_point),
+        Dimension::Diameter(d) => midpoint(d.angle_vertex, d.definition_point),
+        Dimension::Angular2Ln(d) => {
+            angular_text_point(d.angle_vertex, d.second_point, d.definition_point)
+        }
+        Dimension::Angular3Pt(d) => {
+            angular_text_point(d.angle_vertex, d.first_point, d.second_point)
+        }
+        Dimension::Ordinate(d) => d.leader_endpoint,
+        Dimension::Arc(d) => {
+            let first = d.first_extension_point - d.center_point;
+            let second = d.second_extension_point - d.center_point;
+            let radius = (first.length() + second.length()) * 0.5;
+            let bisector = first.normalize() + second.normalize();
+            if radius > 1.0e-12 && bisector.length_squared() > 1.0e-20 {
+                d.center_point + bisector.normalize() * radius
+            } else {
+                midpoint(d.first_extension_point, d.second_extension_point)
+            }
+        }
+        Dimension::LargeRadial(d) => midpoint(d.jog_point, d.chord_point),
+    }
+}
+
 /// Explode a dimension with an optional DIMSTYLE table entry.
 ///
 /// The detached [`EntityType::explode`] API has no document/table context and
@@ -191,6 +262,10 @@ pub(crate) fn explode_dimension_with_style(
 
     let mut result = Vec::new();
     let mut arrows = Vec::new();
+    let mut text_middle_point = base.text_middle_point;
+    if !base.text_user_positioned {
+        text_middle_point = default_dimension_text_point(dim);
+    }
 
     // Dimension geometry is defined by two measured points and a point on the
     // dimension line.  Project each measured point onto that line so the
@@ -229,7 +304,7 @@ pub(crate) fn explode_dimension_with_style(
                     for (start, end) in styled_dimension_line_segments(
                         first_on_line,
                         second_on_line,
-                        base.text_middle_point,
+                        text_middle_point,
                         arrow_size,
                         dimension_gap,
                     ) {
@@ -255,7 +330,7 @@ pub(crate) fn explode_dimension_with_style(
                 // visible portions around the text location.
                 let axis = second_on_line - first_on_line;
                 let t = if axis.length_squared() > 1e-20 {
-                    ((base.text_middle_point - first_on_line).dot(&axis) / axis.length_squared())
+                    ((text_middle_point - first_on_line).dot(&axis) / axis.length_squared())
                         .clamp(0.0, 1.0)
                 } else {
                     0.5
@@ -289,7 +364,7 @@ pub(crate) fn explode_dimension_with_style(
                     for (start, end) in styled_dimension_line_segments(
                         first_on_line,
                         second_on_line,
-                        base.text_middle_point,
+                        text_middle_point,
                         arrow_size,
                         dimension_gap,
                     ) {
@@ -322,7 +397,7 @@ pub(crate) fn explode_dimension_with_style(
                 ));
                 let axis = second_on_line - first_on_line;
                 let t = if axis.length_squared() > 1e-20 {
-                    ((base.text_middle_point - first_on_line).dot(&axis) / axis.length_squared())
+                    ((text_middle_point - first_on_line).dot(&axis) / axis.length_squared())
                         .clamp(0.0, 1.0)
                 } else {
                     0.5
@@ -454,7 +529,7 @@ pub(crate) fn explode_dimension_with_style(
         }
     }
     if let Some(text_value) = text_value {
-        result.push(dimension_mtext(base, text_value, style));
+        result.push(dimension_mtext(base, text_value, style, text_middle_point));
     }
 
     result

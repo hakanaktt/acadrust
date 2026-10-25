@@ -735,6 +735,35 @@ fn test_explode_aligned_dimension_projects_onto_offset_line() {
 }
 
 #[test]
+fn test_default_dimension_text_follows_dimension_line() {
+    let mut dimension = DimensionLinear::horizontal(Vector3::ZERO, Vector3::new(10.0, 0.0, 0.0));
+    dimension.definition_point = Vector3::new(0.0, 5.0, 0.0);
+    let parts = EntityType::Dimension(Box::new(Dimension::Linear(dimension))).flatten();
+    let text = parts
+        .iter()
+        .find_map(|part| match part {
+            EntityType::MText(text) => Some(text),
+            _ => None,
+        })
+        .expect("dimension text");
+    assert_eq!(text.insertion_point, Vector3::new(5.0, 5.0, 0.0));
+
+    let mut positioned = DimensionLinear::horizontal(Vector3::ZERO, Vector3::new(10.0, 0.0, 0.0));
+    positioned.definition_point = Vector3::new(0.0, 5.0, 0.0);
+    positioned.base.text_user_positioned = true;
+    positioned.base.text_middle_point = Vector3::new(3.0, 8.0, 0.0);
+    let parts = EntityType::Dimension(Box::new(Dimension::Linear(positioned))).flatten();
+    let text = parts
+        .iter()
+        .find_map(|part| match part {
+            EntityType::MText(text) => Some(text),
+            _ => None,
+        })
+        .expect("positioned dimension text");
+    assert_eq!(text.insertion_point, Vector3::new(3.0, 8.0, 0.0));
+}
+
+#[test]
 fn test_explode_dimension_uses_dimstyle_geometry_and_formatting() {
     let mut dimension = DimensionLinear::horizontal(Vector3::ZERO, Vector3::new(10.0, 0.0, 0.0));
     dimension.definition_point = Vector3::new(0.0, 5.0, 0.0);

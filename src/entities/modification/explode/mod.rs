@@ -191,7 +191,12 @@ fn dimension_attachment(attachment: AttachmentPointType) -> AttachmentPoint {
     }
 }
 
-fn dimension_mtext(base: &DimensionBase, value: String, style: Option<&DimStyle>) -> EntityType {
+fn dimension_mtext(
+    base: &DimensionBase,
+    value: String,
+    style: Option<&DimStyle>,
+    insertion_point: Vector3,
+) -> EntityType {
     let height = style
         .map(|style| (style.dimtxt * style.dimscale).abs())
         .filter(|height| height.is_finite() && *height > 0.0)
@@ -204,7 +209,7 @@ fn dimension_mtext(base: &DimensionBase, value: String, style: Option<&DimStyle>
         // preserves the behavior when this detached entity is written to DXF.
         format!("\\A1;{value}")
     };
-    let mut text = MText::with_value(value, base.text_middle_point)
+    let mut text = MText::with_value(value, insertion_point)
         .with_height(height)
         .with_width(0.0);
     text.common = inherit_common(&base.common);
