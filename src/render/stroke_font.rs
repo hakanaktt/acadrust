@@ -16,12 +16,17 @@ const BELOW: u8 = 20;
 ///
 /// The renderer draws text with this font when a style's SHX or TrueType file
 /// is not available. The same bytes can be written out for another program.
+/// Glyph ids and `data-advance` widths are listed in the
+/// [renderer advance table](crate::render#stroke-font-advances).
 pub fn acadrust_shx() -> &'static [u8] {
     static BYTES: OnceLock<Vec<u8>> = OnceLock::new();
     BYTES.get_or_init(encode_shx)
 }
 
 /// Shape-source text for [`acadrust_shx`].
+///
+/// The [renderer advance table](crate::render#stroke-font-advances) matches
+/// each character to its SHP name and `data-advance` width.
 pub fn acadrust_shp() -> &'static str {
     static TEXT: OnceLock<String> = OnceLock::new();
     TEXT.get_or_init(encode_shp)

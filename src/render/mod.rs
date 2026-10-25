@@ -11,7 +11,11 @@
 //!
 //! Text styles whose SHX or TrueType file is not available are drawn with
 //! [`acadrust_shx`], an original single-stroke font. Shape-file styles are
-//! left unresolved.
+//! left unresolved. The [advance table](#stroke-font-advances) lists every
+//! glyph, the Unicode scalar the renderer uses to select it, and the
+//! `data-advance` width used when that glyph is drawn in an SVG sheet.
+
+#![doc = include_str!("stroke_advances.md")]
 
 mod bitmap;
 mod clip;
