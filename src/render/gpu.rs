@@ -78,9 +78,12 @@ pub struct Renderer {
     fills: wgpu::Buffer,
     fill_capacity: u64,
     fill_count: u32,
-    surface_pipeline: wgpu::RenderPipeline,
-    surface_bind: wgpu::BindGroup,
-    surfaces: wgpu::Buffer,
+    /// `None` when the device (for example a WebGL2 fallback) cannot sample a
+    /// storage buffer from a fragment shader. Fills then keep their mesh.
+    surface_pipeline: Option<wgpu::RenderPipeline>,
+    surface_bind: Option<wgpu::BindGroup>,
+    surface_layout: Option<wgpu::BindGroupLayout>,
+    surfaces: Option<wgpu::Buffer>,
     surface_capacity: u64,
     surface_count: u32,
     glyph_pipeline: wgpu::RenderPipeline,
@@ -182,77 +185,91 @@ impl Renderer {
             multiview_mask: None,
             cache: None,
         });
-        let surface_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("acadrust-surfaces"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
-        // Group 1 is unused by the surface shader but keeps the storage buffer
-        // at a distinct group from the glyph atlas sampled elsewhere.
-        let empty_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("acadrust-empty"),
-            entries: &[],
-        });
-        let surface_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        let storage_ok = device.limits().max_storage_buffers_per_shader_stage > 0;
+        let (surface_pipeline, surface_bind, surface_layout, surfaces) = if storage_ok {
+            let surface_layout =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("acadrust-surfaces"),
+                    entries: &[wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    }],
+                });
+            // Group 1 is unused by the surface shader but keeps the storage
+            // buffer at a distinct group from the glyph atlas sampled elsewhere.
+            let empty_layout =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("acadrust-empty"),
+                    entries: &[],
+                });
+            let surface_pipeline_layout =
+                device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("acadrust-surfaces"),
+                    bind_group_layouts: &[Some(&layout), Some(&empty_layout), Some(&surface_layout)],
+                    immediate_size: 0,
+                });
+            let surface_pipeline =
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("acadrust-surfaces"),
+                    layout: Some(&surface_pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("vs_surface"),
+                        compilation_options: Default::default(),
+                        buffers: &[],
+                    },
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        cull_mode: None,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(depth_state(true)),
+                    multisample: wgpu::MultisampleState {
+                        count: samples,
+                        ..Default::default()
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some("fs_surface"),
+                        compilation_options: Default::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: config.format,
+                            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    multiview_mask: None,
+                    cache: None,
+                });
+            let surfaces = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("acadrust-surfaces"),
-                bind_group_layouts: &[Some(&layout), Some(&empty_layout), Some(&surface_layout)],
-                immediate_size: 0,
+                size: SURFACE_STRIDE,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
             });
-        let surface_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("acadrust-surfaces"),
-            layout: Some(&surface_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_surface"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: Some(depth_state(true)),
-            multisample: wgpu::MultisampleState {
-                count: samples,
-                ..Default::default()
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_surface"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
-        let surfaces = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("acadrust-surfaces"),
-            size: SURFACE_STRIDE,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let surface_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("acadrust-surfaces"),
-            layout: &surface_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: surfaces.as_entire_binding(),
-            }],
-        });
+            let surface_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("acadrust-surfaces"),
+                layout: &surface_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: surfaces.as_entire_binding(),
+                }],
+            });
+            (
+                Some(surface_pipeline),
+                Some(surface_bind),
+                Some(surface_layout),
+                Some(surfaces),
+            )
+        } else {
+            (None, None, None, None)
+        };
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("acadrust-strokes"),
             layout: Some(&pipeline_layout),
@@ -417,6 +434,7 @@ impl Renderer {
             fill_count: 0,
             surface_pipeline,
             surface_bind,
+            surface_layout,
             surfaces,
             surface_capacity: SURFACE_STRIDE,
             surface_count: 0,
@@ -792,6 +810,10 @@ impl Renderer {
     /// Upload analytic surface descriptors. Any fill carrying one is drawn by
     /// the per-fragment surface pass instead of its triangle mesh.
     fn prepare_surfaces(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, scene: &Scene) {
+        if self.surface_pipeline.is_none() {
+            self.surface_count = 0;
+            return;
+        }
         let mut bytes = Vec::with_capacity(scene.fills.len() * SURFACE_STRIDE as usize);
         for fill in &scene.fills {
             let Some(surface) = &fill.analytic else {
@@ -855,16 +877,29 @@ impl Renderer {
         }
         let size = (bytes.len() as u64).max(SURFACE_STRIDE);
         if size > self.surface_capacity {
-            self.surfaces = device.create_buffer(&wgpu::BufferDescriptor {
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("acadrust-surfaces"),
                 size,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
+            if let Some(layout) = &self.surface_layout {
+                self.surface_bind = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("acadrust-surfaces"),
+                    layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buffer.as_entire_binding(),
+                    }],
+                }));
+            }
+            self.surfaces = Some(buffer);
             self.surface_capacity = size;
         }
         if !bytes.is_empty() {
-            queue.write_buffer(&self.surfaces, 0, &bytes);
+            if let Some(surfaces) = &self.surfaces {
+                queue.write_buffer(surfaces, 0, &bytes);
+            }
         }
         self.surface_count = (bytes.len() as u64 / SURFACE_STRIDE) as u32;
     }
@@ -873,7 +908,7 @@ impl Renderer {
         let vertices: usize = scene.fills.iter().map(|fill| fill.triangles.len()).sum();
         let mut bytes = Vec::with_capacity(vertices * FILL_STRIDE as usize);
         for fill in &scene.fills {
-            if fill.analytic.is_some() {
+            if fill.analytic.is_some() && self.surface_pipeline.is_some() {
                 // The analytic surface pass covers this face.
                 continue;
             }
@@ -1005,9 +1040,13 @@ impl Renderer {
         // Analytic surfaces after planar fills so transparent solids blend in
         // front of them; the depth buffer still sorts everything correctly.
         if self.surface_count > 0 {
-            pass.set_pipeline(&self.surface_pipeline);
-            pass.set_bind_group(2, &self.surface_bind, &[]);
-            pass.draw(0..3, 0..self.surface_count);
+            if let (Some(pipeline), Some(bind)) =
+                (&self.surface_pipeline, &self.surface_bind)
+            {
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(2, bind, &[]);
+                pass.draw(0..3, 0..self.surface_count);
+            }
         }
         pass.set_pipeline(&self.pipeline);
         if self.instance_count > 0 {
