@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>acadrust wasm viewer</title>
+    <style>
+      :root { color-scheme: dark; font: 14px system-ui, sans-serif; }
+      body { margin: 0; background: #202830; color: #e6ebef; }
+      header { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 10px 14px; }
+      #status { color: #aab6bf; }
+      canvas { display: block; width: 100vw; height: calc(100vh - 48px); image-rendering: auto; }
+      input { max-width: 70vw; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <label>DWG <input id="file" type="file" accept=".dwg,.dxf"></label>
+      <label>SHX/SHP <input id="font" type="file" accept=".shx,.shp"></label>
+      <span id="status">Choose a drawing. Add its SHX/SHP font to draw text.</span>
+    </header>
+    <canvas id="canvas" width="1600" height="1000"></canvas>
+    <script type="module">
+      import init, { render_dwg, render_dwg_with_font } from "./pkg/wasm_viewer.js";
+
+      const canvas = document.querySelector("#canvas");
+      const fileInput = document.querySelector("#file");
+      const fontInput = document.querySelector("#font");
+      const status = document.querySelector("#status");
+      let drawing = null;
+      let renderSerial = 0;
+      const resize = () => {
+        const scale = window.devicePixelRatio || 1;
+        canvas.width = Math.max(1, Math.round(canvas.clientWidth * scale));
+        canvas.height = Math.max(1, Math.round(canvas.clientHeight * scale));
+        if (drawing) renderCurrent();
+      };
+
+      const renderCurrent = async () => {
+        if (!drawing) return;
+        const serial = ++renderSerial;
+        status.textContent = `Rendering ${drawing.name}...`;
+        try {
+          const bytes = new Uint8Array(await drawing.arrayBuffer());
+          const font = fontInput.files?.[0];
+          if (serial !== renderSerial) return;
+          if (font) {
+            await render_dwg_with_font(
+              canvas,
+              bytes,
+              font.name,
+              new Uint8Array(await font.arrayBuffer()),
+            );
+          } else {
+            await render_dwg(canvas, bytes);
+          }
+          if (serial === renderSerial) {
+            status.textContent = `${drawing.name} rendered${font ? ` with ${font.name}` : ""}`;
+          }
+        } catch (error) {
+          if (serial === renderSerial) {
+            console.error(error);
+            status.textContent = `Render failed: ${error}`;
+          }
+        }
+      };
+
+      await init();
+      resize();
+      addEventListener("resize", resize);
+      fileInput.addEventListener("change", () => {
+        drawing = fileInput.files?.[0] ?? null;
+        renderCurrent();
+      });
+      fontInput.addEventListener("change", renderCurrent);
+    </script>
+  </body>
+</html>

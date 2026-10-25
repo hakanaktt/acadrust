@@ -1,5 +1,7 @@
 # Rust
 /target/
+/web/target/
+/web/pkg/
 **/*.rs.bk
 *.pdb
 Cargo.lock
