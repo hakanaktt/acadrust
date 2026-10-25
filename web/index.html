@@ -6,73 +6,216 @@
     <title>acadrust wasm viewer</title>
     <style>
       :root { color-scheme: dark; font: 14px system-ui, sans-serif; }
-      body { margin: 0; background: #202830; color: #e6ebef; }
-      header { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 10px 14px; }
-      #status { color: #aab6bf; }
-      canvas { display: block; width: 100vw; height: calc(100vh - 48px); image-rendering: auto; }
-      input { max-width: 70vw; }
+      body { margin: 0; overflow: hidden; background: #202830; color: #e6ebef; }
+      header { min-height: 42px; box-sizing: border-box; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 8px 12px; }
+      label, button, select { font: inherit; }
+      label { display: inline-flex; align-items: center; gap: 6px; }
+      button, select { color: inherit; background: #303b45; border: 1px solid #52616d; border-radius: 3px; padding: 5px 8px; }
+      button { cursor: pointer; }
+      button:hover, select:hover { background: #3a4853; }
+      button:disabled, select:disabled { opacity: .55; cursor: default; }
+      input { max-width: 26vw; }
+      #status { color: #aab6bf; min-width: 14em; }
+      #canvas { display: block; width: 100vw; height: calc(100vh - 48px); touch-action: none; cursor: default; }
     </style>
   </head>
   <body>
     <header>
       <label>DWG <input id="file" type="file" accept=".dwg"></label>
       <label>SHX/SHP <input id="font" type="file" accept=".shx,.shp"></label>
+      <label>Visual style
+        <select id="visual-style" disabled>
+          <option value="ActiveViewport">Active viewport</option>
+          <option value="2dWireframe">2D Wireframe</option>
+          <option value="Wireframe">Wireframe</option>
+          <option value="Hidden">Hidden</option>
+          <option value="FlatShaded">Flat Shaded</option>
+          <option value="GouraudShaded">Gouraud Shaded</option>
+          <option value="FlatShadedWithEdges">Flat Shaded with Edges</option>
+          <option value="GouraudShadedWithEdges">Gouraud Shaded with Edges</option>
+          <option value="Realistic">Realistic</option>
+          <option value="Conceptual">Conceptual</option>
+          <option value="Shaded">Shaded</option>
+          <option value="ShadedWithEdges">Shaded with Edges</option>
+          <option value="Shades of Gray">Shades of Gray</option>
+          <option value="Sketchy">Sketchy</option>
+          <option value="X-Ray">X-Ray</option>
+        </select>
+      </label>
+      <button id="fit" type="button" disabled title="Fit drawing to the viewport">Fit</button>
+      <button id="rotate-left" type="button" disabled title="Rotate counter-clockwise">Rotate left</button>
+      <button id="rotate-right" type="button" disabled title="Rotate clockwise">Rotate right</button>
       <span id="status">Choose a drawing. Add its SHX/SHP font to draw text.</span>
     </header>
     <canvas id="canvas" width="1600" height="1000"></canvas>
     <script type="module">
-      import init, { render_dwg, render_dwg_with_font } from "./pkg/acadrust_wasm_viewer.js";
+      import init, {
+        create_viewer,
+        create_viewer_with_font,
+      } from "./pkg/acadrust_wasm_viewer.js";
 
       const canvas = document.querySelector("#canvas");
       const fileInput = document.querySelector("#file");
       const fontInput = document.querySelector("#font");
+      const styleInput = document.querySelector("#visual-style");
+      const fitButton = document.querySelector("#fit");
+      const rotateLeft = document.querySelector("#rotate-left");
+      const rotateRight = document.querySelector("#rotate-right");
       const status = document.querySelector("#status");
       let drawing = null;
-      let renderSerial = 0;
-      const resize = () => {
-        const scale = window.devicePixelRatio || 1;
-        canvas.width = Math.max(1, Math.round(canvas.clientWidth * scale));
-        canvas.height = Math.max(1, Math.round(canvas.clientHeight * scale));
-        if (drawing) renderCurrent();
+      let viewer = null;
+      let loadSerial = 0;
+      let resizeFrame = 0;
+      let drag = null;
+
+      const setStatus = (message) => { status.textContent = message; };
+      const setControlsEnabled = (enabled) => {
+        styleInput.disabled = !enabled;
+        fitButton.disabled = !enabled;
+        rotateLeft.disabled = !enabled;
+        rotateRight.disabled = !enabled;
       };
 
-      const renderCurrent = async () => {
-        if (!drawing) return;
-        const serial = ++renderSerial;
-        status.textContent = `Rendering ${drawing.name}...`;
-        try {
-          const bytes = new Uint8Array(await drawing.arrayBuffer());
-          const font = fontInput.files?.[0];
-          if (serial !== renderSerial) return;
-          if (font) {
-            await render_dwg_with_font(
-              canvas,
-              bytes,
-              font.name,
-              new Uint8Array(await font.arrayBuffer()),
-            );
-          } else {
-            await render_dwg(canvas, bytes);
-          }
-          if (serial === renderSerial) {
-            status.textContent = `${drawing.name} rendered${font ? ` with ${font.name}` : ""}`;
-          }
-        } catch (error) {
-          if (serial === renderSerial) {
+      const resizeCanvas = () => {
+        const scale = window.devicePixelRatio || 1;
+        const width = Math.max(1, Math.round(canvas.clientWidth * scale));
+        const height = Math.max(1, Math.round(canvas.clientHeight * scale));
+        if (canvas.width === width && canvas.height === height) return;
+        canvas.width = width;
+        canvas.height = height;
+        if (viewer) {
+          try {
+            viewer.resize(width, height);
+          } catch (error) {
             console.error(error);
-            status.textContent = `Render failed: ${error}`;
+            setStatus(`Resize failed: ${error}`);
           }
         }
       };
 
-      await init();
-      resize();
-      addEventListener("resize", resize);
+      const scheduleResize = () => {
+        cancelAnimationFrame(resizeFrame);
+        resizeFrame = requestAnimationFrame(resizeCanvas);
+      };
+
+      const canvasPoint = (event) => {
+        const rect = canvas.getBoundingClientRect();
+        return {
+          x: (event.clientX - rect.left) * canvas.width / Math.max(rect.width, 1),
+          y: (event.clientY - rect.top) * canvas.height / Math.max(rect.height, 1),
+        };
+      };
+
+      const renderCurrent = async () => {
+        if (!drawing) return;
+        const serial = ++loadSerial;
+        const selectedFont = fontInput.files?.[0] ?? null;
+        setControlsEnabled(false);
+        setStatus(`Loading ${drawing.name}...`);
+        try {
+          const bytes = new Uint8Array(await drawing.arrayBuffer());
+          let nextViewer;
+          if (selectedFont) {
+            nextViewer = await create_viewer_with_font(
+              canvas,
+              bytes,
+              selectedFont.name,
+              new Uint8Array(await selectedFont.arrayBuffer()),
+            );
+          } else {
+            nextViewer = await create_viewer(canvas, bytes);
+          }
+          if (serial !== loadSerial) return;
+          nextViewer.render();
+          viewer = nextViewer;
+          setControlsEnabled(true);
+          setStatus(`${drawing.name} rendered${selectedFont ? ` with ${selectedFont.name}` : ""}`);
+        } catch (error) {
+          if (serial === loadSerial) {
+            console.error(error);
+            viewer = null;
+            setControlsEnabled(false);
+            setStatus(`Render failed: ${error}`);
+          }
+        }
+      };
+
+      const withViewer = (action) => {
+        if (!viewer) return;
+        try {
+          action(viewer);
+        } catch (error) {
+          console.error(error);
+          setStatus(`Viewer error: ${error}`);
+        }
+      };
+
+      canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+      canvas.addEventListener("wheel", (event) => {
+        if (!viewer) return;
+        event.preventDefault();
+        const point = canvasPoint(event);
+        const delta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaMode === 2 ? event.deltaY * canvas.clientHeight : event.deltaY;
+        const factor = Math.pow(0.9, Math.max(-12, Math.min(12, delta / 100)));
+        withViewer((active) => active.zoom_at(factor, point.x, point.y));
+      }, { passive: false });
+
+      canvas.addEventListener("pointerdown", (event) => {
+        if (!viewer || event.button !== 1) return;
+        event.preventDefault();
+        const point = canvasPoint(event);
+        drag = { id: event.pointerId, mode: event.shiftKey ? "rotate" : "pan", x: point.x, y: point.y };
+        canvas.setPointerCapture(event.pointerId);
+        canvas.style.cursor = drag.mode === "rotate" ? "crosshair" : "grabbing";
+      });
+
+      canvas.addEventListener("pointermove", (event) => {
+        if (!drag || drag.id !== event.pointerId || !viewer) return;
+        event.preventDefault();
+        const point = canvasPoint(event);
+        const dx = point.x - drag.x;
+        const dy = point.y - drag.y;
+        drag.x = point.x;
+        drag.y = point.y;
+        if (drag.mode === "rotate") {
+          withViewer((active) => active.rotate_at(dx * Math.PI / 360, point.x, point.y));
+        } else {
+          withViewer((active) => active.pan(dx, dy));
+        }
+      });
+
+      const endDrag = (event) => {
+        if (!drag || drag.id !== event.pointerId) return;
+        drag = null;
+        canvas.style.cursor = "default";
+        if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+      };
+      canvas.addEventListener("pointerup", endDrag);
+      canvas.addEventListener("pointercancel", endDrag);
+      canvas.addEventListener("lostpointercapture", () => {
+        drag = null;
+        canvas.style.cursor = "default";
+      });
+
+      styleInput.addEventListener("change", () => {
+        const name = styleInput.value;
+        withViewer((active) => active.set_visual_style(name));
+        if (drawing) setStatus(`${drawing.name} rendered in ${styleInput.options[styleInput.selectedIndex].text}`);
+      });
+      fitButton.addEventListener("click", () => withViewer((active) => active.fit()));
+      rotateLeft.addEventListener("click", () => withViewer((active) => active.rotate_at(-Math.PI / 12, canvas.width / 2, canvas.height / 2)));
+      rotateRight.addEventListener("click", () => withViewer((active) => active.rotate_at(Math.PI / 12, canvas.width / 2, canvas.height / 2)));
       fileInput.addEventListener("change", () => {
         drawing = fileInput.files?.[0] ?? null;
+        viewer = null;
+        setControlsEnabled(false);
         renderCurrent();
       });
       fontInput.addEventListener("change", renderCurrent);
+      addEventListener("resize", scheduleResize);
+
+      await init();
+      resizeCanvas();
     </script>
   </body>
 </html>
