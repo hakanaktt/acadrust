@@ -306,36 +306,47 @@ struct FillIn {
     @location(2) normal: vec4<f32>,
 }
 
+struct FillOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) color: vec4<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) @interpolate(flat) lighting: f32,
+}
+
 @vertex
-fn vs_fill(in: FillIn) -> VertexOut {
+fn vs_fill(in: FillIn) -> FillOut {
     let clip = camera.view_proj * vec4<f32>(in.pos.xyz, 1.0);
-    var rgb = in.color.rgb;
-    if length(in.normal.xyz) > 1e-4 && in.normal.w > 0.5 {
-        let n = normalize(in.normal.xyz);
-        let light = normalize(vec3<f32>(0.22, 0.42, 0.88));
-        let diffuse = dot(n, light);
-        if in.normal.w > 2.5 {
-            let warm = vec3<f32>(1.0, 0.72, 0.42);
-            let cool = vec3<f32>(0.35, 0.55, 1.0);
-            let factor = diffuse * 0.5 + 0.5;
-            rgb = mix(cool, warm, factor) * rgb;
-        } else {
-            var shade = 0.28 + 0.72 * abs(diffuse);
-            if in.normal.w < 1.5 {
-                shade = 0.72;
-            }
-            rgb = rgb * shade;
-        }
-    }
-    return VertexOut(clip, vec4<f32>(rgb, in.color.a));
+    return FillOut(clip, in.color, in.normal.xyz, in.normal.w);
 }
 
 @fragment
-fn fs_fill(in: VertexOut) -> @location(0) vec4<f32> {
+fn fs_fill(in: FillOut, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
     if in.color.a <= 0.001 {
         discard;
     }
-    return in.color;
+
+    if in.lighting < 0.5 || length(in.normal) <= 1e-4 {
+        return in.color;
+    }
+    if in.lighting < 1.5 {
+        return vec4<f32>(in.color.rgb * 0.72, in.color.a);
+    }
+
+    var normal = normalize(in.normal);
+    if !front_facing {
+        normal = -normal;
+    }
+    let light = normalize(vec3<f32>(0.22, 0.42, 0.88));
+    let diffuse = dot(normal, light);
+    if in.lighting > 2.5 {
+        let warm = vec3<f32>(1.0, 0.72, 0.42);
+        let cool = vec3<f32>(0.35, 0.55, 1.0);
+        let factor = clamp(diffuse * 0.5 + 0.5, 0.0, 1.0);
+        return vec4<f32>(mix(cool, warm, factor) * in.color.rgb, in.color.a);
+    }
+
+    let shade = 0.28 + 0.72 * max(diffuse, 0.0);
+    return vec4<f32>(in.color.rgb * shade, in.color.a);
 }
 
 @group(1) @binding(0)

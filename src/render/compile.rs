@@ -3322,13 +3322,14 @@ fn transform_normals(transform: &Transform, normals: &[Vector3]) -> Vec<Vector3>
         ],
     );
     let normal_matrix = linear.inverse().map(|matrix| matrix.transpose());
+    let winding_sign = if linear.determinant() < 0.0 { -1.0 } else { 1.0 };
     normals
         .iter()
         .map(|normal| {
             let turned = normal_matrix
                 .as_ref()
-                .map(|matrix| *matrix * *normal)
-                .unwrap_or_else(|| transform.apply_rotation(*normal));
+                .map(|matrix| (*matrix * *normal) * winding_sign)
+                .unwrap_or_else(|| transform.apply_rotation(*normal) * winding_sign);
             let length = turned.length();
             if length > 1e-12 {
                 turned * (1.0 / length)
@@ -3707,7 +3708,15 @@ fn find_font_file(
 
 #[cfg(test)]
 mod tests {
-    use super::find_font_file;
+    use super::{find_font_file, transform_normals};
+    use crate::types::{Transform, Vector3};
+
+    #[test]
+    fn mirrored_transform_keeps_normals_aligned_with_face_winding() {
+        let transform = Transform::from_scaling(Vector3::new(-1.0, 1.0, 1.0));
+        let transformed = transform_normals(&transform, &[Vector3::UNIT_Z]);
+        assert_eq!(transformed, vec![-Vector3::UNIT_Z]);
+    }
 
     #[test]
     fn font_lookup_retries_an_absolute_path_by_basename() {
