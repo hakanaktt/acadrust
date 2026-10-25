@@ -307,6 +307,11 @@ fn render_mode_and_named_style_both_resolve() {
     options.visual_style = VisualStyleRequest::RenderMode(ViewportRenderMode::HiddenLine);
     let scene = compile(&doc, &options);
     assert_eq!(scene.visual_style.kind, StandardVisualStyle::Hidden);
+
+    options.visual_style = VisualStyleRequest::Standard(StandardVisualStyle::Conceptual);
+    let scene = compile(&doc, &options);
+    assert_eq!(scene.visual_style.kind, StandardVisualStyle::Conceptual);
+    assert_eq!(scene.visual_style.lighting, LightingModel::Gooch);
 }
 
 #[test]

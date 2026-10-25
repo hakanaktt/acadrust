@@ -320,6 +320,8 @@ pub enum VisualStyleRequest {
     /// The `*Active` model-space viewport. A visual-style handle on it wins
     /// over its render-mode code.
     ActiveViewport,
+    /// A built-in AutoCAD visual style, independent of the active viewport.
+    Standard(StandardVisualStyle),
     RenderMode(ViewportRenderMode),
     Object(Handle),
 }
@@ -333,6 +335,7 @@ impl Default for VisualStyleRequest {
 pub(crate) fn resolve(doc: &CadDocument, request: &VisualStyleRequest) -> ResolvedVisualStyle {
     match request {
         VisualStyleRequest::RenderMode(mode) => ResolvedVisualStyle::from_render_mode(*mode),
+        VisualStyleRequest::Standard(kind) => ResolvedVisualStyle::from_standard(*kind),
         VisualStyleRequest::Object(handle) => {
             object_style(doc, *handle).unwrap_or_else(ResolvedVisualStyle::wireframe_2d)
         }
