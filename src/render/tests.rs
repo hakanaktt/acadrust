@@ -1104,13 +1104,45 @@ fn standalone_attdef_draws_the_tag_instead_of_default_value() {
 }
 
 #[test]
-fn missing_font_is_reported_and_not_invented() {
+fn missing_text_font_uses_the_builtin_stroke_font() {
     let mut doc = doc();
-    doc.add_entity(EntityType::Text(Text::with_value("Hi", Vector3::ZERO)))
+    doc.add_entity(EntityType::Text(
+        Text::with_value("Se", Vector3::ZERO).with_height(72.0),
+    ))
+    .unwrap();
+    let scene = compile(&doc, &CompileOptions::default());
+    assert!(
+        scene
+            .skipped
+            .iter()
+            .all(|entry| !entry.reason.contains("font")),
+        "{:?}",
+        scene.skipped
+    );
+    let max_y = scene
+        .strokes
+        .iter()
+        .flat_map(|stroke| &stroke.points)
+        .map(|point| point.y)
+        .fold(0.0, f64::max);
+    assert!(max_y > 60.0, "cap height was {max_y}");
+    assert!(scene.strokes.len() >= 2, "{}", scene.strokes.len());
+}
+
+#[test]
+fn missing_shape_file_is_reported_and_not_replaced() {
+    let mut doc = doc();
+    let style = doc.text_styles.get_mut("Standard").unwrap();
+    style.font_file = "ltypeshp.shx".to_string();
+    style.is_shape_file = true;
+    doc.add_entity(EntityType::Text(Text::with_value("BOX", Vector3::ZERO)))
         .unwrap();
     let scene = compile(&doc, &CompileOptions::default());
     assert!(scene.strokes.is_empty());
-    assert!(scene.skipped[0].reason.contains("font"));
+    assert!(scene
+        .skipped
+        .iter()
+        .any(|entry| entry.reason.contains("font")));
 }
 
 #[test]

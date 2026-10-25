@@ -2,6 +2,11 @@
 
 ### 0.6.7
 
+- **Built-in stroke font** - `acadrust.shx` is an original single-stroke font
+  (source `assets/fonts/acadrust.shp`). The renderer and the wasm viewer draw
+  text with it when a style's SHX or TrueType file is not available. Shape-file
+  styles still report a missing file, so linetype shapes are not replaced with
+  letters. `render::acadrust_shx` and `render::acadrust_shp` return the font.
 - **ACAD Arch** - Reads and preserves AEC, structural, and building-systems
   classes. A same-version DWG save writes the original class record with the
   entity's current common properties. `wall`, `door`, and `window` build an

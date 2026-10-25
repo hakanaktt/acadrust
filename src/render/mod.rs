@@ -8,6 +8,10 @@
 //! [`VisualStyle`](crate::objects::VisualStyle) object selects the rest,
 //! including Realistic, Conceptual, Shades of Gray, Sketchy, and X-Ray.
 //! A custom style uses the object's face and edge fields.
+//!
+//! Text styles whose SHX or TrueType file is not available are drawn with
+//! [`acadrust_shx`], an original single-stroke font. Shape-file styles are
+//! left unresolved.
 
 mod bitmap;
 mod clip;
@@ -22,6 +26,7 @@ mod pdf_page;
 mod scene;
 mod sheet;
 mod shx;
+mod stroke_font;
 mod style;
 mod tess;
 mod text_draw;
@@ -33,6 +38,7 @@ pub use gpu::{render_rgba, render_rgba_with, RenderError, Renderer, RendererConf
 pub use scene::{
     Curve, DrawPath, EntityRef, FallbackEntry, Fill, Picture, Scene, SkippedEntity, Stroke, Style,
 };
+pub use stroke_font::{acadrust_shp, acadrust_shx};
 pub use visual_style::{
     EdgeMode, FaceColorMode, FaceShading, LightingModel, ResolvedVisualStyle, StandardVisualStyle,
     VisualStyleRequest,

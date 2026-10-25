@@ -1,8 +1,9 @@
 //! SHX and SHP shape fonts.
 //!
 //! These are the stroke fonts TEXT, SHAPE, and complex linetypes reference.
-//! A missing file is reported by the caller. This module does not invent a
-//! substitute alphabet.
+//! A missing text file is drawn with [`super::stroke_font`] by the compiler.
+//! This module does not synthesize glyphs of its own, and a missing shape
+//! file stays missing so linetype shapes are not replaced with letters.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -136,7 +137,7 @@ fn shp_numbers(line: &str) -> Vec<i16> {
         .collect()
 }
 
-fn parse_shx(data: &[u8]) -> Option<ShapeFont> {
+pub(super) fn parse_shx(data: &[u8]) -> Option<ShapeFont> {
     let end = data.iter().position(|byte| *byte == 0x1A)?;
     let header = std::str::from_utf8(&data[..end]).ok()?.to_ascii_lowercase();
     if !header.contains("shapes") && !header.contains("unifont") {

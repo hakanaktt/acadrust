@@ -47,7 +47,7 @@
       <button id="fit" type="button" disabled title="Fit drawing to the viewport">Fit</button>
       <button id="rotate-left" type="button" disabled title="Roll counter-clockwise">Roll left</button>
       <button id="rotate-right" type="button" disabled title="Roll clockwise">Roll right</button>
-      <span id="status">Choose a drawing. Scroll zooms, middle mouse pans, right mouse orbits.</span>
+      <span id="status">Choose a drawing. Scroll zooms, middle mouse pans, right mouse orbits. Text uses the built-in Acadrust font unless you supply an SHX or SHP.</span>
     </header>
     <canvas id="canvas" width="1600" height="1000"></canvas>
     <div id="viewcube" title="ViewCube. Drag to orbit. Click a face, edge, or corner.">
@@ -135,7 +135,7 @@
           viewer = nextViewer;
           setControlsEnabled(true);
           refreshGizmo();
-          setStatus(`${drawing.name} rendered${selectedFont ? ` with ${selectedFont.name}` : ""}`);
+          setStatus(`${drawing.name} rendered${selectedFont ? ` with ${selectedFont.name}` : " with the built-in Acadrust font"}`);
         } catch (error) {
           if (serial === loadSerial) {
             console.error(error);

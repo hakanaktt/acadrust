@@ -219,6 +219,9 @@ impl Viewer {
         if let Some(font) = font {
             options.font_files.push(font);
         }
+        // A supplied SHX or SHP is used when its file name matches a text
+        // style. Any other missing SHX or TrueType file is drawn with the
+        // built-in Acadrust stroke font. Shape-file styles are not replaced.
         let scene = compile(&document, &options);
         Self::from_parts(canvas, document, options, scene).await
     }

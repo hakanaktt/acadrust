@@ -1274,8 +1274,18 @@ impl Compiler<'_> {
     }
 
     fn load_font(&self, style_name: &str) -> Option<FaceFont> {
-        let style = self.doc.text_styles.get(style_name)?;
-        self.load_style_font(style)
+        let style = self.doc.text_styles.get(style_name);
+        let shape_file = style.is_some_and(|style| style.is_shape_file);
+        if let Some(style) = style {
+            if let Some(font) = self.load_style_font(style) {
+                return Some(font);
+            }
+        }
+        if shape_file {
+            None
+        } else {
+            Some(FaceFont::Shape(super::stroke_font::font()))
+        }
     }
 
     fn load_style_font(&self, style: &crate::tables::TextStyle) -> Option<FaceFont> {
