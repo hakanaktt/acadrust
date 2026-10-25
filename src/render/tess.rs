@@ -293,11 +293,17 @@ fn triangulate_plane(loops: &[Vec<Vector3>], normal: Vector3) -> (Vec<Vector3>, 
     let mut holes = Vec::new();
     let mut source = Vec::new();
     let project = |point: &Vector3| [point.dot(&axis_u), point.dot(&axis_v)];
-    for (index, loop_) in loops.iter().enumerate() {
+    // Earcut expects the first ring to be the exterior and all following
+    // rings to be holes. ACIS does not guarantee that loop order, so place
+    // the largest projected ring first before building the flattened input.
+    let ordered = std::iter::once(outer_index)
+        .chain((0..loops.len()).filter(move |index| *index != outer_index));
+    for (ring_index, index) in ordered.enumerate() {
+        let loop_ = &loops[index];
         if loop_.len() < 3 {
             continue;
         }
-        if index != outer_index {
+        if ring_index > 0 {
             holes.push(flat.len() / 2);
         }
         for point in loop_ {
@@ -1691,5 +1697,30 @@ mod tests {
         let expected = 1.23;
         let point = frame.point_at(expected, 2.0);
         assert!((frame.angle(point) - expected).abs() < 1e-12);
+    }
+
+    #[test]
+    fn planar_face_accepts_holes_before_the_outer_loop() {
+        // ACIS loop records do not guarantee that the exterior loop appears
+        // first. Earcut requires that order in its flattened input.
+        let hole = vec![
+            Vector3::new(-1.0, -1.0, 0.0),
+            Vector3::new(1.0, -1.0, 0.0),
+            Vector3::new(1.0, 1.0, 0.0),
+            Vector3::new(-1.0, 1.0, 0.0),
+        ];
+        let outer = vec![
+            Vector3::new(-5.0, -5.0, 0.0),
+            Vector3::new(5.0, -5.0, 0.0),
+            Vector3::new(5.0, 5.0, 0.0),
+            Vector3::new(-5.0, 5.0, 0.0),
+        ];
+        let (triangles, normals) = triangulate_plane(&[hole, outer], Vector3::UNIT_Z);
+        assert!(!triangles.is_empty());
+        assert_eq!(triangles.len(), normals.len());
+        assert!(triangles.chunks_exact(3).all(|triangle| {
+            let center = (triangle[0] + triangle[1] + triangle[2]) / 3.0;
+            center.x.abs() > 1.0 || center.y.abs() > 1.0
+        }));
     }
 }

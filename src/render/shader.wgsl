@@ -40,7 +40,12 @@ fn ndc_of(p: vec3<f32>) -> vec2<f32> {
 
 fn depth_of(p: vec3<f32>) -> f32 {
     let clip = camera.view_proj * vec4<f32>(p, 1.0);
-    return clamp(clip.z / max(clip.w, 1e-6) - 0.0015, 0.0, 1.0);
+    // Keep analytic edges just in front of their coplanar fill.  A large
+    // normalized offset makes edges from shallow internal faces pass the
+    // depth test through an outer skin (the model depth span can be dozens
+    // of drawing units).  1e-4 is enough to resolve rasterization ties while
+    // staying below the thickness of ordinary CAD features.
+    return clamp(clip.z / max(clip.w, 1e-6) - 0.0001, 0.0, 1.0);
 }
 
 fn frag_ndc(frag: vec4<f32>) -> vec2<f32> {
