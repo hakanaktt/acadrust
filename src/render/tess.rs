@@ -377,6 +377,15 @@ fn push_ruled(
     if left.len() < 2 || right.len() < 2 {
         return;
     }
+    let (left, right) = if closed_angular_ring(&left) && closed_angular_ring(&right) {
+        let start = left[0].0;
+        (
+            rotate_angular_ring(&left, start),
+            rotate_angular_ring(&right, start),
+        )
+    } else {
+        (left, right)
+    };
     let mut i = 0;
     let mut j = 0;
     while i + 1 < left.len() || j + 1 < right.len() {
@@ -553,6 +562,10 @@ fn angled_ring(points: &[Vector3], frame: &ConeFrame) -> Vec<(f64, Vector3)> {
     }
     if samples.len() >= 3 {
         let span = samples.last().unwrap().0 - samples[0].0;
+        if span < 0.0 {
+            samples.reverse();
+        }
+        let span = samples.last().unwrap().0 - samples[0].0;
         if span > TAU * 0.75 && (samples[0].1 - samples.last().unwrap().1).length_squared() > 1e-16
         {
             let first = samples[0];
@@ -560,6 +573,43 @@ fn angled_ring(points: &[Vector3], frame: &ConeFrame) -> Vec<(f64, Vector3)> {
         }
     }
     samples
+}
+
+fn closed_angular_ring(ring: &[(f64, Vector3)]) -> bool {
+    ring.len() >= 4
+        && ring.last().unwrap().0 - ring[0].0 > TAU * 0.75
+        && (ring[0].1 - ring.last().unwrap().1).length_squared() <= 1e-16
+}
+
+fn rotate_angular_ring(ring: &[(f64, Vector3)], start: f64) -> Vec<(f64, Vector3)> {
+    let end = start + TAU;
+    let point_at = |angle: f64| {
+        let first = ring[0].0;
+        let angle = first + (angle - first).rem_euclid(TAU);
+        for pair in ring.windows(2) {
+            if angle <= pair[1].0 {
+                let span = pair[1].0 - pair[0].0;
+                let t = if span.abs() <= 1e-12 {
+                    0.0
+                } else {
+                    ((angle - pair[0].0) / span).clamp(0.0, 1.0)
+                };
+                return pair[0].1 + (pair[1].1 - pair[0].1) * t;
+            }
+        }
+        ring.last().unwrap().1
+    };
+    let start_point = point_at(start);
+    let mut rotated = vec![(start, start_point)];
+    for (angle, point) in ring {
+        let turns = ((start - angle) / TAU).ceil();
+        let angle = *angle + turns * TAU;
+        if angle > start + 1e-8 && angle < end - 1e-8 {
+            rotated.push((angle, *point));
+        }
+    }
+    rotated.push((end, start_point));
+    rotated
 }
 
 fn close_ring(mut points: Vec<Vector3>) -> Vec<Vector3> {

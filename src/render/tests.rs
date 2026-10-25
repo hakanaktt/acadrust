@@ -1920,6 +1920,28 @@ fn cylinder_side_stays_on_the_surface_and_matches_the_cap() {
             "side vertex {side:?} is not on the cap"
         );
     }
+    for triangle in tess.triangles.chunks_exact(3).filter(|triangle| {
+        triangle.iter().any(|point| point.z.abs() < 1e-5)
+            && triangle.iter().any(|point| (point.z - 12.0).abs() < 1e-5)
+    }) {
+        let mut angles = triangle
+            .iter()
+            .map(|point| point.y.atan2(point.x))
+            .collect::<Vec<_>>();
+        angles.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+        let largest_gap = angles
+            .windows(2)
+            .map(|pair| pair[1] - pair[0])
+            .chain(std::iter::once(
+                angles[0] + std::f64::consts::TAU - angles[2],
+            ))
+            .fold(0.0_f64, f64::max);
+        let covered_angle = std::f64::consts::TAU - largest_gap;
+        assert!(
+            covered_angle <= std::f64::consts::FRAC_PI_3,
+            "cylinder wall triangle spans {covered_angle} radians: {triangle:?}"
+        );
+    }
 }
 
 #[test]
