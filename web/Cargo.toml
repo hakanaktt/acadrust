@@ -13,5 +13,11 @@ wasm-bindgen = "=0.2.121"
 wasm-bindgen-futures = "=0.4.71"
 wgpu = "=30.0.0"
 web-sys = { version = "0.3", features = [
+    "CanvasRenderingContext2d",
+    "CssStyleDeclaration",
+    "Element",
     "HtmlCanvasElement",
+    "HtmlElement",
+    "Performance",
+    "Window",
 ] }

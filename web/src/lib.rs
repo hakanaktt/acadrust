@@ -8,6 +8,10 @@ use acadrust::{CadDocument, DwgReader, Vector3};
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
 
+mod gizmo;
+
+pub use gizmo::ViewCube;
+
 fn js_error(error: impl std::fmt::Display) -> JsValue {
     JsValue::from_str(&error.to_string())
 }
@@ -299,10 +303,7 @@ pub async fn render_dwg_with_font(
 
 /// Create a persistent viewer from a DWG byte buffer.
 #[wasm_bindgen]
-pub async fn create_viewer(
-    canvas: HtmlCanvasElement,
-    bytes: Vec<u8>,
-) -> Result<Viewer, JsValue> {
+pub async fn create_viewer(canvas: HtmlCanvasElement, bytes: Vec<u8>) -> Result<Viewer, JsValue> {
     Viewer::create_inner(canvas, bytes, None).await
 }
 
