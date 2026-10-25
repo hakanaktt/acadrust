@@ -7,6 +7,15 @@
 use crate::document::CadDocument;
 use crate::types::Vector3;
 
+#[cfg(target_arch = "wasm32")]
+use std::{
+    cell::RefCell,
+    future::Future,
+    pin::Pin,
+    rc::Rc,
+    task::{Context, Poll, Waker},
+};
+
 use super::scene::Scene;
 use super::{CompileOptions, View, DEFAULT_MODEL_LINEWEIGHT_PX_PER_MM};
 
@@ -887,17 +896,22 @@ pub async fn render_rgba_with(
     );
     queue.submit(Some(encoder.finish()));
     let slice = buffer.slice(..);
-    let (sender, receiver) = std::sync::mpsc::channel();
-    slice.map_async(wgpu::MapMode::Read, move |result| {
-        sender.send(result).ok();
-    });
-    device
-        .poll(wgpu::PollType::wait_indefinitely())
-        .map_err(|error| RenderError::Device(error.to_string()))?;
-    receiver
-        .recv()
-        .map_err(|_| RenderError::Device("readback closed".to_string()))?
-        .map_err(|error| RenderError::Device(error.to_string()))?;
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            sender.send(result).ok();
+        });
+        device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .map_err(|error| RenderError::Device(error.to_string()))?;
+        receiver
+            .recv()
+            .map_err(|_| RenderError::Device("readback closed".to_string()))?
+            .map_err(|error| RenderError::Device(error.to_string()))?;
+    }
+    #[cfg(target_arch = "wasm32")]
+    map_readback_wasm(slice).await?;
     let mapped = slice
         .get_mapped_range()
         .map_err(|error| RenderError::Device(error.to_string()))?;
@@ -915,6 +929,51 @@ pub async fn render_rgba_with(
         height,
         pixels,
     })
+}
+
+#[cfg(target_arch = "wasm32")]
+struct MapState {
+    result: Option<Result<(), wgpu::BufferAsyncError>>,
+    waker: Option<Waker>,
+}
+
+#[cfg(target_arch = "wasm32")]
+struct MapFuture {
+    state: Rc<RefCell<MapState>>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Future for MapFuture {
+    type Output = Result<(), wgpu::BufferAsyncError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut state = self.state.borrow_mut();
+        if let Some(result) = state.result.take() {
+            Poll::Ready(result)
+        } else {
+            state.waker = Some(cx.waker().clone());
+            Poll::Pending
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn map_readback_wasm(slice: wgpu::BufferSlice<'_>) -> Result<(), RenderError> {
+    let state = Rc::new(RefCell::new(MapState {
+        result: None,
+        waker: None,
+    }));
+    let callback_state = Rc::clone(&state);
+    slice.map_async(wgpu::MapMode::Read, move |result| {
+        let mut state = callback_state.borrow_mut();
+        state.result = Some(result);
+        if let Some(waker) = state.waker.take() {
+            waker.wake();
+        }
+    });
+    MapFuture { state }
+        .await
+        .map_err(|error| RenderError::Device(error.to_string()))
 }
 
 fn glyph_layout_vertices() -> wgpu::VertexBufferLayout<'static> {
