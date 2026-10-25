@@ -75,6 +75,16 @@ pub(crate) fn clip_polygon(subject: &[Vector3], polygon: &[Vector2]) -> Vec<Vect
     output
 }
 
+pub(crate) fn point_inside(point: Vector3, polygon: &[Vector2]) -> bool {
+    if polygon.len() < 3 {
+        return true;
+    }
+    polygon.iter().enumerate().all(|(index, start)| {
+        let end = polygon[(index + 1) % polygon.len()];
+        inside(point, *start, end)
+    })
+}
+
 fn inside(point: Vector3, start: Vector2, end: Vector2) -> bool {
     let cross = (end.x - start.x) * (point.y - start.y) - (end.y - start.y) * (point.x - start.x);
     cross >= -1e-8

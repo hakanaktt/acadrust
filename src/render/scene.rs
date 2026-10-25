@@ -61,6 +61,34 @@ pub struct Fill {
     pub lighting: super::visual_style::LightingModel,
 }
 
+/// Analytic piece drawn instead of the chord samples in [`Stroke::points`].
+///
+/// `points` stays populated so extents, linetype text, and existing callers
+/// still see a polyline. The renderer paints `curves` when the list is not
+/// empty, so the pixels follow the curve rather than those chords.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Curve {
+    /// Straight segment.
+    Line { start: Vector3, end: Vector3 },
+    /// `center + u cos t + v sin t` for `t` in `[start, start + sweep]`.
+    /// A full turn uses a sweep of ±τ.
+    Elliptic {
+        center: Vector3,
+        u: Vector3,
+        v: Vector3,
+        start: f64,
+        sweep: f64,
+    },
+    /// Rational cubic Bézier. Weights of 1 are an ordinary polynomial cubic.
+    Cubic {
+        p0: Vector3,
+        p1: Vector3,
+        p2: Vector3,
+        p3: Vector3,
+        weights: [f64; 4],
+    },
+}
+
 /// One solid run of a stroked curve, after linetype fitting.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Stroke {
@@ -71,6 +99,8 @@ pub struct Stroke {
     pub style: Style,
     pub source: EntityRef,
     pub path: DrawPath,
+    /// Analytic geometry. Empty means `points` are straight segments.
+    pub curves: Vec<Curve>,
 }
 
 /// A graphical entity that does not yet have its dedicated arm.
@@ -209,6 +239,15 @@ impl Scene {
         let mut best: Option<(&EntityRef, f64)> = None;
         let limit = tolerance.max(0.0);
         for stroke in &self.strokes {
+            if !stroke.curves.is_empty() {
+                for curve in &stroke.curves {
+                    let distance = super::curves::distance_xy(curve, point);
+                    if distance <= limit && best.is_none_or(|(_, best_d)| distance < best_d) {
+                        best = Some((&stroke.source, distance));
+                    }
+                }
+                continue;
+            }
             if stroke.points.len() < 2 {
                 continue;
             }

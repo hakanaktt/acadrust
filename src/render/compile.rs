@@ -7,10 +7,12 @@ use crate::entities::{EntityType, Insert, LwPolyline, Text};
 use crate::types::{Handle, Matrix3, Matrix4, Transform, Vector2, Vector3};
 
 use super::curves::{
-    arc_points, circle_points, ellipse_points, fan_triangles, point_chains, spline_points,
+    arc_curve, arc_points, boundary_curves, bulge_curve, circle_curve, circle_points,
+    ellipse_curve, ellipse_points, extract_range, fan_triangles, map_curve, path_length,
+    point_at_distance, point_chains, sample_curve, spline_curves, spline_points, transform_curve,
 };
-use super::dash::{fit_runs, polyline_length, runs_on_segments, SegmentPiece};
-use super::scene::{DrawPath, EntityRef, FallbackEntry, Scene, SkippedEntity, Stroke};
+use super::dash::{fit_runs, polyline_length, runs_on_segments, Run, SegmentPiece};
+use super::scene::{Curve, DrawPath, EntityRef, FallbackEntry, Scene, SkippedEntity, Stroke};
 use super::style::{layer_is_hidden, pattern_elements, resolve_style, Frame};
 use super::visual_style;
 use super::CompileOptions;
@@ -198,42 +200,63 @@ impl Compiler<'_> {
                     if self.doc.header.fill_mode {
                         self.emit_fill(&triangles, entity, frame, source, false);
                     } else {
-                        let points = world(transform, lwpolyline_points(poly));
-                        self.emit_dedicated(&points, entity, frame, source);
+                        self.emit_lwpolyline(poly, transform, entity, frame, source);
                     }
                     return;
                 }
-                let points = world(transform, lwpolyline_points(poly));
-                self.emit_dedicated(&points, entity, frame, source);
+                self.emit_lwpolyline(poly, transform, entity, frame, source);
             }
             EntityType::Circle(circle) => {
+                let curve = transform_curve(transform, circle_curve(circle));
                 let points = world(transform, circle_points(circle));
-                self.emit_dedicated(&points, entity, frame, source);
+                self.emit_analytic(&[curve], &points, entity, frame, source);
             }
             EntityType::Arc(arc) => {
+                let curve = transform_curve(transform, arc_curve(arc));
                 let points = world(transform, arc_points(arc));
-                self.emit_dedicated(&points, entity, frame, source);
+                self.emit_analytic(&[curve], &points, entity, frame, source);
             }
             EntityType::Ellipse(ellipse) => {
+                let Some(curve) = ellipse_curve(ellipse) else {
+                    return;
+                };
+                let curve = transform_curve(transform, curve);
                 let points = world(transform, ellipse_points(ellipse));
-                self.emit_dedicated(&points, entity, frame, source);
+                self.emit_analytic(&[curve], &points, entity, frame, source);
             }
             EntityType::Spline(spline) => {
-                let mut points = world(transform, spline_points(spline));
-                if spline.flags.closed || spline.cv_frame_visible {
-                    if points.len() >= 2 {
-                        points.push(points[0]);
-                    }
-                }
                 if self.doc.header.spline_frame && spline.control_points.len() >= 2 {
                     let frame_points = world(transform, spline.control_points.clone());
                     self.emit_dedicated(&frame_points, entity, frame, source.clone());
                 }
-                self.emit_dedicated(&points, entity, frame, source);
+                let mut points = world(transform, spline_points(spline));
+                let mut curves: Vec<Curve> = spline_curves(spline)
+                    .into_iter()
+                    .map(|curve| transform_curve(transform, curve))
+                    .collect();
+                if spline.flags.closed || spline.cv_frame_visible {
+                    if points.len() >= 2 {
+                        points.push(points[0]);
+                    }
+                    close_curve_gap(&mut curves);
+                }
+                if curves.is_empty() {
+                    self.emit_dedicated(&points, entity, frame, source);
+                } else {
+                    self.emit_analytic(&curves, &points, entity, frame, source);
+                }
             }
             EntityType::Helix(helix) => {
+                let curves: Vec<Curve> = spline_curves(&helix.spline)
+                    .into_iter()
+                    .map(|curve| transform_curve(transform, curve))
+                    .collect();
                 let points = world(transform, spline_points(&helix.spline));
-                self.emit_dedicated(&points, entity, frame, source.clone());
+                if curves.is_empty() {
+                    self.emit_dedicated(&points, entity, frame, source.clone());
+                } else {
+                    self.emit_analytic(&curves, &points, entity, frame, source.clone());
+                }
                 let height = helix.turns * helix.turn_height;
                 let axis = helix.axis_vector;
                 if axis.length_squared() > 1e-18 && height.abs() > 1e-12 {
@@ -247,13 +270,34 @@ impl Compiler<'_> {
                 if size <= 1e-9 {
                     size = 1.0;
                 }
-                for chain in point_chains(point, self.doc.header.point_display_mode, size) {
+                let mode = self.doc.header.point_display_mode;
+                for chain in point_chains(point, mode, size) {
                     let points = world(transform, chain);
                     if points.len() >= 2 && (points[1] - points[0]).length_squared() <= 1e-18 {
                         self.emit_dot(&points, entity, frame, source.clone());
                     } else {
                         self.emit_dedicated(&points, entity, frame, source.clone());
                     }
+                }
+                if mode & 32 != 0 {
+                    let half = size.abs().max(1e-6) * 0.5;
+                    let basis = Matrix3::arbitrary_axis(point.normal);
+                    let curve = Curve::Elliptic {
+                        center: point.location,
+                        u: basis * Vector3::UNIT_X * half,
+                        v: basis * Vector3::UNIT_Y * half,
+                        start: 0.0,
+                        sweep: std::f64::consts::TAU,
+                    };
+                    let samples = sample_curve(&curve, 16);
+                    let curve = transform_curve(transform, curve);
+                    self.emit_analytic(
+                        &[curve],
+                        &world(transform, samples),
+                        entity,
+                        frame,
+                        source.clone(),
+                    );
                 }
             }
             EntityType::Polyline2D(poly) => {
@@ -262,13 +306,11 @@ impl Compiler<'_> {
                     if self.doc.header.fill_mode {
                         self.emit_fill(&triangles, entity, frame, source, false);
                     } else {
-                        let points = world(transform, polyline2d_points(poly));
-                        self.emit_dedicated(&points, entity, frame, source);
+                        self.emit_polyline2d(poly, transform, entity, frame, source);
                     }
                     return;
                 }
-                let points = world(transform, polyline2d_points(poly));
-                self.emit_dedicated(&points, entity, frame, source);
+                self.emit_polyline2d(poly, transform, entity, frame, source);
             }
             EntityType::Polyline(poly) => {
                 let mut points: Vec<Vector3> =
@@ -375,15 +417,28 @@ impl Compiler<'_> {
                     if self.doc.header.fill_mode {
                         self.emit_fill_colors(&triangles, colors, entity, frame, source, false);
                     } else {
-                        for ring in super::curves::path_rings(hatch) {
+                        for path in &hatch.paths {
+                            let mut curves: Vec<Curve> = boundary_curves(hatch, path)
+                                .into_iter()
+                                .map(|curve| transform_curve(transform, curve))
+                                .collect();
                             let mut points = world(
                                 transform,
-                                ring.into_iter()
+                                super::curves::path_ring(hatch, path)
+                                    .into_iter()
                                     .map(|point| super::curves::to_world(hatch, point))
                                     .collect(),
                             );
                             if points.len() >= 2 {
                                 points.push(points[0]);
+                            }
+                            let curved = curves
+                                .iter()
+                                .any(|curve| !matches!(curve, Curve::Line { .. }));
+                            if curved {
+                                close_curve_gap(&mut curves);
+                                self.emit_analytic(&curves, &points, entity, frame, source.clone());
+                            } else if points.len() >= 2 {
                                 self.emit_dedicated(&points, entity, frame, source.clone());
                             }
                         }
@@ -826,7 +881,15 @@ impl Compiler<'_> {
         let mut drew = false;
         if show_plane {
             let points = world(transform, path.clone());
-            self.emit_dedicated(&points, entity, frame, source.clone());
+            if vertices.iter().any(|vertex| vertex.bulge.abs() > 1e-10) {
+                let curves: Vec<Curve> = section_curves(&vertices)
+                    .into_iter()
+                    .map(|curve| transform_curve(transform, curve))
+                    .collect();
+                self.emit_analytic(&curves, &points, entity, frame, source.clone());
+            } else {
+                self.emit_dedicated(&points, entity, frame, source.clone());
+            }
             drew = true;
         } else if show_ends {
             let length = style
@@ -1212,6 +1275,10 @@ impl Compiler<'_> {
 
     fn load_font(&self, style_name: &str) -> Option<FaceFont> {
         let style = self.doc.text_styles.get(style_name)?;
+        self.load_style_font(style)
+    }
+
+    fn load_style_font(&self, style: &crate::tables::TextStyle) -> Option<FaceFont> {
         let mut names = Vec::new();
         if !style.font_file.is_empty() {
             names.push(style.font_file.clone());
@@ -1569,7 +1636,86 @@ impl Compiler<'_> {
             style,
             source,
             path: DrawPath::Dedicated,
+            curves: Vec::new(),
         });
+    }
+
+    fn emit_analytic(
+        &mut self,
+        curves: &[Curve],
+        samples: &[Vector3],
+        entity: &EntityType,
+        frame: &Frame,
+        source: EntityRef,
+    ) {
+        let visual = self.scene.visual_style.clone();
+        let style = resolve_style(self.doc, entity.common(), frame, &visual, self.sheet);
+        let marks = pattern_elements(
+            self.doc,
+            entity.common(),
+            frame,
+            &visual,
+            self.pattern_scale,
+        );
+        let lengths: Vec<f64> = marks.iter().map(|mark| mark.length).collect();
+        emit_curve_chain(
+            &mut self.scene.strokes,
+            curves,
+            samples,
+            &lengths,
+            style,
+            source.clone(),
+            DrawPath::Dedicated,
+        );
+        let along = if samples.len() >= 2 {
+            samples.to_vec()
+        } else {
+            curves
+                .iter()
+                .flat_map(|curve| sample_curve(curve, 8))
+                .collect()
+        };
+        self.place_complex(&along, &marks, entity, frame, source);
+    }
+
+    fn emit_lwpolyline(
+        &mut self,
+        poly: &LwPolyline,
+        transform: &Transform,
+        entity: &EntityType,
+        frame: &Frame,
+        source: EntityRef,
+    ) {
+        let points = world(transform, lwpolyline_points(poly));
+        if lw_has_bulge(poly) {
+            let curves: Vec<Curve> = lwpolyline_curves(poly)
+                .into_iter()
+                .map(|curve| transform_curve(transform, curve))
+                .collect();
+            self.emit_analytic(&curves, &points, entity, frame, source);
+        } else {
+            self.emit_dedicated(&points, entity, frame, source);
+        }
+    }
+
+    fn emit_polyline2d(
+        &mut self,
+        poly: &crate::entities::Polyline2D,
+        transform: &Transform,
+        entity: &EntityType,
+        frame: &Frame,
+        source: EntityRef,
+    ) {
+        let points = world(transform, polyline2d_points(poly));
+        if polyline2d_has_bulge(poly) {
+            let curves: Vec<Curve> = polyline2d_curves(poly)
+                .into_iter()
+                .map(|curve| transform_curve(transform, curve))
+                .collect();
+            self.emit_analytic(&curves, &points, entity, frame, source);
+        } else {
+            self.emit_dedicated(&points, entity, frame, source);
+        }
     }
 
     fn emit_fill(
@@ -2706,8 +2852,9 @@ impl Compiler<'_> {
             data.position.z,
             radius,
         );
-        self.emit_dedicated(
-            &world(transform, super::curves::circle_points(&circle)),
+        self.emit_analytic(
+            &[transform_curve(transform, circle_curve(&circle))],
+            &world(transform, circle_points(&circle)),
             entity,
             frame,
             source.clone(),
@@ -2915,6 +3062,7 @@ impl Compiler<'_> {
                 style: style.clone(),
                 source: source.clone(),
                 path: DrawPath::Fallback,
+                curves: Vec::new(),
             });
         }
         self.scene.fallbacks.push(FallbackEntry { kind, source });
@@ -3016,6 +3164,7 @@ fn emit_chain(
             style,
             source,
             path,
+            curves: Vec::new(),
         });
         return;
     }
@@ -3032,7 +3181,84 @@ fn emit_chain(
             style: style.clone(),
             source: source.clone(),
             path,
+            curves: Vec::new(),
         });
+    }
+}
+
+fn emit_curve_chain(
+    strokes: &mut Vec<Stroke>,
+    curves: &[Curve],
+    samples: &[Vector3],
+    elements: &[f64],
+    style: super::scene::Style,
+    source: EntityRef,
+    path: DrawPath,
+) {
+    if curves.is_empty() {
+        emit_chain(strokes, samples, elements, style, source, path);
+        return;
+    }
+    let length = path_length(curves);
+    if length <= 1e-12 {
+        return;
+    }
+    let patterned = elements.iter().any(|element| element.abs() > 1e-12);
+    if !patterned {
+        let points = if samples.len() >= 2 {
+            samples.to_vec()
+        } else {
+            curves
+                .iter()
+                .flat_map(|curve| sample_curve(curve, 8))
+                .collect()
+        };
+        strokes.push(Stroke {
+            points,
+            closed: false,
+            dot: false,
+            style,
+            source,
+            path,
+            curves: curves.to_vec(),
+        });
+        return;
+    }
+    for run in &fit_runs(length, elements) {
+        match *run {
+            Run::Dash { start, end } => {
+                let pieces = extract_range(curves, start, end);
+                if pieces.is_empty() {
+                    continue;
+                }
+                let points = pieces
+                    .iter()
+                    .flat_map(|curve| sample_curve(curve, 8))
+                    .collect();
+                strokes.push(Stroke {
+                    points,
+                    closed: false,
+                    dot: false,
+                    style: style.clone(),
+                    source: source.clone(),
+                    path,
+                    curves: pieces,
+                });
+            }
+            Run::Dot { at } => {
+                if let Some(point) = point_at_distance(curves, at) {
+                    strokes.push(Stroke {
+                        points: vec![point, point],
+                        closed: false,
+                        dot: true,
+                        style: style.clone(),
+                        source: source.clone(),
+                        path,
+                        curves: Vec::new(),
+                    });
+                }
+            }
+        }
     }
 }
 
@@ -3605,6 +3831,31 @@ fn clip_recent_geometry(
         .strokes
         .split_off(stroke_from.min(scene.strokes.len()));
     for stroke in fresh {
+        if !stroke.curves.is_empty() {
+            let pieces = super::curves::clip_curves(&stroke.curves, polygon);
+            for curve in pieces {
+                scene.strokes.push(Stroke {
+                    points: sample_curve(&curve, 12),
+                    closed: false,
+                    dot: false,
+                    style: stroke.style.clone(),
+                    source: stroke.source.clone(),
+                    path: stroke.path,
+                    curves: vec![curve],
+                });
+            }
+            continue;
+        }
+        if stroke.dot {
+            if stroke
+                .points
+                .first()
+                .is_some_and(|point| super::clip::point_inside(*point, polygon))
+            {
+                scene.strokes.push(stroke);
+            }
+            continue;
+        }
         for pair in stroke.points.windows(2) {
             if let Some((start, end)) = super::clip::clip_segment(pair[0], pair[1], polygon) {
                 scene.strokes.push(Stroke {
@@ -3614,6 +3865,7 @@ fn clip_recent_geometry(
                     style: stroke.style.clone(),
                     source: stroke.source.clone(),
                     path: stroke.path,
+                    curves: Vec::new(),
                 });
             }
         }
@@ -3763,6 +4015,96 @@ fn cell_transforms(insert: &Insert) -> Vec<Transform> {
         .map(|point| {
             let translation = Matrix4::translation(point.x, point.y, point.z);
             Transform::from_matrix(ocs * translation * rotation * scale)
+        })
+        .collect()
+}
+
+fn close_curve_gap(curves: &mut Vec<Curve>) {
+    let (Some(first), Some(last)) = (curves.first(), curves.last()) else {
+        return;
+    };
+    let start = sample_curve(first, 1);
+    let end = sample_curve(last, 1);
+    let start = start[0];
+    let end = end[end.len() - 1];
+    if (end - start).length_squared() > 1e-12 {
+        curves.push(Curve::Line {
+            start: end,
+            end: start,
+        });
+    }
+}
+
+fn lw_has_bulge(poly: &LwPolyline) -> bool {
+    poly.vertices
+        .iter()
+        .any(|vertex| vertex.bulge.abs() > 1e-10)
+}
+
+fn lwpolyline_curves(poly: &LwPolyline) -> Vec<Curve> {
+    let verts = &poly.vertices;
+    if verts.len() < 2 {
+        return Vec::new();
+    }
+    let ocs = Matrix3::arbitrary_axis(poly.normal);
+    let segments = if poly.is_closed && verts.len() >= 2 {
+        verts.len()
+    } else {
+        verts.len().saturating_sub(1)
+    };
+    (0..segments)
+        .map(|index| {
+            let from = &verts[index];
+            let to = &verts[(index + 1) % verts.len()];
+            let curve = bulge_curve(
+                Vector3::new(from.location.x, from.location.y, poly.elevation),
+                Vector3::new(to.location.x, to.location.y, poly.elevation),
+                from.bulge,
+            );
+            map_curve(curve, &|point| ocs * point)
+        })
+        .collect()
+}
+
+fn polyline2d_has_bulge(poly: &crate::entities::Polyline2D) -> bool {
+    poly.vertices
+        .iter()
+        .any(|vertex| vertex.bulge.abs() > 1e-10)
+}
+
+fn polyline2d_curves(poly: &crate::entities::Polyline2D) -> Vec<Curve> {
+    let verts = &poly.vertices;
+    if verts.len() < 2 {
+        return Vec::new();
+    }
+    let ocs = Matrix3::arbitrary_axis(poly.normal);
+    let segments = if poly.is_closed() && verts.len() >= 2 {
+        verts.len()
+    } else {
+        verts.len().saturating_sub(1)
+    };
+    (0..segments)
+        .map(|index| {
+            let from = &verts[index];
+            let to = &verts[(index + 1) % verts.len()];
+            let curve = bulge_curve(
+                Vector3::new(from.location.x, from.location.y, poly.elevation),
+                Vector3::new(to.location.x, to.location.y, poly.elevation),
+                from.bulge,
+            );
+            map_curve(curve, &|point| ocs * point)
+        })
+        .collect()
+}
+
+fn section_curves(vertices: &[SymbolVertex]) -> Vec<Curve> {
+    (0..vertices.len().saturating_sub(1))
+        .map(|index| {
+            bulge_curve(
+                vertices[index].point,
+                vertices[index + 1].point,
+                vertices[index].bulge,
+            )
         })
         .collect()
 }

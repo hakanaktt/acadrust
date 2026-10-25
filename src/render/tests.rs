@@ -16,7 +16,7 @@ use crate::types::{Color, Handle, LineWeight, Vector2, Vector3};
 use super::visual_style::{
     EdgeMode, FaceColorMode, FaceShading, LightingModel, StandardVisualStyle, VisualStyleRequest,
 };
-use super::{compile, CompileOptions, DisplaySpace, DrawPath, SolidStyle, View};
+use super::{compile, CompileOptions, Curve, DisplaySpace, DrawPath, SolidStyle, View};
 
 fn doc() -> CadDocument {
     CadDocument::new()
@@ -180,6 +180,10 @@ fn bulged_polyline_is_more_than_a_chord() {
     let last = scene.strokes[0].points.last().unwrap();
     assert!(first.x.abs() < 1e-6 && first.y.abs() < 1e-6);
     assert!((last.x - 10.0).abs() < 1e-5 && last.y.abs() < 1e-5);
+    assert!(
+        matches!(scene.strokes[0].curves.as_slice(), [Curve::Elliptic { .. }]),
+        "a bulge is an arc, not a polyline"
+    );
 }
 
 #[test]
@@ -571,6 +575,98 @@ fn model_lineweight_keeps_its_pixel_width_when_zooming() {
 }
 
 #[test]
+fn dashed_circle_stays_on_elliptic_arcs() {
+    let mut doc = doc();
+    add_dashed(&mut doc);
+    let mut circle = Circle::from_coords(0.0, 0.0, 0.0, 5.0);
+    circle.common.linetype = "DASHED".to_string();
+    doc.add_entity(EntityType::Circle(circle)).unwrap();
+    let scene = compile(&doc, &CompileOptions::default());
+    let dashes: Vec<_> = scene.strokes.iter().filter(|stroke| !stroke.dot).collect();
+    assert!(
+        dashes.len() > 2,
+        "expected several dashes, got {}",
+        dashes.len()
+    );
+    for dash in dashes {
+        match dash.curves.as_slice() {
+            [Curve::Elliptic {
+                center, u, sweep, ..
+            }] => {
+                assert!(center.length() < 1e-6);
+                assert!((u.length() - 5.0).abs() < 1e-6);
+                assert!(sweep.abs() < std::f64::consts::TAU - 0.2);
+                assert!(sweep.abs() > 1e-3);
+            }
+            other => panic!("dashed circle fell back to chords: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn circle_pixels_follow_the_curve() {
+    let mut doc = doc();
+    let mut circle = Circle::from_coords(0.0, 0.0, 0.0, 40.0);
+    circle.common.color = Color::RED;
+    doc.add_entity(EntityType::Circle(circle)).unwrap();
+    let crown = 5.0_f64.to_radians();
+    let on_curve = Vector3::new(40.0 * crown.cos(), 40.0 * crown.sin(), 0.0);
+    let chord_angle = 10.0_f64.to_radians();
+    let chord = (Vector3::new(40.0, 0.0, 0.0)
+        + Vector3::new(40.0 * chord_angle.cos(), 40.0 * chord_angle.sin(), 0.0))
+        * 0.5;
+    let view = View {
+        target: on_curve,
+        height: 1.0,
+        ..View::default()
+    };
+    let image = match pollster::block_on(super::render_rgba(
+        &doc,
+        &view,
+        80,
+        80,
+        &CompileOptions::default(),
+    )) {
+        Err(super::RenderError::NoAdapter) => return,
+        Err(error) => panic!("{error}"),
+        Ok(image) => image,
+    };
+    let half = view.height * 0.5;
+    let mut red = 0u32;
+    let mut off_curve = 0u32;
+    for y in 0..80usize {
+        for x in 0..80usize {
+            let pixel = &image.pixels[(y * 80 + x) * 4..];
+            if pixel[0] <= 80 || pixel[1] >= 80 {
+                continue;
+            }
+            red += 1;
+            let ndc_x = (x as f64 + 0.5) / 80.0 * 2.0 - 1.0;
+            let ndc_y = 1.0 - (y as f64 + 0.5) / 80.0 * 2.0;
+            let wx = on_curve.x + ndc_x * half;
+            let wy = on_curve.y + ndc_y * half;
+            let pixels_off = ((wx * wx + wy * wy).sqrt() - 40.0).abs() * 80.0;
+            if pixels_off > 2.5 {
+                off_curve += 1;
+            }
+        }
+    }
+    assert!(red > 8, "the circle stroke did not cross the frame");
+    assert_eq!(off_curve, 0, "{off_curve} red pixels left the true circle");
+    let ndc_x = (chord.x - on_curve.x) / half;
+    let ndc_y = (chord.y - on_curve.y) / half;
+    let px = ((ndc_x + 1.0) * 0.5 * 80.0).round() as i32;
+    let py = ((1.0 - ndc_y) * 0.5 * 80.0).round() as i32;
+    if (0..80).contains(&px) && (0..80).contains(&py) {
+        let pixel = &image.pixels[((py as usize) * 80 + px as usize) * 4..];
+        assert!(
+            pixel[0] < 80 || pixel[1] >= 80,
+            "chord midpoint was painted, which is the polyline approximation"
+        );
+    }
+}
+
+#[test]
 fn wide_lwpolyline_becomes_a_fill() {
     let mut doc = doc();
     doc.header.fill_mode = true;
@@ -614,11 +710,25 @@ fn circle_and_arc_sample_their_endpoints() {
     let last = circle.points.last().unwrap();
     assert!((first.x - 5.0).abs() < 1e-6 && first.y.abs() < 1e-6);
     assert!((last.x - first.x).abs() < 1e-6 && (last.y - first.y).abs() < 1e-6);
+    match &circle.curves[..] {
+        [Curve::Elliptic { u, v, sweep, .. }] => {
+            assert!((u.length() - 5.0).abs() < 1e-6);
+            assert!((v.length() - 5.0).abs() < 1e-6);
+            assert!((sweep.abs() - std::f64::consts::TAU).abs() < 1e-6);
+        }
+        other => panic!("circle is one elliptic arc, got {other:?}"),
+    }
     let arc = &scene.strokes[1];
     let start = arc.points[0];
     let end = arc.points.last().unwrap();
     assert!((start.x - 25.0).abs() < 1e-5 && start.y.abs() < 1e-5);
     assert!((end.x - 20.0).abs() < 1e-5 && (end.y - 5.0).abs() < 1e-5);
+    match &arc.curves[..] {
+        [Curve::Elliptic { sweep, .. }] => {
+            assert!((sweep.abs() - FRAC_PI_2).abs() < 1e-6);
+        }
+        other => panic!("arc is one elliptic arc, got {other:?}"),
+    }
 }
 
 #[test]
@@ -704,6 +814,18 @@ fn polyline_spline_and_solid_hatch() {
     assert!(scene.strokes.len() >= 4);
     assert_eq!(scene.fills.len(), 1);
     assert_eq!(scene.fills[0].triangles.len(), 3);
+    let spline = scene
+        .strokes
+        .iter()
+        .find(|stroke| matches!(stroke.curves.first(), Some(Curve::Cubic { .. })))
+        .expect("spline stroke");
+    assert!(
+        spline
+            .curves
+            .iter()
+            .all(|curve| matches!(curve, Curve::Cubic { .. })),
+        "a cubic spline is cubic Bézier spans"
+    );
 }
 
 fn ring(points: &[(f64, f64)]) -> BoundaryPath {

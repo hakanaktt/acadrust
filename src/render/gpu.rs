@@ -19,7 +19,7 @@ use std::{
 use super::scene::Scene;
 use super::{CompileOptions, View, DEFAULT_MODEL_LINEWEIGHT_PX_PER_MM};
 
-const INSTANCE_STRIDE: u64 = 64;
+const INSTANCE_STRIDE: u64 = 96;
 const FILL_STRIDE: u64 = 48;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
 const GLYPH_STRIDE: u64 = 48;
@@ -112,7 +112,7 @@ impl Renderer {
             label: Some("acadrust-camera"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -430,11 +430,17 @@ impl Renderer {
             } else {
                 ((stroke.style.lineweight_mm * 0.5) as f32, 0.0)
             };
-            for pair in stroke.points.windows(2) {
-                if !stroke.dot && (pair[1] - pair[0]).length_squared() <= 1e-18 {
-                    continue;
+            if stroke.curves.is_empty() {
+                for pair in stroke.points.windows(2) {
+                    if !stroke.dot && (pair[1] - pair[0]).length_squared() <= 1e-18 {
+                        continue;
+                    }
+                    push_segment(&mut bytes, pair[0], pair[1], color, half_width, mode);
                 }
-                push_segment(&mut bytes, pair[0], pair[1], color, half_width, mode);
+            } else {
+                for curve in &stroke.curves {
+                    push_curve(&mut bytes, curve, color, half_width, mode);
+                }
             }
         }
         let size = (bytes.len() as u64).max(INSTANCE_STRIDE);
@@ -1097,6 +1103,16 @@ fn instance_layout() -> wgpu::VertexBufferLayout<'static> {
                 offset: 48,
                 shader_location: 3,
             },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 64,
+                shader_location: 4,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 80,
+                shader_location: 5,
+            },
         ],
     }
 }
@@ -1124,6 +1140,71 @@ fn push_segment(
     push_f32(bytes, cosmetic);
     push_f32(bytes, 0.0);
     push_f32(bytes, 0.0);
+    for _ in 0..8 {
+        push_f32(bytes, 0.0);
+    }
+}
+
+fn push_curve(
+    bytes: &mut Vec<u8>,
+    curve: &super::scene::Curve,
+    color: [f32; 4],
+    half_mm: f32,
+    mode: f32,
+) {
+    match curve {
+        super::scene::Curve::Line { start, end } => {
+            push_segment(bytes, *start, *end, color, half_mm, mode);
+        }
+        super::scene::Curve::Elliptic {
+            center,
+            u,
+            v,
+            start,
+            sweep,
+        } => {
+            push_vec3(bytes, *center, 1.0);
+            push_vec3(bytes, *u, 0.0);
+            for channel in color {
+                push_f32(bytes, channel);
+            }
+            push_f32(bytes, half_mm);
+            push_f32(bytes, mode);
+            push_f32(bytes, 1.0);
+            push_f32(bytes, 0.0);
+            push_vec3(bytes, *v, 0.0);
+            push_f32(bytes, *start as f32);
+            push_f32(bytes, *sweep as f32);
+            push_f32(bytes, 0.0);
+            push_f32(bytes, 0.0);
+        }
+        super::scene::Curve::Cubic {
+            p0,
+            p1,
+            p2,
+            p3,
+            weights,
+        } => {
+            push_vec3(bytes, *p0, weights[0] as f32);
+            push_vec3(bytes, *p1, weights[1] as f32);
+            for channel in color {
+                push_f32(bytes, channel);
+            }
+            push_f32(bytes, half_mm);
+            push_f32(bytes, mode);
+            push_f32(bytes, 2.0);
+            push_f32(bytes, 0.0);
+            push_vec3(bytes, *p2, weights[2] as f32);
+            push_vec3(bytes, *p3, weights[3] as f32);
+        }
+    }
+}
+
+fn push_vec3(bytes: &mut Vec<u8>, point: Vector3, w: f32) {
+    push_f32(bytes, point.x as f32);
+    push_f32(bytes, point.y as f32);
+    push_f32(bytes, point.z as f32);
+    push_f32(bytes, w);
 }
 
 fn push_f32(bytes: &mut Vec<u8>, value: f32) {
