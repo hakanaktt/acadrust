@@ -10,7 +10,7 @@ use crate::entities::{
     Viewport,
 };
 use crate::objects::{ObjectType, SortEntitiesTable, VisualStyle};
-use crate::tables::{BlockRecord, Layer, LineType, LineTypeElement, TableEntry};
+use crate::tables::{BlockRecord, Layer, LineType, LineTypeElement, TableEntry, TextStyle};
 use crate::types::{Color, Handle, LineWeight, Vector2, Vector3};
 
 use super::visual_style::{
@@ -712,6 +712,74 @@ fn shp_text_draws_the_letter_strokes() {
         .iter()
         .flat_map(|stroke| &stroke.points)
         .any(|point| (point.y - 6.0).abs() < 1e-4));
+}
+
+#[test]
+fn text_style_defaults_are_applied_to_strokes() {
+    let dir = std::env::temp_dir().join("acadrust-render-text-style-font");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("mini.shp"),
+        "*0,4,TEST\n6,2,0,0\n*65,20,A\n1,8,(8,0),8,(0,6),0\n",
+    )
+    .unwrap();
+
+    let mut doc = doc();
+    let mut narrow = TextStyle::new("Narrow");
+    narrow.font_file = "mini".to_string();
+    narrow.width_factor = 0.5;
+    doc.text_styles.add(narrow).unwrap();
+    let mut mirrored = TextStyle::new("Mirrored");
+    mirrored.font_file = "mini".to_string();
+    mirrored.flags.backward = true;
+    doc.text_styles.add(mirrored).unwrap();
+    let mut slanted = TextStyle::new("Slanted");
+    slanted.font_file = "mini".to_string();
+    slanted.oblique_angle = FRAC_PI_2 / 2.0;
+    doc.text_styles.add(slanted).unwrap();
+
+    let mut narrow_text = Text::with_value("A", Vector3::ZERO).with_height(6.0);
+    narrow_text.style = "Narrow".to_string();
+    let narrow_handle = doc.add_entity(EntityType::Text(narrow_text)).unwrap();
+    let mut mirrored_text = Text::with_value("A", Vector3::new(20.0, 0.0, 0.0)).with_height(6.0);
+    mirrored_text.style = "Mirrored".to_string();
+    let mirrored_handle = doc.add_entity(EntityType::Text(mirrored_text)).unwrap();
+    let mut slanted_text = Text::with_value("A", Vector3::new(40.0, 0.0, 0.0)).with_height(6.0);
+    slanted_text.style = "Slanted".to_string();
+    let slanted_handle = doc.add_entity(EntityType::Text(slanted_text)).unwrap();
+
+    let mut options = CompileOptions::default();
+    options.font_dirs.push(dir.clone());
+    let scene = compile(&doc, &options);
+    assert!(scene.skipped.is_empty(), "{:?}", scene.skipped);
+
+    let bounds = |handle: Handle| {
+        scene
+            .strokes
+            .iter()
+            .filter(|stroke| stroke.source.handle == handle)
+            .flat_map(|stroke| &stroke.points)
+            .fold(None, |bounds: Option<(f64, f64, f64, f64)>, point| {
+                Some(match bounds {
+                    Some((min_x, max_x, min_y, max_y)) => (
+                        min_x.min(point.x),
+                        max_x.max(point.x),
+                        min_y.min(point.y),
+                        max_y.max(point.y),
+                    ),
+                    None => (point.x, point.x, point.y, point.y),
+                })
+            })
+            .expect("text strokes")
+    };
+    let narrow_bounds = bounds(narrow_handle);
+    assert!((narrow_bounds.1 - 4.0).abs() < 1e-6);
+    let mirrored_bounds = bounds(mirrored_handle);
+    assert!((mirrored_bounds.0 - 12.0).abs() < 1e-6);
+    let slanted_bounds = bounds(slanted_handle);
+    assert!((slanted_bounds.1 - 54.0).abs() < 1e-6);
+
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]

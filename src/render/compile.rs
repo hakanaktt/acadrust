@@ -1063,6 +1063,8 @@ impl Compiler<'_> {
         glyph_transform: &Transform,
         source: EntityRef,
     ) {
+        let effective_label = self.effective_label(label, style_name);
+        let label = &effective_label;
         if self.doc.header.quick_text_mode {
             let points = world(anchor_transform, super::text_draw::quick_box(label));
             let visual = self.scene.visual_style.clone();
@@ -1144,6 +1146,57 @@ impl Compiler<'_> {
                     source,
                 });
             }
+        }
+    }
+
+    fn effective_label<'a>(
+        &self,
+        label: &super::text_draw::GlyphLabel<'a>,
+        style_name: &str,
+    ) -> super::text_draw::GlyphLabel<'a> {
+        let Some(style) = self.doc.text_styles.get(style_name) else {
+            return super::text_draw::GlyphLabel {
+                text: label.text,
+                shape_number: label.shape_number,
+                insertion: label.insertion,
+                alignment: label.alignment,
+                use_alignment: label.use_alignment,
+                height: label.height,
+                rotation: label.rotation,
+                width_factor: label.width_factor,
+                oblique: label.oblique,
+                horizontal: label.horizontal,
+                vertical: label.vertical,
+                normal: label.normal,
+                backward: label.backward,
+                upside_down: label.upside_down,
+            };
+        };
+        let entity_width = if label.width_factor == 0.0 {
+            1.0
+        } else {
+            label.width_factor
+        };
+        let style_width = if style.width_factor == 0.0 {
+            1.0
+        } else {
+            style.width_factor
+        };
+        super::text_draw::GlyphLabel {
+            text: label.text,
+            shape_number: label.shape_number,
+            insertion: label.insertion,
+            alignment: label.alignment,
+            use_alignment: label.use_alignment,
+            height: label.height,
+            rotation: label.rotation,
+            width_factor: entity_width * style_width,
+            oblique: label.oblique + style.oblique_angle,
+            horizontal: label.horizontal,
+            vertical: label.vertical,
+            normal: label.normal,
+            backward: label.backward || style.flags.backward,
+            upside_down: label.upside_down || style.flags.upside_down,
         }
     }
 
