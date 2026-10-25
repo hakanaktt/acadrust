@@ -37,7 +37,10 @@ pub struct RendererConfig {
 impl Default for RendererConfig {
     fn default() -> Self {
         Self {
-            format: wgpu::TextureFormat::Rgba8Unorm,
+            // Colors in the scene are authored in sRGB space. An sRGB target
+            // keeps shader lighting linear while presenting the same bright
+            // pastel values as the desktop viewport.
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
             samples: 4,
             // AutoCAD's dark model-space background. ACI 7 contrasts against it.
             background: [33.0 / 255.0, 40.0 / 255.0, 48.0 / 255.0, 1.0],
@@ -851,7 +854,7 @@ pub async fn render_rgba_with(
         .request_device(&wgpu::DeviceDescriptor::default())
         .await
         .map_err(|error| RenderError::Device(error.to_string()))?;
-    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let format = config.format;
     let mut renderer = Renderer::new(
         &device,
         &queue,

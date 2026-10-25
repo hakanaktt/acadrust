@@ -25,6 +25,10 @@ pub(crate) struct Tessellation {
     pub normals: Vec<Vector3>,
     pub edges: Vec<Vec<Vector3>>,
     pub isolines: Vec<Vec<Vector3>>,
+    /// Analytic boundary edges. These replace the matching sampled polylines.
+    pub edge_curves: Vec<super::scene::Curve>,
+    /// Analytic parameter lines. These replace the matching sampled isolines.
+    pub isoline_curves: Vec<super::scene::Curve>,
 }
 
 impl Tessellation {
@@ -34,6 +38,8 @@ impl Tessellation {
             normals: Vec::new(),
             edges: Vec::new(),
             isolines: Vec::new(),
+            edge_curves: Vec::new(),
+            isoline_curves: Vec::new(),
         }
     }
 }
@@ -101,7 +107,10 @@ pub(crate) fn tessellate(document: &SatDocument) -> Tessellation {
             .into_iter()
             .map(|point| place.point(point))
             .collect();
-        if sampled.len() >= 2 {
+        if let Some(curve) = analytic_edge(document, &edge) {
+            let curve = super::curves::map_curve(curve, &|point| place.point(point));
+            tess.edge_curves.push(curve);
+        } else if sampled.len() >= 2 {
             tess.edges.push(sampled.clone());
         }
         edges.insert(record.index as usize, sampled);
@@ -112,7 +121,27 @@ pub(crate) fn tessellate(document: &SatDocument) -> Tessellation {
         };
         facet_face(document, &face, &edges, &place, tolerance, &mut tess);
     }
+    orient_triangles(&mut tess);
     tess
+}
+
+/// Keep raster winding consistent with the oriented surface normals. ACIS
+/// loops may be listed in either direction, and a mixed winding makes a
+/// double-sided conceptual pass shade alternating triangles as if they were
+/// back faces.
+fn orient_triangles(tess: &mut Tessellation) {
+    for (triangle, normals) in tess
+        .triangles
+        .chunks_exact_mut(3)
+        .zip(tess.normals.chunks_exact_mut(3))
+    {
+        let geometric = (triangle[1] - triangle[0]).cross(&(triangle[2] - triangle[0]));
+        let normal = normals[0] + normals[1] + normals[2];
+        if geometric.dot(&normal) < 0.0 {
+            triangle.swap(1, 2);
+            normals.swap(1, 2);
+        }
+    }
 }
 
 fn facet_face(
@@ -278,18 +307,181 @@ fn triangulate_plane(loops: &[Vec<Vector3>], normal: Vector3) -> (Vec<Vector3>, 
             source.push(*point);
         }
     }
-    let mut indices = earcutr::earcut(&flat, &holes, 2).unwrap_or_default();
-    if indices.is_empty() && source.len() >= 3 {
-        indices = (1..source.len().saturating_sub(1))
-            .flat_map(|index| [0, index, index + 1])
-            .collect();
-    }
+    let indices = earcutr::earcut(&flat, &holes, 2).unwrap_or_default();
     let triangles = indices
         .into_iter()
         .filter_map(|index| source.get(index).copied())
         .collect::<Vec<_>>();
     let normals = vec![normal; triangles.len()];
     (triangles, normals)
+}
+
+fn triangulate_cone_loop(
+    points: &[Vector3],
+    frame: &ConeFrame,
+    flip: bool,
+    tolerance: f64,
+) -> Option<(Vec<Vector3>, Vec<Vector3>)> {
+    if points.len() < 3 {
+        return None;
+    }
+
+    let mut parameters = Vec::with_capacity(points.len());
+    let mut previous = frame.angle(points[0]);
+    parameters.push((previous, frame.height(points[0])));
+    for point in points.iter().skip(1) {
+        let mut angle = frame.angle(*point);
+        while angle - previous > PI {
+            angle -= TAU;
+        }
+        while angle - previous < -PI {
+            angle += TAU;
+        }
+        parameters.push((angle, frame.height(*point)));
+        previous = angle;
+    }
+
+    let min_height = parameters
+        .iter()
+        .map(|(_, height)| *height)
+        .fold(f64::INFINITY, f64::min);
+    let max_height = parameters
+        .iter()
+        .map(|(_, height)| *height)
+        .fold(f64::NEG_INFINITY, f64::max);
+    if max_height - min_height <= 1e-8 {
+        return None;
+    }
+
+    let mut flat = Vec::with_capacity(parameters.len() * 2);
+    for (angle, height) in &parameters {
+        flat.extend([*angle, *height]);
+    }
+    let indices = earcutr::earcut(&flat, &[], 2).ok()?;
+    if indices.is_empty() {
+        return None;
+    }
+
+    let mut uv_triangles = indices
+        .chunks_exact(3)
+        .map(|triangle| [triangle[0], triangle[1], triangle[2]])
+        .collect::<Vec<_>>();
+    let boundary_edges = (0..parameters.len())
+        .map(|index| edge_key(index, (index + 1) % parameters.len()))
+        .collect::<std::collections::HashSet<_>>();
+    let tolerance = tolerance.abs().max(1e-6);
+    let max_vertices = 16_384;
+
+    // Split only interior edges, sharing every inserted midpoint between the
+    // incident triangles so the refined mesh remains conforming.
+    for _ in 0..12 {
+        let mut split_edges = std::collections::HashSet::new();
+        for &[a, b, c] in &uv_triangles {
+            let corners = [a, b, c];
+            let world = corners.map(|index| {
+                let (angle, height) = parameters[index];
+                frame.point_at(angle, height)
+            });
+            let mut longest = None;
+            for side in 0..3 {
+                let first = corners[side];
+                let second = corners[(side + 1) % 3];
+                let key = edge_key(first, second);
+                let (u0, h0) = parameters[first];
+                let (u1, h1) = parameters[second];
+                let curved_midpoint = frame.point_at((u0 + u1) * 0.5, (h0 + h1) * 0.5);
+                let chord_midpoint = (world[side] + world[(side + 1) % 3]) * 0.5;
+                let error = (curved_midpoint - chord_midpoint).length();
+                if !boundary_edges.contains(&key) && error > tolerance {
+                    split_edges.insert(key);
+                }
+                let length_squared = (u1 - u0).powi(2) + (h1 - h0).powi(2);
+                if !boundary_edges.contains(&key)
+                    && longest.map_or(true, |(_, best_length)| length_squared > best_length)
+                {
+                    longest = Some((key, length_squared));
+                }
+            }
+
+            let center_uv = corners
+                .iter()
+                .map(|index| parameters[*index])
+                .fold((0.0, 0.0), |sum, point| (sum.0 + point.0 / 3.0, sum.1 + point.1 / 3.0));
+            let curved_center = frame.point_at(center_uv.0, center_uv.1);
+            let chord_center = (world[0] + world[1] + world[2]) / 3.0;
+            let center_error = (curved_center - chord_center).length();
+            if center_error > tolerance {
+                if let Some((key, _)) = longest {
+                    split_edges.insert(key);
+                }
+            }
+        }
+
+        if split_edges.is_empty() || parameters.len() + split_edges.len() > max_vertices {
+            break;
+        }
+
+        let mut midpoint_indices = std::collections::HashMap::new();
+        for &(first, second) in &split_edges {
+            let (u0, h0) = parameters[first];
+            let (u1, h1) = parameters[second];
+            let index = parameters.len();
+            parameters.push(((u0 + u1) * 0.5, (h0 + h1) * 0.5));
+            midpoint_indices.insert((first, second), index);
+        }
+
+        let midpoint = |first: usize, second: usize| {
+            midpoint_indices.get(&edge_key(first, second)).copied()
+        };
+        let mut refined = Vec::with_capacity(uv_triangles.len() * 2);
+        for [a, b, c] in uv_triangles {
+            let mab = midpoint(a, b);
+            let mbc = midpoint(b, c);
+            let mca = midpoint(c, a);
+            match (mab, mbc, mca) {
+                (None, None, None) => refined.push([a, b, c]),
+                (Some(m), None, None) => refined.extend([[a, m, c], [m, b, c]]),
+                (None, Some(m), None) => refined.extend([[b, m, a], [m, c, a]]),
+                (None, None, Some(m)) => refined.extend([[c, m, b], [m, a, b]]),
+                (Some(ab), Some(bc), None) => {
+                    refined.extend([[b, bc, ab], [a, ab, c], [ab, bc, c]]);
+                }
+                (None, Some(bc), Some(ca)) => {
+                    refined.extend([[c, ca, bc], [ca, a, b], [ca, b, bc]]);
+                }
+                (Some(ab), None, Some(ca)) => {
+                    refined.extend([[a, ab, ca], [ab, b, c], [ab, c, ca]]);
+                }
+                (Some(ab), Some(bc), Some(ca)) => refined.extend([
+                    [a, ab, ca],
+                    [ab, b, bc],
+                    [ca, bc, c],
+                    [ab, bc, ca],
+                ]),
+            }
+        }
+        uv_triangles = refined;
+    }
+
+    let mut triangles = Vec::with_capacity(uv_triangles.len() * 3);
+    let mut normals = Vec::with_capacity(uv_triangles.len() * 3);
+    for triangle in uv_triangles {
+        for index in triangle {
+            let (angle, height) = *parameters.get(index)?;
+            let point = frame.point_at(angle, height);
+            triangles.push(point);
+            normals.push(frame.normal_at(point, flip));
+        }
+    }
+    Some((triangles, normals))
+}
+
+fn edge_key(first: usize, second: usize) -> (usize, usize) {
+    if first < second {
+        (first, second)
+    } else {
+        (second, first)
+    }
 }
 
 fn polygon_area(points: &[Vector3]) -> f64 {
@@ -337,10 +529,27 @@ fn facet_cone(
     } else if rings.len() >= 2 {
         push_ruled(&rings[0], &rings[1], &frame, flip, tess);
     } else if rings.len() == 1 {
-        let normal = place.normal(oriented(frame.axis, sense));
-        let (triangles, normals) = triangulate_plane(&rings, normal);
-        tess.triangles.extend(triangles);
-        tess.normals.extend(normals);
+        let height_min = rings[0]
+            .iter()
+            .map(|point| frame.height(*point))
+            .fold(f64::INFINITY, f64::min);
+        let height_max = rings[0]
+            .iter()
+            .map(|point| frame.height(*point))
+            .fold(f64::NEG_INFINITY, f64::max);
+        if height_max - height_min <= 1e-8 {
+            let normal = place.normal(oriented(frame.axis, sense));
+            let (triangles, normals) = triangulate_plane(&rings, normal);
+            tess.triangles.extend(triangles);
+            tess.normals.extend(normals);
+        } else {
+            if let Some((triangles, normals)) =
+                triangulate_cone_loop(&rings[0], &frame, flip, tolerance)
+            {
+                tess.triangles.extend(triangles);
+                tess.normals.extend(normals);
+            }
+        }
     }
     push_cone_isolines(&frame, &rings, tolerance, tess);
 }
@@ -421,7 +630,7 @@ fn push_ruled(
 fn push_cone_isolines(
     frame: &ConeFrame,
     rings: &[Vec<Vector3>],
-    tolerance: f64,
+    _tolerance: f64,
     tess: &mut Tessellation,
 ) {
     let Some(first) = rings.first() else {
@@ -438,16 +647,14 @@ fn push_cone_isolines(
         let high = *heights.last().unwrap();
         for step in 1..4 {
             let height = low + (high - low) * (step as f64 / 4.0);
-            tess.isolines.push(frame.circle(height, tolerance));
+            tess.isoline_curves.push(frame.circle_curve(height));
         }
-        let count = (TAU / frame.angle_step(tolerance)).ceil().max(8.0) as usize;
         for step in 0..4 {
             let angle = TAU * (step as f64 / 4.0);
             let start = frame.point_at(angle, low);
             let end = frame.point_at(angle, high);
             tess.isolines.push(vec![start, end]);
         }
-        let _ = count;
         let _ = first;
     }
 }
@@ -494,7 +701,20 @@ impl ConeFrame {
 
     fn angle(&self, point: Vector3) -> f64 {
         let radial = point - self.center - self.axis * self.height(point);
-        radial.dot(&self.minor).atan2(radial.dot(&self.major))
+        let major_norm = self.major.length_squared();
+        let minor_norm = self.minor.length_squared();
+        let cross = self.major.dot(&self.minor);
+        let determinant = major_norm * minor_norm - cross * cross;
+        if determinant <= 1e-18 {
+            return radial.dot(&self.minor).atan2(radial.dot(&self.major));
+        }
+        let major_component =
+            (radial.dot(&self.major) * minor_norm - radial.dot(&self.minor) * cross)
+                / determinant;
+        let minor_component =
+            (radial.dot(&self.minor) * major_norm - radial.dot(&self.major) * cross)
+                / determinant;
+        minor_component.atan2(major_component)
     }
 
     fn scale_at(&self, height: f64) -> f64 {
@@ -515,30 +735,33 @@ impl ConeFrame {
 
     fn normal_at(&self, point: Vector3, flip: bool) -> Vector3 {
         let height = self.height(point);
-        let radial = point - self.center - self.axis * height;
-        let radial = unit(radial).unwrap_or(unit(self.major).unwrap_or(Vector3::UNIT_X));
+        let angle = self.angle(point);
+        let scale = self.scale_at(height);
+        let radial = self.major * angle.cos() + self.minor * angle.sin();
+        let tangent_angle = (self.major * -angle.sin() + self.minor * angle.cos()) * scale;
         let cosine = if self.cos_half.abs() <= 1e-12 {
             1.0
         } else {
             self.cos_half
         };
-        let mut normal = unit(radial * cosine + self.axis * self.sin_half).unwrap_or(radial);
+        let tangent_height = self.axis + radial * (self.sin_half / (cosine * self.radius));
+        let mut normal = unit(tangent_angle.cross(&tangent_height))
+            .unwrap_or(unit(radial).unwrap_or(Vector3::UNIT_X));
         if flip {
             normal = normal * -1.0;
         }
         normal
     }
 
-    fn angle_step(&self, tolerance: f64) -> f64 {
-        chord_step(self.radius.abs().max(self.minor.length()), tolerance)
-    }
-
-    fn circle(&self, height: f64, tolerance: f64) -> Vec<Vector3> {
-        let step = self.angle_step(tolerance);
-        let count = (TAU / step).ceil().max(8.0) as usize;
-        (0..=count)
-            .map(|index| self.point_at(TAU * (index as f64 / count as f64), height))
-            .collect()
+    fn circle_curve(&self, height: f64) -> super::scene::Curve {
+        let scale = self.scale_at(height);
+        super::scene::Curve::Elliptic {
+            center: self.center + self.axis * height,
+            u: self.major * scale,
+            v: self.minor * scale,
+            start: 0.0,
+            sweep: TAU,
+        }
     }
 }
 
@@ -709,29 +932,24 @@ fn facet_sphere(
     }
     for step in 0..4 {
         let u = TAU * (step as f64 / 4.0);
-        let meridian = (0..=rows)
-            .map(|row| {
-                let v = PI * (row as f64 / rows as f64);
-                center
-                    + east * (v.sin() * u.cos() * radius)
-                    + north * (v.sin() * u.sin() * radius)
-                    + pole * (v.cos() * radius)
-            })
-            .collect();
-        tess.isolines.push(meridian);
+        tess.isoline_curves.push(super::scene::Curve::Elliptic {
+            center,
+            u: pole * radius,
+            v: (east * u.cos() + north * u.sin()) * radius,
+            start: 0.0,
+            sweep: PI,
+        });
     }
     for step in 1..4 {
         let v = PI * (step as f64 / 4.0);
-        let parallel = (0..=columns)
-            .map(|column| {
-                let u = TAU * (column as f64 / columns as f64);
-                center
-                    + east * (v.sin() * u.cos() * radius)
-                    + north * (v.sin() * u.sin() * radius)
-                    + pole * (v.cos() * radius)
-            })
-            .collect();
-        tess.isolines.push(parallel);
+        let radial = v.sin() * radius;
+        tess.isoline_curves.push(super::scene::Curve::Elliptic {
+            center: center + pole * (v.cos() * radius),
+            u: east * radial,
+            v: north * radial,
+            start: 0.0,
+            sweep: TAU,
+        });
     }
 }
 
@@ -972,6 +1190,48 @@ fn spline_grid_flat(
         }
     }
     true
+}
+
+fn analytic_edge(
+    document: &SatDocument,
+    edge: &crate::entities::acis::SatEdge<'_>,
+) -> Option<super::scene::Curve> {
+    let curve = document.resolve(edge.curve())?;
+    let t0 = edge.start_param();
+    let t1 = edge.end_param();
+    if !t0.is_finite() || !t1.is_finite() {
+        return None;
+    }
+    if let Some(ellipse) = SatEllipseCurve::from_record(curve) {
+        let center = vec3(ellipse.center());
+        let major = vec3(ellipse.major_axis());
+        if major.length_squared() <= 1e-18 {
+            return None;
+        }
+        let normal = unit(vec3(ellipse.normal())).unwrap_or(Vector3::UNIT_Z);
+        let minor = normal.cross(&major) * ellipse.ratio();
+        let mut sweep = t1 - t0;
+        if sweep.abs() < 1e-8 {
+            let start = vertex_point(document, edge.start_vertex());
+            let end = vertex_point(document, edge.end_vertex());
+            let closed = match (start, end) {
+                (Some(start), Some(end)) => (start - end).length_squared() <= 1e-12,
+                _ => true,
+            };
+            if !closed {
+                return None;
+            }
+            sweep = TAU.copysign(if sweep < 0.0 { -1.0 } else { 1.0 });
+        }
+        return Some(super::scene::Curve::Elliptic {
+            center,
+            u: major,
+            v: minor,
+            start: t0,
+            sweep,
+        });
+    }
+    None
 }
 
 fn sample_edge(
@@ -1360,4 +1620,76 @@ fn vec3(value: (f64, f64, f64)) -> Vector3 {
 fn unit(value: Vector3) -> Option<Vector3> {
     let length = value.length();
     (length > 1e-12).then_some(value * (1.0 / length))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trimmed_cylinder_loop_triangulates_on_its_surface() {
+        let frame = ConeFrame {
+            center: Vector3::ZERO,
+            axis: Vector3::UNIT_Z,
+            major: Vector3::UNIT_X * 2.0,
+            minor: Vector3::UNIT_Y * 2.0,
+            sin_half: 0.0,
+            cos_half: 1.0,
+            radius: 2.0,
+        };
+        let mut boundary = (0..=16)
+            .map(|step| frame.point_at(PI * 0.5 * step as f64 / 16.0, 0.0))
+            .collect::<Vec<_>>();
+        boundary.extend((1..=16).map(|step| frame.point_at(PI * 0.5, 5.0 * step as f64 / 16.0)));
+        boundary.extend(
+            (1..=16).map(|step| frame.point_at(PI * 0.5 * (1.0 - step as f64 / 16.0), 5.0)),
+        );
+
+        let tolerance = 0.005;
+        let (triangles, normals) =
+            triangulate_cone_loop(&boundary, &frame, false, tolerance).unwrap();
+        assert!(!triangles.is_empty());
+        assert_eq!(triangles.len(), normals.len());
+        for (triangle, normal) in triangles.chunks_exact(3).zip(normals.chunks_exact(3)) {
+            let center = (triangle[0] + triangle[1] + triangle[2]) / 3.0;
+            let radius = center.x.hypot(center.y);
+            assert!(radius > 1.8, "triangle collapsed into the cylinder: {center:?}");
+            let uv = triangle
+                .iter()
+                .map(|point| (frame.angle(*point), frame.height(*point)))
+                .collect::<Vec<_>>();
+            let surface_center = frame.point_at(
+                uv.iter().map(|point| point.0).sum::<f64>() / 3.0,
+                uv.iter().map(|point| point.1).sum::<f64>() / 3.0,
+            );
+            assert!(
+                (surface_center - center).length() <= tolerance * 1.01,
+                "triangle exceeds surface tolerance: {:?}",
+                (surface_center - center).length()
+            );
+            for (point, normal) in triangle.iter().zip(normal) {
+                let radial = unit(Vector3::new(point.x, point.y, 0.0)).unwrap();
+                assert!(
+                    radial.dot(normal) > 0.99,
+                    "inward cylinder normal: {normal:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cone_angle_inverts_an_elliptical_frame() {
+        let frame = ConeFrame {
+            center: Vector3::ZERO,
+            axis: Vector3::UNIT_Z,
+            major: Vector3::UNIT_X * 4.0,
+            minor: Vector3::UNIT_Y * 0.7,
+            sin_half: 0.0,
+            cos_half: 1.0,
+            radius: 4.0,
+        };
+        let expected = 1.23;
+        let point = frame.point_at(expected, 2.0);
+        assert!((frame.angle(point) - expected).abs() < 1e-12);
+    }
 }

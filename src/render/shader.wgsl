@@ -33,6 +33,25 @@ struct FragOut {
 
 const TAU: f32 = 6.28318530718;
 
+fn ndc_of(p: vec3<f32>) -> vec2<f32> {
+    let clip = camera.view_proj * vec4<f32>(p, 1.0);
+    return clip.xy / max(clip.w, 1e-6);
+}
+
+fn depth_of(p: vec3<f32>) -> f32 {
+    let clip = camera.view_proj * vec4<f32>(p, 1.0);
+    return clamp(clip.z / max(clip.w, 1e-6) - 0.0015, 0.0, 1.0);
+}
+
+fn frag_ndc(frag: vec4<f32>) -> vec2<f32> {
+    let viewport = max(camera.viewport, vec2<f32>(1.0, 1.0));
+    return vec2<f32>(frag.x / viewport.x * 2.0 - 1.0, 1.0 - frag.y / viewport.y * 2.0);
+}
+
+fn ndc_px(delta: vec2<f32>) -> f32 {
+    return length(delta * camera.viewport * 0.5);
+}
+
 fn px_per_world() -> f32 {
     let axis = vec2<f32>(camera.view_proj[0][0], camera.view_proj[0][1]);
     let axis_px = vec2<f32>(axis.x * camera.viewport.x, axis.y * camera.viewport.y) * 0.5;
@@ -134,13 +153,16 @@ fn newton_elliptic(center: vec3<f32>, u: vec3<f32>, v: vec3<f32>, seed: f32, p: 
     return t;
 }
 
-fn closest_elliptic(center: vec3<f32>, u: vec3<f32>, v: vec3<f32>, start: f32, sweep: f32, p: vec2<f32>) -> vec3<f32> {
+fn closest_elliptic(center: vec3<f32>, u: vec3<f32>, v: vec3<f32>, start: f32, sweep: f32, p: vec2<f32>) -> vec4<f32> {
     var best = elliptic_at(center, u, v, start);
+    var best_t = start;
     var best_d = distance(best.xy, p);
-    let end = elliptic_at(center, u, v, start + sweep);
+    let end_t = start + sweep;
+    let end = elliptic_at(center, u, v, end_t);
     let end_d = distance(end.xy, p);
     if end_d < best_d {
         best = end;
+        best_t = end_t;
         best_d = end_d;
     }
     let det = u.x * v.y - u.y * v.x;
@@ -149,7 +171,7 @@ fn closest_elliptic(center: vec3<f32>, u: vec3<f32>, v: vec3<f32>, start: f32, s
         let q = p - center.xy;
         seed = atan2((u.x * q.y - u.y * q.x) / det, (q.x * v.y - q.y * v.x) / det);
     }
-    let seeds = array<f32, 4>(seed, seed + 3.14159265, start, start + sweep);
+    let seeds = array<f32, 4>(seed, seed + 3.14159265, start, end_t);
     for (var i = 0; i < 4; i++) {
         let t = newton_elliptic(center, u, v, seeds[i], p);
         if in_sweep(t, start, sweep) || in_sweep(t + TAU, start, sweep) || in_sweep(t - TAU, start, sweep) {
@@ -157,14 +179,15 @@ fn closest_elliptic(center: vec3<f32>, u: vec3<f32>, v: vec3<f32>, start: f32, s
             let d = distance(pos.xy, p);
             if d < best_d {
                 best = pos;
+                best_t = t;
                 best_d = d;
             }
         }
     }
-    return best;
+    return vec4<f32>(best, best_t);
 }
 
-fn closest_cubic(p0: vec4<f32>, p1: vec4<f32>, p2: vec4<f32>, p3: vec4<f32>, p: vec2<f32>) -> vec3<f32> {
+fn closest_cubic(p0: vec4<f32>, p1: vec4<f32>, p2: vec4<f32>, p3: vec4<f32>, p: vec2<f32>) -> vec4<f32> {
     var best_t = 0.0;
     var best_d = distance(cubic_at(p0, p1, p2, p3, 0.0).xy, p);
     for (var i = 1; i <= 8; i++) {
@@ -192,9 +215,19 @@ fn closest_cubic(p0: vec4<f32>, p1: vec4<f32>, p2: vec4<f32>, p3: vec4<f32>, p: 
     }
     let polished = cubic_at(p0, p1, p2, p3, t);
     if distance(polished.xy, p) < best_d {
-        return polished;
+        return vec4<f32>(polished, t);
     }
-    return cubic_at(p0, p1, p2, p3, best_t);
+    return vec4<f32>(cubic_at(p0, p1, p2, p3, best_t), best_t);
+}
+
+fn project_vec(origin: vec3<f32>, axis: vec3<f32>) -> vec3<f32> {
+    let delta = ndc_of(origin + axis) - ndc_of(origin);
+    return vec3<f32>(delta, 0.0);
+}
+
+fn project_cubic(p: vec4<f32>) -> vec4<f32> {
+    let ndc = ndc_of(p.xyz);
+    return vec4<f32>(ndc, 0.0, p.w);
 }
 
 @vertex
@@ -241,26 +274,33 @@ fn vs_main(
             let offset = normal * corner.y * width_px * 0.5 * px_ndc;
             pos += offset;
         }
-        let z0 = clamp(camera.z_scale * a.z + camera.z_bias, 0.0, 1.0);
-        let z1 = clamp(camera.z_scale * b.z + camera.z_bias, 0.0, 1.0);
+        let z0 = depth_of(a.xyz);
+        let z1 = depth_of(b.xyz);
         // A small pull toward the camera keeps an edge from flickering on its face.
-        let depth = max(mix(z0, z1, corner.x) - 0.0015, 0.0);
+        let depth = mix(z0, z1, corner.x);
         return StrokeOut(vec4<f32>(pos, depth, 1.0), color, vec2<f32>(0.0), a, b, c, d, params);
     }
 
     var bound = vec4<f32>(1e20, 1e20, -1e20, -1e20);
-    var depth_z = a.z;
+    var depth_p = a.xyz;
     if params.z < 1.5 {
-        bound = elliptic_bounds(a.xyz, b.xyz, c.xyz, d.x, d.y);
-        depth_z = a.z;
+        let origin = ndc_of(a.xyz);
+        bound = elliptic_bounds(
+            vec3<f32>(origin, 0.0),
+            project_vec(a.xyz, b.xyz),
+            project_vec(a.xyz, c.xyz),
+            d.x,
+            d.y,
+        );
+        depth_p = a.xyz;
     } else {
-        bound = cubic_bounds(a, b, c, d);
-        depth_z = (a.z + d.z) * 0.5;
+        bound = cubic_bounds(project_cubic(a), project_cubic(b), project_cubic(c), project_cubic(d));
+        depth_p = (a.xyz + d.xyz) * 0.5;
     }
     let width_px = stroke_width_px(params);
-    let expand = (width_px * 0.5 + 1.25) / px_per_world();
-    let min_xy = bound.xy - vec2<f32>(expand);
-    let max_xy = bound.zw + vec2<f32>(expand);
+    let pad = (width_px * 0.5 + 1.25) * vec2<f32>(2.0, 2.0) / max(camera.viewport, vec2<f32>(1.0, 1.0));
+    let min_ndc = bound.xy - pad;
+    let max_ndc = bound.zw + pad;
     var uv = vec2<f32>(0.0, 0.0);
     if vertex == 1u || vertex == 2u || vertex == 4u {
         uv.x = 1.0;
@@ -268,11 +308,8 @@ fn vs_main(
     if vertex == 2u || vertex == 4u || vertex == 5u {
         uv.y = 1.0;
     }
-    let world = mix(min_xy, max_xy, uv);
-    let clip = camera.view_proj * vec4<f32>(world, depth_z, 1.0);
-    let depth = clamp(camera.z_scale * depth_z + camera.z_bias, 0.0, 1.0);
-    let ndc = clip.xy / max(clip.w, 1e-6);
-    return StrokeOut(vec4<f32>(ndc, depth, 1.0), color, world, a, b, c, d, params);
+    let ndc = mix(min_ndc, max_ndc, uv);
+    return StrokeOut(vec4<f32>(ndc, depth_of(depth_p), 1.0), color, ndc, a, b, c, d, params);
 }
 
 @fragment
@@ -283,20 +320,39 @@ fn fs_main(in: StrokeOut) -> FragOut {
     if in.params.z < 0.5 {
         return FragOut(in.color, in.clip.z);
     }
-    var closest = vec3<f32>(in.world, in.a.z);
+    let pixel = frag_ndc(in.clip);
+    var closest_ndc = pixel;
+    var depth = in.clip.z;
     if in.params.z < 1.5 {
-        closest = closest_elliptic(in.a.xyz, in.b.xyz, in.c.xyz, in.d.x, in.d.y, in.world);
+        let origin = ndc_of(in.a.xyz);
+        let hit = closest_elliptic(
+            vec3<f32>(origin, 0.0),
+            project_vec(in.a.xyz, in.b.xyz),
+            project_vec(in.a.xyz, in.c.xyz),
+            in.d.x,
+            in.d.y,
+            pixel,
+        );
+        closest_ndc = hit.xy;
+        depth = depth_of(elliptic_at(in.a.xyz, in.b.xyz, in.c.xyz, hit.w));
     } else {
-        closest = closest_cubic(in.a, in.b, in.c, in.d, in.world);
+        let hit = closest_cubic(
+            project_cubic(in.a),
+            project_cubic(in.b),
+            project_cubic(in.c),
+            project_cubic(in.d),
+            pixel,
+        );
+        closest_ndc = hit.xy;
+        depth = depth_of(cubic_at(in.a, in.b, in.c, in.d, hit.w));
     }
-    let dist_px = distance(closest.xy, in.world) * px_per_world();
+    let dist_px = ndc_px(closest_ndc - pixel);
     let half_px = stroke_width_px(in.params) * 0.5;
     let coverage = 1.0 - smoothstep(half_px - 0.6, half_px + 0.6, dist_px);
     let alpha = in.color.a * coverage;
     if alpha <= 0.01 {
         discard;
     }
-    let depth = clamp(camera.z_scale * closest.z + camera.z_bias - 0.0015, 0.0, 1.0);
     return FragOut(vec4<f32>(in.color.rgb, alpha), depth);
 }
 
@@ -332,6 +388,9 @@ fn fs_fill(in: FillOut, @builtin(front_facing) front_facing: bool) -> @location(
         return vec4<f32>(in.color.rgb * 0.72, in.color.a);
     }
 
+    // Triangle winding is normalized against the ACIS surface normal before
+    // upload. Face-forward the normal for the visible side so open shells
+    // retain readable cool shading without exposing winding artifacts.
     var normal = normalize(in.normal);
     if !front_facing {
         normal = -normal;
@@ -339,10 +398,22 @@ fn fs_fill(in: FillOut, @builtin(front_facing) front_facing: bool) -> @location(
     let light = normalize(vec3<f32>(0.22, 0.42, 0.88));
     let diffuse = dot(normal, light);
     if in.lighting > 2.5 {
-        let warm = vec3<f32>(1.0, 0.72, 0.42);
-        let cool = vec3<f32>(0.35, 0.55, 1.0);
-        let factor = clamp(diffuse * 0.5 + 0.5, 0.0, 1.0);
-        return vec4<f32>(mix(cool, warm, factor) * in.color.rgb, in.color.a);
+        // AutoCAD's Conceptual palette is a light olive warm side and a
+        // restrained slate-blue cool side. Scale it by material luminance and
+        // retain a little of the source color so colored solids still differ.
+        let material_luma = dot(in.color.rgb, vec3<f32>(0.30, 0.59, 0.11));
+        let material_scale = clamp(material_luma / 0.54, 0.75, 1.15);
+        // These are linear-light values; the sRGB render target encodes them
+        // to the familiar pale olive and slate-blue viewport colors.
+        let warm_base = vec3<f32>(0.47, 0.56, 0.265) * material_scale;
+        let cool_base = vec3<f32>(0.03, 0.11, 0.33) * material_scale;
+        let warm = mix(warm_base, in.color.rgb, 0.30);
+        let cool = mix(cool_base, in.color.rgb, 0.30);
+        let conceptual_light = normalize(vec3<f32>(-0.40, 0.70, 0.60));
+        let factor = clamp(dot(normal, conceptual_light) * 0.5 + 0.5, 0.0, 1.0);
+        let gooch = mix(cool, warm, factor);
+        let shade = 0.82 + 0.18 * max(diffuse, 0.0);
+        return vec4<f32>(gooch * shade, in.color.a);
     }
 
     let shade = 0.28 + 0.72 * max(diffuse, 0.0);

@@ -1508,7 +1508,11 @@ impl Compiler<'_> {
         path: DrawPath,
     ) {
         let visual = self.scene.visual_style.clone();
-        let style = resolve_style(self.doc, entity.common(), frame, &visual, self.sheet);
+        let mut style = resolve_style(self.doc, entity.common(), frame, &visual, self.sheet);
+        if visual.kind == super::visual_style::StandardVisualStyle::Conceptual {
+            style.rgb = [255, 255, 255];
+            style.aci7 = false;
+        }
         let marks = pattern_elements(
             self.doc,
             entity.common(),
@@ -1638,7 +1642,11 @@ impl Compiler<'_> {
         source: EntityRef,
     ) {
         let visual = self.scene.visual_style.clone();
-        let style = resolve_style(self.doc, entity.common(), frame, &visual, self.sheet);
+        let mut style = resolve_style(self.doc, entity.common(), frame, &visual, self.sheet);
+        if visual.kind == super::visual_style::StandardVisualStyle::Conceptual {
+            style.rgb = [255, 255, 255];
+            style.aci7 = false;
+        }
         self.scene.strokes.push(Stroke {
             points: points.to_vec(),
             closed: false,
@@ -1659,7 +1667,11 @@ impl Compiler<'_> {
         source: EntityRef,
     ) {
         let visual = self.scene.visual_style.clone();
-        let style = resolve_style(self.doc, entity.common(), frame, &visual, self.sheet);
+        let mut style = resolve_style(self.doc, entity.common(), frame, &visual, self.sheet);
+        if visual.kind == super::visual_style::StandardVisualStyle::Conceptual {
+            style.rgb = [255, 255, 255];
+            style.aci7 = false;
+        }
         let marks = pattern_elements(
             self.doc,
             entity.common(),
@@ -1753,7 +1765,10 @@ impl Compiler<'_> {
             return;
         }
         let visual = self.scene.visual_style.clone();
-        let style = resolve_style(self.doc, entity.common(), frame, &visual, self.sheet);
+        let mut style = resolve_style(self.doc, entity.common(), frame, &visual, self.sheet);
+        if !background {
+            apply_face_color(&mut style.rgb, visual.face_color);
+        }
         self.scene.fills.push(super::scene::Fill {
             triangles: triangles.to_vec(),
             style,
@@ -1795,7 +1810,10 @@ impl Compiler<'_> {
             let triangles = world(transform, tess.triangles);
             self.emit_fill(&triangles, entity, frame, source.clone(), false);
             if let Some(fill) = self.scene.fills.last_mut() {
-                fill.normals = transform_normals(transform, &tess.normals);
+                fill.normals = align_normals_to_triangles(
+                    &triangles,
+                    transform_normals(transform, &tess.normals),
+                );
                 if visual.lighting == super::visual_style::LightingModel::None
                     && self.solid_style == super::SolidStyle::Wireframe
                 {
@@ -1822,8 +1840,30 @@ impl Compiler<'_> {
                     );
                 }
             }
+            for curve in &tess.edge_curves {
+                let curve = transform_curve(transform, curve.clone());
+                let samples = sample_curve(&curve, 16);
+                self.emit_analytic(
+                    std::slice::from_ref(&curve),
+                    &samples,
+                    entity,
+                    frame,
+                    source.clone(),
+                );
+            }
         }
         if wireframe || visual.edges == super::visual_style::EdgeMode::Isolines {
+            for curve in &tess.isoline_curves {
+                let curve = transform_curve(transform, curve.clone());
+                let samples = sample_curve(&curve, 16);
+                self.emit_analytic(
+                    std::slice::from_ref(&curve),
+                    &samples,
+                    entity,
+                    frame,
+                    source.clone(),
+                );
+            }
             for line in &tess.isolines {
                 if line.len() >= 2 {
                     self.emit_dedicated(
@@ -1975,7 +2015,10 @@ impl Compiler<'_> {
             let triangles = world(transform, tess.triangles.clone());
             self.emit_fill(&triangles, entity, frame, source.clone(), false);
             if let Some(fill) = self.scene.fills.last_mut() {
-                fill.normals = transform_normals(transform, &tess.normals);
+                fill.normals = align_normals_to_triangles(
+                    &triangles,
+                    transform_normals(transform, &tess.normals),
+                );
                 if visual.lighting == super::visual_style::LightingModel::None
                     && self.solid_style == super::SolidStyle::Wireframe
                 {
@@ -3338,6 +3381,35 @@ fn transform_normals(transform: &Transform, normals: &[Vector3]) -> Vec<Vector3>
             }
         })
         .collect()
+}
+
+/// Keep interpolated vertex normals consistent with the winding of each
+/// tessellated triangle.  ACIS loops can arrive with either orientation, while
+/// the GPU's `front_facing` flag is derived from the emitted triangle winding.
+/// Aligning the three normals as a group avoids abrupt lighting inversions at
+/// loop seams and keeps Gooch shading stable for conceptual views.
+fn align_normals_to_triangles(triangles: &[Vector3], mut normals: Vec<Vector3>) -> Vec<Vector3> {
+    for (triangle, normal_triplet) in triangles
+        .chunks_exact(3)
+        .zip(normals.chunks_exact_mut(3))
+    {
+        let geometric = (triangle[1] - triangle[0]).cross(&(triangle[2] - triangle[0]));
+        if geometric.length_squared() <= 1e-24 {
+            continue;
+        }
+        let reference = normal_triplet
+            .iter()
+            .copied()
+            .find(|normal| normal.length_squared() > 1e-24);
+        if let Some(reference) = reference {
+            if geometric.dot(&reference) < 0.0 {
+                for normal in normal_triplet {
+                    *normal = -*normal;
+                }
+            }
+        }
+    }
+    normals
 }
 
 fn apply_face_color(rgb: &mut [u8; 3], mode: super::visual_style::FaceColorMode) {

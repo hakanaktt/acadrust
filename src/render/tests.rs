@@ -667,6 +667,65 @@ fn circle_pixels_follow_the_curve() {
 }
 
 #[test]
+fn front_view_circle_follows_the_vertical_plane() {
+    let mut doc = doc();
+    let mut circle = Circle::from_coords(0.0, 0.0, 0.0, 40.0);
+    circle.normal = -Vector3::UNIT_Y;
+    circle.common.color = Color::RED;
+    doc.add_entity(EntityType::Circle(circle)).unwrap();
+    let angle = 5.0_f64.to_radians();
+    let (axis_x, axis_y) = {
+        let basis = crate::types::Matrix3::arbitrary_axis(-Vector3::UNIT_Y);
+        (basis * Vector3::UNIT_X, basis * Vector3::UNIT_Y)
+    };
+    let on_curve = axis_x * (40.0 * angle.cos()) + axis_y * (40.0 * angle.sin());
+    let view = View {
+        target: on_curve,
+        height: 1.0,
+        direction: -Vector3::UNIT_Y,
+        ..View::default()
+    };
+    let image = match pollster::block_on(super::render_rgba(
+        &doc,
+        &view,
+        80,
+        80,
+        &CompileOptions::default(),
+    )) {
+        Err(super::RenderError::NoAdapter) => return,
+        Err(error) => panic!("{error}"),
+        Ok(image) => image,
+    };
+    let (right, up, _) = view.basis();
+    let half = view.height * 0.5;
+    let mut red = 0u32;
+    let mut off_curve = 0u32;
+    for y in 0..80usize {
+        for x in 0..80usize {
+            let pixel = &image.pixels[(y * 80 + x) * 4..];
+            if pixel[0] <= 80 || pixel[1] >= 80 {
+                continue;
+            }
+            red += 1;
+            let ndc_x = (x as f64 + 0.5) / 80.0 * 2.0 - 1.0;
+            let ndc_y = 1.0 - (y as f64 + 0.5) / 80.0 * 2.0;
+            let world = on_curve + right * (ndc_x * half) + up * (ndc_y * half);
+            let dx = world.dot(&axis_x);
+            let dy = world.dot(&axis_y);
+            let pixels_off = ((dx * dx + dy * dy).sqrt() - 40.0).abs() * 80.0;
+            if pixels_off > 2.5 {
+                off_curve += 1;
+            }
+        }
+    }
+    assert!(red > 8, "the front-view circle did not cross the frame");
+    assert_eq!(
+        off_curve, 0,
+        "{off_curve} red pixels left the circle in the vertical plane"
+    );
+}
+
+#[test]
 fn wide_lwpolyline_becomes_a_fill() {
     let mut doc = doc();
     doc.header.fill_mode = true;
@@ -1886,6 +1945,12 @@ fn cylinder_side_stays_on_the_surface_and_matches_the_cap() {
         12.0,
     ));
     assert!(!tess.triangles.is_empty());
+    assert!(
+        tess.edge_curves
+            .iter()
+            .any(|curve| matches!(curve, Curve::Elliptic { .. })),
+        "a cylinder rim is an analytic circle"
+    );
     let mut cap_tops = Vec::new();
     let mut side_tops = Vec::new();
     for corner in tess.triangles.chunks_exact(3) {
