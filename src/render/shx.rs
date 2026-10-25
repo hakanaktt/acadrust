@@ -32,10 +32,14 @@ struct Pen {
 impl ShapeFont {
     pub(crate) fn load(path: &Path) -> Option<Self> {
         let bytes = std::fs::read(path).ok()?;
+        Self::load_bytes(&bytes)
+    }
+
+    pub(crate) fn load_bytes(bytes: &[u8]) -> Option<Self> {
         if let Some(font) = parse_shx(&bytes) {
             return Some(font);
         }
-        let text = String::from_utf8(bytes).ok()?;
+        let text = String::from_utf8(bytes.to_vec()).ok()?;
         parse_shp(&text)
     }
 

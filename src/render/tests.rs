@@ -715,6 +715,27 @@ fn shp_text_draws_the_letter_strokes() {
 }
 
 #[test]
+fn shp_text_accepts_an_in_memory_font_file() {
+    let mut doc = doc();
+    doc.text_styles.get_mut("Standard").unwrap().font_file = "mini.shp".to_string();
+    let text = Text::with_value("A", Vector3::ZERO).with_height(6.0);
+    doc.add_entity(EntityType::Text(text)).unwrap();
+    let mut options = CompileOptions::default();
+    options.font_files.push((
+        "mini.shp".to_string(),
+        b"*0,4,TEST\n6,2,0,0\n*65,12,A\n1,8,(4,6),8,(4,-6),2,8,(2,0),0\n".to_vec(),
+    ));
+    let scene = compile(&doc, &options);
+    assert!(scene.fallbacks.is_empty());
+    assert!(scene.skipped.is_empty(), "{:?}", scene.skipped);
+    assert!(scene
+        .strokes
+        .iter()
+        .flat_map(|stroke| &stroke.points)
+        .any(|point| (point.y - 6.0).abs() < 1e-4));
+}
+
+#[test]
 fn text_style_defaults_are_applied_to_strokes() {
     let dir = std::env::temp_dir().join("acadrust-render-text-style-font");
     std::fs::create_dir_all(&dir).unwrap();

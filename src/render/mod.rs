@@ -80,6 +80,10 @@ pub enum DisplaySpace {
 #[derive(Debug, Clone)]
 pub struct CompileOptions {
     pub font_dirs: Vec<std::path::PathBuf>,
+    /// Font files supplied directly by the caller. The name is matched
+    /// against a text style's font filename, which lets browser callers use
+    /// uploaded SHX/SHP data without a filesystem.
+    pub font_files: Vec<(String, Vec<u8>)>,
     pub resource_dirs: Vec<std::path::PathBuf>,
     pub model_lineweight_px_per_mm: f64,
     pub visual_style: VisualStyleRequest,
@@ -93,6 +97,7 @@ impl Default for CompileOptions {
     fn default() -> Self {
         Self {
             font_dirs: Vec::new(),
+            font_files: Vec::new(),
             resource_dirs: Vec::new(),
             model_lineweight_px_per_mm: DEFAULT_MODEL_LINEWEIGHT_PX_PER_MM,
             visual_style: VisualStyleRequest::ActiveViewport,

@@ -43,6 +43,7 @@ pub(crate) fn compile(doc: &CadDocument, options: &CompileOptions) -> Scene {
         scene: blank_scene(doc, options, visual, sheet),
         stack: HashSet::new(),
         font_dirs: &options.font_dirs,
+        font_files: &options.font_files,
         resource_dirs: &options.resource_dirs,
         fonts: HashMap::new(),
         sheet,
@@ -83,6 +84,7 @@ struct Compiler<'a> {
     scene: Scene,
     stack: HashSet<String>,
     font_dirs: &'a [std::path::PathBuf],
+    font_files: &'a [(String, Vec<u8>)],
     resource_dirs: &'a [std::path::PathBuf],
     fonts: HashMap<String, Option<FaceFont>>,
     /// Layout tab. Lineweights are paper millimetres, and viewports open model space.
@@ -1223,6 +1225,11 @@ impl Compiler<'_> {
         let prefer_ttf = style.font_file.to_ascii_lowercase().ends_with(".ttf");
         if !prefer_ttf {
             for name in &names {
+                if let Some(bytes) = self.font_data(name) {
+                    if let Some(font) = super::shx::ShapeFont::load_bytes(bytes) {
+                        return Some(FaceFont::Shape(font));
+                    }
+                }
                 if let Some(path) = find_font_file(self.font_dirs, name, &["shp", "shx", ""]) {
                     if let Some(font) = super::shx::ShapeFont::load(&path) {
                         return Some(FaceFont::Shape(font));
@@ -1243,6 +1250,29 @@ impl Compiler<'_> {
             }
         }
         None
+    }
+
+    fn font_data(&self, requested: &str) -> Option<&[u8]> {
+        let requested = std::path::Path::new(requested);
+        let requested_file = requested
+            .file_name()
+            .map(|file| file.to_string_lossy().into_owned())
+            .unwrap_or_else(|| requested.to_string_lossy().into_owned());
+        let requested_stem = requested
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_else(|| requested_file.clone());
+        self.font_files.iter().find_map(|(name, bytes)| {
+            let path = std::path::Path::new(name);
+            let file = path.file_name()?.to_string_lossy();
+            let stem = path
+                .file_stem()
+                .map(|stem| stem.to_string_lossy())
+                .unwrap_or_else(|| file.clone());
+            (file.eq_ignore_ascii_case(&requested_file)
+                || stem.eq_ignore_ascii_case(&requested_stem))
+            .then_some(bytes.as_slice())
+        })
     }
 
     fn draw_exploded(
