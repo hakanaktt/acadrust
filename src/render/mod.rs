@@ -39,7 +39,7 @@ pub use visual_style::{
 };
 
 use crate::document::CadDocument;
-use crate::types::{Handle, Vector3};
+use crate::types::{Handle, Matrix3, Vector3};
 
 /// Model-space lineweight scale, in pixels per millimetre.
 ///
@@ -107,12 +107,18 @@ impl Default for CompileOptions {
     }
 }
 
-/// Orthographic plan camera. Pan and zoom change this and do not recompile.
+/// Orthographic camera. Pan, zoom, and orbit change this and do not recompile.
 #[derive(Debug, Clone, PartialEq)]
 pub struct View {
     pub target: Vector3,
+    /// Vertical size of the view, in drawing units.
     pub height: f64,
+    /// Roll about the view direction. Positive roll turns the model clockwise,
+    /// matching a paper viewport's twist.
     pub twist: f64,
+    /// From the target toward the camera. `(0, 0, 1)` is the plan view.
+    /// Paper viewports use this same axis and the same twist sense.
+    pub direction: Vector3,
     /// `None` keeps the style `compile` resolved from the drawing.
     pub visual_style: Option<Handle>,
 }
@@ -123,6 +129,7 @@ impl Default for View {
             target: Vector3::ZERO,
             height: 1.0,
             twist: 0.0,
+            direction: Vector3::UNIT_Z,
             visual_style: None,
         }
     }
@@ -151,9 +158,132 @@ impl View {
             ),
             height,
             twist: 0.0,
+            direction: Vector3::UNIT_Z,
             visual_style: None,
         }
     }
+
+    /// Unit vector from the target toward the camera. A zero direction is the
+    /// plan view.
+    pub fn toward_camera(&self) -> Vector3 {
+        if self.direction.length_squared() > 1e-18 {
+            self.direction.normalize()
+        } else {
+            Vector3::UNIT_Z
+        }
+    }
+
+    /// Screen axes. `right` is +X on screen, `up` is +Y on screen, and
+    /// `toward_camera` points from the target to the camera.
+    pub fn basis(&self) -> (Vector3, Vector3, Vector3) {
+        let normal = self.toward_camera();
+        let (x_dir, y_dir) = view_reference_axes(normal);
+        let (sin, cos) = self.twist.sin_cos();
+        let right = x_dir * cos + y_dir * sin;
+        let up = x_dir * (-sin) + y_dir * cos;
+        (right, up, normal)
+    }
+
+    /// Frame `scene` on the current direction and twist.
+    pub fn frame(&mut self, scene: &Scene, width_px: u32, height_px: u32) {
+        let Some((min, max)) = scene.bounds_min_max() else {
+            return;
+        };
+        let center = (min + max) * 0.5;
+        let (right, up, _) = self.basis();
+        let mut min_u = f64::INFINITY;
+        let mut max_u = f64::NEG_INFINITY;
+        let mut min_v = f64::INFINITY;
+        let mut max_v = f64::NEG_INFINITY;
+        for x in [min.x, max.x] {
+            for y in [min.y, max.y] {
+                for z in [min.z, max.z] {
+                    let delta = Vector3::new(x, y, z) - center;
+                    let u = delta.dot(&right);
+                    let v = delta.dot(&up);
+                    min_u = min_u.min(u);
+                    max_u = max_u.max(u);
+                    min_v = min_v.min(v);
+                    max_v = max_v.max(v);
+                }
+            }
+        }
+        let aspect = if height_px == 0 {
+            1.0
+        } else {
+            width_px.max(1) as f64 / height_px as f64
+        };
+        let span_u = max_u - min_u;
+        let span_v = max_v - min_v;
+        self.target = center;
+        self.height = (span_v.max(span_u / aspect) * 1.05).max(1e-6);
+    }
+
+    /// Turntable orbit. Positive `yaw` moves the camera from +X toward +Y.
+    /// Positive `pitch` rotates about the camera's right axis, lowering a
+    /// front camera toward the bottom view.
+    pub fn orbit(&mut self, yaw: f64, pitch: f64) {
+        if yaw == 0.0 && pitch == 0.0 {
+            return;
+        }
+        let (mut right, _, mut direction) = self.basis();
+        if yaw != 0.0 {
+            direction = rotate_around(direction, Vector3::UNIT_Z, yaw);
+            right = rotate_around(right, Vector3::UNIT_Z, yaw);
+        }
+        if pitch != 0.0 {
+            direction = rotate_around(direction, right, pitch);
+        }
+        self.set_frame(direction, right);
+    }
+
+    /// Snap to a view direction and clear the roll, as a ViewCube face does.
+    pub fn look_along(&mut self, direction: Vector3) {
+        let direction = direction.normalize();
+        if direction.length_squared() == 0.0 {
+            return;
+        }
+        self.direction = direction;
+        self.twist = 0.0;
+    }
+
+    fn set_frame(&mut self, direction: Vector3, right: Vector3) {
+        let direction = direction.normalize();
+        if direction.length_squared() == 0.0 {
+            return;
+        }
+        let mut right = right - direction * direction.dot(&right);
+        if right.length_squared() < 1e-16 {
+            right = direction.cross(&Vector3::UNIT_Z);
+            if right.length_squared() < 1e-16 {
+                right = direction.cross(&Vector3::UNIT_Y);
+            }
+        }
+        let right = right.normalize();
+        self.direction = direction;
+        self.twist = twist_for(direction, right);
+    }
+}
+
+fn view_reference_axes(normal: Vector3) -> (Vector3, Vector3) {
+    let axes = Matrix3::arbitrary_axis(normal);
+    let x_dir = Vector3::new(axes.m[0][0], axes.m[1][0], axes.m[2][0]);
+    let y_dir = Vector3::new(axes.m[0][1], axes.m[1][1], axes.m[2][1]);
+    (x_dir, y_dir)
+}
+
+fn twist_for(direction: Vector3, right: Vector3) -> f64 {
+    let (x_dir, y_dir) = view_reference_axes(direction);
+    right.dot(&y_dir).atan2(right.dot(&x_dir))
+}
+
+fn rotate_around(vector: Vector3, axis: Vector3, angle: f64) -> Vector3 {
+    let axis = axis.normalize();
+    if axis.length_squared() == 0.0 || angle == 0.0 {
+        return vector;
+    }
+    let (sin, cos) = angle.sin_cos();
+    vector * cos + axis.cross(&vector) * sin + axis * (axis.dot(&vector) * (1.0 - cos))
 }
 
 /// Resolve `doc` into a display list.

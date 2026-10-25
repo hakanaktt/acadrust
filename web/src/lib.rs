@@ -4,7 +4,7 @@ use acadrust::render::{
     compile, CompileOptions, Renderer, RendererConfig, Scene, StandardVisualStyle, View,
     VisualStyleRequest,
 };
-use acadrust::{CadDocument, DwgReader};
+use acadrust::{CadDocument, DwgReader, Vector3};
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
 
@@ -70,8 +70,15 @@ impl Viewer {
         self.render()
     }
 
-    /// Restore an extents view using the current canvas aspect ratio.
+    /// Frame the drawing on the current orientation.
     pub fn fit(&mut self) -> Result<(), JsValue> {
+        self.view
+            .frame(&self.scene, self.config.width, self.config.height);
+        self.render()
+    }
+
+    /// Restore the plan extents view.
+    pub fn home(&mut self) -> Result<(), JsValue> {
         self.view = View::zoom_extents(&self.scene, self.config.width, self.config.height);
         self.render()
     }
@@ -81,11 +88,10 @@ impl Viewer {
         if !factor.is_finite() || factor <= 0.0 {
             return Err(js_error("zoom factor must be positive"));
         }
-        let old_offset = self.world_offset(x, y);
+        let old_offset = self.cursor_offset(x, y);
         self.view.height = (self.view.height * factor).clamp(1e-9, 1e300);
-        let new_offset = self.world_offset(x, y);
-        self.view.target.x += old_offset.0 - new_offset.0;
-        self.view.target.y += old_offset.1 - new_offset.1;
+        let new_offset = self.cursor_offset(x, y);
+        self.view.target = self.view.target + (old_offset - new_offset);
         self.render()
     }
 
@@ -95,25 +101,76 @@ impl Viewer {
             return Err(js_error("pan delta must be finite"));
         }
         let scale = self.view.height / self.config.height.max(1) as f64;
-        let u = -dx * scale;
-        let v = dy * scale;
-        let (sin, cos) = self.view.twist.sin_cos();
-        self.view.target.x += cos * u - sin * v;
-        self.view.target.y += sin * u + cos * v;
+        let (right, up, _) = self.view.basis();
+        self.view.target = self.view.target + right * (-dx * scale) + up * (dy * scale);
         self.render()
     }
 
-    /// Rotate the plan view around a canvas-pixel position.
+    /// Roll the view around a canvas-pixel position.
     pub fn rotate_at(&mut self, radians: f64, x: f64, y: f64) -> Result<(), JsValue> {
         if !radians.is_finite() {
             return Err(js_error("rotation must be finite"));
         }
-        let old_offset = self.world_offset(x, y);
+        let old_offset = self.cursor_offset(x, y);
         self.view.twist += radians;
-        let new_offset = self.world_offset(x, y);
-        self.view.target.x += old_offset.0 - new_offset.0;
-        self.view.target.y += old_offset.1 - new_offset.1;
+        let new_offset = self.cursor_offset(x, y);
+        self.view.target = self.view.target + (old_offset - new_offset);
         self.render()
+    }
+
+    /// Roll about the view center. Positive radians turn the model clockwise.
+    pub fn roll(&mut self, radians: f64) -> Result<(), JsValue> {
+        if !radians.is_finite() {
+            return Err(js_error("roll must be finite"));
+        }
+        self.view.twist += radians;
+        self.render()
+    }
+
+    /// Turntable orbit, in radians. Positive yaw moves the camera from +X
+    /// toward +Y. Positive pitch lowers a front camera toward the bottom view.
+    pub fn orbit(&mut self, yaw: f64, pitch: f64) -> Result<(), JsValue> {
+        if !yaw.is_finite() || !pitch.is_finite() {
+            return Err(js_error("orbit angles must be finite"));
+        }
+        self.view.orbit(yaw, pitch);
+        self.render()
+    }
+
+    /// Snap the camera onto a direction and clear the roll.
+    pub fn set_view_direction(&mut self, x: f64, y: f64, z: f64) -> Result<(), JsValue> {
+        self.set_oriented(x, y, z, 0.0)
+    }
+
+    /// Set the direction and roll without moving the target.
+    pub fn set_oriented(&mut self, x: f64, y: f64, z: f64, twist: f64) -> Result<(), JsValue> {
+        if !x.is_finite() || !y.is_finite() || !z.is_finite() || !twist.is_finite() {
+            return Err(js_error("view orientation must be finite"));
+        }
+        let direction = Vector3::new(x, y, z);
+        if direction.length_squared() <= 1e-18 {
+            return Err(js_error("view direction must be non-zero"));
+        }
+        self.view.direction = direction.normalize();
+        self.view.twist = twist;
+        self.render()
+    }
+
+    /// Direction, twist, screen-right, and screen-up. Ten finite numbers.
+    pub fn orientation(&self) -> Vec<f64> {
+        let (right, up, direction) = self.view.basis();
+        vec![
+            direction.x,
+            direction.y,
+            direction.z,
+            self.view.twist,
+            right.x,
+            right.y,
+            right.z,
+            up.x,
+            up.y,
+            up.z,
+        ]
     }
 
     /// Select a built-in style or restore the drawing's active viewport style.
@@ -140,14 +197,14 @@ impl Viewer {
         self.render()
     }
 
-    fn world_offset(&self, x: f64, y: f64) -> (f64, f64) {
+    fn cursor_offset(&self, x: f64, y: f64) -> Vector3 {
         let width = self.config.width.max(1) as f64;
         let height = self.config.height.max(1) as f64;
         let scale = self.view.height / height;
         let u = (x - width * 0.5) * scale;
         let v = -(y - height * 0.5) * scale;
-        let (sin, cos) = self.view.twist.sin_cos();
-        (cos * u - sin * v, sin * u + cos * v)
+        let (right, up, _) = self.view.basis();
+        right * u + up * v
     }
 
     async fn create_inner(

@@ -240,6 +240,115 @@ fn infinite_entities_do_not_dominate_zoom_extents() {
 }
 
 #[test]
+fn standard_views_match_the_paper_viewport_axes() {
+    let axes = |direction: Vector3| {
+        View {
+            direction,
+            ..View::default()
+        }
+        .basis()
+    };
+    let (right, up, _) = axes(Vector3::UNIT_Z);
+    assert!(right.distance(&Vector3::UNIT_X) < 1e-9);
+    assert!(up.distance(&Vector3::UNIT_Y) < 1e-9);
+    let (right, up, _) = axes(-Vector3::UNIT_Y);
+    assert!(right.distance(&Vector3::UNIT_X) < 1e-9);
+    assert!(up.distance(&Vector3::UNIT_Z) < 1e-9);
+    let (right, up, _) = axes(Vector3::UNIT_X);
+    assert!(right.distance(&Vector3::UNIT_Y) < 1e-9);
+    assert!(up.distance(&Vector3::UNIT_Z) < 1e-9);
+}
+
+#[test]
+fn orbit_keeps_an_orthonormal_frame() {
+    let mut view = View {
+        direction: -Vector3::UNIT_Y,
+        twist: 0.2,
+        ..View::default()
+    };
+    for _ in 0..24 {
+        view.orbit(0.17, -0.11);
+        let (right, up, direction) = view.basis();
+        assert!((right.length() - 1.0).abs() < 1e-9);
+        assert!((up.length() - 1.0).abs() < 1e-9);
+        assert!((direction.length() - 1.0).abs() < 1e-9);
+        assert!(right.dot(&up).abs() < 1e-9);
+        assert!(right.dot(&direction).abs() < 1e-9);
+        assert!(up.dot(&direction).abs() < 1e-9);
+        let again = View {
+            direction: view.direction,
+            twist: view.twist,
+            ..View::default()
+        }
+        .basis();
+        assert!(again.0.distance(&right) < 1e-9);
+    }
+}
+
+#[test]
+fn frame_fits_the_current_view_plane() {
+    let mut doc = doc();
+    doc.add_entity(EntityType::Line(Line::from_coords(
+        0.0, 0.0, 0.0, 0.0, 0.0, 100.0,
+    )))
+    .unwrap();
+    let scene = compile(&doc, &CompileOptions::default());
+    let mut view = View {
+        direction: -Vector3::UNIT_Y,
+        ..View::default()
+    };
+    view.frame(&scene, 100, 100);
+    assert!((view.target.z - 50.0).abs() < 1e-6);
+    assert!(
+        view.height > 100.0 && view.height < 120.0,
+        "{}",
+        view.height
+    );
+}
+
+#[test]
+fn front_view_draws_a_vertical_world_z_line() {
+    let mut doc = doc();
+    doc.header.lineweight_display = true;
+    let mut line = Line::from_coords(0.0, 0.0, 0.0, 0.0, 0.0, 100.0);
+    line.common.color = Color::RED;
+    line.common.line_weight = LineWeight::Value(50);
+    doc.add_entity(EntityType::Line(line)).unwrap();
+    let image = match pollster::block_on(super::render_rgba_with(
+        &doc,
+        &View {
+            target: Vector3::new(0.0, 0.0, 50.0),
+            height: 150.0,
+            direction: -Vector3::UNIT_Y,
+            ..View::default()
+        },
+        64,
+        64,
+        &CompileOptions::default(),
+        &super::RendererConfig {
+            samples: 1,
+            ..super::RendererConfig::default()
+        },
+    )) {
+        Err(super::RenderError::NoAdapter) => return,
+        Err(error) => panic!("{error}"),
+        Ok(image) => image,
+    };
+    let x = image.width / 2;
+    let mut red = 0u32;
+    for y in 0..image.height {
+        let index = ((y * image.width + x) * 4) as usize;
+        if image.pixels[index] > 80 && image.pixels[index + 1] < 80 {
+            red += 1;
+        }
+    }
+    assert!(
+        red > 20,
+        "front view lost the vertical line, red rows {red}"
+    );
+}
+
+#[test]
 fn every_standard_visual_style_has_a_recipe() {
     assert_eq!(StandardVisualStyle::ALL.len(), 14);
     for kind in StandardVisualStyle::ALL {

@@ -17,6 +17,8 @@
       input { max-width: 26vw; }
       #status { color: #aab6bf; min-width: 14em; }
       #canvas { display: block; width: 100vw; height: calc(100vh - 48px); touch-action: none; cursor: default; }
+      #viewcube { position: fixed; top: 52px; right: 10px; width: 180px; height: 214px; z-index: 2; touch-action: none; }
+      #viewcube canvas { display: block; width: 100%; height: 100%; }
     </style>
   </head>
   <body>
@@ -43,11 +45,14 @@
         </select>
       </label>
       <button id="fit" type="button" disabled title="Fit drawing to the viewport">Fit</button>
-      <button id="rotate-left" type="button" disabled title="Rotate counter-clockwise">Rotate left</button>
-      <button id="rotate-right" type="button" disabled title="Rotate clockwise">Rotate right</button>
-      <span id="status">Choose a drawing. Add its SHX/SHP font to draw text.</span>
+      <button id="rotate-left" type="button" disabled title="Roll counter-clockwise">Roll left</button>
+      <button id="rotate-right" type="button" disabled title="Roll clockwise">Roll right</button>
+      <span id="status">Choose a drawing. Scroll zooms, middle mouse pans, right mouse orbits.</span>
     </header>
     <canvas id="canvas" width="1600" height="1000"></canvas>
+    <div id="viewcube" title="ViewCube. Drag to orbit. Click a face, edge, or corner.">
+      <canvas width="360" height="428"></canvas>
+    </div>
     <script type="module">
       import init, {
         create_viewer,
@@ -129,12 +134,14 @@
           nextViewer.render();
           viewer = nextViewer;
           setControlsEnabled(true);
+          refreshGizmo();
           setStatus(`${drawing.name} rendered${selectedFont ? ` with ${selectedFont.name}` : ""}`);
         } catch (error) {
           if (serial === loadSerial) {
             console.error(error);
             viewer = null;
             setControlsEnabled(false);
+            refreshGizmo();
             setStatus(`Render failed: ${error}`);
           }
         }
@@ -161,12 +168,14 @@
       }, { passive: false });
 
       canvas.addEventListener("pointerdown", (event) => {
-        if (!viewer || event.button !== 1) return;
+        if (!viewer || (event.button !== 1 && event.button !== 2)) return;
         event.preventDefault();
+        stopAnim();
         const point = canvasPoint(event);
-        drag = { id: event.pointerId, mode: event.shiftKey ? "rotate" : "pan", x: point.x, y: point.y };
+        const mode = event.button === 2 ? "orbit" : event.shiftKey ? "roll" : "pan";
+        drag = { id: event.pointerId, mode, x: point.x, y: point.y, cx: event.clientX, cy: event.clientY };
         canvas.setPointerCapture(event.pointerId);
-        canvas.style.cursor = drag.mode === "rotate" ? "crosshair" : "grabbing";
+        canvas.style.cursor = mode === "pan" ? "grabbing" : "crosshair";
       });
 
       canvas.addEventListener("pointermove", (event) => {
@@ -177,11 +186,16 @@
         const dy = point.y - drag.y;
         drag.x = point.x;
         drag.y = point.y;
-        if (drag.mode === "rotate") {
+        if (drag.mode === "roll") {
           withViewer((active) => active.rotate_at(dx * Math.PI / 360, point.x, point.y));
+        } else if (drag.mode === "orbit") {
+          const width = Math.max(canvas.clientWidth, 1);
+          const height = Math.max(canvas.clientHeight, 1);
+          withViewer((active) => active.orbit(-dx / width * Math.PI, dy / height * Math.PI));
         } else {
           withViewer((active) => active.pan(dx, dy));
         }
+        if (drag.mode !== "pan") refreshGizmo();
       });
 
       const endDrag = (event) => {
@@ -202,19 +216,522 @@
         withViewer((active) => active.set_visual_style(name));
         if (drawing) setStatus(`${drawing.name} rendered in ${styleInput.options[styleInput.selectedIndex].text}`);
       });
-      fitButton.addEventListener("click", () => withViewer((active) => active.fit()));
-      rotateLeft.addEventListener("click", () => withViewer((active) => active.rotate_at(-Math.PI / 12, canvas.width / 2, canvas.height / 2)));
-      rotateRight.addEventListener("click", () => withViewer((active) => active.rotate_at(Math.PI / 12, canvas.width / 2, canvas.height / 2)));
+      fitButton.addEventListener("click", () => { stopAnim(); withViewer((active) => active.fit()); refreshGizmo(); });
+      rotateLeft.addEventListener("click", () => { stopAnim(); withViewer((active) => active.roll(-Math.PI / 12)); refreshGizmo(); });
+      rotateRight.addEventListener("click", () => { stopAnim(); withViewer((active) => active.roll(Math.PI / 12)); refreshGizmo(); });
       fileInput.addEventListener("change", () => {
         drawing = fileInput.files?.[0] ?? null;
         viewer = null;
+        stopAnim();
         setControlsEnabled(false);
+        refreshGizmo();
         renderCurrent();
       });
       fontInput.addEventListener("change", renderCurrent);
       addEventListener("resize", scheduleResize);
 
+      const nav = document.querySelector("#viewcube");
+      const navCanvas = nav.querySelector("canvas");
+      const navCtx = navCanvas.getContext("2d");
+      let anim = 0;
+      let navDrag = null;
+      let navHover = null;
+      const stopAnim = () => cancelAnimationFrame(anim);
+      const FACES = [
+        ["TOP", [0, 0, 1]],
+        ["BOTTOM", [0, 0, -1]],
+        ["FRONT", [0, -1, 0]],
+        ["BACK", [0, 1, 0]],
+        ["LEFT", [-1, 0, 0]],
+        ["RIGHT", [1, 0, 0]],
+      ];
+      const COMPASS = [
+        ["N", [0, 1, 0], [0, -1, 0]],
+        ["E", [1, 0, 0], [-1, 0, 0]],
+        ["S", [0, -1, 0], [0, 1, 0]],
+        ["W", [-1, 0, 0], [1, 0, 0]],
+      ];
+      const VIEW_NAMES = [
+        ["Top", [0, 0, 1]],
+        ["Bottom", [0, 0, -1]],
+        ["Front", [0, -1, 0]],
+        ["Back", [0, 1, 0]],
+        ["Left", [-1, 0, 0]],
+        ["Right", [1, 0, 0]],
+        ["SW Isometric", [-1, -1, 1]],
+        ["SE Isometric", [1, -1, 1]],
+        ["NE Isometric", [1, 1, 1]],
+        ["NW Isometric", [-1, 1, 1]],
+      ];
+
+      const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+      const scale = (a, s) => [a[0] * s, a[1] * s, a[2] * s];
+      const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+      const cross = (a, b) => [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+      ];
+      const length = (a) => Math.hypot(a[0], a[1], a[2]);
+      const normalize = (a) => {
+        const len = length(a);
+        return len > 1e-8 ? scale(a, 1 / len) : [0, 0, 1];
+      };
+      const referenceAxes = (normal) => {
+        const n = normalize(normal);
+        const ax = Math.abs(n[0]) < 1 / 64 && Math.abs(n[1]) < 1 / 64 ? [0, 1, 0] : [0, 0, 1];
+        const x = normalize(cross(ax, n));
+        return [x, normalize(cross(n, x))];
+      };
+
+      const cubeParts = (() => {
+        const parts = [];
+        for (const [name, normal] of FACES) {
+          const [u, v] = referenceAxes(normal);
+          const center = scale(normal, 1);
+          const inset = 0.74;
+          parts.push({
+            kind: "face",
+            name,
+            direction: normal,
+            normal,
+            label: name,
+            corners: [
+              add(center, add(scale(u, inset), scale(v, inset))),
+              add(center, add(scale(u, -inset), scale(v, inset))),
+              add(center, add(scale(u, -inset), scale(v, -inset))),
+              add(center, add(scale(u, inset), scale(v, -inset))),
+            ],
+          });
+        }
+        for (let i = 0; i < FACES.length; i += 1) {
+          for (let j = i + 1; j < FACES.length; j += 1) {
+            const n1 = FACES[i][1];
+            const n2 = FACES[j][1];
+            if (Math.abs(dot(n1, n2)) > 0.1) continue;
+            const along = normalize(cross(n1, n2));
+            const mid = add(n1, n2);
+            const outward = normalize(mid);
+            const side = normalize(cross(along, outward));
+            const origin = add(mid, scale(outward, 0.02));
+            const hl = 0.56;
+            const hw = 0.15;
+            parts.push({
+              kind: "edge",
+              name: `${FACES[i][0]}-${FACES[j][0]}`,
+              direction: normalize(mid),
+              normal: outward,
+              corners: [
+                add(origin, add(scale(along, hl), scale(side, hw))),
+                add(origin, add(scale(along, -hl), scale(side, hw))),
+                add(origin, add(scale(along, -hl), scale(side, -hw))),
+                add(origin, add(scale(along, hl), scale(side, -hw))),
+              ],
+            });
+          }
+        }
+        for (let i = 0; i < FACES.length; i += 1) {
+          for (let j = i + 1; j < FACES.length; j += 1) {
+            for (let k = j + 1; k < FACES.length; k += 1) {
+              const n1 = FACES[i][1];
+              const n2 = FACES[j][1];
+              const n3 = FACES[k][1];
+              if (Math.abs(dot(n1, n2)) > 0.1 || Math.abs(dot(n1, n3)) > 0.1 || Math.abs(dot(n2, n3)) > 0.1) continue;
+              const pos = add(add(n1, n2), n3);
+              const outward = normalize(pos);
+              const [u, v] = referenceAxes(outward);
+              const s = 0.18;
+              parts.push({
+                kind: "corner",
+                name: `${FACES[i][0]}-${FACES[j][0]}-${FACES[k][0]}`,
+                direction: outward,
+                normal: outward,
+                anchor: pos,
+                corners: [
+                  add(pos, add(scale(u, s), scale(v, s))),
+                  add(pos, add(scale(u, -s), scale(v, s))),
+                  add(pos, add(scale(u, -s), scale(v, -s))),
+                  add(pos, add(scale(u, s), scale(v, -s))),
+                ],
+              });
+            }
+          }
+        }
+        return parts;
+      })();
+
+      const readOrient = () => {
+        if (!viewer) return { dir: [0, 0, 1], right: [1, 0, 0], up: [0, 1, 0] };
+        const value = viewer.orientation();
+        return {
+          dir: [value[0], value[1], value[2]],
+          right: [value[4], value[5], value[6]],
+          up: [value[7], value[8], value[9]],
+          twist: value[3],
+        };
+      };
+
+      const projectPoint = (point, orient, center, unit) => {
+        const x = dot(orient.right, point);
+        const y = dot(orient.up, point);
+        return {
+          sx: center.x + x * unit,
+          sy: center.y - y * unit,
+          depth: dot(orient.dir, point),
+        };
+      };
+
+      const pointInPoly = (x, y, poly) => {
+        let inside = false;
+        for (let i = 0, j = poly.length - 1; i < poly.length; j = i, i += 1) {
+          const yi = poly[i].sy;
+          const yj = poly[j].sy;
+          const xi = poly[i].sx;
+          const xj = poly[j].sx;
+          const crossEdge = (yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
+          if (crossEdge) inside = !inside;
+        }
+        return inside;
+      };
+
+      const navLayout = () => {
+        const width = nav.clientWidth || 180;
+        const height = nav.clientHeight || 214;
+        return {
+          width,
+          height,
+          center: { x: width * 0.5, y: height * 0.48 },
+          unit: 31,
+          home: { x: 18, y: 18, r: 12 },
+          rollLeft: { x: 28, y: 46, r: 13 },
+          rollRight: { x: width - 28, y: 46, r: 13 },
+        };
+      };
+
+      const viewName = (dir) => {
+        let best = "Free orbit";
+        let score = 0.985;
+        for (const [name, direction] of VIEW_NAMES) {
+          const facing = dot(dir, normalize(direction));
+          if (facing > score) {
+            score = facing;
+            best = name;
+          }
+        }
+        return best;
+      };
+
+      const paintPart = (ctx, part, hot) => {
+        ctx.beginPath();
+        part.projected.forEach((point, index) => {
+          if (index === 0) ctx.moveTo(point.sx, point.sy);
+          else ctx.lineTo(point.sx, point.sy);
+        });
+        ctx.closePath();
+        const facing = Math.max(0, Math.min(1, dot(part.normal, part.orientDir)));
+        const shade = 0.62 + 0.38 * facing;
+        const rgb = hot
+          ? [46, 144, 214]
+          : part.kind === "face"
+            ? [214 * shade, 220 * shade, 226 * shade]
+            : part.kind === "edge"
+              ? [150 * shade, 158 * shade, 166 * shade]
+              : [176 * shade, 184 * shade, 192 * shade];
+        ctx.fillStyle = `rgb(${rgb[0] | 0}, ${rgb[1] | 0}, ${rgb[2] | 0})`;
+        ctx.fill();
+      };
+
+      const paintLabel = (ctx, part, orient, center, unit) => {
+        if (!part.label || dot(part.normal, orient.dir) < 0.42) return;
+        const [u, v] = referenceAxes(part.normal);
+        const origin = projectPoint(scale(part.normal, 1), orient, center, unit);
+        const right = projectPoint(add(scale(part.normal, 1), scale(u, 1)), orient, center, unit);
+        const rx = right.sx - origin.sx;
+        const ry = right.sy - origin.sy;
+        const span = Math.hypot(rx, ry);
+        if (span < 8) return;
+        ctx.save();
+        ctx.translate(origin.sx, origin.sy);
+        ctx.rotate(Math.atan2(ry, rx));
+        ctx.scale(Math.min(span / 46, 1.15), Math.min(span / 46, 1.15));
+        ctx.fillStyle = navHover === part.name ? "#f7fbff" : "#1c2630";
+        ctx.font = "700 11px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(part.label, 0, 0);
+        ctx.restore();
+      };
+
+      const paintArrow = (ctx, button, clockwise, hot) => {
+        ctx.save();
+        ctx.translate(button.x, button.y);
+        ctx.strokeStyle = hot ? "#8ec8f8" : "#c5d0d8";
+        ctx.fillStyle = ctx.strokeStyle;
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        if (clockwise) ctx.arc(0, 0, 9, Math.PI * 0.15, Math.PI * 1.35, false);
+        else ctx.arc(0, 0, 9, Math.PI * 0.85, Math.PI * 1.85, false);
+        ctx.stroke();
+        const tip = clockwise ? Math.PI * 1.35 : Math.PI * 0.85;
+        const x = Math.cos(tip) * 9;
+        const y = Math.sin(tip) * 9;
+        const tangent = tip + (clockwise ? Math.PI / 2 : -Math.PI / 2);
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x - Math.cos(tangent - 0.45) * 6, y - Math.sin(tangent - 0.45) * 6);
+        ctx.lineTo(x - Math.cos(tangent + 0.55) * 6, y - Math.sin(tangent + 0.55) * 6);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      };
+
+      const paintHome = (ctx, button, hot) => {
+        ctx.beginPath();
+        ctx.arc(button.x, button.y, button.r, 0, Math.PI * 2);
+        ctx.fillStyle = hot ? "#2e90d6" : "rgba(48, 59, 69, 0.92)";
+        ctx.fill();
+        ctx.strokeStyle = "#9eb0bd";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = "#e8eef3";
+        ctx.beginPath();
+        ctx.moveTo(button.x, button.y - 6);
+        ctx.lineTo(button.x + 6.5, button.y + 0.5);
+        ctx.lineTo(button.x + 3.5, button.y + 0.5);
+        ctx.lineTo(button.x + 3.5, button.y + 5.5);
+        ctx.lineTo(button.x - 3.5, button.y + 5.5);
+        ctx.lineTo(button.x - 3.5, button.y + 0.5);
+        ctx.lineTo(button.x - 6.5, button.y + 0.5);
+        ctx.closePath();
+        ctx.fill();
+      };
+
+      const drawNav = (orient) => {
+        const ratio = window.devicePixelRatio || 1;
+        const layout = navLayout();
+        const pixelWidth = Math.max(1, Math.round(layout.width * ratio));
+        const pixelHeight = Math.max(1, Math.round(layout.height * ratio));
+        if (navCanvas.width !== pixelWidth || navCanvas.height !== pixelHeight) {
+          navCanvas.width = pixelWidth;
+          navCanvas.height = pixelHeight;
+        }
+        const ctx = navCtx;
+        ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+        ctx.clearRect(0, 0, layout.width, layout.height);
+        ctx.globalAlpha = viewer ? 1 : 0.45;
+        const { center, unit } = layout;
+        const ring = [];
+        for (let step = 0; step < 64; step += 1) {
+          const angle = (step / 64) * Math.PI * 2;
+          ring.push(projectPoint([Math.cos(angle) * 1.72, Math.sin(angle) * 1.72, -1.2], orient, center, unit));
+        }
+        ctx.beginPath();
+        ring.forEach((point, index) => {
+          if (index === 0) ctx.moveTo(point.sx, point.sy);
+          else ctx.lineTo(point.sx, point.sy);
+        });
+        ctx.closePath();
+        ctx.strokeStyle = "rgba(176, 190, 201, 0.55)";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = "#d5dee6";
+        ctx.font = "700 11px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        const flatness = Math.abs(dot(orient.dir, [0, 0, 1]));
+        if (flatness > 0.2) {
+          for (const [letter, at] of COMPASS) {
+            const point = projectPoint([at[0] * 2.08, at[1] * 2.08, -1.2], orient, center, unit);
+            ctx.globalAlpha = (viewer ? 1 : 0.45) * Math.min(1, flatness + 0.25);
+            ctx.fillText(letter, point.sx, point.sy);
+          }
+        }
+        ctx.globalAlpha = viewer ? 1 : 0.45;
+        const drawn = cubeParts.map((part) => {
+          const projected = part.corners.map((corner) => projectPoint(corner, orient, center, unit));
+          const depth = projected.reduce((sum, point) => sum + point.depth, 0) / projected.length;
+          return { ...part, projected, depth, orientDir: orient.dir };
+        });
+        drawn.sort((a, b) => a.depth - b.depth);
+        for (const part of drawn) {
+          const facing = dot(part.normal, orient.dir);
+          if (part.kind === "face" ? facing <= 0.02 : facing <= -0.12) continue;
+          paintPart(ctx, part, navHover === part.name);
+        }
+        for (const part of drawn) paintLabel(ctx, part, orient, center, unit);
+        paintArrow(ctx, layout.rollLeft, false, navHover === "roll-left");
+        paintArrow(ctx, layout.rollRight, true, navHover === "roll-right");
+        paintHome(ctx, layout.home, navHover === "home");
+        ctx.globalAlpha = viewer ? 0.9 : 0.4;
+        ctx.fillStyle = "#c5d0d8";
+        ctx.font = "12px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "alphabetic";
+        ctx.fillText(viewer ? viewName(orient.dir) : "ViewCube", layout.width * 0.5, layout.height - 8);
+        ctx.globalAlpha = 1;
+      };
+
+      const refreshGizmo = () => drawNav(readOrient());
+
+      const pickNav = (x, y) => {
+        const layout = navLayout();
+        const hitButton = (button, name) => {
+          const dx = x - button.x;
+          const dy = y - button.y;
+          return dx * dx + dy * dy <= button.r * button.r ? name : null;
+        };
+        const button = hitButton(layout.home, "home")
+          || hitButton(layout.rollLeft, "roll-left")
+          || hitButton(layout.rollRight, "roll-right");
+        if (button) return { name: button, kind: button };
+        const orient = readOrient();
+        let best = null;
+        for (const part of cubeParts) {
+          const facing = dot(part.normal, orient.dir);
+          if (part.kind === "face" ? facing <= 0.05 : facing <= -0.05) continue;
+          const projected = part.corners.map((corner) => projectPoint(corner, orient, layout.center, layout.unit));
+          const depth = projected.reduce((sum, point) => sum + point.depth, 0) / projected.length;
+          let hit = pointInPoly(x, y, projected);
+          if (!hit && part.anchor) {
+            const anchor = projectPoint(part.anchor, orient, layout.center, layout.unit);
+            const dx = x - anchor.sx;
+            const dy = y - anchor.sy;
+            hit = dx * dx + dy * dy <= 12 * 12;
+          }
+          if (!hit) continue;
+          const rank = part.kind === "corner" ? 3 : part.kind === "edge" ? 2 : 1;
+          if (!best || rank > best.rank || (rank === best.rank && depth > best.depth)) {
+            best = { name: part.name, kind: part.kind, direction: part.direction, rank, depth };
+          }
+        }
+        if (best) return best;
+        if (Math.abs(dot(orient.dir, [0, 0, 1])) > 0.35) {
+          for (const [letter, at, direction] of COMPASS) {
+            const point = projectPoint([at[0] * 2.08, at[1] * 2.08, -1.2], orient, layout.center, layout.unit);
+            const dx = x - point.sx;
+            const dy = y - point.sy;
+            if (dx * dx + dy * dy <= 12 * 12) return { name: letter, kind: "compass", direction };
+          }
+        }
+        return null;
+      };
+
+      const slerpDir = (a, b, t) => {
+        let cosine = Math.max(-1, Math.min(1, dot(a, b)));
+        if (cosine < -0.9995) {
+          const axis = Math.abs(a[2]) < 0.9 ? normalize(cross(a, [0, 0, 1])) : normalize(cross(a, [0, 1, 0]));
+          return t < 0.5 ? slerpDir(a, axis, t * 2) : slerpDir(axis, b, t * 2 - 1);
+        }
+        const theta = Math.acos(cosine);
+        if (theta < 1e-4) return normalize([
+          a[0] + (b[0] - a[0]) * t,
+          a[1] + (b[1] - a[1]) * t,
+          a[2] + (b[2] - a[2]) * t,
+        ]);
+        const span = Math.sin(theta);
+        const w0 = Math.sin((1 - t) * theta) / span;
+        const w1 = Math.sin(t * theta) / span;
+        return [a[0] * w0 + b[0] * w1, a[1] * w0 + b[1] * w1, a[2] * w0 + b[2] * w1];
+      };
+
+      const animateTo = (direction, twist) => {
+        if (!viewer) return;
+        const start = readOrient();
+        const from = start.dir;
+        const to = normalize(direction);
+        let delta = twist - start.twist;
+        while (delta > Math.PI) delta -= Math.PI * 2;
+        while (delta < -Math.PI) delta += Math.PI * 2;
+        const begun = performance.now();
+        stopAnim();
+        const step = (now) => {
+          const t = Math.min(1, (now - begun) / 260);
+          const eased = t < 0.5 ? 2 * t * t : 1 - ((-2 * t + 2) ** 2) / 2;
+          const dir = slerpDir(from, to, eased);
+          const roll = start.twist + delta * eased;
+          withViewer((active) => active.set_oriented(dir[0], dir[1], dir[2], roll));
+          refreshGizmo();
+          if (t < 1) anim = requestAnimationFrame(step);
+        };
+        anim = requestAnimationFrame(step);
+      };
+
+      const activateNav = (hit) => {
+        if (!hit || !viewer) return;
+        if (hit.kind === "home") {
+          stopAnim();
+          withViewer((active) => active.home());
+          refreshGizmo();
+          return;
+        }
+        if (hit.kind === "roll-left" || hit.kind === "roll-right") {
+          const start = readOrient();
+          animateTo(start.dir, start.twist + (hit.kind === "roll-right" ? Math.PI / 2 : -Math.PI / 2));
+          return;
+        }
+        if (hit.direction) animateTo(hit.direction, 0);
+      };
+
+      const navPoint = (event) => {
+        const rect = navCanvas.getBoundingClientRect();
+        return {
+          x: event.clientX - rect.left,
+          y: event.clientY - rect.top,
+        };
+      };
+
+      navCanvas.addEventListener("contextmenu", (event) => event.preventDefault());
+      navCanvas.addEventListener("pointerdown", (event) => {
+        if (!viewer || event.button !== 0) return;
+        event.preventDefault();
+        stopAnim();
+        const point = navPoint(event);
+        navDrag = { id: event.pointerId, x: point.x, y: point.y, moved: false, hit: pickNav(point.x, point.y) };
+        navCanvas.setPointerCapture(event.pointerId);
+      });
+      navCanvas.addEventListener("pointermove", (event) => {
+        const point = navPoint(event);
+        if (navDrag && navDrag.id === event.pointerId) {
+          const dx = point.x - navDrag.x;
+          const dy = point.y - navDrag.y;
+          if (!navDrag.moved && dx * dx + dy * dy < 9) return;
+          navDrag.moved = true;
+          navDrag.x = point.x;
+          navDrag.y = point.y;
+          withViewer((active) => active.orbit(-dx / 78 * Math.PI, dy / 78 * Math.PI));
+          refreshGizmo();
+          return;
+        }
+        const hit = viewer ? pickNav(point.x, point.y) : null;
+        const next = hit ? hit.name : null;
+        if (next !== navHover) {
+          navHover = next;
+          navCanvas.style.cursor = next ? "pointer" : "default";
+          refreshGizmo();
+        }
+      });
+      const endNav = (event) => {
+        if (!navDrag || navDrag.id !== event.pointerId) return;
+        const hit = navDrag.hit;
+        const moved = navDrag.moved;
+        navDrag = null;
+        if (!moved) activateNav(hit);
+        refreshGizmo();
+      };
+      navCanvas.addEventListener("pointerup", endNav);
+      navCanvas.addEventListener("pointercancel", endNav);
+      navCanvas.addEventListener("pointerleave", () => {
+        if (navDrag) return;
+        if (navHover) {
+          navHover = null;
+          navCanvas.style.cursor = "default";
+          refreshGizmo();
+        }
+      });
+
+      refreshGizmo();
       await init();
+      refreshGizmo();
       resizeCanvas();
     </script>
   </body>

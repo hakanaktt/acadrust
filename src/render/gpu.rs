@@ -96,6 +96,7 @@ pub struct Renderer {
     px_per_mm: f32,
     z_scale: f32,
     z_bias: f32,
+    depth_bounds: Option<(Vector3, Vector3)>,
     depth: wgpu::Texture,
     depth_view: wgpu::TextureView,
 }
@@ -356,6 +357,7 @@ impl Renderer {
             px_per_mm: DEFAULT_MODEL_LINEWEIGHT_PX_PER_MM as f32,
             z_scale: 0.0,
             z_bias: 0.5,
+            depth_bounds: None,
             depth,
             depth_view,
         }
@@ -401,9 +403,10 @@ impl Renderer {
         _viewport_px: (u32, u32),
     ) {
         self.px_per_mm = scene.model_lineweight_px_per_mm as f32;
-        let (z_scale, z_bias) = depth_map(scene);
+        let (z_scale, z_bias, bounds) = depth_map(scene);
         self.z_scale = z_scale;
         self.z_bias = z_bias;
+        self.depth_bounds = bounds;
         let mut bytes = Vec::new();
         for stroke in &scene.strokes {
             let rgb = if stroke.style.aci7 {
@@ -743,6 +746,7 @@ impl Renderer {
                 self.px_per_mm,
                 self.z_scale,
                 self.z_bias,
+                self.depth_bounds,
             ),
         );
         let (attachment, resolve) = if let Some(msaa) = self.msaa_view.as_ref() {
@@ -1133,33 +1137,9 @@ fn camera_bytes(
     px_per_mm: f32,
     z_scale: f32,
     z_bias: f32,
+    bounds: Option<(Vector3, Vector3)>,
 ) -> Vec<u8> {
-    let aspect = width as f64 / height.max(1) as f64;
-    let world_h = view.height.max(1e-9);
-    let world_w = world_h * aspect;
-    let sx = 2.0 / world_w;
-    let sy = 2.0 / world_h;
-    let (sin, cos) = view.twist.sin_cos();
-    let tx = view.target.x;
-    let ty = view.target.y;
-    let matrix = [
-        (sx * cos) as f32,
-        (-sy * sin) as f32,
-        0.0,
-        0.0,
-        (sx * sin) as f32,
-        (sy * cos) as f32,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        1.0,
-        0.0,
-        (-sx * (cos * tx + sin * ty)) as f32,
-        (-sy * (-sin * tx + cos * ty)) as f32,
-        0.0,
-        1.0,
-    ];
+    let matrix = camera_matrix(view, width, height, z_scale, z_bias, bounds);
     let mut bytes = Vec::with_capacity(CAMERA_SIZE as usize);
     for value in matrix {
         push_f32(&mut bytes, value);
@@ -1174,11 +1154,102 @@ fn camera_bytes(
     bytes
 }
 
-fn depth_map(scene: &Scene) -> (f32, f32) {
+fn camera_matrix(
+    view: &View,
+    width: u32,
+    height: u32,
+    z_scale: f32,
+    z_bias: f32,
+    bounds: Option<(Vector3, Vector3)>,
+) -> [f32; 16] {
+    let (right, up, normal) = view.basis();
+    let aspect = width as f64 / height.max(1) as f64;
+    let world_h = view.height.max(1e-9);
+    let world_w = world_h * aspect;
+    let sx = 2.0 / world_w;
+    let sy = 2.0 / world_h;
+    let (depth_scale, depth_bias) =
+        depth_coefficients(normal, view.target, z_scale, z_bias, bounds);
+    let target = view.target;
+    [
+        (sx * right.x) as f32,
+        (sy * up.x) as f32,
+        (depth_scale * normal.x) as f32,
+        0.0,
+        (sx * right.y) as f32,
+        (sy * up.y) as f32,
+        (depth_scale * normal.y) as f32,
+        0.0,
+        (sx * right.z) as f32,
+        (sy * up.z) as f32,
+        (depth_scale * normal.z) as f32,
+        0.0,
+        (-sx * right.dot(&target)) as f32,
+        (-sy * up.dot(&target)) as f32,
+        (-depth_scale * normal.dot(&target) + depth_bias) as f32,
+        1.0,
+    ]
+}
+
+/// Depth written into the projection. The plan view keeps the historical
+/// world-Z mapping so an existing top view sorts the same pixels. Any other
+/// direction maps closeness along the camera axis into 0 at the near side.
+fn depth_coefficients(
+    normal: Vector3,
+    target: Vector3,
+    z_scale: f32,
+    z_bias: f32,
+    bounds: Option<(Vector3, Vector3)>,
+) -> (f64, f64) {
+    let plan = normal.z > 1.0 - 1e-5 && normal.x.abs() < 1e-5 && normal.y.abs() < 1e-5;
+    if plan {
+        let scale = z_scale as f64;
+        return (scale, scale * target.z + z_bias as f64);
+    }
+    let Some((min, max)) = bounds else {
+        return (-1.0, 0.5);
+    };
+    let mut min_d = f64::INFINITY;
+    let mut max_d = f64::NEG_INFINITY;
+    for x in [min.x, max.x] {
+        for y in [min.y, max.y] {
+            for z in [min.z, max.z] {
+                let point = Vector3::new(x, y, z) - target;
+                let depth = normal.dot(&point);
+                min_d = min_d.min(depth);
+                max_d = max_d.max(depth);
+            }
+        }
+    }
+    if !min_d.is_finite() || !max_d.is_finite() {
+        return (-1.0, 0.5);
+    }
+    let span = (max_d - min_d).max(1e-4);
+    let pad = span * 0.02;
+    let min_d = min_d - pad;
+    let max_d = max_d + pad;
+    let span = (max_d - min_d).max(1e-4);
+    (-1.0 / span, max_d / span)
+}
+
+fn depth_map(scene: &Scene) -> (f32, f32, Option<(Vector3, Vector3)>) {
+    let mut min = Vector3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
+    let mut max = Vector3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
     let mut min_z = f32::INFINITY;
     let mut max_z = f32::NEG_INFINITY;
-    let mut include = |z: f64| {
-        let z = z as f32;
+    let mut any = false;
+    let mut include = |point: Vector3| {
+        if !point.x.is_finite() || !point.y.is_finite() || !point.z.is_finite() {
+            return;
+        }
+        any = true;
+        min.x = min.x.min(point.x);
+        min.y = min.y.min(point.y);
+        min.z = min.z.min(point.z);
+        max.x = max.x.max(point.x);
+        max.y = max.y.max(point.y);
+        max.z = max.z.max(point.z);
+        let z = point.z as f32;
         if z.is_finite() {
             min_z = min_z.min(z);
             max_z = max_z.max(z);
@@ -1186,22 +1257,23 @@ fn depth_map(scene: &Scene) -> (f32, f32) {
     };
     for stroke in &scene.strokes {
         for point in &stroke.points {
-            include(point.z);
+            include(*point);
         }
     }
     for fill in &scene.fills {
         for point in &fill.triangles {
-            include(point.z);
+            include(*point);
         }
     }
     for glyph in &scene.glyphs {
-        include(glyph.anchor.z);
+        include(glyph.anchor);
     }
     for picture in &scene.pictures {
         for point in &picture.triangles {
-            include(point.z);
+            include(*point);
         }
     }
+    let bounds = any.then_some((min, max));
     if !min_z.is_finite() || !max_z.is_finite() || max_z - min_z < 1e-4 {
         min_z = -0.5;
         max_z = 0.5;
@@ -1211,7 +1283,7 @@ fn depth_map(scene: &Scene) -> (f32, f32) {
     max_z += pad;
     let span = (max_z - min_z).max(1e-4);
     // Larger world Z is closer to a plan camera, so it gets the smaller depth.
-    (-1.0 / span, max_z / span)
+    (-1.0 / span, max_z / span, bounds)
 }
 
 struct PreparedPicture {
@@ -1309,5 +1381,71 @@ fn contrast(background: [f32; 4]) -> [u8; 3] {
         [0, 0, 0]
     } else {
         [255, 255, 255]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn clip(matrix: [f32; 16], point: Vector3) -> [f32; 3] {
+        let p = [point.x as f32, point.y as f32, point.z as f32, 1.0];
+        let mut out = [0.0; 3];
+        for row in 0..3 {
+            out[row] = matrix[row] * p[0]
+                + matrix[4 + row] * p[1]
+                + matrix[8 + row] * p[2]
+                + matrix[12 + row] * p[3];
+        }
+        out
+    }
+
+    #[test]
+    fn plan_matrix_keeps_the_top_view_and_its_depth() {
+        let view = View {
+            target: Vector3::new(10.0, -4.0, 5.0),
+            height: 100.0,
+            twist: 0.4,
+            ..View::default()
+        };
+        let z_scale = -0.02;
+        let z_bias = 0.6;
+        let matrix = camera_matrix(&view, 200, 100, z_scale, z_bias, None);
+        let aspect = 2.0;
+        let sx = 2.0 / (100.0 * aspect);
+        let sy = 2.0 / 100.0;
+        let (sin, cos) = 0.4_f64.sin_cos();
+        let point = Vector3::new(12.0, 3.0, 8.0);
+        let dx = point.x - 10.0;
+        let dy = point.y - (-4.0);
+        let expected_x = sx * (cos * dx + sin * dy);
+        let expected_y = sy * (-sin * dx + cos * dy);
+        let got = clip(matrix, point);
+        assert!((got[0] as f64 - expected_x).abs() < 1e-5);
+        assert!((got[1] as f64 - expected_y).abs() < 1e-5);
+        let expected_z = z_scale * point.z as f32 + z_bias;
+        assert!((got[2] - expected_z).abs() < 1e-5);
+    }
+
+    #[test]
+    fn front_matrix_puts_world_x_right_and_world_z_up() {
+        let view = View {
+            target: Vector3::ZERO,
+            height: 10.0,
+            direction: -Vector3::UNIT_Y,
+            ..View::default()
+        };
+        let bounds = Some((Vector3::new(-5.0, -5.0, -5.0), Vector3::new(5.0, 5.0, 5.0)));
+        let matrix = camera_matrix(&view, 100, 100, -1.0, 1.0, bounds);
+        let right = clip(matrix, Vector3::UNIT_X);
+        let up = clip(matrix, Vector3::UNIT_Z);
+        let near = clip(matrix, Vector3::new(0.0, -5.0, 0.0));
+        let far = clip(matrix, Vector3::new(0.0, 5.0, 0.0));
+        assert!(right[0] > 0.0, "world +X should move right, {right:?}");
+        assert!(up[1] > 0.0, "world +Z should move up, {up:?}");
+        assert!(
+            near[2] < far[2],
+            "the camera side should be nearer, near {near:?} far {far:?}"
+        );
     }
 }
