@@ -42,13 +42,18 @@ pub(crate) fn build_atlas(
         let Some((_, font)) = fonts.iter().find(|(path, _)| path == &run.font_path) else {
             continue;
         };
+        // Keep the raster atlas within a useful size range, but map its pixels
+        // back to the requested world-space text height.  Using the viewport
+        // scale here after clamping makes small text grow and large text shrink.
         let pixel_height = (run.height * pixels_per_world).clamp(4.0, 96.0) as f32;
+        let world_per_raster_pixel = run.height / pixel_height.max(1.0) as f64;
         let mut placed = Vec::new();
+        let width_factor = run.width_factor.abs();
         let mut advance = 0.0f32;
         for ch in run.text.chars() {
             let (metrics, bitmap) = font.rasterize(ch, pixel_height);
             if metrics.width == 0 || metrics.height == 0 {
-                advance += metrics.advance_width * run.width_factor as f32;
+                advance += metrics.advance_width * width_factor as f32;
                 continue;
             }
             if cursor_x + metrics.width as u32 + 1 >= size {
@@ -71,18 +76,17 @@ pub(crate) fn build_atlas(
             placed.push((cursor_x, cursor_y, metrics, advance));
             cursor_x += metrics.width as u32 + 1;
             row_height = row_height.max(metrics.height as u32);
-            advance += metrics.advance_width * run.width_factor as f32;
+            advance += metrics.advance_width * width_factor as f32;
         }
-        let world_per_pixel = 1.0 / pixels_per_world as f32;
-        let width = advance * world_per_pixel;
+        let width = advance as f64 * world_per_raster_pixel;
         let shift_x = match run.horizontal {
             1 | 4 => -width * 0.5,
             2 => -width,
             _ => 0.0,
         };
         let shift_y = match run.vertical {
-            2 | 4 => -run.height as f32 * 0.5,
-            3 => -run.height as f32,
+            2 | 4 => -run.height * 0.5,
+            3 => -run.height,
             _ => 0.0,
         };
         if run.horizontal == 4 {
@@ -91,14 +95,13 @@ pub(crate) fn build_atlas(
         let basis = Matrix3::arbitrary_axis(run.normal);
         let rotation = Matrix3::rotation_z(run.rotation);
         for (x, y, metrics, pen) in placed {
-            let left = pen * world_per_pixel + metrics.xmin as f32 * world_per_pixel + shift_x;
-            let bottom = metrics.ymin as f32 * world_per_pixel + shift_y;
-            let right =
-                left + metrics.width as f32 * run.width_factor.abs() as f32 * world_per_pixel;
-            let top = bottom + metrics.height as f32 * world_per_pixel;
-            let corner = |x: f32, y: f32| {
-                let mut x = x as f64;
-                let mut y = y as f64;
+            let left = pen as f64 * world_per_raster_pixel
+                + metrics.xmin as f64 * width_factor * world_per_raster_pixel
+                + shift_x;
+            let bottom = metrics.ymin as f64 * world_per_raster_pixel + shift_y;
+            let right = left + metrics.width as f64 * width_factor * world_per_raster_pixel;
+            let top = bottom + metrics.height as f64 * world_per_raster_pixel;
+            let corner = |mut x: f64, mut y: f64| {
                 if run.backward {
                     x = -x;
                 }
@@ -151,5 +154,91 @@ fn blit(atlas: &mut [u8], size: u32, x: u32, y: u32, bitmap: &[u8], width: usize
         if end <= atlas.len() && src + width <= bitmap.len() {
             atlas[dst..end].copy_from_slice(&bitmap[src..src + width]);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::Handle;
+
+    fn test_font() -> Option<std::path::PathBuf> {
+        [
+            r"C:\Windows\Fonts\arial.ttf",
+            r"C:\Windows\Fonts\calibri.ttf",
+        ]
+        .into_iter()
+        .map(std::path::PathBuf::from)
+        .find(|path| path.is_file())
+    }
+
+    fn rasterized_height(run: &GlyphRun, view: &View, viewport_px: (u32, u32)) -> f64 {
+        let path = run.font_path.clone();
+        let atlas = build_atlas(std::slice::from_ref(run), view, viewport_px, move |_| {
+            let bytes = std::fs::read(&path).ok()?;
+            fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default()).ok()
+        });
+        let quad = atlas.quads.first().expect("test glyph was not rasterized");
+        let min = quad
+            .corners
+            .iter()
+            .map(|point| point.y)
+            .fold(f64::INFINITY, f64::min);
+        let max = quad
+            .corners
+            .iter()
+            .map(|point| point.y)
+            .fold(f64::NEG_INFINITY, f64::max);
+        max - min
+    }
+
+    #[test]
+    fn clamped_raster_size_preserves_ttf_world_height() {
+        let Some(font_path) = test_font() else {
+            return;
+        };
+        let run = GlyphRun {
+            text: "A".to_string(),
+            anchor: Vector3::ZERO,
+            rotation: 0.0,
+            height: 10.0,
+            width_factor: 1.0,
+            horizontal: 0,
+            vertical: 0,
+            normal: Vector3::UNIT_Z,
+            axis_x: Vector3::UNIT_X,
+            axis_y: Vector3::UNIT_Y,
+            oblique: 0.0,
+            backward: false,
+            upside_down: false,
+            font_path,
+            rgb: [255, 255, 255],
+            aci7: false,
+            opacity: 1.0,
+            source: super::super::scene::EntityRef {
+                handle: Handle::new(1),
+                insert_path: Vec::new(),
+            },
+        };
+        let unclamped = rasterized_height(
+            &run,
+            &View {
+                height: 100.0,
+                ..View::default()
+            },
+            (100, 100),
+        );
+        let clamped = rasterized_height(
+            &run,
+            &View {
+                height: 1.0,
+                ..View::default()
+            },
+            (1000, 1000),
+        );
+        assert!(
+            (unclamped - clamped).abs() < 1.0,
+            "raster clamp changed world glyph height: unclamped={unclamped}, clamped={clamped}"
+        );
     }
 }
