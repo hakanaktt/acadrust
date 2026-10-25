@@ -108,9 +108,11 @@ pub(crate) fn tessellate(document: &SatDocument) -> Tessellation {
             .into_iter()
             .map(|point| place.point(point))
             .collect();
-        if let Some(curve) = analytic_edge(document, &edge) {
-            let curve = super::curves::map_curve(curve, &|point| place.point(point));
-            tess.edge_curves.push(curve);
+        if let Some(curves) = analytic_edge(document, &edge) {
+            for curve in curves {
+                let curve = super::curves::map_curve(curve, &|point| place.point(point));
+                tess.edge_curves.push(curve);
+            }
         } else if sampled.len() >= 2 {
             tess.edges.push(sampled.clone());
         }
@@ -1831,12 +1833,20 @@ fn spline_grid_flat(
 fn analytic_edge(
     document: &SatDocument,
     edge: &crate::entities::acis::SatEdge<'_>,
-) -> Option<super::scene::Curve> {
+) -> Option<Vec<super::scene::Curve>> {
     let curve = document.resolve(edge.curve())?;
     let t0 = edge.start_param();
     let t1 = edge.end_param();
     if !t0.is_finite() || !t1.is_finite() {
         return None;
+    }
+    if let Some(straight) = SatStraightCurve::from_record(curve) {
+        let root = vec3(straight.root_point());
+        let direction = vec3(straight.direction());
+        return Some(vec![super::scene::Curve::Line {
+            start: root + direction * t0,
+            end: root + direction * t1,
+        }]);
     }
     if let Some(ellipse) = SatEllipseCurve::from_record(curve) {
         let center = vec3(ellipse.center());
@@ -1847,13 +1857,33 @@ fn analytic_edge(
         let normal = unit(vec3(ellipse.normal())).unwrap_or(Vector3::UNIT_Z);
         let minor = normal.cross(&major) * ellipse.ratio();
         let sweep = ellipse_edge_sweep(document, edge)?;
-        return Some(super::scene::Curve::Elliptic {
+        return Some(vec![super::scene::Curve::Elliptic {
             center,
             u: major,
             v: minor,
             start: t0,
             sweep,
-        });
+        }]);
+    }
+    if let Some(spline) = SatIntCurve::from_record(curve) {
+        let (degree, knots, control) = spline.bspline_in(document)?;
+        let mut points = Vec::with_capacity(control.len());
+        let mut weights = Vec::with_capacity(control.len());
+        for [x, y, z, weight] in control {
+            let weight = if weight.is_finite() && weight > 1e-12 {
+                weight
+            } else {
+                1.0
+            };
+            points.push(Vector3::new(x / weight, y / weight, z / weight));
+            weights.push(weight);
+        }
+        let (start, end) = spline_edge_parameters(document, edge, degree, &knots)?;
+        let curves =
+            super::curves::nurbs_curves_range(degree, &points, &weights, &knots, start, end);
+        if !curves.is_empty() {
+            return Some(curves);
+        }
     }
     None
 }
@@ -1915,7 +1945,14 @@ fn sample_edge(
     }
     if let Some(spline) = SatIntCurve::from_record(curve) {
         if let Some((degree, knots, control)) = spline.bspline_in(document) {
-            return sample_parameter(t0, t1, tolerance, |parameter| {
+            // The displayed edge is analytic. These points are only the
+            // shared boundary vertices consumed by face triangulation, so
+            // keep them sufficiently dense for neighboring curved faces to
+            // remain watertight.
+            let Some((t0, t1)) = spline_edge_parameters(document, edge, degree, &knots) else {
+                return Vec::new();
+            };
+            return sample_parameter_with_turn(t0, t1, tolerance.min(0.05), 0.08, |parameter| {
                 de_boor(degree, &knots, &control, parameter)
             });
         }
@@ -1925,6 +1962,30 @@ fn sample_edge(
         (Some(point), _) | (_, Some(point)) => vec![point],
         (None, None) => Vec::new(),
     }
+}
+
+fn spline_edge_parameters(
+    document: &SatDocument,
+    edge: &crate::entities::acis::SatEdge<'_>,
+    degree: usize,
+    knots: &[f64],
+) -> Option<(f64, f64)> {
+    let t0 = edge.start_param();
+    let t1 = edge.end_param();
+    if !t0.is_finite() || !t1.is_finite() {
+        return None;
+    }
+    if (t1 - t0).abs() > 1e-12 {
+        return Some((t0, t1));
+    }
+    let start = vertex_point(document, edge.start_vertex())?;
+    let end = vertex_point(document, edge.end_vertex())?;
+    if (start - end).length_squared() > 1e-12 {
+        return None;
+    }
+    let domain_start = *knots.get(degree)?;
+    let domain_end = *knots.get(knots.len().checked_sub(degree + 1)?)?;
+    (domain_end - domain_start > 1e-12).then_some((domain_start, domain_end))
 }
 
 fn vertex_point(

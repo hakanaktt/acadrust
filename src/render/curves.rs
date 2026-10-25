@@ -972,7 +972,63 @@ fn split_range(points: &[[f64; 4]; 4], t0: f64, t1: f64) -> [[f64; 4]; 4] {
     std::array::from_fn(|index| left[index])
 }
 
-fn nurbs_curves(degree: usize, control: &[Vector3], weights: &[f64], knots: &[f64]) -> Vec<Curve> {
+pub(crate) fn nurbs_curves(
+    degree: usize,
+    control: &[Vector3],
+    weights: &[f64],
+    knots: &[f64],
+) -> Vec<Curve> {
+    nurbs_curve_parts(degree, control, weights, knots)
+        .into_iter()
+        .map(|(curve, _, _)| curve)
+        .collect()
+}
+
+/// Convert a NURBS curve to analytic pieces restricted to a parameter range.
+///
+/// The renderer needs the actual edge interval, rather than the complete
+/// support curve stored in an ACIS `intcurve`. Keeping the source interval on
+/// every cubic lets us trim the first and last pieces without turning the
+/// boundary into a sampled polyline.
+pub(crate) fn nurbs_curves_range(
+    degree: usize,
+    control: &[Vector3],
+    weights: &[f64],
+    knots: &[f64],
+    start: f64,
+    end: f64,
+) -> Vec<Curve> {
+    let mut parts = nurbs_curve_parts(degree, control, weights, knots);
+    if parts.is_empty() || !start.is_finite() || !end.is_finite() {
+        return Vec::new();
+    }
+    let reverse = end < start;
+    let low = start.min(end);
+    let high = start.max(end);
+    let mut out = Vec::new();
+    for (curve, part_start, part_end) in parts.drain(..) {
+        let overlap_start = low.max(part_start);
+        let overlap_end = high.min(part_end);
+        if overlap_end - overlap_start <= 1e-12 || part_end - part_start <= 1e-12 {
+            continue;
+        }
+        let from = (overlap_start - part_start) / (part_end - part_start);
+        let to = (overlap_end - part_start) / (part_end - part_start);
+        out.push(trim_curve_parameter(&curve, from, to));
+    }
+    if reverse {
+        out.reverse();
+        out = out.into_iter().map(reverse_curve).collect();
+    }
+    out
+}
+
+fn nurbs_curve_parts(
+    degree: usize,
+    control: &[Vector3],
+    weights: &[f64],
+    knots: &[f64],
+) -> Vec<(Curve, f64, f64)> {
     let count = control.len();
     if count < 2 {
         return Vec::new();
@@ -1026,7 +1082,11 @@ fn nurbs_curves(degree: usize, control: &[Vector3], weights: &[f64], knots: &[f6
     let mut index = 0;
     while index + degree < hom.len() {
         let span = &hom[index..=index + degree];
-        curves.extend(bezier_to_cubics(span, 0));
+        let span_start = knots[index + degree];
+        let span_end = knots[index + degree + 1];
+        if span_end - span_start > 1e-12 {
+            bezier_to_cubics_ranged(span, span_start, span_end, 0, &mut curves);
+        }
         index += degree;
     }
     curves
@@ -1105,13 +1165,121 @@ fn bezier_to_cubics(points: &[[f64; 4]], depth: usize) -> Vec<Curve> {
         3 => bezier_to_cubics(&elevate_quadratic(points), depth),
         4 => vec![cubic_from_hom(points)],
         _ => {
-            if depth >= 12 || cubic_fit_error(points) < 1e-5 {
+            if depth >= 12 || cubic_fit_error(points) < 1e-8 {
                 return vec![fitted_cubic(points)];
             }
             let (left, right) = split_hom(points, 0.5);
             let mut curves = bezier_to_cubics(&left, depth + 1);
             curves.extend(bezier_to_cubics(&right, depth + 1));
             curves
+        }
+    }
+}
+
+fn bezier_to_cubics_ranged(
+    points: &[[f64; 4]],
+    start: f64,
+    end: f64,
+    depth: usize,
+    curves: &mut Vec<(Curve, f64, f64)>,
+) {
+    match points.len() {
+        0 | 1 => {}
+        2 => curves.push((
+            Curve::Line {
+                start: cartesian(points[0]),
+                end: cartesian(points[1]),
+            },
+            start,
+            end,
+        )),
+        3 => bezier_to_cubics_ranged(&elevate_quadratic(points), start, end, depth, curves),
+        4 => curves.push((cubic_from_hom(points), start, end)),
+        _ => {
+            if depth >= 12 || cubic_fit_error(points) < 1e-8 {
+                curves.push((fitted_cubic(points), start, end));
+            } else {
+                let (left, right) = split_hom(points, 0.5);
+                let middle = (start + end) * 0.5;
+                bezier_to_cubics_ranged(&left, start, middle, depth + 1, curves);
+                bezier_to_cubics_ranged(&right, middle, end, depth + 1, curves);
+            }
+        }
+    }
+}
+
+fn reverse_curve(curve: Curve) -> Curve {
+    match curve {
+        Curve::Line { start, end } => Curve::Line {
+            start: end,
+            end: start,
+        },
+        Curve::Elliptic {
+            center,
+            u,
+            v,
+            start,
+            sweep,
+        } => Curve::Elliptic {
+            center,
+            u,
+            v,
+            start: start + sweep,
+            sweep: -sweep,
+        },
+        Curve::Cubic {
+            p0,
+            p1,
+            p2,
+            p3,
+            weights,
+        } => Curve::Cubic {
+            p0: p3,
+            p1: p2,
+            p2: p1,
+            p3: p0,
+            weights: [weights[3], weights[2], weights[1], weights[0]],
+        },
+    }
+}
+
+/// Trim a curve by its native parameter fraction. This differs from
+/// `trim_curve`, whose public callers use arc-length fractions for linetypes.
+/// NURBS span ranges are parameter ranges, so using arc length here would move
+/// the requested edge endpoints on non-uniform spline segments.
+fn trim_curve_parameter(curve: &Curve, start_fraction: f64, end_fraction: f64) -> Curve {
+    let start_fraction = start_fraction.clamp(0.0, 1.0);
+    let end_fraction = end_fraction.clamp(start_fraction, 1.0);
+    match *curve {
+        Curve::Line { start, end } => {
+            let delta = end - start;
+            Curve::Line {
+                start: start + delta * start_fraction,
+                end: start + delta * end_fraction,
+            }
+        }
+        Curve::Elliptic {
+            center,
+            u,
+            v,
+            start,
+            sweep,
+        } => Curve::Elliptic {
+            center,
+            u,
+            v,
+            start: start + sweep * start_fraction,
+            sweep: sweep * (end_fraction - start_fraction),
+        },
+        Curve::Cubic {
+            p0,
+            p1,
+            p2,
+            p3,
+            weights,
+        } => {
+            let hom = cubic_hom([p0, p1, p2, p3], &weights);
+            cubic_from_hom(&split_range(&hom, start_fraction, end_fraction))
         }
     }
 }
@@ -1147,9 +1315,14 @@ fn fitted_cubic_hom(points: &[[f64; 4]]) -> [[f64; 4]; 4] {
 
 fn cubic_fit_error(points: &[[f64; 4]]) -> f64 {
     let fitted = fitted_cubic_hom(points);
-    let actual = de_casteljau(points, 0.5);
-    let approx = de_casteljau(&fitted, 0.5);
-    (cartesian(actual) - cartesian(approx)).length()
+    [0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875]
+        .into_iter()
+        .map(|parameter| {
+            let actual = de_casteljau(points, parameter);
+            let approx = de_casteljau(&fitted, parameter);
+            (cartesian(actual) - cartesian(approx)).length()
+        })
+        .fold(0.0, f64::max)
 }
 
 fn de_casteljau(points: &[[f64; 4]], t: f64) -> [f64; 4] {
@@ -1522,5 +1695,31 @@ mod analytic_tests {
             (radius - 1.0).abs() < 1e-5 && (mid.x - mid.y).abs() < 1e-5,
             "midpoint {mid:?} left the quarter circle"
         );
+    }
+
+    #[test]
+    fn trimmed_nurbs_curve_keeps_parameter_endpoints_and_direction() {
+        let control = vec![
+            Vector3::new(0.0, 0.0, 0.0),
+            Vector3::new(1.0, 3.0, 0.0),
+            Vector3::new(2.0, -2.0, 0.0),
+            Vector3::new(4.0, 4.0, 0.0),
+            Vector3::new(6.0, -1.0, 0.0),
+            Vector3::new(8.0, 0.0, 0.0),
+        ];
+        let knots = vec![0.0; 6]
+            .into_iter()
+            .chain(vec![1.0; 6])
+            .collect::<Vec<_>>();
+        let forward = nurbs_curves_range(5, &control, &[], &knots, 0.2, 0.8);
+        assert!(!forward.is_empty());
+        let start = point_at_fraction(forward.first().unwrap(), 0.0);
+        let end = point_at_fraction(forward.last().unwrap(), 1.0);
+        let reversed = nurbs_curves_range(5, &control, &[], &knots, 0.8, 0.2);
+        assert!(!reversed.is_empty());
+        let reverse_start = point_at_fraction(reversed.first().unwrap(), 0.0);
+        let reverse_end = point_at_fraction(reversed.last().unwrap(), 1.0);
+        assert!((start - reverse_end).length() < 1e-8);
+        assert!((end - reverse_start).length() < 1e-8);
     }
 }

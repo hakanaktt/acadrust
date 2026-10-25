@@ -1794,7 +1794,7 @@ impl Compiler<'_> {
             return;
         };
         let tess = super::tess::tessellate(&document);
-        if tess.triangles.is_empty() && tess.edges.is_empty() {
+        if tess.triangles.is_empty() && tess.edges.is_empty() && tess.edge_curves.is_empty() {
             self.fallback(entity, frame, source);
             return;
         }
