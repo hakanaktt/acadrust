@@ -1404,13 +1404,28 @@ fn facet_torus(
             );
         }
     }
+    // Parameter lines on a torus are exact circles. Emit them as analytic
+    // elliptic curves instead of sampled polylines so wireframe views use the
+    // same GPU curve pipeline as the rest of the solid edges.
     for step in 0..4 {
-        let column = (columns * step) / 4;
-        tess.isolines
-            .push((0..=rows).map(|row| point_at(row, column)).collect());
-        let row = (rows * step) / 4;
-        tess.isolines
-            .push((0..=columns).map(|column| point_at(row, column)).collect());
+        let v = TAU * (step as f64 / 4.0);
+        let radius = major + minor * v.cos();
+        tess.isoline_curves.push(super::scene::Curve::Elliptic {
+            center: center + normal * (minor * v.sin()),
+            u: east * radius,
+            v: north * radius,
+            start: 0.0,
+            sweep: TAU,
+        });
+        let u = TAU * (step as f64 / 4.0);
+        let tube = east * u.cos() + north * u.sin();
+        tess.isoline_curves.push(super::scene::Curve::Elliptic {
+            center: center + tube * major,
+            u: tube * minor,
+            v: normal * minor,
+            start: 0.0,
+            sweep: TAU,
+        });
     }
 }
 
@@ -1777,26 +1792,79 @@ fn facet_spline(
             );
         }
     }
+    // Each parameter line of a tensor-product B-spline surface is itself a
+    // NURBS curve. Extract those curves and hand the GPU the analytic pieces
+    // instead of sampled chords, matching the analytic edge pipeline.
     for step in 0..=4 {
         let u = u0 + (u1 - u0) * (step as f64 / 4.0);
-        tess.isolines.push(
-            (0..=divisions)
-                .map(|row| {
-                    let v = v0 + (v1 - v0) * (row as f64 / divisions as f64);
-                    at(u, v)
-                })
-                .collect(),
-        );
+        if let Some((degree, points, weights, knots)) =
+            spline_isocurve(patch, u, false, place)
+        {
+            tess.isoline_curves.extend(super::curves::nurbs_curves_range(
+                degree, &points, &weights, &knots, v0, v1,
+            ));
+        }
         let v = v0 + (v1 - v0) * (step as f64 / 4.0);
-        tess.isolines.push(
-            (0..=divisions)
-                .map(|column| {
-                    let u = u0 + (u1 - u0) * (column as f64 / divisions as f64);
-                    at(u, v)
-                })
-                .collect(),
-        );
+        if let Some((degree, points, weights, knots)) =
+            spline_isocurve(patch, v, true, place)
+        {
+            tess.isoline_curves.extend(super::curves::nurbs_curves_range(
+                degree, &points, &weights, &knots, u0, u1,
+            ));
+        }
     }
+}
+
+/// Extract one parameter line of a tensor-product B-spline surface as a
+/// rational NURBS curve in world space. `along_u` selects a curve that varies
+/// with U at fixed V; otherwise it varies with V at fixed U.
+fn spline_isocurve(
+    patch: &SatBSplineSurface,
+    fixed: f64,
+    along_u: bool,
+    place: &Placement,
+) -> Option<(usize, Vec<Vector3>, Vec<f64>, Vec<f64>)> {
+    let columns = patch.control_count_u.max(1);
+    let rows = patch.control_count_v.max(1);
+    let (degree, knots, count) = if along_u {
+        (patch.degree_u, patch.u_knots.clone(), columns)
+    } else {
+        (patch.degree_v, patch.v_knots.clone(), rows)
+    };
+    if count < 2 || knots.len() < count + degree + 1 {
+        return None;
+    }
+    let (cross_degree, cross_knots) = if along_u {
+        (patch.degree_v, patch.v_knots.as_slice())
+    } else {
+        (patch.degree_u, patch.u_knots.as_slice())
+    };
+    let mut points = Vec::with_capacity(count);
+    let mut weights = Vec::with_capacity(count);
+    for index in 0..count {
+        let controls: Vec<[f64; 4]> = if along_u {
+            (0..rows)
+                .map(|row| patch.control_points.get(row * columns + index).copied())
+                .collect::<Option<_>>()?
+        } else {
+            (0..columns)
+                .map(|column| patch.control_points.get(index * columns + column).copied())
+                .collect::<Option<_>>()?
+        };
+        let point = de_boor_homogeneous(cross_degree, cross_knots, &controls, fixed);
+        let weight = if point[3].abs() > 1e-12 {
+            point[3]
+        } else {
+            1.0
+        };
+        points.push(place.point(Vector3::new(
+            point[0] / weight,
+            point[1] / weight,
+            point[2] / weight,
+        )));
+        weights.push(weight);
+    }
+    Some((degree, points, weights, knots))
 }
 
 fn spline_grid_flat(
@@ -2371,6 +2439,82 @@ fn unit(value: Vector3) -> Option<Vector3> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn full_torus_isoline_curves_are_analytic_and_on_the_surface() {
+        let document = crate::entities::acis::primitives::build_torus([0.0; 3], 6.0, 1.5);
+        let tess = tessellate(&document);
+        assert!(tess.isolines.is_empty(), "torus still samples parameter lines");
+        assert_eq!(tess.isoline_curves.len(), 8);
+        for curve in &tess.isoline_curves {
+            let super::super::scene::Curve::Elliptic {
+                center,
+                u,
+                v,
+                start,
+                sweep,
+            } = curve
+            else {
+                panic!("torus isoline is not analytic: {curve:?}");
+            };
+            assert_eq!(*start, 0.0);
+            assert!((*sweep - TAU).abs() < 1e-9);
+            for step in 0..16 {
+                let t = TAU * step as f64 / 16.0;
+                let point = *center + *u * t.cos() + *v * t.sin();
+                let radial = point.x.hypot(point.y);
+                let tube = (radial - 6.0).hypot(point.z);
+                assert!((tube - 1.5).abs() < 1e-9, "isoline off the torus: {point:?}");
+            }
+        }
+    }
+
+    fn bilinear_patch() -> SatBSplineSurface {
+        SatBSplineSurface {
+            rational: false,
+            degree_u: 1,
+            degree_v: 1,
+            u_closure: None,
+            v_closure: None,
+            u_singularity: None,
+            v_singularity: None,
+            u_knots: vec![0.0, 0.0, 1.0, 1.0],
+            v_knots: vec![0.0, 0.0, 1.0, 1.0],
+            control_count_u: 2,
+            control_count_v: 2,
+            control_points: vec![
+                [0.0, 0.0, 0.0, 1.0],
+                [4.0, 0.0, 0.0, 1.0],
+                [0.0, 4.0, 0.0, 1.0],
+                [4.0, 4.0, 2.0, 1.0],
+            ],
+            fit_tolerance: None,
+        }
+    }
+
+    #[test]
+    fn spline_isocurve_extracts_an_exact_parameter_line() {
+        let document = SatDocument::new_body();
+        let place = Placement::from_document(&document);
+        let patch = bilinear_patch();
+        let (degree, points, _weights, _knots) =
+            spline_isocurve(&patch, 0.5, true, &place).expect("U isocurve");
+        assert_eq!(degree, 1);
+        assert_eq!(points.len(), 2);
+        assert!((points[0] - Vector3::new(0.0, 2.0, 0.0)).length() < 1e-9);
+        assert!((points[1] - Vector3::new(4.0, 2.0, 1.0)).length() < 1e-9);
+    }
+
+    #[test]
+    fn spline_faces_emit_analytic_isocurves_instead_of_polylines() {
+        let document = SatDocument::new_body();
+        let place = Placement::from_document(&document);
+        let mut tess = Tessellation::new();
+        facet_spline(&bilinear_patch(), Sense::Forward, &place, 1e-3, &mut tess);
+        assert!(!tess.triangles.is_empty());
+        assert!(tess.isolines.is_empty(), "spline still samples parameter lines");
+        assert!(!tess.isoline_curves.is_empty());
+    }
 
     #[test]
     fn torus_band_preserves_shared_boundary_chords() {
