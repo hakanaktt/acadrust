@@ -169,7 +169,9 @@ fn draw_capital_s(pen: &mut Pen) {
         32.0 + 18.0 * lower.cos(),
         18.0 + 20.0 * lower.sin(),
     );
-    pen.earc(32.0, 18.0, 18.0, 20.0, 145.0, 378.0);
+    // End on the lower-right terminal. A sweep past 360 climbs the right side
+    // and closes the lower counter.
+    pen.earc(32.0, 18.0, 18.0, 20.0, 145.0, 328.0);
 }
 
 fn glyph(ch: char, advance: i32, pen: Pen) -> Glyph {
@@ -429,10 +431,11 @@ fn bases() -> Vec<Glyph> {
     let lower_d = glyph('d', 56, pen);
 
     pen = Pen::new();
-    // Start at the upper-right terminal, travel the long way around the bowl,
-    // and close the counter with a straight bar back to the left side.
-    pen.earc(28.0, 26.0, 16.0, 27.0, 32.0, 360.0);
-    pen.ln(12.0, 26.0);
+    // Open bowl in the same family as c. The bar crosses the counter and
+    // stops in the right-hand opening.
+    pen.earc(28.0, 26.0, 18.0, 27.0, 48.0, 312.0);
+    pen.mv(10.2, 30.0);
+    pen.ln(40.0, 30.0);
     let lower_e = glyph('e', 54, pen);
 
     pen = Pen::new();
@@ -1750,6 +1753,35 @@ mod tests {
         assert!(
             top(&acute) > top(&dotted) + 1.0,
             "accented i should rise above the tittle"
+        );
+    }
+
+    #[test]
+    fn e_and_s_keep_their_openings() {
+        let font = font();
+        let (strokes, _) = font.glyph_for_char('e');
+        let bar = strokes.iter().any(|stroke| {
+            let flat = stroke.windows(2).any(|pair| {
+                (pair[1].y - pair[0].y).abs() < 1.0 && (pair[1].x - pair[0].x).abs() > 20.0
+            });
+            flat
+        });
+        assert!(bar, "e needs a crossbar");
+        let closed_on_the_right = strokes.iter().flatten().any(|point| {
+            point.x > 42.0 && (18.0..40.0).contains(&point.y)
+        });
+        assert!(!closed_on_the_right, "e bowl should stay open on the right");
+
+        let (strokes, _) = font.glyph_for_char('S');
+        let lower_terminal = strokes
+            .iter()
+            .flatten()
+            .filter(|point| point.x > 40.0 && point.y < 36.0)
+            .map(|point| point.y)
+            .fold(0.0_f64, f64::max);
+        assert!(
+            lower_terminal < 16.0,
+            "S lower terminal climbed to {lower_terminal}"
         );
     }
 
