@@ -399,4 +399,5 @@ mod tests {
         assert_eq!(strokes[0][0], Vector2::new(0.0, 0.0));
         assert_eq!(strokes[0][1], Vector2::new(1.0, 0.0));
     }
+
 }
