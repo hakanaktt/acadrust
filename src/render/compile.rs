@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::document::CadDocument;
-use crate::entities::{EntityType, Insert, LwPolyline};
+use crate::entities::{EntityType, Insert, LwPolyline, Text};
 use crate::types::{Handle, Matrix3, Matrix4, Transform, Vector2, Vector3};
 
 use super::curves::{
@@ -1253,7 +1253,10 @@ impl Compiler<'_> {
         path: &[crate::types::Handle],
         source: EntityRef,
     ) {
-        let parts = entity.explode();
+        let mut parts = entity.explode();
+        if let EntityType::MText(mtext) = entity {
+            self.layout_mtext_parts(mtext, &mut parts);
+        }
         if parts.is_empty() {
             self.fallback(entity, frame, source);
             return;
@@ -1262,6 +1265,101 @@ impl Compiler<'_> {
             self.draw(part, frame, transform, path);
         }
         let _ = source;
+    }
+
+    fn layout_mtext_parts(&mut self, mtext: &crate::entities::MText, parts: &mut [EntityType]) {
+        let normal = if mtext.normal.length_squared() > 1e-20 {
+            mtext.normal.normalize()
+        } else {
+            Vector3::UNIT_Z
+        };
+        let fallback = Vector3::new(mtext.rotation.cos(), mtext.rotation.sin(), 0.0);
+        let raw_x = mtext.dwg_x_direction.unwrap_or(fallback);
+        let projected = raw_x - normal * raw_x.dot(&normal);
+        let x_axis = if projected.length_squared() > 1e-20 {
+            projected.normalize()
+        } else {
+            (Matrix3::arbitrary_axis(normal) * Vector3::UNIT_X).normalize()
+        };
+        let y_axis = normal.cross(&x_axis).normalize();
+
+        let mut row_y: Option<f64> = None;
+        let mut row_start = Vector3::ZERO;
+        let mut advance = 0.0;
+        for part in parts {
+            let EntityType::Text(text) = part else {
+                continue;
+            };
+            let relative = text.insertion_point - mtext.insertion_point;
+            let y = relative.dot(&y_axis);
+            if row_y.is_none_or(|previous| (previous - y).abs() > 1e-7) {
+                row_y = Some(y);
+                row_start = text.insertion_point;
+                advance = 0.0;
+            }
+            text.insertion_point = row_start + x_axis * advance;
+            if text.alignment_point.is_some() {
+                text.alignment_point = Some(text.insertion_point);
+            }
+            advance += self.text_advance(text);
+        }
+    }
+
+    fn text_advance(&mut self, text: &Text) -> f64 {
+        let height = text.height.abs();
+        if height <= 1e-12 {
+            return 0.0;
+        }
+        let entity_width = if text.width_factor == 0.0 {
+            1.0
+        } else {
+            text.width_factor
+        };
+        let style_width = self
+            .doc
+            .text_styles
+            .get(&text.style)
+            .map(|style| {
+                if style.width_factor == 0.0 {
+                    1.0
+                } else {
+                    style.width_factor
+                }
+            })
+            .unwrap_or(1.0);
+        let width_factor = entity_width * style_width;
+        let fallback =
+            crate::entities::text::estimated_width_in_heights(&text.value) * height * width_factor;
+        let Some(face) = self.font_for(&text.style) else {
+            return fallback;
+        };
+        match face {
+            FaceFont::Shape(font) => {
+                text.value
+                    .chars()
+                    .map(|ch| font.glyph_for_char(ch).1)
+                    .sum::<f64>()
+                    * height
+                    / font.above()
+                    * width_factor
+            }
+            FaceFont::TrueType(path) => {
+                let Some(bytes) = std::fs::read(path).ok() else {
+                    return fallback;
+                };
+                let Some(font) =
+                    fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default()).ok()
+                else {
+                    return fallback;
+                };
+                text.value
+                    .chars()
+                    .map(|ch| font.metrics(ch, 1.0).advance_width as f64)
+                    .sum::<f64>()
+                    * height
+                    * width_factor
+            }
+        }
     }
 
     fn ordered_handles(&self, record: &crate::tables::BlockRecord) -> Vec<crate::types::Handle> {

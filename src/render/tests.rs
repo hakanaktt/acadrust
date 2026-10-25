@@ -5,9 +5,9 @@ use crate::entities::ViewportRenderMode;
 use crate::entities::{
     Arc, AttributeDefinition, BoundaryEdge, BoundaryPath, Circle, EntityCommon, EntityType,
     ExtendedEntity, ExtendedEntityData, Face3D, Hatch, Insert, InvisibleEdgeFlags, Line,
-    LwPolyline, LwVertex, Point, Polyline, Polyline2D, Polyline3D, PolylineEdge, SectionObjectData,
-    SectionSymbol, SectionSymbolPoint, SectionViewStyle, Solid, Spline, Text, Vertex2D, ViewBorder,
-    Viewport,
+    LwPolyline, LwVertex, MText, Point, Polyline, Polyline2D, Polyline3D, PolylineEdge,
+    SectionObjectData, SectionSymbol, SectionSymbolPoint, SectionViewStyle, Solid, Spline, Text,
+    Vertex2D, ViewBorder, Viewport,
 };
 use crate::objects::{ObjectType, SortEntitiesTable, VisualStyle};
 use crate::tables::{BlockRecord, Layer, LineType, LineTypeElement, TableEntry, TextStyle};
@@ -778,6 +778,43 @@ fn text_style_defaults_are_applied_to_strokes() {
     assert!((mirrored_bounds.0 - 12.0).abs() < 1e-6);
     let slanted_bounds = bounds(slanted_handle);
     assert!((slanted_bounds.1 - 54.0).abs() < 1e-6);
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn formatted_mtext_uses_font_advances_between_color_runs() {
+    let dir = std::env::temp_dir().join("acadrust-render-mtext-font");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("mini.shp"),
+        "*0,4,TEST\n6,2,0,0\n*65,20,A\n1,8,(8,0),8,(0,6),0\n",
+    )
+    .unwrap();
+
+    let mut doc = doc();
+    doc.text_styles.get_mut("Standard").unwrap().font_file = "mini".to_string();
+    let mtext = MText::with_value(r"A{\C1;A}A", Vector3::ZERO).with_height(6.0);
+    doc.add_entity(EntityType::MText(Box::new(mtext))).unwrap();
+    let mut options = CompileOptions::default();
+    options.font_dirs.push(dir.clone());
+    let scene = compile(&doc, &options);
+    let mut starts: Vec<f64> = scene
+        .strokes
+        .iter()
+        .map(|stroke| {
+            stroke
+                .points
+                .iter()
+                .map(|point| point.x)
+                .fold(f64::INFINITY, f64::min)
+        })
+        .collect();
+    starts.sort_by(f64::total_cmp);
+    assert_eq!(starts.len(), 3);
+    assert!((starts[0] - 0.0).abs() < 1e-6, "starts={starts:?}");
+    assert!((starts[1] - 8.0).abs() < 1e-6, "starts={starts:?}");
+    assert!((starts[2] - 16.0).abs() < 1e-6, "starts={starts:?}");
 
     let _ = std::fs::remove_dir_all(dir);
 }
