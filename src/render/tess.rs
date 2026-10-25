@@ -177,13 +177,15 @@ fn facet_face(
         if loops.is_empty() {
             facet_sphere(&sphere, sense, place, tolerance, tess);
         } else {
-            facet_trimmed_sphere(&sphere, &loops, sense, place, tess);
+            facet_trimmed_sphere(&sphere, &loops, sense, place, tolerance, tess);
         }
         return;
     }
     if let Some(torus) = SatTorusSurface::from_record(surface) {
         if loops.is_empty() {
             facet_torus(&torus, sense, place, tolerance, tess);
+        } else {
+            facet_trimmed_torus(&torus, &loops, sense, place, tolerance, tess);
         }
         return;
     }
@@ -359,34 +361,107 @@ fn triangulate_cone_loop(
         return None;
     }
 
-    let mut flat = Vec::with_capacity(parameters.len() * 2);
-    for (angle, height) in &parameters {
-        flat.extend([*angle, *height]);
+    let (parameters, indices, sources) = triangulate_parameters(
+        &[parameters],
+        |angle, height| frame.point_at(angle, height),
+        tolerance,
+        Some(&[points.to_vec()]),
+    )?;
+    let mut triangles = Vec::with_capacity(indices.len() * 3);
+    let mut normals = Vec::with_capacity(indices.len() * 3);
+    for triangle in indices {
+        for index in triangle {
+            let (angle, height) = parameters[index];
+            let point = sources[index].unwrap_or_else(|| frame.point_at(angle, height));
+            triangles.push(point);
+            normals.push(frame.normal_at(point, flip));
+        }
     }
-    let indices = earcutr::earcut(&flat, &[], 2).ok()?;
+    Some((triangles, normals))
+}
+
+/// Refine a trimmed parameter polygon without changing its sampled boundaries.
+/// Each inserted interior midpoint is shared by all incident triangles.
+fn triangulate_parameters(
+    loops: &[Vec<(f64, f64)>],
+    point_at: impl Fn(f64, f64) -> Vector3,
+    tolerance: f64,
+    source_loops: Option<&[Vec<Vector3>]>,
+) -> Option<(Vec<(f64, f64)>, Vec<[usize; 3]>, Vec<Option<Vector3>>)> {
+    let area = |ring: &Vec<(f64, f64)>| {
+        (0..ring.len())
+            .map(|index| {
+                let (u0, v0) = ring[index];
+                let (u1, v1) = ring[(index + 1) % ring.len()];
+                u0 * v1 - u1 * v0
+            })
+            .sum::<f64>()
+            .abs()
+    };
+    let outer = (0..loops.len())
+        .filter(|&index| loops[index].len() >= 3)
+        .max_by(|&left, &right| area(&loops[left]).total_cmp(&area(&loops[right])))?;
+    let mut parameters = Vec::new();
+    let mut sources = Vec::new();
+    let mut flat = Vec::new();
+    let mut holes = Vec::new();
+    let mut boundary_edges = std::collections::HashSet::new();
+    for index in std::iter::once(outer).chain((0..loops.len()).filter(|&index| index != outer)) {
+        let ring = &loops[index];
+        if ring.len() < 3 {
+            continue;
+        }
+        let start = parameters.len();
+        if start > 0 {
+            holes.push(start);
+        }
+        for (offset, &(u, v)) in ring.iter().enumerate() {
+            flat.extend([u, v]);
+            parameters.push((u, v));
+            sources.push(
+                source_loops
+                    .and_then(|loops| loops.get(index))
+                    .and_then(|ring| ring.get(offset))
+                    .copied(),
+            );
+        }
+        for offset in 0..ring.len() {
+            boundary_edges.insert(edge_key(start + offset, start + (offset + 1) % ring.len()));
+        }
+    }
+    let indices = earcutr::earcut(&flat, &holes, 2).ok()?;
     if indices.is_empty() {
         return None;
     }
 
-    let mut uv_triangles = indices
+    let uv_triangles = indices
         .chunks_exact(3)
         .map(|triangle| [triangle[0], triangle[1], triangle[2]])
+        // Nearly collinear trims can leave zero-area parameter triangles.
+        // On a curved surface their three evaluated points need not be
+        // collinear, so emitting them would add spurious folded faces.
+        .filter(|triangle| {
+            let [a, b, c] = triangle.map(|index| parameters[index]);
+            let u = (b.0 - a.0).abs().max((c.0 - a.0).abs());
+            let v = (b.1 - a.1).abs().max((c.1 - a.1).abs());
+            let cross = (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0);
+            cross.abs() > 1e-12 * u.max(v).powi(2)
+        })
         .collect::<Vec<_>>();
-    let boundary_edges = (0..parameters.len())
-        .map(|index| edge_key(index, (index + 1) % parameters.len()))
-        .collect::<std::collections::HashSet<_>>();
     let tolerance = tolerance.abs().max(1e-6);
     let max_vertices = 16_384;
 
+    let mut uv_triangles = uv_triangles;
+
     // Split only interior edges, sharing every inserted midpoint between the
     // incident triangles so the refined mesh remains conforming.
-    for _ in 0..12 {
+    for _ in 0..16 {
         let mut split_edges = std::collections::HashSet::new();
         for &[a, b, c] in &uv_triangles {
             let corners = [a, b, c];
             let world = corners.map(|index| {
                 let (angle, height) = parameters[index];
-                frame.point_at(angle, height)
+                point_at(angle, height)
             });
             let mut longest = None;
             for side in 0..3 {
@@ -395,7 +470,7 @@ fn triangulate_cone_loop(
                 let key = edge_key(first, second);
                 let (u0, h0) = parameters[first];
                 let (u1, h1) = parameters[second];
-                let curved_midpoint = frame.point_at((u0 + u1) * 0.5, (h0 + h1) * 0.5);
+                let curved_midpoint = point_at((u0 + u1) * 0.5, (h0 + h1) * 0.5);
                 let chord_midpoint = (world[side] + world[(side + 1) % 3]) * 0.5;
                 let error = (curved_midpoint - chord_midpoint).length();
                 if !boundary_edges.contains(&key) && error > tolerance {
@@ -412,8 +487,10 @@ fn triangulate_cone_loop(
             let center_uv = corners
                 .iter()
                 .map(|index| parameters[*index])
-                .fold((0.0, 0.0), |sum, point| (sum.0 + point.0 / 3.0, sum.1 + point.1 / 3.0));
-            let curved_center = frame.point_at(center_uv.0, center_uv.1);
+                .fold((0.0, 0.0), |sum, point| {
+                    (sum.0 + point.0 / 3.0, sum.1 + point.1 / 3.0)
+                });
+            let curved_center = point_at(center_uv.0, center_uv.1);
             let chord_center = (world[0] + world[1] + world[2]) / 3.0;
             let center_error = (curved_center - chord_center).length();
             if center_error > tolerance {
@@ -433,12 +510,12 @@ fn triangulate_cone_loop(
             let (u1, h1) = parameters[second];
             let index = parameters.len();
             parameters.push(((u0 + u1) * 0.5, (h0 + h1) * 0.5));
+            sources.push(None);
             midpoint_indices.insert((first, second), index);
         }
 
-        let midpoint = |first: usize, second: usize| {
-            midpoint_indices.get(&edge_key(first, second)).copied()
-        };
+        let midpoint =
+            |first: usize, second: usize| midpoint_indices.get(&edge_key(first, second)).copied();
         let mut refined = Vec::with_capacity(uv_triangles.len() * 2);
         for [a, b, c] in uv_triangles {
             let mab = midpoint(a, b);
@@ -458,28 +535,15 @@ fn triangulate_cone_loop(
                 (Some(ab), None, Some(ca)) => {
                     refined.extend([[a, ab, ca], [ab, b, c], [ab, c, ca]]);
                 }
-                (Some(ab), Some(bc), Some(ca)) => refined.extend([
-                    [a, ab, ca],
-                    [ab, b, bc],
-                    [ca, bc, c],
-                    [ab, bc, ca],
-                ]),
+                (Some(ab), Some(bc), Some(ca)) => {
+                    refined.extend([[a, ab, ca], [ab, b, bc], [ca, bc, c], [ab, bc, ca]])
+                }
             }
         }
         uv_triangles = refined;
     }
 
-    let mut triangles = Vec::with_capacity(uv_triangles.len() * 3);
-    let mut normals = Vec::with_capacity(uv_triangles.len() * 3);
-    for triangle in uv_triangles {
-        for index in triangle {
-            let (angle, height) = *parameters.get(index)?;
-            let point = frame.point_at(angle, height);
-            triangles.push(point);
-            normals.push(frame.normal_at(point, flip));
-        }
-    }
-    Some((triangles, normals))
+    Some((parameters, uv_triangles, sources))
 }
 
 fn edge_key(first: usize, second: usize) -> (usize, usize) {
@@ -519,6 +583,7 @@ fn facet_cone(
     tess: &mut Tessellation,
 ) {
     let frame = ConeFrame::from_surface(cone, place);
+    let tolerance = tolerance.min(frame.major.length().max(frame.minor.length()) * 0.001);
     let mut rings = Vec::new();
     let mut apices = Vec::new();
     for loop_ in loops {
@@ -544,7 +609,8 @@ fn facet_cone(
             .map(|point| frame.height(*point))
             .fold(f64::NEG_INFINITY, f64::max);
         if height_max - height_min <= 1e-8 {
-            let normal = place.normal(oriented(frame.axis, sense));
+            let normal = unit(frame.major.cross(&frame.minor)).unwrap_or(Vector3::UNIT_Z);
+            let normal = oriented(normal, sense);
             let (triangles, normals) = triangulate_plane(&rings, normal);
             tess.triangles.extend(triangles);
             tess.normals.extend(normals);
@@ -677,10 +743,11 @@ struct ConeFrame {
 
 impl ConeFrame {
     fn from_surface(cone: &SatConeSurface<'_>, place: &Placement) -> Self {
-        let axis = unit(place.normal(vec3(cone.axis()))).unwrap_or(Vector3::UNIT_Z);
-        let major = place.point(vec3(cone.major_axis())) - place.point(Vector3::ZERO);
+        let local_axis = unit(vec3(cone.axis())).unwrap_or(Vector3::UNIT_Z);
+        let major = vec3(cone.major_axis());
+        let major = major - local_axis * major.dot(&local_axis);
         let major = if major.length_squared() <= 1e-18 {
-            plane_axis(axis) * cone.radius().abs().max(1e-6)
+            plane_axis(local_axis) * cone.radius().abs().max(1e-6)
         } else {
             major
         };
@@ -689,20 +756,28 @@ impl ConeFrame {
         } else {
             cone.ratio()
         };
-        let minor = axis.cross(&major) * ratio;
+        let radius = major.length().max(1e-9);
+        let minor = local_axis.cross(&major) * ratio;
         Self {
             center: place.point(vec3(cone.center())),
-            axis,
-            major,
-            minor,
+            axis: place.linear * local_axis,
+            major: place.linear * major,
+            minor: place.linear * minor,
             sin_half: cone.sin_half_angle(),
             cos_half: cone.cos_half_angle(),
-            radius: major.length().max(1e-9),
+            radius,
         }
     }
 
     fn height(&self, point: Vector3) -> f64 {
-        (point - self.center).dot(&self.axis)
+        // The transformed axis need not be perpendicular to the ellipse
+        // plane after shear. Its dual recovers the original local height.
+        let plane = self.major.cross(&self.minor);
+        let denominator = self.axis.dot(&plane);
+        if denominator.abs() <= 1e-18 {
+            return 0.0;
+        }
+        (point - self.center).dot(&plane) / denominator
     }
 
     fn angle(&self, point: Vector3) -> f64 {
@@ -715,11 +790,9 @@ impl ConeFrame {
             return radial.dot(&self.minor).atan2(radial.dot(&self.major));
         }
         let major_component =
-            (radial.dot(&self.major) * minor_norm - radial.dot(&self.minor) * cross)
-                / determinant;
+            (radial.dot(&self.major) * minor_norm - radial.dot(&self.minor) * cross) / determinant;
         let minor_component =
-            (radial.dot(&self.minor) * major_norm - radial.dot(&self.major) * cross)
-                / determinant;
+            (radial.dot(&self.minor) * major_norm - radial.dot(&self.major) * cross) / determinant;
         minor_component.atan2(major_component)
     }
 
@@ -753,6 +826,9 @@ impl ConeFrame {
         let tangent_height = self.axis + radial * (self.sin_half / (cosine * self.radius));
         let mut normal = unit(tangent_angle.cross(&tangent_height))
             .unwrap_or(unit(radial).unwrap_or(Vector3::UNIT_X));
+        if self.major.cross(&self.minor).dot(&self.axis) < 0.0 {
+            normal = normal * -1.0;
+        }
         if flip {
             normal = normal * -1.0;
         }
@@ -837,6 +913,8 @@ fn rotate_angular_ring(ring: &[(f64, Vector3)], start: f64) -> Vec<(f64, Vector3
             rotated.push((angle, *point));
         }
     }
+    rotated.sort_by(|a, b| a.0.total_cmp(&b.0));
+    rotated.dedup_by(|a, b| (a.0 - b.0).abs() < 1e-10);
     rotated.push((end, start_point));
     rotated
 }
@@ -864,44 +942,42 @@ fn facet_sphere(
     tolerance: f64,
     tess: &mut Tessellation,
 ) {
-    let center = place.point(vec3(sphere.center()));
-    let radius = (place.point(vec3(sphere.center()) + vec3(sphere.u_direction())) - center)
-        .length()
-        .max(sphere.radius().abs() * place.linear.m[0][0].abs().max(1e-9));
-    let radius = if sphere.radius().abs() > 1e-12 {
-        (place.point(
-            vec3(sphere.center())
-                + unit(vec3(sphere.u_direction())).unwrap_or(Vector3::UNIT_X)
-                    * sphere.radius().abs(),
-        ) - center)
-            .length()
-    } else {
-        radius
-    };
-    let pole = unit(place.normal(vec3(sphere.pole()))).unwrap_or(Vector3::UNIT_Z);
-    let east = unit(place.normal(vec3(sphere.u_direction()))).unwrap_or(plane_axis(pole));
+    let local_center = vec3(sphere.center());
+    let center = place.point(local_center);
+    let radius = sphere.radius().abs();
+    let pole = unit(vec3(sphere.pole())).unwrap_or(Vector3::UNIT_Z);
+    let u_direction = vec3(sphere.u_direction());
+    let east =
+        unit(u_direction - pole * u_direction.dot(&pole)).unwrap_or_else(|| plane_axis(pole));
     let north = unit(pole.cross(&east)).unwrap_or(Vector3::UNIT_Y);
     let flip = sense == Sense::Reversed;
-    let step = chord_step(radius, tolerance);
+    let placement_stretch = place
+        .linear
+        .m
+        .iter()
+        .flatten()
+        .map(|value| value * value)
+        .sum::<f64>()
+        .sqrt();
+    let tolerance = tolerance.min(radius * placement_stretch * 0.001);
+    let step = chord_step(radius * placement_stretch, tolerance);
     let columns = (TAU / step).ceil().max(8.0) as usize;
     let rows = (PI / step).ceil().max(4.0) as usize;
-    let point_at = |row: usize, column: usize| -> Vector3 {
+    let direction_at = |row: usize, column: usize| -> Vector3 {
         let v = PI * (row as f64 / rows as f64);
         let u = TAU * (column as f64 / columns as f64);
-        center
-            + east * (v.sin() * u.cos() * radius)
-            + north * (v.sin() * u.sin() * radius)
-            + pole * (v.cos() * radius)
+        east * (v.sin() * u.cos()) + north * (v.sin() * u.sin()) + pole * v.cos()
     };
-    let normal_at = |point: Vector3| {
-        let mut normal = unit(point - center).unwrap_or(pole);
+    let point_at = |row, column| place.point(local_center + direction_at(row, column) * radius);
+    let normal_at = |direction: Vector3| {
+        let mut normal = place.normal(direction);
         if flip {
             normal = normal * -1.0;
         }
         normal
     };
     for column in 0..columns {
-        let south = center + pole * radius;
+        let south = place.point(local_center + pole * radius);
         let a = point_at(1, column);
         let b = point_at(1, column + 1);
         push_triangle(
@@ -909,11 +985,11 @@ fn facet_sphere(
             south,
             b,
             a,
-            normal_at(south),
-            normal_at(b),
-            normal_at(a),
+            normal_at(pole),
+            normal_at(direction_at(1, column + 1)),
+            normal_at(direction_at(1, column)),
         );
-        let north_pole = center - pole * radius;
+        let north_pole = place.point(local_center - pole * radius);
         let c = point_at(rows - 1, column);
         let d = point_at(rows - 1, column + 1);
         push_triangle(
@@ -921,9 +997,9 @@ fn facet_sphere(
             north_pole,
             c,
             d,
-            normal_at(north_pole),
-            normal_at(c),
-            normal_at(d),
+            normal_at(-pole),
+            normal_at(direction_at(rows - 1, column)),
+            normal_at(direction_at(rows - 1, column + 1)),
         );
     }
     for row in 1..rows.saturating_sub(1) {
@@ -932,16 +1008,20 @@ fn facet_sphere(
             let b = point_at(row, column + 1);
             let c = point_at(row + 1, column + 1);
             let d = point_at(row + 1, column);
-            push_triangle(tess, a, b, c, normal_at(a), normal_at(b), normal_at(c));
-            push_triangle(tess, a, c, d, normal_at(a), normal_at(c), normal_at(d));
+            let na = normal_at(direction_at(row, column));
+            let nb = normal_at(direction_at(row, column + 1));
+            let nc = normal_at(direction_at(row + 1, column + 1));
+            let nd = normal_at(direction_at(row + 1, column));
+            push_triangle(tess, a, b, c, na, nb, nc);
+            push_triangle(tess, a, c, d, na, nc, nd);
         }
     }
     for step in 0..4 {
         let u = TAU * (step as f64 / 4.0);
         tess.isoline_curves.push(super::scene::Curve::Elliptic {
             center,
-            u: pole * radius,
-            v: (east * u.cos() + north * u.sin()) * radius,
+            u: place.linear * (pole * radius),
+            v: place.linear * ((east * u.cos() + north * u.sin()) * radius),
             start: 0.0,
             sweep: PI,
         });
@@ -950,9 +1030,9 @@ fn facet_sphere(
         let v = PI * (step as f64 / 4.0);
         let radial = v.sin() * radius;
         tess.isoline_curves.push(super::scene::Curve::Elliptic {
-            center: center + pole * (v.cos() * radius),
-            u: east * radial,
-            v: north * radial,
+            center: place.point(local_center + pole * (v.cos() * radius)),
+            u: place.linear * (east * radial),
+            v: place.linear * (north * radial),
             start: 0.0,
             sweep: TAU,
         });
@@ -964,53 +1044,200 @@ fn facet_trimmed_sphere(
     loops: &[Vec<Vector3>],
     sense: Sense,
     place: &Placement,
+    tolerance: f64,
     tess: &mut Tessellation,
 ) {
-    let center = place.point(vec3(sphere.center()));
-    let radius = sphere.radius().abs().max(1e-9);
-    let flip = sense == Sense::Reversed;
-    for loop_ in loops {
-        if loop_.len() < 3 {
-            continue;
-        }
-        let mean = loop_
+    let Some(inverse) = place.linear.inverse() else {
+        return;
+    };
+    let center = vec3(sphere.center());
+    let radius = sphere.radius().abs();
+    if radius <= 1e-12 {
+        return;
+    }
+    let stretch = place
+        .linear
+        .m
+        .iter()
+        .map(|row| row.iter().map(|value| value * value).sum::<f64>().sqrt())
+        .fold(0.0_f64, f64::max);
+    let tolerance = tolerance.min(radius * stretch * 0.001);
+
+    // A stereographic chart centered on the trim avoids the sphere's
+    // longitude seam and remains regular at either original pole.
+    let mut radial_loops = Vec::new();
+    let mut boundaries = Vec::new();
+    let mut directions = Vec::new();
+    for ring in loops.iter().filter(|ring| ring.len() >= 3) {
+        let local = ring
             .iter()
-            .copied()
-            .fold(Vector3::ZERO, |sum, point| sum + point)
-            / loop_.len() as f64;
-        let mut direction = mean - center;
-        if direction.length_squared() <= 1e-18 {
-            direction = unit(place.normal(vec3(sphere.pole()))).unwrap_or(Vector3::UNIT_Z);
+            .map(|point| inverse * (*point - place.translation))
+            .collect::<Vec<_>>();
+        let radial = local
+            .iter()
+            .map(|point| unit(*point - center).unwrap_or(Vector3::UNIT_Z))
+            .collect::<Vec<_>>();
+        directions.extend(radial.iter().copied());
+        radial_loops.push(radial);
+        boundaries.push(ring.clone());
+    }
+    if radial_loops.is_empty() {
+        return;
+    }
+    let mut chart_pole = directions
+        .iter()
+        .copied()
+        .fold(Vector3::ZERO, |sum, direction| sum + direction);
+    if chart_pole.length_squared() <= 1e-18 {
+        chart_pole = vec3(sphere.pole());
+    }
+    let clearance = |axis: Vector3| {
+        directions
+            .iter()
+            .map(|p| 1.0 + p.dot(&axis))
+            .fold(f64::INFINITY, f64::min)
+    };
+    // The negative axis of an oriented circular trim lies on its removed
+    // side, including circular holes. Put the chart singularity there so a
+    // large cap cannot be mistaken for its bounded, smaller complement.
+    let circular_axes = radial_loops.iter().filter_map(|ring| {
+        let axis = unit(newell(ring))?;
+        let height = ring[0].dot(&axis);
+        ring.iter()
+            .all(|p| (p.dot(&axis) - height).abs() < 1e-8)
+            .then_some(axis)
+    });
+    if let Some(axis) = circular_axes.max_by(|&a, &b| clearance(a).total_cmp(&clearance(b))) {
+        chart_pole = axis;
+    }
+    let mut chart_pole = unit(chart_pole).unwrap_or(Vector3::UNIT_Z);
+    if clearance(chart_pole) < 1e-6 {
+        // Move the chart singularity off a sampled trim before projection.
+        chart_pole = [
+            Vector3::UNIT_X,
+            -Vector3::UNIT_X,
+            Vector3::UNIT_Y,
+            -Vector3::UNIT_Y,
+            Vector3::UNIT_Z,
+            -Vector3::UNIT_Z,
+        ]
+        .into_iter()
+        .max_by(|&a, &b| clearance(a).total_cmp(&clearance(b)))
+        .unwrap();
+    }
+    let chart_east = vec3(sphere.u_direction());
+    let chart_east = chart_east - chart_pole * chart_east.dot(&chart_pole);
+    let chart_east = unit(chart_east).unwrap_or_else(|| plane_axis(chart_pole));
+    let chart_north = unit(chart_pole.cross(&chart_east)).unwrap_or(Vector3::UNIT_Y);
+    let mut parameters = Vec::with_capacity(radial_loops.len());
+    for radial in radial_loops {
+        let mut ring = Vec::with_capacity(radial.len());
+        for direction in radial {
+            let denominator = 1.0 + direction.dot(&chart_pole);
+            if denominator <= 1e-8 {
+                return;
+            }
+            ring.push((
+                direction.dot(&chart_east) / denominator,
+                direction.dot(&chart_north) / denominator,
+            ));
         }
-        let apex = center + unit(direction).unwrap_or(Vector3::UNIT_Z) * radius;
-        let ring = close_ring(
-            loop_
-                .iter()
-                .map(|point| {
-                    let direction = *point - center;
-                    center + unit(direction).unwrap_or(Vector3::UNIT_X) * radius
-                })
-                .collect(),
-        );
-        for pair in ring.windows(2) {
-            let normal = |point: Vector3| {
-                let mut normal = unit(point - center).unwrap_or(Vector3::UNIT_Z);
-                if flip {
-                    normal = normal * -1.0;
-                }
-                normal
-            };
+        parameters.push(ring);
+    }
+    let direction_at = |u: f64, v: f64| {
+        let denominator = 1.0 + u * u + v * v;
+        (chart_east * (2.0 * u) + chart_north * (2.0 * v) + chart_pole * (1.0 - u * u - v * v))
+            / denominator
+    };
+    let point_at = |u, v| place.point(center + direction_at(u, v) * radius);
+    let normal_at = |u, v| place.normal(oriented(direction_at(u, v), sense));
+    for group in parameter_regions(&parameters) {
+        let rings = group
+            .iter()
+            .map(|&index| parameters[index].clone())
+            .collect::<Vec<_>>();
+        let source_rings = group
+            .iter()
+            .map(|&index| boundaries[index].clone())
+            .collect::<Vec<_>>();
+        let Some((parameters, indices, sources)) =
+            triangulate_parameters(&rings, point_at, tolerance, Some(&source_rings))
+        else {
+            continue;
+        };
+        for triangle in indices {
+            let points = triangle.map(|index| {
+                let (u, v) = parameters[index];
+                sources[index].unwrap_or_else(|| point_at(u, v))
+            });
+            let normals = triangle.map(|index| {
+                let (u, v) = parameters[index];
+                normal_at(u, v)
+            });
             push_triangle(
-                tess,
-                apex,
-                pair[0],
-                pair[1],
-                normal(apex),
-                normal(pair[0]),
-                normal(pair[1]),
+                tess, points[0], points[1], points[2], normals[0], normals[1], normals[2],
             );
         }
     }
+}
+
+/// Group each exterior with its immediate holes, regardless of loop order.
+/// Disjoint exteriors and islands nested inside holes form separate regions.
+fn parameter_regions(loops: &[Vec<(f64, f64)>]) -> Vec<Vec<usize>> {
+    let areas = loops
+        .iter()
+        .map(|ring| {
+            ring.iter()
+                .zip(ring.iter().cycle().skip(1))
+                .take(ring.len())
+                .map(|(&(u0, v0), &(u1, v1))| u0 * v1 - u1 * v0)
+                .sum::<f64>()
+                .abs()
+        })
+        .collect::<Vec<_>>();
+    let contains = |ring: &[(f64, f64)], point: (f64, f64)| {
+        let mut inside = false;
+        for (&a, &b) in ring
+            .iter()
+            .zip(ring.iter().cycle().skip(1))
+            .take(ring.len())
+        {
+            if (a.1 > point.1) != (b.1 > point.1)
+                && point.0 < (b.0 - a.0) * (point.1 - a.1) / (b.1 - a.1) + a.0
+            {
+                inside = !inside;
+            }
+        }
+        inside
+    };
+    let parents = loops
+        .iter()
+        .enumerate()
+        .map(|(index, ring)| {
+            (0..loops.len())
+                .filter(|&other| areas[other] > areas[index] && contains(&loops[other], ring[0]))
+                .min_by(|&a, &b| areas[a].total_cmp(&areas[b]))
+        })
+        .collect::<Vec<_>>();
+    let depths = (0..loops.len())
+        .map(|index| {
+            let mut depth = 0;
+            let mut parent = parents[index];
+            while let Some(index) = parent {
+                depth += 1;
+                parent = parents[index];
+            }
+            depth
+        })
+        .collect::<Vec<_>>();
+    (0..loops.len())
+        .filter(|&index| depths[index] % 2 == 0)
+        .map(|index| {
+            std::iter::once(index)
+                .chain((0..loops.len()).filter(|&child| parents[child] == Some(index)))
+                .collect()
+        })
+        .collect()
 }
 
 fn facet_torus(
@@ -1081,6 +1308,229 @@ fn facet_torus(
         tess.isolines
             .push((0..=columns).map(|column| point_at(row, column)).collect());
     }
+}
+
+/// A fillet can cross either periodic seam, or wrap all the way around the
+/// torus between two closed boundary rings. Unwrap its trims before earcut,
+/// then evaluate the refined triangles on the actual curved surface.
+fn facet_trimmed_torus(
+    torus: &SatTorusSurface<'_>,
+    loops: &[Vec<Vector3>],
+    sense: Sense,
+    place: &Placement,
+    tolerance: f64,
+    tess: &mut Tessellation,
+) {
+    let Some(inverse) = place.linear.inverse() else {
+        return;
+    };
+    let center = vec3(torus.center());
+    let axis = unit(vec3(torus.normal())).unwrap_or(Vector3::UNIT_Z);
+    let east = vec3(torus.u_direction());
+    let east = unit(east - axis * east.dot(&axis)).unwrap_or(plane_axis(axis));
+    let north = axis.cross(&east);
+    let major = torus.major_radius().abs();
+    let minor = torus.minor_radius().abs();
+    let point_at = |u: f64, v: f64| {
+        let radial = east * u.cos() + north * u.sin();
+        place.point(center + radial * (major + minor * v.cos()) + axis * (minor * v.sin()))
+    };
+    let normal_at = |u: f64, v: f64| {
+        let radial = east * u.cos() + north * u.sin();
+        place.normal(oriented(radial * v.cos() + axis * v.sin(), sense))
+    };
+    let mut emit = |vertices: [(f64, f64, Vector3); 3]| {
+        let uv = vertices.map(|(u, v, _)| (u, v));
+        let [a, b, c] = vertices.map(|(_, _, point)| point);
+        let [na, nb, nc] = uv.map(|(u, v)| normal_at(u, v));
+        push_triangle(tess, a, b, c, na, nb, nc);
+    };
+    let mut parameters = Vec::new();
+    let mut boundaries = Vec::new();
+    let mut windings = Vec::new();
+    for ring in loops.iter().filter(|ring| ring.len() >= 3) {
+        let mut uv = Vec::<(f64, f64)>::with_capacity(ring.len());
+        for &point in ring {
+            let local = inverse * (point - place.translation) - center;
+            let x = local.dot(&east);
+            let y = local.dot(&north);
+            let u = y.atan2(x);
+            let v = local.dot(&axis).atan2(x.hypot(y) - major);
+            let point = if let Some(&(previous_u, previous_v)) = uv.last() {
+                (unwrap_angle(u, previous_u), unwrap_angle(v, previous_v))
+            } else {
+                (u, v)
+            };
+            uv.push(point);
+        }
+        let first = uv[0];
+        let last = *uv.last().unwrap();
+        windings.push((
+            unwrap_angle(first.0, last.0) - first.0,
+            unwrap_angle(first.1, last.1) - first.1,
+        ));
+        parameters.push(uv);
+        boundaries.push(ring.clone());
+    }
+    if parameters.is_empty() {
+        return;
+    }
+    if windings.iter().any(|&(u, v)| u.abs() > PI || v.abs() > PI) {
+        // A periodic band has two winding trims. Join them on a grid instead
+        // of earcutting long, thin triangles across a full revolution.
+        if parameters.len() != 2 {
+            return;
+        }
+        let swap = windings[0].1.abs() > PI;
+        let along = |w: (f64, f64)| if swap { w.1 } else { w.0 };
+        let across = |w: (f64, f64)| if swap { w.0 } else { w.1 };
+        if windings
+            .iter()
+            .any(|&w| along(w).abs() < PI || across(w).abs() > PI)
+        {
+            return;
+        }
+        if swap {
+            for ring in &mut parameters {
+                for point in ring {
+                    *point = (point.1, point.0);
+                }
+            }
+        }
+        let start = parameters[0][0].0;
+        let left = periodic_parameter_ring(&parameters[0], &boundaries[0], start);
+        let mut right = periodic_parameter_ring(&parameters[1], &boundaries[1], start);
+        let shift = ((left[0].1 - right[0].1) / TAU).round() * TAU;
+        for (_, v, _) in &mut right {
+            *v += shift;
+        }
+        let world_radius = (major + minor)
+            * place
+                .linear
+                .m
+                .iter()
+                .flatten()
+                .map(|value| value * value)
+                .sum::<f64>()
+                .sqrt();
+        let step = chord_step(world_radius, tolerance * 0.5);
+        let divisions = (TAU / step).ceil() as usize;
+        let mut columns = left.iter().chain(&right).map(|p| p.0).collect::<Vec<_>>();
+        columns.extend((0..=divisions).map(|index| start + TAU * index as f64 / divisions as f64));
+        columns.sort_by(f64::total_cmp);
+        columns.dedup_by(|a, b| (*a - *b).abs() < 1e-10);
+        let value_at = |ring: &[(f64, f64, Vector3)], u: f64| {
+            let index = ring.partition_point(|p| p.0 < u).clamp(1, ring.len() - 1);
+            let (u0, v0, p0) = ring[index - 1];
+            let (u1, v1, p1) = ring[index];
+            let t = ((u - u0) / (u1 - u0)).clamp(0.0, 1.0);
+            (v0 + (v1 - v0) * t, p0 + (p1 - p0) * t)
+        };
+        let width = columns
+            .iter()
+            .map(|&u| (value_at(&right, u).0 - value_at(&left, u).0).abs())
+            .fold(0.0, f64::max);
+        let rows = (width / step).ceil().max(1.0) as usize;
+        for pair in columns.windows(2) {
+            let at = |u: f64, row: usize| {
+                let (v0, p0) = value_at(&left, u);
+                let (v1, p1) = value_at(&right, u);
+                let v = v0 + (v1 - v0) * row as f64 / rows as f64;
+                let uv = if swap { (v, u) } else { (u, v) };
+                // Extra grid columns must stay on the shared sampled edge
+                // chords, rather than opening cracks against adjacent faces.
+                let point = if row == 0 {
+                    p0
+                } else if row == rows {
+                    p1
+                } else {
+                    point_at(uv.0, uv.1)
+                };
+                (uv.0, uv.1, point)
+            };
+            for row in 0..rows {
+                let a = at(pair[0], row);
+                let b = at(pair[1], row);
+                let c = at(pair[1], row + 1);
+                let d = at(pair[0], row + 1);
+                emit([a, b, c]);
+                emit([a, c, d]);
+            }
+        }
+        return;
+    } else {
+        // Put holes in the same periodic copy as the exterior, even when
+        // their first points lie on opposite sides of atan2's branch cut.
+        let mean = |ring: &Vec<(f64, f64)>| {
+            ring.iter()
+                .fold((0.0, 0.0), |sum, p| (sum.0 + p.0, sum.1 + p.1))
+        };
+        let reference = parameters.iter().max_by_key(|ring| ring.len()).unwrap();
+        let reference_mean = mean(reference);
+        let reference_mean = (
+            reference_mean.0 / reference.len() as f64,
+            reference_mean.1 / reference.len() as f64,
+        );
+        for ring in &mut parameters {
+            let center = mean(ring);
+            let shift_u = ((reference_mean.0 - center.0 / ring.len() as f64) / TAU).round() * TAU;
+            let shift_v = ((reference_mean.1 - center.1 / ring.len() as f64) / TAU).round() * TAU;
+            for point in ring {
+                point.0 += shift_u;
+                point.1 += shift_v;
+            }
+        }
+    }
+    let Some((parameters, indices, sources)) =
+        triangulate_parameters(&parameters, point_at, tolerance, Some(&boundaries))
+    else {
+        return;
+    };
+    for triangle in indices {
+        emit(triangle.map(|index| {
+            let uv = parameters[index];
+            (
+                uv.0,
+                uv.1,
+                sources[index].unwrap_or_else(|| point_at(uv.0, uv.1)),
+            )
+        }));
+    }
+}
+
+fn unwrap_angle(angle: f64, previous: f64) -> f64 {
+    previous + (angle - previous + PI).rem_euclid(TAU) - PI
+}
+
+/// Rotate a closed winding ring to a common seam, retaining its sample points.
+fn periodic_parameter_ring(
+    ring: &[(f64, f64)],
+    points: &[Vector3],
+    start: f64,
+) -> Vec<(f64, f64, Vector3)> {
+    let mut ring = ring
+        .iter()
+        .zip(points)
+        .map(|(&(u, v), &point)| (start + (u - start).rem_euclid(TAU), v, point))
+        .collect::<Vec<_>>();
+    ring.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let (first_u, first_v, first_point) = ring[0];
+    let (last_u, last_v, last_point) = *ring.last().unwrap();
+    let span = first_u + TAU - last_u;
+    let t = if span > 1e-12 {
+        (start + TAU - last_u) / span
+    } else {
+        0.0
+    };
+    let v = last_v + (first_v - last_v) * t;
+    let point = last_point + (first_point - last_point) * t;
+    let mut result = vec![(start, v, point)];
+    result.extend(
+        ring.into_iter()
+            .filter(|&(u, _, _)| u > start + 1e-10 && u < start + TAU - 1e-10),
+    );
+    result.push((start + TAU, v, point));
+    result
 }
 
 fn facet_spline(
@@ -1216,19 +1666,7 @@ fn analytic_edge(
         }
         let normal = unit(vec3(ellipse.normal())).unwrap_or(Vector3::UNIT_Z);
         let minor = normal.cross(&major) * ellipse.ratio();
-        let mut sweep = t1 - t0;
-        if sweep.abs() < 1e-8 {
-            let start = vertex_point(document, edge.start_vertex());
-            let end = vertex_point(document, edge.end_vertex());
-            let closed = match (start, end) {
-                (Some(start), Some(end)) => (start - end).length_squared() <= 1e-12,
-                _ => true,
-            };
-            if !closed {
-                return None;
-            }
-            sweep = TAU.copysign(if sweep < 0.0 { -1.0 } else { 1.0 });
-        }
+        let sweep = ellipse_edge_sweep(document, edge)?;
         return Some(super::scene::Curve::Elliptic {
             center,
             u: major,
@@ -1238,6 +1676,27 @@ fn analytic_edge(
         });
     }
     None
+}
+
+fn ellipse_edge_sweep(
+    document: &SatDocument,
+    edge: &crate::entities::acis::SatEdge<'_>,
+) -> Option<f64> {
+    let sweep = edge.end_param() - edge.start_param();
+    if !sweep.is_finite() {
+        return None;
+    }
+    if sweep.abs() >= 1e-8 {
+        return Some(sweep);
+    }
+    let start = vertex_point(document, edge.start_vertex());
+    let end = vertex_point(document, edge.end_vertex());
+    if let (Some(start), Some(end)) = (start, end) {
+        if (start - end).length_squared() > 1e-12 {
+            return None;
+        }
+    }
+    Some(TAU.copysign(if sweep < 0.0 { -1.0 } else { 1.0 }))
 }
 
 fn sample_edge(
@@ -1262,7 +1721,15 @@ fn sample_edge(
         return sample_parameter(t0, t1, tolerance, |parameter| root + direction * parameter);
     }
     if let Some(ellipse) = SatEllipseCurve::from_record(curve) {
-        return sample_parameter(t0, t1, tolerance, |parameter| {
+        let Some(sweep) = ellipse_edge_sweep(document, edge) else {
+            return Vec::new();
+        };
+        if sweep.abs() >= TAU - 1e-8 {
+            return sample_parameter_with_turn(t0, t0 + sweep, tolerance, 0.08, |parameter| {
+                ellipse_point(&ellipse, parameter)
+            });
+        }
+        return sample_parameter(t0, t0 + sweep, tolerance, |parameter| {
             ellipse_point(&ellipse, parameter)
         });
     }
@@ -1303,11 +1770,21 @@ fn sample_parameter(
     tolerance: f64,
     eval: impl Fn(f64) -> Vector3,
 ) -> Vec<Vector3> {
+    sample_parameter_with_turn(start, end, tolerance, 0.25, eval)
+}
+
+fn sample_parameter_with_turn(
+    start: f64,
+    end: f64,
+    tolerance: f64,
+    max_turn: f64,
+    eval: impl Fn(f64) -> Vector3,
+) -> Vec<Vector3> {
     if !start.is_finite() || !end.is_finite() || (end - start).abs() <= 1e-15 {
         return vec![eval(start)];
     }
     let mut points = vec![eval(start)];
-    subdivide(start, end, tolerance, &eval, &mut points, 0);
+    subdivide(start, end, tolerance, max_turn, &eval, &mut points, 0);
     let last = eval(end);
     if points
         .last()
@@ -1322,6 +1799,7 @@ fn subdivide(
     start: f64,
     end: f64,
     tolerance: f64,
+    max_turn: f64,
     eval: &impl Fn(f64) -> Vector3,
     points: &mut Vec<Vector3>,
     depth: u32,
@@ -1351,10 +1829,26 @@ fn subdivide(
             (a.dot(&b) / denom).clamp(-1.0, 1.0).acos()
         }
     };
-    if sagitta > tolerance || turn > 0.25 {
-        subdivide(start, middle_parameter, tolerance, eval, points, depth + 1);
+    if sagitta > tolerance || turn > max_turn {
+        subdivide(
+            start,
+            middle_parameter,
+            tolerance,
+            max_turn,
+            eval,
+            points,
+            depth + 1,
+        );
         points.push(middle);
-        subdivide(middle_parameter, end, tolerance, eval, points, depth + 1);
+        subdivide(
+            middle_parameter,
+            end,
+            tolerance,
+            max_turn,
+            eval,
+            points,
+            depth + 1,
+        );
     }
 }
 
@@ -1550,8 +2044,13 @@ fn model_tolerance(document: &SatDocument, place: &Placement) -> f64 {
         if let Some(sphere) = SatSphereSurface::from_record(record) {
             let center = place.point(vec3(sphere.center()));
             let radius = sphere.radius().abs();
-            grow(center + Vector3::new(radius, radius, radius));
-            grow(center - Vector3::new(radius, radius, radius));
+            let extent = place
+                .linear
+                .m
+                .map(|row| radius * row.iter().map(|value| value * value).sum::<f64>().sqrt());
+            let extent = Vector3::new(extent[0], extent[1], extent[2]);
+            grow(center + extent);
+            grow(center - extent);
         }
         if let Some(torus) = SatTorusSurface::from_record(record) {
             let center = place.point(vec3(torus.center()));
@@ -1633,6 +2132,66 @@ mod tests {
     use super::*;
 
     #[test]
+    fn torus_band_preserves_shared_boundary_chords() {
+        let mut document = SatDocument::new_body();
+        let index =
+            document.add_torus_surface([0.0, 0.0, 0.0], [0.0, 0.0, 1.0], 4.0, 1.0, [1.0, 0.0, 0.0]);
+        let torus = SatTorusSurface::from_record(document.record(index as usize).unwrap()).unwrap();
+        // Different sampling densities and starting angles force added grid
+        // columns and a seam point between existing samples on the second ring.
+        let loops = [(0.2_f64, 17, 0.0), (1.0_f64, 23, 0.11)]
+            .into_iter()
+            .map(|(v, count, offset)| {
+                (0..count)
+                    .map(|index| {
+                        let u = offset + TAU * index as f64 / count as f64;
+                        Vector3::new(
+                            (4.0 + v.cos()) * u.cos(),
+                            (4.0 + v.cos()) * u.sin(),
+                            v.sin(),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let mut tess = Tessellation::new();
+        facet_trimmed_torus(
+            &torus,
+            &loops,
+            Sense::Forward,
+            &Placement::from_document(&document),
+            0.005,
+            &mut tess,
+        );
+        assert!(!tess.triangles.is_empty());
+        for ring in &loops {
+            let boundary = tess
+                .triangles
+                .iter()
+                .filter(|p| (p.z - ring[0].z).abs() < 1e-10)
+                .collect::<Vec<_>>();
+            assert!(boundary.len() > ring.len());
+            for point in boundary {
+                assert!(
+                    ring.iter().enumerate().any(|(index, &a)| {
+                        let b = ring[(index + 1) % ring.len()];
+                        let edge = b - a;
+                        let t = ((*point - a).dot(&edge) / edge.length_squared()).clamp(0.0, 1.0);
+                        (*point - a - edge * t).length() < 1e-10
+                    }),
+                    "fillet boundary left the shared edge chord: {point:?}"
+                );
+            }
+            for point in ring {
+                assert!(tess
+                    .triangles
+                    .iter()
+                    .any(|p| (*p - *point).length() < 1e-10));
+            }
+        }
+    }
+
+    #[test]
     fn trimmed_cylinder_loop_triangulates_on_its_surface() {
         let frame = ConeFrame {
             center: Vector3::ZERO,
@@ -1659,7 +2218,10 @@ mod tests {
         for (triangle, normal) in triangles.chunks_exact(3).zip(normals.chunks_exact(3)) {
             let center = (triangle[0] + triangle[1] + triangle[2]) / 3.0;
             let radius = center.x.hypot(center.y);
-            assert!(radius > 1.8, "triangle collapsed into the cylinder: {center:?}");
+            assert!(
+                radius > 1.8,
+                "triangle collapsed into the cylinder: {center:?}"
+            );
             let uv = triangle
                 .iter()
                 .map(|point| (frame.angle(*point), frame.height(*point)))
@@ -1680,6 +2242,43 @@ mod tests {
                     "inward cylinder normal: {normal:?}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn rotated_closed_cylinder_rings_are_monotonic_and_do_not_cross() {
+        let frame = ConeFrame {
+            center: Vector3::ZERO,
+            axis: Vector3::UNIT_Z,
+            major: Vector3::UNIT_X * 5.0,
+            minor: Vector3::UNIT_Y * 5.0,
+            sin_half: 0.0,
+            cos_half: 1.0,
+            radius: 5.0,
+        };
+        let ring = |offset: f64, count: usize, height: f64| {
+            (0..count)
+                .map(|index| frame.point_at(offset + TAU * index as f64 / count as f64, height))
+                .collect::<Vec<_>>()
+        };
+        let mut tess = Tessellation::new();
+        push_ruled(
+            &ring(0.0, 24, 0.0),
+            &ring(PI, 37, 10.0),
+            &frame,
+            false,
+            &mut tess,
+        );
+        assert!(!tess.triangles.is_empty());
+        for triangle in tess.triangles.chunks_exact(3) {
+            let first = frame.angle(triangle[0]);
+            let angles = triangle
+                .iter()
+                .map(|point| unwrap_angle(frame.angle(*point), first))
+                .collect::<Vec<_>>();
+            let covered = angles.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+                - angles.iter().copied().fold(f64::INFINITY, f64::min);
+            assert!(covered < PI, "crossed cylinder triangle: {triangle:?}");
         }
     }
 

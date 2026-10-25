@@ -2010,6 +2010,41 @@ fn cylinder_side_stays_on_the_surface_and_matches_the_cap() {
 }
 
 #[test]
+fn placed_cylinder_keeps_its_analytic_surface_and_normals() {
+    let mut sat = crate::entities::acis::primitives::build_cylinder([0.0, 0.0, 0.0], 5.0, 12.0);
+    let matrix = [[-1.6, 0.2, 0.0], [0.0, 0.8, 0.1], [0.0, 0.0, 1.3]];
+    let linear = crate::types::Matrix3 {
+        m: [[-2.0, 0.0, 0.0], [0.25, 1.0, 0.0], [0.0, 0.125, 1.625]],
+    };
+    let inverse = linear.inverse().unwrap();
+    let normal_map = inverse.transpose();
+    let translation = Vector3::new(7.0, -3.0, 2.0);
+    sat.set_placement(matrix, [translation.x, translation.y, translation.z], 1.25);
+    let tess = super::tess::tessellate(&sat);
+    assert!(!tess.triangles.is_empty());
+    for (point, normal) in tess.triangles.iter().zip(&tess.normals) {
+        let local = inverse * (*point - translation);
+        let radial = local.x.hypot(local.y);
+        assert!(
+            (radial - 5.0).abs() < 1e-6 || (local.z.abs() < 1e-6 || (local.z - 12.0).abs() < 1e-6),
+            "placed cylinder vertex off surface: {local:?}"
+        );
+        if local.z.abs() > 1e-6 && (local.z - 12.0).abs() > 1e-6 {
+            let expected = normal_map * Vector3::new(local.x, local.y, 0.0);
+            assert!(normal.dot(&expected.normalize()) > 0.90);
+        } else if radial < 4.99 {
+            let expected = normal_map
+                * if local.z > 6.0 {
+                    Vector3::UNIT_Z
+                } else {
+                    -Vector3::UNIT_Z
+                };
+            assert!(normal.dot(&expected.normalize()) > 0.90);
+        }
+    }
+}
+
+#[test]
 fn sphere_samples_lie_on_the_sphere() {
     let tess = super::tess::tessellate(&crate::entities::acis::primitives::build_sphere(
         [1.0, 2.0, 3.0],
@@ -2024,6 +2059,386 @@ fn sphere_samples_lie_on_the_sphere() {
             normal.dot(&expected) > 0.99,
             "normal {normal:?} expected {expected:?}"
         );
+    }
+}
+
+// Circle center, normal, radius vector, and angular interval, in sphere space.
+type SphereTrimArc = (Vector3, Vector3, Vector3, f64, f64);
+
+fn sphere_latitude(z: f64, reversed: bool) -> SphereTrimArc {
+    (
+        Vector3::new(0.0, 0.0, z),
+        Vector3::UNIT_Z,
+        Vector3::new((16.0 - z * z).sqrt(), 0.0, 0.0),
+        0.0,
+        if reversed {
+            -std::f64::consts::TAU
+        } else {
+            std::f64::consts::TAU
+        },
+    )
+}
+
+fn sphere_arc_point(arc: &SphereTrimArc, angle: f64) -> Vector3 {
+    arc.0 + arc.2 * angle.cos() + arc.1.cross(&arc.2) * angle.sin()
+}
+
+fn sphere_face_with_trims(
+    rings: &[Vec<SphereTrimArc>],
+    sense: crate::entities::acis::Sense,
+) -> crate::entities::acis::SatDocument {
+    use crate::entities::acis::{SatDocument, SatPointer, SatToken, Sense, Sidedness};
+    let mut sat = SatDocument::new_body();
+    let surface = sat.add_sphere_surface([0.0; 3], 4.0, [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
+    let array = |v: Vector3| [v.x, v.y, v.z];
+    let mut loops = Vec::new();
+    for ring in rings {
+        let vertices: Vec<_> = ring
+            .iter()
+            .map(|arc| {
+                let p = sphere_arc_point(arc, arc.3);
+                let point = sat.add_point(p.x, p.y, p.z);
+                sat.add_vertex(SatPointer::NULL, SatPointer::new(point))
+            })
+            .collect();
+        let edges: Vec<_> = ring
+            .iter()
+            .enumerate()
+            .map(|(i, arc)| {
+                let curve = sat.add_ellipse_curve(array(arc.0), array(arc.1), array(arc.2), 1.0);
+                sat.add_edge(
+                    SatPointer::new(vertices[i]),
+                    arc.3,
+                    SatPointer::new(vertices[(i + 1) % ring.len()]),
+                    arc.4,
+                    SatPointer::NULL,
+                    SatPointer::new(curve),
+                    Sense::Forward,
+                )
+            })
+            .collect();
+        let base = sat.records.len() as i32;
+        let loop_index = base + edges.len() as i32;
+        for (i, edge) in edges.iter().enumerate() {
+            sat.add_coedge(
+                SatPointer::new(base + ((i + 1) % edges.len()) as i32),
+                SatPointer::new(base + ((i + edges.len() - 1) % edges.len()) as i32),
+                SatPointer::NULL,
+                SatPointer::new(*edge),
+                Sense::Forward,
+                SatPointer::new(loop_index),
+            );
+        }
+        sat.add_loop(SatPointer::NULL, SatPointer::new(base), SatPointer::NULL);
+        loops.push(loop_index);
+    }
+    let face = sat.records.len() as i32;
+    for (i, &index) in loops.iter().enumerate() {
+        let record = sat.record_mut(index as usize).unwrap();
+        record.tokens[1] = SatToken::Pointer(
+            loops
+                .get(i + 1)
+                .copied()
+                .map(SatPointer::new)
+                .unwrap_or(SatPointer::NULL),
+        );
+        record.tokens[3] = SatToken::Pointer(SatPointer::new(face));
+    }
+    sat.add_face(
+        SatPointer::NULL,
+        loops
+            .first()
+            .copied()
+            .map(SatPointer::new)
+            .unwrap_or(SatPointer::NULL),
+        SatPointer::new(face + 1),
+        SatPointer::new(surface),
+        sense,
+        Sidedness::Single,
+    );
+    sat.add_shell(SatPointer::new(face), SatPointer::new(face + 2));
+    sat.add_lump(SatPointer::new(face + 1), SatPointer::new(0));
+    sat.record_mut(0).unwrap().tokens[1] = SatToken::Pointer(SatPointer::new(face + 2));
+    sat.complete_brep_links();
+    sat
+}
+
+fn sphere_mesh_area_and_centroid(
+    tess: &super::tess::Tessellation,
+    reversed: bool,
+) -> (f64, Vector3) {
+    assert!(tess.triangles.len() > 12, "sphere face has no shaded mesh");
+    assert_eq!(tess.triangles.len(), tess.normals.len());
+    for (point, normal) in tess.triangles.iter().zip(&tess.normals) {
+        assert!(
+            (point.length() - 4.0).abs() < 1e-7,
+            "sphere vertex {point:?}"
+        );
+        let expected = point.normalize() * if reversed { -1.0 } else { 1.0 };
+        assert!(normal.dot(&expected) > 0.999999, "sphere normal {normal:?}");
+    }
+    let mut area = 0.0;
+    let mut centroid = Vector3::ZERO;
+    for (triangle, normals) in tess
+        .triangles
+        .chunks_exact(3)
+        .zip(tess.normals.chunks_exact(3))
+    {
+        let cross = (triangle[1] - triangle[0]).cross(&(triangle[2] - triangle[0]));
+        assert!(cross.dot(&(normals[0] + normals[1] + normals[2])) > 0.0);
+        let center = (triangle[0] + triangle[1] + triangle[2]) / 3.0;
+        // The model diagonal sets a 0.0278-unit chord tolerance for this sphere.
+        assert!(
+            4.0 - center.length() < 0.03,
+            "coarse spherical triangle at {center:?}"
+        );
+        let weight = cross.length() * 0.5;
+        area += weight;
+        centroid = centroid + center * weight;
+    }
+    (area, centroid / area)
+}
+
+fn assert_sphere_trim_samples(tess: &super::tess::Tessellation, rings: &[Vec<SphereTrimArc>]) {
+    for arc in rings.iter().flatten() {
+        let mut divisions = 1;
+        while arc.2.length() * (1.0 - ((arc.4 - arc.3).abs() / (2.0 * divisions as f64)).cos())
+            > 8.0 * 3.0_f64.sqrt() * 0.002
+        {
+            divisions *= 2;
+        }
+        for i in 0..divisions {
+            let angle = arc.3 + (arc.4 - arc.3) * i as f64 / divisions as f64;
+            let expected = sphere_arc_point(arc, angle);
+            assert!(
+                tess.triangles
+                    .iter()
+                    .any(|p| (*p - expected).length() < 1e-8),
+                "lost shared sphere trim sample {expected:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn trimmed_sphere_caps_are_refined_and_preserve_circular_boundaries() {
+    use crate::entities::acis::Sense;
+    for z in [-2.4, 0.0, 2.4] {
+        let rings = vec![vec![sphere_latitude(z, false)]];
+        for sense in [Sense::Forward, Sense::Reversed] {
+            let tess = super::tess::tessellate(&sphere_face_with_trims(&rings, sense));
+            let (area, centroid) = sphere_mesh_area_and_centroid(&tess, sense == Sense::Reversed);
+            let expected = std::f64::consts::TAU * 4.0 * (4.0 - z);
+            assert!(
+                (area - expected).abs() < expected * 0.02,
+                "cap area {area}, expected {expected}"
+            );
+            assert!(
+                (centroid.z - (4.0 + z) * 0.5).abs() < 0.04,
+                "cap centroid {centroid:?}"
+            );
+            assert!(centroid.x.hypot(centroid.y) < 0.03);
+            assert!(tess.triangles.iter().all(|p| p.z >= z - 1e-8));
+            assert_sphere_trim_samples(&tess, &rings);
+        }
+    }
+}
+
+#[test]
+fn trimmed_sphere_band_and_cap_hole_leave_the_removed_regions_empty() {
+    use crate::entities::acis::Sense;
+    let hole_axis = Vector3::new(0.3, 0.0, (1.0_f64 - 0.3_f64.powi(2)).sqrt());
+    let hole = (
+        hole_axis * 3.85,
+        hole_axis,
+        Vector3::UNIT_Y * (16.0_f64 - 3.85_f64.powi(2)).sqrt(),
+        0.0,
+        -std::f64::consts::TAU,
+    );
+    let cases = [
+        (
+            vec![
+                vec![sphere_latitude(0.6, false)],
+                vec![sphere_latitude(2.4, true)],
+            ],
+            1.8,
+            true,
+        ),
+        (
+            vec![vec![sphere_latitude(1.0, false)], vec![hole]],
+            2.85,
+            false,
+        ),
+    ];
+    for (rings, height, band) in cases {
+        let tess = super::tess::tessellate(&sphere_face_with_trims(&rings, Sense::Forward));
+        let (area, centroid) = sphere_mesh_area_and_centroid(&tess, false);
+        let expected = std::f64::consts::TAU * 4.0 * height;
+        assert!(
+            (area - expected).abs() < expected * 0.025,
+            "trim area {area}, expected {expected}"
+        );
+        for triangle in tess.triangles.chunks_exact(3) {
+            let p = ((triangle[0] + triangle[1] + triangle[2]) / 3.0).normalize() * 4.0;
+            if band {
+                assert!(
+                    (0.6 - 0.02..=2.4 + 0.02).contains(&p.z),
+                    "triangle fills outside band: {p:?}"
+                );
+            } else {
+                assert!(
+                    p.z >= 1.0 - 0.02 && p.dot(&hole_axis) <= 3.85 + 0.02,
+                    "triangle fills cap hole: {p:?}"
+                );
+            }
+        }
+        if band {
+            assert!((centroid.z - 1.5).abs() < 0.04);
+        }
+        assert_sphere_trim_samples(&tess, &rings);
+    }
+}
+
+#[test]
+fn trimmed_sphere_large_cap_with_an_off_axis_hole_selects_the_retained_region() {
+    use crate::entities::acis::Sense;
+    let hole = (
+        Vector3::UNIT_X * 3.85,
+        Vector3::UNIT_X,
+        Vector3::UNIT_Y * (16.0_f64 - 3.85_f64.powi(2)).sqrt(),
+        0.0,
+        -std::f64::consts::TAU,
+    );
+    for hole_first in [false, true] {
+        let mut rings = vec![vec![sphere_latitude(-2.4, false)], vec![hole]];
+        if hole_first {
+            rings.reverse();
+        }
+        let tess = super::tess::tessellate(&sphere_face_with_trims(&rings, Sense::Forward));
+        let (area, _) = sphere_mesh_area_and_centroid(&tess, false);
+        let expected = std::f64::consts::TAU * 4.0 * 6.25;
+        assert!(
+            (area - expected).abs() < expected * 0.025,
+            "large cap with hole area {area}, expected {expected}"
+        );
+        for triangle in tess.triangles.chunks_exact(3) {
+            let point = (triangle[0] + triangle[1] + triangle[2]).normalize() * 4.0;
+            assert!(
+                point.z >= -2.4 - 0.02 && point.x <= 3.85 + 0.02,
+                "triangle fills a removed region: {point:?}"
+            );
+        }
+        assert_sphere_trim_samples(&tess, &rings);
+    }
+}
+
+#[test]
+fn trimmed_sphere_concave_patch_crosses_the_longitude_seam() {
+    use crate::entities::acis::Sense;
+    let corners = [
+        (2.7_f64, 0.15_f64),
+        (3.7, 0.15),
+        (3.7, 0.95),
+        (3.3, 0.95),
+        (3.3, 0.55),
+        (2.7, 0.55),
+    ];
+    let ring = corners
+        .iter()
+        .zip(corners.iter().cycle().skip(1))
+        .map(|(&(u0, v0), &(u1, v1))| {
+            if v0 == v1 {
+                (
+                    Vector3::new(0.0, 0.0, 4.0 * v0.sin()),
+                    Vector3::UNIT_Z,
+                    Vector3::UNIT_X * (4.0 * v0.cos()),
+                    u0,
+                    u1,
+                )
+            } else {
+                (
+                    Vector3::ZERO,
+                    Vector3::new(u0.sin(), -u0.cos(), 0.0),
+                    Vector3::new(4.0 * u0.cos(), 4.0 * u0.sin(), 0.0),
+                    v0,
+                    v1,
+                )
+            }
+        })
+        .collect();
+    let rings = vec![ring];
+    let tess = super::tess::tessellate(&sphere_face_with_trims(&rings, Sense::Forward));
+    let (area, _) = sphere_mesh_area_and_centroid(&tess, false);
+    let expected =
+        16.0 * (0.55_f64.sin() - 0.15_f64.sin() + 0.4 * (0.95_f64.sin() - 0.55_f64.sin()));
+    assert!(
+        (area - expected).abs() < expected * 0.03,
+        "concave patch area {area}, expected {expected}"
+    );
+    for triangle in tess.triangles.chunks_exact(3) {
+        let p = (triangle[0] + triangle[1] + triangle[2]).normalize();
+        let u = p.y.atan2(p.x).rem_euclid(std::f64::consts::TAU);
+        let v = p.z.asin();
+        assert!((2.7 - 0.01..=3.7 + 0.01).contains(&u) && (0.15 - 0.01..=0.95 + 0.01).contains(&v));
+        assert!(
+            u >= 3.3 - 0.01 || v <= 0.55 + 0.01,
+            "triangle fills the concavity: u={u}, v={v}"
+        );
+    }
+    assert_sphere_trim_samples(&tess, &rings);
+}
+
+#[test]
+fn full_and_trimmed_spheres_follow_affine_body_placement() {
+    use crate::entities::acis::Sense;
+    use crate::types::Matrix3;
+    let matrix = [[-1.6, 0.2, 0.0], [0.0, 0.8, 0.1], [0.0, 0.0, 1.3]];
+    let linear = Matrix3 {
+        m: [[-2.0, 0.0, 0.0], [0.25, 1.0, 0.0], [0.0, 0.125, 1.625]],
+    };
+    let inverse = linear.inverse().unwrap();
+    let normal_map = inverse.transpose();
+    let translation = Vector3::new(7.0, -3.0, 2.0);
+    for trimmed in [false, true] {
+        for sense in [Sense::Forward, Sense::Reversed] {
+            let rings = if trimmed {
+                vec![vec![sphere_latitude(2.4, false)]]
+            } else {
+                Vec::new()
+            };
+            let mut sat = sphere_face_with_trims(&rings, sense);
+            sat.set_placement(matrix, [7.0, -3.0, 2.0], 1.25);
+            let tess = super::tess::tessellate(&sat);
+            assert!(tess.triangles.len() > 12);
+            for (point, normal) in tess.triangles.iter().zip(&tess.normals) {
+                let local = inverse * (*point - translation);
+                assert!(
+                    (local.length() - 4.0).abs() < 1e-7,
+                    "placed sphere vertex {local:?}"
+                );
+                if trimmed {
+                    assert!(local.z >= 2.4 - 1e-7);
+                }
+                let expected = (normal_map * local).normalize()
+                    * if sense == Sense::Reversed { -1.0 } else { 1.0 };
+                assert!(
+                    normal.dot(&expected) > 0.99999,
+                    "placed sphere normal {normal:?}, expected {expected:?}"
+                );
+            }
+            for (triangle, normals) in tess
+                .triangles
+                .chunks_exact(3)
+                .zip(tess.normals.chunks_exact(3))
+            {
+                assert!(
+                    (triangle[1] - triangle[0])
+                        .cross(&(triangle[2] - triangle[0]))
+                        .dot(&(normals[0] + normals[1] + normals[2]))
+                        > 0.0
+                );
+            }
+        }
     }
 }
 
@@ -2055,6 +2470,252 @@ fn torus_samples_satisfy_the_tube_equation() {
         let radial = (point.x * point.x + point.y * point.y).sqrt();
         let tube = ((radial - 6.0).powi(2) + point.z * point.z).sqrt();
         assert!((tube - 1.5).abs() < 1e-5, "tube radius {tube} at {point:?}");
+    }
+}
+
+fn trimmed_torus_face(
+    full_revolution: bool,
+    face_sense: crate::entities::acis::Sense,
+) -> crate::entities::acis::SatDocument {
+    use crate::entities::acis::{SatDocument, SatPointer, SatToken, Sense, Sidedness};
+
+    let mut sat = SatDocument::new_body();
+    let surface =
+        sat.add_torus_surface([0.0, 0.0, 0.0], [0.0, 0.0, 1.0], 6.0, 1.5, [1.0, 0.0, 0.0]);
+    let (u0, u1) = if full_revolution {
+        (0.0, std::f64::consts::TAU)
+    } else {
+        // Cross the atan2 seam so a trim cannot be mistaken for its complement.
+        (2.7, 3.7)
+    };
+    let (v0, v1) = (0.2_f64, 1.1_f64);
+    let parameters = [(u0, v0), (u1, v0), (u1, v1), (u0, v1)];
+    let vertices: Vec<_> = parameters
+        .iter()
+        .map(|&(u, v)| {
+            let radius = 6.0 + 1.5 * v.cos();
+            let point = sat.add_point(radius * u.cos(), radius * u.sin(), 1.5 * v.sin());
+            sat.add_vertex(SatPointer::NULL, SatPointer::new(point))
+        })
+        .collect();
+    let mut circles = Vec::new();
+    for v in [v0, v1] {
+        circles.push(sat.add_ellipse_curve(
+            [0.0, 0.0, 1.5 * v.sin()],
+            [0.0, 0.0, 1.0],
+            [6.0 + 1.5 * v.cos(), 0.0, 0.0],
+            1.0,
+        ));
+    }
+    let mut edge_specs = vec![
+        (0, 1, u0, u1, circles[0], Sense::Forward),
+        (3, 2, u0, u1, circles[1], Sense::Reversed),
+    ];
+    if !full_revolution {
+        for (u, start, end, sense) in [(u1, 1, 2, Sense::Forward), (u0, 0, 3, Sense::Reversed)] {
+            let circle = sat.add_ellipse_curve(
+                [6.0 * u.cos(), 6.0 * u.sin(), 0.0],
+                [u.sin(), -u.cos(), 0.0],
+                [1.5 * u.cos(), 1.5 * u.sin(), 0.0],
+                1.0,
+            );
+            edge_specs.push((start, end, v0, v1, circle, sense));
+        }
+        edge_specs.swap(1, 2);
+    }
+    let edges: Vec<_> = edge_specs
+        .into_iter()
+        .map(|(start, end, t0, t1, curve, sense)| {
+            let end = if full_revolution { start } else { end };
+            let edge = sat.add_edge(
+                SatPointer::new(vertices[start]),
+                t0,
+                SatPointer::new(vertices[end]),
+                t1,
+                SatPointer::NULL,
+                SatPointer::new(curve),
+                Sense::Forward,
+            );
+            (edge, sense)
+        })
+        .collect();
+    let rings = if full_revolution {
+        vec![&edges[..1], &edges[1..]]
+    } else {
+        vec![&edges[..]]
+    };
+    let mut loops = Vec::new();
+    for ring in rings {
+        let base = sat.records.len() as i32;
+        let loop_index = base + ring.len() as i32;
+        for (i, &(edge, sense)) in ring.iter().enumerate() {
+            sat.add_coedge(
+                SatPointer::new(base + ((i + 1) % ring.len()) as i32),
+                SatPointer::new(base + ((i + ring.len() - 1) % ring.len()) as i32),
+                SatPointer::NULL,
+                SatPointer::new(edge),
+                sense,
+                SatPointer::new(loop_index),
+            );
+        }
+        sat.add_loop(SatPointer::NULL, SatPointer::new(base), SatPointer::NULL);
+        loops.push(loop_index);
+    }
+    let face = sat.records.len() as i32;
+    for (i, &loop_index) in loops.iter().enumerate() {
+        let record = sat.record_mut(loop_index as usize).unwrap();
+        record.tokens[1] = SatToken::Pointer(
+            loops
+                .get(i + 1)
+                .copied()
+                .map(SatPointer::new)
+                .unwrap_or(SatPointer::NULL),
+        );
+        record.tokens[3] = SatToken::Pointer(SatPointer::new(face));
+    }
+    sat.add_face(
+        SatPointer::NULL,
+        SatPointer::new(loops[0]),
+        SatPointer::new(face + 1),
+        SatPointer::new(surface),
+        face_sense,
+        Sidedness::Single,
+    );
+    sat.add_shell(SatPointer::new(face), SatPointer::new(face + 2));
+    sat.add_lump(SatPointer::new(face + 1), SatPointer::new(0));
+    sat.record_mut(0).unwrap().tokens[1] = SatToken::Pointer(SatPointer::new(face + 2));
+    sat.complete_brep_links();
+    sat
+}
+
+fn assert_trimmed_torus_mesh(
+    tess: &super::tess::Tessellation,
+    full_revolution: bool,
+    reversed: bool,
+) {
+    assert!(
+        tess.triangles.len() > 12,
+        "trimmed torus has no shaded faces"
+    );
+    assert_eq!(tess.triangles.len(), tess.normals.len());
+    for (point, normal) in tess.triangles.iter().zip(&tess.normals) {
+        let radial = point.x.hypot(point.y);
+        let boundary_v = [0.2_f64, 1.1_f64]
+            .into_iter()
+            .find(|v| full_revolution && (point.z - 1.5 * v.sin()).abs() < 1e-8);
+        let v = boundary_v.unwrap_or_else(|| point.z.atan2(radial - 6.0));
+        let tube = (radial - 6.0).hypot(point.z);
+        // A periodic grid retains the shared boundary chords, including any
+        // extra collinear vertices, to meet the neighboring face without gaps.
+        let error = if boundary_v.is_some() { 0.06 } else { 1e-6 };
+        assert!((tube - 1.5).abs() < error, "point off the torus: {point:?}");
+        assert!(
+            (0.2 - 1e-6..=1.1 + 1e-6).contains(&v),
+            "point outside trim: {point:?}"
+        );
+        if !full_revolution {
+            let u = point.y.atan2(point.x).rem_euclid(std::f64::consts::TAU);
+            assert!(
+                (2.7 - 1e-6..=3.7 + 1e-6).contains(&u),
+                "point outside trim: {point:?}"
+            );
+        }
+        let tube_center = Vector3::new(6.0 * point.x / radial, 6.0 * point.y / radial, 0.0);
+        let expected = (*point - tube_center).normalize() * if reversed { -1.0 } else { 1.0 };
+        assert!(
+            normal.dot(&expected) > 0.999,
+            "normal {normal:?}, expected {expected:?}"
+        );
+        assert!((normal.length() - 1.0).abs() < 1e-6);
+    }
+    let mut area = 0.0;
+    for (triangle, normals) in tess
+        .triangles
+        .chunks_exact(3)
+        .zip(tess.normals.chunks_exact(3))
+    {
+        let cross = (triangle[1] - triangle[0]).cross(&(triangle[2] - triangle[0]));
+        assert!(
+            cross.dot(&(normals[0] + normals[1] + normals[2])) > 1e-10,
+            "incorrect winding: {triangle:?}"
+        );
+        area += cross.length() * 0.5;
+    }
+    let sweep = if full_revolution {
+        std::f64::consts::TAU
+    } else {
+        1.0
+    };
+    let expected_area =
+        sweep * (6.0 * 1.5 * 0.9 + 1.5_f64.powi(2) * (1.1_f64.sin() - 0.2_f64.sin()));
+    assert!(
+        (area - expected_area).abs() < expected_area * 0.08,
+        "trim area {area}, expected {expected_area}"
+    );
+}
+
+#[test]
+fn trimmed_torus_fillet_crosses_the_parameter_seam() {
+    use crate::entities::acis::Sense;
+    for sense in [Sense::Forward, Sense::Reversed] {
+        let tess = super::tess::tessellate(&trimmed_torus_face(false, sense));
+        assert_trimmed_torus_mesh(&tess, false, sense == Sense::Reversed);
+        assert_eq!(tess.edge_curves.len(), 4);
+    }
+}
+
+#[test]
+fn trimmed_torus_fillet_band_joins_two_circular_loops() {
+    let sat = trimmed_torus_face(true, crate::entities::acis::Sense::Forward);
+    let tess = super::tess::tessellate(&sat);
+    assert_trimmed_torus_mesh(&tess, true, false);
+    assert_eq!(tess.edge_curves.len(), 2);
+    for direction in [
+        Vector3::UNIT_X,
+        -Vector3::UNIT_X,
+        Vector3::UNIT_Y,
+        -Vector3::UNIT_Y,
+    ] {
+        assert!(tess
+            .triangles
+            .iter()
+            .any(|point| point.dot(&direction) > 6.0));
+    }
+}
+
+#[test]
+fn trimmed_torus_fillet_has_shaded_faces_in_sat_and_sab_entities() {
+    use crate::entities::acis::{SabWriter, Sense};
+    let sat = trimmed_torus_face(false, Sense::Forward);
+    let data = [
+        crate::entities::AcisData::from_sat_document(&sat),
+        crate::entities::AcisData::from_sab(SabWriter::write(&sat)),
+    ];
+    for acis_data in data {
+        for body in [false, true] {
+            let mut doc = doc();
+            let entity = if body {
+                let mut entity = crate::entities::Body::new();
+                entity.acis_data = acis_data.clone();
+                EntityType::Body(entity)
+            } else {
+                let mut entity = crate::entities::Solid3D::new();
+                entity.acis_data = acis_data.clone();
+                EntityType::Solid3D(entity)
+            };
+            doc.add_entity(entity).unwrap();
+            let scene = compile(&doc, &CompileOptions::default());
+            assert!(scene.fallbacks.is_empty());
+            assert_eq!(
+                scene.fills.len(),
+                1,
+                "missing fillet face for binary={}, body={body}",
+                acis_data.is_binary
+            );
+            assert!(scene.fills[0].triangles.len() > 12);
+            assert_eq!(scene.fills[0].triangles.len(), scene.fills[0].normals.len());
+            assert_eq!(scene.strokes.len(), 4);
+        }
     }
 }
 

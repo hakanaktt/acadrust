@@ -3389,18 +3389,22 @@ fn transform_normals(transform: &Transform, normals: &[Vector3]) -> Vec<Vector3>
 /// Aligning the three normals as a group avoids abrupt lighting inversions at
 /// loop seams and keeps Gooch shading stable for conceptual views.
 fn align_normals_to_triangles(triangles: &[Vector3], mut normals: Vec<Vector3>) -> Vec<Vector3> {
-    for (triangle, normal_triplet) in triangles
-        .chunks_exact(3)
-        .zip(normals.chunks_exact_mut(3))
-    {
+    for (triangle, normal_triplet) in triangles.chunks_exact(3).zip(normals.chunks_exact_mut(3)) {
         let geometric = (triangle[1] - triangle[0]).cross(&(triangle[2] - triangle[0]));
         if geometric.length_squared() <= 1e-24 {
             continue;
         }
-        let reference = normal_triplet
-            .iter()
-            .copied()
-            .find(|normal| normal.length_squared() > 1e-24);
+        // The sum is proportional to the interpolated normal at the triangle's
+        // center. A single corner can oppose the winding on a curved face.
+        let average = normal_triplet[0] + normal_triplet[1] + normal_triplet[2];
+        let reference = if average.length_squared() > 1e-24 {
+            Some(average)
+        } else {
+            normal_triplet
+                .iter()
+                .copied()
+                .find(|normal| normal.length_squared() > 1e-24)
+        };
         if let Some(reference) = reference {
             if geometric.dot(&reference) < 0.0 {
                 for normal in normal_triplet {
@@ -3780,8 +3784,29 @@ fn find_font_file(
 
 #[cfg(test)]
 mod tests {
-    use super::{find_font_file, transform_normals};
+    use super::{align_normals_to_triangles, find_font_file, transform_normals};
     use crate::types::{Transform, Vector3};
+
+    #[test]
+    fn normal_alignment_uses_all_three_vertex_normals() {
+        let triangle = [Vector3::ZERO, Vector3::UNIT_X, Vector3::UNIT_Y];
+        let normals = [
+            Vector3::new(-0.6, 0.0, -0.8),
+            Vector3::new(0.6, 0.0, 0.8),
+            Vector3::UNIT_Z,
+        ];
+        // A wide curved triangle can have one corner normal opposing its
+        // winding while the interpolated normal at its center agrees.
+        for offset in 0..3 {
+            let ordered: Vec<_> = (0..3).map(|i| normals[(i + offset) % 3]).collect();
+            assert_eq!(
+                align_normals_to_triangles(&triangle, ordered.clone()),
+                ordered,
+            );
+            let reversed: Vec<_> = ordered.iter().map(|normal| -*normal).collect();
+            assert_eq!(align_normals_to_triangles(&triangle, reversed), ordered);
+        }
+    }
 
     #[test]
     fn mirrored_transform_keeps_normals_aligned_with_face_winding() {
