@@ -444,10 +444,17 @@ struct SurfacePatch {
     east: vec4<f32>,
     // xyz ring north.
     north: vec4<f32>,
+    // x: first trim entry in `trim_data`. y: trim loop count.
+    trim: vec4<f32>,
 }
 
 @group(2) @binding(0)
 var<storage, read> patches: array<SurfacePatch>;
+
+// Flat trim data. A loop is a header vec4 holding its point count in x,
+// followed by one vec4 per point with (u, v) in xy.
+@group(2) @binding(1)
+var<storage, read> trim_data: array<vec4<f32>>;
 
 struct SurfaceOut {
     @builtin(position) clip: vec4<f32>,
@@ -473,7 +480,21 @@ fn ray_through(ndc: vec2<f32>) -> vec3<f32> {
     return far4.xyz / far4.w - near4.xyz / near4.w;
 }
 
-fn hit_sphere(o: vec3<f32>, d: vec3<f32>, c: vec3<f32>, r: f32) -> f32 {
+fn sphere_uv(surface: SurfacePatch, hit: vec3<f32>) -> vec2<f32> {
+    let direction = normalize(hit - surface.center.xyz);
+    let denominator = 1.0 + dot(direction, surface.axis.xyz);
+    if abs(denominator) < 1e-7 {
+        return vec2<f32>(0.0, 0.0);
+    }
+    return vec2<f32>(
+        dot(direction, surface.east.xyz) / denominator,
+        dot(direction, surface.north.xyz) / denominator,
+    );
+}
+
+fn hit_sphere(surface: SurfacePatch, o: vec3<f32>, d: vec3<f32>) -> f32 {
+    let c = surface.center.xyz;
+    let r = surface.center.w;
     let oc = o - c;
     let b = dot(oc, d);
     let disc = b * b - (dot(oc, oc) - r * r);
@@ -481,11 +502,16 @@ fn hit_sphere(o: vec3<f32>, d: vec3<f32>, c: vec3<f32>, r: f32) -> f32 {
         return -1.0;
     }
     let s = sqrt(disc);
-    var t = -b - s;
-    if t < 0.0 {
-        t = -b + s;
+    // A corner blend can be entered outside the face and exited inside it,
+    // so test both roots against the chart trim.
+    let candidates = array<f32, 2>(-b - s, -b + s);
+    for (var i = 0; i < 2; i++) {
+        let t = candidates[i];
+        if t >= 0.0 && inside_trim(surface, sphere_uv(surface, o + d * t), false) {
+            return t;
+        }
     }
-    return t;
+    return -1.0;
 }
 
 fn torus_value(p: vec3<f32>, c: vec3<f32>, a: vec3<f32>, major: f32, minor: f32) -> f32 {
@@ -496,17 +522,65 @@ fn torus_value(p: vec3<f32>, c: vec3<f32>, a: vec3<f32>, major: f32, minor: f32)
     return s * s - 4.0 * major * major * dot(qp, qp);
 }
 
-/// Nearest positive root of the torus quartic. A bounded sign search over the
-/// bounding-sphere chord is robust and keeps the silhouette smooth; a grazing
-/// contact still lands within half a step, well under a pixel.
+fn torus_uv(surface: SurfacePatch, hit: vec3<f32>) -> vec2<f32> {
+    let q = hit - surface.center.xyz;
+    let x = dot(q, surface.east.xyz);
+    let y = dot(q, surface.north.xyz);
+    let qa = dot(q, surface.axis.xyz);
+    let radial = sqrt(x * x + y * y);
+    return vec2<f32>(atan2(y, x), atan2(qa, radial - surface.axis.w));
+}
+
+/// Even-odd fill of the face's boundary loops in (u, v). The loops are stored
+/// unwrapped, so the point is tested against periodic copies; exactly one copy
+/// lands inside a given loop.
+fn inside_trim(surface: SurfacePatch, uv: vec2<f32>, periodic: bool) -> bool {
+    let loops = u32(surface.trim.y);
+    if loops == 0u {
+        return true;
+    }
+    var inside = false;
+    var cursor = u32(surface.trim.x);
+    for (var loop_index = 0u; loop_index < loops; loop_index = loop_index + 1u) {
+        let count = u32(trim_data[cursor].x);
+        cursor = cursor + 1u;
+        let first_shift = select(0, -1, periodic);
+        let last_shift = select(0, 1, periodic);
+        for (var shift = first_shift; shift <= last_shift; shift = shift + 1) {
+            let u = uv.x + f32(shift) * TAU;
+            var odd = false;
+            for (var i = 0u; i < count; i = i + 1u) {
+                let a = trim_data[cursor + i];
+                let next = select(i + 1u, 0u, i + 1u >= count);
+                let b = trim_data[cursor + next];
+                if ((a.y > uv.y) != (b.y > uv.y)) {
+                    let cross_u = (b.x - a.x) * (uv.y - a.y) / (b.y - a.y) + a.x;
+                    if (u < cross_u) {
+                        odd = !odd;
+                    }
+                }
+            }
+            if odd {
+                inside = !inside;
+            }
+        }
+        cursor = cursor + count;
+    }
+    return inside;
+}
+
+/// Nearest positive root of the torus quartic that lies on the trimmed face.
+/// A bounded sign search over the bounding-sphere chord is robust and keeps
+/// the silhouette smooth; a grazing contact still lands within half a step.
 fn hit_torus(
+    surface: SurfacePatch,
     o: vec3<f32>,
     d: vec3<f32>,
-    c: vec3<f32>,
-    a: vec3<f32>,
-    major: f32,
-    minor: f32,
 ) -> f32 {
+    let c = surface.center.xyz;
+    let a = surface.axis.xyz;
+    let major = surface.axis.w;
+    let minor = surface.east.w;
     let oc = o - c;
     let b = dot(oc, d);
     let reach = major + minor;
@@ -520,12 +594,9 @@ fn hit_torus(
         return -1.0;
     }
     let t0 = max(-b - s, 0.0);
-    let steps = 64;
+    let steps = 96;
     var prev_t = t0;
     var prev = torus_value(o + d * prev_t, c, a, major, minor);
-    if abs(prev) < 1e-6 {
-        return prev_t;
-    }
     for (var i = 1; i <= steps; i++) {
         let t = t0 + (t1 - t0) * f32(i) / f32(steps);
         let value = torus_value(o + d * t, c, a, major, minor);
@@ -543,7 +614,12 @@ fn hit_torus(
                     flo = fm;
                 }
             }
-            return (lo + hi) * 0.5;
+            let root = (lo + hi) * 0.5;
+            // A ray can cross the tube outside the face and re-enter it, so
+            // keep scanning until a root lands on the trim.
+            if inside_trim(surface, torus_uv(surface, o + d * root), true) {
+                return root;
+            }
         }
         prev_t = t;
         prev = value;
@@ -588,10 +664,10 @@ fn fs_surface(in: SurfaceOut) -> FragOut {
     let near4 = camera.inv_view_proj * vec4<f32>(ndc, 0.0, 1.0);
     let origin = near4.xyz / near4.w;
     var t = -1.0;
-    if surface.kind.x < 0.5 {
-        t = hit_sphere(origin, dir, surface.center.xyz, surface.center.w);
+    if surface.kind.x > 0.5 && surface.kind.x < 1.5 {
+        t = hit_torus(surface, origin, dir);
     } else {
-        t = hit_torus(origin, dir, surface.center.xyz, surface.axis.xyz, surface.axis.w, surface.east.w);
+        t = hit_sphere(surface, origin, dir);
     }
     if t < 0.0 || t > span {
         discard;

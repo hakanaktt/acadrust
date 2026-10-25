@@ -58,7 +58,24 @@ pub enum CurvedSurface {
         radius: f64,
         flip: bool,
     },
+    /// A trimmed sphere: a corner or vertex blend. `trim` holds the boundary
+    /// loops in the stereographic chart defined by `pole`/`east`/`north`, the
+    /// same chart the tessellator used, so the shader can test fragments in it.
+    SpherePatch {
+        center: Vector3,
+        radius: f64,
+        flip: bool,
+        pole: Vector3,
+        east: Vector3,
+        north: Vector3,
+        trim: Option<Vec<Vec<[f64; 2]>>>,
+    },
     /// A torus around `axis` with `east`/`north` spanning the ring plane.
+    ///
+    /// `trim` holds the face's boundary loops in the same `(u, v)` parameters
+    /// the tessellator unwrapped: `u` is the angle around `axis`, `v` the angle
+    /// around the tube. The shader discards fragments outside an even-odd fill
+    /// of those loops, so a fillet keeps an exact silhouette.
     Torus {
         center: Vector3,
         axis: Vector3,
@@ -67,6 +84,7 @@ pub enum CurvedSurface {
         major: f64,
         minor: f64,
         flip: bool,
+        trim: Option<Vec<Vec<[f64; 2]>>>,
     },
 }
 
@@ -85,9 +103,13 @@ pub struct Fill {
     /// unlit, which is how hatches and wipeouts stay flat.
     pub normals: Vec<Vector3>,
     pub lighting: super::visual_style::LightingModel,
-    /// When set, the triangles are only the fallback mesh. The GPU evaluates
-    /// this surface analytically, so zoomed silhouettes stay smooth.
-    pub analytic: Option<CurvedSurface>,
+    /// Analytic faces that the GPU draws per fragment, so zoomed silhouettes
+    /// stay smooth. Empty means the triangles are the whole fill.
+    pub analytic: Vec<CurvedSurface>,
+    /// Triangle ranges (in triangle units) covered by `analytic`. The renderer
+    /// skips these in the mesh pass. They stay in `triangles` so extents,
+    /// picking, and clipping keep working on the fallback mesh.
+    pub analytic_ranges: Vec<(u32, u32)>,
 }
 
 /// Analytic piece drawn instead of the chord samples in [`Stroke::points`].

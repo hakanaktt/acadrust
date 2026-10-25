@@ -24,8 +24,8 @@ const FILL_STRIDE: u64 = 48;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
 const GLYPH_STRIDE: u64 = 48;
 const CAMERA_SIZE: u64 = 256;
-/// One analytic surface patch. Sixteen-byte aligned, six vectors.
-const SURFACE_STRIDE: u64 = 96;
+/// One analytic surface patch. Seven sixteen-byte vectors.
+const SURFACE_STRIDE: u64 = 112;
 const SHADER: &str = include_str!("shader.wgsl");
 
 /// Clear color and swapchain format for an embedded renderer.
@@ -34,6 +34,9 @@ pub struct RendererConfig {
     pub format: wgpu::TextureFormat,
     pub samples: u32,
     pub background: [f32; 4],
+    /// Evaluate closed and trimmed analytic faces per fragment. `false` draws
+    /// the compiled mesh instead, which is useful for A/B comparison.
+    pub analytic_surfaces: bool,
 }
 
 impl Default for RendererConfig {
@@ -46,6 +49,7 @@ impl Default for RendererConfig {
             samples: 4,
             // AutoCAD's dark model-space background. ACI 7 contrasts against it.
             background: [33.0 / 255.0, 40.0 / 255.0, 48.0 / 255.0, 1.0],
+            analytic_surfaces: true,
         }
     }
 }
@@ -86,6 +90,8 @@ pub struct Renderer {
     surfaces: Option<wgpu::Buffer>,
     surface_capacity: u64,
     surface_count: u32,
+    surface_trim: Option<wgpu::Buffer>,
+    surface_trim_capacity: u64,
     glyph_pipeline: wgpu::RenderPipeline,
     glyph_layout: wgpu::BindGroupLayout,
     glyphs: wgpu::Buffer,
@@ -102,6 +108,7 @@ pub struct Renderer {
     msaa_view: Option<wgpu::TextureView>,
     format: wgpu::TextureFormat,
     samples: u32,
+    analytic_surfaces: bool,
     background: wgpu::Color,
     background_rgba: [f32; 4],
     width: u32,
@@ -186,20 +193,33 @@ impl Renderer {
             cache: None,
         });
         let storage_ok = device.limits().max_storage_buffers_per_shader_stage > 0;
-        let (surface_pipeline, surface_bind, surface_layout, surfaces) = if storage_ok {
+        let (surface_pipeline, surface_bind, surface_layout, surfaces, surface_trim) =
+            if storage_ok {
             let surface_layout =
                 device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                     label: Some("acadrust-surfaces"),
-                    entries: &[wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
                         },
-                        count: None,
-                    }],
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                    ],
                 });
             // Group 1 is unused by the surface shader but keeps the storage
             // buffer at a distinct group from the glyph atlas sampled elsewhere.
@@ -253,22 +273,35 @@ impl Renderer {
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
+            let trim = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("acadrust-surface-trim"),
+                size: 16,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
             let surface_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("acadrust-surfaces"),
                 layout: &surface_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: surfaces.as_entire_binding(),
-                }],
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: surfaces.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: trim.as_entire_binding(),
+                    },
+                ],
             });
             (
                 Some(surface_pipeline),
                 Some(surface_bind),
                 Some(surface_layout),
                 Some(surfaces),
+                Some(trim),
             )
         } else {
-            (None, None, None, None)
+            (None, None, None, None, None)
         };
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("acadrust-strokes"),
@@ -438,6 +471,8 @@ impl Renderer {
             surfaces,
             surface_capacity: SURFACE_STRIDE,
             surface_count: 0,
+            surface_trim,
+            surface_trim_capacity: 16,
             glyph_pipeline,
             glyph_layout,
             glyphs,
@@ -454,6 +489,7 @@ impl Renderer {
             msaa_view: None,
             format: config.format,
             samples,
+            analytic_surfaces: config.analytic_surfaces,
             background: to_color(clear_color(config.format, config.background)),
             background_rgba: config.background,
             width: 0,
@@ -810,15 +846,13 @@ impl Renderer {
     /// Upload analytic surface descriptors. Any fill carrying one is drawn by
     /// the per-fragment surface pass instead of its triangle mesh.
     fn prepare_surfaces(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, scene: &Scene) {
-        if self.surface_pipeline.is_none() {
+        if self.surface_pipeline.is_none() || !self.analytic_surfaces {
             self.surface_count = 0;
             return;
         }
-        let mut bytes = Vec::with_capacity(scene.fills.len() * SURFACE_STRIDE as usize);
+        let mut bytes = Vec::new();
+        let mut trim = Vec::<f32>::new();
         for fill in &scene.fills {
-            let Some(surface) = &fill.analytic else {
-                continue;
-            };
             let rgb = if fill.style.aci7 {
                 contrast(self.background_rgba)
             } else {
@@ -830,75 +864,154 @@ impl Renderer {
                 super::visual_style::LightingModel::Phong => 2.0,
                 super::visual_style::LightingModel::Gooch => 3.0,
             };
-            let (kind, flip, center, radius, axis, major, east, minor, north) = match surface {
-                super::scene::CurvedSurface::Sphere {
-                    center,
-                    radius,
-                    flip,
-                } => (
-                    0.0,
-                    *flip,
-                    *center,
-                    *radius,
-                    Vector3::ZERO,
-                    0.0,
-                    Vector3::ZERO,
-                    0.0,
-                    Vector3::ZERO,
-                ),
-                super::scene::CurvedSurface::Torus {
-                    center,
-                    axis,
-                    east,
-                    north,
-                    major,
-                    minor,
-                    flip,
-                } => (
-                    1.0, *flip, *center, 0.0, *axis, *major, *east, *minor, *north,
-                ),
-            };
-            push_f32(&mut bytes, kind);
-            push_f32(&mut bytes, if flip { 1.0 } else { 0.0 });
-            push_f32(&mut bytes, lighting);
-            push_f32(&mut bytes, 0.0);
-            for channel in [
-                rgb[0] as f32 / 255.0,
-                rgb[1] as f32 / 255.0,
-                rgb[2] as f32 / 255.0,
-                fill.style.opacity,
-            ] {
-                push_f32(&mut bytes, channel);
+            for surface in &fill.analytic {
+                let (kind, flip, center, radius, axis, major, east, minor, north, loops) =
+                    match surface {
+                        super::scene::CurvedSurface::Sphere {
+                            center,
+                            radius,
+                            flip,
+                        } => (
+                            0.0,
+                            *flip,
+                            *center,
+                            *radius,
+                            Vector3::ZERO,
+                            0.0,
+                            Vector3::ZERO,
+                            0.0,
+                            Vector3::ZERO,
+                            &[][..],
+                        ),
+                        super::scene::CurvedSurface::SpherePatch {
+                            center,
+                            radius,
+                            flip,
+                            pole,
+                            east,
+                            north,
+                            trim,
+                        } => (
+                            2.0,
+                            *flip,
+                            *center,
+                            *radius,
+                            *pole,
+                            0.0,
+                            *east,
+                            0.0,
+                            *north,
+                            trim.as_deref().unwrap_or(&[]),
+                        ),
+                        super::scene::CurvedSurface::Torus {
+                            center,
+                            axis,
+                            east,
+                            north,
+                            major,
+                            minor,
+                            flip,
+                            trim,
+                        } => (
+                            1.0,
+                            *flip,
+                            *center,
+                            0.0,
+                            *axis,
+                            *major,
+                            *east,
+                            *minor,
+                            *north,
+                            trim.as_deref().unwrap_or(&[]),
+                        ),
+                    };
+                let trim_start = trim.len() as f32 / 4.0;
+                for ring in loops {
+                    if ring.len() < 3 {
+                        continue;
+                    }
+                    trim.extend([ring.len() as f32, 0.0, 0.0, 0.0]);
+                    for point in ring {
+                        trim.extend([point[0] as f32, point[1] as f32, 0.0, 0.0]);
+                    }
+                }
+                let trim_loops = trim.len() as f32 / 4.0 - trim_start;
+                push_f32(&mut bytes, kind);
+                push_f32(&mut bytes, if flip { 1.0 } else { 0.0 });
+                push_f32(&mut bytes, lighting);
+                push_f32(&mut bytes, 0.0);
+                for channel in [
+                    rgb[0] as f32 / 255.0,
+                    rgb[1] as f32 / 255.0,
+                    rgb[2] as f32 / 255.0,
+                    fill.style.opacity,
+                ] {
+                    push_f32(&mut bytes, channel);
+                }
+                push_vec3(&mut bytes, center, radius as f32);
+                push_vec3(&mut bytes, axis, major as f32);
+                push_vec3(&mut bytes, east, minor as f32);
+                push_vec3(&mut bytes, north, 0.0);
+                push_f32(&mut bytes, trim_start);
+                push_f32(&mut bytes, trim_loops);
+                push_f32(&mut bytes, 0.0);
+                push_f32(&mut bytes, 0.0);
             }
-            push_vec3(&mut bytes, center, radius as f32);
-            push_vec3(&mut bytes, axis, major as f32);
-            push_vec3(&mut bytes, east, minor as f32);
-            push_vec3(&mut bytes, north, 0.0);
         }
         let size = (bytes.len() as u64).max(SURFACE_STRIDE);
-        if size > self.surface_capacity {
-            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let trim_size = ((trim.len() as u64 * 4).max(16) + 15) / 16 * 16;
+        let replace_surfaces = size > self.surface_capacity;
+        let replace_trim = trim_size > self.surface_trim_capacity;
+        if replace_surfaces {
+            self.surfaces = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("acadrust-surfaces"),
                 size,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
-            });
-            if let Some(layout) = &self.surface_layout {
-                self.surface_bind = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("acadrust-surfaces"),
-                    layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: buffer.as_entire_binding(),
-                    }],
-                }));
-            }
-            self.surfaces = Some(buffer);
+            }));
             self.surface_capacity = size;
         }
+        if replace_trim {
+            self.surface_trim = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("acadrust-surface-trim"),
+                size: trim_size,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+            self.surface_trim_capacity = trim_size;
+        }
+        if (replace_surfaces || replace_trim)
+            && self.surface_layout.is_some()
+            && self.surfaces.is_some()
+            && self.surface_trim.is_some()
+        {
+            self.surface_bind = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("acadrust-surfaces"),
+                layout: self.surface_layout.as_ref().unwrap(),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.surfaces.as_ref().unwrap().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.surface_trim.as_ref().unwrap().as_entire_binding(),
+                    },
+                ],
+            }));
+        }
         if !bytes.is_empty() {
-            if let Some(surfaces) = &self.surfaces {
-                queue.write_buffer(surfaces, 0, &bytes);
+            if let Some(buffer) = &self.surfaces {
+                queue.write_buffer(buffer, 0, &bytes);
+            }
+        }
+        if !trim.is_empty() {
+            if let Some(buffer) = &self.surface_trim {
+                let mut raw = Vec::with_capacity(trim.len() * 4);
+                for value in &trim {
+                    raw.extend_from_slice(&value.to_le_bytes());
+                }
+                queue.write_buffer(buffer, 0, &raw);
             }
         }
         self.surface_count = (bytes.len() as u64 / SURFACE_STRIDE) as u32;
@@ -907,12 +1020,20 @@ impl Renderer {
     fn prepare_fills(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, scene: &Scene) {
         let vertices: usize = scene.fills.iter().map(|fill| fill.triangles.len()).sum();
         let mut bytes = Vec::with_capacity(vertices * FILL_STRIDE as usize);
+        let surfaces_available = self.surface_pipeline.is_some() && self.analytic_surfaces;
         for fill in &scene.fills {
-            if fill.analytic.is_some() && self.surface_pipeline.is_some() {
-                // The analytic surface pass covers this face.
-                continue;
-            }
+            // Skip the fallback triangles covered by an analytic descriptor.
+            let skip = |triangle: usize| {
+                surfaces_available
+                    && fill
+                        .analytic_ranges
+                        .iter()
+                        .any(|&(start, end)| triangle as u32 >= start && (triangle as u32) < end)
+            };
             for (index, point) in fill.triangles.iter().enumerate() {
+                if skip(index / 3) {
+                    continue;
+                }
                 let rgb = if fill.background {
                     [
                         (self.background_rgba[0] * 255.0) as u8,
@@ -1110,6 +1231,7 @@ pub async fn render_rgba_with(
             format,
             samples: config.samples,
             background: config.background,
+            analytic_surfaces: config.analytic_surfaces,
         },
     );
     let scene = super::compile(doc, options);
