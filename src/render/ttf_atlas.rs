@@ -25,6 +25,13 @@ pub(crate) fn build_atlas(
     viewport_px: (u32, u32),
     mut font_at: impl FnMut(&std::path::Path) -> Option<fontdue::Font>,
 ) -> BuiltAtlas {
+    if runs.is_empty() {
+        return BuiltAtlas {
+            size: 1,
+            pixels: vec![0],
+            quads: Vec::new(),
+        };
+    }
     let size = 4096u32;
     let mut pixels = vec![0u8; (size * size) as usize];
     let mut cursor_x = 1u32;
@@ -33,15 +40,18 @@ pub(crate) fn build_atlas(
     let mut quads = Vec::new();
     let pixels_per_world = viewport_px.1.max(1) as f64 / view.height.max(1e-6);
     let mut fonts = Vec::new();
+    let mut rasterized: std::collections::HashMap<(usize, char, u32), (fontdue::Metrics, Vec<u8>)> =
+        std::collections::HashMap::new();
     for run in runs {
         if !fonts.iter().any(|(path, _)| path == &run.font_path) {
             if let Some(font) = font_at(&run.font_path) {
                 fonts.push((run.font_path.clone(), font));
             }
         }
-        let Some((_, font)) = fonts.iter().find(|(path, _)| path == &run.font_path) else {
+        let Some(font_index) = fonts.iter().position(|(path, _)| path == &run.font_path) else {
             continue;
         };
+        let font = &fonts[font_index].1;
         // Keep the raster atlas within a useful size range, but map its pixels
         // back to the requested world-space text height.  Using the viewport
         // scale here after clamping makes small text grow and large text shrink.
@@ -51,7 +61,11 @@ pub(crate) fn build_atlas(
         let width_factor = run.width_factor.abs();
         let mut advance = 0.0f32;
         for ch in run.text.chars() {
-            let (metrics, bitmap) = font.rasterize(ch, pixel_height);
+            let key = (font_index, ch, pixel_height.to_bits());
+            let (metrics, bitmap) = rasterized
+                .entry(key)
+                .or_insert_with(|| font.rasterize(ch, pixel_height));
+            let metrics = *metrics;
             if metrics.width == 0 || metrics.height == 0 {
                 advance += metrics.advance_width * width_factor as f32;
                 continue;
@@ -69,7 +83,7 @@ pub(crate) fn build_atlas(
                 size,
                 cursor_x,
                 cursor_y,
-                &bitmap,
+                bitmap.as_slice(),
                 metrics.width,
                 metrics.height,
             );

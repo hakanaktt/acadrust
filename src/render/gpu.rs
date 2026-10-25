@@ -410,7 +410,18 @@ impl Renderer {
         self.z_scale = z_scale;
         self.z_bias = z_bias;
         self.depth_bounds = bounds;
-        let mut bytes = Vec::new();
+        let primitives: usize = scene
+            .strokes
+            .iter()
+            .map(|stroke| {
+                if stroke.curves.is_empty() {
+                    stroke.points.len().saturating_sub(1)
+                } else {
+                    stroke.curves.len()
+                }
+            })
+            .sum();
+        let mut bytes = Vec::with_capacity(primitives * INSTANCE_STRIDE as usize);
         for stroke in &scene.strokes {
             let rgb = if stroke.style.aci7 {
                 contrast(self.background_rgba)
@@ -473,6 +484,10 @@ impl Renderer {
         view: &View,
         viewport_px: (u32, u32),
     ) {
+        if scene.glyphs.is_empty() {
+            self.glyph_count = 0;
+            return;
+        }
         let built = super::ttf_atlas::build_atlas(&scene.glyphs, view, viewport_px, |path| {
             if !self.ttf_fonts.contains_key(path) {
                 let bytes = std::fs::read(path).ok()?;
@@ -482,6 +497,10 @@ impl Renderer {
             }
             self.ttf_fonts.get(path).cloned()
         });
+        if built.quads.is_empty() {
+            self.glyph_count = 0;
+            return;
+        }
         let (atlas, atlas_view, atlas_bind) = atlas_resources(
             device,
             &self.glyph_layout,
@@ -490,13 +509,19 @@ impl Renderer {
             &built.pixels,
         );
         let padded_stride = (built.size as usize).div_ceil(256) * 256;
-        let mut padded = vec![0u8; padded_stride * built.size as usize];
-        for row in 0..built.size as usize {
-            let src = row * built.size as usize;
-            let dst = row * padded_stride;
-            padded[dst..dst + built.size as usize]
-                .copy_from_slice(&built.pixels[src..src + built.size as usize]);
-        }
+        let (pixels, stride): (std::borrow::Cow<'_, [u8]>, u32) =
+            if padded_stride == built.size as usize {
+                (std::borrow::Cow::Borrowed(&built.pixels), built.size)
+            } else {
+                let mut padded = vec![0u8; padded_stride * built.size as usize];
+                for row in 0..built.size as usize {
+                    let src = row * built.size as usize;
+                    let dst = row * padded_stride;
+                    padded[dst..dst + built.size as usize]
+                        .copy_from_slice(&built.pixels[src..src + built.size as usize]);
+                }
+                (std::borrow::Cow::Owned(padded), padded_stride as u32)
+            };
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &atlas,
@@ -504,10 +529,10 @@ impl Renderer {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            &padded,
+            pixels.as_ref(),
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(padded_stride as u32),
+                bytes_per_row: Some(stride),
                 rows_per_image: Some(built.size),
             },
             wgpu::Extent3d {
@@ -519,7 +544,7 @@ impl Renderer {
         self.atlas = atlas;
         self.atlas_view = atlas_view;
         self.atlas_bind = atlas_bind;
-        let mut bytes = Vec::new();
+        let mut bytes = Vec::with_capacity(built.quads.len() * 6 * GLYPH_STRIDE as usize);
         for quad in &built.quads {
             let corners = [
                 quad.corners[0],
@@ -600,18 +625,26 @@ impl Renderer {
             });
             let row = picture.width * 4;
             let padded = row.div_ceil(256) * 256;
-            let mut upload = vec![0u8; padded as usize * picture.height as usize];
-            for y in 0..picture.height as usize {
-                let source = y * row as usize;
-                let dest = y * padded as usize;
-                let next = source + row as usize;
-                upload[dest..dest + row as usize].copy_from_slice(&picture.rgba[source..next]);
-                if picture.opacity < 0.999 {
-                    for pixel in upload[dest..dest + row as usize].chunks_exact_mut(4) {
-                        pixel[3] = (pixel[3] as f32 * picture.opacity).round() as u8;
+            let size = picture.width as usize * picture.height as usize * 4;
+            let (upload, stride): (std::borrow::Cow<'_, [u8]>, u32) = if padded == row
+                && picture.opacity >= 0.999
+            {
+                (std::borrow::Cow::Borrowed(&picture.rgba[..size]), row)
+            } else {
+                let mut upload = vec![0u8; padded as usize * picture.height as usize];
+                for y in 0..picture.height as usize {
+                    let source = y * row as usize;
+                    let dest = y * padded as usize;
+                    let next = source + row as usize;
+                    upload[dest..dest + row as usize].copy_from_slice(&picture.rgba[source..next]);
+                    if picture.opacity < 0.999 {
+                        for pixel in upload[dest..dest + row as usize].chunks_exact_mut(4) {
+                            pixel[3] = (pixel[3] as f32 * picture.opacity).round() as u8;
+                        }
                     }
                 }
-            }
+                (std::borrow::Cow::Owned(upload), padded)
+            };
             queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &texture,
@@ -619,10 +652,10 @@ impl Renderer {
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
                 },
-                &upload,
+                upload.as_ref(),
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some(padded),
+                    bytes_per_row: Some(stride),
                     rows_per_image: Some(picture.height),
                 },
                 wgpu::Extent3d {
@@ -646,7 +679,7 @@ impl Renderer {
                     },
                 ],
             });
-            let mut bytes = Vec::new();
+            let mut bytes = Vec::with_capacity(picture.triangles.len() * 24);
             for (point, uv) in picture.triangles.iter().zip(&picture.uvs) {
                 push_f32(&mut bytes, point.x as f32);
                 push_f32(&mut bytes, point.y as f32);
@@ -673,7 +706,8 @@ impl Renderer {
     }
 
     fn prepare_fills(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, scene: &Scene) {
-        let mut bytes = Vec::new();
+        let vertices: usize = scene.fills.iter().map(|fill| fill.triangles.len()).sum();
+        let mut bytes = Vec::with_capacity(vertices * FILL_STRIDE as usize);
         for fill in &scene.fills {
             for (index, point) in fill.triangles.iter().enumerate() {
                 let rgb = if fill.background {
@@ -1143,9 +1177,7 @@ fn push_segment(
     push_f32(bytes, cosmetic);
     push_f32(bytes, 0.0);
     push_f32(bytes, 0.0);
-    for _ in 0..8 {
-        push_f32(bytes, 0.0);
-    }
+    bytes.resize(bytes.len() + 32, 0);
 }
 
 fn push_curve(
@@ -1222,19 +1254,37 @@ fn camera_bytes(
     z_scale: f32,
     z_bias: f32,
     bounds: Option<(Vector3, Vector3)>,
-) -> Vec<u8> {
+) -> [u8; CAMERA_SIZE as usize] {
     let matrix = camera_matrix(view, width, height, z_scale, z_bias, bounds);
-    let mut bytes = Vec::with_capacity(CAMERA_SIZE as usize);
-    for value in matrix {
-        push_f32(&mut bytes, value);
+    let values = [
+        matrix[0],
+        matrix[1],
+        matrix[2],
+        matrix[3],
+        matrix[4],
+        matrix[5],
+        matrix[6],
+        matrix[7],
+        matrix[8],
+        matrix[9],
+        matrix[10],
+        matrix[11],
+        matrix[12],
+        matrix[13],
+        matrix[14],
+        matrix[15],
+        width as f32,
+        height as f32,
+        px_per_mm,
+        0.0,
+        z_scale,
+        z_bias,
+    ];
+    let mut bytes = [0u8; CAMERA_SIZE as usize];
+    for (index, value) in values.iter().enumerate() {
+        let offset = index * 4;
+        bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
     }
-    push_f32(&mut bytes, width as f32);
-    push_f32(&mut bytes, height as f32);
-    push_f32(&mut bytes, px_per_mm);
-    push_f32(&mut bytes, 0.0);
-    push_f32(&mut bytes, z_scale);
-    push_f32(&mut bytes, z_bias);
-    bytes.resize(CAMERA_SIZE as usize, 0);
     bytes
 }
 

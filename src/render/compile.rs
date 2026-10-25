@@ -40,14 +40,18 @@ pub(crate) fn compile(doc: &CadDocument, options: &CompileOptions) -> Scene {
         return scene;
     };
     let sheet = super::sheet::is_sheet_block(&block);
+    let scene = blank_scene(doc, options, visual, sheet);
+    let visual = scene.visual_style.clone();
     let mut compiler = Compiler {
         doc,
-        scene: blank_scene(doc, options, visual, sheet),
+        scene,
+        visual,
         stack: HashSet::new(),
         font_dirs: &options.font_dirs,
         font_files: &options.font_files,
         resource_dirs: &options.resource_dirs,
         fonts: HashMap::new(),
+        ttf_fonts: HashMap::new(),
         sheet,
         pattern_scale: 1.0,
         viewport_frozen: HashSet::new(),
@@ -84,11 +88,17 @@ fn blank_scene(
 struct Compiler<'a> {
     doc: &'a CadDocument,
     scene: Scene,
+    /// Current visual style. Mirrors `scene.visual_style` so emitters can read
+    /// it without cloning the resolved style for every primitive.
+    visual: super::visual_style::ResolvedVisualStyle,
     stack: HashSet<String>,
     font_dirs: &'a [std::path::PathBuf],
     font_files: &'a [(String, Vec<u8>)],
     resource_dirs: &'a [std::path::PathBuf],
     fonts: HashMap<String, Option<FaceFont>>,
+    /// Parsed TrueType fonts, keyed by path. MText layout asks for advances
+    /// repeatedly, so parsing the file per call would dominate compile time.
+    ttf_fonts: HashMap<std::path::PathBuf, Option<fontdue::Font>>,
     /// Layout tab. Lineweights are paper millimetres, and viewports open model space.
     sheet: bool,
     /// Extra multiplier for linetype lengths. Viewport contents use the
@@ -345,7 +355,6 @@ impl Compiler<'_> {
                 }
             }
             EntityType::Face3D(face) => {
-                let visual = self.scene.visual_style.clone();
                 let corners = [
                     face.first_corner,
                     face.second_corner,
@@ -358,7 +367,7 @@ impl Compiler<'_> {
                     face.invisible_edges.is_third_invisible(),
                     face.invisible_edges.is_fourth_invisible(),
                 ];
-                if visual.edges != super::visual_style::EdgeMode::None {
+                if self.visual.edges != super::visual_style::EdgeMode::None {
                     for index in 0..4 {
                         if hidden[index] {
                             continue;
@@ -372,7 +381,7 @@ impl Compiler<'_> {
                         self.emit_dedicated(&points, entity, frame, source.clone());
                     }
                 }
-                if visual.faces != super::visual_style::FaceShading::None {
+                if self.visual.faces != super::visual_style::FaceShading::None {
                     let mut ring = corners
                         .into_iter()
                         .map(|corner| transform.apply(corner))
@@ -395,13 +404,8 @@ impl Compiler<'_> {
             }
             EntityType::Hatch(hatch) => {
                 if hatch.is_solid || hatch.gradient_color.is_enabled() {
-                    let style = resolve_style(
-                        self.doc,
-                        entity.common(),
-                        frame,
-                        &self.scene.visual_style.clone(),
-                        self.sheet,
-                    );
+                    let style =
+                        resolve_style(self.doc, entity.common(), frame, &self.visual, self.sheet);
                     let color_of =
                         |color: crate::types::Color| match color {
                             crate::types::Color::Rgb { r, g, b } => [r, g, b],
@@ -738,8 +742,8 @@ impl Compiler<'_> {
         let to_paper = super::sheet::model_to_paper(viewport).then(transform);
         let saved_scale = self.pattern_scale;
         let saved_frozen = std::mem::replace(&mut self.viewport_frozen, frozen);
-        let saved_visual = self.scene.visual_style.clone();
-        self.scene.visual_style = if !viewport.visual_style_handle.is_null() {
+        let saved_visual = self.visual.clone();
+        self.visual = if !viewport.visual_style_handle.is_null() {
             visual_style::resolve(
                 self.doc,
                 &visual_style::VisualStyleRequest::Object(viewport.visual_style_handle),
@@ -750,6 +754,7 @@ impl Compiler<'_> {
                 &visual_style::VisualStyleRequest::RenderMode(viewport.render_mode),
             )
         };
+        self.scene.visual_style = self.visual.clone();
         self.pattern_scale = if self.doc.header.paper_space_linetype_scaling {
             1.0
         } else {
@@ -762,7 +767,8 @@ impl Compiler<'_> {
         self.walk_block("*Model_Space", &Frame::model(), &to_paper, &[]);
         self.pattern_scale = saved_scale;
         self.viewport_frozen = saved_frozen;
-        self.scene.visual_style = saved_visual;
+        self.visual = saved_visual;
+        self.scene.visual_style = self.visual.clone();
         clip_viewport_depth(
             &mut self.scene,
             stroke_from,
@@ -1132,8 +1138,7 @@ impl Compiler<'_> {
         let label = &effective_label;
         if self.doc.header.quick_text_mode {
             let points = world(anchor_transform, super::text_draw::quick_box(label));
-            let visual = self.scene.visual_style.clone();
-            let style = resolve_style(self.doc, entity.common(), frame, &visual, self.sheet);
+            let style = resolve_style(self.doc, entity.common(), frame, &self.visual, self.sheet);
             self.emit_plain(&points, &[], style, source);
             return;
         }
@@ -1152,9 +1157,8 @@ impl Compiler<'_> {
             });
             return;
         };
-        let visual = self.scene.visual_style.clone();
-        let mut style = resolve_style(self.doc, entity.common(), frame, &visual, self.sheet);
-        apply_face_color(&mut style.rgb, visual.face_color);
+        let mut style = resolve_style(self.doc, entity.common(), frame, &self.visual, self.sheet);
+        apply_face_color(&mut style.rgb, self.visual.face_color);
         match produced {
             PreparedLabel::Strokes(chains) => {
                 for chain in chains {
@@ -1263,6 +1267,16 @@ impl Compiler<'_> {
             backward: label.backward || style.flags.backward,
             upside_down: label.upside_down || style.flags.upside_down,
         }
+    }
+
+    fn ttf_font(&mut self, path: &std::path::Path) -> Option<&fontdue::Font> {
+        if !self.ttf_fonts.contains_key(path) {
+            let parsed = std::fs::read(path).ok().and_then(|bytes| {
+                fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default()).ok()
+            });
+            self.ttf_fonts.insert(path.to_path_buf(), parsed);
+        }
+        self.ttf_fonts.get(path).and_then(|font| font.as_ref())
     }
 
     fn font_for(&mut self, style_name: &str) -> Option<&FaceFont> {
@@ -1451,12 +1465,8 @@ impl Compiler<'_> {
                     * width_factor
             }
             FaceFont::TrueType(path) => {
-                let Some(bytes) = std::fs::read(path).ok() else {
-                    return fallback;
-                };
-                let Some(font) =
-                    fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default()).ok()
-                else {
+                let path = path.clone();
+                let Some(font) = self.ttf_font(&path) else {
                     return fallback;
                 };
                 text.value
@@ -1507,9 +1517,8 @@ impl Compiler<'_> {
         source: EntityRef,
         path: DrawPath,
     ) {
-        let visual = self.scene.visual_style.clone();
-        let mut style = resolve_style(self.doc, entity.common(), frame, &visual, self.sheet);
-        if visual.kind == super::visual_style::StandardVisualStyle::Conceptual {
+        let mut style = resolve_style(self.doc, entity.common(), frame, &self.visual, self.sheet);
+        if self.visual.kind == super::visual_style::StandardVisualStyle::Conceptual {
             style.rgb = [255, 255, 255];
             style.aci7 = false;
         }
@@ -1517,7 +1526,7 @@ impl Compiler<'_> {
             self.doc,
             entity.common(),
             frame,
-            &visual,
+            &self.visual,
             self.pattern_scale,
         );
         let lengths: Vec<f64> = marks.iter().map(|mark| mark.length).collect();
@@ -1593,7 +1602,7 @@ impl Compiler<'_> {
                         let text = mark.text.clone().unwrap_or_default();
                         let glyph_transform = self.active_transform.clone();
                         let shape_scale = if matches!(
-                            self.font_for(&mark.style_name),
+                            self.font_for(mark.style_name.as_ref()),
                             Some(FaceFont::Shape(_))
                         ) {
                             glyph_transform
@@ -1620,7 +1629,7 @@ impl Compiler<'_> {
                                 backward: false,
                                 upside_down: false,
                             },
-                            &mark.style_name,
+                            mark.style_name.as_ref(),
                             entity,
                             frame,
                             &Transform::identity(),
@@ -1641,9 +1650,8 @@ impl Compiler<'_> {
         frame: &Frame,
         source: EntityRef,
     ) {
-        let visual = self.scene.visual_style.clone();
-        let mut style = resolve_style(self.doc, entity.common(), frame, &visual, self.sheet);
-        if visual.kind == super::visual_style::StandardVisualStyle::Conceptual {
+        let mut style = resolve_style(self.doc, entity.common(), frame, &self.visual, self.sheet);
+        if self.visual.kind == super::visual_style::StandardVisualStyle::Conceptual {
             style.rgb = [255, 255, 255];
             style.aci7 = false;
         }
@@ -1666,9 +1674,8 @@ impl Compiler<'_> {
         frame: &Frame,
         source: EntityRef,
     ) {
-        let visual = self.scene.visual_style.clone();
-        let mut style = resolve_style(self.doc, entity.common(), frame, &visual, self.sheet);
-        if visual.kind == super::visual_style::StandardVisualStyle::Conceptual {
+        let mut style = resolve_style(self.doc, entity.common(), frame, &self.visual, self.sheet);
+        if self.visual.kind == super::visual_style::StandardVisualStyle::Conceptual {
             style.rgb = [255, 255, 255];
             style.aci7 = false;
         }
@@ -1676,7 +1683,7 @@ impl Compiler<'_> {
             self.doc,
             entity.common(),
             frame,
-            &visual,
+            &self.visual,
             self.pattern_scale,
         );
         let lengths: Vec<f64> = marks.iter().map(|mark| mark.length).collect();
@@ -1689,15 +1696,20 @@ impl Compiler<'_> {
             source.clone(),
             DrawPath::Dedicated,
         );
-        let along = if samples.len() >= 2 {
-            samples.to_vec()
-        } else {
-            curves
-                .iter()
-                .flat_map(|curve| sample_curve(curve, 8))
-                .collect()
-        };
-        self.place_complex(&along, &marks, entity, frame, source);
+        if marks
+            .iter()
+            .any(|mark| mark.text.is_some() || mark.shape_number.is_some())
+        {
+            let along = if samples.len() >= 2 {
+                samples.to_vec()
+            } else {
+                curves
+                    .iter()
+                    .flat_map(|curve| sample_curve(curve, 8))
+                    .collect()
+            };
+            self.place_complex(&along, &marks, entity, frame, source);
+        }
     }
 
     fn emit_lwpolyline(
@@ -1764,10 +1776,9 @@ impl Compiler<'_> {
             self.fallback(entity, frame, source);
             return;
         }
-        let visual = self.scene.visual_style.clone();
-        let mut style = resolve_style(self.doc, entity.common(), frame, &visual, self.sheet);
+        let mut style = resolve_style(self.doc, entity.common(), frame, &self.visual, self.sheet);
         if !background {
-            apply_face_color(&mut style.rgb, visual.face_color);
+            apply_face_color(&mut style.rgb, self.visual.face_color);
         }
         self.scene.fills.push(super::scene::Fill {
             triangles: triangles.to_vec(),
@@ -1777,7 +1788,7 @@ impl Compiler<'_> {
             background,
             vertex_rgb,
             normals: Vec::new(),
-            lighting: visual.lighting,
+            lighting: self.visual.lighting,
         });
     }
 
@@ -1798,14 +1809,16 @@ impl Compiler<'_> {
             self.fallback(entity, frame, source);
             return;
         }
-        let visual = self.scene.visual_style.clone();
+        let lighting = self.visual.lighting;
+        let face_opacity = self.visual.face_opacity;
+        let edges_mode = self.visual.edges;
         let wireframe = self.solid_style == super::SolidStyle::Wireframe;
         let depth_only = !wireframe
-            && visual.faces == super::visual_style::FaceShading::None
-            && visual.edges == super::visual_style::EdgeMode::Facet;
+            && self.visual.faces == super::visual_style::FaceShading::None
+            && edges_mode == super::visual_style::EdgeMode::Facet;
         let draw_faces = !wireframe
-            && (visual.faces != super::visual_style::FaceShading::None
-                || visual.kind == super::visual_style::StandardVisualStyle::Wireframe2D);
+            && (self.visual.faces != super::visual_style::FaceShading::None
+                || self.visual.kind == super::visual_style::StandardVisualStyle::Wireframe2D);
         if draw_faces && !tess.triangles.is_empty() {
             let triangles = world(transform, tess.triangles);
             self.emit_fill(&triangles, entity, frame, source.clone(), false);
@@ -1814,7 +1827,7 @@ impl Compiler<'_> {
                     &triangles,
                     transform_normals(transform, &tess.normals),
                 );
-                if visual.lighting == super::visual_style::LightingModel::None
+                if lighting == super::visual_style::LightingModel::None
                     && self.solid_style == super::SolidStyle::Wireframe
                 {
                     fill.normals.clear();
@@ -1822,13 +1835,13 @@ impl Compiler<'_> {
                 if depth_only {
                     fill.style.opacity = 0.0;
                 } else {
-                    fill.style.opacity *= visual.face_opacity as f32;
+                    fill.style.opacity *= face_opacity as f32;
                 }
             }
         }
         let draw_edges = wireframe
             || self.solid_style == super::SolidStyle::ShadedWithEdges
-            || visual.edges != super::visual_style::EdgeMode::None;
+            || edges_mode != super::visual_style::EdgeMode::None;
         if draw_edges {
             for edge in &tess.edges {
                 if edge.len() >= 2 {
@@ -1852,7 +1865,7 @@ impl Compiler<'_> {
                 );
             }
         }
-        if wireframe || visual.edges == super::visual_style::EdgeMode::Isolines {
+        if wireframe || edges_mode == super::visual_style::EdgeMode::Isolines {
             for curve in &tess.isoline_curves {
                 let curve = transform_curve(transform, curve.clone());
                 let samples = sample_curve(&curve, 16);
@@ -2007,10 +2020,10 @@ impl Compiler<'_> {
             self.fallback(entity, frame, source);
             return;
         }
-        let visual = self.scene.visual_style.clone();
+        let lighting = self.visual.lighting;
         let draw_faces = self.solid_style != super::SolidStyle::Wireframe
-            && (visual.faces != super::visual_style::FaceShading::None
-                || visual.kind == super::visual_style::StandardVisualStyle::Wireframe2D);
+            && (self.visual.faces != super::visual_style::FaceShading::None
+                || self.visual.kind == super::visual_style::StandardVisualStyle::Wireframe2D);
         if draw_faces && !tess.triangles.is_empty() {
             let triangles = world(transform, tess.triangles.clone());
             self.emit_fill(&triangles, entity, frame, source.clone(), false);
@@ -2019,7 +2032,7 @@ impl Compiler<'_> {
                     &triangles,
                     transform_normals(transform, &tess.normals),
                 );
-                if visual.lighting == super::visual_style::LightingModel::None
+                if lighting == super::visual_style::LightingModel::None
                     && self.solid_style == super::SolidStyle::Wireframe
                 {
                     fill.normals.clear();
@@ -2027,7 +2040,7 @@ impl Compiler<'_> {
             }
         }
         if self.solid_style == super::SolidStyle::Wireframe
-            && visual.edges == super::visual_style::EdgeMode::None
+            && self.visual.edges == super::visual_style::EdgeMode::None
         {
             return;
         }
@@ -3100,13 +3113,7 @@ impl Compiler<'_> {
         let local_corners = box_corners(bounds.min, bounds.max);
         let corners =
             std::array::from_fn(|index| self.active_transform.apply(local_corners[index]));
-        let style = resolve_style(
-            self.doc,
-            entity.common(),
-            frame,
-            &self.scene.visual_style.clone(),
-            self.sheet,
-        );
+        let style = resolve_style(self.doc, entity.common(), frame, &self.visual, self.sheet);
         for edge in box_edges(&corners) {
             self.scene.strokes.push(Stroke {
                 points: edge.to_vec(),
@@ -3205,7 +3212,11 @@ fn emit_chain(
     source: EntityRef,
     path: DrawPath,
 ) {
-    if points.len() < 2 || polyline_length(points) <= 1e-12 {
+    if points.len() < 2 {
+        return;
+    }
+    let length = polyline_length(points);
+    if length <= 1e-12 {
         return;
     }
     let patterned = elements.iter().any(|element| element.abs() > 1e-12);
@@ -3221,7 +3232,7 @@ fn emit_chain(
         });
         return;
     }
-    let runs = fit_runs(polyline_length(points), elements);
+    let runs = fit_runs(length, elements);
     for piece in runs_on_segments(points, &runs) {
         let (points, dot) = match piece {
             SegmentPiece::Dash { start, end } => (vec![start, end], false),
@@ -4447,13 +4458,13 @@ pub(crate) fn tessellate_bulge(start: Vector3, end: Vector3, bulge: f64) -> Vec<
         .collect()
 }
 
-fn effective_layer_of(common: &crate::entities::EntityCommon, frame: &Frame) -> String {
+fn effective_layer_of<'a>(common: &'a crate::entities::EntityCommon, frame: &'a Frame) -> &'a str {
     if frame.in_insert && common.layer.eq_ignore_ascii_case("0") {
-        frame.layer.clone()
+        frame.layer.as_str()
     } else if common.layer.is_empty() {
-        "0".to_string()
+        "0"
     } else {
-        common.layer.clone()
+        common.layer.as_str()
     }
 }
 

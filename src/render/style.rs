@@ -56,7 +56,7 @@ pub(crate) fn resolve_style(
     visual: &ResolvedVisualStyle,
     sheet: bool,
 ) -> Style {
-    let layer_name = effective_layer(&common.layer, frame);
+    let layer_name = effective_layer_ref(&common.layer, frame);
     let layer = doc.layers.get(&layer_name);
     let color = inherit_color(common.color, frame);
     let color = if matches!(color, Color::ByLayer) {
@@ -105,7 +105,7 @@ pub(crate) fn resolve_style(
     };
 
     Style {
-        layer: layer_name,
+        layer: layer_name.to_string(),
         aci7,
         rgb,
         opacity,
@@ -122,7 +122,7 @@ pub(crate) struct PatternMark {
     pub length: f64,
     pub text: Option<String>,
     pub shape_number: Option<u16>,
-    pub style_name: String,
+    pub style_name: std::borrow::Cow<'static, str>,
     pub scale: f64,
     pub rotation: f64,
     pub absolute: bool,
@@ -141,15 +141,25 @@ pub(crate) fn pattern_elements(
     if !visual.linetypes {
         return Vec::new();
     }
-    let name = inherit_linetype(&common.linetype, frame);
+    let name = if common.linetype.is_empty() || common.linetype.eq_ignore_ascii_case("bylayer") {
+        "ByLayer"
+    } else if common.linetype.eq_ignore_ascii_case("byblock") {
+        if frame.in_insert {
+            frame.linetype.as_str()
+        } else {
+            "ByLayer"
+        }
+    } else {
+        common.linetype.as_str()
+    };
     let linetype = if name.eq_ignore_ascii_case("bylayer") {
-        let layer_name = effective_layer(&common.layer, frame);
+        let layer_name = effective_layer_ref(&common.layer, frame);
         doc.layers
-            .get(&layer_name)
+            .get(layer_name)
             .map(|layer| layer.line_type.as_str())
             .unwrap_or("Continuous")
     } else {
-        name.as_str()
+        name
     };
     let Some(linetype) = lookup_linetype(doc, linetype) else {
         return Vec::new();
@@ -166,7 +176,7 @@ pub(crate) fn pattern_elements(
                 length: element.length * scale,
                 text: None,
                 shape_number: None,
-                style_name: "Standard".to_string(),
+                style_name: std::borrow::Cow::Borrowed("Standard"),
                 scale: scale,
                 rotation: 0.0,
                 absolute: false,
@@ -179,8 +189,8 @@ pub(crate) fn pattern_elements(
                     .text_styles
                     .iter()
                     .find(|style| style.handle == complex.style_handle)
-                    .map(|style| style.name.clone())
-                    .unwrap_or_else(|| "Standard".to_string());
+                    .map(|style| std::borrow::Cow::Owned(style.name.clone()))
+                    .unwrap_or(std::borrow::Cow::Borrowed("Standard"));
                 mark.scale = complex.scale * scale;
                 mark.rotation = complex.rotation;
                 mark.absolute = complex.absolute_rotation;
@@ -208,12 +218,16 @@ pub(crate) fn layer_is_hidden(doc: &CadDocument, layer_name: &str) -> bool {
 }
 
 fn effective_layer(layer: &str, frame: &Frame) -> String {
+    effective_layer_ref(layer, frame).to_string()
+}
+
+fn effective_layer_ref<'a>(layer: &'a str, frame: &'a Frame) -> &'a str {
     if frame.in_insert && layer.eq_ignore_ascii_case("0") {
-        frame.layer.clone()
+        frame.layer.as_str()
     } else if layer.is_empty() {
-        "0".to_string()
+        "0"
     } else {
-        layer.to_string()
+        layer
     }
 }
 

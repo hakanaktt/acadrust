@@ -52,6 +52,7 @@ pub(crate) fn runs_on_segments(points: &[Vector3], runs: &[Run]) -> Vec<SegmentP
         return pieces;
     }
     let mut origin = 0.0;
+    let mut cursor = 0usize;
     for pair in points.windows(2) {
         let start = pair[0];
         let end = pair[1];
@@ -62,7 +63,24 @@ pub(crate) fn runs_on_segments(points: &[Vector3], runs: &[Run]) -> Vec<SegmentP
             continue;
         }
         let seg_end = origin + length;
-        for run in runs {
+        while let Some(run) = runs.get(cursor) {
+            let before = match *run {
+                Run::Dash { end, .. } => end <= origin,
+                Run::Dot { at } => at < origin - 1e-9,
+            };
+            if !before {
+                break;
+            }
+            cursor += 1;
+        }
+        for run in &runs[cursor..] {
+            let run_start = match *run {
+                Run::Dash { start, .. } => start,
+                Run::Dot { at } => at,
+            };
+            if run_start > seg_end + 1e-9 {
+                break;
+            }
             match *run {
                 Run::Dash { start: a, end: b } => {
                     let from = a.max(origin);
