@@ -381,7 +381,9 @@ impl Compiler<'_> {
                         self.emit_dedicated(&points, entity, frame, source.clone());
                     }
                 }
-                if self.visual.faces != super::visual_style::FaceShading::None {
+                if self.visual.faces != super::visual_style::FaceShading::None
+                    || self.visual.hidden_removal
+                {
                     let mut ring = corners
                         .into_iter()
                         .map(|corner| transform.apply(corner))
@@ -1777,6 +1779,10 @@ impl Compiler<'_> {
             return;
         }
         let mut style = resolve_style(self.doc, entity.common(), frame, &self.visual, self.sheet);
+        let background = background
+            || self.visual.face_color == super::visual_style::FaceColorMode::Background
+            || (self.visual.faces == super::visual_style::FaceShading::None
+                && self.visual.hidden_removal);
         if !background {
             apply_face_color(&mut style.rgb, self.visual.face_color);
         }
@@ -1788,7 +1794,12 @@ impl Compiler<'_> {
             background,
             vertex_rgb,
             normals: Vec::new(),
-            lighting: self.visual.lighting,
+            lighting: if background {
+                super::visual_style::LightingModel::None
+            } else {
+                self.visual.lighting
+            },
+            analytic: None,
         });
     }
 
@@ -1813,15 +1824,19 @@ impl Compiler<'_> {
         let face_opacity = self.visual.face_opacity;
         let edges_mode = self.visual.edges;
         let wireframe = self.solid_style == super::SolidStyle::Wireframe;
-        let depth_only = !wireframe
-            && self.visual.faces == super::visual_style::FaceShading::None
-            && edges_mode == super::visual_style::EdgeMode::Facet;
-        let draw_faces = !wireframe
-            && (self.visual.faces != super::visual_style::FaceShading::None
-                || self.visual.kind == super::visual_style::StandardVisualStyle::Wireframe2D);
+        // Hidden styles draw faces so they can mask edges behind them, even
+        // when a custom style leaves the face model off.
+        let occluder = self.visual.hidden_removal
+            && self.visual.faces == super::visual_style::FaceShading::None;
+        let draw_faces =
+            !wireframe && (self.visual.faces != super::visual_style::FaceShading::None || occluder);
+        let analytic_surface = draw_faces
+            .then(|| tess.surface.as_ref())
+            .flatten()
+            .and_then(|surface| transform_surface(transform, surface));
         if draw_faces && !tess.triangles.is_empty() {
             let triangles = world(transform, tess.triangles);
-            self.emit_fill(&triangles, entity, frame, source.clone(), false);
+            self.emit_fill(&triangles, entity, frame, source.clone(), occluder);
             if let Some(fill) = self.scene.fills.last_mut() {
                 fill.normals = align_normals_to_triangles(
                     &triangles,
@@ -1832,16 +1847,16 @@ impl Compiler<'_> {
                 {
                     fill.normals.clear();
                 }
-                if depth_only {
-                    fill.style.opacity = 0.0;
-                } else {
-                    fill.style.opacity *= face_opacity as f32;
+                fill.style.opacity *= face_opacity as f32;
+                // The GPU surface pass evaluates the same face analytically.
+                // Keeping the triangles lets clipping and picking fall back to
+                // the mesh whenever the descriptor cannot be used.
+                if fill.style.opacity > 0.0 && !fill.background {
+                    fill.analytic = analytic_surface;
                 }
             }
         }
-        let draw_edges = wireframe
-            || self.solid_style == super::SolidStyle::ShadedWithEdges
-            || edges_mode != super::visual_style::EdgeMode::None;
+        let draw_edges = wireframe || edges_mode != super::visual_style::EdgeMode::None;
         if draw_edges {
             for edge in &tess.edges {
                 if edge.len() >= 2 {
@@ -2021,12 +2036,14 @@ impl Compiler<'_> {
             return;
         }
         let lighting = self.visual.lighting;
+        let face_opacity = self.visual.face_opacity;
+        let occluder = self.visual.hidden_removal
+            && self.visual.faces == super::visual_style::FaceShading::None;
         let draw_faces = self.solid_style != super::SolidStyle::Wireframe
-            && (self.visual.faces != super::visual_style::FaceShading::None
-                || self.visual.kind == super::visual_style::StandardVisualStyle::Wireframe2D);
+            && (self.visual.faces != super::visual_style::FaceShading::None || occluder);
         if draw_faces && !tess.triangles.is_empty() {
             let triangles = world(transform, tess.triangles.clone());
-            self.emit_fill(&triangles, entity, frame, source.clone(), false);
+            self.emit_fill(&triangles, entity, frame, source.clone(), occluder);
             if let Some(fill) = self.scene.fills.last_mut() {
                 fill.normals = align_normals_to_triangles(
                     &triangles,
@@ -2037,11 +2054,12 @@ impl Compiler<'_> {
                 {
                     fill.normals.clear();
                 }
+                fill.style.opacity *= face_opacity as f32;
             }
         }
-        if self.solid_style == super::SolidStyle::Wireframe
-            && self.visual.edges == super::visual_style::EdgeMode::None
-        {
+        let draw_edges = self.solid_style == super::SolidStyle::Wireframe
+            || self.visual.edges != super::visual_style::EdgeMode::None;
+        if !draw_edges {
             return;
         }
         for edge in tess.edges.iter().chain(extra_edges.iter()) {
@@ -3357,6 +3375,73 @@ fn sort_table<'a>(
     })
 }
 
+/// Apply an entity/insert transform to an analytic surface descriptor.
+/// Returns `None` for a non-similarity transform, where a sphere or torus
+/// would become a general quadric the analytic shader cannot evaluate.
+fn transform_surface(
+    transform: &Transform,
+    surface: &super::scene::CurvedSurface,
+) -> Option<super::scene::CurvedSurface> {
+    let m = &transform.matrix.m;
+    let columns = [
+        Vector3::new(m[0][0], m[1][0], m[2][0]),
+        Vector3::new(m[0][1], m[1][1], m[2][1]),
+        Vector3::new(m[0][2], m[1][2], m[2][2]),
+    ];
+    let lengths = [
+        columns[0].length(),
+        columns[1].length(),
+        columns[2].length(),
+    ];
+    let scale = lengths[0];
+    if scale <= 1e-12
+        || (lengths[1] - scale).abs() > scale * 1e-6
+        || (lengths[2] - scale).abs() > scale * 1e-6
+    {
+        return None;
+    }
+    let tolerance = scale * scale * 1e-6;
+    if columns[0].dot(&columns[1]).abs() > tolerance
+        || columns[0].dot(&columns[2]).abs() > tolerance
+        || columns[1].dot(&columns[2]).abs() > tolerance
+    {
+        return None;
+    }
+    Some(match surface {
+        super::scene::CurvedSurface::Sphere {
+            center,
+            radius,
+            flip,
+        } => super::scene::CurvedSurface::Sphere {
+            center: transform.apply(*center),
+            radius: radius * scale,
+            flip: *flip,
+        },
+        super::scene::CurvedSurface::Torus {
+            center,
+            axis,
+            east,
+            north: _,
+            major,
+            minor,
+            flip,
+        } => {
+            let axis = transform.apply_rotation(*axis).normalize();
+            let east = transform.apply_rotation(*east).normalize();
+            let north = axis.cross(&east).normalize();
+            super::scene::CurvedSurface::Torus {
+                center: transform.apply(*center),
+                axis,
+                east,
+                north,
+                major: major * scale,
+                minor: minor * scale,
+                flip: *flip,
+            }
+        }
+    })
+}
+
 fn transform_normals(transform: &Transform, normals: &[Vector3]) -> Vec<Vector3> {
     let linear = Matrix3::from_rows(
         [
@@ -3376,7 +3461,11 @@ fn transform_normals(transform: &Transform, normals: &[Vector3]) -> Vec<Vector3>
         ],
     );
     let normal_matrix = linear.inverse().map(|matrix| matrix.transpose());
-    let winding_sign = if linear.determinant() < 0.0 { -1.0 } else { 1.0 };
+    let winding_sign = if linear.determinant() < 0.0 {
+        -1.0
+    } else {
+        1.0
+    };
     normals
         .iter()
         .map(|normal| {
@@ -3449,6 +3538,8 @@ fn apply_face_color(rgb: &mut [u8; 3], mode: super::visual_style::FaceColorMode)
         // The actual background is supplied by the GPU at render time; keep
         // the object color here rather than baking an arbitrary background.
         super::visual_style::FaceColorMode::Background => {}
+        // Custom mono color is not exposed on the resolved style yet.
+        super::visual_style::FaceColorMode::Custom => {}
     }
 }
 
@@ -4006,6 +4097,8 @@ fn clip_recent_geometry(
             }
         }
         fill.triangles = triangles;
+        // A clipped face is no longer the whole analytic surface descriptor.
+        fill.analytic = None;
         if !fill.vertex_rgb.is_empty() {
             fill.vertex_rgb.clear();
         }

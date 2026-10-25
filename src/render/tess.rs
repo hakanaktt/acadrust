@@ -30,6 +30,12 @@ pub(crate) struct Tessellation {
     pub edge_curves: Vec<super::scene::Curve>,
     /// Analytic parameter lines. These replace the matching sampled isolines.
     pub isoline_curves: Vec<super::scene::Curve>,
+    /// A closed analytic surface covering the whole tessellation. Set only when
+    /// the model has exactly one face and that face is an untrimmed sphere or
+    /// torus, so the GPU can replace the triangle fill without losing trims.
+    pub surface: Option<super::scene::CurvedSurface>,
+    /// Number of faces visited. Used to decide whether `surface` covers the mesh.
+    face_count: u32,
 }
 
 impl Tessellation {
@@ -41,6 +47,8 @@ impl Tessellation {
             isolines: Vec::new(),
             edge_curves: Vec::new(),
             isoline_curves: Vec::new(),
+            surface: None,
+            face_count: 0,
         }
     }
 }
@@ -91,6 +99,48 @@ impl Placement {
     fn normal(&self, normal: Vector3) -> Vector3 {
         unit(self.normal_map * normal).unwrap_or(Vector3::UNIT_Z)
     }
+
+    /// Uniform scale when the linear part is a similarity (uniform scale plus
+    /// rotation/reflection). Analytic sphere and torus shaders assume one.
+    fn similarity_scale(&self) -> Option<f64> {
+        let columns = [
+            Vector3::new(
+                self.linear.m[0][0],
+                self.linear.m[1][0],
+                self.linear.m[2][0],
+            ),
+            Vector3::new(
+                self.linear.m[0][1],
+                self.linear.m[1][1],
+                self.linear.m[2][1],
+            ),
+            Vector3::new(
+                self.linear.m[0][2],
+                self.linear.m[1][2],
+                self.linear.m[2][2],
+            ),
+        ];
+        let lengths = [
+            columns[0].length(),
+            columns[1].length(),
+            columns[2].length(),
+        ];
+        let scale = lengths[0];
+        if scale <= 1e-12
+            || (lengths[1] - scale).abs() > scale * 1e-6
+            || (lengths[2] - scale).abs() > scale * 1e-6
+        {
+            return None;
+        }
+        let tolerance = scale * scale * 1e-6;
+        if columns[0].dot(&columns[1]).abs() > tolerance
+            || columns[0].dot(&columns[2]).abs() > tolerance
+            || columns[1].dot(&columns[2]).abs() > tolerance
+        {
+            return None;
+        }
+        Some(scale)
+    }
 }
 
 /// Facet `document`. `tolerance` is a world-space chord error. `None` derives
@@ -125,6 +175,11 @@ pub(crate) fn tessellate(document: &SatDocument) -> Tessellation {
         facet_face(document, &face, &edges, &place, tolerance, &mut tess);
     }
     orient_triangles(&mut tess);
+    // A surface descriptor stands in for the whole triangle fill. Only trust it
+    // when there is exactly one face; a mixed solid keeps its per-face mesh.
+    if tess.face_count != 1 {
+        tess.surface = None;
+    }
     tess
 }
 
@@ -155,6 +210,7 @@ fn facet_face(
     tolerance: f64,
     tess: &mut Tessellation,
 ) {
+    tess.face_count = tess.face_count.saturating_add(1);
     let loops = face_loops(document, face)
         .into_iter()
         .map(|pointer| loop_polyline(document, pointer, edges))
@@ -1141,6 +1197,13 @@ fn facet_sphere(
             sweep: TAU,
         });
     }
+    if let Some(scale) = place.similarity_scale() {
+        tess.surface = Some(super::scene::CurvedSurface::Sphere {
+            center,
+            radius: radius * scale,
+            flip,
+        });
+    }
 }
 
 fn facet_trimmed_sphere(
@@ -1425,6 +1488,17 @@ fn facet_torus(
             v: normal * minor,
             start: 0.0,
             sweep: TAU,
+        });
+    }
+    if place.similarity_scale().is_some() {
+        tess.surface = Some(super::scene::CurvedSurface::Torus {
+            center,
+            axis: normal,
+            east,
+            north,
+            major,
+            minor,
+            flip,
         });
     }
 }
@@ -1797,20 +1871,18 @@ fn facet_spline(
     // instead of sampled chords, matching the analytic edge pipeline.
     for step in 0..=4 {
         let u = u0 + (u1 - u0) * (step as f64 / 4.0);
-        if let Some((degree, points, weights, knots)) =
-            spline_isocurve(patch, u, false, place)
-        {
-            tess.isoline_curves.extend(super::curves::nurbs_curves_range(
-                degree, &points, &weights, &knots, v0, v1,
-            ));
+        if let Some((degree, points, weights, knots)) = spline_isocurve(patch, u, false, place) {
+            tess.isoline_curves
+                .extend(super::curves::nurbs_curves_range(
+                    degree, &points, &weights, &knots, v0, v1,
+                ));
         }
         let v = v0 + (v1 - v0) * (step as f64 / 4.0);
-        if let Some((degree, points, weights, knots)) =
-            spline_isocurve(patch, v, true, place)
-        {
-            tess.isoline_curves.extend(super::curves::nurbs_curves_range(
-                degree, &points, &weights, &knots, u0, u1,
-            ));
+        if let Some((degree, points, weights, knots)) = spline_isocurve(patch, v, true, place) {
+            tess.isoline_curves
+                .extend(super::curves::nurbs_curves_range(
+                    degree, &points, &weights, &knots, u0, u1,
+                ));
         }
     }
 }
@@ -2444,7 +2516,10 @@ mod tests {
     fn full_torus_isoline_curves_are_analytic_and_on_the_surface() {
         let document = crate::entities::acis::primitives::build_torus([0.0; 3], 6.0, 1.5);
         let tess = tessellate(&document);
-        assert!(tess.isolines.is_empty(), "torus still samples parameter lines");
+        assert!(
+            tess.isolines.is_empty(),
+            "torus still samples parameter lines"
+        );
         assert_eq!(tess.isoline_curves.len(), 8);
         for curve in &tess.isoline_curves {
             let super::super::scene::Curve::Elliptic {
@@ -2464,7 +2539,10 @@ mod tests {
                 let point = *center + *u * t.cos() + *v * t.sin();
                 let radial = point.x.hypot(point.y);
                 let tube = (radial - 6.0).hypot(point.z);
-                assert!((tube - 1.5).abs() < 1e-9, "isoline off the torus: {point:?}");
+                assert!(
+                    (tube - 1.5).abs() < 1e-9,
+                    "isoline off the torus: {point:?}"
+                );
             }
         }
     }
@@ -2512,7 +2590,10 @@ mod tests {
         let mut tess = Tessellation::new();
         facet_spline(&bilinear_patch(), Sense::Forward, &place, 1e-3, &mut tess);
         assert!(!tess.triangles.is_empty());
-        assert!(tess.isolines.is_empty(), "spline still samples parameter lines");
+        assert!(
+            tess.isolines.is_empty(),
+            "spline still samples parameter lines"
+        );
         assert!(!tess.isoline_curves.is_empty());
     }
 

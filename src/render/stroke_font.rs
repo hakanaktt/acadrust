@@ -1767,9 +1767,10 @@ mod tests {
             flat
         });
         assert!(bar, "e needs a crossbar");
-        let closed_on_the_right = strokes.iter().flatten().any(|point| {
-            point.x > 42.0 && (18.0..40.0).contains(&point.y)
-        });
+        let closed_on_the_right = strokes
+            .iter()
+            .flatten()
+            .any(|point| point.x > 42.0 && (18.0..40.0).contains(&point.y));
         assert!(!closed_on_the_right, "e bowl should stay open on the right");
 
         let (strokes, _) = font.glyph_for_char('S');

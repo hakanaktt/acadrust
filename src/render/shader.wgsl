@@ -1,5 +1,6 @@
 struct Camera {
     view_proj: mat4x4<f32>,
+    inv_view_proj: mat4x4<f32>,
     viewport: vec2<f32>,
     px_per_mm: f32,
     _pad: f32,
@@ -423,6 +424,210 @@ fn fs_fill(in: FillOut, @builtin(front_facing) front_facing: bool) -> @location(
 
     let shade = 0.28 + 0.72 * max(diffuse, 0.0);
     return vec4<f32>(in.color.rgb * shade, in.color.a);
+}
+
+// --- Analytic closed surfaces -------------------------------------------
+//
+// A filled analytic face is uploaded as a descriptor instead of a triangle
+// mesh. Each patch is drawn as one full-screen triangle and evaluated per
+// fragment, so its silhouette follows the true surface at any zoom.
+
+struct SurfacePatch {
+    // x: 0 sphere, 1 torus. y: sense flip. z: lighting model.
+    kind: vec4<f32>,
+    color: vec4<f32>,
+    // xyz center. w sphere radius.
+    center: vec4<f32>,
+    // xyz torus axis. w major radius.
+    axis: vec4<f32>,
+    // xyz ring east. w minor radius.
+    east: vec4<f32>,
+    // xyz ring north.
+    north: vec4<f32>,
+}
+
+@group(2) @binding(0)
+var<storage, read> patches: array<SurfacePatch>;
+
+struct SurfaceOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) @interpolate(flat) surface_index: u32,
+}
+
+@vertex
+fn vs_surface(
+    @builtin(vertex_index) vertex: u32,
+    @builtin(instance_index) instance: u32,
+) -> SurfaceOut {
+    var corners = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(3.0, -1.0),
+        vec2<f32>(-1.0, 3.0),
+    );
+    return SurfaceOut(vec4<f32>(corners[vertex], 0.0, 1.0), instance);
+}
+
+fn ray_through(ndc: vec2<f32>) -> vec3<f32> {
+    let near4 = camera.inv_view_proj * vec4<f32>(ndc, 0.0, 1.0);
+    let far4 = camera.inv_view_proj * vec4<f32>(ndc, 1.0, 1.0);
+    return far4.xyz / far4.w - near4.xyz / near4.w;
+}
+
+fn hit_sphere(o: vec3<f32>, d: vec3<f32>, c: vec3<f32>, r: f32) -> f32 {
+    let oc = o - c;
+    let b = dot(oc, d);
+    let disc = b * b - (dot(oc, oc) - r * r);
+    if disc < 0.0 {
+        return -1.0;
+    }
+    let s = sqrt(disc);
+    var t = -b - s;
+    if t < 0.0 {
+        t = -b + s;
+    }
+    return t;
+}
+
+fn torus_value(p: vec3<f32>, c: vec3<f32>, a: vec3<f32>, major: f32, minor: f32) -> f32 {
+    let q = p - c;
+    let qa = dot(q, a);
+    let qp = q - a * qa;
+    let s = dot(qp, qp) + qa * qa + major * major - minor * minor;
+    return s * s - 4.0 * major * major * dot(qp, qp);
+}
+
+/// Nearest positive root of the torus quartic. A bounded sign search over the
+/// bounding-sphere chord is robust and keeps the silhouette smooth; a grazing
+/// contact still lands within half a step, well under a pixel.
+fn hit_torus(
+    o: vec3<f32>,
+    d: vec3<f32>,
+    c: vec3<f32>,
+    a: vec3<f32>,
+    major: f32,
+    minor: f32,
+) -> f32 {
+    let oc = o - c;
+    let b = dot(oc, d);
+    let reach = major + minor;
+    let disc = b * b - (dot(oc, oc) - reach * reach);
+    if disc < 0.0 {
+        return -1.0;
+    }
+    let s = sqrt(disc);
+    let t1 = -b + s;
+    if t1 < 0.0 {
+        return -1.0;
+    }
+    let t0 = max(-b - s, 0.0);
+    let steps = 64;
+    var prev_t = t0;
+    var prev = torus_value(o + d * prev_t, c, a, major, minor);
+    if abs(prev) < 1e-6 {
+        return prev_t;
+    }
+    for (var i = 1; i <= steps; i++) {
+        let t = t0 + (t1 - t0) * f32(i) / f32(steps);
+        let value = torus_value(o + d * t, c, a, major, minor);
+        if value * prev <= 0.0 {
+            var lo = prev_t;
+            var hi = t;
+            var flo = prev;
+            for (var k = 0; k < 24; k++) {
+                let mid = (lo + hi) * 0.5;
+                let fm = torus_value(o + d * mid, c, a, major, minor);
+                if flo * fm <= 0.0 {
+                    hi = mid;
+                } else {
+                    lo = mid;
+                    flo = fm;
+                }
+            }
+            return (lo + hi) * 0.5;
+        }
+        prev_t = t;
+        prev = value;
+    }
+    return -1.0;
+}
+
+fn surface_normal(surface: SurfacePatch, hit: vec3<f32>, ray: vec3<f32>) -> vec3<f32> {
+    var normal = surface.axis.xyz;
+    if surface.kind.x < 0.5 {
+        normal = normalize(hit - surface.center.xyz);
+    } else {
+        let q = hit - surface.center.xyz;
+        let qa = dot(q, surface.axis.xyz);
+        let radial = q - surface.axis.xyz * qa;
+        let length_radial = length(radial);
+        if length_radial > 1e-6 {
+            let tube = surface.center.xyz + radial / length_radial * surface.axis.w;
+            normal = normalize(hit - tube);
+        }
+    }
+    if surface.kind.y > 0.5 {
+        normal = -normal;
+    }
+    // Two-sided: face the viewer so open or reversed shells stay readable.
+    if dot(normal, ray) > 0.0 {
+        normal = -normal;
+    }
+    return normalize(normal);
+}
+
+@fragment
+fn fs_surface(in: SurfaceOut) -> FragOut {
+    let surface = patches[in.surface_index];
+    let ndc = frag_ndc(in.clip);
+    let delta = ray_through(ndc);
+    let span = length(delta);
+    if span <= 1e-9 {
+        discard;
+    }
+    let dir = delta / span;
+    let near4 = camera.inv_view_proj * vec4<f32>(ndc, 0.0, 1.0);
+    let origin = near4.xyz / near4.w;
+    var t = -1.0;
+    if surface.kind.x < 0.5 {
+        t = hit_sphere(origin, dir, surface.center.xyz, surface.center.w);
+    } else {
+        t = hit_torus(origin, dir, surface.center.xyz, surface.axis.xyz, surface.axis.w, surface.east.w);
+    }
+    if t < 0.0 || t > span {
+        discard;
+    }
+    let hit = origin + dir * t;
+    let clip = camera.view_proj * vec4<f32>(hit, 1.0);
+    let depth = clamp(clip.z / max(clip.w, 1e-6), 0.0, 1.0);
+    let normal = surface_normal(surface, hit, dir);
+    let lighting = surface.kind.z;
+    let color = surface.color;
+    if color.a <= 0.001 {
+        discard;
+    }
+    if lighting < 0.5 {
+        return FragOut(color, depth);
+    }
+    if lighting < 1.5 {
+        return FragOut(vec4<f32>(color.rgb * 0.72, color.a), depth);
+    }
+    let light = normalize(vec3<f32>(0.22, 0.42, 0.88));
+    let diffuse = dot(normal, light);
+    if lighting > 2.5 {
+        let material_luma = dot(color.rgb, vec3<f32>(0.30, 0.59, 0.11));
+        let material_scale = clamp(material_luma / 0.54, 0.75, 1.15);
+        let warm_base = vec3<f32>(0.47, 0.56, 0.265) * material_scale;
+        let cool_base = vec3<f32>(0.03, 0.11, 0.33) * material_scale;
+        let warm = mix(warm_base, color.rgb, 0.30);
+        let cool = mix(cool_base, color.rgb, 0.30);
+        let conceptual_light = normalize(vec3<f32>(-0.40, 0.70, 0.60));
+        let factor = clamp(dot(normal, conceptual_light) * 0.5 + 0.5, 0.0, 1.0);
+        let gooch = mix(cool, warm, factor);
+        let shade = 0.82 + 0.18 * max(diffuse, 0.0);
+        return FragOut(vec4<f32>(gooch * shade, color.a), depth);
+    }
+    let shade = 0.28 + 0.72 * max(diffuse, 0.0);
+    return FragOut(vec4<f32>(color.rgb * shade, color.a), depth);
 }
 
 @group(1) @binding(0)

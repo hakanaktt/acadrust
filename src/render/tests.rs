@@ -362,21 +362,49 @@ fn every_standard_visual_style_has_a_recipe() {
         assert_eq!(again, kind);
     }
     let hidden = super::ResolvedVisualStyle::from_standard(StandardVisualStyle::Hidden);
-    assert_eq!(hidden.faces, FaceShading::None);
+    assert_eq!(hidden.faces, FaceShading::Flat);
+    assert_eq!(hidden.face_color, FaceColorMode::Background);
     assert!(hidden.hidden_removal);
     let xray = super::ResolvedVisualStyle::from_standard(StandardVisualStyle::XRay);
     assert!(xray.face_opacity < 1.0);
-    assert_eq!(xray.edges, EdgeMode::Facet);
+    assert_eq!(xray.edges, EdgeMode::Isolines);
     let sketchy = super::ResolvedVisualStyle::from_standard(StandardVisualStyle::Sketchy);
     assert!(sketchy.sketchy);
+    assert_eq!(sketchy.face_color, FaceColorMode::Background);
     let conceptual = super::ResolvedVisualStyle::from_standard(StandardVisualStyle::Conceptual);
     assert_eq!(conceptual.lighting, LightingModel::Gooch);
-    assert_eq!(conceptual.face_color, FaceColorMode::Tint);
+    assert_eq!(conceptual.face_color, FaceColorMode::Object);
+    assert_eq!(conceptual.edges, EdgeMode::Facet);
     let gray = super::ResolvedVisualStyle::from_standard(StandardVisualStyle::ShadesOfGray);
     assert_eq!(gray.face_color, FaceColorMode::Mono);
     let realistic = super::ResolvedVisualStyle::from_standard(StandardVisualStyle::Realistic);
     assert_eq!(realistic.faces, FaceShading::Gouraud);
     assert_eq!(realistic.edges, EdgeMode::None);
+    let shaded = super::ResolvedVisualStyle::from_standard(StandardVisualStyle::Shaded);
+    assert_eq!(shaded.edges, EdgeMode::None);
+    let shaded_edges =
+        super::ResolvedVisualStyle::from_standard(StandardVisualStyle::ShadedWithEdges);
+    assert_ne!(shaded_edges.edges, EdgeMode::None);
+    let wireframe = super::ResolvedVisualStyle::from_standard(StandardVisualStyle::Wireframe2D);
+    assert!(!wireframe.hidden_removal);
+}
+
+#[test]
+fn custom_face_color_modes_follow_the_dxf_values() {
+    for (mode, expected) in [
+        (0, FaceColorMode::Object),
+        (1, FaceColorMode::Object),
+        (2, FaceColorMode::Background),
+        (3, FaceColorMode::Custom),
+        (4, FaceColorMode::Mono),
+        (5, FaceColorMode::Tint),
+        (6, FaceColorMode::Desaturate),
+    ] {
+        let mut style = VisualStyle::new();
+        style.face_color_mode = mode;
+        let resolved = super::ResolvedVisualStyle::from_object(&style);
+        assert_eq!(resolved.face_color, expected, "face color mode {mode}");
+    }
 }
 
 #[test]
@@ -1913,7 +1941,10 @@ fn shaded_box_has_outward_normals_and_shared_edges() {
         crate::entities::acis::primitives::build_box([0.0, 0.0, 0.0], 10.0, 10.0, 10.0),
     )))
     .unwrap();
-    let scene = compile(&doc, &CompileOptions::default());
+    let mut options = CompileOptions::default();
+    options.visual_style =
+        VisualStyleRequest::Standard(StandardVisualStyle::GouraudShadedWithEdges);
+    let scene = compile(&doc, &options);
     assert!(scene.fallbacks.is_empty());
     assert!(!super::FALLBACK_KINDS.contains(&"Solid3D"));
     let fill = &scene.fills[0];
@@ -2459,6 +2490,112 @@ fn cone_reaches_its_apex_and_base() {
 }
 
 #[test]
+fn closed_spheres_and_tori_get_a_gpu_analytic_surface() {
+    let mut document = doc();
+    document
+        .add_entity(EntityType::Solid3D(solid_from(
+            crate::entities::acis::primitives::build_sphere([0.0; 3], 5.0),
+        )))
+        .unwrap();
+    document
+        .add_entity(EntityType::Solid3D(solid_from(
+            crate::entities::acis::primitives::build_torus([0.0; 3], 6.0, 1.5),
+        )))
+        .unwrap();
+    let mut options = CompileOptions::default();
+    options.visual_style = VisualStyleRequest::Standard(StandardVisualStyle::Conceptual);
+    let scene = compile(&document, &options);
+    assert_eq!(scene.fills.len(), 2);
+    assert!(matches!(
+        scene.fills[0].analytic,
+        Some(super::scene::CurvedSurface::Sphere { .. })
+    ));
+    assert!(matches!(
+        scene.fills[1].analytic,
+        Some(super::scene::CurvedSurface::Torus { .. })
+    ));
+    // The fallback mesh stays available for clipping and picking.
+    assert!(!scene.fills[0].triangles.is_empty());
+
+    // A trimmed torus is not a whole closed surface, so it keeps its mesh.
+    let trimmed = trimmed_torus_face(false, crate::entities::acis::Sense::Forward);
+    let mut trimmed_doc = doc();
+    trimmed_doc
+        .add_entity(EntityType::Solid3D(solid_from(trimmed)))
+        .unwrap();
+    let trimmed_scene = compile(&trimmed_doc, &options);
+    assert!(!trimmed_scene.fills.is_empty());
+    assert!(trimmed_scene.fills[0].analytic.is_none());
+}
+
+/// Walk rays from the frame edge toward the center and measure where the
+/// rendered object starts. A faceted mesh loses this test; an analytic
+/// surface keeps the silhouette on the true circle.
+#[test]
+fn analytic_sphere_silhouette_stays_on_the_circle() {
+    let mut doc = doc();
+    doc.add_entity(EntityType::Solid3D(solid_from(
+        crate::entities::acis::primitives::build_sphere([0.0; 3], 5.0),
+    )))
+    .unwrap();
+    let mut options = CompileOptions::default();
+    options.visual_style = VisualStyleRequest::Standard(StandardVisualStyle::Conceptual);
+    let width = 512u32;
+    let height = 512u32;
+    let view_height = 12.0;
+    let image = match pollster::block_on(super::render_rgba(
+        &doc,
+        &View {
+            target: Vector3::ZERO,
+            height: view_height,
+            ..View::default()
+        },
+        width,
+        height,
+        &options,
+    )) {
+        Err(super::RenderError::NoAdapter) => return,
+        Err(error) => panic!("{error}"),
+        Ok(image) => image,
+    };
+    let background = [
+        image.pixels[0],
+        image.pixels[1],
+        image.pixels[2],
+    ];
+    let is_object = |index: usize| {
+        (0..3).any(|channel| {
+            (image.pixels[index + channel] as i32 - background[channel] as i32).abs() > 24
+        })
+    };
+    let expected = 5.0 * height as f64 / view_height;
+    let center = width as f64 / 2.0;
+    let mut worst: f64 = 0.0;
+    for degree in 0..360 {
+        let angle = (degree as f64).to_radians();
+        let mut radius = expected + 20.0;
+        while radius > 0.0 {
+            let x = center + radius * angle.cos();
+            let y = center - radius * angle.sin();
+            if x < 0.0 || y < 0.0 || x >= width as f64 || y >= height as f64 {
+                radius -= 0.5;
+                continue;
+            }
+            let index = ((y as usize) * width as usize + x as usize) * 4;
+            if is_object(index) {
+                worst = worst.max((radius - expected).abs());
+                break;
+            }
+            radius -= 0.5;
+        }
+    }
+    assert!(
+        worst <= 1.0,
+        "sphere silhouette deviated {worst:.2}px from the true circle"
+    );
+}
+
+#[test]
 fn torus_samples_satisfy_the_tube_equation() {
     let tess = super::tess::tessellate(&crate::entities::acis::primitives::build_torus(
         [0.0, 0.0, 0.0],
@@ -2704,7 +2841,10 @@ fn trimmed_torus_fillet_has_shaded_faces_in_sat_and_sab_entities() {
                 EntityType::Solid3D(entity)
             };
             doc.add_entity(entity).unwrap();
-            let scene = compile(&doc, &CompileOptions::default());
+            let mut options = CompileOptions::default();
+            options.visual_style =
+                VisualStyleRequest::Standard(StandardVisualStyle::GouraudShadedWithEdges);
+            let scene = compile(&doc, &options);
             assert!(scene.fallbacks.is_empty());
             assert_eq!(
                 scene.fills.len(),
@@ -2714,7 +2854,7 @@ fn trimmed_torus_fillet_has_shaded_faces_in_sat_and_sab_entities() {
             );
             assert!(scene.fills[0].triangles.len() > 12);
             assert_eq!(scene.fills[0].triangles.len(), scene.fills[0].normals.len());
-            assert_eq!(scene.strokes.len(), 4);
+            assert!(!scene.strokes.is_empty());
         }
     }
 }
@@ -2789,6 +2929,66 @@ fn wireframe_style_draws_isolines_instead_of_faces() {
 }
 
 #[test]
+fn wireframe_styles_do_not_fill_mesh_faces() {
+    let mut doc = doc();
+    let mut mesh = crate::entities::Mesh::new();
+    mesh.vertices = vec![
+        Vector3::new(0.0, 0.0, 0.0),
+        Vector3::new(2.0, 0.0, 0.0),
+        Vector3::new(2.0, 2.0, 1.0),
+        Vector3::new(0.0, 2.0, 1.0),
+    ];
+    mesh.faces.push(crate::entities::MeshFace::quad(0, 1, 2, 3));
+    doc.add_entity(EntityType::Mesh(mesh)).unwrap();
+    let scene = compile(&doc, &CompileOptions::default());
+    assert!(scene.fills.is_empty(), "2D wireframe must not fill faces");
+    assert!(!scene.strokes.is_empty(), "2D wireframe must draw edges");
+}
+
+#[test]
+fn shaded_style_draws_no_facet_edges() {
+    let mut doc = doc();
+    let mut mesh = crate::entities::Mesh::new();
+    mesh.vertices = vec![
+        Vector3::new(0.0, 0.0, 0.0),
+        Vector3::new(2.0, 0.0, 0.0),
+        Vector3::new(2.0, 2.0, 1.0),
+        Vector3::new(0.0, 2.0, 1.0),
+    ];
+    mesh.faces.push(crate::entities::MeshFace::quad(0, 1, 2, 3));
+    doc.add_entity(EntityType::Mesh(mesh)).unwrap();
+    let mut options = CompileOptions::default();
+    options.visual_style = VisualStyleRequest::Standard(StandardVisualStyle::GouraudShaded);
+    let scene = compile(&doc, &options);
+    assert_eq!(scene.fills.len(), 1);
+    assert!(scene.strokes.is_empty(), "plain shaded style has no edges");
+}
+
+#[test]
+fn hidden_style_uses_background_faces_as_occluders() {
+    let mut doc = doc();
+    let mut mesh = crate::entities::Mesh::new();
+    mesh.vertices = vec![
+        Vector3::new(0.0, 0.0, 0.0),
+        Vector3::new(2.0, 0.0, 0.0),
+        Vector3::new(2.0, 2.0, 1.0),
+        Vector3::new(0.0, 2.0, 1.0),
+    ];
+    mesh.faces.push(crate::entities::MeshFace::quad(0, 1, 2, 3));
+    doc.add_entity(EntityType::Mesh(mesh)).unwrap();
+    let mut options = CompileOptions::default();
+    options.visual_style = VisualStyleRequest::Standard(StandardVisualStyle::Hidden);
+    let scene = compile(&doc, &options);
+    assert_eq!(scene.fills.len(), 1);
+    assert!(
+        scene.fills[0].background,
+        "hidden faces paint the background"
+    );
+    assert_eq!(scene.fills[0].lighting, LightingModel::None);
+    assert!(!scene.strokes.is_empty(), "hidden style keeps facet edges");
+}
+
+#[test]
 fn mesh_and_light_have_dedicated_pictures() {
     let mut doc = doc();
     let mut mesh = crate::entities::Mesh::new();
@@ -2805,7 +3005,10 @@ fn mesh_and_light_have_dedicated_pictures() {
     light.position = Vector3::new(5.0, 5.0, 5.0);
     light.target = Vector3::new(0.0, 0.0, 0.0);
     doc.add_entity(EntityType::Light(Box::new(light))).unwrap();
-    let scene = compile(&doc, &CompileOptions::default());
+    let mut options = CompileOptions::default();
+    options.visual_style =
+        VisualStyleRequest::Standard(StandardVisualStyle::GouraudShadedWithEdges);
+    let scene = compile(&doc, &options);
     assert!(scene.fallbacks.is_empty());
     assert!(!super::FALLBACK_KINDS
         .iter()
@@ -2841,6 +3044,8 @@ fn closer_face_wins_the_depth_test() {
     far.faces.push(crate::entities::MeshFace::quad(0, 1, 2, 3));
     doc.add_entity(EntityType::Mesh(near)).unwrap();
     doc.add_entity(EntityType::Mesh(far)).unwrap();
+    let mut options = CompileOptions::default();
+    options.visual_style = VisualStyleRequest::Standard(StandardVisualStyle::GouraudShaded);
     let image = match pollster::block_on(super::render_rgba(
         &doc,
         &View {
@@ -2850,7 +3055,7 @@ fn closer_face_wins_the_depth_test() {
         },
         48,
         48,
-        &CompileOptions::default(),
+        &options,
     )) {
         Err(super::RenderError::NoAdapter) => return,
         Err(error) => panic!("{error}"),

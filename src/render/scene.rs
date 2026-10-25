@@ -44,6 +44,32 @@ pub struct Style {
     pub sheet: bool,
 }
 
+/// A closed analytic surface that the GPU can evaluate per fragment.
+///
+/// The matching [`Fill`] still carries the CPU triangles so extents, picking,
+/// clipping, and headless callers keep working. The renderer draws this
+/// descriptor instead when it can, which keeps the silhouette and shading
+/// independent of the compile-time chord tolerance and of zoom.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CurvedSurface {
+    /// A sphere centered at `center`.
+    Sphere {
+        center: Vector3,
+        radius: f64,
+        flip: bool,
+    },
+    /// A torus around `axis` with `east`/`north` spanning the ring plane.
+    Torus {
+        center: Vector3,
+        axis: Vector3,
+        east: Vector3,
+        north: Vector3,
+        major: f64,
+        minor: f64,
+        flip: bool,
+    },
+}
+
 /// A filled triangle list. `triangles.len()` is a multiple of three.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Fill {
@@ -59,6 +85,9 @@ pub struct Fill {
     /// unlit, which is how hatches and wipeouts stay flat.
     pub normals: Vec<Vector3>,
     pub lighting: super::visual_style::LightingModel,
+    /// When set, the triangles are only the fallback mesh. The GPU evaluates
+    /// this surface analytically, so zoomed silhouettes stay smooth.
+    pub analytic: Option<CurvedSurface>,
 }
 
 /// Analytic piece drawn instead of the chord samples in [`Stroke::points`].

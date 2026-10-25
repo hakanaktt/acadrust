@@ -67,9 +67,13 @@ pub fn model_lineweight_pixels(millimetres: f64, px_per_mm: f64) -> u32 {
 }
 
 /// How ACIS solids, regions, bodies, and surfaces are drawn.
+///
+/// The visual style already chooses faces and edges, so the default follows
+/// that recipe. `Wireframe` is an explicit override for callers that want
+/// boundary edges and parameter isolines without faces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SolidStyle {
-    /// Faces in the entity color, with the face boundary on top.
+    /// Faces and edges as the resolved visual style asks for them.
     #[default]
     ShadedWithEdges,
     /// Boundary edges and parameter isolines. No faces.
@@ -99,7 +103,8 @@ pub struct CompileOptions {
     pub visual_style: VisualStyleRequest,
     /// Model space, or the named layout tab.
     pub space: DisplaySpace,
-    /// Solids are shaded with their edges unless this asks for isolines.
+    /// Solids are drawn from the resolved visual style unless this asks for
+    /// an isoline wireframe override.
     pub solid_style: SolidStyle,
 }
 

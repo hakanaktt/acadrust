@@ -124,19 +124,23 @@ pub enum EdgeMode {
     Facet,
 }
 
-/// What replaces the entity color on faces.
+/// What replaces the entity color on faces. The discriminator follows the
+/// DXF group 73 values so a style object maps directly: 0 no color, 1 object,
+/// 2 background, 3 custom, 4 monochrome, 5 tinted, 6 desaturated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FaceColorMode {
     /// Entity or layer color.
     Object,
     /// One gray. Shades of Gray.
     Mono,
-    /// Warm or cool shift. Conceptual.
+    /// Warm or cool shift.
     Tint,
     /// Entity color pulled toward gray.
     Desaturate,
-    /// The view background. Faces disappear into it.
+    /// The view background. Hidden and Sketchy erase faces into it.
     Background,
+    /// A style-supplied single color.
+    Custom,
 }
 
 /// Lighting equation. Drawing lights are not used. This is the style's
@@ -181,16 +185,25 @@ impl ResolvedVisualStyle {
         style.kind = kind;
         style.name = kind.as_str().to_string();
         match kind {
-            StandardVisualStyle::Wireframe2D => {}
+            StandardVisualStyle::Wireframe2D => {
+                style.show_obscured = true;
+            }
             StandardVisualStyle::Wireframe3D => {
+                style.show_obscured = true;
                 style.linetypes = true;
                 style.lineweights = false;
             }
+            // Hidden uses opaque background faces as a depth mask, so the
+            // facet edges of nearer faces hide the edges behind them.
             StandardVisualStyle::Hidden => {
-                style.edges = EdgeMode::Facet;
-                style.hidden_removal = true;
-                style.linetypes = false;
-                style.lineweights = false;
+                shade(
+                    &mut style,
+                    FaceShading::Flat,
+                    EdgeMode::Facet,
+                    LightingModel::Constant,
+                );
+                style.face_color = FaceColorMode::Background;
+                style.silhouette = true;
             }
             StandardVisualStyle::FlatShaded => shade(
                 &mut style,
@@ -205,12 +218,15 @@ impl ResolvedVisualStyle {
                     EdgeMode::None,
                     LightingModel::Phong,
                 );
+                style.show_obscured = true;
             }
+            // The with-edges recipes use the isoline edge model, the same as
+            // AutoCAD's FlatWithEdges/GouraudWithEdges/Shaded with edges.
             StandardVisualStyle::FlatShadedWithEdges => {
                 shade(
                     &mut style,
                     FaceShading::Flat,
-                    EdgeMode::Facet,
+                    EdgeMode::Isolines,
                     LightingModel::Constant,
                 );
             }
@@ -218,9 +234,10 @@ impl ResolvedVisualStyle {
                 shade(
                     &mut style,
                     FaceShading::Gouraud,
-                    EdgeMode::Facet,
+                    EdgeMode::Isolines,
                     LightingModel::Phong,
                 );
+                style.silhouette = true;
             }
             StandardVisualStyle::Realistic => {
                 shade(
@@ -237,7 +254,6 @@ impl ResolvedVisualStyle {
                     EdgeMode::Facet,
                     LightingModel::Gooch,
                 );
-                style.face_color = FaceColorMode::Tint;
                 style.silhouette = true;
             }
             StandardVisualStyle::ShadesOfGray => {
@@ -248,14 +264,16 @@ impl ResolvedVisualStyle {
                     LightingModel::Phong,
                 );
                 style.face_color = FaceColorMode::Mono;
+                style.silhouette = true;
             }
             StandardVisualStyle::Sketchy => {
                 shade(
                     &mut style,
-                    FaceShading::Gouraud,
+                    FaceShading::Flat,
                     EdgeMode::Facet,
-                    LightingModel::Phong,
+                    LightingModel::Constant,
                 );
+                style.face_color = FaceColorMode::Background;
                 style.sketchy = true;
                 style.silhouette = true;
             }
@@ -263,10 +281,10 @@ impl ResolvedVisualStyle {
                 shade(
                     &mut style,
                     FaceShading::Gouraud,
-                    EdgeMode::Facet,
+                    EdgeMode::Isolines,
                     LightingModel::Phong,
                 );
-                style.face_opacity = 0.4;
+                style.face_opacity = 0.5;
             }
             StandardVisualStyle::Custom => {}
         }
@@ -280,17 +298,25 @@ impl ResolvedVisualStyle {
     /// Named style when `description` matches a built-in. Otherwise the
     /// face and edge fields, so a custom style still has a recipe.
     pub fn from_object(style: &VisualStyle) -> Self {
-        if let Some(kind) = StandardVisualStyle::from_name(&style.description) {
-            let mut resolved = Self::from_standard(kind);
-            apply_opacity(style, &mut resolved);
-            return resolved;
-        }
-        let mut resolved = from_fields(style);
-        resolved.name = if style.description.is_empty() {
-            "Custom".to_string()
+        let named = StandardVisualStyle::from_name(&style.description);
+        let mut resolved = if named.is_some() && style.properties.is_empty() {
+            Self::from_standard(named.unwrap())
         } else {
-            style.description.clone()
+            from_fields(style)
         };
+        if let Some(kind) = named {
+            resolved.kind = kind;
+            resolved.name = kind.as_str().to_string();
+            if kind == StandardVisualStyle::Sketchy {
+                resolved.sketchy = true;
+            }
+        } else {
+            resolved.name = if style.description.is_empty() {
+                "Custom".to_string()
+            } else {
+                style.description.clone()
+            };
+        }
         apply_opacity(style, &mut resolved);
         resolved
     }
@@ -398,22 +424,22 @@ fn from_fields(style: &VisualStyle) -> ResolvedVisualStyle {
     resolved.faces = faces;
     resolved.lighting = lighting;
     resolved.edges = edges;
-    resolved.hidden_removal = faces != FaceShading::None || style.edge_style & 4 != 0;
+    resolved.hidden_removal = faces != FaceShading::None;
     resolved.show_obscured = style.edge_style & 4 != 0;
     resolved.silhouette = style.edge_style & 2 != 0;
+    resolved.sketchy = style.style_type == 24;
     resolved.linetypes = faces == FaceShading::None && edges == EdgeMode::Isolines;
     resolved.lineweights = resolved.linetypes && style.style_type == 4;
-    // Group 73: 0 none, 1 object, 2 background, 3 custom, 4 mono, 5 tint, 6 desaturate.
+    // Group 73: 0 none, 1 object, 2 background, 3 custom, 4 mono, 5 tint,
+    // 6 desaturate.
     resolved.face_color = match style.face_color_mode {
         2 => FaceColorMode::Background,
+        3 => FaceColorMode::Custom,
         4 => FaceColorMode::Mono,
         5 => FaceColorMode::Tint,
         6 => FaceColorMode::Desaturate,
         _ => FaceColorMode::Object,
     };
-    if lighting == LightingModel::Gooch && resolved.face_color == FaceColorMode::Object {
-        resolved.face_color = FaceColorMode::Tint;
-    }
     resolved
 }
 
