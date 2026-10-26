@@ -1247,6 +1247,45 @@ fn aligned_dimension_explodes_into_strokes() {
 }
 
 #[test]
+fn dimension_draws_its_cached_autocad_block() {
+    let mut doc = doc();
+    let mut record = BlockRecord::new("*D1");
+    let block_handle = doc.allocate_handle();
+    record.set_handle(block_handle);
+    doc.block_records.add(record).unwrap();
+
+    let mut line = Line::from_coords(100.0, 100.0, 0.0, 110.0, 100.0, 0.0);
+    line.common.owner_handle = block_handle;
+    doc.add_entity(EntityType::Line(line)).unwrap();
+    let mut text = MText::with_value("7", Vector3::new(100.0, 110.0, 0.0));
+    text.height = 7.0;
+    text.common.owner_handle = block_handle;
+    doc.add_entity(EntityType::MText(Box::new(text))).unwrap();
+
+    let mut dimension =
+        crate::entities::DimensionLinear::horizontal(Vector3::ZERO, Vector3::new(20.0, 0.0, 0.0));
+    dimension.definition_point = Vector3::new(0.0, 5.0, 0.0);
+    dimension.base.block_name = "*D1".to_string();
+    doc.add_entity(EntityType::Dimension(Box::new(
+        crate::entities::Dimension::Linear(dimension),
+    )))
+    .unwrap();
+
+    let scene = compile(&doc, &CompileOptions::default());
+    assert!(!scene.fallback_kinds().contains(&"Dimension"));
+    assert!(scene
+        .strokes
+        .iter()
+        .flat_map(|stroke| &stroke.points)
+        .any(|point| { (100.0..=110.0).contains(&point.x) && (point.y - 100.0).abs() < 1e-9 }));
+    assert!(scene
+        .strokes
+        .iter()
+        .flat_map(|stroke| &stroke.points)
+        .any(|point| { point.x >= 99.0 && point.y >= 108.0 && point.y <= 117.0 }));
+}
+
+#[test]
 fn complex_linetype_places_text_on_the_gap() {
     let dir = std::env::temp_dir().join("acadrust-render-complex");
     std::fs::create_dir_all(&dir).unwrap();

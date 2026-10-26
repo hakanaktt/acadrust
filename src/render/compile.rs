@@ -1376,7 +1376,20 @@ impl Compiler<'_> {
         path: &[crate::types::Handle],
         source: EntityRef,
     ) {
-        let mut parts = entity.explode();
+        if let EntityType::Dimension(dimension) = entity {
+            if self.draw_dimension_block(dimension, frame, transform, path) {
+                return;
+            }
+        }
+        let mut parts = match entity {
+            EntityType::Dimension(dimension) => {
+                let style = self.doc.dim_styles.get(&dimension.base().style_name);
+                crate::entities::modification::explode::explode_dimension_with_style(
+                    dimension, style,
+                )
+            }
+            _ => entity.explode(),
+        };
         if let EntityType::MText(mtext) = entity {
             self.layout_mtext_parts(mtext, &mut parts);
         }
@@ -1388,6 +1401,55 @@ impl Compiler<'_> {
             self.draw(part, frame, transform, path);
         }
         let _ = source;
+    }
+
+    /// Draw AutoCAD's cached dimension picture when the DIMENSION references a
+    /// non-empty anonymous block.  That block already contains the exact lines,
+    /// arrow solids and text AutoCAD displays, including any custom arrowheads
+    /// or text placement, so drawing it is the only way to match the editor
+    /// one-to-one.  Returns `false` when the block is missing or empty so the
+    /// caller can fall back to regenerating the geometry from the dimension.
+    fn draw_dimension_block(
+        &mut self,
+        dimension: &crate::entities::Dimension,
+        frame: &Frame,
+        transform: &Transform,
+        path: &[crate::types::Handle],
+    ) -> bool {
+        let base = dimension.base();
+        let block_name = &base.block_name;
+        if block_name.is_empty() {
+            return false;
+        }
+        let Some(record) = self.doc.block_records.get(block_name) else {
+            return false;
+        };
+        if record.entity_handles.is_empty() {
+            return false;
+        }
+        if record.flags.is_xref
+            || record.flags.is_xref_overlay
+            || record.flags.is_external
+            || !record.xref_path.is_empty()
+        {
+            return false;
+        }
+        let key = block_name.to_ascii_lowercase();
+        if self.stack.contains(&key) {
+            return false;
+        }
+        let child = Frame::from_insert(frame, &base.common);
+        let mut child_path = path.to_vec();
+        child_path.push(base.common.handle);
+        let handles = self.ordered_handles(record);
+        self.stack.insert(key.clone());
+        for handle in &handles {
+            if let Some(entity) = self.doc.get_entity(*handle) {
+                self.draw(entity, &child, transform, &child_path);
+            }
+        }
+        self.stack.remove(&key);
+        true
     }
 
     fn layout_mtext_parts(&mut self, mtext: &crate::entities::MText, parts: &mut [EntityType]) {
