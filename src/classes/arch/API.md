@@ -138,6 +138,28 @@ chain transactionally.
 named fields come from supported native layouts; they are not arbitrary byte
 matches or a complete schema for an unknown class.
 
+## Display geometry
+
+AEC proxy graphics usually store only a bounding box, so the renderer uses
+measured display geometry when the class layout is understood:
+
+| Reader | Class | Result |
+|---|---|---|
+| `opening_geometry` | door, window, opening | Jamb origin, wall directions, width, height, depth |
+| `stair_geometry` | stair | Origin, run direction, run, width, height |
+| `railing_geometry` | railing | Origin, run, railing height, post spacing |
+| `curtain_wall_geometry` | curtain wall | Origin, length, height, thickness |
+| `grid_geometry` | column and ceiling grid | Origin, extents, spacing |
+| `member_geometry` | structural member | Origin, axis, cross-section axes and sizes |
+
+Each reader returns `None` when the native record is not one of the measured
+AC1032 layouts. The renderer then falls back to the cached proxy profiles.
+Multi-view and mask block references are resolved through their
+`AEC_MVBLOCK_DEF` / `AEC_MASKBLOCK*` objects to the referenced block records;
+the plan representation is drawn in place of the reference bounding box.
+`render` is an optional feature, so these readers are also useful to callers
+that provide their own display pipeline.
+
 ## Hosted Entities
 
 `entities_anchored_to` finds entities linked to a wall by native opening

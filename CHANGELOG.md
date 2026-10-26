@@ -2,6 +2,13 @@
 
 ### Unreleased
 
+- **AEC display geometry** - The renderer no longer draws the proxy-graphics
+  bounding box for every AEC object. Doors, windows, and openings use their
+  measured wall frame and size; stairs, railings, curtain walls, column and
+  ceiling grids, and structural members use their native dimensions. A
+  multi-view or mask block resolves its `AEC_MVBLOCK_DEF` / mask definition
+  and draws the referenced plan block, mapped onto the cached reference
+  extents. Unsupported layouts still draw the cached proxy profiles.
 - **Annotative context data** - AutoCAD does not store the R2010
   file-to-extension-dictionary bit on object-context leaves. 0.6.7 read that
   bit and rejected drawings whose first failure was an aligned-dimension,

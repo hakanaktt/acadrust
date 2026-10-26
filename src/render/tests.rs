@@ -3503,3 +3503,24 @@ fn arch_profile_and_proxy_polyline_are_dedicated() {
             && stroke.points.last() == Some(&Vector3::new(6.0, 1.0, 0.0))
     }));
 }
+
+#[test]
+fn constructed_aec_door_draws_the_opening_and_leaf() {
+    let doc = crate::classes::arch::door(900.0, 2100.0, None).expect("door");
+    let scene = compile(&doc, &CompileOptions::default());
+    assert!(scene.fallbacks.is_empty());
+    assert!(scene.strokes.len() >= 9);
+    let (min, max) = scene.bounds_min_max().expect("bounds");
+    assert!(max.z >= 2100.0 - 1e-6);
+    assert!(max.x - min.x >= 900.0);
+}
+
+#[test]
+fn constructed_aec_window_draws_the_frame_and_glazing() {
+    let doc = crate::classes::arch::window(1200.0, 1500.0, None).expect("window");
+    let scene = compile(&doc, &CompileOptions::default());
+    assert!(scene.fallbacks.is_empty());
+    assert!(scene.strokes.len() >= 8);
+    let (_, max) = scene.bounds_min_max().expect("bounds");
+    assert!(max.z >= 1500.0 - 1e-6);
+}

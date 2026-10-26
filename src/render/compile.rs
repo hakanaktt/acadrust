@@ -2412,37 +2412,277 @@ impl Compiler<'_> {
         transform: &Transform,
         source: EntityRef,
     ) {
+        use crate::classes::arch::ArchKind;
+
         let mut drew = false;
-        for profile in &data.profiles {
-            if profile.len() >= 2 {
-                self.emit_dedicated(
-                    &world(transform, profile.clone()),
-                    entity,
-                    frame,
-                    source.clone(),
-                );
-                drew = true;
+        match data.kind {
+            ArchKind::Wall => {
+                if let Some(wall) = data.straight_wall_geometry() {
+                    let direction = wall.end - wall.start;
+                    let mut side = Vector3::new(-direction.y, direction.x, 0.0);
+                    if side.length_squared() > 1e-18 {
+                        side = side.normalize() * wall.width;
+                        let ring = vec![
+                            wall.start,
+                            wall.end,
+                            wall.end + side,
+                            wall.start + side,
+                            wall.start,
+                        ];
+                        self.emit_dedicated(&world(transform, ring), entity, frame, source.clone());
+                        drew = true;
+                    }
+                }
             }
+            ArchKind::Door | ArchKind::Window | ArchKind::Opening => {
+                if let Some(opening) = crate::classes::arch::opening_geometry(data) {
+                    for points in opening_symbol(&opening, data.kind) {
+                        self.emit_dedicated(
+                            &world(transform, points),
+                            entity,
+                            frame,
+                            source.clone(),
+                        );
+                    }
+                    drew = true;
+                }
+            }
+            ArchKind::Stair => {
+                if let Some(stair) = crate::classes::arch::stair_geometry(data) {
+                    for points in stair_symbol(&stair) {
+                        self.emit_dedicated(
+                            &world(transform, points),
+                            entity,
+                            frame,
+                            source.clone(),
+                        );
+                    }
+                    drew = true;
+                }
+            }
+            ArchKind::Railing => {
+                if let Some(railing) = crate::classes::arch::railing_geometry(data) {
+                    for points in railing_symbol(&railing) {
+                        self.emit_dedicated(
+                            &world(transform, points),
+                            entity,
+                            frame,
+                            source.clone(),
+                        );
+                    }
+                    drew = true;
+                }
+            }
+            ArchKind::CurtainWall => {
+                if let Some(wall) = crate::classes::arch::curtain_wall_geometry(data) {
+                    for points in curtain_wall_symbol(&wall) {
+                        self.emit_dedicated(
+                            &world(transform, points),
+                            entity,
+                            frame,
+                            source.clone(),
+                        );
+                    }
+                    drew = true;
+                }
+            }
+            ArchKind::ColumnGrid | ArchKind::CeilingGrid => {
+                if let Some(grid) = crate::classes::arch::grid_geometry(data) {
+                    for points in grid_symbol(&grid) {
+                        self.emit_dedicated(
+                            &world(transform, points),
+                            entity,
+                            frame,
+                            source.clone(),
+                        );
+                    }
+                    drew = true;
+                }
+            }
+            ArchKind::MultiViewBlock | ArchKind::MaskBlock => {
+                drew = self.draw_arch_block(data, entity, frame, transform, &source);
+            }
+            _ => {}
         }
-        if let Some(wall) = data.straight_wall_geometry() {
-            let direction = wall.end - wall.start;
-            let mut side = Vector3::new(-direction.y, direction.x, 0.0);
-            if side.length_squared() > 1e-18 {
-                side = side.normalize() * wall.width;
-                let ring = vec![
-                    wall.start,
-                    wall.end,
-                    wall.end + side,
-                    wall.start + side,
-                    wall.start,
-                ];
-                self.emit_dedicated(&world(transform, ring), entity, frame, source.clone());
-                drew = true;
+        if !drew {
+            for profile in &data.profiles {
+                if profile.len() >= 2 {
+                    self.emit_dedicated(
+                        &world(transform, profile.clone()),
+                        entity,
+                        frame,
+                        source.clone(),
+                    );
+                    drew = true;
+                }
             }
         }
         if !drew {
             self.draw_cached_graphics(entity, frame, transform, source);
         }
+    }
+
+    /// Draw the block representation referenced by an AEC multi-view block.
+    ///
+    /// AEC stores the drawable representation in ordinary block records linked
+    /// from the `AEC_MVBLOCK_DEF` object. The entity's own profile is only the
+    /// bounding box of that block, so map the block extents onto the profile
+    /// extents and draw the block itself.
+    fn draw_arch_block(
+        &mut self,
+        data: &crate::classes::arch::ArchEntityData,
+        entity: &EntityType,
+        frame: &Frame,
+        transform: &Transform,
+        source: &EntityRef,
+    ) -> bool {
+        use crate::objects::ObjectType;
+        use crate::types::Handle;
+
+        let decoded = data.decode();
+        let Some(placement) = decoded.placement else {
+            return false;
+        };
+        if !placement.rigid || !point_is_finite(placement.origin) {
+            return false;
+        }
+
+        let mut block_names = Vec::new();
+        let mut collect = |object: &crate::classes::arch::ArchObject| {
+            let object = object.decode();
+            for handle in object.handles {
+                if let Some(block) = self
+                    .doc
+                    .block_records
+                    .iter()
+                    .find(|block| block.handle == Handle::new(handle))
+                {
+                    if !block.entity_handles.is_empty() {
+                        block_names.push(block.name.clone());
+                    }
+                }
+            }
+        };
+        for handle in &decoded.handles {
+            if let Some(ObjectType::Arch(object)) = self.doc.objects.get(&Handle::new(*handle)) {
+                if object.dxf_name.to_ascii_uppercase().contains("MVBLOCK_DEF")
+                    || object.dxf_name.to_ascii_uppercase().contains("MASKBLOCK")
+                {
+                    collect(object);
+                }
+            }
+        }
+        if block_names.is_empty() {
+            return false;
+        }
+        block_names.sort_by_key(|name| arch_block_rank(name));
+        block_names.dedup();
+        let Some(name) = block_names
+            .iter()
+            .find(|name| self.doc.block_records.get(name).is_some())
+        else {
+            return false;
+        };
+
+        let Some(source_bounds) = self.block_bounds(name) else {
+            return false;
+        };
+        let Some(target_bounds) = profile_bounds(&data.profiles) else {
+            return false;
+        };
+        let basis = Transform::from_matrix(Matrix4 {
+            m: [
+                [
+                    placement.x_axis.x,
+                    placement.y_axis.x,
+                    placement.z_axis.x,
+                    0.0,
+                ],
+                [
+                    placement.x_axis.y,
+                    placement.y_axis.y,
+                    placement.z_axis.y,
+                    0.0,
+                ],
+                [
+                    placement.x_axis.z,
+                    placement.y_axis.z,
+                    placement.z_axis.z,
+                    0.0,
+                ],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        });
+        let rotated = transform_bounds(&basis, source_bounds.0, source_bounds.1);
+        let source_center = (source_bounds.0 + source_bounds.1) * 0.5;
+        let target_center = (target_bounds.0 + target_bounds.1) * 0.5;
+        let mut scale = Vector3::new(1.0, 1.0, 1.0);
+        for (axis, source_axis) in [
+            (0, Vector3::UNIT_X),
+            (1, Vector3::UNIT_Y),
+            (2, Vector3::UNIT_Z),
+        ] {
+            let source_extent = project_extent(rotated.0, rotated.1, source_axis);
+            let target_extent = project_extent(target_bounds.0, target_bounds.1, source_axis);
+            if source_extent > 1e-9 && target_extent > 1e-9 {
+                let value = target_extent / source_extent;
+                if value.is_finite() && value > 0.0 {
+                    match axis {
+                        0 => scale.x = value,
+                        1 => scale.y = value,
+                        _ => scale.z = value,
+                    }
+                }
+            }
+        }
+        if !point_is_finite(scale) {
+            return false;
+        }
+        if scale.x.abs().max(scale.y.abs()).max(scale.z.abs()) > 1.0e6
+            || scale.x.abs().min(scale.y.abs()).min(scale.z.abs()) < 1.0e-6
+        {
+            return false;
+        }
+        let local = Transform::from_translation(-source_center)
+            .then(&basis)
+            .then(&Transform::from_scaling(scale))
+            .then(&Transform::from_translation(target_center));
+        let final_transform = local.then(transform);
+        let mut path = source.insert_path.clone();
+        path.push(entity.common().handle);
+        let child_frame = Frame::from_insert(frame, entity.common());
+        self.walk_block(name, &child_frame, &final_transform, &path);
+        true
+    }
+
+    fn block_bounds(&self, name: &str) -> Option<(Vector3, Vector3)> {
+        let mut min = Vector3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
+        let mut max = Vector3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+        let mut found = false;
+        for entity in self.doc.entities_in_block(name) {
+            let bounds = entity.as_entity().bounding_box();
+            if !bounds.min.x.is_finite()
+                || !bounds.min.y.is_finite()
+                || !bounds.min.z.is_finite()
+                || !bounds.max.x.is_finite()
+                || !bounds.max.y.is_finite()
+                || !bounds.max.z.is_finite()
+            {
+                continue;
+            }
+            min = Vector3::new(
+                min.x.min(bounds.min.x),
+                min.y.min(bounds.min.y),
+                min.z.min(bounds.min.z),
+            );
+            max = Vector3::new(
+                max.x.max(bounds.max.x),
+                max.y.max(bounds.max.y),
+                max.z.max(bounds.max.z),
+            );
+            found = true;
+        }
+        found.then_some((min, max))
     }
 
     fn draw_proxy_records(
@@ -3782,6 +4022,247 @@ fn apply_underlay_appearance(
             fill.style.rgb = [gray, gray, gray];
         }
     }
+}
+
+fn profile_bounds(profiles: &[Vec<Vector3>]) -> Option<(Vector3, Vector3)> {
+    let mut min = Vector3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
+    let mut max = Vector3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+    let mut found = false;
+    for point in profiles.iter().flatten().copied() {
+        if !point_is_finite(point) {
+            continue;
+        }
+        min = Vector3::new(min.x.min(point.x), min.y.min(point.y), min.z.min(point.z));
+        max = Vector3::new(max.x.max(point.x), max.y.max(point.y), max.z.max(point.z));
+        found = true;
+    }
+    found.then_some((min, max))
+}
+
+fn transform_bounds(transform: &Transform, min: Vector3, max: Vector3) -> (Vector3, Vector3) {
+    let mut out_min = Vector3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
+    let mut out_max = Vector3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for x in [min.x, max.x] {
+        for y in [min.y, max.y] {
+            for z in [min.z, max.z] {
+                let point = transform.apply(Vector3::new(x, y, z));
+                out_min = Vector3::new(
+                    out_min.x.min(point.x),
+                    out_min.y.min(point.y),
+                    out_min.z.min(point.z),
+                );
+                out_max = Vector3::new(
+                    out_max.x.max(point.x),
+                    out_max.y.max(point.y),
+                    out_max.z.max(point.z),
+                );
+            }
+        }
+    }
+    (out_min, out_max)
+}
+
+fn project_extent(min: Vector3, max: Vector3, axis: Vector3) -> f64 {
+    let a = min.dot(&axis);
+    let b = max.dot(&axis);
+    (a - b).abs()
+}
+
+fn point_is_finite(point: Vector3) -> bool {
+    point.x.is_finite() && point.y.is_finite() && point.z.is_finite()
+}
+
+fn arch_block_rank(name: &str) -> u8 {
+    let name = name.trim().to_ascii_uppercase();
+    for (suffix, rank) in [
+        ("_P", 0),
+        ("-P", 0),
+        (" _P", 0),
+        ("_M", 1),
+        ("-M", 1),
+        (" _M", 1),
+        ("_PLAN", 0),
+        ("_MODEL", 1),
+    ] {
+        if name.ends_with(suffix) {
+            return rank;
+        }
+    }
+    2
+}
+
+fn opening_symbol(
+    opening: &crate::classes::arch::OpeningGeometry,
+    kind: crate::classes::arch::ArchKind,
+) -> Vec<Vec<Vector3>> {
+    use crate::classes::arch::ArchKind;
+
+    let up = Vector3::UNIT_Z;
+    let half = opening.across * (opening.depth * 0.5);
+    let start_low = opening.origin - half;
+    let start_high = opening.origin + half;
+    let end = opening.origin + opening.along * opening.width;
+    let end_low = end - half;
+    let end_high = end + half;
+    let top = up * opening.height;
+
+    let mut out = vec![
+        vec![start_low, start_high],
+        vec![end_low, end_high],
+        vec![start_low + top, start_high + top],
+        vec![end_low + top, end_high + top],
+        vec![start_low, start_low + top],
+        vec![start_high, start_high + top],
+        vec![end_low, end_low + top],
+        vec![end_high, end_high + top],
+    ];
+    match kind {
+        ArchKind::Door => {
+            let leaf = opening.origin + opening.across * opening.width;
+            out.push(vec![opening.origin, leaf]);
+            out.push(quarter_arc(
+                opening.origin,
+                opening.along,
+                opening.across,
+                opening.width,
+                16,
+            ));
+        }
+        ArchKind::Window => {
+            for fraction in [0.25, 0.5, 0.75] {
+                let offset = opening.across * (opening.depth * (fraction - 0.5));
+                out.push(vec![opening.origin + offset, end + offset]);
+            }
+            let middle = up * (opening.height * 0.5);
+            out.push(vec![opening.origin + middle, end + middle]);
+        }
+        _ => {}
+    }
+    out
+}
+
+fn quarter_arc(
+    center: Vector3,
+    along: Vector3,
+    across: Vector3,
+    radius: f64,
+    segments: usize,
+) -> Vec<Vector3> {
+    (0..=segments)
+        .map(|index| {
+            let angle = std::f64::consts::FRAC_PI_2 * index as f64 / segments as f64;
+            center + along * (radius * angle.cos()) + across * (radius * angle.sin())
+        })
+        .collect()
+}
+
+fn stair_symbol(stair: &crate::classes::arch::StairGeometry) -> Vec<Vec<Vector3>> {
+    let half = stair.across * (stair.width * 0.5);
+    let start_low = stair.origin - half;
+    let start_high = stair.origin + half;
+    let end = stair.origin + stair.along * stair.run;
+    let end_low = end - half;
+    let end_high = end + half;
+    let mut out = vec![vec![start_low, end_low, end_high, start_high, start_low]];
+    let steps = ((stair.height / 175.0).round() as usize).clamp(2, 64);
+    for index in 0..=steps {
+        let distance = stair.run * index as f64 / steps as f64;
+        let point = stair.origin + stair.along * distance;
+        out.push(vec![point - half, point + half]);
+    }
+    for side in [-1.0, 1.0] {
+        let offset = stair.across * (stair.width * 0.5 * side);
+        out.push(vec![
+            stair.origin + offset,
+            end + offset + Vector3::UNIT_Z * stair.height,
+        ]);
+    }
+    out
+}
+
+fn railing_symbol(railing: &crate::classes::arch::RailingGeometry) -> Vec<Vec<Vector3>> {
+    let end = railing.origin + railing.along * railing.run;
+    let mut out = vec![
+        vec![railing.origin, end],
+        vec![
+            railing.origin + Vector3::UNIT_Z * railing.height,
+            end + Vector3::UNIT_Z * railing.height,
+        ],
+    ];
+    for fraction in [1.0 / 3.0, 2.0 / 3.0] {
+        let height = Vector3::UNIT_Z * (railing.height * fraction);
+        out.push(vec![railing.origin + height, end + height]);
+    }
+    let mut distance = 0.0;
+    while distance <= railing.run + 1e-6 && out.len() < 512 {
+        let point = railing.origin + railing.along * distance;
+        out.push(vec![point, point + Vector3::UNIT_Z * railing.height]);
+        distance += railing.post_spacing.max(1e-6);
+    }
+    out
+}
+
+fn curtain_wall_symbol(wall: &crate::classes::arch::CurtainWallGeometry) -> Vec<Vec<Vector3>> {
+    let half = wall.across * (wall.depth * 0.5);
+    let base_low = wall.origin - half;
+    let base_high = wall.origin + half;
+    let end_low = base_low + wall.along * wall.length;
+    let end_high = base_high + wall.along * wall.length;
+    let up = Vector3::UNIT_Z * wall.height;
+    let mut out = vec![
+        vec![base_low, end_low],
+        vec![base_high, end_high],
+        vec![base_low + up, end_low + up],
+        vec![base_high + up, end_high + up],
+        vec![base_low, base_low + up],
+        vec![base_high, base_high + up],
+        vec![end_low, end_low + up],
+        vec![end_high, end_high + up],
+    ];
+    let panels = ((wall.length / 1200.0).round() as usize).clamp(1, 512);
+    for index in 1..panels {
+        let distance = wall.length * index as f64 / panels as f64;
+        let low = base_low + wall.along * distance;
+        let high = base_high + wall.along * distance;
+        out.push(vec![low, low + up]);
+        out.push(vec![high, high + up]);
+    }
+    out
+}
+
+fn grid_symbol(grid: &crate::classes::arch::GridGeometry) -> Vec<Vec<Vector3>> {
+    let mut out = Vec::new();
+    let along_positions = grid_axis_positions(grid.length, grid.spacing);
+    let across_positions = grid_axis_positions(grid.width, grid.spacing);
+    for distance in &along_positions {
+        let start = grid.origin + grid.along * *distance;
+        out.push(vec![start, start + grid.across * grid.width]);
+    }
+    for distance in &across_positions {
+        let start = grid.origin + grid.across * *distance;
+        out.push(vec![start, start + grid.along * grid.length]);
+    }
+    let corner = grid.origin;
+    out.push(vec![
+        corner,
+        corner + grid.along * grid.length,
+        corner + grid.along * grid.length + grid.across * grid.width,
+        corner + grid.across * grid.width,
+        corner,
+    ]);
+    out
+}
+
+fn grid_axis_positions(extent: f64, spacing: f64) -> Vec<f64> {
+    let spacing = spacing.max(1e-6);
+    let mut positions = vec![0.0];
+    let mut distance = spacing;
+    while distance < extent - 1e-6 && positions.len() < 512 {
+        positions.push(distance);
+        distance += spacing;
+    }
+    positions.push(extent);
+    positions
 }
 
 fn infinite_reach(doc: &crate::document::CadDocument) -> f64 {

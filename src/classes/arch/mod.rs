@@ -13,6 +13,7 @@
 mod continuous;
 mod create;
 mod decode;
+mod display;
 mod entity;
 mod fields;
 mod geometry;
@@ -26,6 +27,11 @@ pub use continuous::{
 };
 pub use create::{door, wall, window};
 pub use decode::{AecPlacement, DecodedAec};
+pub use display::{
+    curtain_wall_geometry, grid_geometry, member_geometry, opening_geometry, railing_geometry,
+    stair_geometry, CurtainWallGeometry, GridGeometry, MemberGeometry, OpeningGeometry,
+    RailingGeometry, StairGeometry,
+};
 pub use entity::{
     centered_wall_profile, reshape_rectangle, set_profile_bounds, set_wall, ArchEditError,
     ArchEntityData, ArchKind, StraightWallGeometry,
