@@ -40,8 +40,7 @@ mod visual_style;
 pub use compile::FALLBACK_KINDS;
 pub use gpu::{render_rgba, render_rgba_with, RenderError, Renderer, RendererConfig, RgbaImage};
 pub use scene::{
-    Curve, CurvedSurface, DrawPath, EntityRef, FallbackEntry, Fill, Picture, Scene, SkippedEntity,
-    Stroke, Style,
+    Curve, DrawPath, EntityRef, FallbackEntry, Fill, Picture, Scene, SkippedEntity, Stroke, Style,
 };
 pub use stroke_font::{acadrust_shp, acadrust_shx};
 pub use visual_style::{

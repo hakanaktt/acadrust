@@ -30,19 +30,12 @@ pub(crate) struct Tessellation {
     pub edge_curves: Vec<super::scene::Curve>,
     /// Analytic parameter lines. These replace the matching sampled isolines.
     pub isoline_curves: Vec<super::scene::Curve>,
-    /// Analytic faces and the triangle range each one occupies. The renderer
-    /// replaces a range with a per-fragment GPU surface, so trimmed fillets
-    /// keep an exact silhouette while the remaining faces stay a mesh.
-    pub face_surfaces: Vec<FaceSurface>,
-}
-
-/// One analytic face: a contiguous run of triangles that a GPU patch stands in
-/// for. `start..end` indexes [`Tessellation::triangles`] and `normals`.
-#[derive(Debug, Clone)]
-pub(crate) struct FaceSurface {
-    pub start: usize,
-    pub end: usize,
-    pub surface: super::scene::CurvedSurface,
+    /// A closed analytic surface covering the whole tessellation. Set only when
+    /// the model has exactly one face and that face is an untrimmed sphere or
+    /// torus, so the GPU can replace the triangle fill without losing trims.
+    pub surface: Option<super::scene::CurvedSurface>,
+    /// Number of faces visited. Used to decide whether `surface` covers the mesh.
+    face_count: u32,
 }
 
 impl Tessellation {
@@ -54,7 +47,8 @@ impl Tessellation {
             isolines: Vec::new(),
             edge_curves: Vec::new(),
             isoline_curves: Vec::new(),
-            face_surfaces: Vec::new(),
+            surface: None,
+            face_count: 0,
         }
     }
 }
@@ -178,21 +172,14 @@ pub(crate) fn tessellate(document: &SatDocument) -> Tessellation {
         let Some(face) = SatFace::from_record(record) else {
             continue;
         };
-        let start = tess.triangles.len();
-        let surface = facet_face(document, &face, &edges, &place, tolerance, &mut tess);
-        let end = tess.triangles.len();
-        if let Some(surface) = surface {
-            // Only a face that actually produced geometry can be replaced.
-            if end > start {
-                tess.face_surfaces.push(FaceSurface {
-                    start,
-                    end,
-                    surface,
-                });
-            }
-        }
+        facet_face(document, &face, &edges, &place, tolerance, &mut tess);
     }
     orient_triangles(&mut tess);
+    // A surface descriptor stands in for the whole triangle fill. Only trust it
+    // when there is exactly one face; a mixed solid keeps its per-face mesh.
+    if tess.face_count != 1 {
+        tess.surface = None;
+    }
     tess
 }
 
@@ -222,7 +209,8 @@ fn facet_face(
     place: &Placement,
     tolerance: f64,
     tess: &mut Tessellation,
-) -> Option<super::scene::CurvedSurface> {
+) {
+    tess.face_count = tess.face_count.saturating_add(1);
     let loops = face_loops(document, face)
         .into_iter()
         .map(|pointer| loop_polyline(document, pointer, edges))
@@ -230,29 +218,35 @@ fn facet_face(
         .collect::<Vec<_>>();
     let surface = document.resolve(face.surface());
     let sense = face.sense();
-    let surface = surface?;
+    let Some(surface) = surface else {
+        return;
+    };
     if let Some(plane) = SatPlaneSurface::from_record(surface) {
         let normal = place.normal(oriented(vec3(plane.normal()), sense));
         let (triangles, normals) = triangulate_plane(&loops, normal);
         tess.triangles.extend(triangles);
         tess.normals.extend(normals);
-        return None;
+        return;
     }
     if let Some(cone) = SatConeSurface::from_record(surface) {
         facet_cone(&cone, &loops, sense, place, tolerance, tess);
-        return None;
+        return;
     }
     if let Some(sphere) = SatSphereSurface::from_record(surface) {
         if loops.is_empty() {
-            return facet_sphere(&sphere, sense, place, tolerance, tess);
+            facet_sphere(&sphere, sense, place, tolerance, tess);
+        } else {
+            facet_trimmed_sphere(&sphere, &loops, sense, place, tolerance, tess);
         }
-        return facet_trimmed_sphere(&sphere, &loops, sense, place, tolerance, tess);
+        return;
     }
     if let Some(torus) = SatTorusSurface::from_record(surface) {
         if loops.is_empty() {
-            return facet_torus(&torus, sense, place, tolerance, tess);
+            facet_torus(&torus, sense, place, tolerance, tess);
+        } else {
+            facet_trimmed_torus(&torus, &loops, sense, place, tolerance, tess);
         }
-        return facet_trimmed_torus(&torus, &loops, sense, place, tolerance, tess);
+        return;
     }
     if let Some(spline) = SatSplineSurface::from_record(surface) {
         if let Some(patch) = spline
@@ -274,7 +268,6 @@ fn facet_face(
             }
         }
     }
-    None
 }
 
 fn face_loops(
@@ -1108,7 +1101,7 @@ fn facet_sphere(
     place: &Placement,
     tolerance: f64,
     tess: &mut Tessellation,
-) -> Option<super::scene::CurvedSurface> {
+) {
     let local_center = vec3(sphere.center());
     let center = place.point(local_center);
     let radius = sphere.radius().abs();
@@ -1204,13 +1197,13 @@ fn facet_sphere(
             sweep: TAU,
         });
     }
-    place
-        .similarity_scale()
-        .map(|scale| super::scene::CurvedSurface::Sphere {
+    if let Some(scale) = place.similarity_scale() {
+        tess.surface = Some(super::scene::CurvedSurface::Sphere {
             center,
             radius: radius * scale,
             flip,
-        })
+        });
+    }
 }
 
 fn facet_trimmed_sphere(
@@ -1220,12 +1213,14 @@ fn facet_trimmed_sphere(
     place: &Placement,
     tolerance: f64,
     tess: &mut Tessellation,
-) -> Option<super::scene::CurvedSurface> {
-    let inverse = place.linear.inverse()?;
+) {
+    let Some(inverse) = place.linear.inverse() else {
+        return;
+    };
     let center = vec3(sphere.center());
     let radius = sphere.radius().abs();
     if radius <= 1e-12 {
-        return None;
+        return;
     }
     let stretch = place
         .linear
@@ -1254,7 +1249,7 @@ fn facet_trimmed_sphere(
         boundaries.push(ring.clone());
     }
     if radial_loops.is_empty() {
-        return None;
+        return;
     }
     let mut chart_pole = directions
         .iter()
@@ -1307,7 +1302,7 @@ fn facet_trimmed_sphere(
         for direction in radial {
             let denominator = 1.0 + direction.dot(&chart_pole);
             if denominator <= 1e-8 {
-                return None;
+                return;
             }
             ring.push((
                 direction.dot(&chart_east) / denominator,
@@ -1351,23 +1346,6 @@ fn facet_trimmed_sphere(
             );
         }
     }
-    // Export the same chart and boundary loops so the shader can reproduce the
-    // trim. Chart coordinates are not periodic, so the shader tests them once.
-    let scale = place.similarity_scale()?;
-    let trim = parameters
-        .iter()
-        .filter(|ring| ring.len() >= 3)
-        .map(|ring| ring.iter().map(|&(u, v)| [u, v]).collect::<Vec<_>>())
-        .collect::<Vec<_>>();
-    Some(super::scene::CurvedSurface::SpherePatch {
-        center: place.point(center),
-        radius: radius * scale,
-        flip: sense == Sense::Reversed,
-        pole: unit(place.linear * chart_pole)?,
-        east: unit(place.linear * chart_east)?,
-        north: unit(place.linear * chart_north)?,
-        trim: Some(trim),
-    })
 }
 
 /// Group each exterior with its immediate holes, regardless of loop order.
@@ -1435,7 +1413,7 @@ fn facet_torus(
     place: &Placement,
     tolerance: f64,
     tess: &mut Tessellation,
-) -> Option<super::scene::CurvedSurface> {
+) {
     let center = place.point(vec3(torus.center()));
     let normal = unit(place.normal(vec3(torus.normal()))).unwrap_or(Vector3::UNIT_Z);
     let east = unit(place.normal(vec3(torus.u_direction()))).unwrap_or(plane_axis(normal));
@@ -1512,9 +1490,8 @@ fn facet_torus(
             sweep: TAU,
         });
     }
-    place
-        .similarity_scale()
-        .map(|_| super::scene::CurvedSurface::Torus {
+    if place.similarity_scale().is_some() {
+        tess.surface = Some(super::scene::CurvedSurface::Torus {
             center,
             axis: normal,
             east,
@@ -1522,8 +1499,8 @@ fn facet_torus(
             major,
             minor,
             flip,
-            trim: None,
-        })
+        });
+    }
 }
 
 /// A fillet can cross either periodic seam, or wrap all the way around the
@@ -1536,9 +1513,9 @@ fn facet_trimmed_torus(
     place: &Placement,
     tolerance: f64,
     tess: &mut Tessellation,
-) -> Option<super::scene::CurvedSurface> {
+) {
     let Some(inverse) = place.linear.inverse() else {
-        return None;
+        return;
     };
     let center = vec3(torus.center());
     let axis = unit(vec3(torus.normal())).unwrap_or(Vector3::UNIT_Z);
@@ -1589,20 +1566,13 @@ fn facet_trimmed_torus(
         boundaries.push(ring.clone());
     }
     if parameters.is_empty() {
-        return None;
+        return;
     }
-    // Keep the boundary loops in the surface parameterization for the
-    // per-fragment trim test, before the earcut-specific unwrapping below.
-    let trim_loops = parameters
-        .iter()
-        .filter(|ring| ring.len() >= 3)
-        .map(|ring| ring.iter().map(|&(u, v)| [u, v]).collect::<Vec<_>>())
-        .collect::<Vec<_>>();
     if windings.iter().any(|&(u, v)| u.abs() > PI || v.abs() > PI) {
         // A periodic band has two winding trims. Join them on a grid instead
         // of earcutting long, thin triangles across a full revolution.
         if parameters.len() != 2 {
-            return None;
+            return;
         }
         let swap = windings[0].1.abs() > PI;
         let along = |w: (f64, f64)| if swap { w.1 } else { w.0 };
@@ -1611,7 +1581,7 @@ fn facet_trimmed_torus(
             .iter()
             .any(|&w| along(w).abs() < PI || across(w).abs() > PI)
         {
-            return None;
+            return;
         }
         if swap {
             for ring in &mut parameters {
@@ -1680,9 +1650,7 @@ fn facet_trimmed_torus(
                 emit([a, c, d]);
             }
         }
-        // A periodic band spans a whole revolution in one parameter. The trim
-        // is not a simple even-odd region, so keep the ruled mesh for it.
-        return None;
+        return;
     } else {
         // Put holes in the same periodic copy as the exterior, even when
         // their first points lie on opposite sides of atan2's branch cut.
@@ -1709,7 +1677,7 @@ fn facet_trimmed_torus(
     let Some((parameters, indices, sources)) =
         triangulate_parameters(&parameters, point_at, tolerance, Some(&boundaries))
     else {
-        return None;
+        return;
     };
     for triangle in indices {
         emit(triangle.map(|index| {
@@ -1721,44 +1689,6 @@ fn facet_trimmed_torus(
             )
         }));
     }
-    torus_surface(
-        place,
-        center,
-        axis,
-        east,
-        north,
-        major,
-        minor,
-        sense,
-        Some(trim_loops),
-    )
-}
-
-/// Build the world-space analytic descriptor for a torus, or `None` when the
-/// placement is not a similarity (the shader assumes a rigid uniform scale).
-#[allow(clippy::too_many_arguments)]
-fn torus_surface(
-    place: &Placement,
-    center: Vector3,
-    axis: Vector3,
-    east: Vector3,
-    north: Vector3,
-    major: f64,
-    minor: f64,
-    sense: Sense,
-    trim: Option<Vec<Vec<[f64; 2]>>>,
-) -> Option<super::scene::CurvedSurface> {
-    let scale = place.similarity_scale()?;
-    Some(super::scene::CurvedSurface::Torus {
-        center: place.point(center),
-        axis: unit(place.linear * axis)?,
-        east: unit(place.linear * east)?,
-        north: unit(place.linear * north)?,
-        major: major * scale,
-        minor: minor * scale,
-        flip: sense == Sense::Reversed,
-        trim,
-    })
 }
 
 fn unwrap_angle(angle: f64, previous: f64) -> f64 {

@@ -2507,12 +2507,12 @@ fn closed_spheres_and_tori_get_a_gpu_analytic_surface() {
     let scene = compile(&document, &options);
     assert_eq!(scene.fills.len(), 2);
     assert!(matches!(
-        scene.fills[0].analytic.as_slice(),
-        [super::scene::CurvedSurface::Sphere { .. }]
+        scene.fills[0].analytic,
+        Some(super::scene::CurvedSurface::Sphere { .. })
     ));
     assert!(matches!(
-        scene.fills[1].analytic.as_slice(),
-        [super::scene::CurvedSurface::Torus { .. }]
+        scene.fills[1].analytic,
+        Some(super::scene::CurvedSurface::Torus { .. })
     ));
     // The fallback mesh stays available for clipping and picking.
     assert!(!scene.fills[0].triangles.is_empty());
@@ -2525,11 +2525,7 @@ fn closed_spheres_and_tori_get_a_gpu_analytic_surface() {
         .unwrap();
     let trimmed_scene = compile(&trimmed_doc, &options);
     assert!(!trimmed_scene.fills.is_empty());
-    // The trimmed torus face now has its own analytic patch with a UV trim.
-    assert!(matches!(
-        trimmed_scene.fills[0].analytic.as_slice(),
-        [super::scene::CurvedSurface::Torus { trim: Some(_), .. }]
-    ));
+    assert!(trimmed_scene.fills[0].analytic.is_none());
 }
 
 /// Walk rays from the frame edge toward the center and measure where the
@@ -2596,75 +2592,6 @@ fn analytic_sphere_silhouette_stays_on_the_circle() {
     assert!(
         worst <= 1.0,
         "sphere silhouette deviated {worst:.2}px from the true circle"
-    );
-}
-
-/// The analytic trim must cover the same pixels as the fallback mesh. Any
-/// hole in the trim loses object pixels; a leak adds pixels outside the face.
-#[test]
-fn analytic_trimmed_torus_matches_the_mesh() {
-    use crate::entities::acis::Sense;
-    let mut document = doc();
-    document
-        .add_entity(EntityType::Solid3D(solid_from(trimmed_torus_face(
-            false,
-            Sense::Forward,
-        ))))
-        .unwrap();
-    let mut options = CompileOptions::default();
-    options.visual_style = VisualStyleRequest::Standard(StandardVisualStyle::Conceptual);
-    let scene = compile(&document, &options);
-    assert!(!scene.fills.is_empty());
-    assert!(scene
-        .fills
-        .iter()
-        .flat_map(|fill| &fill.analytic)
-        .any(|surface| matches!(
-            surface,
-            super::scene::CurvedSurface::Torus { trim: Some(_), .. }
-        )));
-    let view = View {
-        target: Vector3::ZERO,
-        height: 20.0,
-        direction: Vector3::new(0.4, -0.6, 0.7),
-        ..View::default()
-    };
-    let render = |analytic: bool| {
-        pollster::block_on(super::render_rgba_with(
-            &document,
-            &view,
-            256,
-            256,
-            &options,
-            &super::RendererConfig {
-                samples: 1,
-                analytic_surfaces: analytic,
-                ..super::RendererConfig::default()
-            },
-        ))
-    };
-    let analytic = match render(true) {
-        Err(super::RenderError::NoAdapter) => return,
-        Err(error) => panic!("{error}"),
-        Ok(image) => image,
-    };
-    let mesh = render(false).expect("adapter already opened");
-    let background = [analytic.pixels[0], analytic.pixels[1], analytic.pixels[2]];
-    let is_object = |pixels: &[u8], index: usize| {
-        (0..3).any(|channel| {
-            (pixels[index + channel] as i32 - background[channel] as i32).abs() > 24
-        })
-    };
-    let mut differences = 0usize;
-    for index in (0..analytic.pixels.len()).step_by(4) {
-        if is_object(&analytic.pixels, index) != is_object(&mesh.pixels, index) {
-            differences += 1;
-        }
-    }
-    let total = (analytic.width * analytic.height) as usize;
-    assert!(
-        differences * 100 < total,
-        "analytic trim differs from the mesh on {differences}/{total} pixels"
     );
 }
 

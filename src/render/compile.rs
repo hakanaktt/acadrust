@@ -1778,21 +1778,6 @@ impl Compiler<'_> {
             self.fallback(entity, frame, source);
             return;
         }
-        self.emit_fill_core(triangles, vertex_rgb, entity, frame, source, background);
-    }
-
-    /// Push a fill even when its triangle list is empty. A solid whose curved
-    /// faces are all drawn analytically still needs one fill to carry the
-    /// style and the surface descriptors.
-    fn emit_fill_core(
-        &mut self,
-        triangles: &[Vector3],
-        vertex_rgb: Vec<[u8; 3]>,
-        entity: &EntityType,
-        frame: &Frame,
-        source: EntityRef,
-        background: bool,
-    ) {
         let mut style = resolve_style(self.doc, entity.common(), frame, &self.visual, self.sheet);
         let background = background
             || self.visual.face_color == super::visual_style::FaceColorMode::Background
@@ -1814,8 +1799,7 @@ impl Compiler<'_> {
             } else {
                 self.visual.lighting
             },
-            analytic: Vec::new(),
-            analytic_ranges: Vec::new(),
+            analytic: None,
         });
     }
 
@@ -1846,21 +1830,10 @@ impl Compiler<'_> {
             && self.visual.faces == super::visual_style::FaceShading::None;
         let draw_faces =
             !wireframe && (self.visual.faces != super::visual_style::FaceShading::None || occluder);
-        // Split the faces: a face with an analytic descriptor leaves the mesh
-        // and is evaluated per fragment. Trims and occlusion styles keep their
-        // triangles so masking and clipping still work.
-        let analytic_allowed = draw_faces && !occluder;
-        let mut analytic = Vec::new();
-        let mut ranges = Vec::new();
-        if analytic_allowed {
-            for face in &tess.face_surfaces {
-                let Some(surface) = transform_surface(transform, &face.surface) else {
-                    continue;
-                };
-                analytic.push(surface);
-                ranges.push(((face.start / 3) as u32, (face.end / 3) as u32));
-            }
-        }
+        let analytic_surface = draw_faces
+            .then(|| tess.surface.as_ref())
+            .flatten()
+            .and_then(|surface| transform_surface(transform, surface));
         if draw_faces && !tess.triangles.is_empty() {
             let triangles = world(transform, tess.triangles);
             self.emit_fill(&triangles, entity, frame, source.clone(), occluder);
@@ -1875,9 +1848,11 @@ impl Compiler<'_> {
                     fill.normals.clear();
                 }
                 fill.style.opacity *= face_opacity as f32;
+                // The GPU surface pass evaluates the same face analytically.
+                // Keeping the triangles lets clipping and picking fall back to
+                // the mesh whenever the descriptor cannot be used.
                 if fill.style.opacity > 0.0 && !fill.background {
-                    fill.analytic = analytic;
-                    fill.analytic_ranges = ranges;
+                    fill.analytic = analytic_surface;
                 }
             }
         }
@@ -3442,23 +3417,6 @@ fn transform_surface(
             radius: radius * scale,
             flip: *flip,
         },
-        super::scene::CurvedSurface::SpherePatch {
-            center,
-            radius,
-            flip,
-            pole,
-            east,
-            north,
-            trim,
-        } => super::scene::CurvedSurface::SpherePatch {
-            center: transform.apply(*center),
-            radius: radius * scale,
-            flip: *flip,
-            pole: transform.apply_rotation(*pole).normalize(),
-            east: transform.apply_rotation(*east).normalize(),
-            north: transform.apply_rotation(*north).normalize(),
-            trim: trim.clone(),
-        },
         super::scene::CurvedSurface::Torus {
             center,
             axis,
@@ -3467,7 +3425,6 @@ fn transform_surface(
             major,
             minor,
             flip,
-            trim,
         } => {
             let axis = transform.apply_rotation(*axis).normalize();
             let east = transform.apply_rotation(*east).normalize();
@@ -3480,7 +3437,6 @@ fn transform_surface(
                 major: major * scale,
                 minor: minor * scale,
                 flip: *flip,
-                trim: trim.clone(),
             }
         }
     })
@@ -4141,10 +4097,8 @@ fn clip_recent_geometry(
             }
         }
         fill.triangles = triangles;
-        // A clipped face is no longer the whole analytic surface descriptor;
-        // the full triangle mesh is still present, so fall back to it.
-        fill.analytic.clear();
-        fill.analytic_ranges.clear();
+        // A clipped face is no longer the whole analytic surface descriptor.
+        fill.analytic = None;
         if !fill.vertex_rgb.is_empty() {
             fill.vertex_rgb.clear();
         }
