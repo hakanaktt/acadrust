@@ -156,22 +156,13 @@ fn pt(x: f64, y: f64) -> (i32, i32) {
     (x.round() as i32, y.round() as i32)
 }
 
-/// Capital S. The upper bowl runs clockwise and the lower bowl counter-clockwise,
-/// with a short curve between them so the spine does not kink.
+/// Capital S. The upper bowl starts at the upper-right terminal and runs
+/// counter-clockwise down the left side, then the spine crosses to the lower
+/// bowl, which sweeps clockwise around the bottom to the lower-left terminal.
 fn draw_capital_s(pen: &mut Pen) {
-    pen.earc(32.0, 54.0, 17.0, 20.0, 150.0, -18.0);
-    let lower = 145.0_f64.to_radians();
-    pen.bez(
-        46.1,
-        40.1,
-        21.5,
-        36.2,
-        32.0 + 18.0 * lower.cos(),
-        18.0 + 20.0 * lower.sin(),
-    );
-    // End on the lower-right terminal. A sweep past 360 climbs the right side
-    // and closes the lower counter.
-    pen.earc(32.0, 18.0, 18.0, 20.0, 145.0, 328.0);
+    pen.earc(30.75, 54.0, 17.0, 20.0, 30.0, 198.0);
+    pen.bez(16.65, 40.1, 41.25, 36.2, 45.491, 29.472);
+    pen.earc(30.75, 18.0, 18.0, 20.0, 35.0, -148.0);
 }
 
 fn glyph(ch: char, advance: i32, pen: Pen) -> Glyph {
@@ -431,11 +422,11 @@ fn bases() -> Vec<Glyph> {
     let lower_d = glyph('d', 56, pen);
 
     pen = Pen::new();
-    // Open bowl in the same family as c. The bar crosses the counter and
-    // stops in the right-hand opening.
-    pen.earc(28.0, 26.0, 18.0, 27.0, 48.0, 312.0);
+    // Open bowl in the same family as c. The bar meets the bowl on the right
+    // and the opening falls below it, as in a lowercase e.
+    pen.earc(28.0, 26.0, 18.0, 27.0, 8.5, 312.0);
     pen.mv(10.2, 30.0);
-    pen.ln(40.0, 30.0);
+    pen.ln(45.8, 30.0);
     let lower_e = glyph('e', 54, pen);
 
     pen = Pen::new();
@@ -1767,22 +1758,37 @@ mod tests {
             flat
         });
         assert!(bar, "e needs a crossbar");
-        let closed_on_the_right = strokes
+        let bar_meets_bowl = strokes
             .iter()
             .flatten()
-            .any(|point| point.x > 42.0 && (18.0..40.0).contains(&point.y));
-        assert!(!closed_on_the_right, "e bowl should stay open on the right");
+            .any(|point| point.x > 44.0 && (28.0..32.0).contains(&point.y));
+        assert!(
+            bar_meets_bowl,
+            "e crossbar should meet the bowl on the right"
+        );
+        let open_below_bar = !strokes
+            .iter()
+            .flatten()
+            .any(|point| point.x > 40.0 && (10.0..26.0).contains(&point.y));
+        assert!(
+            open_below_bar,
+            "e bowl should open below the bar on the right"
+        );
 
         let (strokes, _) = font.glyph_for_char('S');
-        let lower_terminal = strokes
-            .iter()
-            .flatten()
-            .filter(|point| point.x > 40.0 && point.y < 36.0)
-            .map(|point| point.y)
-            .fold(0.0_f64, f64::max);
+        let has_point = |x: std::ops::Range<f64>, y: std::ops::Range<f64>| {
+            strokes
+                .iter()
+                .flatten()
+                .any(|point| x.contains(&point.x) && y.contains(&point.y))
+        };
         assert!(
-            lower_terminal < 16.0,
-            "S lower terminal climbed to {lower_terminal}"
+            has_point(40.0..60.0, 56.0..72.0),
+            "S upper terminal should be on the right"
+        );
+        assert!(
+            has_point(8.0..20.0, 0.0..12.0),
+            "S lower terminal should be on the left"
         );
     }
 
