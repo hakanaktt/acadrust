@@ -456,6 +456,99 @@ fn render_mode_and_named_style_both_resolve() {
 }
 
 #[test]
+fn conceptual_keeps_entity_and_layer_colors() {
+    let mut doc = doc();
+    add_layer(&mut doc, "Walls", Color::Index(1));
+    doc.header.fill_mode = true;
+    let mut line = Line::from_coords(0.0, 0.0, 0.0, 10.0, 0.0, 0.0);
+    line.common.layer = "Walls".to_string();
+    doc.add_entity(EntityType::Line(line)).unwrap();
+    let mut solid = Solid::triangle(
+        Vector3::new(0.0, 0.0, 0.0),
+        Vector3::new(10.0, 0.0, 0.0),
+        Vector3::new(0.0, 10.0, 0.0),
+    );
+    solid.common.color = Color::Rgb {
+        r: 0,
+        g: 96,
+        b: 200,
+    };
+    doc.add_entity(EntityType::Solid(solid)).unwrap();
+
+    let mut options = CompileOptions::default();
+    options.visual_style = VisualStyleRequest::Standard(StandardVisualStyle::Conceptual);
+    let scene = compile(&doc, &options);
+
+    let line = scene
+        .strokes
+        .iter()
+        .find(|stroke| stroke.style.layer == "Walls")
+        .expect("the ByLayer line is compiled");
+    assert_eq!(line.style.rgb, [255, 0, 0]);
+    assert!(!line.style.aci7);
+
+    let fill = scene
+        .fills
+        .iter()
+        .find(|fill| fill.style.rgb == [0, 96, 200])
+        .expect("the object color reaches the fill");
+    assert_eq!(fill.lighting, LightingModel::Gooch);
+}
+
+#[test]
+fn conceptual_faces_use_the_entity_palette_color() {
+    let mut doc = doc();
+    let mut solid = solid_from(crate::entities::acis::primitives::build_box(
+        [0.0, 0.0, 0.0],
+        10.0,
+        10.0,
+        10.0,
+    ));
+    solid.common.color = Color::Index(3);
+    doc.add_entity(EntityType::Solid3D(solid)).unwrap();
+
+    let mut options = CompileOptions::default();
+    options.visual_style = VisualStyleRequest::Standard(StandardVisualStyle::Conceptual);
+    let image = match pollster::block_on(super::render_rgba(
+        &doc,
+        &View {
+            target: Vector3::new(5.0, 5.0, 5.0),
+            height: 20.0,
+            ..View::default()
+        },
+        96,
+        96,
+        &options,
+    )) {
+        Err(super::RenderError::NoAdapter) => return,
+        Err(error) => panic!("{error}"),
+        Ok(image) => image,
+    };
+
+    let mut green_pixels = 0;
+    let mut pure_green = 0;
+    for pixel in image.pixels.chunks_exact(4) {
+        let (r, g, b) = (pixel[0], pixel[1], pixel[2]);
+        if g <= 120 || g <= r {
+            continue;
+        }
+        green_pixels += 1;
+        assert!(
+            r < 64 && b < 64,
+            "conceptual face kept non-entity channels at rgb({r}, {g}, {b})"
+        );
+        if r < 8 && b < 8 {
+            pure_green += 1;
+        }
+    }
+    assert!(green_pixels > 100, "the green solid was not drawn");
+    assert!(
+        pure_green > 100,
+        "the conceptual palette did not keep the entity's green"
+    );
+}
+
+#[test]
 fn shaded_styles_drop_linetype_patterns() {
     let mut doc = doc();
     add_dashed(&mut doc);

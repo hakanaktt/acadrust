@@ -405,16 +405,13 @@ fn fs_fill(in: FillOut, @builtin(front_facing) front_facing: bool) -> @location(
     let diffuse = dot(normal, light);
     if in.lighting > 2.5 {
         // AutoCAD's Conceptual palette is a light olive warm side and a
-        // restrained slate-blue cool side. Scale it by material luminance and
-        // retain a little of the source color so colored solids still differ.
-        let material_luma = dot(in.color.rgb, vec3<f32>(0.30, 0.59, 0.11));
-        let material_scale = clamp(material_luma / 0.54, 0.75, 1.15);
+        // restrained slate-blue cool side. Multiply it by the entity color so
+        // layer and object colors (already resolved through the ACI palette)
+        // stay visible while the view still reads as Conceptual.
         // These are linear-light values; the sRGB render target encodes them
         // to the familiar pale olive and slate-blue viewport colors.
-        let warm_base = vec3<f32>(0.47, 0.56, 0.265) * material_scale;
-        let cool_base = vec3<f32>(0.03, 0.11, 0.33) * material_scale;
-        let warm = mix(warm_base, in.color.rgb, 0.30);
-        let cool = mix(cool_base, in.color.rgb, 0.30);
+        let warm = vec3<f32>(0.47, 0.56, 0.265) * in.color.rgb;
+        let cool = vec3<f32>(0.03, 0.11, 0.33) * in.color.rgb;
         let conceptual_light = normalize(vec3<f32>(-0.40, 0.70, 0.60));
         let factor = clamp(dot(normal, conceptual_light) * 0.5 + 0.5, 0.0, 1.0);
         let gooch = mix(cool, warm, factor);
@@ -614,12 +611,8 @@ fn fs_surface(in: SurfaceOut) -> FragOut {
     let light = normalize(vec3<f32>(0.22, 0.42, 0.88));
     let diffuse = dot(normal, light);
     if lighting > 2.5 {
-        let material_luma = dot(color.rgb, vec3<f32>(0.30, 0.59, 0.11));
-        let material_scale = clamp(material_luma / 0.54, 0.75, 1.15);
-        let warm_base = vec3<f32>(0.47, 0.56, 0.265) * material_scale;
-        let cool_base = vec3<f32>(0.03, 0.11, 0.33) * material_scale;
-        let warm = mix(warm_base, color.rgb, 0.30);
-        let cool = mix(cool_base, color.rgb, 0.30);
+        let warm = vec3<f32>(0.47, 0.56, 0.265) * color.rgb;
+        let cool = vec3<f32>(0.03, 0.11, 0.33) * color.rgb;
         let conceptual_light = normalize(vec3<f32>(-0.40, 0.70, 0.60));
         let factor = clamp(dot(normal, conceptual_light) * 0.5 + 0.5, 0.0, 1.0);
         let gooch = mix(cool, warm, factor);

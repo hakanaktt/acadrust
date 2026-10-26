@@ -1581,11 +1581,7 @@ impl Compiler<'_> {
         source: EntityRef,
         path: DrawPath,
     ) {
-        let mut style = resolve_style(self.doc, entity.common(), frame, &self.visual, self.sheet);
-        if self.visual.kind == super::visual_style::StandardVisualStyle::Conceptual {
-            style.rgb = [255, 255, 255];
-            style.aci7 = false;
-        }
+        let style = resolve_style(self.doc, entity.common(), frame, &self.visual, self.sheet);
         let marks = pattern_elements(
             self.doc,
             entity.common(),
@@ -1714,11 +1710,7 @@ impl Compiler<'_> {
         frame: &Frame,
         source: EntityRef,
     ) {
-        let mut style = resolve_style(self.doc, entity.common(), frame, &self.visual, self.sheet);
-        if self.visual.kind == super::visual_style::StandardVisualStyle::Conceptual {
-            style.rgb = [255, 255, 255];
-            style.aci7 = false;
-        }
+        let style = resolve_style(self.doc, entity.common(), frame, &self.visual, self.sheet);
         self.scene.strokes.push(Stroke {
             points: points.to_vec(),
             closed: false,
@@ -1738,11 +1730,7 @@ impl Compiler<'_> {
         frame: &Frame,
         source: EntityRef,
     ) {
-        let mut style = resolve_style(self.doc, entity.common(), frame, &self.visual, self.sheet);
-        if self.visual.kind == super::visual_style::StandardVisualStyle::Conceptual {
-            style.rgb = [255, 255, 255];
-            style.aci7 = false;
-        }
+        let style = resolve_style(self.doc, entity.common(), frame, &self.visual, self.sheet);
         let marks = pattern_elements(
             self.doc,
             entity.common(),
