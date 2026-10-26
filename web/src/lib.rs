@@ -1,8 +1,9 @@
 use std::io::Cursor;
 
+use acadrust::objects::ObjectType;
 use acadrust::render::{
-    compile, CompileOptions, Renderer, RendererConfig, Scene, StandardVisualStyle, View,
-    VisualStyleRequest,
+    compile, CompileOptions, DisplaySpace, Renderer, RendererConfig, Scene, StandardVisualStyle,
+    View, VisualStyleRequest,
 };
 use acadrust::{CadDocument, DwgReader, Vector3};
 use wasm_bindgen::prelude::*;
@@ -175,6 +176,59 @@ impl Viewer {
             up.y,
             up.z,
         ]
+    }
+
+    /// Layout tabs in the drawing, in tab order. Model space is always first.
+    pub fn layout_names(&self) -> Vec<String> {
+        let mut layouts: Vec<(i16, String)> = self
+            .document
+            .objects
+            .values()
+            .filter_map(|object| match object {
+                ObjectType::Layout(layout)
+                    if !layout.name.is_empty() && !layout.name.eq_ignore_ascii_case("Model") =>
+                {
+                    Some((layout.tab_order, layout.name.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        layouts.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        layouts.dedup_by(|a, b| a.1.eq_ignore_ascii_case(&b.1));
+        let mut names = Vec::with_capacity(layouts.len() + 1);
+        names.push("Model".to_string());
+        names.extend(layouts.into_iter().map(|(_, name)| name));
+        names
+    }
+
+    /// Select model space or a named layout tab and frame it.
+    pub fn set_layout(&mut self, name: String) -> Result<(), JsValue> {
+        let trimmed = name.trim();
+        let space = if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("model") {
+            DisplaySpace::Model
+        } else {
+            let exists = self.document.objects.values().any(|object| {
+                matches!(
+                    object,
+                    ObjectType::Layout(layout) if layout.name.eq_ignore_ascii_case(trimmed)
+                )
+            });
+            if !exists {
+                return Err(js_error(format!("unknown layout: {trimmed}")));
+            }
+            DisplaySpace::Layout(trimmed.to_string())
+        };
+        self.options.space = space;
+        self.scene = compile(&self.document, &self.options);
+        self.view = View::zoom_extents(&self.scene, self.config.width, self.config.height);
+        self.renderer.prepare(
+            &self.device,
+            &self.queue,
+            &self.scene,
+            &self.view,
+            (self.config.width, self.config.height),
+        );
+        self.render()
     }
 
     /// Select a built-in style or restore the drawing's active viewport style.

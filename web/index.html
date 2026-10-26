@@ -44,6 +44,11 @@
           <option value="X-Ray">X-Ray</option>
         </select>
       </label>
+      <label>Layout
+        <select id="layout" disabled title="Switch between model space and paper space layouts">
+          <option value="Model">Model</option>
+        </select>
+      </label>
       <button id="fit" type="button" disabled title="Fit drawing to the viewport">Fit</button>
       <button id="rotate-left" type="button" disabled title="Roll counter-clockwise">Roll left</button>
       <button id="rotate-right" type="button" disabled title="Roll clockwise">Roll right</button>
@@ -70,6 +75,7 @@
       const fileInput = document.querySelector("#file");
       const fontInput = document.querySelector("#font");
       const styleInput = document.querySelector("#visual-style");
+      const layoutInput = document.querySelector("#layout");
       const fitButton = document.querySelector("#fit");
       const rotateLeft = document.querySelector("#rotate-left");
       const rotateRight = document.querySelector("#rotate-right");
@@ -86,9 +92,24 @@
       const setStatus = (message) => { status.textContent = message; };
       const setControlsEnabled = (enabled) => {
         styleInput.disabled = !enabled;
+        layoutInput.disabled = !enabled || layoutInput.options.length < 2;
         fitButton.disabled = !enabled;
         rotateLeft.disabled = !enabled;
         rotateRight.disabled = !enabled;
+      };
+
+      const populateLayouts = (names, preferred = "Model") => {
+        layoutInput.replaceChildren(...names.map((name) => new Option(name, name)));
+        const choice = names.includes(preferred) ? preferred : "Model";
+        layoutInput.value = choice;
+        layoutInput.disabled = names.length < 2;
+        return choice;
+      };
+
+      const resetLayouts = () => {
+        layoutInput.replaceChildren(new Option("Model", "Model"));
+        layoutInput.value = "Model";
+        layoutInput.disabled = true;
       };
 
       const stopGizmoAnim = () => {
@@ -159,6 +180,7 @@
         if (!drawing) return;
         const serial = ++loadSerial;
         const selectedFont = fontInput.files?.[0] ?? null;
+        const preferredLayout = layoutInput.value || "Model";
         setControlsEnabled(false);
         setStatus(`Loading ${drawing.name}...`);
         try {
@@ -175,15 +197,18 @@
             nextViewer = await create_viewer(canvas, bytes);
           }
           if (serial !== loadSerial) return;
-          nextViewer.render();
+          const layout = populateLayouts(nextViewer.layout_names(), preferredLayout);
+          if (layout === "Model") nextViewer.render();
+          else nextViewer.set_layout(layout);
           viewer = nextViewer;
           setControlsEnabled(true);
           drawGizmo();
-          setStatus(`${drawing.name} rendered${selectedFont ? ` with ${selectedFont.name}` : " with the built-in Acadrust font"}`);
+          setStatus(`${drawing.name} rendered${layout === "Model" ? "" : ` on ${layout}`}${selectedFont ? ` with ${selectedFont.name}` : " with the built-in Acadrust font"}`);
         } catch (error) {
           if (serial === loadSerial) {
             console.error(error);
             viewer = null;
+            resetLayouts();
             setControlsEnabled(false);
             drawGizmo();
             setStatus(`Render failed: ${error}`);
@@ -192,12 +217,14 @@
       };
 
       const withViewer = (action) => {
-        if (!viewer) return;
+        if (!viewer) return false;
         try {
           action(viewer);
+          return true;
         } catch (error) {
           console.error(error);
           setStatus(`Viewer error: ${error}`);
+          return false;
         }
       };
 
@@ -255,6 +282,15 @@
         canvas.style.cursor = "default";
       });
 
+      layoutInput.addEventListener("change", () => {
+        const name = layoutInput.value;
+        stopGizmoAnim();
+        setStatus(`Switching to ${name}...`);
+        if (withViewer((active) => active.set_layout(name))) {
+          drawGizmo();
+          if (drawing) setStatus(`${drawing.name} on ${name}`);
+        }
+      });
       styleInput.addEventListener("change", () => {
         const name = styleInput.value;
         withViewer((active) => active.set_visual_style(name));
@@ -267,6 +303,7 @@
         drawing = fileInput.files?.[0] ?? null;
         viewer = null;
         stopGizmoAnim();
+        resetLayouts();
         setControlsEnabled(false);
         drawGizmo();
         renderCurrent();
