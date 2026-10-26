@@ -54,11 +54,17 @@
       <canvas width="360" height="428"></canvas>
     </div>
     <script type="module">
-      import init, {
+      // A dev server may serve cached artifacts after a rebuild. Version the
+      // module URL so a fresh wasm-bindgen output is always picked up.
+      const pkgVersion = Date.now();
+      const {
+        default: init,
         create_viewer,
         create_viewer_with_font,
         ViewCube,
-      } from "./pkg/acadrust_wasm_viewer.js";
+      } = await import(
+        new URL(`./pkg/acadrust_wasm_viewer.js?v=${pkgVersion}`, import.meta.url)
+      );
 
       const canvas = document.querySelector("#canvas");
       const fileInput = document.querySelector("#file");
@@ -325,7 +331,9 @@
         }
       });
 
-      await init();
+      await init(
+        new URL(`./pkg/acadrust_wasm_viewer_bg.wasm?v=${pkgVersion}`, import.meta.url),
+      );
       gizmo = new ViewCube(navCanvas);
       drawGizmo();
       resizeCanvas();
