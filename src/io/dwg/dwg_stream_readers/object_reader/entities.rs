@@ -3903,10 +3903,10 @@ fn read_table_cell_data(
             style.fill_enabled = !reader.read_bit();
         }
         if flags & 0x04 != 0 {
-            style.background_color = reader.read_cm_color();
+            style.background_color = reader.read_cm_true_color();
         }
         if flags & 0x08 != 0 {
-            style.content_color = reader.read_cm_color();
+            style.content_color = reader.read_cm_true_color();
         }
         if flags & 0x10 != 0 {
             let handle = reader.read_handle();
@@ -3923,7 +3923,7 @@ fn read_table_cell_data(
             (0x200, 0x2000, &mut style.left_border),
         ] {
             if flags & color_bit != 0 {
-                border.color = reader.read_cm_color();
+                border.color = reader.read_cm_true_color();
             }
             if flags & lw_bit != 0 {
                 border.line_weight = crate::types::LineWeight::from_value(reader.read_bit_short());
@@ -3970,7 +3970,7 @@ fn read_legacy_table_style_override(reader: &mut DwgMergedReader) -> LegacyTable
     }
     for bit in [0x0020, 0x0040, 0x0080] {
         if flags & bit != 0 {
-            value.row_colors.push(reader.read_cm_color());
+            value.row_colors.push(reader.read_cm_true_color());
         }
     }
     for bit in [0x0100, 0x0200, 0x0400] {
@@ -3980,7 +3980,7 @@ fn read_legacy_table_style_override(reader: &mut DwgMergedReader) -> LegacyTable
     }
     for bit in [0x0800, 0x1000, 0x2000] {
         if flags & bit != 0 {
-            value.row_fill_colors.push(reader.read_cm_color());
+            value.row_fill_colors.push(reader.read_cm_true_color());
         }
     }
     for bit in [0x4000, 0x8000, 0x10000] {
@@ -4008,7 +4008,7 @@ fn read_legacy_border_colors(reader: &mut DwgMergedReader) -> LegacyBorderOverri
     let mut values = Vec::new();
     for bit in 0..18 {
         if flags & (1 << bit) != 0 {
-            values.push(reader.read_cm_color());
+            values.push(reader.read_cm_true_color());
         }
     }
     LegacyBorderOverrides { flags, values }

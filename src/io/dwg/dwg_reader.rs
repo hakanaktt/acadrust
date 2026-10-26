@@ -764,7 +764,7 @@ fn read_t16(
         let bytes = count.min(cur.len());
         let (s, _) = encoding.decode_without_bom_handling(&cur[..bytes]);
         *cur = &cur[bytes..];
-        crate::io::dxf::code_page::decode_legacy_escapes(s.trim_end_matches('\0'))
+        crate::io::dxf::code_page::decode_legacy_escapes_in(s.trim_end_matches('\0'), encoding)
     }
 }
 
@@ -1331,6 +1331,15 @@ impl<R: Read + Seek> DwgReader<R> {
         }
         document.header.code_page =
             crate::io::dxf::code_page::dwg_code_page_name(info.code_page).to_string();
+        if !crate::io::dxf::code_page::dwg_code_page_is_known(info.code_page) {
+            self.notifications.notify(
+                NotificationType::Warning,
+                format!(
+                    "Unknown DWG code page index {}; falling back to ANSI_1252 for text",
+                    info.code_page
+                ),
+            );
+        }
 
         // MEASUREMENT is stored in the optional Template section, independently
         // of insertion units. Older files may omit the section entirely.

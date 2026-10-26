@@ -1470,12 +1470,14 @@ fn decode_xrecord_entries(raw: &[u8], unicode: bool) -> (Vec<XRecordEntry>, bool
                     require!(1usize.saturating_add(length));
                     let code_page = raw[position] as u16;
                     position += 1;
-                    let value = crate::io::dxf::code_page::encoding_from_dwg_code_page(code_page)
+                    let encoding =
+                        crate::io::dxf::code_page::encoding_from_dwg_code_page(code_page);
+                    let value = encoding
                         .decode(&raw[position..position + length])
                         .0
                         .into_owned();
                     position += length;
-                    crate::io::dxf::code_page::decode_legacy_escapes(&value)
+                    crate::io::dxf::code_page::decode_legacy_escapes_in(&value, encoding)
                 };
                 XRecordValue::String(text)
             }

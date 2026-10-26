@@ -3,7 +3,7 @@
 use crate::error::{DxfError, Result};
 use crate::io::dwg::crc::crc16;
 use crate::io::dxf::code_page::{
-    decode_legacy_escapes, encode_legacy_string, encoding_from_code_page,
+    decode_legacy_escapes_in, encode_legacy_string, encoding_from_code_page,
 };
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -140,11 +140,12 @@ impl<'a> Reader<'a> {
     fn string(&mut self) -> Result<String> {
         let len = self.ushort()? as usize;
         let bytes = self.take(len)?;
-        Ok(decode_legacy_escapes(
+        Ok(decode_legacy_escapes_in(
             self.encoding
                 .decode_without_bom_handling(bytes)
                 .0
                 .trim_end_matches('\0'),
+            self.encoding,
         ))
     }
     fn point(&mut self, record: &mut EntityRecord, code: i32, is3d: bool, z: f64) -> Result<()> {
@@ -1337,8 +1338,10 @@ fn decode_eed(
             0 => {
                 let len = r.byte()? as usize;
                 let encoding = r.encoding;
-                let value =
-                    decode_legacy_escapes(&encoding.decode_without_bom_handling(r.take(len)?).0);
+                let value = decode_legacy_escapes_in(
+                    &encoding.decode_without_bom_handling(r.take(len)?).0,
+                    encoding,
+                );
                 out.put(1000, value);
             }
             1 => out.put(1001, table_name(&tables.appids, r.short()?)?),

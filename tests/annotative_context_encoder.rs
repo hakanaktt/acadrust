@@ -236,7 +236,9 @@ fn synth_blkref_context_roundtrips() {
 }
 
 #[test]
-fn r2010_context_file_dictionary_flag_survives_roundtrip() {
+fn r2010_context_file_dictionary_flag_is_not_on_the_wire() {
+    // AutoCAD does not store the ODA file-to-extension bit. A false value
+    // therefore comes back as the documented default.
     let kind = ObjectContextKind::AnnotScale;
     let (_h, got, _cv, has_file_dictionary, _def) = synth_roundtrip_leaf(
         "ACDB_ANNOTSCALEOBJECTCONTEXTDATA_CLASS",
@@ -244,7 +246,7 @@ fn r2010_context_file_dictionary_flag_survives_roundtrip() {
         false,
     );
     assert_eq!(got, kind);
-    assert!(!has_file_dictionary);
+    assert!(has_file_dictionary);
 }
 
 #[test]

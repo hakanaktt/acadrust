@@ -564,8 +564,9 @@ impl Codec {
         if self.read {
             let bytes = &self.data[self.pos..self.pos + length];
             let end = bytes.iter().position(|byte| *byte == 0).unwrap_or(length);
-            *value = crate::io::dxf::code_page::decode_legacy_escapes(
+            *value = crate::io::dxf::code_page::decode_legacy_escapes_in(
                 &self.encoding.decode(&bytes[..end]).0,
+                self.encoding,
             );
         } else {
             let bytes = crate::io::dxf::code_page::encode_legacy_string(value, self.encoding);
@@ -600,8 +601,10 @@ impl Codec {
                         .take_while(|byte| *byte != 0),
                 );
             }
-            *value =
-                crate::io::dxf::code_page::decode_legacy_escapes(&self.encoding.decode(&bytes).0);
+            *value = crate::io::dxf::code_page::decode_legacy_escapes_in(
+                &self.encoding.decode(&bytes).0,
+                self.encoding,
+            );
         } else {
             let bytes = crate::io::dxf::code_page::encode_legacy_string(value, self.encoding);
             if bytes.contains(&0) || bytes.len() > MENU_PREFIX_LEN + MENU_CONTINUATION_LEN {

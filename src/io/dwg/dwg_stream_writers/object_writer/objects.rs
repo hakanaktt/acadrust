@@ -180,12 +180,11 @@ fn transcode_xrecord_xdata(
             }
             let source_code_page = raw[p] as u16;
             p += 1;
-            let s = crate::io::dxf::code_page::encoding_from_dwg_code_page(source_code_page)
-                .decode(&raw[p..p + len])
-                .0
-                .into_owned();
+            let source = crate::io::dxf::code_page::encoding_from_dwg_code_page(source_code_page);
+            let s = source.decode(&raw[p..p + len]).0.into_owned();
             p += len;
-            crate::io::dxf::code_page::decode_legacy_escapes(&s)
+            // The escapes were written against the source code page, not the target.
+            crate::io::dxf::code_page::decode_legacy_escapes_in(&s, source)
         };
         if tgt_unicode {
             let utf16: Vec<u16> = text.encode_utf16().take(u16::MAX as usize).collect();
@@ -346,6 +345,12 @@ impl<'a> DwgObjectWriter<'a> {
     /// class, whatever that is) or 0, so readers resolve it to another class
     /// or drop it: it is left out instead.
     pub(super) fn lacks_object_class(&self, object: &ObjectType) -> bool {
+        // A save back to the version the drawing came from has no downgrade to
+        // protect against, so the object stays. Only a save to another version
+        // leaves it out.
+        if self.document.dwg_source_version == Some(self.dxf_version) {
+            return false;
+        }
         let class_only = matches!(
             object,
             ObjectType::ObjectContextData(_)
@@ -2211,7 +2216,8 @@ impl<'a> DwgObjectWriter<'a> {
     fn write_image_definition(&mut self, def: &ImageDefinition) {
         // UNLISTED type — always use DXF class number (500+)
         let type_code = self.class_type_code("IMAGEDEF", common::OBJ_IMAGEDEF);
-        self.write_common_non_entity_data(type_code, def.handle, def.owner, &[], &None);
+        let reactors = self.document.image_definition_reactors(def);
+        self.write_common_non_entity_data(type_code, def.handle, def.owner, &reactors, &None);
 
         self.writer.write_bit_long(def.class_version);
         self.writer.write_2raw_double(crate::types::Vector2::new(
@@ -2328,13 +2334,14 @@ impl<'a> DwgObjectWriter<'a> {
             &obj.xdictionary_handle,
         );
 
-        // AcDbObjectContextData base (ODA §20.4.89). R2010+ inserts a
-        // file-to-extension-dictionary bit before the default flag. Native
-        // MLeader records keep the historical one-bit base.
+        // AcDbObjectContextData base. AutoCAD writes class version and the
+        // default flag only. The R2010 file-to-extension-dictionary bit from
+        // ODA §20.4.89 is stored solely for an MLeader context that was read
+        // from that ODA layout (`uses_legacy_mleader_context_base` is false).
         self.writer.write_bit_short(obj.class_version);
-        let legacy_mleader_base = obj.uses_legacy_mleader_context_base
-            && matches!(obj.kind, ObjectContextKind::MLeader(_));
-        if self.version.r2010_plus() && !legacy_mleader_base {
+        let oda_mleader_base = matches!(obj.kind, ObjectContextKind::MLeader(_))
+            && !obj.uses_legacy_mleader_context_base;
+        if self.version.r2010_plus() && oda_mleader_base {
             self.writer.write_bit(obj.has_file_to_extension_dictionary);
         }
         self.writer.write_bit(obj.is_default);
@@ -2471,10 +2478,6 @@ impl<'a> DwgObjectWriter<'a> {
                         self.writer.write_bit(context.has_binary_data);
                     }
                     self.writer.write_bit_short(context.class_version);
-                    if self.version.r2010_plus() {
-                        self.writer
-                            .write_bit(context.has_file_to_extension_dictionary);
-                    }
                     self.writer.write_bit(context.is_default);
                     self.writer.write_bit_long(context.mtext.attachment);
                     self.writer.write_bit_double(context.mtext.x_axis_dir.x);
@@ -2828,7 +2831,8 @@ impl<'a> DwgObjectWriter<'a> {
     fn write_raster_variables(&mut self, rv: &RasterVariables) {
         // UNLISTED type — always use DXF class number (500+)
         let type_code = self.class_type_code("RASTERVARIABLES", common::OBJ_RASTERVARIABLES);
-        self.write_common_non_entity_data(type_code, rv.handle, rv.owner, &[], &None);
+        let reactors = self.document.raster_variables_reactors(rv);
+        self.write_common_non_entity_data(type_code, rv.handle, rv.owner, &reactors, &None);
 
         self.writer.write_bit_long(rv.class_version);
         self.writer.write_bit_short(rv.display_image_frame);

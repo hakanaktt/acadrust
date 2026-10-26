@@ -32,7 +32,8 @@ pub use reader::{DxfReader, DxfReaderConfiguration};
 pub(crate) use reader::{DxfStreamReader, DxfTextReader};
 pub use writer::{value_type_for_code, write_binary_dxf, write_dxf};
 pub use writer::{
-    DxfBinaryWriter, DxfStreamWriter, DxfStreamWriterExt, DxfTextWriter, DxfWriter, SectionWriter,
+    DxfBinaryWriter, DxfOmission, DxfStreamWriter, DxfStreamWriterExt, DxfTextWriter, DxfWriter,
+    SectionWriter,
 };
 
 pub(crate) fn split_color_book_name(value: &str) -> (Option<String>, Option<String>) {

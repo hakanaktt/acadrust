@@ -2569,6 +2569,55 @@ fn hatch_elliptic_arc_edge_roundtrip() {
 }
 
 #[test]
+fn hatch_elliptic_edge_dxf_uses_circular_angles() {
+    // A 45° ray on a 2:1 ellipse meets the curve at parameter atan(2),
+    // about 63.4349°, point (4.472, 4.472) for a major axis of length 10.
+    // AutoCAD stores 45 in DXF groups 50/51 and the parameter in DWG.
+    let parameter = 1.107_148_717_794_090_4_f64;
+    let edge = BoundaryEdge::EllipticArc(EllipticArcEdge {
+        center: Vector2::new(0.0, 0.0),
+        major_axis_endpoint: Vector2::new(10.0, 0.0),
+        minor_axis_ratio: 0.5,
+        start_angle: 0.0,
+        end_angle: parameter,
+        counter_clockwise: true,
+    });
+    let mut flags = BoundaryPathFlags::new();
+    flags.set_external(true);
+    let doc = build_hatch_doc(vec![edge], flags);
+    let bytes = DxfWriter::new(&doc).write_to_vec().unwrap();
+    let text = String::from_utf8(bytes.clone()).unwrap();
+    let lines: Vec<_> = text.lines().map(str::trim).collect();
+    let mut elliptic = false;
+    let mut saw_end = false;
+    for pair in lines.chunks_exact(2) {
+        if pair[0] == "72" && pair[1] == "3" {
+            elliptic = true;
+        }
+        if elliptic && pair[0] == "51" {
+            let degrees: f64 = pair[1].parse().unwrap();
+            assert!(
+                (degrees - 45.0).abs() < 1e-6,
+                "group 51 should be the circular angle, got {degrees}"
+            );
+            saw_end = true;
+            break;
+        }
+    }
+    assert!(saw_end, "elliptic edge group 51 was not written");
+    let rt = DxfReader::from_reader(Cursor::new(bytes))
+        .unwrap()
+        .read()
+        .unwrap();
+    let path = extract_hatch_path(&rt);
+    let BoundaryEdge::EllipticArc(edge) = &path.edges[0] else {
+        panic!("Expected EllipticArc edge");
+    };
+    assert!((edge.end_angle - parameter).abs() < 1e-9);
+    assert!((edge.minor_axis_ratio - 0.5).abs() < 1e-12);
+}
+
+#[test]
 fn hatch_spline_edge_roundtrip() {
     let edge = BoundaryEdge::Spline(SplineEdge {
         degree: 3,

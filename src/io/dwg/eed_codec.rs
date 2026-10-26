@@ -173,11 +173,10 @@ pub fn decode_values(
                     i += 2;
                     let slice = bytes.get(i..i + n)?;
                     i += n;
-                    let decoded = crate::io::dxf::code_page::encoding_from_dwg_code_page(code_page)
-                        .decode(slice)
-                        .0
-                        .into_owned();
-                    crate::io::dxf::code_page::decode_legacy_escapes(&decoded)
+                    let encoding =
+                        crate::io::dxf::code_page::encoding_from_dwg_code_page(code_page);
+                    let decoded = encoding.decode(slice).0.into_owned();
+                    crate::io::dxf::code_page::decode_legacy_escapes_in(&decoded, encoding)
                 };
                 values.push(XDataValue::String(s));
             }

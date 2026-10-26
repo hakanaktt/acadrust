@@ -39,10 +39,23 @@ use crate::types::Handle;
 use crate::types::LineWeight;
 use std::collections::{HashMap, HashSet};
 
-/// Read the DWG-only context-base flag added in the R2010 layout. ODA
-/// §20.4.89 specifies a default value of true; earlier files retain their
-/// version/default pair.
+/// ODA §20.4.89 documents a file-to-extension-dictionary bit before the
+/// default flag on R2010+. AutoCAD does not write that bit for annotative
+/// context leaves (aligned dimensions, text, MTEXT, leaders, hatches, and
+/// the same classes through R2018). Consuming it shifts the rest of the
+/// record by one bit and the strict read stops. The value stays at ODA's
+/// documented default. The MLeader decoder is the exception: it tries this
+/// native layout first, then the two-bit ODA layout.
 fn read_context_file_dictionary_flag(
+    _reader: &mut DwgMergedReader,
+    _version: crate::io::dwg::dwg_version::DwgVersion,
+) -> bool {
+    true
+}
+
+/// ODA §20.4.89 two-bit base. Used only when the native one-bit decode of an
+/// MLeader context does not fit the record.
+fn read_oda_context_file_dictionary_flag(
     reader: &mut DwgMergedReader,
     version: crate::io::dwg::dwg_version::DwgVersion,
 ) -> bool {
@@ -3513,6 +3526,31 @@ impl DwgDocumentBuilder {
             .find(|layer| layer.handle == document.header.current_layer_handle)
             .map(|layer| layer.name.clone())
             .unwrap_or_default();
+
+        // The current text style, linetype and dimension style are handles in
+        // the DWG header too, and the DXF reader gives their names. Resolve them
+        // the same way, and keep the default when a handle names nothing.
+        if let Some(style) = document
+            .text_styles
+            .iter()
+            .find(|s| s.handle == document.header.current_text_style_handle)
+        {
+            document.header.current_text_style_name = style.name.clone();
+        }
+        if let Some(lt) = document
+            .line_types
+            .iter()
+            .find(|l| l.handle == document.header.current_linetype_handle)
+        {
+            document.header.current_linetype_name = lt.name.clone();
+        }
+        if let Some(ds) = document
+            .dim_styles
+            .iter()
+            .find(|d| d.handle == document.header.current_dimstyle_handle)
+        {
+            document.header.current_dimstyle_name = ds.name.clone();
+        }
 
         // ── Post-pass: guarantee the mandatory *Model_Space / *Paper_Space ──
         // block records exist and enumerate their geometry.
@@ -7274,8 +7312,11 @@ impl DwgDocumentBuilder {
                                         legacy_context,
                                     )
                                 } else {
+                                    // ODA §20.4.89 layout: the dictionary bit
+                                    // is present. Native AutoCAD records take
+                                    // the branch above and never reach here.
                                     let has_file_to_extension_dictionary =
-                                        read_context_file_dictionary_flag(
+                                        read_oda_context_file_dictionary_flag(
                                             &mut reader,
                                             self.obj_reader.version(),
                                         );

@@ -103,7 +103,7 @@ impl DwgBitReader {
     /// Decode bytes using the document's legacy text code page.
     pub fn decode_legacy_text(&self, bytes: &[u8]) -> String {
         let (decoded, _, _) = self.encoding.decode(bytes);
-        crate::io::dxf::code_page::decode_legacy_escapes(&decoded)
+        crate::io::dxf::code_page::decode_legacy_escapes_in(&decoded, self.encoding)
     }
 
     /// Get the DWG version.
@@ -855,7 +855,7 @@ impl DwgBitReader {
             // Decode using the reader's encoding; legacy strings may embed
             // CIF \U+XXXX escapes for characters outside the code page.
             let (decoded, _, _) = self.encoding.decode(&bytes);
-            crate::io::dxf::code_page::decode_legacy_escapes(&decoded)
+            crate::io::dxf::code_page::decode_legacy_escapes_in(&decoded, self.encoding)
         }
     }
 
@@ -914,7 +914,10 @@ impl DwgBitReader {
             let (decoded, _, _) = self.encoding.decode(&bytes);
             // Legacy strings may embed CIF \U+XXXX escapes for characters
             // outside the code page — decode them into Unicode chars.
-            crate::io::dxf::code_page::decode_legacy_escapes(&decoded.replace('\0', ""))
+            crate::io::dxf::code_page::decode_legacy_escapes_in(
+                &decoded.replace('\0', ""),
+                self.encoding,
+            )
         }
     }
 
@@ -947,8 +950,9 @@ impl DwgBitReader {
             }
             let bytes = self.read_bytes(length);
             let (decoded, _, _) = self.encoding.decode(&bytes);
-            Some(crate::io::dxf::code_page::decode_legacy_escapes(
+            Some(crate::io::dxf::code_page::decode_legacy_escapes_in(
                 &decoded.replace('\0', ""),
+                self.encoding,
             ))
         }
     }
@@ -1475,9 +1479,11 @@ mod tests {
     }
 }
 
+/// R2007+ text is UTF-16 and holds every character, so a `\U+XXXX` in it is
+/// content; only the `\M+` double-byte escapes are transport.
 fn decode_mif(text: String) -> String {
-    if crate::io::dxf::code_page::has_legacy_escape(&text) {
-        crate::io::dxf::code_page::decode_legacy_escapes(&text)
+    if text.contains("\\M+") {
+        crate::io::dxf::code_page::decode_mif_escapes(&text)
     } else {
         text
     }

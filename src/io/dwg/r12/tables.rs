@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use crate::error::{DxfError, Result};
 use crate::io::dwg::crc::crc16;
 use crate::io::dxf::code_page::{
-    decode_cif_escapes, encode_legacy_string, encoding_from_code_page,
+    decode_cif_escapes_in, encode_legacy_string, encoding_from_code_page,
 };
 
 use super::entities::{EntityRecord, EntityTables};
@@ -768,11 +768,12 @@ impl<'a> Reader<'a> {
     fn text(&mut self, size: usize) -> Result<String> {
         let bytes = self.take(size)?;
         let length = bytes.iter().position(|byte| *byte == 0).unwrap_or(size);
-        Ok(decode_cif_escapes(
+        Ok(decode_cif_escapes_in(
             &self
                 .encoding
                 .decode_without_bom_handling(&bytes[..length])
                 .0,
+            self.encoding,
         ))
     }
 }

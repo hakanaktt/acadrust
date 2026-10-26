@@ -125,7 +125,10 @@ impl<R: Read + Seek> DxfBinaryReader<R> {
             }
         };
         self.str_buf.clear(); // keep the allocation for reuse
-        Ok(crate::io::dxf::code_page::decode_legacy_escapes(&s))
+        Ok(match self.encoding {
+            Some(encoding) => crate::io::dxf::code_page::decode_legacy_escapes_in(&s, encoding),
+            None => crate::io::dxf::code_page::decode_legacy_escapes(&s),
+        })
     }
 
     /// Read a code/value pair from the binary stream for a given group code.

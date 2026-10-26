@@ -81,7 +81,12 @@ impl<R: Read + Seek> DxfTextReader<R> {
         };
         // Characters outside the code page arrive as MIF escapes.
         let line = if crate::io::dxf::code_page::has_legacy_escape(&line) {
-            crate::io::dxf::code_page::decode_legacy_escapes(&line)
+            match self.encoding {
+                Some(encoding) => {
+                    crate::io::dxf::code_page::decode_legacy_escapes_in(&line, encoding)
+                }
+                None => crate::io::dxf::code_page::decode_legacy_escapes(&line),
+            }
         } else {
             line
         };

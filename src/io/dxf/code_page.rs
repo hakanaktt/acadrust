@@ -49,6 +49,18 @@ impl LegacyEncoding {
         }
     }
 
+    /// Whether this encoding holds `ch`, so that [`encode_legacy_string`] writes
+    /// it as bytes instead of a `\U+XXXX` escape.
+    ///
+    /// The bytes must also decode back to `ch`: WHATWG Shift_JIS encodes U+00A5
+    /// to `0x5C` without an error, and that byte reads back as a backslash.
+    pub fn can_encode(self, ch: char) -> bool {
+        let mut buf = [0u8; 4];
+        let text: &str = ch.encode_utf8(&mut buf);
+        let (bytes, _, unmappable) = self.encode(text);
+        !unmappable && self.decode(&bytes).0 == text
+    }
+
     pub fn decode<'a>(self, bytes: &'a [u8]) -> (Cow<'a, str>, Self, bool) {
         match self {
             Self::Whatwg(encoding) => {
@@ -271,6 +283,15 @@ pub fn dwg_code_page_name(index: u16) -> &'static str {
     }
 }
 
+/// Whether `index` is one of the compact DWG code page indices this crate maps.
+///
+/// Anything else is decoded with the ANSI_1252 fallback by
+/// [`dwg_code_page_name`], so callers can use this to tell a declared 1252
+/// file from a guessed one.
+pub fn dwg_code_page_is_known(index: u16) -> bool {
+    matches!(index, 1..=44)
+}
+
 /// Convert a DXF `$DWGCODEPAGE` name to the compact DWG metadata index.
 pub fn dwg_code_page_index(code_page: &str) -> u16 {
     match code_page.to_ascii_lowercase().as_str() {
@@ -331,15 +352,15 @@ pub fn encoding_from_dwg_code_page(index: u16) -> LegacyEncoding {
 pub fn encode_legacy_string(text: &str, encoding: impl Into<LegacyEncoding>) -> Vec<u8> {
     let encoding = encoding.into();
     let (encoded, _, unmappable) = encoding.encode(text);
-    if !unmappable {
+    if !unmappable && encoding.decode(&encoded).0 == text {
         return encoded.into_owned();
     }
     let mut out = Vec::with_capacity(text.len() + 6);
     let mut buf = [0u8; 4];
     for ch in text.chars() {
         // Every DWG code page is stateless, so per-char encoding is safe.
-        let (bytes, _, err) = encoding.encode(ch.encode_utf8(&mut buf));
-        if err {
+        let (bytes, _, _) = encoding.encode(ch.encode_utf8(&mut buf));
+        if !encoding.can_encode(ch) {
             let mut units = [0u16; 2];
             for unit in ch.encode_utf16(&mut units) {
                 out.extend_from_slice(format!("\\U+{:04X}", unit).as_bytes());
@@ -359,6 +380,34 @@ pub fn encode_legacy_string(text: &str, encoding: impl Into<LegacyEncoding>) -> 
 /// text, and invalid code points are dropped — matching the MTEXT
 /// formatter's behavior for the same escapes.
 pub fn decode_cif_escapes(text: &str) -> String {
+    decode_cif(text, None)
+}
+
+/// Decode ACAD CIF `\U+XXXX` escapes in text read from a drawing whose code
+/// page is `encoding`.
+///
+/// [`encode_legacy_string`] escapes a character only when the code page cannot
+/// hold it, so an escape naming a character the page *can* hold was never
+/// written as transport: it is the text itself, and it is copied through as it
+/// stands (lower-case hex included). Surrogate pairs are judged as the one
+/// scalar they name. UTF-8 holds every character, so nothing in it was ever
+/// written as transport and its escapes are all text.
+pub fn decode_cif_escapes_in(text: &str, encoding: impl Into<LegacyEncoding>) -> String {
+    let encoding = encoding.into();
+    if encoding == LegacyEncoding::Whatwg(encoding_rs::UTF_8) {
+        return text.to_string();
+    }
+    decode_cif(text, Some(encoding))
+}
+
+/// [`decode_legacy_escapes`] for text read from a drawing whose code page is
+/// `encoding`: MIF escapes decode as before, CIF escapes by
+/// [`decode_cif_escapes_in`].
+pub fn decode_legacy_escapes_in(text: &str, encoding: impl Into<LegacyEncoding>) -> String {
+    decode_cif_escapes_in(&decode_mif_escapes(text), encoding)
+}
+
+fn decode_cif(text: &str, held_by: Option<LegacyEncoding>) -> String {
     if !text.contains("\\U+") {
         return text.to_string();
     }
@@ -376,6 +425,7 @@ pub fn decode_cif_escapes(text: &str) -> String {
     while i < len {
         if chars[i] == '\\' && i + 7 <= len && chars[i + 1] == 'U' && chars[i + 2] == '+' {
             if let Some(unit) = hex_at(i + 3) {
+                let start = i;
                 i += 7;
                 let mut units = [unit, 0];
                 let mut count = 1usize;
@@ -396,7 +446,11 @@ pub fn decode_cif_escapes(text: &str) -> String {
                 }
                 if let Some(Ok(ch)) = std::char::decode_utf16(units[..count].iter().copied()).next()
                 {
-                    out.push(ch);
+                    if held_by.is_some_and(|e| e.can_encode(ch)) {
+                        out.extend(&chars[start..i]);
+                    } else {
+                        out.push(ch);
+                    }
                 }
                 continue;
             }
@@ -561,6 +615,41 @@ mod tests {
             "技术要求"
         );
         assert_eq!(decode_mif_escapes("\\M+48861"), "\u{AC00}");
+    }
+
+    #[test]
+    fn test_gated_cif_decode_follows_the_code_page() {
+        let w1252 = encoding_rs::WINDOWS_1252;
+        // Held by the page: content, copied as written (hex case included).
+        assert_eq!(decode_cif_escapes_in(r"94\U+00B0", w1252), r"94\U+00B0");
+        assert_eq!(decode_cif_escapes_in(r"94\U+00b0", w1252), r"94\U+00b0");
+        assert_eq!(
+            decode_cif_escapes_in(r"\U+0041\U+0042", w1252),
+            r"\U+0041\U+0042"
+        );
+        // Not held: transport escape, decoded, surrogate pairs as one scalar.
+        assert_eq!(decode_cif_escapes_in(r"\U+2205 x", w1252), "\u{2205} x");
+        assert_eq!(decode_cif_escapes_in(r"\U+D83D\U+DE00", w1252), "\u{1F600}");
+        assert_eq!(
+            decode_cif_escapes_in(r"\U+D83D\U+DE00", encoding_rs::SHIFT_JIS),
+            "\u{1F600}"
+        );
+        // The same character is held by one page and not by another.
+        assert_eq!(decode_cif_escapes_in(r"\U+0411", w1252), "\u{411}");
+        assert_eq!(
+            decode_cif_escapes_in(r"\U+0411", encoding_rs::WINDOWS_1251),
+            r"\U+0411"
+        );
+        // UTF-8 holds every character, so its escapes are text.
+        assert_eq!(
+            decode_cif_escapes_in(r"\U+0041", encoding_rs::UTF_8),
+            r"\U+0041"
+        );
+        // An OEM page is asked too.
+        assert_eq!(
+            decode_cif_escapes_in(r"\U+00E9", LegacyEncoding::Oem(437)),
+            r"\U+00E9"
+        );
     }
 
     #[test]

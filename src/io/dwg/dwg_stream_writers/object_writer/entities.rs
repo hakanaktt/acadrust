@@ -3732,7 +3732,16 @@ impl<'a> DwgObjectWriter<'a> {
     fn write_table_cell_data(&mut self, cell: &TableCell) {
         let cell_type = match cell.cell_type {
             CellType::Block => 2,
-            CellType::Text if cell.contents.is_empty() && cell.value_handle.is_none() => 0,
+            // Below R2007 an empty text cell is still a text cell with an empty
+            // string, as AutoCAD writes it: a type of 0 is not a cell type there and
+            // the reader loses its place after the first one.
+            CellType::Text
+                if cell.contents.is_empty()
+                    && cell.value_handle.is_none()
+                    && self.version.r2007_plus() =>
+            {
+                0
+            }
             CellType::Text => 1,
         };
         self.writer.write_bit_short(cell_type);
@@ -3742,15 +3751,18 @@ impl<'a> DwgObjectWriter<'a> {
         self.writer.write_bit_long(cell.merge_width);
         self.writer.write_bit_long(cell.merge_height);
         self.writer.write_bit_double(cell.rotation);
-        self.writer.write_handle(
-            DwgReferenceType::HardPointer,
-            cell.value_handle
-                .or_else(|| cell.contents.first().and_then(|c| c.block_handle))
-                .map(|h| h.value())
-                .unwrap_or(0),
-        );
+        // The reader takes the text from the cell only when this handle is 0, so
+        // the same value has to decide whether the text is written (a cell whose
+        // first content holds a block handle has a handle and no text here).
+        let value_handle = cell
+            .value_handle
+            .or_else(|| cell.contents.first().and_then(|c| c.block_handle))
+            .map(|h| h.value())
+            .unwrap_or(0);
+        self.writer
+            .write_handle(DwgReferenceType::HardPointer, value_handle);
         if cell_type == 1 {
-            if !self.version.r2007_plus() && cell.value_handle.is_none() {
+            if !self.version.r2007_plus() && value_handle == 0 {
                 self.writer.write_variable_text(cell.text_value());
             }
         } else if cell_type == 2 {
@@ -3786,10 +3798,10 @@ impl<'a> DwgObjectWriter<'a> {
                 self.writer.write_bit(!style.fill_enabled);
             }
             if flags & 0x04 != 0 {
-                self.writer.write_cm_color(&style.background_color);
+                self.writer.write_cm_true_color(&style.background_color);
             }
             if flags & 0x08 != 0 {
-                self.writer.write_cm_color(&style.content_color);
+                self.writer.write_cm_true_color(&style.content_color);
             }
             if flags & 0x10 != 0 {
                 self.writer.write_handle(
@@ -3807,7 +3819,7 @@ impl<'a> DwgObjectWriter<'a> {
                 (0x200, 0x2000, &style.left_border),
             ] {
                 if flags & color_bit != 0 {
-                    self.writer.write_cm_color(&border.color);
+                    self.writer.write_cm_true_color(&border.color);
                 }
                 if flags & lw_bit != 0 {
                     self.writer.write_bit_short(border.line_weight.as_i16());
@@ -3860,7 +3872,7 @@ impl<'a> DwgObjectWriter<'a> {
                     .get(index)
                     .cloned()
                     .unwrap_or(Color::ByBlock);
-                self.writer.write_cm_color(&color);
+                self.writer.write_cm_true_color(&color);
                 index += 1;
             }
         }
@@ -3880,7 +3892,7 @@ impl<'a> DwgObjectWriter<'a> {
                     .get(index)
                     .cloned()
                     .unwrap_or(Color::ByBlock);
-                self.writer.write_cm_color(&color);
+                self.writer.write_cm_true_color(&color);
                 index += 1;
             }
         }
@@ -3930,7 +3942,7 @@ impl<'a> DwgObjectWriter<'a> {
         for bit in 0..18 {
             if value.flags & (1 << bit) != 0 {
                 let color = value.values.get(index).cloned().unwrap_or(Color::ByBlock);
-                self.writer.write_cm_color(&color);
+                self.writer.write_cm_true_color(&color);
                 index += 1;
             }
         }
@@ -6021,5 +6033,79 @@ mod tests {
         let writer = DwgObjectWriter::new(&doc).unwrap();
         let (output, _map, _, _) = writer.write();
         assert!(!output.is_empty());
+    }
+
+    // ── legacy TABLE cells below R2007 ──
+    //
+    // ACadSharp reads a cell as: type, edge flags, merge bits, rotation, the
+    // value handle, then the text only when that handle is 0, then the style.
+    // These write one cell and hold the main stream to the bits that reading
+    // expects, built field by field with a writer of the same version.
+
+    use crate::entities::table::{CellContent, CellStyle, TableCell};
+    use crate::io::dwg::DwgVersion;
+    use crate::io::dwg::dwg_stream_writers::bit_writer::DwgBitWriter;
+    use crate::types::Color;
+
+    fn cell_main_stream(version: DxfVersion, cell: &TableCell) -> Vec<u8> {
+        let doc = CadDocument::with_version(version);
+        let mut w = DwgObjectWriter::new(&doc).unwrap();
+        w.write_table_cell_data(cell);
+        w.writer.main().to_bytes_snapshot()
+    }
+
+    /// The fields every legacy text cell starts with, up to the value handle
+    /// (which lives in the handle stream and is not part of these bytes).
+    fn cell_head(r: &mut DwgBitWriter, cell_type: i16) {
+        r.write_bit_short(cell_type);
+        r.write_byte(0); // edge flags
+        r.write_bit(false); // merged
+        r.write_bit(false); // auto fit
+        r.write_bit_long(1); // merge width
+        r.write_bit_long(1); // merge height
+        r.write_bit_double(0.0); // rotation
+    }
+
+    fn reference(version: DxfVersion) -> DwgBitWriter {
+        DwgBitWriter::new(DwgVersion::from_dxf_version(version).unwrap(), version)
+    }
+
+    #[test]
+    fn an_empty_text_cell_is_a_text_cell_with_an_empty_string_below_r2007() {
+        let cell = TableCell::new(); // a text cell with no contents
+        let mut r = reference(DxfVersion::AC1015);
+        cell_head(&mut r, 1);
+        r.write_variable_text("");
+        r.write_bit(false); // no style
+        assert_eq!(cell_main_stream(DxfVersion::AC1015, &cell), r.to_bytes_snapshot());
+    }
+
+    #[test]
+    fn the_text_is_written_only_when_the_value_handle_is_zero() {
+        let mut cell = TableCell::new();
+        cell.contents.push(CellContent::text("not written"));
+        cell.contents[0].block_handle = Some(Handle::new(0x55));
+        let mut r = reference(DxfVersion::AC1018);
+        cell_head(&mut r, 1);
+        r.write_bit(false); // no style, and no text: the reader sees handle 0x55
+        assert_eq!(cell_main_stream(DxfVersion::AC1018, &cell), r.to_bytes_snapshot());
+    }
+
+    #[test]
+    fn cell_colors_are_full_color_records_in_r2000_as_acadsharp_reads_them() {
+        let mut cell = TableCell::new();
+        cell.contents.push(CellContent::text("x"));
+        let mut style = CellStyle::new();
+        style.override_flags = 0x08; // content color
+        style.content_color = Color::Index(5);
+        cell.style = Some(style);
+        let mut r = reference(DxfVersion::AC1015);
+        cell_head(&mut r, 1);
+        r.write_variable_text("x");
+        r.write_bit(true);
+        r.write_bit_long(0x08);
+        r.write_byte(0); // virtual edge
+        r.write_cm_true_color(&Color::Index(5));
+        assert_eq!(cell_main_stream(DxfVersion::AC1015, &cell), r.to_bytes_snapshot());
     }
 }

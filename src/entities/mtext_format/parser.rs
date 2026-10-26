@@ -416,16 +416,20 @@ impl MTextParser {
 
             // Unicode escape: \U+XXXX
             'U' if self.pos + 1 < self.chars.len() && self.chars[self.pos + 1] == '+' => {
-                self.pos += 2; // skip \U+
-                let start = self.pos;
-                while self.pos < self.chars.len() && self.chars[self.pos].is_ascii_hexdigit() {
-                    self.pos += 1;
-                }
-                let hex: String = self.chars[start..self.pos].iter().collect();
-                if let Ok(code_point) = u32::from_str_radix(&hex, 16) {
-                    if let Some(ch) = char::from_u32(code_point) {
-                        self.text_buf.push(ch);
-                    }
+                // `\U+XXXX` is exactly four hex digits; anything else stays literal.
+                let start = self.pos + 2;
+                let scalar = self
+                    .chars
+                    .get(start..start + 4)
+                    .filter(|d| d.iter().all(char::is_ascii_hexdigit))
+                    .and_then(|d| u32::from_str_radix(&d.iter().collect::<String>(), 16).ok())
+                    .and_then(char::from_u32);
+                if let Some(ch) = scalar {
+                    self.pos = start + 4;
+                    self.text_buf.push(ch);
+                } else {
+                    self.text_buf.push_str("\\U+");
+                    self.pos = start;
                 }
             }
 
@@ -1807,6 +1811,15 @@ mod tests {
     fn test_parse_unicode_escape() {
         let doc = parse_mtext(r"{\U+00B0}", false);
         assert_eq!(doc.paragraphs[0].to_plain_text(), "°");
+    }
+
+    #[test]
+    fn a_unicode_escape_takes_exactly_four_hex_digits() {
+        assert_eq!(parse_mtext(r"20\U+00B0C", false).to_plain_text(), "20°C");
+        assert_eq!(parse_mtext(r"\U+00B12", false).to_plain_text(), "±2");
+        assert_eq!(parse_mtext(r"\U+00GZ", false).to_plain_text(), r"\U+00GZ");
+        assert_eq!(parse_mtext(r"\U+00B", false).to_plain_text(), r"\U+00B");
+        assert_eq!(parse_mtext(r"\U+D800", false).to_plain_text(), r"\U+D800");
     }
 
     #[test]

@@ -464,7 +464,7 @@ fn write_header_fields(w: &mut SectionWriter, v: DxfVersion, h: &HeaderVariables
     w.write_bit_short(h.spline_type);
     w.write_bit_short(h.shade_edge);
     w.write_bit_short(h.shade_diffuse);
-    w.write_bit_short(0); // UNITMODE — default 0
+    w.write_bit_short(h.unit_mode); // UNITMODE
     w.write_bit_short(h.max_active_viewports);
     w.write_bit_short(h.isolines);
     w.write_bit_short(h.multiline_justification);
@@ -560,12 +560,9 @@ fn write_header_fields(w: &mut SectionWriter, v: DxfVersion, h: &HeaderVariables
         w.write_handle_ref(DwgReferenceType::HardPointer, Handle::NULL);
 
         // Paper space orthographic origins (6 × 3BD) — default zeros
-        w.write_3bit_double(Vector3::ZERO); // PUCSORGTOP
-        w.write_3bit_double(Vector3::ZERO); // PUCSORGBOTTOM
-        w.write_3bit_double(Vector3::ZERO); // PUCSORGLEFT
-        w.write_3bit_double(Vector3::ZERO); // PUCSORGRIGHT
-        w.write_3bit_double(Vector3::ZERO); // PUCSORGFRONT
-        w.write_3bit_double(Vector3::ZERO); // PUCSORGBACK
+        for origin in &h.paper_ucs_ortho_origins {
+            w.write_3bit_double(*origin); // PUCSORGTOP, BOTTOM, LEFT, RIGHT, FRONT, BACK
+        }
     }
 
     // ── Model space extents/limits/UCS ──
@@ -590,12 +587,9 @@ fn write_header_fields(w: &mut SectionWriter, v: DxfVersion, h: &HeaderVariables
         w.write_handle_ref(DwgReferenceType::HardPointer, Handle::NULL);
 
         // Model space orthographic origins (6 × 3BD) — default zeros
-        w.write_3bit_double(Vector3::ZERO); // UCSORGTOP
-        w.write_3bit_double(Vector3::ZERO); // UCSORGBOTTOM
-        w.write_3bit_double(Vector3::ZERO); // UCSORGLEFT
-        w.write_3bit_double(Vector3::ZERO); // UCSORGRIGHT
-        w.write_3bit_double(Vector3::ZERO); // UCSORGFRONT
-        w.write_3bit_double(Vector3::ZERO); // UCSORGBACK
+        for origin in &h.ucs_ortho_origins {
+            w.write_3bit_double(*origin); // UCSORGTOP, BOTTOM, LEFT, RIGHT, FRONT, BACK
+        }
 
         // DIMPOST, DIMAPOST
         w.write_variable_text(&h.dim_post);
@@ -627,7 +621,7 @@ fn write_header_fields(w: &mut SectionWriter, v: DxfVersion, h: &HeaderVariables
         w.write_byte(h.dim_alt_tolerance_zero_suppression as u8);
         w.write_byte(h.dim_alt_tolerance_zero_tight as u8);
         w.write_byte(h.dim_text_above as u8);
-        w.write_bit_short(0); // DIMUNIT
+        w.write_bit_short(h.dim_unit); // DIMUNIT
         w.write_bit_short(h.dim_angular_decimal_places);
         w.write_bit_short(h.dim_decimal_places);
         w.write_bit_short(h.dim_tolerance_decimal_places);
@@ -743,11 +737,11 @@ fn write_header_fields(w: &mut SectionWriter, v: DxfVersion, h: &HeaderVariables
 
     // R2010+: extra dimension fields
     if r2010_plus(v) {
-        w.write_bit(false); // DIMTXTDIRECTION
-        w.write_bit_double(0.0); // DIMALTMZF
-        w.write_variable_text(""); // DIMALTMZS
-        w.write_bit_double(0.0); // DIMMZF
-        w.write_variable_text(""); // DIMMZS
+        w.write_bit(h.dim_text_direction); // DIMTXTDIRECTION
+        w.write_bit_double(h.dim_alt_mzf); // DIMALTMZF
+        w.write_variable_text(&h.dim_alt_mzs); // DIMALTMZS
+        w.write_bit_double(h.dim_mzf); // DIMMZF
+        w.write_variable_text(&h.dim_mzs); // DIMMZS
     }
 
     // R2000+ dimension handles
@@ -938,7 +932,7 @@ fn write_header_fields(w: &mut SectionWriter, v: DxfVersion, h: &HeaderVariables
         w.write_handle_ref(DwgReferenceType::HardPointer, Handle::NULL); // INTERFEREVPVS
         w.write_handle_ref(DwgReferenceType::HardPointer, Handle::NULL); // DRAGVS
 
-        w.write_byte(0); // CSHADOW
+        w.write_byte(h.cast_shadow as u8); // CSHADOW
         w.write_bit_double(h.shadow_plane_location);
     }
 

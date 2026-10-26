@@ -12,11 +12,80 @@ pub use stream_writer::{value_type_for_code, DxfStreamWriter, DxfStreamWriterExt
 pub use text_writer::DxfTextWriter;
 
 use crate::document::CadDocument;
-use crate::entities::EntityType;
+use crate::entities::{EntityType, ExtendedEntityData};
 use crate::error::Result;
+use crate::objects::ObjectType;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
+
+/// An Arch entity with neither a DXF class body nor cached proxy graphics.
+/// The DXF writer leaves it out and continues with the rest of the drawing.
+pub(crate) fn dxf_skips_arch_entity(entity: &EntityType) -> bool {
+    let EntityType::Extended(entity) = entity else {
+        return false;
+    };
+    let ExtendedEntityData::Arch(data) = &entity.data else {
+        return false;
+    };
+    data.raw_dxf_codes.is_none()
+        && entity
+            .common
+            .graphic_data
+            .as_deref()
+            .is_none_or(|graphics| graphics.is_empty())
+}
+
+/// One Arch record a non-R12 DXF save does not write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DxfOmission {
+    /// Handle of the skipped record.
+    pub handle: crate::types::Handle,
+    /// DXF class name, such as `AEC_WALL` or `AEC_WALL_STYLE`.
+    pub name: String,
+    /// Why the record was left out.
+    pub reason: String,
+}
+
+/// Arch records this writer will leave out of a DXF that is not R12.
+///
+/// Entities that still have proxy graphics are written as `ACAD_PROXY_ENTITY`
+/// and are not listed. Objects and entities with a stored DXF class body are
+/// written as that class. R12 has no proxy entity, so an R12 save still fails
+/// while any Arch record remains.
+pub(crate) fn architecture_omissions(document: &CadDocument) -> Vec<DxfOmission> {
+    let mut omitted = Vec::new();
+    for entity in document.entities() {
+        if !dxf_skips_arch_entity(entity) {
+            continue;
+        }
+        let EntityType::Extended(entity) = entity else {
+            continue;
+        };
+        let ExtendedEntityData::Arch(data) = &entity.data else {
+            continue;
+        };
+        omitted.push(DxfOmission {
+            handle: entity.common.handle,
+            name: data.dxf_name.clone(),
+            reason: "no DXF body and no proxy graphics".to_string(),
+        });
+    }
+    for object in document.objects.values() {
+        let ObjectType::Arch(object) = object else {
+            continue;
+        };
+        if object.raw_dxf_codes.is_some() {
+            continue;
+        }
+        omitted.push(DxfOmission {
+            handle: object.handle,
+            name: object.dxf_name.clone(),
+            reason: "no DXF body".to_string(),
+        });
+    }
+    omitted
+}
 
 /// An angle in degrees for a DXF angle group, chosen so the reader's
 /// `to_radians` gives back exactly `radians`. A plain `to_degrees` can land
@@ -86,6 +155,15 @@ impl<'a> DxfWriter<'a> {
         self.binary = binary;
     }
 
+    /// Arch records a non-R12 save leaves out. Empty when the target is R12,
+    /// because that save fails instead of omitting them.
+    pub fn omitted_architecture_records(&self) -> Vec<DxfOmission> {
+        if self.version == Some(crate::types::DxfVersion::AC1009) {
+            return Vec::new();
+        }
+        architecture_omissions(self.document)
+    }
+
     /// Write to a file
     pub fn write_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         self.validate_architecture_records()?;
@@ -145,32 +223,26 @@ impl<'a> DxfWriter<'a> {
     }
 
     fn validate_architecture_records(&self) -> Result<()> {
-        let r12 = self.version == Some(crate::types::DxfVersion::AC1009);
-        let reason = if r12 {
-            "R12 does not support Arch classes"
-        } else {
-            "a native DXF class body is required"
-        };
+        if self.version != Some(crate::types::DxfVersion::AC1009) {
+            return Ok(());
+        }
+        let reason = "R12 does not support Arch classes";
         for entity in self.document.entities() {
             if let EntityType::Extended(entity) = entity {
-                if let crate::entities::ExtendedEntityData::Arch(data) = &entity.data {
-                    if r12 || data.raw_dxf_codes.is_none() {
-                        return Err(crate::error::DxfError::NotImplemented(format!(
-                            "Cannot export Arch entity {} at handle {} to DXF: {reason}; save as the source DWG version to preserve its payload",
-                            data.dxf_name, entity.common.handle,
-                        )));
-                    }
+                if let ExtendedEntityData::Arch(data) = &entity.data {
+                    return Err(crate::error::DxfError::NotImplemented(format!(
+                        "Cannot export Arch entity {} at handle {} to DXF: {reason}; save as the source DWG version to preserve its payload",
+                        data.dxf_name, entity.common.handle,
+                    )));
                 }
             }
         }
         for object in self.document.objects.values() {
-            if let crate::objects::ObjectType::Arch(object) = object {
-                if r12 || object.raw_dxf_codes.is_none() {
-                    return Err(crate::error::DxfError::NotImplemented(format!(
-                        "Cannot export Arch object {} at handle {} to DXF: {reason}; save as the source DWG version to preserve its payload",
-                        object.dxf_name, object.handle,
-                    )));
-                }
+            if let ObjectType::Arch(object) = object {
+                return Err(crate::error::DxfError::NotImplemented(format!(
+                    "Cannot export Arch object {} at handle {} to DXF: {reason}; save as the source DWG version to preserve its payload",
+                    object.dxf_name, object.handle,
+                )));
             }
         }
         Ok(())

@@ -1,5 +1,25 @@
 ## Changelog
 
+### Unreleased
+
+- **Annotative context data** - AutoCAD does not store the R2010
+  file-to-extension-dictionary bit on object-context leaves. 0.6.7 read that
+  bit and rejected drawings whose first failure was an aligned-dimension,
+  text, MTEXT, leader, or hatch context record (issue #177). MLeader records
+  that follow the ODA layout still use the extra bit.
+- **Elliptic hatch edges** - DXF groups 50 and 51 are circular angles. The
+  model and DWG keep the ellipse parameter, and a DXF round trip converts
+  between the two, including hatch context boundaries. The parameter stays in
+  the same revolution as the angle, so 300° and 424° come back unchanged
+  (issue #178).
+- **Arch records in DXF** - A non-R12 save no longer refuses the whole file
+  because an AEC object has no DXF body. Those objects are omitted, along
+  with dictionary entries and XDATA handles that point at them. An Arch entity with cached
+  proxy graphics is written as `ACAD_PROXY_ENTITY`. An entity with neither a
+  DXF body nor proxy graphics is omitted. `DxfWriter::omitted_architecture_records`
+  lists what was left out. An R12 save still fails, because R12 has no proxy
+  entity (issue #179).
+
 ### 0.6.7
 
 - **Built-in stroke font** - `acadrust.shx` is an original single-stroke font

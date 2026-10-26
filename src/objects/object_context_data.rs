@@ -6,8 +6,10 @@
 //! Each leaf is a concrete `ACDB_<TYPE>OBJECTCONTEXTDATA_CLASS` object sharing a
 //! common base:
 //!
-//! - `AcDbObjectContextData`: `70` class_version (BS), plus the R2010+ file-
-//!   to-extension-dictionary and default flags (B).
+//! - `AcDbObjectContextData`: `70` class_version (BS) and the default flag
+//!   (B). AutoCAD does not store the file-to-extension-dictionary bit that
+//!   ODA §20.4.89 documents for R2010+; that bit is kept only for an MLeader
+//!   leaf read from the ODA layout.
 //! - `AcDbAnnotScaleObjectContextData`: `340` handle → the `AcDbScale` this
 //!   representation applies to (the hard pointer follows the context base in
 //!   the object handle stream; ODA §20.4.71).
@@ -35,10 +37,10 @@ pub struct ObjectContextData {
     /// `AcDbObjectContextData` class_version (DXF 70). Real R2018 files write 4;
     /// ODA documents 3 as the default. Preserved on read.
     pub class_version: i16,
-    /// R2010+ `AcDbObjectContextData` flag indicating that the context data has
-    /// a file to its extension dictionary. ODA §20.4.89 documents a default of
-    /// true. DXF has no field for this DWG-only flag, so DXF-created contexts
-    /// use the documented default.
+    /// ODA §20.4.89 file-to-extension-dictionary flag. AutoCAD's own context
+    /// leaves do not carry the bit, and neither does this crate's DWG writer,
+    /// except for an MLeader leaf decoded from the ODA layout. Reads of every
+    /// other class keep the documented default, true. DXF has no group for it.
     pub has_file_to_extension_dictionary: bool,
     /// Native MLeader context records sometimes use a historical base that
     /// omits the R2010+ file-to-extension-dictionary bit. Preserve that wire
@@ -221,8 +223,8 @@ pub struct EmbeddedMTextContext {
     /// R2013+ embedded binary-data flag.
     pub has_binary_data: bool,
     pub class_version: i16,
-    /// R2010+ nested context-base flag. DXF-created contexts use ODA's
-    /// documented default of true.
+    /// ODA's nested file-to-extension-dictionary flag. AutoCAD's embedded
+    /// MTEXT attribute context does not store it; reads keep the default true.
     pub has_file_to_extension_dictionary: bool,
     pub is_default: bool,
     pub scale: Handle,

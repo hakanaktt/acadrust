@@ -158,12 +158,46 @@ pub struct EllipticArcEdge {
     pub major_axis_endpoint: Vector2,
     /// Ratio of minor axis to major axis
     pub minor_axis_ratio: f64,
-    /// Start angle in radians
+    /// Start parameter, in radians. This is the ellipse parameter stored by
+    /// DWG, not the circular angle stored in DXF groups 50/51.
     pub start_angle: f64,
-    /// End angle in radians
+    /// End parameter, in radians. See [`Self::start_angle`].
     pub end_angle: f64,
     /// Counter-clockwise flag
     pub counter_clockwise: bool,
+}
+
+/// Move `value` by whole turns so it lies in the same revolution as `reference`.
+///
+/// A circular angle and its ellipse parameter share a quadrant, so the nearest
+/// turn is the matching one. That keeps 300° and 424° on the turn they were
+/// written in, including where `atan2` itself returns a negative principal value.
+fn same_revolution(value: f64, reference: f64) -> f64 {
+    let turn = std::f64::consts::TAU;
+    value + ((reference - value) / turn).round() * turn
+}
+
+/// Circular angle used by a DXF hatch elliptic edge, as an ellipse parameter.
+///
+/// Group 50/51 is the direction from the center, the same angle a circular
+/// arc would use. The parameter is the eccentric angle: a ray at circular
+/// angle `a` meets the ellipse at `atan2(sin(a) / ratio, cos(a))`. The result
+/// stays in the turn of `angle`, and a negative angle stays negative.
+pub(crate) fn circular_angle_to_ellipse_param(ratio: f64, angle: f64) -> f64 {
+    if !(ratio > 0.0 && ratio.is_finite() && angle.is_finite()) {
+        return angle;
+    }
+    let param = (angle.sin() / ratio).atan2(angle.cos());
+    same_revolution(param, angle)
+}
+
+/// Ellipse parameter written back to a DXF hatch elliptic edge as a circular angle.
+pub(crate) fn ellipse_param_to_circular_angle(ratio: f64, param: f64) -> f64 {
+    if !(ratio > 0.0 && ratio.is_finite() && param.is_finite()) {
+        return param;
+    }
+    let angle = (param.sin() * ratio).atan2(param.cos());
+    same_revolution(angle, param)
 }
 
 /// Spline edge in a boundary path

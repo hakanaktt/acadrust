@@ -139,11 +139,13 @@ fn gbk_codepage_text_roundtrip() {
 
 #[test]
 fn cif_escapes_in_dwg_strings_are_decoded() {
-    // A file whose strings contain literal CIF \U+XXXX sequences (ASCII-safe
-    // for any code page) must decode them into the actual characters.
-    let doc = text_document("ANSI_936", "\\U+4E2D\\U+6587");
+    // A file whose strings contain CIF \U+XXXX sequences (ASCII-safe for any
+    // code page) for characters the code page cannot hold must decode them
+    // into the actual characters. GBK holds 中文, so those would not have been
+    // escaped by a writer and stay as written (see legacy_cif_escape_content).
+    let doc = text_document("ANSI_936", "\\U+0E01\\U+0E02");
     let rt = read_dwg(DwgWriter::write_to_vec(&doc).unwrap());
-    assert_eq!(first_text_value(&rt), "中文");
+    assert_eq!(first_text_value(&rt), "กข");
 }
 
 #[test]

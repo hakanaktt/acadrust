@@ -847,22 +847,42 @@ fn class_dxf_hatch_context_boundary(
                 start: fields.point2(section, 10),
                 end: fields.point2(section, 11),
             })),
-            2 => path.add_edge(BoundaryEdge::CircularArc(CircularArcEdge {
-                center: fields.point2(section, 10),
-                radius: fields.f64(section, 40),
-                start_angle: fields.f64(section, 50).to_radians(),
-                end_angle: fields.f64(section, 51).to_radians(),
-                counter_clockwise: fields.bool(section, 73),
-            })),
-            3 => path.add_edge(BoundaryEdge::EllipticArc(EllipticArcEdge {
-                center: fields.point2(section, 10),
-                major_axis_endpoint: fields.point2(section, 11),
-                minor_axis_ratio: fields.f64(section, 40),
-                // Groups 50/51 are degrees, same as a circular edge.
-                start_angle: fields.f64(section, 50).to_radians(),
-                end_angle: fields.f64(section, 51).to_radians(),
-                counter_clockwise: fields.bool(section, 73),
-            })),
+            2 => {
+                let counter_clockwise = fields.bool(section, 73);
+                let mut start_angle = fields.f64(section, 50).to_radians();
+                let mut end_angle = fields.f64(section, 51).to_radians();
+                // A clockwise edge's angles are stored as 360 minus each.
+                if !counter_clockwise {
+                    start_angle = std::f64::consts::TAU - start_angle;
+                    end_angle = std::f64::consts::TAU - end_angle;
+                }
+                path.add_edge(BoundaryEdge::CircularArc(CircularArcEdge {
+                    center: fields.point2(section, 10),
+                    radius: fields.f64(section, 40),
+                    start_angle,
+                    end_angle,
+                    counter_clockwise,
+                }))
+            }
+            3 => {
+                let minor_axis_ratio = fields.f64(section, 40);
+                // Groups 50/51 are circular angles in degrees, same as a HATCH
+                // edge. The model stores the ellipse parameter.
+                path.add_edge(BoundaryEdge::EllipticArc(EllipticArcEdge {
+                    center: fields.point2(section, 10),
+                    major_axis_endpoint: fields.point2(section, 11),
+                    minor_axis_ratio,
+                    start_angle: circular_angle_to_ellipse_param(
+                        minor_axis_ratio,
+                        fields.f64(section, 50).to_radians(),
+                    ),
+                    end_angle: circular_angle_to_ellipse_param(
+                        minor_axis_ratio,
+                        fields.f64(section, 51).to_radians(),
+                    ),
+                    counter_clockwise: fields.bool(section, 73),
+                }))
+            }
             4 => {
                 let degree = fields.i32(section, 94);
                 let rational = fields.bool(section, 73);
@@ -1600,6 +1620,7 @@ impl<'a> SectionReader<'a> {
         // A $CUSTOMPROPERTYTAG waits for its $CUSTOMPROPERTY value.
         let mut custom_value_pending = false;
         let mut code_page_seen = false;
+        let mut dimatfit_seen = false;
 
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 && pair.value_string == "ENDSEC" {
@@ -1644,7 +1665,10 @@ impl<'a> SectionReader<'a> {
                             "$VIEWMODE" => state.view_mode = value,
                             "$FLATLAND" => state.flatland = value,
                             "$UCSICON" => state.ucs_icon = value,
-                            "$UNITMODE" => state.unit_mode = value,
+                            "$UNITMODE" => {
+                                state.unit_mode = value;
+                                hdr.unit_mode = value;
+                            }
                             _ => unreachable!(),
                         }
                     }
@@ -1678,7 +1702,9 @@ impl<'a> SectionReader<'a> {
                     }
                 }
                 "$ACADMAINTVER" => {
-                    self.reader.read_pair()?;
+                    if let Some(v) = self.reader.read_pair()?.and_then(|p| p.as_int()) {
+                        hdr.acad_maintenance_version = v as i32;
+                    }
                 }
                 "$REQUIREDVERSIONS" => {
                     if let Some(p) = self.reader.read_pair()? {
@@ -3033,11 +3059,25 @@ impl<'a> SectionReader<'a> {
                         }
                     }
                 }
-                "$DIMATFIT" | "$DIMFIT" => {
-                    if let Some(p) = self.reader.read_pair()? {
-                        if let Some(v) = p.as_i16() {
+                "$DIMATFIT" => {
+                    if let Some(v) = self.reader.read_pair()?.and_then(|p| p.as_i16()) {
+                        hdr.dim_fit = v;
+                        dimatfit_seen = true;
+                    }
+                }
+                // R13/R14 files only have $DIMFIT, so it feeds dim_fit until a
+                // $DIMATFIT says otherwise.
+                "$DIMFIT" => {
+                    if let Some(v) = self.reader.read_pair()?.and_then(|p| p.as_i16()) {
+                        hdr.dim_fit_r13 = v;
+                        if !dimatfit_seen {
                             hdr.dim_fit = v;
                         }
+                    }
+                }
+                "$DIMUNIT" => {
+                    if let Some(v) = self.reader.read_pair()?.and_then(|p| p.as_i16()) {
+                        hdr.dim_unit = v;
                     }
                 }
                 "$DIMUPT" => {
@@ -3192,6 +3232,80 @@ impl<'a> SectionReader<'a> {
                 }
                 "$PUCSYDIR" => {
                     self.read_header_point3(&mut hdr.paper_space_ucs_y_axis)?;
+                }
+                "$UCSORGTOP" => {
+                    self.read_header_point3(&mut hdr.ucs_ortho_origins[0])?;
+                }
+                "$PUCSORGTOP" => {
+                    self.read_header_point3(&mut hdr.paper_ucs_ortho_origins[0])?;
+                }
+                "$UCSORGBOTTOM" => {
+                    self.read_header_point3(&mut hdr.ucs_ortho_origins[1])?;
+                }
+                "$PUCSORGBOTTOM" => {
+                    self.read_header_point3(&mut hdr.paper_ucs_ortho_origins[1])?;
+                }
+                "$UCSORGLEFT" => {
+                    self.read_header_point3(&mut hdr.ucs_ortho_origins[2])?;
+                }
+                "$PUCSORGLEFT" => {
+                    self.read_header_point3(&mut hdr.paper_ucs_ortho_origins[2])?;
+                }
+                "$UCSORGRIGHT" => {
+                    self.read_header_point3(&mut hdr.ucs_ortho_origins[3])?;
+                }
+                "$PUCSORGRIGHT" => {
+                    self.read_header_point3(&mut hdr.paper_ucs_ortho_origins[3])?;
+                }
+                "$UCSORGFRONT" => {
+                    self.read_header_point3(&mut hdr.ucs_ortho_origins[4])?;
+                }
+                "$PUCSORGFRONT" => {
+                    self.read_header_point3(&mut hdr.paper_ucs_ortho_origins[4])?;
+                }
+                "$UCSORGBACK" => {
+                    self.read_header_point3(&mut hdr.ucs_ortho_origins[5])?;
+                }
+                "$PUCSORGBACK" => {
+                    self.read_header_point3(&mut hdr.paper_ucs_ortho_origins[5])?;
+                }
+                "$DIMTXTDIRECTION" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_text_direction = v != 0;
+                        }
+                    }
+                }
+                "$DIMALTMZF" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.dim_alt_mzf = v;
+                        }
+                    }
+                }
+                "$DIMALTMZS" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.dim_alt_mzs = p.value_string.clone();
+                    }
+                }
+                "$DIMMZF" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.dim_mzf = v;
+                        }
+                    }
+                }
+                "$DIMMZS" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.dim_mzs = p.value_string.clone();
+                    }
+                }
+                "$CSHADOW" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.cast_shadow = v;
+                        }
+                    }
                 }
                 "$UCSORTHOVIEW" => {
                     if let Some(p) = self.reader.read_pair()? {
@@ -13493,6 +13607,13 @@ impl<'a> SectionReader<'a> {
             mtext.dwg_x_direction = Some(direction);
         }
 
+        // R2007 to R2013 keep the column layout in ACAD extended data.
+        if mtext.column_data.column_type == 0 {
+            if let Some(columns) = mtext_columns_from_xdata(&mtext.common.extended_data) {
+                mtext.column_data = columns;
+            }
+        }
+
         Ok(Some(mtext))
     }
 
@@ -15969,6 +16090,11 @@ impl<'a> SectionReader<'a> {
                 }
             }
         }
+        // A clockwise edge's angles are stored as 360 minus each (see the writer).
+        if !edge.counter_clockwise {
+            edge.start_angle = std::f64::consts::TAU - edge.start_angle;
+            edge.end_angle = std::f64::consts::TAU - edge.end_angle;
+        }
         Ok(edge)
     }
 
@@ -15982,6 +16108,10 @@ impl<'a> SectionReader<'a> {
             end_angle: std::f64::consts::TAU,
             counter_clockwise: true,
         };
+        // Groups 50/51 are circular angles in degrees. Hold them until the
+        // ratio (group 40) has been seen, then store ellipse parameters.
+        let mut start_degrees = Some(0.0);
+        let mut end_degrees: Option<f64> = None;
         // Expected sequence: 10, 20, 11, 21, 40, 50, 51, 73
         for _ in 0..8 {
             if let Some(p) = self.reader.read_pair()? {
@@ -15991,15 +16121,8 @@ impl<'a> SectionReader<'a> {
                     11 => edge.major_axis_endpoint.x = p.as_double().unwrap_or(0.0),
                     21 => edge.major_axis_endpoint.y = p.as_double().unwrap_or(0.0),
                     40 => edge.minor_axis_ratio = p.as_double().unwrap_or(1.0),
-                    // Groups 50/51 are degrees. A missing or unparseable 51
-                    // keeps the full-ellipse default, which is already radians.
-                    50 => edge.start_angle = p.as_double().unwrap_or(0.0).to_radians(),
-                    51 => {
-                        edge.end_angle = p
-                            .as_double()
-                            .map(f64::to_radians)
-                            .unwrap_or(std::f64::consts::TAU)
-                    }
+                    50 => start_degrees = p.as_double().or(Some(0.0)),
+                    51 => end_degrees = p.as_double(),
                     73 => edge.counter_clockwise = p.as_i16().unwrap_or(1) != 0,
                     _ => {
                         self.reader.push_back(p);
@@ -16008,6 +16131,20 @@ impl<'a> SectionReader<'a> {
                 }
             }
         }
+        if let Some(degrees) = start_degrees {
+            edge.start_angle = crate::entities::hatch::circular_angle_to_ellipse_param(
+                edge.minor_axis_ratio,
+                degrees.to_radians(),
+            );
+        }
+        edge.end_angle = end_degrees
+            .map(|degrees| {
+                crate::entities::hatch::circular_angle_to_ellipse_param(
+                    edge.minor_axis_ratio,
+                    degrees.to_radians(),
+                )
+            })
+            .unwrap_or(std::f64::consts::TAU);
         Ok(edge)
     }
 
@@ -22594,4 +22731,49 @@ mod tests {
             ]
         );
     }
+}
+
+/// The column layout in an MTEXT's ACAD extended data, between
+/// `ACAD_MTEXT_COLUMN_INFO_BEGIN` and `ACAD_MTEXT_COLUMN_INFO_END`: pairs of a
+/// group code and its value, where code 50 is followed by the height count and
+/// then that many heights.
+fn mtext_columns_from_xdata(
+    xdata: &crate::xdata::ExtendedData,
+) -> Option<crate::entities::mtext::MTextColumnData> {
+    use crate::xdata::XDataValue;
+
+    let record = xdata.records().iter().find(|r| {
+        r.application_name == "ACAD"
+            && r.values
+                .iter()
+                .any(|v| matches!(v, XDataValue::String(s) if s == "ACAD_MTEXT_COLUMN_INFO_BEGIN"))
+    })?;
+    let mut values = record
+        .values
+        .iter()
+        .skip_while(|v| !matches!(v, XDataValue::String(s) if s == "ACAD_MTEXT_COLUMN_INFO_BEGIN"))
+        .skip(1);
+    let mut columns = crate::entities::mtext::MTextColumnData::new();
+    while let Some(code) = values.next() {
+        let XDataValue::Integer16(code) = code else {
+            break; // the END marker, or something this block does not hold
+        };
+        match (code, values.next()?) {
+            (75, XDataValue::Integer16(v)) => columns.column_type = *v,
+            (79, XDataValue::Integer16(v)) => columns.auto_height = *v != 0,
+            (76, XDataValue::Integer16(v)) => columns.column_count = i32::from(*v),
+            (78, XDataValue::Integer16(v)) => columns.flow_reversed = *v != 0,
+            (48, XDataValue::Real(v)) => columns.width = *v,
+            (49, XDataValue::Real(v)) => columns.gutter = *v,
+            (50, XDataValue::Integer16(v)) => {
+                for _ in 0..(*v).max(0) {
+                    if let Some(XDataValue::Real(h)) = values.next() {
+                        columns.heights.push(*h);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    (columns.column_type != 0).then_some(columns)
 }

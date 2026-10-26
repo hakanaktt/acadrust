@@ -116,20 +116,31 @@ impl<W: Write> DxfBinaryWriter<W> {
         use crate::error::DxfError;
         use crate::io::dxf::GroupCodeValueType;
 
+        let too_big = || {
+            DxfError::Parse(format!(
+                "value {value} does not fit the width binary DXF gives group {code}"
+            ))
+        };
         match GroupCodeValueType::from_raw_code(code) {
             GroupCodeValueType::Bool => {
+                let v = u8::try_from(value)
+                    .ok()
+                    .filter(|v| *v <= 1)
+                    .ok_or_else(too_big)?;
                 self.write_code(code)?;
-                self.writer.write_u8(value as u8)?;
+                self.writer.write_u8(v)?;
             }
             // Binary DXF stores Byte groups in the same two-byte slot as
             // Int16 groups (the reader follows this convention as well).
             GroupCodeValueType::Byte | GroupCodeValueType::Int16 => {
+                let v = i16::try_from(value).map_err(|_| too_big())?;
                 self.write_code(code)?;
-                self.writer.write_i16::<LittleEndian>(value as i16)?;
+                self.writer.write_i16::<LittleEndian>(v)?;
             }
             GroupCodeValueType::Int32 => {
+                let v = i32::try_from(value).map_err(|_| too_big())?;
                 self.write_code(code)?;
-                self.writer.write_i32::<LittleEndian>(value as i32)?;
+                self.writer.write_i32::<LittleEndian>(v)?;
             }
             GroupCodeValueType::Int64 => {
                 self.write_code(code)?;
@@ -405,5 +416,49 @@ mod tests {
             expected.push(0);
             assert_eq!(writer.into_inner(), expected);
         }
+    }
+}
+
+#[cfg(test)]
+mod overflow_tests {
+    use super::*;
+
+    fn writer() -> DxfBinaryWriter<Vec<u8>> {
+        DxfBinaryWriter::new(Vec::new()).unwrap()
+    }
+
+    /// Group 73 is a 16-bit group, so 70000 does not fit. Casting it down
+    /// would write 4464 and nobody would know.
+    #[test]
+    fn a_value_too_big_for_a_16_bit_group_is_an_error() {
+        assert!(writer().write_i32(73, 70_000).is_err());
+        assert!(writer().write_i64(73, i64::from(i16::MIN) - 1).is_err());
+        assert!(writer().write_i16(73, i16::MAX).is_ok());
+    }
+
+    /// Groups 90-99 are 32-bit.
+    #[test]
+    fn a_value_too_big_for_a_32_bit_group_is_an_error() {
+        assert!(writer().write_i64(90, i64::from(i32::MAX) + 1).is_err());
+        assert!(writer().write_i64(90, i64::from(i32::MIN)).is_ok());
+    }
+
+    /// Groups 290-299 are one byte holding a flag.
+    #[test]
+    fn a_value_that_is_not_a_flag_is_an_error_in_a_one_byte_group() {
+        assert!(writer().write_i32(290, 2).is_err());
+        assert!(writer().write_i32(290, 257).is_err());
+        assert!(writer().write_i32(290, 1).is_ok());
+        assert!(writer().write_bool(290, true).is_ok());
+    }
+
+    /// A value that fits keeps the width the code fixes.
+    #[test]
+    fn a_value_that_fits_is_written_unchanged() {
+        let mut w = writer();
+        w.write_i32(73, -2).unwrap();
+        let out = w.into_inner();
+        let n = BINARY_DXF_SENTINEL.len();
+        assert_eq!(out[n..], [73, 0, 0xFE, 0xFF]);
     }
 }
