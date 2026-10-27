@@ -442,11 +442,21 @@ pub fn read_class_object_data(
             if !version.r2000_plus() {
                 return None;
             }
-            let size = count(reader.read_bit_long(), reader);
+            // The BL is the size of the AcDb:VBAProject section payload, not
+            // an inline array count. Older records may still carry the bytes
+            // inline, so read them only when the record's main stream holds
+            // the whole payload; otherwise the section owns the storage.
+            let data_size = reader.read_bit_long();
+            let inline_size = usize::try_from(data_size)
+                .ok()
+                .filter(|&size| (size as i64).saturating_mul(8) <= reader.main_remaining_bits());
             ClassObjectData::VbaProject(VbaProject {
-                storage: crate::compound_file::StructuredStoragePayload::decode(
-                    &reader.read_bytes(size),
-                ),
+                storage: match inline_size {
+                    Some(size) => crate::compound_file::StructuredStoragePayload::decode(
+                        &reader.read_bytes(size),
+                    ),
+                    None => crate::compound_file::StructuredStoragePayload::default(),
+                },
             })
         }
         "SECTION_MANAGER" => {

@@ -37,8 +37,14 @@ pub(super) fn read(spline: &mut Spline, flags: i16) {
 pub(super) fn write(spline: &Spline) -> i16 {
     // Refresh mapped fields from current typed values, retaining unrelated bits.
     let mut flags = spline.dxf_flags & !0x7ff;
-    let fit_method = spline.dwg_flags1 & 1 != 0
-        || (!spline.fit_points.is_empty() && spline.control_points.is_empty());
+    let fit_method = match spline.dwg_scenario {
+        Some(2) => true,
+        Some(1) => false,
+        _ => {
+            spline.dwg_flags1 & 1 != 0
+                || (!spline.fit_points.is_empty() && spline.control_points.is_empty())
+        }
+    };
     if fit_method || spline.knot_parameterization != 0 || spline.dxf_flags & PARAMETERIZATION != 0 {
         flags |= match spline.knot_parameterization {
             0 => 32,

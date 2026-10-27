@@ -1230,6 +1230,41 @@ fn prepare_header(
         }
     }
 
+    // ── Current text and dimension styles by name ──
+    // A DXF names them ($TEXTSTYLE, $DIMSTYLE); the handles read with it need not be those styles' handles
+    // in this document, and the DWG stores only handles, so AutoCAD opened the drawing with Standard current.
+    // Ported from CADCraft's DWG bridge (storytold/cadcraft #1051, #1650; MIT OR Apache-2.0).
+    if let Some(s) = document
+        .text_styles
+        .iter()
+        .find(|s| s.name.eq_ignore_ascii_case(&h.current_text_style_name))
+    {
+        let is_default_name = h.current_text_style_name.eq_ignore_ascii_case("Standard");
+        let handle_is_valid_custom = !h.current_text_style_handle.is_null()
+            && document
+                .text_styles
+                .iter()
+                .any(|t| t.handle == h.current_text_style_handle && !t.name.eq_ignore_ascii_case("Standard"));
+        if !is_default_name || !handle_is_valid_custom {
+            h.current_text_style_handle = s.handle;
+        }
+    }
+    if let Some(s) = document
+        .dim_styles
+        .iter()
+        .find(|s| s.name.eq_ignore_ascii_case(&h.current_dimstyle_name))
+    {
+        let is_default_name = h.current_dimstyle_name.eq_ignore_ascii_case("Standard");
+        let handle_is_valid_custom = !h.current_dimstyle_handle.is_null()
+            && document
+                .dim_styles
+                .iter()
+                .any(|d| d.handle == h.current_dimstyle_handle && !d.name.eq_ignore_ascii_case("Standard"));
+        if !is_default_name || !handle_is_valid_custom {
+            h.current_dimstyle_handle = s.handle;
+        }
+    }
+
     // The header reader can produce garbage (multi-byte) handle values
     // when the bit stream is misaligned.  Unconditionally sync every
     // "current style" handle so that garbage values are overwritten
@@ -1327,7 +1362,9 @@ fn prepare_header(
         }
     }
 
-    // dim_text_style_handle — validate against text styles
+    // dim_text_style_handle — DXF names the style, a DWG stores its handle.
+    // A null or dangling handle selects the style the name gives; when that
+    // names nothing, fall back to Standard.
     {
         let dts_valid = !h.dim_text_style_handle.is_null()
             && document
@@ -1337,7 +1374,8 @@ fn prepare_header(
         if !dts_valid {
             h.dim_text_style_handle = document
                 .text_styles
-                .get("Standard")
+                .get(&h.dim_text_style_name)
+                .or_else(|| document.text_styles.get("Standard"))
                 .map(|s| s.handle)
                 .unwrap_or(Handle::NULL);
         }
@@ -1356,20 +1394,29 @@ fn prepare_header(
         }
     }
 
-    // ── Validate dim linetype handles against actual linetypes ──
-    // These can become corrupt during header read/write due to stream alignment.
+    // ── Resolve and validate dim linetype handles against actual linetypes ──
+    // DXF names them and a DWG stores their handles, so a null or dangling
+    // handle takes the handle of the linetype the name gives.
     {
-        let valid_lt = |h: Handle| -> bool {
-            h.is_null() || document.line_types.iter().any(|lt| lt.handle == h)
-        };
-        if !valid_lt(h.dim_linetype_handle) {
-            h.dim_linetype_handle = Handle::NULL;
-        }
-        if !valid_lt(h.dim_linetype1_handle) {
-            h.dim_linetype1_handle = Handle::NULL;
-        }
-        if !valid_lt(h.dim_linetype2_handle) {
-            h.dim_linetype2_handle = Handle::NULL;
+        let names = [
+            h.dim_linetype_name.clone(),
+            h.dim_linetype1_name.clone(),
+            h.dim_linetype2_name.clone(),
+        ];
+        for (handle, name) in [
+            (&mut h.dim_linetype_handle, &names[0]),
+            (&mut h.dim_linetype1_handle, &names[1]),
+            (&mut h.dim_linetype2_handle, &names[2]),
+        ] {
+            let valid =
+                !handle.is_null() && document.line_types.iter().any(|lt| lt.handle == *handle);
+            if !valid {
+                *handle = document
+                    .line_types
+                    .get(name)
+                    .map(|lt| lt.handle)
+                    .unwrap_or(Handle::NULL);
+            }
         }
     }
 

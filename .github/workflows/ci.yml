@@ -62,3 +62,23 @@ jobs:
         run: cargo check --lib --no-default-features --target wasm32-unknown-unknown
       - name: Check all features
         run: cargo check --lib --all-features --target wasm32-unknown-unknown
+
+  freebsd:
+    name: Check FreeBSD (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # c_char is u8 on aarch64 and i8 on x86_64.
+        target: [aarch64-unknown-freebsd, x86_64-unknown-freebsd]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Check all targets and features
+        run: cargo check --all-targets --all-features --target ${{ matrix.target }}

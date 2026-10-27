@@ -175,6 +175,104 @@ impl Spline {
         (p as i32, kv)
     }
 
+    /// Whether all control points or fit points of this spline lie in a plane.
+    pub fn is_planar(&self) -> bool {
+        let points = if !self.control_points.is_empty() {
+            &self.control_points
+        } else if !self.fit_points.is_empty() {
+            &self.fit_points
+        } else {
+            return false;
+        };
+
+        if points.len() <= 3 {
+            return true;
+        }
+
+        let p0 = points[0];
+        // Fast path for 2D XY splines
+        if points.iter().all(|p| (p.z - p0.z).abs() < 1e-4) {
+            return true;
+        }
+
+        // If normal vector is defined and unit length, check against it
+        let normal = self.normal;
+        if normal != Vector3::ZERO && (normal.length_squared() - 1.0).abs() < 1e-4 {
+            return points.iter().all(|p| ((*p - p0).dot(&normal)).abs() < 1e-4);
+        }
+
+        // Otherwise find a plane normal from the first 3 non-collinear points
+        let mut p1_opt = None;
+        for p in &points[1..] {
+            if (*p - p0).length_squared() > 1e-8 {
+                p1_opt = Some(*p);
+                break;
+            }
+        }
+        let Some(p1) = p1_opt else {
+            return true;
+        };
+        let v1 = p1 - p0;
+
+        let mut normal_opt = None;
+        for p in &points[1..] {
+            let v2 = *p - p0;
+            let n = v1.cross(&v2);
+            if n.length_squared() > 1e-8 {
+                normal_opt = Some(n.normalize());
+                break;
+            }
+        }
+        let Some(plane_normal) = normal_opt else {
+            return true;
+        };
+
+        points.iter().all(|p| ((*p - p0).dot(&plane_normal)).abs() < 1e-4)
+    }
+
+    /// Convert a periodic cubic B-spline with DWG periodic knot vector (knots.len() == control_points.len() + 1)
+    /// to a clamped B-spline where `knots.len() == control_points.len() + degree + 1`.
+    ///
+    /// This produces the exact clamped NURBS representation that AutoCAD writes to DXF,
+    /// ensuring downstream DXF readers can evaluate the curve geometry.
+    pub fn periodic_to_clamped_cubic(&self) -> Option<(Vec<Vector3>, Vec<f64>)> {
+        if !self.flags.periodic || self.degree != 3 {
+            return None;
+        }
+        let n = self.control_points.len();
+        if n < 3 || self.knots.len() != n + 1 {
+            return None;
+        }
+
+        let p = &self.control_points;
+        let k = (n - 2) % n;
+        let k_prev = (k + n - 1) % n;
+        let k_next = (k + 1) % n;
+
+        let cp0 = p[k_prev] * (1.0 / 6.0) + p[k] * (2.0 / 3.0) + p[k_next] * (1.0 / 6.0);
+        let cp1 = p[k] * (2.0 / 3.0) + p[k_next] * (1.0 / 3.0);
+
+        let mut clamped_cps = Vec::with_capacity(n + 3);
+        clamped_cps.push(cp0);
+        clamped_cps.push(cp1);
+        for i in 0..(n - 1) {
+            let idx = (k_next + i) % n;
+            clamped_cps.push(p[idx]);
+        }
+        let cp_penult = p[k_prev] * (1.0 / 3.0) + p[k] * (2.0 / 3.0);
+        clamped_cps.push(cp_penult);
+        clamped_cps.push(cp0);
+
+        let u0 = self.knots[0];
+        let un = self.knots[n];
+        let mut clamped_knots = Vec::with_capacity(n + 7);
+        clamped_knots.extend([u0, u0, u0, u0]);
+        clamped_knots.extend_from_slice(&self.knots[1..n]);
+        clamped_knots.extend([un, un, un, un]);
+
+        Some((clamped_cps, clamped_knots))
+    }
+
     /// Get the number of control points
     pub fn control_point_count(&self) -> usize {
         self.control_points.len()

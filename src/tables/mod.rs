@@ -19,8 +19,23 @@ use crate::types::Handle;
 use indexmap::IndexMap;
 
 /// Normalize a symbol-table name for case-insensitive lookup.
+///
+/// Names compare as AutoCAD compares them, the way Windows compares names without regard to
+/// case: each letter is upper-cased to a single letter, and a letter outside ASCII never becomes
+/// an ASCII one. So `ölçü` is `ÖLÇÜ`, but the Turkish dotless `ı` stays apart from `I` (AutoCAD
+/// keeps the layers `YAZI` and `Yazı` side by side), and `ß` is not `SS`.
 pub fn normalize_name(name: &str) -> String {
-    name.to_uppercase()
+    name.chars().map(upper_case).collect()
+}
+
+/// `c` upper-cased, when that gives one letter and does not turn a letter outside ASCII into an
+/// ASCII one; `c` itself otherwise.
+fn upper_case(c: char) -> char {
+    let mut upper = c.to_uppercase();
+    match (upper.next(), upper.next()) {
+        (Some(u), None) if c.is_ascii() || !u.is_ascii() => u,
+        _ => c,
+    }
 }
 
 /// Whether a stored lookup key still describes `name`.

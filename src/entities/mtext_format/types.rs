@@ -756,6 +756,17 @@ pub struct MTextParagraph {
     /// [`to_mtext_string`](MTextDocument::to_mtext_string) writes every break
     /// back as `\P`, quietly collapsing a multi-column MTEXT on round-trip.
     pub starts_column: bool,
+
+    /// Span properties in effect where this paragraph ends: at its break
+    /// (`\P`, `\N`, `^J`, a raw line feed, `\p;`) or at the end of the text.
+    ///
+    /// An empty paragraph (`A\P\PB`) has no spans, so this is the only record
+    /// of the height, font and colour its line is set in. Groups closed before
+    /// the break do not apply to it: in `{\H2x;A}\P\PB` the empty line has the
+    /// outer height, in `\H2x;\PA` the doubled one. Plain-text parsing (TEXT)
+    /// records only the `%%u`/`%%o` state, which ends at the string end.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub end_properties: SpanProperties,
 }
 
 impl MTextParagraph {
@@ -765,6 +776,7 @@ impl MTextParagraph {
             properties: ParagraphProperties::default(),
             spans: Vec::new(),
             starts_column: false,
+            end_properties: SpanProperties::default(),
         }
     }
 
@@ -774,6 +786,7 @@ impl MTextParagraph {
             properties: ParagraphProperties::default(),
             spans: vec![MTextSpan::plain(text)],
             starts_column: false,
+            end_properties: SpanProperties::default(),
         }
     }
 

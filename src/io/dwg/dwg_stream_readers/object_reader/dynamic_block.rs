@@ -1113,11 +1113,10 @@ pub fn read_dynamic_block_data(
                     fields.push(BlockPropertiesTableField { code, value });
                 }
             }
-            let state_count = safe_count(reader.read_bit_long(), reader);
-            integer!(93, state_count);
-            for index in 0..state_count {
+            integer!(93, reader.read_bit_long());
+            for code in 290..=292 {
                 fields.push(BlockPropertiesTableField {
-                    code: 290 + index,
+                    code,
                     value: BlockPropertiesTableValue::Boolean(reader.read_bit()),
                 });
             }

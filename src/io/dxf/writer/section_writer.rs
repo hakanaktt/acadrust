@@ -629,6 +629,19 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         })?;
         self.write_header_variable("$DIMPOST", |w| w.write_string(1, &hdr.dim_post))?;
         self.write_header_variable("$DIMAPOST", |w| w.write_string(1, &hdr.dim_alt_post))?;
+        // A DXF header names these; a DWG stores their handles.
+        if self.dxf_version >= DxfVersion::AC1015 {
+            self.write_header_variable("$DIMTXSTY", |w| {
+                w.write_string(7, &hdr.dim_text_style_name)
+            })?;
+            self.write_header_variable("$DIMLTYPE", |w| w.write_string(6, &hdr.dim_linetype_name))?;
+            self.write_header_variable("$DIMLTEX1", |w| {
+                w.write_string(6, &hdr.dim_linetype1_name)
+            })?;
+            self.write_header_variable("$DIMLTEX2", |w| {
+                w.write_string(6, &hdr.dim_linetype2_name)
+            })?;
+        }
         for (variable, stored, handle) in [
             (
                 "$DIMBLK",
@@ -843,9 +856,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         }
 
         // === UCS ===
-        if let Some(state) = &hdr.legacy {
-            self.write_header_variable("$UNITMODE", |w| w.write_i16(70, state.unit_mode))?;
-        }
+        self.write_header_variable("$UNITMODE", |w| w.write_i16(70, hdr.unit_mode))?;
         self.write_header_variable("$UCSORG", |w| {
             let v = &hdr.model_space_ucs_origin;
             w.write_double(10, v.x)?;
@@ -4647,10 +4658,17 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         let flags = crate::io::dxf::spline_flags::write(spline);
         self.writer.write_i16(70, flags)?;
 
+        let (clamped_cps, clamped_knots) = spline
+            .periodic_to_clamped_cubic()
+            .map(|(cps, kts)| (Some(cps), Some(kts)))
+            .unwrap_or((None, None));
+        let control_points = clamped_cps.as_deref().unwrap_or(&spline.control_points);
+        let knots = clamped_knots.as_deref().unwrap_or(&spline.knots);
+
         self.writer.write_i16(71, spline.degree as i16)?;
-        self.writer.write_i16(72, spline.knots.len() as i16)?;
+        self.writer.write_i16(72, knots.len() as i16)?;
         self.writer
-            .write_i16(73, spline.control_points.len() as i16)?;
+            .write_i16(73, control_points.len() as i16)?;
         self.writer.write_i16(74, spline.fit_points.len() as i16)?;
 
         // Knot / control-point / fit tolerances (round-trip the stored values).
@@ -4667,12 +4685,12 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         }
 
         // Knots
-        for knot in &spline.knots {
+        for knot in knots {
             self.writer.write_double(40, *knot)?;
         }
 
         // Control points (with optional weights for rational splines)
-        for (i, point) in spline.control_points.iter().enumerate() {
+        for (i, point) in control_points.iter().enumerate() {
             self.writer.write_point3d(10, *point)?;
             if spline.flags.rational {
                 let w = spline.weights.get(i).copied().unwrap_or(1.0);

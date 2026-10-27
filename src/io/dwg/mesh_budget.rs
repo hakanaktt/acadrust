@@ -225,7 +225,7 @@ fn unix_physical_bytes() -> Option<u64> {
 fn sysctl_u64(name: &std::ffi::CStr) -> Option<u64> {
     extern "C" {
         fn sysctlbyname(
-            name: *const i8,
+            name: *const std::ffi::c_char,
             oldp: *mut std::ffi::c_void,
             oldlenp: *mut usize,
             newp: *const std::ffi::c_void,

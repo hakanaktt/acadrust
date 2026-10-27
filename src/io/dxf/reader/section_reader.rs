@@ -3095,6 +3095,32 @@ impl<'a> SectionReader<'a> {
                         hdr.dim_alt_post = p.value_string.clone();
                     }
                 }
+                "$DIMTXSTY" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.dim_text_style_name = p.value_string.clone();
+                        // A DXF header names the style; the handle is only a
+                        // DWG concept, so the writer resolves it from the name.
+                        hdr.dim_text_style_handle = Handle::NULL;
+                    }
+                }
+                "$DIMLTYPE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.dim_linetype_name = p.value_string.clone();
+                        hdr.dim_linetype_handle = Handle::NULL;
+                    }
+                }
+                "$DIMLTEX1" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.dim_linetype1_name = p.value_string.clone();
+                        hdr.dim_linetype1_handle = Handle::NULL;
+                    }
+                }
+                "$DIMLTEX2" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.dim_linetype2_name = p.value_string.clone();
+                        hdr.dim_linetype2_handle = Handle::NULL;
+                    }
+                }
                 "$DIMBLK" => {
                     if let Some(p) = self.reader.read_pair()? {
                         hdr.dim_arrow_block = p.value_string.clone();
@@ -3268,6 +3294,19 @@ impl<'a> SectionReader<'a> {
                 }
                 "$PUCSORGBACK" => {
                     self.read_header_point3(&mut hdr.paper_ucs_ortho_origins[5])?;
+                }
+                "$PELLIPSE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        // An int in some versions of AutoCAD, a bool in others.
+                        if let Some(v) = p.as_i16() {
+                            hdr.create_ellipse_as_polyline = v != 0;
+                        }
+                    }
+                }
+                "$PUCSBASE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.paper_ucs_base = p.value_string.clone();
+                    }
                 }
                 "$DIMTXTDIRECTION" => {
                     if let Some(p) = self.reader.read_pair()? {

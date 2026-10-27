@@ -168,6 +168,7 @@ impl R12Header {
         )?;
         let mut state = LegacyHeaderState::default();
         legacy_state(&mut codec, &mut state)?;
+        target.unit_mode = state.unit_mode;
         target.legacy = Some(state);
         Ok(())
     }
@@ -249,6 +250,7 @@ pub(super) fn read_header_with_code_page(
     )?;
     let mut state = LegacyHeaderState::default();
     legacy_state(&mut c, &mut state)?;
+    header.variables.unit_mode = state.unit_mode;
     header.variables.legacy = Some(state);
     if header.layout.entities_start < (variables_end + 18) as u32
         || header.layout.entities_end < header.layout.entities_start
@@ -329,7 +331,9 @@ pub fn write_header(
     c.pos = 0x5e;
     variables(&mut c, &mut header.clone(), &mut references.clone(), count)?;
     if let Some(state) = &header.legacy {
-        legacy_state(&mut c, &mut state.clone())?;
+        let mut state = state.clone();
+        state.unit_mode = header.unit_mode;
+        legacy_state(&mut c, &mut state)?;
     }
     let checksum = crc::crc16(crc::CRC16_SEED, &c.data[..variables_end]);
     let mut output = c.data[..variables_end].to_vec();

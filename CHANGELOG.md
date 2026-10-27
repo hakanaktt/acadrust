@@ -1,14 +1,79 @@
 ## Changelog
 
-### Unreleased
+### 0.6.8
 
-- **AEC display geometry** - The renderer no longer draws the proxy-graphics
-  bounding box for every AEC object. Doors, windows, and openings use their
-  measured wall frame and size; stairs, railings, curtain walls, column and
-  ceiling grids, and structural members use their native dimensions. A
-  multi-view or mask block resolves its `AEC_MVBLOCK_DEF` / mask definition
-  and draws the referenced plan block, mapped onto the cached reference
-  extents. Unsupported layouts still draw the cached proxy profiles.
+- **Symbol names (issue #237)** - Names are compared as AutoCAD compares
+  them: each letter upper-cases to one letter, and a non-ASCII letter never
+  folds into an ASCII one. `Yazı` and `YAZI`, or `Straße` and `STRASSE`, stay
+  distinct table entries.
+- **SPLINE from DWG to DXF (issue #234)** - A DWG to DXF save keeps the
+  SPLINE closed flag and clamps periodic NURBS control points to valid
+  parameters.
+- **Current styles in DWG writes (issue #227)** - A DWG save keeps the
+  current text and dimension styles (`$TEXTSTYLE`, `$DIMSTYLE`) by resolving
+  their names to table handles.
+- **Dimension names (issue #215)** - The dimension text style and linetype
+  names are written and resolved from their names rather than dropped.
+- **BLOCKPROPERTIESTABLE (issue #183)** - Group 93 is read as a value
+  followed by three flags, not as a flag count.
+- **VBA_PROJECT (issue #184)** - The section's BL is treated as its size, so
+  files that previously failed the strict read load.
+- **Header variables (issues #196, #211, and #222)** - The DWG reader keeps
+  `ACADMAINTVER`, `DIMTXTDIRECTION`, `DIMALTMZF`/`DIMALTMZS`,
+  `DIMMZF`/`DIMMZS`, `CSHADOW`, and the UCS and paper-space UCS orthographic
+  origins. `UNITMODE` and `DIMUNIT` round-trip, the R13 `DIMFIT` stays apart
+  from `DIMATFIT`, and the DXF reader also keeps `$PELLIPSE` and
+  `$PUCSBASE`.
+- **UNITMODE (issue #220)** - `header.unit_mode` is the single source for
+  `$UNITMODE`, so a DXF write no longer uses a second value.
+- **Dimension header names (issue #217)** - `DIMTXSTY`, `DIMLTYPE`,
+  `DIMLTEX1`, and `DIMLTEX2` are kept from both the DWG and DXF headers,
+  defaulting to `Standard` and `ByBlock`.
+- **Code pages and CIF escapes (issues #191, #209, #213, and #216)** - A
+  pre-R2007 CIF escape is decoded only when the code page cannot hold the
+  character, and a stand-in code page row does not gate it. In R2007+ UTF-8
+  and UTF-16 text a CIF escape is content. Characters are escaped only when
+  the code page encodes them onto a different one, and Shift_JIS yen is
+  written as a bare backslash.
+- **MTEXT escapes (issue #212)** - `\U+XXXX` takes exactly four hex digits,
+  so `20\U+00B0C` is `20`, U+00B0, then `C`.
+- **Image definition reactors (issue #204)** - `IMAGEDEF` and
+  `RASTERVARIABLES` write their owner dictionary and reactor handles, so
+  AutoCAD's External References palette no longer lists images as
+  unreferenced after a DXF round trip.
+- **Unknown DWG code pages (issue #202)** - An unknown code page index still
+  falls back to ANSI_1252, but the read now reports a warning naming it.
+- **Same-version saves (issue #199)** - A DWG save keeps an object whose
+  class is not registered instead of dropping it.
+- **MTEXT columns (issue #198)** - For R2007 to R2013 the column layout is
+  written as ACAD extended data instead of group 50, so the rotation no
+  longer reads back as a column height. Older versions write no columns, and
+  the reader restores `column_data`.
+- **Legacy TABLE cells (issue #193)** - Below R2007 an empty text cell keeps
+  an empty string, the text follows the value handle that is written, and
+  R2000 colors use the full color record.
+- **Binary DXF integers (issue #190)** - An integer that does not fit its
+  group's width is an error instead of being silently truncated.
+- **Clockwise HATCH arcs (issue #159)** - A clockwise arc edge is stored with
+  complementary angles in DXF, so a round trip keeps its direction.
+- **DWG header current names (issue #186)** - The current text style,
+  linetype, and dimension style resolve to names from their handles.
+- **FreeBSD aarch64** - `sysctlbyname`'s name parameter uses `c_char`, and CI
+  checks both FreeBSD targets.
+- **MTEXT paragraph end properties** - `MTextParagraph::end_properties` holds
+  the span properties in effect where a paragraph ends: at its break (`\P`,
+  `\N`, `^J`, a raw line feed, `\p;`) or at the end of the text. An empty
+  paragraph has no spans, so this is the only record of the height, font and
+  colour its line is set in; groups closed before the break do not apply to
+  it (issue #229). Plain-text parsing records the `%%u`/`%%o` state at its
+  breaks. Breaking: struct literals of `MTextParagraph` need
+  `end_properties: SpanProperties::default()` or `..Default::default()`.
+  Serde input without the field reads as the default (issue #231).
+- **DWG allocation budget** - `DwgReadOptions::max_decompressed_bytes` caps the
+  total decompressed bytes one read allocates across sections and system pages,
+  so a small crafted file fails with a `DxfError` instead of exhausting memory.
+  Buffers sized from file data are now reserved fallibly, turning an allocation
+  failure into a `DxfError` rather than a process abort (issue #226).
 - **Annotative context data** - AutoCAD does not store the R2010
   file-to-extension-dictionary bit on object-context leaves. 0.6.7 read that
   bit and rejected drawings whose first failure was an aligned-dimension,
@@ -29,11 +94,6 @@
 
 ### 0.6.7
 
-- **Built-in stroke font** - `acadrust.shx` is an original single-stroke font
-  (source `assets/fonts/acadrust.shp`). The renderer and the wasm viewer draw
-  text with it when a style's SHX or TrueType file is not available. Shape-file
-  styles still report a missing file, so linetype shapes are not replaced with
-  letters. `render::acadrust_shx` and `render::acadrust_shp` return the font.
 - **ACAD Arch** - Reads and preserves AEC, structural, and building-systems
   classes. A same-version DWG save writes the original class record with the
   entity's current common properties. `wall`, `door`, and `window` build an

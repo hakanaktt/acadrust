@@ -650,6 +650,8 @@ pub struct HeaderVariables {
     pub paper_ucs_ortho_ref: Handle,
     /// PUCSORTHOVIEW - Paper space UCS orthographic view type
     pub paper_ucs_ortho_view: i16,
+    /// PUCSBASE - name of the UCS the paper space orthographic origins are relative to
+    pub paper_ucs_base: String,
 
     // ==================== Handles/References ====================
     /// HANDSEED - Next available handle
@@ -682,6 +684,14 @@ pub struct HeaderVariables {
     pub dim_arrow_block2_handle: Handle,
     /// Leader arrow block handle (DIMLDRBLK)
     pub dim_leader_arrow_block_handle: Handle,
+    /// DIMTXSTY - name of the dimension text style
+    pub dim_text_style_name: String,
+    /// DIMLTYPE - name of the dimension line linetype
+    pub dim_linetype_name: String,
+    /// DIMLTEX1 - name of the first extension line linetype
+    pub dim_linetype1_name: String,
+    /// DIMLTEX2 - name of the second extension line linetype
+    pub dim_linetype2_name: String,
     /// DIMLWD - Dimension line weight
     pub dim_line_weight: i16,
     /// DIMLWE - Extension line weight
@@ -1071,6 +1081,7 @@ impl Default for HeaderVariables {
             ucs_ortho_view: 0,
             paper_ucs_ortho_ref: Handle::NULL,
             paper_ucs_ortho_view: 0,
+            paper_ucs_base: String::new(),
 
             // Handles
             handle_seed: 1,
@@ -1088,6 +1099,10 @@ impl Default for HeaderVariables {
             dim_arrow_block1_handle: Handle::NULL,
             dim_arrow_block2_handle: Handle::NULL,
             dim_leader_arrow_block_handle: Handle::NULL,
+            dim_text_style_name: String::from("Standard"),
+            dim_linetype_name: String::from("ByBlock"),
+            dim_linetype1_name: String::from("ByBlock"),
+            dim_linetype2_name: String::from("ByBlock"),
             dim_line_weight: -2,     // ByBlock
             dim_ext_line_weight: -2, // ByBlock
 
@@ -6331,6 +6346,36 @@ impl CadDocument {
         self.resolve_book_colors();
         self.resolve_xrecord_names();
         self.resolve_xrecord_backed_properties();
+        if let Some(s) = self
+            .text_styles
+            .iter()
+            .find(|s| s.name.eq_ignore_ascii_case(&self.header.current_text_style_name))
+        {
+            let is_default_name = self.header.current_text_style_name.eq_ignore_ascii_case("Standard");
+            let handle_is_valid_custom = !self.header.current_text_style_handle.is_null()
+                && self
+                    .text_styles
+                    .iter()
+                    .any(|t| t.handle == self.header.current_text_style_handle && !t.name.eq_ignore_ascii_case("Standard"));
+            if !is_default_name || !handle_is_valid_custom {
+                self.header.current_text_style_handle = s.handle;
+            }
+        }
+        if let Some(s) = self
+            .dim_styles
+            .iter()
+            .find(|s| s.name.eq_ignore_ascii_case(&self.header.current_dimstyle_name))
+        {
+            let is_default_name = self.header.current_dimstyle_name.eq_ignore_ascii_case("Standard");
+            let handle_is_valid_custom = !self.header.current_dimstyle_handle.is_null()
+                && self
+                    .dim_styles
+                    .iter()
+                    .any(|d| d.handle == self.header.current_dimstyle_handle && !d.name.eq_ignore_ascii_case("Standard"));
+            if !is_default_name || !handle_is_valid_custom {
+                self.header.current_dimstyle_handle = s.handle;
+            }
+        }
         self.header.handle_seed = self.header.handle_seed.max(self.next_handle);
     }
 

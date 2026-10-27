@@ -213,13 +213,13 @@ fn native_header_drafting_state_is_typed_and_honors_edits() {
         assert_eq!(state.circle_zoom, 0);
         assert_eq!(document.vports.get("*ACTIVE").unwrap().circle_zoom, 1200);
         document.header.legacy.as_mut().unwrap().snap_spacing = Vector2::new(1.25, 2.5);
-        document.header.legacy.as_mut().unwrap().unit_mode = 1;
+        document.header.unit_mode = 1;
         let restored = read(DwgWriter::write_to_vec(&document).unwrap());
         assert_eq!(
             restored.header.legacy.as_ref().unwrap().snap_spacing,
             Vector2::new(1.25, 2.5)
         );
-        assert_eq!(restored.header.legacy.as_ref().unwrap().unit_mode, 1);
+        assert_eq!(restored.header.unit_mode, 1);
         let dxf = DxfReader::from_reader(Cursor::new(
             DxfWriter::new(&document).write_to_vec().unwrap(),
         ))

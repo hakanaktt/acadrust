@@ -3323,7 +3323,8 @@ impl DwgDocumentBuilder {
                     }
                     ParsedEntry::AppId(handle, data) => {
                         source_app_ids.insert(*handle);
-                        source_app_id_names.insert(*handle, data.name.to_uppercase());
+                        source_app_id_names
+                            .insert(*handle, crate::tables::normalize_name(&data.name));
                     }
                     _ => {}
                 }
@@ -3479,7 +3480,7 @@ impl DwgDocumentBuilder {
                     collides(entry.handle, &source_app_ids)
                         || source_app_id_names
                             .get(&entry.handle.value())
-                            .is_some_and(|name| *name != entry.name.to_uppercase())
+                            .is_some_and(|name| *name != crate::tables::normalize_name(&entry.name))
                 })
                 .map(|entry| entry.name.clone())
                 .collect();
@@ -3550,6 +3551,29 @@ impl DwgDocumentBuilder {
             .find(|d| d.handle == document.header.current_dimstyle_handle)
         {
             document.header.current_dimstyle_name = ds.name.clone();
+        }
+
+        // The dimension text style and linetypes are handles in the DWG header too.
+        if let Some(style) = document
+            .text_styles
+            .iter()
+            .find(|s| s.handle == document.header.dim_text_style_handle)
+        {
+            document.header.dim_text_style_name = style.name.clone();
+        }
+        for (handle, slot) in [
+            (document.header.dim_linetype_handle, 0usize),
+            (document.header.dim_linetype1_handle, 1),
+            (document.header.dim_linetype2_handle, 2),
+        ] {
+            if let Some(lt) = document.line_types.iter().find(|l| l.handle == handle) {
+                let name = lt.name.clone();
+                match slot {
+                    0 => document.header.dim_linetype_name = name,
+                    1 => document.header.dim_linetype1_name = name,
+                    _ => document.header.dim_linetype2_name = name,
+                }
+            }
         }
 
         // ── Post-pass: guarantee the mandatory *Model_Space / *Paper_Space ──
@@ -8444,7 +8468,7 @@ fn dedupe_block_names(
     let mut group_of: HashMap<String, usize> = HashMap::new();
     let mut taken: HashSet<String> = HashSet::new();
     for (pos, (_, name)) in blocks.iter().enumerate() {
-        let key = name.to_uppercase();
+        let key = crate::tables::normalize_name(name);
         taken.insert(key.clone());
         let g = *group_of.entry(key.clone()).or_insert_with(|| {
             groups.push((key, Vec::new()));
@@ -8480,7 +8504,7 @@ fn dedupe_block_names(
             let new_name = loop {
                 let candidate = format!("{}{}", base, suffix);
                 suffix += 1;
-                if taken.insert(candidate.to_uppercase()) {
+                if taken.insert(crate::tables::normalize_name(&candidate)) {
                     break candidate;
                 }
             };
