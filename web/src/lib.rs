@@ -255,6 +255,67 @@ impl Viewer {
         self.render()
     }
 
+    /// Entity under a canvas-pixel position without selecting it. Returns the
+    /// handle as AutoCAD prints it, for example `0x1F`.
+    pub fn pick_at(&self, x: f64, y: f64, tolerance: f64) -> Result<Option<String>, JsValue> {
+        Ok(self
+            .pick_handle(x, y, tolerance)?
+            .map(|handle| handle.to_string()))
+    }
+
+    /// Select the entity under a canvas-pixel position. Returns its handle, or
+    /// `null` when the click missed and the selection was cleared.
+    pub fn select_at(
+        &mut self,
+        x: f64,
+        y: f64,
+        tolerance: f64,
+    ) -> Result<Option<String>, JsValue> {
+        let handle = self.pick_handle(x, y, tolerance)?;
+        self.renderer.set_selection(handle);
+        self.refresh_selection()?;
+        Ok(handle.map(|handle| handle.to_string()))
+    }
+
+    /// Clear the selection and redraw.
+    pub fn clear_selection(&mut self) -> Result<(), JsValue> {
+        self.renderer.clear_selection();
+        self.refresh_selection()?;
+        Ok(())
+    }
+
+    fn pick_handle(
+        &self,
+        x: f64,
+        y: f64,
+        tolerance: f64,
+    ) -> Result<Option<acadrust::Handle>, JsValue> {
+        if !x.is_finite() || !y.is_finite() || !tolerance.is_finite() {
+            return Err(js_error("pick position must be finite"));
+        }
+        Ok(self
+            .scene
+            .pick_screen(
+                &self.view,
+                (self.config.width, self.config.height),
+                x,
+                y,
+                tolerance,
+            )
+            .map(|source| source.selection_handle()))
+    }
+
+    fn refresh_selection(&mut self) -> Result<(), JsValue> {
+        self.renderer.prepare(
+            &self.device,
+            &self.queue,
+            &self.scene,
+            &self.view,
+            (self.config.width, self.config.height),
+        );
+        self.render()
+    }
+
     fn cursor_offset(&self, x: f64, y: f64) -> Vector3 {
         let width = self.config.width.max(1) as f64;
         let height = self.config.height.max(1) as f64;

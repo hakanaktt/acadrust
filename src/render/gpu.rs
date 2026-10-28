@@ -4,8 +4,10 @@
 //! once and writes a camera uniform on every frame, so a pan does not rebuild
 //! geometry. [`render_rgba`] is the offscreen entry point.
 
+use std::collections::HashSet;
+
 use crate::document::CadDocument;
-use crate::types::Vector3;
+use crate::types::{Handle, Vector3};
 
 #[cfg(target_arch = "wasm32")]
 use std::{
@@ -16,7 +18,7 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
-use super::scene::Scene;
+use super::scene::{EntityRef, Scene};
 use super::{CompileOptions, View, DEFAULT_MODEL_LINEWEIGHT_PX_PER_MM};
 
 const INSTANCE_STRIDE: u64 = 96;
@@ -27,6 +29,10 @@ const CAMERA_SIZE: u64 = 256;
 /// One analytic surface patch. Sixteen-byte aligned, six vectors.
 const SURFACE_STRIDE: u64 = 96;
 const SHADER: &str = include_str!("shader.wgsl");
+
+/// Color used for entities in the selection set. Cyan reads clearly on both
+/// the dark model background and the light paper background, as AutoCAD does.
+pub const HIGHLIGHT_RGB: [u8; 3] = [0, 200, 255];
 
 /// Clear color and swapchain format for an embedded renderer.
 #[derive(Debug, Clone)]
@@ -112,6 +118,8 @@ pub struct Renderer {
     depth_bounds: Option<(Vector3, Vector3)>,
     depth: wgpu::Texture,
     depth_view: wgpu::TextureView,
+    /// Outermost entity handles drawn with [`HIGHLIGHT_RGB`].
+    selection: HashSet<Handle>,
 }
 
 impl Renderer {
@@ -464,7 +472,32 @@ impl Renderer {
             depth_bounds: None,
             depth,
             depth_view,
+            selection: HashSet::new(),
         }
+    }
+
+    /// Replace the selection set. The new colors take effect on the next
+    /// [`Renderer::prepare`], so a caller changing selection re-uploads the
+    /// scene once and then keeps panning without further work.
+    pub fn set_selection<I>(&mut self, handles: I)
+    where
+        I: IntoIterator<Item = Handle>,
+    {
+        self.selection = handles.into_iter().collect();
+    }
+
+    /// Handles currently drawn highlighted.
+    pub fn selection(&self) -> &HashSet<Handle> {
+        &self.selection
+    }
+
+    /// Drop every selected entity.
+    pub fn clear_selection(&mut self) {
+        self.selection.clear();
+    }
+
+    fn is_selected(&self, source: &EntityRef) -> bool {
+        self.selection.contains(&source.selection_handle())
     }
 
     pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
@@ -524,7 +557,9 @@ impl Renderer {
             .sum();
         let mut bytes = Vec::with_capacity(primitives * INSTANCE_STRIDE as usize);
         for stroke in &scene.strokes {
-            let rgb = if stroke.style.aci7 {
+            let rgb = if self.is_selected(&stroke.source) {
+                HIGHLIGHT_RGB
+            } else if stroke.style.aci7 {
                 contrast(self.background_rgba)
             } else {
                 stroke.style.rgb
@@ -673,7 +708,9 @@ impl Renderer {
                 push_f32(&mut bytes, uv.1);
                 push_f32(&mut bytes, 0.0);
                 push_f32(&mut bytes, 0.0);
-                let rgb = if quad.aci7 {
+                let rgb = if self.is_selected(&quad.source) {
+                    HIGHLIGHT_RGB
+                } else if quad.aci7 {
                     contrast(self.background_rgba)
                 } else {
                     quad.rgb
@@ -819,7 +856,9 @@ impl Renderer {
             let Some(surface) = &fill.analytic else {
                 continue;
             };
-            let rgb = if fill.style.aci7 {
+            let rgb = if self.is_selected(&fill.source) {
+                HIGHLIGHT_RGB
+            } else if fill.style.aci7 {
                 contrast(self.background_rgba)
             } else {
                 fill.style.rgb
@@ -912,8 +951,11 @@ impl Renderer {
                 // The analytic surface pass covers this face.
                 continue;
             }
+            let selected = self.is_selected(&fill.source);
             for (index, point) in fill.triangles.iter().enumerate() {
-                let rgb = if fill.background {
+                let rgb = if selected {
+                    HIGHLIGHT_RGB
+                } else if fill.background {
                     [
                         (self.background_rgba[0] * 255.0) as u8,
                         (self.background_rgba[1] * 255.0) as u8,

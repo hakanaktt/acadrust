@@ -52,7 +52,7 @@
       <button id="fit" type="button" disabled title="Fit drawing to the viewport">Fit</button>
       <button id="rotate-left" type="button" disabled title="Roll counter-clockwise">Roll left</button>
       <button id="rotate-right" type="button" disabled title="Roll clockwise">Roll right</button>
-      <span id="status">Choose a drawing. Scroll zooms, middle mouse pans, right mouse orbits. Text uses the built-in Acadrust font unless you supply an SHX or SHP.</span>
+      <span id="status">Choose a drawing. Left click selects, scroll zooms, middle mouse pans, right mouse orbits, Escape clears. Text uses the built-in Acadrust font unless you supply an SHX or SHP.</span>
     </header>
     <canvas id="canvas" width="1600" height="1000"></canvas>
     <div id="viewcube" title="ViewCube. Drag to orbit. Click a face, edge, or corner.">
@@ -238,25 +238,70 @@
         withViewer((active) => active.zoom_at(factor, point.x, point.y));
       }, { passive: false });
 
+      const pickTolerance = () => 4 * (window.devicePixelRatio || 1);
+      let hoverSerial = 0;
+
+      const hoverEntity = (point) => {
+        if (!viewer) return;
+        const serial = ++hoverSerial;
+        let handle = null;
+        try {
+          handle = viewer.pick_at(point.x, point.y, pickTolerance());
+        } catch (error) {
+          console.error(error);
+        }
+        if (serial !== hoverSerial) return;
+        canvas.style.cursor = handle ? "pointer" : "default";
+        canvas.title = handle ? `Entity ${handle}` : "";
+      };
+
+      const selectEntity = (event) => {
+        if (!viewer) return;
+        const point = canvasPoint(event);
+        let handle = null;
+        try {
+          handle = viewer.select_at(point.x, point.y, pickTolerance());
+        } catch (error) {
+          console.error(error);
+          setStatus(`Selection failed: ${error}`);
+          return;
+        }
+        canvas.style.cursor = handle ? "pointer" : "default";
+        setStatus(handle ? `Selected entity ${handle}` : "Selection cleared");
+      };
+
       canvas.addEventListener("pointerdown", (event) => {
-        if (!viewer || (event.button !== 1 && event.button !== 2)) return;
+        if (!viewer) return;
         event.preventDefault();
         stopGizmoAnim();
         const point = canvasPoint(event);
+        if (event.button === 0) {
+          drag = { id: event.pointerId, mode: "select", x: point.x, y: point.y, cx: event.clientX, cy: event.clientY, moved: false };
+          canvas.setPointerCapture(event.pointerId);
+          return;
+        }
+        if (event.button !== 1 && event.button !== 2) return;
         const mode = event.button === 2 ? "orbit" : event.shiftKey ? "roll" : "pan";
-        drag = { id: event.pointerId, mode, x: point.x, y: point.y, cx: event.clientX, cy: event.clientY };
+        drag = { id: event.pointerId, mode, x: point.x, y: point.y, cx: event.clientX, cy: event.clientY, moved: false };
         canvas.setPointerCapture(event.pointerId);
         canvas.style.cursor = mode === "pan" ? "grabbing" : "crosshair";
       });
 
       canvas.addEventListener("pointermove", (event) => {
-        if (!drag || drag.id !== event.pointerId || !viewer) return;
-        event.preventDefault();
         const point = canvasPoint(event);
+        if (!drag || drag.id !== event.pointerId || !viewer) {
+          if (!drag) hoverEntity(point);
+          return;
+        }
+        event.preventDefault();
         const dx = point.x - drag.x;
         const dy = point.y - drag.y;
         drag.x = point.x;
         drag.y = point.y;
+        if (drag.mode === "select") {
+          if (Math.abs(dx) + Math.abs(dy) > 1) drag.moved = true;
+          return;
+        }
         if (drag.mode === "roll") {
           withViewer((active) => active.rotate_at(dx * Math.PI / 360, point.x, point.y));
         } else if (drag.mode === "orbit") {
@@ -269,14 +314,17 @@
         if (drag.mode !== "pan") drawGizmo();
       });
 
-      const endDrag = (event) => {
+      const endDrag = (event, allowSelect) => {
         if (!drag || drag.id !== event.pointerId) return;
+        const mode = drag.mode;
+        const moved = drag.moved;
         drag = null;
         canvas.style.cursor = "default";
         if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+        if (allowSelect && mode === "select" && !moved) selectEntity(event);
       };
-      canvas.addEventListener("pointerup", endDrag);
-      canvas.addEventListener("pointercancel", endDrag);
+      canvas.addEventListener("pointerup", (event) => endDrag(event, true));
+      canvas.addEventListener("pointercancel", (event) => endDrag(event, false));
       canvas.addEventListener("lostpointercapture", () => {
         drag = null;
         canvas.style.cursor = "default";
@@ -295,6 +343,10 @@
         const name = styleInput.value;
         withViewer((active) => active.set_visual_style(name));
         if (drawing) setStatus(`${drawing.name} rendered in ${styleInput.options[styleInput.selectedIndex].text}`);
+      });
+      addEventListener("keydown", (event) => {
+        if (event.key !== "Escape" || !viewer) return;
+        if (withViewer((active) => active.clear_selection())) setStatus("Selection cleared");
       });
       fitButton.addEventListener("click", () => { stopGizmoAnim(); withViewer((active) => active.fit()); drawGizmo(); });
       rotateLeft.addEventListener("click", () => { stopGizmoAnim(); withViewer((active) => active.roll(-Math.PI / 12)); drawGizmo(); });

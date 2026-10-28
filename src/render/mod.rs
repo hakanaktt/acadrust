@@ -38,7 +38,9 @@ mod ttf_atlas;
 mod visual_style;
 
 pub use compile::FALLBACK_KINDS;
-pub use gpu::{render_rgba, render_rgba_with, RenderError, Renderer, RendererConfig, RgbaImage};
+pub use gpu::{
+    render_rgba, render_rgba_with, RenderError, Renderer, RendererConfig, RgbaImage, HIGHLIGHT_RGB,
+};
 pub use scene::{
     Curve, DrawPath, EntityRef, FallbackEntry, Fill, Picture, Scene, SkippedEntity, Stroke, Style,
 };
@@ -122,6 +124,15 @@ impl Default for CompileOptions {
     }
 }
 
+/// A world point projected into a viewport, in device pixels.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScreenPoint {
+    pub x: f64,
+    pub y: f64,
+    /// Distance along the view direction. Larger values are closer to the camera.
+    pub depth: f64,
+}
+
 /// Orthographic camera. Pan, zoom, and orbit change this and do not recompile.
 #[derive(Debug, Clone, PartialEq)]
 pub struct View {
@@ -197,6 +208,21 @@ impl View {
         let right = x_dir * cos + y_dir * sin;
         let up = x_dir * (-sin) + y_dir * cos;
         (right, up, normal)
+    }
+
+    /// Project a world point into a `width_px` by `height_px` viewport.
+    pub fn project(&self, point: Vector3, width_px: u32, height_px: u32) -> ScreenPoint {
+        let width = width_px.max(1) as f64;
+        let height = height_px.max(1) as f64;
+        let (right, up, normal) = self.basis();
+        let delta = point - self.target;
+        let world_height = self.height.max(1e-9);
+        let world_width = world_height * width / height;
+        ScreenPoint {
+            x: width * 0.5 + right.dot(&delta) / world_width * width,
+            y: height * 0.5 - up.dot(&delta) / world_height * height,
+            depth: normal.dot(&delta),
+        }
     }
 
     /// Frame `scene` on the current direction and twist.

@@ -264,6 +264,100 @@ fn standard_views_match_the_paper_viewport_axes() {
 }
 
 #[test]
+fn screen_projection_centers_the_target() {
+    let view = View {
+        target: Vector3::new(10.0, 5.0, 0.0),
+        height: 20.0,
+        ..View::default()
+    };
+    let center = view.project(Vector3::new(10.0, 5.0, 0.0), 400, 200);
+    assert!((center.x - 200.0).abs() < 1e-9);
+    assert!((center.y - 100.0).abs() < 1e-9);
+    let right = view.project(Vector3::new(30.0, 5.0, 0.0), 400, 200);
+    assert!((right.x - 400.0).abs() < 1e-9);
+    let up = view.project(Vector3::new(10.0, 15.0, 0.0), 400, 200);
+    assert!(up.y.abs() < 1e-9);
+}
+
+#[test]
+fn pick_screen_hits_a_stroke_and_misses_empty_space() {
+    let mut doc = doc();
+    let handle = doc
+        .add_entity(EntityType::Line(Line::from_coords(
+            0.0, 0.0, 0.0, 10.0, 0.0, 0.0,
+        )))
+        .unwrap();
+    let scene = compile(&doc, &CompileOptions::default());
+    let view = View {
+        target: Vector3::new(5.0, 0.0, 0.0),
+        height: 20.0,
+        ..View::default()
+    };
+    let hit = scene.pick_screen(&view, (400, 200), 200.0, 101.0, 3.0);
+    assert_eq!(hit.map(|source| source.handle), Some(handle));
+    assert!(scene
+        .pick_screen(&view, (400, 200), 200.0, 160.0, 3.0)
+        .is_none());
+}
+
+#[test]
+fn pick_screen_prefers_the_nearer_fill() {
+    let mut doc = doc();
+    doc.header.fill_mode = true;
+    let far = doc
+        .add_entity(EntityType::Solid(Solid::triangle(
+            Vector3::new(-5.0, -5.0, 0.0),
+            Vector3::new(5.0, -5.0, 0.0),
+            Vector3::new(-5.0, 5.0, 0.0),
+        )))
+        .unwrap();
+    let near = doc
+        .add_entity(EntityType::Solid(Solid::triangle(
+            Vector3::new(-5.0, -5.0, 5.0),
+            Vector3::new(5.0, -5.0, 5.0),
+            Vector3::new(-5.0, 5.0, 5.0),
+        )))
+        .unwrap();
+    let scene = compile(&doc, &CompileOptions::default());
+    let view = View {
+        target: Vector3::new(0.0, 0.0, 0.0),
+        height: 20.0,
+        ..View::default()
+    };
+    let hit = scene.pick_screen(&view, (400, 200), 180.0, 120.0, 0.0);
+    assert_eq!(
+        hit.map(|source| source.handle),
+        Some(near),
+        "the fill closer to a plan camera wins, far was {far}"
+    );
+}
+
+#[test]
+fn picking_a_nested_line_selects_the_insert() {
+    let mut doc = doc();
+    let mut line = Line::from_coords(0.0, 0.0, 0.0, 10.0, 0.0, 0.0);
+    line.common.layer = "0".to_string();
+    add_block_line(&mut doc, "WIDGET", line);
+    let insert = doc
+        .add_entity(EntityType::Insert(Insert::new(
+            "WIDGET",
+            Vector3::new(5.0, 5.0, 0.0),
+        )))
+        .unwrap();
+    let scene = compile(&doc, &CompileOptions::default());
+    let view = View {
+        target: Vector3::new(10.0, 5.0, 0.0),
+        height: 20.0,
+        ..View::default()
+    };
+    let hit = scene
+        .pick_screen(&view, (400, 200), 250.0, 100.0, 3.0)
+        .expect("the inserted line is pickable");
+    assert_eq!(hit.selection_handle(), insert);
+    assert!(hit.insert_path.contains(&insert));
+}
+
+#[test]
 fn orbit_keeps_an_orthonormal_frame() {
     let mut view = View {
         direction: -Vector3::UNIT_Y,
@@ -2690,11 +2784,7 @@ fn analytic_sphere_silhouette_stays_on_the_circle() {
         Err(error) => panic!("{error}"),
         Ok(image) => image,
     };
-    let background = [
-        image.pixels[0],
-        image.pixels[1],
-        image.pixels[2],
-    ];
+    let background = [image.pixels[0], image.pixels[1], image.pixels[2]];
     let is_object = |index: usize| {
         (0..3).any(|channel| {
             (image.pixels[index + channel] as i32 - background[channel] as i32).abs() > 24

@@ -11,6 +11,20 @@ pub struct EntityRef {
     pub insert_path: Vec<Handle>,
 }
 
+impl EntityRef {
+    /// Handle of the entity a user selects: the outermost insert when the
+    /// primitive belongs to a block reference, otherwise the entity itself.
+    pub fn selection_handle(&self) -> Handle {
+        self.insert_path.first().copied().unwrap_or(self.handle)
+    }
+
+    /// True when `handle` selects this primitive, either directly or through
+    /// an enclosing insert.
+    pub fn selected_by(&self, handle: Handle) -> bool {
+        handle == self.handle || handle == self.selection_handle()
+    }
+}
+
 /// Whether this primitive is the entity's real picture or a stand-in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DrawPath {
@@ -263,6 +277,106 @@ impl Scene {
         kinds
     }
 
+    /// Entity nearest a viewport pixel.
+    ///
+    /// Strokes are measured by screen distance, filled primitives by whether
+    /// the pixel lies inside them, and text by its run box. Ties go to the
+    /// primitive closest to the camera, so an edge lying on a selected face
+    /// wins over the face itself.
+    pub fn pick_screen(
+        &self,
+        view: &super::View,
+        viewport_px: (u32, u32),
+        x: f64,
+        y: f64,
+        tolerance_px: f64,
+    ) -> Option<&EntityRef> {
+        let tolerance = tolerance_px.max(0.0);
+        let width = viewport_px.0.max(1);
+        let height = viewport_px.1.max(1);
+        let mut best: Option<(&EntityRef, f64, f64)> = None;
+
+        for stroke in &self.strokes {
+            if stroke.curves.is_empty() {
+                pick_segments(
+                    &mut best,
+                    &stroke.source,
+                    stroke.points.windows(2).map(|pair| (pair[0], pair[1])),
+                    view,
+                    (width, height),
+                    x,
+                    y,
+                    tolerance,
+                );
+            } else {
+                for curve in &stroke.curves {
+                    let samples = super::curves::sample_curve(curve, 32);
+                    pick_segments(
+                        &mut best,
+                        &stroke.source,
+                        samples.windows(2).map(|pair| (pair[0], pair[1])),
+                        view,
+                        (width, height),
+                        x,
+                        y,
+                        tolerance,
+                    );
+                }
+            }
+        }
+
+        for fill in &self.fills {
+            for triangle in fill.triangles.chunks_exact(3) {
+                let a = view.project(triangle[0], width, height);
+                let b = view.project(triangle[1], width, height);
+                let c = view.project(triangle[2], width, height);
+                if point_in_triangle(x, y, &a, &b, &c) {
+                    let depth = a.depth.max(b.depth).max(c.depth);
+                    consider_pick(&mut best, &fill.source, 0.0, depth, tolerance);
+                }
+            }
+        }
+
+        for glyph in &self.glyphs {
+            let characters = glyph.text.chars().count().max(1) as f64;
+            let run_width = glyph.height * glyph.width_factor.abs() * characters * 0.6;
+            let (start, end) = match glyph.horizontal {
+                1 | 4 => (-run_width * 0.5, run_width * 0.5),
+                2 => (-run_width, 0.0),
+                _ => (0.0, run_width),
+            };
+            let baseline = glyph.anchor + glyph.axis_x * start;
+            let corners = [
+                baseline,
+                baseline + glyph.axis_x * (end - start),
+                baseline + glyph.axis_x * (end - start) + glyph.axis_y * glyph.height,
+                baseline + glyph.axis_y * glyph.height,
+            ]
+            .map(|corner| view.project(corner, width, height));
+            if point_in_quad(x, y, &corners) {
+                let depth = corners
+                    .iter()
+                    .map(|corner| corner.depth)
+                    .fold(f64::NEG_INFINITY, f64::max);
+                consider_pick(&mut best, &glyph.source, 0.0, depth, tolerance);
+            }
+        }
+
+        for picture in &self.pictures {
+            for triangle in picture.triangles.chunks_exact(3) {
+                let a = view.project(triangle[0], width, height);
+                let b = view.project(triangle[1], width, height);
+                let c = view.project(triangle[2], width, height);
+                if point_in_triangle(x, y, &a, &b, &c) {
+                    let depth = a.depth.max(b.depth).max(c.depth);
+                    consider_pick(&mut best, &picture.source, 0.0, depth, tolerance);
+                }
+            }
+        }
+
+        best.map(|(source, _, _)| source)
+    }
+
     /// World point nearest a stroke, within `tolerance`.
     pub fn pick(&self, point: Vector2, tolerance: f64) -> Option<&EntityRef> {
         let mut best: Option<(&EntityRef, f64)> = None;
@@ -298,6 +412,92 @@ fn include(min: &mut Vector3, max: &mut Vector3, point: Vector3) {
     max.x = max.x.max(point.x);
     max.y = max.y.max(point.y);
     max.z = max.z.max(point.z);
+}
+
+/// Keep the closest primitive, breaking ties by depth toward the camera.
+fn consider_pick<'a>(
+    best: &mut Option<(&'a EntityRef, f64, f64)>,
+    source: &'a EntityRef,
+    distance: f64,
+    depth: f64,
+    tolerance: f64,
+) {
+    if distance > tolerance {
+        return;
+    }
+    let better = match best {
+        None => true,
+        Some((_, best_distance, best_depth)) => {
+            distance < *best_distance - 1e-6
+                || ((distance - *best_distance).abs() <= 1e-6 && depth > *best_depth)
+        }
+    };
+    if better {
+        *best = Some((source, distance, depth));
+    }
+}
+
+fn pick_segments<'a, I>(
+    best: &mut Option<(&'a EntityRef, f64, f64)>,
+    source: &'a EntityRef,
+    segments: I,
+    view: &super::View,
+    viewport_px: (u32, u32),
+    x: f64,
+    y: f64,
+    tolerance: f64,
+) where
+    I: Iterator<Item = (Vector3, Vector3)>,
+{
+    for (start, end) in segments {
+        let start = view.project(start, viewport_px.0, viewport_px.1);
+        let end = view.project(end, viewport_px.0, viewport_px.1);
+        let (distance, t) = screen_segment_distance(x, y, &start, &end);
+        let depth = start.depth + (end.depth - start.depth) * t;
+        consider_pick(best, source, distance, depth, tolerance);
+    }
+}
+
+/// Distance from a pixel to a projected segment, and the parameter of the
+/// nearest point along it.
+fn screen_segment_distance(
+    x: f64,
+    y: f64,
+    start: &super::ScreenPoint,
+    end: &super::ScreenPoint,
+) -> (f64, f64) {
+    let dx = end.x - start.x;
+    let dy = end.y - start.y;
+    let len2 = dx * dx + dy * dy;
+    let t = if len2 <= f64::EPSILON {
+        0.0
+    } else {
+        (((x - start.x) * dx + (y - start.y) * dy) / len2).clamp(0.0, 1.0)
+    };
+    let px = start.x + dx * t - x;
+    let py = start.y + dy * t - y;
+    ((px * px + py * py).sqrt(), t)
+}
+
+fn point_in_triangle(
+    x: f64,
+    y: f64,
+    a: &super::ScreenPoint,
+    b: &super::ScreenPoint,
+    c: &super::ScreenPoint,
+) -> bool {
+    let cross = |p: &super::ScreenPoint, q: &super::ScreenPoint| {
+        (q.x - p.x) * (y - p.y) - (q.y - p.y) * (x - p.x)
+    };
+    let ab = cross(a, b);
+    let bc = cross(b, c);
+    let ca = cross(c, a);
+    (ab >= -1e-6 && bc >= -1e-6 && ca >= -1e-6) || (ab <= 1e-6 && bc <= 1e-6 && ca <= 1e-6)
+}
+
+fn point_in_quad(x: f64, y: f64, corners: &[super::ScreenPoint; 4]) -> bool {
+    point_in_triangle(x, y, &corners[0], &corners[1], &corners[2])
+        || point_in_triangle(x, y, &corners[0], &corners[2], &corners[3])
 }
 
 fn segment_distance(point: Vector2, start: Vector3, end: Vector3) -> f64 {

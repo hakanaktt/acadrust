@@ -11,6 +11,7 @@ pub(crate) struct AtlasQuad {
     pub rgb: [u8; 3],
     pub aci7: bool,
     pub opacity: f32,
+    pub source: super::scene::EntityRef,
 }
 
 pub(crate) struct BuiltAtlas {
@@ -150,6 +151,7 @@ pub(crate) fn build_atlas(
                 rgb: run.rgb,
                 aci7: run.aci7,
                 opacity: run.opacity,
+                source: run.source.clone(),
             });
         }
     }

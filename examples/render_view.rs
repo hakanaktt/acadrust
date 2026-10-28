@@ -5,7 +5,8 @@
 //! cargo run --example render_view --features render -- target/entity-atlas/AC1032/entity_atlas_AC1032_dwg.dwg
 //! ```
 //!
-//! Drag with the left button to pan. Scroll to zoom.
+//! Click an entity to select it. Drag with the left button to pan, and scroll
+//! to zoom.
 
 use std::sync::Arc;
 use std::{
@@ -133,6 +134,8 @@ struct Gpu {
     view: View,
     prepared: bool,
     dragging: bool,
+    drag_moved: bool,
+    press_cursor: Option<(f64, f64)>,
     last_cursor: Option<(f64, f64)>,
 }
 
@@ -176,8 +179,26 @@ impl Gpu {
             view,
             prepared: false,
             dragging: false,
+            drag_moved: false,
+            press_cursor: None,
             last_cursor: None,
         }
+    }
+
+    fn select_at(&mut self, x: f64, y: f64) {
+        let picked = self
+            .scene
+            .pick_screen(
+                &self.view,
+                (self.config.width, self.config.height),
+                x,
+                y,
+                4.0,
+            )
+            .map(|source| source.selection_handle());
+        self.renderer.set_selection(picked);
+        self.prepared = false;
+        self.window.request_redraw();
     }
 
     fn resize(&mut self, width: u32, height: u32) {
@@ -278,14 +299,33 @@ impl ApplicationHandler for App {
                 button: MouseButton::Left,
                 ..
             } => {
-                gpu.dragging = state.is_pressed();
-                if !gpu.dragging {
+                if state.is_pressed() {
+                    gpu.dragging = true;
+                    gpu.drag_moved = false;
+                    gpu.press_cursor = gpu.last_cursor;
+                } else {
+                    let clicked = gpu.dragging && !gpu.drag_moved;
+                    gpu.dragging = false;
+                    gpu.press_cursor = None;
+                    if clicked {
+                        if let Some((x, y)) = gpu.last_cursor {
+                            gpu.select_at(x, y);
+                        }
+                    }
                     gpu.last_cursor = None;
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
                 if gpu.dragging {
                     if let Some((x, y)) = gpu.last_cursor {
+                        if gpu.press_cursor.is_none() {
+                            gpu.press_cursor = Some((x, y));
+                        }
+                        if let Some((px, py)) = gpu.press_cursor {
+                            if (position.x - px).abs() + (position.y - py).abs() > 3.0 {
+                                gpu.drag_moved = true;
+                            }
+                        }
                         gpu.pan(position.x - x, position.y - y);
                     }
                 }
