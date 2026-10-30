@@ -1400,7 +1400,11 @@ impl<'a> DwgObjectWriter<'a> {
             self.write_default_modern_table_row_style(
                 row,
                 (id, style_type, name, merge_flags),
-                (value.horizontal_margin, value.vertical_margin),
+                (
+                    value.horizontal_margin,
+                    value.vertical_margin,
+                    value.data_row_style.text_height,
+                ),
             );
         }
     }
@@ -1409,7 +1413,7 @@ impl<'a> DwgObjectWriter<'a> {
         &mut self,
         row: &RowCellStyle,
         (id, style_type, name, merge_flags): (i32, i32, &str, i32),
-        margins: (f64, f64),
+        margins: (f64, f64, f64),
     ) {
         let text_style = self.resolve_table_row_text_style(row);
         self.write_named_table_cell_style(&NamedTableCellStyle {

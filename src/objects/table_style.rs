@@ -608,7 +608,9 @@ pub const CELL_CLASS_DATA: i32 = 2;
 /// The R2010+ cell style a pre-R2010 row style describes.
 pub(crate) fn row_cell_style(
     row: &RowCellStyle,
-    margins: (f64, f64),
+    // Horizontal and vertical margins, and the spacing (the data text
+    // height in every cell style of the style).
+    margins: (f64, f64, f64),
     text_style: Handle,
     merge_flags: i32,
 ) -> TableCellStyleData {
@@ -658,8 +660,8 @@ pub(crate) fn row_cell_style(
         right_margin: margins.0,
         vertical_margin: margins.1,
         bottom_margin: margins.1,
-        horizontal_spacing: row.text_height,
-        vertical_spacing: row.text_height,
+        horizontal_spacing: margins.2,
+        vertical_spacing: margins.2,
         borders,
         ..TableCellStyleData::default()
     }
@@ -944,7 +946,11 @@ impl TableStyle {
         if !self.modern_overrides.is_empty() {
             return;
         }
-        let margins = (self.horizontal_margin, self.vertical_margin);
+        let margins = (
+            self.horizontal_margin,
+            self.vertical_margin,
+            self.data_row_style.text_height,
+        );
         let rows = [
             (&self.title_row_style, 1, CELL_CLASS_LABEL, TITLE_CELL_STYLE, TableCellStyleData::MERGE_ALL),
             (&self.header_row_style, 2, CELL_CLASS_LABEL, HEADER_CELL_STYLE, 0),
