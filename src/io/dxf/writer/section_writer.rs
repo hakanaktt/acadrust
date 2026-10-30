@@ -6154,8 +6154,9 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 ObjectType::UnderlayDefinition(def) => self.write_underlay_definition(def)?,
                 ObjectType::PlotSettings(plotsettings) => self.write_plot_settings(plotsettings)?,
                 ObjectType::MultiLeaderStyle(style) => self.write_multileader_style(style)?,
-                ObjectType::TableStyle(style) => self.write_table_style(style)?,
-                ObjectType::TableContent(table) => self.write_table_content_object_dxf(table)?,
+                ObjectType::TableStyle(style) => self.write_table_style(style, document)?,
+                ObjectType::TableContent(table) => self.write_table_content_object_dxf(table, false)?,
+                ObjectType::TableTemplate(table) => self.write_table_content_object_dxf(table, true)?,
                 ObjectType::Scale(scale) => self.write_scale(scale)?,
                 ObjectType::ObjectContextData(ctx) => self.write_object_context_data(ctx)?,
                 ObjectType::SortEntitiesTable(table) => self.write_sort_entities_table(table)?,
@@ -8317,7 +8318,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     }
 
     /// Write TableStyle object
-    fn write_table_style(&mut self, style: &TableStyle) -> Result<()> {
+    fn write_table_style(&mut self, style: &TableStyle, document: &CadDocument) -> Result<()> {
         self.writer.write_string(0, "TABLESTYLE")?;
         if let Some(raw_dxf_codes) = &style.raw_dxf_codes {
             let has_flags = raw_dxf_codes.iter().any(|(code, _)| *code == 71);
@@ -8359,10 +8360,22 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             }
             return Ok(());
         }
+        // The named cell styles describe the style when it has them; the
+        // record's row groups are their title, header and data styles.
+        let projected;
+        let style = if style.modern_overrides.is_empty() {
+            style
+        } else {
+            let mut copy = style.clone();
+            copy.sync_rows_from_cell_styles();
+            projected = copy;
+            &projected
+        };
         self.writer.write_handle(5, style.handle)?;
         self.writer.write_handle(330, style.owner_handle)?;
         self.writer.write_subclass("AcDbTableStyle")?;
 
+        self.writer.write_i16(280, style.version)?;
         self.writer.write_string(3, &style.description)?;
 
         // Flow direction
@@ -8386,17 +8399,28 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             .write_byte(281, (!style.has_header_row()) as u8)?;
 
         // Write cell style info for data row
-        self.write_table_cell_style(&style.data_row_style)?;
-        self.write_table_cell_style(&style.title_row_style)?;
-        self.write_table_cell_style(&style.header_row_style)?;
+        self.write_table_cell_style(&style.data_row_style, document)?;
+        self.write_table_cell_style(&style.title_row_style, document)?;
+        self.write_table_cell_style(&style.header_row_style, document)?;
         self.write_annotative_xdata(style.annotative)?;
 
         Ok(())
     }
 
     /// Helper to write table cell style
-    fn write_table_cell_style(&mut self, style: &crate::objects::RowCellStyle) -> Result<()> {
-        self.writer.write_string(7, &style.text_style_name)?;
+    fn write_table_cell_style(
+        &mut self,
+        style: &crate::objects::RowCellStyle,
+        document: &CadDocument,
+    ) -> Result<()> {
+        // A row of an R2010+ cell style knows its text style by handle.
+        let text_style = style
+            .text_style_handle
+            .and_then(|handle| document.text_styles.iter().find(|s| s.handle == handle))
+            .map_or(style.text_style_name.as_str(), |s| s.name.as_str());
+        if !text_style.is_empty() {
+            self.writer.write_string(7, text_style)?;
+        }
         self.writer.write_double(140, style.text_height)?;
         self.writer.write_i16(170, style.alignment as i16)?;
         self.write_color_i16(62, style.text_color)?;
@@ -11171,8 +11195,9 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         Ok(())
     }
 
-    fn write_table_content_object_dxf(&mut self, table: &table::Table) -> Result<()> {
-        self.writer.write_string(0, "TABLECONTENT")?;
+    fn write_table_content_object_dxf(&mut self, table: &table::Table, template: bool) -> Result<()> {
+        self.writer
+            .write_string(0, if template { "TABLETEMPLATE" } else { "TABLECONTENT" })?;
         self.writer.write_handle(5, table.common.handle)?;
         if !table.common.reactors.is_empty() {
             self.writer.write_string(102, "{ACAD_REACTORS")?;
@@ -11259,6 +11284,9 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_subclass("AcDbTableContent")?;
         self.writer
             .write_handle(340, table.table_style_handle.unwrap_or(Handle::NULL))?;
+        if template {
+            self.writer.write_subclass("AcDbTableTemplate")?;
+        }
         Ok(())
     }
 

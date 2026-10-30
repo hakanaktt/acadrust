@@ -74,6 +74,10 @@ impl DwgWriter {
         prepare_table_keys(&mut prepared);
         prepare_active_viewport_elevation(&mut prepared);
         prepare_roundtrip_records(&mut prepared);
+        // R2010+ style records own their starting table; older ones keep it
+        // in the extension dictionary.
+        let in_dictionary = prepared.version < DxfVersion::AC1024;
+        crate::objects::prepare_table_style_templates(&mut prepared, in_dictionary);
         prepare_book_colors(&mut prepared)?;
         let document = prepared.as_ref();
         let perf = std::env::var_os("PERF").is_some();
@@ -165,6 +169,10 @@ impl DwgWriter {
         prepare_table_keys(&mut prepared);
         prepare_active_viewport_elevation(&mut prepared);
         prepare_roundtrip_records(&mut prepared);
+        // R2010+ style records own their starting table; older ones keep it
+        // in the extension dictionary.
+        let in_dictionary = prepared.version < DxfVersion::AC1024;
+        crate::objects::prepare_table_style_templates(&mut prepared, in_dictionary);
         prepare_book_colors(&mut prepared)?;
         write_ac21_impl(&mut output, prepared.as_ref(), document.version, true)
     }

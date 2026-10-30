@@ -283,6 +283,8 @@ impl<'a> DxfWriter<'a> {
             prepared.to_mut().assign_table_entry_handles();
         }
         crate::io::dwg::dwg_writer::prepare_active_viewport_elevation(&mut prepared);
+        crate::objects::prepare_table_style_cell_maps(&mut prepared);
+        crate::objects::prepare_table_style_templates(&mut prepared, true);
         self.write_prepared_dxf(writer, prepared.as_ref(), output_version)
     }
 

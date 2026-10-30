@@ -6747,7 +6747,7 @@ impl DwgDocumentBuilder {
                         crate::objects::ObjectType::Material(obj),
                     );
                 }
-                OBJ_TABLECONTENT => {
+                OBJ_TABLECONTENT | OBJ_TABLETEMPLATE => {
                     let (
                         name,
                         description,
@@ -6787,10 +6787,12 @@ impl DwgDocumentBuilder {
                     obj.sync_cells_from_merged_ranges();
                     obj.table_style_handle = (style_handle != 0)
                         .then(|| Handle::from(style_handle));
-                    document.objects.insert(
-                        Handle::from(handle),
-                        crate::objects::ObjectType::TableContent(obj),
-                    );
+                    let object = if type_code == OBJ_TABLETEMPLATE {
+                        crate::objects::ObjectType::TableTemplate(obj)
+                    } else {
+                        crate::objects::ObjectType::TableContent(obj)
+                    };
+                    document.objects.insert(Handle::from(handle), object);
                 }
                 OBJ_TABLESTYLE => {
                     let mut obj =
