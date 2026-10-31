@@ -1334,6 +1334,38 @@ impl DwgDocumentBuilder {
                 }
             }
 
+            // The header names the model and paper space records by handle. A damaged name
+            // would turn the drawing into an ordinary block: give the records back their
+            // canonical names, and report it.
+            for (active, canonical) in [
+                (active_model, "*Model_Space"),
+                (active_paper, "*Paper_Space"),
+            ] {
+                if active.is_null() {
+                    continue;
+                }
+                for entry in &mut parsed_entries {
+                    let ParsedEntry::Block(h, data) = entry else {
+                        continue;
+                    };
+                    if Handle::from(*h) != active || data.name.eq_ignore_ascii_case(canonical) {
+                        continue;
+                    }
+                    let message = format!(
+                        "Block record {:#X} is the header's {canonical} but is named {:?}; renamed {canonical}",
+                        *h, data.name
+                    );
+                    self.notifications
+                        .notify(NotificationType::Warning, message.clone());
+                    let mut diagnostic =
+                        ReadDiagnostic::new("space-block-renamed", ReadStage::Objects, message);
+                    diagnostic.record_handle = Some(*h);
+                    push_read_diagnostic(&mut diagnostics, diagnostic);
+                    data.name = canonical.to_string();
+                    maps.blocks.insert(*h, data.name.clone());
+                }
+            }
+
             // Collect (index, handle, name) for all Block entries
             let block_info: Vec<(usize, u64, String)> = parsed_entries
                 .iter()
