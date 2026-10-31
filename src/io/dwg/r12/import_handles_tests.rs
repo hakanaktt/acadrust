@@ -370,6 +370,33 @@ fn anonymous_block_fallback_names_do_not_collide_with_existing_names() {
 }
 
 #[test]
+fn anonymous_block_fallback_does_not_claim_a_later_marker_name() {
+    use super::entities::PositionedRecord;
+    let mut rows = vec![
+        record("BLOCK", &[(2, "*X"), (70, "1"), (90, "0")]),
+        record("BLOCK", &[(2, "*X"), (70, "1"), (90, "10")]),
+    ];
+    let blocks = SectionRecords {
+        base_address: 100,
+        records: [(0, "*X"), (10, "*X0")]
+            .into_iter()
+            .map(|(offset, name)| PositionedRecord {
+                offset,
+                address: 100 + offset,
+                size: 10,
+                record: Some(record("BLOCK", &[(2, name)])),
+                jump_address: None,
+                sequence_owner: None,
+            })
+            .collect(),
+        ..Default::default()
+    };
+    adopt_distinct_block_names(&mut rows, &blocks, 100);
+    assert_eq!(rows[1].string(2), "*X0", "preserve the distinct BLOCK marker name");
+    assert_ne!(rows[0].string(2), "*X0");
+}
+
+#[test]
 fn legacy_header_indices_resolve_to_imported_table_handles() {
     let mut tables: [Vec<EntityRecord>; 10] = std::array::from_fn(|_| Vec::new());
     tables[1] = vec![
