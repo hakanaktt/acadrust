@@ -516,11 +516,11 @@ fn encode_record(
         if flag & 2 != 0 {
             writer.short(super::tables::linetype_index(tables, ltype)?);
         }
-        if flag & 8 != 0 {
-            writer.double(record.number(39, 0.));
-        }
         if flag & 4 != 0 {
             writer.double(elevation);
+        }
+        if flag & 8 != 0 {
+            writer.double(record.number(39, 0.));
         }
         if flag & 32 != 0 {
             let bytes = handle.to_be_bytes();
@@ -926,14 +926,14 @@ fn decode_record_with_owner(
         out.put(6, super::tables::linetype_name(t, index)?);
     }
     let is3d = matches!(kind, 1 | 2 | 21 | 22);
-    if flag & 8 != 0 {
-        out.put(39, r.double()?);
-    }
     let elevation = if flag & 4 != 0 && !is3d {
         r.double()?
     } else {
         0.
     };
+    if flag & 8 != 0 {
+        out.put(39, r.double()?);
+    }
     if flag & 32 != 0 {
         let size = r.byte()? as usize;
         if size > 8 {
@@ -2040,17 +2040,17 @@ mod tests {
     }
 
     #[test]
-    fn native_common_fields_use_short_linetype_indices_and_thickness_before_elevation() {
+    fn native_common_fields_use_short_linetype_indices_and_elevation_before_thickness() {
         let mut tables = tables();
         tables.linetypes = (0..300).map(|i| format!("L{i}")).collect();
         // Independently assembled native CIRCLE: linetype 257, thickness 2,
         // elevation 3, handle A5B6, center (4, 5), radius 6.
-        // Field layout: CC0-1.0 dwg_ac1009.ksy, entity_circle, in
-        // https://github.com/michal-josef-spacek/CAD-Format-DWG-AC1009
+        // AutoCAD 2025 independently confirms elevation before thickness;
+        // the earlier third-party-layout-based ordering was reversed.
         let mut raw = vec![3, 0x2e, 0, 0, 0, 0, 0, 0];
         raw.extend_from_slice(&257i16.to_le_bytes());
-        raw.extend_from_slice(&2f64.to_le_bytes());
         raw.extend_from_slice(&3f64.to_le_bytes());
+        raw.extend_from_slice(&2f64.to_le_bytes());
         raw.extend_from_slice(&[2, 0xa5, 0xb6]);
         for value in [4f64, 5., 6.] {
             raw.extend_from_slice(&value.to_le_bytes());
