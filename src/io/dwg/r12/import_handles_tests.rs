@@ -322,6 +322,90 @@ fn legacy_header_indices_resolve_to_imported_table_handles() {
 }
 
 #[test]
+fn r12_current_layer_name_agrees_with_resolved_header_handle() {
+    let mut tables: [Vec<EntityRecord>; 10] = std::array::from_fn(|_| Vec::new());
+    tables[3] = vec![record("LTYPE", &[(2, "CONTINUOUS")])];
+    tables[1] = vec![
+        record("LAYER", &[(2, "0")]),
+        record("LAYER", &[(2, "WORK")]),
+    ];
+    for seed in [0, 0x1000] {
+        for index in [0, 1] {
+            let bytes = fixture_with_references(
+                seed,
+                &tables,
+                &[],
+                &[],
+                HeaderReferences {
+                    layer_index: index,
+                    ..Default::default()
+                },
+            );
+            let doc = crate::DwgReader::from_stream(Cursor::new(bytes))
+                .read()
+                .unwrap();
+            let expected = if index == 0 { "0" } else { "WORK" };
+            assert_eq!(
+                doc.header.current_layer_handle,
+                doc.layers.get(expected).unwrap().handle
+            );
+            assert_eq!(
+                doc.header.current_layer_name, expected,
+                "seed={seed}, index={index}"
+            );
+        }
+    }
+}
+
+#[test]
+fn r12_current_linetype_name_agrees_with_named_and_special_header_indices() {
+    let mut tables: [Vec<EntityRecord>; 10] = std::array::from_fn(|_| Vec::new());
+    tables[3] = vec![
+        record("LTYPE", &[(2, "CONTINUOUS")]),
+        record("LTYPE", &[(2, "DASHED")]),
+    ];
+    let mut mismatches = Vec::new();
+    for seed in [0, 0x1000] {
+        for (index, expected) in [
+            (0, "CONTINUOUS"),
+            (1, "DASHED"),
+            (-1, "ByLayer"),
+            (-2, "ByBlock"),
+            (32767, "ByLayer"),
+            (32766, "ByBlock"),
+        ] {
+            let bytes = fixture_with_references(
+                seed,
+                &tables,
+                &[],
+                &[],
+                HeaderReferences {
+                    linetype_index: index,
+                    ..Default::default()
+                },
+            );
+            let doc = crate::DwgReader::from_stream(Cursor::new(bytes))
+                .read()
+                .unwrap();
+            let entry = doc.line_types.get(expected).unwrap();
+            assert_eq!(doc.header.current_linetype_handle, entry.handle);
+            if doc.header.current_linetype_name != entry.name {
+                mismatches.push((
+                    seed,
+                    index,
+                    entry.name.clone(),
+                    doc.header.current_linetype_name,
+                ));
+            }
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "header names disagree with resolved handles: {mismatches:?}"
+    );
+}
+
+#[test]
 fn adopt_only_splits_duplicated_block_table_names() {
     use super::entities::PositionedRecord;
     use super::traversal::SectionRecords;
