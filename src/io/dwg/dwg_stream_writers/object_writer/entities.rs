@@ -2870,11 +2870,16 @@ impl<'a> DwgObjectWriter<'a> {
         parent_layer: &str,
         parent_color: &crate::types::Color,
     ) {
+        let layer = if v.layer.is_empty() {
+            parent_layer
+        } else {
+            &v.layer
+        };
         self.write_common_entity_data(
             common::OBJ_VERTEX_3D,
             vertex_handle,
             owner,
-            parent_layer,
+            layer,
             parent_color,
             &crate::types::LineWeight::ByLayer,
             &crate::types::Transparency::default(),
