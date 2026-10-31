@@ -11688,6 +11688,16 @@ impl<'a> SectionReader<'a> {
                 }
                 Ok(true)
             }
+            // Plot style name type (AcDb::PlotStyleNameType): 0 ByLayer, 1 ByBlock. 3 (by id)
+            // comes with the handle in group 390, which sets the flags itself.
+            380 => {
+                if let Some(v @ (0 | 1)) = pair.as_i16() {
+                    if common.plotstyle_handle.is_none() {
+                        common.plotstyle_flags = v as u8;
+                    }
+                }
+                Ok(true)
+            }
             // Named plot style: the handle of its ACDBPLACEHOLDER (R2000+).
             390 => {
                 if let Ok(h) = u64::from_str_radix(pair.value_string.trim(), 16) {
