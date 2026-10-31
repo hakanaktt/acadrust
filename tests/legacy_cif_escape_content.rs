@@ -1,7 +1,8 @@
 //! In a pre-2007 drawing, `\U+XXXX` is a transport escape for a character the
 //! drawing's code page cannot hold. When the page can hold the character, the
 //! writer never escapes it, so a `\U+XXXX` the file does contain is the text
-//! itself and has to come back unchanged.
+//! itself and has to come back unchanged from a DWG. A DXF reader decodes it
+//! all the same, as AutoCAD does (#260).
 
 use acadrust::entities::{EntityType, Text};
 use acadrust::io::dxf::{DxfReader, DxfWriter};
@@ -72,11 +73,13 @@ fn the_dwg_header_reads_the_page_the_entities_do() {
     }
 }
 
+/// A DXF reader decodes it all the same, as AutoCAD does (#260): some writers
+/// escape every non-ASCII character to keep a pre-2007 DXF in ASCII.
 #[test]
-fn a_dxf_escape_the_page_can_hold_is_content() {
-    for (page, text) in HELD {
+fn a_dxf_escape_the_page_can_hold_is_decoded() {
+    for ((page, text), want) in HELD.into_iter().zip(["94\u{B0}", "94\u{B0}", "A\u{104}B"]) {
         let back = dxf_round_trip(&doc_with(text, page, DxfVersion::AC1015));
-        assert_eq!(first_text(&back), text, "{page}");
+        assert_eq!(first_text(&back), want, "{page}");
     }
 }
 

@@ -83,7 +83,7 @@ impl<R: Read + Seek> DxfTextReader<R> {
         let line = if crate::io::dxf::code_page::has_legacy_escape(&line) {
             match self.encoding {
                 Some(encoding) => {
-                    crate::io::dxf::code_page::decode_legacy_escapes_in(&line, encoding)
+                    crate::io::dxf::code_page::decode_dxf_legacy_escapes_in(&line, encoding)
                 }
                 None => crate::io::dxf::code_page::decode_legacy_escapes(&line),
             }

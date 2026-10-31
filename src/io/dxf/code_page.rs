@@ -548,6 +548,19 @@ pub fn decode_legacy_escapes_in(text: &str, encoding: impl Into<LegacyEncoding>)
     decode_cif_escapes_in(&decode_mif_escapes(text), encoding)
 }
 
+/// [`decode_legacy_escapes`] for a DXF line read in `encoding`. AutoCAD decodes
+/// every well-formed `\U+XXXX` in a pre-2007 DXF, held by the code page or not
+/// (some writers escape every non-ASCII character to keep the file ASCII), so
+/// only a UTF-8 file (AC1021+) keeps its escapes as text, as in
+/// [`decode_cif_escapes_in`].
+pub fn decode_dxf_legacy_escapes_in(text: &str, encoding: impl Into<LegacyEncoding>) -> String {
+    let encoding = encoding.into();
+    if encoding == LegacyEncoding::Whatwg(encoding_rs::UTF_8) {
+        return decode_legacy_escapes_in(text, encoding);
+    }
+    decode_legacy_escapes(text)
+}
+
 fn decode_cif(text: &str, held_by: Option<LegacyEncoding>) -> String {
     if !text.contains("\\U+") {
         return text.to_string();
