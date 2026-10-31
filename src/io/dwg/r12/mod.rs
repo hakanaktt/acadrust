@@ -225,7 +225,7 @@ pub(crate) fn read_document(
     // carries the distinct name (`*D0`, `*D1`, …). Dimensions address the table
     // by index, so the shared name has to be replaced before those indexes are
     // turned into DXF names.
-    if header.layout.blocks_size != 0 {
+    let distinct_block_names = if header.layout.blocks_size != 0 {
         let preview = section_records(
             data,
             header.layout.blocks_start,
@@ -237,9 +237,13 @@ pub(crate) fn read_document(
             code_page,
             Some(header.tables[9]),
         )?;
-        adopt_distinct_block_names(&mut table_records[0], &preview, header.layout.blocks_start);
+        let names =
+            adopt_distinct_block_names(&mut table_records[0], &preview, header.layout.blocks_start);
         tables = ensure_table_defaults(tables::entity_tables(&table_records));
-    }
+        names
+    } else {
+        HashMap::new()
+    };
     let entities = section_records(
         data,
         header.layout.entities_start,
@@ -311,6 +315,13 @@ pub(crate) fn read_document(
         }
     }
     for block in blocks.iter_mut().filter(|record| record.kind == "BLOCK") {
+        if let Some(name) = block
+            .native_address
+            .and_then(|address| distinct_block_names.get(&address))
+        {
+            block.pairs.retain(|(code, _)| *code != 2);
+            block.pairs.push((2, name.clone()));
+        }
         if block.string(2).is_empty() {
             if let Some(table_record) = table_records[0].iter().find(|record| {
                 let offset = record.integer(90, 0) as u32 & 0x3fff_ffff;
@@ -538,7 +549,7 @@ fn adopt_distinct_block_names(
     rows: &mut [EntityRecord],
     blocks: &SectionRecords,
     blocks_start: u32,
-) {
+) -> HashMap<u32, String> {
     // Only duplicated table names lose their index identity. A unique name
     // stays as stored so a differing BLOCK string cannot rename another block.
     let mut counts = std::collections::HashMap::<String, usize>::new();
@@ -551,7 +562,17 @@ fn adopt_distinct_block_names(
         .iter()
         .map(|row| row.string(2).to_ascii_uppercase())
         .collect();
-    for row in rows.iter_mut() {
+    // Generated names must not take a distinct BLOCK marker name that a later
+    // table row has not yet had a chance to adopt.
+    let marker_names: std::collections::HashSet<String> = blocks
+        .records
+        .iter()
+        .filter_map(|positioned| positioned.record.as_ref())
+        .filter(|record| record.kind == "BLOCK")
+        .map(|record| record.string(2).to_ascii_uppercase())
+        .collect();
+    let mut renamed = HashMap::new();
+    for (index, row) in rows.iter_mut().enumerate() {
         let current = row.string(2).to_ascii_uppercase();
         if counts.get(&current).copied().unwrap_or(0) < 2 {
             continue;
@@ -565,23 +586,33 @@ fn adopt_distinct_block_names(
             if positioned.address != address || record.kind != "BLOCK" {
                 return None;
             }
-            let name = record.string(2);
-            if name.is_empty() {
-                None
-            } else {
-                Some(name.to_owned())
-            }
+            Some(record.string(2).to_owned())
         }) else {
             continue;
         };
-        let claimed_name = name.to_ascii_uppercase();
-        if claimed_name == current || claimed.contains(&claimed_name) {
+        let name = if !name.is_empty() && !claimed.contains(&name.to_ascii_uppercase()) {
+            name
+        } else if row.integer(70, 0) & 1 != 0 && current.starts_with('*') {
+            // Some R12 writers store only an anonymous prefix in both places.
+            // The native table index still distinguishes the definitions.
+            let mut suffix = index;
+            loop {
+                let candidate = format!("{current}{suffix}");
+                if !claimed.contains(&candidate) && !marker_names.contains(&candidate) {
+                    break candidate;
+                }
+                suffix += 1;
+            }
+        } else {
             continue;
-        }
+        };
+        let claimed_name = name.to_ascii_uppercase();
         claimed.insert(claimed_name);
         row.pairs.retain(|(code, _)| *code != 2);
-        row.pairs.push((2, name));
+        row.pairs.push((2, name.clone()));
+        renamed.insert(address, name);
     }
+    renamed
 }
 
 fn records_reference_application(records: &DxfRecords, application: &str) -> bool {
