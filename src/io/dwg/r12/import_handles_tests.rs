@@ -274,6 +274,102 @@ fn import_handle_overflow_is_rejected() {
 }
 
 #[test]
+fn duplicated_anonymous_block_names_keep_distinct_owned_contents() {
+    let mut tables: [Vec<EntityRecord>; 10] = std::array::from_fn(|_| Vec::new());
+    tables[0] = vec![
+        record("BLOCK", &[(2, "*X"), (70, "1"), (90, "0")]),
+        record("BLOCK", &[(2, "*X"), (70, "1"), (90, "0")]),
+    ];
+    tables[1] = vec![record("LAYER", &[(2, "0")])];
+    tables[3] = vec![record("LTYPE", &[(2, "CONTINUOUS")])];
+    let blocks = vec![
+        record("BLOCK", &[(2, "*X"), (5, "201"), (8, "0")]),
+        record("LINE", &[(5, "202"), (8, "0"), (10, "1"), (11, "2")]),
+        record("ENDBLK", &[(5, "203"), (8, "0")]),
+        record("BLOCK", &[(2, "*X"), (5, "204"), (8, "0")]),
+        record("LINE", &[(5, "205"), (8, "0"), (10, "3"), (11, "4")]),
+        record("ENDBLK", &[(5, "206"), (8, "0")]),
+    ];
+    let refs = ensure_table_defaults(tables::entity_tables(&tables));
+    let offset = encode_entities(&blocks[..3], &refs, 0, "ANSI_1252")
+        .unwrap()
+        .len();
+    tables[0][1].pairs.retain(|(code, _)| *code != 90);
+    tables[0][1].pairs.push((90, offset.to_string()));
+    let inserts = [record("INSERT", &[(2, "*X"), (5, "301"), (8, "0")])];
+    let doc =
+        crate::DwgReader::from_stream(Cursor::new(fixture(0x1000, &tables, &inserts, &blocks)))
+            .read()
+            .unwrap();
+    let first = doc.get_entity(Handle::new(0x202)).unwrap();
+    let second = doc.get_entity(Handle::new(0x205)).unwrap();
+    let owners = (first.common().owner_handle, second.common().owner_handle);
+    assert_ne!(
+        owners.0, doc.header.model_space_block_handle,
+        "first block content escaped into model space"
+    );
+    assert_ne!(
+        owners.1, doc.header.model_space_block_handle,
+        "second block content escaped into model space"
+    );
+    assert_ne!(owners.0, owners.1, "distinct anonymous blocks were merged");
+    for (owner, child) in [
+        (owners.0, Handle::new(0x202)),
+        (owners.1, Handle::new(0x205)),
+    ] {
+        let block = doc
+            .block_records
+            .iter()
+            .find(|b| b.handle == owner)
+            .unwrap();
+        assert!(block.entity_handles.contains(&child));
+    }
+    let EntityType::Insert(insert) = doc.get_entity(Handle::new(0x301)).unwrap() else {
+        panic!("insert");
+    };
+    assert_eq!(
+        doc.block_records.get(&insert.block_name).unwrap().handle,
+        owners.0
+    );
+}
+
+#[test]
+fn anonymous_block_fallback_names_do_not_collide_with_existing_names() {
+    use super::entities::PositionedRecord;
+    let mut rows = vec![
+        record("BLOCK", &[(2, "*X"), (70, "1"), (90, "0")]),
+        record("BLOCK", &[(2, "*X"), (70, "1"), (90, "10")]),
+        record("BLOCK", &[(2, "*X0"), (70, "1"), (90, "20")]),
+    ];
+    let blocks = SectionRecords {
+        base_address: 100,
+        records: [0, 10, 20]
+            .into_iter()
+            .map(|offset| PositionedRecord {
+                offset,
+                address: 100 + offset,
+                size: 10,
+                record: Some(record(
+                    "BLOCK",
+                    &[(2, if offset == 20 { "*X0" } else { "*X" })],
+                )),
+                jump_address: None,
+                sequence_owner: None,
+            })
+            .collect(),
+        ..Default::default()
+    };
+    adopt_distinct_block_names(&mut rows, &blocks, 100);
+    let names: std::collections::HashSet<_> = rows.iter().map(|r| r.string(2)).collect();
+    assert_eq!(names.len(), 3, "anonymous definitions need distinct names");
+    assert_eq!(
+        rows[2].string(2),
+        "*X0",
+        "an existing unique name must stay unchanged"
+    );
+}
+
+#[test]
 fn legacy_header_indices_resolve_to_imported_table_handles() {
     let mut tables: [Vec<EntityRecord>; 10] = std::array::from_fn(|_| Vec::new());
     tables[1] = vec![
