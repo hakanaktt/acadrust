@@ -2077,6 +2077,68 @@ mod tests {
         }
     }
 
+    fn planar_common_fixture(kind: u8, elevation: f64, thickness: f64) -> Vec<u8> {
+        // Independent AutoCAD check: an AC1009 ARC/CIRCLE with both fields
+        // consumes elevation before thickness. Keep distinct values so a
+        // symmetric reader/writer mistake cannot pass as a round trip.
+        let flags = u8::from(elevation != 0.0) * 4 | u8::from(thickness != 0.0) * 8;
+        let mut raw = vec![kind, flags, 0, 0, 0, 0, 0, 0];
+        if elevation != 0.0 {
+            raw.extend_from_slice(&elevation.to_le_bytes());
+        }
+        if thickness != 0.0 {
+            raw.extend_from_slice(&thickness.to_le_bytes());
+        }
+        for value in [4f64, 5.0, 6.0] {
+            raw.extend_from_slice(&value.to_le_bytes());
+        }
+        if kind == 8 {
+            for angle in [0.25f64, 1.25] {
+                raw.extend_from_slice(&angle.to_le_bytes());
+            }
+        }
+        let length = (raw.len() + 2) as u16;
+        raw[2..4].copy_from_slice(&length.to_le_bytes());
+        raw
+    }
+
+    #[test]
+    fn native_arc_and_circle_read_elevation_before_thickness() {
+        for kind in [3, 8] {
+            for (elevation, thickness) in [(3.0, 2.0), (0.0, 2.0), (3.0, 0.0), (0.0, 0.0)] {
+                let raw = planar_common_fixture(kind, elevation, thickness);
+                let decoded = decode_record(&raw, &tables(), "ANSI_1252").unwrap();
+                assert_eq!(
+                    (decoded.number(30, 0.0), decoded.number(39, 0.0)),
+                    (elevation, thickness),
+                    "kind={kind}"
+                );
+                assert_eq!(decoded.number(40, 0.0), 6.0);
+            }
+        }
+    }
+
+    #[test]
+    fn native_arc_and_circle_write_elevation_before_thickness() {
+        for (kind, name) in [(3, "CIRCLE"), (8, "ARC")] {
+            for (elevation, thickness) in [(3.0, 2.0), (0.0, 2.0), (3.0, 0.0), (0.0, 0.0)] {
+                let mut source = record(name);
+                source.put(10, 4.0);
+                source.put(20, 5.0);
+                source.put(30, elevation);
+                source.put(39, thickness);
+                source.put(40, 6.0);
+                if kind == 8 {
+                    source.put(50, 0.25f64.to_degrees());
+                    source.put(51, 1.25f64.to_degrees());
+                }
+                let encoded = encode_record(&source, &tables(), 0, "ANSI_1252").unwrap();
+                let expected = planar_common_fixture(kind, elevation, thickness);
+                assert_eq!(&encoded[..encoded.len() - 2], expected, "kind={kind}");
+            }
+        }
+    }
+
     #[test]
     fn native_style_references_decode_the_full_unsigned_byte_range() {
         let mut tables = tables();
