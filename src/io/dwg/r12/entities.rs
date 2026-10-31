@@ -516,11 +516,11 @@ fn encode_record(
         if flag & 2 != 0 {
             writer.short(super::tables::linetype_index(tables, ltype)?);
         }
-        if flag & 8 != 0 {
-            writer.double(record.number(39, 0.));
-        }
         if flag & 4 != 0 {
             writer.double(elevation);
+        }
+        if flag & 8 != 0 {
+            writer.double(record.number(39, 0.));
         }
         if flag & 32 != 0 {
             let bytes = handle.to_be_bytes();
@@ -926,14 +926,14 @@ fn decode_record_with_owner(
         out.put(6, super::tables::linetype_name(t, index)?);
     }
     let is3d = matches!(kind, 1 | 2 | 21 | 22);
-    if flag & 8 != 0 {
-        out.put(39, r.double()?);
-    }
     let elevation = if flag & 4 != 0 && !is3d {
         r.double()?
     } else {
         0.
     };
+    if flag & 8 != 0 {
+        out.put(39, r.double()?);
+    }
     if flag & 32 != 0 {
         let size = r.byte()? as usize;
         if size > 8 {
@@ -2040,17 +2040,17 @@ mod tests {
     }
 
     #[test]
-    fn native_common_fields_use_short_linetype_indices_and_thickness_before_elevation() {
+    fn native_common_fields_use_short_linetype_indices_and_elevation_before_thickness() {
         let mut tables = tables();
         tables.linetypes = (0..300).map(|i| format!("L{i}")).collect();
         // Independently assembled native CIRCLE: linetype 257, thickness 2,
         // elevation 3, handle A5B6, center (4, 5), radius 6.
-        // Field layout: CC0-1.0 dwg_ac1009.ksy, entity_circle, in
-        // https://github.com/michal-josef-spacek/CAD-Format-DWG-AC1009
+        // AutoCAD 2025 independently confirms elevation before thickness;
+        // the earlier third-party-layout-based ordering was reversed.
         let mut raw = vec![3, 0x2e, 0, 0, 0, 0, 0, 0];
         raw.extend_from_slice(&257i16.to_le_bytes());
-        raw.extend_from_slice(&2f64.to_le_bytes());
         raw.extend_from_slice(&3f64.to_le_bytes());
+        raw.extend_from_slice(&2f64.to_le_bytes());
         raw.extend_from_slice(&[2, 0xa5, 0xb6]);
         for value in [4f64, 5., 6.] {
             raw.extend_from_slice(&value.to_le_bytes());
@@ -2073,6 +2073,68 @@ mod tests {
             if index == 32766 {
                 let encoded = encode_record(&decoded, &tables, 0, "ANSI_1252").unwrap();
                 assert_eq!(&encoded[..encoded.len() - 2], raw);
+            }
+        }
+    }
+
+    fn planar_common_fixture(kind: u8, elevation: f64, thickness: f64) -> Vec<u8> {
+        // Independent AutoCAD check: an AC1009 ARC/CIRCLE with both fields
+        // consumes elevation before thickness. Keep distinct values so a
+        // symmetric reader/writer mistake cannot pass as a round trip.
+        let flags = u8::from(elevation != 0.0) * 4 | u8::from(thickness != 0.0) * 8;
+        let mut raw = vec![kind, flags, 0, 0, 0, 0, 0, 0];
+        if elevation != 0.0 {
+            raw.extend_from_slice(&elevation.to_le_bytes());
+        }
+        if thickness != 0.0 {
+            raw.extend_from_slice(&thickness.to_le_bytes());
+        }
+        for value in [4f64, 5.0, 6.0] {
+            raw.extend_from_slice(&value.to_le_bytes());
+        }
+        if kind == 8 {
+            for angle in [0.25f64, 1.25] {
+                raw.extend_from_slice(&angle.to_le_bytes());
+            }
+        }
+        let length = (raw.len() + 2) as u16;
+        raw[2..4].copy_from_slice(&length.to_le_bytes());
+        raw
+    }
+
+    #[test]
+    fn native_arc_and_circle_read_elevation_before_thickness() {
+        for kind in [3, 8] {
+            for (elevation, thickness) in [(3.0, 2.0), (0.0, 2.0), (3.0, 0.0), (0.0, 0.0)] {
+                let raw = planar_common_fixture(kind, elevation, thickness);
+                let decoded = decode_record(&raw, &tables(), "ANSI_1252").unwrap();
+                assert_eq!(
+                    (decoded.number(30, 0.0), decoded.number(39, 0.0)),
+                    (elevation, thickness),
+                    "kind={kind}"
+                );
+                assert_eq!(decoded.number(40, 0.0), 6.0);
+            }
+        }
+    }
+
+    #[test]
+    fn native_arc_and_circle_write_elevation_before_thickness() {
+        for (kind, name) in [(3, "CIRCLE"), (8, "ARC")] {
+            for (elevation, thickness) in [(3.0, 2.0), (0.0, 2.0), (3.0, 0.0), (0.0, 0.0)] {
+                let mut source = record(name);
+                source.put(10, 4.0);
+                source.put(20, 5.0);
+                source.put(30, elevation);
+                source.put(39, thickness);
+                source.put(40, 6.0);
+                if kind == 8 {
+                    source.put(50, 0.25f64.to_degrees());
+                    source.put(51, 1.25f64.to_degrees());
+                }
+                let encoded = encode_record(&source, &tables(), 0, "ANSI_1252").unwrap();
+                let expected = planar_common_fixture(kind, elevation, thickness);
+                assert_eq!(&encoded[..encoded.len() - 2], expected, "kind={kind}");
             }
         }
     }
