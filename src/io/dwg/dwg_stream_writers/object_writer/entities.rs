@@ -2870,11 +2870,16 @@ impl<'a> DwgObjectWriter<'a> {
         parent_layer: &str,
         parent_color: &crate::types::Color,
     ) {
+        let layer = if v.layer.is_empty() {
+            parent_layer
+        } else {
+            &v.layer
+        };
         self.write_common_entity_data(
             common::OBJ_VERTEX_3D,
             vertex_handle,
             owner,
-            parent_layer,
+            layer,
             parent_color,
             &crate::types::LineWeight::ByLayer,
             &crate::types::Transparency::default(),
@@ -3133,33 +3138,10 @@ impl<'a> DwgObjectWriter<'a> {
                 None
             };
             self.next_handle = (i + 1 < vertex_handles.len()).then(|| vertex_handles[i + 1]);
-            self.write_common_entity_data(
-                common::OBJ_VERTEX_MESH,
-                vh,
-                e.common.handle,
-                &e.common.layer,
-                &e.common.color,
-                &crate::types::LineWeight::ByLayer,
-                &crate::types::Transparency::default(),
-                false,
-                1.0,
-                "ByLayer",
-                &None,
-                &crate::xdata::ExtendedData::default(),
-                &[],
-                &None,
-                None,
-                None,
-                0,
-                &None,
-                0,
-                0,
-                &None,
-                &None,
-                &None,
-                &None,
-                &None,
-            );
+            let mut vc = v.common.clone();
+            vc.handle = vh;
+            vc.owner_handle = e.common.handle;
+            self.entity_preamble(common::OBJ_VERTEX_MESH, &vc);
             self.writer.write_byte(v.flags as u8);
             self.writer.write_3bit_double(v.location);
             self.register_object(vh);

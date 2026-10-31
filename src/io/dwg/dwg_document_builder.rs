@@ -2392,10 +2392,10 @@ impl DwgDocumentBuilder {
                         e.vertices = verts
                             .into_iter()
                             .filter_map(|v| {
-                                if let PendingVertex::V3D(d, _ec) = v {
+                                if let PendingVertex::V3D(d, ec) = v {
                                     Some(crate::entities::polyline3d::Vertex3DPolyline {
                                         handle: d.handle,
-                                        layer: String::new(),
+                                        layer: ec.layer,
                                         position: d.position,
                                         flags: d.flags as i32,
                                     })
@@ -2443,13 +2443,11 @@ impl DwgDocumentBuilder {
                         e.vertices = verts
                             .into_iter()
                             .filter_map(|v| {
-                                if let PendingVertex::V3D(d, _ec) = v {
-                                    let mut c = crate::entities::EntityCommon::new();
-                                    c.handle = d.handle;
+                                if let PendingVertex::V3D(d, ec) = v {
                                     Some(crate::entities::polygon_mesh::PolygonMeshVertex {
-                                        common: c,
+                                        common: ec,
                                         location: d.position,
-                                        flags: 0,
+                                        flags: i16::from(d.flags),
                                     })
                                 } else {
                                     None
