@@ -562,6 +562,15 @@ fn adopt_distinct_block_names(
         .iter()
         .map(|row| row.string(2).to_ascii_uppercase())
         .collect();
+    // Generated names must not take a distinct BLOCK marker name that a later
+    // table row has not yet had a chance to adopt.
+    let marker_names: std::collections::HashSet<String> = blocks
+        .records
+        .iter()
+        .filter_map(|positioned| positioned.record.as_ref())
+        .filter(|record| record.kind == "BLOCK")
+        .map(|record| record.string(2).to_ascii_uppercase())
+        .collect();
     let mut renamed = HashMap::new();
     for (index, row) in rows.iter_mut().enumerate() {
         let current = row.string(2).to_ascii_uppercase();
@@ -589,7 +598,7 @@ fn adopt_distinct_block_names(
             let mut suffix = index;
             loop {
                 let candidate = format!("{current}{suffix}");
-                if !claimed.contains(&candidate) {
+                if !claimed.contains(&candidate) && !marker_names.contains(&candidate) {
                     break candidate;
                 }
                 suffix += 1;

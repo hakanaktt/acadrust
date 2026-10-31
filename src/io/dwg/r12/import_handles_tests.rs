@@ -392,7 +392,11 @@ fn anonymous_block_fallback_does_not_claim_a_later_marker_name() {
         ..Default::default()
     };
     adopt_distinct_block_names(&mut rows, &blocks, 100);
-    assert_eq!(rows[1].string(2), "*X0", "preserve the distinct BLOCK marker name");
+    assert_eq!(
+        rows[1].string(2),
+        "*X0",
+        "preserve the distinct BLOCK marker name"
+    );
     assert_ne!(rows[0].string(2), "*X0");
 }
 
