@@ -8872,7 +8872,13 @@ fn map_dimension_common(
     base.insertion_point =
         crate::types::Vector3::new(common.insertion_point.x, common.insertion_point.y, 0.0);
     base.style_name = maps.dimstyle_name(common.dimstyle_handle);
-    base.block_name = maps.block_name(common.block_handle);
+    // A dimension without a geometry block (null handle) keeps an empty name:
+    // a made-up `*U0` would be written back as a reference to a missing block.
+    base.block_name = if common.block_handle == 0 {
+        String::new()
+    } else {
+        maps.block_name(common.block_handle)
+    };
 }
 
 fn map_entity_common(
