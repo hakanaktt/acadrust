@@ -21156,6 +21156,11 @@ impl<'a> SectionReader<'a> {
                 }
                 2 => style.name = pair.value_string.clone(),
                 3 => style.description = pair.value_string.clone(),
+                70 => {
+                    if let Some(v) = pair.as_i32() {
+                        style.flags = crate::objects::MLineStyleFlags::from_bits(v);
+                    }
+                }
                 // DXF stores MLINESTYLE angles in degrees; the model stores
                 // radians (the DWG stream and the DXF writer both use
                 // radians/degrees respectively). Reading them raw made every
@@ -21176,6 +21181,16 @@ impl<'a> SectionReader<'a> {
                             last.color = Color::from_index(v);
                         } else {
                             style.fill_color = Color::from_index(v);
+                        }
+                    }
+                }
+                420 => {
+                    if let Some(v) = pair.as_i32() {
+                        let color = Color::from_true_color_value(v);
+                        if let Some(last) = style.elements.last_mut() {
+                            last.color = color;
+                        } else {
+                            style.fill_color = color;
                         }
                     }
                 }

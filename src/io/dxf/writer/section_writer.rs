@@ -7960,9 +7960,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             Color::None => 257,
             Color::ByBlock => 0,
             Color::Index(i) => i as i16,
-            Color::Rgb { .. } => 256, // Fall back to ByLayer for RGB color
+            Color::Rgb { .. } => style.fill_color.approximate_index(),
         };
         self.writer.write_i16(62, fill_color_index)?;
+        self.write_mlinestyle_true_color(style.fill_color)?;
 
         // Start angle (code 51) — DXF expects degrees
         self.writer
@@ -7986,14 +7987,26 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 Color::None => 257,
                 Color::ByBlock => 0,
                 Color::Index(i) => i as i16,
-                Color::Rgb { .. } => 256,
+                Color::Rgb { .. } => element.color.approximate_index(),
             };
             self.writer.write_i16(62, elem_color_index)?;
+            self.write_mlinestyle_true_color(element.color)?;
 
             // Element linetype (code 6)
             self.writer.write_string(6, &element.linetype)?;
         }
 
+        Ok(())
+    }
+
+    /// `420` after a MLINESTYLE `62` for a true color (R2004+), as AutoCAD's
+    /// color fields write it.
+    fn write_mlinestyle_true_color(&mut self, color: Color) -> Result<()> {
+        if self.dxf_version >= DxfVersion::AC1018 {
+            if let Some(tc) = color.to_true_color_value() {
+                self.writer.write_i32(420, tc)?;
+            }
+        }
         Ok(())
     }
 
