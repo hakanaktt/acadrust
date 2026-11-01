@@ -15333,7 +15333,9 @@ impl<'a> SectionReader<'a> {
                 42 if current_subclass == "AcDbDimension" => {
                     base.actual_measurement = pair.as_double().unwrap_or(0.0)
                 }
-                44 if current_subclass == "AcDbDimension" => {
+                // Line spacing factor: 41 in AcDbDimension (as AutoCAD and the
+                // writer store it); 44 is still read for older output.
+                41 | 44 if current_subclass == "AcDbDimension" => {
                     base.line_spacing_factor = pair.as_double().unwrap_or(1.0)
                 }
                 53 if current_subclass == "AcDbDimension" => {
@@ -17847,6 +17849,11 @@ impl<'a> SectionReader<'a> {
                             crate::entities::attribute_definition::HorizontalAlignment::from_value(
                                 v,
                             );
+                    }
+                }
+                73 => {
+                    if let Some(v) = pair.as_i16() {
+                        attrib.field_length = v;
                     }
                 }
                 74 => {
