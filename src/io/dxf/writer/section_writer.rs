@@ -1495,13 +1495,18 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             .write_double(42, style.effective_last_height())?;
         self.writer.write_string(3, &style.font_file)?;
         self.writer.write_string(4, &style.big_font_file)?;
+        // The TrueType font record replaces the ACAD record kept from the
+        // source file instead of being written next to it.
+        let mut font = Vec::new();
         if !style.true_type_font.trim().is_empty() {
-            self.writer.write_string(1001, "ACAD")?;
-            self.writer
-                .write_string(1000, style.true_type_font.trim())?;
-            self.writer.write_i32(1071, style.true_type_font_flags)?;
+            let mut record = crate::xdata::ExtendedDataRecord::new("ACAD");
+            record.values = vec![
+                XDataValue::String(style.true_type_font.trim().to_string()),
+                XDataValue::Integer32(style.true_type_font_flags),
+            ];
+            font.push(record);
         }
-        self.write_table_annotative_xdata(document, style.handle, style.annotative)?;
+        self.write_table_annotative_xdata_with(document, style.handle, style.annotative, font)?;
 
         Ok(())
     }
@@ -9670,11 +9675,22 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         handle: Handle,
         annotative: bool,
     ) -> Result<()> {
+        self.write_table_annotative_xdata_with(document, handle, annotative, Vec::new())
+    }
+
+    /// As [`Self::write_table_annotative_xdata`], with modelled records of
+    /// other applications that replace the kept source ones.
+    fn write_table_annotative_xdata_with(
+        &mut self,
+        document: &CadDocument,
+        handle: Handle,
+        annotative: bool,
+        mut generated: Vec<crate::xdata::ExtendedDataRecord>,
+    ) -> Result<()> {
         let has_source = document
             .object_xdata
             .get(&handle)
             .is_some_and(|data| data.get_record("AcadAnnotative").is_some());
-        let mut generated = Vec::new();
         if annotative || has_source {
             let mut record = crate::xdata::ExtendedDataRecord::new("AcadAnnotative");
             record.values = vec![
