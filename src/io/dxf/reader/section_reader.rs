@@ -17748,6 +17748,7 @@ impl<'a> SectionReader<'a> {
         let mut attrib = AttributeEntity::new(String::new(), String::new());
         let mut insertion_point = PointReader::new();
         let mut alignment_point = PointReader::new();
+        let mut normal = PointReader::new();
         // Code 280 ahead of the tag is the R2010+ version byte; after the tag
         // it is the lock-position flag (R2007 files carry only the latter).
         let mut seen_tag = false;
@@ -17792,6 +17793,11 @@ impl<'a> SectionReader<'a> {
                 }
                 11 | 21 | 31 => {
                     alignment_point.add_coordinate(&pair);
+                }
+                // Extrusion, as ATTDEF reads it: without it an attribute of a
+                // flipped insert lands at the mirror position.
+                210 | 220 | 230 => {
+                    normal.add_coordinate(&pair);
                 }
                 40 => {
                     if let Some(v) = pair.as_double() {
@@ -17880,6 +17886,9 @@ impl<'a> SectionReader<'a> {
 
         attrib.insertion_point = insertion_point.get_point().unwrap_or(Vector3::zero());
         attrib.alignment_point = alignment_point.get_point().unwrap_or(Vector3::zero());
+        if let Some(pt) = normal.get_point() {
+            attrib.normal = pt;
+        }
         attrib.line_count = attrib.value.matches("\\P").count() as i16 + 1;
 
         Ok(Some(attrib))
@@ -22277,6 +22286,39 @@ mod tests {
             (a.oblique_angle - 15.0_f64.to_radians()).abs() < 1e-9,
             "oblique angle should survive a roundtrip, got {}",
             a.oblique_angle
+        );
+    }
+
+    /// An attribute of an insert with a flipped extrusion keeps (0,0,-1):
+    /// read as the default +Z, it would be drawn at the mirror position.
+    #[test]
+    fn test_dxf_roundtrip_attrib_extrusion() {
+        let mut doc = CadDocument::new();
+        let mut attrib = AttributeEntity::new(String::new(), String::new());
+        attrib.tag = "TAG1".to_string();
+        attrib.value = "val".to_string();
+        attrib.height = 2.0;
+        attrib.insertion_point = Vector3::new(-40.0, -8.0, 0.0);
+        attrib.normal = Vector3::new(0.0, 0.0, -1.0);
+        let mut insert = Insert::new("*Model_Space", Vector3::new(-40.0, 0.0, 0.0));
+        insert.normal = Vector3::new(0.0, 0.0, -1.0);
+        insert.attributes.push(attrib);
+        let _ = doc.add_entity(EntityType::Insert(insert));
+
+        let doc2 = roundtrip(doc);
+        let insert = doc2
+            .entities()
+            .find_map(|e| match e {
+                EntityType::Insert(i) => Some(i),
+                _ => None,
+            })
+            .expect("Expected Insert entity");
+        assert_eq!(insert.attributes.len(), 1);
+        let n = insert.attributes[0].normal;
+        assert!(
+            n.x.abs() < 1e-12 && n.y.abs() < 1e-12 && (n.z + 1.0).abs() < 1e-12,
+            "attribute extrusion should survive a roundtrip, got {:?}",
+            n
         );
     }
 
