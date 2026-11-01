@@ -6187,10 +6187,12 @@ impl DwgDocumentBuilder {
                             } else {
                                 // Pre-R2018: a bit_short index into the linetypes
                                 // in table order (ByBlock/ByLayer excluded);
-                                // 0x7FFF means ByLayer.
+                                // 0x7FFF means ByLayer, 0x7FFE ByBlock.
                                 let idx = e.linetype_index_or_handle;
                                 if idx == 0x7FFF {
                                     "ByLayer".to_string()
+                                } else if idx == 0x7FFE {
+                                    "ByBlock".to_string()
                                 } else {
                                     maps.linetype_order
                                         .get(idx as usize)
