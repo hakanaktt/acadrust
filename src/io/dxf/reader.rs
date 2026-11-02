@@ -395,6 +395,9 @@ impl DxfReader {
         // earlier would resolve every reference to a null handle.
         rewire_stale_text_style_references(&mut document);
         rewire_dangling_layout_block_records(&mut document);
+        if document.version < crate::types::DxfVersion::AC1032 {
+            super::multiline_attributes::merge(&mut document);
+        }
         document.ensure_model_layout();
         if document.version == crate::types::DxfVersion::AC1009 {
             let layers: HashMap<_, _> = document

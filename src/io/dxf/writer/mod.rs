@@ -341,6 +341,14 @@ impl<'a> DxfWriter<'a> {
             prepared.to_mut().assign_table_entry_handles();
         }
         crate::io::dwg::dwg_writer::prepare_active_viewport_elevation(&mut prepared);
+        // Before R2018 a multiline attribute is written the way AutoCAD
+        // down-saves it: one line per attribute plus an ACAD_MLATT record.
+        if (crate::types::DxfVersion::AC1015..crate::types::DxfVersion::AC1032)
+            .contains(&output_version)
+            && super::multiline_attributes::has_multiline_attributes(&prepared)
+        {
+            super::multiline_attributes::split(prepared.to_mut());
+        }
         self.write_prepared_dxf(writer, prepared.as_ref(), output_version)
     }
 

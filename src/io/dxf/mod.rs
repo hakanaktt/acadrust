@@ -22,6 +22,7 @@
 pub mod code_page;
 mod dxf_code;
 mod group_code_value;
+mod multiline_attributes;
 mod reader;
 mod spline_flags;
 mod writer;
