@@ -2187,12 +2187,15 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 ..Default::default()
             });
         common.owner_handle = owner;
-        self.write_common_entity_data(&common, owner)?;
-        // Paper space flag (group code 67) for all paper space blocks
-        if is_paper_space {
-            self.writer.write_i16(67, 1)?;
+        if common.layer.is_empty() {
+            common.layer = "0".to_string();
         }
-        self.writer.write_string(8, "0")?;
+        // The common data writes the paper-space flag 67 and then layer 8,
+        // once each, in the order AutoCAD writes them for BLOCK.
+        let prev_ps = self.writing_paper_space;
+        self.writing_paper_space = is_paper_space;
+        self.write_common_entity_data(&common, owner)?;
+        self.writing_paper_space = prev_ps;
         self.writer.write_subclass("AcDbBlockBegin")?;
         self.writer.write_string(2, block_record.name())?;
         self.writer.write_i16(70, flags)?;
