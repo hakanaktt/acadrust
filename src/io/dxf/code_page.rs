@@ -521,24 +521,24 @@ pub fn encode_legacy_string(text: &str, encoding: impl Into<LegacyEncoding>) -> 
 /// text, and invalid code points are dropped — matching the MTEXT
 /// formatter's behavior for the same escapes.
 pub fn decode_cif_escapes(text: &str) -> String {
-    decode_cif(text, None)
+    decode_cif(text)
 }
 
 /// Decode ACAD CIF `\U+XXXX` escapes in text read from a drawing whose code
 /// page is `encoding`.
 ///
 /// [`encode_legacy_string`] escapes a character only when the code page cannot
-/// hold it, so an escape naming a character the page *can* hold was never
-/// written as transport: it is the text itself, and it is copied through as it
-/// stands (lower-case hex included). Surrogate pairs are judged as the one
-/// scalar they name. UTF-8 holds every character, so nothing in it was ever
-/// written as transport and its escapes are all text.
+/// hold it, but AutoCAD decodes every well-formed escape in a pre-2007 drawing,
+/// DXF or DWG, held by the page or not (some writers escape every non-ASCII
+/// character to keep the file ASCII), so they all decode here (#260). UTF-8
+/// holds every character, so nothing in it was ever written as transport and
+/// its escapes are all text.
 pub fn decode_cif_escapes_in(text: &str, encoding: impl Into<LegacyEncoding>) -> String {
     let encoding = encoding.into();
     if encoding == LegacyEncoding::Whatwg(encoding_rs::UTF_8) {
         return text.to_string();
     }
-    decode_cif(text, Some(encoding))
+    decode_cif(text)
 }
 
 /// [`decode_legacy_escapes`] for text read from a drawing whose code page is
@@ -548,20 +548,7 @@ pub fn decode_legacy_escapes_in(text: &str, encoding: impl Into<LegacyEncoding>)
     decode_cif_escapes_in(&decode_mif_escapes(text), encoding)
 }
 
-/// [`decode_legacy_escapes`] for a DXF line read in `encoding`. AutoCAD decodes
-/// every well-formed `\U+XXXX` in a pre-2007 DXF, held by the code page or not
-/// (some writers escape every non-ASCII character to keep the file ASCII), so
-/// only a UTF-8 file (AC1021+) keeps its escapes as text, as in
-/// [`decode_cif_escapes_in`].
-pub fn decode_dxf_legacy_escapes_in(text: &str, encoding: impl Into<LegacyEncoding>) -> String {
-    let encoding = encoding.into();
-    if encoding == LegacyEncoding::Whatwg(encoding_rs::UTF_8) {
-        return decode_legacy_escapes_in(text, encoding);
-    }
-    decode_legacy_escapes(text)
-}
-
-fn decode_cif(text: &str, held_by: Option<LegacyEncoding>) -> String {
+fn decode_cif(text: &str) -> String {
     if !text.contains("\\U+") {
         return text.to_string();
     }
@@ -579,7 +566,6 @@ fn decode_cif(text: &str, held_by: Option<LegacyEncoding>) -> String {
     while i < len {
         if chars[i] == '\\' && i + 7 <= len && chars[i + 1] == 'U' && chars[i + 2] == '+' {
             if let Some(unit) = hex_at(i + 3) {
-                let start = i;
                 i += 7;
                 let mut units = [unit, 0];
                 let mut count = 1usize;
@@ -600,11 +586,7 @@ fn decode_cif(text: &str, held_by: Option<LegacyEncoding>) -> String {
                 }
                 if let Some(Ok(ch)) = std::char::decode_utf16(units[..count].iter().copied()).next()
                 {
-                    if held_by.is_some_and(|e| e.is_faithful() && e.can_encode(ch)) {
-                        out.extend(&chars[start..i]);
-                    } else {
-                        out.push(ch);
-                    }
+                    out.push(ch);
                 }
                 continue;
             }
