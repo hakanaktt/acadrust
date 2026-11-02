@@ -1788,6 +1788,8 @@ struct Picture {
     pt: Option<i64>,
     bl: Option<i64>,
     lw: Option<i64>,
+    /// `%nn1`: negative numbers in parentheses.
+    nn: i64,
     printf: Option<usize>,
     pre: String,
     suf: String,
@@ -1847,6 +1849,7 @@ impl Picture {
                 "pt" => p.pt = Some(n),
                 "bl" => p.bl = Some(n),
                 "lw" => p.lw = Some(n),
+                "nn" => p.nn = n,
                 "ct" => p.conv = Some((n, arg.and_then(|a| a.trim().parse().ok()))),
                 "ps" => {
                     let a = arg.unwrap_or("");
@@ -1943,6 +1946,9 @@ fn format_number(doc: &CadDocument, value: f64, pic: &str) -> String {
     let v = p.convert(value);
     if !v.is_finite() {
         return "####".into();
+    }
+    if p.nn == 1 && v < 0.0 {
+        return format!("({})", p.wrap(&number_text(doc, &p, -v)));
     }
     p.wrap(&number_text(doc, &p, v))
 }
@@ -3409,6 +3415,17 @@ impl CadDocument {
         let doomed = self.with_child_fields(&fields);
         self.remove_fields(&doomed);
         true
+    }
+
+    /// A number as a field picture shows it (`%lu2%pr3%ps[$,]`, `%au1%pr2`
+    /// — an angle in radians); table cells format their values this way.
+    pub fn format_with_picture(&self, value: f64, picture: &str) -> String {
+        format_number(self, value, picture)
+    }
+
+    /// A point as a field picture shows it (`%lu2%pt7%ps[,]`).
+    pub fn format_point_with_picture(&self, point: [f64; 3], picture: &str) -> String {
+        format_point(self, point, picture)
     }
 
     /// The fields a table lists that no cell shows any more (typed text
