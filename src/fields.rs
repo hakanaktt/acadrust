@@ -3326,6 +3326,103 @@ impl CadDocument {
         Some(handles)
     }
 
+    /// Puts a field into a table cell: a `_text` field owned by the table
+    /// (its children owned by it) becomes the cell's only content, listed
+    /// among the table's fields. Returns the container field, or `None`
+    /// when the table or the cell does not exist.
+    pub fn set_table_cell_field(
+        &mut self,
+        table: Handle,
+        row: usize,
+        column: usize,
+        template: &str,
+        children: Vec<NewField>,
+    ) -> Option<Handle> {
+        use crate::entities::table::{CellContent, CellType, TableCellContentType};
+        match self.get_entity(table)? {
+            EntityType::Table(t) if t.cell(row, column).is_some() => {}
+            _ => return None,
+        }
+        let display = template_display(template, &children, false)?;
+        self.remove_table_cell_field(table, row, column);
+        for (dxf, cpp) in [("FIELD", "AcDbField"), ("FIELDLIST", "AcDbFieldList")] {
+            if !self.classes.contains(dxf) {
+                let mut class = crate::classes::DxfClass::new(dxf, cpp);
+                class.proxy_flags = crate::classes::ProxyFlags(1152);
+                self.classes.add_or_update(class);
+            }
+        }
+        let container = self.allocate_handle();
+        let child_handles: Vec<Handle> = children.iter().map(|_| self.allocate_handle()).collect();
+        let mut empty = CellValue::new();
+        empty.flags = 3;
+        let container_field = Field {
+            handle: container,
+            owner: table,
+            evaluator_id: "_text".into(),
+            code: template.into(),
+            child_fields: child_handles.clone(),
+            evaluation_option: 63,
+            state: 9,
+            evaluation_status: 2,
+            value: empty,
+            ..Field::default()
+        };
+        let mut all = vec![container_field];
+        for (child, handle) in children.into_iter().zip(&child_handles) {
+            all.push(child_field(child, *handle, container));
+        }
+        self.register_fields(all);
+        let Some(EntityType::Table(t)) = self.get_entity_mut(table) else {
+            return None;
+        };
+        let cell = t.cell_mut(row, column)?;
+        let mut content = CellContent::text(&display);
+        content.content_type = TableCellContentType::Field;
+        content.field_handle = Some(container);
+        cell.contents = vec![content];
+        cell.cell_type = CellType::Text;
+        if !t.field_handles.contains(&container) {
+            t.field_handles.push(container);
+        }
+        Some(container)
+    }
+
+    /// Takes a table cell's field away (the field objects too); the cell
+    /// keeps the text it showed. Returns whether there was one.
+    pub fn remove_table_cell_field(&mut self, table: Handle, row: usize, column: usize) -> bool {
+        let Some(EntityType::Table(t)) = self.get_entity_mut(table) else {
+            return false;
+        };
+        let Some(cell) = t.cell_mut(row, column) else {
+            return false;
+        };
+        let fields: Vec<Handle> = cell
+            .contents
+            .iter_mut()
+            .filter_map(|content| content.field_handle.take())
+            .collect();
+        if fields.is_empty() {
+            return false;
+        }
+        t.field_handles.retain(|handle| !fields.contains(handle));
+        let mut doomed = fields.clone();
+        for field in &fields {
+            if let Some(ObjectType::Field(f)) = self.objects.get(field) {
+                doomed.extend(f.child_fields.iter().copied());
+            }
+        }
+        for handle in &doomed {
+            self.objects.remove(handle);
+            self.fields.remove(handle);
+        }
+        let list = self.field_list_handle();
+        if let Some(ObjectType::FieldList(l)) = self.objects.get_mut(&list) {
+            l.fields.retain(|handle| !doomed.contains(handle));
+        }
+        true
+    }
+
     fn register_fields(&mut self, all: Vec<Field>) {
         let list = self.field_list_handle();
         if let Some(ObjectType::FieldList(l)) = self.objects.get_mut(&list) {
