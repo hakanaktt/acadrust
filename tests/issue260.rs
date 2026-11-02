@@ -1,8 +1,9 @@
 //! Repro for issue #260: in a pre-2007 DXF, a `\U+XXXX` escape for a character
 //! the drawing's code page can hold is kept as text, though AutoCAD decodes it.
-//! Some writers escape every non-ASCII character to keep the file pure ASCII;
-//! AutoCAD 2023 opens `escaped_ac1015.dxf` with the layer `Électricité` current
-//! and the text `Cote 94°`.
+//! Some writers escape every non-ASCII character to keep the file pure ASCII.
+//! The fixtures are complete drawings from this crate's DXF writer (ANSI_1252),
+//! every non-ASCII byte then written as its `\U+XXXX` escape; AutoCAD opens
+//! them with the layer `Électricité` current and the text `Cote 94°`.
 
 use acadrust::entities::{EntityType, Text};
 use acadrust::types::{DxfVersion, Vector3};
