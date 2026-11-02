@@ -110,6 +110,9 @@ pub struct SectionWriter<'a, W: DxfStreamWriter> {
     loft_reference_appid: Option<Handle>,
     /// Original DWG context used for opaque proxy payloads.
     source_dwg_context: Option<(DxfVersion, u8)>,
+    /// Records written per DXF name (upper case), used for the CLASSES
+    /// instance counts. `None` keeps each class's stored count.
+    class_instance_counts: Option<HashMap<String, i32>>,
 }
 
 impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
@@ -135,7 +138,15 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             loft_input_entities: HashMap::new(),
             loft_reference_appid: None,
             source_dwg_context: None,
+            class_instance_counts: None,
         }
+    }
+
+    /// Write these record counts (keyed by upper-case DXF name) as the
+    /// CLASSES instance counts instead of the counts stored in the document.
+    /// A class missing from the map is written with 0.
+    pub fn set_class_instance_counts(&mut self, counts: HashMap<String, i32>) {
+        self.class_instance_counts = Some(counts);
     }
 
     /// The handle the writer gives the next record it creates itself, such as
@@ -980,7 +991,17 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer.write_string(3, &class.application_name)?;
             self.writer.write_i32(90, class.proxy_flags.0 as i32)?;
             if self.dxf_version >= DxfVersion::AC1018 {
-                self.writer.write_i32(91, class.instance_count)?;
+                // A stored count goes stale once records are added or erased,
+                // and a class written with 0 makes AutoCAD drop object-enabler
+                // entities such as WIPEOUT.
+                let count = match &self.class_instance_counts {
+                    Some(counts) => counts
+                        .get(&class.dxf_name.to_ascii_uppercase())
+                        .copied()
+                        .unwrap_or(0),
+                    None => class.instance_count,
+                };
+                self.writer.write_i32(91, count)?;
             }
             self.writer
                 .write_byte(280, if class.was_zombie { 1 } else { 0 })?;

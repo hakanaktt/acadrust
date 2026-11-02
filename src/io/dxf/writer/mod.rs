@@ -36,6 +36,64 @@ pub(crate) fn dxf_skips_arch_entity(entity: &EntityType) -> bool {
             .is_none_or(|graphics| graphics.is_empty())
 }
 
+/// Discards the output and counts the records (group 0) written in the
+/// BLOCKS, ENTITIES and OBJECTS sections, keyed by upper-case DXF name.
+#[derive(Default)]
+struct ClassCountWriter {
+    counts: std::collections::HashMap<String, i32>,
+    section_start: bool,
+    counting: bool,
+}
+
+impl DxfStreamWriter for ClassCountWriter {
+    fn write_string(&mut self, code: i32, value: &str) -> Result<()> {
+        if code == 2 && self.section_start {
+            self.counting = matches!(value, "BLOCKS" | "ENTITIES" | "OBJECTS");
+        }
+        if code == 0 {
+            self.section_start = value == "SECTION";
+            if value == "ENDSEC" {
+                self.counting = false;
+            } else if self.counting {
+                *self.counts.entry(value.to_ascii_uppercase()).or_insert(0) += 1;
+            }
+        } else if code != 2 {
+            self.section_start = false;
+        }
+        Ok(())
+    }
+    fn write_xrecord_string(&mut self, code: i32, value: &str) -> Result<()> {
+        self.write_string(code, value)
+    }
+    fn write_byte(&mut self, _: i32, _: u8) -> Result<()> {
+        Ok(())
+    }
+    fn write_i16(&mut self, _: i32, _: i16) -> Result<()> {
+        Ok(())
+    }
+    fn write_i32(&mut self, _: i32, _: i32) -> Result<()> {
+        Ok(())
+    }
+    fn write_i64(&mut self, _: i32, _: i64) -> Result<()> {
+        Ok(())
+    }
+    fn write_double(&mut self, _: i32, _: f64) -> Result<()> {
+        Ok(())
+    }
+    fn write_bool(&mut self, _: i32, _: bool) -> Result<()> {
+        Ok(())
+    }
+    fn write_handle(&mut self, _: i32, _: crate::types::Handle) -> Result<()> {
+        Ok(())
+    }
+    fn write_binary(&mut self, _: i32, _: &[u8]) -> Result<()> {
+        Ok(())
+    }
+    fn flush(&mut self) -> Result<()> {
+        Ok(())
+    }
+}
+
 /// One Arch record a non-R12 DXF save does not write.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DxfOmission {
@@ -292,6 +350,26 @@ impl<'a> DxfWriter<'a> {
         document: &CadDocument,
         output_version: crate::types::DxfVersion,
     ) -> Result<()> {
+        // CLASSES precedes the records it counts, so count what a dry run
+        // writes. The stored counts are 0 for new drawings and stale after
+        // edits.
+        let class_counts = if output_version >= crate::types::DxfVersion::AC1018 {
+            let mut counter = ClassCountWriter::default();
+            self.write_sections(&mut counter, document, output_version, None)?;
+            Some(counter.counts)
+        } else {
+            None
+        };
+        self.write_sections(writer, document, output_version, class_counts)
+    }
+
+    fn write_sections<W: DxfStreamWriter>(
+        &self,
+        writer: &mut W,
+        document: &CadDocument,
+        output_version: crate::types::DxfVersion,
+        class_counts: Option<std::collections::HashMap<String, i32>>,
+    ) -> Result<()> {
         let handle_start = compute_max_handle(document);
         // Count against the version actually emitted, not the one the document
         // was loaded as, so the handle budget matches what the writer produces.
@@ -303,6 +381,9 @@ impl<'a> DxfWriter<'a> {
         let mut section_writer = SectionWriter::new(writer, handle_start, handle_seed);
         section_writer.set_version(output_version);
         section_writer.build_valid_handles(document);
+        if let Some(counts) = class_counts {
+            section_writer.set_class_instance_counts(counts);
+        }
 
         // Write all sections
         section_writer.write_header(document)?;
