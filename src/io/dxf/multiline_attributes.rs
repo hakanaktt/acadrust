@@ -137,16 +137,43 @@ fn add_records(
         .filter(|h| matches!(doc.objects.get(h), Some(ObjectType::Dictionary(_))))
         .unwrap_or_else(|| new_dictionary(doc, first));
     add_record(doc, dictionary, MLATT, entries);
-    add_record(
-        doc,
-        dictionary,
-        ROUNDTRIP,
-        vec![
-            XRecordEntry::string(102, "ACAD_MATT_HEIGHT"),
-            XRecordEntry::double(140, m.height),
-        ],
-    );
+    let height = [
+        XRecordEntry::string(102, HEIGHT_TAG),
+        XRecordEntry::double(140, m.height),
+    ];
+    // A round-trip record already there is shared: the height joins it.
+    let existing = match doc.objects.get(&dictionary) {
+        Some(ObjectType::Dictionary(d)) => d.get(ROUNDTRIP),
+        _ => None,
+    };
+    match existing.and_then(|h| doc.objects.get_mut(&h)) {
+        Some(ObjectType::XRecord(record)) => {
+            strip_height(&mut record.entries);
+            record.entries.extend(height);
+        }
+        _ => add_record(doc, dictionary, ROUNDTRIP, height.to_vec()),
+    }
     dictionary
+}
+
+const HEIGHT_TAG: &str = "ACAD_MATT_HEIGHT";
+
+/// Whether `entries` hold the multiline attribute's height and nothing else.
+fn height_only(entries: &[XRecordEntry]) -> bool {
+    matches!(entries, [tag, value]
+        if tag.code == 102 && tag.value.as_string() == Some(HEIGHT_TAG) && value.code == 140)
+}
+
+/// Remove the `102 ACAD_MATT_HEIGHT` / `140` pair, keeping the rest.
+fn strip_height(entries: &mut Vec<XRecordEntry>) {
+    if let Some(at) = entries
+        .iter()
+        .position(|e| e.code == 102 && e.value.as_string() == Some(HEIGHT_TAG))
+    {
+        let end = (at + 2).min(entries.len());
+        let pair = entries.get(at + 1).is_some_and(|e| e.code == 140);
+        entries.drain(at..if pair { end } else { at + 1 });
+    }
 }
 
 fn split_attrib(doc: &mut CadDocument, a: &AttributeEntity) -> Vec<AttributeEntity> {
@@ -436,8 +463,18 @@ fn take_record(
         return None;
     }
     let parsed = parse(&record.entries)?;
-    // The two records go; the dictionary too when it holds nothing else.
-    let ours = |key: &String| key == MLATT || key == ROUNDTRIP;
+    // The two records go; the dictionary too when it holds nothing else. The
+    // round-trip record is shared: it goes only when it holds just the height.
+    let ours = |key: &String| {
+        key == MLATT
+            || (key == ROUNDTRIP
+                && d.get(ROUNDTRIP).is_some_and(|h| {
+                    matches!(
+                        doc.objects.get(&h),
+                        Some(ObjectType::XRecord(r)) if height_only(&r.entries)
+                    )
+                }))
+    };
     let mut drop: Vec<Handle> = d
         .entries
         .iter()
@@ -586,9 +623,16 @@ pub(crate) fn merge(doc: &mut CadDocument) {
         doc.objects.remove(handle);
     }
     for handle in keep_dictionaries {
+        let mut shared = None;
         if let Some(ObjectType::Dictionary(d)) = doc.objects.get_mut(&handle) {
-            d.entries
-                .retain(|(key, _)| key != MLATT && key != ROUNDTRIP);
+            d.entries.retain(|(key, h)| {
+                key != MLATT && !(key == ROUNDTRIP && drop_objects.contains(h))
+            });
+            shared = d.get(ROUNDTRIP);
+        }
+        // A shared round-trip record keeps everything but the height.
+        if let Some(ObjectType::XRecord(record)) = shared.and_then(|h| doc.objects.get_mut(&h)) {
+            strip_height(&mut record.entries);
         }
     }
 }
