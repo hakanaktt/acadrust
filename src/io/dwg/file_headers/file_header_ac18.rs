@@ -106,7 +106,9 @@ impl DwgFileHeaderWriterAC18 {
             descriptors: IndexMap::new(),
             local_section_maps: Vec::new(),
             compressor: DwgLZ77AC18Compressor::new(),
-            next_section_id: 0,
+            // AutoCAD keeps section id 0 for the empty, unnamed descriptor that opens the
+            // section map; the named sections are numbered from 1.
+            next_section_id: 1,
             section_array_page_size: 0,
             section_page_map_id: 0,
             section_map_id: 0,
@@ -340,8 +342,10 @@ impl DwgFileHeaderWriterAC18 {
     fn write_descriptors<W: Write + Seek>(&mut self, output: &mut W) -> Result<(), DxfError> {
         let mut stream = Vec::new();
 
+        // The descriptors plus the empty one (id 0) AutoCAD writes first.
+        let count = self.descriptors.len() as i32 + 1;
         // 0x00: Number of section descriptions (4 bytes)
-        stream.write_i32::<LittleEndian>(self.descriptors.len() as i32)?;
+        stream.write_i32::<LittleEndian>(count)?;
         // 0x04: 0x02 (4 bytes)
         stream.write_i32::<LittleEndian>(2)?;
         // 0x08: 0x00007400 (4 bytes)
@@ -349,7 +353,17 @@ impl DwgFileHeaderWriterAC18 {
         // 0x0C: 0x00 (4 bytes)
         stream.write_i32::<LittleEndian>(0)?;
         // 0x10: NumDescriptions again (4 bytes)
-        stream.write_i32::<LittleEndian>(self.descriptors.len() as i32)?;
+        stream.write_i32::<LittleEndian>(count)?;
+
+        // The empty, unnamed descriptor (section id 0): no data, no pages.
+        stream.write_u64::<LittleEndian>(0)?;
+        stream.write_i32::<LittleEndian>(0)?;
+        stream.write_i32::<LittleEndian>(0x7400)?;
+        stream.write_i32::<LittleEndian>(1)?;
+        stream.write_i32::<LittleEndian>(2)?;
+        stream.write_i32::<LittleEndian>(0)?;
+        stream.write_i32::<LittleEndian>(0)?;
+        stream.write_all(&[0u8; 64])?;
 
         for descriptor in self.descriptors.values() {
             // 0x00: Size of section (8 bytes)
