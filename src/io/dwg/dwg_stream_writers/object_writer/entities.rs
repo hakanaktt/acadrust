@@ -2653,7 +2653,7 @@ impl<'a> DwgObjectWriter<'a> {
                 None
             };
             self.next_handle = (i + 1 < vertex_handles.len()).then(|| vertex_handles[i + 1]);
-            self.write_vertex2d(v, vh, e.common.handle, &e.common.layer, &e.common.color);
+            self.write_vertex2d(v, vh, &e.common);
         }
 
         // Write SEQEND — last in polyline chain
@@ -2693,26 +2693,20 @@ impl<'a> DwgObjectWriter<'a> {
         self.next_handle = saved_next;
     }
 
-    fn write_vertex2d(
-        &mut self,
-        v: &Vertex2D,
-        vertex_handle: Handle,
-        owner: Handle,
-        parent_layer: &str,
-        parent_color: &crate::types::Color,
-    ) {
+    fn write_vertex2d(&mut self, v: &Vertex2D, vertex_handle: Handle, parent: &EntityCommon) {
+        // AUDIT requires a vertex to carry its polyline's linetype.
         self.write_common_entity_data(
             common::OBJ_VERTEX_2D,
             vertex_handle,
-            owner,
-            parent_layer,
-            parent_color,
+            parent.handle,
+            &parent.layer,
+            &parent.color,
             &crate::types::LineWeight::ByLayer,
             &crate::types::Transparency::default(),
             false,
             1.0,
-            "ByLayer",
-            &None,
+            &parent.linetype,
+            &parent.linetype_handle,
             &crate::xdata::ExtendedData::default(),
             &[],
             &None,
@@ -2822,7 +2816,7 @@ impl<'a> DwgObjectWriter<'a> {
                 None
             };
             self.next_handle = (i + 1 < vertex_handles.len()).then(|| vertex_handles[i + 1]);
-            self.write_vertex3d(v, vh, e.common.handle, &e.common.layer, &e.common.color);
+            self.write_vertex3d(v, vh, &e.common);
         }
 
         // Write SEQEND — last in polyline chain
@@ -2866,22 +2860,21 @@ impl<'a> DwgObjectWriter<'a> {
         &mut self,
         v: &Vertex3DPolyline,
         vertex_handle: Handle,
-        owner: Handle,
-        parent_layer: &str,
-        parent_color: &crate::types::Color,
+        parent: &EntityCommon,
     ) {
+        // AUDIT requires a vertex to carry its polyline's linetype.
         self.write_common_entity_data(
             common::OBJ_VERTEX_3D,
             vertex_handle,
-            owner,
-            parent_layer,
-            parent_color,
+            parent.handle,
+            &parent.layer,
+            &parent.color,
             &crate::types::LineWeight::ByLayer,
             &crate::types::Transparency::default(),
             false,
             1.0,
-            "ByLayer",
-            &None,
+            &parent.linetype,
+            &parent.linetype_handle,
             &crate::xdata::ExtendedData::default(),
             &[],
             &None,
@@ -3133,6 +3126,7 @@ impl<'a> DwgObjectWriter<'a> {
                 None
             };
             self.next_handle = (i + 1 < vertex_handles.len()).then(|| vertex_handles[i + 1]);
+            // AUDIT requires a vertex to carry its mesh's linetype.
             self.write_common_entity_data(
                 common::OBJ_VERTEX_MESH,
                 vh,
@@ -3143,8 +3137,8 @@ impl<'a> DwgObjectWriter<'a> {
                 &crate::types::Transparency::default(),
                 false,
                 1.0,
-                "ByLayer",
-                &None,
+                &e.common.linetype,
+                &e.common.linetype_handle,
                 &crate::xdata::ExtendedData::default(),
                 &[],
                 &None,
