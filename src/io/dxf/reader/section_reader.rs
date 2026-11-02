@@ -5327,7 +5327,11 @@ impl<'a> SectionReader<'a> {
         Ok(object)
     }
 
-    fn read_object_context_data_dxf(&mut self, dxf_name: &str) -> Result<ObjectContextData> {
+    fn read_object_context_data_dxf(
+        &mut self,
+        dxf_name: &str,
+        block_by_name: impl Fn(&str) -> Option<Handle>,
+    ) -> Result<ObjectContextData> {
         let mut handle = Handle::NULL;
         let mut owner_handle = Handle::NULL;
         let mut reactors = Vec::new();
@@ -5475,7 +5479,10 @@ impl<'a> SectionReader<'a> {
             | "ACDB_RADIMLGOBJECTCONTEXTDATA_CLASS"
             | "ACDB_ORDDIMOBJECTCONTEXTDATA_CLASS" => {
                 let section = "AcDbDimensionObjectContextData";
-                let block = fields.handle(section, 2);
+                // AutoCAD writes the block name (*Dn); older acadrust output a
+                // hex handle, still accepted.
+                let block = fields.string(section, 2);
+                let block = block_by_name(block.trim()).unwrap_or_else(|| parse_dxf_handle(&block));
                 let b293 = fields.bool(section, 293);
                 let def_pt = fields.point2(section, 10);
                 let is_def_textloc = fields.bool(section, 294);
@@ -7140,7 +7147,12 @@ impl<'a> SectionReader<'a> {
                             }
                         }
                         name if is_object_context_name(name) => {
-                            let object = self.read_object_context_data_dxf(name)?;
+                            let object = self.read_object_context_data_dxf(name, |block| {
+                                document
+                                    .block_records
+                                    .get(block)
+                                    .map(|record| record.handle())
+                            })?;
                             if !object.scale.is_null() {
                                 document.context_scales.insert(object.handle, object.scale);
                             }

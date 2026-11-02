@@ -8615,7 +8615,12 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             ObjectContextKind::Dim(d) => {
                 self.writer
                     .write_subclass("AcDbDimensionObjectContextData")?;
-                self.writer.write_handle(2, d.block)?;
+                // Group 2 is the dimension block's NAME (*Dn); AutoCAD refuses
+                // a hex handle there ("Invalid dimension block name").
+                match self.block_record_names.get(&d.block) {
+                    Some(name) => self.writer.write_string(2, &name.clone())?,
+                    None => self.writer.write_handle(2, d.block)?,
+                }
                 self.writer.write_bool(293, d.b293)?;
                 self.writer.write_double(10, d.def_pt.x)?;
                 self.writer.write_double(20, d.def_pt.y)?;
