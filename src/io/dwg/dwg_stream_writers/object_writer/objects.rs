@@ -2081,10 +2081,13 @@ impl<'a> DwgObjectWriter<'a> {
                     .write_handle(DwgReferenceType::HardPointer, lt_handle.value());
             } else {
                 // Before R2018: bit_short index into the linetypes in table
-                // order, EXCLUDING ByBlock/ByLayer; 0x7FFF means ByLayer.
+                // order, EXCLUDING ByBlock/ByLayer; 0x7FFF means ByLayer,
+                // 0x7FFE ByBlock.
                 let idx: i16 =
                     if elem.linetype.is_empty() || elem.linetype.eq_ignore_ascii_case("ByLayer") {
                         0x7FFF
+                    } else if elem.linetype.eq_ignore_ascii_case("ByBlock") {
+                        0x7FFE
                     } else {
                         self.document
                             .line_types
