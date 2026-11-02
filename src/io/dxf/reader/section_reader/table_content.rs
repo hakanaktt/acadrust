@@ -44,8 +44,9 @@ fn apply_table_value_pair(value: &mut CellValue, code: i32, text: &str) {
 }
 
 /// The items of a data map (`CUSTOMDATA` / `DATAMAP_BEGIN` … `DATAMAP_END`) from an object's
-/// groups in file order: each item is a name (300), `DATAMAP_VALUE` (301), then its value up to
-/// `ACVALUE_END` (304).
+/// groups in file order: each item is a name (300), `DATAMAP_VALUE` (301), then its value. From
+/// 2007 the value ends with `ACVALUE_END` (304); a 2004 DXF has no end marker, so the value also
+/// ends where the next item (300 then 301) or `DATAMAP_END` begins.
 pub(super) fn data_map_from_pairs(pairs: &[(i32, String)]) -> Vec<TableCustomData> {
     let mut items = Vec::new();
     let Some(start) = pairs
@@ -54,17 +55,25 @@ pub(super) fn data_map_from_pairs(pairs: &[(i32, String)]) -> Vec<TableCustomDat
     else {
         return items;
     };
+    let rest = pairs.get(start + 1..).unwrap_or_default();
     let mut name = String::new();
     let mut value: Option<CellValue> = None;
-    for (code, text) in pairs.iter().skip(start + 1) {
-        if *code == 304 {
+    for (at, (code, text)) in rest.iter().enumerate() {
+        let next_item = *code == 300
+            && rest
+                .get(at + 1)
+                .is_some_and(|(c, v)| *c == 301 && v == "DATAMAP_VALUE");
+        let map_end = *code == 309 && text == "DATAMAP_END";
+        if *code == 304 || next_item || map_end {
             if let Some(value) = value.take() {
                 items.push(TableCustomData {
                     name: std::mem::take(&mut name),
                     value,
                 });
             }
-            continue;
+            if *code == 304 {
+                continue;
+            }
         }
         if let Some(value) = value.as_mut() {
             apply_table_value_pair(value, *code, text);

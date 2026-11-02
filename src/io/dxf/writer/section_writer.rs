@@ -7387,7 +7387,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                     self.writer.write_string(300, &item.name)?;
                     self.writer.write_string(301, "DATAMAP_VALUE")?;
                     self.write_field_cell_value_dxf(&item.value)?;
-                    self.writer.write_string(304, "ACVALUE_END")?;
+                    // A 2004 DXF value has no end marker; AutoCAD rejects one there.
+                    if self.dxf_version >= DxfVersion::AC1021 {
+                        self.writer.write_string(304, "ACVALUE_END")?;
+                    }
                 }
                 self.writer.write_string(309, "DATAMAP_END")?;
                 self.writer.write_handle(360, value.hard_owner)?;
