@@ -16,6 +16,9 @@ use crate::types::{Color, Handle, LineWeight, Vector2, Vector3};
 use super::common;
 use super::DwgObjectWriter;
 
+/// Largest block AutoCAD writes in a version 1 (SAT) ACIS body.
+const SAT_BLOCK_SIZE: usize = 4096;
+
 struct ArchitectureRecordBody {
     type_code: i16,
     has_ds_data: bool,
@@ -5599,8 +5602,17 @@ impl<'a> DwgObjectWriter<'a> {
                 }
             })
             .collect();
-        self.writer.write_bit_long(encrypted.len() as i32);
-        self.writer.write_bytes(&encrypted);
+        self.write_sat_blocks(&encrypted);
+    }
+
+    /// Encrypted SAT text as BL-sized blocks ended by an empty one. AutoCAD
+    /// writes blocks of at most 4096 bytes and refuses a drawing with a
+    /// larger one.
+    fn write_sat_blocks(&mut self, encrypted: &[u8]) {
+        for block in encrypted.chunks(SAT_BLOCK_SIZE) {
+            self.writer.write_bit_long(block.len() as i32);
+            self.writer.write_bytes(block);
+        }
         self.writer.write_bit_long(0);
     }
 
@@ -5792,10 +5804,7 @@ impl<'a> DwgObjectWriter<'a> {
                     }
                 }
 
-                // Write as a single block + terminating BL(0)
-                self.writer.write_bit_long(encrypted.len() as i32);
-                self.writer.write_bytes(&encrypted);
-                self.writer.write_bit_long(0); // terminating empty block
+                self.write_sat_blocks(&encrypted);
             }
         }
 
