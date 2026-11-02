@@ -863,6 +863,25 @@ impl CellStyle {
         self.overridden().contains(property)
     }
 
+    /// The margin flag word to store: the stored word, with bit 0 (the six
+    /// margin values follow) set whenever the style overrides a margin or a
+    /// content spacing, so an override made through the property flags is
+    /// written out instead of dropped.
+    pub fn margin_flags_to_write(&self) -> i16 {
+        use CellStylePropertyFlags as P;
+        let margins = P::MARGIN_LEFT
+            | P::MARGIN_TOP
+            | P::MARGIN_RIGHT
+            | P::MARGIN_BOTTOM
+            | P::MARGIN_HORIZONTAL_SPACING
+            | P::MARGIN_VERTICAL_SPACING;
+        if self.property_flags.intersects(margins) {
+            self.margin_override_flags | 1
+        } else {
+            self.margin_override_flags
+        }
+    }
+
     /// Creates a default cell style.
     pub fn new() -> Self {
         Self {

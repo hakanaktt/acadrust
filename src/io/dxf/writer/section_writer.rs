@@ -11165,8 +11165,9 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer
             .write_i32(93, style.layout_flags.bits() as i32)?;
         self.write_table_style_content_format_dxf(style)?;
-        self.writer.write_i16(171, style.margin_override_flags)?;
-        if style.margin_override_flags != 0 {
+        let margin_flags = style.margin_flags_to_write();
+        self.writer.write_i16(171, margin_flags)?;
+        if margin_flags != 0 {
             self.writer.write_string(301, "MARGIN")?;
             self.writer.write_string(1, "CELLMARGIN_BEGIN")?;
             for value in [
