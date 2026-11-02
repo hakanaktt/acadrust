@@ -452,6 +452,8 @@ fn find_acds_end(buf: &[u8], from: usize, to: usize) -> Option<(usize, usize)> {
 /// blob therefore lives in `[base + off[r] .. base + off[r+1]]`; locate the SAB
 /// header there and read through its end marker (which can run a few bytes past
 /// `off[r+1]`). Records with an empty range carry no geometry and are skipped.
+/// A record whose range holds a blob reference instead of a body is followed to
+/// its `blob01` pages ([`resolve_acds_blob_ref`]).
 /// Empty when there is no such table (the caller then falls back to order-based
 /// attachment).
 fn extract_acds_record_blobs(buf: &[u8], modeler_handles: &HashSet<u64>) -> Vec<(u64, Vec<u8>)> {
@@ -465,6 +467,8 @@ fn extract_acds_record_blobs(buf: &[u8], modeler_handles: &HashSet<u64>) -> Vec<
     // unclaimed blob segments elsewhere in the datastore. Kept in record order.
     let mut orphan_handles: Vec<u64> = Vec::new();
     let mut claimed_starts: HashSet<usize> = HashSet::new();
+    // `blob01` segments by id, collected on the first record that needs them.
+    let mut blob01_pages: Option<HashMap<u32, usize>> = None;
     // A large datastore splits its records across several `_data_` segments, so
     // process every one whose content is a record table (opens with `col0=0x14`).
     let mut scan = 0;
@@ -516,7 +520,13 @@ fn extract_acds_record_blobs(buf: &[u8], modeler_handles: &HashSet<u64>) -> Vec<
                 .position(|w| w == b"ASM BinaryFile")
                 .or_else(|| region.windows(15).position(|w| w == b"ACIS BinaryFile"))
             else {
-                if modeler_handles.contains(&handle) {
+                // A body too large for the table's own data is stored in `blob01`
+                // pages; the record then holds a reference naming them.
+                let pages = blob01_pages.get_or_insert_with(|| acds_blob01_pages(buf));
+                if let Some((start, blob)) = resolve_acds_blob_ref(buf, region, pages) {
+                    claimed_starts.insert(start);
+                    out.push((handle, blob));
+                } else if modeler_handles.contains(&handle) {
                     orphan_handles.push(handle); // blob lives in an external segment
                 }
                 continue;
@@ -549,6 +559,99 @@ fn extract_acds_record_blobs(buf: &[u8], modeler_handles: &HashSet<u64>) -> Vec<
         }
     }
     out
+}
+
+/// Size of a `blob01` page frame: the 48-byte segment header, then
+/// `total_data_size` (u64), `page_start_offset` (u64), `page_index` (u32),
+/// `page_count` (u32) and `page_data_size` (u64). The page's data follows.
+const BLOB01_FRAME_LEN: usize = 80;
+
+/// Every `blob01` segment in an AcDs buffer, by its segment id (the u32 at
+/// header offset 8), for [`resolve_acds_blob_ref`]. Only headers flagged as a
+/// blob page (`is_blob01`, the u32 at offset 12, is 1) are taken.
+fn acds_blob01_pages(buf: &[u8]) -> HashMap<u32, usize> {
+    const MARKER: &[u8] = b"\xAC\xD5blob01";
+    let mut pages = HashMap::new();
+    let mut scan = 0usize;
+    while let Some(i) = buf[scan..].windows(MARKER.len()).position(|w| w == MARKER) {
+        let seg = scan + i;
+        scan = seg + MARKER.len();
+        let word = |p: usize| {
+            buf.get(p..p + 4)
+                .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+        };
+        if let (Some(id), Some(1)) = (word(seg + 8), word(seg + 12)) {
+            pages.entry(id).or_insert(seg);
+        }
+    }
+    pages
+}
+
+/// The body a `_data_` record stores out of line, from its blob reference.
+///
+/// A record whose data does not fit its `_data_` segment holds, in place of
+/// the data, a reference to the `blob01` pages that do. Its layout, as found
+/// in AutoCAD-saved datastores: a u32 marker, `total_data_size` (u64),
+/// `page_count` (u32), the reference's size after the marker (u32,
+/// `32 + 8 * page_count`),
+/// the page size and the last page's size (u32 each), two u32 left unread,
+/// then `page_count` pairs `(segment id, size)` (u32 each), in page order.
+///
+/// Every page must be a `blob01` segment whose own frame agrees with the
+/// reference: the same total, its index in the chain, the same page count and
+/// size; the sizes must add up to the total. The pages are joined and cut, as
+/// a body inside the table is, from its header magic through its end marker.
+/// Returns the buffer position of the magic (to mark the blob as claimed) and
+/// the body; `None` for anything else, which leaves the record an orphan.
+fn resolve_acds_blob_ref(
+    buf: &[u8],
+    region: &[u8],
+    pages: &HashMap<u32, usize>,
+) -> Option<(usize, Vec<u8>)> {
+    let r32 = |b: &[u8], p: usize| {
+        b.get(p..p + 4)
+            .map(|v| u32::from_le_bytes(v.try_into().unwrap()))
+    };
+    let r64 = |b: &[u8], p: usize| {
+        b.get(p..p + 8)
+            .map(|v| u64::from_le_bytes(v.try_into().unwrap()))
+    };
+    let total = r64(region, 4)?;
+    let count = r32(region, 12)? as usize;
+    if count == 0 || r32(region, 16)? as usize != 32 + 8 * count || region.len() < 36 + 8 * count {
+        return None;
+    }
+    if total > buf.len() as u64 {
+        return None;
+    }
+    let mut body = Vec::with_capacity(total as usize);
+    // (offset in `body`, position in `buf`) of each page's data.
+    let mut starts = Vec::with_capacity(count);
+    for index in 0..count {
+        let id = r32(region, 36 + 8 * index)?;
+        let size = r32(region, 40 + 8 * index)? as usize;
+        let seg = *pages.get(&id)?;
+        let frame_agrees = r64(buf, seg + 48) == Some(total)
+            && r32(buf, seg + 64) == Some(index as u32)
+            && r32(buf, seg + 68) == Some(count as u32)
+            && r64(buf, seg + 72) == Some(size as u64);
+        if !frame_agrees {
+            return None;
+        }
+        let data = seg + BLOB01_FRAME_LEN;
+        starts.push((body.len(), data));
+        body.extend_from_slice(buf.get(data..data.checked_add(size)?)?);
+    }
+    if body.len() as u64 != total {
+        return None;
+    }
+    let magic = find_acds_magic(&body, 0)?;
+    let (end, marker_len) = find_acds_end(&body, magic, body.len())?;
+    let (page_offset, page_start) = *starts.iter().rev().find(|(offset, _)| *offset <= magic)?;
+    Some((
+        page_start + magic - page_offset,
+        body[magic..end + marker_len].to_vec(),
+    ))
 }
 
 /// Extract every SAB (ACIS/ASM binary) blob from a decompressed AcDs section, in
@@ -3713,6 +3816,155 @@ mod dwg_reader_tests {
                 expected,
             );
         }
+    }
+
+    /// Records whose bodies live in `blob01` pages hold a blob reference; each
+    /// is followed to its own pages, whatever order the pages are in, and an
+    /// unreferenced body elsewhere in the datastore (left by an earlier save)
+    /// attaches to nothing. Pairing the unclaimed bodies by count gave up on
+    /// every such record as soon as one stale body was present.
+    #[test]
+    fn acds_blob_references_follow_their_own_blob01_pages() {
+        const HEADER_SIZE: usize = 48;
+        const RECORD_SIZE: usize = 20;
+
+        fn body(label: &[u8]) -> Vec<u8> {
+            let mut value = b"ASM BinaryFile".to_vec();
+            value.extend_from_slice(label);
+            value.extend_from_slice(ACIS_END_MARKER);
+            value
+        }
+        fn put32(b: &mut Vec<u8>, v: u32) {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+        fn put64(b: &mut Vec<u8>, v: u64) {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+        fn segment_header(b: &mut Vec<u8>, name: &[u8; 6], id: u32, is_blob: u32, size: u64) {
+            b.extend_from_slice(b"\xAC\xD5");
+            b.extend_from_slice(name);
+            put32(b, id);
+            put32(b, is_blob);
+            put64(b, size);
+            b.extend_from_slice(&[0; 16]);
+            b.extend_from_slice(&[0x55; 8]);
+        }
+        /// The record's in-table data: the reference to `pages` (id, size).
+        fn blob_ref(total: usize, pages: &[(u32, usize)]) -> Vec<u8> {
+            let mut r = Vec::new();
+            put32(&mut r, 0xBB10_6BB1);
+            put64(&mut r, total as u64);
+            put32(&mut r, pages.len() as u32);
+            put32(&mut r, 32 + 8 * pages.len() as u32);
+            put32(&mut r, pages[0].1 as u32);
+            put32(&mut r, pages[pages.len() - 1].1 as u32);
+            put32(&mut r, 0);
+            put32(&mut r, 0);
+            for (id, size) in pages {
+                put32(&mut r, *id);
+                put32(&mut r, *size as u32);
+            }
+            r
+        }
+        fn blob01(
+            b: &mut Vec<u8>,
+            id: u32,
+            total: usize,
+            start: usize,
+            index: u32,
+            count: u32,
+            data: &[u8],
+        ) {
+            segment_header(b, b"blob01", id, 1, HEADER_SIZE as u64);
+            put64(b, total as u64);
+            put64(b, start as u64);
+            put32(b, index);
+            put32(b, count);
+            put64(b, data.len() as u64);
+            b.extend_from_slice(data);
+        }
+
+        let inline = body(b"inline");
+        let one_page = body(b"one page");
+        let two_pages = body(b"two pages, split across both");
+        let stale = body(b"stale");
+        let split = 20;
+        let records: [(u32, Vec<u8>); 3] = [
+            (0xA1, blob_ref(one_page.len(), &[(30, one_page.len())])),
+            (0x91, inline.clone()),
+            (
+                0xA2,
+                blob_ref(
+                    two_pages.len(),
+                    &[(41, split), (42, two_pages.len() - split)],
+                ),
+            ),
+        ];
+
+        let table_size = RECORD_SIZE * records.len();
+        let data_size: usize = records.iter().map(|(_, d)| d.len()).sum();
+        let mut buffer = Vec::new();
+        segment_header(
+            &mut buffer,
+            b"_data_",
+            2,
+            0,
+            (HEADER_SIZE + table_size + data_size) as u64,
+        );
+        let mut offset = 0;
+        for (handle, data) in &records {
+            put32(&mut buffer, 0x14);
+            put32(&mut buffer, 1);
+            put64(&mut buffer, u64::from(*handle));
+            put32(&mut buffer, offset as u32);
+            offset += data.len();
+        }
+        for (_, data) in &records {
+            buffer.extend_from_slice(data);
+        }
+        // A body no record names, ahead of the pages: what an earlier save left.
+        segment_header(
+            &mut buffer,
+            b"search",
+            7,
+            0,
+            (HEADER_SIZE + stale.len()) as u64,
+        );
+        buffer.extend_from_slice(&stale);
+        // Pages out of record order: the two-page body first, then the one-page one.
+        blob01(
+            &mut buffer,
+            41,
+            two_pages.len(),
+            0,
+            0,
+            2,
+            &two_pages[..split],
+        );
+        blob01(
+            &mut buffer,
+            42,
+            two_pages.len(),
+            split,
+            1,
+            2,
+            &two_pages[split..],
+        );
+        blob01(&mut buffer, 30, one_page.len(), 0, 0, 1, &one_page);
+
+        let handles = HashSet::from([0x91u64, 0xA1, 0xA2]);
+        let extracted = extract_acds_record_blobs(&buffer, &handles);
+        let of = |handle: u64| {
+            extracted
+                .iter()
+                .find(|(candidate, _)| *candidate == handle)
+                .map(|(_, blob)| blob.clone())
+        };
+        assert_eq!(extracted.len(), 3);
+        assert_eq!(of(0x91), Some(inline));
+        assert_eq!(of(0xA1), Some(one_page));
+        assert_eq!(of(0xA2), Some(two_pages));
+        assert!(extracted.iter().all(|(_, blob)| *blob != stale));
     }
 }
 
