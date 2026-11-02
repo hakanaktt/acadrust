@@ -2511,7 +2511,6 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                     499,
                     0,
                     0,
-                    false,
                     Some(&graphics),
                     &payload,
                     &crate::objects::ProxyPayload::default(),
@@ -2541,7 +2540,6 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 data.class_id,
                 data.dwg_version,
                 data.maintenance_version,
-                data.from_dxf,
                 Some(&graphics),
                 &data.payload,
                 &data.text_payload,
@@ -4053,7 +4051,6 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 data.class_id,
                 data.dwg_version,
                 data.maintenance_version,
-                false,
                 Some(graphics),
                 &data.payload,
                 &data.text_payload,
@@ -6291,7 +6288,6 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 499,
                 0,
                 0,
-                false,
                 None,
                 &payload,
                 &crate::objects::ProxyPayload::default(),
@@ -6520,19 +6516,16 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// object itself was saved in an R2007+ format (DHL code 27 and up).
     /// 94 always terminates the object-id list, even when it is empty.
     #[allow(clippy::too_many_arguments)]
-    fn write_proxy_body_dxf(
+    /// `90` proxy id, `91` class id, the drawing version (`71`/`97` from
+    /// R2018, `95` before) and `70` original data format.
+    fn write_proxy_header_dxf(
         &mut self,
         proxy_id: i32,
         class_id: i32,
         dwg_version: i32,
         maintenance_version: i32,
         from_dxf: bool,
-        graphics: Option<&[u8]>,
-        payload: &crate::objects::ProxyPayload,
-        text_payload: &crate::objects::ProxyPayload,
-        references: &[crate::objects::ProxyObjectReference],
     ) -> Result<()> {
-        let v2010 = self.dxf_version >= DxfVersion::AC1024;
         self.writer.write_i32(90, proxy_id)?;
         self.writer.write_i32(91, class_id)?;
         if self.dxf_version >= DxfVersion::AC1032 {
@@ -6542,7 +6535,31 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer
                 .write_i32(95, (maintenance_version << 16) | (dwg_version & 0xffff))?;
         }
-        self.writer.write_bool(70, from_dxf)?;
+        self.writer.write_bool(70, from_dxf)
+    }
+
+    fn write_proxy_body_dxf(
+        &mut self,
+        proxy_id: i32,
+        class_id: i32,
+        dwg_version: i32,
+        maintenance_version: i32,
+        graphics: Option<&[u8]>,
+        payload: &crate::objects::ProxyPayload,
+        text_payload: &crate::objects::ProxyPayload,
+        references: &[crate::objects::ProxyObjectReference],
+    ) -> Result<()> {
+        let v2010 = self.dxf_version >= DxfVersion::AC1024;
+        self.write_proxy_header_dxf(
+            proxy_id,
+            class_id,
+            dwg_version,
+            maintenance_version,
+            // Binary data follows, so the original data format is DWG (`70 0`)
+            // whatever the record was read from: AutoCAD discards a drawing
+            // with `70 1` before binary data.
+            false,
+        )?;
         if let Some(graphics) = graphics {
             if v2010 {
                 self.writer.write_i64(160, graphics.len() as i64)?;
@@ -6599,12 +6616,27 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         }
         self.writer.write_handle(330, object.owner)?;
         self.writer.write_subclass("AcDbProxyObject")?;
+        if object.from_dxf && !object.dxf_data.is_empty() {
+            // Original data format DXF: the header, then the object's own DXF
+            // groups as read, with no binary size, data or 94 terminator
+            // (AutoCAD's form; it refuses binary data after 70 1).
+            self.write_proxy_header_dxf(
+                499,
+                object.class_id,
+                object.dwg_version,
+                object.maintenance_version,
+                true,
+            )?;
+            for (code, value) in &object.dxf_data {
+                self.writer.write_string(*code, value)?;
+            }
+            return Ok(());
+        }
         self.write_proxy_body_dxf(
             499,
             object.class_id,
             object.dwg_version,
             object.maintenance_version,
-            object.from_dxf,
             None,
             &object.payload,
             &object.text_payload,

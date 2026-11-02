@@ -12191,10 +12191,17 @@ impl<'a> SectionReader<'a> {
         let mut binary = Vec::new();
         let mut object_data_bits = 0u32;
         let mut text_data_bits = 0u32;
+        // After `70 1` (original data format DXF) AutoCAD writes the object's
+        // own DXF groups instead of binary data; keep them verbatim.
+        let mut dxf_data_follows = false;
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 {
                 self.reader.push_back(pair);
                 break;
+            }
+            if dxf_data_follows {
+                object.dxf_data.push((pair.code, pair.value_string));
+                continue;
             }
             match pair.code {
                 5 if object.handle.is_null() => {
@@ -12233,7 +12240,14 @@ impl<'a> SectionReader<'a> {
                 95 => object.version = pair.as_i32().unwrap_or(0),
                 71 => object.dwg_version = pair.as_i32().unwrap_or(0),
                 97 => object.maintenance_version = pair.as_i32().unwrap_or(0),
-                70 => object.from_dxf = pair.as_i16().unwrap_or(0) != 0,
+                70 => {
+                    object.from_dxf = pair.as_i16().unwrap_or(0) != 0;
+                    dxf_data_follows = object.from_dxf
+                        && !matches!(
+                            self.reader.peek_code()?,
+                            None | Some(0 | 92 | 93 | 94 | 96 | 160 | 161 | 162 | 310)
+                        );
+                }
                 // Data size in bits: 93 up to R2007, 161 (64-bit) from R2010.
                 93 | 161 => {
                     object_data_bits = pair.as_int().unwrap_or(0).max(0) as u32;

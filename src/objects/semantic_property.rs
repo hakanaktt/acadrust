@@ -66,6 +66,11 @@ pub struct ProxyObject {
     #[cfg_attr(feature = "serde", serde(default))]
     pub text_payload: ProxyPayload,
     pub object_ids: Vec<ProxyObjectReference>,
+    /// The object's own DXF groups, as a DXF file stores them after `70 1`
+    /// (original data format DXF): `100 AcDbRenderSettings`, `90 2`, ... up to
+    /// the next record. Written back as they are. Empty for binary data.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub dxf_data: Vec<(i32, String)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
