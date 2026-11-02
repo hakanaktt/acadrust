@@ -25,12 +25,14 @@ fn roundtrip(version: DxfVersion, spline: Spline) -> Spline {
     let read = DwgReader::from_stream(Cursor::new(bytes))
         .read()
         .expect("DWG read failed");
-    read.entities()
+    let spline = read
+        .entities()
         .find_map(|e| match e {
             EntityType::Spline(s) => Some(s.clone()),
             _ => None,
         })
-        .expect("SPLINE missing after roundtrip")
+        .expect("SPLINE missing after roundtrip");
+    spline
 }
 
 #[test]
