@@ -3423,7 +3423,7 @@ impl<'a> DwgObjectWriter<'a> {
         }
     }
 
-    fn write_table_custom_data(&mut self, data: &TableCustomData) {
+    pub(super) fn write_table_custom_data(&mut self, data: &TableCustomData) {
         self.writer.write_variable_text(&data.name);
         self.write_table_cad_value_with_schema(&data.value, true);
     }

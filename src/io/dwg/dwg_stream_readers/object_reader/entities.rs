@@ -3640,7 +3640,10 @@ fn read_cell_style(reader: &mut DwgMergedReader) -> Option<CellStyle> {
     Some(style)
 }
 
-fn read_custom_table_data(reader: &mut DwgMergedReader, version: DwgVersion) -> TableCustomData {
+pub(super) fn read_custom_table_data(
+    reader: &mut DwgMergedReader,
+    version: DwgVersion,
+) -> TableCustomData {
     let name = reader.read_variable_text();
     let value = read_cad_value_with_schema(reader, version, true);
     TableCustomData { name, value }

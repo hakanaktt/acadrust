@@ -623,10 +623,13 @@ struct ClassDxfFields {
         String,
         std::collections::HashMap<i32, std::collections::VecDeque<String>>,
     >,
+    /// Every group in file order, for collections whose items mix group codes (a data map).
+    ordered: Vec<(i32, String)>,
 }
 
 impl ClassDxfFields {
     fn push(&mut self, section: &str, code: i32, value: String) {
+        self.ordered.push((code, value.clone()));
         self.sections
             .entry(section.to_string())
             .or_default()
@@ -6335,6 +6338,7 @@ impl<'a> SectionReader<'a> {
                     status_flags,
                     update_status,
                     custom_data,
+                    data_map: table_content::data_map_from_pairs(&fields.ordered),
                     hard_owner: fields.handle(section, 360),
                 })
             }

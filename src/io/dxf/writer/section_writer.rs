@@ -7376,11 +7376,18 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 self.writer.write_i32(93, value.status_flags)?;
                 self.writer.write_string(304, &value.update_status)?;
                 self.writer.write_i32(94, value.custom_data.len() as i32)?;
-                self.writer.write_string(305, "CUSTOMDATA")?;
-                self.writer.write_string(1, "DATAMAP_BEGIN")?;
                 for item in &value.custom_data {
                     self.writer.write_handle(330, item.target)?;
                     self.writer.write_string(304, &item.value)?;
+                }
+                self.writer.write_string(305, "CUSTOMDATA")?;
+                self.writer.write_string(1, "DATAMAP_BEGIN")?;
+                self.writer.write_i32(90, value.data_map.len() as i32)?;
+                for item in &value.data_map {
+                    self.writer.write_string(300, &item.name)?;
+                    self.writer.write_string(301, "DATAMAP_VALUE")?;
+                    self.write_field_cell_value_dxf(&item.value)?;
+                    self.writer.write_string(304, "ACVALUE_END")?;
                 }
                 self.writer.write_string(309, "DATAMAP_END")?;
                 self.writer.write_handle(360, value.hard_owner)?;

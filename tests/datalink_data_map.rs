@@ -124,3 +124,53 @@ fn dwg_keeps_the_data_map_of_a_data_link() {
         .expect("read DWG");
     assert_data_map(&write_dxf(&back));
 }
+
+/// The data link written by `DwgWriter` from a DXF (option 2, as AutoCAD shows it) carries bit 8
+/// of its DWG option, the bit that says its data map follows; the option read back is 2 again.
+#[test]
+fn dwg_option_carries_the_data_map_bit_only_with_a_map() {
+    let link = |document: &CadDocument| {
+        document
+            .objects
+            .values()
+            .find_map(|object| match object {
+                ObjectType::ClassObject(ClassObject {
+                    data: ClassObjectData::DataLink(link),
+                    ..
+                }) => Some(link.clone()),
+                _ => None,
+            })
+            .expect("the data link survives")
+    };
+    let from_dxf = read_dxf(&link_dxf());
+    assert_eq!(link(&from_dxf).option & DataLink::HAS_DATA_MAP, 0);
+    let dwg = DwgWriter::write_to_vec(&from_dxf).expect("write DWG");
+    let back = DwgReader::from_stream(Cursor::new(dwg))
+        .read()
+        .expect("read DWG");
+    assert_eq!(link(&back).option, 2, "the option shows without the bit");
+    assert_eq!(
+        link(&back).data_map.len(),
+        3,
+        "the map is read because the bit is set"
+    );
+
+    // Without a map, the bit is not written and nothing follows.
+    let mut empty = from_dxf.clone();
+    for object in empty.objects.values_mut() {
+        if let ObjectType::ClassObject(ClassObject {
+            data: ClassObjectData::DataLink(link),
+            ..
+        }) = object
+        {
+            link.data_map.clear();
+            link.option |= DataLink::HAS_DATA_MAP;
+        }
+    }
+    let dwg = DwgWriter::write_to_vec(&empty).expect("write DWG");
+    let back = DwgReader::from_stream(Cursor::new(dwg))
+        .read()
+        .expect("read DWG");
+    assert_eq!(link(&back).option, 2);
+    assert!(link(&back).data_map.is_empty());
+}
