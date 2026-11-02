@@ -1102,7 +1102,7 @@ impl SabReader {
             name_spline_keywords(&record.entity_type, &mut record.tokens);
         }
 
-        Ok((SatDocument { header, records }, pos))
+        Ok((SatDocument::with_records(header, records), pos))
     }
 
     fn read_record(
