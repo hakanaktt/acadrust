@@ -6109,3 +6109,118 @@ mod tests {
         assert_eq!(cell_main_stream(DxfVersion::AC1015, &cell), r.to_bytes_snapshot());
     }
 }
+
+#[cfg(test)]
+mod polyline_vertex_linetype_tests {
+    // AutoCAD's AUDIT reports "linetype != owner's" for every polyline
+    // vertex whose linetype differs from its polyline, as INTERIOR_OBJECTS.dwg
+    // did once re-written (440 polygon mesh vertices).
+
+    use super::*;
+    use crate::document::CadDocument;
+    use crate::io::dwg::dwg_stream_readers::object_reader::DwgObjectReader;
+    use crate::tables::LineType;
+    use crate::types::DxfVersion;
+
+    const VERSIONS: [DxfVersion; 3] = [DxfVersion::AC1015, DxfVersion::AC1018, DxfVersion::AC1032];
+
+    fn document(version: DxfVersion) -> CadDocument {
+        let mut doc = CadDocument::with_version(version);
+        doc.line_types.add(LineType::new("POLYDASH")).unwrap();
+        doc
+    }
+
+    fn common(doc: &CadDocument) -> EntityCommon {
+        let mut common = EntityCommon::new();
+        common.handle = Handle::new(0x7000);
+        common.owner_handle = doc.header.model_space_block_handle;
+        common.linetype = "POLYDASH".into();
+        common
+    }
+
+    /// Linetype flags of the polyline and of each vertex record written.
+    fn linetype_flags(w: &DwgObjectWriter, version: DxfVersion) -> (u8, Vec<u8>) {
+        let reader = DwgObjectReader::new(w.output.clone(), version, Default::default()).unwrap();
+        let mut owner = None;
+        let mut vertices = Vec::new();
+        for &(_, offset) in &w.handle_map {
+            let (type_code, mut record) = reader.read_record_at(offset as usize).unwrap();
+            let flags = reader
+                .read_common_entity_data(&mut record, type_code)
+                .linetype_flags;
+            match type_code {
+                common::OBJ_POLYLINE_2D | common::OBJ_POLYLINE_3D | common::OBJ_POLYLINE_MESH => {
+                    owner = Some(flags)
+                }
+                common::OBJ_VERTEX_2D | common::OBJ_VERTEX_3D | common::OBJ_VERTEX_MESH => {
+                    vertices.push(flags)
+                }
+                _ => {}
+            }
+        }
+        (owner.expect("polyline record"), vertices)
+    }
+
+    fn assert_vertices_follow_owner(w: &DwgObjectWriter, version: DxfVersion, kind: &str) {
+        let (owner, vertices) = linetype_flags(w, version);
+        assert_eq!(
+            owner, 3,
+            "{kind} {version:?}: the polyline names its linetype"
+        );
+        assert_eq!(vertices.len(), 4, "{kind} {version:?}");
+        assert!(
+            vertices.iter().all(|&flags| flags == owner),
+            "{kind} {version:?}: vertex linetype flags {vertices:?}"
+        );
+    }
+
+    const POINTS: [(f64, f64); 4] = [(0.0, 0.0), (0.0, 1.0), (1.0, 0.0), (1.0, 1.0)];
+
+    #[test]
+    fn polygon_mesh_vertices_carry_the_mesh_linetype() {
+        for version in VERSIONS {
+            let doc = document(version);
+            let mut mesh = PolygonMeshEntity::new();
+            mesh.common = common(&doc);
+            mesh.m_vertex_count = 2;
+            mesh.n_vertex_count = 2;
+            for (x, y) in POINTS {
+                let mut vertex = PolygonMeshVertex::new();
+                vertex.location = Vector3::new(x, y, 0.0);
+                vertex.flags = 64;
+                mesh.vertices.push(vertex);
+            }
+            let mut w = DwgObjectWriter::new(&doc).unwrap();
+            w.write_polygon_mesh(&mesh);
+            assert_vertices_follow_owner(&w, version, "mesh");
+        }
+    }
+
+    #[test]
+    fn polyline_3d_vertices_carry_the_polyline_linetype() {
+        for version in VERSIONS {
+            let doc = document(version);
+            let points = POINTS.iter().map(|&(x, y)| Vector3::new(x, y, x)).collect();
+            let mut polyline = Polyline3D::from_points(points);
+            polyline.common = common(&doc);
+            let mut w = DwgObjectWriter::new(&doc).unwrap();
+            w.write_polyline3d(&polyline);
+            assert_vertices_follow_owner(&w, version, "3D polyline");
+        }
+    }
+
+    #[test]
+    fn polyline_2d_vertices_carry_the_polyline_linetype() {
+        for version in VERSIONS {
+            let doc = document(version);
+            let mut polyline = Polyline2D::new();
+            polyline.common = common(&doc);
+            for (x, y) in POINTS {
+                polyline.add_vertex(Vertex2D::new(Vector3::new(x, y, 0.0)));
+            }
+            let mut w = DwgObjectWriter::new(&doc).unwrap();
+            w.write_polyline2d(&polyline);
+            assert_vertices_follow_owner(&w, version, "2D polyline");
+        }
+    }
+}
