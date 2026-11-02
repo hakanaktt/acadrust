@@ -4771,6 +4771,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     ) -> Result<()> {
         self.write_common_entity_data(&base.common, owner)?;
         self.writer.write_subclass("AcDbDimension")?;
+        // R2010+: class version (0).
+        if self.dxf_version >= DxfVersion::AC1024 {
+            self.writer.write_byte(280, 0)?;
+        }
         // Omit an absent geometry cache so the CAD host can regenerate it.
         // An explicit empty group 2 is an invalid block-table reference.
         if !base.block_name.is_empty() {
@@ -4791,6 +4795,12 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         };
         self.writer.write_i16(70, type_flags)?;
         self.writer.write_double(42, base.actual_measurement)?;
+        // R2007+: an always-0 flag, then the two flip-arrow flags.
+        if self.dxf_version >= DxfVersion::AC1021 {
+            self.writer.write_i16(73, 0)?;
+            self.writer.write_i16(74, i16::from(base.flip_arrow1))?;
+            self.writer.write_i16(75, i16::from(base.flip_arrow2))?;
+        }
         // DXF angles are in degrees; internal representation is radians.
         self.writer
             .write_double(53, super::degrees(base.text_rotation))?;

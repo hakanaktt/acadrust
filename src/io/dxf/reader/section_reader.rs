@@ -15452,6 +15452,7 @@ impl<'a> SectionReader<'a> {
         let mut leader_length = 0.0;
         let mut line_spacing_factor = 1.0f64;
         let mut line_spacing_style = 1i16;
+        let (mut flip_arrow1, mut flip_arrow2) = (false, false);
         let mut attachment_point = AttachmentPointType::MiddleCenter;
         let mut normal = PointReader::new();
         let mut common = EntityCommon::new();
@@ -15561,6 +15562,8 @@ impl<'a> SectionReader<'a> {
                     };
                 }
                 72 => line_spacing_style = pair.as_i16().unwrap_or(1),
+                74 => flip_arrow1 = pair.as_i16().is_some_and(|v| v != 0),
+                75 => flip_arrow2 = pair.as_i16().is_some_and(|v| v != 0),
                 42 => {
                     if let Some(measurement) = pair.as_double() {
                         actual_measurement = Some(measurement);
@@ -15730,6 +15733,8 @@ impl<'a> SectionReader<'a> {
             dc.text_user_positioned = text_user_positioned;
             dc.attachment_point = attachment_point;
             dc.line_spacing_style = line_spacing_style;
+            dc.flip_arrow1 = flip_arrow1;
+            dc.flip_arrow2 = flip_arrow2;
             if line_spacing_factor != 1.0 {
                 dc.line_spacing_factor = line_spacing_factor;
             }
