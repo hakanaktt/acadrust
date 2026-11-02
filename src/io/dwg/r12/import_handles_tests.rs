@@ -456,3 +456,34 @@ fn duplicate_r11_dimension_block_names_keep_entity_identity() {
     };
     assert_eq!(line.start, crate::types::Vector3::new(2.0, 0.0, 0.0));
 }
+
+#[test]
+fn deleted_table_entries_stay_out_of_the_drawing() {
+    let mut tables: [Vec<EntityRecord>; 10] = Default::default();
+    for (name, flags) in [("*D0", "65"), ("", "128"), ("B", "64")] {
+        let mut row = EntityRecord::new("BLOCK_RECORD");
+        row.pairs.push((2, name.into()));
+        row.pairs.push((70, flags.into()));
+        tables[0].push(row);
+    }
+    for (name, flags) in [("0", "0"), ("GONE", "128")] {
+        let mut row = EntityRecord::new("LAYER");
+        row.pairs.push((2, name.into()));
+        row.pairs.push((70, flags.into()));
+        tables[1].push(row);
+    }
+    let handles =
+        import_handles::ImportHandles::assign(0x20, &mut tables, &mut [], &mut [], None, None)
+            .unwrap();
+    let mut dxf = String::new();
+    table_section_to_dxf(&mut dxf, &tables, &handles);
+    let names: Vec<&str> = dxf
+        .lines()
+        .collect::<Vec<_>>()
+        .windows(2)
+        .filter(|pair| pair[0] == "2")
+        .map(|pair| pair[1])
+        .collect();
+    assert!(names.contains(&"*D0") && names.contains(&"B"), "{names:?}");
+    assert!(!names.contains(&"") && !names.contains(&"GONE"), "{names:?}");
+}
