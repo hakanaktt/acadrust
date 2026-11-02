@@ -180,6 +180,8 @@ pub(crate) fn prepare_table_entity_roundtrip(document: &mut std::borrow::Cow<'_,
         return;
     }
     let document = document.to_mut();
+    document.classes.ensure_default("TABLECONTENT");
+    document.classes.ensure_default("TABLEGEOMETRY");
     for handle in tables {
         let Some(EntityType::Table(table)) = document.get_entity(handle).cloned() else {
             continue;
@@ -190,7 +192,19 @@ pub(crate) fn prepare_table_entity_roundtrip(document: &mut std::borrow::Cow<'_,
                 let record = document.ensure_xrecord(handle, RECORD_KEY);
                 let content = document.allocate_handle();
                 if let Some(ObjectType::XRecord(xrecord)) = document.objects.get_mut(&record) {
-                    xrecord.entries.clear();
+                    // The record may carry other roundtrip data: replace only
+                    // this table's section (a stale one, if any).
+                    if let Some(start) = xrecord
+                        .entries
+                        .iter()
+                        .position(|entry| entry.value.as_string() == Some(MARKER))
+                    {
+                        let end = xrecord.entries[start + 1..]
+                            .iter()
+                            .position(|entry| entry.code == 102)
+                            .map_or(xrecord.entries.len(), |offset| start + 1 + offset);
+                        xrecord.entries.drain(start..end);
+                    }
                     xrecord.add_string(102, MARKER);
                     xrecord.add_handle(360, content);
                     xrecord.add_int16(70, 2);

@@ -1146,6 +1146,7 @@ pub(crate) fn prepare_table_style_templates(
         return;
     }
     let document = document.to_mut();
+    document.classes.ensure_default("TABLETEMPLATE");
     for (style, template) in changes {
         let owner = if in_dictionary {
             let dictionary = document.ensure_extension_dictionary(style);
@@ -1363,14 +1364,7 @@ fn store_cell_style_maps(document: &mut crate::document::CadDocument) {
             _ => {
                 // The map takes its type code from the CELLSTYLEMAP class;
                 // without it the writer leaves the map out.
-                if !document.classes.contains("CELLSTYLEMAP") {
-                    if let Some(class) = crate::classes::default_classes()
-                        .into_iter()
-                        .find(|class| class.dxf_name == "CELLSTYLEMAP")
-                    {
-                        document.classes.add_or_update(class);
-                    }
-                }
+                document.classes.ensure_default("CELLSTYLEMAP");
                 let map = document.allocate_handle();
                 let mut object =
                     DataObject::new(DataObjectData::CellStyleMap(CellStyleMap { cells }));

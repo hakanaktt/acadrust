@@ -3409,10 +3409,18 @@ impl CadDocument {
         let Some(cell) = t.cell_mut(row, column) else {
             return false;
         };
+        // The cell keeps the text the field showed, as a value of its own:
+        // a field content with no field would be written without its text.
         let fields: Vec<Handle> = cell
             .contents
             .iter_mut()
-            .filter_map(|content| content.field_handle.take())
+            .filter_map(|content| {
+                let field = content.field_handle.take()?;
+                if content.content_type == crate::entities::TableCellContentType::Field {
+                    content.content_type = crate::entities::TableCellContentType::Value;
+                }
+                Some(field)
+            })
             .collect();
         if fields.is_empty() {
             return false;

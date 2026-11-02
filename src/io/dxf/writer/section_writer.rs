@@ -8428,9 +8428,35 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     }
 
     /// Write TableStyle object
+    /// The reactor and extension-dictionary groups of a TABLESTYLE: its cell
+    /// style map and starting table live in that dictionary, and readers
+    /// reach them through the link.
+    fn write_table_style_links(&mut self, style: &TableStyle, document: &CadDocument) -> Result<()> {
+        let valid = |h: &Handle| {
+            *h != Handle::NULL && (self.valid_handles.is_empty() || self.valid_handles.contains(h))
+        };
+        if valid(&style.owner_handle) {
+            self.writer.write_string(102, "{ACAD_REACTORS")?;
+            self.writer.write_handle(330, style.owner_handle)?;
+            self.writer.write_string(102, "}")?;
+        }
+        if let Some(xdictionary) = document.extension_dictionary_handle(style.handle).filter(valid) {
+            self.writer.write_string(102, "{ACAD_XDICTIONARY")?;
+            self.writer.write_handle(360, xdictionary)?;
+            self.writer.write_string(102, "}")?;
+        }
+        Ok(())
+    }
+
     fn write_table_style(&mut self, style: &TableStyle, document: &CadDocument) -> Result<()> {
         self.writer.write_string(0, "TABLESTYLE")?;
         if let Some(raw_dxf_codes) = &style.raw_dxf_codes {
+            // A dictionary made after the style was read (cell styles added
+            // here) is linked after the handle, as on a style written anew.
+            let raw_has_links = raw_dxf_codes
+                .iter()
+                .any(|(code, value)| *code == 102 && value.starts_with('{'));
+            let mut wrote_links = raw_has_links;
             let has_flags = raw_dxf_codes.iter().any(|(code, _)| *code == 71);
             let has_title_suppressed = raw_dxf_codes
                 .iter()
@@ -8439,6 +8465,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             let has_header_suppressed = raw_dxf_codes.iter().any(|(code, _)| *code == 281);
             let mut saw_name = false;
             for (code, value) in raw_dxf_codes {
+                if !wrote_links && *code == 330 {
+                    self.write_table_style_links(style, document)?;
+                    wrote_links = true;
+                }
                 match *code {
                     3 => {
                         self.writer.write_string(*code, value)?;
@@ -8482,6 +8512,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             &projected
         };
         self.writer.write_handle(5, style.handle)?;
+        self.write_table_style_links(style, document)?;
         self.writer.write_handle(330, style.owner_handle)?;
         self.writer.write_subclass("AcDbTableStyle")?;
 
