@@ -3723,6 +3723,15 @@ fn read_table_cell(reader: &mut DwgMergedReader, version: DwgVersion) -> TableCe
     for _ in 0..ncontents {
         cell.contents.push(read_table_cell_content(reader, version));
     }
+    // The R2010+ cell has no type of its own: a block content makes it a
+    // block cell, as in the DXF reader.
+    if cell
+        .contents
+        .iter()
+        .any(|content| content.content_type == TableCellContentType::Block)
+    {
+        cell.cell_type = CellType::Block;
+    }
     cell.style = read_cell_style(reader);
     cell.style_id = reader.read_bit_long();
     let has_geometry = reader.read_bit_long();

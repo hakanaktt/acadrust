@@ -209,6 +209,11 @@ pub trait DxfStreamReader {
     fn take_recorded_xdata(&mut self) -> (Option<String>, Vec<DxfCodePair>) {
         (None, Vec::new())
     }
+
+    /// Handles of the `{ACAD_REACTORS` group seen since `record_xdata(true)`.
+    fn take_recorded_reactors(&mut self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 pub(crate) struct XDataRecorder {
@@ -218,6 +223,8 @@ pub(crate) struct XDataRecorder {
     in_xdata: bool,
     handle: Option<String>,
     recorded: Vec<DxfCodePair>,
+    in_reactors: bool,
+    reactors: Vec<String>,
 }
 
 impl XDataRecorder {
@@ -229,6 +236,8 @@ impl XDataRecorder {
             in_xdata: false,
             handle: None,
             recorded: Vec::new(),
+            in_reactors: false,
+            reactors: Vec::new(),
         }
     }
 }
@@ -245,6 +254,11 @@ impl DxfStreamReader for XDataRecorder {
                     self.in_xdata = true;
                 } else if !(1000..=1071).contains(&pair.code) {
                     self.in_xdata = false;
+                }
+                if pair.code == 102 {
+                    self.in_reactors = pair.value_string.trim() == "{ACAD_REACTORS";
+                } else if self.in_reactors && pair.code == 330 {
+                    self.reactors.push(pair.value_string.trim().to_string());
                 }
                 if self.in_xdata {
                     self.recorded.push(pair.clone());
@@ -285,10 +299,16 @@ impl DxfStreamReader for XDataRecorder {
         self.in_xdata = false;
         self.handle = None;
         self.recorded.clear();
+        self.in_reactors = false;
+        self.reactors.clear();
     }
 
     fn take_recorded_xdata(&mut self) -> (Option<String>, Vec<DxfCodePair>) {
         (self.handle.take(), std::mem::take(&mut self.recorded))
+    }
+
+    fn take_recorded_reactors(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.reactors)
     }
 }
 

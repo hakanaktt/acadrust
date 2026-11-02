@@ -101,12 +101,18 @@ pub struct SectionWriter<'a, W: DxfStreamWriter> {
     text_style_names: HashMap<Handle, String>,
     /// Block-record names needed by legacy TABLE INSERT data.
     block_record_names: HashMap<Handle, String>,
+    /// Reactors of objects whose model has no reactor list (SCALE,
+    /// MLINESTYLE, ACDBDICTIONARYWDFLT), from `reactors_by_handle`.
+    kept_reactors: HashMap<Handle, Vec<Handle>>,
     /// Typed inputs for loft surfaces whose native data contains references.
     loft_input_entities: HashMap<Handle, EmbeddedEntity>,
     /// Extra registration required by the loft-reference XDATA extension.
     loft_reference_appid: Option<Handle>,
     /// Original DWG context used for opaque proxy payloads.
     source_dwg_context: Option<(DxfVersion, u8)>,
+    /// Records written per DXF name (upper case), used for the CLASSES
+    /// instance counts. `None` keeps each class's stored count.
+    class_instance_counts: Option<HashMap<String, i32>>,
 }
 
 impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
@@ -128,10 +134,19 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             normal_plotstyle_handle: Handle::NULL,
             text_style_names: HashMap::new(),
             block_record_names: HashMap::new(),
+            kept_reactors: HashMap::new(),
             loft_input_entities: HashMap::new(),
             loft_reference_appid: None,
             source_dwg_context: None,
+            class_instance_counts: None,
         }
+    }
+
+    /// Write these record counts (keyed by upper-case DXF name) as the
+    /// CLASSES instance counts instead of the counts stored in the document.
+    /// A class missing from the map is written with 0.
+    pub fn set_class_instance_counts(&mut self, counts: HashMap<String, i32>) {
+        self.class_instance_counts = Some(counts);
     }
 
     /// The handle the writer gives the next record it creates itself, such as
@@ -196,6 +211,22 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             }
             set.insert(*h);
         }
+        self.kept_reactors = document
+            .objects
+            .iter()
+            .filter(|(_, object)| {
+                matches!(
+                    object,
+                    ObjectType::Scale(_)
+                        | ObjectType::MLineStyle(_)
+                        | ObjectType::DictionaryWithDefault(_)
+                )
+            })
+            .filter_map(|(handle, _)| {
+                let reactors = document.reactors_by_handle.get(handle)?;
+                Some((*handle, reactors.clone()))
+            })
+            .collect();
         // Entity handles (from all block records); capture *Model_Space.
         self.block_record_names.clear();
         for br in document.block_records.iter() {
@@ -960,7 +991,17 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer.write_string(3, &class.application_name)?;
             self.writer.write_i32(90, class.proxy_flags.0 as i32)?;
             if self.dxf_version >= DxfVersion::AC1018 {
-                self.writer.write_i32(91, class.instance_count)?;
+                // A stored count goes stale once records are added or erased,
+                // and a class written with 0 makes AutoCAD drop object-enabler
+                // entities such as WIPEOUT.
+                let count = match &self.class_instance_counts {
+                    Some(counts) => counts
+                        .get(&class.dxf_name.to_ascii_uppercase())
+                        .copied()
+                        .unwrap_or(0),
+                    None => class.instance_count,
+                };
+                self.writer.write_i32(91, count)?;
             }
             self.writer
                 .write_byte(280, if class.was_zombie { 1 } else { 0 })?;
@@ -1495,13 +1536,18 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             .write_double(42, style.effective_last_height())?;
         self.writer.write_string(3, &style.font_file)?;
         self.writer.write_string(4, &style.big_font_file)?;
+        // The TrueType font record replaces the ACAD record kept from the
+        // source file instead of being written next to it.
+        let mut font = Vec::new();
         if !style.true_type_font.trim().is_empty() {
-            self.writer.write_string(1001, "ACAD")?;
-            self.writer
-                .write_string(1000, style.true_type_font.trim())?;
-            self.writer.write_i32(1071, style.true_type_font_flags)?;
+            let mut record = crate::xdata::ExtendedDataRecord::new("ACAD");
+            record.values = vec![
+                XDataValue::String(style.true_type_font.trim().to_string()),
+                XDataValue::Integer32(style.true_type_font_flags),
+            ];
+            font.push(record);
         }
-        self.write_table_annotative_xdata(document, style.handle, style.annotative)?;
+        self.write_table_annotative_xdata_with(document, style.handle, style.annotative, font)?;
 
         Ok(())
     }
@@ -1768,6 +1814,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     ) -> Result<()> {
         self.writer.write_string(0, "DIMSTYLE")?;
         self.writer.write_handle(105, dimstyle.handle())?;
+        self.write_table_entry_reactors(dimstyle.handle(), document)?;
         self.write_table_entry_xdictionary(dimstyle.handle(), document)?;
         self.writer.write_handle(330, owner)?;
         self.writer.write_subclass("AcDbSymbolTableRecord")?;
@@ -2071,9 +2118,16 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         document: &CadDocument,
     ) -> Result<()> {
         self.writer.write_handle(5, handle)?;
-        // Reactors kept from the source (an associative array's dependencies
-        // on its anonymous blocks, for example). They precede the extension
-        // dictionary, as on every other object.
+        self.write_table_entry_reactors(handle, document)?;
+        self.write_table_entry_xdictionary(handle, document)?;
+        self.writer.write_handle(330, owner)?;
+        Ok(())
+    }
+
+    /// Reactors kept from the source for a table entry (an associative array's
+    /// dependencies on its anonymous blocks, a DIMSTYLE's dimensions). They
+    /// precede the extension dictionary, as on every other object.
+    fn write_table_entry_reactors(&mut self, handle: Handle, document: &CadDocument) -> Result<()> {
         let reactors: Vec<Handle> = document
             .reactors_by_handle
             .get(&handle)
@@ -2092,8 +2146,6 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             }
             self.writer.write_string(102, "}")?;
         }
-        self.write_table_entry_xdictionary(handle, document)?;
-        self.writer.write_handle(330, owner)?;
         Ok(())
     }
 
@@ -2187,12 +2239,15 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 ..Default::default()
             });
         common.owner_handle = owner;
-        self.write_common_entity_data(&common, owner)?;
-        // Paper space flag (group code 67) for all paper space blocks
-        if is_paper_space {
-            self.writer.write_i16(67, 1)?;
+        if common.layer.is_empty() {
+            common.layer = "0".to_string();
         }
-        self.writer.write_string(8, "0")?;
+        // The common data writes the paper-space flag 67 and then layer 8,
+        // once each, in the order AutoCAD writes them for BLOCK.
+        let prev_ps = self.writing_paper_space;
+        self.writing_paper_space = is_paper_space;
+        self.write_common_entity_data(&common, owner)?;
+        self.writing_paper_space = prev_ps;
         self.writer.write_subclass("AcDbBlockBegin")?;
         self.writer.write_string(2, block_record.name())?;
         self.writer.write_i16(70, flags)?;
@@ -2477,7 +2532,6 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                     499,
                     0,
                     0,
-                    false,
                     Some(&graphics),
                     &payload,
                     &crate::objects::ProxyPayload::default(),
@@ -2507,7 +2561,6 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 data.class_id,
                 data.dwg_version,
                 data.maintenance_version,
-                data.from_dxf,
                 Some(&graphics),
                 &data.payload,
                 &data.text_payload,
@@ -4019,7 +4072,6 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 data.class_id,
                 data.dwg_version,
                 data.maintenance_version,
-                false,
                 Some(graphics),
                 &data.payload,
                 &data.text_payload,
@@ -4499,7 +4551,11 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         if mtext.background_fill_flags != 0 {
             self.writer.write_i32(90, mtext.background_fill_flags)?;
             self.writer.write_double(45, mtext.background_scale)?;
+            // A true colour still needs its nearest index in 63: the reference
+            // application refuses the file when 421 comes without 63.
             if let Some(tc) = mtext.background_color.to_true_color_value() {
+                self.writer
+                    .write_i16(63, mtext.background_color.approximate_index())?;
                 self.writer.write_i32(421, tc)?;
             } else if let Some(idx) = mtext.background_color.index() {
                 self.writer.write_i16(63, idx as i16)?;
@@ -4561,61 +4617,13 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// the entity already holds a column block of its own (a drawing read from
     /// AutoCAD keeps that one, which is written back as it is).
     fn mtext_column_xdata(&self, mtext: &MText) -> Option<ExtendedDataRecord> {
-        let cols = &mtext.column_data;
-        if cols.column_type == 0
-            || self.dxf_version < DxfVersion::AC1021
+        if self.dxf_version < DxfVersion::AC1021
             || self.dxf_version >= DxfVersion::AC1032
+            || MTextColumnData::in_acad_xdata(&mtext.common.extended_data)
         {
             return None;
         }
-        if mtext.common.extended_data.records().iter().any(|r| {
-            r.values
-                .iter()
-                .any(|v| matches!(v, XDataValue::String(s) if s == "ACAD_MTEXT_COLUMN_INFO_BEGIN"))
-        }) {
-            return None;
-        }
-        let manual_heights = cols.column_type == 2 && !cols.auto_height;
-        let count = if manual_heights {
-            cols.heights.len()
-        } else {
-            cols.column_count.max(0) as usize
-        };
-        let i = XDataValue::Integer16;
-        let mut record = ExtendedDataRecord::new("ACAD");
-        record.values = vec![
-            XDataValue::String("ACAD_MTEXT_COLUMN_INFO_BEGIN".into()),
-            i(75),
-            i(cols.column_type),
-            i(79),
-            i(i16::from(cols.auto_height)),
-            i(76),
-            i(count.min(i16::MAX as usize) as i16),
-            i(78),
-            i(i16::from(cols.flow_reversed)),
-            i(48),
-            XDataValue::Real(cols.width),
-            i(49),
-            XDataValue::Real(cols.gutter),
-            i(50),
-            i(if manual_heights {
-                count.min(i16::MAX as usize) as i16
-            } else {
-                0
-            }),
-        ];
-        if manual_heights {
-            record.values.extend(
-                cols.heights
-                    .iter()
-                    .take(count)
-                    .map(|h| XDataValue::Real(*h)),
-            );
-        }
-        record
-            .values
-            .push(XDataValue::String("ACAD_MTEXT_COLUMN_INFO_END".into()));
-        Some(record)
+        mtext.column_data.to_acad_xdata()
     }
 
     fn write_mtext_value(&mut self, value: &str) -> Result<()> {
@@ -4767,6 +4775,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     ) -> Result<()> {
         self.write_common_entity_data(&base.common, owner)?;
         self.writer.write_subclass("AcDbDimension")?;
+        // R2010+: class version (0).
+        if self.dxf_version >= DxfVersion::AC1024 {
+            self.writer.write_byte(280, 0)?;
+        }
         // Omit an absent geometry cache so the CAD host can regenerate it.
         // An explicit empty group 2 is an invalid block-table reference.
         if !base.block_name.is_empty() {
@@ -4787,6 +4799,12 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         };
         self.writer.write_i16(70, type_flags)?;
         self.writer.write_double(42, base.actual_measurement)?;
+        // R2007+: an always-0 flag, then the two flip-arrow flags.
+        if self.dxf_version >= DxfVersion::AC1021 {
+            self.writer.write_i16(73, 0)?;
+            self.writer.write_i16(74, i16::from(base.flip_arrow1))?;
+            self.writer.write_i16(75, i16::from(base.flip_arrow2))?;
+        }
         // DXF angles are in degrees; internal representation is radians.
         self.writer
             .write_double(53, super::degrees(base.text_rotation))?;
@@ -5465,6 +5483,16 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         Ok(())
     }
 
+    /// A VIEWPORT handle group, left out when null or not in the output.
+    fn write_viewport_handle(&mut self, code: i32, handle: Handle) -> Result<()> {
+        if !handle.is_null()
+            && (self.valid_handles.is_empty() || self.valid_handles.contains(&handle))
+        {
+            self.writer.write_handle(code, handle)?;
+        }
+        Ok(())
+    }
+
     /// Write VIEWPORT entity
     fn write_viewport(&mut self, viewport: &Viewport, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("VIEWPORT")?;
@@ -5506,8 +5534,6 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         } else {
             0
         };
-        self.writer
-            .write_i32(90, viewport.status.to_bits() | grid_bits)?;
 
         // View center
         self.writer.write_double(12, viewport.view_center.x)?;
@@ -5560,51 +5586,65 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 self.writer.write_handle(331, *frozen_layer)?;
             }
         }
+        // Status flags (after 331, as AutoCAD writes them)
+        self.writer
+            .write_i32(90, viewport.status.to_bits() | grid_bits)?;
+
         // Boundary presence and clipping activation are independent.
         if !viewport.clip_boundary_handle.is_null() {
             self.writer
                 .write_handle(340, viewport.clip_boundary_handle)?;
         }
 
+        // Plot style sheet
+        self.writer.write_string(1, &viewport.style_sheet)?;
+
         // Render mode
         self.writer
             .write_byte(281, viewport.render_mode.to_value() as u8)?;
 
-        // UCS per viewport
-        if viewport.ucs_per_viewport {
-            self.writer.write_i16(71, 1)?;
-        }
+        // UCS per viewport, UCS icon at origin, UCS origin and axes
+        self.writer
+            .write_i16(71, i16::from(viewport.ucs_per_viewport))?;
+        self.writer
+            .write_i16(74, i16::from(viewport.ucs_at_origin))?;
+        self.writer.write_point3d(110, viewport.ucs_origin)?;
+        self.writer.write_point3d(111, viewport.ucs_x_axis)?;
+        self.writer.write_point3d(112, viewport.ucs_y_axis)?;
+        self.write_viewport_handle(345, viewport.ucs_handle)?;
+        self.write_viewport_handle(346, viewport.base_ucs_handle)?;
 
-        // UCS origin, axes
-        if viewport.ucs_origin != Vector3::ZERO {
-            self.writer.write_double(110, viewport.ucs_origin.x)?;
-            self.writer.write_double(120, viewport.ucs_origin.y)?;
-            self.writer.write_double(130, viewport.ucs_origin.z)?;
-        }
-        if viewport.ucs_x_axis != Vector3::ZERO {
-            self.writer.write_double(111, viewport.ucs_x_axis.x)?;
-            self.writer.write_double(121, viewport.ucs_x_axis.y)?;
-            self.writer.write_double(131, viewport.ucs_x_axis.z)?;
-        }
-        if viewport.ucs_y_axis != Vector3::ZERO {
-            self.writer.write_double(112, viewport.ucs_y_axis.x)?;
-            self.writer.write_double(122, viewport.ucs_y_axis.y)?;
-            self.writer.write_double(132, viewport.ucs_y_axis.z)?;
-        }
-
-        // Elevation
-        if viewport.elevation != 0.0 {
-            self.writer.write_double(146, viewport.elevation)?;
-        }
-
-        // Grid major
-        if viewport.grid_major != 0 {
-            self.writer.write_i16(61, viewport.grid_major)?;
-        }
+        // Orthographic UCS type, elevation
+        self.writer.write_i16(79, viewport.ucs_ortho_type)?;
+        self.writer.write_double(146, viewport.elevation)?;
 
         // R2004+: per-viewport ShadePlot mode, independent of render mode.
         if self.dxf_version >= DxfVersion::AC1018 {
             self.writer.write_i16(170, viewport.shade_plot_mode)?;
+        }
+
+        // Grid major
+        if self.dxf_version >= DxfVersion::AC1021 || viewport.grid_major != 0 {
+            self.writer.write_i16(61, viewport.grid_major)?;
+        }
+
+        // R2007+: background, shade plot, visual style, lighting.
+        if self.dxf_version >= DxfVersion::AC1021 {
+            self.write_viewport_handle(332, viewport.background_handle)?;
+            self.write_viewport_handle(333, viewport.shade_plot_handle)?;
+            self.write_viewport_handle(348, viewport.visual_style_handle)?;
+            self.writer.write_bool(292, viewport.default_lighting)?;
+            self.writer.write_i16(282, viewport.default_lighting_type)?;
+            self.writer.write_double(141, viewport.brightness)?;
+            self.writer.write_double(142, viewport.contrast)?;
+            // The model's default (index 0) means "not set": leave it out.
+            if viewport.ambient_color != Color::from_index(0) {
+                self.writer.write_color(63, viewport.ambient_color)?;
+                if let Some(rgb) = viewport.ambient_color.to_true_color_value() {
+                    self.writer.write_i32(421, rgb)?;
+                }
+            }
+            self.write_viewport_handle(361, viewport.sun_handle)?;
         }
 
         Ok(())
@@ -6270,7 +6310,6 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 499,
                 0,
                 0,
-                false,
                 None,
                 &payload,
                 &crate::objects::ProxyPayload::default(),
@@ -6499,19 +6538,16 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// object itself was saved in an R2007+ format (DHL code 27 and up).
     /// 94 always terminates the object-id list, even when it is empty.
     #[allow(clippy::too_many_arguments)]
-    fn write_proxy_body_dxf(
+    /// `90` proxy id, `91` class id, the drawing version (`71`/`97` from
+    /// R2018, `95` before) and `70` original data format.
+    fn write_proxy_header_dxf(
         &mut self,
         proxy_id: i32,
         class_id: i32,
         dwg_version: i32,
         maintenance_version: i32,
         from_dxf: bool,
-        graphics: Option<&[u8]>,
-        payload: &crate::objects::ProxyPayload,
-        text_payload: &crate::objects::ProxyPayload,
-        references: &[crate::objects::ProxyObjectReference],
     ) -> Result<()> {
-        let v2010 = self.dxf_version >= DxfVersion::AC1024;
         self.writer.write_i32(90, proxy_id)?;
         self.writer.write_i32(91, class_id)?;
         if self.dxf_version >= DxfVersion::AC1032 {
@@ -6521,7 +6557,31 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer
                 .write_i32(95, (maintenance_version << 16) | (dwg_version & 0xffff))?;
         }
-        self.writer.write_bool(70, from_dxf)?;
+        self.writer.write_bool(70, from_dxf)
+    }
+
+    fn write_proxy_body_dxf(
+        &mut self,
+        proxy_id: i32,
+        class_id: i32,
+        dwg_version: i32,
+        maintenance_version: i32,
+        graphics: Option<&[u8]>,
+        payload: &crate::objects::ProxyPayload,
+        text_payload: &crate::objects::ProxyPayload,
+        references: &[crate::objects::ProxyObjectReference],
+    ) -> Result<()> {
+        let v2010 = self.dxf_version >= DxfVersion::AC1024;
+        self.write_proxy_header_dxf(
+            proxy_id,
+            class_id,
+            dwg_version,
+            maintenance_version,
+            // Binary data follows, so the original data format is DWG (`70 0`)
+            // whatever the record was read from: AutoCAD discards a drawing
+            // with `70 1` before binary data.
+            false,
+        )?;
         if let Some(graphics) = graphics {
             if v2010 {
                 self.writer.write_i64(160, graphics.len() as i64)?;
@@ -6578,12 +6638,27 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         }
         self.writer.write_handle(330, object.owner)?;
         self.writer.write_subclass("AcDbProxyObject")?;
+        if object.from_dxf && !object.dxf_data.is_empty() {
+            // Original data format DXF: the header, then the object's own DXF
+            // groups as read, with no binary size, data or 94 terminator
+            // (AutoCAD's form; it refuses binary data after 70 1).
+            self.write_proxy_header_dxf(
+                499,
+                object.class_id,
+                object.dwg_version,
+                object.maintenance_version,
+                true,
+            )?;
+            for (code, value) in &object.dxf_data {
+                self.writer.write_string(*code, value)?;
+            }
+            return Ok(());
+        }
         self.write_proxy_body_dxf(
             499,
             object.class_id,
             object.dwg_version,
             object.maintenance_version,
-            object.from_dxf,
             None,
             &object.payload,
             &object.text_payload,
@@ -7943,6 +8018,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     fn write_mlinestyle(&mut self, style: &MLineStyle) -> Result<()> {
         self.writer.write_string(0, "MLINESTYLE")?;
         self.writer.write_handle(5, style.handle)?;
+        self.write_kept_reactors(style.handle)?;
         self.writer.write_handle(330, style.owner)?;
         self.writer.write_subclass("AcDbMlineStyle")?;
 
@@ -7961,9 +8037,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             Color::None => 257,
             Color::ByBlock => 0,
             Color::Index(i) => i as i16,
-            Color::Rgb { .. } => 256, // Fall back to ByLayer for RGB color
+            Color::Rgb { .. } => style.fill_color.approximate_index(),
         };
         self.writer.write_i16(62, fill_color_index)?;
+        self.write_mlinestyle_true_color(style.fill_color)?;
 
         // Start angle (code 51) — DXF expects degrees
         self.writer
@@ -7987,14 +8064,26 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 Color::None => 257,
                 Color::ByBlock => 0,
                 Color::Index(i) => i as i16,
-                Color::Rgb { .. } => 256,
+                Color::Rgb { .. } => element.color.approximate_index(),
             };
             self.writer.write_i16(62, elem_color_index)?;
+            self.write_mlinestyle_true_color(element.color)?;
 
             // Element linetype (code 6)
             self.writer.write_string(6, &element.linetype)?;
         }
 
+        Ok(())
+    }
+
+    /// `420` after a MLINESTYLE `62` for a true color (R2004+), as AutoCAD's
+    /// color fields write it.
+    fn write_mlinestyle_true_color(&mut self, color: Color) -> Result<()> {
+        if self.dxf_version >= DxfVersion::AC1018 {
+            if let Some(tc) = color.to_true_color_value() {
+                self.writer.write_i32(420, tc)?;
+            }
+        }
         Ok(())
     }
 
@@ -8175,6 +8264,11 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_handle(330, style.owner_handle)?;
         self.writer.write_subclass("AcDbMLeaderStyle")?;
 
+        // Class version BS 179 (R2010+; the DWG record has it, the model not).
+        if self.dxf_version >= DxfVersion::AC1024 {
+            self.writer.write_i16(179, 2)?;
+        }
+
         // Content type
         self.writer.write_i16(170, style.content_type as i16)?;
 
@@ -8227,8 +8321,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         // Dogleg length
         self.writer.write_double(43, style.landing_distance)?;
 
-        // Style name
-        self.writer.write_string(3, &style.name)?;
+        // Description (group 3). The name is the style's dictionary key and is
+        // not written here: writing it as the description would turn it into
+        // one on the next read.
+        self.writer.write_string(3, &style.description)?;
 
         // Arrow head block handle
         if let Some(h) = style.arrowhead_handle {
@@ -8250,15 +8346,15 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer
             .write_i16(174, style.text_left_attachment as i16)?;
 
+        // Text right attachment type (before 175, as AutoCAD writes it)
+        self.writer
+            .write_i16(178, style.text_right_attachment as i16)?;
+
         // Text angle type
         self.writer.write_i16(175, style.text_angle_type as i16)?;
 
         // Text alignment type
         self.writer.write_i16(176, style.text_alignment as i16)?;
-
-        // Text right attachment type
-        self.writer
-            .write_i16(178, style.text_right_attachment as i16)?;
 
         // Text color
         self.write_color_i32(93, style.text_color)?;
@@ -8313,6 +8409,20 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         // Break gap size
         self.writer.write_double(143, style.break_gap_size)?;
+
+        // R2010+: text attachment direction, bottom and top attachment.
+        if self.dxf_version >= DxfVersion::AC1024 {
+            self.writer
+                .write_i16(271, style.text_attachment_direction as i16)?;
+            self.writer
+                .write_i16(272, style.text_bottom_attachment as i16)?;
+            self.writer
+                .write_i16(273, style.text_top_attachment as i16)?;
+        }
+        // R2013+: extended text flag.
+        if self.dxf_version >= DxfVersion::AC1027 {
+            self.writer.write_bool(298, style.unknown_flag_298)?;
+        }
 
         Ok(())
     }
@@ -8462,6 +8572,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     fn write_scale(&mut self, scale: &Scale) -> Result<()> {
         self.writer.write_string(0, "SCALE")?;
         self.writer.write_handle(5, scale.handle)?;
+        self.write_kept_reactors(scale.handle)?;
         self.writer.write_handle(330, scale.owner_handle)?;
         self.writer.write_subclass("AcDbScale")?;
 
@@ -8513,7 +8624,8 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 insertion,
                 scale_factor,
             } => {
-                self.writer.write_subclass("AcDbBlkRefObjectContextData")?;
+                // No AcDbBlkRefObjectContextData marker: ACAD refuses it
+                // ("Missing DXF group code: 1"), as for TEXT.
                 self.writer.write_double(50, *rotation)?;
                 self.writer.write_double(10, insertion.x)?;
                 self.writer.write_double(20, insertion.y)?;
@@ -8528,7 +8640,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 insertion,
                 alignment,
             } => {
-                self.writer.write_subclass("AcDbTextObjectContextData")?;
+                // ACAD writes these straight after the
+                // AcDbAnnotScaleObjectContextData groups, without an
+                // AcDbTextObjectContextData marker, and refuses the file with
+                // one ("Missing DXF group code: 1").
                 self.writer.write_i16(70, *horizontal_mode)?;
                 self.writer.write_double(50, *rotation)?;
                 self.writer.write_double(10, insertion.x)?;
@@ -8572,7 +8687,12 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             ObjectContextKind::Dim(d) => {
                 self.writer
                     .write_subclass("AcDbDimensionObjectContextData")?;
-                self.writer.write_handle(2, d.block)?;
+                // Group 2 is the dimension block's NAME (*Dn); AutoCAD refuses
+                // a hex handle there ("Invalid dimension block name").
+                match self.block_record_names.get(&d.block) {
+                    Some(name) => self.writer.write_string(2, &name.clone())?,
+                    None => self.writer.write_handle(2, d.block)?,
+                }
                 self.writer.write_bool(293, d.b293)?;
                 self.writer.write_double(10, d.def_pt.x)?;
                 self.writer.write_double(20, d.def_pt.y)?;
@@ -8667,7 +8787,8 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 }
             }
             ObjectContextKind::Leader(value) => {
-                self.writer.write_subclass("AcDbLeaderObjectContextData")?;
+                // No AcDbLeaderObjectContextData marker: ACAD refuses it
+                // ("Missing DXF group code: 1"), as for TEXT.
                 self.writer.write_i32(70, value.points.len() as i32)?;
                 for point in &value.points {
                     self.writer.write_point3d(10, *point)?;
@@ -9502,6 +9623,30 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         Ok(())
     }
 
+    /// The `{ACAD_REACTORS` group kept for `handle`, if any; reactors that
+    /// are not in the output are left out.
+    fn write_kept_reactors(&mut self, handle: Handle) -> Result<()> {
+        let reactors: Vec<Handle> = self
+            .kept_reactors
+            .get(&handle)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|reactor| {
+                !reactor.is_null()
+                    && (self.valid_handles.is_empty() || self.valid_handles.contains(reactor))
+            })
+            .collect();
+        if !reactors.is_empty() {
+            self.writer.write_string(102, "{ACAD_REACTORS")?;
+            for reactor in reactors {
+                self.writer.write_handle(330, reactor)?;
+            }
+            self.writer.write_string(102, "}")?;
+        }
+        Ok(())
+    }
+
     /// Write an ACDBDICTIONARYWDFLT object
     fn write_dict_with_default(
         &mut self,
@@ -9510,6 +9655,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     ) -> Result<()> {
         self.writer.write_string(0, "ACDBDICTIONARYWDFLT")?;
         self.writer.write_handle(5, obj.handle)?;
+        self.write_kept_reactors(obj.handle)?;
         self.writer.write_handle(330, obj.owner)?;
         self.writer.write_subclass("AcDbDictionary")?;
         // BricsCAD's own DXF export does not write the hard-owner flag (280)
@@ -9694,11 +9840,22 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         handle: Handle,
         annotative: bool,
     ) -> Result<()> {
+        self.write_table_annotative_xdata_with(document, handle, annotative, Vec::new())
+    }
+
+    /// As [`Self::write_table_annotative_xdata`], with modelled records of
+    /// other applications that replace the kept source ones.
+    fn write_table_annotative_xdata_with(
+        &mut self,
+        document: &CadDocument,
+        handle: Handle,
+        annotative: bool,
+        mut generated: Vec<crate::xdata::ExtendedDataRecord>,
+    ) -> Result<()> {
         let has_source = document
             .object_xdata
             .get(&handle)
             .is_some_and(|data| data.get_record("AcadAnnotative").is_some());
-        let mut generated = Vec::new();
         if annotative || has_source {
             let mut record = crate::xdata::ExtendedDataRecord::new("AcadAnnotative");
             record.values = vec![
@@ -11588,11 +11745,18 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         let merge_height = merged_range.map_or(cell.merge_height, |range| range.row_count() as i32);
         self.writer.write_i16(175, merge_width as i16)?;
         self.writer.write_i16(176, merge_height as i16)?;
+        // AutoCAD takes a cell override only when its legacy bit is set in the
+        // cell override flag (91, 177 before R2007). Legacy bits read from DXF
+        // are in `cell.flag` already.
+        let overrides = cell
+            .style
+            .as_ref()
+            .map_or(0, |s| s.property_override_bits());
         if self.dxf_version >= DxfVersion::AC1021 {
-            self.writer.write_i32(91, cell.flag)?;
+            self.writer.write_i32(91, cell.flag | overrides)?;
             self.writer.write_i32(92, cell.state.bits() as i32)?;
         } else {
-            self.writer.write_i16(177, cell.flag as i16)?;
+            self.writer.write_i16(177, (cell.flag | overrides) as i16)?;
         }
 
         // Virtual edge flag
@@ -11652,8 +11816,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         }
 
         // Cell style: only the overridden properties when the cell says which.
+        // A style with no stored override bits writes everything (below);
+        // the property-flag bits then only add to the cell flag above.
         if let Some(style) = cell.style.as_ref().filter(|s| s.override_flags != 0) {
-            let f = style.override_flags;
+            let f = style.legacy_override_flags();
             if f & 0x01 != 0 {
                 self.writer.write_i16(170, style.alignment as i16)?;
             }
@@ -11661,10 +11827,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 self.writer.write_bool(283, !style.fill_enabled)?;
             }
             if f & 0x04 != 0 {
-                self.writer.write_color(63, style.background_color)?;
+                self.write_table_cell_color(63, style.background_color)?;
             }
             if f & 0x08 != 0 {
-                self.writer.write_color(64, style.content_color)?;
+                self.write_table_cell_color(64, style.content_color)?;
             }
             if f & 0x10 != 0 && !style.text_style_name.is_empty() {
                 self.writer.write_string(7, &style.text_style_name)?;
@@ -11679,7 +11845,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 (0x200, 0x2000, (68, 278, 288), &style.left_border),
             ] {
                 if f & color_bit != 0 {
-                    self.writer.write_color(color_code, border.color)?;
+                    self.write_table_cell_color(color_code, border.color)?;
                 }
                 if f & lw_bit != 0 {
                     self.writer
@@ -11693,8 +11859,8 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             }
             self.writer.write_double(140, style.text_height)?;
             self.writer.write_i16(170, style.alignment as i16)?;
-            self.writer.write_color(64, style.content_color)?;
-            self.writer.write_color(63, style.background_color)?;
+            self.write_table_cell_color(64, style.content_color)?;
+            self.write_table_cell_color(63, style.background_color)?;
             self.writer.write_bool(283, !style.fill_enabled)?;
 
             for (color_code, weight_code, visibility_code, border) in [
@@ -11703,13 +11869,23 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 (66, 276, 286, &style.bottom_border),
                 (68, 278, 288, &style.left_border),
             ] {
-                self.writer.write_color(color_code, border.color)?;
+                self.write_table_cell_color(color_code, border.color)?;
                 self.writer
                     .write_i16(weight_code, border.line_weight.value())?;
                 self.writer.write_bool(visibility_code, !border.invisible)?;
             }
         }
 
+        Ok(())
+    }
+
+    /// A cell color: the index, then for a true color its RGB at the index
+    /// code + 358 (421 for 63, 422 for 64, ...), as AutoCAD's cell colors.
+    fn write_table_cell_color(&mut self, code: i32, color: Color) -> Result<()> {
+        self.writer.write_color(code, color)?;
+        if let Some(rgb) = color.to_true_color_value() {
+            self.writer.write_i32(code + 358, rgb)?;
+        }
         Ok(())
     }
 

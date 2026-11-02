@@ -5327,7 +5327,11 @@ impl<'a> SectionReader<'a> {
         Ok(object)
     }
 
-    fn read_object_context_data_dxf(&mut self, dxf_name: &str) -> Result<ObjectContextData> {
+    fn read_object_context_data_dxf(
+        &mut self,
+        dxf_name: &str,
+        block_by_name: impl Fn(&str) -> Option<Handle>,
+    ) -> Result<ObjectContextData> {
         let mut handle = Handle::NULL;
         let mut owner_handle = Handle::NULL;
         let mut reactors = Vec::new();
@@ -5377,7 +5381,14 @@ impl<'a> SectionReader<'a> {
         let kind = match name.as_str() {
             "ACDB_ANNOTSCALEOBJECTCONTEXTDATA_CLASS" => ObjectContextKind::AnnotScale,
             "ACDB_BLKREFOBJECTCONTEXTDATA_CLASS" => {
-                let section = "AcDbBlkRefObjectContextData";
+                // ACAD: no subclass marker, the fields follow the annotation
+                // scale groups. Older acadrust output: an
+                // AcDbBlkRefObjectContextData marker.
+                let section = if fields.has("AcDbBlkRefObjectContextData", 50) {
+                    "AcDbBlkRefObjectContextData"
+                } else {
+                    "AcDbAnnotScaleObjectContextData"
+                };
                 ObjectContextKind::BlkRef {
                     rotation: fields.f64(section, 50),
                     insertion: fields.point3(section, 10),
@@ -5389,7 +5400,14 @@ impl<'a> SectionReader<'a> {
                 }
             }
             "ACDB_TEXTOBJECTCONTEXTDATA_CLASS" => {
-                let section = "AcDbTextObjectContextData";
+                // ACAD: no subclass marker, the fields follow the annotation
+                // scale groups. Older acadrust output: an
+                // AcDbTextObjectContextData marker.
+                let section = if fields.has("AcDbTextObjectContextData", 70) {
+                    "AcDbTextObjectContextData"
+                } else {
+                    "AcDbAnnotScaleObjectContextData"
+                };
                 ObjectContextKind::Text {
                     horizontal_mode: fields.i16(section, 70),
                     rotation: fields.f64(section, 50),
@@ -5461,7 +5479,10 @@ impl<'a> SectionReader<'a> {
             | "ACDB_RADIMLGOBJECTCONTEXTDATA_CLASS"
             | "ACDB_ORDDIMOBJECTCONTEXTDATA_CLASS" => {
                 let section = "AcDbDimensionObjectContextData";
-                let block = fields.handle(section, 2);
+                // AutoCAD writes the block name (*Dn); older acadrust output a
+                // hex handle, still accepted.
+                let block = fields.string(section, 2);
+                let block = block_by_name(block.trim()).unwrap_or_else(|| parse_dxf_handle(&block));
                 let b293 = fields.bool(section, 293);
                 let def_pt = fields.point2(section, 10);
                 let is_def_textloc = fields.bool(section, 294);
@@ -7133,7 +7154,12 @@ impl<'a> SectionReader<'a> {
                             }
                         }
                         name if is_object_context_name(name) => {
-                            let object = self.read_object_context_data_dxf(name)?;
+                            let object = self.read_object_context_data_dxf(name, |block| {
+                                document
+                                    .block_records
+                                    .get(block)
+                                    .map(|record| record.handle())
+                            })?;
                             if !object.scale.is_null() {
                                 document.context_scales.insert(object.handle, object.scale);
                             }
@@ -7257,7 +7283,7 @@ impl<'a> SectionReader<'a> {
                 self.decoded_records = self
                     .decoded_records
                     .saturating_add(document.objects.len().saturating_sub(before));
-                self.read_object_xdata(document)?;
+                self.read_object_xdata(document, false)?;
             }
         }
 
@@ -7351,6 +7377,8 @@ impl<'a> SectionReader<'a> {
             }
             _ => Handle::NULL,
         };
+
+        name_mleader_styles_from_dictionary(document);
 
         Ok(())
     }
@@ -9735,7 +9763,7 @@ impl<'a> SectionReader<'a> {
                     document.layers.add_or_replace(layer);
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
-                self.read_object_xdata(document)?;
+                self.read_object_xdata(document, true)?;
             } else if pair.code == 5 {
                 if let Ok(handle) = u64::from_str_radix(pair.value_string.trim(), 16) {
                     table_handle = Handle::new(handle);
@@ -9883,7 +9911,7 @@ impl<'a> SectionReader<'a> {
                     document.line_types.add_or_replace(linetype);
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
-                self.read_object_xdata(document)?;
+                self.read_object_xdata(document, true)?;
             }
         }
         Ok(())
@@ -10037,7 +10065,7 @@ impl<'a> SectionReader<'a> {
                     }
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
-                self.read_object_xdata(document)?;
+                self.read_object_xdata(document, true)?;
             }
         }
         Ok(())
@@ -10186,7 +10214,7 @@ impl<'a> SectionReader<'a> {
                     }
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
-                self.read_object_xdata(document)?;
+                self.read_object_xdata(document, true)?;
             }
         }
 
@@ -10348,7 +10376,7 @@ impl<'a> SectionReader<'a> {
                     document.dim_styles.add_or_replace(dimstyle);
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
-                self.read_object_xdata(document)?;
+                self.read_object_xdata(document, true)?;
             }
         }
         Ok(())
@@ -10792,7 +10820,7 @@ impl<'a> SectionReader<'a> {
                     document.app_ids.add_or_replace(appid);
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
-                self.read_object_xdata(document)?;
+                self.read_object_xdata(document, true)?;
             }
         }
         Ok(())
@@ -10844,7 +10872,7 @@ impl<'a> SectionReader<'a> {
                     document.views.add_or_replace(view);
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
-                self.read_object_xdata(document)?;
+                self.read_object_xdata(document, true)?;
             }
         }
         Ok(())
@@ -11071,7 +11099,7 @@ impl<'a> SectionReader<'a> {
                     document.vports.add_allow_duplicate(vport);
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
-                self.read_object_xdata(document)?;
+                self.read_object_xdata(document, true)?;
             }
         }
         Ok(())
@@ -11430,7 +11458,7 @@ impl<'a> SectionReader<'a> {
                     document.ucss.add_or_replace(ucs);
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
-                self.read_object_xdata(document)?;
+                self.read_object_xdata(document, true)?;
             }
         }
         Ok(())
@@ -12170,10 +12198,17 @@ impl<'a> SectionReader<'a> {
         let mut binary = Vec::new();
         let mut object_data_bits = 0u32;
         let mut text_data_bits = 0u32;
+        // After `70 1` (original data format DXF) AutoCAD writes the object's
+        // own DXF groups instead of binary data; keep them verbatim.
+        let mut dxf_data_follows = false;
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 {
                 self.reader.push_back(pair);
                 break;
+            }
+            if dxf_data_follows {
+                object.dxf_data.push((pair.code, pair.value_string));
+                continue;
             }
             match pair.code {
                 5 if object.handle.is_null() => {
@@ -12212,7 +12247,14 @@ impl<'a> SectionReader<'a> {
                 95 => object.version = pair.as_i32().unwrap_or(0),
                 71 => object.dwg_version = pair.as_i32().unwrap_or(0),
                 97 => object.maintenance_version = pair.as_i32().unwrap_or(0),
-                70 => object.from_dxf = pair.as_i16().unwrap_or(0) != 0,
+                70 => {
+                    object.from_dxf = pair.as_i16().unwrap_or(0) != 0;
+                    dxf_data_follows = object.from_dxf
+                        && !matches!(
+                            self.reader.peek_code()?,
+                            None | Some(0 | 92 | 93 | 94 | 96 | 160 | 161 | 162 | 310)
+                        );
+                }
                 // Data size in bits: 93 up to R2007, 161 (64-bit) from R2010.
                 93 | 161 => {
                     object_data_bits = pair.as_int().unwrap_or(0).max(0) as u32;
@@ -13687,7 +13729,9 @@ impl<'a> SectionReader<'a> {
 
         // R2007 to R2013 keep the column layout in ACAD extended data.
         if mtext.column_data.column_type == 0 {
-            if let Some(columns) = mtext_columns_from_xdata(&mtext.common.extended_data) {
+            if let Some(columns) = crate::entities::mtext::MTextColumnData::from_acad_xdata(
+                &mtext.common.extended_data,
+            ) {
                 mtext.column_data = columns;
             }
         }
@@ -15340,7 +15384,9 @@ impl<'a> SectionReader<'a> {
                 42 if current_subclass == "AcDbDimension" => {
                     base.actual_measurement = pair.as_double().unwrap_or(0.0)
                 }
-                44 if current_subclass == "AcDbDimension" => {
+                // Line spacing factor: 41 in AcDbDimension (as AutoCAD and the
+                // writer store it); 44 is still read for older output.
+                41 | 44 if current_subclass == "AcDbDimension" => {
                     base.line_spacing_factor = pair.as_double().unwrap_or(1.0)
                 }
                 53 if current_subclass == "AcDbDimension" => {
@@ -15457,6 +15503,7 @@ impl<'a> SectionReader<'a> {
         let mut leader_length = 0.0;
         let mut line_spacing_factor = 1.0f64;
         let mut line_spacing_style = 1i16;
+        let (mut flip_arrow1, mut flip_arrow2) = (false, false);
         let mut attachment_point = AttachmentPointType::MiddleCenter;
         let mut normal = PointReader::new();
         let mut common = EntityCommon::new();
@@ -15566,6 +15613,8 @@ impl<'a> SectionReader<'a> {
                     };
                 }
                 72 => line_spacing_style = pair.as_i16().unwrap_or(1),
+                74 => flip_arrow1 = pair.as_i16().is_some_and(|v| v != 0),
+                75 => flip_arrow2 = pair.as_i16().is_some_and(|v| v != 0),
                 42 => {
                     if let Some(measurement) = pair.as_double() {
                         actual_measurement = Some(measurement);
@@ -15735,6 +15784,8 @@ impl<'a> SectionReader<'a> {
             dc.text_user_positioned = text_user_positioned;
             dc.attachment_point = attachment_point;
             dc.line_spacing_style = line_spacing_style;
+            dc.flip_arrow1 = flip_arrow1;
+            dc.flip_arrow2 = flip_arrow2;
             if line_spacing_factor != 1.0 {
                 dc.line_spacing_factor = line_spacing_factor;
             }
@@ -17694,6 +17745,44 @@ impl<'a> SectionReader<'a> {
                         vp.default_lighting_type = v;
                     }
                 }
+                1 => vp.style_sheet = pair.value_string.clone(),
+                74 => {
+                    if let Some(v) = pair.as_i16() {
+                        vp.ucs_at_origin = v != 0;
+                    }
+                }
+                79 => {
+                    if let Some(v) = pair.as_i16() {
+                        vp.ucs_ortho_type = v;
+                    }
+                }
+                // The viewport's own handles; 348 here is its visual style,
+                // not the entity's (which AcDbEntity carries).
+                345 | 346 | 332 | 333 | 348 | 361 => {
+                    if let Ok(h) = u64::from_str_radix(pair.value_string.trim(), 16) {
+                        let handle = Handle::new(h);
+                        match pair.code {
+                            345 => vp.ucs_handle = handle,
+                            346 => vp.base_ucs_handle = handle,
+                            332 => vp.background_handle = handle,
+                            333 => vp.shade_plot_handle = handle,
+                            348 => vp.visual_style_handle = handle,
+                            _ => vp.sun_handle = handle,
+                        }
+                    }
+                }
+                63 => {
+                    if let Some(v) = pair.as_i16() {
+                        if !matches!(vp.ambient_color, Color::Rgb { .. }) {
+                            vp.ambient_color = Color::from_index(v);
+                        }
+                    }
+                }
+                421 => {
+                    if let Some(v) = pair.as_i32_bits() {
+                        vp.ambient_color = Color::from_true_color_value(v);
+                    }
+                }
                 _ => {
                     self.try_read_common_entity_code(&pair, &mut vp.common)?;
                 }
@@ -17755,6 +17844,7 @@ impl<'a> SectionReader<'a> {
         let mut attrib = AttributeEntity::new(String::new(), String::new());
         let mut insertion_point = PointReader::new();
         let mut alignment_point = PointReader::new();
+        let mut normal = PointReader::new();
         // Code 280 ahead of the tag is the R2010+ version byte; after the tag
         // it is the lock-position flag (R2007 files carry only the latter).
         let mut seen_tag = false;
@@ -17799,6 +17889,11 @@ impl<'a> SectionReader<'a> {
                 }
                 11 | 21 | 31 => {
                     alignment_point.add_coordinate(&pair);
+                }
+                // Extrusion, as ATTDEF reads it: without it an attribute of a
+                // flipped insert lands at the mirror position.
+                210 | 220 | 230 => {
+                    normal.add_coordinate(&pair);
                 }
                 40 => {
                     if let Some(v) = pair.as_double() {
@@ -17856,6 +17951,11 @@ impl<'a> SectionReader<'a> {
                             );
                     }
                 }
+                73 => {
+                    if let Some(v) = pair.as_i16() {
+                        attrib.field_length = v;
+                    }
+                }
                 74 => {
                     if let Some(v) = pair.as_i16() {
                         attrib.vertical_alignment =
@@ -17887,6 +17987,9 @@ impl<'a> SectionReader<'a> {
 
         attrib.insertion_point = insertion_point.get_point().unwrap_or(Vector3::zero());
         attrib.alignment_point = alignment_point.get_point().unwrap_or(Vector3::zero());
+        if let Some(pt) = normal.get_point() {
+            attrib.normal = pt;
+        }
         attrib.line_count = attrib.value.matches("\\P").count() as i16 + 1;
 
         Ok(Some(attrib))
@@ -20760,6 +20863,21 @@ impl<'a> SectionReader<'a> {
                         }
                     }
                 }
+                // True color after a cell's 63-69 index color (that code + 358).
+                421 | 422 | 423 | 424 | 426 | 427 if cur.is_some() => {
+                    if let (Some(c), Some(value)) = (cur.as_mut(), pair.as_i32()) {
+                        let style = c.style.get_or_insert_with(crate::entities::CellStyle::new);
+                        let color = Color::from_true_color_value(value);
+                        match pair.code {
+                            421 => style.background_color = color,
+                            422 => style.content_color = color,
+                            423 => style.right_border.color = color,
+                            424 => style.bottom_border.color = color,
+                            426 => style.left_border.color = color,
+                            _ => style.top_border.color = color,
+                        }
+                    }
+                }
                 1001 => {
                     self.try_read_common_entity_code(&pair, &mut table.common)?;
                 }
@@ -21163,6 +21281,11 @@ impl<'a> SectionReader<'a> {
                 }
                 2 => style.name = pair.value_string.clone(),
                 3 => style.description = pair.value_string.clone(),
+                70 => {
+                    if let Some(v) = pair.as_i32() {
+                        style.flags = crate::objects::MLineStyleFlags::from_bits(v);
+                    }
+                }
                 // DXF stores MLINESTYLE angles in degrees; the model stores
                 // radians (the DWG stream and the DXF writer both use
                 // radians/degrees respectively). Reading them raw made every
@@ -21183,6 +21306,16 @@ impl<'a> SectionReader<'a> {
                             last.color = Color::from_index(v);
                         } else {
                             style.fill_color = Color::from_index(v);
+                        }
+                    }
+                }
+                420 => {
+                    if let Some(v) = pair.as_i32() {
+                        let color = Color::from_true_color_value(v);
+                        if let Some(last) = style.elements.last_mut() {
+                            last.color = color;
+                        } else {
+                            style.fill_color = color;
                         }
                     }
                 }
@@ -21337,8 +21470,13 @@ impl<'a> SectionReader<'a> {
                         style.owner_handle = Handle::new(h);
                     }
                 }
-                3 => style.name = pair.value_string.clone(),
-                300 => style.description = pair.value_string.clone(),
+                // 3 is the description (the name is the dictionary key; the
+                // name is kept too for callers that look styles up by it).
+                3 => {
+                    style.description = pair.value_string.clone();
+                    style.name = pair.value_string.clone();
+                }
+                300 => style.default_text = pair.value_string.clone(),
                 170 => {
                     if let Some(v) = pair.as_i16() {
                         style.content_type = crate::objects::LeaderContentType::from(v);
@@ -21350,8 +21488,8 @@ impl<'a> SectionReader<'a> {
                     }
                 }
                 91 => {
-                    if let Some(v) = pair.as_i32() {
-                        style.line_color = Color::from_index(v as i16);
+                    if let Some(v) = pair.as_i32_bits() {
+                        style.line_color = color_from_i32(v);
                     }
                 }
                 92 => {
@@ -21390,8 +21528,8 @@ impl<'a> SectionReader<'a> {
                     }
                 }
                 93 => {
-                    if let Some(v) = pair.as_i32() {
-                        style.text_color = Color::from_index(v as i16);
+                    if let Some(v) = pair.as_i32_bits() {
+                        style.text_color = color_from_i32(v);
                     }
                 }
                 292 => {
@@ -21424,6 +21562,7 @@ impl<'a> SectionReader<'a> {
                         style.scale_factor = v;
                     }
                 }
+                // Not an MLEADERSTYLE group; kept for files that used it.
                 304 => style.default_text = pair.value_string.clone(),
                 340 => {
                     if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
@@ -21448,6 +21587,74 @@ impl<'a> SectionReader<'a> {
                 296 => {
                     if let Some(v) = pair.as_bool() {
                         style.is_annotative = v;
+                    }
+                }
+                94 => {
+                    if let Some(v) = pair.as_i32_bits() {
+                        style.block_content_color = color_from_i32(v);
+                    }
+                }
+                171 => {
+                    if let Some(v) = pair.as_i16() {
+                        style.multileader_draw_order =
+                            crate::objects::MultiLeaderDrawOrderType::from(v);
+                    }
+                }
+                172 => {
+                    if let Some(v) = pair.as_i16() {
+                        style.leader_draw_order = crate::objects::LeaderDrawOrderType::from(v);
+                    }
+                }
+                177 => {
+                    if let Some(v) = pair.as_i16() {
+                        style.block_content_connection =
+                            crate::objects::BlockContentConnectionType::from(v);
+                    }
+                }
+                271 => {
+                    if let Some(v) = pair.as_i16() {
+                        style.text_attachment_direction =
+                            crate::objects::TextAttachmentDirectionType::from(v);
+                    }
+                }
+                272 => {
+                    if let Some(v) = pair.as_i16() {
+                        style.text_bottom_attachment = crate::objects::TextAttachmentType::from(v);
+                    }
+                }
+                273 => {
+                    if let Some(v) = pair.as_i16() {
+                        style.text_top_attachment = crate::objects::TextAttachmentType::from(v);
+                    }
+                }
+                90 => {
+                    if let Some(v) = pair.as_i32() {
+                        style.max_leader_points = v;
+                    }
+                }
+                40 | 41 | 46 | 47 | 49 | 140 | 141 | 143 => {
+                    if let Some(v) = pair.as_double() {
+                        match pair.code {
+                            40 => style.first_segment_angle = v,
+                            41 => style.second_segment_angle = v,
+                            46 => style.align_space = v,
+                            47 => style.block_content_scale_x = v,
+                            49 => style.block_content_scale_y = v,
+                            140 => style.block_content_scale_z = v,
+                            141 => style.block_content_rotation = v,
+                            _ => style.break_gap_size = v,
+                        }
+                    }
+                }
+                293 | 294 | 295 | 297 | 298 => {
+                    if let Some(v) = pair.as_bool() {
+                        match pair.code {
+                            293 => style.enable_block_scale = v,
+                            294 => style.enable_block_rotation = v,
+                            295 => style.property_changed = v,
+                            297 => style.text_always_left = v,
+                            _ => style.unknown_flag_298 = v,
+                        }
                     }
                 }
                 _ => {}
@@ -21868,8 +22075,12 @@ impl<'a> SectionReader<'a> {
         Ok(Some(scale))
     }
 
-    fn read_object_xdata(&mut self, document: &mut CadDocument) -> Result<()> {
+    /// `table_entry` is set for TABLES records, which are read while the
+    /// document still holds its default objects, whose handles a drawing's
+    /// table entries can reuse (AutoCAD's DIMSTYLE Standard is often 27).
+    fn read_object_xdata(&mut self, document: &mut CadDocument, table_entry: bool) -> Result<()> {
         let (handle, pairs) = self.reader.take_recorded_xdata();
+        let reactors = self.reader.take_recorded_reactors();
         self.reader.record_xdata(false);
         let Some(handle) = handle
             .and_then(|value| u64::from_str_radix(&value, 16).ok())
@@ -21877,6 +22088,26 @@ impl<'a> SectionReader<'a> {
         else {
             return Ok(());
         };
+        // Records whose model has no reactor list of its own keep theirs
+        // here (table entries, SCALE, MLINESTYLE, ACDBDICTIONARYWDFLT); the
+        // writer puts them back.
+        let keeps_reactors = table_entry
+            || match document.objects.get(&handle) {
+                None => true,
+                Some(object) => matches!(
+                    object,
+                    ObjectType::Scale(_)
+                        | ObjectType::MLineStyle(_)
+                        | ObjectType::DictionaryWithDefault(_)
+                ),
+            };
+        if keeps_reactors && !reactors.is_empty() {
+            let reactors: Vec<Handle> = reactors.iter().map(|h| parse_dxf_handle(h)).collect();
+            document
+                .reactors_by_handle
+                .entry(handle)
+                .or_insert(reactors);
+        }
         if pairs.is_empty()
             || document
                 .objects
@@ -21986,6 +22217,35 @@ impl<'a> SectionReader<'a> {
         }
 
         Ok(Some(dv))
+    }
+}
+
+/// An MLEADERSTYLE's name is its key in the ACAD_MLEADERSTYLE dictionary;
+/// group 3 is only its description (AutoCAD's "Annotative" style has
+/// `3 Standard`). Name every style the dictionary lists; the others keep the
+/// name taken from group 3.
+fn name_mleader_styles_from_dictionary(document: &mut CadDocument) {
+    let Some(ObjectType::Dictionary(root)) = document
+        .objects
+        .get(&document.header.named_objects_dict_handle)
+    else {
+        return;
+    };
+    let Some(dictionary) = root.get("ACAD_MLEADERSTYLE") else {
+        return;
+    };
+    let Some(ObjectType::Dictionary(styles)) = document.objects.get(&dictionary) else {
+        return;
+    };
+    let names: Vec<(Handle, String)> = styles
+        .entries
+        .iter()
+        .map(|(name, handle)| (*handle, name.clone()))
+        .collect();
+    for (handle, name) in names {
+        if let Some(ObjectType::MultiLeaderStyle(style)) = document.objects.get_mut(&handle) {
+            style.name = name;
+        }
     }
 }
 
@@ -22296,6 +22556,39 @@ mod tests {
         );
     }
 
+    /// An attribute of an insert with a flipped extrusion keeps (0,0,-1):
+    /// read as the default +Z, it would be drawn at the mirror position.
+    #[test]
+    fn test_dxf_roundtrip_attrib_extrusion() {
+        let mut doc = CadDocument::new();
+        let mut attrib = AttributeEntity::new(String::new(), String::new());
+        attrib.tag = "TAG1".to_string();
+        attrib.value = "val".to_string();
+        attrib.height = 2.0;
+        attrib.insertion_point = Vector3::new(-40.0, -8.0, 0.0);
+        attrib.normal = Vector3::new(0.0, 0.0, -1.0);
+        let mut insert = Insert::new("*Model_Space", Vector3::new(-40.0, 0.0, 0.0));
+        insert.normal = Vector3::new(0.0, 0.0, -1.0);
+        insert.attributes.push(attrib);
+        let _ = doc.add_entity(EntityType::Insert(insert));
+
+        let doc2 = roundtrip(doc);
+        let insert = doc2
+            .entities()
+            .find_map(|e| match e {
+                EntityType::Insert(i) => Some(i),
+                _ => None,
+            })
+            .expect("Expected Insert entity");
+        assert_eq!(insert.attributes.len(), 1);
+        let n = insert.attributes[0].normal;
+        assert!(
+            n.x.abs() < 1e-12 && n.y.abs() < 1e-12 && (n.z + 1.0).abs() < 1e-12,
+            "attribute extrusion should survive a roundtrip, got {:?}",
+            n
+        );
+    }
+
     #[test]
     fn test_dxf_roundtrip_mtext_properties() {
         use crate::entities::mtext::{AttachmentPoint, DrawingDirection};
@@ -22323,6 +22616,57 @@ mod tests {
             assert_eq!(m.drawing_direction, DrawingDirection::TopToBottom);
             assert!((m.line_spacing_factor - 1.5).abs() < 1e-9);
             assert!((m.normal.z - (-1.0)).abs() < 1e-9);
+        } else {
+            panic!("Expected MText entity");
+        }
+    }
+
+    #[test]
+    fn test_dxf_mtext_true_color_background_writes_index_too() {
+        let mut doc = CadDocument::new();
+        let mut mtext = crate::entities::mtext::MText::new();
+        mtext.value = "bg".to_string();
+        mtext.height = 2.5;
+        mtext.background_fill_flags = 1;
+        mtext.background_scale = 1.5;
+        mtext.background_color = crate::types::Color::Rgb {
+            r: 255,
+            g: 128,
+            b: 0,
+        };
+        let _ = doc.add_entity(EntityType::MText(Box::new(mtext)));
+
+        let bytes = crate::io::dxf::writer::DxfWriter::new(&doc)
+            .write_to_vec()
+            .expect("write_to_vec");
+        let text = String::from_utf8_lossy(&bytes);
+        let lines: Vec<&str> = text.lines().map(str::trim).collect();
+        let start = lines
+            .windows(2)
+            .position(|w| w[0] == "0" && w[1] == "MTEXT")
+            .expect("MTEXT in output");
+        let pairs: Vec<(&str, &str)> = lines[start..]
+            .chunks(2)
+            .take_while(|p| !(p.len() == 2 && p[0] == "0" && p[1] != "MTEXT"))
+            .filter(|p| p.len() == 2)
+            .map(|p| (p[0], p[1]))
+            .collect();
+        // The reference application refuses a true-colour background
+        // without its index colour in 63.
+        assert!(pairs.contains(&("63", "30")), "no 63 30 in {pairs:?}");
+        assert!(pairs.contains(&("421", "16744448")), "no 421 in {pairs:?}");
+
+        let doc2 = roundtrip(doc);
+        let entities: Vec<_> = doc2.entities().collect();
+        if let EntityType::MText(ref m) = entities[0] {
+            assert_eq!(
+                m.background_color,
+                crate::types::Color::Rgb {
+                    r: 255,
+                    g: 128,
+                    b: 0
+                }
+            );
         } else {
             panic!("Expected MText entity");
         }
@@ -22841,49 +23185,4 @@ mod tests {
             ]
         );
     }
-}
-
-/// The column layout in an MTEXT's ACAD extended data, between
-/// `ACAD_MTEXT_COLUMN_INFO_BEGIN` and `ACAD_MTEXT_COLUMN_INFO_END`: pairs of a
-/// group code and its value, where code 50 is followed by the height count and
-/// then that many heights.
-fn mtext_columns_from_xdata(
-    xdata: &crate::xdata::ExtendedData,
-) -> Option<crate::entities::mtext::MTextColumnData> {
-    use crate::xdata::XDataValue;
-
-    let record = xdata.records().iter().find(|r| {
-        r.application_name == "ACAD"
-            && r.values
-                .iter()
-                .any(|v| matches!(v, XDataValue::String(s) if s == "ACAD_MTEXT_COLUMN_INFO_BEGIN"))
-    })?;
-    let mut values = record
-        .values
-        .iter()
-        .skip_while(|v| !matches!(v, XDataValue::String(s) if s == "ACAD_MTEXT_COLUMN_INFO_BEGIN"))
-        .skip(1);
-    let mut columns = crate::entities::mtext::MTextColumnData::new();
-    while let Some(code) = values.next() {
-        let XDataValue::Integer16(code) = code else {
-            break; // the END marker, or something this block does not hold
-        };
-        match (code, values.next()?) {
-            (75, XDataValue::Integer16(v)) => columns.column_type = *v,
-            (79, XDataValue::Integer16(v)) => columns.auto_height = *v != 0,
-            (76, XDataValue::Integer16(v)) => columns.column_count = i32::from(*v),
-            (78, XDataValue::Integer16(v)) => columns.flow_reversed = *v != 0,
-            (48, XDataValue::Real(v)) => columns.width = *v,
-            (49, XDataValue::Real(v)) => columns.gutter = *v,
-            (50, XDataValue::Integer16(v)) => {
-                for _ in 0..(*v).max(0) {
-                    if let Some(XDataValue::Real(h)) = values.next() {
-                        columns.heights.push(*h);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    (columns.column_type != 0).then_some(columns)
 }

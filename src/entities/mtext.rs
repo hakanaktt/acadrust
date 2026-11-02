@@ -94,6 +94,113 @@ impl MTextColumnData {
     }
 }
 
+impl MTextColumnData {
+    /// The ACAD extended data AutoCAD keeps R2007 to R2013 columns in:
+    /// `ACAD_MTEXT_COLUMN_INFO_BEGIN`, pairs of a group code and its value
+    /// (code 50 is followed by the height count and then the heights), and
+    /// `ACAD_MTEXT_COLUMN_INFO_END`. None when there are no columns.
+    pub(crate) fn to_acad_xdata(&self) -> Option<crate::xdata::ExtendedDataRecord> {
+        use crate::xdata::{ExtendedDataRecord, XDataValue};
+        if self.column_type == 0 {
+            return None;
+        }
+        let manual_heights = self.column_type == 2 && !self.auto_height;
+        let count = if manual_heights {
+            self.heights.len()
+        } else {
+            self.column_count.max(0) as usize
+        };
+        let i = XDataValue::Integer16;
+        let mut record = ExtendedDataRecord::new("ACAD");
+        record.values = vec![
+            XDataValue::String("ACAD_MTEXT_COLUMN_INFO_BEGIN".into()),
+            i(75),
+            i(self.column_type),
+            i(79),
+            i(i16::from(self.auto_height)),
+            i(76),
+            i(count.min(i16::MAX as usize) as i16),
+            i(78),
+            i(i16::from(self.flow_reversed)),
+            i(48),
+            XDataValue::Real(self.width),
+            i(49),
+            XDataValue::Real(self.gutter),
+            i(50),
+            i(if manual_heights {
+                count.min(i16::MAX as usize) as i16
+            } else {
+                0
+            }),
+        ];
+        if manual_heights {
+            record.values.extend(
+                self.heights
+                    .iter()
+                    .take(count)
+                    .map(|h| XDataValue::Real(*h)),
+            );
+        }
+        record
+            .values
+            .push(XDataValue::String("ACAD_MTEXT_COLUMN_INFO_END".into()));
+        Some(record)
+    }
+
+    /// Whether `xdata` already holds an ACAD column block.
+    pub(crate) fn in_acad_xdata(xdata: &crate::xdata::ExtendedData) -> bool {
+        Self::acad_column_record(xdata).is_some()
+    }
+
+    fn acad_column_record(
+        xdata: &crate::xdata::ExtendedData,
+    ) -> Option<&crate::xdata::ExtendedDataRecord> {
+        use crate::xdata::XDataValue;
+        xdata.records().iter().find(|r| {
+            r.application_name == "ACAD"
+                && r.values.iter().any(
+                    |v| matches!(v, XDataValue::String(s) if s == "ACAD_MTEXT_COLUMN_INFO_BEGIN"),
+                )
+        })
+    }
+
+    /// The columns of an ACAD column block (see [`Self::to_acad_xdata`]).
+    pub(crate) fn from_acad_xdata(xdata: &crate::xdata::ExtendedData) -> Option<Self> {
+        use crate::xdata::XDataValue;
+        let record = Self::acad_column_record(xdata)?;
+        let mut values = record
+            .values
+            .iter()
+            .skip_while(
+                |v| !matches!(v, XDataValue::String(s) if s == "ACAD_MTEXT_COLUMN_INFO_BEGIN"),
+            )
+            .skip(1);
+        let mut columns = Self::new();
+        while let Some(code) = values.next() {
+            let XDataValue::Integer16(code) = code else {
+                break; // the END marker, or something this block does not hold
+            };
+            match (code, values.next()?) {
+                (75, XDataValue::Integer16(v)) => columns.column_type = *v,
+                (79, XDataValue::Integer16(v)) => columns.auto_height = *v != 0,
+                (76, XDataValue::Integer16(v)) => columns.column_count = i32::from(*v),
+                (78, XDataValue::Integer16(v)) => columns.flow_reversed = *v != 0,
+                (48, XDataValue::Real(v)) => columns.width = *v,
+                (49, XDataValue::Real(v)) => columns.gutter = *v,
+                (50, XDataValue::Integer16(v)) => {
+                    for _ in 0..(*v).max(0) {
+                        if let Some(XDataValue::Real(h)) = values.next() {
+                            columns.heights.push(*h);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        (columns.column_type != 0).then_some(columns)
+    }
+}
+
 impl Default for MTextColumnData {
     fn default() -> Self {
         Self::new()

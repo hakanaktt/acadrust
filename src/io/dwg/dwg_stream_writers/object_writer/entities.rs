@@ -940,7 +940,26 @@ impl<'a> DwgObjectWriter<'a> {
     // â”€â”€ MText â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     fn write_mtext(&mut self, e: &MText) {
-        self.entity_preamble(common::OBJ_MTEXT, &e.common);
+        // R2007 to R2013 have no column fields in the MTEXT record; AutoCAD
+        // keeps the columns in ACAD extended data (as in DXF). A drawing read
+        // from AutoCAD already holds that block and keeps it as it is.
+        let column_xdata = (self.version.r2007_plus()
+            && !self.version.r2018_plus(self.dxf_version)
+            && !crate::entities::mtext::MTextColumnData::in_acad_xdata(&e.common.extended_data))
+        .then(|| e.column_data.to_acad_xdata())
+        .flatten();
+        if let Some(columns) = column_xdata {
+            let mut common = e.common.clone();
+            let mut record = common
+                .extended_data
+                .remove_record("ACAD")
+                .unwrap_or_else(|| crate::xdata::ExtendedDataRecord::new("ACAD"));
+            record.values.extend(columns.values);
+            common.extended_data.add_record(record);
+            self.entity_preamble(common::OBJ_MTEXT, &common);
+        } else {
+            self.entity_preamble(common::OBJ_MTEXT, &e.common);
+        }
 
         // Insertion pt 3BD 10
         self.writer.write_3bit_double(e.insertion_point);
@@ -3790,7 +3809,7 @@ impl<'a> DwgObjectWriter<'a> {
         }
         self.writer.write_bit(cell.style.is_some());
         if let Some(style) = &cell.style {
-            let flags = style.override_flags;
+            let flags = style.legacy_override_flags();
             self.writer.write_bit_long(flags);
             self.writer.write_byte(cell.virtual_edge as u8);
             if flags & 0x01 != 0 {

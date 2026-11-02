@@ -2570,10 +2570,10 @@ impl DwgDocumentBuilder {
                         e.vertices = verts
                             .into_iter()
                             .filter_map(|v| {
-                                if let PendingVertex::V3D(d, _ec) = v {
+                                if let PendingVertex::V3D(d, ec) = v {
                                     Some(crate::entities::polyline3d::Vertex3DPolyline {
                                         handle: d.handle,
-                                        layer: String::new(),
+                                        layer: ec.layer,
                                         position: d.position,
                                         flags: d.flags as i32,
                                     })
@@ -3303,6 +3303,18 @@ impl DwgDocumentBuilder {
                         let xd = &mut std::sync::Arc::make_mut(entity).common_mut().extended_data;
                         for record in records {
                             xd.add_record(record);
+                        }
+                    }
+                    // R2007 to R2013 keep MTEXT columns in ACAD extended data.
+                    let columns = match entity.as_ref() {
+                        EntityType::MText(m) if m.column_data.column_type == 0 => {
+                            MTextColumnData::from_acad_xdata(&m.common.extended_data)
+                        }
+                        _ => None,
+                    };
+                    if let Some(columns) = columns {
+                        if let EntityType::MText(m) = std::sync::Arc::make_mut(entity) {
+                            m.column_data = columns;
                         }
                     }
                     if self.obj_reader.version().r13_14_only() {
@@ -6187,10 +6199,12 @@ impl DwgDocumentBuilder {
                             } else {
                                 // Pre-R2018: a bit_short index into the linetypes
                                 // in table order (ByBlock/ByLayer excluded);
-                                // 0x7FFF means ByLayer.
+                                // 0x7FFF means ByLayer, 0x7FFE ByBlock.
                                 let idx = e.linetype_index_or_handle;
                                 if idx == 0x7FFF {
                                     "ByLayer".to_string()
+                                } else if idx == 0x7FFE {
+                                    "ByBlock".to_string()
                                 } else {
                                     maps.linetype_order
                                         .get(idx as usize)
@@ -6698,6 +6712,7 @@ impl DwgDocumentBuilder {
                                         text_data_bits,
                                     ),
                                 object_ids,
+                                dxf_data: Vec::new(),
                             },
                         )
                     };
@@ -8874,7 +8889,13 @@ fn map_dimension_common(
     base.insertion_point =
         crate::types::Vector3::new(common.insertion_point.x, common.insertion_point.y, 0.0);
     base.style_name = maps.dimstyle_name(common.dimstyle_handle);
-    base.block_name = maps.block_name(common.block_handle);
+    // A dimension without a geometry block (null handle) keeps an empty name:
+    // a made-up `*U0` would be written back as a reference to a missing block.
+    base.block_name = if common.block_handle == 0 {
+        String::new()
+    } else {
+        maps.block_name(common.block_handle)
+    };
 }
 
 fn map_entity_common(
