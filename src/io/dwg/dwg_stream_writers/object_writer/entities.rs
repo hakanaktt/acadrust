@@ -3524,8 +3524,9 @@ impl<'a> DwgObjectWriter<'a> {
         self.writer.write_cm_true_color(&style.background_color);
         self.writer.write_bit_long(style.layout_flags.bits() as i32);
         self.write_table_style_content_format(style);
-        self.writer.write_bit_short(style.margin_override_flags);
-        if style.margin_override_flags & 0x01 != 0 {
+        let margin_flags = style.margin_flags_to_write();
+        self.writer.write_bit_short(margin_flags);
+        if margin_flags & 0x01 != 0 {
             self.writer.write_bit_double(style.margin_top);
             self.writer.write_bit_double(style.margin_left);
             self.writer.write_bit_double(style.margin_bottom);

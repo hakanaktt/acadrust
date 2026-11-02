@@ -1788,6 +1788,8 @@ struct Picture {
     pt: Option<i64>,
     bl: Option<i64>,
     lw: Option<i64>,
+    /// `%nn1`: negative numbers in parentheses.
+    nn: i64,
     printf: Option<usize>,
     pre: String,
     suf: String,
@@ -1847,6 +1849,7 @@ impl Picture {
                 "pt" => p.pt = Some(n),
                 "bl" => p.bl = Some(n),
                 "lw" => p.lw = Some(n),
+                "nn" => p.nn = n,
                 "ct" => p.conv = Some((n, arg.and_then(|a| a.trim().parse().ok()))),
                 "ps" => {
                     let a = arg.unwrap_or("");
@@ -1944,6 +1947,9 @@ fn format_number(doc: &CadDocument, value: f64, pic: &str) -> String {
     if !v.is_finite() {
         return "####".into();
     }
+    if p.nn == 1 && v < 0.0 {
+        return format!("({})", p.wrap(&number_text(doc, &p, -v)));
+    }
     p.wrap(&number_text(doc, &p, v))
 }
 
@@ -1987,24 +1993,30 @@ fn unit_text(v: f64, mode: i64, prec: usize, z: Zeros, ds: char, th: Option<char
     let decimal = |x: f64, p: usize| {
         let m = 10f64.powi(p as i32);
         let mut s = format!("{:.*}", p, (x * m).round() / m);
-        if let Some(t) = th {
-            let (int, frac) = s.split_at(s.find('.').unwrap_or(s.len()));
-            let mut grouped = String::new();
-            for (i, c) in int.chars().enumerate() {
-                if i > 0 && (int.len() - i) % 3 == 0 {
-                    grouped.push(t);
-                }
-                grouped.push(c);
-            }
-            s = grouped + frac;
-        }
         if z.trailing && s.contains('.') {
             s = s.trim_end_matches('0').trim_end_matches('.').to_string();
         }
         if z.leading && s.starts_with("0.") {
             s.remove(0);
         }
-        s.replace('.', &ds.to_string())
+        // Only the decimal point takes the decimal separator; a thousands
+        // separator that is a period stays one (`1.234,57`).
+        let (int, frac) = s.split_at(s.find('.').unwrap_or(s.len()));
+        let frac = frac.replacen('.', &ds.to_string(), 1);
+        let int = match th {
+            Some(t) => {
+                let mut grouped = String::new();
+                for (i, c) in int.chars().enumerate() {
+                    if i > 0 && (int.len() - i) % 3 == 0 {
+                        grouped.push(t);
+                    }
+                    grouped.push(c);
+                }
+                grouped
+            }
+            None => int.to_string(),
+        };
+        int + &frac
     };
     // Whole units and a reduced 1/2^prec fraction.
     let fraction = |x: f64| {
@@ -3324,6 +3336,170 @@ impl CadDocument {
             let _ = self.add_entity(EntityType::Line(l));
         }
         Some(handles)
+    }
+
+    /// Puts a field into a table cell: a `_text` field owned by the table
+    /// (its children owned by it) becomes the cell's only content, listed
+    /// among the table's fields. Returns the container field, or `None`
+    /// when the table or the cell does not exist.
+    pub fn set_table_cell_field(
+        &mut self,
+        table: Handle,
+        row: usize,
+        column: usize,
+        template: &str,
+        children: Vec<NewField>,
+    ) -> Option<Handle> {
+        use crate::entities::table::{CellContent, CellType, TableCellContentType};
+        match self.get_entity(table)? {
+            EntityType::Table(t) if t.cell(row, column).is_some() => {}
+            _ => return None,
+        }
+        let display = template_display(template, &children, false)?;
+        self.remove_table_cell_field(table, row, column);
+        for (dxf, cpp) in [("FIELD", "AcDbField"), ("FIELDLIST", "AcDbFieldList")] {
+            if !self.classes.contains(dxf) {
+                let mut class = crate::classes::DxfClass::new(dxf, cpp);
+                class.proxy_flags = crate::classes::ProxyFlags(1152);
+                self.classes.add_or_update(class);
+            }
+        }
+        let container = self.allocate_handle();
+        let child_handles: Vec<Handle> = children.iter().map(|_| self.allocate_handle()).collect();
+        let mut empty = CellValue::new();
+        empty.flags = 3;
+        let container_field = Field {
+            handle: container,
+            owner: table,
+            evaluator_id: "_text".into(),
+            code: template.into(),
+            child_fields: child_handles.clone(),
+            evaluation_option: 63,
+            state: 9,
+            evaluation_status: 2,
+            value: empty,
+            ..Field::default()
+        };
+        let mut all = vec![container_field];
+        for (child, handle) in children.into_iter().zip(&child_handles) {
+            all.push(child_field(child, *handle, container));
+        }
+        self.register_fields(all);
+        let Some(EntityType::Table(t)) = self.get_entity_mut(table) else {
+            return None;
+        };
+        let cell = t.cell_mut(row, column)?;
+        let mut content = CellContent::text(&display);
+        content.content_type = TableCellContentType::Field;
+        content.field_handle = Some(container);
+        cell.contents = vec![content];
+        cell.cell_type = CellType::Text;
+        if !t.field_handles.contains(&container) {
+            t.field_handles.push(container);
+        }
+        Some(container)
+    }
+
+    /// Takes a table cell's field away (the field objects too); the cell
+    /// keeps the text it showed. Returns whether there was one.
+    pub fn remove_table_cell_field(&mut self, table: Handle, row: usize, column: usize) -> bool {
+        let Some(EntityType::Table(t)) = self.get_entity_mut(table) else {
+            return false;
+        };
+        let Some(cell) = t.cell_mut(row, column) else {
+            return false;
+        };
+        // The cell keeps the text the field showed, as a value of its own:
+        // a field content with no field would be written without its text.
+        let fields: Vec<Handle> = cell
+            .contents
+            .iter_mut()
+            .filter_map(|content| {
+                let field = content.field_handle.take()?;
+                if content.content_type == crate::entities::TableCellContentType::Field {
+                    content.content_type = crate::entities::TableCellContentType::Value;
+                }
+                Some(field)
+            })
+            .collect();
+        if fields.is_empty() {
+            return false;
+        }
+        t.field_handles.retain(|handle| !fields.contains(handle));
+        let doomed = self.with_child_fields(&fields);
+        self.remove_fields(&doomed);
+        true
+    }
+
+    /// A number as a field picture shows it (`%lu2%pr3%ps[$,]`, `%au1%pr2`
+    /// — an angle in radians); table cells format their values this way.
+    pub fn format_with_picture(&self, value: f64, picture: &str) -> String {
+        format_number(self, value, picture)
+    }
+
+    /// A point as a field picture shows it (`%lu2%pt7%ps[,]`).
+    pub fn format_point_with_picture(&self, point: [f64; 3], picture: &str) -> String {
+        format_point(self, point, picture)
+    }
+
+    /// The fields a table lists that no cell shows any more (typed text
+    /// replaced a field, a row or column went away), with their child
+    /// fields. Their cells were rewritten, so nothing reaches them.
+    pub fn orphan_table_fields(&self, table: Handle) -> Vec<Handle> {
+        let Some(EntityType::Table(t)) = self.get_entity(table) else {
+            return Vec::new();
+        };
+        let shown: std::collections::HashSet<Handle> = t
+            .rows
+            .iter()
+            .flat_map(|row| row.cells.iter())
+            .flat_map(|cell| cell.contents.iter())
+            .filter_map(|content| content.field_handle)
+            .collect();
+        let orphans: Vec<Handle> = t
+            .field_handles
+            .iter()
+            .copied()
+            .filter(|handle| !shown.contains(handle))
+            .collect();
+        self.with_child_fields(&orphans)
+    }
+
+    /// Takes away the fields a table lists but no cell shows (see
+    /// [`Self::orphan_table_fields`]). Returns the removed field objects.
+    pub fn prune_table_fields(&mut self, table: Handle) -> Vec<Handle> {
+        let doomed = self.orphan_table_fields(table);
+        if doomed.is_empty() {
+            return doomed;
+        }
+        if let Some(EntityType::Table(t)) = self.get_entity_mut(table) {
+            t.field_handles.retain(|handle| !doomed.contains(handle));
+        }
+        self.remove_fields(&doomed);
+        doomed
+    }
+
+    fn with_child_fields(&self, fields: &[Handle]) -> Vec<Handle> {
+        let mut all = fields.to_vec();
+        for field in fields {
+            if let Some(ObjectType::Field(f)) = self.objects.get(field) {
+                all.extend(f.child_fields.iter().copied());
+            }
+        }
+        all
+    }
+
+    /// Drops field objects and their field-list entries.
+    pub fn remove_fields(&mut self, doomed: &[Handle]) {
+        for handle in doomed {
+            self.objects.remove(handle);
+            self.fields.remove(handle);
+        }
+        for object in self.objects.values_mut() {
+            if let ObjectType::FieldList(list) = object {
+                list.fields.retain(|handle| !doomed.contains(handle));
+            }
+        }
     }
 
     fn register_fields(&mut self, all: Vec<Field>) {

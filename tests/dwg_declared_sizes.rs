@@ -110,6 +110,14 @@ fn system_page(bytes: &[u8], kind: u32) -> usize {
 /// part followed by 16 bytes per page) through `edit`, and writes the recompressed map back
 /// in place of the old one.
 fn rewrite_section_map(bytes: &[u8], edit: impl Fn(&str, Vec<u8>) -> Vec<u8>) -> Vec<u8> {
+    try_rewrite_section_map(bytes, edit).expect("rewritten section map does not fit")
+}
+
+/// `rewrite_section_map`, or `None` when the recompressed map is larger than the old one.
+fn try_rewrite_section_map(
+    bytes: &[u8],
+    edit: impl Fn(&str, Vec<u8>) -> Vec<u8>,
+) -> Option<Vec<u8>> {
     let at = system_page(bytes, SECTION_MAP);
     let size = i32_at(bytes, at + 4) as usize;
     let room = i32_at(bytes, at + 8) as usize;
@@ -127,12 +135,14 @@ fn rewrite_section_map(bytes: &[u8], edit: impl Fn(&str, Vec<u8>) -> Vec<u8>) ->
     }
     out.extend_from_slice(&map[pos..]);
     let packed = DwgLZ77AC18Compressor::new().compress(&out, 0, out.len());
-    assert!(packed.len() <= room, "rewritten section map does not fit");
+    if packed.len() > room {
+        return None;
+    }
     let mut bytes = bytes.to_vec();
     put_i32(&mut bytes, at + 4, out.len() as i32);
     put_i32(&mut bytes, at + 8, packed.len() as i32);
     bytes[at + 20..at + 20 + packed.len()].copy_from_slice(&packed);
-    bytes
+    Some(bytes)
 }
 
 /// Makes `section` claim `data_size` bytes with a page count of -1, so that no page
@@ -150,9 +160,10 @@ fn inflate_section(bytes: &[u8], section: &str, data_size: u64) -> Vec<u8> {
 }
 
 /// Makes a section declare a small amount of padding beyond the sum of its parsed page
-/// capacities. AC1032 files in the wild use this form for the objects section.
-fn overshoot_section(bytes: &[u8], section: &str, extra: u64) -> Vec<u8> {
-    rewrite_section_map(bytes, |name, descriptor| {
+/// capacities. AC1032 files in the wild use this form for the objects section. `None` when
+/// the edited map no longer compresses into the old map's room.
+fn overshoot_section(bytes: &[u8], section: &str, extra: u64) -> Option<Vec<u8>> {
+    try_rewrite_section_map(bytes, |name, descriptor| {
         if name != section {
             return descriptor;
         }
@@ -240,7 +251,11 @@ fn ac18_section_size_is_bounded_by_its_parsed_pages() {
 #[test]
 fn ac18_small_section_capacity_overshoot_keeps_objects_readable() {
     let bytes = dwg(DxfVersion::AC1032);
-    let padded = overshoot_section(&bytes, "AcDb:AcDbObjects", 1);
+    // Any overshoot under a page will do: the first whose edited section map still
+    // compresses into the old map's room.
+    let padded = (1..=255)
+        .find_map(|extra| overshoot_section(&bytes, "AcDb:AcDbObjects", extra))
+        .expect("an overshoot whose section map fits");
     assert_eq!(entity_count(&padded), 3);
 }
 

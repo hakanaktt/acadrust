@@ -291,6 +291,20 @@ impl DxfClassCollection {
         }
     }
 
+    /// Add the default definition of one class when the collection lacks it:
+    /// objects made in memory need their class listed to be written.
+    pub(crate) fn ensure_default(&mut self, dxf_name: &str) {
+        if self.contains(dxf_name) {
+            return;
+        }
+        if let Some(class) = default_classes()
+            .into_iter()
+            .find(|class| class.dxf_name == dxf_name)
+        {
+            self.add_or_update(class);
+        }
+    }
+
     /// Populate with default class definitions that ACAD expects.
     ///
     /// This mirrors the reference `DxfClassCollection.UpdateDxfClasses()`.
@@ -720,6 +734,7 @@ pub(crate) fn default_classes() -> Vec<DxfClass> {
         ("DIMASSOC", "AcDbDimAssoc", 0,
             "AcDbDimAssoc|Product Desc:     AcDim ARX App For Dimension|Company:          Autodesk|WEB Address:      www.autodesk.com", false),
         ("TABLECONTENT", "AcDbTableContent", 1025, "ObjectDBX Classes", false),
+        ("TABLETEMPLATE", "AcDbTableTemplate", 1152, "ObjectDBX Classes", false),
         ("TABLEGEOMETRY", "AcDbTableGeometry", 1025, "ObjectDBX Classes", false),
         ("Format", "mcsDbObjectFormat", 0, "NanoSPDS", true),
         ("RASTERVARIABLES", "AcDbRasterVariables", 0, "ISM", false),
