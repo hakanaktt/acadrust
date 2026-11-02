@@ -5513,6 +5513,16 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         Ok(())
     }
 
+    /// A VIEWPORT handle group, left out when null or not in the output.
+    fn write_viewport_handle(&mut self, code: i32, handle: Handle) -> Result<()> {
+        if !handle.is_null()
+            && (self.valid_handles.is_empty() || self.valid_handles.contains(&handle))
+        {
+            self.writer.write_handle(code, handle)?;
+        }
+        Ok(())
+    }
+
     /// Write VIEWPORT entity
     fn write_viewport(&mut self, viewport: &Viewport, owner: Handle) -> Result<()> {
         self.writer.write_entity_type("VIEWPORT")?;
@@ -5554,8 +5564,6 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         } else {
             0
         };
-        self.writer
-            .write_i32(90, viewport.status.to_bits() | grid_bits)?;
 
         // View center
         self.writer.write_double(12, viewport.view_center.x)?;
@@ -5608,51 +5616,65 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 self.writer.write_handle(331, *frozen_layer)?;
             }
         }
+        // Status flags (after 331, as AutoCAD writes them)
+        self.writer
+            .write_i32(90, viewport.status.to_bits() | grid_bits)?;
+
         // Boundary presence and clipping activation are independent.
         if !viewport.clip_boundary_handle.is_null() {
             self.writer
                 .write_handle(340, viewport.clip_boundary_handle)?;
         }
 
+        // Plot style sheet
+        self.writer.write_string(1, &viewport.style_sheet)?;
+
         // Render mode
         self.writer
             .write_byte(281, viewport.render_mode.to_value() as u8)?;
 
-        // UCS per viewport
-        if viewport.ucs_per_viewport {
-            self.writer.write_i16(71, 1)?;
-        }
+        // UCS per viewport, UCS icon at origin, UCS origin and axes
+        self.writer
+            .write_i16(71, i16::from(viewport.ucs_per_viewport))?;
+        self.writer
+            .write_i16(74, i16::from(viewport.ucs_at_origin))?;
+        self.writer.write_point3d(110, viewport.ucs_origin)?;
+        self.writer.write_point3d(111, viewport.ucs_x_axis)?;
+        self.writer.write_point3d(112, viewport.ucs_y_axis)?;
+        self.write_viewport_handle(345, viewport.ucs_handle)?;
+        self.write_viewport_handle(346, viewport.base_ucs_handle)?;
 
-        // UCS origin, axes
-        if viewport.ucs_origin != Vector3::ZERO {
-            self.writer.write_double(110, viewport.ucs_origin.x)?;
-            self.writer.write_double(120, viewport.ucs_origin.y)?;
-            self.writer.write_double(130, viewport.ucs_origin.z)?;
-        }
-        if viewport.ucs_x_axis != Vector3::ZERO {
-            self.writer.write_double(111, viewport.ucs_x_axis.x)?;
-            self.writer.write_double(121, viewport.ucs_x_axis.y)?;
-            self.writer.write_double(131, viewport.ucs_x_axis.z)?;
-        }
-        if viewport.ucs_y_axis != Vector3::ZERO {
-            self.writer.write_double(112, viewport.ucs_y_axis.x)?;
-            self.writer.write_double(122, viewport.ucs_y_axis.y)?;
-            self.writer.write_double(132, viewport.ucs_y_axis.z)?;
-        }
-
-        // Elevation
-        if viewport.elevation != 0.0 {
-            self.writer.write_double(146, viewport.elevation)?;
-        }
-
-        // Grid major
-        if viewport.grid_major != 0 {
-            self.writer.write_i16(61, viewport.grid_major)?;
-        }
+        // Orthographic UCS type, elevation
+        self.writer.write_i16(79, viewport.ucs_ortho_type)?;
+        self.writer.write_double(146, viewport.elevation)?;
 
         // R2004+: per-viewport ShadePlot mode, independent of render mode.
         if self.dxf_version >= DxfVersion::AC1018 {
             self.writer.write_i16(170, viewport.shade_plot_mode)?;
+        }
+
+        // Grid major
+        if self.dxf_version >= DxfVersion::AC1021 || viewport.grid_major != 0 {
+            self.writer.write_i16(61, viewport.grid_major)?;
+        }
+
+        // R2007+: background, shade plot, visual style, lighting.
+        if self.dxf_version >= DxfVersion::AC1021 {
+            self.write_viewport_handle(332, viewport.background_handle)?;
+            self.write_viewport_handle(333, viewport.shade_plot_handle)?;
+            self.write_viewport_handle(348, viewport.visual_style_handle)?;
+            self.writer.write_bool(292, viewport.default_lighting)?;
+            self.writer.write_i16(282, viewport.default_lighting_type)?;
+            self.writer.write_double(141, viewport.brightness)?;
+            self.writer.write_double(142, viewport.contrast)?;
+            // The model's default (index 0) means "not set": leave it out.
+            if viewport.ambient_color != Color::from_index(0) {
+                self.writer.write_color(63, viewport.ambient_color)?;
+                if let Some(rgb) = viewport.ambient_color.to_true_color_value() {
+                    self.writer.write_i32(421, rgb)?;
+                }
+            }
+            self.write_viewport_handle(361, viewport.sun_handle)?;
         }
 
         Ok(())

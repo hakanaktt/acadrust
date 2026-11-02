@@ -17720,6 +17720,44 @@ impl<'a> SectionReader<'a> {
                         vp.default_lighting_type = v;
                     }
                 }
+                1 => vp.style_sheet = pair.value_string.clone(),
+                74 => {
+                    if let Some(v) = pair.as_i16() {
+                        vp.ucs_at_origin = v != 0;
+                    }
+                }
+                79 => {
+                    if let Some(v) = pair.as_i16() {
+                        vp.ucs_ortho_type = v;
+                    }
+                }
+                // The viewport's own handles; 348 here is its visual style,
+                // not the entity's (which AcDbEntity carries).
+                345 | 346 | 332 | 333 | 348 | 361 => {
+                    if let Ok(h) = u64::from_str_radix(pair.value_string.trim(), 16) {
+                        let handle = Handle::new(h);
+                        match pair.code {
+                            345 => vp.ucs_handle = handle,
+                            346 => vp.base_ucs_handle = handle,
+                            332 => vp.background_handle = handle,
+                            333 => vp.shade_plot_handle = handle,
+                            348 => vp.visual_style_handle = handle,
+                            _ => vp.sun_handle = handle,
+                        }
+                    }
+                }
+                63 => {
+                    if let Some(v) = pair.as_i16() {
+                        if !matches!(vp.ambient_color, Color::Rgb { .. }) {
+                            vp.ambient_color = Color::from_index(v);
+                        }
+                    }
+                }
+                421 => {
+                    if let Some(v) = pair.as_i32_bits() {
+                        vp.ambient_color = Color::from_true_color_value(v);
+                    }
+                }
                 _ => {
                     self.try_read_common_entity_code(&pair, &mut vp.common)?;
                 }
