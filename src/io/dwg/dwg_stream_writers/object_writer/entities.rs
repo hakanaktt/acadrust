@@ -6109,3 +6109,58 @@ mod tests {
         assert_eq!(cell_main_stream(DxfVersion::AC1015, &cell), r.to_bytes_snapshot());
     }
 }
+
+#[cfg(test)]
+mod sat_block_tests {
+    // AutoCAD splits a SAT (version 1) ACIS body into blocks of at most 4096
+    // bytes, and refuses a drawing whose 3DSOLID carries a larger block
+    // (ErrorStatus 53), as budweiser(original).dwg did once re-written.
+
+    use super::*;
+    use crate::document::CadDocument;
+    use crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader;
+    use crate::io::dwg::DwgVersion;
+    use crate::types::DxfVersion;
+
+    fn sat_block_sizes(version: DxfVersion, acis: &AcisData) -> Vec<i32> {
+        let doc = CadDocument::with_version(version);
+        let mut w = DwgObjectWriter::new(&doc).unwrap();
+        w.write_acis_data(Vector3::ZERO, acis, &[], &[]);
+        let bytes = w.writer.main().to_bytes_snapshot();
+        let mut r = DwgBitReader::new(
+            bytes,
+            DwgVersion::from_dxf_version(version).unwrap(),
+            version,
+        );
+        assert!(!r.read_bit(), "acis_empty");
+        r.read_bit(); // unknown
+        assert_eq!(r.read_bit_short(), 1, "SAT version");
+        let mut sizes = Vec::new();
+        loop {
+            let size = r.read_bit_long();
+            if size == 0 {
+                return sizes;
+            }
+            r.read_bytes(size as usize);
+            sizes.push(size);
+        }
+    }
+
+    #[test]
+    fn sat_bodies_are_written_in_blocks_of_at_most_4096_bytes() {
+        let mut acis = AcisData::new();
+        acis.sat_data = "ellipse-curve $-1 0 0 0 0 0 1 1 0 0 1 I I #
+"
+        .repeat(400);
+        for version in [DxfVersion::AC1014, DxfVersion::AC1015] {
+            let sizes = sat_block_sizes(version, &acis);
+            let total: i32 = sizes.iter().sum();
+            assert!(total > 4096, "{version:?}: {total} bytes");
+            assert!(
+                sizes.iter().all(|&size| size <= 4096),
+                "{version:?}: blocks {sizes:?}"
+            );
+            assert!(sizes[..sizes.len() - 1].iter().all(|&size| size == 4096));
+        }
+    }
+}
