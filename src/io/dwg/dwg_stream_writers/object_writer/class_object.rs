@@ -757,7 +757,15 @@ impl<'a> DwgObjectWriter<'a> {
                 self.writer.write_variable_text(&value.description);
                 self.writer.write_variable_text(&value.tooltip);
                 self.writer.write_variable_text(&value.connection_string);
-                self.writer.write_bit_long(value.option);
+                // Bit 8 of the DWG option says the data map follows, and AutoCAD refuses a link
+                // whose bit and map disagree.
+                let has_data_map = !value.data_map.is_empty();
+                let option = if has_data_map {
+                    value.option | DataLink::HAS_DATA_MAP
+                } else {
+                    value.option & !DataLink::HAS_DATA_MAP
+                };
+                self.writer.write_bit_long(option);
                 self.writer.write_bit_long(value.update_option);
                 self.writer.write_bit_long(value.flags);
                 self.writer.write_bit_short(value.year);
@@ -775,6 +783,12 @@ impl<'a> DwgObjectWriter<'a> {
                     self.writer
                         .write_handle(DwgReferenceType::HardOwnership, item.target.value());
                     self.writer.write_variable_text(&item.value);
+                }
+                if has_data_map {
+                    self.writer.write_bit_long(value.data_map.len() as i32);
+                    for item in &value.data_map {
+                        self.write_table_custom_data(item);
+                    }
                 }
                 self.writer
                     .write_handle(DwgReferenceType::HardOwnership, value.hard_owner.value());
