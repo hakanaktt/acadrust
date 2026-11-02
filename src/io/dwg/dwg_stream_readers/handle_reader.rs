@@ -20,8 +20,6 @@
 //! └─────────────────────────────────────┘
 //! ```
 
-use std::collections::HashMap;
-
 use crate::error::Result;
 
 /// Read the Handles section from raw section bytes (already decompressed).
@@ -35,8 +33,21 @@ use crate::error::Result;
 /// # Returns
 /// `HashMap<u64, i64>` mapping object handles to their file offsets within
 /// the AcDb:AcDbObjects section.
-pub fn read_handles(data: &[u8]) -> Result<HashMap<u64, i64>> {
-    let mut handle_map: HashMap<u64, i64> = HashMap::new();
+pub fn read_handles(data: &[u8]) -> Result<std::collections::HashMap<u64, i64>> {
+    read_handle_map(data).map(|map| map.into_iter().collect())
+}
+
+/// Handle → file offset, hashed with foldhash. Every record lookup goes
+/// through this map, which is why it does not use the std hasher; the seed
+/// is fixed because the map lives in [`DwgObjectReader`], which plugins may
+/// use from another binary (see `CadDocument::entity_index`).
+///
+/// [`DwgObjectReader`]: super::object_reader::DwgObjectReader
+pub(crate) type HandleMap = std::collections::HashMap<u64, i64, foldhash::fast::FixedState>;
+
+/// [`read_handles`] into the map the object reader keeps.
+pub(crate) fn read_handle_map(data: &[u8]) -> Result<HandleMap> {
+    let mut handle_map = HandleMap::default();
     let mut pos: usize = 0;
 
     // Process chunks until we run out of data
@@ -209,5 +220,44 @@ mod tests {
         assert_eq!(handles.len(), 2);
         assert_eq!(handles[&5_u64], 100_i64);
         assert_eq!(handles[&8_u64], 150_i64); // 5+3=8, 100+50=150
+    }
+
+    /// Handle 5 at offset 100, handle 8 at offset 150.
+    const TWO_HANDLES: [u8; 9] = [0x00, 0x07, 0x05, 0xE4, 0x00, 0x03, 0x32, 0x00, 0x00];
+
+    #[test]
+    fn the_public_and_the_read_path_maps_hold_the_same_entries() {
+        let public = read_handles(&TWO_HANDLES).unwrap();
+        let internal = read_handle_map(&TWO_HANDLES).unwrap();
+        assert_eq!(public.len(), 2);
+        assert_eq!(internal.len(), public.len());
+        for (handle, offset) in &public {
+            assert_eq!(internal.get(handle), Some(offset));
+        }
+    }
+
+    /// These signatures are public API: downstream code names the std types.
+    #[test]
+    fn the_public_entry_points_take_and_return_std_maps() {
+        use crate::io::dwg::dwg_stream_readers::object_reader::DwgObjectReader;
+        use crate::types::DxfVersion;
+
+        let map: std::collections::HashMap<u64, i64> = read_handles(&TWO_HANDLES).unwrap();
+        let new = DwgObjectReader::new(Vec::new(), DxfVersion::AC1018, map.clone()).unwrap();
+        let with_encoding = DwgObjectReader::with_encoding(
+            Vec::new(),
+            DxfVersion::AC1018,
+            map,
+            encoding_rs::WINDOWS_1252,
+        )
+        .unwrap();
+        for reader in [new, with_encoding] {
+            assert_eq!(reader.offset_for(5), Some(100));
+            assert_eq!(reader.offset_for(8), Some(150));
+            assert_eq!(reader.offset_for(9), None);
+            let mut handles = reader.handles();
+            handles.sort_unstable();
+            assert_eq!(handles, [5, 8]);
+        }
     }
 }
