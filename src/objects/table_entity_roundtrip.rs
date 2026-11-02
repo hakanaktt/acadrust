@@ -8,31 +8,77 @@
 use crate::document::CadDocument;
 use crate::entities::table::{CellStylePropertyFlags as P, Table};
 use crate::entities::EntityType;
-use crate::objects::{ObjectType, XRecordValue};
+use crate::objects::{
+    DataObject, DataObjectData, ObjectType, TableGeometry, TableGeometryCell, XRecordValue,
+};
 use crate::types::Handle;
 
 const RECORD_KEY: &str = "ACAD_XREC_ROUNDTRIP";
 const MARKER: &str = "ACAD_ROUNDTRIP_2008_TABLE_ENTITY";
 
-/// The table content object a table's roundtrip record points to.
-fn roundtrip_content(document: &CadDocument, table: Handle) -> Option<Handle> {
+/// A table's roundtrip record.
+fn roundtrip_record(document: &CadDocument, table: Handle) -> Option<Handle> {
     let dictionary = document.extension_dictionary_handle(table)?;
     let Some(ObjectType::Dictionary(entries)) = document.objects.get(&dictionary) else {
         return None;
     };
-    let Some(ObjectType::XRecord(record)) = document.objects.get(&entries.get(RECORD_KEY)?) else {
+    let record = entries.get(RECORD_KEY)?;
+    matches!(document.objects.get(&record), Some(ObjectType::XRecord(_))).then_some(record)
+}
+
+/// The handle a table's roundtrip record keeps under `code` (360 the
+/// content object, 361 the geometry object).
+fn roundtrip_entry(document: &CadDocument, table: Handle, code: i32) -> Option<Handle> {
+    let Some(ObjectType::XRecord(record)) = document.objects.get(&roundtrip_record(document, table)?)
+    else {
         return None;
     };
-    let content = record
+    record
         .entries
         .iter()
         .skip_while(|entry| entry.value.as_string() != Some(MARKER))
-        .find(|entry| entry.code == 360)
+        .find(|entry| entry.code == code)
         .and_then(|entry| match entry.value {
             XRecordValue::Handle(handle) => Some(handle),
             _ => None,
-        })?;
+        })
+}
+
+/// The table content object a table's roundtrip record points to.
+fn roundtrip_content(document: &CadDocument, table: Handle) -> Option<Handle> {
+    let content = roundtrip_entry(document, table, 360)?;
     matches!(document.objects.get(&content), Some(ObjectType::TableContent(_))).then_some(content)
+}
+
+/// The table geometry object a table's roundtrip record points to.
+fn roundtrip_geometry(document: &CadDocument, table: Handle) -> Option<Handle> {
+    let geometry = roundtrip_entry(document, table, 361)?;
+    matches!(
+        document.objects.get(&geometry),
+        Some(ObjectType::DataObject(DataObject { data: DataObjectData::TableGeometry(_), .. }))
+    )
+    .then_some(geometry)
+}
+
+/// Where the contents of each cell sit, row by row, as the geometry object
+/// keeps it.
+fn table_geometry(table: &Table) -> TableGeometry {
+    TableGeometry {
+        rows: table.rows.len() as i32,
+        columns: table.columns.len() as i32,
+        cells: table
+            .rows
+            .iter()
+            .flat_map(|row| row.cells.iter())
+            .map(|cell| TableGeometryCell {
+                geometry_data_flag: cell.geometry_data_flag,
+                width_with_gap: cell.geometry_width_with_gap,
+                height_with_gap: cell.geometry_height_with_gap,
+                table_geometry: Handle::NULL,
+                geometry: cell.geometries.clone(),
+            })
+            .collect(),
+    }
 }
 
 fn table_handles(document: &CadDocument) -> Vec<Handle> {
@@ -55,10 +101,37 @@ pub(crate) fn restore_table_entity_roundtrip(document: &mut CadDocument) {
         let Some(ObjectType::TableContent(content)) = document.objects.get(&content).cloned() else {
             continue;
         };
+        let geometry = roundtrip_geometry(document, handle).and_then(|geometry| {
+            match document.objects.get(&geometry) {
+                Some(ObjectType::DataObject(DataObject {
+                    data: DataObjectData::TableGeometry(geometry),
+                    ..
+                })) => Some(geometry.clone()),
+                _ => None,
+            }
+        });
         let Some(EntityType::Table(table)) = document.get_entity_mut(handle) else {
             continue;
         };
         merge_formats(table, &content);
+        if let Some(geometry) = geometry {
+            merge_geometry(table, &geometry);
+        }
+    }
+}
+
+fn merge_geometry(table: &mut Table, geometry: &TableGeometry) {
+    if geometry.columns as usize != table.columns.len() {
+        return;
+    }
+    let cells = table.rows.iter_mut().flat_map(|row| row.cells.iter_mut());
+    for (cell, from) in cells.zip(&geometry.cells) {
+        if cell.geometry_width_with_gap == 0.0 && cell.geometries.is_empty() {
+            cell.geometry_data_flag = from.geometry_data_flag;
+            cell.geometry_width_with_gap = from.width_with_gap;
+            cell.geometry_height_with_gap = from.height_with_gap;
+            cell.geometries = from.geometry.clone();
+        }
     }
 }
 
@@ -97,9 +170,10 @@ fn merge_formats(table: &mut Table, content: &Table) {
     }
 }
 
-/// Before a DXF write: every table record gets its content object, written
-/// from the table as it is now (a content object read from a file is
-/// brought up to date with edits made since).
+/// Before a DXF write: every table record gets its content object and its
+/// geometry object (where each cell's content sits), written from the
+/// table as it is now (objects read from a file are brought up to date with
+/// edits made since).
 pub(crate) fn prepare_table_entity_roundtrip(document: &mut std::borrow::Cow<'_, CadDocument>) {
     let tables = table_handles(document);
     if tables.is_empty() {
@@ -142,6 +216,42 @@ pub(crate) fn prepare_table_entity_roundtrip(document: &mut std::borrow::Cow<'_,
             written.common.reactors = object.common.reactors.clone();
             written.common.xdictionary_handle = object.common.xdictionary_handle;
             *object = *written;
+        }
+        let geometry = match roundtrip_geometry(document, handle) {
+            Some(geometry) => geometry,
+            None => {
+                let Some(record) = roundtrip_record(document, handle) else {
+                    continue;
+                };
+                let geometry = document.allocate_handle();
+                let mut object = DataObject::new(DataObjectData::TableGeometry(TableGeometry::default()));
+                object.handle = geometry;
+                object.owner = record;
+                document.objects.insert(geometry, ObjectType::DataObject(object));
+                if let Some(ObjectType::XRecord(xrecord)) = document.objects.get_mut(&record) {
+                    xrecord.entries.retain(|entry| entry.code != 361);
+                    xrecord.add_handle(361, geometry);
+                }
+                geometry
+            }
+        };
+        if let Some(ObjectType::DataObject(object)) = document.objects.get_mut(&geometry) {
+            object.data = DataObjectData::TableGeometry(table_geometry(&table));
+        }
+        // The record's last 90 is the table's last row index.
+        if let Some(record) = roundtrip_record(document, handle) {
+            if let Some(ObjectType::XRecord(xrecord)) = document.objects.get_mut(&record) {
+                let last_row = table.rows.len().saturating_sub(1) as i32;
+                if let Some(entry) = xrecord
+                    .entries
+                    .iter_mut()
+                    .skip_while(|entry| entry.value.as_string() != Some(MARKER))
+                    .filter(|entry| entry.code == 90)
+                    .nth(2)
+                {
+                    entry.value = XRecordValue::Int32(last_row);
+                }
+            }
         }
     }
 }
