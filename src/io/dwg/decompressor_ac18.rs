@@ -181,33 +181,29 @@ fn copy_literals(
     count: usize,
     max_size: usize,
 ) {
-    for _ in 0..count {
-        if *si >= source.len() || output.len() >= max_size {
-            break;
-        }
-        output.push(source[*si]);
-        *si += 1;
-    }
+    let n = count
+        .min(source.len().saturating_sub(*si))
+        .min(max_size.saturating_sub(output.len()));
+    output.extend_from_slice(&source[*si..*si + n]);
+    *si += n;
 }
 
 /// Copy a match from earlier in the output buffer (back-reference).
 #[inline]
 fn copy_match(output: &mut Vec<u8>, offset: usize, length: usize, max_size: usize) {
-    let start = output.len().saturating_sub(offset);
-    for i in 0..length {
-        if output.len() >= max_size {
-            break;
-        }
-        let idx = start + i;
-        if idx < output.len() {
-            // Must index one-at-a-time because the output grows during the copy
-            // (overlapping matches, e.g., run-length encoding of repeating bytes).
-            let byte = output[idx];
-            output.push(byte);
-        } else {
-            // Reference beyond output — emit zero (shouldn't happen in valid data)
-            output.push(0);
-        }
+    let n = length.min(max_size.saturating_sub(output.len()));
+    let mut from = output.len().saturating_sub(offset);
+    if from == output.len() {
+        // Nothing to refer to (empty output or offset 0): emit zeros.
+        output.resize(output.len() + n, 0);
+        return;
+    }
+    let mut left = n;
+    while left > 0 {
+        let take = left.min(output.len() - from);
+        output.extend_from_within(from..from + take);
+        from += take;
+        left -= take;
     }
 }
 
@@ -341,5 +337,104 @@ mod tests {
         let mut si = 0;
         assert_eq!(read_ext_length(&data, &mut si), 0x201);
         assert_eq!(si, 3);
+    }
+
+    /// The byte-at-a-time copy `copy_match` has to agree with.
+    fn copy_match_bytewise(output: &mut Vec<u8>, offset: usize, length: usize, max_size: usize) {
+        let start = output.len().saturating_sub(offset);
+        for i in 0..length {
+            if output.len() >= max_size {
+                break;
+            }
+            let byte = output.get(start + i).copied().unwrap_or(0);
+            output.push(byte);
+        }
+    }
+
+    #[test]
+    fn copy_match_agrees_with_a_bytewise_copy() {
+        let prefix: Vec<u8> = (1..=9).collect();
+        for len in 0..=prefix.len() {
+            for offset in 0..=12 {
+                for length in 0..=30 {
+                    for max_size in [0, len, len + 1, len + length / 2, len + length, 64] {
+                        let mut fast = prefix[..len].to_vec();
+                        let mut slow = fast.clone();
+                        copy_match(&mut fast, offset, length, max_size);
+                        copy_match_bytewise(&mut slow, offset, length, max_size);
+                        assert_eq!(fast, slow, "{len} {offset} {length} {max_size}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn copy_literals_stops_at_the_source_and_at_max_size() {
+        // (source length, start, requested, max_size, bytes copied)
+        let cases: [(u8, usize, usize, usize, usize); 6] = [
+            (5, 0, 5, 64, 5),
+            (5, 0, 9, 64, 5),
+            (5, 2, 9, 64, 3),
+            (5, 5, 1, 64, 0),
+            (5, 0, 5, 3, 3),
+            (5, 0, 5, 0, 0),
+        ];
+        for (source_len, start, count, max_size, copied) in cases {
+            let source: Vec<u8> = (1..=source_len).collect();
+            let mut si = start;
+            let mut output = Vec::new();
+            copy_literals(&source, &mut si, &mut output, count, max_size);
+            assert_eq!(output, source[start..start + copied]);
+            assert_eq!(si, start + copied);
+        }
+    }
+
+    /// `abcd`, then a six-byte match of the given short-match offset (1 to 4).
+    fn abcd_then_match(offset: u8) -> Vec<u8> {
+        vec![
+            0x01,
+            b'a',
+            b'b',
+            b'c',
+            b'd',
+            0x70 | ((offset - 1) << 2),
+            0x00,
+        ]
+    }
+
+    #[test]
+    fn an_overlapping_match_repeats_what_it_has_just_written() {
+        let cases: [(u8, &[u8]); 4] = [
+            (1, b"abcddddddd"),
+            (2, b"abcdcdcdcd"),
+            (3, b"abcdbcdbcd"),
+            (4, b"abcdabcdab"),
+        ];
+        for (offset, expected) in cases {
+            assert_eq!(decompress_ac18(&abcd_then_match(offset), 64), expected);
+        }
+    }
+
+    #[test]
+    fn a_match_stops_at_the_expected_size() {
+        assert_eq!(decompress_ac18(&abcd_then_match(1), 6), b"abcddd");
+    }
+
+    #[test]
+    fn a_match_reaching_before_the_start_copies_from_the_start() {
+        // Offset 97, with four bytes written.
+        let source = [0x01, b'a', b'b', b'c', b'd', 0x70, 0x18];
+        assert_eq!(decompress_ac18(&source, 64), b"abcdabcdab");
+    }
+
+    #[test]
+    fn a_match_with_nothing_before_it_emits_zeros() {
+        assert_eq!(decompress_ac18(&[0x70, 0x00], 64), [0u8; 6]);
+    }
+
+    #[test]
+    fn a_truncated_literal_run_keeps_what_is_there() {
+        assert_eq!(decompress_ac18(&[0x05, b'a', b'b'], 64), b"ab");
     }
 }
