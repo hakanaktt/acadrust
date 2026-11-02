@@ -370,29 +370,30 @@ impl RowCellStyle {
         }
     }
 
-    /// Creates a data row style (smaller text, centered).
+    /// Creates a data row style (smaller text, top-centered, as the
+    /// default table style of the reference templates).
     pub fn data_row() -> Self {
         RowCellStyle {
             text_height: 0.18,
+            alignment: CellAlignment::TopCenter,
+            ..Self::new()
+        }
+    }
+
+    /// Creates a header row style (larger text, middle-centered).
+    pub fn header_row() -> Self {
+        RowCellStyle {
+            text_height: 0.25,
             alignment: CellAlignment::MiddleCenter,
             ..Self::new()
         }
     }
 
-    /// Creates a header row style (larger text, top-centered).
-    pub fn header_row() -> Self {
-        RowCellStyle {
-            text_height: 0.25,
-            alignment: CellAlignment::TopCenter,
-            ..Self::new()
-        }
-    }
-
-    /// Creates a title row style (larger text, top-centered).
+    /// Creates a title row style (larger text, middle-centered).
     pub fn title_row() -> Self {
         RowCellStyle {
             text_height: 0.25,
-            alignment: CellAlignment::TopCenter,
+            alignment: CellAlignment::MiddleCenter,
             ..Self::new()
         }
     }
@@ -1463,14 +1464,14 @@ mod tests {
     fn test_data_row_style() {
         let style = TableStyle::default();
         assert!((style.data_row_style.text_height - 0.18).abs() < 1e-10);
-        assert_eq!(style.data_row_style.alignment, CellAlignment::MiddleCenter);
+        assert_eq!(style.data_row_style.alignment, CellAlignment::TopCenter);
     }
 
     #[test]
     fn test_header_row_style() {
         let style = TableStyle::default();
         assert!((style.header_row_style.text_height - 0.25).abs() < 1e-10);
-        assert_eq!(style.header_row_style.alignment, CellAlignment::TopCenter);
+        assert_eq!(style.header_row_style.alignment, CellAlignment::MiddleCenter);
     }
 
     #[test]
