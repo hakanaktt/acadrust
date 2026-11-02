@@ -20856,6 +20856,21 @@ impl<'a> SectionReader<'a> {
                         }
                     }
                 }
+                // True color after a cell's 63-69 index color (that code + 358).
+                421 | 422 | 423 | 424 | 426 | 427 if cur.is_some() => {
+                    if let (Some(c), Some(value)) = (cur.as_mut(), pair.as_i32()) {
+                        let style = c.style.get_or_insert_with(crate::entities::CellStyle::new);
+                        let color = Color::from_true_color_value(value);
+                        match pair.code {
+                            421 => style.background_color = color,
+                            422 => style.content_color = color,
+                            423 => style.right_border.color = color,
+                            424 => style.bottom_border.color = color,
+                            426 => style.left_border.color = color,
+                            _ => style.top_border.color = color,
+                        }
+                    }
+                }
                 1001 => {
                     self.try_read_common_entity_code(&pair, &mut table.common)?;
                 }

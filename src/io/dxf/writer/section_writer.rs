@@ -11801,10 +11801,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 self.writer.write_bool(283, !style.fill_enabled)?;
             }
             if f & 0x04 != 0 {
-                self.writer.write_color(63, style.background_color)?;
+                self.write_table_cell_color(63, style.background_color)?;
             }
             if f & 0x08 != 0 {
-                self.writer.write_color(64, style.content_color)?;
+                self.write_table_cell_color(64, style.content_color)?;
             }
             if f & 0x10 != 0 && !style.text_style_name.is_empty() {
                 self.writer.write_string(7, &style.text_style_name)?;
@@ -11819,7 +11819,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 (0x200, 0x2000, (68, 278, 288), &style.left_border),
             ] {
                 if f & color_bit != 0 {
-                    self.writer.write_color(color_code, border.color)?;
+                    self.write_table_cell_color(color_code, border.color)?;
                 }
                 if f & lw_bit != 0 {
                     self.writer
@@ -11833,8 +11833,8 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             }
             self.writer.write_double(140, style.text_height)?;
             self.writer.write_i16(170, style.alignment as i16)?;
-            self.writer.write_color(64, style.content_color)?;
-            self.writer.write_color(63, style.background_color)?;
+            self.write_table_cell_color(64, style.content_color)?;
+            self.write_table_cell_color(63, style.background_color)?;
             self.writer.write_bool(283, !style.fill_enabled)?;
 
             for (color_code, weight_code, visibility_code, border) in [
@@ -11843,13 +11843,23 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 (66, 276, 286, &style.bottom_border),
                 (68, 278, 288, &style.left_border),
             ] {
-                self.writer.write_color(color_code, border.color)?;
+                self.write_table_cell_color(color_code, border.color)?;
                 self.writer
                     .write_i16(weight_code, border.line_weight.value())?;
                 self.writer.write_bool(visibility_code, !border.invisible)?;
             }
         }
 
+        Ok(())
+    }
+
+    /// A cell color: the index, then for a true color its RGB at the index
+    /// code + 358 (421 for 63, 422 for 64, ...), as AutoCAD's cell colors.
+    fn write_table_cell_color(&mut self, code: i32, color: Color) -> Result<()> {
+        self.writer.write_color(code, color)?;
+        if let Some(rgb) = color.to_true_color_value() {
+            self.writer.write_i32(code + 358, rgb)?;
+        }
         Ok(())
     }
 
