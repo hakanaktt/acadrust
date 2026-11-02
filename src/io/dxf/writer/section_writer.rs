@@ -8210,6 +8210,11 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_handle(330, style.owner_handle)?;
         self.writer.write_subclass("AcDbMLeaderStyle")?;
 
+        // Class version BS 179 (R2010+; the DWG record has it, the model not).
+        if self.dxf_version >= DxfVersion::AC1024 {
+            self.writer.write_i16(179, 2)?;
+        }
+
         // Content type
         self.writer.write_i16(170, style.content_type as i16)?;
 
@@ -8262,8 +8267,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         // Dogleg length
         self.writer.write_double(43, style.landing_distance)?;
 
-        // Style name
-        self.writer.write_string(3, &style.name)?;
+        // Description (group 3). The name is the style's dictionary key and is
+        // not written here: writing it as the description would turn it into
+        // one on the next read.
+        self.writer.write_string(3, &style.description)?;
 
         // Arrow head block handle
         if let Some(h) = style.arrowhead_handle {
@@ -8285,15 +8292,15 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer
             .write_i16(174, style.text_left_attachment as i16)?;
 
+        // Text right attachment type (before 175, as AutoCAD writes it)
+        self.writer
+            .write_i16(178, style.text_right_attachment as i16)?;
+
         // Text angle type
         self.writer.write_i16(175, style.text_angle_type as i16)?;
 
         // Text alignment type
         self.writer.write_i16(176, style.text_alignment as i16)?;
-
-        // Text right attachment type
-        self.writer
-            .write_i16(178, style.text_right_attachment as i16)?;
 
         // Text color
         self.write_color_i32(93, style.text_color)?;
@@ -8348,6 +8355,20 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         // Break gap size
         self.writer.write_double(143, style.break_gap_size)?;
+
+        // R2010+: text attachment direction, bottom and top attachment.
+        if self.dxf_version >= DxfVersion::AC1024 {
+            self.writer
+                .write_i16(271, style.text_attachment_direction as i16)?;
+            self.writer
+                .write_i16(272, style.text_bottom_attachment as i16)?;
+            self.writer
+                .write_i16(273, style.text_top_attachment as i16)?;
+        }
+        // R2013+: extended text flag.
+        if self.dxf_version >= DxfVersion::AC1027 {
+            self.writer.write_bool(298, style.unknown_flag_298)?;
+        }
 
         Ok(())
     }
