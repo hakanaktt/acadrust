@@ -7250,7 +7250,7 @@ impl<'a> SectionReader<'a> {
                 self.decoded_records = self
                     .decoded_records
                     .saturating_add(document.objects.len().saturating_sub(before));
-                self.read_object_xdata(document)?;
+                self.read_object_xdata(document, false)?;
             }
         }
 
@@ -9728,7 +9728,7 @@ impl<'a> SectionReader<'a> {
                     document.layers.add_or_replace(layer);
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
-                self.read_object_xdata(document)?;
+                self.read_object_xdata(document, true)?;
             } else if pair.code == 5 {
                 if let Ok(handle) = u64::from_str_radix(pair.value_string.trim(), 16) {
                     table_handle = Handle::new(handle);
@@ -9876,7 +9876,7 @@ impl<'a> SectionReader<'a> {
                     document.line_types.add_or_replace(linetype);
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
-                self.read_object_xdata(document)?;
+                self.read_object_xdata(document, true)?;
             }
         }
         Ok(())
@@ -10030,7 +10030,7 @@ impl<'a> SectionReader<'a> {
                     }
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
-                self.read_object_xdata(document)?;
+                self.read_object_xdata(document, true)?;
             }
         }
         Ok(())
@@ -10179,7 +10179,7 @@ impl<'a> SectionReader<'a> {
                     }
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
-                self.read_object_xdata(document)?;
+                self.read_object_xdata(document, true)?;
             }
         }
 
@@ -10341,7 +10341,7 @@ impl<'a> SectionReader<'a> {
                     document.dim_styles.add_or_replace(dimstyle);
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
-                self.read_object_xdata(document)?;
+                self.read_object_xdata(document, true)?;
             }
         }
         Ok(())
@@ -10785,7 +10785,7 @@ impl<'a> SectionReader<'a> {
                     document.app_ids.add_or_replace(appid);
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
-                self.read_object_xdata(document)?;
+                self.read_object_xdata(document, true)?;
             }
         }
         Ok(())
@@ -10837,7 +10837,7 @@ impl<'a> SectionReader<'a> {
                     document.views.add_or_replace(view);
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
-                self.read_object_xdata(document)?;
+                self.read_object_xdata(document, true)?;
             }
         }
         Ok(())
@@ -11064,7 +11064,7 @@ impl<'a> SectionReader<'a> {
                     document.vports.add_allow_duplicate(vport);
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
-                self.read_object_xdata(document)?;
+                self.read_object_xdata(document, true)?;
             }
         }
         Ok(())
@@ -11423,7 +11423,7 @@ impl<'a> SectionReader<'a> {
                     document.ucss.add_or_replace(ucs);
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
-                self.read_object_xdata(document)?;
+                self.read_object_xdata(document, true)?;
             }
         }
         Ok(())
@@ -21888,8 +21888,12 @@ impl<'a> SectionReader<'a> {
         Ok(Some(scale))
     }
 
-    fn read_object_xdata(&mut self, document: &mut CadDocument) -> Result<()> {
+    /// `table_entry` is set for TABLES records, which are read while the
+    /// document still holds its default objects, whose handles a drawing's
+    /// table entries can reuse (AutoCAD's DIMSTYLE Standard is often 27).
+    fn read_object_xdata(&mut self, document: &mut CadDocument, table_entry: bool) -> Result<()> {
         let (handle, pairs) = self.reader.take_recorded_xdata();
+        let reactors = self.reader.take_recorded_reactors();
         self.reader.record_xdata(false);
         let Some(handle) = handle
             .and_then(|value| u64::from_str_radix(&value, 16).ok())
@@ -21897,6 +21901,26 @@ impl<'a> SectionReader<'a> {
         else {
             return Ok(());
         };
+        // Records whose model has no reactor list of its own keep theirs
+        // here (table entries, SCALE, MLINESTYLE, ACDBDICTIONARYWDFLT); the
+        // writer puts them back.
+        let keeps_reactors = table_entry
+            || match document.objects.get(&handle) {
+                None => true,
+                Some(object) => matches!(
+                    object,
+                    ObjectType::Scale(_)
+                        | ObjectType::MLineStyle(_)
+                        | ObjectType::DictionaryWithDefault(_)
+                ),
+            };
+        if keeps_reactors && !reactors.is_empty() {
+            let reactors: Vec<Handle> = reactors.iter().map(|h| parse_dxf_handle(h)).collect();
+            document
+                .reactors_by_handle
+                .entry(handle)
+                .or_insert(reactors);
+        }
         if pairs.is_empty()
             || document
                 .objects

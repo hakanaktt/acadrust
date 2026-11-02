@@ -101,6 +101,9 @@ pub struct SectionWriter<'a, W: DxfStreamWriter> {
     text_style_names: HashMap<Handle, String>,
     /// Block-record names needed by legacy TABLE INSERT data.
     block_record_names: HashMap<Handle, String>,
+    /// Reactors of objects whose model has no reactor list (SCALE,
+    /// MLINESTYLE, ACDBDICTIONARYWDFLT), from `reactors_by_handle`.
+    kept_reactors: HashMap<Handle, Vec<Handle>>,
     /// Typed inputs for loft surfaces whose native data contains references.
     loft_input_entities: HashMap<Handle, EmbeddedEntity>,
     /// Extra registration required by the loft-reference XDATA extension.
@@ -128,6 +131,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             normal_plotstyle_handle: Handle::NULL,
             text_style_names: HashMap::new(),
             block_record_names: HashMap::new(),
+            kept_reactors: HashMap::new(),
             loft_input_entities: HashMap::new(),
             loft_reference_appid: None,
             source_dwg_context: None,
@@ -196,6 +200,22 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             }
             set.insert(*h);
         }
+        self.kept_reactors = document
+            .objects
+            .iter()
+            .filter(|(_, object)| {
+                matches!(
+                    object,
+                    ObjectType::Scale(_)
+                        | ObjectType::MLineStyle(_)
+                        | ObjectType::DictionaryWithDefault(_)
+                )
+            })
+            .filter_map(|(handle, _)| {
+                let reactors = document.reactors_by_handle.get(handle)?;
+                Some((*handle, reactors.clone()))
+            })
+            .collect();
         // Entity handles (from all block records); capture *Model_Space.
         self.block_record_names.clear();
         for br in document.block_records.iter() {
@@ -1773,6 +1793,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     ) -> Result<()> {
         self.writer.write_string(0, "DIMSTYLE")?;
         self.writer.write_handle(105, dimstyle.handle())?;
+        self.write_table_entry_reactors(dimstyle.handle(), document)?;
         self.write_table_entry_xdictionary(dimstyle.handle(), document)?;
         self.writer.write_handle(330, owner)?;
         self.writer.write_subclass("AcDbSymbolTableRecord")?;
@@ -2076,9 +2097,16 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         document: &CadDocument,
     ) -> Result<()> {
         self.writer.write_handle(5, handle)?;
-        // Reactors kept from the source (an associative array's dependencies
-        // on its anonymous blocks, for example). They precede the extension
-        // dictionary, as on every other object.
+        self.write_table_entry_reactors(handle, document)?;
+        self.write_table_entry_xdictionary(handle, document)?;
+        self.writer.write_handle(330, owner)?;
+        Ok(())
+    }
+
+    /// Reactors kept from the source for a table entry (an associative array's
+    /// dependencies on its anonymous blocks, a DIMSTYLE's dimensions). They
+    /// precede the extension dictionary, as on every other object.
+    fn write_table_entry_reactors(&mut self, handle: Handle, document: &CadDocument) -> Result<()> {
         let reactors: Vec<Handle> = document
             .reactors_by_handle
             .get(&handle)
@@ -2097,8 +2125,6 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             }
             self.writer.write_string(102, "}")?;
         }
-        self.write_table_entry_xdictionary(handle, document)?;
-        self.writer.write_handle(330, owner)?;
         Ok(())
     }
 
@@ -7964,6 +7990,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     fn write_mlinestyle(&mut self, style: &MLineStyle) -> Result<()> {
         self.writer.write_string(0, "MLINESTYLE")?;
         self.writer.write_handle(5, style.handle)?;
+        self.write_kept_reactors(style.handle)?;
         self.writer.write_handle(330, style.owner)?;
         self.writer.write_subclass("AcDbMlineStyle")?;
 
@@ -8473,6 +8500,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     fn write_scale(&mut self, scale: &Scale) -> Result<()> {
         self.writer.write_string(0, "SCALE")?;
         self.writer.write_handle(5, scale.handle)?;
+        self.write_kept_reactors(scale.handle)?;
         self.writer.write_handle(330, scale.owner_handle)?;
         self.writer.write_subclass("AcDbScale")?;
 
@@ -9513,6 +9541,30 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         Ok(())
     }
 
+    /// The `{ACAD_REACTORS` group kept for `handle`, if any; reactors that
+    /// are not in the output are left out.
+    fn write_kept_reactors(&mut self, handle: Handle) -> Result<()> {
+        let reactors: Vec<Handle> = self
+            .kept_reactors
+            .get(&handle)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|reactor| {
+                !reactor.is_null()
+                    && (self.valid_handles.is_empty() || self.valid_handles.contains(reactor))
+            })
+            .collect();
+        if !reactors.is_empty() {
+            self.writer.write_string(102, "{ACAD_REACTORS")?;
+            for reactor in reactors {
+                self.writer.write_handle(330, reactor)?;
+            }
+            self.writer.write_string(102, "}")?;
+        }
+        Ok(())
+    }
+
     /// Write an ACDBDICTIONARYWDFLT object
     fn write_dict_with_default(
         &mut self,
@@ -9521,6 +9573,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     ) -> Result<()> {
         self.writer.write_string(0, "ACDBDICTIONARYWDFLT")?;
         self.writer.write_handle(5, obj.handle)?;
+        self.write_kept_reactors(obj.handle)?;
         self.writer.write_handle(330, obj.owner)?;
         self.writer.write_subclass("AcDbDictionary")?;
         // BricsCAD's own DXF export does not write the hard-owner flag (280)
