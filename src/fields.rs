@@ -2829,7 +2829,7 @@ impl CadDocument {
         };
         let mut all = vec![container_field];
         for (child, handle) in children.into_iter().zip(&child_handles) {
-            all.push(child_field(child, *handle, container));
+            self.push_field_tree(child, *handle, container, &mut all);
         }
 
         self.register_fields(all);
@@ -3382,7 +3382,7 @@ impl CadDocument {
         };
         let mut all = vec![container_field];
         for (child, handle) in children.into_iter().zip(&child_handles) {
-            all.push(child_field(child, *handle, container));
+            self.push_field_tree(child, *handle, container, &mut all);
         }
         self.register_fields(all);
         let Some(EntityType::Table(t)) = self.get_entity_mut(table) else {
@@ -3499,6 +3499,26 @@ impl CadDocument {
             if let ObjectType::FieldList(list) = object {
                 list.fields.retain(|handle| !doomed.contains(handle));
             }
+        }
+    }
+
+    /// `field` and, for a formula written with its operand fields inline,
+    /// the operands as child FIELDs the formula refers to as
+    /// `%<\_FldIdx n>%`, the way a drawing stores them.
+    fn push_field_tree(
+        &mut self,
+        field: NewField,
+        handle: Handle,
+        owner: Handle,
+        all: &mut Vec<Field>,
+    ) {
+        let (field, operands) = split_operands(field);
+        let handles: Vec<Handle> = operands.iter().map(|_| self.allocate_handle()).collect();
+        let mut stored = child_field(field, handle, owner);
+        stored.child_fields = handles.clone();
+        all.push(stored);
+        for (operand, operand_handle) in operands.into_iter().zip(handles) {
+            self.push_field_tree(operand, operand_handle, handle, all);
         }
     }
 
@@ -3629,13 +3649,18 @@ impl CadDocument {
             let children = kids
                 .iter()
                 .map(|k| {
-                    let placeholder = k.code.contains("?BlockRefId");
-                    let code = map(&k.code.replace("?BlockRefId", "%<\\_ObjIdx 0>%"));
-                    let objects = if placeholder {
-                        vec![insert]
+                    // A formula comes with its operands written inline, so
+                    // the copy stores them as fields of its own.
+                    let (code, mut objects) = inline_code(self, k.handle)
+                        .unwrap_or_else(|| (k.code.clone(), k.objects.clone()));
+                    let code = if code.contains("?BlockRefId") {
+                        let at = format!("%<\\_ObjIdx {}>%", objects.len());
+                        objects.push(insert);
+                        code.replace("?BlockRefId", &at)
                     } else {
-                        k.objects.clone()
+                        code
                     };
+                    let code = map(&code);
                     let stored = match self.objects.get(&k.handle) {
                         Some(ObjectType::Field(f)) => Some(f),
                         _ => None,
@@ -3869,6 +3894,120 @@ impl CadDocument {
         let a = i.attributes.iter_mut().find(|a| a.common.handle == host)?;
         Some(f(&mut a.common, &mut a.value, TextHostKind::Attribute))
     }
+}
+
+/// A formula's operand fields written inline (`%<\AcObjProp …>%`), taken out
+/// as fields of their own: the formula refers to the n-th as
+/// `%<\_FldIdx n>%`, and each keeps the objects its `%<\_ObjIdx k>%` name.
+fn split_operands(mut field: NewField) -> (NewField, Vec<NewField>) {
+    if field.evaluator != "AcExpr" {
+        return (field, Vec::new());
+    }
+    let mut code = String::new();
+    let mut operands = Vec::new();
+    let mut rest = field.code.as_str();
+    while let Some(at) = rest.find("%<") {
+        // `%<\_ObjIdx k>%` and the like are references, not fields.
+        let operand = field_marker_len(&rest[at..])
+            .map(|len| (len, rest[at + 2..at + len - 2].trim()))
+            .filter(|(_, inner)| inner.starts_with('\\') && !inner.starts_with("\\_"));
+        let Some((len, inner)) = operand else {
+            code.push_str(&rest[..at + 2]);
+            rest = &rest[at + 2..];
+            continue;
+        };
+        code.push_str(&rest[..at]);
+        code.push_str(&format!("%<\\_FldIdx {}>%", operands.len()));
+        let mut objects = Vec::new();
+        let mut operand = NewField::new(renumber_objects(inner, &field.objects, &mut objects), "");
+        operand.objects = objects;
+        operands.push(operand);
+        rest = &rest[at + len..];
+    }
+    if operands.is_empty() {
+        return (field, operands);
+    }
+    code.push_str(rest);
+    let mut objects = Vec::new();
+    field.code = renumber_objects(&code, &field.objects, &mut objects);
+    field.objects = objects;
+    (field, operands)
+}
+
+/// `code` with each `%<\_ObjIdx j>%`, an index into `from`, renumbered to
+/// that object's place in `into`, where it is added if it is not yet.
+fn renumber_objects(code: &str, from: &[Handle], into: &mut Vec<Handle>) -> String {
+    const KEY: &str = "%<\\_ObjIdx ";
+    let mut out = String::new();
+    let mut rest = code;
+    while let Some(at) = rest.find(KEY) {
+        let after = &rest[at + KEY.len()..];
+        let Some(end) = after.find(">%") else {
+            break;
+        };
+        out.push_str(&rest[..at]);
+        match after[..end]
+            .trim()
+            .parse::<usize>()
+            .ok()
+            .and_then(|j| from.get(j))
+        {
+            Some(object) => {
+                let k = into.iter().position(|h| h == object).unwrap_or_else(|| {
+                    into.push(*object);
+                    into.len() - 1
+                });
+                out.push_str(&format!("{KEY}{k}>%"));
+            }
+            None => out.push_str(&rest[at..at + KEY.len() + end + 2]),
+        }
+        rest = &after[end + 2..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// A field's code with its child fields written inline, as the Field dialog
+/// shows a formula: each `%<\_FldIdx n>%` becomes `%<code>%` of the n-th
+/// child, and every `%<\_ObjIdx k>%` indexes the one object list returned
+/// with it. The inverse of how `set_text_field` stores a formula.
+pub fn inline_code(doc: &CadDocument, field: Handle) -> Option<(String, Vec<Handle>)> {
+    inline_code_at(doc, doc.fields.get(&field)?, 0)
+}
+
+fn inline_code_at(doc: &CadDocument, field: &FieldDef, depth: u8) -> Option<(String, Vec<Handle>)> {
+    // A damaged drawing can link child fields in a loop.
+    if depth >= 16 {
+        return None;
+    }
+    const KEY: &str = "%<\\_FldIdx ";
+    let kids = child_fields(doc, field.handle);
+    let mut objects = field.objects.clone();
+    let mut out = String::new();
+    let mut rest = field.code.as_str();
+    while let Some(at) = rest.find(KEY) {
+        let after = &rest[at + KEY.len()..];
+        let Some(end) = after.find(">%") else {
+            break;
+        };
+        out.push_str(&rest[..at]);
+        match after[..end]
+            .trim()
+            .parse::<usize>()
+            .ok()
+            .and_then(|n| kids.get(n))
+        {
+            Some(kid) => {
+                let (code, kid_objects) = inline_code_at(doc, kid, depth + 1)?;
+                let code = renumber_objects(&code, &kid_objects, &mut objects);
+                out.push_str(&format!("%<{code}>%"));
+            }
+            None => out.push_str(&rest[at..at + KEY.len() + end + 2]),
+        }
+        rest = &after[end + 2..];
+    }
+    out.push_str(rest);
+    Some((out, objects))
 }
 
 fn child_field(child: NewField, handle: Handle, owner: Handle) -> Field {
