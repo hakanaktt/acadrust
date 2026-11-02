@@ -1644,12 +1644,11 @@ impl<'a> DwgObjectWriter<'a> {
                 // Fit-point storage requires both MethodFitPoints and
                 // UseKnotParameter. Omitting bit 8 makes readers parse the
                 // following fit-point body as control-point data.
+                // AutoCAD reads bit 4 ("is closed") on a fit-point record
+                // as a periodic spline and drops the fit data. It states
+                // closure by repeating the first fit point instead.
                 flags1 |= 1 | 8;
-                if e.flags.closed {
-                    flags1 |= 4;
-                } else {
-                    flags1 &= !4;
-                }
+                flags1 &= !4;
             } else {
                 // Control-point records carry their closed state in the
                 // scenario body. Preserve the source flag word exactly;
@@ -1724,11 +1723,21 @@ impl<'a> DwgObjectWriter<'a> {
                 self.writer.write_3bit_double(e.begin_tangent);
                 // End tan vec 3BD 13
                 self.writer.write_3bit_double(e.end_tangent);
+                // A closed list on R2013+ ends with its first point again,
+                // as AutoCAD writes it (flags1 no longer carries closure).
+                let repeat_first = r2013_plus
+                    && e.flags.closed
+                    && e.fit_points.len() >= 3
+                    && e.fit_points.first() != e.fit_points.last();
                 // num fit pts BL 74
-                self.writer.write_bit_long(e.fit_points.len() as i32);
+                self.writer
+                    .write_bit_long(e.fit_points.len() as i32 + i32::from(repeat_first));
                 // Fit points
                 for pt in &e.fit_points {
                     self.writer.write_3bit_double(*pt);
+                }
+                if repeat_first {
+                    self.writer.write_3bit_double(e.fit_points[0]);
                 }
             }
         }
