@@ -1554,7 +1554,7 @@ impl<R: Read + Seek> DwgReader<R> {
                 let handle_map = match self.get_section_buffer("AcDb:Handles", &info) {
                     Ok(handle_buf) => {
                         handles_section_read = true;
-                        match crate::io::dwg::dwg_stream_readers::handle_reader::read_handles(
+                        match crate::io::dwg::dwg_stream_readers::handle_reader::read_handle_map(
                             &handle_buf,
                         ) {
                             Ok(mut hm) => {
@@ -1578,7 +1578,7 @@ impl<R: Read + Seek> DwgReader<R> {
                                     Some("AcDb:Handles"),
                                     format!("Failed to read handles: {}", e),
                                 );
-                                std::collections::HashMap::new()
+                                Default::default()
                             }
                         }
                     }
@@ -1591,7 +1591,7 @@ impl<R: Read + Seek> DwgReader<R> {
                             Some("AcDb:Handles"),
                             format!("Failed to extract handles section: {}", e),
                         );
-                        std::collections::HashMap::new()
+                        Default::default()
                     }
                 };
                 (None, handle_map.len(), handle_map)
@@ -1615,7 +1615,7 @@ impl<R: Read + Seek> DwgReader<R> {
             match objects_buf {
                 Ok(objects_buf) => {
                     objects_section_read = true;
-                    match crate::io::dwg::dwg_stream_readers::object_reader::DwgObjectReader::with_encoding(
+                    match crate::io::dwg::dwg_stream_readers::object_reader::DwgObjectReader::with_handle_map(
                     std::sync::Arc::clone(&objects_buf),
                     dxf_version,
                     handle_map,

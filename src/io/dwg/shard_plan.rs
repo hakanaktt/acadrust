@@ -6,10 +6,11 @@
 //! objects, tables, block records, dictionaries and other objects) and the
 //! `BLOCK`/`ENDBLK` markers, plus its own group of entity records.
 
-use std::collections::{HashMap, HashSet};
+use foldhash::{HashMap, HashMapExt, HashSet, HashSetExt};
 use std::sync::Arc;
 
 use crate::document::CadDocument;
+use crate::io::dwg::dwg_stream_readers::handle_reader::HandleMap;
 use crate::io::dwg::dwg_stream_readers::object_reader::common::{
     is_entity_type, OBJ_BLOCK, OBJ_BLOCK_HEADER, OBJ_ENDBLK,
 };
@@ -18,9 +19,6 @@ use crate::io::dwg::parallel::map_slice;
 
 /// Owner chains longer than this are treated as broken and not followed.
 const MAX_OWNER_DEPTH: usize = 8;
-
-/// Record handles and their offsets in the object section.
-type HandleMap = HashMap<u64, i64>;
 
 /// The records of one shard, as (handle, offset) pairs.
 type ShardRecords = Vec<(u64, i64)>;
@@ -45,7 +43,7 @@ impl ShardState {
         Self {
             max_entities,
             objects: None,
-            shared: HashMap::new(),
+            shared: HandleMap::default(),
             plan: Vec::new(),
             index: 0,
         }
@@ -136,7 +134,7 @@ fn plan_shards(
             .filter_map(|&handle| reader.offset_for(handle).map(|offset| (handle, offset)))
             .collect()
     };
-    let whole = |handles: &[u64]| (HashMap::new(), vec![with_offsets(handles)]);
+    let whole = |handles: &[u64]| (HandleMap::default(), vec![with_offsets(handles)]);
     if !reader.version().r2004_plus() {
         return whole(&handles);
     }

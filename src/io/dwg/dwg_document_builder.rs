@@ -37,7 +37,7 @@ use crate::io::read::{push_read_diagnostic, ReadDiagnostic, ReadStage};
 use crate::notification::{NotificationCollection, NotificationType};
 use crate::types::Handle;
 use crate::types::LineWeight;
-use std::collections::{HashMap, HashSet};
+use foldhash::{HashMap, HashMapExt, HashSet, HashSetExt};
 
 /// ODA §20.4.89 documents a file-to-extension-dictionary bit before the
 /// default flag on R2010+. AutoCAD does not write that bit for annotative
@@ -3211,7 +3211,7 @@ impl DwgDocumentBuilder {
                 });
                 // Objects keep their EED in `eed_by_handle`; decode it the
                 // same way so the DXF writer can write it after the object.
-                let mut object_xdata = HashMap::new();
+                let mut object_xdata = std::collections::HashMap::new();
                 for (handle, blocks) in &document.eed_by_handle {
                     match document.objects.get(handle) {
                         // FIELD decodes its XDATA onto `Field::xdata` itself.
@@ -8753,7 +8753,7 @@ fn map_entity_common(
 mod vertex_chain_tests {
     use super::vertex_chain_ranks;
     use crate::types::Handle;
-    use std::collections::HashMap;
+    use foldhash::{HashMap, HashMapExt};
 
     fn links(pairs: &[(u64, u64)]) -> HashMap<Handle, Handle> {
         pairs
@@ -8790,12 +8790,12 @@ mod vertex_chain_tests {
 mod block_entity_chain_tests {
     use super::DwgDocumentBuilder;
     use crate::types::Handle;
-    use std::collections::HashMap;
+    use foldhash::HashMap;
 
     #[test]
     fn damaged_block_entity_chains_terminate_at_cycles_nulls_and_missing_records() {
         for next in [10, 0, 30] {
-            let links = HashMap::from([
+            let links = HashMap::from_iter([
                 (Handle::new(10), Handle::new(20)),
                 (Handle::new(20), Handle::new(next)),
             ]);
@@ -8804,7 +8804,7 @@ mod block_entity_chain_tests {
                 [Handle::new(10), Handle::new(20)]
             );
         }
-        let links = HashMap::from([(Handle::new(10), Handle::new(20))]);
+        let links = HashMap::from_iter([(Handle::new(10), Handle::new(20))]);
         assert!(DwgDocumentBuilder::block_entity_chain(0, 10, &links).is_empty());
         assert!(DwgDocumentBuilder::block_entity_chain(10, 0, &links).is_empty());
         assert!(DwgDocumentBuilder::block_entity_chain(30, 40, &links).is_empty());
@@ -8812,7 +8812,7 @@ mod block_entity_chain_tests {
 
     #[test]
     fn block_entity_chain_stops_at_last_even_when_a_next_link_exists() {
-        let links = HashMap::from([
+        let links = HashMap::from_iter([
             (Handle::new(10), Handle::new(20)),
             (Handle::new(20), Handle::new(30)),
             (Handle::new(30), Handle::NULL),
