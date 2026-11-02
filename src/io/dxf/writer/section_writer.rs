@@ -5445,7 +5445,8 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer.write_handle(5, vertex_handle)?;
             self.writer.write_handle(330, polyline_handle)?;
             self.writer.write_subclass("AcDbEntity")?;
-            self.writer.write_string(8, &vertex.layer)?;
+            self.writer
+                .write_string(8, vertex.layer_for_write(&polyline.common.layer))?;
             // Propagate parent color to vertex so CAD doesn't flag mismatch
             if polyline.common.color != Color::ByLayer {
                 self.writer.write_color(62, polyline.common.color)?;
@@ -12079,20 +12080,16 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 vertex.common.handle
             };
             self.writer.write_entity_type("VERTEX")?;
-            self.writer.write_handle(5, vertex_handle)?;
-            self.writer.write_handle(330, mesh_handle)?;
-            self.writer.write_subclass("AcDbEntity")?;
-            self.writer.write_string(8, &vertex.common.layer)?;
-            // Propagate parent color to vertex so CAD doesn't flag mismatch
-            if mesh.common.color != Color::ByLayer {
-                self.writer.write_color(62, mesh.common.color)?;
-            }
+            let mut common = vertex.common_for_write(&mesh.common);
+            common.handle = vertex_handle;
+            self.write_common_entity_data(&common, mesh_handle)?;
             self.writer.write_subclass("AcDbVertex")?;
             self.writer.write_subclass("AcDbPolygonMeshVertex")?;
             self.writer.write_point3d(10, vertex.location)?;
             if vertex.flags != 0 {
                 self.writer.write_i16(70, vertex.flags)?;
             }
+            self.write_xdata(&common.extended_data)?;
         }
 
         // Write SEQEND

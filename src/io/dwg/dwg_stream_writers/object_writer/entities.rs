@@ -2870,11 +2870,7 @@ impl<'a> DwgObjectWriter<'a> {
         parent_layer: &str,
         parent_color: &crate::types::Color,
     ) {
-        let layer = if v.layer.is_empty() {
-            parent_layer
-        } else {
-            &v.layer
-        };
+        let layer = v.layer_for_write(parent_layer);
         self.write_common_entity_data(
             common::OBJ_VERTEX_3D,
             vertex_handle,
@@ -3138,7 +3134,7 @@ impl<'a> DwgObjectWriter<'a> {
                 None
             };
             self.next_handle = (i + 1 < vertex_handles.len()).then(|| vertex_handles[i + 1]);
-            let mut vc = v.common.clone();
+            let mut vc = v.common_for_write(&e.common);
             vc.handle = vh;
             vc.owner_handle = e.common.handle;
             self.entity_preamble(common::OBJ_VERTEX_MESH, &vc);
