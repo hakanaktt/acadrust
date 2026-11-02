@@ -11788,11 +11788,9 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         }
 
         // Cell style: only the overridden properties when the cell says which.
-        if let Some(style) = cell
-            .style
-            .as_ref()
-            .filter(|s| s.legacy_override_flags() != 0)
-        {
+        // A style with no stored override bits writes everything (below);
+        // the property-flag bits then only add to the cell flag above.
+        if let Some(style) = cell.style.as_ref().filter(|s| s.override_flags != 0) {
             let f = style.legacy_override_flags();
             if f & 0x01 != 0 {
                 self.writer.write_i16(170, style.alignment as i16)?;
