@@ -753,7 +753,8 @@ mod tests {
 
         let desc = &writer.descriptors[names::HEADER];
         assert_eq!(desc.page_count, 1);
-        assert_eq!(desc.section_id, 0);
+        // Section id 0 is the empty descriptor AutoCAD writes first; named sections start at 1.
+        assert_eq!(desc.section_id, 1);
         assert_eq!(desc.compressed_code, 2);
     }
 
@@ -805,8 +806,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(writer.descriptors.len(), 2);
-        assert_eq!(writer.descriptors[names::HEADER].section_id, 0);
-        assert_eq!(writer.descriptors[names::CLASSES].section_id, 1);
+        assert_eq!(writer.descriptors[names::HEADER].section_id, 1);
+        assert_eq!(writer.descriptors[names::CLASSES].section_id, 2);
     }
 
     #[test]
