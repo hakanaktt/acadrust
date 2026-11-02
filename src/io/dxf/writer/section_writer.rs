@@ -4599,61 +4599,13 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// the entity already holds a column block of its own (a drawing read from
     /// AutoCAD keeps that one, which is written back as it is).
     fn mtext_column_xdata(&self, mtext: &MText) -> Option<ExtendedDataRecord> {
-        let cols = &mtext.column_data;
-        if cols.column_type == 0
-            || self.dxf_version < DxfVersion::AC1021
+        if self.dxf_version < DxfVersion::AC1021
             || self.dxf_version >= DxfVersion::AC1032
+            || MTextColumnData::in_acad_xdata(&mtext.common.extended_data)
         {
             return None;
         }
-        if mtext.common.extended_data.records().iter().any(|r| {
-            r.values
-                .iter()
-                .any(|v| matches!(v, XDataValue::String(s) if s == "ACAD_MTEXT_COLUMN_INFO_BEGIN"))
-        }) {
-            return None;
-        }
-        let manual_heights = cols.column_type == 2 && !cols.auto_height;
-        let count = if manual_heights {
-            cols.heights.len()
-        } else {
-            cols.column_count.max(0) as usize
-        };
-        let i = XDataValue::Integer16;
-        let mut record = ExtendedDataRecord::new("ACAD");
-        record.values = vec![
-            XDataValue::String("ACAD_MTEXT_COLUMN_INFO_BEGIN".into()),
-            i(75),
-            i(cols.column_type),
-            i(79),
-            i(i16::from(cols.auto_height)),
-            i(76),
-            i(count.min(i16::MAX as usize) as i16),
-            i(78),
-            i(i16::from(cols.flow_reversed)),
-            i(48),
-            XDataValue::Real(cols.width),
-            i(49),
-            XDataValue::Real(cols.gutter),
-            i(50),
-            i(if manual_heights {
-                count.min(i16::MAX as usize) as i16
-            } else {
-                0
-            }),
-        ];
-        if manual_heights {
-            record.values.extend(
-                cols.heights
-                    .iter()
-                    .take(count)
-                    .map(|h| XDataValue::Real(*h)),
-            );
-        }
-        record
-            .values
-            .push(XDataValue::String("ACAD_MTEXT_COLUMN_INFO_END".into()));
-        Some(record)
+        mtext.column_data.to_acad_xdata()
     }
 
     fn write_mtext_value(&mut self, value: &str) -> Result<()> {

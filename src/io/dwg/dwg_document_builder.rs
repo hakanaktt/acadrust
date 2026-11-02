@@ -3305,6 +3305,18 @@ impl DwgDocumentBuilder {
                             xd.add_record(record);
                         }
                     }
+                    // R2007 to R2013 keep MTEXT columns in ACAD extended data.
+                    let columns = match entity.as_ref() {
+                        EntityType::MText(m) if m.column_data.column_type == 0 => {
+                            MTextColumnData::from_acad_xdata(&m.common.extended_data)
+                        }
+                        _ => None,
+                    };
+                    if let Some(columns) = columns {
+                        if let EntityType::MText(m) = std::sync::Arc::make_mut(entity) {
+                            m.column_data = columns;
+                        }
+                    }
                     if self.obj_reader.version().r13_14_only() {
                         if let EntityType::Viewport(viewport) = std::sync::Arc::make_mut(entity) {
                             crate::io::dwg::legacy_viewport::restore(viewport, |name| {

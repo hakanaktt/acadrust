@@ -13706,7 +13706,9 @@ impl<'a> SectionReader<'a> {
 
         // R2007 to R2013 keep the column layout in ACAD extended data.
         if mtext.column_data.column_type == 0 {
-            if let Some(columns) = mtext_columns_from_xdata(&mtext.common.extended_data) {
+            if let Some(columns) = crate::entities::mtext::MTextColumnData::from_acad_xdata(
+                &mtext.common.extended_data,
+            ) {
                 mtext.column_data = columns;
             }
         }
@@ -23033,49 +23035,4 @@ mod tests {
             ]
         );
     }
-}
-
-/// The column layout in an MTEXT's ACAD extended data, between
-/// `ACAD_MTEXT_COLUMN_INFO_BEGIN` and `ACAD_MTEXT_COLUMN_INFO_END`: pairs of a
-/// group code and its value, where code 50 is followed by the height count and
-/// then that many heights.
-fn mtext_columns_from_xdata(
-    xdata: &crate::xdata::ExtendedData,
-) -> Option<crate::entities::mtext::MTextColumnData> {
-    use crate::xdata::XDataValue;
-
-    let record = xdata.records().iter().find(|r| {
-        r.application_name == "ACAD"
-            && r.values
-                .iter()
-                .any(|v| matches!(v, XDataValue::String(s) if s == "ACAD_MTEXT_COLUMN_INFO_BEGIN"))
-    })?;
-    let mut values = record
-        .values
-        .iter()
-        .skip_while(|v| !matches!(v, XDataValue::String(s) if s == "ACAD_MTEXT_COLUMN_INFO_BEGIN"))
-        .skip(1);
-    let mut columns = crate::entities::mtext::MTextColumnData::new();
-    while let Some(code) = values.next() {
-        let XDataValue::Integer16(code) = code else {
-            break; // the END marker, or something this block does not hold
-        };
-        match (code, values.next()?) {
-            (75, XDataValue::Integer16(v)) => columns.column_type = *v,
-            (79, XDataValue::Integer16(v)) => columns.auto_height = *v != 0,
-            (76, XDataValue::Integer16(v)) => columns.column_count = i32::from(*v),
-            (78, XDataValue::Integer16(v)) => columns.flow_reversed = *v != 0,
-            (48, XDataValue::Real(v)) => columns.width = *v,
-            (49, XDataValue::Real(v)) => columns.gutter = *v,
-            (50, XDataValue::Integer16(v)) => {
-                for _ in 0..(*v).max(0) {
-                    if let Some(XDataValue::Real(h)) = values.next() {
-                        columns.heights.push(*h);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    (columns.column_type != 0).then_some(columns)
 }
