@@ -22362,6 +22362,57 @@ mod tests {
     }
 
     #[test]
+    fn test_dxf_mtext_true_color_background_writes_index_too() {
+        let mut doc = CadDocument::new();
+        let mut mtext = crate::entities::mtext::MText::new();
+        mtext.value = "bg".to_string();
+        mtext.height = 2.5;
+        mtext.background_fill_flags = 1;
+        mtext.background_scale = 1.5;
+        mtext.background_color = crate::types::Color::Rgb {
+            r: 255,
+            g: 128,
+            b: 0,
+        };
+        let _ = doc.add_entity(EntityType::MText(Box::new(mtext)));
+
+        let bytes = crate::io::dxf::writer::DxfWriter::new(&doc)
+            .write_to_vec()
+            .expect("write_to_vec");
+        let text = String::from_utf8_lossy(&bytes);
+        let lines: Vec<&str> = text.lines().map(str::trim).collect();
+        let start = lines
+            .windows(2)
+            .position(|w| w[0] == "0" && w[1] == "MTEXT")
+            .expect("MTEXT in output");
+        let pairs: Vec<(&str, &str)> = lines[start..]
+            .chunks(2)
+            .take_while(|p| !(p.len() == 2 && p[0] == "0" && p[1] != "MTEXT"))
+            .filter(|p| p.len() == 2)
+            .map(|p| (p[0], p[1]))
+            .collect();
+        // The reference application refuses a true-colour background
+        // without its index colour in 63.
+        assert!(pairs.contains(&("63", "30")), "no 63 30 in {pairs:?}");
+        assert!(pairs.contains(&("421", "16744448")), "no 421 in {pairs:?}");
+
+        let doc2 = roundtrip(doc);
+        let entities: Vec<_> = doc2.entities().collect();
+        if let EntityType::MText(ref m) = entities[0] {
+            assert_eq!(
+                m.background_color,
+                crate::types::Color::Rgb {
+                    r: 255,
+                    g: 128,
+                    b: 0
+                }
+            );
+        } else {
+            panic!("Expected MText entity");
+        }
+    }
+
+    #[test]
     fn test_dxf_roundtrip_lwpolyline_properties() {
         use crate::entities::lwpolyline::{LwPolyline, LwVertex};
         use crate::types::Vector2;

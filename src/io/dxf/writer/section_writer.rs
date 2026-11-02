@@ -4499,7 +4499,11 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         if mtext.background_fill_flags != 0 {
             self.writer.write_i32(90, mtext.background_fill_flags)?;
             self.writer.write_double(45, mtext.background_scale)?;
+            // A true colour still needs its nearest index in 63: the reference
+            // application refuses the file when 421 comes without 63.
             if let Some(tc) = mtext.background_color.to_true_color_value() {
+                self.writer
+                    .write_i16(63, mtext.background_color.approximate_index())?;
                 self.writer.write_i32(421, tc)?;
             } else if let Some(idx) = mtext.background_color.index() {
                 self.writer.write_i16(63, idx as i16)?;
