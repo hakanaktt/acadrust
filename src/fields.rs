@@ -3406,21 +3406,69 @@ impl CadDocument {
             return false;
         }
         t.field_handles.retain(|handle| !fields.contains(handle));
-        let mut doomed = fields.clone();
-        for field in &fields {
+        let doomed = self.with_child_fields(&fields);
+        self.remove_fields(&doomed);
+        true
+    }
+
+    /// The fields a table lists that no cell shows any more (typed text
+    /// replaced a field, a row or column went away), with their child
+    /// fields. Their cells were rewritten, so nothing reaches them.
+    pub fn orphan_table_fields(&self, table: Handle) -> Vec<Handle> {
+        let Some(EntityType::Table(t)) = self.get_entity(table) else {
+            return Vec::new();
+        };
+        let shown: std::collections::HashSet<Handle> = t
+            .rows
+            .iter()
+            .flat_map(|row| row.cells.iter())
+            .flat_map(|cell| cell.contents.iter())
+            .filter_map(|content| content.field_handle)
+            .collect();
+        let orphans: Vec<Handle> = t
+            .field_handles
+            .iter()
+            .copied()
+            .filter(|handle| !shown.contains(handle))
+            .collect();
+        self.with_child_fields(&orphans)
+    }
+
+    /// Takes away the fields a table lists but no cell shows (see
+    /// [`Self::orphan_table_fields`]). Returns the removed field objects.
+    pub fn prune_table_fields(&mut self, table: Handle) -> Vec<Handle> {
+        let doomed = self.orphan_table_fields(table);
+        if doomed.is_empty() {
+            return doomed;
+        }
+        if let Some(EntityType::Table(t)) = self.get_entity_mut(table) {
+            t.field_handles.retain(|handle| !doomed.contains(handle));
+        }
+        self.remove_fields(&doomed);
+        doomed
+    }
+
+    fn with_child_fields(&self, fields: &[Handle]) -> Vec<Handle> {
+        let mut all = fields.to_vec();
+        for field in fields {
             if let Some(ObjectType::Field(f)) = self.objects.get(field) {
-                doomed.extend(f.child_fields.iter().copied());
+                all.extend(f.child_fields.iter().copied());
             }
         }
-        for handle in &doomed {
+        all
+    }
+
+    /// Drops field objects and their field-list entries.
+    pub fn remove_fields(&mut self, doomed: &[Handle]) {
+        for handle in doomed {
             self.objects.remove(handle);
             self.fields.remove(handle);
         }
-        let list = self.field_list_handle();
-        if let Some(ObjectType::FieldList(l)) = self.objects.get_mut(&list) {
-            l.fields.retain(|handle| !doomed.contains(handle));
+        for object in self.objects.values_mut() {
+            if let ObjectType::FieldList(list) = object {
+                list.fields.retain(|handle| !doomed.contains(handle));
+            }
         }
-        true
     }
 
     fn register_fields(&mut self, all: Vec<Field>) {
