@@ -1993,24 +1993,30 @@ fn unit_text(v: f64, mode: i64, prec: usize, z: Zeros, ds: char, th: Option<char
     let decimal = |x: f64, p: usize| {
         let m = 10f64.powi(p as i32);
         let mut s = format!("{:.*}", p, (x * m).round() / m);
-        if let Some(t) = th {
-            let (int, frac) = s.split_at(s.find('.').unwrap_or(s.len()));
-            let mut grouped = String::new();
-            for (i, c) in int.chars().enumerate() {
-                if i > 0 && (int.len() - i) % 3 == 0 {
-                    grouped.push(t);
-                }
-                grouped.push(c);
-            }
-            s = grouped + frac;
-        }
         if z.trailing && s.contains('.') {
             s = s.trim_end_matches('0').trim_end_matches('.').to_string();
         }
         if z.leading && s.starts_with("0.") {
             s.remove(0);
         }
-        s.replace('.', &ds.to_string())
+        // Only the decimal point takes the decimal separator; a thousands
+        // separator that is a period stays one (`1.234,57`).
+        let (int, frac) = s.split_at(s.find('.').unwrap_or(s.len()));
+        let frac = frac.replacen('.', &ds.to_string(), 1);
+        let int = match th {
+            Some(t) => {
+                let mut grouped = String::new();
+                for (i, c) in int.chars().enumerate() {
+                    if i > 0 && (int.len() - i) % 3 == 0 {
+                        grouped.push(t);
+                    }
+                    grouped.push(c);
+                }
+                grouped
+            }
+            None => int.to_string(),
+        };
+        int + &frac
     };
     // Whole units and a reduced 1/2^prec fraction.
     let fraction = |x: f64| {
