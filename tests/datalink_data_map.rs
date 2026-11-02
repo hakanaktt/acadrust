@@ -174,3 +174,96 @@ fn dwg_option_carries_the_data_map_bit_only_with_a_map() {
     assert_eq!(link(&back).option, 2);
     assert!(link(&back).data_map.is_empty());
 }
+
+fn data_link(document: &CadDocument) -> DataLink {
+    document
+        .objects
+        .values()
+        .find_map(|object| match object {
+            ObjectType::ClassObject(ClassObject {
+                data: ClassObjectData::DataLink(link),
+                ..
+            }) => Some(link.clone()),
+            _ => None,
+        })
+        .expect("a data link")
+}
+
+/// The groups from `DATAMAP_BEGIN` to `DATAMAP_END` of a written DXF.
+fn data_map_block(dxf: &str) -> &str {
+    let start = dxf.find("DATAMAP_BEGIN").expect("DATAMAP_BEGIN");
+    let end = dxf[start..].find("DATAMAP_END").expect("DATAMAP_END") + start;
+    &dxf[start..end]
+}
+
+/// A pre-2007 DXF value has no `ACVALUE_END`: AutoCAD's own 2004 DXF writes each item as its
+/// name (300), `DATAMAP_VALUE` (301), the type (90) and the value, and rejects the whole drawing
+/// ("Premature end of object") when a `304 ACVALUE_END` follows.
+#[test]
+fn dxf_2004_data_map_items_have_no_value_end() {
+    let mut document = read_dxf(&link_dxf());
+    document.version = acadrust::types::DxfVersion::AC1018;
+    let dxf = write_dxf(&document);
+    let block = data_map_block(&dxf);
+    assert_eq!(block.matches("DATAMAP_VALUE").count(), 3, "{block}");
+    assert!(!block.contains("ACVALUE_END"), "{block}");
+    // The data link keeps the 304 of its own update status, outside the map.
+    let back = data_link(&read_dxf(&dxf));
+    let names: Vec<&str> = back.data_map.iter().map(|i| i.name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "ACEXCEL_CONNECTION_STRING",
+            "ACEXCEL_SOURCEDATE",
+            "ACEXCEL_UPDATEOPTIONS"
+        ]
+    );
+    assert_eq!(back.data_map[0].value.text, CONNECTION);
+    assert_eq!(back.data_map[2].value.numeric_value, 68943873.0);
+}
+
+/// A data map in the form AutoCAD writes in a 2004 DXF, without `ACVALUE_END`, reads every item.
+#[test]
+fn dxf_2004_data_map_without_value_end_reads_every_item() {
+    const DATE_2004: &str = "0102030405060708";
+    let mut document = read_dxf(&link_dxf());
+    document.version = acadrust::types::DxfVersion::AC1018;
+    let dxf = write_dxf(&document);
+    let eol = if dxf.contains("\r\n") { "\r\n" } else { "\n" };
+    let begin = dxf.find("DATAMAP_BEGIN").expect("DATAMAP_BEGIN") + "DATAMAP_BEGIN".len();
+    let end = dxf[begin..].find("309").expect("DATAMAP_END") + begin;
+    let end = dxf[..end].rfind(eol).expect("line start") + eol.len();
+    let pairs = [
+        (90, "3"),
+        (300, "ACEXCEL_CONNECTION_STRING"),
+        (301, "DATAMAP_VALUE"),
+        (90, "4"),
+        (1, CONNECTION),
+        (300, "ACEXCEL_SOURCEDATE"),
+        (301, "DATAMAP_VALUE"),
+        (90, "8"),
+        (92, "8"),
+        (310, DATE_2004),
+        (300, "ACEXCEL_UPDATEOPTIONS"),
+        (301, "DATAMAP_VALUE"),
+        (90, "1"),
+        (91, "68943873"),
+    ];
+    let map: String = pairs
+        .iter()
+        .map(|(c, v)| format!("{c:>3}{eol}{v}{eol}"))
+        .collect();
+    let source = format!("{}{eol}{}{}", &dxf[..begin], map, &dxf[end..]);
+
+    let link = data_link(&read_dxf(&source));
+    assert_eq!(link.data_map.len(), 3, "{}", data_map_block(&source));
+    assert_eq!(link.data_map[0].name, "ACEXCEL_CONNECTION_STRING");
+    assert_eq!(link.data_map[0].value.text, CONNECTION);
+    assert_eq!(link.data_map[1].name, "ACEXCEL_SOURCEDATE");
+    assert_eq!(
+        link.data_map[1].value.binary_value,
+        [1, 2, 3, 4, 5, 6, 7, 8]
+    );
+    assert_eq!(link.data_map[2].name, "ACEXCEL_UPDATEOPTIONS");
+    assert_eq!(link.data_map[2].value.numeric_value, 68943873.0);
+}
