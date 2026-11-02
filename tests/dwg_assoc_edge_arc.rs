@@ -112,39 +112,114 @@ fn composite_arc_keeps_four_scalars_and_following_line() {
     }
 }
 
+fn decoded_edge(version: DxfVersion, edge: &AssocEdgeActionParam) -> Option<AssocEdgeActionParam> {
+    let outcome = DwgReader::from_stream(Cursor::new(encode(version, edge)))
+        .read_with_stats()
+        .ok()?;
+    outcome
+        .document
+        .objects
+        .values()
+        .find_map(|object| match object {
+            ObjectType::Associative(AssociativeObject {
+                data: AssociativeData::EdgeActionParam(value),
+                ..
+            }) => Some(value.clone()),
+            _ => None,
+        })
+}
+
+fn assert_rejected(version: DxfVersion, edge: &AssocEdgeActionParam, what: &str) {
+    let result = DwgReader::from_stream(Cursor::new(encode(version, edge))).read_with_stats();
+    // The public reader can preserve a rejected record as opaque data;
+    // that must not mask acceptance as a successfully decoded edge.
+    if let Ok(outcome) = result {
+        assert!(
+            !outcome.document.objects.values().any(|object| matches!(
+                object,
+                ObjectType::Associative(AssociativeObject {
+                    data: AssociativeData::EdgeActionParam(_),
+                    ..
+                })
+            )),
+            "{what}: {version:?} decoded as a typed edge"
+        );
+        assert!(
+            outcome.stats.recovered_errors > 0
+                || outcome.stats.skipped_source_records > 0
+                || !outcome.stats.diagnostics.is_empty(),
+            "{what}: {version:?} reported no error"
+        );
+    }
+}
+
+fn scalar_count(edge: &AssocEdgeActionParam) -> usize {
+    edge.curve
+        .iter()
+        .filter(|item| matches!(item, AssocCurveValue::Real(_)))
+        .count()
+}
+
+/// AutoCAD writes a terminal AC1024 arc with three scalars (radius, start and
+/// end angle); the fourth scalar exists only from AC1027.
+#[test]
+fn terminal_ac1024_arc_with_three_scalars_is_a_typed_edge() {
+    let edge = arc();
+    assert_eq!(scalar_count(&edge), 3);
+    round_trip(DxfVersion::AC1024, &edge);
+    let decoded = decoded_edge(DxfVersion::AC1024, &edge).expect("typed edge");
+    assert_eq!(scalar_count(&decoded), 3);
+    assert_eq!(decoded.curve, edge.curve);
+}
+
+#[test]
+fn four_scalar_ac1024_arc_keeps_four_scalars() {
+    let mut edge = arc();
+    edge.curve.push(AssocCurveValue::Real(0.0));
+    round_trip(DxfVersion::AC1024, &edge);
+    let decoded = decoded_edge(DxfVersion::AC1024, &edge).expect("typed edge");
+    assert_eq!(scalar_count(&decoded), 4);
+}
+
 #[test]
 fn incomplete_arcs_are_not_accepted_as_typed_edges() {
-    let mut short = arc();
-    short.curve.pop();
+    // Fewer than three scalars, in any version.
+    let mut two = arc();
+    two.curve.pop();
+    let mut one = two.clone();
+    one.curve.pop();
+    for version in [DxfVersion::AC1024, DxfVersion::AC1027, DxfVersion::AC1032] {
+        assert_rejected(version, &two, "two scalars");
+        assert_rejected(version, &one, "one scalar");
+    }
+    // The fourth scalar is only optional in AC1024.
+    for version in [DxfVersion::AC1027, DxfVersion::AC1032] {
+        assert_rejected(version, &arc(), "three scalars");
+    }
+    // Only a terminal arc may omit it.
     let mut nested = arc();
     nested.action_type = 47;
     nested.subcurve_kind = AssocSubcurveKind::None;
     nested
         .curve
         .splice(0..0, [AssocCurveValue::Int(1), AssocCurveValue::Int(11)]);
-    for (version, edge) in [
-        (DxfVersion::AC1024, short),
-        (DxfVersion::AC1024, arc()),
-        (DxfVersion::AC1024, nested),
-        (DxfVersion::AC1027, arc()),
-        (DxfVersion::AC1032, arc()),
+    assert_rejected(DxfVersion::AC1024, &nested, "nested three scalars");
+}
+
+/// Bits left after the third scalar are read as a fourth scalar, never taken
+/// as its absence: the guard applies only when the main stream is exhausted.
+#[test]
+fn ac1024_arc_with_bits_after_third_scalar_is_not_read_as_three_scalars() {
+    for trailing in [
+        vec![AssocCurveValue::Bool(true)],
+        vec![AssocCurveValue::Bool(false)],
+        vec![AssocCurveValue::Bool(true), AssocCurveValue::Bool(true)],
+        vec![AssocCurveValue::Int(7)],
     ] {
-        let result = DwgReader::from_stream(Cursor::new(encode(version, &edge))).read_with_stats();
-        // The public reader can preserve a rejected record as opaque data;
-        // that must not mask acceptance as a successfully decoded edge.
-        if let Ok(outcome) = result {
-            assert!(!outcome.document.objects.values().any(|object| matches!(
-                object,
-                ObjectType::Associative(AssociativeObject {
-                    data: AssociativeData::EdgeActionParam(_),
-                    ..
-                })
-            )));
-            assert!(
-                outcome.stats.recovered_errors > 0
-                    || outcome.stats.skipped_source_records > 0
-                    || !outcome.stats.diagnostics.is_empty()
-            );
+        let mut edge = arc();
+        edge.curve.extend(trailing);
+        if let Some(decoded) = decoded_edge(DxfVersion::AC1024, &edge) {
+            assert_ne!(scalar_count(&decoded), 3, "{:?}", decoded.curve);
         }
     }
 }

@@ -2,6 +2,12 @@
 
 ### Unreleased
 
+- **Custom drawing property fields** - `%<\AcVar CustomDP.<Name>>%`, the code
+  AutoCAD writes for a custom drawing property, resolves to the property's
+  stored text verbatim (name matched case-insensitively). It used to fall
+  through to the system-variable lookup, which reformatted a value such as
+  `12,5` as the point `12.000000, 5.000000, 0.000000`. An empty value shows
+  `----`; a missing property stays unresolved.
 - **Classes of added entities** - Saving as DWG now declares the class of
   every class-registered entity that the source file's class table lacks
   (MULTILEADER, WIPEOUT, ACAD_TABLE, IMAGE, ARC_DIMENSION, ...), as it already
@@ -125,8 +131,12 @@
   treated as a material tail. An R2007 solid-history region accepts a profile
   stored as a body. AcDs wireframe stubs write the silhouette count even when
   the isoline cache is absent (issue #170).
-- **Associative arcs** - An edge arc carries three points and four scalars in
-  every version. A shorter terminal record is not accepted as a decoded arc.
+- **Associative arcs** - An edge arc carries three points and four scalars,
+  except a terminal AC1024 arc, which AutoCAD writes with three (radius, start
+  and end angle) and whose main stream ends exactly after the third. That
+  record is decoded with three scalars and written back as it was read. Any
+  other shorter record (AC1027 and later, a nested arc, bits left after the
+  third scalar, or fewer than three scalars) is not accepted as a decoded arc.
 - **Block Properties Tables** - Numeric rows and ordered DXF fields
   round-trip. Each column stores two parameter handles, in DXF field order.
   Unsupported value types are rejected instead of dropping the table.

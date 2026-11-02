@@ -1639,6 +1639,19 @@ fn eval_acvar(
                 }
             })
         }
+        // AutoCAD's code for a custom drawing property: `CustomDP.<Name>`.
+        // The stored text is the value as is (a "12,5" is not a point); an
+        // empty value shows no value, a missing property stays unresolved.
+        _ if name
+            .get(..9)
+            .is_some_and(|p| p.eq_ignore_ascii_case("CustomDP.")) =>
+        {
+            let wanted = &name[9..];
+            si.custom_properties
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(wanted))
+                .map(|(_, v)| or_no_value(v))
+        }
         // Otherwise a custom document property, else a system variable.
         _ => si
             .custom_properties

@@ -838,16 +838,19 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 )?;
                 self.writer.write_handle(330, value.parameter)?;
                 self.writer.write_bool(290, value.has_action)?;
-                self.writer.write_i32(90, value.action_type)?;
-                for item in &value.curve {
-                    match item {
-                        AssocCurveValue::Bool(value) => self.writer.write_bool(70, *value)?,
-                        AssocCurveValue::Int(value) => self.writer.write_i32(90, *value)?,
-                        AssocCurveValue::Real(value) => self.writer.write_double(40, *value)?,
-                        AssocCurveValue::Point(value) => {
-                            self.writer.write_double(10, value.x)?;
-                            self.writer.write_double(20, value.y)?;
-                            self.writer.write_double(30, value.z)?;
+                // A detached edge stores no cached curve after the flag.
+                if value.has_action {
+                    self.writer.write_i32(90, value.action_type)?;
+                    for item in &value.curve {
+                        match item {
+                            AssocCurveValue::Bool(value) => self.writer.write_bool(70, *value)?,
+                            AssocCurveValue::Int(value) => self.writer.write_i32(90, *value)?,
+                            AssocCurveValue::Real(value) => self.writer.write_double(40, *value)?,
+                            AssocCurveValue::Point(value) => {
+                                self.writer.write_double(10, value.x)?;
+                                self.writer.write_double(20, value.y)?;
+                                self.writer.write_double(30, value.z)?;
+                            }
                         }
                     }
                 }
