@@ -3809,7 +3809,7 @@ impl<'a> DwgObjectWriter<'a> {
         }
         self.writer.write_bit(cell.style.is_some());
         if let Some(style) = &cell.style {
-            let flags = style.override_flags;
+            let flags = style.legacy_override_flags();
             self.writer.write_bit_long(flags);
             self.writer.write_byte(cell.virtual_edge as u8);
             if flags & 0x01 != 0 {

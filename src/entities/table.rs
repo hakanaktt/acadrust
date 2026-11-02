@@ -826,6 +826,30 @@ pub struct CellStyle {
 }
 
 impl CellStyle {
+    /// Legacy override bits (pre-R2010 DWG cell, DXF cell group 91) for the
+    /// overrides set through the R2010+ property flags, as the readers and
+    /// editors set them.
+    pub fn property_override_bits(&self) -> i32 {
+        let mut flags = 0;
+        for (property, bits) in [
+            (CellStylePropertyFlags::ALIGNMENT, 0x01),
+            (CellStylePropertyFlags::BACKGROUND_COLOR, 0x02 | 0x04),
+            (CellStylePropertyFlags::CONTENT_COLOR, 0x08),
+            (CellStylePropertyFlags::TEXT_STYLE, 0x10),
+            (CellStylePropertyFlags::TEXT_HEIGHT, 0x20),
+        ] {
+            if self.property_flags.contains(property) {
+                flags |= bits;
+            }
+        }
+        flags
+    }
+
+    /// The stored legacy override bits plus `property_override_bits`.
+    pub fn legacy_override_flags(&self) -> i32 {
+        self.override_flags | self.property_override_bits()
+    }
+
     pub fn overridden(&self) -> CellStylePropertyFlags {
         if self.legacy_override_bits {
             self.property_flags

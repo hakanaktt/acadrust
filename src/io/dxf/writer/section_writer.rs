@@ -11717,11 +11717,18 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         let merge_height = merged_range.map_or(cell.merge_height, |range| range.row_count() as i32);
         self.writer.write_i16(175, merge_width as i16)?;
         self.writer.write_i16(176, merge_height as i16)?;
+        // AutoCAD takes a cell override only when its legacy bit is set in the
+        // cell override flag (91, 177 before R2007). Legacy bits read from DXF
+        // are in `cell.flag` already.
+        let overrides = cell
+            .style
+            .as_ref()
+            .map_or(0, |s| s.property_override_bits());
         if self.dxf_version >= DxfVersion::AC1021 {
-            self.writer.write_i32(91, cell.flag)?;
+            self.writer.write_i32(91, cell.flag | overrides)?;
             self.writer.write_i32(92, cell.state.bits() as i32)?;
         } else {
-            self.writer.write_i16(177, cell.flag as i16)?;
+            self.writer.write_i16(177, (cell.flag | overrides) as i16)?;
         }
 
         // Virtual edge flag
@@ -11781,8 +11788,12 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         }
 
         // Cell style: only the overridden properties when the cell says which.
-        if let Some(style) = cell.style.as_ref().filter(|s| s.override_flags != 0) {
-            let f = style.override_flags;
+        if let Some(style) = cell
+            .style
+            .as_ref()
+            .filter(|s| s.legacy_override_flags() != 0)
+        {
+            let f = style.legacy_override_flags();
             if f & 0x01 != 0 {
                 self.writer.write_i16(170, style.alignment as i16)?;
             }
