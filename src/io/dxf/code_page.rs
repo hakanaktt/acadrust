@@ -772,39 +772,33 @@ mod tests {
     }
 
     #[test]
-    fn test_gated_cif_decode_follows_the_code_page() {
+    fn test_cif_decode_in_a_legacy_page_decodes_every_escape() {
         let w1252 = encoding_from_code_page("ANSI_1252").unwrap();
-        // Held by the page: content, copied as written (hex case included).
-        assert_eq!(decode_cif_escapes_in(r"94\U+00B0", w1252), r"94\U+00B0");
-        assert_eq!(decode_cif_escapes_in(r"94\U+00b0", w1252), r"94\U+00b0");
-        assert_eq!(
-            decode_cif_escapes_in(r"\U+0041\U+0042", w1252),
-            r"\U+0041\U+0042"
-        );
-        // Not held: transport escape, decoded, surrogate pairs as one scalar.
+        // Held by the page or not, a well-formed escape decodes, as in AutoCAD.
+        assert_eq!(decode_cif_escapes_in(r"94\U+00B0", w1252), "94\u{B0}");
+        assert_eq!(decode_cif_escapes_in(r"94\U+00b0", w1252), "94\u{B0}");
+        assert_eq!(decode_cif_escapes_in(r"\U+0041\U+0042", w1252), "AB");
         assert_eq!(decode_cif_escapes_in(r"\U+2205 x", w1252), "\u{2205} x");
+        // Surrogate pairs as one scalar.
         assert_eq!(decode_cif_escapes_in(r"\U+D83D\U+DE00", w1252), "\u{1F600}");
         assert_eq!(
             decode_cif_escapes_in(r"\U+D83D\U+DE00", encoding_rs::SHIFT_JIS),
             "\u{1F600}"
         );
-        // The same character is held by one page and not by another.
-        assert_eq!(decode_cif_escapes_in(r"\U+0411", w1252), "\u{411}");
         assert_eq!(
             decode_cif_escapes_in(r"\U+0411", encoding_from_code_page("ANSI_1251").unwrap()),
-            r"\U+0411"
+            "\u{411}"
         );
-        // A bare row names no code page, so it asks nothing.
-        assert_eq!(decode_cif_escapes_in(r"94\U+00B0", encoding_rs::WINDOWS_1252), "94\u{B0}");
+        assert_eq!(
+            decode_cif_escapes_in(r"\U+00E9", LegacyEncoding::Oem(437)),
+            "\u{E9}"
+        );
+        // A malformed escape stays as written.
+        assert_eq!(decode_cif_escapes_in(r"94\U+00B", w1252), r"94\U+00B");
         // UTF-8 holds every character, so its escapes are text.
         assert_eq!(
             decode_cif_escapes_in(r"\U+0041", encoding_rs::UTF_8),
             r"\U+0041"
-        );
-        // An OEM page is asked too.
-        assert_eq!(
-            decode_cif_escapes_in(r"\U+00E9", LegacyEncoding::Oem(437)),
-            r"\U+00E9"
         );
     }
 
