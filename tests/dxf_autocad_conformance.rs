@@ -347,6 +347,162 @@ fn mtext_context_data_has_no_subclass_marker_and_autocad_point_codes() {
 }
 
 #[test]
+fn text_context_data_has_no_subclass_marker() {
+    use acadrust::objects::{ObjectContextData, ObjectContextKind};
+    let mut doc = CadDocument::new();
+    let handle = doc.allocate_handle();
+    let context = ObjectContextData {
+        handle,
+        owner_handle: Handle::NULL,
+        reactors: Vec::new(),
+        xdictionary_handle: None,
+        class_version: 4,
+        has_file_to_extension_dictionary: true,
+        uses_legacy_mleader_context_base: false,
+        is_default: true,
+        scale: Handle::NULL,
+        kind: ObjectContextKind::Text {
+            horizontal_mode: 1,
+            rotation: 0.0,
+            insertion: Vector2::new(12.0, -30.0),
+            alignment: Vector2::new(40.0, -30.0),
+        },
+    };
+    doc.objects
+        .insert(handle, ObjectType::ObjectContextData(context));
+    let pairs = write_pairs(&doc);
+    let rec = record(&pairs, handle);
+    assert!(
+        !rec.iter().any(|(_, v)| v == "AcDbTextObjectContextData"),
+        "AutoCAD rejects the marker: {rec:?}"
+    );
+    assert_eq!(
+        codes_after(&rec, "AcDbAnnotScaleObjectContextData"),
+        vec![340, 70, 50, 10, 20, 11, 21],
+        "AutoCAD's layout"
+    );
+
+    let path = std::env::temp_dir().join("acadrust_text_context_rt.dxf");
+    std::fs::write(&path, DxfWriter::new(&doc).write_to_vec().unwrap()).unwrap();
+    let loaded = DxfReader::from_file(&path).unwrap().read().unwrap();
+    let _ = std::fs::remove_file(&path);
+    let Some(ObjectType::ObjectContextData(read)) = loaded.objects.get(&handle) else {
+        panic!("context data not read back");
+    };
+    let ObjectContextKind::Text {
+        horizontal_mode,
+        insertion,
+        alignment,
+        ..
+    } = &read.kind
+    else {
+        panic!("wrong kind")
+    };
+    assert_eq!(*horizontal_mode, 1);
+    assert_eq!(*insertion, Vector2::new(12.0, -30.0));
+    assert_eq!(*alignment, Vector2::new(40.0, -30.0));
+}
+
+/// Writes one context-data leaf, checks AutoCAD's layout (no own subclass
+/// marker, `codes` straight after the annotation scale groups) and returns
+/// the leaf read back.
+fn context_leaf_roundtrip(
+    kind: acadrust::objects::ObjectContextKind,
+    marker: &str,
+    codes: &[i32],
+) -> acadrust::objects::ObjectContextKind {
+    use acadrust::objects::ObjectContextData;
+    let mut doc = CadDocument::new();
+    let handle = doc.allocate_handle();
+    let context = ObjectContextData {
+        handle,
+        owner_handle: Handle::NULL,
+        reactors: Vec::new(),
+        xdictionary_handle: None,
+        class_version: 4,
+        has_file_to_extension_dictionary: true,
+        uses_legacy_mleader_context_base: false,
+        is_default: true,
+        scale: Handle::NULL,
+        kind,
+    };
+    doc.objects
+        .insert(handle, ObjectType::ObjectContextData(context));
+    let rec = record(&write_pairs(&doc), handle);
+    assert!(
+        !rec.iter().any(|(_, v)| v == marker),
+        "AutoCAD rejects the marker: {rec:?}"
+    );
+    assert_eq!(
+        codes_after(&rec, "AcDbAnnotScaleObjectContextData"),
+        codes,
+        "AutoCAD's layout"
+    );
+
+    let bytes = DxfWriter::new(&doc).write_to_vec().unwrap();
+    let loaded = DxfReader::from_reader(std::io::Cursor::new(bytes))
+        .unwrap()
+        .read()
+        .unwrap();
+    let Some(ObjectType::ObjectContextData(read)) = loaded.objects.get(&handle) else {
+        panic!("context data not read back");
+    };
+    read.kind.clone()
+}
+
+#[test]
+fn blkref_context_data_has_no_subclass_marker() {
+    use acadrust::objects::ObjectContextKind;
+    let read = context_leaf_roundtrip(
+        ObjectContextKind::BlkRef {
+            rotation: 0.5,
+            insertion: Vector3::new(1.0, 2.0, 0.0),
+            scale_factor: Vector3::new(2.0, 2.0, 2.0),
+        },
+        "AcDbBlkRefObjectContextData",
+        &[340, 50, 10, 20, 30, 41, 42, 43],
+    );
+    let ObjectContextKind::BlkRef {
+        rotation,
+        insertion,
+        scale_factor,
+    } = read
+    else {
+        panic!("wrong kind")
+    };
+    assert_eq!(rotation, 0.5);
+    assert_eq!(insertion, Vector3::new(1.0, 2.0, 0.0));
+    assert_eq!(scale_factor, Vector3::new(2.0, 2.0, 2.0));
+}
+
+#[test]
+fn leader_context_data_has_no_subclass_marker() {
+    use acadrust::objects::{LeaderContext, ObjectContextKind};
+    let leader = LeaderContext {
+        points: vec![
+            Vector3::new(0.0, 0.0, 0.0),
+            Vector3::new(10.0, 5.0, 0.0),
+            Vector3::new(15.0, 5.0, 0.0),
+        ],
+        x_direction: Vector3::new(1.0, 0.0, 0.0),
+        annotation_enabled: true,
+        insertion_offset: Vector3::new(0.5, 0.0, 0.0),
+        endpoint_projection: Vector3::new(0.0, 0.25, 0.0),
+    };
+    let read = context_leaf_roundtrip(
+        ObjectContextKind::Leader(leader.clone()),
+        "AcDbLeaderObjectContextData",
+        &[
+            340, 70, 10, 20, 30, 10, 20, 30, 10, 20, 30, 11, 21, 31, 290, 12, 22, 32, 13, 23, 33,
+        ],
+    );
+    let ObjectContextKind::Leader(read) = read else {
+        panic!("wrong kind")
+    };
+    assert_eq!(read, leader);
+}
+
+#[test]
 fn r2007_table_records_do_not_claim_the_referenced_flag() {
     // R2007+ DWG no longer stores the "referenced" (64) bit. Reading must not
     // invent it, or DXF output carries 70 = 64 and AutoCAD rejects "*Multiple"

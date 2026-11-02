@@ -5377,7 +5377,14 @@ impl<'a> SectionReader<'a> {
         let kind = match name.as_str() {
             "ACDB_ANNOTSCALEOBJECTCONTEXTDATA_CLASS" => ObjectContextKind::AnnotScale,
             "ACDB_BLKREFOBJECTCONTEXTDATA_CLASS" => {
-                let section = "AcDbBlkRefObjectContextData";
+                // ACAD: no subclass marker, the fields follow the annotation
+                // scale groups. Older acadrust output: an
+                // AcDbBlkRefObjectContextData marker.
+                let section = if fields.has("AcDbBlkRefObjectContextData", 50) {
+                    "AcDbBlkRefObjectContextData"
+                } else {
+                    "AcDbAnnotScaleObjectContextData"
+                };
                 ObjectContextKind::BlkRef {
                     rotation: fields.f64(section, 50),
                     insertion: fields.point3(section, 10),
@@ -5389,7 +5396,14 @@ impl<'a> SectionReader<'a> {
                 }
             }
             "ACDB_TEXTOBJECTCONTEXTDATA_CLASS" => {
-                let section = "AcDbTextObjectContextData";
+                // ACAD: no subclass marker, the fields follow the annotation
+                // scale groups. Older acadrust output: an
+                // AcDbTextObjectContextData marker.
+                let section = if fields.has("AcDbTextObjectContextData", 70) {
+                    "AcDbTextObjectContextData"
+                } else {
+                    "AcDbAnnotScaleObjectContextData"
+                };
                 ObjectContextKind::Text {
                     horizontal_mode: fields.i16(section, 70),
                     rotation: fields.f64(section, 50),
