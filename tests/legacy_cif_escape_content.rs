@@ -1,7 +1,7 @@
 //! In a pre-2007 drawing, `\U+XXXX` is a transport escape for a character the
-//! drawing's code page cannot hold. When the page can hold the character, the
-//! writer never escapes it, so a `\U+XXXX` the file does contain is the text
-//! itself and has to come back unchanged.
+//! drawing's code page cannot hold. The writer never escapes a character the
+//! page can hold, but a `\U+XXXX` the file does contain for one is decoded all
+//! the same, in a DXF as in a DWG: AutoCAD 2027 does so (#260).
 
 use acadrust::entities::{EntityType, Text};
 use acadrust::io::dxf::{DxfReader, DxfWriter};
@@ -49,11 +49,15 @@ const HELD: [(&str, &str); 3] = [
     ("ANSI_1250", "A\\U+0104B"),
 ];
 
+const HELD_DECODED: [&str; 3] = ["94\u{B0}", "94\u{B0}", "A\u{104}B"];
+
 #[test]
-fn a_dwg_escape_the_page_can_hold_is_content() {
-    for (page, text) in HELD {
-        let back = dwg_round_trip(&doc_with(text, page, DxfVersion::AC1015));
-        assert_eq!(first_text(&back), text, "{page}");
+fn a_dwg_escape_the_page_can_hold_is_decoded() {
+    for version in [DxfVersion::AC1015, DxfVersion::AC1018] {
+        for ((page, text), want) in HELD.into_iter().zip(HELD_DECODED) {
+            let back = dwg_round_trip(&doc_with(text, page, version));
+            assert_eq!(first_text(&back), want, "{version:?} {page}");
+        }
     }
 }
 
@@ -65,18 +69,20 @@ fn a_dwg_escape_the_page_cannot_hold_is_decoded() {
 
 #[test]
 fn the_dwg_header_reads_the_page_the_entities_do() {
-    for (value, want) in [("94\\U+00B0", "94\\U+00B0"), ("\\U+2205 x", "\u{2205} x")] {
+    for (value, want) in [("94\\U+00B0", "94\u{B0}"), ("\\U+2205 x", "\u{2205} x")] {
         let back = dwg_round_trip(&doc_with(value, "ANSI_1252", DxfVersion::AC1015));
         assert_eq!(back.header.dim_post, want, "header: {value:?}");
         assert_eq!(first_text(&back), want, "entity: {value:?}");
     }
 }
 
+/// Some writers escape every non-ASCII character to keep a pre-2007 DXF in
+/// ASCII; AutoCAD reads the characters.
 #[test]
-fn a_dxf_escape_the_page_can_hold_is_content() {
-    for (page, text) in HELD {
+fn a_dxf_escape_the_page_can_hold_is_decoded() {
+    for ((page, text), want) in HELD.into_iter().zip(HELD_DECODED) {
         let back = dxf_round_trip(&doc_with(text, page, DxfVersion::AC1015));
-        assert_eq!(first_text(&back), text, "{page}");
+        assert_eq!(first_text(&back), want, "{page}");
     }
 }
 
