@@ -138,6 +138,16 @@ fn merge_geometry(table: &mut Table, geometry: &TableGeometry) {
 fn merge_formats(table: &mut Table, content: &Table) {
     for (row, source_row) in table.rows.iter_mut().zip(&content.rows) {
         for (cell, source) in row.cells.iter_mut().zip(&source_row.cells) {
+            // The table record gives every cell an empty text; the content
+            // object tells which cells hold no content at all.
+            if source.contents.is_empty()
+                && cell
+                    .contents
+                    .iter()
+                    .all(|c| c.block_handle.is_none() && c.field_handle.is_none() && c.value.display().is_empty())
+            {
+                cell.contents.clear();
+            }
             for (value, from) in cell.contents.iter_mut().zip(&source.contents) {
                 let unset = value.format_property_flags == 0
                     && value.format_override_flags == 0
@@ -148,6 +158,15 @@ fn merge_formats(table: &mut Table, content: &Table) {
                     value.format_value_data_type = from.format_value_data_type;
                     value.format_value_unit_type = from.format_value_unit_type;
                     value.value_format = from.value_format.clone();
+                    // The rest of the content's format (text style, height,
+                    // color, rotation, alignment) is kept there too.
+                    value.text_style_handle = from.text_style_handle;
+                    value.text_style_name = from.text_style_name.clone();
+                    value.color = from.color.clone();
+                    value.rotation = from.rotation;
+                    value.scale = from.scale;
+                    value.text_height = from.text_height;
+                    value.alignment = from.alignment;
                 }
             }
             let Some(from) = source.style.as_ref() else {

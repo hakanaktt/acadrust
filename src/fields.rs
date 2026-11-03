@@ -1845,7 +1845,7 @@ impl Picture {
                 "qf" => p.qf = n,
                 "ds" => p.ds = ch(),
                 "th" => p.th = ch(),
-                "ls" => p.ls = ch(),
+                "ls" => p.ls = arg.and_then(|a| a.chars().next()).or_else(ch),
                 "pt" => p.pt = Some(n),
                 "bl" => p.bl = Some(n),
                 "lw" => p.lw = Some(n),

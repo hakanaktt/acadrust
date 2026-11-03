@@ -11131,6 +11131,19 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         Ok(())
     }
 
+    /// A content format's text style as the handle a DXF file keeps there
+    /// (a name read from a legacy table record is looked up; a name in
+    /// group 7 inside the format makes the file unreadable elsewhere).
+    fn content_text_style(&self, handle: Option<Handle>, name: &str) -> Handle {
+        handle
+            .or_else(|| {
+                (!name.is_empty())
+                    .then(|| self.text_style_names.iter().find(|(_, n)| n.eq_ignore_ascii_case(name)).map(|(h, _)| *h))
+                    .flatten()
+            })
+            .unwrap_or(Handle::NULL)
+    }
+
     fn write_table_content_format_dxf(&mut self, content: &table::CellContent) -> Result<()> {
         self.writer.write_string(300, "CONTENTFORMAT")?;
         self.writer.write_string(1, "CONTENTFORMAT_BEGIN")?;
@@ -11143,13 +11156,8 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_double(140, content.scale)?;
         self.writer.write_i32(94, content.alignment)?;
         self.writer.write_color(62, content.color)?;
-        if let Some(handle) = content.text_style_handle {
-            self.writer.write_handle(340, handle)?;
-        } else if !content.text_style_name.is_empty() {
-            self.writer.write_string(7, &content.text_style_name)?;
-        } else {
-            self.writer.write_handle(340, Handle::NULL)?;
-        }
+        let style = self.content_text_style(content.text_style_handle, &content.text_style_name);
+        self.writer.write_handle(340, style)?;
         self.writer.write_double(144, content.text_height)?;
         self.writer.write_string(309, "CONTENTFORMAT_END")?;
         Ok(())
@@ -11168,13 +11176,8 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_double(140, style.scale)?;
         self.writer.write_i32(94, style.alignment)?;
         self.writer.write_color(62, style.content_color)?;
-        if let Some(handle) = style.text_style_handle {
-            self.writer.write_handle(340, handle)?;
-        } else if !style.text_style_name.is_empty() {
-            self.writer.write_string(7, &style.text_style_name)?;
-        } else {
-            self.writer.write_handle(340, Handle::NULL)?;
-        }
+        let text_style = self.content_text_style(style.text_style_handle, &style.text_style_name);
+        self.writer.write_handle(340, text_style)?;
         self.writer.write_double(144, style.text_height)?;
         self.writer.write_string(309, "CONTENTFORMAT_END")?;
         Ok(())
@@ -11345,41 +11348,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         self.writer.write_string(1, "TABLECELL_BEGIN")?;
         self.writer.write_i32(90, cell.style_id)?;
-        let geometries: Vec<_> = if !cell.geometries.is_empty() {
-            cell.geometries.iter().collect()
-        } else if let Some(geometry) = cell.geometry.as_ref() {
-            vec![geometry]
-        } else {
-            cell.contents
-                .iter()
-                .filter_map(|content| content.geometry.as_ref())
-                .collect()
-        };
-        let has_geometry = !geometries.is_empty()
-            || cell.geometry_handle.is_some()
-            || cell.geometry_data_flag != 0
-            || cell.geometry_width_with_gap != 0.0
-            || cell.geometry_height_with_gap != 0.0;
-        self.writer.write_i32(91, has_geometry as i32)?;
-        if has_geometry {
-            self.writer.write_i32(91, cell.geometry_data_flag)?;
-            self.writer.write_double(40, cell.geometry_width_with_gap)?;
-            self.writer
-                .write_double(41, cell.geometry_height_with_gap)?;
-            self.writer
-                .write_handle(330, cell.geometry_handle.unwrap_or(Handle::NULL))?;
-            self.writer.write_i32(92, geometries.len() as i32)?;
-            for geometry in geometries {
-                self.writer
-                    .write_point3d(10, geometry.distance_to_top_left)?;
-                self.writer.write_point3d(11, geometry.distance_to_center)?;
-                self.writer.write_double(43, geometry.width)?;
-                self.writer.write_double(44, geometry.height)?;
-                self.writer.write_double(45, geometry.outer_width)?;
-                self.writer.write_double(46, geometry.outer_height)?;
-                self.writer.write_i32(95, geometry.flags)?;
-            }
-        }
+        // A DXF file keeps where each cell's content sits in the table's
+        // geometry object, never in the content object's cells (a cell
+        // holding it here makes the file unreadable to other applications).
+        self.writer.write_i32(91, 0)?;
         self.writer.write_string(309, "TABLECELL_END")?;
         Ok(())
     }
