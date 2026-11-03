@@ -174,8 +174,19 @@ impl DwgBitReader {
         self.end_bit.saturating_sub(self.position_in_bits()).max(0)
     }
 
-    #[inline]
+    #[inline(always)]
     fn require_bits(&self, bits: usize) -> bool {
+        let pos = self.position_in_bits();
+        let left = self.end_bit.saturating_sub(pos);
+        if pos >= 0 && left >= 0 && (bits as u64) <= left as u64 && !self.has_error() {
+            return true;
+        }
+        self.require_bits_slow(bits)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn require_bits_slow(&self, bits: usize) -> bool {
         if self.has_error() {
             return false;
         }
@@ -812,7 +823,9 @@ impl DwgBitReader {
             self.invalidate("DWG handle exceeds 64 bits");
             return 0;
         }
-        let raw = self.read_bytes(length);
+        let mut buf = [0u8; 8];
+        let raw = &mut buf[..length];
+        self.apply_shift_to_arr(raw);
         // Convert from big-endian to u64
         let mut arr = [0u8; 8];
         for (i, byte) in raw.iter().enumerate() {
@@ -1476,6 +1489,78 @@ mod tests {
         assert!((v1 - 3.14).abs() < 1e-10, "v1 = {}", v1);
         let v2 = r.read_bit_double_with_default(reference);
         assert!((v2 - 100.5).abs() < 1e-10, "v2 = {}", v2);
+    }
+
+    /// A reader over `bytes`, positioned `shift` bits into the data.
+    fn reader_at_shift(bytes: &[u8], shift: u32) -> DwgBitReader {
+        let mut data = vec![0u8; bytes.len() + 1];
+        for (i, byte) in bytes.iter().enumerate() {
+            data[i] |= byte >> shift;
+            if shift > 0 {
+                data[i + 1] = byte << (8 - shift);
+            }
+        }
+        let mut reader = DwgBitReader::new(data, DwgVersion::AC18, DxfVersion::AC1018);
+        for _ in 0..shift {
+            assert!(!reader.read_bit());
+        }
+        reader
+    }
+
+    #[test]
+    fn a_handle_of_any_length_reads_the_same_at_every_bit_offset() {
+        let value = [0x12u8, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0];
+        for counter in 0..=8usize {
+            let mut bytes = vec![0x40 | counter as u8];
+            bytes.extend_from_slice(&value[..counter]);
+            let expected = value[..counter]
+                .iter()
+                .fold(0u64, |total, byte| (total << 8) | u64::from(*byte));
+            for shift in 0..8 {
+                let mut reader = reader_at_shift(&bytes, shift);
+                assert_eq!(reader.read_handle(), expected, "{counter} at {shift}");
+                assert!(reader.check_error().is_ok());
+            }
+        }
+    }
+
+    #[test]
+    fn a_handle_longer_than_eight_bytes_is_an_error() {
+        let mut reader = DwgBitReader::new(vec![0x49; 16], DwgVersion::AC18, DxfVersion::AC1018);
+        assert_eq!(reader.read_handle(), 0);
+        let error = reader.check_error().unwrap_err().to_string();
+        assert!(error.contains("exceeds 64 bits"), "{error}");
+    }
+
+    #[test]
+    fn a_truncated_handle_reads_as_zero_and_is_an_error() {
+        let mut reader =
+            DwgBitReader::new(vec![0x44, 0x12, 0x34], DwgVersion::AC18, DxfVersion::AC1018);
+        assert_eq!(reader.read_handle(), 0);
+        let error = reader.check_error().unwrap_err().to_string();
+        assert!(error.contains("Truncated"), "{error}");
+    }
+
+    #[test]
+    fn the_last_bit_can_be_read_and_the_next_one_cannot() {
+        let mut reader = DwgBitReader::new(vec![0xFF], DwgVersion::AC18, DxfVersion::AC1018);
+        for _ in 0..8 {
+            assert!(reader.read_bit());
+        }
+        assert!(reader.check_error().is_ok());
+        assert!(!reader.read_bit());
+        let error = reader.check_error().unwrap_err().to_string();
+        assert!(error.contains("Truncated"), "{error}");
+    }
+
+    #[test]
+    fn a_reader_in_error_reads_nothing_even_with_bits_left() {
+        let mut reader = DwgBitReader::new(vec![0xFF; 4], DwgVersion::AC18, DxfVersion::AC1018);
+        reader.invalidate("stop");
+        let position = reader.position_in_bits();
+        assert!(!reader.read_bit());
+        assert_eq!(reader.position_in_bits(), position);
+        assert!(reader.read_bytes(2).is_empty());
     }
 }
 
