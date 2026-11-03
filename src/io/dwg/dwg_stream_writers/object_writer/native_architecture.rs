@@ -56,7 +56,7 @@ impl DwgObjectWriter<'_> {
     pub(super) fn write_architecture_object(&mut self, object: &ArchObject) {
         let body = Self::architecture_object_body(object, self.dxf_version)
             .expect("Arch object record was validated before writing");
-        let type_code = self.class_type_code(&object.dxf_name, body.type_code);
+        let type_code = self.source_class_type_code(&object.dxf_name, body.type_code);
         let source_eed = if self.document.eed_by_handle.contains_key(&object.handle) {
             Vec::new()
         } else {

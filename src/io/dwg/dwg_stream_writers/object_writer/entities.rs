@@ -68,7 +68,7 @@ impl<'a> DwgObjectWriter<'a> {
     ) {
         let body = Self::architecture_record_body(data, self.dxf_version)
             .expect("Arch class record was validated before writing");
-        let type_code = self.class_type_code(&data.dxf_name, body.type_code);
+        let type_code = self.source_class_type_code(&data.dxf_name, body.type_code);
         self.pending_has_ds_data = body.has_ds_data;
         self.entity_preamble(type_code, &entity.common);
         // The opaque class body is independent of the common entity header.
