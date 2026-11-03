@@ -6,6 +6,7 @@
 //! are retained as editable models based on native-format probes and regression
 //! tests; individual class coverage is not a claim of a complete published spec.
 
+use crate::objects::object_data::{ObjectDataDescriptor, ObjectDataDictionary, ObjectDataRecord};
 use crate::types::{Color, Handle, Vector2, Vector3};
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -97,6 +98,9 @@ pub enum ClassObjectData {
     ViewRepModelSpaceViewSelectionSet(ViewRepModelSpaceViewSelectionSet),
     ViewRep(ViewRep),
     ViewRepModelSpaceSource(ViewRepModelSpaceSource),
+    ObjectDataDictionary(ObjectDataDictionary),
+    ObjectDataDescriptor(ObjectDataDescriptor),
+    ObjectDataRecord(ObjectDataRecord),
 }
 
 impl ClassObjectData {
@@ -153,12 +157,22 @@ impl ClassObjectData {
             Self::ViewRepModelSpaceViewSelectionSet(_) => "ACDBSYMODELSPACEVIEWSELSET",
             Self::ViewRep(_) => "ACDBVIEWREP",
             Self::ViewRepModelSpaceSource(_) => "ACDBVIEWREPMODELSPACESOURCE",
+            Self::ObjectDataDictionary(_) => "IRD_DSC_DICT",
+            Self::ObjectDataDescriptor(_) => "IRD_DSC_RECORD",
+            Self::ObjectDataRecord(_) => "IRD_OBJ_RECORD",
         }
     }
 
     pub(crate) fn visit_handles_mut(&mut self, visit: &mut impl FnMut(&mut Handle)) {
         match self {
+            Self::ObjectDataDictionary(value) => {
+                for (_, handle) in &mut value.entries {
+                    visit(handle);
+                }
+            }
+            Self::ObjectDataRecord(value) => visit(&mut value.table),
             Self::Empty
+            | Self::ObjectDataDescriptor(_)
             | Self::LayerFilter(_)
             | Self::VbaProject(_)
             | Self::Sun(_)
