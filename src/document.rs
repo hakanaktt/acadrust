@@ -40,6 +40,10 @@ use std::sync::{Arc, Mutex};
 #[path = "document/evaluated_block_tests.rs"]
 mod evaluated_block_tests;
 
+#[cfg(test)]
+#[path = "document/map_seed_tests.rs"]
+mod map_seed_tests;
+
 fn material_checker_texture(entries: &[XRecordEntry]) -> Option<MaterialTexture> {
     if !entries.iter().any(|entry| {
         entry.code == 301
