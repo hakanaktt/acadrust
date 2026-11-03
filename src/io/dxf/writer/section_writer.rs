@@ -11345,41 +11345,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         self.writer.write_string(1, "TABLECELL_BEGIN")?;
         self.writer.write_i32(90, cell.style_id)?;
-        let geometries: Vec<_> = if !cell.geometries.is_empty() {
-            cell.geometries.iter().collect()
-        } else if let Some(geometry) = cell.geometry.as_ref() {
-            vec![geometry]
-        } else {
-            cell.contents
-                .iter()
-                .filter_map(|content| content.geometry.as_ref())
-                .collect()
-        };
-        let has_geometry = !geometries.is_empty()
-            || cell.geometry_handle.is_some()
-            || cell.geometry_data_flag != 0
-            || cell.geometry_width_with_gap != 0.0
-            || cell.geometry_height_with_gap != 0.0;
-        self.writer.write_i32(91, has_geometry as i32)?;
-        if has_geometry {
-            self.writer.write_i32(91, cell.geometry_data_flag)?;
-            self.writer.write_double(40, cell.geometry_width_with_gap)?;
-            self.writer
-                .write_double(41, cell.geometry_height_with_gap)?;
-            self.writer
-                .write_handle(330, cell.geometry_handle.unwrap_or(Handle::NULL))?;
-            self.writer.write_i32(92, geometries.len() as i32)?;
-            for geometry in geometries {
-                self.writer
-                    .write_point3d(10, geometry.distance_to_top_left)?;
-                self.writer.write_point3d(11, geometry.distance_to_center)?;
-                self.writer.write_double(43, geometry.width)?;
-                self.writer.write_double(44, geometry.height)?;
-                self.writer.write_double(45, geometry.outer_width)?;
-                self.writer.write_double(46, geometry.outer_height)?;
-                self.writer.write_i32(95, geometry.flags)?;
-            }
-        }
+        // A DXF file keeps where each cell's content sits in the table's
+        // geometry object, never in the content object's cells (a cell
+        // holding it here makes the file unreadable to other applications).
+        self.writer.write_i32(91, 0)?;
         self.writer.write_string(309, "TABLECELL_END")?;
         Ok(())
     }
