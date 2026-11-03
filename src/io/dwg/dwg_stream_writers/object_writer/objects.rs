@@ -2559,7 +2559,7 @@ impl<'a> DwgObjectWriter<'a> {
         }
         if let ObjectContextKind::HatchView(value) = &obj.kind {
             self.writer
-                .write_handle(DwgReferenceType::SoftOwnership, value.view.value());
+                .write_handle(DwgReferenceType::SoftPointer, value.view.value());
         }
         if let ObjectContextKind::MTextAttribute(value) = &obj.kind {
             if value.enable_context {
