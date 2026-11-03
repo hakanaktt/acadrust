@@ -9,7 +9,7 @@
 use acadrust::entities::EntityType;
 use acadrust::objects::ObjectType;
 use acadrust::types::Handle;
-use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader};
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
 use std::io::Cursor;
 
 /// Root dictionary C, ACAD_PLOTSTYLENAME dictionary E with placeholders
@@ -216,4 +216,36 @@ fn dxf_to_dwg_keeps_plot_style_handles() {
         .read()
         .expect("read dwg");
     assert_review_everywhere(&back, "dwg");
+}
+
+/// What a DXF consumer sees of `doc` after the DXF writer: a DWG reaches
+/// DXF-based tools (CADCraft's bridge among them) as DwgReader + DxfWriter.
+fn through_dxf_writer(doc: &CadDocument) -> CadDocument {
+    let dxf = DxfWriter::new(doc).write_to_vec().expect("write dxf");
+    DxfReader::from_reader(Cursor::new(dxf))
+        .expect("open written dxf")
+        .read()
+        .expect("read written dxf")
+}
+
+#[test]
+fn dxf_writer_keeps_plot_style_handles() {
+    let doc = DxfReader::from_reader(Cursor::new(DXF_NAMED_PLOT_STYLES))
+        .expect("open dxf")
+        .read()
+        .expect("read dxf");
+    assert_review_everywhere(&through_dxf_writer(&doc), "dxf -> dxf");
+}
+
+#[test]
+fn dwg_to_dxf_keeps_plot_style_handles() {
+    let doc = DxfReader::from_reader(Cursor::new(DXF_NAMED_PLOT_STYLES))
+        .expect("open dxf")
+        .read()
+        .expect("read dxf");
+    let dwg = DwgWriter::write_to_vec(&doc).expect("write dwg");
+    let back = DwgReader::from_stream(Cursor::new(dwg))
+        .read()
+        .expect("read dwg");
+    assert_review_everywhere(&through_dxf_writer(&back), "dwg -> dxf");
 }
