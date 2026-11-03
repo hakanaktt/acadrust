@@ -713,22 +713,29 @@ fn read_dimension_association(reader: &mut DwgMergedReader) -> AssocDimensionAss
                 intersection_subent_type,
                 intersection_gs_marker,
                 intersection_xref_paths,
-            ) = if osnap_type == 6 || osnap_type == 11 {
+            ) = if AssocDimensionReference::stores_intersection(osnap_type) {
                 let count = reader.read_bit_long();
                 let intersection_objects = read_handles(reader, count);
-                let intersection_subent_type = reader.read_bit_long();
-                let intersection_gs_marker = reader.read_bit_long();
-                let count = safe_count(reader.read_bit_long(), reader);
-                let mut paths = Vec::with_capacity(count as usize);
-                for _ in 0..count {
-                    paths.push(reader.read_variable_text());
+                if AssocDimensionReference::stores_intersection_subentity(
+                    osnap_type,
+                    intersection_objects.len(),
+                ) {
+                    let intersection_subent_type = reader.read_bit_long();
+                    let intersection_gs_marker = reader.read_bit_long();
+                    let count = safe_count(reader.read_bit_long(), reader);
+                    let mut paths = Vec::with_capacity(count as usize);
+                    for _ in 0..count {
+                        paths.push(reader.read_variable_text());
+                    }
+                    (
+                        intersection_objects,
+                        intersection_subent_type,
+                        intersection_gs_marker,
+                        paths,
+                    )
+                } else {
+                    (intersection_objects, 0, 0, Vec::new())
                 }
-                (
-                    intersection_objects,
-                    intersection_subent_type,
-                    intersection_gs_marker,
-                    paths,
-                )
             } else {
                 (Vec::new(), 0, 0, Vec::new())
             };

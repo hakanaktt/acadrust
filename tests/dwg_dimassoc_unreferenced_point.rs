@@ -100,3 +100,49 @@ fn reference_without_objects_survives_dwg_and_dxf_saves() {
         "group codes after the last point reference"
     );
 }
+
+/// An intersection reference (osnap 6 or 11) with no intersection object
+/// stores no intersection subentity either, as the main reference does:
+/// AutoCAD drawings carry such references, and reading the fields anyway
+/// ran the record out of bits.
+#[test]
+fn intersection_reference_without_objects_has_no_intersection_subentity() {
+    let mut source = fixture();
+    match source.objects.get_mut(&Handle::new(DIMASSOC)) {
+        Some(ObjectType::Associative(object)) => match &mut object.data {
+            AssociativeData::DimensionAssociation(association) => {
+                let reference = &mut association.references[1][0];
+                reference.osnap_type = 11;
+                reference.intersection_objects.clear();
+            }
+            other => panic!("expected a dimension association, got {other:?}"),
+        },
+        other => panic!("expected an associative object, got {other:?}"),
+    }
+
+    let dwg = DwgReader::from_stream(Cursor::new(DwgWriter::write_to_vec(&source).unwrap()))
+        .read()
+        .unwrap();
+    let chain = &association(&dwg).references[1];
+    assert_eq!(chain[0].osnap_type, 11);
+    assert!(chain[0].has_last_point_reference);
+    assert_eq!(chain[1].osnap_type, 1, "the chained reference still reads");
+
+    let text = DxfWriter::new(&source).write_to_vec().unwrap();
+    let lines: Vec<String> = String::from_utf8_lossy(&text)
+        .lines()
+        .map(|line| line.trim().to_string())
+        .collect();
+    let first = lines
+        .iter()
+        .position(|line| line == "AcDbOsnapPointRef")
+        .expect("a point reference in the DXF");
+    let after_point: Vec<&str> = (first + 1..lines.len())
+        .step_by(2)
+        .map(|index| lines[index].as_str())
+        .skip_while(|code| *code != "30")
+        .skip(1)
+        .take(1)
+        .collect();
+    assert_eq!(after_point, ["75"], "no 74/92 after the osnap point");
+}

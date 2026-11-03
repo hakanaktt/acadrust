@@ -736,16 +736,21 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 }
                 self.writer.write_double(40, reference.osnap_distance)?;
                 self.writer.write_point3d(10, reference.osnap_point)?;
-                if reference.osnap_type == 6 || reference.osnap_type == 11 {
+                if AssocDimensionReference::stores_intersection(reference.osnap_type) {
                     for object in &reference.intersection_objects {
                         self.writer.write_handle(332, *object)?;
                     }
-                    self.writer
-                        .write_i32(74, reference.intersection_subent_type)?;
-                    self.writer
-                        .write_i32(92, reference.intersection_gs_marker)?;
-                    for path in &reference.intersection_xref_paths {
-                        self.writer.write_string(302, path)?;
+                    if AssocDimensionReference::stores_intersection_subentity(
+                        reference.osnap_type,
+                        reference.intersection_objects.len(),
+                    ) {
+                        self.writer
+                            .write_i32(74, reference.intersection_subent_type)?;
+                        self.writer
+                            .write_i32(92, reference.intersection_gs_marker)?;
+                        for path in &reference.intersection_xref_paths {
+                            self.writer.write_string(302, path)?;
+                        }
                     }
                 }
                 self.writer.write_bool(75, index + 1 < references.len())?;

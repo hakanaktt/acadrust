@@ -370,20 +370,25 @@ impl<'a> DwgObjectWriter<'a> {
                 }
                 self.writer.write_bit_double(reference.osnap_distance);
                 self.writer.write_3bit_double(reference.osnap_point);
-                if reference.osnap_type == 6 || reference.osnap_type == 11 {
+                if AssocDimensionReference::stores_intersection(reference.osnap_type) {
                     self.writer
                         .write_bit_long(reference.intersection_objects.len() as i32);
                     self.write_assoc_handles(
                         DwgReferenceType::HardPointer,
                         &reference.intersection_objects,
                     );
-                    self.writer
-                        .write_bit_long(reference.intersection_subent_type);
-                    self.writer.write_bit_long(reference.intersection_gs_marker);
-                    self.writer
-                        .write_bit_long(reference.intersection_xref_paths.len() as i32);
-                    for path in &reference.intersection_xref_paths {
-                        self.writer.write_variable_text(path);
+                    if AssocDimensionReference::stores_intersection_subentity(
+                        reference.osnap_type,
+                        reference.intersection_objects.len(),
+                    ) {
+                        self.writer
+                            .write_bit_long(reference.intersection_subent_type);
+                        self.writer.write_bit_long(reference.intersection_gs_marker);
+                        self.writer
+                            .write_bit_long(reference.intersection_xref_paths.len() as i32);
+                        for path in &reference.intersection_xref_paths {
+                            self.writer.write_variable_text(path);
+                        }
                     }
                 }
                 self.writer.write_bit(index + 1 < references.len());
