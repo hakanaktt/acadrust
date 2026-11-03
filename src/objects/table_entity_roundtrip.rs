@@ -158,6 +158,15 @@ fn merge_formats(table: &mut Table, content: &Table) {
                     value.format_value_data_type = from.format_value_data_type;
                     value.format_value_unit_type = from.format_value_unit_type;
                     value.value_format = from.value_format.clone();
+                    // The rest of the content's format (text style, height,
+                    // color, rotation, alignment) is kept there too.
+                    value.text_style_handle = from.text_style_handle;
+                    value.text_style_name = from.text_style_name.clone();
+                    value.color = from.color.clone();
+                    value.rotation = from.rotation;
+                    value.scale = from.scale;
+                    value.text_height = from.text_height;
+                    value.alignment = from.alignment;
                 }
             }
             let Some(from) = source.style.as_ref() else {
