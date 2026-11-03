@@ -11131,6 +11131,19 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         Ok(())
     }
 
+    /// A content format's text style as the handle a DXF file keeps there
+    /// (a name read from a legacy table record is looked up; a name in
+    /// group 7 inside the format makes the file unreadable elsewhere).
+    fn content_text_style(&self, handle: Option<Handle>, name: &str) -> Handle {
+        handle
+            .or_else(|| {
+                (!name.is_empty())
+                    .then(|| self.text_style_names.iter().find(|(_, n)| n.eq_ignore_ascii_case(name)).map(|(h, _)| *h))
+                    .flatten()
+            })
+            .unwrap_or(Handle::NULL)
+    }
+
     fn write_table_content_format_dxf(&mut self, content: &table::CellContent) -> Result<()> {
         self.writer.write_string(300, "CONTENTFORMAT")?;
         self.writer.write_string(1, "CONTENTFORMAT_BEGIN")?;
@@ -11143,13 +11156,8 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_double(140, content.scale)?;
         self.writer.write_i32(94, content.alignment)?;
         self.writer.write_color(62, content.color)?;
-        if let Some(handle) = content.text_style_handle {
-            self.writer.write_handle(340, handle)?;
-        } else if !content.text_style_name.is_empty() {
-            self.writer.write_string(7, &content.text_style_name)?;
-        } else {
-            self.writer.write_handle(340, Handle::NULL)?;
-        }
+        let style = self.content_text_style(content.text_style_handle, &content.text_style_name);
+        self.writer.write_handle(340, style)?;
         self.writer.write_double(144, content.text_height)?;
         self.writer.write_string(309, "CONTENTFORMAT_END")?;
         Ok(())
@@ -11168,13 +11176,8 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_double(140, style.scale)?;
         self.writer.write_i32(94, style.alignment)?;
         self.writer.write_color(62, style.content_color)?;
-        if let Some(handle) = style.text_style_handle {
-            self.writer.write_handle(340, handle)?;
-        } else if !style.text_style_name.is_empty() {
-            self.writer.write_string(7, &style.text_style_name)?;
-        } else {
-            self.writer.write_handle(340, Handle::NULL)?;
-        }
+        let text_style = self.content_text_style(style.text_style_handle, &style.text_style_name);
+        self.writer.write_handle(340, text_style)?;
         self.writer.write_double(144, style.text_height)?;
         self.writer.write_string(309, "CONTENTFORMAT_END")?;
         Ok(())
