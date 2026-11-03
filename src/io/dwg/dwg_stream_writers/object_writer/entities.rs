@@ -1726,10 +1726,10 @@ impl<'a> DwgObjectWriter<'a> {
                 self.writer.write_3bit_double(e.begin_tangent);
                 // End tan vec 3BD 13
                 self.writer.write_3bit_double(e.end_tangent);
-                // A closed list on R2013+ ends with its first point again,
-                // as AutoCAD writes it (flags1 no longer carries closure).
-                let repeat_first = r2013_plus
-                    && e.flags.closed
+                // A closed list ends with its first point again, as AutoCAD
+                // writes it: the fit-data body has no closed bit before R2013,
+                // and flags1 no longer carries closure from R2013 on.
+                let repeat_first = e.flags.closed
                     && e.fit_points.len() >= 3
                     && e.fit_points.first() != e.fit_points.last();
                 // num fit pts BL 74
