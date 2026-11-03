@@ -2553,7 +2553,7 @@ impl<'a> DwgObjectWriter<'a> {
         }
         if let ObjectContextKind::HatchView(value) = &obj.kind {
             self.writer
-                .write_handle(DwgReferenceType::SoftOwnership, value.view.value());
+                .write_handle(DwgReferenceType::SoftPointer, value.view.value());
         }
         if let ObjectContextKind::MTextAttribute(value) = &obj.kind {
             if value.enable_context {
@@ -3030,5 +3030,66 @@ impl<'a> DwgObjectWriter<'a> {
         self.writer.write_bit_short(wv.display_frame);
 
         self.register_object(wv.handle);
+    }
+}
+
+#[cfg(test)]
+mod annotation_reference_tests {
+    use super::*;
+    use crate::io::dwg::dwg_stream_readers::object_reader::DwgObjectReader;
+    use crate::objects::{HatchScaleContext, HatchViewContext};
+    use crate::types::{DxfVersion, Vector3};
+    use crate::CadDocument;
+
+    #[test]
+    fn hatch_view_target_is_a_soft_pointer_including_null() {
+        // Native 2527 source: all 84 HatchView target references use code 4,
+        // including 77 nulls. A view context references, rather than owns,
+        // its Paper viewport. Checking only the resolved handle misses this.
+        for target in [0, 0x1003] {
+            let mut document = CadDocument::new();
+            document.version = DxfVersion::AC1032;
+            document.register_object_context_class("ACDB_HATCHVIEWCONTEXTDATA_CLASS");
+            let context = ObjectContextData {
+                handle: Handle::from(0x1000u64),
+                owner_handle: Handle::from(0x1001u64),
+                reactors: vec![Handle::from(0x1001u64)],
+                xdictionary_handle: None,
+                class_version: 4,
+                has_file_to_extension_dictionary: true,
+                uses_legacy_mleader_context_base: false,
+                is_default: true,
+                scale: Handle::from(0x1002u64),
+                kind: ObjectContextKind::HatchView(HatchViewContext {
+                    hatch: HatchScaleContext {
+                        pattern_lines: vec![],
+                        pattern_scale: 1.0,
+                        pattern_base: Vector3::ZERO,
+                        loops: vec![],
+                    },
+                    view: Handle::from(target),
+                    view_normal: Vector3::UNIT_Z,
+                    view_rotation: 0.0,
+                    evaluate_hatch: false,
+                }),
+            };
+            let mut writer = DwgObjectWriter::new(&document).expect("writer");
+            writer.write_object_context_data(&context);
+            let offset = writer.handle_map()[0].1 as usize;
+            let reader = DwgObjectReader::new(
+                writer.output().to_vec(),
+                document.version,
+                Default::default(),
+            )
+            .expect("object reader");
+            let (kind, mut record) = reader.read_record_at(offset).expect("record");
+            let common = reader.read_common_non_entity_data(&mut record, kind);
+            assert_eq!(common.owner_handle, context.owner_handle.value());
+            assert_eq!(record.read_handle(), context.scale.value());
+            let (actual_target, reference_type) =
+                record.read_handle_reference(context.handle.value());
+            assert_eq!(actual_target, target);
+            assert_eq!(reference_type, DwgReferenceType::SoftPointer);
+        }
     }
 }
