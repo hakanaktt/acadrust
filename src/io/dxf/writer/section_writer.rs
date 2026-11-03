@@ -4329,6 +4329,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         if polyline.end_width != 0.0 {
             self.writer.write_double(41, polyline.end_width)?;
         }
+        // Curve type of a spline-fit polyline (5 quadratic, 6 cubic, 8 Bezier).
+        if polyline.smooth_surface != SmoothSurfaceType::None {
+            self.writer.write_i16(75, polyline.smooth_surface as i16)?;
+        }
         self.write_normal(polyline.normal)?;
 
         // XDATA precedes the child VERTEX/SEQEND records.
