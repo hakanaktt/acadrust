@@ -2875,11 +2875,12 @@ impl<'a> DwgObjectWriter<'a> {
         parent: &EntityCommon,
     ) {
         // AUDIT requires a vertex to carry its polyline's linetype.
+        let layer = v.layer_for_write(&parent.layer);
         self.write_common_entity_data(
             common::OBJ_VERTEX_3D,
             vertex_handle,
             parent.handle,
-            &parent.layer,
+            layer,
             &parent.color,
             &crate::types::LineWeight::ByLayer,
             &crate::types::Transparency::default(),
@@ -3138,34 +3139,17 @@ impl<'a> DwgObjectWriter<'a> {
                 None
             };
             self.next_handle = (i + 1 < vertex_handles.len()).then(|| vertex_handles[i + 1]);
-            // AUDIT requires a vertex to carry its mesh's linetype.
-            self.write_common_entity_data(
-                common::OBJ_VERTEX_MESH,
-                vh,
-                e.common.handle,
-                &e.common.layer,
-                &e.common.color,
-                &crate::types::LineWeight::ByLayer,
-                &crate::types::Transparency::default(),
-                false,
-                1.0,
-                &e.common.linetype,
-                &e.common.linetype_handle,
-                &crate::xdata::ExtendedData::default(),
-                &[],
-                &None,
-                None,
-                None,
-                0,
-                &None,
-                0,
-                0,
-                &None,
-                &None,
-                &None,
-                &None,
-                &None,
-            );
+            let mut vc = v.common_for_write(&e.common);
+            vc.handle = vh;
+            vc.owner_handle = e.common.handle;
+            // AUDIT requires a vertex to carry its mesh's linetype; keep one
+            // the vertex stores explicitly.
+            let unset = vc.linetype.is_empty() || vc.linetype.eq_ignore_ascii_case("ByLayer");
+            if unset && vc.linetype_handle.is_none() {
+                vc.linetype = e.common.linetype.clone();
+                vc.linetype_handle = e.common.linetype_handle;
+            }
+            self.entity_preamble(common::OBJ_VERTEX_MESH, &vc);
             self.writer.write_byte(v.flags as u8);
             self.writer.write_3bit_double(v.location);
             self.register_object(vh);
