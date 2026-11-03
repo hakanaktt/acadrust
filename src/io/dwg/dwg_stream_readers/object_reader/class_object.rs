@@ -954,6 +954,15 @@ pub fn read_class_object_data(
                     value: reader.read_variable_text(),
                 });
             }
+            // Bit 8 of the DWG option says the data map follows: a custom data collection
+            // (count, then name and value). AutoCAD shows the option without it (DXF, entget).
+            let mut data_map = Vec::new();
+            if option & DataLink::HAS_DATA_MAP != 0 {
+                for _ in 0..count(reader.read_bit_long(), reader) {
+                    data_map.push(super::entities::read_custom_table_data(reader, version));
+                }
+            }
+            let option = option & !DataLink::HAS_DATA_MAP;
             ClassObjectData::DataLink(DataLink {
                 data_adapter,
                 description,
@@ -973,6 +982,7 @@ pub fn read_class_object_data(
                 status_flags,
                 update_status,
                 custom_data,
+                data_map,
                 hard_owner: Handle::from(reader.read_handle()),
             })
         }

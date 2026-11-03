@@ -3921,6 +3921,16 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer.write_i16(370, common.line_weight.value())?;
         }
 
+        // Named plot style (R2000+, `$PSTYLEMODE 0`): the placeholder the entity points at,
+        // as the LAYER writer does. ByLayer/ByBlock have no handle.
+        if self.dxf_version >= DxfVersion::AC1015 && common.plotstyle_flags == 0b11 {
+            if let Some(handle) = common.plotstyle_handle.filter(|h| {
+                !h.is_null() && (self.valid_handles.is_empty() || self.valid_handles.contains(h))
+            }) {
+                self.writer.write_handle(390, handle)?;
+            }
+        }
+
         // Write visibility
         if common.invisible {
             self.writer.write_i16(60, 1)?;
@@ -7377,11 +7387,21 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 self.writer.write_i32(93, value.status_flags)?;
                 self.writer.write_string(304, &value.update_status)?;
                 self.writer.write_i32(94, value.custom_data.len() as i32)?;
-                self.writer.write_string(305, "CUSTOMDATA")?;
-                self.writer.write_string(1, "DATAMAP_BEGIN")?;
                 for item in &value.custom_data {
                     self.writer.write_handle(330, item.target)?;
                     self.writer.write_string(304, &item.value)?;
+                }
+                self.writer.write_string(305, "CUSTOMDATA")?;
+                self.writer.write_string(1, "DATAMAP_BEGIN")?;
+                self.writer.write_i32(90, value.data_map.len() as i32)?;
+                for item in &value.data_map {
+                    self.writer.write_string(300, &item.name)?;
+                    self.writer.write_string(301, "DATAMAP_VALUE")?;
+                    self.write_field_cell_value_dxf(&item.value)?;
+                    // A 2004 DXF value has no end marker; AutoCAD rejects one there.
+                    if self.dxf_version >= DxfVersion::AC1021 {
+                        self.writer.write_string(304, "ACVALUE_END")?;
+                    }
                 }
                 self.writer.write_string(309, "DATAMAP_END")?;
                 self.writer.write_handle(360, value.hard_owner)?;
