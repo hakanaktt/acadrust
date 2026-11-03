@@ -405,10 +405,11 @@ impl<'a> DwgObjectWriter<'a> {
         }
 
         // ── MAIN + HANDLE: reactors + xdic ──
-        // Reactor count (MAIN)
+        // Reactor count (MAIN) — dangling reactors dropped (see `live_handles`)
+        let reactors = self.live_reactors(reactors);
         self.writer.write_bit_long(reactors.len() as i32);
         // Reactor handles (HANDLE)
-        for r in reactors {
+        for r in &reactors {
             self.writer
                 .write_handle(DwgReferenceType::SoftPointer, r.value());
         }
@@ -908,11 +909,13 @@ impl<'a> DwgObjectWriter<'a> {
             reactors
         };
 
+        // Dangling reactors dropped (see `live_handles`)
+        let reactors_to_write = self.live_reactors(reactors_to_write);
         // MAIN: Reactor count
         self.writer.write_bit_long(reactors_to_write.len() as i32);
 
         // HANDLE: Reactor handles
-        for r in reactors_to_write {
+        for r in &reactors_to_write {
             self.writer
                 .write_handle(DwgReferenceType::SoftPointer, r.value());
         }
