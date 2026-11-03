@@ -133,3 +133,13 @@ fn two_handle_maps_do_not_share_a_seed() {
         .iter()
         .any(|key| first.hasher().hash_one(key) != second.hasher().hash_one(key)));
 }
+
+#[test]
+fn a_cloned_map_keeps_its_seed_and_finds_its_keys() {
+    let map = read_handle_map(&handle_section(crafted_keys())).unwrap();
+    let clone = map.clone();
+    for key in crafted_keys() {
+        assert_eq!(clone.hasher().hash_one(key), map.hasher().hash_one(key));
+        assert_eq!(clone.get(key), map.get(key));
+    }
+}

@@ -39,11 +39,11 @@ pub fn read_handles(data: &[u8]) -> Result<std::collections::HashMap<u64, i64>> 
 
 /// Handle → file offset, hashed with foldhash. Every record lookup goes
 /// through this map, which is why it does not use the std hasher; the seed
-/// is fixed because the map lives in [`DwgObjectReader`], which plugins may
-/// use from another binary (see `CadDocument::entity_index`).
+/// stays in the map because the map lives in [`DwgObjectReader`], which plugins
+/// may use from another binary (see `CadDocument::entity_index`).
 ///
 /// [`DwgObjectReader`]: super::object_reader::DwgObjectReader
-pub(crate) type HandleMap = std::collections::HashMap<u64, i64, foldhash::fast::FixedState>;
+pub(crate) type HandleMap = std::collections::HashMap<u64, i64, crate::document::SeededState>;
 
 /// [`read_handles`] into the map the object reader keeps.
 pub(crate) fn read_handle_map(data: &[u8]) -> Result<HandleMap> {
