@@ -380,6 +380,7 @@ pub(crate) fn translate_raster_image(e: &mut RasterImage, offset: Vector3) {
 // ── Solid3D ──────────────────────────────────────────────────────────────────
 
 pub(crate) fn translate_solid3d(e: &mut Solid3D, offset: Vector3) {
+    e.resolve_deferred_reference_point();
     e.point_of_reference = e.point_of_reference + offset;
     // The body geometry lives in the ACIS placement, so move it there too —
     // otherwise the solid keeps rendering at its original location.
@@ -407,6 +408,7 @@ pub(crate) fn translate_solid3d(e: &mut Solid3D, offset: Vector3) {
 // ── Region ───────────────────────────────────────────────────────────────────
 
 pub(crate) fn translate_region(e: &mut Region, offset: Vector3) {
+    e.resolve_deferred_reference_point();
     e.point_of_reference = e.point_of_reference + offset;
     super::transform::compose_acis_placement(
         &mut e.acis_data,
@@ -430,6 +432,7 @@ pub(crate) fn translate_region(e: &mut Region, offset: Vector3) {
 // ── Body ─────────────────────────────────────────────────────────────────────
 
 pub(crate) fn translate_body(e: &mut Body, offset: Vector3) {
+    e.resolve_deferred_reference_point();
     e.point_of_reference = e.point_of_reference + offset;
     super::transform::compose_acis_placement(
         &mut e.acis_data,
