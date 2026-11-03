@@ -1392,6 +1392,18 @@ impl AssocDimensionReference {
     pub fn stores_main_subentity(osnap_type: u8, object_count: usize) -> bool {
         osnap_type != 0 && object_count > 0
     }
+
+    /// Whether an intersection snap stores its intersection objects.
+    pub fn stores_intersection(osnap_type: u8) -> bool {
+        osnap_type == 6 || osnap_type == 11
+    }
+
+    /// Whether the intersection subentity (type, marker, paths) follows the
+    /// intersection objects: as for the main subentity, only when there is
+    /// an object to name.
+    pub fn stores_intersection_subentity(osnap_type: u8, object_count: usize) -> bool {
+        Self::stores_intersection(osnap_type) && object_count > 0
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]

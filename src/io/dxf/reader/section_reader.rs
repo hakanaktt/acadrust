@@ -6989,6 +6989,13 @@ impl<'a> SectionReader<'a> {
                                     .insert(obj.common.handle, ObjectType::TableContent(obj));
                             }
                         }
+                        "TABLETEMPLATE" => {
+                            if let Some(obj) = self.read_table_content_object_typed_dxf()? {
+                                document
+                                    .objects
+                                    .insert(obj.common.handle, ObjectType::TableTemplate(obj));
+                            }
+                        }
                         "SCALE" => {
                             if let Some(obj) = self.read_scale()? {
                                 document.objects.insert(obj.handle, ObjectType::Scale(obj));
@@ -21856,6 +21863,7 @@ impl<'a> SectionReader<'a> {
         let mut raw_dxf_codes = Vec::new();
         let mut rows = Vec::<RowCellStyle>::with_capacity(3);
         let mut saw_name = false;
+        let mut last_code = 0;
 
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 {
@@ -21863,6 +21871,14 @@ impl<'a> SectionReader<'a> {
                 break;
             }
             raw_dxf_codes.push((pair.code, pair.value_string.clone()));
+            // A row without a text style leaves out its `7`: it starts at
+            // its text height.
+            if pair.code == 140 && last_code != 7 && rows.len() < 3 {
+                let mut row = RowCellStyle::new();
+                row.text_style_name.clear();
+                rows.push(row);
+            }
+            last_code = pair.code;
             match pair.code {
                 5 => {
                     if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {

@@ -144,6 +144,17 @@ fn table_section_to_dxf(
 ) {
     out.push_str("0\nSECTION\n2\nTABLES\n");
     for (index, rows) in records.iter().enumerate() {
+        // A deleted entry (flag 128) keeps its slot so table indexes stay
+        // aligned, but it is no record of the drawing. BLOCK rows have lost
+        // group 70 by now (it means insertion units on a BLOCK_RECORD); a
+        // deleted one is unnamed.
+        let rows: Vec<&EntityRecord> = rows
+            .iter()
+            .filter(|row| match index {
+                0 => !row.string(2).is_empty(),
+                _ => row.integer(70, 0) & 128 == 0,
+            })
+            .collect();
         if rows.is_empty() {
             continue;
         }

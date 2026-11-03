@@ -4271,7 +4271,9 @@ impl CadDocument {
             ObjectType::PlotSettings(value) => Some(value.owner),
             ObjectType::MultiLeaderStyle(value) => Some(value.owner_handle),
             ObjectType::TableStyle(value) => Some(value.owner_handle),
-            ObjectType::TableContent(value) => Some(value.common.owner_handle),
+            ObjectType::TableContent(value) | ObjectType::TableTemplate(value) => {
+                Some(value.common.owner_handle)
+            }
             ObjectType::Scale(value) => Some(value.owner_handle),
             ObjectType::ObjectContextData(value) => Some(value.owner_handle),
             ObjectType::SortEntitiesTable(value) => Some(value.owner_handle),
@@ -6452,7 +6454,7 @@ impl CadDocument {
                     ObjectType::DictionaryVariable(value) => {
                         remap_object_handle(&mut value.owner_handle);
                     }
-                    ObjectType::TableContent(value) => {
+                    ObjectType::TableContent(value) | ObjectType::TableTemplate(value) => {
                         value.visit_object_handles_mut(&mut remap_object_handle);
                     }
                     ObjectType::BlockVisibilityParameter(value) => {

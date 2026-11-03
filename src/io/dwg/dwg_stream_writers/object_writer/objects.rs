@@ -304,6 +304,7 @@ pub(crate) fn object_class_names(object: &ObjectType) -> Vec<std::borrow::Cow<'_
         ObjectType::GeoData(_) => "GEODATA",
         ObjectType::BlockVisibilityParameter(_) => "BLOCKVISIBILITYPARAMETER",
         ObjectType::TableContent(_) => "TABLECONTENT",
+        ObjectType::TableTemplate(_) => "TABLETEMPLATE",
         ObjectType::VisualStyle(_) => "VISUALSTYLE",
         ObjectType::Material(_) => "MATERIAL",
         ObjectType::TableStyle(_) => "TABLESTYLE",
@@ -480,6 +481,7 @@ impl<'a> DwgObjectWriter<'a> {
             ObjectType::VisualStyle(v) => self.write_visual_style(v),
             ObjectType::Material(m) => self.write_material(m),
             ObjectType::TableContent(t) => self.write_table_content_object(t),
+            ObjectType::TableTemplate(t) => self.write_table_template_object(t),
             ObjectType::TableStyle(t) => self.write_table_style(t),
             ObjectType::Unknown {
                 handle,
@@ -1144,6 +1146,26 @@ impl<'a> DwgObjectWriter<'a> {
         }
     }
 
+    fn write_table_template_object(&mut self, value: &crate::entities::Table) {
+        let Some(type_code) = self
+            .document
+            .classes
+            .get_by_name("TABLETEMPLATE")
+            .map(|class| class.class_number)
+        else {
+            return;
+        };
+        self.write_common_non_entity_data(
+            type_code,
+            value.common.handle,
+            value.common.owner_handle,
+            &value.common.reactors,
+            &value.common.xdictionary_handle,
+        );
+        self.write_table_content(value);
+        self.register_object(value.common.handle);
+    }
+
     fn write_table_content_object(&mut self, value: &crate::entities::Table) {
         let type_code = self.class_type_code("TABLECONTENT", common::OBJ_TABLECONTENT);
         self.write_common_non_entity_data(
@@ -1191,16 +1213,24 @@ impl<'a> DwgObjectWriter<'a> {
                 DwgReferenceType::HardOwnership,
                 value.modern_cell_style_handle.value(),
             );
+            // The base "Table" cell style carries the table direction.
+            let flow_up = value.flow_direction == crate::objects::TableFlowDirection::Up;
             if let Some(style) = &value.modern_style {
+                let mut style = style.clone();
+                if flow_up {
+                    style.cell_style.merge_flags |= TableCellStyleData::FLOW_UP;
+                } else {
+                    style.cell_style.merge_flags &= !TableCellStyleData::FLOW_UP;
+                }
                 // The base "Table" style normally has no text style and keeps
                 // none; only a dangling one is resolved.
                 if style.cell_style.content_format.text_style.is_null() {
-                    self.write_named_table_cell_style(style);
+                    self.write_named_table_cell_style(&style);
                 } else {
-                    self.write_table_style_named_cell_style(style);
+                    self.write_table_style_named_cell_style(&style);
                 }
             } else {
-                self.write_default_modern_table_cell_style(value);
+                self.write_default_modern_table_cell_style(value, flow_up);
             }
             if value.modern_overrides.is_empty() {
                 self.write_default_modern_table_row_styles(value);
@@ -1323,10 +1353,11 @@ impl<'a> DwgObjectWriter<'a> {
         self.write_named_table_cell_style(&value);
     }
 
-    fn write_default_modern_table_cell_style(&mut self, value: &TableStyle) {
+    fn write_default_modern_table_cell_style(&mut self, value: &TableStyle, flow_up: bool) {
         let cell_style = TableCellStyleData {
             style_type: 5,
             data_flags: 1,
+            merge_flags: if flow_up { TableCellStyleData::FLOW_UP } else { 0 },
             background_color: Color::None,
             content_layout: 1,
             content_format: TableContentFormat {
@@ -1366,64 +1397,27 @@ impl<'a> DwgObjectWriter<'a> {
         self.writer.write_bit_long(rows.len() as i32);
         for (key, row, id, style_type, name, merge_flags) in rows {
             self.writer.write_bit_long(key);
-            self.write_default_modern_table_row_style(row, id, style_type, name, merge_flags);
+            self.write_default_modern_table_row_style(
+                row,
+                (id, style_type, name, merge_flags),
+                (
+                    value.horizontal_margin,
+                    value.vertical_margin,
+                    value.data_row_style.text_height,
+                ),
+            );
         }
     }
 
     fn write_default_modern_table_row_style(
         &mut self,
         row: &RowCellStyle,
-        id: i32,
-        style_type: i32,
-        name: &str,
-        merge_flags: i32,
+        (id, style_type, name, merge_flags): (i32, i32, &str, i32),
+        margins: (f64, f64, f64),
     ) {
-        // R2010+ edge order; the grid flag is set for a hidden edge, the
-        // reverse of the row border's `is_invisible`.
-        let borders = [
-            (1, &row.top_border),
-            (2, &row.horizontal_inside_border),
-            (4, &row.bottom_border),
-            (8, &row.left_border),
-            (16, &row.vertical_inside_border),
-            (32, &row.right_border),
-        ]
-        .into_iter()
-        .map(|(index_mask, border)| TableGridFormat {
-            index_mask,
-            border: TableCellBorder {
-                is_invisible: !border.is_invisible,
-                ..border.clone()
-            },
-            line_type: Handle::NULL,
-        })
-        .collect();
-
+        let text_style = self.resolve_table_row_text_style(row);
         self.write_named_table_cell_style(&NamedTableCellStyle {
-            cell_style: TableCellStyleData {
-                style_type: 5,
-                data_flags: 1,
-                merge_flags,
-                background_color: if row.fill_enabled {
-                    row.fill_color
-                } else {
-                    Color::None
-                },
-                content_layout: 1,
-                content_format: TableContentFormat {
-                    value_data_type: row.data_type,
-                    value_unit_type: row.unit_type,
-                    value_format_string: row.format_string.clone(),
-                    block_scale: 1.0,
-                    cell_alignment: row.alignment as i32,
-                    content_color: row.text_color,
-                    text_style: self.resolve_table_row_text_style(row),
-                    text_height: row.text_height,
-                    ..TableContentFormat::default()
-                },
-                borders,
-                ..TableCellStyleData::default()
-            },
+            cell_style: crate::objects::row_cell_style(row, margins, text_style, merge_flags),
             id,
             style_type,
             name: name.to_string(),

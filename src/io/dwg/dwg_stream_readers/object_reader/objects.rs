@@ -470,7 +470,14 @@ pub fn read_table_style(reader: &mut DwgMergedReader, version: DwgVersion) -> Ta
     let modern_style = read_named_table_cell_style(reader);
     value.horizontal_margin = modern_style.cell_style.horizontal_margin;
     value.vertical_margin = modern_style.cell_style.vertical_margin;
-    apply_cell_style_to_row(&mut value.data_row_style, &modern_style.cell_style);
+    // The base "Table" cell style carries the table direction.
+    if modern_style.cell_style.merge_flags & TableCellStyleData::FLOW_UP != 0 {
+        value.flow_direction = crate::objects::TableFlowDirection::Up;
+    }
+    crate::objects::apply_cell_style_to_row(
+        &mut value.data_row_style,
+        &modern_style.cell_style,
+    );
     value.modern_style = Some(modern_style);
     let override_count = safe_count(reader.read_bit_long(), reader).min(64);
     value.modern_overrides.reserve(override_count as usize);
@@ -490,45 +497,9 @@ pub fn read_table_style(reader: &mut DwgMergedReader, version: DwgVersion) -> Ta
             "_DATA" => &mut value.data_row_style,
             _ => continue,
         };
-        apply_cell_style_to_row(row, &style.cell_style);
+        crate::objects::apply_cell_style_to_row(row, &style.cell_style);
     }
     value
-}
-
-fn apply_cell_style_to_row(
-    row: &mut crate::objects::RowCellStyle,
-    style: &crate::objects::TableCellStyleData,
-) {
-    let format = &style.content_format;
-    row.data_type = format.value_data_type;
-    row.unit_type = format.value_unit_type;
-    row.format_string = format.value_format_string.clone();
-    row.alignment = crate::objects::CellAlignment::from(format.cell_alignment as i16);
-    row.text_color = format.content_color;
-    row.text_style_handle = (!format.text_style.is_null()).then_some(format.text_style);
-    row.text_height = format.text_height;
-    // No background color means an unfilled row; the row keeps its default
-    // fill color.
-    row.fill_enabled = style.background_color != crate::types::Color::None;
-    if row.fill_enabled {
-        row.fill_color = style.background_color;
-    }
-    // Grid edges in R2010+ order: top, horizontal inside, bottom, left,
-    // vertical inside, right. The grid's stored flag is set for a hidden
-    // edge, the reverse of what `is_invisible` holds for it.
-    for grid in &style.borders {
-        let mut border = grid.border.clone();
-        border.is_invisible = !border.is_invisible;
-        match grid.index_mask {
-            1 => row.top_border = border,
-            2 => row.horizontal_inside_border = border,
-            4 => row.bottom_border = border,
-            8 => row.left_border = border,
-            16 => row.vertical_inside_border = border,
-            32 => row.right_border = border,
-            _ => {}
-        }
-    }
 }
 
 // ════════════════════════════════════════════════════════════════════════

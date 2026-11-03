@@ -370,29 +370,30 @@ impl RowCellStyle {
         }
     }
 
-    /// Creates a data row style (smaller text, centered).
+    /// Creates a data row style (smaller text, top-centered, as the
+    /// default table style of the reference templates).
     pub fn data_row() -> Self {
         RowCellStyle {
             text_height: 0.18,
+            alignment: CellAlignment::TopCenter,
+            ..Self::new()
+        }
+    }
+
+    /// Creates a header row style (larger text, middle-centered).
+    pub fn header_row() -> Self {
+        RowCellStyle {
+            text_height: 0.25,
             alignment: CellAlignment::MiddleCenter,
             ..Self::new()
         }
     }
 
-    /// Creates a header row style (larger text, top-centered).
-    pub fn header_row() -> Self {
-        RowCellStyle {
-            text_height: 0.25,
-            alignment: CellAlignment::TopCenter,
-            ..Self::new()
-        }
-    }
-
-    /// Creates a title row style (larger text, top-centered).
+    /// Creates a title row style (larger text, middle-centered).
     pub fn title_row() -> Self {
         RowCellStyle {
             text_height: 0.25,
-            alignment: CellAlignment::TopCenter,
+            alignment: CellAlignment::MiddleCenter,
             ..Self::new()
         }
     }
@@ -499,6 +500,206 @@ pub struct NamedTableCellStyle {
     pub id: i32,
     pub style_type: i32,
     pub name: String,
+}
+
+/// Grid edges of a cell style, in the order the R2010+ record stores them.
+pub const TABLE_GRID_EDGES: [i32; 6] = [1, 2, 4, 8, 16, 32];
+
+impl TableCellStyleData {
+    /// "Merge cells on row/column creation".
+    pub const MERGE_ALL: i32 = 0x8000;
+    /// On the "Table" base cell style: rows run bottom to top.
+    pub const FLOW_UP: i32 = 0x10000;
+
+    pub fn merge_all(&self) -> bool {
+        self.merge_flags & Self::MERGE_ALL != 0
+    }
+
+    pub fn set_merge_all(&mut self, on: bool) {
+        self.merge_flags = if on {
+            self.merge_flags | Self::MERGE_ALL
+        } else {
+            self.merge_flags & !Self::MERGE_ALL
+        };
+    }
+
+    /// Horizontal and vertical margins; `None` when the cell style keeps
+    /// the table's.
+    pub fn margins(&self) -> Option<(f64, f64)> {
+        (self.margin_override_flags != 0).then_some((self.horizontal_margin, self.vertical_margin))
+    }
+
+    /// Sets the left/right (`horizontal`) and top/bottom (`vertical`) margins.
+    pub fn set_margins(&mut self, horizontal: f64, vertical: f64) {
+        if self.margin_override_flags == 0 {
+            // A cell style that took the table's margins starts its spacing
+            // at its text height, as a new style does.
+            self.horizontal_spacing = self.content_format.text_height;
+            self.vertical_spacing = self.content_format.text_height;
+        }
+        self.margin_override_flags = 1;
+        self.horizontal_margin = horizontal;
+        self.right_margin = horizontal;
+        self.vertical_margin = vertical;
+        self.bottom_margin = vertical;
+    }
+
+    /// The grid record of an edge (`TABLE_GRID_EDGES`), if the style has one.
+    pub fn grid(&self, edge: i32) -> Option<&TableGridFormat> {
+        self.borders.iter().find(|grid| grid.index_mask == edge)
+    }
+
+    /// The grid record of an edge, added (visible, by block) when missing.
+    pub fn grid_mut(&mut self, edge: i32) -> &mut TableGridFormat {
+        if let Some(index) = self.borders.iter().position(|grid| grid.index_mask == edge) {
+            return &mut self.borders[index];
+        }
+        let spacing = 0.25 * self.content_format.text_height;
+        let at = self
+            .borders
+            .iter()
+            .position(|grid| grid.index_mask > edge)
+            .unwrap_or(self.borders.len());
+        self.borders.insert(
+            at,
+            TableGridFormat {
+                index_mask: edge,
+                border: TableCellBorder {
+                    // The record's flag is set for a hidden edge; the field
+                    // holds its inverse (see `edge_hidden`).
+                    is_invisible: true,
+                    double_line_spacing: spacing,
+                    ..TableCellBorder::default()
+                },
+                line_type: Handle::NULL,
+            },
+        );
+        &mut self.borders[at]
+    }
+
+    /// Whether an edge is hidden. The grid record stores a "hidden" flag,
+    /// read into `is_invisible` inverted.
+    pub fn edge_hidden(&self, edge: i32) -> bool {
+        self.grid(edge).is_some_and(|grid| !grid.border.is_invisible)
+    }
+
+    pub fn set_edge_hidden(&mut self, edge: i32, hidden: bool) {
+        self.grid_mut(edge).border.is_invisible = !hidden;
+    }
+
+    /// The pre-R2010 row style this cell style describes (text, fill and
+    /// the six edges, with `is_invisible` meaning hidden).
+    pub fn to_row_style(&self) -> RowCellStyle {
+        let mut row = RowCellStyle::new();
+        row.text_style_name.clear();
+        apply_cell_style_to_row(&mut row, self);
+        row
+    }
+}
+
+/// Names of the cell styles the title, header and data rows use.
+pub const TITLE_CELL_STYLE: &str = "_TITLE";
+pub const HEADER_CELL_STYLE: &str = "_HEADER";
+pub const DATA_CELL_STYLE: &str = "_DATA";
+
+/// Cell style class: a label cell (title, header) or a data cell.
+pub const CELL_CLASS_LABEL: i32 = 1;
+pub const CELL_CLASS_DATA: i32 = 2;
+
+/// The R2010+ cell style a pre-R2010 row style describes.
+pub(crate) fn row_cell_style(
+    row: &RowCellStyle,
+    // Horizontal and vertical margins, and the spacing (the data text
+    // height in every cell style of the style).
+    margins: (f64, f64, f64),
+    text_style: Handle,
+    merge_flags: i32,
+) -> TableCellStyleData {
+    // R2010+ edge order; the grid flag is set for a hidden edge, the
+    // reverse of the row border's `is_invisible`.
+    let borders = [
+        (1, &row.top_border),
+        (2, &row.horizontal_inside_border),
+        (4, &row.bottom_border),
+        (8, &row.left_border),
+        (16, &row.vertical_inside_border),
+        (32, &row.right_border),
+    ]
+    .into_iter()
+    .map(|(index_mask, border)| TableGridFormat {
+        index_mask,
+        border: TableCellBorder {
+            is_invisible: !border.is_invisible,
+            ..border.clone()
+        },
+        line_type: Handle::NULL,
+    })
+    .collect();
+    TableCellStyleData {
+        style_type: 5,
+        data_flags: 1,
+        merge_flags,
+        background_color: if row.fill_enabled {
+            row.fill_color
+        } else {
+            Color::None
+        },
+        content_layout: 1,
+        content_format: TableContentFormat {
+            value_data_type: row.data_type,
+            value_unit_type: row.unit_type,
+            value_format_string: row.format_string.clone(),
+            block_scale: 1.0,
+            cell_alignment: row.alignment as i32,
+            content_color: row.text_color,
+            text_style,
+            text_height: row.text_height,
+            ..TableContentFormat::default()
+        },
+        margin_override_flags: 1,
+        horizontal_margin: margins.0,
+        right_margin: margins.0,
+        vertical_margin: margins.1,
+        bottom_margin: margins.1,
+        horizontal_spacing: margins.2,
+        vertical_spacing: margins.2,
+        borders,
+        ..TableCellStyleData::default()
+    }
+}
+
+/// The pre-R2010 row style an R2010+ cell style describes.
+pub(crate) fn apply_cell_style_to_row(row: &mut RowCellStyle, style: &TableCellStyleData) {
+    let format = &style.content_format;
+    row.data_type = format.value_data_type;
+    row.unit_type = format.value_unit_type;
+    row.format_string = format.value_format_string.clone();
+    row.alignment = CellAlignment::from(format.cell_alignment as i16);
+    row.text_color = format.content_color;
+    row.text_style_handle = (!format.text_style.is_null()).then_some(format.text_style);
+    row.text_height = format.text_height;
+    // No background color means an unfilled row; the row keeps its default
+    // fill color.
+    row.fill_enabled = style.background_color != Color::None;
+    if row.fill_enabled {
+        row.fill_color = style.background_color;
+    }
+    // Grid edges in R2010+ order: top, horizontal inside, bottom, left,
+    // vertical inside, right. The grid's stored flag is set for a hidden
+    // edge, the reverse of what `is_invisible` holds for it.
+    for grid in &style.borders {
+        let mut border = grid.border.clone();
+        border.is_invisible = !border.is_invisible;
+        match grid.index_mask {
+            1 => row.top_border = border,
+            2 => row.horizontal_inside_border = border,
+            4 => row.bottom_border = border,
+            8 => row.left_border = border,
+            16 => row.vertical_inside_border = border,
+            32 => row.right_border = border,
+            _ => {}
+        }
+    }
 }
 
 // ============================================================================
@@ -712,6 +913,183 @@ impl TableStyle {
         self.title_suppressed = self.flags.contains(TableStyleFlags::TITLE_SUPPRESSED);
         self.header_suppressed = self.flags.contains(TableStyleFlags::HEADER_SUPPRESSED);
     }
+
+    /// The style's starting table (a `TableTemplate` object), if it has one.
+    pub fn template(&self) -> Option<Handle> {
+        (!self.modern_cell_style_handle.is_null()).then_some(self.modern_cell_style_handle)
+    }
+
+    /// The style's named cell styles (title, header, data and the user's).
+    pub fn cell_styles(&self) -> impl Iterator<Item = &NamedTableCellStyle> {
+        self.modern_overrides.iter().map(|(_, style)| style)
+    }
+
+    pub fn cell_style(&self, name: &str) -> Option<&NamedTableCellStyle> {
+        self.cell_styles()
+            .find(|style| style.name.eq_ignore_ascii_case(name))
+    }
+
+    pub fn cell_style_mut(&mut self, name: &str) -> Option<&mut NamedTableCellStyle> {
+        self.modern_overrides
+            .iter_mut()
+            .map(|(_, style)| style)
+            .find(|style| style.name.eq_ignore_ascii_case(name))
+    }
+
+    pub fn cell_style_by_id(&self, id: i32) -> Option<&NamedTableCellStyle> {
+        self.cell_styles().find(|style| style.id == id)
+    }
+
+    /// Gives a style that only has the pre-R2010 title, header and data
+    /// rows (a new style, or one read from an older file) the named cell
+    /// styles the rows describe. `text_style` resolves a row's text style.
+    pub fn ensure_cell_styles(&mut self, text_style: impl Fn(&RowCellStyle) -> Handle) {
+        if !self.modern_overrides.is_empty() {
+            return;
+        }
+        let margins = (
+            self.horizontal_margin,
+            self.vertical_margin,
+            self.data_row_style.text_height,
+        );
+        let rows = [
+            (&self.title_row_style, 1, CELL_CLASS_LABEL, TITLE_CELL_STYLE, TableCellStyleData::MERGE_ALL),
+            (&self.header_row_style, 2, CELL_CLASS_LABEL, HEADER_CELL_STYLE, 0),
+            (&self.data_row_style, 3, CELL_CLASS_DATA, DATA_CELL_STYLE, 0),
+        ];
+        self.modern_overrides = rows
+            .into_iter()
+            .map(|(row, id, class, name, merge)| {
+                (
+                    id,
+                    NamedTableCellStyle {
+                        cell_style: row_cell_style(row, margins, text_style(row), merge),
+                        id,
+                        style_type: class,
+                        name: name.to_string(),
+                    },
+                )
+            })
+            .collect();
+    }
+
+    /// Projects the title, header and data cell styles and the base cell
+    /// style's direction onto the pre-R2010 fields, which the DXF record
+    /// and older files carry. Call after editing the cell styles.
+    pub fn sync_rows_from_cell_styles(&mut self) {
+        // The DXF groups the style was read with no longer describe it.
+        self.raw_dxf_codes = None;
+        let cells: Vec<(String, TableCellStyleData)> = self
+            .cell_styles()
+            .map(|style| (style.name.clone(), style.cell_style.clone()))
+            .collect();
+        for (name, cell) in cells {
+            let row = match name.as_str() {
+                TITLE_CELL_STYLE => &mut self.title_row_style,
+                HEADER_CELL_STYLE => &mut self.header_row_style,
+                DATA_CELL_STYLE => {
+                    if let Some((horizontal, vertical)) = cell.margins() {
+                        self.horizontal_margin = horizontal;
+                        self.vertical_margin = vertical;
+                    }
+                    &mut self.data_row_style
+                }
+                _ => continue,
+            };
+            apply_cell_style_to_row(row, &cell);
+        }
+    }
+
+    /// A cell style name not in use, from `base` ("Cell style", "Cell style
+    /// (2)", ...).
+    pub fn unique_cell_style_name(&self, base: &str) -> String {
+        if self.cell_style(base).is_none() {
+            return base.to_string();
+        }
+        (2..)
+            .map(|n| format!("{base} ({n})"))
+            .find(|name| self.cell_style(name).is_none())
+            .unwrap_or_default()
+    }
+
+    /// Adds a cell style named `name`, a copy of `source` or else a blank
+    /// data cell style. User cell styles are numbered from 101. Returns its
+    /// id, or `None` when the name is empty or taken.
+    pub fn create_cell_style(&mut self, name: &str, source: Option<&str>) -> Option<i32> {
+        let name = name.trim();
+        if name.is_empty() || self.cell_style(name).is_some() {
+            return None;
+        }
+        let id = self
+            .cell_styles()
+            .map(|style| style.id)
+            .filter(|id| *id > 100)
+            .max()
+            .unwrap_or(100)
+            + 1;
+        let mut style = match source.and_then(|source| self.cell_style(source)) {
+            Some(source) => source.clone(),
+            None => NamedTableCellStyle {
+                cell_style: TableCellStyleData {
+                    style_type: 5,
+                    data_flags: 1,
+                    background_color: Color::None,
+                    content_layout: 1,
+                    content_format: TableContentFormat {
+                        cell_alignment: CellAlignment::TopLeft as i32,
+                        ..TableContentFormat::default()
+                    },
+                    ..TableCellStyleData::default()
+                },
+                style_type: CELL_CLASS_DATA,
+                ..NamedTableCellStyle::default()
+            },
+        };
+        style.id = id;
+        style.name = name.to_string();
+        self.modern_overrides.push((id, style));
+        Some(id)
+    }
+
+    /// Renames a user cell style; the title, header and data cell styles
+    /// keep their names.
+    pub fn rename_cell_style(&mut self, name: &str, new_name: &str) -> bool {
+        let new_name = new_name.trim();
+        if new_name.is_empty()
+            || is_row_cell_style(name)
+            || self
+                .cell_style(new_name)
+                .is_some_and(|other| !other.name.eq_ignore_ascii_case(name))
+        {
+            return false;
+        }
+        match self.cell_style_mut(name) {
+            Some(style) => {
+                style.name = new_name.to_string();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Deletes a user cell style; the title, header and data cell styles
+    /// stay.
+    pub fn delete_cell_style(&mut self, name: &str) -> bool {
+        if is_row_cell_style(name) {
+            return false;
+        }
+        let before = self.modern_overrides.len();
+        self.modern_overrides
+            .retain(|(_, style)| !style.name.eq_ignore_ascii_case(name));
+        self.modern_overrides.len() != before
+    }
+}
+
+/// The title, header and data cell styles every table style has.
+pub fn is_row_cell_style(name: &str) -> bool {
+    [TITLE_CELL_STYLE, HEADER_CELL_STYLE, DATA_CELL_STYLE]
+        .iter()
+        .any(|row| row.eq_ignore_ascii_case(name))
 }
 
 impl Default for TableStyle {
@@ -721,6 +1099,79 @@ impl Default for TableStyle {
 }
 
 const CELL_STYLE_MAP_KEY: &str = "ACAD_ROUNDTRIP_2008_TABLESTYLE_CELLSTYLEMAP";
+/// A DXF file keeps a table style's starting table in its extension
+/// dictionary under this key; a DWG file in the style record.
+const TEMPLATE_KEY: &str = "ACAD_ROUNDTRIP_2008_TABLESTYLE_TEMPLATE";
+
+/// Moves the starting tables (`TableTemplate`) to where the output keeps
+/// them: in DXF (and pre-R2010 DWG, whose style record has no field for
+/// it) under the style's extension dictionary, in R2010+ DWG owned by the
+/// style record itself.
+pub(crate) fn prepare_table_style_templates(
+    document: &mut std::borrow::Cow<'_, crate::document::CadDocument>,
+    in_dictionary: bool,
+) {
+    use crate::objects::ObjectType;
+    let mut changes = Vec::new();
+    for (handle, object) in &document.objects {
+        let ObjectType::TableStyle(style) = object else {
+            continue;
+        };
+        let Some(template) = style.template() else {
+            continue;
+        };
+        let Some(ObjectType::TableTemplate(table)) = document.objects.get(&template) else {
+            continue;
+        };
+        let entry = document
+            .extension_dictionary_handle(*handle)
+            .and_then(|dictionary| match document.objects.get(&dictionary) {
+                Some(ObjectType::Dictionary(entries)) => {
+                    entries.get(TEMPLATE_KEY).map(|entry| (dictionary, entry))
+                }
+                _ => None,
+            });
+        let placed = if in_dictionary {
+            entry.is_some_and(|(dictionary, entry)| {
+                entry == template && table.common.owner_handle == dictionary
+            })
+        } else {
+            entry.is_none() && table.common.owner_handle == *handle
+        };
+        if !placed {
+            changes.push((*handle, template));
+        }
+    }
+    if changes.is_empty() {
+        return;
+    }
+    let document = document.to_mut();
+    document.classes.ensure_default("TABLETEMPLATE");
+    for (style, template) in changes {
+        let owner = if in_dictionary {
+            let dictionary = document.ensure_extension_dictionary(style);
+            if let Some(ObjectType::Dictionary(entries)) = document.objects.get_mut(&dictionary) {
+                entries.remove(TEMPLATE_KEY);
+                entries.add_entry(TEMPLATE_KEY, template);
+                entries.hard_owner_entries.push(TEMPLATE_KEY.to_string());
+            }
+            dictionary
+        } else {
+            if let Some(dictionary) = document.extension_dictionary_handle(style) {
+                if let Some(ObjectType::Dictionary(entries)) =
+                    document.objects.get_mut(&dictionary)
+                {
+                    entries.remove(TEMPLATE_KEY);
+                }
+            }
+            style
+        };
+        if let Some(ObjectType::TableTemplate(table)) = document.objects.get_mut(&template) {
+            table.common.owner_handle = owner;
+            table.common.reactors = vec![owner];
+        }
+    }
+}
 const ROUNDTRIP_RECORD_KEY: &str = "ACAD_XREC_ROUNDTRIP";
 const PRE2007_MARKER: &str = "ACAD_ROUNDTRIP_PRE2007_TABLESTYLE";
 
@@ -734,6 +1185,29 @@ fn legacy_rows_mut(style: &mut TableStyle) -> [&mut RowCellStyle; 3] {
 
 pub(crate) fn restore_table_style_roundtrip(document: &mut crate::document::CadDocument) {
     use crate::objects::{DataObjectData, ObjectType, XRecordValue};
+    // A starting table kept in the extension dictionary (DXF, pre-R2010).
+    let templates: Vec<(Handle, Handle)> = document
+        .objects
+        .iter()
+        .filter_map(|(handle, object)| match object {
+            ObjectType::TableStyle(style) if style.template().is_none() => {
+                let dictionary = document.extension_dictionary_handle(*handle)?;
+                let Some(ObjectType::Dictionary(entries)) = document.objects.get(&dictionary)
+                else {
+                    return None;
+                };
+                let template = entries.get(TEMPLATE_KEY)?;
+                matches!(document.objects.get(&template), Some(ObjectType::TableTemplate(_)))
+                    .then_some((*handle, template))
+            }
+            _ => None,
+        })
+        .collect();
+    for (style, template) in templates {
+        if let Some(ObjectType::TableStyle(style)) = document.objects.get_mut(&style) {
+            style.modern_cell_style_handle = template;
+        }
+    }
     let styles: Vec<_> = document
         .objects
         .iter()
@@ -804,13 +1278,54 @@ pub(crate) fn restore_table_style_roundtrip(document: &mut crate::document::CadD
 }
 
 pub(crate) fn store_table_style_roundtrip(document: &mut crate::document::CadDocument) {
-    use crate::objects::{
-        CellStyleMap, DataObject, DataObjectData, ObjectType, XRecordEntry, XRecordValue,
-    };
     use crate::types::DxfVersion;
     if document.version >= DxfVersion::AC1024 {
         return;
     }
+    store_cell_style_maps(document);
+}
+
+/// A DXF file keeps a table style's named cell styles in its extension
+/// dictionary, whatever its version: bring those maps up to date with the
+/// cell styles (a style edited or made after reading has a stale or no map).
+pub(crate) fn prepare_table_style_cell_maps(
+    document: &mut std::borrow::Cow<'_, crate::document::CadDocument>,
+) {
+    use crate::objects::{DataObjectData, ObjectType};
+    let stale = document.objects.iter().any(|(handle, object)| {
+        let ObjectType::TableStyle(style) = object else {
+            return false;
+        };
+        if style.modern_overrides.is_empty() {
+            return false;
+        }
+        let stored = document
+            .extension_dictionary_handle(*handle)
+            .and_then(|dictionary| match document.objects.get(&dictionary) {
+                Some(ObjectType::Dictionary(entries)) => entries.get(CELL_STYLE_MAP_KEY),
+                _ => None,
+            })
+            .and_then(|map| match document.objects.get(&map) {
+                Some(ObjectType::DataObject(object)) => match &object.data {
+                    DataObjectData::CellStyleMap(map) => Some(&map.cells),
+                    _ => None,
+                },
+                _ => None,
+            });
+        stored.is_none_or(|cells| {
+            !cells.iter().eq(style.modern_overrides.iter().map(|(_, cell)| cell))
+        })
+    });
+    if stale {
+        store_cell_style_maps(document.to_mut());
+    }
+}
+
+fn store_cell_style_maps(document: &mut crate::document::CadDocument) {
+    use crate::objects::{
+        CellStyleMap, DataObject, DataObjectData, ObjectType, XRecordEntry, XRecordValue,
+    };
+    use crate::types::DxfVersion;
     let with_row_types = document.version < DxfVersion::AC1021;
     let mut styles: Vec<_> = document
         .objects
@@ -849,14 +1364,7 @@ pub(crate) fn store_table_style_roundtrip(document: &mut crate::document::CadDoc
             _ => {
                 // The map takes its type code from the CELLSTYLEMAP class;
                 // without it the writer leaves the map out.
-                if !document.classes.contains("CELLSTYLEMAP") {
-                    if let Some(class) = crate::classes::default_classes()
-                        .into_iter()
-                        .find(|class| class.dxf_name == "CELLSTYLEMAP")
-                    {
-                        document.classes.add_or_update(class);
-                    }
-                }
+                document.classes.ensure_default("CELLSTYLEMAP");
                 let map = document.allocate_handle();
                 let mut object =
                     DataObject::new(DataObjectData::CellStyleMap(CellStyleMap { cells }));
@@ -950,14 +1458,14 @@ mod tests {
     fn test_data_row_style() {
         let style = TableStyle::default();
         assert!((style.data_row_style.text_height - 0.18).abs() < 1e-10);
-        assert_eq!(style.data_row_style.alignment, CellAlignment::MiddleCenter);
+        assert_eq!(style.data_row_style.alignment, CellAlignment::TopCenter);
     }
 
     #[test]
     fn test_header_row_style() {
         let style = TableStyle::default();
         assert!((style.header_row_style.text_height - 0.25).abs() < 1e-10);
-        assert_eq!(style.header_row_style.alignment, CellAlignment::TopCenter);
+        assert_eq!(style.header_row_style.alignment, CellAlignment::MiddleCenter);
     }
 
     #[test]
