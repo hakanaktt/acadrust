@@ -164,29 +164,60 @@ fn source_state_diagnostics(document: &CadDocument, diagnostics: &mut Vec<ReadDi
     }
     for style in document.text_styles.iter() {
         if !style.is_shape_file && style.name.trim().is_empty() {
-            report(
-                "unnamed-text-style",
-                style.handle,
-                "STYLE",
-                format!("Text style {:#X} has no name", style.handle.value()),
-            );
+            // The usual source: the shape-file style behind a complex
+            // linetype, stored without its shape-file flag. Naming the
+            // linetypes that draw from it gives the record its role.
+            let users: Vec<&str> = document
+                .line_types
+                .iter()
+                .filter(|linetype| {
+                    linetype.elements.iter().any(|element| {
+                        element
+                            .complex
+                            .as_ref()
+                            .is_some_and(|complex| complex.style_handle == style.handle)
+                    })
+                })
+                .map(|linetype| linetype.name.as_str())
+                .collect();
+            let message = if users.is_empty() {
+                format!("Text style {:#X} has no name", style.handle.value())
+            } else {
+                format!(
+                    "Text style {:#X} has no name and no shape-file flag, but linetypes {:?} draw shapes from it (font {:?})",
+                    style.handle.value(),
+                    users,
+                    style.font_file
+                )
+            };
+            report("unnamed-text-style", style.handle, "STYLE", message);
         }
     }
     for linetype in document.line_types.iter() {
         use crate::tables::linetype::LineTypeComplexContent;
-        let unstyled = linetype.elements.iter().position(|element| {
-            element.complex.as_ref().is_some_and(|complex| {
-                matches!(complex.content, LineTypeComplexContent::Shape { .. })
-                    && complex.style_handle.is_null()
+        let unstyled = linetype.elements.iter().enumerate().find_map(|(index, element)| {
+            element.complex.as_ref().and_then(|complex| match complex.content {
+                LineTypeComplexContent::Shape { shape_number } if complex.style_handle.is_null() => {
+                    Some((index, shape_number, complex.source_flags))
+                }
+                _ => None,
             })
         });
-        if let Some(index) = unstyled {
+        if let Some((index, shape_number, flags)) = unstyled {
+            // Shape 0 under the bare shape flag is what simple linetypes
+            // carry in some files on every segment: a flag with nothing to
+            // draw, as the record stores it.
+            let detail = if shape_number == 0 {
+                format!(" (shape flag {flags:#04X} set, shape number 0, no style: the record names no shape)")
+            } else {
+                format!(" (shape {shape_number})")
+            };
             report(
                 "shape-without-style",
                 linetype.handle,
                 "LTYPE",
                 format!(
-                    "Linetype {:?} draws a shape at element {index} without a shape-file style",
+                    "Linetype {:?} draws a shape at element {index} without a shape-file style{detail}",
                     linetype.name
                 ),
             );
