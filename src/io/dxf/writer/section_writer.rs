@@ -9333,12 +9333,22 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_double(142, obj.sea_level_elevation)?;
         self.writer
             .write_double(143, obj.coordinate_projection_radius)?;
-        self.writer
-            .write_string(301, &obj.coordinate_system_definition)?;
         if obj.version == 1 {
+            self.writer
+                .write_string(301, &obj.coordinate_system_definition)?;
             self.writer
                 .write_string(303, &obj.coordinate_system_datum)?;
             self.writer.write_string(304, &obj.coordinate_system_wkt)?;
+        } else {
+            // As AutoCAD: 303 chunks of 250 characters and a final 301, line
+            // breaks escaped as ^J (the definition is multi-line XML, longer
+            // than one DXF group).
+            let chunks = geodata_definition_chunks(&obj.coordinate_system_definition);
+            let last = chunks.len() - 1;
+            for (k, chunk) in chunks.iter().enumerate() {
+                let code = if k == last { 301 } else { 303 };
+                self.writer.write_xrecord_string(code, chunk)?;
+            }
         }
         self.writer.write_string(302, &obj.geo_rss_tag)?;
         self.writer.write_string(305, &obj.observation_from_tag)?;
@@ -12537,6 +12547,28 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         Ok(())
     }
+}
+
+/// Split a GEODATA coordinate-system definition into the chunks AutoCAD writes:
+/// 250 characters each (before escaping), at least one. A chunk never ends on a
+/// caret (as ezdxf): the reader decodes each chunk on its own and joins a
+/// trailing caret with the next chunk's first character.
+fn geodata_definition_chunks(definition: &str) -> Vec<String> {
+    let chars: Vec<char> = definition.chars().collect();
+    if chars.is_empty() {
+        return vec![String::new()];
+    }
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    while start < chars.len() {
+        let mut end = (start + 250).min(chars.len());
+        while end < chars.len() && end > start + 1 && chars[end - 1] == '^' {
+            end -= 1;
+        }
+        chunks.push(chars[start..end].iter().collect());
+        start = end;
+    }
+    chunks
 }
 
 /// Helper to extract invisible edge bits

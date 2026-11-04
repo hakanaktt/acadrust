@@ -8619,11 +8619,15 @@ impl<'a> SectionReader<'a> {
                     obj.coordinate_projection_radius =
                         pair.as_double().unwrap_or(obj.coordinate_projection_radius)
                 }
-                301 => obj.coordinate_system_definition = pair.value_string,
+                // The definition is 303 chunks and a final 301 (AutoCAD, ezdxf); a
+                // definition that fits one group has only the 301.
+                301 => {
+                    push_geodata_chunk(&mut obj.coordinate_system_definition, &pair.value_string)
+                }
                 303 if obj.version == 1 => obj.coordinate_system_datum = pair.value_string,
-                303 => obj
-                    .coordinate_system_definition
-                    .push_str(&pair.value_string),
+                303 => {
+                    push_geodata_chunk(&mut obj.coordinate_system_definition, &pair.value_string)
+                }
                 304 => obj.coordinate_system_wkt = pair.value_string,
                 302 => obj.geo_rss_tag = pair.value_string,
                 305 => obj.observation_from_tag = pair.value_string,
@@ -22262,6 +22266,36 @@ fn name_mleader_styles_from_dictionary(document: &mut CadDocument) {
             style.name = name;
         }
     }
+}
+
+/// Append one 303/301 chunk of a GEODATA coordinate-system definition.
+///
+/// Each value is decoded on its own, so a writer that splits the escaped text
+/// by length (libdxfrw: 255 bytes) can leave a `^J` cut in two: the first chunk
+/// ends with a lone `^` and the next starts with `J`. Joined, they are the
+/// control character the writer escaped. A writer that splits the decoded
+/// text (AutoCAD: 250 characters) never cuts an escape. A literal caret
+/// ending a chunk (escaped `^ `) followed by a chunk starting with `J`, `M`,
+/// `I` or a space is ambiguous here: it is read as a cut escape, which yields
+/// the control character, or for a space drops that space; writers avoid it by
+/// never ending a chunk on a caret (ezdxf).
+fn push_geodata_chunk(definition: &mut String, chunk: &str) {
+    if definition.ends_with('^') {
+        let control = match chunk.as_bytes().first() {
+            Some(b'J') => Some('\n'),
+            Some(b'M') => Some('\r'),
+            Some(b'I') => Some('\t'),
+            Some(b' ') => Some('^'),
+            _ => None,
+        };
+        if let Some(control) = control {
+            definition.pop();
+            definition.push(control);
+            definition.push_str(&chunk[1..]);
+            return;
+        }
+    }
+    definition.push_str(chunk);
 }
 
 /// Parse a colour group code's raw text into a 32-bit bit pattern.
