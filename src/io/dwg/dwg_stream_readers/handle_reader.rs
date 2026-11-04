@@ -236,6 +236,70 @@ mod tests {
         }
     }
 
+    /// One handle-map chunk holding `pairs`, with its size header and a
+    /// dummy CRC.
+    fn section(pairs: &[u8]) -> Vec<u8> {
+        let size = (2 + pairs.len()) as u16;
+        let mut data = size.to_be_bytes().to_vec();
+        data.extend_from_slice(pairs);
+        data.extend_from_slice(&[0x00, 0x00]);
+        data
+    }
+
+    /// Ten continuation bytes put the eleventh byte at a shift of 70 bits.
+    #[test]
+    fn a_handle_with_ten_continuation_bytes_is_an_error() {
+        let mut pairs = vec![0xFF; 10];
+        pairs.push(0x01); // last handle byte
+        pairs.push(0x00); // offset 0
+        assert!(read_handle_map(&section(&pairs)).is_err());
+    }
+
+    #[test]
+    fn an_offset_with_ten_continuation_bytes_is_an_error() {
+        let mut pairs = vec![0x01]; // handle 1
+        pairs.extend_from_slice(&[0xFF; 10]);
+        pairs.push(0x00); // last offset byte
+        assert!(read_handle_map(&section(&pairs)).is_err());
+    }
+
+    /// The tenth byte sits at a shift of 63, so only its lowest bit fits in
+    /// 64 bits. A 2 there would be dropped without a word.
+    #[test]
+    fn a_handle_whose_bits_do_not_fit_in_64_bits_is_an_error() {
+        let mut pairs = vec![0xFF; 9];
+        pairs.push(0x02);
+        pairs.push(0x00);
+        assert!(read_handle_map(&section(&pairs)).is_err());
+    }
+
+    #[test]
+    fn an_offset_whose_bits_do_not_fit_in_64_bits_is_an_error() {
+        let mut pairs = vec![0x01];
+        pairs.extend_from_slice(&[0xFF; 9]);
+        pairs.push(0x02); // final offset byte, value 2, positive
+        assert!(read_handle_map(&section(&pairs)).is_err());
+    }
+
+    /// Continuation bytes with no bits in them still may not run past bit 63.
+    #[test]
+    fn empty_continuation_bytes_past_64_bits_are_an_error() {
+        let mut pairs = vec![0x80; 10];
+        pairs.push(0x00);
+        pairs.push(0x00);
+        assert!(read_handle_map(&section(&pairs)).is_err());
+    }
+
+    /// Guard: the widest handle that does fit still reads.
+    #[test]
+    fn the_largest_handle_that_fits_still_reads() {
+        let mut pairs = vec![0xFF; 9];
+        pairs.push(0x01);
+        pairs.push(0x00);
+        let map = read_handle_map(&section(&pairs)).unwrap();
+        assert_eq!(map.get(&u64::MAX), Some(&0));
+    }
+
     /// These signatures are public API: downstream code names the std types.
     #[test]
     fn the_public_entry_points_take_and_return_std_maps() {
