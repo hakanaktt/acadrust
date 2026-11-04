@@ -1068,11 +1068,36 @@ impl<'a> DwgObjectWriter<'a> {
                 .iter()
                 .any(|a| a.handle.value() == app)
         };
+        // A blob whose decoded record has been edited since (an XDATA point
+        // moved with its entity, a plugin rewrite) gives way to the record.
+        let wide = self.dxf_version >= crate::types::DxfVersion::AC1021;
+        let edited = |app: u64, bytes: &[u8]| {
+            let Some(name) = self
+                .document
+                .app_ids
+                .iter()
+                .find(|a| a.handle.value() == app)
+                .map(|a| a.name.as_str())
+            else {
+                return false;
+            };
+            let Some(record) = xdata.get_record(name) else {
+                return false;
+            };
+            crate::io::dwg::eed_codec::decode_values(bytes, wide, |handle| {
+                self.document
+                    .layers
+                    .iter()
+                    .find(|layer| layer.handle.value() == handle)
+                    .map(|layer| layer.name.clone())
+            })
+            .is_some_and(|values| values != record.values)
+        };
         let raw_blocks: Vec<(u64, Vec<u8>)> = if eed_compatible {
             xdata
                 .raw_dwg_eed
                 .iter()
-                .filter(|(app, _)| registered(*app))
+                .filter(|(app, bytes)| registered(*app) && !edited(*app, bytes))
                 .cloned()
                 .collect()
         } else {

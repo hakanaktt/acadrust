@@ -384,7 +384,10 @@ fn find_subsequence(haystack: &[u8], needle: &[u8], from: usize) -> Option<usize
     if needle.is_empty() || haystack.len() < needle.len() {
         return None;
     }
-    (from..=haystack.len() - needle.len()).find(|&i| &haystack[i..i + needle.len()] == needle)
+    if from > haystack.len() - needle.len() {
+        return None;
+    }
+    memchr::memmem::find(&haystack[from..], needle).map(|i| from + i)
 }
 
 /// First index `>= from` where a SAB blob header magic begins — either
@@ -395,15 +398,20 @@ fn find_subsequence(haystack: &[u8], needle: &[u8], from: usize) -> Option<usize
 fn find_acds_magic(buf: &[u8], from: usize) -> Option<usize> {
     const ACIS_MAGIC: &[u8] = b"ACIS BinaryFile";
     const ASM_MAGIC: &[u8] = b"ASM BinaryFile";
-    let mut i = from;
-    while i < buf.len() {
-        if buf[i] == b'A' {
-            let rest = &buf[i..];
-            if rest.starts_with(ACIS_MAGIC) || rest.starts_with(ASM_MAGIC) {
-                return Some(i);
+    // Both magics end in " BinaryFile": find that with memchr, then check
+    // which magic it closes.
+    const TAIL: &[u8] = b" BinaryFile";
+    let finder = memchr::memmem::Finder::new(TAIL);
+    let mut at = from;
+    while at < buf.len() {
+        let hit = at + finder.find(&buf[at..])?;
+        for magic in [ACIS_MAGIC, ASM_MAGIC] {
+            let head = magic.len() - TAIL.len();
+            if hit >= from + head && buf[hit - head..].starts_with(magic) {
+                return Some(hit - head);
             }
         }
-        i += 1;
+        at = hit + 1;
     }
     None
 }
@@ -468,7 +476,7 @@ fn extract_acds_record_blobs(buf: &[u8], modeler_handles: &HashSet<u64>) -> Vec<
     // A large datastore splits its records across several `_data_` segments, so
     // process every one whose content is a record table (opens with `col0=0x14`).
     let mut scan = 0;
-    while let Some(i) = buf[scan..].windows(8).position(|w| w == marker) {
+    while let Some(i) = memchr::memmem::find(&buf[scan..], &marker) {
         let seg = scan + i;
         scan = seg + 8;
         if rd(seg + 48) != Some(0x14) {
@@ -511,10 +519,8 @@ fn extract_acds_record_blobs(buf: &[u8], modeler_handles: &HashSet<u64>) -> Vec<
                 continue;
             }
             let region = &buf[region_start..region_end.min(seg_end)];
-            let Some(mp) = region
-                .windows(14)
-                .position(|w| w == b"ASM BinaryFile")
-                .or_else(|| region.windows(15).position(|w| w == b"ACIS BinaryFile"))
+            let Some(mp) = memchr::memmem::find(region, b"ASM BinaryFile")
+                .or_else(|| memchr::memmem::find(region, b"ACIS BinaryFile"))
             else {
                 if modeler_handles.contains(&handle) {
                     orphan_handles.push(handle); // blob lives in an external segment
@@ -604,7 +610,7 @@ fn strip_acds_blob01_frames(blob: Vec<u8>) -> Vec<u8> {
     let mut clean = Vec::with_capacity(blob.len());
     let mut cursor = 0usize;
     let mut scan = 0usize;
-    while let Some(relative) = blob[scan..].windows(PREFIX.len()).position(|w| w == PREFIX) {
+    while let Some(relative) = memchr::memmem::find(&blob[scan..], PREFIX) {
         let start = scan + relative;
         let valid = start + FRAME_LEN <= blob.len()
             && blob.get(start + 12..start + 16) == Some(&1u32.to_le_bytes())
@@ -702,15 +708,51 @@ fn attach_acds_record_blobs(
     record_blobs: Vec<(u64, Vec<u8>)>,
 ) -> usize {
     document.acis_sab_handles.clear();
+    // Cleaning a blob and finding its reference point parses the whole SAB,
+    // and the blobs are independent: do that for all of them in parallel,
+    // then hand the results to the document in record order.
+    let prepared = super::parallel::map_ordered(record_blobs, |(h, blob)| {
+        let mut acis = crate::entities::solid3d::AcisData::default();
+        acds_fill(&mut acis, blob);
+        let centre = acis.geometry_centre().or_else(|| acis.placement_origin());
+        (h, acis, centre)
+    });
     let mut attached = 0usize;
-    for (h, blob) in record_blobs {
+    for (h, acis, centre) in prepared {
         if let Some(entity) = document.get_entity_mut(crate::Handle::new(h)) {
-            if acds_apply(entity, blob) {
+            if acds_apply_prepared(entity, acis, centre) {
                 attached += 1;
             }
         }
     }
     attached
+}
+
+/// [`acds_apply`] with the blob already cleaned into `acis` and its reference
+/// point already found, so the expensive part can run off the document.
+fn acds_apply_prepared(
+    entity: &mut crate::entities::EntityType,
+    acis: crate::entities::solid3d::AcisData,
+    centre: Option<crate::types::Vector3>,
+) -> bool {
+    use crate::entities::EntityType;
+    let (data, point) = match entity {
+        EntityType::Solid3D(s) => (&mut s.acis_data, Some(&mut s.point_of_reference)),
+        EntityType::Region(r) => (&mut r.acis_data, Some(&mut r.point_of_reference)),
+        EntityType::Body(b) => (&mut b.acis_data, Some(&mut b.point_of_reference)),
+        EntityType::Surface(s) => (&mut s.acis_data, None),
+        _ => return false,
+    };
+    data.sab_data = acis.sab_data;
+    data.sat_data = acis.sat_data;
+    data.is_binary = acis.is_binary;
+    data.version = acis.version;
+    if let (Some(point), Some(centre)) = (point, centre) {
+        if *point == crate::types::Vector3::ZERO {
+            *point = centre;
+        }
+    }
+    true
 }
 
 /// Attach order-extracted AcDs SAB blobs when no record table is parseable: pair
@@ -3620,8 +3662,35 @@ impl std::fmt::Display for CrcExtractionReport {
 
 #[cfg(test)]
 mod dwg_reader_tests {
-    use super::{extract_acds_record_blobs, section_name_from_field, ACIS_END_MARKER};
+    use super::{
+        extract_acds_record_blobs, find_acds_magic, find_subsequence, section_name_from_field,
+        ACIS_END_MARKER,
+    };
     use std::collections::HashSet;
+
+    #[test]
+    fn find_subsequence_starts_at_from() {
+        let hay = b"abcabcabc";
+        assert_eq!(find_subsequence(hay, b"abc", 0), Some(0));
+        assert_eq!(find_subsequence(hay, b"abc", 1), Some(3));
+        assert_eq!(find_subsequence(hay, b"abc", 6), Some(6));
+        assert_eq!(find_subsequence(hay, b"abc", 7), None);
+        assert_eq!(find_subsequence(hay, b"abc", 100), None);
+        assert_eq!(find_subsequence(hay, b"", 0), None);
+        assert_eq!(find_subsequence(b"ab", b"abc", 0), None);
+    }
+
+    #[test]
+    fn find_acds_magic_finds_either_magic_from_an_offset() {
+        let buf = b"xx ASM BinaryFile yy ACIS BinaryFile zz";
+        assert_eq!(find_acds_magic(buf, 0), Some(3));
+        assert_eq!(find_acds_magic(buf, 4), Some(21));
+        assert_eq!(find_acds_magic(buf, 22), None);
+        // A tail with neither magic in front of it is not a match.
+        assert_eq!(find_acds_magic(b"xx BinaryFile", 0), None);
+        // A magic that starts before `from` is not reported.
+        assert_eq!(find_acds_magic(b"ASM BinaryFile", 1), None);
+    }
 
     fn field(prefix: &[u8]) -> [u8; 64] {
         let mut b = [0u8; 64];

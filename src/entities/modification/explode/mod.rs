@@ -232,6 +232,7 @@ mod text;
 
 pub(crate) use dimensions::explode_dimension_with_style;
 use dimensions::*;
+pub(crate) use hatch::hatch_area;
 use leaders::*;
 use meshes::*;
 use modeler::*;

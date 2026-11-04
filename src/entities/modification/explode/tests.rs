@@ -129,6 +129,25 @@ fn test_explode_planar_lines_convert_ocs_to_wcs() {
 }
 
 #[test]
+fn test_explode_polyline2d_sits_at_its_elevation() {
+    let normal = Vector3::UNIT_X;
+    let mut heavy = Polyline2D::new();
+    heavy.normal = normal;
+    heavy.elevation = 2.0;
+    heavy.thickness = -4.0;
+    heavy.add_vertex(Vertex2D::new(Vector3::new(0.0, 0.0, 0.0)));
+    heavy.add_vertex(Vertex2D::new(Vector3::new(10.0, 0.0, 0.0)));
+    let parts = EntityType::Polyline2D(heavy).explode();
+    let [EntityType::Line(line)] = &parts[..] else {
+        panic!("expected one line, got {parts:?}");
+    };
+    let to_wcs = Matrix3::arbitrary_axis(normal);
+    assert_eq!(line.start, to_wcs * Vector3::new(0.0, 0.0, 2.0));
+    assert_eq!(line.end, to_wcs * Vector3::new(10.0, 0.0, 2.0));
+    assert_eq!(line.thickness, -4.0);
+}
+
+#[test]
 fn test_explode_hatch_clockwise_elliptic_edge_uses_geometric_parameters() {
     let mut path = BoundaryPath::new();
     path.edges.push(BoundaryEdge::EllipticArc(
@@ -834,6 +853,34 @@ fn test_document_explode_dimension_resolves_named_dimstyle() {
     assert_eq!(text.height, 4.0);
     assert_eq!(text.value, "\\A1;6");
     assert!(parts.iter().all(|part| part.common().handle.is_valid()));
+}
+
+#[test]
+fn test_document_explode_dimension_gives_its_block() {
+    let mut document = crate::document::CadDocument::new();
+    let mut block = crate::tables::BlockRecord::new("*D1");
+    block.handle = document.allocate_handle();
+    let mut drawn = Line::from_points(Vector3::new(0.0, 5.0, 0.0), Vector3::new(2.0, 5.0, 0.0));
+    drawn.common.color = Color::ByBlock;
+    let line = document.add_entity(EntityType::Line(drawn)).unwrap();
+    block.entity_handles.push(line);
+    document.block_records.add(block).unwrap();
+
+    let mut dimension = DimensionLinear::horizontal(Vector3::ZERO, Vector3::new(2.0, 0.0, 0.0));
+    dimension.definition_point = Vector3::new(0.0, 5.0, 0.0);
+    dimension.base.block_name = "*D1".to_owned();
+    dimension.base.common.color = Color::from_index(3);
+    let parts = document.explode_entity(&EntityType::Dimension(Box::new(Dimension::Linear(
+        dimension,
+    ))));
+
+    let [EntityType::Line(part)] = &parts[..] else {
+        panic!("expected the block's line, got {parts:?}");
+    };
+    assert_eq!(part.start, Vector3::new(0.0, 5.0, 0.0));
+    assert_eq!(part.end, Vector3::new(2.0, 5.0, 0.0));
+    assert_eq!(part.common.color, Color::from_index(3));
+    assert!(part.common.handle.is_valid());
 }
 
 #[test]

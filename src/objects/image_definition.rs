@@ -100,6 +100,10 @@ pub struct ImageDefinition {
     /// Academic year (internal field, DXF code 290)
     /// Note: This appears in DXF but purpose is unclear
     pub class_version: i32,
+    /// Reactor handles (`{ACAD_REACTORS}`): one IMAGEDEF_REACTOR per image
+    /// that uses this definition
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub reactors: Vec<Handle>,
 }
 
 impl ImageDefinition {
@@ -120,6 +124,7 @@ impl ImageDefinition {
             pixel_size: (0.0, 0.0),
             resolution_unit: ResolutionUnit::None,
             class_version: Self::DEFAULT_CLASS_VERSION,
+            reactors: Vec::new(),
         }
     }
 
@@ -134,6 +139,7 @@ impl ImageDefinition {
             pixel_size: (1.0, 1.0),
             resolution_unit: ResolutionUnit::None,
             class_version: Self::DEFAULT_CLASS_VERSION,
+            reactors: Vec::new(),
         }
     }
 

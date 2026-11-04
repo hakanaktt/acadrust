@@ -302,6 +302,10 @@ pub(crate) fn translate_viewport(e: &mut Viewport, offset: Vector3) {
 // ── AttributeDefinition ──────────────────────────────────────────────────────
 
 pub(crate) fn translate_attribute_definition(e: &mut AttributeDefinition, offset: Vector3) {
+    // A multiline attribute draws its embedded MTEXT (world space): move it too.
+    if let Some(m) = e.embedded_mtext.as_deref_mut() {
+        translate_mtext(m, offset);
+    }
     let offset = ocs_offset(e.normal, offset);
     e.insertion_point = e.insertion_point + offset;
     e.alignment_point = e.alignment_point + offset;
@@ -310,6 +314,9 @@ pub(crate) fn translate_attribute_definition(e: &mut AttributeDefinition, offset
 // ── AttributeEntity ──────────────────────────────────────────────────────────
 
 pub(crate) fn translate_attribute_entity(e: &mut AttributeEntity, offset: Vector3) {
+    if let Some(m) = e.embedded_mtext.as_deref_mut() {
+        translate_mtext(m, offset);
+    }
     let offset = ocs_offset(e.normal, offset);
     e.insertion_point = e.insertion_point + offset;
     e.alignment_point = e.alignment_point + offset;
@@ -608,6 +615,18 @@ impl EntityType {
             EntityType::Extended(e) => e.translate(offset),
             EntityType::Unknown(e) => translate_unknown(e, offset),
         }
+        // XDATA positions follow the entity; records that stay put keep theirs.
+        // The verbatim record would write the old values back.
+        if !matches!(
+            self,
+            EntityType::SectionSymbol(_) | EntityType::ViewBorder(_) | EntityType::Unknown(_)
+        ) && self
+            .common_mut()
+            .extended_data
+            .apply_transform(&Transform::from_translation(offset))
+        {
+            self.common_mut().raw_record = None;
+        }
     }
 }
 
@@ -675,6 +694,26 @@ mod tests {
             ins.attributes[0].alignment_point,
             Vector3::new(17.0, 10.0, 0.0)
         );
+    }
+
+    #[test]
+    fn test_translate_multiline_attribute_moves_embedded_mtext() {
+        let mut att = AttributeEntity::new("T".into(), "V".into());
+        let mut m = MText::new();
+        m.insertion_point = Vector3::new(100.0, 102.5, 0.0);
+        att.embedded_mtext = Some(Box::new(m));
+        let mut def = AttributeDefinition::new("T".into(), "P".into(), "V".into());
+        def.embedded_mtext = att.embedded_mtext.clone();
+
+        // A MOVE used to leave the drawn MTEXT of a multiline attribute behind.
+        translate_attribute_entity(&mut att, Vector3::new(50.0, 0.0, 0.0));
+        translate_attribute_definition(&mut def, Vector3::new(50.0, 0.0, 0.0));
+        for m in [&att.embedded_mtext, &def.embedded_mtext] {
+            assert_eq!(
+                m.as_ref().unwrap().insertion_point,
+                Vector3::new(150.0, 102.5, 0.0)
+            );
+        }
     }
 
     #[test]

@@ -943,7 +943,26 @@ impl<'a> DwgObjectWriter<'a> {
     // â”€â”€ MText â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     fn write_mtext(&mut self, e: &MText) {
-        self.entity_preamble(common::OBJ_MTEXT, &e.common);
+        // R2007 to R2013 have no column fields in the MTEXT record; AutoCAD
+        // keeps the columns in ACAD extended data (as in DXF). A drawing read
+        // from AutoCAD already holds that block and keeps it as it is.
+        let column_xdata = (self.version.r2007_plus()
+            && !self.version.r2018_plus(self.dxf_version)
+            && !crate::entities::mtext::MTextColumnData::in_acad_xdata(&e.common.extended_data))
+        .then(|| e.column_data.to_acad_xdata())
+        .flatten();
+        if let Some(columns) = column_xdata {
+            let mut common = e.common.clone();
+            let mut record = common
+                .extended_data
+                .remove_record("ACAD")
+                .unwrap_or_else(|| crate::xdata::ExtendedDataRecord::new("ACAD"));
+            record.values.extend(columns.values);
+            common.extended_data.add_record(record);
+            self.entity_preamble(common::OBJ_MTEXT, &common);
+        } else {
+            self.entity_preamble(common::OBJ_MTEXT, &e.common);
+        }
 
         // Insertion pt 3BD 10
         self.writer.write_3bit_double(e.insertion_point);
@@ -3495,8 +3514,9 @@ impl<'a> DwgObjectWriter<'a> {
         self.writer.write_cm_true_color(&style.background_color);
         self.writer.write_bit_long(style.layout_flags.bits() as i32);
         self.write_table_style_content_format(style);
-        self.writer.write_bit_short(style.margin_override_flags);
-        if style.margin_override_flags & 0x01 != 0 {
+        let margin_flags = style.margin_flags_to_write();
+        self.writer.write_bit_short(margin_flags);
+        if margin_flags & 0x01 != 0 {
             self.writer.write_bit_double(style.margin_top);
             self.writer.write_bit_double(style.margin_left);
             self.writer.write_bit_double(style.margin_bottom);
@@ -3598,7 +3618,9 @@ impl<'a> DwgObjectWriter<'a> {
         for data in &cell.custom_data_items {
             self.write_table_custom_data(data);
         }
-        self.writer.write_bit_long(cell.has_linked_data as i32);
+        // Linked-data flags: the anchor of a linked range is stored as 3.
+        self.writer
+            .write_bit_long(if cell.has_linked_data { 3 } else { 0 });
         if cell.has_linked_data {
             self.writer.write_handle(
                 DwgReferenceType::HardPointer,
@@ -3778,7 +3800,7 @@ impl<'a> DwgObjectWriter<'a> {
         }
         self.writer.write_bit(cell.style.is_some());
         if let Some(style) = &cell.style {
-            let flags = style.override_flags;
+            let flags = style.legacy_override_flags();
             self.writer.write_bit_long(flags);
             self.writer.write_byte(cell.virtual_edge as u8);
             if flags & 0x01 != 0 {

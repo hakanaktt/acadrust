@@ -1,8 +1,9 @@
+use crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader;
 use crate::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
 use crate::objects::{
     DgnLineStyleData, DgnLsComponentData, DgnLsComponentType, DgnLsCompoundComponent,
     DgnLsCompoundEntry, DgnLsInternalComponent, DgnLsPhaseMode, DgnLsPointComponent, DgnLsStroke,
-    DgnLsStrokePattern, DgnLsSymbolComponent, DgnLsSymbolReference,
+    DgnLsStrokePattern, DgnLsSymbolComponent, DgnLsSymbolReference, ProxyPayload,
 };
 use crate::types::Handle;
 
@@ -16,20 +17,22 @@ pub fn read_dgn_line_style_data(
     let component_uid = read_uid(reader);
 
     if dxf_name.eq_ignore_ascii_case("LSDEFINITION") {
+        let (fields, undecoded_fields) = read_definition_fields(reader);
         return Some(DgnLineStyleData::Definition {
             description,
             version,
             style_number: component_type,
             component_uid,
-            is_continuous: reader.read_bit(),
-            unit_definition: reader.read_bit_double(),
-            unit_scale: reader.read_bit_double(),
-            units_type: reader.read_bit_long(),
-            is_element: reader.read_bit(),
-            is_physical: reader.read_bit(),
-            is_scale_independent: reader.read_bit(),
-            is_snappable: reader.read_bit(),
+            is_continuous: fields.is_continuous,
+            unit_definition: fields.unit_definition,
+            unit_scale: fields.unit_scale,
+            units_type: fields.units_type,
+            is_element: fields.is_element,
+            is_physical: fields.is_physical,
+            is_scale_independent: fields.is_scale_independent,
+            is_snappable: fields.is_snappable,
             root_component: Handle::from(reader.read_handle()),
+            undecoded_fields,
             properties: Vec::new(),
         });
     }
@@ -112,6 +115,58 @@ pub fn read_dgn_line_style_data(
         component,
         properties: Vec::new(),
     })
+}
+
+#[derive(Default)]
+struct DefinitionFields {
+    is_continuous: bool,
+    unit_definition: f64,
+    unit_scale: f64,
+    units_type: i32,
+    is_element: bool,
+    is_physical: bool,
+    is_scale_independent: bool,
+    is_snappable: bool,
+}
+
+/// The fields of an `AcDbLSDefinition` after its UID.
+///
+/// They are read in the order the writer uses, from a copy of the bits that
+/// are left in the main stream. Some drawings store bits that do not fit
+/// that order (the record ends inside a field), and the order they do fit is
+/// not known. Those bits are returned as they are, so the definition still
+/// reads and is written back unchanged, and the fields keep their defaults.
+fn read_definition_fields(
+    reader: &mut DwgMergedReader,
+) -> (DefinitionFields, Option<ProxyPayload>) {
+    let bit_count = reader.main_remaining_bits().max(0);
+    let mut data = vec![0u8; (bit_count as usize).div_ceil(8)];
+    for bit_index in 0..bit_count as usize {
+        if reader.read_bit() {
+            data[bit_index / 8] |= 0x80 >> (bit_index % 8);
+        }
+    }
+
+    let mut bits = DwgBitReader::new(data.clone(), reader.main().version(), reader.dxf_version());
+    bits.set_end_bit(bit_count);
+    let fields = DefinitionFields {
+        is_continuous: bits.read_bit(),
+        unit_definition: bits.read_bit_double(),
+        unit_scale: bits.read_bit_double(),
+        units_type: bits.read_bit_long(),
+        is_element: bits.read_bit(),
+        is_physical: bits.read_bit(),
+        is_scale_independent: bits.read_bit(),
+        is_snappable: bits.read_bit(),
+    };
+    if bits.check_error().is_ok() {
+        (fields, None)
+    } else {
+        (
+            DefinitionFields::default(),
+            Some(ProxyPayload::from_bits(&data, bit_count as u32)),
+        )
+    }
 }
 
 fn read_uid(reader: &mut DwgMergedReader) -> [u8; 16] {

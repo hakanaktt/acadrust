@@ -92,8 +92,10 @@ impl EntityType {
             EntityType::Leader(e) => mirror_leader(e, transform),
             EntityType::Shape(e) => mirror_shape(e, transform),
             EntityType::Hatch(e) => mirror_hatch_with_options(e, transform, options),
-            _ => self.apply_transform(transform),
+            // Carries its XDATA along itself.
+            _ => return self.apply_transform(transform),
         }
+        let _ = self.common_mut().extended_data.apply_transform(transform);
         if super::transform::transform_invalidates_raw_record(self) {
             self.common_mut().raw_record = None;
         }

@@ -32,6 +32,167 @@ fn viewport_override_base_layer(name: &str) -> Option<&str> {
         .then_some(base)
 }
 use crate::io::dwg::dwg_stream_readers::object_reader::{DwgObjectReader, EntityCommonData};
+
+/// Report relationships the file itself leaves inconsistent, which the reader
+/// keeps as stored rather than repairing (acadrust #135-#142): block markers
+/// without a record or disagreeing with it, layer references that resolve to
+/// nothing or to another name, nonfinite polyline bulges, unnamed text styles
+/// and shape segments without a style. A consumer that requires a consistent
+/// drawing reads the reason here instead of inferring it from a clean read.
+fn source_state_diagnostics(document: &CadDocument, diagnostics: &mut Vec<ReadDiagnostic>) {
+    let mut report = |code: &str, handle: Handle, kind: &str, message: String| {
+        let mut diagnostic = ReadDiagnostic::new(code, ReadStage::Objects, message);
+        diagnostic.record_handle = Some(handle.value());
+        diagnostic.record_type = Some(kind.to_string());
+        push_read_diagnostic(diagnostics, diagnostic);
+    };
+    let mut marker_names: HashMap<Handle, &str> = HashMap::new();
+    for record in document.block_records.iter() {
+        for marker in [record.block_entity_handle, record.block_end_handle] {
+            if marker.is_null() {
+                continue;
+            }
+            if let Some(other) = marker_names.insert(marker, &record.name) {
+                report(
+                    "shared-block-marker",
+                    marker,
+                    "BLOCK_RECORD",
+                    format!(
+                        "Block records {other:?} and {:?} both name marker {:#X}",
+                        record.name,
+                        marker.value()
+                    ),
+                );
+            }
+        }
+    }
+    for entity in &document.entities {
+        let common = entity.common();
+        let handle = common.handle;
+        let (kind, is_end) = match entity.as_ref() {
+            EntityType::Block(_) => ("BLOCK", false),
+            EntityType::BlockEnd(_) => ("ENDBLK", true),
+            _ => continue,
+        };
+        let record = document
+            .block_records
+            .iter()
+            .find(|record| record.handle == common.owner_handle);
+        match record {
+            None => report(
+                "orphan-block-marker",
+                handle,
+                kind,
+                format!(
+                    "{kind} {:#X} is owned by {:#X}, which is not a block record",
+                    handle.value(),
+                    common.owner_handle.value()
+                ),
+            ),
+            Some(record) => {
+                let named = match is_end {
+                    true => record.block_end_handle,
+                    false => record.block_entity_handle,
+                };
+                if named != handle {
+                    report(
+                        "block-marker-mismatch",
+                        handle,
+                        kind,
+                        format!(
+                            "Block record {:?} names {kind} {:#X}, but the {kind} it owns is {:#X}",
+                            record.name,
+                            named.value(),
+                            handle.value()
+                        ),
+                    );
+                }
+            }
+        }
+    }
+    for entity in document.entities() {
+        let common = entity.common();
+        let kind = entity.as_entity().entity_type();
+        if let Some(layer_handle) = common.layer_handle.filter(|handle| !handle.is_null()) {
+            match document.layers.iter().find(|layer| layer.handle == layer_handle) {
+                None => report(
+                    "unresolved-layer-handle",
+                    common.handle,
+                    kind,
+                    format!(
+                        "{kind} {:#X} references layer {:#X}, which is not in the layer table; it reads as layer {:?}",
+                        common.handle.value(),
+                        layer_handle.value(),
+                        common.layer
+                    ),
+                ),
+                // A hidden per-viewport override record reads as its base layer.
+                Some(layer)
+                    if !layer.name.eq_ignore_ascii_case(&common.layer)
+                        && !viewport_override_base_layer(&layer.name)
+                            .is_some_and(|base| base.eq_ignore_ascii_case(&common.layer)) =>
+                {
+                    report(
+                        "layer-name-handle-mismatch",
+                        common.handle,
+                        kind,
+                        format!(
+                            "{kind} {:#X} names layer {:?} but references {:?} ({:#X})",
+                            common.handle.value(),
+                            common.layer,
+                            layer.name,
+                            layer_handle.value()
+                        ),
+                    )
+                }
+                Some(_) => {}
+            }
+        }
+        if let EntityType::LwPolyline(polyline) = entity {
+            if let Some(index) = polyline.vertices.iter().position(|v| !v.bulge.is_finite()) {
+                report(
+                    "nonfinite-bulge",
+                    common.handle,
+                    kind,
+                    format!(
+                        "LWPOLYLINE {:#X} stores a nonfinite bulge at vertex {index}",
+                        common.handle.value()
+                    ),
+                );
+            }
+        }
+    }
+    for style in document.text_styles.iter() {
+        if !style.is_shape_file && style.name.trim().is_empty() {
+            report(
+                "unnamed-text-style",
+                style.handle,
+                "STYLE",
+                format!("Text style {:#X} has no name", style.handle.value()),
+            );
+        }
+    }
+    for linetype in document.line_types.iter() {
+        use crate::tables::linetype::LineTypeComplexContent;
+        let unstyled = linetype.elements.iter().position(|element| {
+            element.complex.as_ref().is_some_and(|complex| {
+                matches!(complex.content, LineTypeComplexContent::Shape { .. })
+                    && complex.style_handle.is_null()
+            })
+        });
+        if let Some(index) = unstyled {
+            report(
+                "shape-without-style",
+                linetype.handle,
+                "LTYPE",
+                format!(
+                    "Linetype {:?} draws a shape at element {index} without a shape-file style",
+                    linetype.name
+                ),
+            );
+        }
+    }
+}
 use crate::io::dwg::parallel::{filter_map_slice, for_each_mut, map_chunks, map_mut, worker_count};
 use crate::io::read::{push_read_diagnostic, ReadDiagnostic, ReadStage};
 use crate::notification::{NotificationCollection, NotificationType};
@@ -895,8 +1056,25 @@ impl DwgDocumentBuilder {
         });
         let mut record_catalog = Vec::with_capacity(catalog_results.len());
         let mut skipped_catalog = 0usize;
+        let mut unused_records = 0usize;
         for result in catalog_results {
             match result {
+                Ok((handle, _, _, type_code)) if is_unused_type(type_code) => {
+                    unused_records += 1;
+                    if unused_records == 1 {
+                        let mut diagnostic = ReadDiagnostic::new(
+                            "unused-object-type",
+                            ReadStage::RecordStream,
+                            format!(
+                                "Ignored a record of unused DWG object type {type_code} at handle {handle:#X}"
+                            ),
+                        );
+                        diagnostic.section = Some("AcDb:AcDbObjects".to_string());
+                        diagnostic.record_handle = Some(handle);
+                        diagnostic.record_type = Some(type_code.to_string());
+                        push_read_diagnostic(&mut diagnostics, diagnostic);
+                    }
+                }
                 Ok(record) => record_catalog.push(record),
                 Err((handle, source_offset, failure)) => {
                     skipped_catalog = skipped_catalog.saturating_add(1);
@@ -2612,6 +2790,7 @@ impl DwgDocumentBuilder {
         }
 
         document.resolve_xrecord_names();
+        document.resolve_table_style_names();
 
         // Advanced material properties are not stored in the AcDbMaterial
         // object body. ACAD keeps them in the ADVMATERIAL XRECORD owned by
@@ -2754,73 +2933,6 @@ impl DwgDocumentBuilder {
         if max_from_reader + 1 > document.header.handle_seed {
             document.header.handle_seed = max_from_reader + 1;
         }
-
-        // BLOCK/ENDBLK markers are structural records and are not retained in
-        // the flat entity arena. Damaged files can point a block record at a
-        // handle now occupied by a table entry or ordinary object (0718 uses
-        // its Standard DIMSTYLE as *Paper_Space's BLOCK marker). Rehome only
-        // those colliding markers; the writer will synthesize their records.
-        let mut occupied: std::collections::HashSet<Handle> =
-            document.objects.keys().copied().collect();
-        occupied.extend(document.entities().filter_map(|entity| {
-            (!matches!(
-                entity,
-                crate::entities::EntityType::Block(_) | crate::entities::EntityType::BlockEnd(_)
-            ))
-            .then_some(entity.common().handle)
-        }));
-        for handle in [
-            document.block_records.handle(),
-            document.layers.handle(),
-            document.text_styles.handle(),
-            document.line_types.handle(),
-            document.views.handle(),
-            document.ucss.handle(),
-            document.vports.handle(),
-            document.app_ids.handle(),
-            document.dim_styles.handle(),
-            document.vx_table.handle(),
-        ] {
-            occupied.insert(handle);
-        }
-        occupied.extend(document.block_records.iter().map(|record| record.handle));
-        occupied.extend(document.layers.iter().map(|entry| entry.handle));
-        occupied.extend(document.text_styles.iter().map(|entry| entry.handle));
-        occupied.extend(document.line_types.iter().map(|entry| entry.handle));
-        occupied.extend(document.views.iter().map(|entry| entry.handle));
-        occupied.extend(document.ucss.iter().map(|entry| entry.handle));
-        occupied.extend(document.vports.iter().map(|entry| entry.handle));
-        occupied.extend(document.app_ids.iter().map(|entry| entry.handle));
-        occupied.extend(document.dim_styles.iter().map(|entry| entry.handle));
-        occupied.extend(document.vx_table.iter().map(|entry| entry.handle));
-        fn allocate_marker(
-            occupied: &mut std::collections::HashSet<Handle>,
-            next_handle: &mut u64,
-        ) -> Handle {
-            while occupied.contains(&Handle::new(*next_handle)) {
-                *next_handle += 1;
-            }
-            let handle = Handle::new(*next_handle);
-            *next_handle += 1;
-            occupied.insert(handle);
-            handle
-        }
-        let mut next_handle = document.header.handle_seed.max(1);
-        for record in document.block_records.iter_mut() {
-            if record.block_entity_handle.is_null()
-                || occupied.contains(&record.block_entity_handle)
-            {
-                record.block_entity_handle = allocate_marker(&mut occupied, &mut next_handle);
-            } else {
-                occupied.insert(record.block_entity_handle);
-            }
-            if record.block_end_handle.is_null() || occupied.contains(&record.block_end_handle) {
-                record.block_end_handle = allocate_marker(&mut occupied, &mut next_handle);
-            } else {
-                occupied.insert(record.block_end_handle);
-            }
-        }
-        document.header.handle_seed = document.header.handle_seed.max(next_handle);
 
         // ── Post-pass: Resolve root dictionary handle ──────────────────
         //
@@ -3228,6 +3340,18 @@ impl DwgDocumentBuilder {
                             xd.add_record(record);
                         }
                     }
+                    // R2007 to R2013 keep MTEXT columns in ACAD extended data.
+                    let columns = match entity.as_ref() {
+                        EntityType::MText(m) if m.column_data.column_type == 0 => {
+                            MTextColumnData::from_acad_xdata(&m.common.extended_data)
+                        }
+                        _ => None,
+                    };
+                    if let Some(columns) = columns {
+                        if let EntityType::MText(m) = std::sync::Arc::make_mut(entity) {
+                            m.column_data = columns;
+                        }
+                    }
                     if self.obj_reader.version().r13_14_only() {
                         if let EntityType::Viewport(viewport) = std::sync::Arc::make_mut(entity) {
                             crate::io::dwg::legacy_viewport::restore(viewport, |name| {
@@ -3556,6 +3680,77 @@ impl DwgDocumentBuilder {
             }
         }
 
+        // Runs after the handle-collision repair: a default entry seeded at a
+        // low handle before the file was read (the ACAD APPID, Standard
+        // styles) is moved off a source handle there, so it no longer looks
+        // like it occupies the file's own BLOCK/ENDBLK marker (acadrust #136).
+        // BLOCK/ENDBLK markers are structural records and are not retained in
+        // the flat entity arena. Damaged files can point a block record at a
+        // handle now occupied by a table entry or ordinary object (0718 uses
+        // its Standard DIMSTYLE as *Paper_Space's BLOCK marker). Rehome only
+        // those colliding markers; the writer will synthesize their records.
+        let mut occupied: std::collections::HashSet<Handle> =
+            document.objects.keys().copied().collect();
+        occupied.extend(document.entities().filter_map(|entity| {
+            (!matches!(
+                entity,
+                crate::entities::EntityType::Block(_) | crate::entities::EntityType::BlockEnd(_)
+            ))
+            .then_some(entity.common().handle)
+        }));
+        for handle in [
+            document.block_records.handle(),
+            document.layers.handle(),
+            document.text_styles.handle(),
+            document.line_types.handle(),
+            document.views.handle(),
+            document.ucss.handle(),
+            document.vports.handle(),
+            document.app_ids.handle(),
+            document.dim_styles.handle(),
+            document.vx_table.handle(),
+        ] {
+            occupied.insert(handle);
+        }
+        occupied.extend(document.block_records.iter().map(|record| record.handle));
+        occupied.extend(document.layers.iter().map(|entry| entry.handle));
+        occupied.extend(document.text_styles.iter().map(|entry| entry.handle));
+        occupied.extend(document.line_types.iter().map(|entry| entry.handle));
+        occupied.extend(document.views.iter().map(|entry| entry.handle));
+        occupied.extend(document.ucss.iter().map(|entry| entry.handle));
+        occupied.extend(document.vports.iter().map(|entry| entry.handle));
+        occupied.extend(document.app_ids.iter().map(|entry| entry.handle));
+        occupied.extend(document.dim_styles.iter().map(|entry| entry.handle));
+        occupied.extend(document.vx_table.iter().map(|entry| entry.handle));
+        fn allocate_marker(
+            occupied: &mut std::collections::HashSet<Handle>,
+            next_handle: &mut u64,
+        ) -> Handle {
+            while occupied.contains(&Handle::new(*next_handle)) {
+                *next_handle += 1;
+            }
+            let handle = Handle::new(*next_handle);
+            *next_handle += 1;
+            occupied.insert(handle);
+            handle
+        }
+        let mut next_handle = document.header.handle_seed.max(1);
+        for record in document.block_records.iter_mut() {
+            if record.block_entity_handle.is_null()
+                || occupied.contains(&record.block_entity_handle)
+            {
+                record.block_entity_handle = allocate_marker(&mut occupied, &mut next_handle);
+            } else {
+                occupied.insert(record.block_entity_handle);
+            }
+            if record.block_end_handle.is_null() || occupied.contains(&record.block_end_handle) {
+                record.block_end_handle = allocate_marker(&mut occupied, &mut next_handle);
+            } else {
+                occupied.insert(record.block_end_handle);
+            }
+        }
+        document.header.handle_seed = document.header.handle_seed.max(next_handle);
+
         document.header.current_layer_name = document
             .layers
             .iter()
@@ -3741,6 +3936,8 @@ impl DwgDocumentBuilder {
                 build_started.elapsed().as_secs_f64() * 1000.0,
             );
         }
+
+        source_state_diagnostics(document, &mut diagnostics);
 
         DwgBuildOutcome {
             notifications: self.notifications,
@@ -6037,10 +6234,12 @@ impl DwgDocumentBuilder {
                             } else {
                                 // Pre-R2018: a bit_short index into the linetypes
                                 // in table order (ByBlock/ByLayer excluded);
-                                // 0x7FFF means ByLayer.
+                                // 0x7FFF means ByLayer, 0x7FFE ByBlock.
                                 let idx = e.linetype_index_or_handle;
                                 if idx == 0x7FFF {
                                     "ByLayer".to_string()
+                                } else if idx == 0x7FFE {
+                                    "ByBlock".to_string()
                                 } else {
                                     maps.linetype_order
                                         .get(idx as usize)
@@ -6252,6 +6451,12 @@ impl DwgDocumentBuilder {
                     obj.pixel_size = (data.pixel_size.x, data.pixel_size.y);
                     obj.resolution_unit =
                         crate::objects::ResolutionUnit::from_code(data.resolution_unit as i32);
+                    // The list lives on the object; drop the side-map copy so
+                    // the writer cannot bring back a list the caller emptied.
+                    obj.reactors = document
+                        .reactors_by_handle
+                        .remove(&Handle::from(handle))
+                        .unwrap_or_default();
                     document.objects.insert(
                         Handle::from(handle),
                         crate::objects::ObjectType::ImageDefinition(obj),
@@ -6285,7 +6490,9 @@ impl DwgDocumentBuilder {
                             crate::objects::ImageDefinitionReactor {
                                 handle: Handle::from(handle),
                                 owner: owner_handle,
-                                image_handle: Handle::NULL,
+                                // The image owns its reactor; DWG stores no
+                                // separate image link.
+                                image_handle: owner_handle,
                             },
                         ),
                     );
@@ -6540,6 +6747,7 @@ impl DwgDocumentBuilder {
                                         text_data_bits,
                                     ),
                                 object_ids,
+                                dxf_data: Vec::new(),
                             },
                         )
                     };
@@ -6589,7 +6797,7 @@ impl DwgDocumentBuilder {
                         crate::objects::ObjectType::Material(obj),
                     );
                 }
-                OBJ_TABLECONTENT => {
+                OBJ_TABLECONTENT | OBJ_TABLETEMPLATE => {
                     let (
                         name,
                         description,
@@ -6629,10 +6837,12 @@ impl DwgDocumentBuilder {
                     obj.sync_cells_from_merged_ranges();
                     obj.table_style_handle = (style_handle != 0)
                         .then(|| Handle::from(style_handle));
-                    document.objects.insert(
-                        Handle::from(handle),
-                        crate::objects::ObjectType::TableContent(obj),
-                    );
+                    let object = if type_code == OBJ_TABLETEMPLATE {
+                        crate::objects::ObjectType::TableTemplate(obj)
+                    } else {
+                        crate::objects::ObjectType::TableContent(obj)
+                    };
+                    document.objects.insert(Handle::from(handle), object);
                 }
                 OBJ_TABLESTYLE => {
                     let mut obj =
@@ -8714,7 +8924,13 @@ fn map_dimension_common(
     base.insertion_point =
         crate::types::Vector3::new(common.insertion_point.x, common.insertion_point.y, 0.0);
     base.style_name = maps.dimstyle_name(common.dimstyle_handle);
-    base.block_name = maps.block_name(common.block_handle);
+    // A dimension without a geometry block (null handle) keeps an empty name:
+    // a made-up `*U0` would be written back as a reference to a missing block.
+    base.block_name = if common.block_handle == 0 {
+        String::new()
+    } else {
+        maps.block_name(common.block_handle)
+    };
 }
 
 fn map_entity_common(

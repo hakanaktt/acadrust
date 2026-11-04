@@ -158,6 +158,8 @@ pub const OBJ_DBCOLOR: i16 = 0x81; // 129
 pub const OBJ_WIPEOUTVARIABLES: i16 = 0x82; // 130
 pub const OBJ_TABLECONTENT: i16 = 0x69; // 105
 pub const OBJ_TABLESTYLE: i16 = 0x6A; // 106
+// AcDbTableTemplate is always class-based; 0x8F is a free internal sentinel.
+pub const OBJ_TABLETEMPLATE: i16 = 0x8F; // 143
                                       // GEODATA has no fixed DWG type code (it is always class-based); 0x83 is a free
                                       // internal sentinel used by the class-number map + builder dispatch.
 pub const OBJ_GEODATA: i16 = 0x83; // 131
@@ -197,7 +199,14 @@ pub fn is_entity_type(type_code: i16) -> bool {
 
 /// Returns true if the type code is a table control or entry.
 pub fn is_table_type(type_code: i16) -> bool {
-    matches!(type_code, 48..=71)
+    matches!(type_code, 48..=53 | 56..=57 | 60..=71)
+}
+
+/// Type codes inside the table range that name no object type (54, 55, 58,
+/// 59). Some writers leave records of these codes behind; they carry no
+/// object data and other readers ignore them.
+pub fn is_unused_type(type_code: i16) -> bool {
+    matches!(type_code, 54 | 55 | 58 | 59)
 }
 
 /// Map a DXF class name to the internal OBJ_* type code constant.
@@ -270,6 +279,7 @@ pub fn dxf_name_to_type_code(dxf_name: &str) -> Option<i16> {
         "DBCOLOR" => Some(OBJ_DBCOLOR),
         "WIPEOUTVARIABLES" => Some(OBJ_WIPEOUTVARIABLES),
         "TABLECONTENT" => Some(OBJ_TABLECONTENT),
+        "TABLETEMPLATE" => Some(OBJ_TABLETEMPLATE),
         "TABLESTYLE" => Some(OBJ_TABLESTYLE),
         "VISUALSTYLE" => Some(OBJ_VISUALSTYLE),
         "MATERIAL" => Some(OBJ_MATERIAL),

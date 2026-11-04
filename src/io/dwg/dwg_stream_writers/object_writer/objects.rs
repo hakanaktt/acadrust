@@ -304,6 +304,7 @@ pub(crate) fn object_class_names(object: &ObjectType) -> Vec<std::borrow::Cow<'_
         ObjectType::GeoData(_) => "GEODATA",
         ObjectType::BlockVisibilityParameter(_) => "BLOCKVISIBILITYPARAMETER",
         ObjectType::TableContent(_) => "TABLECONTENT",
+        ObjectType::TableTemplate(_) => "TABLETEMPLATE",
         ObjectType::VisualStyle(_) => "VISUALSTYLE",
         ObjectType::Material(_) => "MATERIAL",
         ObjectType::TableStyle(_) => "TABLESTYLE",
@@ -480,6 +481,7 @@ impl<'a> DwgObjectWriter<'a> {
             ObjectType::VisualStyle(v) => self.write_visual_style(v),
             ObjectType::Material(m) => self.write_material(m),
             ObjectType::TableContent(t) => self.write_table_content_object(t),
+            ObjectType::TableTemplate(t) => self.write_table_template_object(t),
             ObjectType::TableStyle(t) => self.write_table_style(t),
             ObjectType::Unknown {
                 handle,
@@ -565,20 +567,25 @@ impl<'a> DwgObjectWriter<'a> {
                 is_scale_independent,
                 is_snappable,
                 root_component,
+                undecoded_fields,
                 ..
             } => {
                 self.writer.write_variable_text(description);
                 self.writer.write_bit_long(*version);
                 self.writer.write_bit_long(*style_number);
                 self.writer.write_bytes(component_uid);
-                self.writer.write_bit(*is_continuous);
-                self.writer.write_bit_double(*unit_definition);
-                self.writer.write_bit_double(*unit_scale);
-                self.writer.write_bit_long(*units_type);
-                self.writer.write_bit(*is_element);
-                self.writer.write_bit(*is_physical);
-                self.writer.write_bit(*is_scale_independent);
-                self.writer.write_bit(*is_snappable);
+                if let Some(fields) = undecoded_fields {
+                    self.write_registered_payload(fields, &[]);
+                } else {
+                    self.writer.write_bit(*is_continuous);
+                    self.writer.write_bit_double(*unit_definition);
+                    self.writer.write_bit_double(*unit_scale);
+                    self.writer.write_bit_long(*units_type);
+                    self.writer.write_bit(*is_element);
+                    self.writer.write_bit(*is_physical);
+                    self.writer.write_bit(*is_scale_independent);
+                    self.writer.write_bit(*is_snappable);
+                }
                 self.writer
                     .write_handle(DwgReferenceType::HardPointer, root_component.value());
             }
@@ -1144,6 +1151,26 @@ impl<'a> DwgObjectWriter<'a> {
         }
     }
 
+    fn write_table_template_object(&mut self, value: &crate::entities::Table) {
+        let Some(type_code) = self
+            .document
+            .classes
+            .get_by_name("TABLETEMPLATE")
+            .map(|class| class.class_number)
+        else {
+            return;
+        };
+        self.write_common_non_entity_data(
+            type_code,
+            value.common.handle,
+            value.common.owner_handle,
+            &value.common.reactors,
+            &value.common.xdictionary_handle,
+        );
+        self.write_table_content(value);
+        self.register_object(value.common.handle);
+    }
+
     fn write_table_content_object(&mut self, value: &crate::entities::Table) {
         let type_code = self.class_type_code("TABLECONTENT", common::OBJ_TABLECONTENT);
         self.write_common_non_entity_data(
@@ -1169,7 +1196,7 @@ impl<'a> DwgObjectWriter<'a> {
         self.write_common_non_entity_data(type_code, value.handle, value.owner_handle, &[], &None);
 
         if !self.version.r2010_plus() {
-            self.writer.write_variable_text(&value.name);
+            self.writer.write_variable_text(&value.description);
             self.writer.write_bit_short(value.flow_direction as i16);
             self.writer
                 .write_bit_short(value.effective_flags().bits() & !STALE_TABLE_STYLE_FLAG);
@@ -1182,7 +1209,7 @@ impl<'a> DwgObjectWriter<'a> {
             self.write_legacy_table_row_style(&value.header_row_style);
         } else {
             self.writer.write_byte(value.modern_unknown_byte);
-            self.writer.write_variable_text(&value.name);
+            self.writer.write_variable_text(&value.description);
             // The R2010+ flags field carries the table style flags.
             self.writer
                 .write_bit_long((value.effective_flags().bits() & !STALE_TABLE_STYLE_FLAG) as i32);
@@ -1191,16 +1218,24 @@ impl<'a> DwgObjectWriter<'a> {
                 DwgReferenceType::HardOwnership,
                 value.modern_cell_style_handle.value(),
             );
+            // The base "Table" cell style carries the table direction.
+            let flow_up = value.flow_direction == crate::objects::TableFlowDirection::Up;
             if let Some(style) = &value.modern_style {
+                let mut style = style.clone();
+                if flow_up {
+                    style.cell_style.merge_flags |= TableCellStyleData::FLOW_UP;
+                } else {
+                    style.cell_style.merge_flags &= !TableCellStyleData::FLOW_UP;
+                }
                 // The base "Table" style normally has no text style and keeps
                 // none; only a dangling one is resolved.
                 if style.cell_style.content_format.text_style.is_null() {
-                    self.write_named_table_cell_style(style);
+                    self.write_named_table_cell_style(&style);
                 } else {
-                    self.write_table_style_named_cell_style(style);
+                    self.write_table_style_named_cell_style(&style);
                 }
             } else {
-                self.write_default_modern_table_cell_style(value);
+                self.write_default_modern_table_cell_style(value, flow_up);
             }
             if value.modern_overrides.is_empty() {
                 self.write_default_modern_table_row_styles(value);
@@ -1218,13 +1253,11 @@ impl<'a> DwgObjectWriter<'a> {
     }
 
     fn write_legacy_table_row_style(&mut self, value: &RowCellStyle) {
-        self.writer.write_handle(
-            DwgReferenceType::HardPointer,
-            value
-                .text_style_handle
-                .map(|handle| handle.value())
-                .unwrap_or(0),
-        );
+        // A row read from DXF only has the text style name: resolve it as
+        // the R2010+ cell styles do, never write a null text style.
+        let text_style = self.resolve_table_row_text_style(value);
+        self.writer
+            .write_handle(DwgReferenceType::HardPointer, text_style.value());
         self.writer.write_bit_double(value.text_height);
         self.writer.write_bit_short(value.alignment as i16);
         self.writer.write_cm_true_color(&value.text_color);
@@ -1325,10 +1358,11 @@ impl<'a> DwgObjectWriter<'a> {
         self.write_named_table_cell_style(&value);
     }
 
-    fn write_default_modern_table_cell_style(&mut self, value: &TableStyle) {
+    fn write_default_modern_table_cell_style(&mut self, value: &TableStyle, flow_up: bool) {
         let cell_style = TableCellStyleData {
             style_type: 5,
             data_flags: 1,
+            merge_flags: if flow_up { TableCellStyleData::FLOW_UP } else { 0 },
             background_color: Color::None,
             content_layout: 1,
             content_format: TableContentFormat {
@@ -1368,64 +1402,27 @@ impl<'a> DwgObjectWriter<'a> {
         self.writer.write_bit_long(rows.len() as i32);
         for (key, row, id, style_type, name, merge_flags) in rows {
             self.writer.write_bit_long(key);
-            self.write_default_modern_table_row_style(row, id, style_type, name, merge_flags);
+            self.write_default_modern_table_row_style(
+                row,
+                (id, style_type, name, merge_flags),
+                (
+                    value.horizontal_margin,
+                    value.vertical_margin,
+                    value.data_row_style.text_height,
+                ),
+            );
         }
     }
 
     fn write_default_modern_table_row_style(
         &mut self,
         row: &RowCellStyle,
-        id: i32,
-        style_type: i32,
-        name: &str,
-        merge_flags: i32,
+        (id, style_type, name, merge_flags): (i32, i32, &str, i32),
+        margins: (f64, f64, f64),
     ) {
-        // R2010+ edge order; the grid flag is set for a hidden edge, the
-        // reverse of the row border's `is_invisible`.
-        let borders = [
-            (1, &row.top_border),
-            (2, &row.horizontal_inside_border),
-            (4, &row.bottom_border),
-            (8, &row.left_border),
-            (16, &row.vertical_inside_border),
-            (32, &row.right_border),
-        ]
-        .into_iter()
-        .map(|(index_mask, border)| TableGridFormat {
-            index_mask,
-            border: TableCellBorder {
-                is_invisible: !border.is_invisible,
-                ..border.clone()
-            },
-            line_type: Handle::NULL,
-        })
-        .collect();
-
+        let text_style = self.resolve_table_row_text_style(row);
         self.write_named_table_cell_style(&NamedTableCellStyle {
-            cell_style: TableCellStyleData {
-                style_type: 5,
-                data_flags: 1,
-                merge_flags,
-                background_color: if row.fill_enabled {
-                    row.fill_color
-                } else {
-                    Color::None
-                },
-                content_layout: 1,
-                content_format: TableContentFormat {
-                    value_data_type: row.data_type,
-                    value_unit_type: row.unit_type,
-                    value_format_string: row.format_string.clone(),
-                    block_scale: 1.0,
-                    cell_alignment: row.alignment as i32,
-                    content_color: row.text_color,
-                    text_style: self.resolve_table_row_text_style(row),
-                    text_height: row.text_height,
-                    ..TableContentFormat::default()
-                },
-                borders,
-                ..TableCellStyleData::default()
-            },
+            cell_style: crate::objects::row_cell_style(row, margins, text_style, merge_flags),
             id,
             style_type,
             name: name.to_string(),
@@ -2083,10 +2080,13 @@ impl<'a> DwgObjectWriter<'a> {
                     .write_handle(DwgReferenceType::HardPointer, lt_handle.value());
             } else {
                 // Before R2018: bit_short index into the linetypes in table
-                // order, EXCLUDING ByBlock/ByLayer; 0x7FFF means ByLayer.
+                // order, EXCLUDING ByBlock/ByLayer; 0x7FFF means ByLayer,
+                // 0x7FFE ByBlock.
                 let idx: i16 =
                     if elem.linetype.is_empty() || elem.linetype.eq_ignore_ascii_case("ByLayer") {
                         0x7FFF
+                    } else if elem.linetype.eq_ignore_ascii_case("ByBlock") {
+                        0x7FFE
                     } else {
                         self.document
                             .line_types
@@ -2218,7 +2218,13 @@ impl<'a> DwgObjectWriter<'a> {
     fn write_image_definition(&mut self, def: &ImageDefinition) {
         // UNLISTED type — always use DXF class number (500+)
         let type_code = self.class_type_code("IMAGEDEF", common::OBJ_IMAGEDEF);
-        let reactors = self.document.image_definition_reactors(def);
+        // The definition's own list when the document keeps one, else the
+        // reactors derived from the drawing.
+        let reactors = if def.reactors.is_empty() {
+            self.document.image_definition_reactors(def)
+        } else {
+            def.reactors.clone()
+        };
         self.write_common_non_entity_data(type_code, def.handle, def.owner, &reactors, &None);
 
         self.writer.write_bit_long(def.class_version);
@@ -2552,7 +2558,7 @@ impl<'a> DwgObjectWriter<'a> {
         }
         if let ObjectContextKind::HatchView(value) = &obj.kind {
             self.writer
-                .write_handle(DwgReferenceType::SoftOwnership, value.view.value());
+                .write_handle(DwgReferenceType::SoftPointer, value.view.value());
         }
         if let ObjectContextKind::MTextAttribute(value) = &obj.kind {
             if value.enable_context {
@@ -3029,5 +3035,66 @@ impl<'a> DwgObjectWriter<'a> {
         self.writer.write_bit_short(wv.display_frame);
 
         self.register_object(wv.handle);
+    }
+}
+
+#[cfg(test)]
+mod annotation_reference_tests {
+    use super::*;
+    use crate::io::dwg::dwg_stream_readers::object_reader::DwgObjectReader;
+    use crate::objects::{HatchScaleContext, HatchViewContext};
+    use crate::types::{DxfVersion, Vector3};
+    use crate::CadDocument;
+
+    #[test]
+    fn hatch_view_target_is_a_soft_pointer_including_null() {
+        // Native 2527 source: all 84 HatchView target references use code 4,
+        // including 77 nulls. A view context references, rather than owns,
+        // its Paper viewport. Checking only the resolved handle misses this.
+        for target in [0, 0x1003] {
+            let mut document = CadDocument::new();
+            document.version = DxfVersion::AC1032;
+            document.register_object_context_class("ACDB_HATCHVIEWCONTEXTDATA_CLASS");
+            let context = ObjectContextData {
+                handle: Handle::from(0x1000u64),
+                owner_handle: Handle::from(0x1001u64),
+                reactors: vec![Handle::from(0x1001u64)],
+                xdictionary_handle: None,
+                class_version: 4,
+                has_file_to_extension_dictionary: true,
+                uses_legacy_mleader_context_base: false,
+                is_default: true,
+                scale: Handle::from(0x1002u64),
+                kind: ObjectContextKind::HatchView(HatchViewContext {
+                    hatch: HatchScaleContext {
+                        pattern_lines: vec![],
+                        pattern_scale: 1.0,
+                        pattern_base: Vector3::ZERO,
+                        loops: vec![],
+                    },
+                    view: Handle::from(target),
+                    view_normal: Vector3::UNIT_Z,
+                    view_rotation: 0.0,
+                    evaluate_hatch: false,
+                }),
+            };
+            let mut writer = DwgObjectWriter::new(&document).expect("writer");
+            writer.write_object_context_data(&context);
+            let offset = writer.handle_map()[0].1 as usize;
+            let reader = DwgObjectReader::new(
+                writer.output().to_vec(),
+                document.version,
+                Default::default(),
+            )
+            .expect("object reader");
+            let (kind, mut record) = reader.read_record_at(offset).expect("record");
+            let common = reader.read_common_non_entity_data(&mut record, kind);
+            assert_eq!(common.owner_handle, context.owner_handle.value());
+            assert_eq!(record.read_handle(), context.scale.value());
+            let (actual_target, reference_type) =
+                record.read_handle_reference(context.handle.value());
+            assert_eq!(actual_target, target);
+            assert_eq!(reference_type, DwgReferenceType::SoftPointer);
+        }
     }
 }

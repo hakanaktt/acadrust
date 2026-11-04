@@ -3,7 +3,7 @@
 //! Extended data is application-specific data that can be attached to entities.
 //! It is stored in DXF files using group codes 1000-1071.
 
-use crate::types::{Handle, Vector3};
+use crate::types::{Handle, Transform, Vector3};
 
 /// Extended data value types
 #[derive(Debug, Clone, PartialEq)]
@@ -217,11 +217,136 @@ impl ExtendedData {
     pub fn clear(&mut self) {
         self.records.clear();
     }
+
+    /// Carry the world-space values along when their entity is transformed,
+    /// as AutoCAD does: a 1011 position takes the whole transform, a 1012
+    /// displacement and a 1013 direction its linear part (the direction
+    /// stays a unit vector), and a 1041 distance and 1042 scale factor its
+    /// scale. Other values are left alone. Returns whether anything changed;
+    /// the DWG writer then writes the edited records instead of the blobs
+    /// read from the file. A caller that transforms an entity itself drops
+    /// the entity's verbatim `raw_record` when this returns true, as
+    /// `EntityType::translate` does.
+    pub fn apply_transform(&mut self, transform: &Transform) -> bool {
+        let scale = transform.matrix.to_matrix3().determinant().abs().cbrt();
+        let mut changed = false;
+        for record in &mut self.records {
+            for value in &mut record.values {
+                let new = match value {
+                    XDataValue::Position3D(p) => XDataValue::Position3D(transform.apply(*p)),
+                    XDataValue::Displacement3D(d) => {
+                        XDataValue::Displacement3D(transform.apply_rotation(*d))
+                    }
+                    XDataValue::Direction3D(d) => {
+                        let moved = transform.apply_rotation(*d);
+                        if moved.length() > f64::EPSILON {
+                            XDataValue::Direction3D(moved.normalize())
+                        } else {
+                            continue;
+                        }
+                    }
+                    XDataValue::Distance(v) => XDataValue::Distance(*v * scale),
+                    XDataValue::ScaleFactor(v) => XDataValue::ScaleFactor(*v * scale),
+                    _ => continue,
+                };
+                if new != *value {
+                    *value = new;
+                    changed = true;
+                }
+            }
+        }
+        changed
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn line_with_world_xdata() -> crate::entities::EntityType {
+        let mut line = crate::entities::Line::from_points(
+            Vector3::new(100.0, 100.0, 0.0),
+            Vector3::new(110.0, 100.0, 0.0),
+        );
+        let mut record = ExtendedDataRecord::new("MYAPP");
+        record.add_value(XDataValue::String("tag".into()));
+        record.add_value(XDataValue::Point3D(Vector3::new(1.0, 2.0, 0.0)));
+        record.add_value(XDataValue::Position3D(Vector3::new(100.0, 100.0, 0.0)));
+        record.add_value(XDataValue::Displacement3D(Vector3::new(1.0, 0.0, 0.0)));
+        record.add_value(XDataValue::Direction3D(Vector3::new(1.0, 0.0, 0.0)));
+        record.add_value(XDataValue::Distance(5.0));
+        record.add_value(XDataValue::ScaleFactor(1.0));
+        record.add_value(XDataValue::Real(5.0));
+        line.common.extended_data.add_record(record);
+        crate::entities::EntityType::Line(line)
+    }
+
+    fn values(entity: &crate::entities::EntityType) -> Vec<XDataValue> {
+        entity.common().extended_data.records()[0].values.clone()
+    }
+
+    fn close(a: Vector3, b: Vector3) -> bool {
+        (a - b).length() < 1e-9
+    }
+
+    #[test]
+    fn move_carries_world_positions_only() {
+        let mut entity = line_with_world_xdata();
+        entity.translate(Vector3::new(50.0, 0.0, 0.0));
+        let v = values(&entity);
+        assert_eq!(v[1], XDataValue::Point3D(Vector3::new(1.0, 2.0, 0.0)));
+        assert_eq!(
+            v[2],
+            XDataValue::Position3D(Vector3::new(150.0, 100.0, 0.0))
+        );
+        assert_eq!(
+            v[3],
+            XDataValue::Displacement3D(Vector3::new(1.0, 0.0, 0.0))
+        );
+        assert_eq!(v[5], XDataValue::Distance(5.0));
+    }
+
+    #[test]
+    fn rotate_and_scale_carry_vectors_and_distances() {
+        let mut entity = line_with_world_xdata();
+        entity.rotate(Vector3::new(100.0, 100.0, 0.0), std::f64::consts::FRAC_PI_2);
+        entity.apply_scaling_with_origin(
+            Vector3::new(2.0, 2.0, 2.0),
+            Vector3::new(100.0, 100.0, 0.0),
+        );
+        let v = values(&entity);
+        let XDataValue::Position3D(p) = v[2] else {
+            panic!()
+        };
+        assert!(close(p, Vector3::new(100.0, 100.0, 0.0)));
+        let XDataValue::Displacement3D(d) = v[3] else {
+            panic!()
+        };
+        assert!(close(d, Vector3::new(0.0, 2.0, 0.0)), "{d:?}");
+        let XDataValue::Direction3D(d) = v[4] else {
+            panic!()
+        };
+        assert!(close(d, Vector3::new(0.0, 1.0, 0.0)), "{d:?}");
+        let XDataValue::Distance(d) = v[5] else {
+            panic!()
+        };
+        assert!((d - 10.0).abs() < 1e-9);
+        let XDataValue::ScaleFactor(f) = v[6] else {
+            panic!()
+        };
+        assert!((f - 2.0).abs() < 1e-9);
+        assert_eq!(v[7], XDataValue::Real(5.0));
+    }
+
+    #[test]
+    fn mirror_carries_world_positions() {
+        let mut entity = line_with_world_xdata();
+        entity.mirror(Vector3::new(0.0, 0.0, 0.0), Vector3::new(0.0, 1.0, 0.0));
+        let XDataValue::Position3D(p) = values(&entity)[2] else {
+            panic!()
+        };
+        assert!(close(p, Vector3::new(-100.0, 100.0, 0.0)), "{p:?}");
+    }
 
     #[test]
     fn test_xdata_record_creation() {

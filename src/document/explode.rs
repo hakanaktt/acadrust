@@ -563,6 +563,7 @@ impl CadDocument {
     /// entity's extension dictionary.  A source extension dictionary is a
     /// hard-owned graph; retaining its handle under a copied entity makes the
     /// original and exploded entity race for the same owner at DWG save time.
+    /// A modeler copy's solid history is hard-owned too; the copy drops it.
     fn detach_exploded_parts(&mut self, parts: &mut [EntityType], owner: Handle) {
         for part in parts {
             let old = part.common().handle;
@@ -578,6 +579,7 @@ impl CadDocument {
             if !cloned_dictionary {
                 part.common_mut().xdictionary_handle = None;
             }
+            Insert::detach_exploded_history(part);
 
             if let EntityType::Insert(nested) = part {
                 for attribute in &mut nested.attributes {

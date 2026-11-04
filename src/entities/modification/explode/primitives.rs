@@ -54,10 +54,19 @@ pub(super) fn explode_polyline2d(pl: &Polyline2D) -> Vec<EntityType> {
         let v1 = &pl.vertices[i];
         let v2 = &pl.vertices[(i + 1) % n];
 
+        // A 2D polyline sits at its own elevation; a vertex's Z stands in
+        // only where the polyline records none.
+        let z = |vertex: &Vertex2D| {
+            if pl.elevation != 0.0 {
+                pl.elevation
+            } else {
+                vertex.location.z
+            }
+        };
         if v1.bulge.abs() < 1e-10 {
             result.push(line_entity(
-                to_wcs * v1.location,
-                to_wcs * v2.location,
+                to_wcs * Vector3::new(v1.location.x, v1.location.y, z(v1)),
+                to_wcs * Vector3::new(v2.location.x, v2.location.y, z(v2)),
                 pl.thickness,
                 pl.normal,
                 &pl.common,
@@ -69,7 +78,7 @@ pub(super) fn explode_polyline2d(pl: &Polyline2D) -> Vec<EntityType> {
                 v2.location.x,
                 v2.location.y,
                 v1.bulge,
-                v1.location.z,
+                z(v1),
                 pl.thickness,
                 pl.normal,
                 &pl.common,

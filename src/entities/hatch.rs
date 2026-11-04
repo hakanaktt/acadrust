@@ -509,6 +509,12 @@ pub struct Hatch {
 }
 
 impl Hatch {
+    /// The filled area: each boundary loop's exact area, islands taken out
+    /// as the hatch style says. `None` without a closed loop.
+    pub fn area(&self) -> Option<f64> {
+        crate::entities::modification::explode::hatch_area(self)
+    }
+
     /// Create a new hatch entity
     pub fn new() -> Self {
         Self {

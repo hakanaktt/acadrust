@@ -45,7 +45,11 @@ pub(super) fn write(spline: &Spline) -> i16 {
                 || (!spline.fit_points.is_empty() && spline.control_points.is_empty())
         }
     };
-    if fit_method || spline.knot_parameterization != 0 || spline.dxf_flags & PARAMETERIZATION != 0 {
+    // Parameterization belongs to the fit method. A control-point spline gets
+    // it only when its own DXF carried it: a DWG keeps a parameterization on
+    // every spline, and writing it for a control-point one sets a bit (256,
+    // Custom) other writers leave clear (#149).
+    if fit_method || spline.dxf_flags & PARAMETERIZATION != 0 {
         flags |= match spline.knot_parameterization {
             0 => 32,
             1 => 64,

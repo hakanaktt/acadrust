@@ -2008,6 +2008,11 @@ fn decode_spline_definition(
         Some("cyl_spl_sur") => {
             decode_extruded_surface(document, tokens).or_else(|| decode_fitted_extrusion(tokens))
         }
+        // A revolution saved without its fitted spline keeps only the
+        // profile, the axis and the ranges; it is rebuilt exactly from them.
+        Some("rot_spl_sur") => {
+            decode_revolved_surface(document, tokens).or_else(|| decode_bspline_surface(tokens))
+        }
         _ => decode_bspline_surface(tokens),
     }
 }
@@ -2164,6 +2169,181 @@ fn decode_extruded_surface(
     })
 }
 
+/// Whether a sweep's `u` range runs against its profile's parameter. ACIS
+/// often saves sum and revolution surfaces with `u = -t`, and their pcurves
+/// then hold `-t`: a spline built along `t` leaves every pcurve off the
+/// surface and the face unmeshed. `None` when the range fits neither.
+fn runs_against_profile(degree: usize, knots: &[f64], low: f64, high: f64) -> Option<bool> {
+    let first = *knots.get(degree)?;
+    let last = *knots.get(knots.len().checked_sub(degree + 1)?)?;
+    let tolerance = 1e-6 * (last - first).abs().max(1.0);
+    let within = |from: f64, to: f64| low >= from - tolerance && high <= to + tolerance;
+    if within(first, last) {
+        Some(false)
+    } else if within(-last, -first) {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+/// The profile run backwards, `c(-t)`: knots negated and reversed, controls
+/// reversed.
+fn reversed_profile(knots: &[f64], controls: &[[f64; 4]]) -> (Vec<f64>, Vec<[f64; 4]>) {
+    (
+        knots.iter().rev().map(|knot| -knot).collect(),
+        controls.iter().rev().copied().collect(),
+    )
+}
+
+/// A profile turned about an axis (`rot_spl_sur`), as an exact rational
+/// spline: each profile control point sweeps a circular arc of at most a
+/// quarter turn per span. `v` is the angle, turned right-handed about the
+/// axis direction; the arc spans meet it exactly at their ends only, and
+/// between them the angle is close.
+fn decode_revolved_surface(
+    document: &SatDocument,
+    source: &[SatToken],
+) -> Option<SatBSplineSurface> {
+    let tokens = scalar_tokens(source);
+    let name = tokens
+        .iter()
+        .position(|t| t.as_ident() == Some("rot_spl_sur"))?;
+    // Only a spline profile, saved forward: `intcurve F { ... }`.
+    let curve = (name + 1..tokens.len()).find(|&i| tokens[i].as_ident().is_some())?;
+    if tokens[curve].as_ident() != Some("intcurve")
+        || matches!(tokens.get(curve + 1)?.as_ident(), Some("T" | "reversed"))
+    {
+        return None;
+    }
+    let open = (curve + 1..=curve + 2)
+        .find(|&i| tokens.get(i).and_then(SatToken::as_ident) == Some("{"))?;
+    let close = block_close(&tokens, open)?;
+    let profile = scalar_tokens(subtype_definition(document, &tokens, open)?);
+    let (degree_u, knots, controls) = decode_bspline_curve(&profile)?;
+    let closed = profile
+        .iter()
+        .position(|t| matches!(t.as_ident(), Some("nubs" | "nurbs")))
+        .and_then(|start| profile.get(start + 2))
+        .is_some_and(|form| {
+            matches!(form.as_ident(), Some("closed" | "periodic"))
+                || form.as_integer().is_some_and(|value| value != 0)
+        });
+    // The profile's own interval: `I` unset, or `F` and a bound, per end.
+    let mut index = close + 1;
+    for _ in 0..2 {
+        index += if tokens.get(index)?.as_ident()? == "I" {
+            1
+        } else {
+            2
+        };
+    }
+    let read3 = |i: usize| -> Option<[f64; 3]> {
+        Some([
+            tokens.get(i)?.as_float()?,
+            tokens.get(i + 1)?.as_float()?,
+            tokens.get(i + 2)?.as_float()?,
+        ])
+    };
+    let root = read3(index)?;
+    let axis = read3(index + 3)?;
+    // Level 2 saves only the ranges; a fitted spline (level 0) is read by
+    // the caller instead.
+    let range = index + 6;
+    if tokens.get(range)?.as_integer()? != 2 {
+        return None;
+    }
+    let mut bounds = [0.0; 4];
+    for (slot, bound) in bounds.iter_mut().enumerate() {
+        if tokens.get(range + 1 + slot * 2)?.as_float().is_some() {
+            return None;
+        }
+        *bound = tokens.get(range + 2 + slot * 2)?.as_float()?;
+    }
+    let length = (axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]).sqrt();
+    let sweep = bounds[3] - bounds[2];
+    if !bounds
+        .iter()
+        .chain(root.iter())
+        .chain(axis.iter())
+        .all(|value| value.is_finite())
+        || length < 1e-12
+        || !(sweep > 0.0 && sweep <= 2.0 * std::f64::consts::PI + 1e-9)
+    {
+        return None;
+    }
+    let axis = [axis[0] / length, axis[1] / length, axis[2] / length];
+
+    let (u_knots, controls) = if runs_against_profile(degree_u, &knots, bounds[0], bounds[1])? {
+        reversed_profile(&knots, &controls)
+    } else {
+        (knots, controls)
+    };
+
+    let spans = (sweep / std::f64::consts::FRAC_PI_2 - 1e-9).ceil().max(1.0) as usize;
+    let step = sweep / spans as f64;
+    let mid_weight = (step / 2.0).cos();
+    let mut v_knots = vec![bounds[2]; 3];
+    for span in 1..spans {
+        let knot = bounds[2] + sweep * span as f64 / spans as f64;
+        v_knots.extend([knot, knot]);
+    }
+    v_knots.extend([bounds[3]; 3]);
+    // (angle, radius scale, weight) of each control row.
+    let mut rows = vec![(bounds[2], 1.0, 1.0)];
+    for span in 0..spans {
+        let start = bounds[2] + step * span as f64;
+        rows.push((start + step / 2.0, 1.0 / mid_weight, mid_weight));
+        rows.push((start + step, 1.0, 1.0));
+    }
+
+    let control_count_u = controls.len();
+    let mut control_points = Vec::with_capacity(control_count_u * rows.len());
+    for &(angle, scale, row_weight) in &rows {
+        let (sin, cos) = angle.sin_cos();
+        for p in &controls {
+            let w = p[3];
+            let point = [p[0] / w - root[0], p[1] / w - root[1], p[2] / w - root[2]];
+            let along = point[0] * axis[0] + point[1] * axis[1] + point[2] * axis[2];
+            let x = [
+                point[0] - axis[0] * along,
+                point[1] - axis[1] * along,
+                point[2] - axis[2] * along,
+            ];
+            let y = [
+                axis[1] * x[2] - axis[2] * x[1],
+                axis[2] * x[0] - axis[0] * x[2],
+                axis[0] * x[1] - axis[1] * x[0],
+            ];
+            let weight = w * row_weight;
+            let mut homogeneous = [0.0; 4];
+            for c in 0..3 {
+                let at = root[c] + axis[c] * along + scale * (x[c] * cos + y[c] * sin);
+                homogeneous[c] = at * weight;
+            }
+            homogeneous[3] = weight;
+            control_points.push(homogeneous);
+        }
+    }
+    let form = if closed { "closed" } else { "open" };
+    let full_turn = (sweep - 2.0 * std::f64::consts::PI).abs() < 1e-9;
+    Some(SatBSplineSurface {
+        rational: true,
+        degree_u,
+        degree_v: 2,
+        u_closure: Some(form.into()),
+        v_closure: Some(if full_turn { "closed" } else { "open" }.into()),
+        u_singularity: None,
+        v_singularity: None,
+        u_knots,
+        v_knots,
+        control_count_u,
+        control_count_v: rows.len(),
+        control_points,
+        fit_tolerance: Some(0.0),
+    })
+}
+
 /// A spline plus a straight curve is an exact tensor-product ruled surface.
 /// ACIS defines S(u,v) = C(u) + line(v) - origin; no fitting is required.
 fn decode_linear_sum_surface(source: &[SatToken]) -> Option<SatBSplineSurface> {
@@ -2241,6 +2421,12 @@ fn decode_linear_sum_surface(source: &[SatToken]) -> Option<SatBSplineSurface> {
     {
         return None;
     }
+    let (u_knots, controls) =
+        if runs_against_profile(degree_u, &u_knots, bounds[0], bounds[1]) == Some(true) {
+            reversed_profile(&u_knots, &controls)
+        } else {
+            (u_knots, controls)
+        };
     let control_count_u = controls.len();
     let mut control_points = Vec::with_capacity(control_count_u * 2);
     for v in [bounds[2], bounds[3]] {

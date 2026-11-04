@@ -773,6 +773,174 @@ fn point_segment_distance(p: Vector2, a: Vector2, b: Vector2) -> f64 {
     p.distance(&(a + v * t))
 }
 
+// ── area ─────────────────────────────────────────────────────────────────────
+
+/// The filled area of a hatch, as its `Area` property reports it: each loop's
+/// exact area (arcs and elliptic arcs integrated, splines finely sampled),
+/// with islands subtracted according to the hatch style.
+pub(crate) fn hatch_area(hatch: &Hatch) -> Option<f64> {
+    let loops: Vec<(f64, Vec<Vector2>)> = hatch
+        .paths
+        .iter()
+        .filter_map(|path| {
+            let polygon = path_polygon(path, &mut Bounds::empty());
+            (polygon.len() >= 3).then(|| (loop_area(path).abs(), polygon))
+        })
+        .collect();
+    if loops.is_empty() {
+        return None;
+    }
+    let total = loops
+        .iter()
+        .enumerate()
+        .map(|(i, (area, polygon))| {
+            let depth = loops
+                .iter()
+                .enumerate()
+                .filter(|(j, (outer, outer_polygon))| {
+                    *j != i && *outer > *area && loop_inside(polygon, outer_polygon)
+                })
+                .count();
+            let sign = match (hatch.style, depth) {
+                (_, 0) => 1.0,
+                (HatchStyleType::Ignore, _) => 0.0,
+                (HatchStyleType::Outer, d) if d > 1 => 0.0,
+                (_, d) if d % 2 == 1 => -1.0,
+                _ => 1.0,
+            };
+            sign * area
+        })
+        .sum::<f64>();
+    total.is_finite().then_some(total.max(0.0))
+}
+
+/// Signed area enclosed by a boundary loop (counter-clockwise positive), by
+/// Green's theorem over its edges; a gap between consecutive edges closes
+/// with a straight segment.
+fn loop_area(path: &BoundaryPath) -> f64 {
+    let mut twice = 0.0;
+    let mut ends: Vec<(Vector2, Vector2)> = Vec::new();
+    for edge in &path.edges {
+        let Some((integral, start, end)) = edge_integral(edge) else {
+            continue;
+        };
+        twice += integral;
+        ends.push((start, end));
+    }
+    for i in 0..ends.len() {
+        twice += ends[i].1.cross(&ends[(i + 1) % ends.len()].0);
+    }
+    twice / 2.0
+}
+
+/// `∮ x dy − y dx` along one edge, with the edge's start and end points.
+fn edge_integral(edge: &BoundaryEdge) -> Option<(f64, Vector2, Vector2)> {
+    // The parameter range an arc edge runs over, in its direction of travel.
+    let range = |start: f64, end: f64, ccw: bool| {
+        if ccw {
+            (start, start + oriented_sweep(start, end, true))
+        } else {
+            (-start, -start - oriented_sweep(-start, -end, false))
+        }
+    };
+    Some(match edge {
+        BoundaryEdge::Line(e) => (e.start.cross(&e.end), e.start, e.end),
+        BoundaryEdge::CircularArc(e) => {
+            let (a, b) = range(e.start_angle, e.end_angle, e.counter_clockwise);
+            let (c, r) = (e.center, e.radius);
+            let at = |t: f64| c + Vector2::new(r * t.cos(), r * t.sin());
+            let integral =
+                r * r * (b - a) + r * c.x * (b.sin() - a.sin()) - r * c.y * (b.cos() - a.cos());
+            (integral, at(a), at(b))
+        }
+        BoundaryEdge::EllipticArc(e) => {
+            let (a, b) = range(e.start_angle, e.end_angle, e.counter_clockwise);
+            let (c, major) = (e.center, e.major_axis_endpoint);
+            let minor = Vector2::new(-major.y, major.x) * e.minor_axis_ratio;
+            let at = |t: f64| c + major * t.cos() + minor * t.sin();
+            let integral = major.cross(&minor) * (b - a)
+                + c.cross(&major) * (b.cos() - a.cos())
+                + c.cross(&minor) * (b.sin() - a.sin());
+            (integral, at(a), at(b))
+        }
+        BoundaryEdge::Polyline(e) => {
+            let v = &e.vertices;
+            let first = v.first()?;
+            let segments = if e.is_closed { v.len() } else { v.len() - 1 };
+            let integral = (0..segments)
+                .map(|i| {
+                    let (p, q) = (v[i], v[(i + 1) % v.len()]);
+                    let chord = Vector2::new(p.x, p.y).cross(&Vector2::new(q.x, q.y));
+                    let theta = 4.0 * p.z.atan();
+                    let half_sin = (theta / 2.0).sin();
+                    if half_sin.abs() < EPS {
+                        return chord;
+                    }
+                    let r = ((q.x - p.x).hypot(q.y - p.y)) / (2.0 * half_sin.abs());
+                    chord + r * r * (theta - theta.sin())
+                })
+                .sum::<f64>();
+            let last = if e.is_closed { first } else { v.last()? };
+            (
+                integral,
+                Vector2::new(first.x, first.y),
+                Vector2::new(last.x, last.y),
+            )
+        }
+        BoundaryEdge::Spline(e) => {
+            let points: Vec<Vector2> = if e.control_points.len() >= 2 {
+                let cps: Vec<Vector3> = e
+                    .control_points
+                    .iter()
+                    .map(|p| Vector3::new(p.x, p.y, 0.0))
+                    .collect();
+                let weights: Vec<f64> = if e.rational {
+                    e.control_points.iter().map(|p| p.z).collect()
+                } else {
+                    vec![1.0; cps.len()]
+                };
+                let degree = usize::try_from(e.degree).unwrap_or(3).max(1);
+                eval_nurbs(degree, &cps, &weights, &e.knots, 256)
+                    .into_iter()
+                    .map(|p| Vector2::new(p.x, p.y))
+                    .collect()
+            } else {
+                e.fit_points.clone()
+            };
+            let integral = points.windows(2).map(|w| w[0].cross(&w[1])).sum::<f64>();
+            (integral, *points.first()?, *points.last()?)
+        }
+    })
+}
+
+/// Whether loop `inner` lies inside loop `outer`, judged at a point well
+/// inside `inner`: neighbouring loops that share an edge overlap only along
+/// it, so a corner can fall a drafting tolerance inside the other loop.
+fn loop_inside(inner: &[Vector2], outer: &[Vector2]) -> bool {
+    point_in_polygon(interior_point(inner), outer)
+}
+
+/// The middle of the widest span of `poly` along the horizontal line through
+/// the middle of its bounding box.
+fn interior_point(poly: &[Vector2]) -> Vector2 {
+    let (lo, hi) = poly
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
+            (lo.min(p.y), hi.max(p.y))
+        });
+    let y = (lo + hi) / 2.0;
+    let mut xs: Vec<f64> = (0..poly.len())
+        .filter_map(|i| {
+            let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
+            ((a.y > y) != (b.y > y)).then(|| a.x + (b.x - a.x) * (y - a.y) / (b.y - a.y))
+        })
+        .collect();
+    xs.sort_by(f64::total_cmp);
+    xs.chunks_exact(2)
+        .max_by(|a, b| (a[1] - a[0]).total_cmp(&(b[1] - b[0])))
+        .map_or(poly[0], |span| Vector2::new((span[0] + span[1]) / 2.0, y))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

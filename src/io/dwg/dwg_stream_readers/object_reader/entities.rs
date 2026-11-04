@@ -1168,6 +1168,11 @@ pub fn read_insert(reader: &mut DwgMergedReader, version: DwgVersion) -> InsertD
     let rotation = reader.read_bit_double();
     let normal = reader.read_3bit_double();
     let has_attribs = reader.read_bit();
+    if version.r2004_plus() && has_attribs {
+        // R2004+: owned object count (BL). The ATTRIBs themselves are
+        // attached through their owner handles by the document builder.
+        let _owned_count = reader.read_bit_long();
+    }
     let block_handle = reader.read_handle();
 
     InsertData {
@@ -3710,7 +3715,9 @@ fn read_table_cell(reader: &mut DwgMergedReader, version: DwgVersion) -> TableCe
         cell.custom_data_items
             .push(read_custom_table_data(reader, version));
     }
-    cell.has_linked_data = reader.read_bit_long() == 1;
+    // Linked-data flags: bit 0 = the cell anchors a linked range (files
+    // store 3 for the anchor).
+    cell.has_linked_data = reader.read_bit_long() & 1 != 0;
     if cell.has_linked_data {
         let handle = reader.read_handle();
         cell.data_link_handle = (handle != 0).then(|| Handle::from(handle));
@@ -3721,6 +3728,15 @@ fn read_table_cell(reader: &mut DwgMergedReader, version: DwgVersion) -> TableCe
     let ncontents = safe_count(reader.read_bit_long(), reader);
     for _ in 0..ncontents {
         cell.contents.push(read_table_cell_content(reader, version));
+    }
+    // The R2010+ cell has no type of its own: a block content makes it a
+    // block cell, as in the DXF reader.
+    if cell
+        .contents
+        .iter()
+        .any(|content| content.content_type == TableCellContentType::Block)
+    {
+        cell.cell_type = CellType::Block;
     }
     cell.style = read_cell_style(reader);
     cell.style_id = reader.read_bit_long();
@@ -6302,6 +6318,35 @@ mod tests {
         assert_eq!(ins.y_scale, 1.0);
         assert_eq!(ins.z_scale, 1.0);
         assert_eq!(ins.block_handle, 0x50);
+    }
+
+    #[test]
+    fn test_minsert_with_attribs_r2004_reads_the_owned_count() {
+        let v = DwgVersion::AC18;
+        let d = DxfVersion::AC1018;
+        let mut r = make_reader(v, d, |w| {
+            w.write_3bit_double(Vector3::new(100.0, 200.0, 0.0));
+            w.write_2bits(3); // all-ones scale
+            w.write_bit_double(0.0); // rotation
+            w.write_3bit_double(Vector3::UNIT_Z); // normal
+            w.write_bit(true); // has_attribs
+            w.write_bit_long(1); // owned object count (R2004+)
+            w.write_handle(
+                crate::io::dwg::dwg_reference_type::DwgReferenceType::HardPointer,
+                0x50,
+            );
+            w.write_bit_short(2); // columns
+            w.write_bit_short(3); // rows
+            w.write_bit_double(15.0); // column spacing
+            w.write_bit_double(10.0); // row spacing
+        });
+        let m = read_minsert(&mut r, v);
+        assert!(m.insert.has_attribs);
+        assert_eq!(m.insert.block_handle, 0x50);
+        assert_eq!(m.column_count, 2);
+        assert_eq!(m.row_count, 3);
+        assert_eq!(m.column_spacing, 15.0);
+        assert_eq!(m.row_spacing, 10.0);
     }
 
     #[test]

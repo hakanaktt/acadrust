@@ -21,7 +21,20 @@ fn read_edge_curve(
                 out.push(point(reader));
             }
             let scalar_count = if curve_type == 11 { 4 } else { 5 };
-            for _ in 0..scalar_count {
+            for index in 0..scalar_count {
+                // AutoCAD writes a terminal AC1024 edge arc without the
+                // fourth scalar; AC1027 and later add it. Never infer a
+                // missing value in nested curves, other versions, or a
+                // partially read scalar.
+                if curve_type == 11
+                    && index == 3
+                    && depth == 0
+                    && reader.dxf_version() == DxfVersion::AC1024
+                    && !reader.has_error()
+                    && reader.main_remaining_bits() == 0
+                {
+                    break;
+                }
                 out.push(real(reader));
             }
         }
@@ -700,22 +713,29 @@ fn read_dimension_association(reader: &mut DwgMergedReader) -> AssocDimensionAss
                 intersection_subent_type,
                 intersection_gs_marker,
                 intersection_xref_paths,
-            ) = if osnap_type == 6 || osnap_type == 11 {
+            ) = if AssocDimensionReference::stores_intersection(osnap_type) {
                 let count = reader.read_bit_long();
                 let intersection_objects = read_handles(reader, count);
-                let intersection_subent_type = reader.read_bit_long();
-                let intersection_gs_marker = reader.read_bit_long();
-                let count = safe_count(reader.read_bit_long(), reader);
-                let mut paths = Vec::with_capacity(count as usize);
-                for _ in 0..count {
-                    paths.push(reader.read_variable_text());
+                if AssocDimensionReference::stores_intersection_subentity(
+                    osnap_type,
+                    intersection_objects.len(),
+                ) {
+                    let intersection_subent_type = reader.read_bit_long();
+                    let intersection_gs_marker = reader.read_bit_long();
+                    let count = safe_count(reader.read_bit_long(), reader);
+                    let mut paths = Vec::with_capacity(count as usize);
+                    for _ in 0..count {
+                        paths.push(reader.read_variable_text());
+                    }
+                    (
+                        intersection_objects,
+                        intersection_subent_type,
+                        intersection_gs_marker,
+                        paths,
+                    )
+                } else {
+                    (intersection_objects, 0, 0, Vec::new())
                 }
-                (
-                    intersection_objects,
-                    intersection_subent_type,
-                    intersection_gs_marker,
-                    paths,
-                )
             } else {
                 (Vec::new(), 0, 0, Vec::new())
             };
@@ -1208,7 +1228,8 @@ pub fn read_associative_data(
             let single_dependency = read_single_dependency(reader, version, dxf_version);
             let parameter = handle(reader);
             let has_action = reader.read_bit();
-            let action_type = reader.read_bit_long();
+            // A detached edge stores no cached curve after the flag.
+            let action_type = if has_action { reader.read_bit_long() } else { 0 };
             let subcurve_kind = match action_type {
                 11 => AssocSubcurveKind::Arc,
                 17 => AssocSubcurveKind::Ellipse,
@@ -1219,7 +1240,9 @@ pub fn read_associative_data(
                 _ => AssocSubcurveKind::None,
             };
             let mut curve = Vec::new();
-            read_edge_curve(reader, action_type, &mut curve, 0);
+            if has_action {
+                read_edge_curve(reader, action_type, &mut curve, 0);
+            }
             AssociativeData::EdgeActionParam(AssocEdgeActionParam {
                 single_dependency,
                 parameter,

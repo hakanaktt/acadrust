@@ -3623,6 +3623,26 @@ impl CadDocument {
         if let EntityType::Insert(insert) = entity {
             return self.explode_insert_with_context(insert);
         }
+        // A dimension draws its block; exploding it gives that block's
+        // contents, as a reference to the block would. Without one the
+        // geometry is rebuilt from the dimension and its style below.
+        if let EntityType::Dimension(dimension) = entity {
+            let base = dimension.base();
+            let has_block = self
+                .block_records
+                .get(&base.block_name)
+                .is_some_and(|record| !record.entity_handles.is_empty());
+            if has_block {
+                let mut insert =
+                    crate::entities::Insert::new(&base.block_name, base.insertion_point);
+                insert.common = base.common.clone();
+                insert.common.handle = Handle::NULL;
+                let parts = self.explode_insert_with_context(&insert);
+                if !parts.is_empty() {
+                    return parts;
+                }
+            }
+        }
         let mut parts = match entity {
             EntityType::MLine(mline) => self.explode_mline_with_context(mline),
             EntityType::MultiLeader(leader) => self.explode_multileader_with_context(leader),
@@ -4255,7 +4275,9 @@ impl CadDocument {
             ObjectType::PlotSettings(value) => Some(value.owner),
             ObjectType::MultiLeaderStyle(value) => Some(value.owner_handle),
             ObjectType::TableStyle(value) => Some(value.owner_handle),
-            ObjectType::TableContent(value) => Some(value.common.owner_handle),
+            ObjectType::TableContent(value) | ObjectType::TableTemplate(value) => {
+                Some(value.common.owner_handle)
+            }
             ObjectType::Scale(value) => Some(value.owner_handle),
             ObjectType::ObjectContextData(value) => Some(value.owner_handle),
             ObjectType::SortEntitiesTable(value) => Some(value.owner_handle),
@@ -4469,6 +4491,22 @@ impl CadDocument {
         match self.objects.get_mut(&record_handle)? {
             ObjectType::XRecord(record) => Some(record),
             _ => None,
+        }
+    }
+
+    /// Reactors of a non-entity object such as a block record.
+    pub fn object_reactors(&self, object: Handle) -> &[Handle] {
+        self.reactors_by_handle
+            .get(&object)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    /// Add `reactor` to a non-entity object's reactors, once.
+    pub fn add_object_reactor(&mut self, object: Handle, reactor: Handle) {
+        let reactors = self.reactors_by_handle.entry(object).or_default();
+        if !reactors.contains(&reactor) {
+            reactors.push(reactor);
         }
     }
 
@@ -4877,6 +4915,48 @@ impl CadDocument {
         for (handle, name) in names {
             if let Some(ObjectType::XRecord(record)) = self.objects.get_mut(&handle) {
                 record.name = name;
+            }
+        }
+    }
+
+    /// A table style's name is its key in the table style dictionary; the
+    /// record's own string is its description, empty for most styles, and is
+    /// what the writers store there. Each row's text style is the one its
+    /// handle points at.
+    pub fn resolve_table_style_names(&mut self) {
+        let names: HashMap<Handle, String> = self
+            .objects
+            .values()
+            .filter_map(|object| match object {
+                ObjectType::Dictionary(dictionary) => Some(dictionary.entries.iter()),
+                _ => None,
+            })
+            .flatten()
+            .filter(|(_, handle)| {
+                matches!(self.objects.get(handle), Some(ObjectType::TableStyle(_)))
+            })
+            .map(|(name, handle)| (*handle, name.clone()))
+            .collect();
+        let text_styles: HashMap<Handle, String> = self
+            .text_styles
+            .iter()
+            .map(|style| (style.handle, style.name.clone()))
+            .collect();
+        for (handle, object) in self.objects.iter_mut() {
+            let ObjectType::TableStyle(style) = object else {
+                continue;
+            };
+            if let Some(name) = names.get(handle) {
+                style.name = name.clone();
+            }
+            for row in [
+                &mut style.data_row_style,
+                &mut style.header_row_style,
+                &mut style.title_row_style,
+            ] {
+                if let Some(name) = row.text_style_handle.and_then(|h| text_styles.get(&h)) {
+                    row.text_style_name = name.clone();
+                }
             }
         }
     }
@@ -6378,7 +6458,7 @@ impl CadDocument {
                     ObjectType::DictionaryVariable(value) => {
                         remap_object_handle(&mut value.owner_handle);
                     }
-                    ObjectType::TableContent(value) => {
+                    ObjectType::TableContent(value) | ObjectType::TableTemplate(value) => {
                         value.visit_object_handles_mut(&mut remap_object_handle);
                     }
                     ObjectType::BlockVisibilityParameter(value) => {
@@ -6392,6 +6472,14 @@ impl CadDocument {
                     }
                     ObjectType::FieldList(value) => {
                         value.visit_handles_mut(&mut remap_object_handle);
+                    }
+                    ObjectType::ImageDefinition(value) => {
+                        remap_object_handle(&mut value.owner);
+                        value.reactors.iter_mut().for_each(&mut remap_object_handle);
+                    }
+                    ObjectType::ImageDefinitionReactor(value) => {
+                        remap_object_handle(&mut value.owner);
+                        remap_object_handle(&mut value.image_handle);
                     }
                     ObjectType::ProxyObject(value) => {
                         if let Some(new_handle) = remap_map.get(&value.owner.value()) {
@@ -6696,6 +6784,7 @@ impl CadDocument {
         }
         self.resolve_book_colors();
         self.resolve_xrecord_names();
+        self.resolve_table_style_names();
         self.resolve_group_names();
         self.resolve_xrecord_backed_properties();
         if let Some(s) = self

@@ -119,6 +119,12 @@ impl AttributeEntity {
         attdef: &crate::entities::AttributeDefinition,
         value: Option<String>,
     ) -> Self {
+        // A multiline attribute keeps its text in the embedded MTEXT too; give it the
+        // instance value, not the definition's default.
+        let mut embedded_mtext = attdef.embedded_mtext.clone();
+        if let (Some(mtext), Some(value)) = (embedded_mtext.as_mut(), value.as_ref()) {
+            mtext.value = value.clone();
+        }
         Self {
             common: EntityCommon {
                 layer: attdef.common.layer.clone(),
@@ -142,10 +148,15 @@ impl AttributeEntity {
             flags: attdef.flags,
             field_length: attdef.field_length,
             normal: attdef.normal,
-            mtext_flag: attdef.mtext_flag,
+            // DWG type 4 marks a multiline ATTDEF; on an ATTRIB the reference reads 4 as single
+            // line, so the instance takes 2.
+            mtext_flag: match attdef.mtext_flag {
+                MTextFlag::ConstantMultiLine => MTextFlag::MultiLine,
+                flag => flag,
+            },
             is_multiline: attdef.is_multiline,
             line_count: attdef.line_count,
-            embedded_mtext: attdef.embedded_mtext.clone(),
+            embedded_mtext,
             attdef_handle: attdef.common.handle,
             lock_position: attdef.lock_position,
         }
@@ -389,6 +400,40 @@ mod tests {
         // With default value
         let attrib2 = AttributeEntity::from_definition(&attdef, None);
         assert_eq!(attrib2.value, "default");
+    }
+
+    #[test]
+    fn test_attrib_from_multiline_definition_sets_embedded_value() {
+        let mut attdef = AttributeDefinition::new(
+            "TAG".to_string(),
+            "Enter:".to_string(),
+            "DEFAULT".to_string(),
+        );
+        let mut mtext = crate::entities::MText::new();
+        mtext.value = "DEFAULT".to_string();
+        attdef.is_multiline = true;
+        attdef.embedded_mtext = Some(Box::new(mtext));
+
+        let attrib =
+            AttributeEntity::from_definition(&attdef, Some("CUSTOM one\\PCUSTOM two".to_string()));
+        assert_eq!(attrib.value, "CUSTOM one\\PCUSTOM two");
+        assert_eq!(
+            attrib.embedded_mtext.as_ref().map(|m| m.value.as_str()),
+            Some("CUSTOM one\\PCUSTOM two")
+        );
+
+        let mut attdef4 = attdef.clone();
+        attdef4.mtext_flag = MTextFlag::ConstantMultiLine;
+        assert_eq!(
+            AttributeEntity::from_definition(&attdef4, None).mtext_flag,
+            MTextFlag::MultiLine
+        );
+
+        let attrib2 = AttributeEntity::from_definition(&attdef, None);
+        assert_eq!(
+            attrib2.embedded_mtext.as_ref().map(|m| m.value.as_str()),
+            Some("DEFAULT")
+        );
     }
 
     #[test]

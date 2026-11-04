@@ -203,3 +203,24 @@ fn helix_embedded_spline_uses_the_same_extended_flag_mapping() {
     assert_eq!(spline.knot_parameterization, 2);
     assert!(spline.cv_frame_visible);
 }
+
+/// A control-point spline read from DWG carries a parameterization (Custom),
+/// but its DXF flags keep only the curve bits, as other writers do (#149).
+#[test]
+fn control_point_spline_from_dwg_writes_no_parameterization_bits() {
+    let mut spline = Spline::new();
+    spline.degree = 2;
+    spline.control_points = vec![
+        Vector3::ZERO,
+        Vector3::new(1.0, 1.0, 0.0),
+        Vector3::new(2.0, 0.0, 0.0),
+    ];
+    spline.knots = vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+    spline.flags.closed = true;
+    spline.flags.periodic = true;
+    spline.knot_parameterization = 15;
+    let mut doc = CadDocument::with_version(DxfVersion::AC1032);
+    doc.add_entity(EntityType::Spline(spline)).unwrap();
+    let bytes = DxfWriter::new(&doc).write_to_vec().unwrap();
+    assert_eq!(written_flags(&bytes, "SPLINE"), 3);
+}

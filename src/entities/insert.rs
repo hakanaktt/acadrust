@@ -415,6 +415,7 @@ impl Insert {
         common.reactors.clear();
         common.graphic_data = None;
         common.raw_record = None;
+        Self::detach_exploded_history(entity);
         if let EntityType::Insert(insert) = entity {
             for attribute in &mut insert.attributes {
                 attribute.common.handle = Handle::NULL;
@@ -426,6 +427,20 @@ impl Insert {
             }
             insert.view_rep_handle = None;
             insert.seqend_handle = None;
+        }
+    }
+
+    /// Drop a modeler copy's link to its source's solid history.  The
+    /// history graph is hard-owned by the member in the block definition, so
+    /// a copy naming it would share it: deleting the copy's history would
+    /// delete the definition's, and both would claim it at DWG save time.
+    pub(crate) fn detach_exploded_history(entity: &mut EntityType) {
+        match entity {
+            EntityType::Solid3D(solid) => solid.history_handle = None,
+            EntityType::Region(region) => region.history_handle = None,
+            EntityType::Body(body) => body.history_handle = None,
+            EntityType::Surface(surface) => surface.history_handle = None,
+            _ => {}
         }
     }
 
@@ -534,24 +549,6 @@ impl Insert {
     /// A retained bulge would still describe a circular arc after stretching,
     /// while ACAD emits an exact elliptical segment.
     fn explode_single_many(&self, entity: &EntityType, transform: &Transform) -> Vec<EntityType> {
-        // Modeler entities are explodable when the block transform is a
-        // rigid transform or uniform scale.  Under those transforms their
-        // native region decomposition remains exact; non-uniform cases are
-        // handled by the document-aware anonymous *E fallback instead.
-        if matches!(
-            entity,
-            EntityType::Solid3D(_) | EntityType::Region(_) | EntityType::Body(_)
-        ) && Self::linear_is_similarity(transform)
-        {
-            return entity
-                .explode()
-                .into_iter()
-                .map(|mut piece| {
-                    piece.as_entity_mut().apply_transform(transform);
-                    piece
-                })
-                .collect();
-        }
         let normal = match entity {
             EntityType::LwPolyline(polyline) => polyline.normal,
             EntityType::Polyline2D(polyline) => polyline.normal,
@@ -591,20 +588,6 @@ impl Insert {
             && ly > SCALE_EPSILON
             && (lx - ly).abs() <= 1e-10 * lx.max(ly)
             && x.dot(&y).abs() <= 1e-10 * lx * ly
-    }
-
-    fn linear_is_similarity(transform: &Transform) -> bool {
-        let x = transform.apply_rotation(Vector3::UNIT_X);
-        let y = transform.apply_rotation(Vector3::UNIT_Y);
-        let z = transform.apply_rotation(Vector3::UNIT_Z);
-        let vectors = [x, y, z];
-        let lengths = vectors.map(|vector| vector.length());
-        lengths.iter().all(|length| *length > SCALE_EPSILON)
-            && (lengths[0] - lengths[1]).abs() <= 1e-10 * lengths[0].max(lengths[1])
-            && (lengths[1] - lengths[2]).abs() <= 1e-10 * lengths[1].max(lengths[2])
-            && x.dot(&y).abs() <= 1e-10 * lengths[0] * lengths[1]
-            && x.dot(&z).abs() <= 1e-10 * lengths[0] * lengths[2]
-            && y.dot(&z).abs() <= 1e-10 * lengths[1] * lengths[2]
     }
 
     /// Whether a linear transform introduces shear relative to an INSERT's
