@@ -120,8 +120,11 @@ fn try_rewrite_section_map(
 ) -> Option<Vec<u8>> {
     let at = system_page(bytes, SECTION_MAP);
     let size = i32_at(bytes, at + 4) as usize;
-    let room = i32_at(bytes, at + 8) as usize;
-    let map = decompress_ac18(&bytes[at + 20..at + 20 + room], size);
+    let compressed = i32_at(bytes, at + 8) as usize;
+    let map = decompress_ac18(&bytes[at + 20..at + 20 + compressed], size);
+    // The page is padded to a 0x20 boundary after its 20-byte header and data: the rewritten
+    // map may use that padding too.
+    let room = ((20 + compressed + 0x1F) & !0x1F) - 20;
     let mut out = map[..20].to_vec();
     let mut pos = 20;
     for _ in 0..i32_at(&map, 0) {

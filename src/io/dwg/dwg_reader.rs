@@ -146,9 +146,15 @@ fn decode_ac21_page(
     block_size: usize,
     compressed_size: u64,
     uncompressed_size: u64,
+    decryption_key: Option<&[u8]>,
 ) -> Result<Vec<u8>, DxfError> {
     let mut compressed_data = try_zeroed_vec(total_size, "AC21 compressed page data")?;
     reed_solomon_decode(encoded, &mut compressed_data, factor, block_size);
+    if let Some(key) = decryption_key {
+        let mut rc4 = crate::io::dwg::security::Rc4::new(key);
+        let decrypt_len = (compressed_size as usize).min(compressed_data.len());
+        rc4.apply(&mut compressed_data[..decrypt_len]);
+    }
     if compressed_size == uncompressed_size {
         compressed_data.truncate(uncompressed_size as usize);
         return Ok(compressed_data);
@@ -313,6 +319,9 @@ pub struct DwgReadOptions {
     /// starts. `None` keeps the previous per-section behaviour.
     #[cfg_attr(feature = "serde", serde(default))]
     pub max_decompressed_bytes: Option<usize>,
+    /// Optional password for decrypting password-protected DWG files.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub password: Option<String>,
 }
 
 impl Default for DwgReadOptions {
@@ -322,6 +331,7 @@ impl Default for DwgReadOptions {
             max_mesh_faces: None,
             max_mesh_face_indices: None,
             max_decompressed_bytes: None,
+            password: None,
         }
     }
 }
@@ -353,6 +363,12 @@ impl DwgReadOptions {
     /// fallible allocation path.
     pub fn with_max_decompressed_bytes(mut self, max_bytes: usize) -> Self {
         self.max_decompressed_bytes = Some(max_bytes);
+        self
+    }
+
+    /// Set a password for decrypting password-protected DWG files.
+    pub fn with_password(mut self, password: impl Into<String>) -> Self {
+        self.password = Some(password.into());
         self
     }
 
@@ -976,6 +992,8 @@ pub struct DwgReader<R: Read + Seek> {
     decompressed_bytes_used: usize,
     /// State of a [`Self::read_sharded`] call between shards.
     shard: Option<ShardState>,
+    /// Derived decryption key for password-protected drawings.
+    pub decryption_key: Option<Vec<u8>>,
 }
 
 impl DwgReader<File> {
@@ -1002,6 +1020,7 @@ impl DwgReader<File> {
             pending_diagnostics: Vec::new(),
             decompressed_bytes_used: 0,
             shard: None,
+            decryption_key: None,
         })
     }
 }
@@ -1027,6 +1046,7 @@ impl DwgReader<Cursor<memmap2::Mmap>> {
             pending_diagnostics: Vec::new(),
             decompressed_bytes_used: 0,
             shard: None,
+            decryption_key: None,
         })
     }
 }
@@ -1083,6 +1103,7 @@ impl<R: Read + Seek> DwgReader<R> {
             pending_diagnostics: Vec::new(),
             decompressed_bytes_used: 0,
             shard: None,
+            decryption_key: None,
         }
     }
 
@@ -1099,6 +1120,7 @@ impl<R: Read + Seek> DwgReader<R> {
             pending_diagnostics: Vec::new(),
             decompressed_bytes_used: 0,
             shard: None,
+            decryption_key: None,
         }
     }
 
@@ -1107,6 +1129,12 @@ impl<R: Read + Seek> DwgReader<R> {
     /// The callback may run from Rayon worker threads while object records are
     /// decoded, so it must be thread-safe and should only perform cheap atomic
     /// updates.
+    /// Set a password for decrypting password-protected DWG files.
+    pub fn with_password(mut self, password: impl Into<String>) -> Self {
+        self.options.password = Some(password.into());
+        self
+    }
+
     pub fn set_progress_callback(&mut self, progress: std::sync::Arc<dyn Fn(u16) + Send + Sync>) {
         self.progress = Some(progress);
     }
@@ -1116,6 +1144,26 @@ impl<R: Read + Seek> DwgReader<R> {
         if let Some(progress) = &self.progress {
             progress(value.min(1000));
         }
+    }
+
+    /// Ensure the decryption key is derived and verified if the file is password-protected.
+    pub fn ensure_decryption_key(&mut self, info: &DwgFileHeaderInfo) -> Result<(), DxfError> {
+        if self.decryption_key.is_some() {
+            return Ok(());
+        }
+        if !info.section_descriptors.iter().any(|s| s.name == "AcDb:Security") {
+            return Ok(());
+        }
+        let sec_data = self.get_section_buffer("AcDb:Security", info)?;
+        let sec_info = crate::io::dwg::security::DwgSecurityInfo::parse(&sec_data)?;
+        let Some(pwd) = &self.options.password else {
+            return Err(DxfError::Decryption(
+                "Drawing is password protected; please provide a password".to_string(),
+            ));
+        };
+        let key = sec_info.derive_key(pwd)?;
+        self.decryption_key = Some(key);
+        Ok(())
     }
 
     /// Read the DWG file and reconstruct a `CadDocument`.
@@ -1424,6 +1472,22 @@ impl<R: Read + Seek> DwgReader<R> {
                 info.page_records.len(),
             );
         }
+        if info.section_descriptors.iter().any(|s| s.name == "AcDb:Security") {
+            if let Err(e) = self.ensure_decryption_key(&info) {
+                if !self.options.failsafe {
+                    return Err(e);
+                }
+                report_read_error(
+                    &mut self.notifications,
+                    &mut diagnostics,
+                    "decryption-failed",
+                    ReadStage::FileHeader,
+                    Some("AcDb:Security"),
+                    format!("Failed to decrypt drawing: {}", e),
+                );
+            }
+        }
+
         let dxf_version = crate::types::DxfVersion::parse(&info.version_string)
             .unwrap_or(crate::types::DxfVersion::Unknown);
         self.report_progress(20);
@@ -1532,7 +1596,7 @@ impl<R: Read + Seek> DwgReader<R> {
                 let handle_map = match self.get_section_buffer("AcDb:Handles", &info) {
                     Ok(handle_buf) => {
                         handles_section_read = true;
-                        match crate::io::dwg::dwg_stream_readers::handle_reader::read_handles(
+                        match crate::io::dwg::dwg_stream_readers::handle_reader::read_handle_map(
                             &handle_buf,
                         ) {
                             Ok(mut hm) => {
@@ -1556,7 +1620,7 @@ impl<R: Read + Seek> DwgReader<R> {
                                     Some("AcDb:Handles"),
                                     format!("Failed to read handles: {}", e),
                                 );
-                                std::collections::HashMap::new()
+                                Default::default()
                             }
                         }
                     }
@@ -1569,7 +1633,7 @@ impl<R: Read + Seek> DwgReader<R> {
                             Some("AcDb:Handles"),
                             format!("Failed to extract handles section: {}", e),
                         );
-                        std::collections::HashMap::new()
+                        Default::default()
                     }
                 };
                 (None, handle_map.len(), handle_map)
@@ -1593,7 +1657,7 @@ impl<R: Read + Seek> DwgReader<R> {
             match objects_buf {
                 Ok(objects_buf) => {
                     objects_section_read = true;
-                    match crate::io::dwg::dwg_stream_readers::object_reader::DwgObjectReader::with_encoding(
+                    match crate::io::dwg::dwg_stream_readers::object_reader::DwgObjectReader::with_handle_map(
                     std::sync::Arc::clone(&objects_buf),
                     dxf_version,
                     handle_map,
@@ -2808,6 +2872,7 @@ impl<R: Read + Seek> DwgReader<R> {
             block_size,
             compressed_size,
             uncompressed_size,
+            None,
         )
     }
 
@@ -2958,6 +3023,10 @@ impl<R: Read + Seek> DwgReader<R> {
                 DxfError::Parse(format!("Section '{}' not found in file", section_name))
             })?;
 
+        if section.encrypted != 0 && self.decryption_key.is_none() {
+            self.ensure_decryption_key(info)?;
+        }
+
         // Field 0x00 ("Data size") holds the total section data size.
         // Field 0x08 ("Max size") is the page partition size per spec §5.4.
         // We truncate to the total data size, not the page size.
@@ -3051,6 +3120,17 @@ impl<R: Read + Seek> DwgReader<R> {
                                 format_args!("AC21 page {}", page.page_number),
                             )?;
                             self.stream.read_exact(&mut bytes)?;
+                            if section.encrypted != 0 {
+                                if let Some(key) = &self.decryption_key {
+                                    let mut rc4 = crate::io::dwg::security::Rc4::new(key);
+                                    rc4.apply(&mut bytes);
+                                } else {
+                                    return Err(DxfError::Decryption(format!(
+                                        "Section '{}' is encrypted but no decryption key is available",
+                                        section_name
+                                    )));
+                                }
+                            }
                             Ok(bytes)
                         })();
                         match read {
@@ -3110,6 +3190,11 @@ impl<R: Read + Seek> DwgReader<R> {
                 });
             }
 
+            let key_ref = if section.encrypted != 0 {
+                self.decryption_key.as_deref()
+            } else {
+                None
+            };
             let decoded = map_ordered(prepared, |page| {
                 let data = match page.payload {
                     PagePayload::Ready(bytes) => Ok(bytes),
@@ -3126,6 +3211,7 @@ impl<R: Read + Seek> DwgReader<R> {
                         block_size,
                         compressed_size,
                         uncompressed_size,
+                        key_ref,
                     )
                     .map_err(|error| error.to_string()),
                     PagePayload::Failed(error) => Err(error),
@@ -3195,6 +3281,10 @@ impl<R: Read + Seek> DwgReader<R> {
             .ok_or_else(|| {
                 DxfError::Parse(format!("Section '{}' not found in AC18 file", section_name))
             })?;
+
+        if section.encrypted != 0 && self.decryption_key.is_none() {
+            self.ensure_decryption_key(info)?;
+        }
 
         // compressed_size field actually holds the total uncompressed section data size
         let total_size = size_from_file(
@@ -3298,6 +3388,17 @@ impl<R: Read + Seek> DwgReader<R> {
                         format_args!("AC18 page {} compressed data", page_number),
                     )?;
                     self.stream.read_exact(&mut compressed)?;
+                    if section.encrypted != 0 {
+                        if let Some(key) = &self.decryption_key {
+                            let mut rc4 = crate::io::dwg::security::Rc4::new(key);
+                            rc4.apply(&mut compressed);
+                        } else {
+                            return Err(DxfError::Decryption(format!(
+                                "Section '{}' is encrypted but no decryption key is available",
+                                section_name
+                            )));
+                        }
+                    }
 
                     Ok((data_offset as usize, compressed))
                 })();

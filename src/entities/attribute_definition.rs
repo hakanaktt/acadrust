@@ -435,6 +435,12 @@ impl Entity for AttributeDefinition {
         &mut self.common
     }
 
+    /// Hidden by the entity flag (group 60) or by the attribute's own
+    /// invisible flag (group 70, bit 1).
+    fn is_invisible(&self) -> bool {
+        self.common.invisible || self.flags.invisible
+    }
+
     fn bounding_box(&self) -> BoundingBox3D {
         let width = self.estimated_width();
         let height = self.height;

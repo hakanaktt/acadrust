@@ -68,7 +68,11 @@ impl<'a> DwgObjectWriter<'a> {
                     .write_bit_long(value.point_references.len() as i32);
                 for reference in &value.point_references {
                     self.writer.write_bit_short(reference.version);
-                    self.writer.write_bit(reference.reserved != 0);
+                    if self.version.r2013_plus(self.dxf_version) {
+                        self.writer.write_bit_short(reference.reserved);
+                    } else {
+                        self.writer.write_bit(reference.reserved != 0);
+                    }
                     self.writer.write_bit_long(reference.reference_type);
                     self.writer.write_bit_short(reference.flags);
                     self.writer.write_bit_long(reference.identifier);

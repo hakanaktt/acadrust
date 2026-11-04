@@ -1164,6 +1164,23 @@ impl<'a> DwgObjectWriter<'a> {
             .unwrap_or(fallback)
     }
 
+    /// Type code for a record read from a source file: keeps `source` while
+    /// it still names a class called `dxf_name`. Two classes may share a DXF
+    /// name (AEC drawings carry two `AEC_LIST_DEF` entries), so the lookup
+    /// by name would move the objects of one of them to the other class.
+    pub fn source_class_type_code(&self, dxf_name: &str, source: i16) -> i16 {
+        let kept = self
+            .document
+            .classes
+            .iter()
+            .any(|c| c.class_number == source && c.dxf_name.eq_ignore_ascii_case(dxf_name));
+        if kept {
+            source
+        } else {
+            self.class_type_code(dxf_name, source)
+        }
+    }
+
     // ── entity-mode helper ──────────────────────────────────────────
     /// Returns the 2-bit entity-mode value (per ODA spec §19.4.4):
     /// - 0 = owned (owner handle present) — VERTEX, ATTRIB, SEQEND,

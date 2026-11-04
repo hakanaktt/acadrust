@@ -136,7 +136,19 @@ pub struct Vertex3DPolyline {
 }
 
 impl Vertex3DPolyline {
-    /// Create a new 3D vertex
+    /// An unassigned constructor-default vertex inherits its parent's layer.
+    /// A stored vertex on layer "0" keeps that explicit layer.
+    pub(crate) fn layer_for_write<'a>(&'a self, parent_layer: &'a str) -> &'a str {
+        if self.layer.is_empty() || (self.handle.is_null() && self.layer == "0") {
+            parent_layer
+        } else {
+            &self.layer
+        }
+    }
+
+    /// Create a new 3D vertex.
+    /// Unassigned vertices on the default layer inherit the parent's layer
+    /// when written; vertices read from a file retain their stored layer.
     pub fn new(position: Vector3) -> Self {
         Self {
             handle: Handle::NULL,

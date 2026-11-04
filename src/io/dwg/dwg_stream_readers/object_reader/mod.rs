@@ -31,6 +31,8 @@ use crate::types::{Color, DxfVersion, Transparency};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use super::handle_reader::HandleMap;
+
 /// Reject counts that cannot be represented by the remaining record bits.
 #[inline]
 fn safe_count(raw: i32, reader: &DwgMergedReader) -> i32 {
@@ -139,7 +141,7 @@ pub struct DwgObjectReader {
     /// DXF version
     dxf_version: DxfVersion,
     /// Handle → byte-offset map (from handle section)
-    handle_map: HashMap<u64, i64>,
+    handle_map: HandleMap,
     /// Document code page used by pre-R2007 object strings.
     encoding: crate::io::dxf::code_page::LegacyEncoding,
     /// Faces and face-corner indices retained from one MESH record.
@@ -175,6 +177,21 @@ impl DwgObjectReader {
         data: impl Into<Arc<Vec<u8>>>,
         dxf_version: DxfVersion,
         handle_map: HashMap<u64, i64>,
+        encoding: impl Into<crate::io::dxf::code_page::LegacyEncoding>,
+    ) -> Result<Self> {
+        Self::with_handle_map(
+            data,
+            dxf_version,
+            handle_map.into_iter().collect(),
+            encoding,
+        )
+    }
+
+    /// [`Self::with_encoding`] with the map [`DwgReader`](crate::DwgReader) reads.
+    pub(crate) fn with_handle_map(
+        data: impl Into<Arc<Vec<u8>>>,
+        dxf_version: DxfVersion,
+        handle_map: HandleMap,
         encoding: impl Into<crate::io::dxf::code_page::LegacyEncoding>,
     ) -> Result<Self> {
         let version = DwgVersion::from_dxf_version(dxf_version)?;
@@ -275,7 +292,7 @@ impl DwgObjectReader {
     }
 
     /// Decode an already captured merged record without adding file framing.
-    pub(crate) fn read_raw_record(
+    pub fn read_raw_record(
         &self,
         data: &[u8],
         handle_bits: i64,
@@ -823,7 +840,7 @@ impl DwgObjectReader {
     }
 
     /// Replace the handle map, keeping the object section.
-    pub(crate) fn set_handle_map(&mut self, handle_map: HashMap<u64, i64>) {
+    pub(crate) fn set_handle_map(&mut self, handle_map: HandleMap) {
         self.handle_map = handle_map;
     }
 

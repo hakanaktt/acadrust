@@ -198,7 +198,7 @@ use crate::io::read::{push_read_diagnostic, ReadDiagnostic, ReadStage};
 use crate::notification::{NotificationCollection, NotificationType};
 use crate::types::Handle;
 use crate::types::LineWeight;
-use std::collections::{HashMap, HashSet};
+use foldhash::{HashMap, HashMapExt, HashSet, HashSetExt};
 
 /// ODA §20.4.89 documents a file-to-extension-dictionary bit before the
 /// default flag on R2010+. AutoCAD does not write that bit for annotative
@@ -342,8 +342,8 @@ fn read_hatch_scale_context_data(
 /// Pending vertex data collected during Pass 2, keyed by owner (parent polyline) handle.
 enum PendingVertex {
     V2D(entities::Vertex2DData),
-    V3D(entities::Vertex3DData, EntityCommon),
-    PfaceFace(entities::PfaceFaceData, EntityCommon),
+    V3D(entities::Vertex3DData, Box<EntityCommon>),
+    PfaceFace(entities::PfaceFaceData, Box<EntityCommon>),
 }
 
 impl PendingVertex {
@@ -393,12 +393,17 @@ fn order_pending_vertices(
     } else {
         return;
     };
-    verts.sort_by_key(|vertex| {
+    let rank = |vertex: &PendingVertex| {
         ranks
             .get(&vertex.handle_value())
             .copied()
             .unwrap_or(usize::MAX)
-    });
+    };
+    // Records usually arrive in drawing order already.
+    if verts.windows(2).all(|w| rank(&w[0]) <= rank(&w[1])) {
+        return;
+    }
+    verts.sort_by_cached_key(rank);
 }
 
 /// Drawing-order ranks from the prev/next chain, when that chain visits
@@ -1512,6 +1517,38 @@ impl DwgDocumentBuilder {
                 }
             }
 
+            // The header names the model and paper space records by handle. A damaged name
+            // would turn the drawing into an ordinary block: give the records back their
+            // canonical names, and report it.
+            for (active, canonical) in [
+                (active_model, "*Model_Space"),
+                (active_paper, "*Paper_Space"),
+            ] {
+                if active.is_null() {
+                    continue;
+                }
+                for entry in &mut parsed_entries {
+                    let ParsedEntry::Block(h, data) = entry else {
+                        continue;
+                    };
+                    if Handle::from(*h) != active || data.name.eq_ignore_ascii_case(canonical) {
+                        continue;
+                    }
+                    let message = format!(
+                        "Block record {:#X} is the header's {canonical} but is named {:?}; renamed {canonical}",
+                        *h, data.name
+                    );
+                    self.notifications
+                        .notify(NotificationType::Warning, message.clone());
+                    let mut diagnostic =
+                        ReadDiagnostic::new("space-block-renamed", ReadStage::Objects, message);
+                    diagnostic.record_handle = Some(*h);
+                    push_read_diagnostic(&mut diagnostics, diagnostic);
+                    data.name = canonical.to_string();
+                    maps.blocks.insert(*h, data.name.clone());
+                }
+            }
+
             // Collect (index, handle, name) for all Block entries
             let block_info: Vec<(usize, u64, String)> = parsed_entries
                 .iter()
@@ -2588,7 +2625,7 @@ impl DwgDocumentBuilder {
                             match v {
                                 PendingVertex::V3D(d, ec) => {
                                     e.vertices.push(crate::entities::polyface_mesh::PolyfaceVertex {
-                                        common: ec,
+                                        common: *ec,
                                         location: d.position,
                                         flags: crate::entities::polyface_mesh::PolyfaceVertexFlags::from_bits_truncate(d.flags as i16),
                                         bulge: 0.0,
@@ -2600,7 +2637,7 @@ impl DwgDocumentBuilder {
                                 }
                                 PendingVertex::PfaceFace(f, ec) => {
                                     e.faces.push(crate::entities::polyface_mesh::PolyfaceFace {
-                                        common: ec,
+                                        common: *ec,
                                         flags: crate::entities::polyface_mesh::PolyfaceVertexFlags::NONE,
                                         index1: f.index1,
                                         index2: f.index2,
@@ -2621,13 +2658,11 @@ impl DwgDocumentBuilder {
                         e.vertices = verts
                             .into_iter()
                             .filter_map(|v| {
-                                if let PendingVertex::V3D(d, _ec) = v {
-                                    let mut c = crate::entities::EntityCommon::new();
-                                    c.handle = d.handle;
+                                if let PendingVertex::V3D(d, ec) = v {
                                     Some(crate::entities::polygon_mesh::PolygonMeshVertex {
-                                        common: c,
+                                        common: *ec,
                                         location: d.position,
-                                        flags: 0,
+                                        flags: i16::from(d.flags),
                                     })
                                 } else {
                                     None
@@ -3335,7 +3370,7 @@ impl DwgDocumentBuilder {
                 });
                 // Objects keep their EED in `eed_by_handle`; decode it the
                 // same way so the DXF writer can write it after the object.
-                let mut object_xdata = HashMap::new();
+                let mut object_xdata = std::collections::HashMap::new();
                 for (handle, blocks) in &document.eed_by_handle {
                     match document.objects.get(handle) {
                         // FIELD decodes its XDATA onto `Field::xdata` itself.
@@ -5341,7 +5376,7 @@ impl DwgDocumentBuilder {
                         .vertices
                         .entry(entity_data.owner_handle)
                         .or_default()
-                        .push(PendingVertex::V3D(data, entity_common));
+                        .push(PendingVertex::V3D(data, Box::new(entity_common)));
                 }
                 OBJ_VERTEX_PFACE => {
                     let mut data = entities::read_vertex3d(&mut reader);
@@ -5350,7 +5385,7 @@ impl DwgDocumentBuilder {
                         .vertices
                         .entry(entity_data.owner_handle)
                         .or_default()
-                        .push(PendingVertex::V3D(data, entity_common));
+                        .push(PendingVertex::V3D(data, Box::new(entity_common)));
                 }
                 OBJ_VERTEX_PFACE_FACE => {
                     let mut data = entities::read_pface_face(&mut reader);
@@ -5359,7 +5394,7 @@ impl DwgDocumentBuilder {
                         .vertices
                         .entry(entity_data.owner_handle)
                         .or_default()
-                        .push(PendingVertex::PfaceFace(data, entity_common));
+                        .push(PendingVertex::PfaceFace(data, Box::new(entity_common)));
                 }
 
                 // ── Underlay reference (PDF / DWF / DGN) ───────────
@@ -8969,7 +9004,7 @@ fn map_entity_common(
 mod vertex_chain_tests {
     use super::vertex_chain_ranks;
     use crate::types::Handle;
-    use std::collections::HashMap;
+    use foldhash::{HashMap, HashMapExt};
 
     fn links(pairs: &[(u64, u64)]) -> HashMap<Handle, Handle> {
         pairs
@@ -9003,15 +9038,78 @@ mod vertex_chain_tests {
 }
 
 #[cfg(test)]
+mod pending_vertex_order_tests {
+    use super::{entities, order_pending_vertices, PendingVertex};
+    use crate::entities::EntityCommon;
+    use crate::types::{Handle, Vector3};
+    use foldhash::{HashMap, HashMapExt};
+
+    fn vertices(handles: &[u64]) -> Vec<PendingVertex> {
+        handles
+            .iter()
+            .map(|handle| {
+                PendingVertex::V3D(
+                    entities::Vertex3DData {
+                        handle: Handle::new(*handle),
+                        flags: 0,
+                        position: Vector3::ZERO,
+                    },
+                    Box::new(EntityCommon::new()),
+                )
+            })
+            .collect()
+    }
+
+    fn ordered(handles: &[u64], owned: &[u64]) -> Vec<u64> {
+        let mut list = vertices(handles);
+        order_pending_vertices(&mut list, Some(owned), &HashMap::new());
+        list.iter().map(PendingVertex::handle_value).collect()
+    }
+
+    #[test]
+    fn vertices_already_in_order_stay_there() {
+        assert_eq!(ordered(&[1, 2, 3], &[1, 2, 3]), [1, 2, 3]);
+    }
+
+    #[test]
+    fn vertices_out_of_order_follow_the_owned_list() {
+        assert_eq!(ordered(&[1, 2, 3, 4], &[3, 1, 4, 2]), [3, 1, 4, 2]);
+        assert_eq!(ordered(&[1, 2, 3], &[3, 2, 1]), [3, 2, 1]);
+    }
+
+    #[test]
+    fn vertices_the_list_does_not_name_go_last_in_their_own_order() {
+        assert_eq!(ordered(&[9, 1, 8, 2], &[2, 1]), [2, 1, 9, 8]);
+        // Already in order by rank, including the unnamed tail.
+        assert_eq!(ordered(&[1, 2, 9, 8], &[1, 2]), [1, 2, 9, 8]);
+    }
+
+    #[test]
+    fn many_vertices_the_list_does_not_name_keep_their_order() {
+        let handles: Vec<u64> = (0..200).map(|i| (i * 37) % 200 + 10).collect();
+        let mut expected = vec![5];
+        expected.extend(&handles);
+        let mut input = handles;
+        input.insert(100, 5);
+        assert_eq!(ordered(&input, &[5]), expected);
+    }
+
+    #[test]
+    fn an_empty_list_with_no_chain_leaves_the_order_alone() {
+        assert_eq!(ordered(&[3, 1, 2], &[]), [3, 1, 2]);
+    }
+}
+
+#[cfg(test)]
 mod block_entity_chain_tests {
     use super::DwgDocumentBuilder;
     use crate::types::Handle;
-    use std::collections::HashMap;
+    use foldhash::HashMap;
 
     #[test]
     fn damaged_block_entity_chains_terminate_at_cycles_nulls_and_missing_records() {
         for next in [10, 0, 30] {
-            let links = HashMap::from([
+            let links = HashMap::from_iter([
                 (Handle::new(10), Handle::new(20)),
                 (Handle::new(20), Handle::new(next)),
             ]);
@@ -9020,7 +9118,7 @@ mod block_entity_chain_tests {
                 [Handle::new(10), Handle::new(20)]
             );
         }
-        let links = HashMap::from([(Handle::new(10), Handle::new(20))]);
+        let links = HashMap::from_iter([(Handle::new(10), Handle::new(20))]);
         assert!(DwgDocumentBuilder::block_entity_chain(0, 10, &links).is_empty());
         assert!(DwgDocumentBuilder::block_entity_chain(10, 0, &links).is_empty());
         assert!(DwgDocumentBuilder::block_entity_chain(30, 40, &links).is_empty());
@@ -9028,7 +9126,7 @@ mod block_entity_chain_tests {
 
     #[test]
     fn block_entity_chain_stops_at_last_even_when_a_next_link_exists() {
-        let links = HashMap::from([
+        let links = HashMap::from_iter([
             (Handle::new(10), Handle::new(20)),
             (Handle::new(20), Handle::new(30)),
             (Handle::new(30), Handle::NULL),

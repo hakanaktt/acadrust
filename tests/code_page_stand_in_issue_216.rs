@@ -27,9 +27,9 @@ fn issue_216_a_stand_in_row_decodes_every_escape() {
     // WHATWG windows-1255 maps U+05BA, CP1255 does not.
     let hebrew = encoding_from_code_page("ANSI_1255").unwrap();
     assert_eq!(decode_cif_escapes_in("\\U+05BA", hebrew), "\u{05BA}");
-    // Control: a faithful page keeps a representable escape literal.
+    // A faithful page decodes a representable escape too, as AutoCAD (#260).
     let ansi = encoding_from_code_page("ANSI_1252").unwrap();
-    assert_eq!(decode_cif_escapes_in("94\\U+00B0", ansi), "94\\U+00B0");
+    assert_eq!(decode_cif_escapes_in("94\\U+00B0", ansi), "94\u{B0}");
 }
 
 #[test]

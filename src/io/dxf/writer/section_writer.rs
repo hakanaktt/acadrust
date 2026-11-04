@@ -25,6 +25,7 @@ use crate::types::{Color, DxfVersion, Handle, LineWeight, Vector3};
 use crate::xdata::{ExtendedData, ExtendedDataRecord, XDataValue};
 
 use super::stream_writer::{DxfStreamWriter, DxfStreamWriterExt};
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 /// Sanitize a symbol table record name: strip control characters and
@@ -3902,19 +3903,21 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         // Write reactor group (filter out reactors pointing to non-existent objects)
         if !common.reactors.is_empty() {
-            let valid_reactors: Vec<Handle> = if self.valid_handles.is_empty() {
-                common.reactors.clone()
+            let valid_reactors: Cow<'_, [Handle]> = if self.valid_handles.is_empty() {
+                Cow::Borrowed(&common.reactors)
             } else {
-                common
-                    .reactors
-                    .iter()
-                    .copied()
-                    .filter(|r| self.valid_handles.contains(r))
-                    .collect()
+                Cow::Owned(
+                    common
+                        .reactors
+                        .iter()
+                        .copied()
+                        .filter(|r| self.valid_handles.contains(r))
+                        .collect(),
+                )
             };
             if !valid_reactors.is_empty() {
                 self.writer.write_string(102, "{ACAD_REACTORS")?;
-                for reactor in &valid_reactors {
+                for reactor in valid_reactors.as_ref() {
                     self.writer.write_handle(330, *reactor)?;
                 }
                 self.writer.write_string(102, "}")?;
@@ -3969,6 +3972,16 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         // Write lineweight if not default
         if common.line_weight != crate::types::LineWeight::ByLayer {
             self.writer.write_i16(370, common.line_weight.value())?;
+        }
+
+        // Named plot style (R2000+, `$PSTYLEMODE 0`): the placeholder the entity points at,
+        // as the LAYER writer does. ByLayer/ByBlock have no handle.
+        if self.dxf_version >= DxfVersion::AC1015 && common.plotstyle_flags == 0b11 {
+            if let Some(handle) = common.plotstyle_handle.filter(|h| {
+                !h.is_null() && (self.valid_handles.is_empty() || self.valid_handles.contains(h))
+            }) {
+                self.writer.write_handle(390, handle)?;
+            }
         }
 
         // Write visibility
@@ -5146,18 +5159,20 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         // Associated entities (boundary handles)
         // Filter to only valid handles if valid_handles is populated
-        let valid_boundary_handles: Vec<Handle> = if self.valid_handles.is_empty() {
-            path.boundary_handles.clone()
+        let valid_boundary_handles: Cow<'_, [Handle]> = if self.valid_handles.is_empty() {
+            Cow::Borrowed(&path.boundary_handles)
         } else {
-            path.boundary_handles
-                .iter()
-                .copied()
-                .filter(|h| *h != Handle::NULL && self.valid_handles.contains(h))
-                .collect()
+            Cow::Owned(
+                path.boundary_handles
+                    .iter()
+                    .copied()
+                    .filter(|h| *h != Handle::NULL && self.valid_handles.contains(h))
+                    .collect(),
+            )
         };
         self.writer
             .write_i32(97, valid_boundary_handles.len() as i32)?;
-        for h in &valid_boundary_handles {
+        for h in valid_boundary_handles.as_ref() {
             self.writer.write_handle(330, *h)?;
         }
 
@@ -5462,7 +5477,8 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer.write_handle(5, vertex_handle)?;
             self.writer.write_handle(330, polyline_handle)?;
             self.writer.write_subclass("AcDbEntity")?;
-            self.writer.write_string(8, &vertex.layer)?;
+            self.writer
+                .write_string(8, vertex.layer_for_write(&polyline.common.layer))?;
             // Propagate parent color to vertex so CAD doesn't flag mismatch
             if polyline.common.color != Color::ByLayer {
                 self.writer.write_color(62, polyline.common.color)?;
@@ -7456,7 +7472,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 self.writer.write_i32(93, value.status_flags)?;
                 self.writer.write_string(304, &value.update_status)?;
                 // The connected objects come first as bare handles, then the
-                // hard owner, then an (empty) custom data map — the order the
+                // hard owner, then the custom data map — the order the
                 // reference format uses; the map body is a count, not handles.
                 self.writer.write_i32(94, value.custom_data.len() as i32)?;
                 for item in &value.custom_data {
@@ -7465,7 +7481,16 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 self.writer.write_handle(360, value.hard_owner)?;
                 self.writer.write_string(305, "CUSTOMDATA")?;
                 self.writer.write_string(1, "DATAMAP_BEGIN")?;
-                self.writer.write_i32(90, 0)?;
+                self.writer.write_i32(90, value.data_map.len() as i32)?;
+                for item in &value.data_map {
+                    self.writer.write_string(300, &item.name)?;
+                    self.writer.write_string(301, "DATAMAP_VALUE")?;
+                    self.write_field_cell_value_dxf(&item.value)?;
+                    // A 2004 DXF value has no end marker; AutoCAD rejects one there.
+                    if self.dxf_version >= DxfVersion::AC1021 {
+                        self.writer.write_string(304, "ACVALUE_END")?;
+                    }
+                }
                 self.writer.write_string(309, "DATAMAP_END")?;
                 Ok(())
             }
@@ -7781,19 +7806,21 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         // Reactors (filter out references to non-existent objects)
         if !layout.reactors.is_empty() {
-            let valid_reactors: Vec<Handle> = if self.valid_handles.is_empty() {
-                layout.reactors.clone()
+            let valid_reactors: Cow<'_, [Handle]> = if self.valid_handles.is_empty() {
+                Cow::Borrowed(&layout.reactors)
             } else {
-                layout
-                    .reactors
-                    .iter()
-                    .copied()
-                    .filter(|r| self.valid_handles.contains(r))
-                    .collect()
+                Cow::Owned(
+                    layout
+                        .reactors
+                        .iter()
+                        .copied()
+                        .filter(|r| self.valid_handles.contains(r))
+                        .collect(),
+                )
             };
             if !valid_reactors.is_empty() {
                 self.writer.write_string(102, "{ACAD_REACTORS")?;
-                for r in &valid_reactors {
+                for r in valid_reactors.as_ref() {
                     self.writer.write_handle(330, *r)?;
                 }
                 self.writer.write_string(102, "}")?;
@@ -12297,20 +12324,16 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 vertex.common.handle
             };
             self.writer.write_entity_type("VERTEX")?;
-            self.writer.write_handle(5, vertex_handle)?;
-            self.writer.write_handle(330, mesh_handle)?;
-            self.writer.write_subclass("AcDbEntity")?;
-            self.writer.write_string(8, &vertex.common.layer)?;
-            // Propagate parent color to vertex so CAD doesn't flag mismatch
-            if mesh.common.color != Color::ByLayer {
-                self.writer.write_color(62, mesh.common.color)?;
-            }
+            let mut common = vertex.common_for_write(&mesh.common);
+            common.handle = vertex_handle;
+            self.write_common_entity_data(&common, mesh_handle)?;
             self.writer.write_subclass("AcDbVertex")?;
             self.writer.write_subclass("AcDbPolygonMeshVertex")?;
             self.writer.write_point3d(10, vertex.location)?;
             if vertex.flags != 0 {
                 self.writer.write_i16(70, vertex.flags)?;
             }
+            self.write_xdata(&common.extended_data)?;
         }
 
         // Write SEQEND

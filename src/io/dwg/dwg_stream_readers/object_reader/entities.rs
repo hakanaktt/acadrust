@@ -887,7 +887,10 @@ pub(crate) fn read_proxy_payload(
 ) {
     let object_data_bits = reader.main_remaining_bits() as u32;
     let mut object_data = vec![0u8; object_data_bits.div_ceil(8) as usize];
-    for bit_index in 0..object_data_bits as usize {
+    let whole = object_data_bits as usize / 8;
+    let bytes = reader.read_bytes(whole);
+    object_data[..bytes.len()].copy_from_slice(&bytes);
+    for bit_index in whole * 8..object_data_bits as usize {
         if reader.read_bit() {
             object_data[bit_index / 8] |= 0x80 >> (bit_index % 8);
         }
@@ -3645,7 +3648,10 @@ fn read_cell_style(reader: &mut DwgMergedReader) -> Option<CellStyle> {
     Some(style)
 }
 
-fn read_custom_table_data(reader: &mut DwgMergedReader, version: DwgVersion) -> TableCustomData {
+pub(super) fn read_custom_table_data(
+    reader: &mut DwgMergedReader,
+    version: DwgVersion,
+) -> TableCustomData {
     let name = reader.read_variable_text();
     let value = read_cad_value_with_schema(reader, version, true);
     TableCustomData { name, value }
@@ -6554,5 +6560,54 @@ mod tests {
             missing_reader.check_error().is_err()
                 || missing_reader.position_in_bits() != missing_end
         );
+    }
+
+    /// `shift` bits are read first, so the payload starts off a byte boundary
+    /// and, for most shifts, ends in trailing bits.
+    fn proxy_reader(dwg: DwgVersion, dxf: DxfVersion, shift: u32, size: usize) -> DwgMergedReader {
+        let mut reader = make_reader(dwg, dxf, |writer| {
+            for _ in 0..shift {
+                writer.write_bit(true);
+            }
+            let bytes: Vec<u8> = (0..size)
+                .map(|i| (i as u8).wrapping_mul(37) ^ 0xA5)
+                .collect();
+            writer.write_bytes(&bytes);
+        });
+        for _ in 0..shift {
+            assert!(reader.read_bit());
+        }
+        reader
+    }
+
+    #[test]
+    fn a_proxy_payload_matches_reading_it_bit_by_bit() {
+        for (dwg, dxf) in [
+            (DwgVersion::AC15, DxfVersion::AC1015),
+            (DwgVersion::AC18, DxfVersion::AC1018),
+        ] {
+            for shift in 0..8 {
+                for size in [0, 1, 2, 16, 257] {
+                    let mut oracle = proxy_reader(dwg, dxf, shift, size);
+                    let bits = oracle.main_remaining_bits() as u32;
+                    let mut expected = vec![0u8; bits.div_ceil(8) as usize];
+                    for bit in 0..bits as usize {
+                        if oracle.read_bit() {
+                            expected[bit / 8] |= 0x80 >> (bit % 8);
+                        }
+                    }
+
+                    let mut reader = proxy_reader(dwg, dxf, shift, size);
+                    let (payload, _, _) = read_proxy_payload(&mut reader, 1);
+                    assert_eq!(
+                        payload,
+                        crate::objects::ProxyPayload::from_bits(&expected, bits),
+                        "{dxf:?} shift {shift} size {size}"
+                    );
+                    assert_eq!(reader.main_remaining_bits(), 0);
+                    assert!(reader.check_error().is_ok());
+                }
+            }
+        }
     }
 }

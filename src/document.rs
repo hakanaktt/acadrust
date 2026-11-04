@@ -30,6 +30,10 @@ use crate::types::{Color, DxfVersion, Handle, Vector2, Vector3};
 use crate::xdata::XDataValue;
 use crate::Result;
 use std::collections::{HashMap, HashSet};
+
+/// Maps the read path fills on every record. The seed is fixed for the reason
+/// on [`CadDocument::entity_index`].
+pub(crate) type FixedMap<K, V> = HashMap<K, V, foldhash::fast::FixedState>;
 use std::sync::{Arc, Mutex};
 
 #[cfg(test)]
@@ -1365,22 +1369,22 @@ pub struct CadDocument {
 
     /// Raw EED blobs per handle — populated during DWG read, consumed during DWG write.
     /// Keyed by the object/table-entry handle. Not serialized.
-    pub(crate) eed_by_handle: HashMap<Handle, Vec<(u64, Vec<u8>)>>,
+    pub(crate) eed_by_handle: FixedMap<Handle, Vec<(u64, Vec<u8>)>>,
 
     /// Structured XDATA for objects and symbol-table records, keyed by handle.
     /// Entity XDATA lives in `EntityCommon::extended_data`.
     pub object_xdata: HashMap<Handle, crate::xdata::ExtendedData>,
 
     /// Non-entity object xdictionary handles — populated during DWG read, consumed during DWG write.
-    pub(crate) xdic_by_handle: HashMap<Handle, Handle>,
+    pub(crate) xdic_by_handle: FixedMap<Handle, Handle>,
 
     /// Non-entity object reactors — populated during DWG read, consumed during DWG write.
-    pub(crate) reactors_by_handle: HashMap<Handle, Vec<Handle>>,
+    pub(crate) reactors_by_handle: FixedMap<Handle, Vec<Handle>>,
 
     /// Original BLOCK_HEADER entity handles from the DWG binary — includes sub-entity handles
     /// (vertices, faces, SEQENDs). Keyed by BlockRecord handle. Used by the writer to produce
     /// correct owned_object_count without re-expanding from the document model.
-    pub(crate) block_entity_handles: HashMap<Handle, Vec<Handle>>,
+    pub(crate) block_entity_handles: FixedMap<Handle, Vec<Handle>>,
 
     /// DWG version this document was read from (set by the DWG reader).
     /// Verbatim raw blobs (Unknown objects, EED) are encoded for this version
@@ -1426,13 +1430,13 @@ pub struct CadDocument {
     /// so that a writer defect can be bisected by object type
     /// (`ACADRUST_RAW_EXCLUDE`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub(crate) raw_records: HashMap<u64, (i16, Arc<crate::entities::RawRecord>)>,
+    pub(crate) raw_records: FixedMap<u64, (i16, Arc<crate::entities::RawRecord>)>,
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub(crate) original_objects: HashMap<Handle, ObjectType>,
+    pub(crate) original_objects: FixedMap<Handle, ObjectType>,
     /// Child record -> compound entity handle, captured with `raw_records`.
     /// Exclusions must serialize each compound entity and its children together.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub(crate) raw_record_owners: HashMap<u64, u64>,
+    pub(crate) raw_record_owners: FixedMap<u64, u64>,
 
     /// `(handle, byte length, hash)` of SAB bodies when `raw_acds_data` was
     /// captured. Used to reject stale section passthrough after geometry edits.
@@ -1607,11 +1611,11 @@ impl CadDocument {
             source_path: None,
             dgn_ls_definitions: HashMap::new(),
             dgn_ls_components: HashMap::new(),
-            eed_by_handle: HashMap::new(),
+            eed_by_handle: FixedMap::default(),
             object_xdata: HashMap::new(),
-            xdic_by_handle: HashMap::new(),
-            reactors_by_handle: HashMap::new(),
-            block_entity_handles: HashMap::new(),
+            xdic_by_handle: FixedMap::default(),
+            reactors_by_handle: FixedMap::default(),
+            block_entity_handles: FixedMap::default(),
             dwg_source_version: None,
             preview: None,
             acis_sab_handles: Vec::new(),
@@ -1619,9 +1623,9 @@ impl CadDocument {
             r12_header_raw: None,
             r12_table_usage: HashMap::new(),
             r12_block_tags: HashMap::new(),
-            raw_records: HashMap::new(),
-            original_objects: HashMap::new(),
-            raw_record_owners: HashMap::new(),
+            raw_records: FixedMap::default(),
+            original_objects: FixedMap::default(),
+            raw_record_owners: FixedMap::default(),
             raw_acds_fingerprint: Vec::new(),
             dwg_data_store_handles: HashSet::new(),
             section_view_style: None,

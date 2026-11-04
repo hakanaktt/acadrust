@@ -82,6 +82,7 @@ mod parallel;
 pub mod preview;
 pub mod r12;
 pub mod reed_solomon;
+pub mod security;
 mod shard_plan;
 pub(crate) mod size_limits;
 pub(crate) mod typeface_eed;

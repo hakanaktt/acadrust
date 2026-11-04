@@ -884,4 +884,67 @@ mod tests {
         assert!((normalize_angle(-PI / 2.0) - 3.0 * PI / 2.0).abs() < 1e-10);
         assert!((normalize_angle(3.0 * PI) - PI).abs() < 1e-10);
     }
+
+    #[test]
+    fn test_is_zero_angle() {
+        assert!(is_zero_angle(0.0));
+        assert!(is_zero_angle(1e-11));
+        assert!(is_zero_angle(-1e-11));
+        assert!(!is_zero_angle(1e-9));
+        assert!(!is_zero_angle(-1e-9));
+        assert!(!is_zero_angle(PI));
+    }
+
+    #[test]
+    fn test_rotate_point_2d() {
+        let origin = Vector2::ZERO;
+
+        // Zero rotation returns the same point
+        let p = Vector2::new(3.0, 4.0);
+        let r0 = rotate_point_2d(p, origin, 0.0);
+        assert!((r0.x - p.x).abs() < 1e-10);
+        assert!((r0.y - p.y).abs() < 1e-10);
+
+        // 90 degrees CCW rotation around origin: (1, 0) -> (0, 1)
+        let r90 = rotate_point_2d(Vector2::UNIT_X, origin, PI / 2.0);
+        assert!(r90.x.abs() < 1e-10);
+        assert!((r90.y - 1.0).abs() < 1e-10);
+
+        // 180 degrees rotation around origin: (1, 0) -> (-1, 0)
+        let r180 = rotate_point_2d(Vector2::UNIT_X, origin, PI);
+        assert!((r180.x - (-1.0)).abs() < 1e-10);
+        assert!(r180.y.abs() < 1e-10);
+
+        // 270 degrees rotation around origin: (1, 0) -> (0, -1)
+        let r270 = rotate_point_2d(Vector2::UNIT_X, origin, 3.0 * PI / 2.0);
+        assert!(r270.x.abs() < 1e-10);
+        assert!((r270.y - (-1.0)).abs() < 1e-10);
+
+        // 360 degrees full rotation returns to initial point
+        let r360 = rotate_point_2d(p, origin, 2.0 * PI);
+        assert!((r360.x - p.x).abs() < 1e-10);
+        assert!((r360.y - p.y).abs() < 1e-10);
+
+        // Rotation around an arbitrary pivot point:
+        // Pivot at (2, 3), point at (5, 3) (offset +3 along X).
+        // Rotated 90 degrees CCW should be at (2, 6) (offset +3 along Y).
+        let pivot = Vector2::new(2.0, 3.0);
+        let pt = Vector2::new(5.0, 3.0);
+        let rotated = rotate_point_2d(pt, pivot, PI / 2.0);
+        assert!((rotated.x - 2.0).abs() < 1e-10);
+        assert!((rotated.y - 6.0).abs() < 1e-10);
+
+        // Rotating the pivot point itself should leave it unchanged
+        let rotated_pivot = rotate_point_2d(pivot, pivot, 1.234);
+        assert!((rotated_pivot.x - pivot.x).abs() < 1e-10);
+        assert!((rotated_pivot.y - pivot.y).abs() < 1e-10);
+
+        // Distance from center is preserved
+        let arbitrary_pt = Vector2::new(7.0, -11.0);
+        let arbitrary_center = Vector2::new(-3.0, 5.0);
+        let res = rotate_point_2d(arbitrary_pt, arbitrary_center, 0.75);
+        let orig_dist = (arbitrary_pt - arbitrary_center).length();
+        let new_dist = (res - arbitrary_center).length();
+        assert!((orig_dist - new_dist).abs() < 1e-10);
+    }
 }

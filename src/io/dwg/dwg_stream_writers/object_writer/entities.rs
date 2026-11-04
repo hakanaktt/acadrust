@@ -16,6 +16,9 @@ use crate::types::{Color, Handle, LineWeight, Vector2, Vector3};
 use super::common;
 use super::DwgObjectWriter;
 
+/// Largest block AutoCAD writes in a version 1 (SAT) ACIS body.
+const SAT_BLOCK_SIZE: usize = 4096;
+
 struct ArchitectureRecordBody {
     type_code: i16,
     has_ds_data: bool,
@@ -68,7 +71,7 @@ impl<'a> DwgObjectWriter<'a> {
     ) {
         let body = Self::architecture_record_body(data, self.dxf_version)
             .expect("Arch class record was validated before writing");
-        let type_code = self.class_type_code(&data.dxf_name, body.type_code);
+        let type_code = self.source_class_type_code(&data.dxf_name, body.type_code);
         self.pending_has_ds_data = body.has_ds_data;
         self.entity_preamble(type_code, &entity.common);
         // The opaque class body is independent of the common entity header.
@@ -1663,12 +1666,11 @@ impl<'a> DwgObjectWriter<'a> {
                 // Fit-point storage requires both MethodFitPoints and
                 // UseKnotParameter. Omitting bit 8 makes readers parse the
                 // following fit-point body as control-point data.
+                // AutoCAD reads bit 4 ("is closed") on a fit-point record
+                // as a periodic spline and drops the fit data. It states
+                // closure by repeating the first fit point instead.
                 flags1 |= 1 | 8;
-                if e.flags.closed {
-                    flags1 |= 4;
-                } else {
-                    flags1 &= !4;
-                }
+                flags1 &= !4;
             } else {
                 // Control-point records carry their closed state in the
                 // scenario body. Preserve the source flag word exactly;
@@ -1743,11 +1745,21 @@ impl<'a> DwgObjectWriter<'a> {
                 self.writer.write_3bit_double(e.begin_tangent);
                 // End tan vec 3BD 13
                 self.writer.write_3bit_double(e.end_tangent);
+                // A closed list ends with its first point again, as AutoCAD
+                // writes it: the fit-data body has no closed bit before R2013,
+                // and flags1 no longer carries closure from R2013 on.
+                let repeat_first = e.flags.closed
+                    && e.fit_points.len() >= 3
+                    && e.fit_points.first() != e.fit_points.last();
                 // num fit pts BL 74
-                self.writer.write_bit_long(e.fit_points.len() as i32);
+                self.writer
+                    .write_bit_long(e.fit_points.len() as i32 + i32::from(repeat_first));
                 // Fit points
                 for pt in &e.fit_points {
                     self.writer.write_3bit_double(*pt);
+                }
+                if repeat_first {
+                    self.writer.write_3bit_double(e.fit_points[0]);
                 }
             }
         }
@@ -2672,7 +2684,7 @@ impl<'a> DwgObjectWriter<'a> {
                 None
             };
             self.next_handle = (i + 1 < vertex_handles.len()).then(|| vertex_handles[i + 1]);
-            self.write_vertex2d(v, vh, e.common.handle, &e.common.layer, &e.common.color);
+            self.write_vertex2d(v, vh, &e.common);
         }
 
         // Write SEQEND — last in polyline chain
@@ -2712,26 +2724,20 @@ impl<'a> DwgObjectWriter<'a> {
         self.next_handle = saved_next;
     }
 
-    fn write_vertex2d(
-        &mut self,
-        v: &Vertex2D,
-        vertex_handle: Handle,
-        owner: Handle,
-        parent_layer: &str,
-        parent_color: &crate::types::Color,
-    ) {
+    fn write_vertex2d(&mut self, v: &Vertex2D, vertex_handle: Handle, parent: &EntityCommon) {
+        // AUDIT requires a vertex to carry its polyline's linetype.
         self.write_common_entity_data(
             common::OBJ_VERTEX_2D,
             vertex_handle,
-            owner,
-            parent_layer,
-            parent_color,
+            parent.handle,
+            &parent.layer,
+            &parent.color,
             &crate::types::LineWeight::ByLayer,
             &crate::types::Transparency::default(),
             false,
             1.0,
-            "ByLayer",
-            &None,
+            &parent.linetype,
+            &parent.linetype_handle,
             &crate::xdata::ExtendedData::default(),
             &[],
             &None,
@@ -2841,7 +2847,7 @@ impl<'a> DwgObjectWriter<'a> {
                 None
             };
             self.next_handle = (i + 1 < vertex_handles.len()).then(|| vertex_handles[i + 1]);
-            self.write_vertex3d(v, vh, e.common.handle, &e.common.layer, &e.common.color);
+            self.write_vertex3d(v, vh, &e.common);
         }
 
         // Write SEQEND — last in polyline chain
@@ -2885,22 +2891,22 @@ impl<'a> DwgObjectWriter<'a> {
         &mut self,
         v: &Vertex3DPolyline,
         vertex_handle: Handle,
-        owner: Handle,
-        parent_layer: &str,
-        parent_color: &crate::types::Color,
+        parent: &EntityCommon,
     ) {
+        // AUDIT requires a vertex to carry its polyline's linetype.
+        let layer = v.layer_for_write(&parent.layer);
         self.write_common_entity_data(
             common::OBJ_VERTEX_3D,
             vertex_handle,
-            owner,
-            parent_layer,
-            parent_color,
+            parent.handle,
+            layer,
+            &parent.color,
             &crate::types::LineWeight::ByLayer,
             &crate::types::Transparency::default(),
             false,
             1.0,
-            "ByLayer",
-            &None,
+            &parent.linetype,
+            &parent.linetype_handle,
             &crate::xdata::ExtendedData::default(),
             &[],
             &None,
@@ -3152,33 +3158,17 @@ impl<'a> DwgObjectWriter<'a> {
                 None
             };
             self.next_handle = (i + 1 < vertex_handles.len()).then(|| vertex_handles[i + 1]);
-            self.write_common_entity_data(
-                common::OBJ_VERTEX_MESH,
-                vh,
-                e.common.handle,
-                &e.common.layer,
-                &e.common.color,
-                &crate::types::LineWeight::ByLayer,
-                &crate::types::Transparency::default(),
-                false,
-                1.0,
-                "ByLayer",
-                &None,
-                &crate::xdata::ExtendedData::default(),
-                &[],
-                &None,
-                None,
-                None,
-                0,
-                &None,
-                0,
-                0,
-                &None,
-                &None,
-                &None,
-                &None,
-                &None,
-            );
+            let mut vc = v.common_for_write(&e.common);
+            vc.handle = vh;
+            vc.owner_handle = e.common.handle;
+            // AUDIT requires a vertex to carry its mesh's linetype; keep one
+            // the vertex stores explicitly.
+            let unset = vc.linetype.is_empty() || vc.linetype.eq_ignore_ascii_case("ByLayer");
+            if unset && vc.linetype_handle.is_none() {
+                vc.linetype = e.common.linetype.clone();
+                vc.linetype_handle = e.common.linetype_handle;
+            }
+            self.entity_preamble(common::OBJ_VERTEX_MESH, &vc);
             self.writer.write_byte(v.flags as u8);
             self.writer.write_3bit_double(v.location);
             self.register_object(vh);
@@ -3442,7 +3432,7 @@ impl<'a> DwgObjectWriter<'a> {
         }
     }
 
-    fn write_table_custom_data(&mut self, data: &TableCustomData) {
+    pub(super) fn write_table_custom_data(&mut self, data: &TableCustomData) {
         self.writer.write_variable_text(&data.name);
         self.write_table_cad_value_with_schema(&data.value, true);
     }
@@ -5621,8 +5611,17 @@ impl<'a> DwgObjectWriter<'a> {
                 }
             })
             .collect();
-        self.writer.write_bit_long(encrypted.len() as i32);
-        self.writer.write_bytes(&encrypted);
+        self.write_sat_blocks(&encrypted);
+    }
+
+    /// Encrypted SAT text as BL-sized blocks ended by an empty one. AutoCAD
+    /// writes blocks of at most 4096 bytes and refuses a drawing with a
+    /// larger one.
+    fn write_sat_blocks(&mut self, encrypted: &[u8]) {
+        for block in encrypted.chunks(SAT_BLOCK_SIZE) {
+            self.writer.write_bit_long(block.len() as i32);
+            self.writer.write_bytes(block);
+        }
         self.writer.write_bit_long(0);
     }
 
@@ -5814,10 +5813,7 @@ impl<'a> DwgObjectWriter<'a> {
                     }
                 }
 
-                // Write as a single block + terminating BL(0)
-                self.writer.write_bit_long(encrypted.len() as i32);
-                self.writer.write_bytes(&encrypted);
-                self.writer.write_bit_long(0); // terminating empty block
+                self.write_sat_blocks(&encrypted);
             }
         }
 
@@ -6129,5 +6125,175 @@ mod tests {
         r.write_byte(0); // virtual edge
         r.write_cm_true_color(&Color::Index(5));
         assert_eq!(cell_main_stream(DxfVersion::AC1015, &cell), r.to_bytes_snapshot());
+    }
+}
+
+#[cfg(test)]
+mod sat_block_tests {
+    // AutoCAD splits a SAT (version 1) ACIS body into blocks of at most 4096
+    // bytes, and refuses a drawing whose 3DSOLID carries a larger block
+    // (ErrorStatus 53), as budweiser(original).dwg did once re-written.
+
+    use super::*;
+    use crate::document::CadDocument;
+    use crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader;
+    use crate::io::dwg::DwgVersion;
+    use crate::types::DxfVersion;
+
+    fn sat_block_sizes(version: DxfVersion, acis: &AcisData) -> Vec<i32> {
+        let doc = CadDocument::with_version(version);
+        let mut w = DwgObjectWriter::new(&doc).unwrap();
+        w.write_acis_data(Vector3::ZERO, acis, &[], &[]);
+        let bytes = w.writer.main().to_bytes_snapshot();
+        let mut r = DwgBitReader::new(
+            bytes,
+            DwgVersion::from_dxf_version(version).unwrap(),
+            version,
+        );
+        assert!(!r.read_bit(), "acis_empty");
+        r.read_bit(); // unknown
+        assert_eq!(r.read_bit_short(), 1, "SAT version");
+        let mut sizes = Vec::new();
+        loop {
+            let size = r.read_bit_long();
+            if size == 0 {
+                return sizes;
+            }
+            r.read_bytes(size as usize);
+            sizes.push(size);
+        }
+    }
+
+    #[test]
+    fn sat_bodies_are_written_in_blocks_of_at_most_4096_bytes() {
+        let mut acis = AcisData::new();
+        acis.sat_data = "ellipse-curve $-1 0 0 0 0 0 1 1 0 0 1 I I #
+"
+        .repeat(400);
+        for version in [DxfVersion::AC1014, DxfVersion::AC1015] {
+            let sizes = sat_block_sizes(version, &acis);
+            let total: i32 = sizes.iter().sum();
+            assert!(total > 4096, "{version:?}: {total} bytes");
+            assert!(
+                sizes.iter().all(|&size| size <= 4096),
+                "{version:?}: blocks {sizes:?}"
+            );
+            assert!(sizes[..sizes.len() - 1].iter().all(|&size| size == 4096));
+        }
+    }
+}
+
+#[cfg(test)]
+mod polyline_vertex_linetype_tests {
+    // AutoCAD's AUDIT reports "linetype != owner's" for every polyline
+    // vertex whose linetype differs from its polyline, as INTERIOR_OBJECTS.dwg
+    // did once re-written (440 polygon mesh vertices).
+
+    use super::*;
+    use crate::document::CadDocument;
+    use crate::io::dwg::dwg_stream_readers::object_reader::DwgObjectReader;
+    use crate::tables::LineType;
+    use crate::types::DxfVersion;
+
+    const VERSIONS: [DxfVersion; 3] = [DxfVersion::AC1015, DxfVersion::AC1018, DxfVersion::AC1032];
+
+    fn document(version: DxfVersion) -> CadDocument {
+        let mut doc = CadDocument::with_version(version);
+        doc.line_types.add(LineType::new("POLYDASH")).unwrap();
+        doc
+    }
+
+    fn common(doc: &CadDocument) -> EntityCommon {
+        let mut common = EntityCommon::new();
+        common.handle = Handle::new(0x7000);
+        common.owner_handle = doc.header.model_space_block_handle;
+        common.linetype = "POLYDASH".into();
+        common
+    }
+
+    /// Linetype flags of the polyline and of each vertex record written.
+    fn linetype_flags(w: &DwgObjectWriter, version: DxfVersion) -> (u8, Vec<u8>) {
+        let reader = DwgObjectReader::new(w.output.clone(), version, Default::default()).unwrap();
+        let mut owner = None;
+        let mut vertices = Vec::new();
+        for &(_, offset) in &w.handle_map {
+            let (type_code, mut record) = reader.read_record_at(offset as usize).unwrap();
+            let flags = reader
+                .read_common_entity_data(&mut record, type_code)
+                .linetype_flags;
+            match type_code {
+                common::OBJ_POLYLINE_2D | common::OBJ_POLYLINE_3D | common::OBJ_POLYLINE_MESH => {
+                    owner = Some(flags)
+                }
+                common::OBJ_VERTEX_2D | common::OBJ_VERTEX_3D | common::OBJ_VERTEX_MESH => {
+                    vertices.push(flags)
+                }
+                _ => {}
+            }
+        }
+        (owner.expect("polyline record"), vertices)
+    }
+
+    fn assert_vertices_follow_owner(w: &DwgObjectWriter, version: DxfVersion, kind: &str) {
+        let (owner, vertices) = linetype_flags(w, version);
+        assert_eq!(
+            owner, 3,
+            "{kind} {version:?}: the polyline names its linetype"
+        );
+        assert_eq!(vertices.len(), 4, "{kind} {version:?}");
+        assert!(
+            vertices.iter().all(|&flags| flags == owner),
+            "{kind} {version:?}: vertex linetype flags {vertices:?}"
+        );
+    }
+
+    const POINTS: [(f64, f64); 4] = [(0.0, 0.0), (0.0, 1.0), (1.0, 0.0), (1.0, 1.0)];
+
+    #[test]
+    fn polygon_mesh_vertices_carry_the_mesh_linetype() {
+        for version in VERSIONS {
+            let doc = document(version);
+            let mut mesh = PolygonMeshEntity::new();
+            mesh.common = common(&doc);
+            mesh.m_vertex_count = 2;
+            mesh.n_vertex_count = 2;
+            for (x, y) in POINTS {
+                let mut vertex = PolygonMeshVertex::new();
+                vertex.location = Vector3::new(x, y, 0.0);
+                vertex.flags = 64;
+                mesh.vertices.push(vertex);
+            }
+            let mut w = DwgObjectWriter::new(&doc).unwrap();
+            w.write_polygon_mesh(&mesh);
+            assert_vertices_follow_owner(&w, version, "mesh");
+        }
+    }
+
+    #[test]
+    fn polyline_3d_vertices_carry_the_polyline_linetype() {
+        for version in VERSIONS {
+            let doc = document(version);
+            let points = POINTS.iter().map(|&(x, y)| Vector3::new(x, y, x)).collect();
+            let mut polyline = Polyline3D::from_points(points);
+            polyline.common = common(&doc);
+            let mut w = DwgObjectWriter::new(&doc).unwrap();
+            w.write_polyline3d(&polyline);
+            assert_vertices_follow_owner(&w, version, "3D polyline");
+        }
+    }
+
+    #[test]
+    fn polyline_2d_vertices_carry_the_polyline_linetype() {
+        for version in VERSIONS {
+            let doc = document(version);
+            let mut polyline = Polyline2D::new();
+            polyline.common = common(&doc);
+            for (x, y) in POINTS {
+                polyline.add_vertex(Vertex2D::new(Vector3::new(x, y, 0.0)));
+            }
+            let mut w = DwgObjectWriter::new(&doc).unwrap();
+            w.write_polyline2d(&polyline);
+            assert_vertices_follow_owner(&w, version, "2D polyline");
+        }
     }
 }

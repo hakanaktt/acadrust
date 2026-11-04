@@ -10,6 +10,85 @@ use crate::types::{Color, LineWeight, Vector3};
 
 use super::{append_hex_bytes, parse_dxf_handle, SectionReader};
 
+/// Apply one group, as text, of a data map value to `value` (the groups of
+/// [`SectionReader::read_table_value_dxf`]).
+fn apply_table_value_pair(value: &mut CellValue, code: i32, text: &str) {
+    let int = || text.trim().parse::<i32>().unwrap_or(0);
+    let real = || text.trim().parse::<f64>().unwrap_or(0.0);
+    match code {
+        93 => value.flags = int(),
+        90 => {
+            value.raw_type_code = int();
+            value.value_type = CellValueType::from(value.raw_type_code as u32);
+        }
+        91 => value.numeric_value = int() as f64,
+        140 => value.numeric_value = real(),
+        1 | 2 => value.text.push_str(text),
+        92 => value.data_size = int(),
+        11 => value.point_value.x = real(),
+        21 => value.point_value.y = real(),
+        31 => value.point_value.z = real(),
+        94 => {
+            value.raw_unit_type_code = int();
+            value.unit_type = ValueUnitType::from(value.raw_unit_type_code as u32);
+        }
+        300 => value.format = text.to_string(),
+        302 if value.raw_unit_type_code != 12 => value.formatted_value = text.to_string(),
+        310..=319 => append_hex_bytes(&mut value.binary_value, text),
+        330 => {
+            let handle = parse_dxf_handle(text);
+            value.handle_value = (!handle.is_null()).then_some(handle);
+        }
+        _ => {}
+    }
+}
+
+/// The items of a data map (`CUSTOMDATA` / `DATAMAP_BEGIN` … `DATAMAP_END`) from an object's
+/// groups in file order: each item is a name (300), `DATAMAP_VALUE` (301), then its value. From
+/// 2007 the value ends with `ACVALUE_END` (304); a 2004 DXF has no end marker, so the value also
+/// ends where the next item (300 then 301) or `DATAMAP_END` begins.
+pub(super) fn data_map_from_pairs(pairs: &[(i32, String)]) -> Vec<TableCustomData> {
+    let mut items = Vec::new();
+    let Some(start) = pairs
+        .iter()
+        .position(|(c, v)| *c == 1 && v == "DATAMAP_BEGIN")
+    else {
+        return items;
+    };
+    let rest = pairs.get(start + 1..).unwrap_or_default();
+    let mut name = String::new();
+    let mut value: Option<CellValue> = None;
+    for (at, (code, text)) in rest.iter().enumerate() {
+        let next_item = *code == 300
+            && rest
+                .get(at + 1)
+                .is_some_and(|(c, v)| *c == 301 && v == "DATAMAP_VALUE");
+        let map_end = *code == 309 && text == "DATAMAP_END";
+        if *code == 304 || next_item || map_end {
+            if let Some(value) = value.take() {
+                items.push(TableCustomData {
+                    name: std::mem::take(&mut name),
+                    value,
+                });
+            }
+            if *code == 304 {
+                continue;
+            }
+        }
+        if let Some(value) = value.as_mut() {
+            apply_table_value_pair(value, *code, text);
+            continue;
+        }
+        match *code {
+            309 if text == "DATAMAP_END" => break,
+            300 => name = text.clone(),
+            301 if text == "DATAMAP_VALUE" => value = Some(CellValue::new()),
+            _ => {}
+        }
+    }
+    items
+}
+
 impl<'a> SectionReader<'a> {
     fn read_table_value_dxf(&mut self) -> Result<CellValue> {
         let mut value = CellValue::new();

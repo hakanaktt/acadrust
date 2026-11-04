@@ -43,7 +43,28 @@ pub struct PolygonMeshVertex {
 }
 
 impl PolygonMeshVertex {
-    /// Create a new polygon mesh vertex
+    /// Resolve unassigned constructor defaults without overwriting stored or
+    /// explicitly customized vertex properties. Shared by the DWG/DXF writers.
+    pub(crate) fn common_for_write(&self, parent: &EntityCommon) -> EntityCommon {
+        let mut common = self.common.clone();
+        if common.handle.is_null()
+            && common.owner_handle.is_null()
+            && common.layer_handle.is_none()
+            && common.layer == "0"
+            && common.color == crate::types::Color::ByLayer
+        {
+            common.layer = parent.layer.clone();
+            common.layer_handle = parent.layer_handle;
+            common.color = parent.color;
+            common.color_name = parent.color_name.clone();
+            common.color_book_handle = parent.color_book_handle;
+        }
+        common
+    }
+
+    /// Create a new polygon mesh vertex.
+    /// Unassigned vertices with default layer/color inherit their parent's
+    /// display properties when written.
     pub fn new() -> Self {
         PolygonMeshVertex {
             common: EntityCommon::new(),

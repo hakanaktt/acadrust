@@ -623,10 +623,13 @@ struct ClassDxfFields {
         String,
         std::collections::HashMap<i32, std::collections::VecDeque<String>>,
     >,
+    /// Every group in file order, for collections whose items mix group codes (a data map).
+    ordered: Vec<(i32, String)>,
 }
 
 impl ClassDxfFields {
     fn push(&mut self, section: &str, code: i32, value: String) {
+        self.ordered.push((code, value.clone()));
         self.sections
             .entry(section.to_string())
             .or_default()
@@ -1621,7 +1624,7 @@ impl<'a> SectionReader<'a> {
                 continue;
             }
 
-            let var_name = pair.value_string.clone();
+            let var_name = &pair.value_string;
             match var_name.as_str() {
                 "$VIEWCTR" | "$VIEWDIR" | "$TARGET" | "$SNAPBASE" | "$SNAPUNIT" | "$GRIDUNIT"
                 | "$AXISUNIT" => {
@@ -6356,6 +6359,7 @@ impl<'a> SectionReader<'a> {
                     status_flags,
                     update_status,
                     custom_data,
+                    data_map: table_content::data_map_from_pairs(&fields.ordered),
                     hard_owner: fields.handle(section, 360),
                 })
             }
@@ -11731,6 +11735,16 @@ impl<'a> SectionReader<'a> {
             370 => {
                 if let Some(weight) = pair.as_i16() {
                     common.line_weight = LineWeight::from_value(weight);
+                }
+                Ok(true)
+            }
+            // Plot style name type (AcDb::PlotStyleNameType): 0 ByLayer, 1 ByBlock. 3 (by id)
+            // comes with the handle in group 390, which sets the flags itself.
+            380 => {
+                if let Some(v @ (0 | 1)) = pair.as_i16() {
+                    if common.plotstyle_handle.is_none() {
+                        common.plotstyle_flags = v as u8;
+                    }
                 }
                 Ok(true)
             }
