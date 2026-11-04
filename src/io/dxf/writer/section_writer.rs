@@ -6374,6 +6374,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 is_scale_independent,
                 is_snappable,
                 root_component,
+                undecoded_fields,
                 properties,
             } => {
                 self.writer.write_subclass("AcDbLSDefinition")?;
@@ -6381,14 +6382,18 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 self.writer.write_i32(90, *version)?;
                 self.writer.write_i32(91, *style_number)?;
                 self.writer.write_binary(310, component_uid)?;
-                self.writer.write_bool(290, *is_continuous)?;
-                self.writer.write_double(40, *unit_definition)?;
-                self.writer.write_double(41, *unit_scale)?;
-                self.writer.write_i32(92, *units_type)?;
-                self.writer.write_bool(291, *is_element)?;
-                self.writer.write_bool(292, *is_physical)?;
-                self.writer.write_bool(293, *is_scale_independent)?;
-                self.writer.write_bool(294, *is_snappable)?;
+                // Fields read from DWG bits that did not fit them are unknown:
+                // leave them out rather than write their defaults as values.
+                if undecoded_fields.is_none() {
+                    self.writer.write_bool(290, *is_continuous)?;
+                    self.writer.write_double(40, *unit_definition)?;
+                    self.writer.write_double(41, *unit_scale)?;
+                    self.writer.write_i32(92, *units_type)?;
+                    self.writer.write_bool(291, *is_element)?;
+                    self.writer.write_bool(292, *is_physical)?;
+                    self.writer.write_bool(293, *is_scale_independent)?;
+                    self.writer.write_bool(294, *is_snappable)?;
+                }
                 self.writer.write_handle(340, *root_component)?;
                 self.write_semantic_properties(properties)
             }

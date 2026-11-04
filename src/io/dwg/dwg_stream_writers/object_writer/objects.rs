@@ -567,20 +567,25 @@ impl<'a> DwgObjectWriter<'a> {
                 is_scale_independent,
                 is_snappable,
                 root_component,
+                undecoded_fields,
                 ..
             } => {
                 self.writer.write_variable_text(description);
                 self.writer.write_bit_long(*version);
                 self.writer.write_bit_long(*style_number);
                 self.writer.write_bytes(component_uid);
-                self.writer.write_bit(*is_continuous);
-                self.writer.write_bit_double(*unit_definition);
-                self.writer.write_bit_double(*unit_scale);
-                self.writer.write_bit_long(*units_type);
-                self.writer.write_bit(*is_element);
-                self.writer.write_bit(*is_physical);
-                self.writer.write_bit(*is_scale_independent);
-                self.writer.write_bit(*is_snappable);
+                if let Some(fields) = undecoded_fields {
+                    self.write_registered_payload(fields, &[]);
+                } else {
+                    self.writer.write_bit(*is_continuous);
+                    self.writer.write_bit_double(*unit_definition);
+                    self.writer.write_bit_double(*unit_scale);
+                    self.writer.write_bit_long(*units_type);
+                    self.writer.write_bit(*is_element);
+                    self.writer.write_bit(*is_physical);
+                    self.writer.write_bit(*is_scale_independent);
+                    self.writer.write_bit(*is_snappable);
+                }
                 self.writer
                     .write_handle(DwgReferenceType::HardPointer, root_component.value());
             }
