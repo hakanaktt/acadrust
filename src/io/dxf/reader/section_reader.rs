@@ -12338,6 +12338,7 @@ impl<'a> SectionReader<'a> {
                         subclass,
                         340,
                     )),
+                    undecoded_fields: None,
                     properties: object.properties,
                 },
             });
