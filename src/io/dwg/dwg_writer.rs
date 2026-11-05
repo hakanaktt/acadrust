@@ -260,6 +260,24 @@ fn validate_unknown_records(document: &CadDocument) -> Result<()> {
                 )?;
             }
         }
+        if let crate::entities::EntityType::Extended(entity) = entity {
+            // An SPDS format entity has no model: its vendor schema is not
+            // public, so only its raw bytes can be written. Without bytes of
+            // the target version the record would go out empty.
+            if let crate::entities::ExtendedEntityData::Format(data) = &entity.data {
+                if data.raw_dwg_data.is_none()
+                    || data
+                        .raw_dwg_version
+                        .is_some_and(|version| version != document.version)
+                    || document.version == DxfVersion::AC1009
+                {
+                    return Err(DxfError::NotImplemented(format!(
+                        "Cannot encode SPDS format entity at handle {} as DWG {:?}: compatible raw DWG data is required",
+                        entity.common.handle, document.version
+                    )));
+                }
+            }
+        }
         if let crate::entities::EntityType::Unknown(entity) = entity {
             if entity.raw_dwg_data.is_none()
                 || entity
