@@ -20,7 +20,7 @@
 //! └─────────────────────────────────────┘
 //! ```
 
-use crate::error::Result;
+use crate::error::{DxfError, Result};
 
 /// Read the Handles section from raw section bytes (already decompressed).
 ///
@@ -74,11 +74,11 @@ pub(crate) fn read_handle_map(data: &[u8]) -> Result<HandleMap> {
 
         while pos < chunk_end {
             // Handle delta (MC — unsigned modular char)
-            let (handle_delta, bytes_read) = read_mc(&data[pos..]);
+            let (handle_delta, bytes_read) = read_mc(&data[pos..])?;
             pos += bytes_read;
 
             // Offset delta (SMC — signed modular char)
-            let (offset_delta, bytes_read) = read_smc(&data[pos..]);
+            let (offset_delta, bytes_read) = read_smc(&data[pos..])?;
             pos += bytes_read;
 
             last_handle = last_handle.wrapping_add(handle_delta);
@@ -98,7 +98,10 @@ pub(crate) fn read_handle_map(data: &[u8]) -> Result<HandleMap> {
 
 /// Read unsigned Modular Char (MC) from byte slice.
 /// Returns (value, bytes_consumed).
-fn read_mc(data: &[u8]) -> (u64, usize) {
+///
+/// A value whose bits do not fit in 64 bits (ten or more continuation
+/// bytes, or a tenth byte above 1) is an error: the map is damaged.
+fn read_mc(data: &[u8]) -> Result<(u64, usize)> {
     let mut value: u64 = 0;
     let mut shift: u32 = 0;
     let mut i: usize = 0;
@@ -109,19 +112,21 @@ fn read_mc(data: &[u8]) -> (u64, usize) {
         }
         let b = data[i];
         i += 1;
-        value |= ((b & 0x7F) as u64) << shift;
+        add_bits(&mut value, (b & 0x7F) as u64, shift)?;
         if (b & 0x80) == 0 {
             break;
         }
         shift += 7;
     }
 
-    (value, i)
+    Ok((value, i))
 }
 
 /// Read signed Modular Char (SMC) from byte slice.
 /// Returns (value, bytes_consumed).
-fn read_smc(data: &[u8]) -> (i64, usize) {
+///
+/// Its magnitude must fit in 64 bits, as for [`read_mc`].
+fn read_smc(data: &[u8]) -> Result<(i64, usize)> {
     let mut value: u64 = 0;
     let mut shift: u32 = 0;
     let mut i: usize = 0;
@@ -137,20 +142,33 @@ fn read_smc(data: &[u8]) -> (i64, usize) {
 
         if (b & 0x80) == 0 {
             // Final byte: bits 0-5 = value, bit 6 = sign
-            value |= ((b & 0x3F) as u64) << shift;
+            add_bits(&mut value, (b & 0x3F) as u64, shift)?;
             break;
         } else {
-            value |= ((b & 0x7F) as u64) << shift;
+            add_bits(&mut value, (b & 0x7F) as u64, shift)?;
             shift += 7;
         }
     }
 
     let signed_value = value as i64;
     if (last_byte & 0x40) != 0 {
-        (-signed_value, i)
+        Ok((-signed_value, i))
     } else {
-        (signed_value, i)
+        Ok((signed_value, i))
     }
+}
+
+/// ORs `bits` into `value` at `shift`, or fails if the byte starts at bit 64
+/// or later, or any of its bits would fall past bit 63.
+fn add_bits(value: &mut u64, bits: u64, shift: u32) -> Result<()> {
+    if shift >= 64 || (bits != 0 && bits.leading_zeros() < shift) {
+        return Err(DxfError::InvalidFormat(format!(
+            "AcDb:Handles: a modular char runs past 64 bits ({} continuation bytes)",
+            shift / 7
+        )));
+    }
+    *value |= bits << shift;
+    Ok(())
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -164,14 +182,14 @@ mod tests {
     #[test]
     fn test_mc_encoding() {
         // Single byte: 5 → 0x05
-        let (val, len) = read_mc(&[0x05]);
+        let (val, len) = read_mc(&[0x05]).unwrap();
         assert_eq!(val, 5);
         assert_eq!(len, 1);
 
         // Two bytes: 200 = 0b11001000
         // byte0: (200 & 0x7F) | 0x80 = 0xC8
         // byte1: (200 >> 7) = 1 → 0x01
-        let (val, len) = read_mc(&[0xC8, 0x01]);
+        let (val, len) = read_mc(&[0xC8, 0x01]).unwrap();
         assert_eq!(val, 200);
         assert_eq!(len, 2);
     }
@@ -179,15 +197,15 @@ mod tests {
     #[test]
     fn test_smc_encoding() {
         // Single byte positive: 36 → 0x24 (bit 6 = 0 = positive)
-        let (val, _) = read_smc(&[0x24]);
+        let (val, _) = read_smc(&[0x24]).unwrap();
         assert_eq!(val, 36);
 
         // Single byte negative: -36 → 0x64 (36 | 0x40)
-        let (val, _) = read_smc(&[0x64]);
+        let (val, _) = read_smc(&[0x64]).unwrap();
         assert_eq!(val, -36);
 
         // Multi-byte positive: 100 → first byte 0xE4 (100|0x80), second byte 0x00
-        let (val, len) = read_smc(&[0xE4, 0x00]);
+        let (val, len) = read_smc(&[0xE4, 0x00]).unwrap();
         assert_eq!(val, 100);
         assert_eq!(len, 2);
     }
@@ -234,6 +252,70 @@ mod tests {
         for (handle, offset) in &public {
             assert_eq!(internal.get(handle), Some(offset));
         }
+    }
+
+    /// One handle-map chunk holding `pairs`, with its size header and a
+    /// dummy CRC.
+    fn section(pairs: &[u8]) -> Vec<u8> {
+        let size = (2 + pairs.len()) as u16;
+        let mut data = size.to_be_bytes().to_vec();
+        data.extend_from_slice(pairs);
+        data.extend_from_slice(&[0x00, 0x00]);
+        data
+    }
+
+    /// Ten continuation bytes put the eleventh byte at a shift of 70 bits.
+    #[test]
+    fn a_handle_with_ten_continuation_bytes_is_an_error() {
+        let mut pairs = vec![0xFF; 10];
+        pairs.push(0x01); // last handle byte
+        pairs.push(0x00); // offset 0
+        assert!(read_handle_map(&section(&pairs)).is_err());
+    }
+
+    #[test]
+    fn an_offset_with_ten_continuation_bytes_is_an_error() {
+        let mut pairs = vec![0x01]; // handle 1
+        pairs.extend_from_slice(&[0xFF; 10]);
+        pairs.push(0x00); // last offset byte
+        assert!(read_handle_map(&section(&pairs)).is_err());
+    }
+
+    /// The tenth byte sits at a shift of 63, so only its lowest bit fits in
+    /// 64 bits. A 2 there would be dropped without a word.
+    #[test]
+    fn a_handle_whose_bits_do_not_fit_in_64_bits_is_an_error() {
+        let mut pairs = vec![0xFF; 9];
+        pairs.push(0x02);
+        pairs.push(0x00);
+        assert!(read_handle_map(&section(&pairs)).is_err());
+    }
+
+    #[test]
+    fn an_offset_whose_bits_do_not_fit_in_64_bits_is_an_error() {
+        let mut pairs = vec![0x01];
+        pairs.extend_from_slice(&[0xFF; 9]);
+        pairs.push(0x02); // final offset byte, value 2, positive
+        assert!(read_handle_map(&section(&pairs)).is_err());
+    }
+
+    /// Continuation bytes with no bits in them still may not run past bit 63.
+    #[test]
+    fn empty_continuation_bytes_past_64_bits_are_an_error() {
+        let mut pairs = vec![0x80; 10];
+        pairs.push(0x00);
+        pairs.push(0x00);
+        assert!(read_handle_map(&section(&pairs)).is_err());
+    }
+
+    /// Guard: the widest handle that does fit still reads.
+    #[test]
+    fn the_largest_handle_that_fits_still_reads() {
+        let mut pairs = vec![0xFF; 9];
+        pairs.push(0x01);
+        pairs.push(0x00);
+        let map = read_handle_map(&section(&pairs)).unwrap();
+        assert_eq!(map.get(&u64::MAX), Some(&0));
     }
 
     /// These signatures are public API: downstream code names the std types.
