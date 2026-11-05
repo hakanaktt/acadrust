@@ -880,7 +880,13 @@ fn objects_in_handle_order(document: &CadDocument) -> Vec<(Handle, &crate::objec
 /// class-registered record takes its type code from that number. A class the
 /// profile would drop while an entity or object still uses it leaves the
 /// record without a valid type code, so it is kept, after the profile.
+///
+/// A proxy names its class by number instead (`class_id`, DXF 91): that class
+/// is kept as well, and the proxy takes the class's new number once the table
+/// is rebuilt. Without it the number points past the table or at another
+/// class, and readers refuse the proxy (ODA: "No ClassId").
 fn prepare_legacy_classes(document: &mut CadDocument) {
+    let proxies = proxy_classes(document);
     let entity_classes = document.entities().map(entity_class_name);
     let object_classes = objects_in_handle_order(document)
         .into_iter()
@@ -903,6 +909,7 @@ fn prepare_legacy_classes(document: &mut CadDocument) {
         .chain(object_classes)
         .chain(field_classes)
         .filter_map(|name| document.classes.get_by_name(&name).cloned())
+        .chain(proxies.iter().map(|(_, class)| class.clone()))
         .filter(|class| seen.insert(class.dxf_name.to_ascii_uppercase()))
         .collect();
 
@@ -913,6 +920,71 @@ fn prepare_legacy_classes(document: &mut CadDocument) {
             document.classes.add_or_update(class);
         }
     }
+
+    for (proxy, class) in proxies {
+        let Some(number) = document
+            .classes
+            .get_by_name(&class.dxf_name)
+            .map(|class| i32::from(class.class_number))
+        else {
+            continue;
+        };
+        match proxy {
+            ProxyRecord::Entity(handle) => {
+                if let Some(crate::entities::EntityType::Extended(entity)) =
+                    document.get_entity_mut(handle)
+                {
+                    if let crate::entities::ExtendedEntityData::Proxy(data) = &mut entity.data {
+                        data.class_id = number;
+                    }
+                }
+            }
+            ProxyRecord::Object(handle) => {
+                if let Some(crate::objects::ObjectType::ProxyObject(object)) =
+                    document.objects.get_mut(&handle)
+                {
+                    object.class_id = number;
+                }
+            }
+        }
+    }
+}
+
+/// A proxy record, by handle.
+enum ProxyRecord {
+    Entity(Handle),
+    Object(Handle),
+}
+
+/// Every proxy entity and proxy object whose `class_id` names a class of the
+/// table, with that class.
+fn proxy_classes(document: &CadDocument) -> Vec<(ProxyRecord, crate::classes::DxfClass)> {
+    let class_of = |class_id: i32| {
+        document
+            .classes
+            .iter()
+            .find(|class| i32::from(class.class_number) == class_id)
+            .cloned()
+    };
+    let entities = document.entities().filter_map(|entity| match entity {
+        crate::entities::EntityType::Extended(extended) => match &extended.data {
+            crate::entities::ExtendedEntityData::Proxy(data) => Some((
+                ProxyRecord::Entity(extended.common.handle),
+                class_of(data.class_id)?,
+            )),
+            _ => None,
+        },
+        _ => None,
+    });
+    let objects = objects_in_handle_order(document)
+        .into_iter()
+        .filter_map(|(handle, object)| match object {
+            crate::objects::ObjectType::ProxyObject(data) => {
+                Some((ProxyRecord::Object(handle), class_of(data.class_id)?))
+            }
+            _ => None,
+        });
+    entities.chain(objects).collect()
 }
 
 /// Default declarations for the classes of entities and objects that the
