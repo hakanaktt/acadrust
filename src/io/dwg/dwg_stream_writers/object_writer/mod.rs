@@ -2821,3 +2821,115 @@ mod unregistered_class_tests {
         );
     }
 }
+
+/// Records of a registered class with semantic properties (#319, a custom class
+/// read from DXF) are written as proxies. The proxy's class number must name
+/// the record's class in the table: 498 and 499 are the proxy type codes, not
+/// classes, and ODA refuses such a proxy ("No ClassId") and recovers the whole
+/// file.
+#[cfg(test)]
+mod registered_class_proxy_tests {
+    use super::*;
+    use crate::classes::DxfClass;
+    use crate::entities::{ExtendedEntity, ExtendedEntityData, RegisteredClassEntityData};
+    use crate::io::dwg::dwg_stream_readers::object_reader::DwgObjectReader;
+    use crate::objects::{RegisteredClassObject, SemanticProperty, SemanticPropertyValue};
+    use std::collections::HashMap;
+
+    const ENTITY_CLASS: (&str, &str) = ("SPDSNOTE", "mcsDbObjectNote");
+    const OBJECT_CLASS: (&str, &str) = ("SPDSDATACONTAINER", "mcsDbDataContainer");
+    const OBJECT: Handle = Handle::new(0x7300);
+
+    fn properties() -> Vec<SemanticProperty> {
+        vec![SemanticProperty {
+            subclass: ENTITY_CLASS.1.to_string(),
+            code: 1,
+            value: SemanticPropertyValue::Text("Note".to_string()),
+        }]
+    }
+
+    /// A drawing with one registered-class entity and one registered-class
+    /// object, both with properties, and their classes in the table.
+    fn document(version: DxfVersion) -> (CadDocument, Handle) {
+        let mut doc = CadDocument::with_version(version);
+        doc.classes
+            .add_or_update(DxfClass::new_entity(ENTITY_CLASS.0, ENTITY_CLASS.1));
+        doc.classes
+            .add_or_update(DxfClass::new(OBJECT_CLASS.0, OBJECT_CLASS.1));
+        let entity = doc
+            .add_entity(EntityType::Extended(Box::new(ExtendedEntity {
+                common: Default::default(),
+                data: ExtendedEntityData::RegisteredClass(RegisteredClassEntityData {
+                    dxf_name: ENTITY_CLASS.0.to_string(),
+                    cpp_class_name: ENTITY_CLASS.1.to_string(),
+                    properties: properties(),
+                    ..Default::default()
+                }),
+            })))
+            .unwrap();
+        doc.objects.insert(
+            OBJECT,
+            ObjectType::RegisteredClass(RegisteredClassObject {
+                handle: OBJECT,
+                owner: doc.header.named_objects_dict_handle,
+                dxf_name: OBJECT_CLASS.0.to_string(),
+                cpp_class_name: OBJECT_CLASS.1.to_string(),
+                properties: properties(),
+                ..Default::default()
+            }),
+        );
+        (doc, entity)
+    }
+
+    fn class_number(doc: &CadDocument, name: &str) -> i32 {
+        i32::from(doc.classes.get_by_name(name).unwrap().class_number)
+    }
+
+    /// Type code and class number of the proxy records written for `entity`
+    /// and [`OBJECT`].
+    fn written_proxies(doc: &CadDocument, entity: Handle) -> [(i16, i32); 2] {
+        let (output, handles, _, _) = DwgObjectWriter::new(doc).unwrap().write();
+        let offsets: HashMap<u64, i64> = handles
+            .iter()
+            .map(|(handle, offset)| (*handle, i64::from(*offset)))
+            .collect();
+        let reader = DwgObjectReader::new(output, doc.version, offsets.clone()).unwrap();
+        let record = |handle: Handle| {
+            let offset = usize::try_from(offsets[&handle.value()]).unwrap();
+            reader.read_record_at(offset).unwrap()
+        };
+        let (entity_type, mut merged) = record(entity);
+        reader.read_common_entity_data(&mut merged, entity_type);
+        let entity_class = merged.read_bit_long();
+        let (object_type, mut merged) = record(OBJECT);
+        reader.read_common_non_entity_data(&mut merged, object_type);
+        let object_class = merged.read_bit_long();
+        [(entity_type, entity_class), (object_type, object_class)]
+    }
+
+    #[test]
+    fn proxies_of_registered_classes_name_their_class() {
+        for version in [
+            DxfVersion::AC1015,
+            DxfVersion::AC1018,
+            DxfVersion::AC1024,
+            DxfVersion::AC1032,
+        ] {
+            let (doc, entity) = document(version);
+            let [(entity_type, entity_class), (object_type, object_class)] =
+                written_proxies(&doc, entity);
+            assert_eq!(entity_type, common::OBJ_PROXY_ENTITY, "{version:?}");
+            assert_eq!(object_type, common::OBJ_PROXY_OBJECT, "{version:?}");
+            assert_eq!(
+                entity_class,
+                class_number(&doc, ENTITY_CLASS.0),
+                "{version:?}: the proxy entity names no class"
+            );
+            assert_eq!(
+                object_class,
+                class_number(&doc, OBJECT_CLASS.0),
+                "{version:?}: the proxy object names no class"
+            );
+        }
+    }
+}
