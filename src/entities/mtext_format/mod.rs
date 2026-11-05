@@ -37,10 +37,10 @@
 //! | `\p i<n>;` | First line indent (inches) |
 //! | `\p l<n>;` | Left margin (inches) |
 //! | `\p r<n>;` | Right margin (inches) |
-//! | `\p b<n>;` | Spacing before paragraph (inches) |
-//! | `\p a<n>;` | Spacing after paragraph (inches) |
-//! | `\p se<n>;` | Exact line spacing (inches) |
-//! | `\p sm<n>;` | Line spacing as multiple of font height |
+//! | `\p b<n>;` | Spacing before paragraph (multiple of text height) |
+//! | `\p a<n>;` | Spacing after paragraph (multiple of text height) |
+//! | `\p se<n>;` | Exact line spacing (factor of 5/3 × text height; also sets the baseline) |
+//! | `\p sm<n>;` | Multiple line spacing (factor of 5/3 × text height) |
 //! | `\p t<n1,n2,...>;` | Tab stop positions |
 //! | `\p...;` | Paragraph properties (sub-codes comma-separated) |
 //! | `\b<n>;` | Legacy strikethrough (1=on, 0=off) |
