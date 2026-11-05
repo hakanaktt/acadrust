@@ -73,23 +73,45 @@ fn record_names(doc: &CadDocument, objects: &DwgObjectReader) -> HashMap<Handle,
         .collect()
 }
 
+fn marker_names(doc: &CadDocument, objects: &DwgObjectReader) -> HashMap<Handle, String> {
+    doc.block_records
+        .iter()
+        .map(|block| {
+            let (code, mut reader) = objects
+                .read_record_at(
+                    objects
+                        .offset_for(block.block_entity_handle.value())
+                        .unwrap() as usize,
+                )
+                .unwrap();
+            objects.read_common_entity_data(&mut reader, code);
+            let name = reader.read_variable_text();
+            assert!(reader.check_error().is_ok());
+            (block.handle, name)
+        })
+        .collect()
+}
+
+// Paper-space headers are stored bare; their BLOCK markers keep the numbered name.
 fn assert_marker_names(
     doc: &CadDocument,
     objects: &DwgObjectReader,
     names: &HashMap<Handle, String>,
-) {
+) -> HashMap<Handle, String> {
+    let markers = marker_names(doc, objects);
     for block in doc.block_records.iter() {
-        let (code, mut reader) = objects
-            .read_record_at(
-                objects
-                    .offset_for(block.block_entity_handle.value())
-                    .unwrap() as usize,
-            )
-            .unwrap();
-        objects.read_common_entity_data(&mut reader, code);
-        assert_eq!(reader.read_variable_text(), names[&block.handle]);
-        assert!(reader.check_error().is_ok());
+        let header = &names[&block.handle];
+        let marker = &markers[&block.handle];
+        if header.eq_ignore_ascii_case("*Paper_Space") {
+            assert!(
+                marker.to_uppercase().starts_with("*PAPER_SPACE"),
+                "{marker}"
+            );
+        } else {
+            assert_eq!(marker, header);
+        }
     }
+    markers
 }
 
 #[test]
@@ -116,6 +138,7 @@ fn paper_space_names_and_anonymous_bases_are_consistent() {
             doc.header.paper_space_block_handle = active;
             let objects = objects(&doc);
             let names = record_names(&doc, &objects);
+            let markers = assert_marker_names(&doc, &objects, &names);
             let regular: Vec<_> = doc
                 .block_records
                 .iter()
@@ -123,7 +146,7 @@ fn paper_space_names_and_anonymous_bases_are_consistent() {
                 .collect();
             let unique: HashSet<_> = regular
                 .iter()
-                .map(|block| names[&block.handle].to_uppercase())
+                .map(|block| markers[&block.handle].to_uppercase())
                 .collect();
             assert_eq!(
                 unique.len(),
@@ -131,14 +154,15 @@ fn paper_space_names_and_anonymous_bases_are_consistent() {
                 "duplicate names in {version:?}"
             );
             assert_eq!(names[&active], "*Paper_Space");
+            assert_eq!(markers[&active], "*Paper_Space");
             if active != old_paper {
-                assert_eq!(names[&old_paper], old_active_name);
+                assert_eq!(names[&old_paper], "*Paper_Space");
+                assert_eq!(markers[&old_paper], old_active_name);
             }
             for name in ["*U42", "*U99"] {
                 let block = doc.block_records.get(name).unwrap();
                 assert_eq!(names[&block.handle], "*U");
             }
-            assert_marker_names(&doc, &objects, &names);
 
             let (code, mut reader) = objects
                 .read_record_at(

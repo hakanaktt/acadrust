@@ -2227,8 +2227,13 @@ impl<'a> DwgObjectWriter<'a> {
             extra,
         );
 
-        // Paper-space names stay unique; anonymous names use their native base.
-        let dwg_name = dwg_block_name(self.document, record, self.paper_space_block_handle);
+        // Paper-space headers store the bare name; BLOCK markers keep the
+        // layout suffix so readers can recover distinct block-record names.
+        let dwg_name = if record.is_paper_space() {
+            "*Paper_Space"
+        } else {
+            dwg_block_name(self.document, record, self.paper_space_block_handle)
+        };
         self.writer.write_variable_text(dwg_name);
         // Xref dependant
         self.write_xref_dependant_bit();
