@@ -328,6 +328,19 @@ fn read_view_rep(reader: &mut DwgMergedReader) -> ViewRep {
     }
 }
 
+/// Map 3D's `CIrdBaseRecord`, whose length counts two bytes more than the
+/// payload it stores.
+fn read_object_data_payload(reader: &mut DwgMergedReader) -> Option<Vec<u8>> {
+    reader.read_bit_short();
+    reader.read_bit_long();
+    reader.read_bit_long();
+    let length = usize::try_from(reader.read_bit_long().checked_sub(2)?).ok()?;
+    if (length as i64).saturating_mul(8) > reader.main_remaining_bits() {
+        return None;
+    }
+    Some(reader.read_bytes(length))
+}
+
 pub fn read_class_object_data(
     reader: &mut DwgMergedReader,
     dxf_name: &str,
@@ -336,6 +349,40 @@ pub fn read_class_object_data(
 ) -> Option<ClassObjectData> {
     let name = dxf_name.to_uppercase();
     let data = match name.as_str() {
+        "IRD_DSC_DICT" => {
+            let entry_count = count(reader.read_bit_long(), reader);
+            let duplicate_cloning = reader.read_bit_short();
+            let hard_owner = reader.read_byte() != 0;
+            let mut entries = Vec::with_capacity(entry_count);
+            for _ in 0..entry_count {
+                let name = reader.read_variable_text();
+                entries.push((name, Handle::from(reader.read_handle())));
+            }
+            reader.read_bit_double();
+            ClassObjectData::ObjectDataDictionary(ObjectDataDictionary {
+                entries,
+                duplicate_cloning,
+                hard_owner,
+            })
+        }
+        "IRD_DSC_RECORD" => {
+            let payload = read_object_data_payload(reader)?;
+            let kind = reader.read_bit_long();
+            let name = reader.read_variable_text();
+            reader.read_bit_long();
+            ClassObjectData::ObjectDataDescriptor(ObjectDataDescriptor {
+                kind,
+                name,
+                payload,
+            })
+        }
+        "IRD_OBJ_RECORD" => {
+            let payload = read_object_data_payload(reader)?;
+            ClassObjectData::ObjectDataRecord(ObjectDataRecord {
+                table: Handle::from(reader.read_handle()),
+                payload,
+            })
+        }
         "ACDBVIEWREPMODELSPACESOURCE" => {
             let enabled = reader.read_bit();
             let header_values = [

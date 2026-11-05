@@ -52,6 +52,14 @@ fn split_proxy_text_data(binary: &[u8], text_data_bits: u32) -> (&[u8], &[u8]) {
     binary.split_at(binary.len() - text_len)
 }
 
+fn object_data_payload_dxf(fields: &mut ClassDxfFields) -> Vec<u8> {
+    let mut payload = Vec::new();
+    for chunk in fields.strings("CIrdBaseRecord", 1004) {
+        append_hex_bytes(&mut payload, &chunk);
+    }
+    payload
+}
+
 fn append_hex_bytes(target: &mut Vec<u8>, value: &str) {
     let bytes = value.trim().as_bytes();
     let mut index = 0;
@@ -525,6 +533,9 @@ fn is_class_object_name(name: &str) -> bool {
             | "ACMESCOPE"
             | "ACMESTATEMGR"
             | "CSACDOCUMENTOPTIONS"
+            | "IRD_DSC_DICT"
+            | "IRD_DSC_RECORD"
+            | "IRD_OBJ_RECORD"
             | "ACDBVIEWREPSOURCEMGR"
             | "ACDBVIEWREPSTANDARD"
             | "ACDBVIEWREPORIENTATIONDEF"
@@ -5726,6 +5737,39 @@ impl<'a> SectionReader<'a> {
 
         let name = dxf_name.to_uppercase();
         object.data = match name.as_str() {
+            "IRD_DSC_DICT" => {
+                let section = "AcDbDictionary";
+                let duplicate_cloning = if fields.has(section, 281) {
+                    fields.i16(section, 281)
+                } else {
+                    1
+                };
+                let hard_owner = fields.bool(section, 280);
+                let names = fields.strings(section, 3);
+                let code = if fields.has(section, 350) { 350 } else { 360 };
+                let handles = fields.strings(section, code);
+                ClassObjectData::ObjectDataDictionary(ObjectDataDictionary {
+                    entries: names
+                        .into_iter()
+                        .zip(handles.iter().map(|handle| parse_dxf_handle(handle)))
+                        .collect(),
+                    duplicate_cloning,
+                    hard_owner,
+                })
+            }
+            "IRD_DSC_RECORD" => {
+                let payload = object_data_payload_dxf(&mut fields);
+                let section = "CIrdDscRecord";
+                ClassObjectData::ObjectDataDescriptor(ObjectDataDescriptor {
+                    kind: fields.i32(section, 1071),
+                    name: fields.string(section, 1000),
+                    payload,
+                })
+            }
+            "IRD_OBJ_RECORD" => ClassObjectData::ObjectDataRecord(ObjectDataRecord {
+                payload: object_data_payload_dxf(&mut fields),
+                table: fields.handle("CIrdObjRecord", 330),
+            }),
             "SPATIAL_INDEX" => {
                 let updated = fields.f64("AcDbIndex", 40);
                 let last_updated_julian_day = updated.floor() as i32;

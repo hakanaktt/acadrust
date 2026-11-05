@@ -6945,10 +6945,53 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         Ok(())
     }
 
+    fn write_object_data_payload_dxf(
+        &mut self,
+        object: &crate::objects::ClassObject,
+        record: bool,
+        payload: &[u8],
+    ) -> Result<()> {
+        self.write_class_object_header(object, "CIrdBaseRecord")?;
+        self.writer.write_i16(1070, 516)?;
+        self.writer.write_i32(1071, record as i32)?;
+        // Map reads binary chunks of at most 127 bytes.
+        for chunk in payload.chunks(127) {
+            self.writer.write_binary(1004, chunk)?;
+        }
+        Ok(())
+    }
+
     fn write_class_object_dxf(&mut self, object: &crate::objects::ClassObject) -> Result<()> {
         use crate::objects::{ClassObjectData as Data, DataTableCellType};
         match &object.data {
             Data::Empty => self.write_class_object_header(object, ""),
+            Data::ObjectDataDictionary(value) => {
+                self.write_class_object_header(object, "AcDbDictionary")?;
+                self.writer.write_byte(280, value.hard_owner as u8)?;
+                self.writer.write_byte(281, value.duplicate_cloning as u8)?;
+                let code = if value.hard_owner { 360 } else { 350 };
+                for (name, handle) in &value.entries {
+                    if !self.valid_handles.is_empty() && !self.valid_handles.contains(handle) {
+                        continue;
+                    }
+                    self.writer.write_string(3, name)?;
+                    self.writer.write_handle(code, *handle)?;
+                }
+                self.writer.write_subclass("CIrdDscDict")?;
+                self.writer.write_double(1040, 0.0)
+            }
+            Data::ObjectDataDescriptor(value) => {
+                self.write_object_data_payload_dxf(object, false, &value.payload)?;
+                self.writer.write_subclass("CIrdDscRecord")?;
+                self.writer.write_i32(1071, value.kind)?;
+                self.writer.write_string(1000, &value.name)?;
+                self.writer.write_i32(1071, 0)
+            }
+            Data::ObjectDataRecord(value) => {
+                self.write_object_data_payload_dxf(object, true, &value.payload)?;
+                self.writer.write_subclass("CIrdObjRecord")?;
+                self.writer.write_handle(330, value.table)
+            }
             Data::ViewRepModelSpaceSource(value) => {
                 self.write_class_object_header(object, "AcDbViewRepSource")?;
                 self.writer.write_subclass("AcDbViewRepModelSpaceSource")?;

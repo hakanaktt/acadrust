@@ -16,6 +16,7 @@ mod image_definition;
 mod mlinestyle;
 mod multileader_style;
 mod object_context_data;
+pub(crate) mod object_data;
 mod plot_settings;
 mod scale;
 pub(crate) mod semantic_property;
@@ -97,6 +98,10 @@ pub use object_context_data::{
     DimContext, DimSubtype, EmbeddedMTextContext, HatchLoopContext, HatchScaleContext,
     HatchViewContext, LeaderContext, MTextAttributeContext, MTextColumns, MTextContext,
     ObjectContextData, ObjectContextKind,
+};
+pub use object_data::{
+    ObjectDataAttachment, ObjectDataDescriptor, ObjectDataDictionary, ObjectDataField,
+    ObjectDataRecord, ObjectDataTable, ObjectDataType, ObjectDataValue, OBJECT_DATA_DICTIONARY_KEY,
 };
 pub use plot_settings::{
     PaperMargin, PlotFlags, PlotPaperUnits, PlotRotation, PlotSettings, PlotType, PlotWindow,
