@@ -70,6 +70,7 @@ impl DwgWriter {
         }
         let mut prepared = crate::io::loft_parameters::prepared(document);
         prepare_surface_classes(&mut prepared);
+        prepare_unique_seqends(&mut prepared);
         prepare_database_references(&mut prepared);
         prepare_table_keys(&mut prepared);
         prepare_active_viewport_elevation(&mut prepared);
@@ -165,6 +166,7 @@ impl DwgWriter {
         validate_version(document.version)?;
         let mut prepared = crate::io::loft_parameters::prepared(document);
         prepare_surface_classes(&mut prepared);
+        prepare_unique_seqends(&mut prepared);
         prepare_database_references(&mut prepared);
         prepare_table_keys(&mut prepared);
         prepare_active_viewport_elevation(&mut prepared);
@@ -744,6 +746,72 @@ fn prepare_surface_classes(document: &mut std::borrow::Cow<'_, CadDocument>) {
         output
             .classes
             .add_or_update(crate::classes::DxfClass::new_entity(name, cpp));
+    }
+}
+
+/// An INSERT's SEQEND is written under a handle no other record of the drawing has.
+/// A block reference copied within or between drawings keeps the SEQEND handle it had (the
+/// copy paths renew its ATTRIB handles only), so two records were written under one handle:
+/// another INSERT's SEQEND, or whatever entity, ATTRIB or object of the target drawing holds
+/// that handle; the reader keeps one, and an ATTRIB lost that way was gone from the saved
+/// drawing. On the output copy, a SEQEND handle already in use is cleared, so the writer
+/// allocates a fresh one; the first claimant keeps it.
+fn prepare_unique_seqends(document: &mut std::borrow::Cow<'_, CadDocument>) {
+    use crate::entities::EntityType;
+    use crate::tables::TableEntry;
+    let doc = document.as_ref();
+    let mut used = std::collections::HashSet::new();
+    macro_rules! table {
+        ($t:expr) => {
+            used.insert($t.handle().value());
+            used.extend($t.iter().map(|e| e.handle().value()));
+        };
+    }
+    table!(doc.layers);
+    table!(doc.line_types);
+    table!(doc.text_styles);
+    table!(doc.dim_styles);
+    table!(doc.app_ids);
+    table!(doc.views);
+    table!(doc.vports);
+    table!(doc.ucss);
+    table!(doc.vx_table);
+    table!(doc.block_records);
+    for record in doc.block_records.iter() {
+        used.extend([
+            record.block_entity_handle.value(),
+            record.block_end_handle.value(),
+        ]);
+    }
+    used.extend(doc.objects.keys().map(|h| h.value()));
+    for entity in doc.entities() {
+        used.insert(entity.common().handle.value());
+        match entity {
+            EntityType::Insert(i) => {
+                used.extend(i.attributes.iter().map(|a| a.common.handle.value()))
+            }
+            EntityType::Polyline3D(p) => used.extend(p.vertices.iter().map(|v| v.handle.value())),
+            _ => {}
+        }
+    }
+    let clashes: Vec<Handle> = doc
+        .entities()
+        .filter_map(|e| match e {
+            EntityType::Insert(i) => i
+                .seqend_handle
+                .filter(|h| !h.is_null() && !used.insert(h.value()))
+                .map(|_| i.common.handle),
+            _ => None,
+        })
+        .collect();
+    if clashes.is_empty() {
+        return;
+    }
+    let output = document.to_mut();
+    for handle in clashes {
+        if let Some(EntityType::Insert(i)) = output.get_entity_mut(handle) {
+            i.seqend_handle = None;
+        }
     }
 }
 
