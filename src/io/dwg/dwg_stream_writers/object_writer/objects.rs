@@ -323,7 +323,9 @@ pub(crate) fn object_class_names(object: &ObjectType) -> Vec<std::borrow::Cow<'_
         {
             value.dxf_name()
         }
-        ObjectType::RegisteredClass(value) if value.properties.is_empty() => &value.dxf_name,
+        // A record with properties is written as a proxy that names this
+        // class, so the class is needed either way.
+        ObjectType::RegisteredClass(value) => &value.dxf_name,
         ObjectType::Associative(value) => {
             let canonical = associative_canonical_name(&value.dxf_name);
             return vec![
@@ -514,7 +516,10 @@ impl<'a> DwgObjectWriter<'a> {
                 &value.reactors,
                 &value.xdictionary_handle,
             );
-            self.writer.write_bit_long(499);
+            // The proxy names the record's class; 499 is the proxy type
+            // code, not a class.
+            self.writer
+                .write_bit_long(i32::from(self.class_type_code(&value.dxf_name, 0)));
             if self.dxf_version > crate::types::DxfVersion::AC1015 {
                 self.writer.write_variable_text(&value.dxf_name);
             }

@@ -547,7 +547,10 @@ impl<'a> DwgObjectWriter<'a> {
                 if data.properties.is_empty() {
                     self.write_registered_payload(&data.payload, &data.object_ids);
                 } else {
-                    self.writer.write_bit_long(498);
+                    // The proxy names the record's class; 498 is the proxy
+                    // type code, not a class.
+                    self.writer
+                        .write_bit_long(i32::from(self.class_type_code(&data.dxf_name, 0)));
                     if self.dxf_version > crate::types::DxfVersion::AC1015 {
                         self.writer.write_variable_text(&data.dxf_name);
                     }

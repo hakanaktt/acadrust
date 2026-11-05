@@ -925,7 +925,9 @@ fn missing_classes<'a>(document: &'a CadDocument) -> Vec<crate::classes::DxfClas
     // each name once instead of once per record.
     let mut seen: std::collections::HashSet<Cow<'a, str>> = std::collections::HashSet::new();
     let mut missing: Vec<crate::classes::DxfClass> = Vec::new();
-    let mut check = |names: &[Cow<'a, str>]| {
+    // `own`: the declaration a registered-class record carries itself (its
+    // DXF and C++ class names), used when the defaults don't know the class.
+    let mut check = |names: &[Cow<'a, str>], own: Option<crate::classes::DxfClass>| {
         if names.iter().all(|name| seen.contains(name.as_ref())) {
             return;
         }
@@ -933,26 +935,47 @@ fn missing_classes<'a>(document: &'a CadDocument) -> Vec<crate::classes::DxfClas
         if names.iter().any(|name| document.classes.contains(name)) {
             return;
         }
-        let Some(class) = defaults.iter().find(|class| {
-            names
-                .iter()
-                .any(|name| class.dxf_name.eq_ignore_ascii_case(name))
-        }) else {
+        let Some(class) = defaults
+            .iter()
+            .find(|class| {
+                names
+                    .iter()
+                    .any(|name| class.dxf_name.eq_ignore_ascii_case(name))
+            })
+            .cloned()
+            .or(own)
+        else {
             return;
         };
         if !missing
             .iter()
             .any(|added| added.dxf_name.eq_ignore_ascii_case(&class.dxf_name))
         {
-            missing.push(class.clone());
+            missing.push(class);
         }
     };
     for entity in document.entities() {
-        check(&[Cow::Borrowed(entity_class_name(entity))]);
+        let own = match entity {
+            crate::entities::EntityType::Extended(extended) => match &extended.data {
+                crate::entities::ExtendedEntityData::RegisteredClass(data) => Some(
+                    crate::classes::DxfClass::new_entity(&data.dxf_name, &data.cpp_class_name),
+                ),
+                _ => None,
+            },
+            _ => None,
+        };
+        check(&[Cow::Borrowed(entity_class_name(entity))], own);
     }
     for (_, object) in objects_in_handle_order(document) {
+        let own = match object {
+            crate::objects::ObjectType::RegisteredClass(data) => Some(
+                crate::classes::DxfClass::new(&data.dxf_name, &data.cpp_class_name),
+            ),
+            _ => None,
+        };
         check(
             &crate::io::dwg::dwg_stream_writers::object_writer::objects::object_class_names(object),
+            own,
         );
     }
     missing
