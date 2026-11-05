@@ -1196,6 +1196,7 @@ pub(crate) fn transform_raster_image(e: &mut RasterImage, transform: &Transform)
 
 pub(crate) fn transform_solid3d(e: &mut Solid3D, transform: &Transform) {
     e.common.raw_record = None;
+    e.resolve_deferred_reference_point();
     e.point_of_reference = transform.apply(e.point_of_reference);
     compose_acis_placement(&mut e.acis_data, transform);
     for wire in &mut e.wires {
@@ -1221,6 +1222,7 @@ pub(crate) fn transform_solid3d(e: &mut Solid3D, transform: &Transform) {
 
 pub(crate) fn transform_region(e: &mut Region, transform: &Transform) {
     e.common.raw_record = None;
+    e.resolve_deferred_reference_point();
     e.point_of_reference = transform.apply(e.point_of_reference);
     compose_acis_placement(&mut e.acis_data, transform);
     for wire in &mut e.wires {
@@ -1246,6 +1248,7 @@ pub(crate) fn transform_region(e: &mut Region, transform: &Transform) {
 
 pub(crate) fn transform_body(e: &mut Body, transform: &Transform) {
     e.common.raw_record = None;
+    e.resolve_deferred_reference_point();
     e.point_of_reference = transform.apply(e.point_of_reference);
     compose_acis_placement(&mut e.acis_data, transform);
     for wire in &mut e.wires {

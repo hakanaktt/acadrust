@@ -325,6 +325,14 @@ pub struct AcisData {
     /// for round-trip; 0 when the entity carried no wireframe data).
     #[cfg_attr(feature = "serde", serde(default))]
     pub wireframe_isolines: i32,
+    /// Set by a DWG read with
+    /// [`DwgReadOptions::defer_solid_reference_point`](crate::DwgReadOptions::defer_solid_reference_point):
+    /// the owning entity's `point_of_reference` was left at the origin because
+    /// the file stored none and deriving it would parse the whole modeler
+    /// data. `reference_point()` derives it on request, and a move or
+    /// transform of the entity derives it first, then clears this flag.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub reference_point_deferred: bool,
 }
 
 impl AcisData {
@@ -343,6 +351,7 @@ impl AcisData {
             acis_empty_bit: false,
             extra_acis_data: None,
             wireframe_isolines: 0,
+            reference_point_deferred: false,
         }
     }
 
@@ -364,6 +373,7 @@ impl AcisData {
             acis_empty_bit: false,
             extra_acis_data: None,
             wireframe_isolines: 0,
+            reference_point_deferred: false,
         }
     }
 
@@ -382,6 +392,7 @@ impl AcisData {
             acis_empty_bit: false,
             extra_acis_data: None,
             wireframe_isolines: 0,
+            reference_point_deferred: false,
         }
     }
 
@@ -483,6 +494,15 @@ impl AcisData {
         }
         let (_m, t, _s) = doc.placement();
         Some(Vector3::new(t[0], t[1], t[2]))
+    }
+
+    /// The reference point derived from the geometry itself: the vertex-point
+    /// bounding-box centre ([`geometry_centre`](Self::geometry_centre)), else
+    /// the placement origin ([`placement_origin`](Self::placement_origin)).
+    /// Parses the modeler data on every call, so ask for it when it is needed
+    /// rather than at load time.
+    pub fn reference_centre(&self) -> Option<Vector3> {
+        self.geometry_centre().or_else(|| self.placement_origin())
     }
 
     /// The centre of the body's vertex-point bounding box, in world space
@@ -668,6 +688,29 @@ impl Solid3D {
             wires: Vec::new(),
             silhouettes: Vec::new(),
             history_handle: None,
+        }
+    }
+
+    /// The solid's reference point: the stored `point_of_reference` when the
+    /// file carried one, else the point derived from the geometry
+    /// ([`AcisData::reference_centre`]), else the origin. After a DWG read with
+    /// `DwgReadOptions::defer_solid_reference_point`, `point_of_reference` stays
+    /// at the origin for a solid whose file stored no anchor; call this to get
+    /// the derived point.
+    pub fn reference_point(&self) -> Vector3 {
+        if self.point_of_reference != Vector3::ZERO {
+            return self.point_of_reference;
+        }
+        self.acis_data.reference_centre().unwrap_or(Vector3::ZERO)
+    }
+
+    /// Fill `point_of_reference` from the geometry when a deferred read left it
+    /// unset, and clear the flag. Called before the solid is moved, so the
+    /// offset is applied to a real point and not to the unset origin.
+    pub(crate) fn resolve_deferred_reference_point(&mut self) {
+        if self.acis_data.reference_point_deferred {
+            self.point_of_reference = self.reference_point();
+            self.acis_data.reference_point_deferred = false;
         }
     }
 
@@ -875,6 +918,24 @@ impl Region {
         }
     }
 
+    /// The region's reference point: the stored `point_of_reference`, else the
+    /// point derived from the geometry ([`AcisData::reference_centre`]), else
+    /// the origin. See [`Solid3D::reference_point`].
+    pub fn reference_point(&self) -> Vector3 {
+        if self.point_of_reference != Vector3::ZERO {
+            return self.point_of_reference;
+        }
+        self.acis_data.reference_centre().unwrap_or(Vector3::ZERO)
+    }
+
+    /// See [`Solid3D::resolve_deferred_reference_point`].
+    pub(crate) fn resolve_deferred_reference_point(&mut self) {
+        if self.acis_data.reference_point_deferred {
+            self.point_of_reference = self.reference_point();
+            self.acis_data.reference_point_deferred = false;
+        }
+    }
+
     /// Creates a region from SAT text data.
     pub fn from_sat(sat: &str) -> Self {
         let mut region = Self::new();
@@ -1001,6 +1062,24 @@ impl Body {
             wires: Vec::new(),
             silhouettes: Vec::new(),
             history_handle: None,
+        }
+    }
+
+    /// The body's reference point: the stored `point_of_reference`, else the
+    /// point derived from the geometry ([`AcisData::reference_centre`]), else
+    /// the origin. See [`Solid3D::reference_point`].
+    pub fn reference_point(&self) -> Vector3 {
+        if self.point_of_reference != Vector3::ZERO {
+            return self.point_of_reference;
+        }
+        self.acis_data.reference_centre().unwrap_or(Vector3::ZERO)
+    }
+
+    /// See [`Solid3D::resolve_deferred_reference_point`].
+    pub(crate) fn resolve_deferred_reference_point(&mut self) {
+        if self.acis_data.reference_point_deferred {
+            self.point_of_reference = self.reference_point();
+            self.acis_data.reference_point_deferred = false;
         }
     }
 
