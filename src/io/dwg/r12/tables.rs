@@ -264,9 +264,21 @@ pub(crate) fn decode_table(
         put(&mut record, 2, reader.text(32)?);
         put(&mut record, 70, flag);
         record.native_table_usage = Some(reader.short()?);
-        decode_fields(&mut reader, name, &mut record, tables)?;
-        if reader.pos != size - 2 {
-            return Err(invalid(format!("AC1009 {name} record layout mismatch")));
+        if flag & 0x80 != 0 {
+            // A deleted row (flag 128) keeps its slot so the table indexes
+            // stay aligned, but the rest of it holds stale values that need
+            // not be valid any more. Keep its fields only when they decode.
+            let mut fields = record.clone();
+            if decode_fields(&mut reader, name, &mut fields, tables).is_ok()
+                && reader.pos == size - 2
+            {
+                record = fields;
+            }
+        } else {
+            decode_fields(&mut reader, name, &mut record, tables)?;
+            if reader.pos != size - 2 {
+                return Err(invalid(format!("AC1009 {name} record layout mismatch")));
+            }
         }
         records.push(record);
     }

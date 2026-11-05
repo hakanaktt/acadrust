@@ -1387,7 +1387,9 @@ impl<R: Read + Seek> DwgReader<R> {
                         0,
                         0,
                         1,
-                        true,
+                        // The AC1009 read failed as a whole: nothing of
+                        // its record stream reached the document.
+                        false,
                         true,
                         false,
                         diagnostics,
