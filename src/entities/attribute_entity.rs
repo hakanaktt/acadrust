@@ -162,9 +162,15 @@ impl AttributeEntity {
         }
     }
 
-    /// Set the attribute value
+    /// Set the attribute value. A multi-line attribute's embedded MTEXT is what DWG/DXF R2018+
+    /// write and AutoCAD shows, so it takes the same text.
     pub fn set_value(&mut self, value: impl Into<String>) {
-        self.value = value.into();
+        let value = value.into();
+        if let Some(mtext) = self.embedded_mtext.as_mut() {
+            // MTEXT breaks a line with `\P`; a raw line feed in a plain value would not.
+            mtext.value = value.replace("\r\n", "\\P").replace(['\n', '\r'], "\\P");
+        }
+        self.value = value;
     }
 
     /// Get the attribute value
