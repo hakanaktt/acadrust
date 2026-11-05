@@ -2944,7 +2944,79 @@ pub struct SatDocument {
     /// SAT file header.
     pub header: SatHeader,
     /// Entity records in the document.
+    ///
+    /// Shared subtype definitions are looked up through an index built on
+    /// first use. It is rebuilt when the record list changes length or
+    /// allocation and dropped by every `&mut self` method; a subtype block
+    /// added or removed inside an existing record should be edited through
+    /// [`SatDocument::record_mut`], not through this field in place.
     pub records: Vec<SatRecord>,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    subtypes: SubtypeIndex,
+}
+
+/// Where each shared subtype definition starts: definition number to
+/// `(record position, token position of its opening brace)`, plus the shape
+/// of the record list it was built from.
+#[derive(Default)]
+struct SubtypeIndex(std::sync::RwLock<Option<SubtypeEntries>>);
+
+struct SubtypeEntries {
+    records_len: usize,
+    records_ptr: usize,
+    starts: Vec<(u32, u32)>,
+}
+
+impl SubtypeIndex {
+    fn clear(&mut self) {
+        *self.0.get_mut().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+}
+
+// A cache, not content: copies start empty, and it never makes two
+// documents differ.
+impl Clone for SubtypeIndex {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl PartialEq for SubtypeIndex {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl fmt::Debug for SubtypeIndex {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SubtypeIndex")
+    }
+}
+
+/// Whether `tokens[at]` opens a subtype definition: a `{` that is not a
+/// `{ ref n }` reference.
+fn opens_subtype_definition(tokens: &[SatToken], at: usize) -> bool {
+    tokens[at].as_ident() == Some("{")
+        && tokens.get(at + 1).and_then(SatToken::as_ident) != Some("ref")
+}
+
+/// The definition body whose `{` is `tokens[start]`: the tokens up to its
+/// matching `}`, without the braces. `None` when it is never closed.
+fn subtype_body(tokens: &[SatToken], start: usize) -> Option<&[SatToken]> {
+    let mut depth = 1usize;
+    for end in start + 1..tokens.len() {
+        match tokens[end].as_ident() {
+            Some("{") => depth += 1,
+            Some("}") => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&tokens[start + 1..end]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 pub(super) fn transform_flags(matrix: [[f64; 3]; 3], scale: f64) -> [&'static str; 3] {
@@ -2963,17 +3035,20 @@ pub(super) fn transform_flags(matrix: [[f64; 3]; 3], scale: f64) -> [&'static st
 impl SatDocument {
     /// Creates a new empty SAT document with ACIS 7.0 header.
     pub fn new() -> Self {
-        Self {
-            header: SatHeader::new(),
-            records: Vec::new(),
-        }
+        Self::with_header(SatHeader::new())
     }
 
     /// Creates a document with the specified header.
     pub fn with_header(header: SatHeader) -> Self {
+        Self::with_records(header, Vec::new())
+    }
+
+    /// Creates a document from a header and its records.
+    pub fn with_records(header: SatHeader, records: Vec<SatRecord>) -> Self {
         Self {
             header,
-            records: Vec::new(),
+            records,
+            subtypes: SubtypeIndex::default(),
         }
     }
 
@@ -3044,6 +3119,7 @@ impl SatDocument {
     /// body's transform pointer) when absent. Encodes the 3×3, translation and
     /// scale in the layout `placement()` reads back.
     pub fn set_placement(&mut self, matrix: [[f64; 3]; 3], translation: [f64; 3], scale: f64) {
+        self.subtypes.clear();
         let mut tokens = Vec::with_capacity(17);
         tokens.push(SatToken::Pointer(SatPointer::NULL)); // v700 book-keeping
         for row in &matrix {
@@ -3118,6 +3194,7 @@ impl SatDocument {
 
     /// Returns a mutable record by index.
     pub fn record_mut(&mut self, index: usize) -> Option<&mut SatRecord> {
+        self.subtypes.clear();
         if matches!(self.records.get(index), Some(r) if r.index == index as i32) {
             return self.records.get_mut(index);
         }
@@ -3198,6 +3275,7 @@ impl SatDocument {
 
     /// Adds a record and returns its index.
     pub fn add_record(&mut self, mut record: SatRecord) -> i32 {
+        self.subtypes.clear();
         let index = self.records.len() as i32;
         record.index = index;
         self.records.push(record);
@@ -3220,31 +3298,80 @@ impl SatDocument {
     /// `{ ref n }` blocks reference an earlier definition and do not consume
     /// an index of their own. The returned slice excludes the surrounding
     /// braces but includes the subtype identifier and its complete payload.
+    ///
+    /// Every reference used to rescan the document from its first record, so
+    /// a body resolving one reference per face cost faces x records. The
+    /// definitions' positions are now indexed once (see [`Self::records`]);
+    /// a lookup checks that its position still opens a definition and falls
+    /// back to the scan when it does not.
     pub fn subtype_tokens(&self, requested: usize) -> Option<&[SatToken]> {
+        match self.indexed_subtype(requested) {
+            Ok(Some((record, at))) => subtype_body(&self.records[record].tokens, at),
+            Ok(None) => None,
+            Err(()) => self.scan_subtype_tokens(requested),
+        }
+    }
+
+    /// The indexed `(record, token)` of definition `requested`, building the
+    /// index when it is missing or was built from another record list.
+    /// `Ok(None)` when there is no such definition; `Err` when the index
+    /// cannot answer (the caller then scans).
+    fn indexed_subtype(&self, requested: usize) -> Result<Option<(usize, usize)>, ()> {
+        let shape = (self.records.len(), self.records.as_ptr() as usize);
+        let lookup = |entries: &SubtypeEntries| {
+            if (entries.records_len, entries.records_ptr) != shape {
+                return Err(());
+            }
+            let Some(&(record, at)) = entries.starts.get(requested) else {
+                return Ok(None);
+            };
+            let (record, at) = (record as usize, at as usize);
+            match self.records.get(record) {
+                Some(r) if at < r.tokens.len() && opens_subtype_definition(&r.tokens, at) => {
+                    Ok(Some((record, at)))
+                }
+                _ => Err(()),
+            }
+        };
+        {
+            let guard = self.subtypes.0.read().unwrap_or_else(|e| e.into_inner());
+            if let Some(entries) = guard.as_ref() {
+                if let Ok(found) = lookup(entries) {
+                    return Ok(found);
+                }
+            }
+        }
+        let mut guard = self.subtypes.0.write().unwrap_or_else(|e| e.into_inner());
+        let mut starts = Vec::new();
+        for (record, r) in self.records.iter().enumerate() {
+            for at in 0..r.tokens.len() {
+                if opens_subtype_definition(&r.tokens, at) {
+                    let record = u32::try_from(record).map_err(|_| ())?;
+                    let at = u32::try_from(at).map_err(|_| ())?;
+                    starts.push((record, at));
+                }
+            }
+        }
+        let entries = guard.insert(SubtypeEntries {
+            records_len: shape.0,
+            records_ptr: shape.1,
+            starts,
+        });
+        lookup(entries)
+    }
+
+    /// The definition found by walking every record in order: what the index
+    /// replaces, kept for a lookup the index cannot answer.
+    fn scan_subtype_tokens(&self, requested: usize) -> Option<&[SatToken]> {
         let mut current = 0usize;
         for record in &self.records {
             let tokens = &record.tokens;
             for start in 0..tokens.len() {
-                if tokens[start].as_ident() != Some("{")
-                    || tokens.get(start + 1).and_then(SatToken::as_ident) == Some("ref")
-                {
+                if !opens_subtype_definition(tokens, start) {
                     continue;
                 }
                 if current == requested {
-                    let mut depth = 1usize;
-                    for end in start + 1..tokens.len() {
-                        match tokens[end].as_ident() {
-                            Some("{") => depth += 1,
-                            Some("}") => {
-                                depth -= 1;
-                                if depth == 0 {
-                                    return Some(&tokens[start + 1..end]);
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    return None;
+                    return subtype_body(tokens, start);
                 }
                 current += 1;
             }
@@ -3299,6 +3426,7 @@ impl SatDocument {
     /// Preserve existing non-null links.
     pub fn complete_brep_links(&mut self) {
         use std::collections::HashMap;
+        self.subtypes.clear();
 
         let mut vertex_edges = HashMap::<i32, i32>::new();
         let mut edge_coedges = HashMap::<i32, i32>::new();
@@ -3350,6 +3478,7 @@ impl SatDocument {
     /// stay: the modeler's own binary data carries them, and they are what
     /// gives a face a colour of its own.
     pub fn strip_for_sab(&mut self) {
+        self.subtypes.clear();
         // Determine which records to keep.
         // Core ACIS base types (last segment after hyphen split):
         let keep: Vec<bool> = self
@@ -3569,6 +3698,7 @@ impl SatDocument {
     }
 
     fn bodies_first(&mut self) {
+        self.subtypes.clear();
         let mut order: Vec<usize> = (0..self.records.len()).collect();
         order.sort_by_key(|&at| self.records[at].entity_type != "body");
         let mut index_map = vec![-1i32; order.len()];
@@ -3774,6 +3904,244 @@ pub fn classify_entity_type(entity_type: &str) -> SatEntityCategory {
 /// For example, `tcoedge-coedge` derives from `coedge`.
 pub fn base_entity_type(entity_type: &str) -> &str {
     entity_type.rsplit('-').next().unwrap_or(entity_type)
+}
+
+#[cfg(test)]
+mod subtype_index_tests {
+    use super::*;
+
+    /// The lookup as it was before the index: a walk from the first record.
+    /// Kept verbatim as the reference the index must agree with.
+    fn reference_scan(doc: &SatDocument, requested: usize) -> Option<&[SatToken]> {
+        let mut current = 0usize;
+        for record in &doc.records {
+            let tokens = &record.tokens;
+            for start in 0..tokens.len() {
+                if tokens[start].as_ident() != Some("{")
+                    || tokens.get(start + 1).and_then(SatToken::as_ident) == Some("ref")
+                {
+                    continue;
+                }
+                if current == requested {
+                    let mut depth = 1usize;
+                    for end in start + 1..tokens.len() {
+                        match tokens[end].as_ident() {
+                            Some("{") => depth += 1,
+                            Some("}") => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    return Some(&tokens[start + 1..end]);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    return None;
+                }
+                current += 1;
+            }
+        }
+        None
+    }
+
+    /// A small deterministic generator, so every run builds the same document.
+    struct Lcg(u64);
+    impl Lcg {
+        fn next(&mut self, n: u64) -> u64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (self.0 >> 33) % n
+        }
+    }
+
+    #[derive(Default)]
+    struct Census {
+        definitions: usize,
+        nested: usize,
+        references: usize,
+        binary_braces: usize,
+    }
+
+    /// `{` and `}` as text identifiers or as binary tags, as both readers
+    /// produce them.
+    fn brace(open: bool, rng: &mut Lcg, census: &mut Census) -> SatToken {
+        if rng.next(2) == 0 {
+            SatToken::Ident(if open { "{" } else { "}" }.to_string())
+        } else {
+            census.binary_braces += 1;
+            SatToken::Sab {
+                tag: if open { 0x0F } else { 0x10 },
+                data: Vec::new(),
+            }
+        }
+    }
+
+    /// One definition, sometimes holding a nested one or a reference to an
+    /// earlier definition (references consume no number).
+    fn definition(rng: &mut Lcg, census: &mut Census, out: &mut Vec<SatToken>) {
+        out.push(brace(true, rng, census));
+        census.definitions += 1;
+        out.push(SatToken::Ident(format!("kind{}", rng.next(7))));
+        out.push(SatToken::Float(rng.next(1000) as f64 / 7.0));
+        match rng.next(4) {
+            0 => {
+                census.nested += 1;
+                definition(rng, census, out);
+            }
+            1 if census.definitions > 1 => {
+                census.references += 1;
+                out.push(brace(true, rng, census));
+                out.push(SatToken::Ident("ref".to_string()));
+                out.push(SatToken::Integer(
+                    rng.next(census.definitions as u64 - 1) as i64
+                ));
+                out.push(brace(false, rng, census));
+            }
+            _ => {}
+        }
+        out.push(SatToken::Integer(rng.next(100) as i64));
+        out.push(brace(false, rng, census));
+    }
+
+    fn record(at: usize, tokens: Vec<SatToken>) -> SatRecord {
+        let mut r = SatRecord::new(at as i32, "spline-surface");
+        r.tokens = tokens;
+        r
+    }
+
+    /// Hundreds of records with zero to three definitions or references each,
+    /// and a last record whose definition never closes.
+    fn document(census: &mut Census) -> SatDocument {
+        let mut rng = Lcg(2224);
+        let mut doc = SatDocument::new();
+        for at in 0..400 {
+            let mut tokens = vec![SatToken::Pointer(SatPointer::NULL)];
+            for _ in 0..rng.next(4) {
+                if rng.next(5) == 0 && census.definitions > 0 {
+                    census.references += 1;
+                    tokens.push(brace(true, &mut rng, census));
+                    tokens.push(SatToken::Ident("ref".to_string()));
+                    tokens.push(SatToken::Integer(rng.next(census.definitions as u64) as i64));
+                    tokens.push(brace(false, &mut rng, census));
+                } else {
+                    definition(&mut rng, census, &mut tokens);
+                }
+                tokens.push(SatToken::Enum("forward".to_string()));
+            }
+            tokens.push(SatToken::Terminator);
+            doc.records.push(record(at, tokens));
+        }
+        let open = brace(true, &mut rng, census);
+        census.definitions += 1;
+        doc.records.push(record(
+            400,
+            vec![open, SatToken::Ident("unclosed".to_string())],
+        ));
+        doc
+    }
+
+    fn assert_agrees(doc: &SatDocument, definitions: usize, when: &str) {
+        for n in 0..definitions + 8 {
+            assert_eq!(
+                doc.subtype_tokens(n),
+                reference_scan(doc, n),
+                "definition {n} {when}"
+            );
+        }
+    }
+
+    #[test]
+    fn indexed_lookup_returns_what_the_scan_returns() {
+        let mut census = Census::default();
+        let doc = document(&mut census);
+        // The document exercises what the lookup has to get right.
+        assert!(
+            census.definitions > 300,
+            "{} definitions",
+            census.definitions
+        );
+        assert!(census.nested > 50, "{} nested", census.nested);
+        assert!(census.references > 100, "{} references", census.references);
+        assert!(
+            census.binary_braces > 300,
+            "{} binary braces",
+            census.binary_braces
+        );
+        assert!(
+            reference_scan(&doc, census.definitions - 1).is_none(),
+            "unclosed last"
+        );
+        assert!(reference_scan(&doc, census.definitions - 2).is_some());
+
+        assert_agrees(&doc, census.definitions, "");
+        // Every lookup was answered by the index, none by the fallback scan.
+        for n in 0..census.definitions + 8 {
+            let indexed = doc.indexed_subtype(n);
+            assert!(indexed.is_ok(), "definition {n} fell back to the scan");
+            assert_eq!(indexed.unwrap().is_some(), n < census.definitions);
+        }
+        // Out of order too: the index does not depend on the order of use.
+        let mut rng = Lcg(7);
+        for _ in 0..2000 {
+            let n = rng.next(census.definitions as u64 + 8) as usize;
+            assert_eq!(
+                doc.subtype_tokens(n),
+                reference_scan(&doc, n),
+                "definition {n}"
+            );
+        }
+    }
+
+    #[test]
+    fn indexed_lookup_follows_edits_of_the_records() {
+        let mut census = Census::default();
+        let mut doc = document(&mut census);
+        let mut definitions = census.definitions;
+        assert_agrees(&doc, definitions, "before edits");
+
+        // A definition inserted in front of every other one renumbers them all.
+        let mut rng = Lcg(11);
+        let mut inserted = Vec::new();
+        definition(&mut rng, &mut Census::default(), &mut inserted);
+        let added = inserted
+            .iter()
+            .enumerate()
+            .filter(|(at, _)| opens_subtype_definition(&inserted, *at))
+            .count();
+        let first = doc.record_mut(0).unwrap();
+        first.tokens.splice(1..1, inserted).for_each(drop);
+        definitions += added;
+        assert_agrees(&doc, definitions, "after record_mut");
+
+        // Records pushed straight onto the field.
+        let mut tokens = Vec::new();
+        definition(&mut rng, &mut Census::default(), &mut tokens);
+        definitions += tokens
+            .iter()
+            .enumerate()
+            .filter(|(at, _)| opens_subtype_definition(&tokens, *at))
+            .count();
+        let at = doc.records.len();
+        doc.records.push(record(at, tokens));
+        assert_agrees(&doc, definitions, "after a push");
+
+        // The record list replaced, here by its own first half.
+        // (`definitions` stays an upper bound: past the end both answer None.)
+        let half: Vec<SatRecord> = doc.records[..200].to_vec();
+        doc.records = half;
+        assert!(
+            reference_scan(&doc, definitions * 3 / 4).is_none(),
+            "fewer definitions now"
+        );
+        assert_agrees(&doc, definitions, "after replacing the records");
+
+        // A copy answers alike and does not share the original's index.
+        let copy = doc.clone();
+        assert_eq!(copy, doc);
+        assert_agrees(&copy, definitions, "in a copy");
+    }
 }
 
 #[cfg(all(test, feature = "serde"))]

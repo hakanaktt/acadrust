@@ -70,10 +70,7 @@ impl SatParser {
         // Parse entity records
         let records = Self::parse_records(&mut lines, &sat_header.version)?;
 
-        let mut doc = SatDocument {
-            header: sat_header,
-            records,
-        };
+        let mut doc = SatDocument::with_records(sat_header, records);
 
         // Update record count
         doc.header.num_records = doc.records.len();
