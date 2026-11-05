@@ -211,6 +211,7 @@ impl DxfReader {
         let mut record_stream_read = false;
         let mut stream_completed = false;
         let mut diagnostics = Vec::new();
+        let mut file_classes = Vec::new();
 
         loop {
             let pair = match self.reader.read_pair() {
@@ -307,7 +308,9 @@ impl DxfReader {
                         let decoded_before = decoded_source_records;
                         let result = match section_name.as_str() {
                             "HEADER" => self.read_header_section(&mut document),
-                            "CLASSES" => self.read_classes_section(&mut document),
+                            "CLASSES" => self
+                                .read_classes_section(&mut document)
+                                .map(|classes| file_classes.extend(classes)),
                             "TABLES" => self.read_tables_section(
                                 &mut document,
                                 &mut decoded_source_records,
@@ -389,6 +392,7 @@ impl DxfReader {
         // and repair cross-references.
         document.synchronize_handle_allocator();
         rehandle_colliding_default_entries(&mut document, &default_entry_handles);
+        renumber_proxy_classes(&mut document, &file_classes);
         document.resolve_references();
         // Must follow `resolve_references`: handle-less legacy table records
         // (R12 STYLE entries) only receive their handles there, so running this
@@ -459,8 +463,8 @@ impl DxfReader {
         section_reader.read_header(document)
     }
 
-    /// Read the CLASSES section
-    fn read_classes_section(&mut self, document: &mut CadDocument) -> Result<()> {
+    /// Read the CLASSES section; returns the file's class names in order.
+    fn read_classes_section(&mut self, document: &mut CadDocument) -> Result<Vec<String>> {
         let mut section_reader = SectionReader::new(&mut self.reader);
         section_reader.read_classes(document)
     }
@@ -725,6 +729,49 @@ fn snapshot_default_entry_handles(document: &CadDocument) -> HashMap<(&'static s
     snapshot!("vx_table", document.vx_table);
     snapshot!("block_records", document.block_records);
     map
+}
+
+/// Turns the class numbers of proxies read from DXF into numbers of the
+/// document's class table.
+///
+/// A DXF proxy entity or object names its class by `500 + index` of the
+/// class in the file's CLASSES section (`file_classes`). The reader merges
+/// the file's classes into the default table by name, so a file class sits
+/// at another place in the document: its number there is found by name. A
+/// number naming no class of the file becomes 0 (no class); numbers below
+/// 500 name no class and are kept.
+fn renumber_proxy_classes(document: &mut CadDocument, file_classes: &[String]) {
+    let numbers: Vec<i32> = file_classes
+        .iter()
+        .map(|name| {
+            document
+                .classes
+                .get_by_name(name)
+                .filter(|_| !name.is_empty())
+                .map_or(0, |class| i32::from(class.class_number))
+        })
+        .collect();
+    let document_number = |class_id: &mut i32| {
+        if *class_id >= 500 {
+            *class_id = usize::try_from(*class_id - 500)
+                .ok()
+                .and_then(|index| numbers.get(index))
+                .copied()
+                .unwrap_or(0);
+        }
+    };
+    for entity in document.entities_mut_keep_raw() {
+        if let EntityType::Extended(extended) = entity {
+            if let crate::entities::ExtendedEntityData::Proxy(proxy) = &mut extended.data {
+                document_number(&mut proxy.class_id);
+            }
+        }
+    }
+    for object in document.objects.values_mut() {
+        if let crate::objects::ObjectType::ProxyObject(proxy) = object {
+            document_number(&mut proxy.class_id);
+        }
+    }
 }
 
 /// Re-handle surviving `initialize_defaults()` entries whose handles the
