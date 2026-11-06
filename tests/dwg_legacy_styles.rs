@@ -115,3 +115,42 @@ fn legacy_writes_keep_styles_only_from_their_introduction_version() {
         }
     }
 }
+
+/// Pre-R2010 MLEADERSTYLE records carry ACAD_MLEADERVER xdata (1070 = 2);
+/// ZWCAD 2025 drops an R2004 style without it as an invalid entry.
+#[test]
+fn legacy_mleader_styles_carry_their_record_version() {
+    let doc = CadDocument::new();
+    for version in [DxfVersion::AC1018, DxfVersion::AC1021, DxfVersion::AC1024] {
+        let back = write_at(&doc, version);
+        let styles: Vec<_> = back
+            .objects
+            .iter()
+            .filter(|(_, object)| matches!(object, ObjectType::MultiLeaderStyle(_)))
+            .map(|(handle, _)| *handle)
+            .collect();
+        assert!(
+            !styles.is_empty(),
+            "{version:?}: Standard MLEADERSTYLE written"
+        );
+        for handle in styles {
+            let record = back
+                .object_xdata
+                .get(&handle)
+                .and_then(|data| data.get_record("ACAD_MLEADERVER"));
+            if version < DxfVersion::AC1024 {
+                let record = record.unwrap_or_else(|| panic!("{version:?}: ACAD_MLEADERVER"));
+                assert_eq!(
+                    record.values,
+                    vec![acadrust::xdata::XDataValue::Integer16(2)],
+                    "{version:?}"
+                );
+            } else {
+                assert!(
+                    record.is_none(),
+                    "{version:?}: R2010 records name their version"
+                );
+            }
+        }
+    }
+}
