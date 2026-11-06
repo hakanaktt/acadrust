@@ -5678,14 +5678,16 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.write_common_entity_data(&attdef.common, owner)?;
         self.writer.write_subclass("AcDbText")?;
 
+        // Thickness precedes the insertion point, as in TEXT.
+        if attdef.thickness != 0.0 {
+            self.writer.write_double(39, attdef.thickness)?;
+        }
+
         // Insertion point
         self.writer.write_point3d(10, attdef.insertion_point)?;
 
         // Text height
         self.writer.write_double(40, attdef.height)?;
-        if attdef.thickness != 0.0 {
-            self.writer.write_double(39, attdef.thickness)?;
-        }
 
         // Default value (a multiline one also lives in the embedded MTEXT;
         // the reference application reads it from here too)
@@ -5860,14 +5862,16 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.write_common_entity_data(&attrib.common, owner)?;
         self.writer.write_subclass("AcDbText")?;
 
+        // Thickness precedes the insertion point, as in TEXT.
+        if attrib.thickness != 0.0 {
+            self.writer.write_double(39, attrib.thickness)?;
+        }
+
         // Insertion point
         self.writer.write_point3d(10, attrib.insertion_point)?;
 
         // Text height
         self.writer.write_double(40, attrib.height)?;
-        if attrib.thickness != 0.0 {
-            self.writer.write_double(39, attrib.thickness)?;
-        }
 
         // Value (a multiline one also lives in the embedded MTEXT; the
         // reference application reads it from here too)

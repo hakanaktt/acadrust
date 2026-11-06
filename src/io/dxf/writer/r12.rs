@@ -1124,6 +1124,7 @@ impl<'a, W: DxfStreamWriter> R12Writer<'a, W> {
     fn write_attdef(&mut self, a: &AttributeDefinition, paper: bool) -> Result<()> {
         self.writer.write_entity_type("ATTDEF")?;
         self.common(&a.common, paper)?;
+        self.thickness(a.thickness)?;
         self.writer.write_point3d(10, a.insertion_point)?;
         self.writer.write_double(40, a.height)?;
         self.writer.write_string(1, &a.default_value)?;
@@ -1152,6 +1153,7 @@ impl<'a, W: DxfStreamWriter> R12Writer<'a, W> {
     fn write_attrib(&mut self, a: &AttributeEntity, paper: bool) -> Result<()> {
         self.writer.write_entity_type("ATTRIB")?;
         self.common(&a.common, paper)?;
+        self.thickness(a.thickness)?;
         self.writer.write_point3d(10, a.insertion_point)?;
         self.writer.write_double(40, a.height)?;
         self.writer.write_string(1, &a.value)?;
