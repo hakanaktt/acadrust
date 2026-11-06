@@ -1480,12 +1480,13 @@ impl<R: Read + Seek> DwgReader<R> {
 
         // AC1009/R12 predates the section-map/object-stream model used by the
         // normal DWG reader. Dispatch it to the byte-aligned pre-R13 codec
-        // before attempting the R13+ file-header parser.
+        // before attempting the R13+ file-header parser. AC1006/R10 shares
+        // that layout and is read into an R11/R12 document.
         self.stream.seek(SeekFrom::Start(0))?;
         let mut magic = [0u8; 6];
         self.stream.read_exact(&mut magic)?;
         self.stream.seek(SeekFrom::Start(0))?;
-        if magic == *b"AC1009" || magic == *b"AD1009" {
+        if magic == *b"AC1009" || magic == *b"AD1009" || magic == *b"AC1006" {
             let mut bytes = Vec::new();
             self.stream.read_to_end(&mut bytes)?;
             let mut document = match crate::io::dwg::r12::read_document(

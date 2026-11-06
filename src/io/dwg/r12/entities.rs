@@ -1,5 +1,6 @@
 //! Byte-aligned entity records used by AC1009 (R11/R12) drawings.
 
+use super::header::Revision;
 use crate::error::{DxfError, Result};
 use crate::io::dwg::crc::crc16;
 use crate::io::dxf::code_page::{
@@ -813,11 +814,24 @@ pub(crate) fn decode_entities(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn decode_positioned_entities(
     bytes: &[u8],
     tables: &EntityTables,
     base_address: u32,
     code_page: &str,
+) -> Result<Vec<PositionedRecord>> {
+    decode_positioned_entities_for(bytes, tables, base_address, code_page, Revision::R11R12)
+}
+
+/// Decode an entity section of either revision. R10 records have no CRC, so
+/// each one has to be consumed exactly instead.
+pub(crate) fn decode_positioned_entities_for(
+    bytes: &[u8],
+    tables: &EntityTables,
+    base_address: u32,
+    code_page: &str,
+    revision: Revision,
 ) -> Result<Vec<PositionedRecord>> {
     let section_size =
         u32::try_from(bytes.len()).map_err(|_| invalid("R12 entity section size overflow"))?;
@@ -838,15 +852,25 @@ pub(crate) fn decode_positioned_entities(
             .get(offset..offset + size)
             .ok_or_else(|| invalid("R12 entity exceeds section bounds"))?;
         let is_jump = header[0] & 127 == 18;
-        let crc_offset = if is_jump { 8 } else { size - 2 };
-        let expected = raw
-            .get(crc_offset..crc_offset + 2)
-            .ok_or_else(|| invalid("Truncated R12 JUMP record"))?;
-        let expected = u16::from_le_bytes(expected.try_into().unwrap());
-        if crc16(0xC0C1, &raw[..crc_offset]) != expected {
-            return Err(invalid(format!(
-                "R12 entity CRC mismatch at section offset {offset}"
-            )));
+        let crc_offset = match revision {
+            // An R10 JUMP may carry unused bytes after its address.
+            Revision::R10 if is_jump => 8.min(size),
+            Revision::R10 => size,
+            Revision::R11R12 if is_jump => 8,
+            Revision::R11R12 => size - 2,
+        };
+        if revision == Revision::R11R12 {
+            let expected = raw
+                .get(crc_offset..crc_offset + 2)
+                .ok_or_else(|| invalid("Truncated R12 JUMP record"))?;
+            let expected = u16::from_le_bytes(expected.try_into().unwrap());
+            if crc16(0xC0C1, &raw[..crc_offset]) != expected {
+                return Err(invalid(format!(
+                    "R12 entity CRC mismatch at section offset {offset}"
+                )));
+            }
+        } else if is_jump && size < 8 {
+            return Err(invalid("Truncated R10 JUMP record"));
         }
         let address = base_address
             .checked_add(u32::try_from(offset).map_err(|_| invalid("R12 entity offset overflow"))?)
@@ -866,7 +890,7 @@ pub(crate) fn decode_positioned_entities(
         // reach its target.
         if !deleted || is_jump {
             let (mut record, owner) =
-                decode_record_with_owner(&raw[..crc_offset], tables, code_page).map_err(
+                decode_record_with_owner(&raw[..crc_offset], tables, code_page, revision).map_err(
                     |error| {
                         invalid(format!(
                             "R12 entity type {} at file offset {:#x}: {error}",
@@ -890,14 +914,16 @@ pub(crate) fn decode_positioned_entities(
 
 #[cfg(test)]
 fn decode_record(bytes: &[u8], t: &EntityTables, code_page: &str) -> Result<EntityRecord> {
-    Ok(decode_record_with_owner(bytes, t, code_page)?.0)
+    Ok(decode_record_with_owner(bytes, t, code_page, Revision::R11R12)?.0)
 }
 
 fn decode_record_with_owner(
     bytes: &[u8],
     t: &EntityTables,
     code_page: &str,
+    revision: Revision,
 ) -> Result<(EntityRecord, Option<u32>)> {
+    let r10 = revision == Revision::R10;
     let mut r = Reader::new(bytes, code_page);
     let kind = r.byte()? & 127;
     let flag = r.byte()?;
@@ -910,6 +936,11 @@ fn decode_record_with_owner(
     }
     out.put(8, table_name(&t.layers, r.short()?)?);
     let options = r.ushort()?;
+    if r10 && flag & 64 != 0 {
+        // R11 introduced this bit for the extra flag byte (paper space,
+        // extended data). Its meaning in R10 is unknown.
+        return Err(invalid("Unsupported R10 entity flag 0x40"));
+    }
     let extra = if flag & 64 != 0 { r.byte()? } else { 0 };
     if extra & 1 != 0 {
         out.put(67, 1);
@@ -922,7 +953,16 @@ fn decode_record_with_owner(
         out.put(62, r.byte()? as i8 as i16);
     }
     if flag & 2 != 0 {
-        let index = r.short()?;
+        let index = if r10 {
+            // R10 stores the linetype index in one byte; 255 is BYBLOCK.
+            // BYLAYER is the absence of the field.
+            match r.byte()? {
+                255 => 32766,
+                index => i16::from(index),
+            }
+        } else {
+            r.short()?
+        };
         out.put(6, super::tables::linetype_name(t, index)?);
     }
     let is3d = matches!(kind, 1 | 2 | 21 | 22);
@@ -952,6 +992,15 @@ fn decode_record_with_owner(
         out.put(66, 1);
     }
     let owner = decode_geometry(&mut r, &mut out, t, options, flag, elevation)?;
+    // Without a CRC, a record that is not used up exactly means the layout
+    // was misread.
+    if r10 && r.pos != bytes.len() {
+        return Err(invalid(format!(
+            "R10 {} record has {} unread bytes",
+            out.kind,
+            bytes.len() - r.pos
+        )));
+    }
     Ok((out, owner))
 }
 
