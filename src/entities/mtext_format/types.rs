@@ -279,28 +279,78 @@ pub struct ParagraphProperties {
     pub left_margin: Option<f64>,
     /// Right margin from `r<n>`.
     pub right_margin: Option<f64>,
-    /// Spacing before paragraph from `b<n>` (inches).
+    /// Spacing before paragraph from `b<n>`, as a multiple of the entity's
+    /// text height (`b2` leaves two text heights). See
+    /// [`spacing_before_distance`](Self::spacing_before_distance).
     pub spacing_before: Option<f64>,
-    /// Spacing after paragraph from `a<n>` (inches).
+    /// Spacing after paragraph from `a<n>`, as a multiple of the entity's
+    /// text height. See [`spacing_after_distance`](Self::spacing_after_distance).
     pub spacing_after: Option<f64>,
-    /// Line spacing from `se<n>` (exact spacing in inches) or `sm<n>` (multiple of font height).
+    /// Line spacing from `se<n>` or `sm<n>`. Both are factors of the default
+    /// line pitch, not distances. See [`MTextLineSpacing`].
     pub line_spacing: Option<MTextLineSpacing>,
     /// Tab stops from `t<n>` (comma-separated, each optionally prefixed by
     /// `c`/`r`/`D` for center/right/decimal alignment).
     pub tab_stops: Vec<TabStop>,
 }
 
+impl ParagraphProperties {
+    /// Space before the paragraph in drawing units: `b<n>` × `text_height`.
+    /// `None` when the paragraph has no `b` code.
+    pub fn spacing_before_distance(&self, text_height: f64) -> Option<f64> {
+        self.spacing_before.map(|factor| factor * text_height)
+    }
+
+    /// Space after the paragraph in drawing units: `a<n>` × `text_height`.
+    /// `None` when the paragraph has no `a` code.
+    pub fn spacing_after_distance(&self, text_height: f64) -> Option<f64> {
+        self.spacing_after.map(|factor| factor * text_height)
+    }
+}
+
 /// Line spacing mode from `se` (exact) or `sm` (multiple) inside `\p...;`.
+///
+/// Neither value is a distance. Both are factors of the default line pitch,
+/// [`DEFAULT_PITCH_FACTOR`](Self::DEFAULT_PITCH_FACTOR) × text height. They
+/// differ in where a line's baseline sits in its slot (see
+/// [`baseline_offset`](Self::baseline_offset)).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum MTextLineSpacing {
-    /// Default (automatic line spacing).
+    /// Default (the entity's line spacing factor, DXF 44).
     #[default]
     Default,
-    /// Exact spacing in inches: `se<n>`.
+    /// Exact spacing factor `se<n>`: pitch `n` × 5/3 × text height, with the
+    /// baseline `n` × text height below the top of the line slot.
     Exact(f64),
-    /// Multiple of font height: `sm<n>`.
+    /// Multiple spacing factor `sm<n>`: pitch `n` × 5/3 × text height.
     Multiple(f64),
+}
+
+impl MTextLineSpacing {
+    /// Default baseline-to-baseline pitch as a multiple of the text height.
+    pub const DEFAULT_PITCH_FACTOR: f64 = 5.0 / 3.0;
+
+    /// Baseline-to-baseline distance in drawing units. `entity_factor` is the
+    /// entity's line spacing factor (DXF 44), used for [`Default`](Self::Default).
+    pub fn line_pitch(&self, text_height: f64, entity_factor: f64) -> f64 {
+        let factor = match *self {
+            Self::Default => entity_factor,
+            Self::Exact(factor) | Self::Multiple(factor) => factor,
+        };
+        factor * Self::DEFAULT_PITCH_FACTOR * text_height
+    }
+
+    /// Distance in drawing units from the top of a line's slot down to its
+    /// baseline. This is `n` × text height for `se<n>` and one text height
+    /// otherwise, so `se2` drops the first line by one text height and `se0.5`
+    /// raises it by half.
+    pub fn baseline_offset(&self, text_height: f64) -> f64 {
+        match *self {
+            Self::Exact(factor) => factor * text_height,
+            Self::Default | Self::Multiple(_) => text_height,
+        }
+    }
 }
 
 // ============================================================================
