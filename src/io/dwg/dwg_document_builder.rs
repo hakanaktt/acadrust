@@ -5248,6 +5248,7 @@ impl DwgDocumentBuilder {
                     e.common = entity_common;
                     e.insertion_point = data.text_data.insertion_point;
                     e.height = data.text_data.height;
+                    e.thickness = data.text_data.thickness;
                     e.rotation = data.text_data.rotation;
                     // Carry the full text geometry the reader parsed — same as
                     // ATTRIB. Without these the attribute reverts to
@@ -5303,6 +5304,7 @@ impl DwgDocumentBuilder {
                     e.common = entity_common;
                     e.insertion_point = data.text_data.insertion_point;
                     e.height = data.text_data.height;
+                    e.thickness = data.text_data.thickness;
                     e.rotation = data.text_data.rotation;
                     // Carry the full text geometry the reader parsed. Without
                     // these the attribute reverts to left/baseline with no

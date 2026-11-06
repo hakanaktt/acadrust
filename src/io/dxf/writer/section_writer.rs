@@ -5683,6 +5683,9 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         // Text height
         self.writer.write_double(40, attdef.height)?;
+        if attdef.thickness != 0.0 {
+            self.writer.write_double(39, attdef.thickness)?;
+        }
 
         // Default value (a multiline one also lives in the embedded MTEXT;
         // the reference application reads it from here too)
@@ -5862,6 +5865,9 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         // Text height
         self.writer.write_double(40, attrib.height)?;
+        if attrib.thickness != 0.0 {
+            self.writer.write_double(39, attrib.thickness)?;
+        }
 
         // Value (a multiline one also lives in the embedded MTEXT; the
         // reference application reads it from here too)

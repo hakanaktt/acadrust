@@ -43,6 +43,9 @@ pub struct AttributeEntity {
     pub alignment_point: Vector3,
     /// Text height
     pub height: f64,
+    /// Signed extrusion thickness in drawing units.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub thickness: f64,
     /// Rotation angle in radians
     pub rotation: f64,
     /// Relative X scale factor (width factor)
@@ -90,6 +93,7 @@ impl AttributeEntity {
             insertion_point: Vector3::ZERO,
             alignment_point: Vector3::ZERO,
             height: 2.5,
+            thickness: 0.0,
             rotation: 0.0,
             width_factor: 1.0,
             oblique_angle: 0.0,
@@ -138,6 +142,7 @@ impl AttributeEntity {
             insertion_point: attdef.insertion_point,
             alignment_point: attdef.alignment_point,
             height: attdef.height,
+            thickness: attdef.thickness,
             rotation: attdef.rotation,
             width_factor: attdef.width_factor,
             oblique_angle: attdef.oblique_angle,

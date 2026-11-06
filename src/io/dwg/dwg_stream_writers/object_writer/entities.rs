@@ -1427,7 +1427,7 @@ impl<'a> DwgObjectWriter<'a> {
             att.insertion_point,
             att.alignment_point,
             att.normal,
-            0.0, // thickness
+            att.thickness,
             att.oblique_angle,
             att.rotation,
             att.height,
@@ -4917,7 +4917,7 @@ impl<'a> DwgObjectWriter<'a> {
             e.insertion_point,
             e.alignment_point,
             e.normal,
-            0.0, // thickness
+            e.thickness,
             e.oblique_angle,
             e.rotation,
             e.height,
@@ -4999,7 +4999,7 @@ impl<'a> DwgObjectWriter<'a> {
             e.insertion_point,
             e.alignment_point,
             e.normal,
-            0.0, // thickness
+            e.thickness,
             e.oblique_angle,
             e.rotation,
             e.height,
