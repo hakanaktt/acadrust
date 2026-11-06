@@ -453,6 +453,7 @@ impl DxfReader {
         document.source_path = self.source_path.take();
         crate::objects::restore_visual_style_roundtrip(&mut document);
         crate::objects::restore_table_style_roundtrip(&mut document);
+        document.resolve_multileader_style_names();
         crate::objects::restore_table_entity_roundtrip(&mut document);
         Ok(crate::io::read::ReadOutcome::new(document, stats))
     }

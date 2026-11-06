@@ -5,6 +5,13 @@
 
 use crate::types::Vector3;
 
+mod checked;
+mod records;
+pub use checked::{ProxyGraphicError, ProxyGraphicErrorReason};
+pub use records::{
+    ProxyGraphicCommand, ProxyLegacyText, ProxyLegacyTextStyle, ProxyStyledUnicodeText,
+};
+
 const HEADER_SIZE: usize = 8;
 const RECORD_HEADER_SIZE: usize = 8;
 const UNICODE_TEXT_FIXED_SIZE: usize = 96;
@@ -24,6 +31,8 @@ pub enum ProxyGraphicRecord {
     FillOff,
     /// Type 36: a single-line UTF-16 text primitive.
     UnicodeText(ProxyUnicodeText),
+    /// Additional typed commands returned by the checked decoding API.
+    Command(ProxyGraphicCommand),
     /// A record whose payload is not interpreted by this version of acadrust.
     Unknown { record_type: u32, data: Vec<u8> },
 }
@@ -124,6 +133,7 @@ fn decode_record(record_type: u32, payload: &[u8]) -> ProxyGraphicRecord {
 
 fn encode_record(record: &ProxyGraphicRecord) -> Option<(u32, Vec<u8>)> {
     match record {
+        ProxyGraphicRecord::Command(command) => records::encode(command),
         ProxyGraphicRecord::FillOff => Some((21, Vec::new())),
         ProxyGraphicRecord::UnicodeText(text) => {
             let mut data = Vec::with_capacity(UNICODE_TEXT_FIXED_SIZE + text.text.len() * 2 + 4);
