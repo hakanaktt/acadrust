@@ -105,3 +105,20 @@ fn an_explicit_attribute_flag_survives_without_attribute_definitions() {
     );
     assert_eq!(doc.entities().count(), saved.entities().count());
 }
+
+#[test]
+fn a_layout_block_record_never_gets_the_attribute_flag() {
+    use acadrust::entities::AttributeDefinition;
+    for version in [DxfVersion::AC1018, DxfVersion::AC1032] {
+        let mut doc = CadDocument::with_version(version);
+        let attdef = AttributeDefinition::new("TAG".into(), "Prompt".into(), String::new());
+        doc.add_entity(EntityType::AttributeDefinition(attdef))
+            .unwrap();
+        let saved = DwgReader::from_stream(Cursor::new(DwgWriter::write_to_vec(&doc).unwrap()))
+            .read()
+            .unwrap();
+        let model = saved.block_records.get("*Model_Space").unwrap();
+        assert!(!model.flags.has_attributes, "{version:?}");
+        assert_eq!(saved.entities().count(), 1, "{version:?}");
+    }
+}

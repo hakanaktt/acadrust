@@ -2263,15 +2263,18 @@ impl<'a> DwgObjectWriter<'a> {
 
         // Anonymous flag
         self.writer.write_bit(record.flags.anonymous);
-        // Has attributes
-        let has_attributes = record.entity_handles.iter().any(|handle| {
-            matches!(
-                self.document.get_entity(*handle),
-                Some(EntityType::AttributeDefinition(_))
-            )
-        });
+        // Has attributes: never on a layout block record, as AutoCAD writes it
+        // (ZWCAD's AUDIT flags a layout with the bit set).
+        let is_layout = record.is_model_space() || record.is_paper_space() || record.is_layout();
+        let has_attributes = !is_layout
+            && record.entity_handles.iter().any(|handle| {
+                matches!(
+                    self.document.get_entity(*handle),
+                    Some(EntityType::AttributeDefinition(_))
+                )
+            });
         self.writer
-            .write_bit(record.flags.has_attributes || has_attributes);
+            .write_bit(!is_layout && (record.flags.has_attributes || has_attributes));
         // Is xref
         self.writer.write_bit(record.flags.is_xref);
         // Is xref overlay
