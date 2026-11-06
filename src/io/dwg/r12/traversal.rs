@@ -24,6 +24,10 @@ struct Cursor {
 
 struct Sequence {
     address: u32,
+    /// Address of the JUMP that led to the header, if one did. When AutoCAD
+    /// moves a header into the extra section it leaves a JUMP in its place,
+    /// and the SEQEND may still name that old address (R10 sample JUMP1).
+    jumped_from: Option<u32>,
     child_kind: &'static str,
 }
 
@@ -131,6 +135,8 @@ impl Walker {
         let mut cursor = Some(start);
         let mut sequence: Option<Sequence> = None;
         let mut in_block = false;
+        // First JUMP of the chain that reached the current record.
+        let mut jumped_from: Option<u32> = None;
         while let Some(current) = cursor {
             let record = &self.sections[current.section].records[current.index];
             if let Some(previous) = self.visited[current.section][current.index] {
@@ -146,9 +152,11 @@ impl Walker {
             }
             self.visited[current.section][current.index] = Some(owner);
             if let Some(target) = record.jump_address {
+                jumped_from.get_or_insert(record.address);
                 cursor = self.jump_target(target, owner)?;
                 continue;
             }
+            let reached_from = jumped_from.take();
             if let Some(entity) = &record.record {
                 let kind = entity.kind.as_str();
                 match kind {
@@ -179,10 +187,12 @@ impl Walker {
                                 record.address
                             )));
                         };
-                        if !record
-                            .sequence_owner
-                            .is_some_and(|owner| self.sequence_owner_matches(owner, open.address))
-                        {
+                        if !record.sequence_owner.is_some_and(|owner| {
+                            self.sequence_owner_matches(owner, open.address)
+                                || open
+                                    .jumped_from
+                                    .is_some_and(|jump| self.sequence_owner_matches(owner, jump))
+                        }) {
                             return Err(invalid(format!(
                                 "AC1009 SEQEND at {:#x} names owner {:?}, expected {:#x}",
                                 record.address, record.sequence_owner, open.address
@@ -204,6 +214,7 @@ impl Walker {
                         if kind == "POLYLINE" || kind == "INSERT" && entity.integer(66, 0) != 0 {
                             sequence = Some(Sequence {
                                 address: record.address,
+                                jumped_from: reached_from,
                                 child_kind: if kind == "POLYLINE" {
                                     "VERTEX"
                                 } else {

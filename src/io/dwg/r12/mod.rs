@@ -1,4 +1,4 @@
-//! Native pre-R13 (AC1009/R11-R12) DWG support.
+//! Native pre-R13 (AC1009/R11-R12) DWG support, and reading of AC1006 (R10).
 
 pub mod entities;
 pub mod header;
@@ -25,9 +25,9 @@ use crate::io::dxf::{DxfReader, DxfStreamReader, DxfTextReader, DxfWriter};
 use crate::tables::{TableEntry, VxTableRecord};
 use crate::types::{DxfVersion, Handle};
 
-use self::entities::{decode_positioned_entities, encode_entities, EntityRecord, EntityTables};
+use self::entities::{decode_positioned_entities_for, encode_entities, EntityRecord, EntityTables};
 use self::header::{
-    write_auxheader, write_header, HeaderLayout, HeaderReferences, TableLocator,
+    write_auxheader, write_header, HeaderLayout, HeaderReferences, Revision, TableLocator,
     BLOCK_ENTITIES_BEGIN, BLOCK_ENTITIES_END, ENTITIES_BEGIN, ENTITIES_END, EXTRA_ENTITIES_BEGIN,
     EXTRA_ENTITIES_END,
 };
@@ -43,11 +43,31 @@ fn section_records(
     tables: &EntityTables,
     code_page: &str,
     preceding_table: Option<TableLocator>,
+    revision: Revision,
 ) -> Result<SectionRecords> {
     if content_size == 0 {
         return Ok(SectionRecords {
             base_address: field_start,
             ..SectionRecords::default()
+        });
+    }
+    if revision == Revision::R10 {
+        // R10 sections have no sentinels: the header addresses the records.
+        let section = usize::try_from(field_start)
+            .ok()
+            .zip(usize::try_from(content_size).ok())
+            .and_then(|(start, size)| data.get(start..start.checked_add(size)?))
+            .ok_or_else(|| DxfError::InvalidFormat("AC1006 section exceeds file bounds".into()))?;
+        return Ok(SectionRecords {
+            base_address: field_start,
+            size: content_size,
+            records: decode_positioned_entities_for(
+                section,
+                tables,
+                field_start,
+                code_page,
+                revision,
+            )?,
         });
     }
     let field_start = usize::try_from(field_start)
@@ -84,11 +104,12 @@ fn section_records(
             section.len()
         )));
     }
-    let records = decode_positioned_entities(
+    let records = decode_positioned_entities_for(
         &section[prelude..section.len() - 16],
         tables,
         field_start as u32,
         code_page,
+        revision,
     )?;
     Ok(SectionRecords {
         base_address: field_start as u32,
@@ -229,8 +250,9 @@ pub(crate) fn read_document(
     code_page_override: Option<&str>,
 ) -> Result<CadDocument> {
     let header = header::read_header_with_code_page(data, code_page_override)?;
+    let revision = header.revision();
     let code_page = code_page_override.unwrap_or(header.variables.code_page.as_str());
-    let mut table_records = tables::decode_tables(data, &header.tables, code_page)?;
+    let mut table_records = tables::decode_tables_for(data, &header.tables, code_page, revision)?;
     let mut tables = ensure_table_defaults(tables::entity_tables(&table_records));
     // R11 dimension blocks share one table name (`*D`) while each BLOCK entity
     // carries the distinct name (`*D0`, `*D1`, …). Dimensions address the table
@@ -247,6 +269,7 @@ pub(crate) fn read_document(
             &tables,
             code_page,
             Some(header.tables[9]),
+            revision,
         )?;
         let names =
             adopt_distinct_block_names(&mut table_records[0], &preview, header.layout.blocks_start);
@@ -268,6 +291,7 @@ pub(crate) fn read_document(
         &tables,
         code_page,
         None,
+        revision,
     )?;
     let blocks = if header.layout.blocks_size != 0 {
         section_records(
@@ -280,6 +304,7 @@ pub(crate) fn read_document(
             &tables,
             code_page,
             Some(header.tables[9]),
+            revision,
         )?
     } else {
         SectionRecords {
@@ -298,6 +323,7 @@ pub(crate) fn read_document(
             &tables,
             code_page,
             None,
+            revision,
         )?
     } else {
         SectionRecords {

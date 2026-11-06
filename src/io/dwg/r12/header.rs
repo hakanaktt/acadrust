@@ -1,4 +1,9 @@
 //! Fixed-layout AC1009 (ACAD R11/R12) drawing and table headers.
+//!
+//! AC1006 (R10) files use the same layout up to offset 0x512, where their
+//! header ends, or up to 0x51e in the later form that adds the APPID table and
+//! WORLDVIEW. They have no header CRC and no section sentinels; see
+//! [`Revision`].
 
 use crate::document::{HeaderVariables, LegacyHeaderState};
 use crate::error::{DxfError, Result};
@@ -10,6 +15,21 @@ pub const ENTITIES_START: u32 = 0x6cf;
 /// R11 omits the final VISRETAIN variable, shortening the fixed header by two
 /// bytes and moving the first entity section accordingly.
 pub const R11_ENTITIES_START: u32 = ENTITIES_START - 2;
+/// R10 stores 158 header variables; its header ends after `$UCSNAME`. The
+/// entity section follows directly.
+pub(crate) const R10_HEADER_VARIABLES: u16 = 158;
+pub(crate) const R10_HEADER_VARIABLES_END: usize = 0x512;
+/// Later R10 files store 160 variables: the APPID table locator and
+/// `$WORLDVIEW` follow, at the offsets R11/R12 use for them.
+pub(crate) const R10_APPID_HEADER_VARIABLES: u16 = 160;
+pub(crate) const R10_APPID_HEADER_VARIABLES_END: usize = 0x51e;
+/// R10 has at most the first eight table locators (BLOCK … APPID).
+pub(crate) const R10_TABLE_COUNT: usize = 8;
+
+/// Whether a header variable count is one of the R10 forms.
+pub(crate) fn is_r10_count(count: u16) -> bool {
+    matches!(count, R10_HEADER_VARIABLES | R10_APPID_HEADER_VARIABLES)
+}
 const MENU_START: usize = 0x194;
 const MENU_PREFIX_LEN: usize = 15;
 const MENU_CONTINUATION_START: usize = 0x1fc;
@@ -90,6 +110,17 @@ pub const TABLE_BEGIN: [[u8; 16]; 10] = [
     ],
 ];
 
+/// Pre-R13 file revision.
+///
+/// R10 (AC1006) has the R11/R12 record layout without the parts R11 added:
+/// no header, table-row or entity CRCs, no section sentinels, no table usage
+/// word, no APPID/DIMSTYLE/VX tables and a one-byte entity linetype index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Revision {
+    R10,
+    R11R12,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TableLocator {
     pub record_size: u16,
@@ -143,6 +174,14 @@ pub struct R12Header {
 }
 
 impl R12Header {
+    pub(crate) fn revision(&self) -> Revision {
+        if is_r10_count(self.num_header_variables) {
+            Revision::R10
+        } else {
+            Revision::R11R12
+        }
+    }
+
     /// Apply the variables stored in R12 without replacing references to
     /// dictionaries, layouts and other objects created by the importer.
     pub(crate) fn apply_variables(
@@ -167,7 +206,7 @@ impl R12Header {
             self.num_header_variables,
         )?;
         let mut state = LegacyHeaderState::default();
-        legacy_state(&mut codec, &mut state)?;
+        legacy_state(&mut codec, &mut state, self.num_header_variables)?;
         target.unit_mode = state.unit_mode;
         target.legacy = Some(state);
         Ok(())
@@ -182,29 +221,52 @@ pub(super) fn read_header_with_code_page(
     data: &[u8],
     code_page_override: Option<&str>,
 ) -> Result<R12Header> {
-    if data.len() < 0x6cd || !matches!(data.get(..6), Some(b"AC1009" | b"AD1009")) {
-        return Err(DxfError::InvalidFormat("Invalid AC1009 header".into()));
-    }
-    let num_header_variables = u16::from_le_bytes(data[0x11..0x13].try_into().unwrap());
-    if !matches!(num_header_variables, 204 | 205) {
-        return Err(DxfError::InvalidFormat(format!(
-            "Unsupported AC1009 header variable count: {num_header_variables}"
-        )));
-    }
-    let variables_end = if num_header_variables == 204 {
-        0x6bb
+    let r10 = data.get(..6) == Some(b"AC1006".as_slice());
+    let (num_header_variables, variables_end) = if r10 {
+        if data.len() < R10_HEADER_VARIABLES_END {
+            return Err(DxfError::InvalidFormat("Invalid AC1006 header".into()));
+        }
+        let count = u16::from_le_bytes(data[0x11..0x13].try_into().unwrap());
+        let end = match count {
+            R10_HEADER_VARIABLES => R10_HEADER_VARIABLES_END,
+            R10_APPID_HEADER_VARIABLES => R10_APPID_HEADER_VARIABLES_END,
+            _ => {
+                return Err(DxfError::InvalidFormat(format!(
+                    "Unsupported AC1006 header variable count: {count}"
+                )))
+            }
+        };
+        if data.len() < end {
+            return Err(DxfError::InvalidFormat("Invalid AC1006 header".into()));
+        }
+        (count, end)
     } else {
-        HEADER_VARIABLES_END
+        if data.len() < 0x6cd || !matches!(data.get(..6), Some(b"AC1009" | b"AD1009")) {
+            return Err(DxfError::InvalidFormat("Invalid AC1009 header".into()));
+        }
+        let count = u16::from_le_bytes(data[0x11..0x13].try_into().unwrap());
+        if !matches!(count, 204 | 205) {
+            return Err(DxfError::InvalidFormat(format!(
+                "Unsupported AC1009 header variable count: {count}"
+            )));
+        }
+        let variables_end = if count == 204 {
+            0x6bb
+        } else {
+            HEADER_VARIABLES_END
+        };
+        let stored_crc =
+            u16::from_le_bytes(data[variables_end..variables_end + 2].try_into().unwrap());
+        if stored_crc != crc::crc16(crc::CRC16_SEED, &data[..variables_end]) {
+            return Err(DxfError::InvalidFormat("AC1009 header CRC mismatch".into()));
+        }
+        if data.get(variables_end + 2..variables_end + 18) != Some(ENTITIES_BEGIN.as_slice()) {
+            return Err(DxfError::InvalidFormat(
+                "Missing AC1009 entity sentinel".into(),
+            ));
+        }
+        (count, variables_end)
     };
-    let stored_crc = u16::from_le_bytes(data[variables_end..variables_end + 2].try_into().unwrap());
-    if stored_crc != crc::crc16(crc::CRC16_SEED, &data[..variables_end]) {
-        return Err(DxfError::InvalidFormat("AC1009 header CRC mismatch".into()));
-    }
-    if data.get(variables_end + 2..variables_end + 18) != Some(ENTITIES_BEGIN.as_slice()) {
-        return Err(DxfError::InvalidFormat(
-            "Missing AC1009 entity sentinel".into(),
-        ));
-    }
     let mut header = R12Header {
         variables: HeaderVariables::default(),
         layout: HeaderLayout::default(),
@@ -231,7 +293,12 @@ pub(super) fn read_header_with_code_page(
     c.long(&mut header.layout.extras_size);
     header.layout.blocks_size &= 0x3fffffff;
     header.layout.extras_size &= 0x3fffffff;
-    for (table, offset) in header.tables.iter_mut().zip(TABLE_OFFSETS) {
+    let table_count = match num_header_variables {
+        R10_HEADER_VARIABLES => R10_TABLE_COUNT - 1,
+        R10_APPID_HEADER_VARIABLES => R10_TABLE_COUNT,
+        _ => TABLE_OFFSETS.len(),
+    };
+    for (table, offset) in header.tables[..table_count].iter_mut().zip(TABLE_OFFSETS) {
         c.pos = offset;
         c.locator(table);
         let end = u64::from(table.address) + u64::from(table.record_size) * u64::from(table.count);
@@ -249,10 +316,20 @@ pub(super) fn read_header_with_code_page(
         num_header_variables,
     )?;
     let mut state = LegacyHeaderState::default();
-    legacy_state(&mut c, &mut state)?;
+    legacy_state(&mut c, &mut state, num_header_variables)?;
     header.variables.unit_mode = state.unit_mode;
     header.variables.legacy = Some(state);
-    if header.layout.entities_start < (variables_end + 18) as u32
+    if r10 {
+        // R10 spells the current linetype as 256 (BYLAYER) and 255 (BYBLOCK)
+        // where R11/R12 use 32767 and 32766.
+        header.references.linetype_index = match header.references.linetype_index {
+            256 => 32767,
+            255 => 32766,
+            index => index,
+        };
+    }
+    let sentinels = if r10 { 0 } else { 18 };
+    if header.layout.entities_start < (variables_end + sentinels) as u32
         || header.layout.entities_end < header.layout.entities_start
         || header.layout.entities_end as usize > data.len()
     {
@@ -333,7 +410,7 @@ pub fn write_header(
     if let Some(state) = &header.legacy {
         let mut state = state.clone();
         state.unit_mode = header.unit_mode;
-        legacy_state(&mut c, &mut state)?;
+        legacy_state(&mut c, &mut state, count)?;
     }
     let checksum = crc::crc16(crc::CRC16_SEED, &c.data[..variables_end]);
     let mut output = c.data[..variables_end].to_vec();
@@ -376,7 +453,7 @@ pub fn write_auxheader(
     data
 }
 
-fn legacy_state(c: &mut Codec, state: &mut LegacyHeaderState) -> Result<()> {
+fn legacy_state(c: &mut Codec, state: &mut LegacyHeaderState, count: u16) -> Result<()> {
     for (offset, value) in [
         (0xc8, &mut state.view_center),
         (0x239, &mut state.view_direction),
@@ -415,11 +492,17 @@ fn legacy_state(c: &mut Codec, state: &mut LegacyHeaderState) -> Result<()> {
         (0x47b, &mut state.view_mode),
         (0x50a, &mut state.flatland),
         (0x50e, &mut state.ucs_icon),
-        (0x53d, &mut state.unit_mode),
     ] {
         c.pos = offset;
         c.short(value);
     }
+    // UNITMODE and the user units follow the R10 header end; R10 keeps the
+    // defaults.
+    if is_r10_count(count) {
+        return Ok(());
+    }
+    c.pos = 0x53d;
+    c.short(&mut state.unit_mode);
     c.pos = 0x53f;
     for value in &mut state.user_unit_ratios {
         c.double(value);
@@ -810,8 +893,15 @@ fn variables(
     c.short(&mut h.spline_type);
     c.skip(2);
     c.short(&mut r.ucs_index);
+    if count == R10_HEADER_VARIABLES {
+        // The R10 header ends here; the variables R11 added keep their defaults.
+        return Ok(());
+    }
     c.skip(10);
     c.flag(&mut h.world_view);
+    if count == R10_APPID_HEADER_VARIABLES {
+        return Ok(());
+    }
     c.skip(4 + 10 + 5);
     c.color(&mut h.dim_line_color);
     c.color(&mut h.dim_ext_line_color);

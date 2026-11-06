@@ -1,4 +1,7 @@
 //! Fixed-size, byte-aligned symbol-table records in AC1009 (R11/R12) drawings.
+//!
+//! AC1006 (R10) rows are the same without the usage word and the CRC, and
+//! BLOCK rows end after the block offset.
 
 use std::collections::HashMap;
 
@@ -9,9 +12,11 @@ use crate::io::dxf::code_page::{
 };
 
 use super::entities::{EntityRecord, EntityTables};
-use super::header::{TableLocator, TABLE_BEGIN, TABLE_NAMES};
+use super::header::{Revision, TableLocator, R10_TABLE_COUNT, TABLE_BEGIN, TABLE_NAMES};
 
 pub(crate) const RECORD_SIZES: [u16; 10] = [45, 41, 198, 191, 153, 109, 253, 37, 324, 43];
+/// Row sizes of the R10 tables (BLOCK … APPID).
+const R10_RECORD_SIZES: [u16; R10_TABLE_COUNT] = [37, 37, 194, 187, 149, 105, 249, 33];
 pub(crate) const TABLE_END: [[u8; 16]; 10] = [
     [
         0x24, 0x10, 0x4c, 0x0f, 0x38, 0xc1, 0x92, 0x59, 0x36, 0x49, 0xdb, 0xa3, 0xb3, 0x90, 0xcd,
@@ -88,16 +93,37 @@ pub(crate) fn entity_tables(records: &[Vec<EntityRecord>; 10]) -> EntityTables {
 }
 
 /// Decode table payloads, validating the sentinels and CRCs before resolving indices.
+#[cfg(test)]
 pub(crate) fn decode_tables(
     data: &[u8],
     locators: &[TableLocator; 10],
     code_page: &str,
 ) -> Result<[Vec<EntityRecord>; 10]> {
+    decode_tables_for(data, locators, code_page, Revision::R11R12)
+}
+
+/// Decode table payloads of either revision. R10 has no sentinels and no
+/// CRCs to validate.
+pub(crate) fn decode_tables_for(
+    data: &[u8],
+    locators: &[TableLocator; 10],
+    code_page: &str,
+    revision: Revision,
+) -> Result<[Vec<EntityRecord>; 10]> {
+    if revision == Revision::R10
+        && locators[R10_TABLE_COUNT..]
+            .iter()
+            .any(|locator| *locator != TableLocator::default())
+    {
+        return Err(invalid("AC1006 has no DIMSTYLE or VX table"));
+    }
     let mut raw_names: [Vec<EntityRecord>; 10] = std::array::from_fn(|_| Vec::new());
     for (index, locator) in locators.iter().enumerate() {
-        let payload = table_payload(data, *locator, index)?;
+        let payload = table_payload(data, *locator, index, revision)?;
         let size = usize::from(locator.record_size);
-        if locator.count != 0 && size < 37 {
+        // Flag and name; R10 APPID rows hold nothing else.
+        let min_size = if revision == Revision::R10 { 33 } else { 37 };
+        if locator.count != 0 && size < min_size {
             return Err(invalid(format!(
                 "Invalid AC1009 {} record size",
                 TABLE_NAMES[index]
@@ -114,19 +140,25 @@ pub(crate) fn decode_tables(
     let tables = entity_tables(&raw_names);
     let mut decoded: [Vec<EntityRecord>; 10] = std::array::from_fn(|_| Vec::new());
     for (index, locator) in locators.iter().enumerate() {
-        decoded[index] = decode_table(
+        decoded[index] = decode_table_for(
             TABLE_NAMES[index],
-            table_payload(data, *locator, index)?,
+            table_payload(data, *locator, index, revision)?,
             locator.record_size,
             locator.count,
             &tables,
             code_page,
+            revision,
         )?;
     }
     Ok(decoded)
 }
 
-fn table_payload(data: &[u8], locator: TableLocator, index: usize) -> Result<&[u8]> {
+fn table_payload(
+    data: &[u8],
+    locator: TableLocator,
+    index: usize,
+    revision: Revision,
+) -> Result<&[u8]> {
     if locator.count == 0 {
         return Ok(&[]);
     }
@@ -151,7 +183,7 @@ fn table_payload(data: &[u8], locator: TableLocator, index: usize) -> Result<&[u
     // VX is the one exception: BricsCAD places the BLOCK begin sentinel at
     // the end of the VX payload and the section walker validates that shared
     // marker when it opens the BLOCK stream.
-    if index != 9 && (!begin_present || !end_present) {
+    if revision == Revision::R11R12 && index != 9 && (!begin_present || !end_present) {
         return Err(invalid(format!(
             "Invalid AC1009 {} table sentinels",
             TABLE_NAMES[index]
@@ -221,6 +253,7 @@ pub(crate) fn encode_table(
     Ok((record_size, payload))
 }
 
+#[cfg(test)]
 pub(crate) fn decode_table(
     name: &str,
     data: &[u8],
@@ -229,17 +262,46 @@ pub(crate) fn decode_table(
     tables: &EntityTables,
     code_page: &str,
 ) -> Result<Vec<EntityRecord>> {
+    decode_table_for(
+        name,
+        data,
+        record_size,
+        count,
+        tables,
+        code_page,
+        Revision::R11R12,
+    )
+}
+
+fn decode_table_for(
+    name: &str,
+    data: &[u8],
+    record_size: u16,
+    count: u16,
+    tables: &EntityTables,
+    code_page: &str,
+    revision: Revision,
+) -> Result<Vec<EntityRecord>> {
     let index = table_index(name)?;
     let name = TABLE_NAMES[index];
     if count == 0 {
         return Ok(Vec::new());
     }
     let size = usize::from(record_size);
-    if size != usize::from(RECORD_SIZES[index]) {
+    let r10 = revision == Revision::R10;
+    let expected_size = if r10 {
+        R10_RECORD_SIZES.get(index).copied()
+    } else {
+        Some(RECORD_SIZES[index])
+    };
+    if expected_size != Some(record_size) {
         return Err(invalid(format!(
-            "Unsupported AC1009 {name} record size {record_size}"
+            "Unsupported {} {name} record size {record_size}",
+            if r10 { "AC1006" } else { "AC1009" }
         )));
     }
+    // R10 rows carry no CRC.
+    let body = if r10 { size } else { size - 2 };
     let expected_len = usize::from(count)
         .checked_mul(size)
         .ok_or_else(|| invalid("AC1009 table size overflow"))?;
@@ -248,13 +310,15 @@ pub(crate) fn decode_table(
     }
     let mut records = Vec::with_capacity(usize::from(count));
     for (record_index, raw) in data.chunks_exact(size).enumerate() {
-        let expected = u16::from_le_bytes(raw[size - 2..].try_into().unwrap());
-        if crc16(0xc0c1, &raw[..size - 2]) != expected {
-            return Err(invalid(format!(
-                "AC1009 {name} record {record_index} CRC mismatch"
-            )));
+        if !r10 {
+            let expected = u16::from_le_bytes(raw[size - 2..].try_into().unwrap());
+            if crc16(0xc0c1, &raw[..size - 2]) != expected {
+                return Err(invalid(format!(
+                    "AC1009 {name} record {record_index} CRC mismatch"
+                )));
+            }
         }
-        let mut reader = Reader::new(&raw[..size - 2], code_page);
+        let mut reader = Reader::new(&raw[..body], code_page);
         let mut record = EntityRecord::new(if name == "BLOCK" {
             "BLOCK_RECORD"
         } else {
@@ -263,20 +327,22 @@ pub(crate) fn decode_table(
         let flag = reader.byte()?;
         put(&mut record, 2, reader.text(32)?);
         put(&mut record, 70, flag);
-        record.native_table_usage = Some(reader.short()?);
+        if !r10 {
+            record.native_table_usage = Some(reader.short()?);
+        }
         if flag & 0x80 != 0 {
             // A deleted row (flag 128) keeps its slot so the table indexes
             // stay aligned, but the rest of it holds stale values that need
             // not be valid any more. Keep its fields only when they decode.
             let mut fields = record.clone();
-            if decode_fields(&mut reader, name, &mut fields, tables).is_ok()
-                && reader.pos == size - 2
+            if decode_fields(&mut reader, name, &mut fields, tables, revision).is_ok()
+                && reader.pos == body
             {
                 record = fields;
             }
         } else {
-            decode_fields(&mut reader, name, &mut record, tables)?;
-            if reader.pos != size - 2 {
+            decode_fields(&mut reader, name, &mut record, tables, revision)?;
+            if reader.pos != body {
                 return Err(invalid(format!("AC1009 {name} record layout mismatch")));
             }
         }
@@ -534,14 +600,17 @@ fn decode_fields(
     name: &str,
     record: &mut EntityRecord,
     tables: &EntityTables,
+    revision: Revision,
 ) -> Result<()> {
     match name {
         "BLOCK" => {
             let offset = reader.long()?;
             put(record, 90, offset);
             record.native_block_tag = Some(offset & 0xff00_0000);
-            put(record, 91, reader.short()?);
-            put(record, 92, reader.short()?);
+            if revision == Revision::R11R12 {
+                put(record, 91, reader.short()?);
+                put(record, 92, reader.short()?);
+            }
         }
         "LAYER" => {
             put(record, 62, reader.short()?);
