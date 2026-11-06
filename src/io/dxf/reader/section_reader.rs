@@ -3476,7 +3476,11 @@ impl<'a> SectionReader<'a> {
     }
 
     /// Read the CLASSES section
-    pub fn read_classes(&mut self, document: &mut CadDocument) -> Result<()> {
+    /// Reads the CLASSES section into `document.classes` and returns the
+    /// DXF names of its `CLASS` records in file order (empty for a record
+    /// without one): a proxy names its class by `500 + index` in this list.
+    pub fn read_classes(&mut self, document: &mut CadDocument) -> Result<Vec<String>> {
+        let mut file_classes = Vec::new();
         // Read classes until ENDSEC
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 && pair.value_string == "ENDSEC" {
@@ -3519,13 +3523,14 @@ impl<'a> SectionReader<'a> {
                         _ => {}
                     }
                 }
+                file_classes.push(class.dxf_name.clone());
                 if !class.dxf_name.is_empty() {
                     document.classes.add_or_update(class);
                 }
             }
         }
 
-        Ok(())
+        Ok(file_classes)
     }
 
     /// Read the TABLES section
