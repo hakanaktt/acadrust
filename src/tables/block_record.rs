@@ -216,6 +216,38 @@ impl TableEntry for BlockRecord {
     }
 }
 
+// Checked reservation: exhaustive field classification, including scalar nested carriers.
+const _: fn(&BlockFlags) = |v| {
+    let BlockFlags {
+        anonymous: _,
+        has_attributes: _,
+        is_xref: _,
+        is_xref_overlay: _,
+        is_external: _,
+        is_xref_unloaded: _,
+    } = v;
+};
+const _: fn(&BlockRecord) = |v| {
+    let BlockRecord {
+        handle: _,
+        block_entity_handle: _,
+        block_end_handle: _,
+        name: _,
+        flags: _,
+        layout: _,
+        units: _,
+        explodable: _,
+        scale_uniformly: _,
+        entity_handles: _,
+        xref_path: _,
+        description: _,
+        insert_count_bytes: _,
+        preview_data: _,
+        insert_handles: _,
+        base_point: _,
+    } = v;
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;

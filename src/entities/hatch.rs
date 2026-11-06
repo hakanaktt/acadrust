@@ -721,3 +721,113 @@ impl Entity for Hatch {
         super::mirror::mirror_hatch_with_options(self, transform, options);
     }
 }
+
+// Checked reservation: exhaustive field classification, including scalar nested carriers.
+const _: fn(&BoundaryPath) = |v| {
+    let BoundaryPath {
+        flags: _,
+        edges: _,
+        boundary_handles: _,
+    } = v;
+};
+const _: fn(&BoundaryPathFlags) = |v| {
+    let BoundaryPathFlags { bits: _ } = v;
+};
+const _: fn(&CircularArcEdge) = |v| {
+    let CircularArcEdge {
+        center: _,
+        radius: _,
+        start_angle: _,
+        end_angle: _,
+        counter_clockwise: _,
+    } = v;
+};
+const _: fn(&EllipticArcEdge) = |v| {
+    let EllipticArcEdge {
+        center: _,
+        major_axis_endpoint: _,
+        minor_axis_ratio: _,
+        start_angle: _,
+        end_angle: _,
+        counter_clockwise: _,
+    } = v;
+};
+const _: fn(&GradientColorEntry) = |v| {
+    let GradientColorEntry {
+        value: _,
+        color: _,
+        color_name: _,
+        book_name: _,
+    } = v;
+};
+const _: fn(&Hatch) = |v| {
+    let Hatch {
+        common: _,
+        is_mpolygon: _,
+        elevation: _,
+        normal: _,
+        pattern: _,
+        is_solid: _,
+        is_associative: _,
+        pattern_type: _,
+        pattern_angle: _,
+        pattern_scale: _,
+        is_double: _,
+        style: _,
+        paths: _,
+        seed_points: _,
+        pixel_size: _,
+        gradient_color: _,
+        mpolygon_hatch_color: _,
+        mpolygon_x_direction: _,
+        mpolygon_invalid_loops: _,
+    } = v;
+};
+const _: fn(&HatchGradientPattern) = |v| {
+    let HatchGradientPattern {
+        enabled: _,
+        reserved: _,
+        angle: _,
+        shift: _,
+        is_single_color: _,
+        color_tint: _,
+        colors: _,
+        name: _,
+    } = v;
+};
+const _: fn(&HatchPattern) = |v| {
+    let HatchPattern {
+        name: _,
+        description: _,
+        lines: _,
+    } = v;
+};
+const _: fn(&HatchPatternLine) = |v| {
+    let HatchPatternLine {
+        angle: _,
+        base_point: _,
+        offset: _,
+        dash_lengths: _,
+    } = v;
+};
+const _: fn(&LineEdge) = |v| {
+    let LineEdge { start: _, end: _ } = v;
+};
+const _: fn(&PolylineEdge) = |v| {
+    let PolylineEdge {
+        vertices: _,
+        is_closed: _,
+    } = v;
+};
+const _: fn(&SplineEdge) = |v| {
+    let SplineEdge {
+        degree: _,
+        rational: _,
+        periodic: _,
+        knots: _,
+        control_points: _,
+        fit_points: _,
+        start_tangent: _,
+        end_tangent: _,
+    } = v;
+};

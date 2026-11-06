@@ -376,6 +376,38 @@ impl LineTypeElement {
     }
 }
 
+// Checked reservation: exhaustive field classification, including scalar nested carriers.
+const _: fn(&LineType) = |v| {
+    let LineType {
+        handle: _,
+        name: _,
+        description: _,
+        elements: _,
+        pattern_length: _,
+        alignment: _,
+        xref_dependent: _,
+        xref_block_record_handle: _,
+    } = v;
+};
+const _: fn(&LineTypeComplexData) = |v| {
+    let LineTypeComplexData {
+        content: _,
+        style_handle: _,
+        scale: _,
+        rotation: _,
+        absolute_rotation: _,
+        upright: _,
+        source_flags: _,
+        offset: _,
+    } = v;
+};
+const _: fn(&LineTypeElement) = |v| {
+    let LineTypeElement {
+        length: _,
+        complex: _,
+    } = v;
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;

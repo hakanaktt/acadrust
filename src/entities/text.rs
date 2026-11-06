@@ -181,3 +181,23 @@ impl Entity for Text {
         super::mirror::mirror_text_with_options(self, transform, options);
     }
 }
+
+// Checked reservation: exhaustive field classification, including scalar nested carriers.
+const _: fn(&Text) = |v| {
+    let Text {
+        common: _,
+        value: _,
+        insertion_point: _,
+        alignment_point: _,
+        height: _,
+        rotation: _,
+        width_factor: _,
+        oblique_angle: _,
+        style: _,
+        horizontal_alignment: _,
+        vertical_alignment: _,
+        normal: _,
+        thickness: _,
+        generation_flags: _,
+    } = v;
+};

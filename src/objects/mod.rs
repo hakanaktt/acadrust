@@ -848,6 +848,79 @@ impl ObjectType {
     }
 }
 
+// Checked reservation: exhaustive field classification, including scalar nested carriers.
+const _: fn(&Dictionary) = |v| {
+    let Dictionary {
+        handle: _,
+        owner: _,
+        entries: _,
+        hard_owner_entries: _,
+        duplicate_cloning: _,
+        hard_owner: _,
+        reactors: _,
+        xdictionary_handle: _,
+    } = v;
+};
+const _: fn(&Layout) = |v| {
+    let Layout {
+        handle: _,
+        owner: _,
+        name: _,
+        flags: _,
+        tab_order: _,
+        min_limits: _,
+        max_limits: _,
+        insertion_base: _,
+        min_extents: _,
+        max_extents: _,
+        elevation: _,
+        ucs_origin: _,
+        ucs_x_axis: _,
+        ucs_y_axis: _,
+        ucs_ortho_type: _,
+        block_record: _,
+        viewport: _,
+        viewports: _,
+        base_ucs: _,
+        named_ucs: _,
+        reactors: _,
+        xdictionary_handle: _,
+        raw_plot_settings_codes: _,
+        paper_width: _,
+        paper_height: _,
+        plot_rotation: _,
+        plot_flags: _,
+        plot_page_name: _,
+        plot_printer_name: _,
+        paper_size: _,
+        plot_view_name: _,
+        plot_style_sheet: _,
+        plot_margin_left: _,
+        plot_margin_bottom: _,
+        plot_margin_right: _,
+        plot_margin_top: _,
+        plot_origin_x: _,
+        plot_origin_y: _,
+        plot_window_min_x: _,
+        plot_window_min_y: _,
+        plot_window_max_x: _,
+        plot_window_max_y: _,
+        plot_paper_units: _,
+        plot_type: _,
+        plot_scale_numerator: _,
+        plot_scale_denominator: _,
+        plot_scale_type: _,
+        plot_scale_factor: _,
+        paper_image_origin_x: _,
+        paper_image_origin_y: _,
+        shade_plot_mode: _,
+        shade_plot_resolution: _,
+        shade_plot_dpi: _,
+        plot_view_handle: _,
+        visual_style_handle: _,
+    } = v;
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;

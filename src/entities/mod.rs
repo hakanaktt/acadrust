@@ -853,6 +853,47 @@ impl EntityType {
     }
 }
 
+// Checked reservation: exhaustive field classification, including scalar nested carriers.
+const _: fn(&EntityCommon) = |v| {
+    let EntityCommon {
+        handle: _,
+        layer: _,
+        layer_handle: _,
+        color: _,
+        line_weight: _,
+        linetype: _,
+        linetype_handle: _,
+        linetype_scale: _,
+        transparency: _,
+        color_name: _,
+        invisible: _,
+        extended_data: _,
+        graphic_data: _,
+        reactors: _,
+        xdictionary_handle: _,
+        owner_handle: _,
+        color_book_handle: _,
+        full_visual_style_handle: _,
+        face_visual_style_handle: _,
+        edge_visual_style_handle: _,
+        material_flags: _,
+        material_handle: _,
+        shadow_flags: _,
+        plotstyle_flags: _,
+        plotstyle_handle: _,
+        entity_mode: _,
+        r12_metadata: _,
+        has_ds_data: _,
+        raw_record: _,
+    } = v;
+};
+const _: fn(&R12EntityMetadata) = |v| {
+    let R12EntityMetadata {
+        viewport: _,
+        child_viewports: _,
+    } = v;
+};
+
 #[cfg(test)]
 mod storage_data_tests {
     use super::*;

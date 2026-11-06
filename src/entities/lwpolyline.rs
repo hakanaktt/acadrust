@@ -167,3 +167,26 @@ impl Entity for LwPolyline {
         super::mirror::mirror_lwpolyline(self, transform);
     }
 }
+
+// Checked reservation: exhaustive field classification, including scalar nested carriers.
+const _: fn(&LwPolyline) = |v| {
+    let LwPolyline {
+        common: _,
+        vertices: _,
+        is_closed: _,
+        plinegen: _,
+        constant_width: _,
+        elevation: _,
+        thickness: _,
+        normal: _,
+    } = v;
+};
+const _: fn(&LwVertex) = |v| {
+    let LwVertex {
+        location: _,
+        bulge: _,
+        start_width: _,
+        end_width: _,
+        vertex_id: _,
+    } = v;
+};

@@ -1427,6 +1427,113 @@ fn store_cell_style_maps(document: &mut crate::document::CadDocument) {
 // Tests
 // ============================================================================
 
+// Checked reservation: exhaustive field classification, including scalar nested carriers.
+const _: fn(&NamedTableCellStyle) = |v| {
+    let NamedTableCellStyle {
+        cell_style: _,
+        id: _,
+        style_type: _,
+        name: _,
+    } = v;
+};
+const _: fn(&RowCellStyle) = |v| {
+    let RowCellStyle {
+        text_style_name: _,
+        text_style_handle: _,
+        text_height: _,
+        alignment: _,
+        text_color: _,
+        fill_color: _,
+        fill_enabled: _,
+        data_type: _,
+        unit_type: _,
+        format_string: _,
+        left_border: _,
+        right_border: _,
+        top_border: _,
+        bottom_border: _,
+        horizontal_inside_border: _,
+        vertical_inside_border: _,
+    } = v;
+};
+const _: fn(&TableCellBorder) = |v| {
+    let TableCellBorder {
+        property_flags: _,
+        border_type: _,
+        line_weight: _,
+        color: _,
+        is_invisible: _,
+        double_line_spacing: _,
+    } = v;
+};
+const _: fn(&TableCellStyleData) = |v| {
+    let TableCellStyleData {
+        style_type: _,
+        data_flags: _,
+        property_override_flags: _,
+        merge_flags: _,
+        background_color: _,
+        content_layout: _,
+        content_format: _,
+        margin_override_flags: _,
+        vertical_margin: _,
+        horizontal_margin: _,
+        bottom_margin: _,
+        right_margin: _,
+        horizontal_spacing: _,
+        vertical_spacing: _,
+        borders: _,
+    } = v;
+};
+const _: fn(&TableContentFormat) = |v| {
+    let TableContentFormat {
+        property_override_flags: _,
+        property_flags: _,
+        value_data_type: _,
+        value_unit_type: _,
+        value_format_string: _,
+        rotation: _,
+        block_scale: _,
+        cell_alignment: _,
+        content_color: _,
+        text_style: _,
+        text_height: _,
+    } = v;
+};
+const _: fn(&TableGridFormat) = |v| {
+    let TableGridFormat {
+        index_mask: _,
+        border: _,
+        line_type: _,
+    } = v;
+};
+const _: fn(&TableStyle) = |v| {
+    let TableStyle {
+        handle: _,
+        owner_handle: _,
+        name: _,
+        description: _,
+        version: _,
+        flow_direction: _,
+        flags: _,
+        horizontal_margin: _,
+        vertical_margin: _,
+        title_suppressed: _,
+        header_suppressed: _,
+        data_row_style: _,
+        header_row_style: _,
+        title_row_style: _,
+        modern_unknown_byte: _,
+        modern_unknown_long1: _,
+        modern_unknown_long2: _,
+        modern_cell_style_handle: _,
+        modern_style: _,
+        modern_overrides: _,
+        annotative: _,
+        raw_dxf_codes: _,
+    } = v;
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;

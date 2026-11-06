@@ -309,3 +309,7 @@ Every contribution helps keep this project active and well-maintained. Thank you
 ## License
 
 MPL-2.0 — see [LICENSE](LICENSE).
+
+## Checked handle reservation
+
+See [checked handle reservation](docs/handle-reservation.md) for safe batch allocation, supported target coverage and explicit refusal/legacy limits.

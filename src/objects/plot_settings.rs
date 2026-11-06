@@ -774,3 +774,113 @@ impl Default for PlotSettings {
         Self::new("")
     }
 }
+
+impl PlotSettings {
+    pub(crate) fn reservation_fields(&self) {
+        let Self {
+            handle: _,
+            owner: _,
+            reactors: _,
+            xdictionary_handle: _,
+            page_name: _,
+            printer_name: _,
+            paper_size: _,
+            plot_view_name: _,
+            current_style_sheet: _,
+            paper_width: _,
+            paper_height: _,
+            margins: _,
+            origin_x: _,
+            origin_y: _,
+            plot_window: _,
+            scale_numerator: _,
+            scale_denominator: _,
+            paper_units: _,
+            rotation: _,
+            plot_type: _,
+            scale_type: _,
+            shade_plot_mode: _,
+            shade_plot_resolution: _,
+            shade_plot_dpi: _,
+            flags: _,
+            standard_scale_factor: _,
+            paper_image_origin_x: _,
+            paper_image_origin_y: _,
+            plot_view_handle: _,
+            visual_style_handle: _,
+            cached_scale: _,
+        } = self;
+    }
+}
+
+// Checked reservation: exhaustive field classification, including scalar nested carriers.
+const _: fn(&PaperMargin) = |v| {
+    let PaperMargin {
+        left: _,
+        bottom: _,
+        right: _,
+        top: _,
+    } = v;
+};
+const _: fn(&PlotFlags) = |v| {
+    let PlotFlags {
+        unknown_bits: _,
+        plot_viewport_borders: _,
+        show_plot_styles: _,
+        plot_centered: _,
+        plot_hidden: _,
+        use_standard_scale: _,
+        plot_plot_styles: _,
+        scale_lineweights: _,
+        print_lineweights: _,
+        draw_viewports_first: _,
+        model_type: _,
+        update_paper: _,
+        zoom_to_paper_on_update: _,
+        initializing: _,
+        prev_plot_init: _,
+    } = v;
+};
+const _: fn(&PlotSettings) = |v| {
+    let PlotSettings {
+        handle: _,
+        owner: _,
+        reactors: _,
+        xdictionary_handle: _,
+        page_name: _,
+        printer_name: _,
+        paper_size: _,
+        plot_view_name: _,
+        current_style_sheet: _,
+        paper_width: _,
+        paper_height: _,
+        margins: _,
+        origin_x: _,
+        origin_y: _,
+        plot_window: _,
+        scale_numerator: _,
+        scale_denominator: _,
+        paper_units: _,
+        rotation: _,
+        plot_type: _,
+        scale_type: _,
+        shade_plot_mode: _,
+        shade_plot_resolution: _,
+        shade_plot_dpi: _,
+        flags: _,
+        standard_scale_factor: _,
+        paper_image_origin_x: _,
+        paper_image_origin_y: _,
+        plot_view_handle: _,
+        visual_style_handle: _,
+        cached_scale: _,
+    } = v;
+};
+const _: fn(&PlotWindow) = |v| {
+    let PlotWindow {
+        lower_left_x: _,
+        lower_left_y: _,
+        upper_right_x: _,
+        upper_right_y: _,
+    } = v;
+};

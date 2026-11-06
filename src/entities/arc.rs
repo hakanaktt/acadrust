@@ -198,6 +198,19 @@ impl Entity for Arc {
     }
 }
 
+// Checked reservation: exhaustive field classification, including scalar nested carriers.
+const _: fn(&Arc) = |v| {
+    let Arc {
+        common: _,
+        center: _,
+        radius: _,
+        start_angle: _,
+        end_angle: _,
+        thickness: _,
+        normal: _,
+    } = v;
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
