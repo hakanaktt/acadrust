@@ -5409,7 +5409,7 @@ impl<'a> SectionReader<'a> {
                     "AcDbAnnotScaleObjectContextData"
                 };
                 ObjectContextKind::BlkRef {
-                    rotation: fields.f64(section, 50),
+                    rotation: fields.f64(section, 50).to_radians(),
                     insertion: fields.point3(section, 10),
                     scale_factor: Vector3::new(
                         fields.f64(section, 41),
@@ -5429,7 +5429,7 @@ impl<'a> SectionReader<'a> {
                 };
                 ObjectContextKind::Text {
                     horizontal_mode: fields.i16(section, 70),
-                    rotation: fields.f64(section, 50),
+                    rotation: fields.f64(section, 50).to_radians(),
                     insertion: fields.point2(section, 10),
                     alignment: fields.point2(section, 11),
                 }
