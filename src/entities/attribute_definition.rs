@@ -199,6 +199,9 @@ pub struct AttributeDefinition {
     pub alignment_point: Vector3,
     /// Text height
     pub height: f64,
+    /// Signed extrusion thickness in drawing units.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub thickness: f64,
     /// Rotation angle in radians
     pub rotation: f64,
     /// Relative X scale factor (width factor)
@@ -245,6 +248,7 @@ impl AttributeDefinition {
             insertion_point: Vector3::ZERO,
             alignment_point: Vector3::ZERO,
             height: 2.5,
+            thickness: 0.0,
             rotation: 0.0,
             width_factor: 1.0,
             oblique_angle: 0.0,
