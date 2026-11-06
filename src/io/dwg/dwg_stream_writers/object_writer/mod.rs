@@ -2068,7 +2068,7 @@ impl<'a> DwgObjectWriter<'a> {
                                 ((run.len() + worker_count * 4 - 1) / (worker_count * 4)).max(512);
                             let batches: Vec<ParallelEntityBatch> =
                                 map_chunks(run, chunk_size, |chunk| {
-                                    self.serialize_parallel_entity_batch(chunk)
+                                    self.serialize_parallel_entity_batch(chunk, br.handle)
                                 });
                             for batch in batches {
                                 self.append_parallel_entity_batch(batch);
@@ -2081,7 +2081,7 @@ impl<'a> DwgObjectWriter<'a> {
                                     (start + offset > 0).then(|| handles[start + offset - 1]);
                                 self.next_handle =
                                     (start + offset + 1 < len).then(|| handles[start + offset + 1]);
-                                self.write_entity(&self.document.entities[idx]);
+                                self.write_listed_entity(&self.document.entities[idx], br.handle);
                             }
                         }
                         continue;
@@ -2098,7 +2098,7 @@ impl<'a> DwgObjectWriter<'a> {
                             None
                         };
 
-                        self.write_entity(entity);
+                        self.write_listed_entity(entity, br.handle);
                     }
                     i += 1;
                 }
@@ -2109,6 +2109,25 @@ impl<'a> DwgObjectWriter<'a> {
 
             self.write_block_end(br);
         }
+    }
+
+    /// Write an entity of `record`'s entity list with the record as its
+    /// owner, as the BLOCK/ENDBLK markers are and as the DXF writer writes
+    /// group 330. The entity mode follows the owner handle, so an owner that
+    /// names another record (a DXF 330 of `*Model_Space` on an entity of a
+    /// named block) would write the entity in that space while this record
+    /// lists it, and readers that go by the mode would drop it from the block.
+    fn write_listed_entity(&mut self, entity: &EntityType, record: Handle) {
+        if entity.common().owner_handle == record {
+            self.write_entity(entity);
+            return;
+        }
+        let mut entity = entity.clone();
+        let common = entity.common_mut();
+        common.owner_handle = record;
+        // The verbatim record still holds the old owner.
+        common.raw_record = None;
+        self.write_entity(&entity);
     }
 
     fn parallel_entity_safe(entity: &EntityType) -> bool {
@@ -2129,7 +2148,11 @@ impl<'a> DwgObjectWriter<'a> {
         )
     }
 
-    fn serialize_parallel_entity_batch(&self, handles: &[Handle]) -> ParallelEntityBatch {
+    fn serialize_parallel_entity_batch(
+        &self,
+        handles: &[Handle],
+        record: Handle,
+    ) -> ParallelEntityBatch {
         let encoding = crate::io::dxf::code_page::encoding_from_dwg_code_page(
             crate::io::dxf::code_page::dwg_code_page_index(&self.document.header.code_page),
         );
@@ -2163,7 +2186,7 @@ impl<'a> DwgObjectWriter<'a> {
         };
         for handle in handles {
             if let Some(&idx) = worker.document.entity_index.get(handle) {
-                worker.write_entity(&worker.document.entities[idx]);
+                worker.write_listed_entity(&worker.document.entities[idx], record);
             }
         }
         ParallelEntityBatch {
