@@ -385,6 +385,40 @@ impl Default for MLineStyle {
     }
 }
 
+// Checked reservation: exhaustive field classification, including scalar nested carriers.
+const _: fn(&MLineStyle) = |v| {
+    let MLineStyle {
+        handle: _,
+        owner: _,
+        name: _,
+        description: _,
+        elements: _,
+        start_angle: _,
+        end_angle: _,
+        fill_color: _,
+        flags: _,
+    } = v;
+};
+const _: fn(&MLineStyleElement) = |v| {
+    let MLineStyleElement {
+        offset: _,
+        color: _,
+        linetype: _,
+    } = v;
+};
+const _: fn(&MLineStyleFlags) = |v| {
+    let MLineStyleFlags {
+        fill_on: _,
+        display_joints: _,
+        start_square_cap: _,
+        start_inner_arcs_cap: _,
+        start_round_cap: _,
+        end_square_cap: _,
+        end_inner_arcs_cap: _,
+        end_round_cap: _,
+    } = v;
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;

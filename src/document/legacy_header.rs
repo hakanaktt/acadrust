@@ -63,3 +63,34 @@ impl Default for LegacyHeaderState {
         }
     }
 }
+
+// Checked reservation: legacy drafting data is scalar, with no CAD record handles.
+const _: fn(&LegacyHeaderState) = |v| {
+    let LegacyHeaderState {
+        view_center: _,
+        view_height: _,
+        view_aspect_ratio: _,
+        view_direction: _,
+        view_target: _,
+        snap_mode: _,
+        snap_spacing: _,
+        snap_base: _,
+        snap_angle: _,
+        snap_style: _,
+        snap_isopair: _,
+        grid_mode: _,
+        grid_spacing: _,
+        axis_mode: _,
+        axis_spacing: _,
+        circle_zoom: _,
+        fast_zoom: _,
+        front_clip: _,
+        back_clip: _,
+        view_mode: _,
+        flatland: _,
+        ucs_icon: _,
+        unit_mode: _,
+        user_unit_ratios: _,
+        user_unit_names: _,
+    } = v;
+};

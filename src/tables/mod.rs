@@ -308,6 +308,15 @@ impl<T: TableEntry> Default for Table<T> {
     }
 }
 
+impl<T: TableEntry> Table<T> {
+    pub(crate) fn reservation_fields(&self) {
+        let Self {
+            entries: _,
+            handle: _,
+        } = self;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

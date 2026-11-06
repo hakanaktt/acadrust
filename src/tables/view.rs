@@ -153,3 +153,48 @@ impl TableEntry for View {
         self.name = name;
     }
 }
+
+// Checked reservation: exhaustive field classification, including scalar nested carriers.
+const _: fn(&View) = |v| {
+    let View {
+        handle: _,
+        name: _,
+        center: _,
+        height: _,
+        width: _,
+        direction: _,
+        target: _,
+        lens_length: _,
+        front_clip: _,
+        back_clip: _,
+        twist_angle: _,
+        perspective: _,
+        front_clipping: _,
+        back_clipping: _,
+        front_clip_at_eye: _,
+        render_mode: _,
+        use_default_lights: _,
+        default_lighting_type: _,
+        brightness: _,
+        contrast: _,
+        ambient_color: _,
+        paper_space: _,
+        ucs_associated: _,
+        ucs_origin: _,
+        ucs_x_axis: _,
+        ucs_y_axis: _,
+        ucs_elevation: _,
+        ucs_ortho_type: _,
+        camera_plottable: _,
+        xref_reference: _,
+        xref_resolved: _,
+        xref_dependent: _,
+        xref_handle: _,
+        background_handle: _,
+        live_section_handle: _,
+        visual_style_handle: _,
+        sun_handle: _,
+        named_ucs_handle: _,
+        base_ucs_handle: _,
+    } = v;
+};

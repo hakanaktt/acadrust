@@ -259,6 +259,29 @@ impl ExtendedData {
     }
 }
 
+impl ExtendedData {
+    pub(crate) fn reservation_fields(&self) {
+        let Self {
+            records: _,
+            raw_dwg_eed: _,
+        } = self;
+    }
+}
+
+// Checked reservation: exhaustive field classification, including scalar nested carriers.
+const _: fn(&ExtendedData) = |v| {
+    let ExtendedData {
+        records: _,
+        raw_dwg_eed: _,
+    } = v;
+};
+const _: fn(&ExtendedDataRecord) = |v| {
+    let ExtendedDataRecord {
+        application_name: _,
+        values: _,
+    } = v;
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;

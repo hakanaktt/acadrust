@@ -49,3 +49,8 @@ impl TableEntry for AppId {
         self.name == "ACAD"
     }
 }
+
+// Checked reservation: exhaustive field classification, including scalar nested carriers.
+const _: fn(&AppId) = |v| {
+    let AppId { handle: _, name: _ } = v;
+};

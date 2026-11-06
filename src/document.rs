@@ -112,6 +112,9 @@ fn material_checker_texture(entries: &[XRecordEntry]) -> Option<MaterialTexture>
 }
 
 mod dim_header;
+mod handle_reservation;
+pub(crate) mod handle_usage;
+pub use handle_reservation::{HandleReservation, HandleReservationError, HandleReservationIter};
 mod legacy_header;
 mod semantic_inventory;
 pub(crate) use dim_header::{

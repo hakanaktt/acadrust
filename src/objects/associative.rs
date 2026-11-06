@@ -1571,3 +1571,43 @@ pub fn associative_cpp_class_name(name: &str) -> Option<&'static str> {
         _ => return None,
     })
 }
+
+// Checked reservation: exhaustive field classification, including scalar nested carriers.
+const _: fn(&AssocDimensionAssociation) = |v| {
+    let AssocDimensionAssociation {
+        associativity: _,
+        trans_space: _,
+        rotated_type: _,
+        dimension: _,
+        references: _,
+    } = v;
+};
+const _: fn(&AssocDimensionReference) = |v| {
+    let AssocDimensionReference {
+        class_name: _,
+        osnap_type: _,
+        xrefs: _,
+        main_subent_type: _,
+        main_gs_marker: _,
+        xref_paths: _,
+        osnap_distance: _,
+        osnap_point: _,
+        intersection_objects: _,
+        intersection_subent_type: _,
+        intersection_gs_marker: _,
+        intersection_xref_paths: _,
+        has_last_point_reference: _,
+    } = v;
+};
+const _: fn(&AssociativeObject) = |v| {
+    let AssociativeObject {
+        handle: _,
+        owner: _,
+        reactors: _,
+        xdictionary_handle: _,
+        dxf_name: _,
+        cpp_class_name: _,
+        data: _,
+        source_version: _,
+    } = v;
+};

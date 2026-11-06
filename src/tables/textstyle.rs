@@ -183,6 +183,34 @@ impl TableEntry for TextStyle {
     }
 }
 
+// Checked reservation: exhaustive field classification, including scalar nested carriers.
+const _: fn(&TextGenerationFlags) = |v| {
+    let TextGenerationFlags {
+        backward: _,
+        upside_down: _,
+    } = v;
+};
+const _: fn(&TextStyle) = |v| {
+    let TextStyle {
+        handle: _,
+        name: _,
+        flags: _,
+        height: _,
+        width_factor: _,
+        oblique_angle: _,
+        last_height: _,
+        font_file: _,
+        big_font_file: _,
+        true_type_font: _,
+        true_type_font_flags: _,
+        xref_dependent: _,
+        xref_block_record_handle: _,
+        is_shape_file: _,
+        is_vertical: _,
+        annotative: _,
+    } = v;
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;

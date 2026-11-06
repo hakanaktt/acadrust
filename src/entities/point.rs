@@ -78,6 +78,17 @@ impl Entity for Point {
     }
 }
 
+// Checked reservation: exhaustive field classification, including scalar nested carriers.
+const _: fn(&Point) = |v| {
+    let Point {
+        common: _,
+        location: _,
+        thickness: _,
+        normal: _,
+        x_axis_angle: _,
+    } = v;
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;

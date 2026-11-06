@@ -390,3 +390,48 @@ impl Entity for Polyline {
         super::transform::transform_polyline(self, transform);
     }
 }
+
+// Checked reservation: exhaustive field classification, including scalar nested carriers.
+const _: fn(&Polyline) = |v| {
+    let Polyline {
+        common: _,
+        flags: _,
+        vertices: _,
+    } = v;
+};
+const _: fn(&Polyline2D) = |v| {
+    let Polyline2D {
+        common: _,
+        flags: _,
+        smooth_surface: _,
+        start_width: _,
+        end_width: _,
+        thickness: _,
+        elevation: _,
+        normal: _,
+        vertices: _,
+    } = v;
+};
+const _: fn(&PolylineFlags) = |v| {
+    let PolylineFlags { bits: _ } = v;
+};
+const _: fn(&Vertex2D) = |v| {
+    let Vertex2D {
+        location: _,
+        flags: _,
+        start_width: _,
+        end_width: _,
+        bulge: _,
+        curve_tangent: _,
+        id: _,
+    } = v;
+};
+const _: fn(&Vertex3D) = |v| {
+    let Vertex3D {
+        location: _,
+        flags: _,
+    } = v;
+};
+const _: fn(&VertexFlags) = |v| {
+    let VertexFlags { bits: _ } = v;
+};

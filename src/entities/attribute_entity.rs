@@ -376,6 +376,35 @@ impl Entity for AttributeEntity {
     }
 }
 
+// Checked reservation: exhaustive field classification, including scalar nested carriers.
+const _: fn(&AttributeEntity) = |v| {
+    let AttributeEntity {
+        common: _,
+        tag: _,
+        value: _,
+        insertion_point: _,
+        alignment_point: _,
+        height: _,
+        thickness: _,
+        rotation: _,
+        width_factor: _,
+        oblique_angle: _,
+        text_style: _,
+        text_generation_flags: _,
+        horizontal_alignment: _,
+        vertical_alignment: _,
+        flags: _,
+        field_length: _,
+        normal: _,
+        mtext_flag: _,
+        is_multiline: _,
+        line_count: _,
+        embedded_mtext: _,
+        attdef_handle: _,
+        lock_position: _,
+    } = v;
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;

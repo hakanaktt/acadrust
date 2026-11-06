@@ -114,6 +114,19 @@ impl Entity for Ellipse {
     }
 }
 
+// Checked reservation: exhaustive field classification, including scalar nested carriers.
+const _: fn(&Ellipse) = |v| {
+    let Ellipse {
+        common: _,
+        center: _,
+        major_axis: _,
+        minor_axis_ratio: _,
+        start_parameter: _,
+        end_parameter: _,
+        normal: _,
+    } = v;
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;

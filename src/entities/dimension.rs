@@ -1085,3 +1085,121 @@ impl super::Entity for Dimension {
         }
     }
 }
+
+// Checked reservation: exhaustive field classification, including scalar nested carriers.
+const _: fn(&DimensionAligned) = |v| {
+    let DimensionAligned {
+        base: _,
+        first_point: _,
+        second_point: _,
+        definition_point: _,
+        ext_line_rotation: _,
+    } = v;
+};
+const _: fn(&DimensionAngular2Ln) = |v| {
+    let DimensionAngular2Ln {
+        base: _,
+        dimension_arc: _,
+        first_point: _,
+        second_point: _,
+        angle_vertex: _,
+        definition_point: _,
+    } = v;
+};
+const _: fn(&DimensionAngular3Pt) = |v| {
+    let DimensionAngular3Pt {
+        base: _,
+        definition_point: _,
+        first_point: _,
+        second_point: _,
+        angle_vertex: _,
+    } = v;
+};
+const _: fn(&DimensionArc) = |v| {
+    let DimensionArc {
+        base: _,
+        definition_point: _,
+        first_extension_point: _,
+        second_extension_point: _,
+        center_point: _,
+        is_partial: _,
+        arc_start_parameter: _,
+        arc_end_parameter: _,
+        has_leader: _,
+        first_leader_point: _,
+        second_leader_point: _,
+    } = v;
+};
+const _: fn(&DimensionBase) = |v| {
+    let DimensionBase {
+        common: _,
+        definition_point: _,
+        text_middle_point: _,
+        insertion_point: _,
+        dimension_type: _,
+        attachment_point: _,
+        text: _,
+        user_text: _,
+        normal: _,
+        text_rotation: _,
+        horizontal_direction: _,
+        style_name: _,
+        actual_measurement: _,
+        version: _,
+        block_name: _,
+        line_spacing_factor: _,
+        line_spacing_style: _,
+        insertion_scale: _,
+        insertion_rotation: _,
+        dwg_unknown_bit: _,
+        flip_arrow1: _,
+        flip_arrow2: _,
+        dwg_flags_byte: _,
+        text_user_positioned: _,
+    } = v;
+};
+const _: fn(&DimensionDiameter) = |v| {
+    let DimensionDiameter {
+        base: _,
+        definition_point: _,
+        angle_vertex: _,
+        leader_length: _,
+    } = v;
+};
+const _: fn(&DimensionLargeRadial) = |v| {
+    let DimensionLargeRadial {
+        base: _,
+        definition_point: _,
+        chord_point: _,
+        jog_angle: _,
+        override_center: _,
+        jog_point: _,
+    } = v;
+};
+const _: fn(&DimensionLinear) = |v| {
+    let DimensionLinear {
+        base: _,
+        first_point: _,
+        second_point: _,
+        definition_point: _,
+        rotation: _,
+        ext_line_rotation: _,
+    } = v;
+};
+const _: fn(&DimensionOrdinate) = |v| {
+    let DimensionOrdinate {
+        base: _,
+        definition_point: _,
+        feature_location: _,
+        leader_endpoint: _,
+        is_ordinate_type_x: _,
+    } = v;
+};
+const _: fn(&DimensionRadius) = |v| {
+    let DimensionRadius {
+        base: _,
+        definition_point: _,
+        angle_vertex: _,
+        leader_length: _,
+    } = v;
+};

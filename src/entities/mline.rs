@@ -823,6 +823,36 @@ impl Default for MLineBuilder {
 // Tests
 // ============================================================================
 
+// Checked reservation: exhaustive field classification, including scalar nested carriers.
+const _: fn(&MLine) = |v| {
+    let MLine {
+        common: _,
+        flags: _,
+        justification: _,
+        normal: _,
+        scale_factor: _,
+        start_point: _,
+        style_handle: _,
+        style_name: _,
+        style_element_count: _,
+        vertices: _,
+    } = v;
+};
+const _: fn(&MLineSegment) = |v| {
+    let MLineSegment {
+        parameters: _,
+        area_fill_parameters: _,
+    } = v;
+};
+const _: fn(&MLineVertex) = |v| {
+    let MLineVertex {
+        position: _,
+        direction: _,
+        miter: _,
+        segments: _,
+    } = v;
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -419,6 +419,43 @@ impl Entity for Polyline3D {
     }
 }
 
+// Checked reservation: exhaustive field classification, including scalar nested carriers.
+const _: fn(&Polyline3D) = |v| {
+    let Polyline3D {
+        common: _,
+        flags: _,
+        smooth_type: _,
+        default_start_width: _,
+        default_end_width: _,
+        mesh_m_count: _,
+        mesh_n_count: _,
+        smooth_m_density: _,
+        smooth_n_density: _,
+        elevation: _,
+        normal: _,
+        vertices: _,
+    } = v;
+};
+const _: fn(&Polyline3DFlags) = |v| {
+    let Polyline3DFlags {
+        closed: _,
+        spline_fit: _,
+        is_3d: _,
+        is_3d_mesh: _,
+        mesh_closed_n: _,
+        is_polyface_mesh: _,
+        linetype_continuous: _,
+    } = v;
+};
+const _: fn(&Vertex3DPolyline) = |v| {
+    let Vertex3DPolyline {
+        handle: _,
+        layer: _,
+        position: _,
+        flags: _,
+    } = v;
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;

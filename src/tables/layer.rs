@@ -220,3 +220,33 @@ impl TableEntry for Layer {
         self.name == "0"
     }
 }
+
+// Checked reservation: exhaustive field classification, including scalar nested carriers.
+const _: fn(&Layer) = |v| {
+    let Layer {
+        handle: _,
+        name: _,
+        flags: _,
+        color: _,
+        color_name: _,
+        book_name: _,
+        line_type: _,
+        line_weight: _,
+        plot_style: _,
+        is_plottable: _,
+        transparency: _,
+        description: _,
+        material: _,
+        plotstyle_handle: _,
+        xref_block_record_handle: _,
+    } = v;
+};
+const _: fn(&LayerFlags) = |v| {
+    let LayerFlags {
+        frozen: _,
+        locked: _,
+        frozen_in_new_viewport: _,
+        off: _,
+        xref_dependent: _,
+    } = v;
+};
