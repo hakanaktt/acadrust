@@ -2,6 +2,12 @@
 
 ### Unreleased
 
+- **Rotation of annotative block and text representations in DXF** - Group 50
+  of a block or text object context is in degrees, but it was read and written
+  as is while the rotation in memory is in radians, as DWG stores it and as
+  `Insert::rotation` and the attribute representation hold it. A symbol rotated
+  30 degrees came back as 30 radians. A representation that an earlier version
+  wrote after editing holds radians in group 50 and now reads as degrees.
 - **Custom drawing property fields** - `%<\AcVar CustomDP.<Name>>%`, the code
   AutoCAD writes for a custom drawing property, resolves to the property's
   stored text verbatim (name matched case-insensitively). It used to fall
