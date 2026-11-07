@@ -98,6 +98,10 @@ impl ExtendedData {
 
     /// Add a record to the collection
     pub fn add_record(&mut self, record: ExtendedDataRecord) {
+        // Most entities carry one record: a plain push would reserve four.
+        if self.records.is_empty() {
+            self.records.reserve_exact(1);
+        }
         self.records.push(record);
     }
 
@@ -114,7 +118,7 @@ impl ExtendedData {
         {
             *existing = record;
         } else {
-            self.records.push(record);
+            self.add_record(record);
         }
     }
 
@@ -370,5 +374,24 @@ mod tests {
         assert_eq!(xdata.len(), 1);
         assert!(xdata.get_record("APP1").is_some());
         assert!(xdata.get_record("APP2").is_none());
+    }
+
+    #[test]
+    fn a_single_record_allocates_one_slot() {
+        // Most entities carry one XDATA record; a read of a large drawing
+        // holds one `ExtendedData` per entity.
+        let mut added = ExtendedData::new();
+        added.add_record(ExtendedDataRecord::new("APP1"));
+        assert_eq!(added.records.capacity(), 1);
+
+        let mut upserted = ExtendedData::new();
+        upserted.upsert_record(ExtendedDataRecord::new("APP1"));
+        assert_eq!(upserted.records.capacity(), 1);
+
+        // Further records still grow amortized.
+        added.add_record(ExtendedDataRecord::new("APP2"));
+        added.add_record(ExtendedDataRecord::new("APP3"));
+        assert_eq!(added.len(), 3);
+        assert!(added.records.capacity() >= 3);
     }
 }
