@@ -765,6 +765,8 @@ pub struct DwgDocumentBuilder {
     obj_reader: DwgObjectReader,
     /// Whether to use failsafe mode (report skipped records via notifications).
     failsafe: bool,
+    /// See [`crate::DwgReadOptions::skip_roundtrip_data`].
+    skip_roundtrip_data: bool,
     /// Notifications collected during building.
     notifications: NotificationCollection,
     /// Shared with `DwgReader`; reports the object-build portion of the
@@ -799,6 +801,7 @@ impl DwgDocumentBuilder {
         Self {
             obj_reader,
             failsafe: false,
+            skip_roundtrip_data: false,
             notifications: NotificationCollection::new(),
             progress: None,
         }
@@ -810,6 +813,12 @@ impl DwgDocumentBuilder {
     /// instead of being silently lost.
     pub fn set_failsafe(&mut self, failsafe: bool) {
         self.failsafe = failsafe;
+    }
+
+    /// Leave out the verbatim entity bytes kept for a byte-exact re-save
+    /// (see [`crate::DwgReadOptions::skip_roundtrip_data`]).
+    pub fn set_skip_roundtrip_data(&mut self, skip: bool) {
+        self.skip_roundtrip_data = skip;
     }
 
     pub fn set_progress_callback(&mut self, progress: std::sync::Arc<dyn Fn(u16) + Send + Sync>) {
@@ -3342,7 +3351,7 @@ impl DwgDocumentBuilder {
                 .collect();
             if !app_name_by_handle.is_empty() {
                 for_each_mut(&mut document.entities, |entity| {
-                    let records: Vec<crate::xdata::ExtendedDataRecord> = {
+                    let records: Vec<(u64, crate::xdata::ExtendedDataRecord)> = {
                         let xd = &entity.common().extended_data;
                         xd.raw_dwg_eed
                             .iter()
@@ -3360,14 +3369,20 @@ impl DwgDocumentBuilder {
                                     let mut rec =
                                         crate::xdata::ExtendedDataRecord::new(name.clone());
                                     rec.values = values;
-                                    rec
+                                    (*app_handle, rec)
                                 })
                             })
                             .collect()
                     };
                     if !records.is_empty() {
                         let xd = &mut std::sync::Arc::make_mut(entity).common_mut().extended_data;
-                        for record in records {
+                        if self.skip_roundtrip_data {
+                            // A decoded block is only kept for a byte-exact re-save.
+                            xd.raw_dwg_eed
+                                .retain(|(app, _)| !records.iter().any(|(decoded, _)| decoded == app));
+                            xd.raw_dwg_eed.shrink_to_fit();
+                        }
+                        for (_, record) in records {
                             xd.add_record(record);
                         }
                     }
@@ -4162,11 +4177,13 @@ impl DwgDocumentBuilder {
             );
             // Keep the verbatim record so an untouched entity can be copied on write
             // instead of re-encoded (see EntityCommon::raw_record).
-            entity_common.raw_record = Some(std::sync::Arc::new(crate::entities::RawRecord {
-                data: reader.raw_merged_data(),
-                handle_bits: reader.get_handle_bits(),
-                version: self.obj_reader.dxf_version(),
-            }));
+            if !self.skip_roundtrip_data {
+                entity_common.raw_record = Some(std::sync::Arc::new(crate::entities::RawRecord {
+                    data: reader.raw_merged_data(),
+                    handle_bits: reader.get_handle_bits(),
+                    version: self.obj_reader.dxf_version(),
+                }));
+            }
 
             match type_code {
                 // ── Simple entities ────────────────────────────────
