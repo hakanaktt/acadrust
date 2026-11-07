@@ -2265,7 +2265,14 @@ impl<'a> DwgObjectWriter<'a> {
         self.writer.write_bit(record.flags.anonymous);
         // Has attributes: never on a layout block record, as AutoCAD writes it
         // (ZWCAD's AUDIT flags a layout with the bit set).
-        let is_layout = record.is_model_space() || record.is_paper_space() || record.is_layout();
+        // A layout handle counts only when it resolves: an orphaned block can
+        // keep a dangling one, and its ATTDEFs still need the bit.
+        let is_layout = record.is_model_space()
+            || record.is_paper_space()
+            || matches!(
+                self.document.objects.get(&record.layout),
+                Some(crate::objects::ObjectType::Layout(_))
+            );
         let has_attributes = !is_layout
             && record.entity_handles.iter().any(|handle| {
                 matches!(
