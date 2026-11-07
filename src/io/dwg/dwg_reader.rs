@@ -1798,6 +1798,10 @@ impl<R: Read + Seek> DwgReader<R> {
                             self.shard.as_mut().filter(|shard| shard.objects.is_none())
                         {
                             shard.plan_first(&mut obj_reader, objects_buf, handle_count, &document);
+                        } else {
+                            // The object reader holds the only other copy and
+                            // frees it once every record is decoded.
+                            drop(objects_buf);
                         }
                         record_stream_read = true;
                         obj_reader.set_mesh_budget(self.options.mesh_budget());
