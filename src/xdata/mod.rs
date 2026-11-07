@@ -98,6 +98,10 @@ impl ExtendedData {
 
     /// Add a record to the collection
     pub fn add_record(&mut self, record: ExtendedDataRecord) {
+        // Most entities carry one record: a plain push would reserve four.
+        if self.records.is_empty() {
+            self.records.reserve_exact(1);
+        }
         self.records.push(record);
     }
 
@@ -114,7 +118,7 @@ impl ExtendedData {
         {
             *existing = record;
         } else {
-            self.records.push(record);
+            self.add_record(record);
         }
     }
 
