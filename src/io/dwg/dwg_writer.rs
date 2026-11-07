@@ -1228,6 +1228,51 @@ fn prepare_legacy_document(document: &mut CadDocument) {
             }
         }
     }
+
+    // A pre-R2010 MLEADERSTYLE names its record version in ACAD_MLEADERVER
+    // xdata (1070 = 2), as AutoCAD and ZWCAD write it. ZWCAD 2025 drops an
+    // R2004 style without it as an invalid dictionary entry, and AUDIT then
+    // clears CMLEADERSTYLE.
+    if document.version < DxfVersion::AC1024 {
+        add_mleader_version_xdata(document);
+    }
+}
+
+/// Application name of the MLEADERSTYLE record version xdata.
+const MLEADER_VERSION_APP: &str = "ACAD_MLEADERVER";
+
+fn add_mleader_version_xdata(document: &mut CadDocument) {
+    use crate::xdata::{ExtendedDataRecord, XDataValue};
+    let styles: Vec<Handle> = document
+        .objects
+        .iter()
+        .filter(|(_, object)| matches!(object, crate::objects::ObjectType::MultiLeaderStyle(_)))
+        .map(|(handle, _)| *handle)
+        .filter(|handle| {
+            document
+                .object_xdata
+                .get(handle)
+                .and_then(|data| data.get_record(MLEADER_VERSION_APP))
+                .is_none()
+        })
+        .collect();
+    if styles.is_empty() {
+        return;
+    }
+    if !document.app_ids.contains(MLEADER_VERSION_APP) {
+        let mut app = crate::tables::AppId::new(MLEADER_VERSION_APP);
+        app.handle = document.allocate_handle();
+        let _ = document.app_ids.add(app);
+    }
+    for handle in styles {
+        let mut record = ExtendedDataRecord::new(MLEADER_VERSION_APP);
+        record.add_value(XDataValue::Integer16(2));
+        document
+            .object_xdata
+            .entry(handle)
+            .or_default()
+            .add_record(record);
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
