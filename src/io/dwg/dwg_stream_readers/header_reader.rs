@@ -133,6 +133,12 @@ impl SectionReader {
             SectionReaderInner::MergedReader(r) => r.try_read_bit_short(),
         }
     }
+    fn try_read_bit_long(&mut self) -> Option<i32> {
+        match &mut self.inner {
+            SectionReaderInner::BitReader(r) => r.try_read_bit_long(),
+            SectionReaderInner::MergedReader(r) => r.try_read_bit_long(),
+        }
+    }
     fn read_bit_long(&mut self) -> i32 {
         match &mut self.inner {
             SectionReaderInner::BitReader(r) => r.read_bit_long(),
@@ -873,9 +879,12 @@ fn read_header_fields(r: &mut SectionReader, v: DxfVersion, h: &mut HeaderVariab
             }
         }
 
-        if r2004_plus(v) {
-            let _ = r.read_bit_long();
-            let _ = r.read_bit_long();
+        // LibreDWG's writer stops the R2004 header here, so the two BitLongs and
+        // the bit after them are optional as well, like the AC1014 tail above.
+        if r2004_plus(v)
+            && r.try_read_bit_long().is_some()
+            && r.try_read_bit_long().is_some()
+        {
             let _ = r.read_bit();
         }
     }
