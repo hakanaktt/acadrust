@@ -110,3 +110,42 @@ fn new_styles_keep_their_metric_defaults() {
     assert_eq!(defaults.name, "Fresh");
     assert_eq!(defaults.dimtxt, fresh.dimtxt, "shared values stay shared");
 }
+
+/// A DIMSTYLE without group 340 keeps DIMTXSTY's default, Standard, by handle
+/// as well as by name: a null handle written to DWG is an AUDIT error
+/// (`Dimtxsty null object id`). ezdxf writes its R2000 Standard entry so.
+#[test]
+fn missing_dimstyle_text_style_reads_as_standard() {
+    let doc = CadDocument::new();
+    let text =
+        String::from_utf8(DxfWriter::new(&doc).write_to_vec().expect("write")).expect("utf8");
+    let lines: Vec<&str> = text.lines().collect();
+    let mut out: Vec<&str> = Vec::with_capacity(lines.len());
+    let (mut in_dimstyle, mut dropped) = (false, 0);
+    for pair in lines.chunks(2) {
+        if pair[0].trim() == "0" {
+            in_dimstyle = pair.get(1).is_some_and(|v| v.trim() == "DIMSTYLE");
+        }
+        if in_dimstyle && pair[0].trim() == "340" {
+            dropped += 1;
+            continue;
+        }
+        out.extend_from_slice(pair);
+    }
+    assert!(dropped > 0, "the writer emits group 340");
+
+    let loaded = DxfReader::from_reader(Cursor::new(out.join("\r\n").into_bytes()))
+        .expect("reader")
+        .read()
+        .expect("read");
+    let standard = loaded
+        .text_styles
+        .get("Standard")
+        .expect("Standard text style");
+    let style = loaded
+        .dim_styles
+        .get("Standard")
+        .expect("Standard dimstyle");
+    assert_eq!(style.dimtxsty, "Standard");
+    assert_eq!(style.dimtxsty_handle, standard.handle);
+}

@@ -10429,6 +10429,10 @@ impl<'a> SectionReader<'a> {
                         {
                             dimstyle.dimtxsty = text_style.name.clone();
                         }
+                    } else if let Some(text_style) = document.text_styles.get(&dimstyle.dimtxsty) {
+                        // Without group 340 DIMTXSTY keeps its default, Standard; a null
+                        // handle written to DWG is an AUDIT error.
+                        dimstyle.dimtxsty_handle = text_style.handle;
                     }
                     document.dim_styles.add_or_replace(dimstyle);
                     self.decoded_records = self.decoded_records.saturating_add(1);
