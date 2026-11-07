@@ -844,6 +844,13 @@ impl DwgObjectReader {
         self.handle_map = handle_map;
     }
 
+    /// Drop this reader's share of the object section and its handle map once
+    /// every record is decoded. Only the version accessors stay meaningful.
+    pub(crate) fn release_section(&mut self) {
+        self.data = Arc::default();
+        self.handle_map = HandleMap::default();
+    }
+
     /// Get the DWG version.
     pub fn version(&self) -> DwgVersion {
         self.version
