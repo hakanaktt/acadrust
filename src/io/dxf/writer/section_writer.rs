@@ -2369,7 +2369,8 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 | EntityType::PolygonMesh(_)
                 | EntityType::AttributeEntity(_)
                 | EntityType::Unknown(_)
-        ) {
+        ) && !arch_written_as_proxy(entity)
+        {
             let lofted = match entity {
                 EntityType::Surface(surface) => Some(&surface.surface_data),
                 _ => None,
@@ -12679,4 +12680,20 @@ fn wrap_sat_line(line: &str) -> Vec<&str> {
     }
     pieces.push(&line[start..]);
     pieces
+}
+
+/// An Arch entity read from DWG (no DXF class body) with proxy graphics is
+/// written through `write_unknown_entity`, which writes its XDATA itself.
+fn arch_written_as_proxy(entity: &EntityType) -> bool {
+    let EntityType::Extended(e) = entity else {
+        return false;
+    };
+    let ExtendedEntityData::Arch(data) = &e.data else {
+        return false;
+    };
+    data.raw_dxf_codes.is_none()
+        && e.common
+            .graphic_data
+            .as_deref()
+            .is_some_and(|graphics| !graphics.is_empty())
 }
