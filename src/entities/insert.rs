@@ -130,6 +130,17 @@ impl Insert {
         };
     }
 
+    /// Store the three scale factors exactly as given, with no zero guard.
+    ///
+    /// The checked setters above keep a drawing someone is building from holding a degenerate
+    /// transform by accident. A reader has no such choice: a DWG stores the scale as a plain double,
+    /// so the file can say 0.0, and the reader reports what the file says.
+    pub fn set_scale_unchecked(&mut self, x: f64, y: f64, z: f64) {
+        self.x_scale = x;
+        self.y_scale = y;
+        self.z_scale = z;
+    }
+
     // ── Builder helpers ─────────────────────────────────────────
 
     /// Builder: Set the scale factors
@@ -895,6 +906,13 @@ mod tests {
             "the file stores 0.0, the reader returned {:e}",
             inserts[0].y_scale()
         );
+    }
+
+    #[test]
+    fn unchecked_setter_stores_what_it_is_given() {
+        let mut i = Insert::new("B", Vector3::ZERO);
+        i.set_scale_unchecked(1.0, 0.0, -2.5);
+        assert_eq!((i.x_scale(), i.y_scale(), i.z_scale()), (1.0, 0.0, -2.5));
     }
 
     #[test]
