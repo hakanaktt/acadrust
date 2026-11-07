@@ -2609,6 +2609,9 @@ impl DwgDocumentBuilder {
                 worker_count,
             );
         }
+        // Every record is decoded; the post-pass reads no section bytes.
+        self.obj_reader.release_section();
+        drop(pass2_records);
         let post_started = web_time::Instant::now();
         self.report_progress(875);
 
