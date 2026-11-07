@@ -5541,55 +5541,22 @@ fn read_acis_entity_impl(
     let mut silhouettes = Vec::new();
 
     if wireframe_present {
-        // LibreDWG COMMON_3DSOLID: a point_present bit gates the 3BD point.
-        point_present = reader.read_bit();
-        if point_present {
-            point = reader.read_3bit_double();
-        }
-        isolines = reader.read_bit_long();
-        isoline_present = reader.read_bit();
-        if isoline_present {
-            let num_wires = safe_count(reader.read_bit_long(), reader);
-            for _ in 0..num_wires {
-                wires.push(read_wire(reader));
+        // The wire colour is a BS in the drawings of #129 (AutoCAD 2004 and
+        // 2018, checked against ODA) but reads as a BL in others (#356,
+        // AutoCAD 2025, as LibreDWG has it from R2004 on). Read it as a BS,
+        // and when that runs the wire block off the rails, read it again
+        // as a BL from the same point.
+        let start = (*reader).clone();
+        let mut frame = read_wireframe(reader, version, false);
+        if reader.check_error().is_err() && version.r2004_plus() {
+            let mut retry = start;
+            let wide = read_wireframe(&mut retry, version, true);
+            if retry.check_error().is_ok() {
+                *reader = retry;
+                frame = wide;
             }
         }
-
-        // The isoline flag gates only the wire array. The silhouette
-        // count is always present in a wireframe block, including zero
-        // when there are no silhouettes (ODA DWG spec, section 20.4.41).
-        let num_silhouettes = safe_count(reader.read_bit_long(), reader);
-        for _ in 0..num_silhouettes {
-            // Native R2010+ silhouettes store a BLL viewport identity.
-            // Earlier records use BL, including compact zero identities.
-            let viewport_id = if version.r2010_plus() {
-                reader.read_bit_long_long()
-            } else {
-                i64::from(reader.read_bit_long())
-            };
-            let target = reader.read_3bit_double();
-            let view_direction = reader.read_3bit_double();
-            let up_vector = reader.read_3bit_double();
-            let is_perspective = reader.read_bit();
-            let mut sil_wires = Vec::new();
-            let has_sil_wires = reader.read_bit();
-            if has_sil_wires {
-                let num_sw = safe_count(reader.read_bit_long(), reader);
-                sil_wires.reserve(num_sw as usize);
-                for _ in 0..num_sw {
-                    sil_wires.push(read_wire(reader));
-                }
-            }
-            silhouettes.push(Silhouette {
-                viewport_id,
-                view_direction,
-                up_vector,
-                target,
-                is_perspective,
-                has_wires: has_sil_wires,
-                wires: sil_wires,
-            });
-        }
+        (point_present, point, isolines, isoline_present, wires, silhouettes) = frame;
     }
 
     // Native pre-R2007 SAT records can end at an absent wireframe flag,
@@ -6000,10 +5967,79 @@ pub fn read_surface(
 /// Field order/types per LibreDWG `Dwg_3DSOLID_wire`:
 /// RC type, BLd selection_marker, BS color, BLd acis_index, BL num_points,
 /// 3BD points…, B transform_present [+ axes/translation/scale/flags].
-fn read_wire(reader: &mut DwgMergedReader) -> Wire {
+/// The wireframe block of an ACIS entity: the point, the isolines, the wires
+/// and the silhouettes. `wide_color` reads each wire colour as a BL.
+#[allow(clippy::type_complexity)]
+fn read_wireframe(
+    reader: &mut DwgMergedReader,
+    version: DwgVersion,
+    wide_color: bool,
+) -> (bool, Vector3, i32, bool, Vec<Wire>, Vec<Silhouette>) {
+    let mut point = Vector3::ZERO;
+    let mut wires = Vec::new();
+    let mut silhouettes = Vec::new();
+    // LibreDWG COMMON_3DSOLID: a point_present bit gates the 3BD point.
+    let point_present = reader.read_bit();
+    if point_present {
+        point = reader.read_3bit_double();
+    }
+    let isolines = reader.read_bit_long();
+    let isoline_present = reader.read_bit();
+    if isoline_present {
+        let num_wires = safe_count(reader.read_bit_long(), reader);
+        for _ in 0..num_wires {
+            wires.push(read_wire(reader, wide_color));
+        }
+    }
+
+    // The isoline flag gates only the wire array. The silhouette
+    // count is always present in a wireframe block, including zero
+    // when there are no silhouettes (ODA DWG spec, section 20.4.41).
+    let num_silhouettes = safe_count(reader.read_bit_long(), reader);
+    for _ in 0..num_silhouettes {
+        // Native R2010+ silhouettes store a BLL viewport identity.
+        // Earlier records use BL, including compact zero identities.
+        let viewport_id = if version.r2010_plus() {
+            reader.read_bit_long_long()
+        } else {
+            i64::from(reader.read_bit_long())
+        };
+        let target = reader.read_3bit_double();
+        let view_direction = reader.read_3bit_double();
+        let up_vector = reader.read_3bit_double();
+        let is_perspective = reader.read_bit();
+        let mut sil_wires = Vec::new();
+        let has_sil_wires = reader.read_bit();
+        if has_sil_wires {
+            let num_sw = safe_count(reader.read_bit_long(), reader);
+            sil_wires.reserve(num_sw as usize);
+            for _ in 0..num_sw {
+                sil_wires.push(read_wire(reader, wide_color));
+            }
+        }
+        silhouettes.push(Silhouette {
+            viewport_id,
+            view_direction,
+            up_vector,
+            target,
+            is_perspective,
+            has_wires: has_sil_wires,
+            wires: sil_wires,
+        });
+    }
+    (point_present, point, isolines, isoline_present, wires, silhouettes)
+}
+
+/// One cached wire of an ACIS entity; `wide_color` reads its colour as a BL
+/// rather than a BS (see `read_wireframe`'s caller).
+fn read_wire(reader: &mut DwgMergedReader, wide_color: bool) -> Wire {
     let wire_type_raw = reader.read_byte();
     let selection_marker = reader.read_bit_long();
-    let color_val = reader.read_bit_short();
+    let color_val = if wide_color {
+        reader.read_bit_long()
+    } else {
+        i32::from(reader.read_bit_short())
+    };
     let acis_index = reader.read_bit_long();
     let num_pts = safe_count(reader.read_bit_long(), reader);
     let mut pts = Vec::with_capacity(num_pts as usize);
