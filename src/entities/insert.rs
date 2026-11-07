@@ -130,6 +130,17 @@ impl Insert {
         };
     }
 
+    /// Store the three scale factors exactly as given, with no zero guard.
+    ///
+    /// The checked setters above keep a drawing someone is building from holding a degenerate
+    /// transform by accident. A reader has no such choice: a DWG stores the scale as a plain double,
+    /// so the file can say 0.0, and the reader reports what the file says.
+    pub fn set_scale_unchecked(&mut self, x: f64, y: f64, z: f64) {
+        self.x_scale = x;
+        self.y_scale = y;
+        self.z_scale = z;
+    }
+
     // ── Builder helpers ─────────────────────────────────────────
 
     /// Builder: Set the scale factors
@@ -824,6 +835,93 @@ mod tests {
         assert!(insert.array_capacity_hint() <= 4096);
         assert!(insert.array_points().is_empty());
         assert!(insert.explode(&[EntityType::Line(Line::new())]).is_empty());
+    }
+
+    /// A DWG stores an INSERT scale as a plain double, so a file can hold 0.0.
+    /// No setter lets a caller build one (they rewrite anything under SCALE_EPSILON),
+    /// so I put the zero into the private field and write the file myself.
+    fn zero_scale_round_trip(
+        version: crate::types::DxfVersion,
+        columns: u16,
+    ) -> Vec<Insert> {
+        use crate::tables::BlockRecord;
+        use crate::{CadDocument, DwgReader, DwgWriter};
+
+        let mut doc = CadDocument::with_version(version);
+        let mut block = BlockRecord::new("B");
+        block.handle = doc.allocate_handle();
+        block.block_entity_handle = doc.allocate_handle();
+        block.block_end_handle = doc.allocate_handle();
+        doc.block_records.add(block).unwrap();
+
+        let mut insert = Insert::new("B", Vector3::new(5.0, 6.0, 0.0));
+        insert.x_scale = 1.0;
+        insert.y_scale = 0.0;
+        insert.z_scale = 1.0;
+        if columns > 1 {
+            insert.column_count = columns;
+            insert.column_spacing = 10.0;
+        }
+        doc.add_entity(EntityType::Insert(insert)).unwrap();
+
+        let bytes = DwgWriter::write_to_vec(&doc).expect("write dwg");
+        let back = DwgReader::from_stream(std::io::Cursor::new(bytes))
+            .read()
+            .expect("read dwg");
+        back.entities()
+            .filter_map(|e| match e {
+                EntityType::Insert(i) => Some(i.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn dwg_reader_keeps_a_stored_zero_scale_on_insert() {
+        for version in [
+            crate::types::DxfVersion::AC1015,
+            crate::types::DxfVersion::AC1032,
+        ] {
+            let inserts = zero_scale_round_trip(version, 1);
+            assert_eq!(inserts.len(), 1, "{version:?}");
+            assert_eq!(inserts[0].x_scale().to_bits(), 1.0f64.to_bits(), "{version:?}");
+            assert_eq!(
+                inserts[0].y_scale().to_bits(),
+                0.0f64.to_bits(),
+                "{version:?}: the file stores 0.0, the reader returned {:e}",
+                inserts[0].y_scale()
+            );
+            assert_eq!(inserts[0].z_scale().to_bits(), 1.0f64.to_bits(), "{version:?}");
+        }
+    }
+
+    #[test]
+    fn dwg_reader_keeps_a_stored_zero_scale_on_minsert() {
+        let inserts = zero_scale_round_trip(crate::types::DxfVersion::AC1015, 3);
+        assert_eq!(inserts.len(), 1);
+        assert_eq!(inserts[0].column_count, 3);
+        assert_eq!(
+            inserts[0].y_scale().to_bits(),
+            0.0f64.to_bits(),
+            "the file stores 0.0, the reader returned {:e}",
+            inserts[0].y_scale()
+        );
+    }
+
+    #[test]
+    fn unchecked_setter_stores_what_it_is_given() {
+        let mut i = Insert::new("B", Vector3::ZERO);
+        i.set_scale_unchecked(1.0, 0.0, -2.5);
+        assert_eq!((i.x_scale(), i.y_scale(), i.z_scale()), (1.0, 0.0, -2.5));
+    }
+
+    #[test]
+    fn checked_setters_still_refuse_zero() {
+        let mut i = Insert::new("B", Vector3::ZERO);
+        i.set_x_scale(0.0);
+        i.set_y_scale(0.0);
+        i.set_z_scale(0.0);
+        assert_eq!((i.x_scale(), i.y_scale(), i.z_scale()), (SCALE_EPSILON, SCALE_EPSILON, SCALE_EPSILON));
     }
 
     /// Helper – approximate equality for f64

@@ -4386,9 +4386,7 @@ impl DwgDocumentBuilder {
                     let block_name = maps.block_name(data.block_handle);
                     let mut e = Insert::new(block_name, data.insert_point);
                     e.common = entity_common;
-                    e.set_x_scale(data.x_scale);
-                    e.set_y_scale(data.y_scale);
-                    e.set_z_scale(data.z_scale);
+                    e.set_scale_unchecked(data.x_scale, data.y_scale, data.z_scale);
                     e.rotation = data.rotation;
                     e.normal = data.normal;
                     e.view_rep_handle = view_rep_handle;
@@ -4399,9 +4397,11 @@ impl DwgDocumentBuilder {
                     let block_name = maps.block_name(data.insert.block_handle);
                     let mut e = Insert::new(block_name, data.insert.insert_point);
                     e.common = entity_common;
-                    e.set_x_scale(data.insert.x_scale);
-                    e.set_y_scale(data.insert.y_scale);
-                    e.set_z_scale(data.insert.z_scale);
+                    e.set_scale_unchecked(
+                        data.insert.x_scale,
+                        data.insert.y_scale,
+                        data.insert.z_scale,
+                    );
                     e.rotation = data.insert.rotation;
                     e.normal = data.insert.normal;
                     e.column_count = data.column_count as u16;
