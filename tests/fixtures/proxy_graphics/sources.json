@@ -1,0 +1,26 @@
+{
+  "source": "sample_AC1032_ascii.dxf",
+  "source_sha256": "c2934f616ecd7097e773b85e5d6e0548d21ccc635abcc8e7276f7d4a585a7ae2",
+  "scope": "Existing source graphic_data extracted without CAD conversion; no rendering or roundtrip claim",
+  "fixtures": [
+    {
+      "file": "sample_ac1032_mleader_b1e.bin",
+      "source_handle": "B1E",
+      "sha256": "bf8802b2e8bf5c8d726161ad435d85c92d5fcd1e23034e0c5a5ecb782b91c14f",
+      "record_types": [
+        6,
+        7,
+        14,
+        16,
+        18,
+        19,
+        20,
+        22,
+        23,
+        38,
+        51
+      ],
+      "bytes": 1228
+    }
+  ]
+}

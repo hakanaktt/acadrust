@@ -4990,6 +4990,21 @@ impl CadDocument {
         }
     }
 
+    /// MLEADERSTYLE names are dictionary keys; DXF group 3 is its description.
+    pub(crate) fn resolve_multileader_style_names(&mut self) {
+        let Some(dictionary) = self.named_objects_dictionary()
+            .and_then(|root| root.get("ACAD_MLEADERSTYLE")) else { return; };
+        let names = match self.objects.get(&dictionary) {
+            Some(ObjectType::Dictionary(d)) => d.entries.clone(),
+            _ => return,
+        };
+        for (name, handle) in names {
+            if let Some(ObjectType::MultiLeaderStyle(style)) = self.objects.get_mut(&handle) {
+                if style.owner_handle == dictionary { style.name = name; }
+            }
+        }
+    }
+
     /// Assign dictionary keys to Group objects after file loading.
     pub fn resolve_group_names(&mut self) {
         let group_dict_handle = self.header.acad_group_dict_handle;

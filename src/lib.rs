@@ -258,7 +258,9 @@ pub use types::{
 // Re-export entity types
 pub use entities::{
     Arc, Circle, Ellipse, EmbeddedEntity, Entity, EntityType, Line, LwPolyline, MText, Point,
-    Polyline, ProxyGraphicRecord, ProxyGraphics, ProxyUnicodeText, Spline, Text,
+    Polyline, ProxyGraphicCommand, ProxyGraphicError, ProxyGraphicErrorReason, ProxyGraphicRecord,
+    ProxyGraphics, ProxyLegacyText, ProxyLegacyTextStyle, ProxyStyledUnicodeText, ProxyUnicodeText,
+    Spline, Text,
 };
 
 // Re-export table types
