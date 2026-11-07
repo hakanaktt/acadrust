@@ -258,6 +258,42 @@ pub fn decode_values(
     Some(values)
 }
 
+/// Decode raw DWG EED blocks (`ExtendedData::raw_dwg_eed`) into XDATA records,
+/// resolving application and layer handles against `document`.
+///
+/// [`DwgReader::read`](crate::DwgReader::read) does this for every entity
+/// after all of them are read, because the APPID an EED block points at may
+/// not be resolved while the entity is decoded. A
+/// [`read_visiting`](crate::DwgReader::read_visiting) consumer receives only
+/// the raw blocks and can decode them with this function once the read has
+/// returned the document. A block whose application is unknown or whose
+/// payload does not decode is skipped, as `read` keeps it only as raw bytes.
+pub fn decode_xdata(
+    raw_eed: &[(u64, Vec<u8>)],
+    document: &crate::document::CadDocument,
+) -> Vec<crate::xdata::ExtendedDataRecord> {
+    let wide = document.version >= crate::types::DxfVersion::AC1021;
+    let layer_name = |handle: u64| {
+        document
+            .layers
+            .iter()
+            .find(|layer| layer.handle.value() == handle)
+            .map(|layer| layer.name.clone())
+    };
+    raw_eed
+        .iter()
+        .filter_map(|(app_handle, bytes)| {
+            let app = document
+                .app_ids
+                .iter()
+                .find(|app| app.handle.value() == *app_handle)?;
+            let mut record = crate::xdata::ExtendedDataRecord::new(app.name.clone());
+            record.values = decode_values(bytes, wide, layer_name)?;
+            Some(record)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
