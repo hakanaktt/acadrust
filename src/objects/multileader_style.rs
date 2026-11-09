@@ -715,60 +715,6 @@ impl Default for MultiLeaderStyle {
 // Tests
 // ============================================================================
 
-// Checked reservation: exhaustive field classification, including scalar nested carriers.
-const _: fn(&MultiLeaderStyle) = |v| {
-    let MultiLeaderStyle {
-        handle: _,
-        owner_handle: _,
-        name: _,
-        description: _,
-        path_type: _,
-        line_color: _,
-        line_type_handle: _,
-        line_weight: _,
-        enable_landing: _,
-        enable_dogleg: _,
-        landing_distance: _,
-        landing_gap: _,
-        arrowhead_handle: _,
-        arrowhead_size: _,
-        content_type: _,
-        text_style_handle: _,
-        text_left_attachment: _,
-        text_right_attachment: _,
-        text_top_attachment: _,
-        text_bottom_attachment: _,
-        text_attachment_direction: _,
-        text_angle_type: _,
-        text_alignment: _,
-        text_color: _,
-        text_height: _,
-        text_frame: _,
-        text_always_left: _,
-        default_text: _,
-        block_content_handle: _,
-        block_content_color: _,
-        block_content_connection: _,
-        block_content_rotation: _,
-        block_content_scale_x: _,
-        block_content_scale_y: _,
-        block_content_scale_z: _,
-        enable_block_scale: _,
-        enable_block_rotation: _,
-        scale_factor: _,
-        align_space: _,
-        break_gap_size: _,
-        max_leader_points: _,
-        first_segment_angle: _,
-        second_segment_angle: _,
-        leader_draw_order: _,
-        multileader_draw_order: _,
-        is_annotative: _,
-        property_changed: _,
-        unknown_flag_298: _,
-    } = v;
-};
-
 #[cfg(test)]
 mod tests {
     use super::*;

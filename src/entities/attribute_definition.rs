@@ -486,45 +486,6 @@ impl Entity for AttributeDefinition {
     }
 }
 
-// Checked reservation: exhaustive field classification, including scalar nested carriers.
-const _: fn(&AttributeDefinition) = |v| {
-    let AttributeDefinition {
-        common: _,
-        tag: _,
-        prompt: _,
-        default_value: _,
-        insertion_point: _,
-        alignment_point: _,
-        height: _,
-        thickness: _,
-        rotation: _,
-        width_factor: _,
-        oblique_angle: _,
-        text_style: _,
-        text_generation_flags: _,
-        horizontal_alignment: _,
-        vertical_alignment: _,
-        flags: _,
-        field_length: _,
-        normal: _,
-        mtext_flag: _,
-        is_multiline: _,
-        line_count: _,
-        embedded_mtext: _,
-        lock_position: _,
-    } = v;
-};
-const _: fn(&AttributeFlags) = |v| {
-    let AttributeFlags {
-        invisible: _,
-        constant: _,
-        verify: _,
-        preset: _,
-        locked_position: _,
-        annotative: _,
-    } = v;
-};
-
 #[cfg(test)]
 mod tests {
     use super::*;

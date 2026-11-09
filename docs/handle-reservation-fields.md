@@ -1,6 +1,9 @@
 # Reservation field manifest
 
-Base: `beec5a5692eddde2d71282839c49d9d25e37f6f1`. The checked visitor has explicit exhaustive root/header/table/common and enum dispatch. Anonymous shape checks in owning modules also make additions to nested/private structs require a coverage review. These are internal checks, not public reflection.
+The census classifies each type once. Exhaustive matches and destructures live
+with the census visitors, including nested scalar shapes. Types with private
+fields are classified by their owning helper or, for private flag bits, by a
+single local shape check.
 
 I = assigned identity; P = protected reference, including dangling; S = typed scalar/geometry; X = refuse active backing. Root/private-map protocols are described in [the contract](handle-reservation.md). A newly added field or variant must be classified and tested before positive coverage is extended.
 

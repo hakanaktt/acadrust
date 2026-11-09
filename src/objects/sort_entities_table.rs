@@ -342,25 +342,6 @@ impl SortEntitiesTable {
     }
 }
 
-// Checked reservation: exhaustive field classification, including scalar nested carriers.
-const _: fn(&SortEntitiesTable) = |v| {
-    let SortEntitiesTable {
-        handle: _,
-        owner_handle: _,
-        block_owner_handle: _,
-        entries: _,
-        entry_map: _,
-        raw_dxf_codes: _,
-        raw_dxf_version: _,
-    } = v;
-};
-const _: fn(&SortEntsEntry) = |v| {
-    let SortEntsEntry {
-        entity_handle: _,
-        sort_handle: _,
-    } = v;
-};
-
 #[cfg(test)]
 mod reservation_tests {
     use super::*;

@@ -45,10 +45,12 @@ multiple independent defects exist; successful ranges are map-order independent.
 
 ## Coverage
 
-The initial positive target scope is typed native IFCCAD import output,
-constructor defaults, and the additional MLINE/style/order records needed by
-selective reconstruction. It is not every DWG-read document or every possible
-payload of a supported family. See the [field manifest](handle-reservation-fields.md).
+The initial scope is documents assembled in memory from the supported typed
+records, such as constructor defaults and native IFCCAD conversion output.
+File readers often retain raw records, EED, or replay payloads that cause
+`UninspectableData`. Expect many documents loaded directly from DWG or DXF to
+be refused. Eligibility depends on the contents of the document at the time of
+reservation. See the [field manifest](handle-reservation-fields.md).
 
 Entities: Point, Line, Circle, Arc, Ellipse, Polyline, Polyline2D, Polyline3D,
 LwPolyline, Text, MText, all nine Dimensions, Hatch, Solid, Insert, Block,

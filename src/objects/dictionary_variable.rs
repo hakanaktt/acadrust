@@ -169,17 +169,6 @@ impl Default for DictionaryVariable {
 // Tests
 // ============================================================================
 
-// Checked reservation: exhaustive field classification, including scalar nested carriers.
-const _: fn(&DictionaryVariable) = |v| {
-    let DictionaryVariable {
-        handle: _,
-        owner_handle: _,
-        schema_number: _,
-        value: _,
-        name: _,
-    } = v;
-};
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -767,6 +767,72 @@ pub(super) fn visit(key: Handle, o: &ObjectType, u: &mut HandleUsage) -> Result<
     Ok(())
 }
 
+// Nested scalar carriers are classified here with the rest of the census.
+const _: fn(&MLineStyleElement) = |v| {
+    let MLineStyleElement {
+        offset: _,
+        color: _,
+        linetype: _,
+    } = v;
+};
+const _: fn(&MLineStyleFlags) = |v| {
+    let MLineStyleFlags {
+        fill_on: _,
+        display_joints: _,
+        start_square_cap: _,
+        start_inner_arcs_cap: _,
+        start_round_cap: _,
+        end_square_cap: _,
+        end_inner_arcs_cap: _,
+        end_round_cap: _,
+    } = v;
+};
+const _: fn(&PaperMargin) = |v| {
+    let PaperMargin {
+        left: _,
+        bottom: _,
+        right: _,
+        top: _,
+    } = v;
+};
+const _: fn(&PlotFlags) = |v| {
+    let PlotFlags {
+        unknown_bits: _,
+        plot_viewport_borders: _,
+        show_plot_styles: _,
+        plot_centered: _,
+        plot_hidden: _,
+        use_standard_scale: _,
+        plot_plot_styles: _,
+        scale_lineweights: _,
+        print_lineweights: _,
+        draw_viewports_first: _,
+        model_type: _,
+        update_paper: _,
+        zoom_to_paper_on_update: _,
+        initializing: _,
+        prev_plot_init: _,
+    } = v;
+};
+const _: fn(&PlotWindow) = |v| {
+    let PlotWindow {
+        lower_left_x: _,
+        lower_left_y: _,
+        upper_right_x: _,
+        upper_right_y: _,
+    } = v;
+};
+const _: fn(&TableCellBorder) = |v| {
+    let TableCellBorder {
+        property_flags: _,
+        border_type: _,
+        line_weight: _,
+        color: _,
+        is_invisible: _,
+        double_line_spacing: _,
+    } = v;
+};
+
 #[cfg(test)]
 #[allow(clippy::field_reassign_with_default)] // Independently mutate one carrier per case.
 mod slot_tests {

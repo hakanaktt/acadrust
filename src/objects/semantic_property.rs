@@ -380,8 +380,3 @@ impl<'a> EnvelopeReader<'a> {
         self.position == self.data.len()
     }
 }
-
-// Checked reservation: exhaustive field classification, including scalar nested carriers.
-const _: fn(&ProxyObjectReference) = |v| {
-    let ProxyObjectReference { handle: _, kind: _ } = v;
-};

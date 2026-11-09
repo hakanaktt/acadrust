@@ -67,21 +67,3 @@ impl TableEntry for VxTableRecord {
         self.name = name;
     }
 }
-
-// Checked reservation: exhaustive field classification, including scalar nested carriers.
-const _: fn(&VxTableRecord) = |v| {
-    let VxTableRecord {
-        handle: _,
-        name: _,
-        is_xref_reference: _,
-        is_xref_resolved: _,
-        is_xref_dependent: _,
-        xref_handle: _,
-        is_on: _,
-        viewport: _,
-        previous_entry: _,
-        legacy_viewport_entity_address: _,
-        legacy_viewport_index: _,
-        legacy_previous_entry_index: _,
-    } = v;
-};

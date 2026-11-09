@@ -97,17 +97,6 @@ impl Entity for Line {
     }
 }
 
-// Checked reservation: exhaustive field classification, including scalar nested carriers.
-const _: fn(&Line) = |v| {
-    let Line {
-        common: _,
-        start: _,
-        end: _,
-        thickness: _,
-        normal: _,
-    } = v;
-};
-
 #[cfg(test)]
 mod tests {
     use super::*;

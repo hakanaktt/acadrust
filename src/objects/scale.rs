@@ -354,19 +354,6 @@ impl Default for Scale {
 // Tests
 // ============================================================================
 
-// Checked reservation: exhaustive field classification, including scalar nested carriers.
-const _: fn(&Scale) = |v| {
-    let Scale {
-        handle: _,
-        owner_handle: _,
-        name: _,
-        paper_units: _,
-        drawing_units: _,
-        is_unit_scale: _,
-        is_temporary: _,
-    } = v;
-};
-
 #[cfg(test)]
 mod tests {
     use super::*;

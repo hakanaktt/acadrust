@@ -173,37 +173,6 @@ fn dimension(d: &Dimension, u: &mut HandleUsage) -> Result<()> {
                 definition_point: _,
                 ext_line_rotation: _,
             } = v;
-            let b = &v.base;
-            let DimensionBase {
-                common: _,
-                definition_point: _,
-                text_middle_point: _,
-                insertion_point: _,
-                dimension_type: _,
-                attachment_point: _,
-                text: _,
-                user_text: _,
-                normal: _,
-                text_rotation: _,
-                horizontal_direction: _,
-                style_name: _,
-                actual_measurement: _,
-                version: _,
-                block_name: _,
-                line_spacing_factor: _,
-                line_spacing_style: _,
-                insertion_scale: _,
-                insertion_rotation: _,
-                dwg_unknown_bit: _,
-                flip_arrow1: _,
-                flip_arrow2: _,
-                dwg_flags_byte: _,
-                text_user_positioned: _,
-            } = b;
-            u.text(&b.text, "dimension.text")?;
-            if let Some(t) = &b.user_text {
-                u.text(t, "dimension.user_text")?;
-            }
         }
         Dimension::Linear(v) => {
             let DimensionLinear {
@@ -214,37 +183,6 @@ fn dimension(d: &Dimension, u: &mut HandleUsage) -> Result<()> {
                 rotation: _,
                 ext_line_rotation: _,
             } = v;
-            let b = &v.base;
-            let DimensionBase {
-                common: _,
-                definition_point: _,
-                text_middle_point: _,
-                insertion_point: _,
-                dimension_type: _,
-                attachment_point: _,
-                text: _,
-                user_text: _,
-                normal: _,
-                text_rotation: _,
-                horizontal_direction: _,
-                style_name: _,
-                actual_measurement: _,
-                version: _,
-                block_name: _,
-                line_spacing_factor: _,
-                line_spacing_style: _,
-                insertion_scale: _,
-                insertion_rotation: _,
-                dwg_unknown_bit: _,
-                flip_arrow1: _,
-                flip_arrow2: _,
-                dwg_flags_byte: _,
-                text_user_positioned: _,
-            } = b;
-            u.text(&b.text, "dimension.text")?;
-            if let Some(t) = &b.user_text {
-                u.text(t, "dimension.user_text")?;
-            }
         }
         Dimension::Radius(v) => {
             let DimensionRadius {
@@ -253,37 +191,6 @@ fn dimension(d: &Dimension, u: &mut HandleUsage) -> Result<()> {
                 angle_vertex: _,
                 leader_length: _,
             } = v;
-            let b = &v.base;
-            let DimensionBase {
-                common: _,
-                definition_point: _,
-                text_middle_point: _,
-                insertion_point: _,
-                dimension_type: _,
-                attachment_point: _,
-                text: _,
-                user_text: _,
-                normal: _,
-                text_rotation: _,
-                horizontal_direction: _,
-                style_name: _,
-                actual_measurement: _,
-                version: _,
-                block_name: _,
-                line_spacing_factor: _,
-                line_spacing_style: _,
-                insertion_scale: _,
-                insertion_rotation: _,
-                dwg_unknown_bit: _,
-                flip_arrow1: _,
-                flip_arrow2: _,
-                dwg_flags_byte: _,
-                text_user_positioned: _,
-            } = b;
-            u.text(&b.text, "dimension.text")?;
-            if let Some(t) = &b.user_text {
-                u.text(t, "dimension.user_text")?;
-            }
         }
         Dimension::Diameter(v) => {
             let DimensionDiameter {
@@ -292,37 +199,6 @@ fn dimension(d: &Dimension, u: &mut HandleUsage) -> Result<()> {
                 angle_vertex: _,
                 leader_length: _,
             } = v;
-            let b = &v.base;
-            let DimensionBase {
-                common: _,
-                definition_point: _,
-                text_middle_point: _,
-                insertion_point: _,
-                dimension_type: _,
-                attachment_point: _,
-                text: _,
-                user_text: _,
-                normal: _,
-                text_rotation: _,
-                horizontal_direction: _,
-                style_name: _,
-                actual_measurement: _,
-                version: _,
-                block_name: _,
-                line_spacing_factor: _,
-                line_spacing_style: _,
-                insertion_scale: _,
-                insertion_rotation: _,
-                dwg_unknown_bit: _,
-                flip_arrow1: _,
-                flip_arrow2: _,
-                dwg_flags_byte: _,
-                text_user_positioned: _,
-            } = b;
-            u.text(&b.text, "dimension.text")?;
-            if let Some(t) = &b.user_text {
-                u.text(t, "dimension.user_text")?;
-            }
         }
         Dimension::Angular2Ln(v) => {
             let DimensionAngular2Ln {
@@ -333,37 +209,6 @@ fn dimension(d: &Dimension, u: &mut HandleUsage) -> Result<()> {
                 angle_vertex: _,
                 definition_point: _,
             } = v;
-            let b = &v.base;
-            let DimensionBase {
-                common: _,
-                definition_point: _,
-                text_middle_point: _,
-                insertion_point: _,
-                dimension_type: _,
-                attachment_point: _,
-                text: _,
-                user_text: _,
-                normal: _,
-                text_rotation: _,
-                horizontal_direction: _,
-                style_name: _,
-                actual_measurement: _,
-                version: _,
-                block_name: _,
-                line_spacing_factor: _,
-                line_spacing_style: _,
-                insertion_scale: _,
-                insertion_rotation: _,
-                dwg_unknown_bit: _,
-                flip_arrow1: _,
-                flip_arrow2: _,
-                dwg_flags_byte: _,
-                text_user_positioned: _,
-            } = b;
-            u.text(&b.text, "dimension.text")?;
-            if let Some(t) = &b.user_text {
-                u.text(t, "dimension.user_text")?;
-            }
         }
         Dimension::Angular3Pt(v) => {
             let DimensionAngular3Pt {
@@ -373,37 +218,6 @@ fn dimension(d: &Dimension, u: &mut HandleUsage) -> Result<()> {
                 second_point: _,
                 angle_vertex: _,
             } = v;
-            let b = &v.base;
-            let DimensionBase {
-                common: _,
-                definition_point: _,
-                text_middle_point: _,
-                insertion_point: _,
-                dimension_type: _,
-                attachment_point: _,
-                text: _,
-                user_text: _,
-                normal: _,
-                text_rotation: _,
-                horizontal_direction: _,
-                style_name: _,
-                actual_measurement: _,
-                version: _,
-                block_name: _,
-                line_spacing_factor: _,
-                line_spacing_style: _,
-                insertion_scale: _,
-                insertion_rotation: _,
-                dwg_unknown_bit: _,
-                flip_arrow1: _,
-                flip_arrow2: _,
-                dwg_flags_byte: _,
-                text_user_positioned: _,
-            } = b;
-            u.text(&b.text, "dimension.text")?;
-            if let Some(t) = &b.user_text {
-                u.text(t, "dimension.user_text")?;
-            }
         }
         Dimension::Ordinate(v) => {
             let DimensionOrdinate {
@@ -413,37 +227,6 @@ fn dimension(d: &Dimension, u: &mut HandleUsage) -> Result<()> {
                 leader_endpoint: _,
                 is_ordinate_type_x: _,
             } = v;
-            let b = &v.base;
-            let DimensionBase {
-                common: _,
-                definition_point: _,
-                text_middle_point: _,
-                insertion_point: _,
-                dimension_type: _,
-                attachment_point: _,
-                text: _,
-                user_text: _,
-                normal: _,
-                text_rotation: _,
-                horizontal_direction: _,
-                style_name: _,
-                actual_measurement: _,
-                version: _,
-                block_name: _,
-                line_spacing_factor: _,
-                line_spacing_style: _,
-                insertion_scale: _,
-                insertion_rotation: _,
-                dwg_unknown_bit: _,
-                flip_arrow1: _,
-                flip_arrow2: _,
-                dwg_flags_byte: _,
-                text_user_positioned: _,
-            } = b;
-            u.text(&b.text, "dimension.text")?;
-            if let Some(t) = &b.user_text {
-                u.text(t, "dimension.user_text")?;
-            }
         }
         Dimension::Arc(v) => {
             let DimensionArc {
@@ -459,37 +242,6 @@ fn dimension(d: &Dimension, u: &mut HandleUsage) -> Result<()> {
                 first_leader_point: _,
                 second_leader_point: _,
             } = v;
-            let b = &v.base;
-            let DimensionBase {
-                common: _,
-                definition_point: _,
-                text_middle_point: _,
-                insertion_point: _,
-                dimension_type: _,
-                attachment_point: _,
-                text: _,
-                user_text: _,
-                normal: _,
-                text_rotation: _,
-                horizontal_direction: _,
-                style_name: _,
-                actual_measurement: _,
-                version: _,
-                block_name: _,
-                line_spacing_factor: _,
-                line_spacing_style: _,
-                insertion_scale: _,
-                insertion_rotation: _,
-                dwg_unknown_bit: _,
-                flip_arrow1: _,
-                flip_arrow2: _,
-                dwg_flags_byte: _,
-                text_user_positioned: _,
-            } = b;
-            u.text(&b.text, "dimension.text")?;
-            if let Some(t) = &b.user_text {
-                u.text(t, "dimension.user_text")?;
-            }
         }
         Dimension::LargeRadial(v) => {
             let DimensionLargeRadial {
@@ -500,38 +252,38 @@ fn dimension(d: &Dimension, u: &mut HandleUsage) -> Result<()> {
                 override_center: _,
                 jog_point: _,
             } = v;
-            let b = &v.base;
-            let DimensionBase {
-                common: _,
-                definition_point: _,
-                text_middle_point: _,
-                insertion_point: _,
-                dimension_type: _,
-                attachment_point: _,
-                text: _,
-                user_text: _,
-                normal: _,
-                text_rotation: _,
-                horizontal_direction: _,
-                style_name: _,
-                actual_measurement: _,
-                version: _,
-                block_name: _,
-                line_spacing_factor: _,
-                line_spacing_style: _,
-                insertion_scale: _,
-                insertion_rotation: _,
-                dwg_unknown_bit: _,
-                flip_arrow1: _,
-                flip_arrow2: _,
-                dwg_flags_byte: _,
-                text_user_positioned: _,
-            } = b;
-            u.text(&b.text, "dimension.text")?;
-            if let Some(t) = &b.user_text {
-                u.text(t, "dimension.user_text")?;
-            }
         }
+    }
+    let b = d.base();
+    let DimensionBase {
+        common: _,
+        definition_point: _,
+        text_middle_point: _,
+        insertion_point: _,
+        dimension_type: _,
+        attachment_point: _,
+        text: _,
+        user_text: _,
+        normal: _,
+        text_rotation: _,
+        horizontal_direction: _,
+        style_name: _,
+        actual_measurement: _,
+        version: _,
+        block_name: _,
+        line_spacing_factor: _,
+        line_spacing_style: _,
+        insertion_scale: _,
+        insertion_rotation: _,
+        dwg_unknown_bit: _,
+        flip_arrow1: _,
+        flip_arrow2: _,
+        dwg_flags_byte: _,
+        text_user_positioned: _,
+    } = b;
+    u.text(&b.text, "dimension.text")?;
+    if let Some(t) = &b.user_text {
+        u.text(t, "dimension.user_text")?;
     }
     Ok(())
 }
@@ -623,6 +375,12 @@ pub(super) fn visit(e: &EntityType, u: &mut HandleUsage) -> Result<()> {
                 vertices: _,
             } = v;
             for (index, p) in v.vertices.iter().enumerate() {
+                let Vertex3DPolyline {
+                    handle: _,
+                    layer: _,
+                    position: _,
+                    flags: _,
+                } = p;
                 if !p.handle.is_null() {
                     u.primary(p.handle, &format!("polyline3d.vertices[{index}].handle"))?;
                 }
@@ -896,6 +654,185 @@ pub(super) fn visit(e: &EntityType, u: &mut HandleUsage) -> Result<()> {
     }
     Ok(())
 }
+
+// Nested scalar carriers are classified here with the rest of the census.
+const _: fn(&AttributeFlags) = |v| {
+    let AttributeFlags {
+        invisible: _,
+        constant: _,
+        verify: _,
+        preset: _,
+        locked_position: _,
+        annotative: _,
+    } = v;
+};
+const _: fn(&CircularArcEdge) = |v| {
+    let CircularArcEdge {
+        center: _,
+        radius: _,
+        start_angle: _,
+        end_angle: _,
+        counter_clockwise: _,
+    } = v;
+};
+const _: fn(&EllipticArcEdge) = |v| {
+    let EllipticArcEdge {
+        center: _,
+        major_axis_endpoint: _,
+        minor_axis_ratio: _,
+        start_angle: _,
+        end_angle: _,
+        counter_clockwise: _,
+    } = v;
+};
+const _: fn(&GradientColorEntry) = |v| {
+    let GradientColorEntry {
+        value: _,
+        color: _,
+        color_name: _,
+        book_name: _,
+    } = v;
+};
+const _: fn(&HatchGradientPattern) = |v| {
+    let HatchGradientPattern {
+        enabled: _,
+        reserved: _,
+        angle: _,
+        shift: _,
+        is_single_color: _,
+        color_tint: _,
+        colors: _,
+        name: _,
+    } = v;
+};
+const _: fn(&HatchPattern) = |v| {
+    let HatchPattern {
+        name: _,
+        description: _,
+        lines: _,
+    } = v;
+};
+const _: fn(&HatchPatternLine) = |v| {
+    let HatchPatternLine {
+        angle: _,
+        base_point: _,
+        offset: _,
+        dash_lengths: _,
+    } = v;
+};
+const _: fn(&LineEdge) = |v| {
+    let LineEdge { start: _, end: _ } = v;
+};
+const _: fn(&PolylineEdge) = |v| {
+    let PolylineEdge {
+        vertices: _,
+        is_closed: _,
+    } = v;
+};
+const _: fn(&SplineEdge) = |v| {
+    let SplineEdge {
+        degree: _,
+        rational: _,
+        periodic: _,
+        knots: _,
+        control_points: _,
+        fit_points: _,
+        start_tangent: _,
+        end_tangent: _,
+    } = v;
+};
+const _: fn(&LwVertex) = |v| {
+    let LwVertex {
+        location: _,
+        bulge: _,
+        start_width: _,
+        end_width: _,
+        vertex_id: _,
+    } = v;
+};
+const _: fn(&MLineSegment) = |v| {
+    let MLineSegment {
+        parameters: _,
+        area_fill_parameters: _,
+    } = v;
+};
+const _: fn(&MLineVertex) = |v| {
+    let MLineVertex {
+        position: _,
+        direction: _,
+        miter: _,
+        segments: _,
+    } = v;
+};
+const _: fn(&MTextColumnData) = |v| {
+    let MTextColumnData {
+        column_type: _,
+        column_count: _,
+        flow_reversed: _,
+        auto_height: _,
+        width: _,
+        gutter: _,
+        heights: _,
+    } = v;
+};
+const _: fn(&Vertex2D) = |v| {
+    let Vertex2D {
+        location: _,
+        flags: _,
+        start_width: _,
+        end_width: _,
+        bulge: _,
+        curve_tangent: _,
+        id: _,
+    } = v;
+};
+const _: fn(&Vertex3D) = |v| {
+    let Vertex3D {
+        location: _,
+        flags: _,
+    } = v;
+};
+const _: fn(&Polyline3DFlags) = |v| {
+    let Polyline3DFlags {
+        closed: _,
+        spline_fit: _,
+        is_3d: _,
+        is_3d_mesh: _,
+        mesh_closed_n: _,
+        is_polyface_mesh: _,
+        linetype_continuous: _,
+    } = v;
+};
+const _: fn(&GridFlags) = |v| {
+    let GridFlags {
+        beyond_limits: _,
+        adaptive: _,
+        subdivision: _,
+        follow_dynamic: _,
+    } = v;
+};
+const _: fn(&ViewportStatusFlags) = |v| {
+    let ViewportStatusFlags {
+        non_rectangular_clipping: _,
+        is_off: _,
+        is_on: _,
+        perspective: _,
+        front_clipping: _,
+        back_clipping: _,
+        ucs_follow: _,
+        front_clip_not_at_eye: _,
+        ucs_icon_visible: _,
+        ucs_icon_at_origin: _,
+        fast_zoom: _,
+        snap_on: _,
+        grid_on: _,
+        isometric_snap: _,
+        hide_plot: _,
+        iso_pair_top: _,
+        iso_pair_right: _,
+        locked: _,
+    } = v;
+};
 
 #[cfg(test)]
 #[allow(clippy::field_reassign_with_default)] // Independently mutate one carrier per case.

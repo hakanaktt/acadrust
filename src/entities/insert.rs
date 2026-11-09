@@ -831,28 +831,6 @@ impl Insert {
     }
 }
 
-// Checked reservation: exhaustive field classification, including scalar nested carriers.
-const _: fn(&Insert) = |v| {
-    let Insert {
-        common: _,
-        block_name: _,
-        insert_point: _,
-        x_scale: _,
-        y_scale: _,
-        z_scale: _,
-        rotation: _,
-        normal: _,
-        column_count: _,
-        row_count: _,
-        column_spacing: _,
-        row_spacing: _,
-        dwg_minsert: _,
-        attributes: _,
-        view_rep_handle: _,
-        seqend_handle: _,
-    } = v;
-};
-
 #[cfg(test)]
 mod tests {
     use super::*;

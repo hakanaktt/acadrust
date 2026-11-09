@@ -134,17 +134,6 @@ impl Entity for Circle {
     }
 }
 
-// Checked reservation: exhaustive field classification, including scalar nested carriers.
-const _: fn(&Circle) = |v| {
-    let Circle {
-        common: _,
-        center: _,
-        radius: _,
-        thickness: _,
-        normal: _,
-    } = v;
-};
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -128,17 +128,3 @@ impl Entity for Solid {
         super::mirror::mirror_solid(self, transform);
     }
 }
-
-// Checked reservation: exhaustive field classification, including scalar nested carriers.
-const _: fn(&Solid) = |v| {
-    let Solid {
-        common: _,
-        first_corner: _,
-        second_corner: _,
-        third_corner: _,
-        fourth_corner: _,
-        normal: _,
-        thickness: _,
-        is_trace: _,
-    } = v;
-};

@@ -51,8 +51,3 @@ impl Entity for Seqend {
         super::transform::transform_seqend(self, _transform);
     }
 }
-
-// Checked reservation: exhaustive field classification, including scalar nested carriers.
-const _: fn(&Seqend) = |v| {
-    let Seqend { common: _ } = v;
-};

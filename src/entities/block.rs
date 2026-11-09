@@ -126,20 +126,6 @@ impl Entity for BlockEnd {
     }
 }
 
-// Checked reservation: exhaustive field classification, including scalar nested carriers.
-const _: fn(&Block) = |v| {
-    let Block {
-        common: _,
-        name: _,
-        base_point: _,
-        description: _,
-        xref_path: _,
-    } = v;
-};
-const _: fn(&BlockEnd) = |v| {
-    let BlockEnd { common: _ } = v;
-};
-
 #[cfg(test)]
 mod tests {
     use super::*;

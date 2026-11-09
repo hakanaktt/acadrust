@@ -849,6 +849,62 @@ pub(super) fn visit(d: &CadDocument, u: &mut HandleUsage) -> Result<()> {
     Ok(())
 }
 
+// Nested scalar carriers are classified here with the rest of the census.
+const _: fn(&super::super::LegacyHeaderState) = |v| {
+    let super::super::LegacyHeaderState {
+        view_center: _,
+        view_height: _,
+        view_aspect_ratio: _,
+        view_direction: _,
+        view_target: _,
+        snap_mode: _,
+        snap_spacing: _,
+        snap_base: _,
+        snap_angle: _,
+        snap_style: _,
+        snap_isopair: _,
+        grid_mode: _,
+        grid_spacing: _,
+        axis_mode: _,
+        axis_spacing: _,
+        circle_zoom: _,
+        fast_zoom: _,
+        front_clip: _,
+        back_clip: _,
+        view_mode: _,
+        flatland: _,
+        ucs_icon: _,
+        unit_mode: _,
+        user_unit_ratios: _,
+        user_unit_names: _,
+    } = v;
+};
+const _: fn(&crate::tables::block_record::BlockFlags) = |v| {
+    let crate::tables::block_record::BlockFlags {
+        anonymous: _,
+        has_attributes: _,
+        is_xref: _,
+        is_xref_overlay: _,
+        is_external: _,
+        is_xref_unloaded: _,
+    } = v;
+};
+const _: fn(&LayerFlags) = |v| {
+    let LayerFlags {
+        frozen: _,
+        locked: _,
+        frozen_in_new_viewport: _,
+        off: _,
+        xref_dependent: _,
+    } = v;
+};
+const _: fn(&TextGenerationFlags) = |v| {
+    let TextGenerationFlags {
+        backward: _,
+        upside_down: _,
+    } = v;
+};
+
 #[cfg(test)]
 mod slot_tests {
     use super::*;

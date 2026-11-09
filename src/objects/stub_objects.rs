@@ -1287,24 +1287,6 @@ macro_rules! impl_stub_object {
 impl_stub_object!(GeoData);
 impl_stub_object!(PlaceHolder);
 
-// Checked reservation: exhaustive field classification, including scalar nested carriers.
-const _: fn(&DictionaryWithDefault) = |v| {
-    let DictionaryWithDefault {
-        handle: _,
-        owner: _,
-        entries: _,
-        default_handle: _,
-        duplicate_cloning: _,
-        hard_owner: _,
-    } = v;
-};
-const _: fn(&PlaceHolder) = |v| {
-    let PlaceHolder {
-        handle: _,
-        owner: _,
-    } = v;
-};
-
 #[cfg(test)]
 mod tests {
     use super::*;

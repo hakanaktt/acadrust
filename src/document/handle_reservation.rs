@@ -110,6 +110,10 @@ fn plan_range(
 impl CadDocument {
     /// Reserve a batch above every qualified identity/reference and both floors.
     ///
+    /// Intended for documents assembled in memory from supported typed records.
+    /// Raw backing retained by DWG or DXF readers can cause a positive request
+    /// to return [`HandleReservationError::UninspectableData`].
+    ///
     /// A zero count returns empty without inspecting or certifying the document.
     /// Positive requests inspect current storage and reject unqualified carriers.
     /// On error all document state is unchanged; on success only the private

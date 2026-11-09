@@ -860,29 +860,6 @@ impl Default for XRecord {
     }
 }
 
-// Checked reservation: exhaustive field classification, including scalar nested carriers.
-const _: fn(&XRecord) = |v| {
-    let XRecord {
-        handle: _,
-        owner: _,
-        reactors: _,
-        xdictionary_handle: _,
-        name: _,
-        cloning_flags: _,
-        entries: _,
-        object_references: _,
-        preserve_object_reference_stream: _,
-        entries_complete: _,
-        raw_data: _,
-        raw_dwg_data: _,
-        raw_dwg_handle_bits: _,
-        raw_dwg_version: _,
-    } = v;
-};
-const _: fn(&XRecordEntry) = |v| {
-    let XRecordEntry { code: _, value: _ } = v;
-};
-
 #[cfg(test)]
 mod tests {
     use super::*;

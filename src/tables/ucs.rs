@@ -106,23 +106,3 @@ impl TableEntry for Ucs {
         self.name = name;
     }
 }
-
-// Checked reservation: exhaustive field classification, including scalar nested carriers.
-const _: fn(&Ucs) = |v| {
-    let Ucs {
-        handle: _,
-        name: _,
-        origin: _,
-        x_axis: _,
-        y_axis: _,
-        elevation: _,
-        ortho_view_type: _,
-        ortho_type: _,
-        named_ucs_handle: _,
-        base_ucs_handle: _,
-        xref_reference: _,
-        xref_resolved: _,
-        xref_dependent: _,
-        xref_handle: _,
-    } = v;
-};
