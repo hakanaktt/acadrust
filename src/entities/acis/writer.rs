@@ -108,10 +108,10 @@ impl SatWriter {
         // v400 output.
         let skip_index: Option<usize> = if version.major < 7 {
             match base_entity_type(&record.entity_type) {
-                "lump" => Some(1),
-                "shell" => Some(2),
-                "body" | "subshell" | "wire" | "face" | "loop" | "vertex" | "coedge" | "edge"
-                | "point" | "transform" | "surface" | "curve" | "pcurve" => Some(0),
+                "body" | "lump" | "shell" | "subshell" | "wire" | "face" | "loop" | "vertex"
+                | "coedge" | "edge" | "point" | "transform" | "surface" | "curve" | "pcurve" => {
+                    Some(0)
+                }
                 _ => None,
             }
         } else {

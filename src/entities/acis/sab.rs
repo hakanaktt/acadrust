@@ -93,6 +93,13 @@ pub struct SabWriter;
 impl SabWriter {
     /// Convert a SAT document to SAB binary data.
     pub fn write(doc: &SatDocument) -> Vec<u8> {
+        // Records are written in the 7.0 layout, so the header must say 7.0.
+        let upgraded = (doc.header.version.major < 7).then(|| {
+            let mut upgraded = doc.clone();
+            super::upgrade_records_from_v400(&mut upgraded);
+            upgraded
+        });
+        let doc = upgraded.as_ref().unwrap_or(doc);
         let completed = doc.completed_for_restore();
         let doc = completed.as_ref().unwrap_or(doc);
         let mut buf = Vec::with_capacity(8192);

@@ -639,31 +639,21 @@ fn looks_like_negative_index(s: &str) -> bool {
 
 /// Normalize a pre-7.0 (v400) record's token list to match the 7.0+ layout.
 ///
-/// ACIS 7.0 added a sentinel `$-1` pointer to most entity record types.
-/// The position of that sentinel varies by entity type:
-///
-/// | Entity types                                       | Sentinel position |
-/// |----------------------------------------------------|-------------------|
-/// | body, subshell, wire, face, loop, coedge, edge,    | 0                 |
-/// | vertex,                                            |                   |
-/// | point, transform, *-surface, *-curve               |                   |
-/// | lump                                               | 1                 |
-/// | shell                                              | 2                 |
+/// ACIS 7.0 added a pattern pointer to the topology and geometry records,
+/// first after the attribute and id: `lump $-1 -1 $pattern $next $shell
+/// $body`.
 ///
 /// By inserting a synthetic `$-1` here the rest of the codebase can use
 /// a single set of token indices regardless of the source ACIS version.
 pub(crate) fn normalize_v400_tokens(entity_type: &str, tokens: &mut Vec<SatToken>) {
     let base = base_entity_type(entity_type);
-    let position = match base {
-        "lump" => 1.min(tokens.len()),
-        "shell" => 2.min(tokens.len()),
-        "body" | "subshell" | "wire" | "face" | "loop" | "vertex" | "coedge" | "edge" | "point"
-        | "transform" | "surface" | "curve" | "pcurve" => 0,
+    match base {
+        "body" | "lump" | "shell" | "subshell" | "wire" | "face" | "loop" | "vertex"
+        | "coedge" | "edge" | "point" | "transform" | "surface" | "curve" | "pcurve" => {}
         // Unknown entity types (attributes, etc.): leave unchanged.
         _ => return,
-    };
-    let sentinel = SatToken::Pointer(SatPointer::NULL);
-    tokens.insert(position, sentinel);
+    }
+    tokens.insert(0, SatToken::Pointer(SatPointer::NULL));
 
     // v400 edge is `$sv $ev $coedge $curve sense` — it omits the
     // start_param / end_param doubles that v700 carries between the
