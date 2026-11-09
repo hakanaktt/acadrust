@@ -5,6 +5,15 @@
 
 use crate::types::Vector3;
 
+mod checked;
+mod records;
+pub use checked::{
+    CheckedProxyGraphicRecord, CheckedProxyGraphics, ProxyGraphicError, ProxyGraphicErrorReason,
+};
+pub use records::{
+    ProxyGraphicCommand, ProxyLegacyText, ProxyLegacyTextStyle, ProxyStyledUnicodeText,
+};
+
 const HEADER_SIZE: usize = 8;
 const RECORD_HEADER_SIZE: usize = 8;
 const UNICODE_TEXT_FIXED_SIZE: usize = 96;
@@ -125,25 +134,27 @@ fn decode_record(record_type: u32, payload: &[u8]) -> ProxyGraphicRecord {
 fn encode_record(record: &ProxyGraphicRecord) -> Option<(u32, Vec<u8>)> {
     match record {
         ProxyGraphicRecord::FillOff => Some((21, Vec::new())),
-        ProxyGraphicRecord::UnicodeText(text) => {
-            let mut data = Vec::with_capacity(UNICODE_TEXT_FIXED_SIZE + text.text.len() * 2 + 4);
-            write_vector(&mut data, text.position);
-            write_vector(&mut data, text.normal);
-            write_vector(&mut data, text.direction);
-            data.extend_from_slice(&text.height.to_le_bytes());
-            data.extend_from_slice(&text.width_factor.to_le_bytes());
-            data.extend_from_slice(&text.oblique_angle.to_le_bytes());
-            for value in text.text.encode_utf16() {
-                data.extend_from_slice(&value.to_le_bytes());
-            }
-            data.extend_from_slice(&0u16.to_le_bytes());
-            while (RECORD_HEADER_SIZE + data.len()) % 4 != 0 {
-                data.push(0);
-            }
-            Some((36, data))
-        }
+        ProxyGraphicRecord::UnicodeText(text) => Some((36, encode_unicode_text(text))),
         ProxyGraphicRecord::Unknown { record_type, data } => Some((*record_type, data.clone())),
     }
+}
+
+fn encode_unicode_text(text: &ProxyUnicodeText) -> Vec<u8> {
+    let mut data = Vec::with_capacity(UNICODE_TEXT_FIXED_SIZE + text.text.len() * 2 + 4);
+    write_vector(&mut data, text.position);
+    write_vector(&mut data, text.normal);
+    write_vector(&mut data, text.direction);
+    data.extend_from_slice(&text.height.to_le_bytes());
+    data.extend_from_slice(&text.width_factor.to_le_bytes());
+    data.extend_from_slice(&text.oblique_angle.to_le_bytes());
+    for value in text.text.encode_utf16() {
+        data.extend_from_slice(&value.to_le_bytes());
+    }
+    data.extend_from_slice(&0u16.to_le_bytes());
+    while (RECORD_HEADER_SIZE + data.len()) % 4 != 0 {
+        data.push(0);
+    }
+    data
 }
 
 fn decode_unicode_text(data: &[u8]) -> Option<ProxyUnicodeText> {

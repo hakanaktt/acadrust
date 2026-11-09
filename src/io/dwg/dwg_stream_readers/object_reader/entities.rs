@@ -1795,7 +1795,14 @@ pub fn read_leader(
 ) -> LeaderData {
     let unknown_bit = reader.read_bit();
     let annotation_type = reader.read_bit_short();
+    crate::io::leader_codes::dwg(
+        reader,
+        annotation_type,
+        &[0, 1, 2, 3],
+        "read_leader.annotation_type",
+    );
     let path_type = reader.read_bit_short();
+    crate::io::leader_codes::dwg(reader, path_type, &[0, 1], "read_leader.path_type");
 
     let num_pts = safe_count(reader.read_bit_long(), reader);
     let mut vertices = Vec::with_capacity(num_pts as usize);
@@ -4657,6 +4664,7 @@ pub fn read_multileader(
     let style_handle = reader.read_handle();
     let property_override_flags = reader.read_bit_long() as u32;
     let path_type = reader.read_bit_short();
+    crate::io::leader_codes::dwg(reader, path_type, &[0, 1, 2], "read_multileader.path_type");
     let line_color = reader.read_cm_color();
     let line_type_handle = reader.read_handle();
     let line_weight = reader.read_bit_long();
@@ -4666,11 +4674,41 @@ pub fn read_multileader(
     let arrowhead_handle = reader.read_handle();
     let arrowhead_size = reader.read_bit_double();
     let content_type = reader.read_bit_short();
+    crate::io::leader_codes::dwg(
+        reader,
+        content_type,
+        &[0, 1, 2, 3],
+        "read_multileader.content_type",
+    );
     let text_style_handle = reader.read_handle();
     let text_left_attachment = reader.read_bit_short();
+    crate::io::leader_codes::dwg(
+        reader,
+        text_left_attachment,
+        &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+        "read_multileader.text_left_attachment",
+    );
     let text_right_attachment = reader.read_bit_short();
+    crate::io::leader_codes::dwg(
+        reader,
+        text_right_attachment,
+        &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+        "read_multileader.text_right_attachment",
+    );
     let text_angle_type = reader.read_bit_short();
+    crate::io::leader_codes::dwg(
+        reader,
+        text_angle_type,
+        &[0, 1, 2],
+        "read_multileader.text_angle_type",
+    );
     let text_alignment = reader.read_bit_short();
+    crate::io::leader_codes::dwg(
+        reader,
+        text_alignment,
+        &[0, 1, 2],
+        "read_multileader.text_alignment",
+    );
     let text_color = reader.read_cm_color();
     let text_frame = reader.read_bit();
     let block_content_handle = reader.read_handle();
@@ -4678,6 +4716,12 @@ pub fn read_multileader(
     let block_scale = reader.read_3bit_double();
     let block_rotation = reader.read_bit_double();
     let block_connection_type = reader.read_bit_short();
+    crate::io::leader_codes::dwg(
+        reader,
+        block_connection_type,
+        &[0, 1],
+        "read_multileader.block_connection_type",
+    );
     let enable_annotation_scale = reader.read_bit();
 
     // R2010 introduced per-leader-line appearance fields. Older records omit
@@ -4743,6 +4787,12 @@ pub fn read_multileader(
     let text_direction_negative = reader.read_bit();
     let text_align_in_ipe = reader.read_bit_short();
     let text_attachment_point = reader.read_bit_short();
+    crate::io::leader_codes::dwg(
+        reader,
+        text_attachment_point,
+        &[1, 2, 3],
+        "read_multileader.text_attachment_point",
+    );
     let scale_factor = reader.read_bit_double();
 
     let mut text_attachment_direction: i16 = 0;
@@ -4751,8 +4801,26 @@ pub fn read_multileader(
     if version.r2010_plus() {
         // Order: dir (271), bottom (272), top (273) — per ACAD.
         text_attachment_direction = reader.read_bit_short();
+        crate::io::leader_codes::dwg(
+            reader,
+            text_attachment_direction,
+            &[0, 1],
+            "read_multileader.text_attachment_direction",
+        );
         text_bottom_attachment = reader.read_bit_short();
+        crate::io::leader_codes::dwg(
+            reader,
+            text_bottom_attachment,
+            &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            "read_multileader.text_bottom_attachment",
+        );
         text_top_attachment = reader.read_bit_short();
+        crate::io::leader_codes::dwg(
+            reader,
+            text_top_attachment,
+            &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            "read_multileader.text_top_attachment",
+        );
     }
 
     let mut extend_leader_to_text = false;
@@ -4840,10 +4908,42 @@ pub(crate) fn read_multileader_annotation_context(
     let text_height = reader.read_bit_double();
     let arrowhead_size = reader.read_bit_double();
     let landing_gap = reader.read_bit_double();
-    let text_left_attachment = TextAttachmentType::from(reader.read_bit_short());
-    let text_right_attachment = TextAttachmentType::from(reader.read_bit_short());
-    let text_alignment = TextAlignmentType::from(reader.read_bit_short());
-    let block_connection_type = BlockContentConnectionType::from(reader.read_bit_short());
+    let text_left_attachment = TextAttachmentType::from({
+        let code = reader.read_bit_short();
+        crate::io::leader_codes::dwg(
+            reader,
+            code,
+            &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            "read_multileader_annotation_context.TextAttachmentType",
+        )
+    });
+    let text_right_attachment = TextAttachmentType::from({
+        let code = reader.read_bit_short();
+        crate::io::leader_codes::dwg(
+            reader,
+            code,
+            &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            "read_multileader_annotation_context.TextAttachmentType",
+        )
+    });
+    let text_alignment = TextAlignmentType::from({
+        let code = reader.read_bit_short();
+        crate::io::leader_codes::dwg(
+            reader,
+            code,
+            &[0, 1, 2],
+            "read_multileader_annotation_context.TextAlignmentType",
+        )
+    });
+    let block_connection_type = BlockContentConnectionType::from({
+        let code = reader.read_bit_short();
+        crate::io::leader_codes::dwg(
+            reader,
+            code,
+            &[0, 1],
+            "read_multileader_annotation_context.BlockContentConnectionType",
+        )
+    });
 
     let has_text_contents = reader.read_bit();
 
@@ -4889,10 +4989,34 @@ pub(crate) fn read_multileader_annotation_context(
         text_width = reader.read_bit_double();
         text_boundary_height = reader.read_bit_double();
         line_spacing_factor = reader.read_bit_double();
-        line_spacing_style = LineSpacingStyle::from(reader.read_bit_short());
+        line_spacing_style = LineSpacingStyle::from({
+            let code = reader.read_bit_short();
+            crate::io::leader_codes::dwg(
+                reader,
+                code,
+                &[1, 2],
+                "read_multileader_annotation_context.LineSpacingStyle",
+            )
+        });
         text_color = reader.read_cm_color();
-        text_attachment_point = TextAttachmentPointType::from(reader.read_bit_short());
-        text_flow_direction = FlowDirectionType::from(reader.read_bit_short());
+        text_attachment_point = TextAttachmentPointType::from({
+            let code = reader.read_bit_short();
+            crate::io::leader_codes::dwg(
+                reader,
+                code,
+                &[1, 2, 3],
+                "read_multileader_annotation_context.TextAttachmentPointType",
+            )
+        });
+        text_flow_direction = FlowDirectionType::from({
+            let code = reader.read_bit_short();
+            crate::io::leader_codes::dwg(
+                reader,
+                code,
+                &[1, 3, 5],
+                "read_multileader_annotation_context.FlowDirectionType",
+            )
+        });
         background_fill_color = reader.read_cm_color();
         background_scale_factor = reader.read_bit_double();
         background_transparency = reader.read_bit_long();
@@ -4961,8 +5085,24 @@ pub(crate) fn read_multileader_annotation_context(
     let mut text_top_attachment = TextAttachmentType::CenterOfText;
     let mut text_bottom_attachment = TextAttachmentType::CenterOfText;
     if version.r2010_plus() {
-        text_top_attachment = TextAttachmentType::from(reader.read_bit_short());
-        text_bottom_attachment = TextAttachmentType::from(reader.read_bit_short());
+        text_top_attachment = TextAttachmentType::from({
+            let code = reader.read_bit_short();
+            crate::io::leader_codes::dwg(
+                reader,
+                code,
+                &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+                "read_multileader_annotation_context.TextAttachmentType",
+            )
+        });
+        text_bottom_attachment = TextAttachmentType::from({
+            let code = reader.read_bit_short();
+            crate::io::leader_codes::dwg(
+                reader,
+                code,
+                &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+                "read_multileader_annotation_context.TextAttachmentType",
+            )
+        });
     }
 
     MultiLeaderAnnotContext {
@@ -5055,7 +5195,15 @@ fn read_leader_root(
 
     let mut text_attachment_direction = TextAttachmentDirectionType::default();
     if version.r2010_plus() {
-        text_attachment_direction = TextAttachmentDirectionType::from(reader.read_bit_short());
+        text_attachment_direction = TextAttachmentDirectionType::from({
+            let code = reader.read_bit_short();
+            crate::io::leader_codes::dwg(
+                reader,
+                code,
+                &[0, 1],
+                "read_leader_root.TextAttachmentDirectionType",
+            )
+        });
     }
 
     LeaderRoot {
@@ -5119,7 +5267,15 @@ fn read_leader_line(reader: &mut DwgMergedReader, version: DwgVersion) -> Leader
     let mut override_flags = LeaderLinePropertyOverrideFlags::NONE;
 
     if version.r2010_plus() {
-        path_type = MultiLeaderPathType::from(reader.read_bit_short());
+        path_type = MultiLeaderPathType::from({
+            let code = reader.read_bit_short();
+            crate::io::leader_codes::dwg(
+                reader,
+                code,
+                &[0, 1, 2],
+                "read_leader_line.MultiLeaderPathType",
+            )
+        });
         line_color = reader.read_cm_color();
         let lt_handle = reader.read_handle();
         line_type_handle = if lt_handle != 0 {

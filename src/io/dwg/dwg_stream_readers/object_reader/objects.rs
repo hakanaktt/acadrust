@@ -1215,12 +1215,36 @@ pub fn read_multileader_style(
     }
 
     let content_type = reader.read_bit_short();
+    crate::io::leader_codes::dwg(
+        reader,
+        content_type,
+        &[0, 1, 2, 3],
+        "read_multileader_style.content_type",
+    );
     let multileader_draw_order = reader.read_bit_short();
+    crate::io::leader_codes::dwg(
+        reader,
+        multileader_draw_order,
+        &[0, 1],
+        "read_multileader_style.multileader_draw_order",
+    );
     let leader_draw_order = reader.read_bit_short();
+    crate::io::leader_codes::dwg(
+        reader,
+        leader_draw_order,
+        &[0, 1],
+        "read_multileader_style.leader_draw_order",
+    );
     let max_leader_points = reader.read_bit_long();
     let first_segment_angle = reader.read_bit_double();
     let second_segment_angle = reader.read_bit_double();
     let path_type = reader.read_bit_short();
+    crate::io::leader_codes::dwg(
+        reader,
+        path_type,
+        &[0, 1, 2],
+        "read_multileader_style.path_type",
+    );
     let line_color = reader.read_cm_color();
     let line_type_handle = reader.read_handle();
     let line_weight = reader.read_bit_long();
@@ -1234,9 +1258,33 @@ pub fn read_multileader_style(
     let default_text = reader.read_variable_text();
     let text_style_handle = reader.read_handle();
     let text_left_attachment = reader.read_bit_short();
+    crate::io::leader_codes::dwg(
+        reader,
+        text_left_attachment,
+        &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+        "read_multileader_style.text_left_attachment",
+    );
     let text_right_attachment = reader.read_bit_short();
+    crate::io::leader_codes::dwg(
+        reader,
+        text_right_attachment,
+        &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+        "read_multileader_style.text_right_attachment",
+    );
     let text_angle_type = reader.read_bit_short();
+    crate::io::leader_codes::dwg(
+        reader,
+        text_angle_type,
+        &[0, 1, 2],
+        "read_multileader_style.text_angle_type",
+    );
     let text_alignment = reader.read_bit_short();
+    crate::io::leader_codes::dwg(
+        reader,
+        text_alignment,
+        &[0, 1, 2],
+        "read_multileader_style.text_alignment",
+    );
     let text_color = reader.read_cm_color();
     let text_height = reader.read_bit_double();
     let text_frame = reader.read_bit();
@@ -1251,6 +1299,12 @@ pub fn read_multileader_style(
     let block_content_rotation = reader.read_bit_double();
     let enable_block_rotation = reader.read_bit();
     let block_content_connection = reader.read_bit_short();
+    crate::io::leader_codes::dwg(
+        reader,
+        block_content_connection,
+        &[0, 1],
+        "read_multileader_style.block_content_connection",
+    );
     let scale_factor = reader.read_bit_double();
     let property_changed = reader.read_bit();
     let is_annotative = reader.read_bit();
@@ -1261,8 +1315,26 @@ pub fn read_multileader_style(
     let mut text_bottom_attachment = 0i16;
     if version.r2010_plus() {
         text_attachment_direction = reader.read_bit_short();
+        crate::io::leader_codes::dwg(
+            reader,
+            text_attachment_direction,
+            &[0, 1],
+            "read_multileader_style.text_attachment_direction",
+        );
         text_top_attachment = reader.read_bit_short();
+        crate::io::leader_codes::dwg(
+            reader,
+            text_top_attachment,
+            &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            "read_multileader_style.text_top_attachment",
+        );
         text_bottom_attachment = reader.read_bit_short();
+        crate::io::leader_codes::dwg(
+            reader,
+            text_bottom_attachment,
+            &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            "read_multileader_style.text_bottom_attachment",
+        );
     }
 
     let mut unknown_flag_298 = false;

@@ -121,7 +121,11 @@ pub use polyline::{
     Polyline, Polyline2D, PolylineFlags, SmoothSurfaceType, Vertex2D, Vertex3D, VertexFlags,
 };
 pub use polyline3d::{Polyline3D, Polyline3DFlags, Vertex3DPolyline};
-pub use proxy_graphics::{ProxyGraphicRecord, ProxyGraphics, ProxyUnicodeText};
+pub use proxy_graphics::{
+    CheckedProxyGraphicRecord, CheckedProxyGraphics, ProxyGraphicCommand, ProxyGraphicError,
+    ProxyGraphicErrorReason, ProxyGraphicRecord, ProxyGraphics, ProxyLegacyText,
+    ProxyLegacyTextStyle, ProxyStyledUnicodeText, ProxyUnicodeText,
+};
 pub use raster_image::{
     ClipBoundary, ClipMode, ClipType, ImageDefinition, ImageDisplayFlags, ImageDisplayQuality,
     RasterImage, RasterImageBuilder, ResolutionUnit,

@@ -565,6 +565,10 @@ impl DxfReader {
         diagnostics: &mut Vec<ReadDiagnostic>,
     ) {
         *skipped_records = skipped_records.saturating_add(section_reader.skipped_records());
+        for mut warning in section_reader.take_leader_diagnostics() {
+            warning.section = Some(section.into());
+            crate::io::leader_codes::report(&mut document.notifications, diagnostics, warning);
+        }
         for recovery in section_reader.take_recovery_errors() {
             let message = format!("Error reading {} record: {}", section, recovery.message);
             document.notifications.notify(
