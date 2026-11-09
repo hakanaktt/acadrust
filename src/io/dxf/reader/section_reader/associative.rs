@@ -14,6 +14,9 @@ struct AssocDxfRecord {
     reactors: Vec<Handle>,
     xdictionary_handle: Option<Handle>,
     sections: HashMap<String, Vec<(i32, String)>>,
+    /// Value parameters whose empty and handle values could not be told
+    /// apart; see `read_value_param`.
+    ambiguous_value_params: std::cell::Cell<usize>,
 }
 
 impl AssocDxfRecord {
@@ -93,6 +96,7 @@ impl AssocDxfRecord {
 struct AssocCursor<'a> {
     entries: &'a [(i32, String)],
     position: usize,
+    ambiguous_value_params: &'a std::cell::Cell<usize>,
 }
 
 impl<'a> AssocCursor<'a> {
@@ -104,6 +108,7 @@ impl<'a> AssocCursor<'a> {
                 .map(Vec::as_slice)
                 .unwrap_or_default(),
             position: 0,
+            ambiguous_value_params: &record.ambiguous_value_params,
         }
     }
 
@@ -231,6 +236,18 @@ fn read_eval(
     AssocEvalVariant { code, value }
 }
 
+/// Reads one `AcDbAssocValueParam`.
+///
+/// Native DXF writes each variable as its value alone, at the value's own
+/// group code, followed by the variable's `330` handle; an empty value writes
+/// nothing. A handle value written at `330` therefore looks exactly like the
+/// next variable's own handle, and only the total handle count says how many
+/// such values there are, not which variables own them.
+///
+/// This read is lossy when a parameter mixes empty values with handle values
+/// at `330`: the handle values go to the earliest candidate variables, which
+/// is wrong for e.g. `[empty, handle]`. Such parameters are counted on the
+/// record and reported as a warning by `read_associative_object_dxf`.
 fn read_value_param(cursor: &mut AssocCursor<'_>) -> AssocValueParam {
     let class_version = cursor.i32(90);
     let name = cursor.text(1);
@@ -249,15 +266,33 @@ fn read_value_param(cursor: &mut AssocCursor<'_>) -> AssocValueParam {
         .count()
         .saturating_sub(count as usize + 1);
     let mut variables = Vec::with_capacity(count as usize);
+    // Variables whose slot starts at 330 are either empty or hold a handle
+    // value there; the split is only certain when all or none of them do.
+    // ponytail: also flags some layouts a full search would decode uniquely;
+    // enumerate the decodings if a false warning ever matters.
+    let mut slots_at_330 = 0;
+    let mut handle_values_at_330 = 0;
     for _ in 0..count {
+        let starts_at_330 = cursor.peek_code() == Some(330);
         let value = read_eval(cursor, Some(handle_values_remaining));
         if (330..=369).contains(&value.code) && matches!(value.value, AssocEvalValue::Handle(_)) {
             handle_values_remaining = handle_values_remaining.saturating_sub(1);
+        }
+        if starts_at_330 {
+            slots_at_330 += 1;
+            if matches!(value.value, AssocEvalValue::Handle(_)) {
+                handle_values_at_330 += 1;
+            }
         }
         variables.push(AssocValueParamVariable {
             value,
             handle: cursor.handle(330),
         });
+    }
+    if handle_values_at_330 > 0 && handle_values_at_330 < slots_at_330 {
+        cursor
+            .ambiguous_value_params
+            .set(cursor.ambiguous_value_params.get() + 1);
     }
     AssocValueParam {
         class_version,
@@ -1106,6 +1141,7 @@ impl<'a> SectionReader<'a> {
         &mut self,
         dxf_name: &str,
         dxf_version: crate::types::DxfVersion,
+        notifications: &mut crate::notification::NotificationCollection,
     ) -> Result<AssociativeObject> {
         let mut record = AssocDxfRecord::default();
         let mut section = String::new();
@@ -1421,6 +1457,7 @@ impl<'a> SectionReader<'a> {
                         let mut node_cursor = AssocCursor {
                             entries: &cursor.entries[cursor.position..end],
                             position: 0,
+                            ambiguous_value_params: cursor.ambiguous_value_params,
                         };
                         let mut node = read_constraint_common(&mut node_cursor, dxf_version);
                         node.data = read_constraint_data(&mut node_cursor, &class_name, false);
@@ -1484,7 +1521,13 @@ impl<'a> SectionReader<'a> {
                 let expression = cursor.text(1);
                 let evaluator = cursor.text(1);
                 let description = cursor.text(1);
-                let value = read_eval(&mut cursor, None);
+                // An eval variant has no 290 form, so a 290 here is the
+                // cached-value flag and the value was empty.
+                let value = if cursor.peek_code() == Some(290) {
+                    AssocEvalVariant::default()
+                } else {
+                    read_eval(&mut cursor, None)
+                };
                 let has_cached_value = cursor.bool(290);
                 let cached_value = if has_cached_value {
                     cursor.text(1)
@@ -1791,6 +1834,18 @@ impl<'a> SectionReader<'a> {
             ),
             _ => AssociativeData::Unknown,
         };
+        let ambiguous = record.ambiguous_value_params.get();
+        if ambiguous > 0 {
+            notifications.notify(
+                crate::notification::NotificationType::Warning,
+                format!(
+                    "{dxf_name} {}: {ambiguous} value parameter(s) mix empty values with \
+                     handle values that DXF does not tell apart; handle values were \
+                     assigned to the earliest variables",
+                    record.handle
+                ),
+            );
+        }
         Ok(AssociativeObject {
             handle: record.handle,
             owner: record.owner,

@@ -7221,8 +7221,11 @@ impl<'a> SectionReader<'a> {
                                 .insert(object.handle, ObjectType::ObjectContextData(object));
                         }
                         name if is_associative_object_name(name) => {
-                            let object =
-                                self.read_associative_object_dxf(name, document.version)?;
+                            let object = self.read_associative_object_dxf(
+                                name,
+                                document.version,
+                                &mut document.notifications,
+                            )?;
                             document
                                 .objects
                                 .insert(object.handle, ObjectType::Associative(object));
