@@ -3869,6 +3869,27 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         Ok(())
     }
 
+    /// Whether a reference to `handle` will resolve in the written file.
+    /// `valid_handles` is empty when the writer was not given a document to
+    /// scan, and then every handle is taken on trust.
+    fn handle_is_writable(&self, handle: Handle) -> bool {
+        self.valid_handles.is_empty() || self.valid_handles.contains(&handle)
+    }
+
+    /// Owner substitute for a non-entity object, the way `write_dictionary`
+    /// falls back to the root dictionary: an owner that is not written would
+    /// leave the object parented to nothing.
+    fn safe_object_owner(&self, owner: Handle) -> Handle {
+        if owner == Handle::NULL
+            || self.handle_is_writable(owner)
+            || self.root_dict_handle == Handle::NULL
+        {
+            owner
+        } else {
+            self.root_dict_handle
+        }
+    }
+
     /// Return `owner` if it will be present in the output, else fall back to the
     /// *Model_Space record. An entity whose original owner (e.g. a dropped
     /// application container with no DXF form) is gone would otherwise emit a
