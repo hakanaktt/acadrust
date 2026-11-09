@@ -59,6 +59,7 @@ pub struct DwgMergedReader {
     /// `set_ref_handle()` right after reading the object's handle from the
     /// main stream.
     ref_handle: u64,
+    leader_diagnostics: Vec<crate::ReadDiagnostic>,
     /// Bit position where the handle stream starts.
     /// For R2007: equals the RL field (total_size_bits).
     /// For R2010+: equals total_data_bits - handle_bits.
@@ -130,6 +131,7 @@ impl DwgMergedReader {
                     encoding,
                     handle_bits: 0,
                     ref_handle: 0,
+                    leader_diagnostics: Vec::new(),
                     handle_start_bit: handle_start_bits,
                     text_start_bit: handle_start_bits,
                 }
@@ -153,6 +155,7 @@ impl DwgMergedReader {
                     encoding,
                     handle_bits: 0,
                     ref_handle: 0,
+                    leader_diagnostics: Vec::new(),
                     handle_start_bit: 0, // set later when RL is known
                     text_start_bit: 0,
                 }
@@ -185,6 +188,7 @@ impl DwgMergedReader {
             encoding: encoding_rs::WINDOWS_1252.into(),
             handle_bits: 0,
             ref_handle: 0,
+            leader_diagnostics: Vec::new(),
             handle_start_bit: 0,
             text_start_bit: 0,
         }
@@ -291,6 +295,14 @@ impl DwgMergedReader {
         self.main.has_error()
             || self.text.as_ref().is_some_and(DwgBitReader::has_error)
             || self.handle.as_ref().is_some_and(DwgBitReader::has_error)
+    }
+
+    pub(crate) fn push_leader_diagnostic(&mut self, warning: crate::ReadDiagnostic) {
+        crate::push_read_diagnostic(&mut self.leader_diagnostics, warning);
+    }
+
+    pub(crate) fn take_leader_diagnostics(&mut self) -> Vec<crate::ReadDiagnostic> {
+        std::mem::take(&mut self.leader_diagnostics)
     }
 
     pub(crate) fn invalidate(&self, message: impl Into<String>) {

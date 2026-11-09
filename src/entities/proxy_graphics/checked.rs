@@ -24,7 +24,28 @@ pub struct ProxyGraphicError {
     pub reason: ProxyGraphicErrorReason,
 }
 
-impl ProxyGraphics {
+/// A complete proxy metafile decoded with validation and typed commands.
+#[derive(Debug, Clone, PartialEq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct CheckedProxyGraphics {
+    pub records: Vec<CheckedProxyGraphicRecord>,
+}
+
+/// Records of a checked metafile. Unknown types retain their original bytes.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum CheckedProxyGraphicRecord {
+    /// Type 21: the empty record recognized by the legacy decoder.
+    FillOff,
+    /// Type 36: single-line UTF-16 text.
+    UnicodeText(ProxyUnicodeText),
+    /// A typed drawing or trait command.
+    Command(ProxyGraphicCommand),
+    /// A record whose type is outside the checked decoder's command set.
+    Unknown { record_type: u32, data: Vec<u8> },
+}
+
+impl CheckedProxyGraphics {
     /// Decode exactly one complete metafile. Known malformed payloads are errors;
     /// future record types retain their bytes as `Unknown`.
     pub fn decode_checked(data: &[u8]) -> Result<Self, ProxyGraphicError> {
@@ -75,8 +96,16 @@ impl ProxyGraphics {
             }
             records.push(
                 command
-                    .map(ProxyGraphicRecord::Command)
-                    .unwrap_or_else(|| decode_record(kind, payload)),
+                    .map(CheckedProxyGraphicRecord::Command)
+                    .unwrap_or_else(|| match decode_record(kind, payload) {
+                        ProxyGraphicRecord::FillOff => CheckedProxyGraphicRecord::FillOff,
+                        ProxyGraphicRecord::UnicodeText(text) => {
+                            CheckedProxyGraphicRecord::UnicodeText(text)
+                        }
+                        ProxyGraphicRecord::Unknown { record_type, data } => {
+                            CheckedProxyGraphicRecord::Unknown { record_type, data }
+                        }
+                    }),
             );
             offset = end;
         }
@@ -105,13 +134,22 @@ impl ProxyGraphics {
                 record_type: None,
                 reason: R::InvalidValue,
             };
-            if let ProxyGraphicRecord::UnicodeText(text) = record {
+            if let CheckedProxyGraphicRecord::UnicodeText(text) = record {
                 if text.text.contains('\0') {
                     error.reason = R::InvalidString;
                     return Err(error);
                 }
             }
-            let (kind, payload) = encode_record(record).ok_or_else(|| error.clone())?;
+            let (kind, payload) = match record {
+                CheckedProxyGraphicRecord::FillOff => (21, Vec::new()),
+                CheckedProxyGraphicRecord::UnicodeText(text) => (36, encode_unicode_text(text)),
+                CheckedProxyGraphicRecord::Command(command) => {
+                    super::records::encode(command).ok_or_else(|| error.clone())?
+                }
+                CheckedProxyGraphicRecord::Unknown { record_type, data } => {
+                    (*record_type, data.clone())
+                }
+            };
             error.record_type = Some(kind);
             validate_payload(kind, &payload).map_err(|reason| {
                 error.reason = reason;

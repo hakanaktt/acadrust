@@ -474,7 +474,10 @@ pub fn read_table_style(reader: &mut DwgMergedReader, version: DwgVersion) -> Ta
     if modern_style.cell_style.merge_flags & TableCellStyleData::FLOW_UP != 0 {
         value.flow_direction = crate::objects::TableFlowDirection::Up;
     }
-    crate::objects::apply_cell_style_to_row(&mut value.data_row_style, &modern_style.cell_style);
+    crate::objects::apply_cell_style_to_row(
+        &mut value.data_row_style,
+        &modern_style.cell_style,
+    );
     value.modern_style = Some(modern_style);
     let override_count = safe_count(reader.read_bit_long(), reader).min(64);
     value.modern_overrides.reserve(override_count as usize);

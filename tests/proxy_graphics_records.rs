@@ -1,4 +1,6 @@
-use acadrust::entities::proxy_graphics::{ProxyGraphicRecord, ProxyGraphics};
+use acadrust::entities::proxy_graphics::{
+    CheckedProxyGraphicRecord, CheckedProxyGraphics, ProxyGraphicRecord, ProxyGraphics,
+};
 
 fn stream(record_type: u32, payload: &[u8]) -> Vec<u8> {
     let mut bytes = Vec::new();
@@ -17,9 +19,9 @@ fn stream(record_type: u32, payload: &[u8]) -> Vec<u8> {
 #[test]
 fn checked_unknown_roundtrip_preserves_future_records() {
     let bytes = stream(9001, &[3, 2, 1, 0]);
-    let graphics = ProxyGraphics::decode_checked(&bytes).unwrap();
+    let graphics = CheckedProxyGraphics::decode_checked(&bytes).unwrap();
     assert!(
-        matches!(&graphics.records[0], ProxyGraphicRecord::Unknown { record_type: 9001, data } if data == &[3,2,1,0])
+        matches!(&graphics.records[0], CheckedProxyGraphicRecord::Unknown { record_type: 9001, data } if data == &[3,2,1,0])
     );
     assert_eq!(graphics.encode_checked().unwrap(), bytes);
 }
@@ -28,22 +30,22 @@ fn checked_unknown_roundtrip_preserves_future_records() {
 fn checked_framing_requires_exact_complete_stream() {
     let valid = stream(21, &[]);
     for end in 0..valid.len() {
-        assert!(ProxyGraphics::decode_checked(&valid[..end]).is_err());
+        assert!(CheckedProxyGraphics::decode_checked(&valid[..end]).is_err());
     }
     let mut trailing = valid.clone();
     trailing.push(0);
-    assert!(ProxyGraphics::decode_checked(&trailing).is_err());
+    assert!(CheckedProxyGraphics::decode_checked(&trailing).is_err());
     // Existing permissive API keeps accepting a framed prefix.
     assert!(ProxyGraphics::decode(&trailing).is_some());
     let mut impossible_count = valid;
     impossible_count[4..8].copy_from_slice(&u32::MAX.to_le_bytes());
-    assert!(ProxyGraphics::decode_checked(&impossible_count).is_err());
+    assert!(CheckedProxyGraphics::decode_checked(&impossible_count).is_err());
 }
 
 #[test]
 fn checked_known_record_cannot_fall_back_to_unknown() {
     let bytes = stream(36, &[0; 8]);
-    assert!(ProxyGraphics::decode_checked(&bytes).is_err());
+    assert!(CheckedProxyGraphics::decode_checked(&bytes).is_err());
     assert!(matches!(
         ProxyGraphics::decode(&bytes).unwrap().records[0],
         ProxyGraphicRecord::Unknown { .. }
@@ -53,12 +55,12 @@ fn checked_known_record_cannot_fall_back_to_unknown() {
 #[test]
 fn sample_graphics_records_are_typed_and_roundtrip() {
     let source = include_bytes!("fixtures/proxy_graphics/sample_ac1032_mleader_b1e.bin");
-    let graphics = ProxyGraphics::decode_checked(source).unwrap();
+    let graphics = CheckedProxyGraphics::decode_checked(source).unwrap();
     let unsupported: Vec<_> = graphics
         .records
         .iter()
         .filter_map(|record| match record {
-            ProxyGraphicRecord::Unknown { record_type, .. } => Some(*record_type),
+            CheckedProxyGraphicRecord::Unknown { record_type, .. } => Some(*record_type),
             _ => None,
         })
         .collect();
@@ -67,7 +69,10 @@ fn sample_graphics_records_are_typed_and_roundtrip() {
         "source records still opaque: {unsupported:?}"
     );
     let encoded = graphics.encode_checked().unwrap();
-    assert_eq!(ProxyGraphics::decode_checked(&encoded).unwrap(), graphics);
+    assert_eq!(
+        CheckedProxyGraphics::decode_checked(&encoded).unwrap(),
+        graphics
+    );
 }
 
 #[test]
@@ -77,9 +82,9 @@ fn checked_alignment_padding_is_not_semantic_string_data() {
         payload[offset..offset + 8].copy_from_slice(&1.0f64.to_le_bytes());
     }
     payload[98..100].copy_from_slice(&[0xcd, 0xec]);
-    let graphics = ProxyGraphics::decode_checked(&stream(36, &payload)).unwrap();
+    let graphics = CheckedProxyGraphics::decode_checked(&stream(36, &payload)).unwrap();
     assert_eq!(
-        ProxyGraphics::decode_checked(&graphics.encode_checked().unwrap()).unwrap(),
+        CheckedProxyGraphics::decode_checked(&graphics.encode_checked().unwrap()).unwrap(),
         graphics
     );
 }
@@ -88,31 +93,31 @@ fn checked_alignment_padding_is_not_semantic_string_data() {
 fn known_polyline_count_cannot_escape_its_payload() {
     let mut payload = 2u32.to_le_bytes().to_vec();
     payload.extend_from_slice(&[0; 24]);
-    assert!(ProxyGraphics::decode_checked(&stream(6, &payload)).is_err());
+    assert!(CheckedProxyGraphics::decode_checked(&stream(6, &payload)).is_err());
 }
 
 #[test]
 fn trait_values_require_valid_closed_enums_and_finite_scalars() {
     for value in [1u32, 2] {
-        assert!(ProxyGraphics::decode_checked(&stream(20, &value.to_le_bytes())).is_ok());
+        assert!(CheckedProxyGraphics::decode_checked(&stream(20, &value.to_le_bytes())).is_ok());
     }
-    assert!(ProxyGraphics::decode_checked(&stream(20, &0u32.to_le_bytes())).is_err());
-    assert!(ProxyGraphics::decode_checked(&stream(24, &f64::NAN.to_le_bytes())).is_err());
-    assert!(ProxyGraphics::decode_checked(&stream(25, &(-3.5f64).to_le_bytes())).is_ok());
+    assert!(CheckedProxyGraphics::decode_checked(&stream(20, &0u32.to_le_bytes())).is_err());
+    assert!(CheckedProxyGraphics::decode_checked(&stream(24, &f64::NAN.to_le_bytes())).is_err());
+    assert!(CheckedProxyGraphics::decode_checked(&stream(25, &(-3.5f64).to_le_bytes())).is_ok());
 }
 
 #[test]
 fn compatibility51_only_recognizes_the_zero_word() {
-    let zero = ProxyGraphics::decode_checked(&stream(51, &0u32.to_le_bytes())).unwrap();
+    let zero = CheckedProxyGraphics::decode_checked(&stream(51, &0u32.to_le_bytes())).unwrap();
     assert!(!matches!(
         zero.records[0],
-        ProxyGraphicRecord::Unknown { .. }
+        CheckedProxyGraphicRecord::Unknown { .. }
     ));
     let future = stream(51, &1u32.to_le_bytes());
-    let graphics = ProxyGraphics::decode_checked(&future).unwrap();
+    let graphics = CheckedProxyGraphics::decode_checked(&future).unwrap();
     assert!(matches!(
         graphics.records[0],
-        ProxyGraphicRecord::Unknown { .. }
+        CheckedProxyGraphicRecord::Unknown { .. }
     ));
     assert_eq!(graphics.encode_checked().unwrap(), future);
 }
@@ -145,19 +150,19 @@ fn parametric_geometry_and_transform_records_are_typed() {
         (31, vec![]),
         (32, normal_polyline),
     ] {
-        let graphics = ProxyGraphics::decode_checked(&stream(kind, &payload)).unwrap();
-        let ProxyGraphicRecord::Command(command) = &graphics.records[0] else {
+        let graphics = CheckedProxyGraphics::decode_checked(&stream(kind, &payload)).unwrap();
+        let CheckedProxyGraphicRecord::Command(command) = &graphics.records[0] else {
             panic!("record {kind} remains untyped")
         };
         assert_eq!(command.record_type(), kind);
         assert_eq!(
-            ProxyGraphics::decode_checked(&graphics.encode_checked().unwrap()).unwrap(),
+            CheckedProxyGraphics::decode_checked(&graphics.encode_checked().unwrap()).unwrap(),
             graphics
         );
         let mut truncated = payload;
         if !truncated.is_empty() {
             truncated.pop();
-            assert!(ProxyGraphics::decode_checked(&stream(kind, &truncated)).is_err());
+            assert!(CheckedProxyGraphics::decode_checked(&stream(kind, &truncated)).is_err());
         }
     }
 }
@@ -166,12 +171,14 @@ fn parametric_geometry_and_transform_records_are_typed() {
 fn styled_unicode_preserves_non_bmp_text_empty_font_requests_and_source_length() {
     use acadrust::entities::proxy_graphics::ProxyGraphicCommand;
     let source = include_bytes!("fixtures/proxy_graphics/sample_ac1032_mleader_b1e.bin");
-    let graphics = ProxyGraphics::decode_checked(source).unwrap();
+    let graphics = CheckedProxyGraphics::decode_checked(source).unwrap();
     let mut text = graphics
         .records
         .into_iter()
         .find_map(|record| match record {
-            ProxyGraphicRecord::Command(ProxyGraphicCommand::StyledUnicodeText(text)) => Some(text),
+            CheckedProxyGraphicRecord::Command(ProxyGraphicCommand::StyledUnicodeText(text)) => {
+                Some(text)
+            }
             _ => None,
         })
         .unwrap();
@@ -181,18 +188,18 @@ fn styled_unicode_preserves_non_bmp_text_empty_font_requests_and_source_length()
     text.font_file.clear();
     text.big_font_file.clear();
     text.text_flags[2] = true;
-    let valid = ProxyGraphics {
-        records: vec![ProxyGraphicRecord::Command(
+    let valid = CheckedProxyGraphics {
+        records: vec![CheckedProxyGraphicRecord::Command(
             ProxyGraphicCommand::StyledUnicodeText(text.clone()),
         )],
     };
     assert_eq!(
-        ProxyGraphics::decode_checked(&valid.encode_checked().unwrap()).unwrap(),
+        CheckedProxyGraphics::decode_checked(&valid.encode_checked().unwrap()).unwrap(),
         valid
     );
     text.declared_length = 1;
-    let invalid = ProxyGraphics {
-        records: vec![ProxyGraphicRecord::Command(
+    let invalid = CheckedProxyGraphics {
+        records: vec![CheckedProxyGraphicRecord::Command(
             ProxyGraphicCommand::StyledUnicodeText(text),
         )],
     };
@@ -226,18 +233,18 @@ fn legacy_text_records_preserve_source_codepage_bytes() {
     }
     styled.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 0]); // Two unspecified font requests.
     for (kind, payload) in [(10, plain), (11, styled)] {
-        let graphics = ProxyGraphics::decode_checked(&stream(kind, &payload)).unwrap();
-        let ProxyGraphicRecord::Command(command) = &graphics.records[0] else {
+        let graphics = CheckedProxyGraphics::decode_checked(&stream(kind, &payload)).unwrap();
+        let CheckedProxyGraphicRecord::Command(command) = &graphics.records[0] else {
             panic!("legacy text {kind} is opaque")
         };
         assert_eq!(command.record_type(), kind);
         assert_eq!(
-            ProxyGraphics::decode_checked(&graphics.encode_checked().unwrap()).unwrap(),
+            CheckedProxyGraphics::decode_checked(&graphics.encode_checked().unwrap()).unwrap(),
             graphics
         );
         let mut truncated = payload;
         truncated.pop();
-        assert!(ProxyGraphics::decode_checked(&stream(kind, &truncated)).is_err());
+        assert!(CheckedProxyGraphics::decode_checked(&stream(kind, &truncated)).is_err());
     }
 }
 
@@ -247,7 +254,7 @@ fn reconstructed_snapshot_survives_production_dwg_and_both_dxf_writers() {
     use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfVersion, DxfWriter, Vector3};
     use std::io::Cursor;
     let source = include_bytes!("fixtures/proxy_graphics/sample_ac1032_mleader_b1e.bin");
-    let expected = ProxyGraphics::decode_checked(source).unwrap();
+    let expected = CheckedProxyGraphics::decode_checked(source).unwrap();
     let mut doc = CadDocument::with_version(DxfVersion::AC1032);
     let mut leader = MultiLeader::with_text(
         "graphics fixture",
@@ -279,7 +286,7 @@ fn reconstructed_snapshot_survives_production_dwg_and_both_dxf_writers() {
             })
             .unwrap_or_else(|| panic!("{format} lost saved graphics"));
         assert_eq!(
-            ProxyGraphics::decode_checked(bytes).unwrap(),
+            CheckedProxyGraphics::decode_checked(bytes).unwrap(),
             expected,
             "{format}"
         );
@@ -341,4 +348,3 @@ fn experimental_tolerance_h1_preserves_tag_and_text_only() {
         );
     }
 }
-

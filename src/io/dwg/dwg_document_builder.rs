@@ -603,6 +603,7 @@ struct Pass2Chunk {
     pending: PendingPolylines,
     pending_attributes: HashMap<u64, Vec<AttributeEntity>>,
     failures: Vec<RecordFailure>,
+    leader_diagnostics: Vec<ReadDiagnostic>,
     /// (handle, type code, merged bytes, handle bits) — only with ACADRUST_RAW_ALL.
     raw_records: Vec<(u64, i16, Vec<u8>, i64)>,
 }
@@ -634,6 +635,7 @@ impl Pass2Chunk {
             pending: PendingPolylines::default(),
             pending_attributes: HashMap::new(),
             failures: Vec::new(),
+            leader_diagnostics: Vec::new(),
             raw_records: Vec::new(),
         }
     }
@@ -999,6 +1001,7 @@ impl DwgDocumentBuilder {
         let mut skipped_pass2 = 0u32;
         let mut decoded_pass2 = 0usize;
         let mut diagnostics = Vec::new();
+        let mut leader_diagnostics = Vec::new();
         let total_handles = handles.len();
         self.report_progress(55);
 
@@ -2345,6 +2348,14 @@ impl DwgDocumentBuilder {
                             photometric_lighting,
                         );
                     }));
+                    for mut warning in reader.take_leader_diagnostics() {
+                        warning.source_offset = Some(offset as u64);
+                        warning.source_offset_basis = Some("object-section-byte".into());
+                        warning.section = Some("AcDb:AcDbObjects".into());
+                        warning.record_handle = Some(handle);
+                        warning.record_type = Some(type_code.to_string());
+                        push_read_diagnostic(&mut chunk.leader_diagnostics, warning);
+                    }
                     if let Some(message) = reader
                         .check_error()
                         .err()
@@ -2559,6 +2570,9 @@ impl DwgDocumentBuilder {
                         .entry(owner)
                         .or_default()
                         .append(&mut attributes);
+                }
+                for warning in chunk.leader_diagnostics {
+                    push_read_diagnostic(&mut leader_diagnostics, warning);
                 }
                 for failure in chunk.failures {
                     if !failure.recoverable {
@@ -2822,7 +2836,6 @@ impl DwgDocumentBuilder {
 
         document.resolve_xrecord_names();
         document.resolve_table_style_names();
-        document.resolve_multileader_style_names();
 
         // Advanced material properties are not stored in the AcDbMaterial
         // object body. ACAD keeps them in the ADVMATERIAL XRECORD owned by
@@ -3184,6 +3197,8 @@ impl DwgDocumentBuilder {
                 document.header.named_objects_dict_handle = root_handle;
             }
         }
+
+        document.name_mleader_styles_from_dictionary();
 
         // Summary notification
         let total_skipped = skipped_catalog
@@ -3970,6 +3985,13 @@ impl DwgDocumentBuilder {
         }
 
         source_state_diagnostics(document, &mut diagnostics);
+
+        // Strict reads use the first diagnostic to explain a skipped record.
+        // Append leader warnings after existing diagnostics so they cannot
+        // mask a decoding failure or use its diagnostic budget.
+        for warning in leader_diagnostics {
+            crate::io::leader_codes::report(&mut self.notifications, &mut diagnostics, warning);
+        }
 
         DwgBuildOutcome {
             notifications: self.notifications,

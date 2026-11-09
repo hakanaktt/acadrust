@@ -4990,17 +4990,30 @@ impl CadDocument {
         }
     }
 
-    /// MLEADERSTYLE names are dictionary keys; DXF group 3 is its description.
-    pub(crate) fn resolve_multileader_style_names(&mut self) {
-        let Some(dictionary) = self.named_objects_dictionary()
-            .and_then(|root| root.get("ACAD_MLEADERSTYLE")) else { return; };
-        let names = match self.objects.get(&dictionary) {
-            Some(ObjectType::Dictionary(d)) => d.entries.clone(),
-            _ => return,
+    /// An MLEADERSTYLE's name is its key in the ACAD_MLEADERSTYLE dictionary;
+    /// group 3 is only its description (AutoCAD's "Annotative" style has
+    /// `3 Standard`). Name every style the dictionary lists; the others keep the
+    /// name taken from group 3.
+    pub(crate) fn name_mleader_styles_from_dictionary(&mut self) {
+        let Some(ObjectType::Dictionary(root)) =
+            self.objects.get(&self.header.named_objects_dict_handle)
+        else {
+            return;
         };
-        for (name, handle) in names {
+        let Some(dictionary) = root.get("ACAD_MLEADERSTYLE") else {
+            return;
+        };
+        let Some(ObjectType::Dictionary(styles)) = self.objects.get(&dictionary) else {
+            return;
+        };
+        let names: Vec<(Handle, String)> = styles
+            .entries
+            .iter()
+            .map(|(name, handle)| (*handle, name.clone()))
+            .collect();
+        for (handle, name) in names {
             if let Some(ObjectType::MultiLeaderStyle(style)) = self.objects.get_mut(&handle) {
-                if style.owner_handle == dictionary { style.name = name; }
+                style.name = name;
             }
         }
     }

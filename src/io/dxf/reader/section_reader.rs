@@ -1527,6 +1527,7 @@ pub struct SectionReader<'a> {
     failsafe: bool,
     skipped_records: usize,
     recovery_errors: Vec<SectionRecoveryError>,
+    leader_diagnostics: Vec<crate::ReadDiagnostic>,
 }
 
 /// A record-level error recovered by a section reader.
@@ -1545,6 +1546,7 @@ impl<'a> SectionReader<'a> {
             failsafe: false,
             skipped_records: 0,
             recovery_errors: Vec::new(),
+            leader_diagnostics: Vec::new(),
         }
     }
 
@@ -1565,6 +1567,24 @@ impl<'a> SectionReader<'a> {
 
     pub fn take_recovery_errors(&mut self) -> Vec<SectionRecoveryError> {
         std::mem::take(&mut self.recovery_errors)
+    }
+
+    pub(super) fn take_leader_diagnostics(&mut self) -> Vec<crate::ReadDiagnostic> {
+        std::mem::take(&mut self.leader_diagnostics)
+    }
+
+    fn leader_code(&mut self, value: impl Into<i32>, allowed: &[i16], field: &str) -> i16 {
+        let value = value.into();
+        if let Some(mut warning) = crate::io::leader_codes::warning(value, allowed, field) {
+            let context = self.reader.diagnostic_context();
+            warning.source_offset = context.source_offset;
+            warning.source_offset_basis = Some("file-byte".into());
+            warning.source_line = context.source_line;
+            warning.record_handle = context.record_handle;
+            warning.record_type = context.record_type;
+            crate::push_read_diagnostic(&mut self.leader_diagnostics, warning);
+        }
+        value as i16
     }
 
     fn read_section_pair(&mut self) -> Result<Option<super::stream_reader::DxfCodePair>> {
@@ -7431,7 +7451,7 @@ impl<'a> SectionReader<'a> {
             _ => Handle::NULL,
         };
 
-        name_mleader_styles_from_dictionary(document);
+        document.name_mleader_styles_from_dictionary();
 
         Ok(())
     }
@@ -16393,8 +16413,7 @@ impl<'a> SectionReader<'a> {
 
         // Read control points (codes 10/20, with optional weight 42)
         let control_point_count = num_control_points.max(0) as usize;
-        edge.control_points
-            .reserve(control_point_count.min(100_000));
+        edge.control_points.reserve(control_point_count.min(100_000));
         for _ in 0..control_point_count {
             let mut x = 0.0;
             let mut y = 0.0;
@@ -18119,11 +18138,7 @@ impl<'a> SectionReader<'a> {
                 }
                 72 => {
                     if let Some(v) = pair.as_i16() {
-                        crate::io::leader_codes::checked(
-                            i64::from(v),
-                            &[0, 1],
-                            "LEADER.path_type",
-                        )?;
+                        self.leader_code(v, &[0, 1], "LEADER.path_type");
                         leader.path_type = if v == 1 {
                             crate::entities::leader::LeaderPathType::Spline
                         } else {
@@ -18133,11 +18148,7 @@ impl<'a> SectionReader<'a> {
                 }
                 73 => {
                     if let Some(v) = pair.as_i16() {
-                        crate::io::leader_codes::checked(
-                            i64::from(v),
-                            &[0, 1, 2, 3],
-                            "LEADER.creation_type",
-                        )?;
+                        self.leader_code(v, &[0, 1, 2, 3], "LEADER.creation_type");
                         leader.creation_type = match v {
                             0 => crate::entities::leader::LeaderCreationType::WithText,
                             1 => crate::entities::leader::LeaderCreationType::WithTolerance,
@@ -18148,11 +18159,7 @@ impl<'a> SectionReader<'a> {
                 }
                 74 => {
                     if let Some(v) = pair.as_i16() {
-                        crate::io::leader_codes::checked(
-                            i64::from(v),
-                            &[0, 1],
-                            "LEADER.hookline_direction",
-                        )?;
+                        self.leader_code(v, &[0, 1], "LEADER.hookline_direction");
                         leader.hookline_direction = if v == 1 {
                             crate::entities::leader::HooklineDirection::Same
                         } else {
@@ -18327,12 +18334,11 @@ impl<'a> SectionReader<'a> {
                 }
                 170 => {
                     if let Some(v) = pair.as_i16() {
-                        ml.path_type =
-                            mlt::MultiLeaderPathType::from(crate::io::leader_codes::checked(
-                                i64::from(v),
-                                &[0, 1, 2],
-                                "read_multileader.MultiLeaderPathType",
-                            )?);
+                        ml.path_type = mlt::MultiLeaderPathType::from(self.leader_code(
+                            v,
+                            &[0, 1, 2],
+                            "read_multileader.MultiLeaderPathType",
+                        ));
                     }
                 }
                 91 => {
@@ -18379,17 +18385,11 @@ impl<'a> SectionReader<'a> {
                 }
                 172 => {
                     if let Some(v) = pair.as_i16() {
-                        if !(0..=3).contains(&v) {
-                            return Err(crate::error::DxfError::Parse(format!(
-                                "invalid MLEADER content type {v}"
-                            )));
-                        }
-                        ml.content_type =
-                            mlt::LeaderContentType::from(crate::io::leader_codes::checked(
-                                i64::from(v),
-                                &[0, 1, 2, 3],
-                                "read_multileader.LeaderContentType",
-                            )?);
+                        ml.content_type = mlt::LeaderContentType::from(self.leader_code(
+                            v,
+                            &[0, 1, 2, 3],
+                            "read_multileader.LeaderContentType",
+                        ));
                     }
                 }
                 343 => {
@@ -18399,42 +18399,38 @@ impl<'a> SectionReader<'a> {
                 }
                 173 => {
                     if let Some(v) = pair.as_i16() {
-                        ml.text_left_attachment =
-                            mlt::TextAttachmentType::from(crate::io::leader_codes::checked(
-                                i64::from(v),
-                                &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-                                "read_multileader.TextAttachmentType",
-                            )?);
+                        ml.text_left_attachment = mlt::TextAttachmentType::from(self.leader_code(
+                            v,
+                            &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+                            "read_multileader.TextAttachmentType",
+                        ));
                     }
                 }
                 95 => {
                     if let Some(v) = pair.as_i32() {
-                        ml.text_right_attachment =
-                            mlt::TextAttachmentType::from(crate::io::leader_codes::checked(
-                                i64::from(v),
-                                &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-                                "read_multileader.TextAttachmentType",
-                            )?);
+                        ml.text_right_attachment = mlt::TextAttachmentType::from(self.leader_code(
+                            v,
+                            &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+                            "read_multileader.TextAttachmentType",
+                        ));
                     }
                 }
                 174 => {
                     if let Some(v) = pair.as_i16() {
-                        ml.text_angle_type =
-                            mlt::TextAngleType::from(crate::io::leader_codes::checked(
-                                i64::from(v),
-                                &[0, 1, 2],
-                                "read_multileader.TextAngleType",
-                            )?);
+                        ml.text_angle_type = mlt::TextAngleType::from(self.leader_code(
+                            v,
+                            &[0, 1, 2],
+                            "read_multileader.TextAngleType",
+                        ));
                     }
                 }
                 175 => {
                     if let Some(v) = pair.as_i16() {
-                        ml.text_alignment =
-                            mlt::TextAlignmentType::from(crate::io::leader_codes::checked(
-                                i64::from(v),
-                                &[0, 1, 2],
-                                "read_multileader.TextAlignmentType",
-                            )?);
+                        ml.text_alignment = mlt::TextAlignmentType::from(self.leader_code(
+                            v,
+                            &[0, 1, 2],
+                            "read_multileader.TextAlignmentType",
+                        ));
                     }
                 }
                 92 => {
@@ -18472,13 +18468,12 @@ impl<'a> SectionReader<'a> {
                 }
                 176 => {
                     if let Some(v) = pair.as_i16() {
-                        ml.block_connection_type = mlt::BlockContentConnectionType::from(
-                            crate::io::leader_codes::checked(
-                                i64::from(v),
+                        ml.block_connection_type =
+                            mlt::BlockContentConnectionType::from(self.leader_code(
+                                v,
                                 &[0, 1],
                                 "read_multileader.BlockContentConnectionType",
-                            )?,
-                        );
+                            ));
                     }
                 }
                 293 => {
@@ -18548,42 +18543,40 @@ impl<'a> SectionReader<'a> {
                 179 => {
                     if let Some(v) = pair.as_i16() {
                         ml.text_attachment_point =
-                            mlt::TextAttachmentPointType::from(crate::io::leader_codes::checked(
-                                i64::from(v),
+                            mlt::TextAttachmentPointType::from(self.leader_code(
+                                v,
                                 &[1, 2, 3],
                                 "read_multileader.TextAttachmentPointType",
-                            )?);
+                            ));
                     }
                 }
                 271 => {
                     if let Some(v) = pair.as_i16() {
-                        ml.text_attachment_direction = mlt::TextAttachmentDirectionType::from(
-                            crate::io::leader_codes::checked(
-                                i64::from(v),
+                        ml.text_attachment_direction =
+                            mlt::TextAttachmentDirectionType::from(self.leader_code(
+                                v,
                                 &[0, 1],
                                 "read_multileader.TextAttachmentDirectionType",
-                            )?,
-                        );
+                            ));
                     }
                 }
                 272 => {
                     if let Some(v) = pair.as_i16() {
                         ml.text_bottom_attachment =
-                            mlt::TextAttachmentType::from(crate::io::leader_codes::checked(
-                                i64::from(v),
+                            mlt::TextAttachmentType::from(self.leader_code(
+                                v,
                                 &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
                                 "read_multileader.TextAttachmentType",
-                            )?);
+                            ));
                     }
                 }
                 273 => {
                     if let Some(v) = pair.as_i16() {
-                        ml.text_top_attachment =
-                            mlt::TextAttachmentType::from(crate::io::leader_codes::checked(
-                                i64::from(v),
-                                &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-                                "read_multileader.TextAttachmentType",
-                            )?);
+                        ml.text_top_attachment = mlt::TextAttachmentType::from(self.leader_code(
+                            v,
+                            &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+                            "read_multileader.TextAttachmentType",
+                        ));
                     }
                 }
                 295 => {
@@ -18672,43 +18665,40 @@ impl<'a> SectionReader<'a> {
                 }
                 174 => {
                     if let Some(v) = pair.as_i16() {
-                        ctx.text_left_attachment =
-                            mlt::TextAttachmentType::from(crate::io::leader_codes::checked(
-                                i64::from(v),
-                                &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-                                "read_mleader_context.TextAttachmentType",
-                            )?);
+                        ctx.text_left_attachment = mlt::TextAttachmentType::from(self.leader_code(
+                            v,
+                            &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+                            "read_mleader_context.TextAttachmentType",
+                        ));
                     }
                 }
                 175 => {
                     if let Some(v) = pair.as_i16() {
                         ctx.text_right_attachment =
-                            mlt::TextAttachmentType::from(crate::io::leader_codes::checked(
-                                i64::from(v),
+                            mlt::TextAttachmentType::from(self.leader_code(
+                                v,
                                 &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
                                 "read_mleader_context.TextAttachmentType",
-                            )?);
+                            ));
                     }
                 }
                 176 => {
                     if let Some(v) = pair.as_i16() {
-                        ctx.text_alignment =
-                            mlt::TextAlignmentType::from(crate::io::leader_codes::checked(
-                                i64::from(v),
-                                &[0, 1, 2],
-                                "read_mleader_context.TextAlignmentType",
-                            )?);
+                        ctx.text_alignment = mlt::TextAlignmentType::from(self.leader_code(
+                            v,
+                            &[0, 1, 2],
+                            "read_mleader_context.TextAlignmentType",
+                        ));
                     }
                 }
                 177 => {
                     if let Some(v) = pair.as_i16() {
-                        ctx.block_connection_type = mlt::BlockContentConnectionType::from(
-                            crate::io::leader_codes::checked(
-                                i64::from(v),
+                        ctx.block_connection_type =
+                            mlt::BlockContentConnectionType::from(self.leader_code(
+                                v,
                                 &[0, 1],
                                 "read_mleader_context.BlockContentConnectionType",
-                            )?,
-                        );
+                            ));
                     }
                 }
                 290 => {
@@ -18754,11 +18744,7 @@ impl<'a> SectionReader<'a> {
                 170 => {
                     if let Some(v) = pair.as_i16() {
                         ctx.line_spacing_style = crate::entities::LineSpacingStyle::from(
-                            crate::io::leader_codes::checked(
-                                i64::from(v),
-                                &[1, 2],
-                                "read_mleader_context.LineSpacingStyle",
-                            )?,
+                            self.leader_code(v, &[1, 2], "read_mleader_context.LineSpacingStyle"),
                         );
                     }
                 }
@@ -18770,21 +18756,20 @@ impl<'a> SectionReader<'a> {
                 171 => {
                     if let Some(v) = pair.as_i16() {
                         ctx.text_attachment_point =
-                            mlt::TextAttachmentPointType::from(crate::io::leader_codes::checked(
-                                i64::from(v),
+                            mlt::TextAttachmentPointType::from(self.leader_code(
+                                v,
                                 &[1, 2, 3],
                                 "read_mleader_context.TextAttachmentPointType",
-                            )?);
+                            ));
                     }
                 }
                 172 => {
                     if let Some(v) = pair.as_i16() {
-                        ctx.text_flow_direction =
-                            mlt::FlowDirectionType::from(crate::io::leader_codes::checked(
-                                i64::from(v),
-                                &[1, 3, 5],
-                                "read_mleader_context.FlowDirectionType",
-                            )?);
+                        ctx.text_flow_direction = mlt::FlowDirectionType::from(self.leader_code(
+                            v,
+                            &[1, 3, 5],
+                            "read_mleader_context.FlowDirectionType",
+                        ));
                     }
                 }
                 91 => {
@@ -18900,22 +18885,21 @@ impl<'a> SectionReader<'a> {
                 }
                 273 => {
                     if let Some(v) = pair.as_i16() {
-                        ctx.text_top_attachment =
-                            mlt::TextAttachmentType::from(crate::io::leader_codes::checked(
-                                i64::from(v),
-                                &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-                                "read_mleader_context.TextAttachmentType",
-                            )?);
+                        ctx.text_top_attachment = mlt::TextAttachmentType::from(self.leader_code(
+                            v,
+                            &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+                            "read_mleader_context.TextAttachmentType",
+                        ));
                     }
                 }
                 272 => {
                     if let Some(v) = pair.as_i16() {
                         ctx.text_bottom_attachment =
-                            mlt::TextAttachmentType::from(crate::io::leader_codes::checked(
-                                i64::from(v),
+                            mlt::TextAttachmentType::from(self.leader_code(
+                                v,
                                 &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
                                 "read_mleader_context.TextAttachmentType",
-                            )?);
+                            ));
                     }
                 }
                 _ => {}
@@ -19023,11 +19007,11 @@ impl<'a> SectionReader<'a> {
                     if let Some(v) = pair.as_i16() {
                         root.text_attachment_direction =
                             crate::entities::multileader::TextAttachmentDirectionType::from(
-                                crate::io::leader_codes::checked(
-                                    i64::from(v),
+                                self.leader_code(
+                                    v,
                                     &[0, 1],
                                     "read_mleader_leader_root.TextAttachmentDirectionType",
-                                )?,
+                                ),
                             );
                     }
                 }
@@ -19124,12 +19108,11 @@ impl<'a> SectionReader<'a> {
                 }
                 170 => {
                     if let Some(v) = pair.as_i16() {
-                        line.path_type =
-                            mlt::MultiLeaderPathType::from(crate::io::leader_codes::checked(
-                                i64::from(v),
-                                &[0, 1, 2],
-                                "read_mleader_leader_line.MultiLeaderPathType",
-                            )?);
+                        line.path_type = mlt::MultiLeaderPathType::from(self.leader_code(
+                            v,
+                            &[0, 1, 2],
+                            "read_mleader_leader_line.MultiLeaderPathType",
+                        ));
                     }
                 }
                 92 => {
@@ -21682,31 +21665,30 @@ impl<'a> SectionReader<'a> {
                         style.owner_handle = Handle::new(h);
                     }
                 }
-                // The name is resolved from the MLEADERSTYLE dictionary.
+                // The dictionary key takes precedence when the style is listed.
                 3 => {
                     style.description = pair.value_string.clone();
+                    style.name = pair.value_string.clone();
                 }
                 300 => style.default_text = pair.value_string.clone(),
                 170 => {
                     if let Some(v) = pair.as_i16() {
-                        style.content_type = crate::objects::LeaderContentType::from(
-                            crate::io::leader_codes::checked(
-                                i64::from(v),
+                        style.content_type =
+                            crate::objects::LeaderContentType::from(self.leader_code(
+                                v,
                                 &[0, 1, 2, 3],
                                 "read_multileader_style.LeaderContentType",
-                            )?,
-                        );
+                            ));
                     }
                 }
                 173 => {
                     if let Some(v) = pair.as_i16() {
-                        style.path_type = crate::objects::MultiLeaderPathType::from(
-                            crate::io::leader_codes::checked(
-                                i64::from(v),
+                        style.path_type =
+                            crate::objects::MultiLeaderPathType::from(self.leader_code(
+                                v,
                                 &[0, 1, 2],
                                 "read_multileader_style.MultiLeaderPathType",
-                            )?,
-                        );
+                            ));
                     }
                 }
                 91 => {
@@ -21761,45 +21743,39 @@ impl<'a> SectionReader<'a> {
                 }
                 174 => {
                     if let Some(v) = pair.as_i16() {
-                        style.text_left_attachment = crate::objects::TextAttachmentType::from(
-                            crate::io::leader_codes::checked(
-                                i64::from(v),
+                        style.text_left_attachment =
+                            crate::objects::TextAttachmentType::from(self.leader_code(
+                                v,
                                 &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
                                 "read_multileader_style.TextAttachmentType",
-                            )?,
-                        );
+                            ));
                     }
                 }
                 178 => {
                     if let Some(v) = pair.as_i16() {
-                        style.text_right_attachment = crate::objects::TextAttachmentType::from(
-                            crate::io::leader_codes::checked(
-                                i64::from(v),
+                        style.text_right_attachment =
+                            crate::objects::TextAttachmentType::from(self.leader_code(
+                                v,
                                 &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
                                 "read_multileader_style.TextAttachmentType",
-                            )?,
-                        );
+                            ));
                     }
                 }
                 175 => {
                     if let Some(v) = pair.as_i16() {
-                        style.text_angle_type =
-                            crate::objects::TextAngleType::from(crate::io::leader_codes::checked(
-                                i64::from(v),
-                                &[0, 1, 2],
-                                "read_multileader_style.TextAngleType",
-                            )?);
+                        style.text_angle_type = crate::objects::TextAngleType::from(
+                            self.leader_code(v, &[0, 1, 2], "read_multileader_style.TextAngleType"),
+                        );
                     }
                 }
                 176 => {
                     if let Some(v) = pair.as_i16() {
-                        style.text_alignment = crate::objects::TextAlignmentType::from(
-                            crate::io::leader_codes::checked(
-                                i64::from(v),
+                        style.text_alignment =
+                            crate::objects::TextAlignmentType::from(self.leader_code(
+                                v,
                                 &[0, 1, 2],
                                 "read_multileader_style.TextAlignmentType",
-                            )?,
-                        );
+                            ));
                     }
                 }
                 142 => {
@@ -21842,70 +21818,61 @@ impl<'a> SectionReader<'a> {
                 171 => {
                     if let Some(v) = pair.as_i16() {
                         style.multileader_draw_order =
-                            crate::objects::MultiLeaderDrawOrderType::from(
-                                crate::io::leader_codes::checked(
-                                    i64::from(v),
-                                    &[0, 1],
-                                    "read_multileader_style.LeaderDrawOrderType",
-                                )?,
-                            );
+                            crate::objects::MultiLeaderDrawOrderType::from(self.leader_code(
+                                v,
+                                &[0, 1],
+                                "read_multileader_style.LeaderDrawOrderType",
+                            ));
                     }
                 }
                 172 => {
                     if let Some(v) = pair.as_i16() {
-                        style.leader_draw_order = crate::objects::LeaderDrawOrderType::from(
-                            crate::io::leader_codes::checked(
-                                i64::from(v),
+                        style.leader_draw_order =
+                            crate::objects::LeaderDrawOrderType::from(self.leader_code(
+                                v,
                                 &[0, 1],
                                 "read_multileader_style.LeaderDrawOrderType",
-                            )?,
-                        );
+                            ));
                     }
                 }
                 177 => {
                     if let Some(v) = pair.as_i16() {
                         style.block_content_connection =
-                            crate::objects::BlockContentConnectionType::from(
-                                crate::io::leader_codes::checked(
-                                    i64::from(v),
-                                    &[0, 1],
-                                    "read_multileader_style.BlockContentConnectionType",
-                                )?,
-                            );
+                            crate::objects::BlockContentConnectionType::from(self.leader_code(
+                                v,
+                                &[0, 1],
+                                "read_multileader_style.BlockContentConnectionType",
+                            ));
                     }
                 }
                 271 => {
                     if let Some(v) = pair.as_i16() {
                         style.text_attachment_direction =
-                            crate::objects::TextAttachmentDirectionType::from(
-                                crate::io::leader_codes::checked(
-                                    i64::from(v),
-                                    &[0, 1],
-                                    "read_multileader_style.TextAttachmentDirectionType",
-                                )?,
-                            );
+                            crate::objects::TextAttachmentDirectionType::from(self.leader_code(
+                                v,
+                                &[0, 1],
+                                "read_multileader_style.TextAttachmentDirectionType",
+                            ));
                     }
                 }
                 272 => {
                     if let Some(v) = pair.as_i16() {
-                        style.text_bottom_attachment = crate::objects::TextAttachmentType::from(
-                            crate::io::leader_codes::checked(
-                                i64::from(v),
+                        style.text_bottom_attachment =
+                            crate::objects::TextAttachmentType::from(self.leader_code(
+                                v,
                                 &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
                                 "read_multileader_style.TextAttachmentType",
-                            )?,
-                        );
+                            ));
                     }
                 }
                 273 => {
                     if let Some(v) = pair.as_i16() {
-                        style.text_top_attachment = crate::objects::TextAttachmentType::from(
-                            crate::io::leader_codes::checked(
-                                i64::from(v),
+                        style.text_top_attachment =
+                            crate::objects::TextAttachmentType::from(self.leader_code(
+                                v,
                                 &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
                                 "read_multileader_style.TextAttachmentType",
-                            )?,
-                        );
+                            ));
                     }
                 }
                 90 => {
@@ -22498,35 +22465,6 @@ impl<'a> SectionReader<'a> {
         }
 
         Ok(Some(dv))
-    }
-}
-
-/// An MLEADERSTYLE's name is its key in the ACAD_MLEADERSTYLE dictionary;
-/// group 3 is only its description (AutoCAD's "Annotative" style has
-/// `3 Standard`). Name every style the dictionary lists; the others keep the
-/// name taken from group 3.
-fn name_mleader_styles_from_dictionary(document: &mut CadDocument) {
-    let Some(ObjectType::Dictionary(root)) = document
-        .objects
-        .get(&document.header.named_objects_dict_handle)
-    else {
-        return;
-    };
-    let Some(dictionary) = root.get("ACAD_MLEADERSTYLE") else {
-        return;
-    };
-    let Some(ObjectType::Dictionary(styles)) = document.objects.get(&dictionary) else {
-        return;
-    };
-    let names: Vec<(Handle, String)> = styles
-        .entries
-        .iter()
-        .map(|(name, handle)| (*handle, name.clone()))
-        .collect();
-    for (handle, name) in names {
-        if let Some(ObjectType::MultiLeaderStyle(style)) = document.objects.get_mut(&handle) {
-            style.name = name;
-        }
     }
 }
 

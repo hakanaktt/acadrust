@@ -54,7 +54,6 @@ pub(crate) fn decode_preview(graphic_data: Option<&[u8]>) -> Vec<PreviewRecord> 
         .map(|record| match record {
             ProxyGraphicRecord::FillOff => PreviewRecord::FillOff,
             ProxyGraphicRecord::UnicodeText(text) => PreviewRecord::Text(text.text),
-            ProxyGraphicRecord::Command(command) => PreviewRecord::Other(command.record_type()),
             ProxyGraphicRecord::Unknown { record_type, data } => {
                 if record_type == 6 {
                     polyline_from_type6(&data)
