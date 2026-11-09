@@ -106,7 +106,7 @@ fn finish(decoded: &mut DecodedAec, mut reader: DwgMergedReader, entity: bool) {
     }
 }
 
-fn open_entity(data: &ArchEntityData) -> crate::error::Result<DwgMergedReader> {
+pub(crate) fn open_entity(data: &ArchEntityData) -> crate::error::Result<DwgMergedReader> {
     let raw = data.raw_dwg_data.as_deref().ok_or_else(|| {
         crate::error::DxfError::Parse("architecture entity has no DWG body".into())
     })?;

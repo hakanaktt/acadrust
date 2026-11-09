@@ -2,6 +2,41 @@
 
 ### Unreleased
 
+- **Civil 3D classes** - `classes::civil` names the `AECC_*` classes:
+  `kind_of` / `ArchEntityData::civil_kind` give alignments, profiles, profile
+  views, TIN surfaces, corridors, assemblies, subassemblies, parcels, sample
+  line groups and labels; `object_kind_of` / `ArchObject::civil_kind` sort the
+  dictionary objects into styles, label styles, display representations,
+  settings and profile elements. `ArchEntityData::tin_surface` reads a TIN
+  surface's stored triangulation (points, triangles, neighbors, hidden flags),
+  which the drawing's proxy graphics reduce to a bounding box.
+  `alignment_elements` / `alignment_polylines` read an alignment's design
+  elements and solve its centerline exactly: fixed, floating and free lines
+  and arcs, spirals, free and floating spiral-curve(-spiral) groups, free
+  spirals, free spiral-line-spirals, spiral-spiral-curves ending at their
+  stored point, and reverse spiral-curve-spiral pairs. An element this crate
+  cannot decode ends the polyline instead of being guessed.
+  `profile_polylines` reads a profile's station/elevation tangents and joins
+  them with their vertical curves, `profile_view_frame` a profile view's
+  placement, ranges and vertical scale, and `corridor_feature_lines` a
+  corridor's baseline and feature lines with their stations.
+  `alignment_start_station` and `alignment_geometry_points` (POB, TS, SC, PC,
+  ...) give stations along the solved centerline. `profile_pvis` lists
+  a design profile's PVIs and vertical curve lengths, `label_stations` the
+  stations a label group places labels at, `label_anchor` a single label's
+  position, and `sample_lines` the stations and swath of a sample line group.
+  `ArchObject::label_text` reads a label text component (its format with
+  static text, property fields and their precision/station/percent options,
+  text height and offset; `parse_format` and `LabelPart::format_value`
+  render it), `ArchObject::inline_strings` the formats a style stores, and
+  `sample_line_name_template` a sample line group's naming template.
+  `subassembly_shape` reads the points and links a subassembly last
+  generated, `assembly_layout` an assembly's baseline point and which parent
+  point each subassembly hangs from, and `subassembly_assembly` the assembly
+  a subassembly belongs to.
+  `classes::map3d` names the Map 3D display-management objects. The records
+  stay in their containers and keep their native bodies on save.
+
 - **Rotation of annotative block and text representations in DXF** - Group 50
   of a block or text object context is in degrees, but it was read and written
   as is while the rotation in memory is in radians, as DWG stores it and as

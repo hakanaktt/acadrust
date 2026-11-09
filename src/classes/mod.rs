@@ -2,6 +2,8 @@
 //!
 //! [`arch`] is the ACAD Arch (AEC) class catalog and the geometry
 //! model used to read, write, build, and modify those entities and objects.
+//! [`civil`] names the Civil 3D classes and decodes their stored geometry.
+//! [`map3d`] names the Map 3D display-management objects.
 
 //! Classes define custom object types registered in the DXF drawing.
 //! Each class maps a DXF entity/object name to its C++ class name and
@@ -10,6 +12,8 @@
 //! Corresponds to the classic `DxfClass` and `DxfClassCollection`.
 
 pub mod arch;
+pub mod civil;
+pub mod map3d;
 
 use std::collections::HashMap;
 

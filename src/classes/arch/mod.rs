@@ -12,7 +12,7 @@
 
 mod continuous;
 mod create;
-mod decode;
+pub(crate) mod decode;
 mod entity;
 mod fields;
 mod geometry;

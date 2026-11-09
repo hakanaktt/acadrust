@@ -195,6 +195,7 @@
 //! | [`entities::acis`] | ACIS/SAT/SAB parsing, writing, and primitive builders |
 //! | [`notification`] | Structured parse notifications and recovery counts |
 //! | [`classes::arch`] | ACAD Arch entities, objects, constructors, and edits |
+//! | [`classes::civil`] | Civil 3D class catalog and TIN surface geometry |
 //!
 //! ## File Version Support
 //!
