@@ -296,6 +296,7 @@ then fails and names it.
 ## Used By
 - [Open CAD Studio](https://github.com/HakanSeven12/OpenCADStudio) An open-source (GPLv3) CAD application that uses acadrust as its core native DWG/DXF engine for read/write operations and 3D modeling.
 - [CADCraft](https://github.com/storytold/cadcraft) An open-source, AutoCAD-style drafting application written in Rust that uses acadrust for DWG read/write operations.
+- [LinceCAD](https://www.lincecad.com/) A commercial 2D and 3D CAD application for Windows and Linux that uses acadrust for native DWG/DXF reading and writing. Its changes to acadrust are published under the MPL-2.0 in [jac0161/acadrust](https://github.com/jac0161/acadrust/tree/cadfv).
 
 ## Support & Sponsorship
 
