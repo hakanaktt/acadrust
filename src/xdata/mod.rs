@@ -263,6 +263,15 @@ impl ExtendedData {
     }
 }
 
+impl ExtendedData {
+    pub(crate) fn reservation_fields(&self) {
+        let Self {
+            records: _,
+            raw_dwg_eed: _,
+        } = self;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

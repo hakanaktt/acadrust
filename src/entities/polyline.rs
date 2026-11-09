@@ -390,3 +390,11 @@ impl Entity for Polyline {
         super::transform::transform_polyline(self, transform);
     }
 }
+
+// The census cannot destructure these private flag bits outside this module.
+const _: fn(&PolylineFlags) = |v| {
+    let PolylineFlags { bits: _ } = v;
+};
+const _: fn(&VertexFlags) = |v| {
+    let VertexFlags { bits: _ } = v;
+};

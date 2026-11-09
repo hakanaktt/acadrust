@@ -774,3 +774,41 @@ impl Default for PlotSettings {
         Self::new("")
     }
 }
+
+impl PlotSettings {
+    pub(crate) fn reservation_fields(&self) {
+        let Self {
+            handle: _,
+            owner: _,
+            reactors: _,
+            xdictionary_handle: _,
+            page_name: _,
+            printer_name: _,
+            paper_size: _,
+            plot_view_name: _,
+            current_style_sheet: _,
+            paper_width: _,
+            paper_height: _,
+            margins: _,
+            origin_x: _,
+            origin_y: _,
+            plot_window: _,
+            scale_numerator: _,
+            scale_denominator: _,
+            paper_units: _,
+            rotation: _,
+            plot_type: _,
+            scale_type: _,
+            shade_plot_mode: _,
+            shade_plot_resolution: _,
+            shade_plot_dpi: _,
+            flags: _,
+            standard_scale_factor: _,
+            paper_image_origin_x: _,
+            paper_image_origin_y: _,
+            plot_view_handle: _,
+            visual_style_handle: _,
+            cached_scale: _,
+        } = self;
+    }
+}

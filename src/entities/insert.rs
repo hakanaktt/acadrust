@@ -819,6 +819,29 @@ impl Entity for Insert {
     }
 }
 
+impl Insert {
+    pub(crate) fn reservation_fields(&self) {
+        let Self {
+            common: _,
+            block_name: _,
+            insert_point: _,
+            x_scale: _,
+            y_scale: _,
+            z_scale: _,
+            rotation: _,
+            normal: _,
+            column_count: _,
+            row_count: _,
+            column_spacing: _,
+            row_spacing: _,
+            dwg_minsert: _,
+            attributes: _,
+            view_rep_handle: _,
+            seqend_handle: _,
+        } = self;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -308,6 +308,61 @@ impl Default for SortEntitiesTable {
 // Tests
 // ============================================================================
 
+impl SortEntitiesTable {
+    pub(crate) fn reservation_inspect(
+        &self,
+        u: &mut crate::document::handle_usage::HandleUsage,
+    ) -> std::result::Result<(), crate::HandleReservationError> {
+        let Self {
+            handle: _,
+            owner_handle: _,
+            block_owner_handle: _,
+            entries: _,
+            entry_map: _,
+            raw_dxf_codes: _,
+            raw_dxf_version: _,
+        } = self;
+        if self.raw_dxf_codes.is_some() {
+            return Err(u.unsupported("sort_entities.raw_dxf_codes"));
+        }
+        if self.entry_map.len() != self.entries.len() {
+            return Err(u.bad("sort_entities.entry_map.length", Some(self.handle)));
+        }
+        for (i, e) in self.entries.iter().enumerate() {
+            let SortEntsEntry {
+                entity_handle: _,
+                sort_handle: _,
+            } = e;
+            if self.entry_map.get(&e.entity_handle.value()) != Some(&i) {
+                return Err(u.bad("sort_entities.entry_map", Some(e.entity_handle)));
+            }
+            u.protect(e.entity_handle);
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod reservation_tests {
+    use super::*;
+    #[test]
+    fn private_entry_map_mismatch_refuses_without_rebuild() {
+        let mut d = crate::CadDocument::new();
+        let mut v = SortEntitiesTable::new();
+        v.handle = Handle::new(700);
+        v.add_entry(Handle::new(800), Handle::new(1));
+        v.entry_map.insert(800, usize::MAX);
+        d.objects
+            .insert(v.handle, crate::objects::ObjectType::SortEntitiesTable(v));
+        let before = format!("{:?}", d);
+        assert!(matches!(
+            d.try_reserve_handles(1),
+            Err(crate::HandleReservationError::InconsistentDocument { .. })
+        ));
+        assert_eq!(format!("{:?}", d), before);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

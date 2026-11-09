@@ -721,3 +721,8 @@ impl Entity for Hatch {
         super::mirror::mirror_hatch_with_options(self, transform, options);
     }
 }
+
+// The census cannot destructure these private flag bits outside this module.
+const _: fn(&BoundaryPathFlags) = |v| {
+    let BoundaryPathFlags { bits: _ } = v;
+};
