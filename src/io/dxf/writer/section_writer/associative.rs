@@ -9,19 +9,40 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     fn write_assoc_header(&mut self, value: &AssociativeObject) -> Result<()> {
         self.writer.write_string(0, &value.dxf_name)?;
         self.writer.write_handle(5, value.handle)?;
-        if !value.reactors.is_empty() {
+        // Reactors, the xdictionary and the owner are filtered the way
+        // `write_common_entity_data` and `write_dictionary` filter theirs: a
+        // reference to an object this writer skips (an Unknown record with no
+        // DXF form, a purge preventer, an Arch entity) resolves to nothing, and
+        // readers report it on audit.
+        let reactors: std::borrow::Cow<'_, [Handle]> = if self.valid_handles.is_empty() {
+            std::borrow::Cow::Borrowed(&value.reactors)
+        } else {
+            std::borrow::Cow::Owned(
+                value
+                    .reactors
+                    .iter()
+                    .copied()
+                    .filter(|reactor| self.handle_is_writable(*reactor))
+                    .collect(),
+            )
+        };
+        if !reactors.is_empty() {
             self.writer.write_string(102, "{ACAD_REACTORS")?;
-            for reactor in &value.reactors {
+            for reactor in reactors.as_ref() {
                 self.writer.write_handle(330, *reactor)?;
             }
             self.writer.write_string(102, "}")?;
         }
-        if let Some(xdictionary) = value.xdictionary_handle {
+        if let Some(xdictionary) = value
+            .xdictionary_handle
+            .filter(|xdictionary| self.handle_is_writable(*xdictionary))
+        {
             self.writer.write_string(102, "{ACAD_XDICTIONARY")?;
             self.writer.write_handle(360, xdictionary)?;
             self.writer.write_string(102, "}")?;
         }
-        self.writer.write_handle(330, value.owner)?;
+        self.writer
+            .write_handle(330, self.safe_object_owner(value.owner))?;
         Ok(())
     }
 
