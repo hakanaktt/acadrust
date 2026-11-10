@@ -7,6 +7,8 @@
 use super::bits::Bits;
 
 /// Stations of the longest run of equally spaced records with rising values.
+/// A record whose station is 0 is 64 bits shorter: the BD stores zero in
+/// two bits.
 pub(super) fn stations(data: &[u8], start: usize, end: usize) -> Vec<f64> {
     let mut found: Vec<(usize, f64)> = Vec::new();
     for pos in start..end {
@@ -17,10 +19,15 @@ pub(super) fn stations(data: &[u8], start: usize, end: usize) -> Vec<f64> {
         }
         let Some(value) = bits.raw_double() else { continue };
         let centi = value * 100.0;
-        if value >= 0.01 && value < 1e7 && (centi - centi.round()).abs() < 1e-6 {
+        if value.abs() >= 0.01 && value.abs() < 1e7 && (centi - centi.round()).abs() < 1e-6 {
             found.push((pos, value));
         }
     }
+    let full = |at: usize| found.iter().find(|(p, _)| *p == at).map(|&(_, v)| v);
+    let zero = |at: usize| {
+        let mut bits = Bits::new(data, at, end);
+        bits.bit() == Some(true) && bits.bit() == Some(false)
+    };
     let mut best: Vec<f64> = Vec::new();
     for (i, &(first, value)) in found.iter().enumerate() {
         for &(second, next) in &found[i + 1..] {
@@ -33,12 +40,33 @@ pub(super) fn stations(data: &[u8], start: usize, end: usize) -> Vec<f64> {
             }
             let mut run = vec![value, next];
             let mut at = second + stride;
-            while let Some(&(_, v)) = found.iter().find(|(p, _)| *p == at) {
-                if v <= *run.last().unwrap() {
+            loop {
+                let last = *run.last().unwrap();
+                match full(at) {
+                    Some(v) if v > last => {
+                        run.push(v);
+                        at += stride;
+                    }
+                    None if last < 0.0 && zero(at) => {
+                        run.push(0.0);
+                        at += stride - 64;
+                    }
+                    _ => break,
+                }
+            }
+            // Records before the run: a zero station, then negative ones.
+            let mut at = first;
+            loop {
+                let head = run[0];
+                if head > 0.0 && at >= start + stride - 64 && zero(at - (stride - 64)) {
+                    run.insert(0, 0.0);
+                    at -= stride - 64;
+                } else if let Some(v) = at.checked_sub(stride).and_then(full).filter(|v| *v < head) {
+                    run.insert(0, v);
+                    at -= stride;
+                } else {
                     break;
                 }
-                run.push(v);
-                at += stride;
             }
             if run.len() > best.len() {
                 best = run;
@@ -229,7 +257,11 @@ fn plotted_size(v: f64) -> bool {
 // ponytail: found by probing; the fields before it vary with the style's
 // overrides. Read them in order once those are decoded.
 fn offsets(data: &[u8], from: usize, end: usize) -> Option<(f64, f64, f64)> {
-    (from..end.min(from + 600)).find_map(|pos| {
+    offsets_within(data, from, end.min(from + 600))
+}
+
+fn offsets_within(data: &[u8], from: usize, end: usize) -> Option<(f64, f64, f64)> {
+    (from..end).find_map(|pos| {
         let mut bits = Bits::new(data, pos, end);
         let mut values = [0.0; 4];
         for v in &mut values {
@@ -272,7 +304,13 @@ pub(super) fn text_component(data: &[u8], start: usize, end: usize) -> Option<La
         .and_then(|p| full_double(data, p, end))
         .and_then(plotted)
         .filter(|v| *v > 0.0);
-    let (x_offset, y_offset, gap) = marker.and_then(|m| offsets(data, m + 82, end)).unwrap_or((0.0, 0.0, 0.0));
+    // Components written without the marker keep the same block; it is then
+    // the first one in the record.
+    let (x_offset, y_offset, gap) = match marker {
+        Some(m) => offsets(data, m + 82, end),
+        None => offsets_within(data, start, end),
+    }
+    .unwrap_or((0.0, 0.0, 0.0));
     // A 16-bit header after the marker ends with the anchor point, when the
     // component's settings block (opening 1011) follows it directly.
     // ponytail: only that short header form is read; longer ones leave it

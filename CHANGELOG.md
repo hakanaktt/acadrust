@@ -2,6 +2,12 @@
 
 ### Unreleased
 
+- **Civil 3D labels** - `label_stations` keeps a label at station 0, which
+  the record stores in two bits, and negative stations before it, so a
+  data band labels the alignment start and stations before it. Text
+  components written without the component marker read their x/y offsets
+  and gap too.
+
 - **Civil 3D styles** - `ArchObject::display_components` reads a Civil 3D
   style's display components (visibility, color, layer, linetype,
   lineweight, linetype scale) in the order the style class defines them,
