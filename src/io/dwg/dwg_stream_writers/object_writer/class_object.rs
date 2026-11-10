@@ -60,9 +60,7 @@ impl<'a> DwgObjectWriter<'a> {
         rapid_rt: bool,
         write_predefined_bit: bool,
     ) {
-        let class_version = if rapid_rt && self.dxf_version == crate::types::DxfVersion::AC1027 {
-            value.class_version - 1
-        } else if !rapid_rt && self.version.r2013_plus(self.dxf_version) {
+        let class_version = if !rapid_rt && self.version.r2013_plus(self.dxf_version) {
             value.class_version + 1
         } else {
             value.class_version
