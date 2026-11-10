@@ -336,9 +336,21 @@ impl SatParser {
             -1
         };
 
-        // Remaining tokens
+        // Remaining tokens. Before 7.0 a string is `<len> <text>`, which reads
+        // like an integer and an identifier, so it is taken as a string only
+        // where the layout puts one: the labels of a refinement's `label
+        // value` fields (`5 grid  1 3 tri 1 … 10 end_fields`).
+        let labelled = !version.has_counted_strings() && entity_type == "eye_refinement";
         let mut tokens = Vec::new();
-        while let Some(token) = tokenizer.next_token() {
+        loop {
+            let label = labelled && tokens.len() % 2 == 0;
+            let Some(token) = label
+                .then(|| tokenizer.next_length_prefixed_string())
+                .flatten()
+                .or_else(|| tokenizer.next_token())
+            else {
+                break;
+            };
             if matches!(token, SatToken::Terminator) {
                 break;
             }
@@ -507,6 +519,29 @@ impl<'a> SatTokenizer<'a> {
             self.pos += 1;
         }
         Some(&self.text[start..self.pos])
+    }
+
+    /// Read a pre-7.0 string, `<len> <text>`: the length, one space and
+    /// exactly `len` bytes, which may themselves hold spaces. Nothing is
+    /// consumed when the next field is not one.
+    fn next_length_prefixed_string(&mut self) -> Option<SatToken> {
+        let start = self.pos;
+        let len = self
+            .next_raw_token()
+            .and_then(|raw| raw.parse::<usize>().ok());
+        let text = len
+            .filter(|_| self.text.as_bytes().get(self.pos) == Some(&b' '))
+            .and_then(|len| self.text.get(self.pos + 1..self.pos + 1 + len));
+        match text {
+            Some(text) => {
+                self.pos += 1 + text.len();
+                Some(SatToken::String(text.to_string()))
+            }
+            None => {
+                self.pos = start;
+                None
+            }
+        }
     }
 
     /// Read the next typed token.
