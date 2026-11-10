@@ -3863,10 +3863,7 @@ impl<'a> DwgObjectWriter<'a> {
             self.writer
                 .write_bit(value.title_suppressed.unwrap_or(false));
         }
-        if flags & 0x0002 != 0 {
-            self.writer
-                .write_bit(value.header_suppressed.unwrap_or(false));
-        }
+        // Header suppressed (0x0002) is "always true" and has no data in DWG.
         if flags & 0x0004 != 0 {
             self.writer
                 .write_bit_short(value.flow_direction.unwrap_or(0));
