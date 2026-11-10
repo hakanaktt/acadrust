@@ -3926,10 +3926,13 @@ impl CadDocument {
             .iter()
             .filter(|br| br.is_paper_space())
             .count();
-        let block_name = if ps_count == 0 {
+        let block_name = if self.block_records.get("*Paper_Space").is_none() {
             "*Paper_Space".to_string()
         } else {
-            format!("*Paper_Space{}", ps_count - 1)
+            (0..)
+                .map(|n| format!("*Paper_Space{n}"))
+                .find(|n| self.block_records.get(n).is_none())
+                .unwrap()
         };
 
         // Create the block record
