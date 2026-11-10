@@ -173,7 +173,7 @@ fn named_auxiliary_failures_are_preserved_in_strict_and_failsafe_reads() {
                 assert_eq!(diagnostics.len(), 1, "{version:?} {name}");
                 let diagnostic = diagnostics[0];
                 assert_eq!(diagnostic.record_handle, Some(auxiliary.value()));
-                assert_eq!(diagnostic.record_type, Some(class_number.to_string()));
+                assert_eq!(diagnostic.record_type.as_deref(), Some(name));
                 assert!(diagnostic.source_offset.is_some());
                 assert!(diagnostic.message.contains(name));
                 assert_eq!(
