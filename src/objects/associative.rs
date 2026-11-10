@@ -1388,9 +1388,11 @@ impl AssocDimensionReference {
     /// paths). A reference that snaps to no object has none to describe:
     /// AutoCAD writes an `_End` "last point" reference with no objects as
     /// class name, osnap type, object count, distance, point and the
-    /// continuation bit only, in DWG and DXF alike.
-    pub fn stores_main_subentity(osnap_type: u8, object_count: usize) -> bool {
-        osnap_type != 0 && object_count > 0
+    /// continuation bit only, in DWG and DXF alike. Any reference with an
+    /// object stores it, whatever the osnap type: a geometry point reference
+    /// (osnap type 0) names its object's sub-entity too.
+    pub fn stores_main_subentity(_osnap_type: u8, object_count: usize) -> bool {
+        object_count > 0
     }
 
     /// Whether an intersection snap stores its intersection objects.
