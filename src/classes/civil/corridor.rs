@@ -8,7 +8,9 @@
 //! segment count x { BL n, n x { BD station, BD x, BD y, BD z, B } }
 //! ```
 //!
-//! Points are in world coordinates, one record per corridor station.
+//! Points are in world coordinates, one record per corridor station. A
+//! corridor with several baselines keeps one such run of groups per
+//! baseline, with other records between them.
 
 use super::bits::Bits;
 use crate::types::Vector3;
@@ -61,26 +63,35 @@ fn group(bits: &mut Bits, first: bool) -> Option<Vec<Vec<(f64, Vector3)>>> {
     (!first || segments.iter().map(Vec::len).sum::<usize>() >= 2).then_some(segments)
 }
 
-/// Feature lines of a corridor, one group per point code in the order of
-/// the corridor's code list; each group holds that code's segments.
-// ponytail: finds the first group by probing bit offsets; parse the
-// baseline/region records before it once their layout is known.
-pub(super) fn feature_line_groups(data: &[u8], start: usize, end: usize) -> Vec<Vec<Vec<(f64, Vector3)>>> {
-    let mut groups = Vec::new();
-    let Some(mut pos) = (start..end).find(|&pos| group(&mut Bits::new(data, pos, end), true).is_some()) else {
-        return groups;
-    };
-    loop {
-        let mut bits = Bits::new(data, pos, end);
-        match group(&mut bits, groups.is_empty()) {
-            Some(found) => {
-                groups.push(found);
-                pos = bits.pos;
+/// Feature lines of a corridor per baseline: each baseline's groups, one
+/// per point code in the order of the corridor's code list, each group
+/// holding that code's segments.
+// ponytail: finds each baseline's first group by probing bit offsets; parse
+// the baseline/region records before it once their layout is known.
+pub(super) fn baselines(data: &[u8], start: usize, end: usize) -> Vec<Vec<Vec<Vec<(f64, Vector3)>>>> {
+    let mut out = Vec::new();
+    let mut from = start;
+    while let Some(mut pos) = (from..end).find(|&pos| group(&mut Bits::new(data, pos, end), true).is_some()) {
+        let mut groups = Vec::new();
+        loop {
+            let mut bits = Bits::new(data, pos, end);
+            match group(&mut bits, groups.is_empty()) {
+                Some(found) => {
+                    groups.push(found);
+                    pos = bits.pos;
+                }
+                None => break,
             }
-            None => break,
         }
+        out.push(groups);
+        from = pos;
     }
-    groups
+    out
+}
+
+/// Feature line groups of every baseline, one after another.
+pub(super) fn feature_line_groups(data: &[u8], start: usize, end: usize) -> Vec<Vec<Vec<(f64, Vector3)>>> {
+    baselines(data, start, end).into_iter().flatten().collect()
 }
 
 /// Every feature line segment of a corridor.

@@ -4,7 +4,8 @@
 //! (plan first, then model, ...), in the order the class defines:
 //!
 //! ```text
-//! BS 80, BS 80, BS 0, BS 80   component tag
+//! BS v, BS v, BS 0, BS v      component tag; v is 70 in Civil 3D 2013
+//!                             drawings (AC1027) and 80 from 2018 (AC1032)
 //! B    visible
 //! CMC  color
 //! BS   lineweight
@@ -51,7 +52,7 @@ fn records(data: &[u8], start: usize, end: usize) -> Vec<(bool, Color, i16, f64)
 
 fn record(bits: &mut Bits) -> Option<(bool, Color, i16, f64)> {
     let tag = [bits.bit_short()?, bits.bit_short()?, bits.bit_short()?, bits.bit_short()?];
-    (tag == [80, 80, 0, 80]).then_some(())?;
+    (matches!(tag[0], 70 | 80) && tag == [tag[0], tag[0], 0, tag[0]]).then_some(())?;
     let visible = bits.bit()?;
     bits.bit_short()?;
     let rgb = bits.bit_long()? as u32;
@@ -260,4 +261,45 @@ pub(super) fn marker(data: &[u8], start: usize, end: usize) -> Option<Marker> {
             absolute: mode == 2,
         })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One component record with tag value `v`: visible, ByLayer, lineweight
+    /// -1, linetype scale 1.
+    fn record_bits(v: u8) -> Vec<u8> {
+        let mut bits = String::new();
+        let byte = |b: u8| format!("{b:08b}");
+        for tag in [v, v, 0, v] {
+            bits += &if tag == 0 { "10".to_string() } else { format!("01{}", byte(tag)) };
+        }
+        bits += "1"; // visible
+        bits += "10"; // BS 0
+        bits += "00";
+        for b in 0xC000_0000u32.to_le_bytes() {
+            bits += &byte(b);
+        }
+        bits += &byte(0); // name flags
+        bits += "00";
+        for b in (-1i16).to_le_bytes() {
+            bits += &byte(b);
+        }
+        bits += "01"; // BD 1.0
+        while bits.len() % 8 != 0 {
+            bits.push('0');
+        }
+        bits.as_bytes().chunks(8).map(|c| u8::from_str_radix(std::str::from_utf8(c).unwrap(), 2).unwrap()).collect()
+    }
+
+    #[test]
+    fn reads_2013_and_2018_component_tags() {
+        for v in [70, 80] {
+            let data = record_bits(v);
+            assert_eq!(records(&data, 0, data.len() * 8), vec![(true, Color::ByLayer, -1, 1.0)], "tag {v}");
+        }
+        let data = record_bits(60);
+        assert!(records(&data, 0, data.len() * 8).is_empty());
+    }
 }

@@ -2,6 +2,20 @@
 
 ### Unreleased
 
+- **Civil 3D 2013 drawings** - Style display components, assembly
+  attachments and alignment elements read in drawings Civil 3D 2013 wrote:
+  their component and attachment tags carry 70 where later releases carry
+  80, some alignments open each element with `BS 0`, and subassemblies and
+  assemblies keep one null handle fewer before the assembly and baseline
+  style. Alignments solve arcs of a given radius fitted between a line and
+  a fixed arc, arcs that leave a line and end at a stored point, lines
+  through two stored points, and elements stored as a chain of points.
+  Curves are walked with the exact chord of each step, so small radii no
+  longer drift off their end point. `corridor_baselines` returns a
+  corridor's feature line groups per baseline, and
+  `corridor_feature_line_groups` now covers every baseline instead of the
+  first.
+
 - **Civil 3D labels** - `label_stations` keeps a label at station 0, which
   the record stores in two bits, and negative stations before it, so a
   data band labels the alignment start and stations before it. Text

@@ -378,8 +378,9 @@ impl ArchEntityData {
         if self.civil_kind() != Some(CivilKind::Subassembly) {
             return None;
         }
-        // Body handles: two nulls, then the owning assembly.
-        self.decode().handles.get(2).copied().filter(|h| *h != 0)
+        // Body handles: two nulls (one in Civil 3D 2013), then the owning
+        // assembly.
+        self.decode().handles.iter().take(3).skip(1).copied().find(|h| *h != 0)
     }
 
     /// Baseline point of a Civil 3D assembly and where each of its
@@ -397,6 +398,17 @@ impl ArchEntityData {
         let handles = self.decode().handles;
         let (data, start, end) = self.main_stream()?;
         subassembly::assembly_layout(data, start, end, &handles, (min, max))
+    }
+
+    /// Feature lines of a Civil 3D corridor per baseline, each grouped by
+    /// point code in the order of the corridor's code list.
+    pub fn corridor_baselines(&self) -> Vec<Vec<Vec<Vec<(f64, crate::types::Vector3)>>>> {
+        if self.civil_kind() != Some(CivilKind::Corridor) {
+            return Vec::new();
+        }
+        self.main_stream()
+            .map(|(data, start, end)| corridor::baselines(data, start, end))
+            .unwrap_or_default()
     }
 
     /// Feature lines of a Civil 3D corridor grouped by point code, in the

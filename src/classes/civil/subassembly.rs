@@ -154,14 +154,20 @@ pub struct AssemblyLayout {
     pub attachments: Vec<Attachment>,
 }
 
-/// Attachment records each open with this tag; a record that holds a
-/// point index follows each one that does not.
-fn attachment_tag(bits: &mut Bits) -> Option<()> {
-    (bits.bit_short()? == 80 && bits.bit_short()? == 80 && bits.bit_short()? == 0).then_some(())?;
-    bits.bit()?.then_some(())?;
-    (bits.bit_long()? == 240).then_some(())?;
+/// Attachment records each open with this tag (`v` is 70 in Civil 3D
+/// 2013 drawings, 80 from 2018); a record that holds a point index follows
+/// each one that does not. Returns `v`.
+fn attachment_tag(bits: &mut Bits) -> Option<i16> {
+    let v = bits.bit_short()?;
+    (matches!(v, 70 | 80) && bits.bit_short()? == v && bits.bit_short()? == 0).then_some(())?;
+    // `B 1, BL 240` from 2018; Civil 3D 2013 writes `B 0` and `00`
+    // followed by the byte 0x40 in the same place.
+    let set = bits.bit()?;
+    let code = (u8::from(bits.bit()?) << 1) | u8::from(bits.bit()?);
+    let byte = bits.raw_short_byte()?;
+    (matches!((set, code, byte), (true, 1, 240) | (false, 0, 0x40))).then_some(())?;
     let flags = [bits.bit()?, bits.bit()?, bits.bit()?, bits.bit()?, bits.bit()?];
-    (flags == [false, false, true, false, false]).then_some(())
+    (flags == [false, false, true, false, false]).then_some(v)
 }
 
 /// Parent point indices in subassembly order.
@@ -169,11 +175,11 @@ fn attachment_points(data: &[u8], start: usize, end: usize) -> Vec<u32> {
     let mut points = Vec::new();
     for pos in start..end {
         let mut bits = Bits::new(data, pos, end);
-        if attachment_tag(&mut bits).is_none() {
+        let Some(tag) = attachment_tag(&mut bits) else {
             continue;
-        }
+        };
         let body = bits.pos;
-        if bits.bit_short() == Some(80) {
+        if bits.bit_short() == Some(tag) {
             continue;
         }
         bits.pos = body;
@@ -201,9 +207,10 @@ pub(super) fn assembly_layout(
         let inside = x > min.x && x < max.x && y > min.y && y < max.y;
         (inside && bits.bit_double()? == 0.0).then(|| Vector3::new(x, y, 0.0))
     })?;
-    // Body handles: two nulls, the baseline style, (subassembly, parent)
-    // pairs, then the drawing's Civil root.
-    let pairs = handles.get(3..handles.len().checked_sub(1)?)?;
+    // Body handles: two nulls (one in Civil 3D 2013), the baseline style,
+    // (subassembly, parent) pairs, then the drawing's Civil root.
+    let style = handles.iter().take(3).position(|h| *h != 0)?;
+    let pairs = handles.get(style + 1..handles.len().checked_sub(1)?)?;
     let points = attachment_points(data, start, end);
     if pairs.len() % 2 != 0 || pairs.len() / 2 != points.len() {
         return None;
