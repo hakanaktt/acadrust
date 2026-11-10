@@ -1,6 +1,7 @@
 //! What `CadDocument::add_entity` does with each entity it is given: the
 //! handle it gets, the block record that lists it, and the order the document
-//! keeps.
+//! keeps. Reserving room first with `CadDocument::reserve_entities` must not
+//! change any of it.
 
 use acadrust::entities::{AttributeEntity, EntityType, Line};
 use acadrust::tables::BlockRecord;
@@ -22,6 +23,29 @@ fn add_block(doc: &mut CadDocument, name: &str) -> Handle {
     let handle = record.handle;
     doc.block_records.add(record).unwrap();
     handle
+}
+
+/// Everything `add_entity` decides, in the order the document keeps it.
+#[derive(Debug, PartialEq)]
+struct Layout {
+    /// `(handle, owner)` of every entity, in document order.
+    entities: Vec<(Handle, Handle)>,
+    /// `(record name, listed entity handles)` of every block record.
+    records: Vec<(String, Vec<Handle>)>,
+}
+
+fn layout(doc: &CadDocument) -> Layout {
+    Layout {
+        entities: doc
+            .entities()
+            .map(|e| (e.common().handle, e.common().owner_handle))
+            .collect(),
+        records: doc
+            .block_records
+            .iter()
+            .map(|r| (r.name.clone(), r.entity_handles.clone()))
+            .collect(),
+    }
 }
 
 /// A mixed run of entities: model space, paper space, two named blocks, an
@@ -52,9 +76,18 @@ fn add_mixed(doc: &mut CadDocument, a: Handle, b: Handle, range: Range<usize>) -
 }
 
 fn mixed_document(n: usize) -> (CadDocument, Vec<Handle>) {
+    mixed_document_reserving(n, None)
+}
+
+/// [`mixed_document`], with `reserve` passed to `reserve_entities` after the
+/// block records are added and before the first entity.
+fn mixed_document_reserving(n: usize, reserve: Option<usize>) -> (CadDocument, Vec<Handle>) {
     let mut doc = CadDocument::with_version(DxfVersion::AC1032);
     let a = add_block(&mut doc, "A");
     let b = add_block(&mut doc, "B");
+    if let Some(additional) = reserve {
+        doc.reserve_entities(additional);
+    }
     let handles = add_mixed(&mut doc, a, b, 0..n);
     (doc, handles)
 }
@@ -118,4 +151,45 @@ fn add_entity_keeps_order_and_handles_of_a_long_run() {
     sorted.sort();
     sorted.dedup();
     assert_eq!(sorted.len(), handles.len(), "duplicate handles");
+}
+
+#[test]
+fn reserve_entities_leaves_the_same_document() {
+    const N: usize = 20_000;
+    let (plain, plain_handles) = mixed_document(N);
+    let expected = layout(&plain);
+    // Exactly enough, too little, far too much, and nothing at all.
+    for reserve in [N, N / 3, N * 4, 0] {
+        let (reserved, handles) = mixed_document_reserving(N, Some(reserve));
+        assert_eq!(handles, plain_handles, "reserve {reserve}");
+        assert_eq!(layout(&reserved), expected, "reserve {reserve}");
+        for handle in &handles {
+            assert_eq!(
+                reserved.get_entity(*handle).map(|e| e.common().handle),
+                Some(*handle),
+                "reserve {reserve}"
+            );
+        }
+    }
+}
+
+#[test]
+fn reserve_entities_on_a_document_that_has_entities() {
+    let mut doc = CadDocument::with_version(DxfVersion::AC1032);
+    let a = add_block(&mut doc, "A");
+    let b = add_block(&mut doc, "B");
+    let mut handles = add_mixed(&mut doc, a, b, 0..1_000);
+    let mut twin = CadDocument::with_version(DxfVersion::AC1032);
+    let ta = add_block(&mut twin, "A");
+    let tb = add_block(&mut twin, "B");
+    let mut twin_handles = add_mixed(&mut twin, ta, tb, 0..1_000);
+
+    doc.reserve_entities(5_000);
+    handles.extend(add_mixed(&mut doc, a, b, 1_000..6_000));
+    twin_handles.extend(add_mixed(&mut twin, ta, tb, 1_000..6_000));
+
+    assert_eq!(handles, twin_handles);
+    assert_eq!(layout(&doc), layout(&twin));
+    let in_order: Vec<Handle> = doc.entities().map(|e| e.common().handle).collect();
+    assert_eq!(in_order, handles);
 }

@@ -3527,6 +3527,16 @@ impl CadDocument {
         Ok(handle)
     }
 
+    /// Reserve room for at least `additional` more entities, so a run of
+    /// [`add_entity`](Self::add_entity) calls does not grow the entity storage
+    /// and the handle index step by step.
+    ///
+    /// Only capacity changes: the document, and what `add_entity` does with
+    /// each entity afterwards, are the same as without the call.
+    pub fn reserve_entities(&mut self, additional: usize) {
+        self.reserve_loaded_entities(additional);
+    }
+
     /// Reserve and append entities decoded by the DWG loader without routing
     /// each one through a linear block-record scan. The loader rebuilds block
     /// membership once after all owner handles are available.
