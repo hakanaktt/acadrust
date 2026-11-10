@@ -6129,6 +6129,126 @@ mod tests {
         r.write_cm_true_color(&Color::Index(5));
         assert_eq!(cell_main_stream(DxfVersion::AC1015, &cell), r.to_bytes_snapshot());
     }
+
+    // ── legacy TABLE cell overrides below R2010 ──
+    //
+    // ODA's Open Design Specification (20.4.96.1): each edge (top, right,
+    // bottom, left) has a color bit 0x40 << i, a line weight bit 0x400 << i
+    // and a visibility bit 0x4000 << i; an edge set in the virtual edge byte
+    // (RC 178) carries no border data, and ODA reads an edge's data only when
+    // the edge is set in the cell's edge flags (RC 172).
+
+    /// A legacy text cell "x" with these overrides, up to the style flags.
+    fn overridden_cell(flags: i32, virtual_edge: i16) -> TableCell {
+        let mut cell = TableCell::new();
+        cell.contents.push(CellContent::text("x"));
+        cell.virtual_edge = virtual_edge;
+        let mut style = CellStyle::new();
+        style.override_flags = flags;
+        style.legacy_override_bits = true;
+        cell.style = Some(style);
+        cell
+    }
+
+    /// The expected bits of `overridden_cell` up to and including the virtual
+    /// edge byte, with these edge flags.
+    fn overridden_head(
+        version: DxfVersion,
+        edge_flags: u8,
+        flags: i32,
+        virtual_edge: u8,
+    ) -> DwgBitWriter {
+        let mut r = reference(version);
+        r.write_bit_short(1); // text cell
+        r.write_byte(edge_flags);
+        r.write_bit(false); // merged
+        r.write_bit(false); // auto fit
+        r.write_bit_long(1); // merge width
+        r.write_bit_long(1); // merge height
+        r.write_bit_double(0.0); // rotation
+        r.write_variable_text("x");
+        r.write_bit(true);
+        r.write_bit_long(flags);
+        r.write_byte(virtual_edge);
+        r
+    }
+
+    #[test]
+    fn cell_edge_visibility_is_written_under_its_own_bit() {
+        // Text height, then the visibility of the top, right and left edges,
+        // with no line weight.
+        let flags = 0x20 | 0x4000 | 0x8000 | 0x20000;
+        let mut cell = overridden_cell(flags, 0);
+        let style = cell.style.as_mut().unwrap();
+        style.text_height = 2.5;
+        style.top_border.invisible = true;
+        style.left_border.invisible = true;
+        let mut r = overridden_head(DxfVersion::AC1018, 0x0B, flags, 0);
+        r.write_bit_double(2.5);
+        r.write_bit_short(0); // top: invisible
+        r.write_bit_short(1); // right: visible
+        r.write_bit_short(0); // left: invisible
+        assert_eq!(
+            cell_main_stream(DxfVersion::AC1018, &cell),
+            r.to_bytes_snapshot()
+        );
+    }
+
+    #[test]
+    fn cell_line_weight_is_written_without_visibility() {
+        let flags = 0x400 | 0x1000; // top and bottom line weights
+        let mut cell = overridden_cell(flags, 0);
+        let style = cell.style.as_mut().unwrap();
+        style.top_border.line_weight = LineWeight::from_value(35);
+        style.bottom_border.line_weight = LineWeight::from_value(50);
+        let mut r = overridden_head(DxfVersion::AC1018, 0x05, flags, 0);
+        r.write_bit_short(35);
+        r.write_bit_short(50);
+        assert_eq!(
+            cell_main_stream(DxfVersion::AC1018, &cell),
+            r.to_bytes_snapshot()
+        );
+    }
+
+    #[test]
+    fn virtual_edge_border_data_is_not_written() {
+        // Color bits on the top and left edges, the top edge is virtual: only
+        // the left color is written, and only the left edge is flagged.
+        let flags = 0x40 | 0x200;
+        let mut cell = overridden_cell(flags, 0x01);
+        let style = cell.style.as_mut().unwrap();
+        style.top_border.color = Color::Index(5);
+        style.left_border.color = Color::Index(3);
+        let mut r = overridden_head(DxfVersion::AC1018, 0x08, flags, 0x01);
+        r.write_cm_true_color(&Color::Index(3));
+        assert_eq!(
+            cell_main_stream(DxfVersion::AC1018, &cell),
+            r.to_bytes_snapshot()
+        );
+    }
+
+    #[test]
+    fn edges_with_border_data_are_set_in_the_edge_flags() {
+        // Top and bottom colors on a cell whose edge flags are 0 (as a cell
+        // read from DXF may come): both edges are flagged, the stored flags
+        // are kept.
+        let flags = 0x40 | 0x100;
+        for (stored, written) in [(0x00, 0x05), (0x02, 0x07)] {
+            let mut cell = overridden_cell(flags, 0);
+            cell.edge_flags = stored;
+            let style = cell.style.as_mut().unwrap();
+            style.top_border.color = Color::Index(5);
+            style.bottom_border.color = Color::Index(3);
+            let mut r = overridden_head(DxfVersion::AC1018, written, flags, 0);
+            r.write_cm_true_color(&Color::Index(5));
+            r.write_cm_true_color(&Color::Index(3));
+            assert_eq!(
+                cell_main_stream(DxfVersion::AC1018, &cell),
+                r.to_bytes_snapshot(),
+                "stored edge flags {stored:#x}"
+            );
+        }
+    }
 }
 
 #[cfg(test)]
