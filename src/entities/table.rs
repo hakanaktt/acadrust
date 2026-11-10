@@ -1126,26 +1126,26 @@ impl TableCell {
                 if p.contains(P::BACKGROUND_COLOR) && !style.fill_enabled {
                     style.background_color = Color::ByBlock;
                 }
-                for (color_bit, weight_bit, edge, border) in [
-                    (0x40, 0x400, CellEdgeFlags::TOP, &mut style.top_border),
-                    (0x80, 0x800, CellEdgeFlags::RIGHT, &mut style.right_border),
-                    (
-                        0x100,
-                        0x1000,
-                        CellEdgeFlags::BOTTOM,
-                        &mut style.bottom_border,
-                    ),
-                    (0x200, 0x2000, CellEdgeFlags::LEFT, &mut style.left_border),
-                ] {
-                    if own.override_flags & color_bit != 0 {
-                        border.override_flags |= BorderPropertyFlags::COLOR;
-                    }
-                    if own.override_flags & weight_bit != 0 {
-                        border.override_flags |=
-                            BorderPropertyFlags::LINE_WEIGHT | BorderPropertyFlags::INVISIBILITY;
-                    }
-                    if own.override_flags & (color_bit | weight_bit) != 0 {
-                        style.applied_border_edges |= edge;
+                // Each edge's colour, line weight and visibility have their
+                // own legacy bits (0x40, 0x400, 0x4000, shifted by the edge).
+                for (i, (edge, border)) in [
+                    (CellEdgeFlags::TOP, &mut style.top_border),
+                    (CellEdgeFlags::RIGHT, &mut style.right_border),
+                    (CellEdgeFlags::BOTTOM, &mut style.bottom_border),
+                    (CellEdgeFlags::LEFT, &mut style.left_border),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    for (bit, property) in [
+                        (0x40 << i, BorderPropertyFlags::COLOR),
+                        (0x400 << i, BorderPropertyFlags::LINE_WEIGHT),
+                        (0x4000 << i, BorderPropertyFlags::INVISIBILITY),
+                    ] {
+                        if own.override_flags & bit != 0 {
+                            border.override_flags |= property;
+                            style.applied_border_edges |= edge;
+                        }
                     }
                 }
                 style.override_flags = (p & !CONTENT).bits() as i32;
@@ -2966,10 +2966,14 @@ pub fn cell_override_bit(code: i32) -> Option<i32> {
         65 => 0x80,
         66 => 0x100,
         68 => 0x200,
-        279 | 289 => 0x400,
-        275 | 285 => 0x800,
-        276 | 286 => 0x1000,
-        278 | 288 => 0x2000,
+        279 => 0x400,
+        275 => 0x800,
+        276 => 0x1000,
+        278 => 0x2000,
+        289 => 0x4000,
+        285 => 0x8000,
+        286 => 0x10000,
+        288 => 0x20000,
         _ => return None,
     })
 }

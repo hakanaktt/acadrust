@@ -3918,9 +3918,8 @@ fn read_table_cell_data(
         _ => {}
     }
 
-    // Per-cell style override block (each conditional gated on the override
-    // flags; the grid line-weight bit gates both the weight and the visibility
-    // read, mirroring the source exactly to stay byte-aligned).
+    // Per-cell style override block: each field is present only when its bit
+    // is set in the override flags.
     if reader.read_bit() {
         let flags = reader.read_bit_long();
         let mut style = CellStyle::new();
@@ -3948,20 +3947,28 @@ fn read_table_cell_data(
         if flags & 0x20 != 0 {
             style.text_height = reader.read_bit_double();
         }
-        // Per edge: colour, line weight, visibility.
-        for (color_bit, lw_bit, border) in [
-            (0x40, 0x400, &mut style.top_border),
-            (0x80, 0x800, &mut style.right_border),
-            (0x100, 0x1000, &mut style.bottom_border),
-            (0x200, 0x2000, &mut style.left_border),
-        ] {
-            if flags & color_bit != 0 {
+        // Per edge (top, right, bottom, left): colour, line weight and
+        // visibility, each under its own bit. A virtual edge (the adjacent
+        // cell holds the shared edge) has no data, whatever its bits say.
+        for (edge, border) in [
+            &mut style.top_border,
+            &mut style.right_border,
+            &mut style.bottom_border,
+            &mut style.left_border,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if cell.virtual_edge & (1 << edge) != 0 {
+                continue;
+            }
+            if flags & (0x40 << edge) != 0 {
                 border.color = reader.read_cm_true_color();
             }
-            if flags & lw_bit != 0 {
+            if flags & (0x400 << edge) != 0 {
                 border.line_weight = crate::types::LineWeight::from_value(reader.read_bit_short());
             }
-            if flags & lw_bit != 0 {
+            if flags & (0x4000 << edge) != 0 {
                 border.invisible = reader.read_bit_short() == 0;
             }
         }

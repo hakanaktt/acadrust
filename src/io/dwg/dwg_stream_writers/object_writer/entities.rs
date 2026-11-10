@@ -3760,7 +3760,19 @@ impl<'a> DwgObjectWriter<'a> {
             CellType::Text => 1,
         };
         self.writer.write_bit_short(cell_type);
-        self.writer.write_byte(cell.edge_flags);
+        // ODA reads an edge's override data (colour 0x40, line weight 0x400,
+        // visibility 0x4000, shifted by the edge) only when the edge is set
+        // here.
+        let override_flags = cell
+            .style
+            .as_ref()
+            .map_or(0, |style| style.legacy_override_flags());
+        let edges_with_data = (0..4)
+            .filter(|edge| {
+                cell.virtual_edge & (1 << edge) == 0 && override_flags & (0x4440 << edge) != 0
+            })
+            .fold(0u8, |edges, edge| edges | (1 << edge));
+        self.writer.write_byte(cell.edge_flags | edges_with_data);
         self.writer.write_bit(cell.merged != 0);
         self.writer.write_bit(cell.auto_fit);
         self.writer.write_bit_long(cell.merge_width);
@@ -3827,17 +3839,27 @@ impl<'a> DwgObjectWriter<'a> {
             if flags & 0x20 != 0 {
                 self.writer.write_bit_double(style.text_height);
             }
-            for (color_bit, lw_bit, border) in [
-                (0x40, 0x400, &style.top_border),
-                (0x80, 0x800, &style.right_border),
-                (0x100, 0x1000, &style.bottom_border),
-                (0x200, 0x2000, &style.left_border),
-            ] {
-                if flags & color_bit != 0 {
+            // Per edge (top, right, bottom, left): colour, line weight and
+            // visibility, each under its own bit; none for a virtual edge.
+            for (edge, border) in [
+                &style.top_border,
+                &style.right_border,
+                &style.bottom_border,
+                &style.left_border,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                if cell.virtual_edge & (1 << edge) != 0 {
+                    continue;
+                }
+                if flags & (0x40 << edge) != 0 {
                     self.writer.write_cm_true_color(&border.color);
                 }
-                if flags & lw_bit != 0 {
+                if flags & (0x400 << edge) != 0 {
                     self.writer.write_bit_short(border.line_weight.as_i16());
+                }
+                if flags & (0x4000 << edge) != 0 {
                     self.writer.write_bit_short((!border.invisible) as i16);
                 }
             }
