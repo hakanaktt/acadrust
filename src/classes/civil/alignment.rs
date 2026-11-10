@@ -21,12 +21,15 @@
 //! | 257/0 | 2RD start, 2RD end | fixed line |
 //! | 257/5 | BD length | line continuing the previous element |
 //! | 257/10 | BD, BS, BS, 2BD, BD, BD, 2BD first point, BL, 3 x BS, 2BD second point | line through two points |
+//! | 258/0 | 2RD centre, BD radius | whole circle |
+//! | 258/1 | 2RD centre, 2RD start | whole circle |
 //! | 258/2 | 2RD start, mid, end | fixed arc |
 //! | 258/21 | BD radius, BD length, B clockwise | arc continuing the previous element |
 //! | 258/13 | BD radius, 2RD end | arc from the previous line, through the end point |
+//! | 258/15 | BD radius, 2RD start | arc from the start point onto the next line |
 //! | 258/29, 258/30 | BD radius | arc fitted between two lines, or a line and a fixed arc |
-//! | 259/0 | BL, B cw, 2RD start, 2RD direction, BD length, BD radius | spiral from a stored point |
-//! | 259/1 | BL, B cw, BD radius, BD length | spiral from the previous curvature to zero |
+//! | 259/0 | BL type, B cw, 2RD start, 2RD direction, BD length, BD radius | spiral from a stored point |
+//! | 259/1 | BL type, B cw, BD radius, BD length | spiral from the previous curvature to zero |
 //! | 260/0 | BL, BD spiral in, BD radius, BD spiral out | spiral-curve-spiral fitted between two lines |
 //! | 260/6 | BL, BD spiral, BD radius, BD arc length, B cw | spiral from the previous curvature, then arc |
 //! | 260/7 | BL, BD radius, BD arc length, BD spiral, B cw | arc then spiral ending at the next line's first point |
@@ -71,6 +74,10 @@ pub enum AlignmentElementKind {
     FreeArc { radius: f64 },
     /// Arc continuing the previous line, ending at a stored point.
     FloatingArcToPoint { radius: f64, end: Vector2 },
+    /// Arc from a stored point, ending tangent to the next line.
+    FloatingArcFromPoint { radius: f64, start: Vector2 },
+    /// Whole circle; `start` when the record stores one.
+    Circle { center: Vector2, radius: f64, start: Option<Vector2> },
     /// Spiral from a stored point and direction, curvature rising to `1/radius`.
     SpiralIn {
         start: Vector2,
@@ -78,9 +85,15 @@ pub enum AlignmentElementKind {
         length: f64,
         radius: f64,
         clockwise: bool,
+        shape: SpiralShape,
     },
     /// Spiral continuing the previous element, curvature falling to zero.
-    SpiralOut { radius: f64, length: f64, clockwise: bool },
+    SpiralOut {
+        radius: f64,
+        length: f64,
+        clockwise: bool,
+        shape: SpiralShape,
+    },
     /// Spiral-curve-spiral fitted between the previous and next lines.
     FreeSpiralCurveSpiral {
         spiral_in: f64,
@@ -124,6 +137,41 @@ pub enum AlignmentElementKind {
     Points { points: Vec<Vector2> },
     /// Element kind or constraint this crate does not decode.
     Other { element_type: i32, constraint: Option<i32> },
+}
+
+/// How a spiral's curvature runs from zero to `1/radius` over its length.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum SpiralShape {
+    /// Linear in arc length (type 256), and types not decoded.
+    #[default]
+    Clothoid,
+    /// `(1 - cos(pi x/X)) / 2` against the tangent offset (257).
+    SineHalfWave,
+    /// `y = x^3 / (6 R X)`, with `X + X^3 / (40 R^2) = L` (258).
+    JapaneseCubic,
+    /// `3t^2 - 2t^3` of arc length (259).
+    Bloss,
+    /// `t - sin(2 pi t) / (2 pi)` of arc length (261).
+    Sinusoidal,
+    /// `y = x^3 / (6 R L)` to arc length `L` (260).
+    CubicParabola,
+    /// `2t^2`, then `1 - 2(1-t)^2`, of arc length (262).
+    Biquadratic,
+}
+
+impl SpiralShape {
+    fn from_code(code: i32) -> Self {
+        match code {
+            257 => Self::SineHalfWave,
+            258 => Self::JapaneseCubic,
+            259 => Self::Bloss,
+            260 => Self::CubicParabola,
+            261 => Self::Sinusoidal,
+            262 => Self::Biquadratic,
+            _ => Self::Clothoid,
+        }
+    }
 }
 
 /// Design elements found in a main stream, keyed by their own ids.
@@ -226,6 +274,24 @@ fn read_element(bits: &mut Bits) -> Option<AlignmentElement> {
             length: bits.bit_double()?,
             clockwise: bits.bit()?,
         },
+        (258, Some(0)) => AlignmentElementKind::Circle {
+            center: point(bits)?,
+            radius: bits.bit_double()?,
+            start: None,
+        },
+        (258, Some(1)) => {
+            let center = point(bits)?;
+            let start = point(bits)?;
+            AlignmentElementKind::Circle {
+                center,
+                radius: center.distance(&start),
+                start: Some(start),
+            }
+        }
+        (258, Some(15)) => AlignmentElementKind::FloatingArcFromPoint {
+            radius: bits.bit_double()?,
+            start: point(bits)?,
+        },
         (258, Some(13)) => AlignmentElementKind::FloatingArcToPoint {
             radius: bits.bit_double()?,
             end: point(bits)?,
@@ -234,7 +300,7 @@ fn read_element(bits: &mut Bits) -> Option<AlignmentElement> {
             radius: bits.bit_double()?,
         },
         (259, Some(code @ (0 | 1))) => {
-            bits.bit_long()?;
+            let shape = SpiralShape::from_code(bits.bit_long()?);
             let clockwise = bits.bit()?;
             if code == 0 {
                 AlignmentElementKind::SpiralIn {
@@ -243,12 +309,14 @@ fn read_element(bits: &mut Bits) -> Option<AlignmentElement> {
                     length: bits.bit_double()?,
                     radius: bits.bit_double()?,
                     clockwise,
+                    shape,
                 }
             } else {
                 AlignmentElementKind::SpiralOut {
                     radius: bits.bit_double()?,
                     length: bits.bit_double()?,
                     clockwise,
+                    shape,
                 }
             }
         }
@@ -337,8 +405,12 @@ fn read_element(bits: &mut Bits) -> Option<AlignmentElement> {
             positive(*radius) && positive(*length)
         }
         AlignmentElementKind::FreeArc { radius } => positive(*radius),
-        AlignmentElementKind::FloatingArcToPoint { radius, end } => {
-            positive(*radius) && end.x.is_finite() && end.y.is_finite()
+        AlignmentElementKind::FloatingArcToPoint { radius, end: p }
+        | AlignmentElementKind::FloatingArcFromPoint { radius, start: p } => {
+            positive(*radius) && p.x.is_finite() && p.y.is_finite()
+        }
+        AlignmentElementKind::Circle { center, radius, .. } => {
+            positive(*radius) && center.x.is_finite() && center.y.is_finite()
         }
         AlignmentElementKind::Points { points } => {
             points.len() > 1 && points.iter().all(|p| p.x.is_finite() && p.y.is_finite())
@@ -773,10 +845,11 @@ fn solve_run(run: &[&AlignmentElement], out: &mut Vec<Vec<Vector2>>) {
                 radius,
                 length,
                 clockwise,
+                shape,
             } => {
                 attach(&mut points, &mut pending, &mut state);
                 let k = curvature(*radius, *clockwise);
-                state.map(|s| pieces(s, &[(k, 0.0, *length)]))
+                state.map(|s| spiral(s, k, false, *length, *shape))
             }
             AlignmentElementKind::SpiralIn {
                 start,
@@ -784,6 +857,7 @@ fn solve_run(run: &[&AlignmentElement], out: &mut Vec<Vec<Vector2>>) {
                 length,
                 radius,
                 clockwise,
+                shape,
             } => {
                 close(&mut points, &mut pending, *start);
                 let begin = State {
@@ -791,7 +865,7 @@ fn solve_run(run: &[&AlignmentElement], out: &mut Vec<Vec<Vector2>>) {
                     heading: heading(*d),
                     curvature: 0.0,
                 };
-                Some(pieces(begin, &[(0.0, curvature(*radius, *clockwise), *length)]))
+                Some(spiral(begin, curvature(*radius, *clockwise), true, *length, *shape))
             }
             AlignmentElementKind::FixedArc { start, mid, end } => {
                 close(&mut points, &mut pending, *start);
@@ -949,6 +1023,44 @@ fn solve_run(run: &[&AlignmentElement], out: &mut Vec<Vec<Vector2>>) {
                     .zip(next.and_then(line_carrier))
                     .and_then(|(s, carrier)| reverse_curves(s, carrier, *first, *second, *first_arc))
             }
+            AlignmentElementKind::FloatingArcFromPoint { radius, start } => {
+                close(&mut points, &mut pending, *start);
+                // Solved backwards: an arc leaving the next line against its
+                // direction and reaching the start point, then reversed.
+                next.and_then(line_carrier).and_then(|(b, v)| {
+                    let back = Vector2::new(-v.x, -v.y);
+                    let (touch, mut q, _) = arc_from_line_to_point_any(b, back, *radius, *start)?;
+                    q.reverse();
+                    Some((
+                        q,
+                        State {
+                            point: touch,
+                            heading: heading(v),
+                            curvature: 0.0,
+                        },
+                    ))
+                })
+            }
+            AlignmentElementKind::Circle { center, radius, start } => {
+                // ponytail: a circle stored by centre and radius keeps no
+                // start; it is drawn from its west point, which only moves
+                // where its stations begin.
+                let from = start.unwrap_or(Vector2::new(center.x - radius, center.y));
+                close(&mut points, &mut pending, from);
+                let a0 = (from.y - center.y).atan2(from.x - center.x);
+                let n = ((TAU * radius / STEP).ceil() as usize).clamp(16, 20000);
+                let q: Vec<Vector2> = (0..=n)
+                    .map(|j| *center + direction(a0 + TAU * j as f64 / n as f64) * *radius)
+                    .collect();
+                Some((
+                    q,
+                    State {
+                        point: from,
+                        heading: a0 + PI / 2.0,
+                        curvature: 1.0 / radius,
+                    },
+                ))
+            }
             AlignmentElementKind::Points { points: q } => {
                 close(&mut points, &mut pending, q[0]);
                 let n = q.len();
@@ -1047,6 +1159,161 @@ fn three_point_arc(a: Vector2, b: Vector2, c: Vector2) -> Option<(Vec<Vector2>, 
     Some((points, end))
 }
 
+/// A spiral of `shape` from `s`: curvature rising from zero to `k`
+/// (`inward`), or falling from `k` to zero.
+fn spiral(s: State, k: f64, inward: bool, length: f64, shape: SpiralShape) -> (Vec<Vector2>, State) {
+    use std::f64::consts::PI;
+    // Integral over [0, t] of the curvature fraction, for shapes defined
+    // along the arc.
+    let along: Option<fn(f64) -> f64> = match shape {
+        SpiralShape::Clothoid => None,
+        SpiralShape::Bloss => Some(|t| t.powi(3) - t.powi(4) / 2.0),
+        SpiralShape::Sinusoidal => Some(|t| t * t / 2.0 + ((2.0 * PI * t).cos() - 1.0) / (4.0 * PI * PI)),
+        SpiralShape::Biquadratic => Some(|t| {
+            if t <= 0.5 {
+                2.0 * t.powi(3) / 3.0
+            } else {
+                1.0 / 12.0 + (t - 0.5) + 2.0 / 3.0 * ((1.0 - t).powi(3) - 0.125)
+            }
+        }),
+        _ => {
+            return offset_spiral(s, k, inward, length, shape);
+        }
+    };
+    let Some(integral) = along else {
+        let (k0, k1) = if inward { (s.curvature, k) } else { (k, 0.0) };
+        return pieces(s, &[(k0, k1, length)]);
+    };
+    // The shapes are symmetric about mid-length, so falling curvature is
+    // `k (1 - f(t))`.
+    let heading_at = |d: f64| {
+        let t = d / length;
+        if inward {
+            s.heading + k * length * integral(t)
+        } else {
+            s.heading + k * d - k * length * integral(t)
+        }
+    };
+    let n = ((length / STEP).ceil() as usize).clamp(2, 20000);
+    let ds = length / n as f64;
+    let mut points = Vec::with_capacity(n + 1);
+    let mut p = s.point;
+    points.push(p);
+    for i in 0..n {
+        let (h0, h1) = (heading_at(i as f64 * ds), heading_at((i + 1) as f64 * ds));
+        let half = (h1 - h0) / 2.0;
+        let chord = if half.abs() < 1e-12 { ds } else { ds * half.sin() / half };
+        p = p + direction(heading_at((i as f64 + 0.5) * ds)) * chord;
+        points.push(p);
+    }
+    let end = State {
+        point: p,
+        heading: heading_at(length),
+        curvature: if inward { k } else { 0.0 },
+    };
+    (points, end)
+}
+
+/// Spirals given as a tangent offset `y(x)` from the tangent at their
+/// zero-curvature end, out to `x = X`.
+fn offset_spiral(s: State, k: f64, inward: bool, length: f64, shape: SpiralShape) -> (Vec<Vector2>, State) {
+    use std::f64::consts::PI;
+    let r = 1.0 / k.abs();
+    let arc = |slope: &dyn Fn(f64) -> f64, x_end: f64| {
+        let n = 2000;
+        (0..n)
+            .map(|i| {
+                let x = (i as f64 + 0.5) * x_end / n as f64;
+                (1.0 + slope(x).powi(2)).sqrt() * x_end / n as f64
+            })
+            .sum::<f64>()
+    };
+    // `X` from the shape's rule; `y` and its slope.
+    let (x_end, offset, slope): (f64, Box<dyn Fn(f64) -> f64>, Box<dyn Fn(f64) -> f64>) = match shape {
+        SpiralShape::JapaneseCubic => {
+            // X + X^3 / (40 R^2) = L
+            let mut x = length;
+            for _ in 0..50 {
+                x -= (x + x.powi(3) / (40.0 * r * r) - length) / (1.0 + 3.0 * x * x / (40.0 * r * r));
+            }
+            (x, Box::new(move |t| t.powi(3) / (6.0 * r * x)), Box::new(move |t| t * t / (2.0 * r * x)))
+        }
+        SpiralShape::CubicParabola => {
+            let slope = move |t: f64| t * t / (2.0 * r * length);
+            let (mut lo, mut hi) = (0.5 * length, length);
+            for _ in 0..60 {
+                let mid = (lo + hi) / 2.0;
+                if arc(&slope, mid) < length { lo = mid } else { hi = mid }
+            }
+            (lo, Box::new(move |t| t.powi(3) / (6.0 * r * length)), Box::new(slope))
+        }
+        _ => {
+            // Sine half-wave: curvature (1 - cos(pi x/X)) / (2R) against x.
+            // ponytail: X is taken so the arc is `L` long; one sample puts
+            // Civil 3D's X 0.2% shorter, so its end can sit ~0.4 off on a
+            // 200-long spiral. Pin the rule down with more samples.
+            let curve = move |x_end: f64| {
+                move |t: f64| (t - x_end / PI * (PI * t / x_end).sin()) / (2.0 * r)
+            };
+            let (mut lo, mut hi) = (0.5 * length, length);
+            for _ in 0..60 {
+                let mid = (lo + hi) / 2.0;
+                if arc(&curve(mid), mid) < length { lo = mid } else { hi = mid }
+            }
+            let x = lo;
+            (
+                x,
+                Box::new(move |t| (t * t / 2.0 - x * x / (PI * PI) * (1.0 - (PI * t / x).cos())) / (2.0 * r)),
+                Box::new(curve(x)),
+            )
+        }
+    };
+    let turn = k.signum();
+    let n = ((length / STEP).ceil() as usize).clamp(2, 20000);
+    // Local points from the zero-curvature end, turning `turn`.
+    let local: Vec<Vector2> = (0..=n)
+        .map(|i| {
+            let x = x_end * i as f64 / n as f64;
+            Vector2::new(x, turn * offset(x))
+        })
+        .collect();
+    let end_angle = turn * slope(x_end).atan();
+    let place = |points: Vec<Vector2>, origin: Vector2, from: Vector2, rotate: f64| -> Vec<Vector2> {
+        let (c, si) = (rotate.cos(), rotate.sin());
+        points
+            .into_iter()
+            .map(|q| {
+                let d = q - from;
+                origin + Vector2::new(d.x * c - d.y * si, d.x * si + d.y * c)
+            })
+            .collect()
+    };
+    if inward {
+        let points = place(local, s.point, Vector2::new(0.0, 0.0), s.heading);
+        let end = State {
+            point: *points.last().unwrap(),
+            heading: s.heading + end_angle,
+            curvature: k,
+        };
+        (points, end)
+    } else {
+        // Travelled backwards from its curved end: the same curve turning
+        // the other way, reversed.
+        let mirrored: Vec<Vector2> = local.iter().rev().map(|q| Vector2::new(q.x, -q.y)).collect();
+        let from = mirrored[0];
+        // Direction of travel at the curved end, leaving towards x = 0:
+        // back along the mirrored curve's tangent there.
+        let leave = std::f64::consts::PI - end_angle;
+        let points = place(mirrored, s.point, from, s.heading - leave);
+        let end = State {
+            point: *points.last().unwrap(),
+            heading: s.heading - leave + std::f64::consts::PI,
+            curvature: 0.0,
+        };
+        (points, end)
+    }
+}
+
 /// Left normal of a unit direction.
 fn left(u: Vector2) -> Vector2 {
     Vector2::new(-u.y, u.x)
@@ -1056,6 +1323,15 @@ fn left(u: Vector2) -> Vector2 {
 /// through `end`; the shorter of the arcs that do. Returns where it leaves
 /// the line, its points and its end state.
 fn arc_from_line_to_point(p: Vector2, u: Vector2, radius: f64, end: Vector2) -> Option<(Vector2, Vec<Vector2>, State)> {
+    arc_leaving_line(p, u, radius, end, true)
+}
+
+/// As [`arc_from_line_to_point`], leaving the line anywhere along it.
+fn arc_from_line_to_point_any(p: Vector2, u: Vector2, radius: f64, end: Vector2) -> Option<(Vector2, Vec<Vector2>, State)> {
+    arc_leaving_line(p, u, radius, end, false)
+}
+
+fn arc_leaving_line(p: Vector2, u: Vector2, radius: f64, end: Vector2, after_p: bool) -> Option<(Vector2, Vec<Vector2>, State)> {
     let mut best: Option<(f64, Vector2, f64)> = None;
     for sign in [1.0, -1.0] {
         let n = left(u) * sign;
@@ -1067,7 +1343,7 @@ fn arc_from_line_to_point(p: Vector2, u: Vector2, radius: f64, end: Vector2) -> 
             continue;
         }
         for t in [-b - disc.sqrt(), -b + disc.sqrt()] {
-            if t < -TOLERANCE {
+            if after_p && t < -TOLERANCE {
                 continue;
             }
             let touch = p + u * t;
@@ -1469,6 +1745,41 @@ mod tests {
         assert!(touch.distance(&v(5.0, 0.0)) < 1e-9);
         assert!(q.last().unwrap().distance(&v(15.0, 10.0)) < TOLERANCE);
         assert!((end.heading - PI / 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn japanese_cubic_ends_where_its_offset_says() {
+        // X + X^3 / (40 R^2) = L, y(X) = X^2 / (6 R), slope X / (2 R).
+        let (r, length) = (200.0, 200.0);
+        let start = State { point: v(0.0, 0.0), heading: 0.0, curvature: 0.0 };
+        let (q, end) = spiral(start, 1.0 / r, true, length, SpiralShape::JapaneseCubic);
+        let x: f64 = 195.341_3;
+        assert!((x + x.powi(3) / (40.0 * r * r) - length).abs() < 1e-3);
+        assert!(q.last().unwrap().distance(&v(x, x * x / (6.0 * r))) < 1e-3);
+        assert!((end.heading - (x / (2.0 * r)).atan()).abs() < 1e-6);
+    }
+
+    #[test]
+    fn outward_spiral_retraces_the_inward_one() {
+        // Leaving the inward spiral's curved end backwards, with its
+        // curvature reversed, an outward spiral of the same shape comes
+        // back to where the inward one began.
+        for shape in [
+            SpiralShape::Clothoid,
+            SpiralShape::Bloss,
+            SpiralShape::Sinusoidal,
+            SpiralShape::Biquadratic,
+            SpiralShape::JapaneseCubic,
+            SpiralShape::CubicParabola,
+            SpiralShape::SineHalfWave,
+        ] {
+            let start = State { point: v(10.0, 20.0), heading: 0.3, curvature: 0.0 };
+            let (_, end) = spiral(start, -1.0 / 150.0, true, 120.0, shape);
+            let back = State { heading: end.heading + PI, curvature: 1.0 / 150.0, ..end };
+            let (_, home) = spiral(back, 1.0 / 150.0, false, 120.0, shape);
+            assert!(home.point.distance(&start.point) < 0.05, "{shape:?}: {:?}", home.point);
+            assert!(normalize(home.heading - (start.heading + PI)).abs() < 1e-3, "{shape:?}");
+        }
     }
 
     #[test]

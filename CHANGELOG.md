@@ -2,6 +2,13 @@
 
 ### Unreleased
 
+- **Civil 3D spirals and curves** - Spiral records carry their shape:
+  `SpiralShape` (clothoid, Bloss, sinusoidal, biquadratic, cubic parabola,
+  Japanese cubic, sine half-wave) on `SpiralIn` / `SpiralOut`, each drawn
+  with its own geometry. Alignments read whole circles (by centre and
+  radius, or centre and start point) and arcs from a stored point onto the
+  next line.
+
 - **Civil 3D 2013 drawings** - Style display components, assembly
   attachments and alignment elements read in drawings Civil 3D 2013 wrote:
   their component and attachment tags carry 70 where later releases carry

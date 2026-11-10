@@ -17,7 +17,7 @@ mod style;
 mod subassembly;
 mod tin;
 
-pub use alignment::{AlignmentElement, AlignmentElementKind, AlignmentPiece, GeometryPoint};
+pub use alignment::{AlignmentElement, AlignmentElementKind, AlignmentPiece, GeometryPoint, SpiralShape};
 pub use labels::{parse_format, property, LabelPart, LabelText};
 pub use profile::{ProfilePiece, ProfileViewFrame, Pvi};
 pub use sample_lines::SampleLines;
