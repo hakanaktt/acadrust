@@ -5214,7 +5214,12 @@ impl<'a> DwgObjectWriter<'a> {
             self.queue_sab_entry(&e.acis_data, e.common.handle);
             false
         } else {
-            self.write_acis_data(e.point_of_reference, &e.acis_data, &e.wires, &e.silhouettes)
+            self.write_entity_acis_data(
+                e.point_of_reference,
+                &e.acis_data,
+                &e.wires,
+                &e.silhouettes,
+            )
         };
 
         // SAB binary path already wrote trailing fields; skip for SAT/empty.
@@ -5245,7 +5250,12 @@ impl<'a> DwgObjectWriter<'a> {
             self.queue_sab_entry(&e.acis_data, e.common.handle);
             false
         } else {
-            self.write_acis_data(e.point_of_reference, &e.acis_data, &e.wires, &e.silhouettes)
+            self.write_entity_acis_data(
+                e.point_of_reference,
+                &e.acis_data,
+                &e.wires,
+                &e.silhouettes,
+            )
         };
 
         // SAB binary path already wrote trailing fields; skip for SAT/empty.
@@ -5275,7 +5285,12 @@ impl<'a> DwgObjectWriter<'a> {
             self.queue_sab_entry(&e.acis_data, e.common.handle);
             false
         } else {
-            self.write_acis_data(e.point_of_reference, &e.acis_data, &e.wires, &e.silhouettes)
+            self.write_entity_acis_data(
+                e.point_of_reference,
+                &e.acis_data,
+                &e.wires,
+                &e.silhouettes,
+            )
         };
 
         // SAB binary path already wrote trailing fields; skip for SAT/empty.
@@ -5373,7 +5388,12 @@ impl<'a> DwgObjectWriter<'a> {
             self.queue_sab_entry(&e.acis_data, e.common.handle);
             false
         } else {
-            self.write_acis_data(e.point_of_reference, &e.acis_data, &e.wires, &e.silhouettes)
+            self.write_entity_acis_data(
+                e.point_of_reference,
+                &e.acis_data,
+                &e.wires,
+                &e.silhouettes,
+            )
         };
         if !tail_written {
             self.write_acis_materials(&e.acis_data, false);
@@ -5694,6 +5714,32 @@ impl<'a> DwgObjectWriter<'a> {
         silhouettes: &[Silhouette],
     ) -> bool {
         self.write_acis_data_impl(point, acis, wires, silhouettes, false)
+    }
+
+    /// Write the inline (pre-R2013) body of a 3DSOLID, REGION, BODY or
+    /// SURFACE.
+    ///
+    /// ODA refuses an entity whose body is only the `acis_empty` flag
+    /// ("Empty ACIS not allowed") and saves an empty body as an ACIS
+    /// document with a header and no records, so an empty body is written
+    /// as such a document.
+    fn write_entity_acis_data(
+        &mut self,
+        point: Vector3,
+        acis: &AcisData,
+        wires: &[Wire],
+        silhouettes: &[Silhouette],
+    ) -> bool {
+        if acis.has_data() {
+            return self.write_acis_data(point, acis, wires, silhouettes);
+        }
+        let empty_document = crate::entities::acis::SatDocument::new().to_sat_string();
+        let acis = AcisData {
+            sat_data: AcisData::strip_sat_terminator(&empty_document),
+            is_binary: false,
+            ..acis.clone()
+        };
+        self.write_acis_data(point, &acis, wires, silhouettes)
     }
 
     pub(super) fn write_history_acis_data(&mut self, acis: &AcisData) {
