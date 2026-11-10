@@ -2,6 +2,25 @@
 
 ### Unreleased
 
+- **Civil 3D styles** - `ArchObject::display_components` reads a Civil 3D
+  style's display components (visibility, color, layer, linetype,
+  lineweight, linetype scale) in the order the style class defines them,
+  and `surface_contour_intervals` a surface style's minor and major contour
+  intervals. `TinSurface::boundary` and `TinSurface::contours` draw a
+  surface's outline and contours, `alignment_pieces` gives an alignment's
+  lines, curves and spirals, and `profile_pieces` a profile's tangents and
+  vertical curves, so each can take its own style component.
+  `alignment_masked_ranges` gives the station ranges an alignment hides,
+  `profile_view_axes` a profile view style's axis intervals, tick sizes and
+  text heights, `marker` a marker style's point shape and size,
+  `label_tick` / `label_line` a label's tick block and leader line,
+  `band_height` a data band's height, `code_set` / `code_set_defaults` a code
+  set's styles, and `corridor_feature_line_groups` a corridor's feature lines
+  grouped by region. `LabelText` gains the text component's attachment,
+  rotation, x/y offsets, gap and anchor point; station formats add the
+  `9+99.99` and whole-station options. Alignment geometry points keep every
+  join inside compound pieces and are named BP, EP, PI, PCC, PRC and SPI.
+
 - **Civil 3D classes** - `classes::civil` names the `AECC_*` classes:
   `kind_of` / `ArchEntityData::civil_kind` give alignments, profiles, profile
   views, TIN surfaces, corridors, assemblies, subassemblies, parcels, sample

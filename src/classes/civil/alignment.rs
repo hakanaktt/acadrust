@@ -449,7 +449,9 @@ fn pieces(state: State, parts: &[(f64, f64, f64)]) -> (Vec<Vector2>, State) {
         if length > 1e-9 {
             let (q, end) = walk(*points.last().unwrap(), h, k0, k1, length);
             h = end;
-            points.extend(q.into_iter().skip(1));
+            // Later parts repeat their first point: that marks the join.
+            let skip = usize::from(points.len() == 1);
+            points.extend(q.into_iter().skip(skip));
             k = k1;
         }
     }
@@ -473,16 +475,21 @@ pub struct GeometryPoint {
     pub point: Vector2,
     /// Distance from the start of the first solved run.
     pub distance: f64,
-    /// `POB`, `TS`, `SC`, `CS`, `ST`, `PC`, `PT`, `PCC`, `SS`, `POE`.
+    /// `BP`, `PI`, `TS`, `SC`, `CS`, `ST`, `PC`, `PT`, `PCC`, `PRC`, `SPI`,
+    /// `EP`.
     pub name: &'static str,
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum Piece {
+/// Kind of a solved alignment piece, the way an alignment style draws it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum AlignmentPiece {
     Line,
     Curve,
     Spiral,
 }
+
+use AlignmentPiece as Piece;
 
 /// Signed curvature at the middle vertex of three.
 fn curvature_at(a: Vector2, b: Vector2, c: Vector2) -> f64 {
@@ -511,12 +518,9 @@ fn piece_kind(points: &[Vector2]) -> Piece {
     }
 }
 
-/// Geometry points along the first solved run.
-pub(super) fn geometry_points(elements: &[AlignmentElement]) -> Vec<GeometryPoint> {
-    let Some(raw) = raw_polylines(elements).into_iter().next() else {
-        return Vec::new();
-    };
-    // Every solved piece repeats its first point at the join.
+/// `(start, end, kind)` index ranges of the pieces of a solved run. Every
+/// solved piece repeats its first point at the join.
+fn split(raw: &[Vector2]) -> Vec<(usize, usize, Piece)> {
     let mut joins = vec![0];
     for i in 1..raw.len() {
         if raw[i].distance(&raw[i - 1]) < 1e-9 {
@@ -524,11 +528,32 @@ pub(super) fn geometry_points(elements: &[AlignmentElement]) -> Vec<GeometryPoin
         }
     }
     joins.push(raw.len());
-    let pieces: Vec<(usize, usize, Piece)> = joins
+    joins
         .windows(2)
         .filter(|w| w[1] > w[0] + 1)
         .map(|w| (w[0], w[1], piece_kind(&raw[w[0]..w[1]])))
-        .collect();
+        .collect()
+}
+
+/// Solved pieces of every run with their kind.
+pub(super) fn pieces_by_kind(elements: &[AlignmentElement]) -> Vec<(Piece, Vec<Vector2>)> {
+    raw_polylines(elements)
+        .iter()
+        .flat_map(|raw| {
+            split(raw)
+                .into_iter()
+                .map(|(a, b, kind)| (kind, raw[a..b].to_vec()))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// Geometry points along the first solved run.
+pub(super) fn geometry_points(elements: &[AlignmentElement]) -> Vec<GeometryPoint> {
+    let Some(raw) = raw_polylines(elements).into_iter().next() else {
+        return Vec::new();
+    };
+    let pieces = split(&raw);
     let mut distance_to = vec![0.0; raw.len()];
     for i in 1..raw.len() {
         distance_to[i] = distance_to[i - 1] + raw[i].distance(&raw[i - 1]);
@@ -543,9 +568,32 @@ pub(super) fn geometry_points(elements: &[AlignmentElement]) -> Vec<GeometryPoin
         })
     };
     if let Some(first) = pieces.first() {
-        push(first.0, "POB");
+        push(first.0, "BP");
     }
+    // Curvature at either end of a piece, from points a metre apart so a
+    // tiny closing segment does not count.
+    let at_end = |p: &[Vector2]| -> f64 {
+        let mut picked = vec![p[0]];
+        for q in &p[1..] {
+            if picked.len() == 3 {
+                break;
+            }
+            if q.distance(picked.last().unwrap()) >= 1.0 {
+                picked.push(*q);
+            }
+        }
+        if picked.len() < 3 {
+            return 0.0;
+        }
+        curvature_at(picked[0], picked[1], picked[2])
+    };
+    let ends = |(a, b, _): (usize, usize, Piece)| {
+        let p = &raw[a..b];
+        let reversed: Vec<Vector2> = p.iter().rev().copied().collect();
+        (at_end(p), -at_end(&reversed))
+    };
     for pair in pieces.windows(2) {
+        let (k0, k1) = (ends(pair[0]).1, ends(pair[1]).0);
         let name = match (pair[0].2, pair[1].2) {
             (Piece::Line, Piece::Spiral) => "TS",
             (Piece::Spiral, Piece::Curve) => "SC",
@@ -553,14 +601,15 @@ pub(super) fn geometry_points(elements: &[AlignmentElement]) -> Vec<GeometryPoin
             (Piece::Spiral, Piece::Line) => "ST",
             (Piece::Line, Piece::Curve) => "PC",
             (Piece::Curve, Piece::Line) => "PT",
+            (Piece::Curve, Piece::Curve) if k0 * k1 < 0.0 => "PRC",
             (Piece::Curve, Piece::Curve) => "PCC",
-            (Piece::Spiral, Piece::Spiral) => "SS",
-            (Piece::Line, Piece::Line) => continue,
+            (Piece::Spiral, Piece::Spiral) => "SPI",
+            (Piece::Line, Piece::Line) => "PI",
         };
         push(pair[1].0, name);
     }
     if let Some(last) = pieces.last() {
-        push(last.1 - 1, "POE");
+        push(last.1 - 1, "EP");
     }
     out
 }
@@ -606,9 +655,15 @@ fn solve_run(run: &[&AlignmentElement], out: &mut Vec<Vec<Vector2>>) {
                     continue;
                 };
                 if let Some(line) = pending.take() {
-                    let joint = intersect(line.start, line.direction, *start, u)
-                        .filter(|x| x.distance(&line.end) < 1e4)
-                        .unwrap_or(line.end);
+                    // Lines that already meet join where they meet; only lines
+                    // apart join at their tangent intersection.
+                    let joint = if line.end.distance(start) <= TOLERANCE {
+                        line.end
+                    } else {
+                        intersect(line.start, line.direction, *start, u)
+                            .filter(|x| x.distance(&line.end) < 1e4)
+                            .unwrap_or(line.end)
+                    };
                     points.push(line.start);
                     points.push(joint);
                     state = Some(State {
@@ -742,7 +797,7 @@ fn solve_run(run: &[&AlignmentElement], out: &mut Vec<Vec<Vector2>>) {
                         spiral_line_spiral(s, begin).map(|(mut sls, sls_end)| match then {
                             Some((q, end)) => {
                                 index += 1;
-                                sls.extend(q.into_iter().skip(1));
+                                sls.extend(q);
                                 (sls, end)
                             }
                             None => (sls, sls_end),
@@ -768,8 +823,8 @@ fn solve_run(run: &[&AlignmentElement], out: &mut Vec<Vec<Vector2>>) {
                             let (in_points, at_arc) = pieces(at_zero, &[(0.0, k, *spiral_in)]);
                             let (arc, arc_end, miss) = arc_to_point(at_arc, *end)?;
                             let mut all = out_points.clone();
-                            all.extend(in_points.into_iter().skip(1));
-                            all.extend(arc.into_iter().skip(1));
+                            all.extend(in_points);
+                            all.extend(arc);
                             Some((miss, all, arc_end))
                         })
                         .min_by(|a, b| a.0.total_cmp(&b.0))
@@ -791,6 +846,12 @@ fn solve_run(run: &[&AlignmentElement], out: &mut Vec<Vec<Vector2>>) {
         };
         match solved {
             Some((q, end)) => {
+                // A piece that starts off the previous end still joins it.
+                if let (Some(&last), Some(&first)) = (points.last(), q.first()) {
+                    if last.distance(&first) >= 1e-9 {
+                        points.push(first);
+                    }
+                }
                 points.extend(q);
                 state = Some(end);
             }
@@ -1087,4 +1148,49 @@ pub(super) fn start_station(data: &[u8], start: usize, end: usize) -> f64 {
         return 0.0;
     }
     0.0
+}
+
+/// Bits that follow each mask range's stations.
+const MASK_TAIL_BITS: usize = 257;
+
+/// Station ranges an alignment hides (its masking): `BL n` four times, then
+/// `n` x `{ BD from, BD to, 257 bits }`. Ranges lie within `first..=last`.
+// ponytail: found by probing bit offsets for a list whose every range fits
+// the alignment; parse the records before it once their layout is known.
+pub(super) fn masked_ranges(data: &[u8], start: usize, end: usize, first: f64, last: f64) -> Vec<(f64, f64)> {
+    let slack = 1e-3 * (last - first).abs().max(1.0);
+    let fits = |v: f64| v.is_finite() && v >= first - slack && v <= last + slack;
+    let read = |pos: usize| -> Option<Vec<(f64, f64)>> {
+        let mut bits = Bits::new(data, pos, end);
+        let n = usize::try_from(bits.bit_long()?).ok()?;
+        if n == 0 || n > 64 {
+            return None;
+        }
+        for _ in 0..3 {
+            (bits.bit_long()? == n as i32).then_some(())?;
+        }
+        let mut out = Vec::with_capacity(n);
+        // A station other than the alignment's ends is written in full; the
+        // two-bit 0.0 / 1.0 forms would match random bits too easily.
+        let station = |bits: &mut Bits| -> Option<f64> {
+            let at = bits.pos;
+            let v = bits.bit_double()?;
+            let full = bits.pos - at == 66;
+            let at_end = (v - first).abs() <= slack || (v - last).abs() <= slack;
+            (fits(v) && (full || at_end)).then_some(v)
+        };
+        for _ in 0..n {
+            let from = station(&mut bits)?;
+            let to = station(&mut bits)?;
+            (to - from > slack).then_some(())?;
+            out.push((from, to));
+            if bits.remaining() < MASK_TAIL_BITS {
+                return None;
+            }
+            bits.pos += MASK_TAIL_BITS;
+        }
+        Some(out)
+    };
+    // The list sits near the end of the body; the last one that parses wins.
+    (start..end).rev().find_map(read).unwrap_or_default()
 }

@@ -149,3 +149,109 @@ fn read_at(data: &[u8], pos: usize, end: usize) -> Option<TinSurface> {
         corners,
     })
 }
+
+/// Join `(a, b)` segments sharing end keys into polylines of keys.
+fn chain<K: Copy + Eq + std::hash::Hash>(segments: &[(K, K)]) -> Vec<Vec<K>> {
+    use std::collections::HashMap;
+    let mut at: HashMap<K, Vec<usize>> = HashMap::new();
+    for (i, (a, b)) in segments.iter().enumerate() {
+        at.entry(*a).or_default().push(i);
+        at.entry(*b).or_default().push(i);
+    }
+    let mut used = vec![false; segments.len()];
+    let mut out = Vec::new();
+    // Open chains start at a key one segment touches; the rest are loops.
+    let mut starts: Vec<usize> = (0..segments.len())
+        .filter(|&i| at[&segments[i].0].len() == 1 || at[&segments[i].1].len() == 1)
+        .collect();
+    starts.extend(0..segments.len());
+    for first in starts {
+        if used[first] {
+            continue;
+        }
+        used[first] = true;
+        let (a, b) = segments[first];
+        let mut keys = if at[&a].len() == 1 { vec![a, b] } else { vec![b, a] };
+        loop {
+            let tail = *keys.last().unwrap();
+            let Some(&next) = at[&tail].iter().find(|&&i| !used[i]) else {
+                break;
+            };
+            used[next] = true;
+            let (p, q) = segments[next];
+            keys.push(if p == tail { q } else { p });
+        }
+        out.push(keys);
+    }
+    out
+}
+
+impl TinSurface {
+    fn drawn(&self, triangle: i32) -> bool {
+        triangle >= 0
+            && self
+                .triangles
+                .get(triangle as usize)
+                .is_some_and(TinTriangle::is_visible)
+    }
+
+    /// Outline of the drawn triangles: every edge without a drawn neighbor,
+    /// joined into loops.
+    pub fn boundary(&self) -> Vec<Vec<Vector3>> {
+        let mut edges = Vec::new();
+        for triangle in self.triangles.iter().filter(|t| t.is_visible()) {
+            for edge in 0..3 {
+                if !self.drawn(triangle.neighbors[edge]) {
+                    edges.push((triangle.vertices[edge], triangle.vertices[(edge + 1) % 3]));
+                }
+            }
+        }
+        chain(&edges)
+            .into_iter()
+            .map(|keys| keys.iter().map(|&v| self.vertices[v as usize].position).collect())
+            .collect()
+    }
+
+    /// Contour polylines at every multiple of `interval`, with their
+    /// elevation. A vertex exactly at a contour elevation counts as above it.
+    pub fn contours(&self, interval: f64) -> Vec<(f64, Vec<Vector3>)> {
+        use std::collections::HashMap;
+        if !(interval > 0.0) {
+            return Vec::new();
+        }
+        type Edge = (u32, u32);
+        let key = |a: u32, b: u32| (a.min(b), a.max(b));
+        let mut levels: HashMap<i64, Vec<(Edge, Edge)>> = HashMap::new();
+        for triangle in self.triangles.iter().filter(|t| t.is_visible()) {
+            let v = triangle.vertices;
+            let z = v.map(|i| self.vertices[i as usize].position.z);
+            let low = (z.iter().copied().fold(f64::INFINITY, f64::min) / interval).ceil() as i64;
+            let high = (z.iter().copied().fold(f64::NEG_INFINITY, f64::max) / interval).floor() as i64;
+            for level in low..=high {
+                let h = level as f64 * interval;
+                let crossed: Vec<Edge> = (0..3)
+                    .filter(|&e| (z[e] >= h) != (z[(e + 1) % 3] >= h))
+                    .map(|e| key(v[e], v[(e + 1) % 3]))
+                    .collect();
+                if let [a, b] = crossed[..] {
+                    levels.entry(level).or_default().push((a, b));
+                }
+            }
+        }
+        let mut out = Vec::new();
+        let mut ordered: Vec<_> = levels.into_iter().collect();
+        ordered.sort_by_key(|(level, _)| *level);
+        for (level, segments) in ordered {
+            let h = level as f64 * interval;
+            let at = |(a, b): Edge| {
+                let (p, q) = (self.vertices[a as usize].position, self.vertices[b as usize].position);
+                let t = (h - p.z) / (q.z - p.z);
+                Vector3::new(p.x + (q.x - p.x) * t, p.y + (q.y - p.y) * t, h)
+            };
+            for keys in chain(&segments) {
+                out.push((h, keys.into_iter().map(at).collect()));
+            }
+        }
+        out
+    }
+}

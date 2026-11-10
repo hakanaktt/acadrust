@@ -109,6 +109,11 @@ mod option {
     pub const STATION: u32 = 2474;
     /// Grade shown as a percentage.
     pub const PERCENT: u32 = 2467;
+    /// Station `+` after the hundreds (`12+34.56`); otherwise after the
+    /// thousands.
+    pub const STATION_PLUS_HUNDREDS: u32 = 2674;
+    /// Station shown without its decimals.
+    pub const STATION_WHOLE: u32 = 2705;
 }
 
 impl LabelPart {
@@ -119,10 +124,17 @@ impl LabelPart {
             .find(|o| (option::PRECISION_0..=option::PRECISION_MAX).contains(*o))
             .map_or(2, |o| (o - option::PRECISION_0) as usize);
         if options.contains(&option::STATION) {
-            let km = (value / 1000.0).floor();
-            let metres = value - km * 1000.0;
-            let width = if precision == 0 { 3 } else { 4 + precision };
-            return format!("{}+{:0width$.precision$}", km as i64, metres, width = width, precision = precision);
+            let precision = if options.contains(&option::STATION_WHOLE) { 0 } else { precision };
+            let digits = if options.contains(&option::STATION_PLUS_HUNDREDS) { 2 } else { 3 };
+            let unit = 10f64.powi(digits as i32);
+            // Round first so the minor part never shows as a whole unit.
+            let scale = 10f64.powi(precision as i32);
+            let rounded = (value.abs() * scale).round() / scale;
+            let major = (rounded / unit).floor();
+            let minor = rounded - major * unit;
+            let sign = if value < 0.0 { "-" } else { "" };
+            let width = if precision == 0 { digits } else { digits + 1 + precision };
+            return format!("{sign}{}+{:0width$.precision$}", major as i64, minor, width = width, precision = precision);
         }
         if options.contains(&option::PERCENT) {
             return format!("{:.precision$}%", value * 100.0, precision = precision);
@@ -173,14 +185,28 @@ pub fn parse_format(format: &str) -> Vec<LabelPart> {
     parts
 }
 
-/// A label text component: its content, text height and vertical offset, as
-/// plotted sizes in drawing units at 1:1 (multiply by the drawing scale).
+/// A label text component as plotted sizes in drawing units at 1:1
+/// (multiply by the drawing scale).
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LabelText {
     pub content: Vec<LabelPart>,
     pub height: Option<f64>,
-    pub y_offset: Option<f64>,
+    /// Offset of the text from its anchor, along and across the anchor's
+    /// direction.
+    pub x_offset: f64,
+    pub y_offset: f64,
+    /// Border gap: the clearance kept between the attachment point and the
+    /// text.
+    pub gap: f64,
+    /// Angle of the text to the anchor's direction, radians.
+    pub rotation: f64,
+    /// Which point of the text sits at the anchor: 0 top left, 1 top
+    /// centre, 2 top right, 3..5 middle, 6..8 bottom, left to right.
+    pub attachment: u8,
+    /// Which point of its anchor the text hangs from, for anchors with
+    /// several (a data band: 0 top, 1 middle, 2 bottom).
+    pub anchor_point: Option<u8>,
 }
 
 /// BD at `pos` written in full.
@@ -193,10 +219,51 @@ fn full_double(data: &[u8], pos: usize, end: usize) -> Option<f64> {
 /// Every field of a text component sits at a fixed distance from this BD.
 const COMPONENT_MARKER: f64 = 156_679.000_488_281_22;
 
+/// A plotted size: zero, or a short decimal well under a drawing unit.
+fn plotted_size(v: f64) -> bool {
+    v == 0.0 || ((1e-6..0.1).contains(&v.abs()) && ((v * 1e6).round() - v * 1e6).abs() < 1e-3)
+}
+
+/// `BD x offset, BD, BD y offset, BD, B, BD gap`, the first run of them
+/// after the component's header that reads as plotted sizes.
+// ponytail: found by probing; the fields before it vary with the style's
+// overrides. Read them in order once those are decoded.
+fn offsets(data: &[u8], from: usize, end: usize) -> Option<(f64, f64, f64)> {
+    (from..end.min(from + 600)).find_map(|pos| {
+        let mut bits = Bits::new(data, pos, end);
+        let mut values = [0.0; 4];
+        for v in &mut values {
+            *v = bits.bit_double().filter(|v| plotted_size(*v))?;
+        }
+        bits.bit()?;
+        let at = bits.pos;
+        let gap = bits.bit_double()?;
+        (bits.pos == at + 66 && gap > 0.0 && plotted_size(gap)).then_some((values[0], values[2], gap))
+    })
+}
+
+/// A line component closes with its length and then its angle, both
+/// written in full.
+pub(super) fn line_component(data: &[u8], start: usize, end: usize) -> Option<(f64, f64)> {
+    let angle_at = (start..end)
+        .rev()
+        .find(|&p| full_double(data, p, end).is_some_and(|v| (1e-3..=std::f64::consts::TAU).contains(&v.abs())))?;
+    let length_at = (start..angle_at.checked_sub(66)?).rev().find(|&p| {
+        full_double(data, p, end).is_some_and(|v| (1e-6..1.0).contains(&v) && ((v * 1e6).round() - v * 1e6).abs() < 1e-3)
+    })?;
+    Some((full_double(data, length_at, end)?, full_double(data, angle_at, end)?))
+}
+
 pub(super) fn text_component(data: &[u8], start: usize, end: usize) -> Option<LabelText> {
-    let content = inline_strings(data, start, end)
+    // The content is the longest format string; rotation and attachment
+    // follow it.
+    let (content, after) = inline_strings_at(data, start, end)
         .into_iter()
-        .max_by_key(|s| (s.contains("<["), s.len()))?;
+        .max_by_key(|(s, _)| (s.contains("<["), s.len()))?;
+    let mut bits = Bits::new(data, after, end);
+    let rotation = bits.bit_double().filter(|v| v.abs() <= 10.0).unwrap_or(0.0);
+    bits.bit_double();
+    let attachment = bits.bit_short().and_then(|v| u8::try_from(v).ok()).filter(|v| *v <= 8).unwrap_or(6);
     let marker = (start..end)
         .find(|&pos| full_double(data, pos, end).is_some_and(|v| (v - COMPONENT_MARKER).abs() < 1e-6));
     let plotted = |v: f64| (v.abs() > 1e-6 && v.abs() < 1.0).then_some(v);
@@ -205,19 +272,44 @@ pub(super) fn text_component(data: &[u8], start: usize, end: usize) -> Option<La
         .and_then(|p| full_double(data, p, end))
         .and_then(plotted)
         .filter(|v| *v > 0.0);
-    let y_offset = marker
-        .and_then(|m| full_double(data, m + 147, end))
-        .and_then(plotted);
+    let (x_offset, y_offset, gap) = marker.and_then(|m| offsets(data, m + 82, end)).unwrap_or((0.0, 0.0, 0.0));
+    // A 16-bit header after the marker ends with the anchor point, when the
+    // component's settings block (opening 1011) follows it directly.
+    // ponytail: only that short header form is read; longer ones leave it
+    // unknown until their fields are decoded.
+    let anchor_point = marker.and_then(|m| {
+        let mut bits = Bits::new(data, m + 82, end);
+        let mut read = |n: usize| -> Option<u8> {
+            let mut v = 0u8;
+            for _ in 0..n {
+                v = (v << 1) | u8::from(bits.bit()?);
+            }
+            Some(v)
+        };
+        read(12)?;
+        let point = read(4)?;
+        (read(4)? == 0b1011).then_some(point)
+    });
     Some(LabelText {
         content: parse_format(&content),
         height,
+        x_offset,
         y_offset,
+        gap,
+        rotation,
+        attachment,
+        anchor_point,
     })
 }
 
 /// UTF-16 strings stored inline as `BL byte length` + code units with a
 /// null terminator, in record order.
 pub(super) fn inline_strings(data: &[u8], start: usize, end: usize) -> Vec<String> {
+    inline_strings_at(data, start, end).into_iter().map(|(s, _)| s).collect()
+}
+
+/// Inline strings with the bit position after each.
+fn inline_strings_at(data: &[u8], start: usize, end: usize) -> Vec<(String, usize)> {
     // A misaligned read can look valid inside a real string; keep the
     // longest of any overlapping candidates.
     let mut found: Vec<(usize, usize, String)> = (start..end)
@@ -231,7 +323,7 @@ pub(super) fn inline_strings(data: &[u8], start: usize, end: usize) -> Vec<Strin
         }
     }
     kept.sort_by_key(|k| k.0);
-    kept.into_iter().map(|k| k.2).collect()
+    kept.into_iter().map(|k| (k.2, k.1)).collect()
 }
 
 fn string_at(data: &[u8], pos: usize, end: usize) -> Option<(String, usize)> {
