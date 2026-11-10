@@ -4,11 +4,14 @@
 
 use std::io::Cursor;
 
+use acadrust::entities::solid3d::{AcisVersion, Solid3D};
 use acadrust::entities::{EntityType, Line};
 use acadrust::io::dwg::compression::DwgLZ77AC18Compressor;
 use acadrust::io::dwg::decompressor_ac18::decompress_ac18;
 use acadrust::io::dwg::decompressor_ac21::decompress_ac21;
 use acadrust::io::dwg::dwg21_metadata::Dwg21CompressedMetadata;
+use acadrust::notification::NotificationType;
+use acadrust::types::Handle;
 use acadrust::{CadDocument, DwgReadOptions, DwgReader, DwgWriter, DxfVersion};
 
 /// Section types of the AC18 page map and section map (system pages, headers not masked).
@@ -20,6 +23,8 @@ const SECTION_MAP: u32 = 0x4163_003B;
 const AC21_HEADER: usize = 0x80;
 const RS_BLOCKS: usize = 3;
 const RS_DATA: usize = 239;
+/// The section that holds the SAB data of R2013+ modeler entities.
+const ACDS: &str = "AcDb:AcDsPrototype_1b";
 
 fn dwg(version: DxfVersion) -> Vec<u8> {
     let mut document = CadDocument::with_version(version);
@@ -179,6 +184,56 @@ fn overshoot_section(bytes: &[u8], section: &str, extra: u64) -> Option<Vec<u8>>
     })
 }
 
+/// An AC1032 drawing with one 3DSOLID whose SAB blob holds `zeros` zero bytes between the
+/// SAB magic and terminator, so that its AcDs section has pages of zeros in the middle.
+fn dwg_with_solid(zeros: usize) -> (Vec<u8>, Handle, Vec<u8>) {
+    let mut sab = b"ASM BinaryFile".to_vec();
+    sab.resize(sab.len() + zeros, 0);
+    sab.extend_from_slice(b"\x0E\x03End\x0E\x02of\x0E\x03ASM\x0D\x04data");
+    let mut solid = Solid3D::new();
+    solid.acis_data.sab_data = sab.clone();
+    solid.acis_data.is_binary = true;
+    solid.acis_data.version = AcisVersion::Version2;
+    let mut document = CadDocument::with_version(DxfVersion::AC1032);
+    let handle = document.add_entity(EntityType::Solid3D(solid)).unwrap();
+    (DwgWriter::write_to_vec(&document).unwrap(), handle, sab)
+}
+
+fn sab_of(document: &CadDocument, handle: Handle) -> &[u8] {
+    match document.get_entity(handle) {
+        Some(EntityType::Solid3D(solid)) => &solid.acis_data.sab_data,
+        other => panic!("3DSOLID {handle:?} missing: {other:?}"),
+    }
+}
+
+/// Drops the page descriptors of `section` whose pages hold only zeros, as AutoCAD saves
+/// such sections: the declared size and the other pages' offsets stay, and the reader is to
+/// zero-fill the gaps. Returns the edited file and the number of descriptors kept.
+fn drop_zero_pages(bytes: &[u8], section: &str) -> (Vec<u8>, usize) {
+    let mut reader = DwgReader::from_stream(Cursor::new(bytes.to_vec()));
+    let info = reader.read_file_header().unwrap();
+    let data = reader.get_section_buffer(section, &info).unwrap();
+    let kept = std::cell::Cell::new(0);
+    let bytes = rewrite_section_map(bytes, |name, descriptor| {
+        if name != section {
+            return descriptor;
+        }
+        let page_size = i32_at(&descriptor, 12) as usize;
+        let mut out = descriptor[..96].to_vec();
+        for entry in descriptor[96..].chunks(16) {
+            let start = u64::from_le_bytes(entry[8..16].try_into().unwrap()) as usize;
+            let end = (start + page_size).min(data.len());
+            if data[start..end].iter().any(|&b| b != 0) {
+                out.extend_from_slice(entry);
+            }
+        }
+        kept.set((out.len() - 96) / 16);
+        put_i32(&mut out, 8, kept.get() as i32);
+        out
+    });
+    (bytes, kept.get())
+}
+
 fn rs_index(i: usize) -> usize {
     AC21_HEADER + i / RS_DATA + (i % RS_DATA) * RS_BLOCKS
 }
@@ -306,4 +361,68 @@ fn ac21_header_min_compr_len_does_not_overflow() {
         bad_bytes[rs_index(i)] = byte;
     }
     let _ = DwgReader::from_stream(Cursor::new(bad_bytes)).read();
+}
+
+#[test]
+fn ac18_sparse_section_is_bounded_by_its_furthest_page() {
+    // About 7 pages of 0x7400 bytes, 5 of them all zeros.
+    let (bytes, handle, sab) = dwg_with_solid(6 * 0x7400);
+    let document = DwgReader::from_stream(Cursor::new(bytes.clone()))
+        .read()
+        .unwrap();
+    assert_eq!(sab_of(&document, handle), sab.as_slice());
+
+    let mut reader = DwgReader::from_stream(Cursor::new(bytes.clone()));
+    let info = reader.read_file_header().unwrap();
+    let dense = reader.get_section_buffer(ACDS, &info).unwrap();
+    let section = DwgReader::<Cursor<Vec<u8>>>::find_section(&info, ACDS).unwrap();
+    let pages = section.pages.len();
+
+    let (sparse, kept) = drop_zero_pages(&bytes, ACDS);
+    // The declared size is more than twice what the kept descriptors hold one after another.
+    assert!(
+        dense.len() > 2 * kept * 0x7400,
+        "{kept} of {pages} pages kept for {} bytes",
+        dense.len()
+    );
+    let mut reader = DwgReader::from_stream(Cursor::new(sparse.clone()));
+    let info = reader.read_file_header().unwrap();
+    let read = reader.get_section_buffer(ACDS, &info).unwrap();
+    assert!(read == dense, "the gaps must read as zeros");
+
+    let document = DwgReader::from_stream(Cursor::new(sparse)).read().unwrap();
+    assert_eq!(sab_of(&document, handle), sab.as_slice());
+}
+
+#[test]
+fn unreadable_acds_section_is_reported() {
+    let (bytes, handle, _) = dwg_with_solid(16);
+    let bad = inflate_section(&bytes, ACDS, 512 << 20);
+    for options in [DwgReadOptions::default(), DwgReadOptions::failsafe()] {
+        let failsafe = options.failsafe;
+        let document = DwgReader::from_stream_with_options(Cursor::new(bad.clone()), options)
+            .read()
+            .unwrap();
+        assert!(sab_of(&document, handle).is_empty());
+        let warned = document
+            .notifications
+            .of_type(NotificationType::Warning)
+            .iter()
+            .any(|n| n.message.contains(ACDS) && n.message.contains("0 page(s)"));
+        assert!(
+            warned,
+            "failsafe={failsafe}: no warning for the unread {ACDS} section"
+        );
+    }
+}
+
+#[test]
+fn drawing_without_acds_section_raises_no_acds_warning() {
+    let document = DwgReader::from_stream(Cursor::new(dwg(DxfVersion::AC1032)))
+        .read()
+        .unwrap();
+    assert!(!document
+        .notifications
+        .iter()
+        .any(|n| n.message.contains(ACDS)));
 }
