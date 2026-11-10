@@ -19,6 +19,12 @@ pub struct SplineFlags {
     pub linear: bool,
 }
 
+pub(crate) struct ClampedSpline {
+    pub points: Vec<Vector3>,
+    pub knots: Vec<f64>,
+    pub weights: Vec<f64>,
+}
+
 impl SplineFlags {
     /// Create default spline flags
     pub fn new() -> Self {
@@ -227,7 +233,9 @@ impl Spline {
             return true;
         };
 
-        points.iter().all(|p| ((*p - p0).dot(&plane_normal)).abs() < 1e-4)
+        points
+            .iter()
+            .all(|p| ((*p - p0).dot(&plane_normal)).abs() < 1e-4)
     }
 
     /// Convert a periodic cubic B-spline with DWG periodic knot vector (knots.len() == control_points.len() + 1)
@@ -236,6 +244,11 @@ impl Spline {
     /// This produces the exact clamped NURBS representation that AutoCAD writes to DXF,
     /// ensuring downstream DXF readers can evaluate the curve geometry.
     pub fn periodic_to_clamped_cubic(&self) -> Option<(Vec<Vector3>, Vec<f64>)> {
+        self.clamp_periodic_cubic()
+            .map(|clamped| (clamped.points, clamped.knots))
+    }
+
+    pub(crate) fn clamp_periodic_cubic(&self) -> Option<ClampedSpline> {
         if !self.flags.periodic || self.degree != 3 {
             return None;
         }
@@ -249,19 +262,39 @@ impl Spline {
         let k_prev = (k + n - 1) % n;
         let k_next = (k + 1) % n;
 
-        let cp0 = p[k_prev] * (1.0 / 6.0) + p[k] * (2.0 / 3.0) + p[k_next] * (1.0 / 6.0);
-        let cp1 = p[k] * (2.0 / 3.0) + p[k_next] * (1.0 / 3.0);
+        let weighted = self.flags.rational;
+        let weight = |i: usize| self.weights.get(i).copied().unwrap_or(1.);
+        let combine = |terms: &[(usize, f64)]| {
+            let common = weight(terms[0].0);
+            if !weighted || terms.iter().all(|&(i, _)| weight(i) == common) {
+                let point = terms
+                    .iter()
+                    .fold(Vector3::ZERO, |point, &(i, factor)| point + p[i] * factor);
+                return (point, common);
+            }
+            let scale = terms.iter().map(|&(i, _)| weight(i)).fold(0., f64::max);
+            let (sum, point) =
+                terms
+                    .iter()
+                    .fold((0., Vector3::ZERO), |(sum, point), &(i, factor)| {
+                        let contribution = factor * (weight(i) / scale);
+                        (sum + contribution, point + p[i] * contribution)
+                    });
+            (point * (1. / sum), sum * scale)
+        };
+        let first = combine(&[(k_prev, 1. / 6.), (k, 2. / 3.), (k_next, 1. / 6.)]);
+        let second = combine(&[(k, 2. / 3.), (k_next, 1. / 3.)]);
+        let penultimate = combine(&[(k_prev, 1. / 3.), (k, 2. / 3.)]);
 
-        let mut clamped_cps = Vec::with_capacity(n + 3);
-        clamped_cps.push(cp0);
-        clamped_cps.push(cp1);
+        let mut controls = Vec::with_capacity(n + 3);
+        controls.push(first);
+        controls.push(second);
         for i in 0..(n - 1) {
             let idx = (k_next + i) % n;
-            clamped_cps.push(p[idx]);
+            controls.push((p[idx], weight(idx)));
         }
-        let cp_penult = p[k_prev] * (1.0 / 3.0) + p[k] * (2.0 / 3.0);
-        clamped_cps.push(cp_penult);
-        clamped_cps.push(cp0);
+        controls.push(penultimate);
+        controls.push(first);
 
         let u0 = self.knots[0];
         let un = self.knots[n];
@@ -270,7 +303,12 @@ impl Spline {
         clamped_knots.extend_from_slice(&self.knots[1..n]);
         clamped_knots.extend([un, un, un, un]);
 
-        Some((clamped_cps, clamped_knots))
+        let (points, weights) = controls.into_iter().unzip();
+        Some(ClampedSpline {
+            points,
+            knots: clamped_knots,
+            weights: if weighted { weights } else { Vec::new() },
+        })
     }
 
     /// Get the number of control points

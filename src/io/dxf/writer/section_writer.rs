@@ -4721,17 +4721,15 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         let flags = crate::io::dxf::spline_flags::write(spline);
         self.writer.write_i16(70, flags)?;
 
-        let (clamped_cps, clamped_knots) = spline
-            .periodic_to_clamped_cubic()
-            .map(|(cps, kts)| (Some(cps), Some(kts)))
-            .unwrap_or((None, None));
-        let control_points = clamped_cps.as_deref().unwrap_or(&spline.control_points);
-        let knots = clamped_knots.as_deref().unwrap_or(&spline.knots);
+        let clamped = spline.clamp_periodic_cubic();
+        let (control_points, knots, weights) = clamped.as_ref().map_or(
+            (&spline.control_points, &spline.knots, &spline.weights),
+            |value| (&value.points, &value.knots, &value.weights),
+        );
 
         self.writer.write_i16(71, spline.degree as i16)?;
         self.writer.write_i16(72, knots.len() as i16)?;
-        self.writer
-            .write_i16(73, control_points.len() as i16)?;
+        self.writer.write_i16(73, control_points.len() as i16)?;
         self.writer.write_i16(74, spline.fit_points.len() as i16)?;
 
         // Knot / control-point / fit tolerances (round-trip the stored values).
@@ -4756,7 +4754,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         for (i, point) in control_points.iter().enumerate() {
             self.writer.write_point3d(10, *point)?;
             if spline.flags.rational {
-                let w = spline.weights.get(i).copied().unwrap_or(1.0);
+                let w = weights.get(i).copied().unwrap_or(1.0);
                 self.writer.write_double(41, w)?;
             }
         }
