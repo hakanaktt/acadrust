@@ -1881,7 +1881,24 @@ impl<R: Read + Seek> DwgReader<R> {
         //    Store) section. Extract those blobs and attach them, in document
         //    order, to the modeler-geometry entities that arrived with only a
         //    stub. Files without an AcDs section keep their inline data.
-        if let Ok(acds_buf) = self.get_section_buffer("AcDb:AcDsPrototype_1b", &info) {
+        let acds_buf = match self.get_section_buffer("AcDb:AcDsPrototype_1b", &info) {
+            Ok(acds_buf) => Some(acds_buf),
+            Err(error) => {
+                // Many drawings have no AcDs section; one that has it but
+                // cannot be read loses every SAB blob.
+                if Self::find_section(&info, "AcDb:AcDsPrototype_1b").is_some() {
+                    self.notifications.notify(
+                        NotificationType::Warning,
+                        format!(
+                            "AcDs: section 'AcDb:AcDsPrototype_1b' not read, modeler entities keep no SAB data: {}",
+                            error
+                        ),
+                    );
+                }
+                None
+            }
+        };
+        if let Some(acds_buf) = acds_buf {
             // Authoritative: the `_data_` record table(s) bind each blob to its
             // owning handle. When present, attach by handle — the only mapping
             // that survives BIM exports whose blob/record/handle orders diverge.
@@ -3464,8 +3481,24 @@ impl<R: Read + Seek> DwgReader<R> {
         // corrupt header, while a large drawing legitimately spans many pages.
         // Count the page descriptors actually parsed: the declared count is file
         // data, and -1 reads as u64::MAX, which would lift this bound entirely.
+        // Pages of zeros are not stored, and each page is placed at its own
+        // offset with the gaps zero-filled, so a sparse section reaches as far
+        // as its furthest page. MAX_SECTION_SIZE and the decompressed budget
+        // still bound the allocation.
         let page_count = section.pages.len();
-        let page_capacity = page_count.saturating_mul(max_page_size);
+        let furthest_page_end = section
+            .pages
+            .iter()
+            .map(|page| {
+                usize::try_from(page.offset)
+                    .unwrap_or(usize::MAX)
+                    .saturating_add(max_page_size)
+            })
+            .max()
+            .unwrap_or(0);
+        let page_capacity = page_count
+            .saturating_mul(max_page_size)
+            .max(furthest_page_end);
         if total_size > page_capacity {
             // Some AC1032 writers include a small amount of section padding in the
             // declared size, beyond the sum of the parsed page capacities. Keep the
