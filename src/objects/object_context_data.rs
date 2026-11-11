@@ -38,13 +38,15 @@ pub struct ObjectContextData {
     /// ODA documents 3 as the default. Preserved on read.
     pub class_version: i16,
     /// ODA §20.4.89 file-to-extension-dictionary flag. AutoCAD's own context
-    /// leaves do not carry the bit, and neither does this crate's DWG writer,
-    /// except for an MLeader leaf decoded from the ODA layout. Reads of every
-    /// other class keep the documented default, true. DXF has no group for it.
+    /// leaves do not carry the bit, and neither does this crate's DWG writer.
+    /// An MLeader leaf decoded from the ODA layout keeps the value it had;
+    /// reads of every other class keep the documented default, true. DXF has
+    /// no group for it.
     pub has_file_to_extension_dictionary: bool,
-    /// Native MLeader context records sometimes use a historical base that
-    /// omits the R2010+ file-to-extension-dictionary bit. Preserve that wire
-    /// layout separately from the flag's semantic value.
+    /// True for an MLeader context read from a DWG record in the native base,
+    /// which omits the R2010+ file-to-extension-dictionary bit. False for one
+    /// read from the ODA two-bit base, or not read from a DWG. The DWG writer
+    /// does not use it: it always writes the native base.
     #[cfg_attr(feature = "serde", serde(default))]
     pub uses_legacy_mleader_context_base: bool,
     /// `AcDbObjectContextData` is_default flag (DXF 290) — set on the native rep.

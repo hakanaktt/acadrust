@@ -2361,15 +2361,11 @@ impl<'a> DwgObjectWriter<'a> {
         );
 
         // AcDbObjectContextData base. AutoCAD writes class version and the
-        // default flag only. The R2010 file-to-extension-dictionary bit from
-        // ODA §20.4.89 is stored solely for an MLeader context that was read
-        // from that ODA layout (`uses_legacy_mleader_context_base` is false).
+        // default flag only, for every class. It does not open a drawing
+        // whose MLeader context carries the R2010 file-to-extension-dictionary
+        // bit from ODA §20.4.89, so a context read from that layout is written
+        // in the native one as well.
         self.writer.write_bit_short(obj.class_version);
-        let oda_mleader_base = matches!(obj.kind, ObjectContextKind::MLeader(_))
-            && !obj.uses_legacy_mleader_context_base;
-        if self.version.r2010_plus() && oda_mleader_base {
-            self.writer.write_bit(obj.has_file_to_extension_dictionary);
-        }
         self.writer.write_bit(obj.is_default);
 
         // AcDbAnnotScaleObjectContextData: first object-specific handle.

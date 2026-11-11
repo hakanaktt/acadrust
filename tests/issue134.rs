@@ -415,72 +415,101 @@ fn native_mleader_base_flags_and_context_payload_decode_from_oda_layout() {
     // ODA DWG specification §20.4.89 (pp. 219): BS version,
     // B file-to-xdict, B default. The following MLeader context fields are
     // encoded in the order from §20.4.86 (pp. 214-216).
-    let (source, healthy, auxiliary, _raw, _) = auxiliary_fixture_with_payload(
-        DxfVersion::AC1032,
-        CONTEXT,
-        540,
-        false,
-        false,
-        |writer, scale| {
-            writer.write_bit_short(4);
-            writer.write_bit(true);
-            writer.write_bit(false);
-            writer.write_handle(DwgReferenceType::HardPointer, scale.value());
-            writer.write_bit_long(1); // One leader root.
-            writer.write_bit(true);
-            writer.write_bit(true);
-            writer.write_3bit_double(Vector3::ZERO);
-            writer.write_3bit_double(Vector3::UNIT_X);
-            writer.write_bit_long(0); // No break pairs.
-            writer.write_bit_long(0); // Root index.
-            writer.write_bit_double(5.0);
-            writer.write_bit_long(0); // No leader lines.
-            writer.write_bit_short(0);
-            writer.write_bit_double(1.0); // Context scale.
-            writer.write_3bit_double(Vector3::new(1.0, 2.0, 0.0));
-            for value in [2.5, 1.0, 0.5] {
-                writer.write_bit_double(value);
-            }
-            for value in [1, 1, 0, 0] {
-                writer.write_bit_short(value);
-            }
-            writer.write_bit(false); // No text contents.
-            writer.write_bit(false); // No block contents.
-            for vector in [Vector3::ZERO, Vector3::UNIT_X, Vector3::UNIT_Y] {
-                writer.write_3bit_double(vector);
-            }
-            writer.write_bit(false);
-            writer.write_bit_short(8); // Distinct top attachment value.
-            writer.write_bit_short(9);
-        },
-    );
-    let outcome = DwgReader::from_stream(Cursor::new(DwgWriter::write_to_vec(&source).unwrap()))
+    // With the default flag set, the same bits also decode without an error
+    // as a native one-bit record with no leader roots, which stops far short
+    // of the end of the record.
+    for is_default in [false, true] {
+        let (source, healthy, auxiliary, _raw, _) = auxiliary_fixture_with_payload(
+            DxfVersion::AC1032,
+            CONTEXT,
+            540,
+            false,
+            false,
+            move |writer, scale| {
+                writer.write_bit_short(4);
+                writer.write_bit(true);
+                writer.write_bit(is_default);
+                writer.write_handle(DwgReferenceType::HardPointer, scale.value());
+                writer.write_bit_long(1); // One leader root.
+                writer.write_bit(true);
+                writer.write_bit(false);
+                writer.write_3bit_double(Vector3::ZERO);
+                writer.write_3bit_double(Vector3::UNIT_X);
+                writer.write_bit_long(0); // No break pairs.
+                writer.write_bit_long(0); // Root index.
+                writer.write_bit_double(5.0);
+                writer.write_bit_long(0); // No leader lines.
+                writer.write_bit_short(0);
+                writer.write_bit_double(1.0); // Context scale.
+                writer.write_3bit_double(Vector3::new(1.0, 2.0, 0.0));
+                for value in [2.5, 1.0, 0.5] {
+                    writer.write_bit_double(value);
+                }
+                for value in [1, 1, 0, 0] {
+                    writer.write_bit_short(value);
+                }
+                writer.write_bit(false); // No text contents.
+                writer.write_bit(false); // No block contents.
+                for vector in [
+                    // Raw doubles: a real record is long enough for the misread
+                    // to finish inside it.
+                    Vector3::new(58.5, 50.25, 0.125),
+                    Vector3::new(0.6, 0.8, 0.0),
+                    Vector3::new(-0.8, 0.6, 0.0),
+                ] {
+                    writer.write_3bit_double(vector);
+                }
+                writer.write_bit(false);
+                writer.write_bit_short(8); // Distinct top attachment value.
+                writer.write_bit_short(9);
+            },
+        );
+        let outcome =
+            DwgReader::from_stream(Cursor::new(DwgWriter::write_to_vec(&source).unwrap()))
+                .read_with_stats()
+                .unwrap();
+        assert_eq!(outcome.stats.skipped_source_records, 0);
+        assert!(outcome.document.get_entity(healthy).is_some());
+        assert!(outcome.stats.diagnostics.is_empty());
+        let Some(ObjectType::ObjectContextData(context)) = outcome.document.objects.get(&auxiliary)
+        else {
+            panic!("ODA-layout MLeader context should be modeled");
+        };
+        assert_eq!(context.class_version, 4);
+        assert!(context.has_file_to_extension_dictionary);
+        assert!(!context.uses_legacy_mleader_context_base);
+        assert_eq!(context.is_default, is_default);
+        assert_eq!(context.scale, outcome.document.context_scales[&auxiliary]);
+        let source_kind = context.kind.clone();
+        let ObjectContextKind::MLeader(context) = &context.kind else {
+            panic!("ODA-layout MLeader payload should decode as MLeader context");
+        };
+        assert_eq!(context.leader_roots.len(), 1);
+        assert_eq!(
+            context.text_top_attachment,
+            acadrust::entities::TextAttachmentType::from(8)
+        );
+        assert_eq!(
+            context.text_bottom_attachment,
+            acadrust::entities::TextAttachmentType::from(9)
+        );
+
+        // A save always writes the native one-bit base.
+        let saved = DwgReader::from_stream(Cursor::new(
+            DwgWriter::write_to_vec(&outcome.document).unwrap(),
+        ))
         .read_with_stats()
         .unwrap();
-    assert_eq!(outcome.stats.skipped_source_records, 0);
-    assert!(outcome.document.get_entity(healthy).is_some());
-    assert!(outcome.stats.diagnostics.is_empty());
-    let Some(ObjectType::ObjectContextData(context)) = outcome.document.objects.get(&auxiliary)
-    else {
-        panic!("ODA-layout MLeader context should be modeled");
-    };
-    assert_eq!(context.class_version, 4);
-    assert!(context.has_file_to_extension_dictionary);
-    assert!(!context.uses_legacy_mleader_context_base);
-    assert!(!context.is_default);
-    assert_eq!(context.scale, outcome.document.context_scales[&auxiliary]);
-    let ObjectContextKind::MLeader(context) = &context.kind else {
-        panic!("ODA-layout MLeader payload should decode as MLeader context");
-    };
-    assert_eq!(context.leader_roots.len(), 1);
-    assert_eq!(
-        context.text_top_attachment,
-        acadrust::entities::TextAttachmentType::from(8)
-    );
-    assert_eq!(
-        context.text_bottom_attachment,
-        acadrust::entities::TextAttachmentType::from(9)
-    );
+        assert!(saved.stats.diagnostics.is_empty());
+        let Some(ObjectType::ObjectContextData(saved_context)) =
+            saved.document.objects.get(&auxiliary)
+        else {
+            panic!("saved MLeader context should be modeled");
+        };
+        assert!(saved_context.uses_legacy_mleader_context_base);
+        assert_eq!(saved_context.is_default, is_default);
+        assert_eq!(saved_context.kind, source_kind);
+    }
 }
 
 #[test]
@@ -567,9 +596,13 @@ fn valid_mleader_context_still_decodes_to_fields_without_recovery() {
         .read_with_stats()
         .unwrap();
     assert!(outcome.stats.diagnostics.is_empty());
+    // The writer emits the native one-bit base whatever the flag says, so
+    // the context reads back marked as native.
+    let mut native_object = object;
+    native_object.uses_legacy_mleader_context_base = true;
     assert_eq!(
         outcome.document.objects[&auxiliary],
-        ObjectType::ObjectContextData(object)
+        ObjectType::ObjectContextData(native_object)
     );
     assert_eq!(outcome.document.context_scales[&auxiliary], scale_handle);
 
