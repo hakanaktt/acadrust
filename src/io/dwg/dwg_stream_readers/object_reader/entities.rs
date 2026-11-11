@@ -3997,7 +3997,8 @@ fn read_legacy_table_style_override(reader: &mut DwgMergedReader) -> LegacyTable
         value.title_suppressed = Some(reader.read_bit());
     }
     if flags & 0x0002 != 0 {
-        value.header_suppressed = Some(reader.read_bit());
+        // Header suppressed: "always true", no data in DWG.
+        value.header_suppressed = Some(true);
     }
     if flags & 0x0004 != 0 {
         value.flow_direction = Some(reader.read_bit_short());
@@ -6968,6 +6969,38 @@ mod tests {
             assert!(style.right_border.invisible, "{dxf:?}: right");
             assert!(!style.bottom_border.invisible, "{dxf:?}: bottom");
             assert_eq!(style.bottom_border.line_weight, LineWeight::ByLayer);
+        }
+    }
+
+    // ── legacy TABLE overrides (BL 93, AcDbTable below R2010) ──
+    //
+    // ODA's Open Design Specification (20.4.96.1): the header suppressed
+    // override (bit 0x0002) is "always true (do not read any data for this)".
+
+    #[test]
+    fn legacy_table_header_suppressed_override_has_no_data() {
+        const SENTINEL: i32 = 0x0123_4567;
+        // Title and header suppressed, both cell margins.
+        let flags = 0x01 | 0x02 | 0x08 | 0x10;
+        for (dwg, dxf) in [
+            (DwgVersion::AC18, DxfVersion::AC1018),
+            (DwgVersion::AC21, DxfVersion::AC1021),
+        ] {
+            let mut reader = make_reader(dwg, dxf, |w| {
+                w.write_bit_long(flags);
+                w.write_bit(true); // title suppressed
+                w.write_bit_double(0.0864); // horizontal cell margin
+                w.write_bit_double(0.0432); // vertical cell margin
+                w.write_bit_long(SENTINEL);
+            });
+            let value = read_legacy_table_style_override(&mut reader);
+            assert_eq!(reader.read_bit_long(), SENTINEL, "{dxf:?}");
+            reader.check_error().expect("table overrides");
+            assert_eq!(value.flags, flags);
+            assert_eq!(value.title_suppressed, Some(true));
+            assert_eq!(value.header_suppressed, Some(true), "{dxf:?}");
+            assert_eq!(value.horizontal_cell_margin, Some(0.0864), "{dxf:?}");
+            assert_eq!(value.vertical_cell_margin, Some(0.0432), "{dxf:?}");
         }
     }
 }
