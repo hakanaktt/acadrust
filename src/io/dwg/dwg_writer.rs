@@ -75,6 +75,7 @@ impl DwgWriter {
         prepare_table_keys(&mut prepared);
         prepare_active_viewport_elevation(&mut prepared);
         prepare_roundtrip_records(&mut prepared);
+        prepare_plot_style_name_dictionary(&mut prepared);
         // R2010+ style records own their starting table; older ones keep it
         // in the extension dictionary.
         let in_dictionary = prepared.version < DxfVersion::AC1024;
@@ -171,6 +172,7 @@ impl DwgWriter {
         prepare_table_keys(&mut prepared);
         prepare_active_viewport_elevation(&mut prepared);
         prepare_roundtrip_records(&mut prepared);
+        prepare_plot_style_name_dictionary(&mut prepared);
         // R2010+ style records own their starting table; older ones keep it
         // in the extension dictionary.
         let in_dictionary = prepared.version < DxfVersion::AC1024;
@@ -831,6 +833,53 @@ fn prepare_unique_seqends(document: &mut std::borrow::Cow<'_, CadDocument>) {
             i.seqend_handle = None;
         }
     }
+}
+
+/// ACAD_PLOTSTYLENAME is a dictionary with a default entry
+/// (ACDBDICTIONARYWDFLT) in every drawing AutoCAD and ODA save, and ODA refuses
+/// a DWG that stores it as a plain DICTIONARY ("can't be cast to
+/// AcDbDictionaryWithDefault"). DXF files of other programs carry it as a plain
+/// DICTIONARY: promote it on the output copy, with `Normal` as the default
+/// entry, else the first one. Its reactors and extension dictionary go to the
+/// side channels the writer reads them from for this record.
+fn prepare_plot_style_name_dictionary(document: &mut std::borrow::Cow<'_, CadDocument>) {
+    use crate::objects::{DictionaryWithDefault, ObjectType};
+    // R13/R14 have no plot style dictionary: the writer leaves it out.
+    if document.version < DxfVersion::AC1015 {
+        return;
+    }
+    let Some(handle) = document
+        .named_objects_dictionary()
+        .and_then(|root| root.get("ACAD_PLOTSTYLENAME"))
+    else {
+        return;
+    };
+    let Some(ObjectType::Dictionary(plain)) = document.objects.get(&handle) else {
+        return;
+    };
+    let promoted = DictionaryWithDefault {
+        handle: plain.handle,
+        owner: plain.owner,
+        entries: plain.entries.clone(),
+        default_handle: plain
+            .get("Normal")
+            .or_else(|| plain.entries.first().map(|(_, entry)| *entry))
+            .unwrap_or(Handle::NULL),
+        duplicate_cloning: plain.duplicate_cloning,
+        hard_owner: plain.hard_owner,
+    };
+    let reactors = plain.reactors.clone();
+    let xdictionary = plain.xdictionary_handle;
+    let output = document.to_mut();
+    if !reactors.is_empty() {
+        output.reactors_by_handle.entry(handle).or_insert(reactors);
+    }
+    if let Some(xdictionary) = xdictionary {
+        output.xdic_by_handle.entry(handle).or_insert(xdictionary);
+    }
+    output
+        .objects
+        .insert(handle, ObjectType::DictionaryWithDefault(promoted));
 }
 
 /// Re-key symbol-table entries that were renamed in place.
