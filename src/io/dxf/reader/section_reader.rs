@@ -729,7 +729,7 @@ fn class_dxf_render_settings(
     // Same class-version normalisation as the DWG reader.
     let stored_version = fields.i32(section, 90);
     RenderSettings {
-        class_version: if !rapid_rt && version >= DxfVersion::AC1027 {
+        class_version: if has_predefined_in_base && version >= DxfVersion::AC1027 {
             stored_version - 1
         } else {
             stored_version

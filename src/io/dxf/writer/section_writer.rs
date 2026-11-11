@@ -6757,7 +6757,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         write_has_predefined: bool,
         rapid_rt: bool,
     ) -> Result<()> {
-        let class_version = if !rapid_rt && self.dxf_version >= DxfVersion::AC1027 {
+        let class_version = if write_has_predefined && self.dxf_version >= DxfVersion::AC1027 {
             value.class_version + 1
         } else {
             value.class_version
