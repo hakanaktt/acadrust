@@ -79,8 +79,20 @@ pub enum AlignmentElementKind {
     FloatingArcToPoint { radius: f64, end: Vector2 },
     /// Arc from a stored point, ending tangent to the next line.
     FloatingArcFromPoint { radius: f64, start: Vector2 },
-    /// Whole circle; `start` when the record stores one.
-    Circle { center: Vector2, radius: f64, start: Option<Vector2> },
+    /// Circle by its centre; `start` when the record stores one. A whole
+    /// circle when `closed`, otherwise the part between where the lines
+    /// next to it touch it, travelled clockwise or not.
+    Circle {
+        center: Vector2,
+        radius: f64,
+        start: Option<Vector2>,
+        closed: bool,
+        clockwise: bool,
+    },
+    /// Line from a stored point, tangent to the next element.
+    FloatingLineFrom { start: Vector2 },
+    /// Line from a stored point, then a spiral into the next curve.
+    LineSpiralInto { start: Vector2, spiral: f64 },
     /// Spiral from a stored point and direction, curvature rising to `1/radius`.
     SpiralIn {
         start: Vector2,
@@ -119,8 +131,57 @@ pub enum AlignmentElementKind {
     },
     /// Spiral from the previous curvature to zero, tangent to the next line.
     FreeSpiral,
-    /// Spiral-line-spiral joining the previous and next curves.
-    FreeSpiralLineSpiral,
+    /// Spiral out of the previous curve and spiral into the next one, with
+    /// `A1 / A2 = ratio`.
+    FreeSpiralSpiralCurves { ratio: f64 },
+    /// Spiral out of the previous curve, a line, spiral into the next
+    /// curve: by both spiral lengths, or by the line's length with equal
+    /// `A` on both spirals.
+    FreeSpiralLineSpiralCurves { spirals: Option<(f64, f64)>, line: Option<f64> },
+    /// Spiral of `length` between the previous and next lines, curvature
+    /// rising from the first line (`incurve`) or falling onto the second.
+    FreeSpiralBetweenLines { length: f64, incurve: bool },
+    /// Two spirals meeting without a curve between the previous and next
+    /// lines.
+    FreeSpiralSpiralLines { spiral_in: f64, spiral_out: f64 },
+    /// Spiral from the previous line into an arc that ends at `end`.
+    FloatingSpiralCurveTo { spiral: f64, radius: f64, end: Vector2 },
+    /// Spiral out of the previous curve, then a line.
+    FloatingSpiralLine { spiral: f64, line: f64 },
+    /// Spiral from a stored point and direction, curvature running from
+    /// `1/start_radius` to `1/end_radius`.
+    CompoundSpiral {
+        start: Vector2,
+        direction: Vector2,
+        start_radius: f64,
+        length: f64,
+        end_radius: f64,
+        clockwise: bool,
+    },
+    /// Spiral continuing the previous element, curvature running to
+    /// `1/end_radius` (zero when it is not finite).
+    PlacedSpiral {
+        end_radius: f64,
+        length: f64,
+        clockwise: bool,
+        shape: SpiralShape,
+    },
+    /// Spiral out of the previous curve, reverse spiral into an arc
+    /// through `through` that ends at `end`; the arc's radius is solved.
+    FloatingReverseSpiralsThrough {
+        spiral_out: f64,
+        spiral_in: f64,
+        through: Vector2,
+        end: Vector2,
+    },
+    /// Line from the previous element's end to `end`.
+    FloatingLineTo { end: Vector2 },
+    /// Arc fitted between the previous and next lines through a point.
+    FreeArcThrough { through: Vector2 },
+    /// Arc continuing the previous element, ending at `end`.
+    FloatingArcThrough { end: Vector2 },
+    /// Arc leaving the previous line, ending at `end` along `direction`.
+    FloatingArcToDirection { end: Vector2, direction: Vector2 },
     /// Spiral to zero, reverse spiral to `1/radius`, then an arc ending at `end`.
     FloatingSpiralSpiralCurve {
         spiral_out: f64,
@@ -135,6 +196,17 @@ pub enum AlignmentElementKind {
         first: [f64; 3],
         second: [f64; 3],
         first_arc: f64,
+    },
+    /// Spiral, curve, spiral, curve, spiral from a stored TS on the
+    /// previous line to the next line: `spirals` and `radii` as stored, the
+    /// curves' lengths solved. `reverse`: the second curve turns the other
+    /// way, after a spiral out of the first and one into it.
+    SpiralCurveGroup {
+        start: Vector2,
+        spirals: Vec<f64>,
+        radii: [f64; 2],
+        first_left: bool,
+        reverse: bool,
     },
     /// Points the record stores, joined in order.
     Points { points: Vec<Vector2> },
@@ -184,7 +256,9 @@ pub(super) fn elements(data: &[u8], start: usize, end: usize) -> Vec<AlignmentEl
         if !is_header(data, pos, end) {
             continue;
         }
-        if let Some(element) = read_element(&mut Bits::new(data, pos, end)) {
+        let member = member_body(data, pos, end);
+        let after_type = type_end(data, pos, end);
+        if let Some(element) = read_element(&mut Bits::new(data, pos, end), member, after_type) {
             if element.id > 0 && !out.iter().any(|e| e.id == element.id) {
                 out.push(element);
             }
@@ -194,13 +268,42 @@ pub(super) fn elements(data: &[u8], start: usize, end: usize) -> Vec<AlignmentEl
 }
 
 /// `BL type` (raw, 257..=280) followed by `BS 2`, or `BS 0` in some
-/// Civil 3D 2013 alignments.
+/// Civil 3D 2013 alignments, or the header of a group member.
 fn is_header(data: &[u8], pos: usize, end: usize) -> bool {
     let mut bits = Bits::new(data, pos, end);
     let Some(element_type) = raw_bit_long(&mut bits) else {
         return false;
     };
-    (257..=280).contains(&element_type) && matches!(bits.bit_short(), Some(0 | 2))
+    (257..=280).contains(&element_type)
+        && (matches!(bits.bit_short(), Some(0 | 2)) || header_type(data, pos, end).is_some_and(|t| matches!(t, 0x04 | 0x09 | 0x0D)))
+}
+
+/// The header's type byte. The flag and type bytes start at bit 29 of the
+/// record: a flag byte with the parameter lock (0x02) comes first when the
+/// lock is on, then the type byte.
+fn header_type(data: &[u8], pos: usize, end: usize) -> Option<u8> {
+    let mut bits = Bits::new(data, pos + 29, end);
+    let first = bits.raw_short_byte()?;
+    if first & 0x02 != 0 {
+        bits.raw_short_byte()
+    } else {
+        Some(first)
+    }
+}
+
+/// Where the parameters of a group member begin. Type bit 0x08 marks the
+/// first spiral of a group kept as separate elements; the group's start
+/// point (2 RD) follows the type byte.
+fn member_body(data: &[u8], pos: usize, end: usize) -> Option<usize> {
+    let kind = header_type(data, pos, end)?;
+    let body = type_end(data, pos, end)? + 128;
+    (kind & 0x08 != 0 && body <= end).then_some(body)
+}
+
+/// The bit after the header's type byte.
+fn type_end(data: &[u8], pos: usize, end: usize) -> Option<usize> {
+    let flagged = Bits::new(data, pos + 29, end).raw_short_byte()? & 0x02 != 0;
+    Some(pos + 37 + if flagged { 8 } else { 0 })
 }
 
 fn raw_bit_long(bits: &mut Bits) -> Option<i32> {
@@ -209,14 +312,24 @@ fn raw_bit_long(bits: &mut Bits) -> Option<i32> {
     bits.raw_long()
 }
 
-fn read_element(bits: &mut Bits) -> Option<AlignmentElement> {
+fn read_element(bits: &mut Bits, member: Option<usize>, after_type: Option<usize>) -> Option<AlignmentElement> {
     let element_type = raw_bit_long(bits)?;
-    bits.bit_short()?;
+    let mut closed = false;
+    // `BS 0 / 2` covers the usual flag and type bytes up to the type's
+    // last bit; other flag bytes are skipped by their layout.
+    if !matches!(bits.bit_short()?, 0 | 2) {
+        bits.pos = after_type? - 1;
+    }
     let constraint = if element_type == 257 {
         bits.bit()?;
         Some(i32::from(bits.bit_short()?))
     } else {
-        bits.bit()?;
+        match member {
+            Some(body) => bits.pos = body,
+            None => {
+                bits.bit()?;
+            }
+        }
         bits.bit()?;
         bits.bit_double()?;
         bits.bit_double()?;
@@ -228,12 +341,12 @@ fn read_element(bits: &mut Bits) -> Option<AlignmentElement> {
             bits.bit_double()?;
         }
         // The low word is the constraint; the high word carries flags.
-        let constraint = (element_type != 269)
+        let constraint = (!matches!(element_type, 268 | 269))
             .then(|| bits.bit_long())
             .flatten()
             .map(|c| c & 0xFFFF);
         if element_type == 258 {
-            bits.bit()?;
+            closed = bits.bit()?;
         }
         constraint
     };
@@ -241,12 +354,19 @@ fn read_element(bits: &mut Bits) -> Option<AlignmentElement> {
     let previous = bits.bit_short()?;
     let next = bits.bit_short()?;
     let point = |bits: &mut Bits| Some(Vector2::new(bits.raw_double()?, bits.raw_double()?));
+    let long = if matches!(element_type, 268 | 269) {
+        long_group(bits, element_type == 269)
+    } else {
+        None
+    };
     let kind = match (element_type, constraint) {
         (257, Some(0)) => AlignmentElementKind::FixedLine {
             start: point(bits)?,
             end: point(bits)?,
         },
         (257, Some(9)) => AlignmentElementKind::FreeLine,
+        (257, Some(4)) => AlignmentElementKind::FloatingLineTo { end: point(bits)? },
+        (257, Some(3)) => AlignmentElementKind::FloatingLineFrom { start: point(bits)? },
         (257, Some(5)) => AlignmentElementKind::FloatingLine {
             length: bits.bit_double()?,
         },
@@ -282,6 +402,8 @@ fn read_element(bits: &mut Bits) -> Option<AlignmentElement> {
             center: point(bits)?,
             radius: bits.bit_double()?,
             start: None,
+            closed,
+            clockwise: bits.bit()?,
         },
         (258, Some(1)) => {
             let center = point(bits)?;
@@ -290,6 +412,8 @@ fn read_element(bits: &mut Bits) -> Option<AlignmentElement> {
                 center,
                 radius: center.distance(&start),
                 start: Some(start),
+                closed,
+                clockwise: bits.bit()?,
             }
         }
         (258, Some(15)) => AlignmentElementKind::FloatingArcFromPoint {
@@ -300,13 +424,37 @@ fn read_element(bits: &mut Bits) -> Option<AlignmentElement> {
             radius: bits.bit_double()?,
             end: point(bits)?,
         },
+        (258, Some(28)) => AlignmentElementKind::FreeArcThrough {
+            through: point(bits)?,
+        },
+        (258, Some(8)) => AlignmentElementKind::FloatingArcThrough { end: point(bits)? },
+        (258, Some(11)) => AlignmentElementKind::FloatingArcToDirection {
+            end: point(bits)?,
+            direction: point(bits)?,
+        },
         (258, Some(29 | 30)) => AlignmentElementKind::FreeArc {
             radius: bits.bit_double()?,
         },
-        (259, Some(code @ (0 | 1))) => {
+        (259, Some(code @ (0 | 1 | 2 | 6 | 8))) => {
             let shape = SpiralShape::from_code(bits.bit_long()?);
             let clockwise = bits.bit()?;
-            if code == 0 {
+            if code == 2 {
+                AlignmentElementKind::CompoundSpiral {
+                    start: point(bits)?,
+                    direction: point(bits)?,
+                    start_radius: bits.bit_double()?,
+                    length: bits.bit_double()?,
+                    end_radius: bits.bit_double()?,
+                    clockwise,
+                }
+            } else if code >= 6 {
+                AlignmentElementKind::PlacedSpiral {
+                    end_radius: bits.bit_double()?,
+                    length: bits.bit_double()?,
+                    clockwise,
+                    shape,
+                }
+            } else if code == 0 {
                 AlignmentElementKind::SpiralIn {
                     start: point(bits)?,
                     direction: point(bits)?,
@@ -351,7 +499,72 @@ fn read_element(bits: &mut Bits) -> Option<AlignmentElement> {
             }
         }
         (260, Some(14)) => AlignmentElementKind::FreeSpiral,
-        (261, Some(5)) => AlignmentElementKind::FreeSpiralLineSpiral,
+        (260, Some(code @ (10 | 12))) => {
+            bits.bit_long()?;
+            AlignmentElementKind::FreeSpiralBetweenLines {
+                length: bits.bit_double()?,
+                incurve: code == 10,
+            }
+        }
+        (260, Some(8)) => {
+            bits.bit_long()?;
+            AlignmentElementKind::FreeSpiralSpiralLines {
+                spiral_in: bits.bit_double()?,
+                spiral_out: bits.bit_double()?,
+            }
+        }
+        (260, Some(2)) => {
+            bits.bit_long()?;
+            AlignmentElementKind::FloatingSpiralCurveTo {
+                spiral: bits.bit_double()?,
+                radius: bits.bit_double()?,
+                end: point(bits)?,
+            }
+        }
+        // Civil 3D 2013 writes code 5 where later releases write 4.
+        (261, Some(4 | 5)) => {
+            bits.bit_long()?;
+            AlignmentElementKind::FreeSpiralSpiralCurves {
+                ratio: bits.bit_double()?,
+            }
+        }
+        (261, Some(0)) => {
+            bits.bit_long()?;
+            AlignmentElementKind::FreeSpiralLineSpiralCurves {
+                spirals: Some((bits.bit_double()?, bits.bit_double()?)),
+                line: None,
+            }
+        }
+        (261, Some(1)) => {
+            bits.bit_long()?;
+            AlignmentElementKind::FreeSpiralLineSpiralCurves {
+                spirals: None,
+                line: Some(bits.bit_double()?),
+            }
+        }
+        (261, Some(161)) => {
+            bits.bit_long()?;
+            AlignmentElementKind::FloatingSpiralLine {
+                spiral: bits.bit_double()?,
+                line: bits.bit_double()?,
+            }
+        }
+        (261, Some(162)) => {
+            bits.bit_long()?;
+            AlignmentElementKind::LineSpiralInto {
+                start: point(bits)?,
+                spiral: bits.bit_double()?,
+            }
+        }
+        (266, Some(2)) => {
+            bits.bit_long()?;
+            AlignmentElementKind::FloatingReverseSpiralsThrough {
+                spiral_out: bits.bit_double()?,
+                spiral_in: bits.bit_double()?,
+                through: point(bits)?,
+                end: point(bits)?,
+            }
+        }
         (266, Some(1)) => {
             bits.bit_long()?;
             AlignmentElementKind::FloatingSpiralSpiralCurve {
@@ -383,6 +596,9 @@ fn read_element(bits: &mut Bits) -> Option<AlignmentElement> {
             }
             AlignmentElementKind::Points { points }
         }
+        // Long spiral groups from a stored TS (later releases): `BL n,
+        // B first curve left, B`, the spiral lengths and radii, `RD TS`.
+        (268 | 269, None) if long.is_some() => long?,
         (269, None) => {
             bits.bit_long()?;
             bits.bit_short()?;
@@ -468,6 +684,106 @@ fn read_element(bits: &mut Bits) -> Option<AlignmentElement> {
         next,
         kind,
     })
+}
+
+/// A long spiral group's TS layout; the reader is left after it.
+fn long_group(bits: &mut Bits, reverse: bool) -> Option<AlignmentElementKind> {
+    let from = bits.pos;
+    let parsed = (|| {
+        bits.bit_long()?;
+        bits.bit_long()?;
+        let first_left = bits.bit()?;
+        bits.bit()?;
+        let mut v = Vec::new();
+        for _ in 0..if reverse { 6 } else { 5 } {
+            v.push(bits.bit_double().filter(|x| x.is_finite() && *x > 0.0 && *x < 1e9)?);
+        }
+        let start = Vector2::new(bits.raw_double()?, bits.raw_double()?);
+        let plausible = |x: f64| (x.is_normal() || x == 0.0) && x.abs() < 1e9;
+        (plausible(start.x) && plausible(start.y)).then_some(())?;
+        Some(if reverse {
+            AlignmentElementKind::SpiralCurveGroup {
+                start,
+                spirals: vec![v[0], v[2], v[3], v[5]],
+                radii: [v[1], v[4]],
+                first_left,
+                reverse,
+            }
+        } else {
+            AlignmentElementKind::SpiralCurveGroup {
+                start,
+                spirals: vec![v[0], v[2], v[4]],
+                radii: [v[1], v[3]],
+                first_left,
+                reverse,
+            }
+        })
+    })();
+    if parsed.is_none() {
+        bits.pos = from;
+    }
+    parsed
+}
+
+/// An open circle's signed offset of its centre to the left of travel.
+fn open_circle(element: Option<&&AlignmentElement>) -> Option<(Vector2, f64)> {
+    match element.map(|e| &e.kind) {
+        Some(AlignmentElementKind::Circle {
+            center,
+            radius,
+            closed: false,
+            clockwise,
+            ..
+        }) => Some((*center, if *clockwise { -radius } else { *radius })),
+        _ => None,
+    }
+}
+
+/// The line leaving `(c1, s1)` and arriving at `(c2, s2)` tangentially,
+/// each a centre with its signed offset to the left of travel (0 for a
+/// point).
+fn tangent_line(c1: Vector2, s1: f64, c2: Vector2, s2: f64) -> Option<(Vector2, Vector2)> {
+    let d = c2 - c1;
+    let length = d.length();
+    let ratio = (s2 - s1) / length;
+    if length < 1e-12 || ratio.abs() > 1.0 {
+        return None;
+    }
+    let u = direction(heading(d) - ratio.asin());
+    let n = left(u);
+    Some((c1 - n * s1, c2 - n * s2))
+}
+
+/// Lines next to an open circle, placed from the circle: a free line
+/// between two open circles is their common tangent, a line to or from a
+/// stored point the tangent through that point.
+fn lines_at_open_circles(run: &[&AlignmentElement]) -> Vec<AlignmentElement> {
+    run.iter()
+        .enumerate()
+        .map(|(i, e)| {
+            let before = i.checked_sub(1).and_then(|j| run.get(j));
+            let after = run.get(i + 1);
+            let line = match &e.kind {
+                AlignmentElementKind::FreeLine => open_circle(before)
+                    .zip(open_circle(after))
+                    .and_then(|((c1, s1), (c2, s2))| tangent_line(c1, s1, c2, s2)),
+                AlignmentElementKind::FloatingLineTo { end } => {
+                    open_circle(before).and_then(|(c, s)| tangent_line(c, s, *end, 0.0))
+                }
+                AlignmentElementKind::FloatingLineFrom { start } => {
+                    open_circle(after).and_then(|(c, s)| tangent_line(*start, 0.0, c, s))
+                }
+                _ => None,
+            };
+            match line {
+                Some((start, end)) => AlignmentElement {
+                    kind: AlignmentElementKind::FixedLine { start, end },
+                    ..(*e).clone()
+                },
+                None => (*e).clone(),
+            }
+        })
+        .collect()
 }
 
 /// Elements in station order, one run per start element.
@@ -759,6 +1075,8 @@ pub(super) fn geometry_points(elements: &[AlignmentElement]) -> Vec<GeometryPoin
 fn raw_polylines(elements: &[AlignmentElement]) -> Vec<Vec<Vector2>> {
     let mut out = Vec::new();
     for run in chains(elements) {
+        let placed = lines_at_open_circles(&run);
+        let run: Vec<&AlignmentElement> = placed.iter().collect();
         solve_run(&run, &mut out);
     }
     out.retain(|points| points.len() > 1);
@@ -791,7 +1109,22 @@ fn solve_run(run: &[&AlignmentElement], out: &mut Vec<Vec<Vector2>>) {
                 });
             }
         };
-        let solved: Option<(Vec<Vector2>, State)> = match &element.kind {
+        // A line to a stored point starts where the element before ends.
+        let from_end;
+        let kind = match &element.kind {
+            AlignmentElementKind::FloatingLineTo { end } => {
+                attach(&mut points, &mut pending, &mut state);
+                match state {
+                    Some(s) => {
+                        from_end = AlignmentElementKind::FixedLine { start: s.point, end: *end };
+                        &from_end
+                    }
+                    None => &element.kind,
+                }
+            }
+            kind => kind,
+        };
+        let solved: Option<(Vec<Vector2>, State)> = match kind {
             AlignmentElementKind::FixedLine { start, end } => {
                 let Some(u) = unit(*end - *start) else {
                     continue;
@@ -889,6 +1222,74 @@ fn solve_run(run: &[&AlignmentElement], out: &mut Vec<Vec<Vector2>>) {
                         }
                         _ => None,
                     },
+                    // A group from this arc to the fixed arc after it leaves this
+                    // arc where it is solved to.
+                    Some(
+                        group @ (AlignmentElementKind::FreeSpiralSpiralCurves { .. }
+                        | AlignmentElementKind::FreeSpiralLineSpiralCurves { .. }),
+                    ) => match run.get(index + 1).map(|after| &after.kind) {
+                        Some(AlignmentElementKind::FixedArc { start: a2, mid: m2, end: e2 }) => {
+                            let parts = |k1: f64, k2: f64, value: f64| -> Option<Vec<(f64, f64, f64)>> {
+                                Some(match group {
+                                    AlignmentElementKind::FreeSpiralSpiralCurves { ratio } => {
+                                        let a2 = value / ratio;
+                                        vec![(k1, 0.0, value * value * k1.abs()), (0.0, k2, a2 * a2 * k2.abs())]
+                                    }
+                                    AlignmentElementKind::FreeSpiralLineSpiralCurves {
+                                        spirals: Some((l1, l2)),
+                                        ..
+                                    } => vec![(k1, 0.0, *l1), (0.0, 0.0, value), (0.0, k2, *l2)],
+                                    AlignmentElementKind::FreeSpiralLineSpiralCurves { line: Some(line), .. } => {
+                                        let a = value * value;
+                                        vec![(k1, 0.0, a * k1.abs()), (0.0, 0.0, *line), (0.0, k2, a * k2.abs())]
+                                    }
+                                    _ => return None,
+                                })
+                            };
+                            let seeds: &[f64] = match group {
+                                AlignmentElementKind::FreeSpiralLineSpiralCurves { spirals: Some(_), .. } => {
+                                    &[0.0, 10.0, 100.0, 1000.0, 5000.0]
+                                }
+                                _ => &[10.0, 30.0, 100.0, 300.0, 1000.0, 3000.0],
+                            };
+                            between_circles((*start, *mid, *end), (*a2, *m2, *e2), parts, seeds).and_then(
+                                |(from, q, arrive)| {
+                                    let (mut all, ..) = arc_to_point(arc_start_state(*start, *mid, *end), from.point)?;
+                                    all.extend(q);
+                                    let (rest, last, _) = arc_to_point(arrive, *e2)?;
+                                    all.extend(rest);
+                                    Some(((all, last), 2))
+                                },
+                            )
+                        }
+                        _ => None,
+                    },
+                    // Reverse spirals leaving this arc where they are solved to.
+                    Some(
+                        group @ (AlignmentElementKind::FloatingSpiralSpiralCurve { .. }
+                        | AlignmentElementKind::FloatingReverseSpiralsThrough { .. }),
+                    ) => {
+                        let solved = match group {
+                            AlignmentElementKind::FloatingSpiralSpiralCurve {
+                                spiral_out,
+                                spiral_in,
+                                radius,
+                                end: to,
+                            } => reverse_from_circle((*start, *mid, *end), *spiral_out, *spiral_in, Some(*radius), *to, *to),
+                            AlignmentElementKind::FloatingReverseSpiralsThrough {
+                                spiral_out,
+                                spiral_in,
+                                through,
+                                end: to,
+                            } => reverse_from_circle((*start, *mid, *end), *spiral_out, *spiral_in, None, *through, *to),
+                            _ => None,
+                        };
+                        solved.and_then(|(from, q, last)| {
+                            let (mut all, ..) = arc_to_point(arc_start_state(*start, *mid, *end), from.point)?;
+                            all.extend(q);
+                            Some(((all, last), 1))
+                        })
+                    }
                     _ => None,
                 };
                 match fillet {
@@ -971,7 +1372,8 @@ fn solve_run(run: &[&AlignmentElement], out: &mut Vec<Vec<Vector2>>) {
                         .filter(|(_, end)| cross(end.point - b, v).abs() < TOLERANCE)
                 })
             }
-            AlignmentElementKind::FreeSpiralLineSpiral => {
+            AlignmentElementKind::FreeSpiralSpiralCurves { .. }
+            | AlignmentElementKind::FreeSpiralLineSpiralCurves { .. } => {
                 attach(&mut points, &mut pending, &mut state);
                 // What the spiral-line-spiral has to arrive at: the start of a
                 // curve-spiral built back from the line after it (solved
@@ -1000,6 +1402,182 @@ fn solve_run(run: &[&AlignmentElement], out: &mut Vec<Vec<Vector2>>) {
                     _ => None,
                 }
             }
+            AlignmentElementKind::FreeSpiralBetweenLines { length, incurve } => {
+                slide_between_lines(&mut points, &mut pending, next, |turn| {
+                    let k = 2.0 * turn / length;
+                    vec![if *incurve { (0.0, k, *length) } else { (k, 0.0, *length) }]
+                })
+            }
+            AlignmentElementKind::FreeSpiralSpiralLines { spiral_in, spiral_out } => {
+                slide_between_lines(&mut points, &mut pending, next, |turn| {
+                    let k = 2.0 * turn / (spiral_in + spiral_out);
+                    vec![(0.0, k, *spiral_in), (k, 0.0, *spiral_out)]
+                })
+            }
+            AlignmentElementKind::FloatingSpiralCurveTo { spiral, radius, end } => line_from(&pending, state)
+                .and_then(|(p, u)| spiral_curve_to(p, u, *spiral, *radius, *end))
+                .map(|(start, q, end)| {
+                    close(&mut points, &mut pending, start);
+                    (q, end)
+                }),
+            AlignmentElementKind::FloatingSpiralLine { spiral, line } => {
+                attach(&mut points, &mut pending, &mut state);
+                state.map(|s| pieces(s, &[(s.curvature, 0.0, *spiral), (0.0, 0.0, *line)]))
+            }
+            AlignmentElementKind::CompoundSpiral {
+                start,
+                direction: d,
+                start_radius,
+                length,
+                end_radius,
+                clockwise,
+            } => {
+                close(&mut points, &mut pending, *start);
+                let (k0, k1) = (curvature(*start_radius, *clockwise), curvature(*end_radius, *clockwise));
+                let begin = State {
+                    point: *start,
+                    heading: heading(*d),
+                    curvature: k0,
+                };
+                Some(pieces(begin, &[(k0, k1, *length)]))
+            }
+            AlignmentElementKind::PlacedSpiral {
+                end_radius,
+                length,
+                clockwise,
+                shape,
+            } => {
+                attach(&mut points, &mut pending, &mut state);
+                let k1 = if end_radius.is_finite() && *end_radius > 0.0 && *end_radius < 1e12 {
+                    curvature(*end_radius, *clockwise)
+                } else {
+                    0.0
+                };
+                state.map(|s| {
+                    if s.curvature.abs() < 1e-12 {
+                        spiral(s, k1, true, *length, *shape)
+                    } else if k1 == 0.0 {
+                        spiral(s, s.curvature, false, *length, *shape)
+                    } else {
+                        pieces(s, &[(s.curvature, k1, *length)])
+                    }
+                })
+            }
+            AlignmentElementKind::FreeArcThrough { through } => {
+                let radius = pending
+                    .as_ref()
+                    .zip(next.and_then(line_carrier))
+                    .and_then(|(line, (b, v))| fillet_radius_through(line.start, line.direction, b, v, *through));
+                radius.and_then(|r| fitted_curve(&mut points, &mut pending, state, next, 0.0, r, 0.0))
+            }
+            AlignmentElementKind::FloatingArcThrough { end } => {
+                attach(&mut points, &mut pending, &mut state);
+                state.and_then(|s| {
+                    let w = *end - s.point;
+                    let k = 2.0 * cross(direction(s.heading), w) / w.dot(&w);
+                    arc_to_point(State { curvature: k, ..s }, *end).map(|(q, end, _)| (q, end))
+                })
+            }
+            AlignmentElementKind::FloatingArcToDirection { end, direction: d } => line_from(&pending, state)
+                .and_then(|(p, u)| arc_to_direction(p, u, *end, unit(*d)?))
+                .and_then(|(touch, at)| {
+                    close(&mut points, &mut pending, touch);
+                    arc_to_point(at, *end).map(|(q, end, _)| (q, end))
+                }),
+            AlignmentElementKind::SpiralCurveGroup {
+                start,
+                spirals,
+                radii,
+                first_left,
+                reverse,
+            } => {
+                let u = pending.as_ref().map(|line| line.direction);
+                u.zip(next.and_then(line_carrier)).and_then(|(u, (b, v))| {
+                    let k1 = if *first_left { 1.0 } else { -1.0 } / radii[0];
+                    let k2 = if *reverse { -k1.signum() } else { k1.signum() } / radii[1];
+                    let parts = |c1: f64, c2: f64| -> Vec<(f64, f64, f64)> {
+                        if *reverse {
+                            vec![
+                                (0.0, k1, spirals[0]),
+                                (k1, k1, c1),
+                                (k1, 0.0, spirals[1]),
+                                (0.0, k2, spirals[2]),
+                                (k2, k2, c2),
+                                (k2, 0.0, spirals[3]),
+                            ]
+                        } else {
+                            vec![
+                                (0.0, k1, spirals[0]),
+                                (k1, k1, c1),
+                                (k1, k2, spirals[1]),
+                                (k2, k2, c2),
+                                (k2, 0.0, spirals[2]),
+                            ]
+                        }
+                    };
+                    let begin = State {
+                        point: *start,
+                        heading: heading(u),
+                        curvature: 0.0,
+                    };
+                    let seeds: Vec<(f64, f64)> = [1.0, 30.0, 300.0, 3000.0]
+                        .iter()
+                        .flat_map(|a| [1.0, 30.0, 300.0, 3000.0].map(|b| (*a, b)))
+                        .collect();
+                    let (c1, c2) = newton2(
+                        |c1, c2| {
+                            let end = end_of(begin, &parts(c1, c2));
+                            Some((normalize(end.heading - heading(v)), cross(end.point - b, v)))
+                        },
+                        &seeds,
+                    )
+                    .into_iter()
+                    .filter(|(c1, c2)| *c1 >= -1e-9 && *c2 >= -1e-9)
+                    .min_by(|a, b| (a.0 + a.1).total_cmp(&(b.0 + b.1)))?;
+                    close(&mut points, &mut pending, *start);
+                    Some(pieces(begin, &parts(c1.max(0.0), c2.max(0.0))))
+                })
+            }
+            AlignmentElementKind::LineSpiralInto { start, spiral } => {
+                // The line meets the curve shifted out by the spiral's
+                // offset; the spiral starts its tangent offset before that.
+                let circle = open_circle(next.as_ref()).or_else(|| match next.map(|n| &n.kind) {
+                    Some(AlignmentElementKind::FixedArc { start: a, mid: m, end: c }) => {
+                        let (center, k, _) = arc_circle(*a, *m, *c)?;
+                        Some((center, 1.0 / k))
+                    }
+                    _ => None,
+                });
+                circle.and_then(|(center, signed)| {
+                    let r = signed.abs();
+                    let local = end_of(
+                        State {
+                            point: Vector2::new(0.0, 0.0),
+                            heading: 0.0,
+                            curvature: 0.0,
+                        },
+                        &[(0.0, 1.0 / r, *spiral)],
+                    );
+                    let theta = spiral / (2.0 * r);
+                    let shift = local.point.y - r * (1.0 - theta.cos());
+                    let along = local.point.x - r * theta.sin();
+                    let (_, foot) = tangent_line(*start, 0.0, center, signed.signum() * (r + shift))?;
+                    let u = unit(foot - *start)?;
+                    let ts = foot - u * along;
+                    close(&mut points, &mut pending, *start);
+                    let begin = State {
+                        point: ts,
+                        heading: heading(u),
+                        curvature: 0.0,
+                    };
+                    let (mut q, end) = pieces(begin, &[(0.0, 1.0 / signed, *spiral)]);
+                    q.insert(0, *start);
+                    Some((q, end))
+                })
+            }
+            AlignmentElementKind::FloatingReverseSpiralsThrough { .. }
+            | AlignmentElementKind::FloatingLineTo { .. }
+            | AlignmentElementKind::FloatingLineFrom { .. } => None,
             AlignmentElementKind::FloatingSpiralSpiralCurve {
                 spiral_out,
                 spiral_in,
@@ -1054,7 +1632,32 @@ fn solve_run(run: &[&AlignmentElement], out: &mut Vec<Vec<Vector2>>) {
                     ))
                 })
             }
-            AlignmentElementKind::Circle { center, radius, start } => {
+            AlignmentElementKind::Circle {
+                center,
+                radius,
+                closed: false,
+                clockwise,
+                ..
+            } => {
+                // From where the line before leaves off to where the line after
+                // starts; a half circle on a side with no line.
+                let into = pending.as_ref().map(|line| line.end).or(state.map(|s| s.point));
+                let out = next.and_then(line_carrier).map(|(p, _)| p);
+                let half = |p: Vector2| *center * 2.0 - p;
+                into.or(out.map(half)).and_then(|from| {
+                    let to = out.unwrap_or_else(|| half(from));
+                    close(&mut points, &mut pending, from);
+                    let k = curvature(*radius, *clockwise);
+                    let a = heading(from - *center) + if *clockwise { -PI / 2.0 } else { PI / 2.0 };
+                    let at = State {
+                        point: from,
+                        heading: a,
+                        curvature: k,
+                    };
+                    arc_to_point(at, to).map(|(q, end, _)| (q, end))
+                })
+            }
+            AlignmentElementKind::Circle { center, radius, start, .. } => {
                 // ponytail: a circle stored by centre and radius keeps no
                 // start; it is drawn from its west point, which only moves
                 // where its stations begin.
@@ -1785,6 +2388,331 @@ pub(super) fn masked_ranges(data: &[u8], start: usize, end: usize, first: f64, l
     };
     // The list sits near the end of the body; the last one that parses wins.
     (start..end).rev().find_map(read).unwrap_or_default()
+}
+
+/// End of `parts` walked from `state`, integrated without keeping points
+/// (Simpson's rule on each piece): what the solvers evaluate.
+fn end_of(state: State, parts: &[(f64, f64, f64)]) -> State {
+    let mut s = state;
+    for &(k0, k1, length) in parts {
+        if length <= 1e-9 {
+            continue;
+        }
+        let turn = k0.abs() * length + (k1 - k0).abs() * length / 2.0;
+        let n = (((turn / 0.02).ceil() as usize) * 2).clamp(16, 4000);
+        let h = |t: f64| s.heading + k0 * t + (k1 - k0) * t * t / (2.0 * length);
+        let ds = length / n as f64;
+        let (mut x, mut y) = (0.0, 0.0);
+        for i in 0..=n {
+            let w = if i == 0 || i == n {
+                1.0
+            } else if i % 2 == 1 {
+                4.0
+            } else {
+                2.0
+            };
+            let a = h(i as f64 * ds);
+            x += w * a.cos();
+            y += w * a.sin();
+        }
+        s = State {
+            point: s.point + Vector2::new(x, y) * (ds / 3.0),
+            heading: h(length),
+            curvature: k1,
+        };
+    }
+    s
+}
+
+/// Pieces laid along the pending line's direction and slid along that line
+/// until they end on the next line; the pending line stops where they
+/// start, and the next line starts where they end.
+fn slide_between_lines(
+    points: &mut Vec<Vector2>,
+    pending: &mut Option<PendingLine>,
+    next: Option<&AlignmentElement>,
+    parts_for: impl Fn(f64) -> Vec<(f64, f64, f64)>,
+) -> Option<(Vec<Vector2>, State)> {
+    let line = pending.as_ref()?;
+    let (b, v) = next.and_then(line_carrier)?;
+    let u = line.direction;
+    let den = cross(u, v);
+    if den.abs() < 1e-12 {
+        return None;
+    }
+    let parts = parts_for(normalize(heading(v) - heading(u)));
+    let begin = State {
+        point: line.start,
+        heading: heading(u),
+        curvature: parts.first()?.0,
+    };
+    let (q, end) = pieces(begin, &parts);
+    let shift = u * (-cross(end.point - b, v) / den);
+    close(points, pending, line.start + shift);
+    Some((
+        q.into_iter().map(|p| p + shift).collect(),
+        State {
+            point: end.point + shift,
+            ..end
+        },
+    ))
+}
+
+/// Where the pending line, or a straight end state, points from.
+fn line_from(pending: &Option<PendingLine>, state: Option<State>) -> Option<(Vector2, Vector2)> {
+    match pending.as_ref() {
+        Some(line) => Some((line.start, line.direction)),
+        None => state
+            .filter(|s| s.curvature.abs() < 1e-12)
+            .map(|s| (s.point, direction(s.heading))),
+    }
+}
+
+/// Spiral from the line `(p, u)` into an arc of `radius` that ends at
+/// `end`, slid along the line until the arc reaches `end`; of the
+/// positions that do, the one with the shorter arc. Returns where the
+/// spiral leaves the line.
+fn spiral_curve_to(p: Vector2, u: Vector2, spiral: f64, radius: f64, end: Vector2) -> Option<(Vector2, Vec<Vector2>, State)> {
+    let mut best: Option<(f64, Vector2, Vec<Vector2>, State)> = None;
+    for sign in [1.0, -1.0] {
+        let k = sign / radius;
+        let begin = State {
+            point: p,
+            heading: heading(u),
+            curvature: 0.0,
+        };
+        let (q, sc) = pieces(begin, &[(0.0, k, spiral)]);
+        let center = sc.point + left(direction(sc.heading)) * (1.0 / k);
+        let w = end - center;
+        let along = w.dot(&u);
+        let disc = along * along - (w.dot(&w) - radius * radius);
+        if disc < 0.0 {
+            continue;
+        }
+        for t in [along - disc.sqrt(), along + disc.sqrt()] {
+            let shift = u * t;
+            let at = State {
+                point: sc.point + shift,
+                ..sc
+            };
+            let Some((arc, arc_end, miss)) = arc_to_point(at, end) else {
+                continue;
+            };
+            let length = arc.len() as f64;
+            if miss < TOLERANCE && best.as_ref().is_none_or(|b| length < b.0) {
+                let mut all: Vec<Vector2> = q.iter().map(|x| *x + shift).collect();
+                all.extend(arc);
+                best = Some((length, p + shift, all, arc_end));
+            }
+        }
+    }
+    best.map(|(_, start, q, end)| (start, q, end))
+}
+
+/// Fillet between the lines `(p, u)` and `(b, v)` through `x`: the radius
+/// of the circle tangent to both whose arc between them passes `x`.
+fn fillet_radius_through(p: Vector2, u: Vector2, b: Vector2, v: Vector2, x: Vector2) -> Option<f64> {
+    let pi = intersect(p, u, b, v)?;
+    let bisector = unit(v - u)?;
+    let delta = cross(u, v).atan2(u.dot(&v)).abs();
+    let (sh, ch) = ((delta / 2.0).sin(), (delta / 2.0).cos());
+    let w = x - pi;
+    let (qa, qb, qc) = (sh * sh, -2.0 * bisector.dot(&w), w.dot(&w));
+    let disc = qb * qb - 4.0 * qa * qc;
+    if qa <= 1e-15 || disc < 0.0 {
+        return None;
+    }
+    [(-qb - disc.sqrt()) / (2.0 * qa), (-qb + disc.sqrt()) / (2.0 * qa)]
+        .into_iter()
+        .filter(|k| *k > 0.0)
+        .find(|k| {
+            // `x` on the arc: on the PI's side of the chord between the
+            // tangent points.
+            let t = k * sh;
+            let (t1, t2) = (pi - u * t, pi + v * t);
+            cross(t2 - t1, x - t1) * cross(t2 - t1, pi - t1) >= 0.0
+        })
+        .map(|k| k * ch)
+}
+
+/// Arc leaving the line `(p, u)` and ending at `end` along `d`: where it
+/// leaves the line and its state there.
+fn arc_to_direction(p: Vector2, u: Vector2, end: Vector2, d: Vector2) -> Option<(Vector2, State)> {
+    let offset = cross(u, end - p);
+    let den = 1.0 - u.dot(&d);
+    if offset.abs() < 1e-12 || den.abs() < 1e-12 {
+        return None;
+    }
+    let sign = offset.signum();
+    let radius = offset / (sign * den);
+    if !(radius > 0.0) {
+        return None;
+    }
+    let center = end + left(d) * (sign * radius);
+    let touch = p + u * (center - p).dot(&u);
+    Some((
+        touch,
+        State {
+            point: touch,
+            heading: heading(u),
+            curvature: sign / radius,
+        },
+    ))
+}
+
+/// Circle of a fixed arc: centre, signed curvature, angle of its end.
+fn arc_circle(a: Vector2, m: Vector2, c: Vector2) -> Option<(Vector2, f64, f64)> {
+    let (center, radius, ccw) = circle(a, m, c)?;
+    let k = if ccw { 1.0 / radius } else { -1.0 / radius };
+    Some((center, k, (c.y - center.y).atan2(c.x - center.x)))
+}
+
+/// State on the circle `(center, k)` at `angle`.
+fn on_circle(center: Vector2, k: f64, angle: f64) -> State {
+    State {
+        point: center + direction(angle) * (1.0 / k.abs()),
+        heading: angle + if k > 0.0 { PI / 2.0 } else { -PI / 2.0 },
+        curvature: k,
+    }
+}
+
+/// Centre of the circle a state is on.
+fn center_of(s: State) -> Vector2 {
+    s.point + left(direction(s.heading)) * (1.0 / s.curvature)
+}
+
+/// Roots of two equations in two unknowns by Newton's method from each
+/// seed.
+fn newton2(f: impl Fn(f64, f64) -> Option<(f64, f64)>, seeds: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    let mut roots: Vec<(f64, f64)> = Vec::new();
+    for &(mut x, mut y) in seeds {
+        for _ in 0..60 {
+            let Some((f0, g0)) = f(x, y) else { break };
+            let (hx, hy) = (1e-7 * (1.0 + x.abs()), 1e-7 * (1.0 + y.abs()));
+            let (Some((fx, gx)), Some((fy, gy))) = (f(x + hx, y), f(x, y + hy)) else {
+                break;
+            };
+            let (a, b, c, d) = ((fx - f0) / hx, (fy - f0) / hy, (gx - g0) / hx, (gy - g0) / hy);
+            let det = a * d - b * c;
+            if det.abs() < 1e-14 {
+                break;
+            }
+            let (dx, dy) = ((d * f0 - b * g0) / det, (a * g0 - c * f0) / det);
+            x -= dx;
+            y -= dy;
+            if !(x.is_finite() && y.is_finite()) {
+                break;
+            }
+            if dx.abs() < 1e-12 * (1.0 + x.abs()) && dy.abs() < 1e-12 * (1.0 + y.abs()) {
+                break;
+            }
+        }
+        if f(x, y).is_some_and(|(f, g)| f.hypot(g) < 1e-6)
+            && !roots.iter().any(|r| (r.0 - x).abs() < 1e-6 && (r.1 - y).abs() < 1e-6)
+        {
+            roots.push((x, y));
+        }
+    }
+    roots
+}
+
+/// A group between two fixed arcs: it leaves the first circle at an
+/// angle solved together with one free value, and arrives on the second
+/// circle. `parts(k1, k2, value)` lays the group's pieces. Of the
+/// solutions, the one leaving nearest the first arc's stored end. Returns
+/// the departure angle and the solved pieces.
+fn between_circles(
+    first: (Vector2, Vector2, Vector2),
+    second: (Vector2, Vector2, Vector2),
+    parts: impl Fn(f64, f64, f64) -> Option<Vec<(f64, f64, f64)>>,
+    values: &[f64],
+) -> Option<(State, Vec<Vector2>, State)> {
+    let (c1, k1, end_angle) = arc_circle(first.0, first.1, first.2)?;
+    let (c2, k2, _) = arc_circle(second.0, second.1, second.2)?;
+    let lay = |angle: f64, value: f64| -> Option<(State, Vec<Vector2>, State)> {
+        let from = on_circle(c1, k1, angle);
+        let (q, end) = pieces(from, &parts(k1, k2, value)?);
+        Some((from, q, end))
+    };
+    let residual = |angle: f64, value: f64| {
+        let parts = parts(k1, k2, value)?;
+        // No spiral group turns more than twice round.
+        if parts.iter().map(|(a, b, l)| a.abs().max(b.abs()) * l).sum::<f64>() > 4.0 * TAU {
+            return None;
+        }
+        let end = end_of(on_circle(c1, k1, angle), &parts);
+        let miss = center_of(end) - c2;
+        Some((miss.x, miss.y))
+    };
+    let seeds: Vec<(f64, f64)> = (-12..=12)
+        .flat_map(|i| values.iter().map(move |v| (end_angle + 0.1 * f64::from(i), *v)))
+        .collect();
+    newton2(residual, &seeds)
+        .into_iter()
+        .filter(|(angle, value)| parts(k1, k2, *value).is_some_and(|p| p.iter().all(|x| x.2 >= -1e-9)) && angle.is_finite())
+        .min_by(|a, b| normalize(a.0 - end_angle).abs().total_cmp(&normalize(b.0 - end_angle).abs()))
+        .and_then(|(angle, value)| lay(angle, value))
+}
+
+/// Spiral out of a fixed arc and a reverse spiral into a curve through
+/// `through` (or of `radius`) ending at `end`: the departure on the arc
+/// (and the radius) solved; of the solutions, the shortest curve to `end`.
+fn reverse_from_circle(
+    arc: (Vector2, Vector2, Vector2),
+    spiral_out: f64,
+    spiral_in: f64,
+    radius: Option<f64>,
+    through: Vector2,
+    end: Vector2,
+) -> Option<(State, Vec<Vector2>, State)> {
+    let (c1, k1, end_angle) = arc_circle(arc.0, arc.1, arc.2)?;
+    let parts = |r: f64| [(k1, 0.0, spiral_out), (0.0, -k1.signum() / r, spiral_in)];
+    let lay = |angle: f64, r: f64| -> Option<(State, Vec<Vector2>, State)> {
+        if !(r > 0.0) {
+            return None;
+        }
+        let from = on_circle(c1, k1, angle);
+        let (q, sc) = pieces(from, &parts(r));
+        Some((from, q, sc))
+    };
+    let sc_at = |angle: f64, r: f64| (r > 0.0).then(|| end_of(on_circle(c1, k1, angle), &parts(r)));
+    let seeds: Vec<(f64, f64)> = (-30..=30)
+        .flat_map(|i| {
+            [10.0, 50.0, 200.0, 1000.0, 5000.0]
+                .into_iter()
+                .map(move |r| (end_angle + 0.1 * f64::from(i), radius.unwrap_or(r)))
+        })
+        .collect();
+    let roots = match radius {
+        // One unknown: the second equation pins the radius.
+        Some(r) => newton2(
+            |angle, rr| {
+                let sc = sc_at(angle, r)?;
+                Some((end.distance(&center_of(sc)) - r, rr - r))
+            },
+            &seeds,
+        ),
+        None => newton2(
+            |angle, r| {
+                let c = center_of(sc_at(angle, r)?);
+                Some((end.distance(&c) - r, through.distance(&c) - r))
+            },
+            &seeds,
+        ),
+    };
+    roots
+        .into_iter()
+        .filter_map(|(angle, r)| {
+            let (from, mut q, sc) = lay(angle, r)?;
+            let (arc, arc_end, miss) = arc_to_point(sc, end)?;
+            (miss < TOLERANCE).then(|| {
+                let length = arc.len();
+                q.extend(arc);
+                (length, from, q, arc_end)
+            })
+        })
+        .min_by_key(|(length, ..)| *length)
+        .map(|(_, from, q, end)| (from, q, end))
 }
 
 #[cfg(test)]

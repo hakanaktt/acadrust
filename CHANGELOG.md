@@ -2,6 +2,20 @@
 
 ### Unreleased
 
+- **Civil 3D alignment elements** - Alignments read more of the element
+  records Civil 3D 2018 and later write: the first spiral of a group kept
+  as separate elements, headers with any parameter-lock byte, compound and
+  placed spirals, free spirals and spiral-spiral groups between lines,
+  spiral-curve groups ending at a point, spiral-line and line-spiral
+  groups, spiral-spiral and spiral-line-spiral groups between two curves,
+  reverse curves with spirals through one or two points, long
+  spiral-curve-spiral-curve-spiral groups from their TS, fillets through a
+  point, curves ending at a point or along a direction, lines to or from a
+  point, and open curves by their centre. Groups between curves solve
+  where they leave the first curve. `FreeSpiralLineSpiral` is now
+  `FreeSpiralSpiralCurves { ratio }`; `Circle` carries `closed` and
+  `clockwise`.
+
 - **Civil 3D pipe networks** - `ArchEntityData::pipe_ends` reads a pipe's
   start and end, `structure_position` a structure's insertion point, and
   `ArchObject::network_part_fields` a part definition's number fields
