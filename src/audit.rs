@@ -709,7 +709,7 @@ impl CadDocument {
         }
 
         // An object owned by a dictionary or a field must be listed by that
-        // owner; AutoCAD/ZWCAD AUDIT report such orphans (e.g. AcDbField).
+        // owner; CAD auditors report such orphans (e.g. AcDbField).
         for key in self.objects.keys() {
             let Some(owner) = self.object_owner(*key) else { continue };
             let listed = match self.objects.get(&owner) {
@@ -720,7 +720,7 @@ impl CadDocument {
                 Some(ObjectType::Field(f)) => f.child_fields.contains(key),
                 _ => true,
             };
-            // ZWCAD: "AcDbField Owner Id (0) Invalid".
+            // Reported elsewhere as "AcDbField Owner Id (0) Invalid".
             let null_owner = owner.is_null() && *key != self.header.named_objects_dict_handle;
             if !listed || null_owner {
                 report.issue(
