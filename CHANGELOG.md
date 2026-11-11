@@ -2,6 +2,15 @@
 
 ### Unreleased
 
+- **Civil 3D station equations, design speeds and sites** -
+  `ArchEntityData::alignment_station_equations` and
+  `alignment_design_speeds` read an alignment's equations (raw station,
+  back, ahead, increasing) and speeds; `display_station` gives the
+  station Civil 3D shows past the equations. `ArchObject::topology` reads
+  the graph a site container or alignment companion keeps (edges through
+  nodes with the faces on both sides); `Topology::face_polylines` gives a
+  parcel's boundary.
+
 - **Civil 3D offset and connected alignments** - Offset alignments draw
   their spirals (the parent spiral moved sideways over the part it
   follows) and their widening transitions (curve – line – curve, curve –

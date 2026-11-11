@@ -59,6 +59,11 @@ impl<'a> Bits<'a> {
         Some(out)
     }
 
+    /// `count` (at most 8) raw bits as a number.
+    pub fn bits_value(&mut self, count: usize) -> Option<u8> {
+        self.bits(count)
+    }
+
     /// One raw byte.
     pub fn raw_short_byte(&mut self) -> Option<u8> {
         self.byte()

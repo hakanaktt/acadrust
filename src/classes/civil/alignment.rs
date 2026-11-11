@@ -2468,6 +2468,96 @@ pub(super) fn start_station(data: &[u8], start: usize, end: usize) -> f64 {
     0.0
 }
 
+/// A station equation: past `raw` (the station the alignment would have
+/// there) stations run on from `ahead`, up or down.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct StationEquation {
+    pub raw: f64,
+    /// Station back, as stored (derived from the equation before).
+    pub back: f64,
+    pub ahead: f64,
+    pub increasing: bool,
+}
+
+/// A design speed from `station` on.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct DesignSpeed {
+    pub station: f64,
+    pub speed: f64,
+}
+
+/// The station Civil 3D shows at a raw station, after the equations.
+pub fn display_station(equations: &[StationEquation], raw: f64) -> f64 {
+    equations
+        .iter()
+        .rev()
+        .find(|e| raw >= e.raw)
+        .map_or(raw, |e| if e.increasing { e.ahead + (raw - e.raw) } else { e.ahead - (raw - e.raw) })
+}
+
+/// The station equations and design speeds after an alignment's
+/// intervals: `BL k`, `k x { '00' 0xBE 0x04, BD raw, GUID, BD back,
+/// BD ahead, B increasing }`, then `BL 1, BL n`,
+/// `n x { BL 1, BD station, BD speed, GUID }`. Stations lie within
+/// `first..=last`.
+// ponytail: found by probing for a position where both lists read; read
+// the interval block before them once its layout is mapped here.
+pub(super) fn equations_and_speeds(
+    data: &[u8],
+    start: usize,
+    end: usize,
+    first: f64,
+    last: f64,
+) -> (Vec<StationEquation>, Vec<DesignSpeed>) {
+    let slack = 1e-3 * (last - first).abs().max(1.0);
+    let fits = |v: f64| v.is_finite() && v >= first - slack && v <= last + slack;
+    let read = |pos: usize| -> Option<(Vec<StationEquation>, Vec<DesignSpeed>)> {
+        let mut bits = Bits::new(data, pos, end);
+        let k = bits.bit_long()?;
+        if !(0..=64).contains(&k) {
+            return None;
+        }
+        let mut equations = Vec::new();
+        for _ in 0..k {
+            (bits.bits_value(2)? == 0 && bits.raw_short_byte()? == 0xBE && bits.raw_short_byte()? == 0x04).then_some(())?;
+            let raw = bits.bit_double().filter(|v| fits(*v))?;
+            bits.pos += 128;
+            let back = bits.bit_double().filter(|v| v.is_finite() && v.abs() < 1e8)?;
+            let ahead = bits.bit_double().filter(|v| v.is_finite() && v.abs() < 1e8)?;
+            let increasing = bits.bit()?;
+            equations.push(StationEquation {
+                raw,
+                back,
+                ahead,
+                increasing,
+            });
+        }
+        (bits.bit_long()? == 1).then_some(())?;
+        let n = bits.bit_long()?;
+        if !(0..=256).contains(&n) || (k == 0 && n == 0) {
+            return None;
+        }
+        let mut speeds = Vec::new();
+        for _ in 0..n {
+            (bits.bit_long()? == 1).then_some(())?;
+            let station = bits.bit_double().filter(|v| fits(*v))?;
+            let speed = bits.bit_double().filter(|v| v.is_normal() && *v >= 1.0 && *v < 1000.0)?;
+            bits.pos += 128;
+            if bits.pos > end {
+                return None;
+            }
+            speeds.push(DesignSpeed { station, speed });
+        }
+        let ordered = |a: &[f64]| a.windows(2).all(|w| w[0] <= w[1]);
+        (ordered(&equations.iter().map(|e| e.raw).collect::<Vec<_>>())
+            && ordered(&speeds.iter().map(|s| s.station).collect::<Vec<_>>()))
+        .then_some((equations, speeds))
+    };
+    (start..end).find_map(read).unwrap_or_default()
+}
+
 /// Bits that follow each mask range's stations.
 const MASK_TAIL_BITS: usize = 257;
 

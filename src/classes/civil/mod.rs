@@ -17,14 +17,19 @@ mod sample_lines;
 mod style;
 mod subassembly;
 mod tin;
+mod topology;
 
-pub use alignment::{AlignmentElement, AlignmentElementKind, AlignmentPiece, GeometryPoint, SpiralShape};
+pub use alignment::{
+    display_station, AlignmentElement, AlignmentElementKind, AlignmentPiece, DesignSpeed, GeometryPoint, SpiralShape,
+    StationEquation,
+};
 pub use labels::{parse_format, property, LabelPart, LabelText};
 pub use network::PartField;
 pub use profile::{ProfilePiece, ProfileViewFrame, Pvi};
 pub use sample_lines::SampleLines;
 pub use style::{DisplayComponent, Marker, ViewAxes, ViewAxis};
 pub use subassembly::{AssemblyLayout, Attachment, SubassemblyShape};
+pub use topology::{Topology, TopologyVertex};
 pub use tin::{TinSurface, TinTriangle, TinVertex};
 
 use super::arch::{ArchEntityData, ArchObject};
@@ -247,6 +252,30 @@ impl ArchEntityData {
             .unwrap_or_default()
     }
 
+    /// Station equations of a Civil 3D alignment, in station order.
+    pub fn alignment_station_equations(&self) -> Vec<StationEquation> {
+        self.alignment_equations_and_speeds().0
+    }
+
+    /// Design speeds of a Civil 3D alignment, in station order.
+    pub fn alignment_design_speeds(&self) -> Vec<DesignSpeed> {
+        self.alignment_equations_and_speeds().1
+    }
+
+    fn alignment_equations_and_speeds(&self) -> (Vec<StationEquation>, Vec<DesignSpeed>) {
+        let Some(first) = self.alignment_start_station() else {
+            return Default::default();
+        };
+        let length: f64 = self
+            .alignment_polylines()
+            .first()
+            .map(|run| run.windows(2).map(|w| w[0].distance(&w[1])).sum())
+            .unwrap_or(0.0);
+        self.main_stream()
+            .map(|(data, start, end)| alignment::equations_and_speeds(data, start, end, first, first + length))
+            .unwrap_or_default()
+    }
+
     /// Geometry points (TS, SC, PC, ...) along the first solved run of a
     /// Civil 3D alignment.
     pub fn alignment_geometry_points(&self) -> Vec<GeometryPoint> {
@@ -464,6 +493,17 @@ impl ArchObject {
     /// Civil 3D kind of this dictionary object, `None` for Arch objects.
     pub fn civil_kind(&self) -> Option<CivilObjectKind> {
         object_kind_of(&self.dxf_name)
+    }
+
+    /// Site topology a site container or alignment companion
+    /// (`AECC_FEATURE_STYLE`) keeps: edges through nodes with the faces on
+    /// their sides.
+    pub fn topology(&self) -> Option<Topology> {
+        if !self.dxf_name.eq_ignore_ascii_case("AECC_FEATURE_STYLE") {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        topology::topology(data, start, end)
     }
 
     /// Content, height and offset of a label text component
