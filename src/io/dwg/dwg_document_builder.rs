@@ -7645,58 +7645,87 @@ impl DwgDocumentBuilder {
                                 // the historical one-bit base (default flag),
                                 // while the generic ODA §20.4.89 layout has a
                                 // preceding file-to-extension-dictionary bit.
-                                // Try the native form first and fall back to
-                                // the two-bit ODA form when its bounded decode
-                                // rejects the payload (issue134/native reA).
+                                // A record is in the form whose decode ends
+                                // exactly at the end of its data. The wrong
+                                // form can decode without an error: a two-bit
+                                // record of a default context reads as a
+                                // native one with no leader roots and leaves
+                                // most of the record unread.
+                                let version = self.obj_reader.version();
+                                let dxf_version = self.obj_reader.dxf_version();
                                 let mut legacy = reader.clone();
                                 let legacy_is_default = legacy.read_bit();
                                 let legacy_scale = legacy.read_handle();
                                 let legacy_context =
                                     entities::read_multileader_annotation_context(
                                         &mut legacy,
-                                        self.obj_reader.version(),
-                                        self.obj_reader.dxf_version(),
+                                        version,
+                                        dxf_version,
                                         true,
                                     );
                                 let legacy_ok = legacy.check_error().is_ok();
+                                let legacy_fits =
+                                    legacy_ok && legacy.main_remaining_bits() == 0;
+                                let oda = if legacy_fits {
+                                    None
+                                } else {
+                                    let mut oda = reader.clone();
+                                    let has_file_to_extension_dictionary =
+                                        read_oda_context_file_dictionary_flag(
+                                            &mut oda, version,
+                                        );
+                                    let is_default = oda.read_bit();
+                                    let scale = oda.read_handle();
+                                    let context =
+                                        entities::read_multileader_annotation_context(
+                                            &mut oda,
+                                            version,
+                                            dxf_version,
+                                            true,
+                                        );
+                                    let oda_fits = oda.check_error().is_ok()
+                                        && oda.main_remaining_bits() == 0;
+                                    // Without an exact fit on either side keep
+                                    // the native reading when it has no error.
+                                    (oda_fits || !legacy_ok).then_some((
+                                        oda,
+                                        has_file_to_extension_dictionary,
+                                        is_default,
+                                        scale,
+                                        context,
+                                    ))
+                                };
                                 let (
                                     has_file_to_extension_dictionary,
                                     is_default,
                                     scale,
                                     context,
-                                ) = if legacy_ok {
-                                    *reader = legacy;
-                                    uses_legacy_mleader_context_base = true;
-                                    (
-                                        true,
-                                        legacy_is_default,
-                                        legacy_scale,
-                                        legacy_context,
-                                    )
-                                } else {
-                                    // ODA §20.4.89 layout: the dictionary bit
-                                    // is present. Native AutoCAD records take
-                                    // the branch above and never reach here.
-                                    let has_file_to_extension_dictionary =
-                                        read_oda_context_file_dictionary_flag(
-                                            &mut reader,
-                                            self.obj_reader.version(),
-                                        );
-                                    let is_default = reader.read_bit();
-                                    let scale = reader.read_handle();
-                                    let context =
-                                        entities::read_multileader_annotation_context(
-                                            &mut reader,
-                                            self.obj_reader.version(),
-                                            self.obj_reader.dxf_version(),
-                                            true,
-                                        );
-                                    (
+                                ) = match oda {
+                                    Some((
+                                        oda,
                                         has_file_to_extension_dictionary,
                                         is_default,
                                         scale,
                                         context,
-                                    )
+                                    )) => {
+                                        *reader = oda;
+                                        (
+                                            has_file_to_extension_dictionary,
+                                            is_default,
+                                            scale,
+                                            context,
+                                        )
+                                    }
+                                    None => {
+                                        *reader = legacy;
+                                        uses_legacy_mleader_context_base = true;
+                                        (
+                                            true,
+                                            legacy_is_default,
+                                            legacy_scale,
+                                            legacy_context,
+                                        )
+                                    }
                                 };
                                 Some((
                                     crate::objects::ObjectContextKind::MLeader(
