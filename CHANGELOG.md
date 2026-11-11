@@ -2,6 +2,12 @@
 
 ### Unreleased
 
+- **Civil 3D offset and connected alignments** - Offset alignments draw
+  their spirals (the parent spiral moved sideways over the part it
+  follows) and their widening transitions (curve – line – curve, curve –
+  reverse curve, curve – curve – reverse curve); connected alignments draw
+  their three-centered arcs.
+
 - **Civil 3D profiles** - Layout profiles read every entity Civil 3D
   writes: symmetric parabolas by length or K, circular curves by length,
   radius or through a point, asymmetric parabolas, parabolas through three

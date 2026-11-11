@@ -91,6 +91,33 @@ pub enum AlignmentElementKind {
     },
     /// Line from a stored point, tangent to the next element.
     FloatingLineFrom { start: Vector2 },
+    /// Widening transition of an offset alignment between the element
+    /// before and the one after: a curve turning towards the other offset,
+    /// then a line and a curve back (`second` set), or a reverse curve whose
+    /// radius is solved (`second` unset).
+    WideningCurves { first: f64, second: Option<f64> },
+    /// Three arcs turning the same way from the element before's end to
+    /// the next element's direction: `(radius, length)` each, a middle
+    /// length of 0 taking the rest of the turn.
+    ThreeCenteredArc { arcs: [(f64, f64); 3] },
+    /// Widening transition: two curves the same way, then a reverse curve.
+    WideningCompoundReverse { radii: [f64; 3] },
+    /// An offset alignment's spiral: the parent spiral, given by its
+    /// straight end (its end when it runs out to a straight, its start
+    /// otherwise) and the direction of travel there, moved sideways by
+    /// `offset` (negative to the left), over the part `from..to` of its
+    /// length (fractions).
+    OffsetSpiral {
+        point: Vector2,
+        direction: Vector2,
+        start_radius: f64,
+        length: f64,
+        end_radius: f64,
+        clockwise: bool,
+        offset: f64,
+        from: f64,
+        to: f64,
+    },
     /// Line from a stored point, then a spiral into the next curve.
     LineSpiralInto { start: Vector2, spiral: f64 },
     /// Spiral from a stored point and direction, curvature rising to `1/radius`.
@@ -320,7 +347,8 @@ fn read_element(bits: &mut Bits, member: Option<usize>, after_type: Option<usize
     if !matches!(bits.bit_short()?, 0 | 2) {
         bits.pos = after_type? - 1;
     }
-    let constraint = if element_type == 257 {
+    // Lines and widening transitions carry no parameter block.
+    let constraint = if element_type == 257 || (273..=275).contains(&element_type) {
         bits.bit()?;
         Some(i32::from(bits.bit_short()?))
     } else {
@@ -435,6 +463,21 @@ fn read_element(bits: &mut Bits, member: Option<usize>, after_type: Option<usize
         (258, Some(29 | 30)) => AlignmentElementKind::FreeArc {
             radius: bits.bit_double()?,
         },
+        (259, Some(5)) => {
+            bits.bit_long()?;
+            let clockwise = bits.bit()?;
+            AlignmentElementKind::OffsetSpiral {
+                point: point(bits)?,
+                direction: point(bits)?,
+                start_radius: bits.bit_double()?,
+                length: bits.bit_double()?,
+                end_radius: bits.bit_double()?,
+                clockwise,
+                offset: bits.bit_double()?,
+                from: bits.bit_double()?,
+                to: bits.bit_double()?,
+            }
+        }
         (259, Some(code @ (0 | 1 | 2 | 6 | 8))) => {
             let shape = SpiralShape::from_code(bits.bit_long()?);
             let clockwise = bits.bit()?;
@@ -549,6 +592,24 @@ fn read_element(bits: &mut Bits, member: Option<usize>, after_type: Option<usize
                 line: bits.bit_double()?,
             }
         }
+        (267, Some(1)) => {
+            ((bits.bit_long()?, bits.bit_long()?, bits.bit_long()?) == (0, 1, 3)).then_some(())?;
+            let mut arc = || Some((bits.bit_double()?, bits.bit_double()?));
+            AlignmentElementKind::ThreeCenteredArc {
+                arcs: [arc()?, arc()?, arc()?],
+            }
+        }
+        (273, Some(0)) => AlignmentElementKind::WideningCurves {
+            first: bits.bit_double()?,
+            second: Some(bits.bit_double()?),
+        },
+        (274, Some(0)) => AlignmentElementKind::WideningCurves {
+            first: bits.bit_double()?,
+            second: None,
+        },
+        (275, Some(1)) => AlignmentElementKind::WideningCompoundReverse {
+            radii: [bits.bit_double()?, bits.bit_double()?, bits.bit_double()?],
+        },
         (261, Some(162)) => {
             bits.bit_long()?;
             AlignmentElementKind::LineSpiralInto {
@@ -1575,6 +1636,68 @@ fn solve_run(run: &[&AlignmentElement], out: &mut Vec<Vec<Vector2>>) {
                     Some((q, end))
                 })
             }
+            AlignmentElementKind::OffsetSpiral {
+                point,
+                direction: d,
+                start_radius,
+                length,
+                end_radius,
+                clockwise,
+                offset,
+                from,
+                to,
+            } => parallel_spiral(*point, *d, *start_radius, *length, *end_radius, *clockwise, *offset, (*from, *to))
+                .map(|(q, end)| {
+                    close(&mut points, &mut pending, q[0]);
+                    (q, end)
+                }),
+            AlignmentElementKind::WideningCurves { first, second } => {
+                attach(&mut points, &mut pending, &mut state);
+                state.zip(start_of(next)).and_then(|(s, (to, h))| {
+                    widening_transition(s, to, h, |sign, turn, a, b| {
+                        // The curve back turns by the rest of the heading change.
+                        let back = a - sign * turn;
+                        Some(match second {
+                            Some(r2) => vec![(sign / first, sign / first, first * a), (0.0, 0.0, b), (-sign / r2, -sign / r2, r2 * back)],
+                            None => {
+                                (b > 0.0).then_some(())?;
+                                vec![(sign / first, sign / first, first * a), (-sign / b, -sign / b, b * back)]
+                            }
+                        })
+                    })
+                })
+            }
+            AlignmentElementKind::ThreeCenteredArc { arcs } => {
+                attach(&mut points, &mut pending, &mut state);
+                state.zip(start_of(next)).and_then(|(s, (to, h))| {
+                    let (u, v) = (direction(s.heading), direction(h));
+                    let across = cross(u, v);
+                    // The way the direction turns, or towards the next start
+                    // when the directions are parallel.
+                    let sign = if across.abs() > 1e-12 { across.signum() } else { cross(u, to - s.point).signum() };
+                    let mut total = sign * across.atan2(u.dot(&v));
+                    if total <= 0.0 {
+                        total += TAU;
+                    }
+                    let [(r1, l1), (r2, l2), (r3, l3)] = *arcs;
+                    let middle = if l2 > 0.0 { l2 } else { r2 * (total - l1 / r1 - l3 / r3) };
+                    (middle >= 0.0 && r1 > 0.0 && r2 > 0.0 && r3 > 0.0).then(|| {
+                        pieces(
+                            s,
+                            &[(sign / r1, sign / r1, l1), (sign / r2, sign / r2, middle), (sign / r3, sign / r3, l3)],
+                        )
+                    })
+                })
+            }
+            AlignmentElementKind::WideningCompoundReverse { radii: [r1, r2, r3] } => {
+                attach(&mut points, &mut pending, &mut state);
+                state.zip(start_of(next)).and_then(|(s, (to, h))| {
+                    widening_transition(s, to, h, |sign, turn, a, b| {
+                        let back = a + b / r2 - sign * turn;
+                        Some(vec![(sign / r1, sign / r1, r1 * a), (sign / r2, sign / r2, b), (-sign / r3, -sign / r3, r3 * back)])
+                    })
+                })
+            }
             AlignmentElementKind::FloatingReverseSpiralsThrough { .. }
             | AlignmentElementKind::FloatingLineTo { .. }
             | AlignmentElementKind::FloatingLineFrom { .. } => None,
@@ -2422,6 +2545,116 @@ fn end_of(state: State, parts: &[(f64, f64, f64)]) -> State {
         };
     }
     s
+}
+
+/// Points of an offset alignment's spiral and its end state.
+#[allow(clippy::too_many_arguments)]
+fn parallel_spiral(
+    point: Vector2,
+    d: Vector2,
+    start_radius: f64,
+    length: f64,
+    end_radius: f64,
+    clockwise: bool,
+    offset: f64,
+    (from, to): (f64, f64),
+) -> Option<(Vec<Vector2>, State)> {
+    let k_of = |r: f64| if r.is_finite() && r > 0.0 && r < 1e12 { curvature(r, clockwise) } else { 0.0 };
+    let (k0, k1) = (k_of(start_radius), k_of(end_radius));
+    let h = heading(unit(d)?);
+    // The parent's start: the stored point, or run back from it when it is
+    // the straight end of a spiral running out.
+    let start = if k1 == 0.0 && k0 != 0.0 {
+        let back = end_of(
+            State {
+                point,
+                heading: h + PI,
+                curvature: 0.0,
+            },
+            &[(0.0, -k0, length)],
+        );
+        State {
+            point: back.point,
+            heading: back.heading - PI,
+            curvature: k0,
+        }
+    } else {
+        State {
+            point,
+            heading: h,
+            curvature: k0,
+        }
+    };
+    let k_at = |f: f64| k0 + (k1 - k0) * f;
+    let begin = end_of(start, &[(k0, k_at(from), from * length)]);
+    let (q, end) = pieces(begin, &[(k_at(from), k_at(to), (to - from) * length)]);
+    // Moved sideways along the normal at each point.
+    let side = -offset;
+    let n = q.len();
+    let moved: Vec<Vector2> = (0..n)
+        .map(|i| {
+            let (a, b) = (q[i.saturating_sub(1)], q[(i + 1).min(n - 1)]);
+            let u = unit(b - a).unwrap_or(direction(end.heading));
+            q[i] + left(u) * side
+        })
+        .collect();
+    let last = *moved.last()?;
+    Some((
+        moved,
+        State {
+            point: last,
+            heading: end.heading,
+            curvature: if end.curvature == 0.0 { 0.0 } else { 1.0 / (1.0 / end.curvature - side) },
+        },
+    ))
+}
+
+/// Where the next element starts and its heading there.
+fn start_of(next: Option<&AlignmentElement>) -> Option<(Vector2, f64)> {
+    match next.map(|n| &n.kind) {
+        Some(AlignmentElementKind::FixedArc { start, mid, end }) => {
+            let s = arc_start_state(*start, *mid, *end);
+            Some((s.point, s.heading))
+        }
+        _ => next.and_then(line_carrier).map(|(p, u)| (p, heading(u))),
+    }
+}
+
+/// A widening transition from `begin` to `to` arriving along `to_heading`:
+/// `parts(sign, a, b)` lays its curves for the first curve's turn `sign`
+/// and two free values; the shortest solution.
+fn widening_transition(
+    begin: State,
+    to: Vector2,
+    to_heading: f64,
+    parts: impl Fn(f64, f64, f64, f64) -> Option<Vec<(f64, f64, f64)>>,
+) -> Option<(Vec<Vector2>, State)> {
+    let turn = normalize(to_heading - begin.heading);
+    let mut best: Option<(f64, Vec<(f64, f64, f64)>)> = None;
+    for sign in [1.0, -1.0] {
+        let seeds: Vec<(f64, f64)> = [0.05, 0.2, 0.5, 1.0]
+            .iter()
+            .flat_map(|a| [1.0, 10.0, 50.0, 200.0].map(|b| (*a, b)))
+            .collect();
+        for (a, b) in newton2(
+            |a, b| {
+                let end = end_of(begin, &parts(sign, turn, a, b)?);
+                Some((end.point.x - to.x, end.point.y - to.y))
+            },
+            &seeds,
+        ) {
+            let Some(laid) = parts(sign, turn, a, b) else { continue };
+            if laid.iter().any(|p| p.2 < -1e-9) {
+                continue;
+            }
+            let length: f64 = laid.iter().map(|p| p.2).sum();
+            if best.as_ref().is_none_or(|(l, _)| length < *l) {
+                best = Some((length, laid));
+            }
+        }
+    }
+    let (_, laid) = best?;
+    Some(pieces(begin, &laid))
 }
 
 /// Pieces laid along the pending line's direction and slid along that line
