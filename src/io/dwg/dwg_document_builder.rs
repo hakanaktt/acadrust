@@ -612,7 +612,7 @@ struct RecordFailure {
     code: &'static str,
     handle: u64,
     offset: usize,
-    type_code: i16,
+    raw_type_code: i16,
     /// True when a failed auxiliary payload was retained as a validated raw record.
     recoverable: bool,
     message: String,
@@ -1103,7 +1103,7 @@ impl DwgDocumentBuilder {
         let mut unused_records = 0usize;
         for result in catalog_results {
             match result {
-                Ok((handle, _, _, type_code)) if is_unused_type(type_code) => {
+                Ok((handle, _, raw_type_code, type_code)) if is_unused_type(type_code) => {
                     unused_records += 1;
                     if unused_records == 1 {
                         let mut diagnostic = ReadDiagnostic::new(
@@ -1115,7 +1115,8 @@ impl DwgDocumentBuilder {
                         );
                         diagnostic.section = Some("AcDb:AcDbObjects".to_string());
                         diagnostic.record_handle = Some(handle);
-                        diagnostic.record_type = Some(type_code.to_string());
+                        diagnostic.record_type =
+                            Some(Self::record_type_name(&class_names, raw_type_code));
                         push_read_diagnostic(&mut diagnostics, diagnostic);
                     }
                 }
@@ -1160,7 +1161,7 @@ impl DwgDocumentBuilder {
         let pass1_started = web_time::Instant::now();
         let capture_raw_pass1 = std::env::var_os("ACADRUST_RAW_ALL").is_some();
 
-        for &(handle, offset, _, type_code) in &record_catalog {
+        for &(handle, offset, raw_type_code, type_code) in &record_catalog {
             if is_table_type(type_code) {
                 let (_, mut reader) = match self.obj_reader.read_record_at(offset) {
                     Ok(record) => record,
@@ -1181,7 +1182,8 @@ impl DwgDocumentBuilder {
                         diagnostic.source_offset_basis = Some("object-section-byte".to_string());
                         diagnostic.section = Some("AcDb:AcDbObjects".to_string());
                         diagnostic.record_handle = Some(handle);
-                        diagnostic.record_type = Some(type_code.to_string());
+                        diagnostic.record_type =
+                            Some(Self::record_type_name(&class_names, raw_type_code));
                         push_read_diagnostic(&mut diagnostics, diagnostic);
                         continue;
                     }
@@ -1240,7 +1242,8 @@ impl DwgDocumentBuilder {
                                 Some("object-section-byte".to_string());
                             diagnostic.section = Some("AcDb:AcDbObjects".to_string());
                             diagnostic.record_handle = Some(handle);
-                            diagnostic.record_type = Some(type_code.to_string());
+                            diagnostic.record_type =
+                                Some(Self::record_type_name(&class_names, raw_type_code));
                             push_read_diagnostic(&mut diagnostics, diagnostic);
                             continue;
                         }
@@ -1484,7 +1487,8 @@ impl DwgDocumentBuilder {
                         diagnostic.source_offset_basis = Some("object-section-byte".to_string());
                         diagnostic.section = Some("AcDb:AcDbObjects".to_string());
                         diagnostic.record_handle = Some(handle);
-                        diagnostic.record_type = Some(type_code.to_string());
+                        diagnostic.record_type =
+                            Some(Self::record_type_name(&class_names, raw_type_code));
                         push_read_diagnostic(&mut diagnostics, diagnostic);
                     }
                 }
@@ -2313,7 +2317,7 @@ impl DwgDocumentBuilder {
                                     code: "record-read-failed",
                                     handle,
                                     offset,
-                                    type_code,
+                                    raw_type_code,
                                     recoverable: false,
                                     message: format!(
                                         "Could not read record at handle {handle:#X}, type_code={type_code}: {error}"
@@ -2363,7 +2367,8 @@ impl DwgDocumentBuilder {
                         warning.source_offset_basis = Some("object-section-byte".into());
                         warning.section = Some("AcDb:AcDbObjects".into());
                         warning.record_handle = Some(handle);
-                        warning.record_type = Some(type_code.to_string());
+                        warning.record_type =
+                            Some(Self::record_type_name(&class_names, raw_type_code));
                         push_read_diagnostic(&mut chunk.leader_diagnostics, warning);
                     }
                     if let Some(message) = reader
@@ -2461,7 +2466,7 @@ impl DwgDocumentBuilder {
                             },
                             handle,
                             offset,
-                            type_code,
+                            raw_type_code,
                             recoverable,
                             message: if recoverable {
                                 let name = Self::unknown_object_type_name(&class_names, raw_type_code);
@@ -2596,7 +2601,8 @@ impl DwgDocumentBuilder {
                     diagnostic.source_offset_basis = Some("object-section-byte".to_string());
                     diagnostic.section = Some("AcDb:AcDbObjects".to_string());
                     diagnostic.record_handle = Some(failure.handle);
-                    diagnostic.record_type = Some(failure.type_code.to_string());
+                    diagnostic.record_type =
+                        Some(Self::record_type_name(&class_names, failure.raw_type_code));
                     if failure.recoverable {
                         push_read_diagnostic(&mut preserved_diagnostics, diagnostic);
                     } else {
@@ -8347,6 +8353,14 @@ impl DwgDocumentBuilder {
             raw_dwg_version: Some(self.obj_reader.dxf_version()),
         };
         Some((object, common, scale))
+    }
+
+    /// Name a record's type for diagnostics: the DXF name of a fixed type,
+    /// otherwise its class name, as for an unsupported object.
+    fn record_type_name(class_names: &ClassNames, raw_type_code: i16) -> String {
+        fixed_type_name(raw_type_code)
+            .map(str::to_string)
+            .unwrap_or_else(|| Self::unknown_object_type_name(class_names, raw_type_code))
     }
 
     /// Name an unsupported object by its CLASSES-section dxfname when the

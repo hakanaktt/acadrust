@@ -298,6 +298,89 @@ pub fn dxf_name_to_type_code(dxf_name: &str) -> Option<i16> {
 
 /// Returns true if the given class represents a graphical entity based
 /// on its `is_an_entity` flag.
+/// The DXF record name of a fixed DWG object type, for diagnostics. Table
+/// control objects, which DXF writes as `TABLE`, are named `<table>_CONTROL`.
+pub fn fixed_type_name(type_code: i16) -> Option<&'static str> {
+    Some(match type_code {
+        OBJ_TEXT => "TEXT",
+        OBJ_ATTRIB => "ATTRIB",
+        OBJ_ATTDEF => "ATTDEF",
+        OBJ_BLOCK => "BLOCK",
+        OBJ_ENDBLK => "ENDBLK",
+        OBJ_SEQEND => "SEQEND",
+        OBJ_INSERT | OBJ_MINSERT => "INSERT",
+        OBJ_VERTEX_2D
+        | OBJ_VERTEX_3D
+        | OBJ_VERTEX_MESH
+        | OBJ_VERTEX_PFACE
+        | OBJ_VERTEX_PFACE_FACE => "VERTEX",
+        OBJ_POLYLINE_2D | OBJ_POLYLINE_3D | OBJ_POLYLINE_PFACE | OBJ_POLYLINE_MESH => "POLYLINE",
+        OBJ_ARC => "ARC",
+        OBJ_CIRCLE => "CIRCLE",
+        OBJ_LINE => "LINE",
+        OBJ_DIMENSION_ORDINATE
+        | OBJ_DIMENSION_LINEAR
+        | OBJ_DIMENSION_ALIGNED
+        | OBJ_DIMENSION_ANG_3PT
+        | OBJ_DIMENSION_ANG_2LN
+        | OBJ_DIMENSION_RADIUS
+        | OBJ_DIMENSION_DIAMETER => "DIMENSION",
+        OBJ_POINT => "POINT",
+        OBJ_3DFACE => "3DFACE",
+        OBJ_SOLID => "SOLID",
+        OBJ_TRACE => "TRACE",
+        OBJ_SHAPE => "SHAPE",
+        OBJ_VIEWPORT => "VIEWPORT",
+        OBJ_ELLIPSE => "ELLIPSE",
+        OBJ_SPLINE => "SPLINE",
+        OBJ_REGION => "REGION",
+        OBJ_3DSOLID => "3DSOLID",
+        OBJ_BODY => "BODY",
+        OBJ_RAY => "RAY",
+        OBJ_XLINE => "XLINE",
+        OBJ_DICTIONARY => "DICTIONARY",
+        OBJ_OLEFRAME => "OLEFRAME",
+        OBJ_MTEXT => "MTEXT",
+        OBJ_LEADER => "LEADER",
+        OBJ_TOLERANCE => "TOLERANCE",
+        OBJ_MLINE => "MLINE",
+        OBJ_BLOCK_CONTROL => "BLOCK_CONTROL",
+        OBJ_BLOCK_HEADER => "BLOCK_RECORD",
+        OBJ_LAYER_CONTROL => "LAYER_CONTROL",
+        OBJ_LAYER => "LAYER",
+        OBJ_STYLE_CONTROL => "STYLE_CONTROL",
+        OBJ_STYLE => "STYLE",
+        OBJ_LTYPE_CONTROL => "LTYPE_CONTROL",
+        OBJ_LTYPE => "LTYPE",
+        OBJ_VIEW_CONTROL => "VIEW_CONTROL",
+        OBJ_VIEW => "VIEW",
+        OBJ_UCS_CONTROL => "UCS_CONTROL",
+        OBJ_UCS => "UCS",
+        OBJ_VPORT_CONTROL => "VPORT_CONTROL",
+        OBJ_VPORT => "VPORT",
+        OBJ_APPID_CONTROL => "APPID_CONTROL",
+        OBJ_APPID => "APPID",
+        OBJ_DIMSTYLE_CONTROL => "DIMSTYLE_CONTROL",
+        OBJ_DIMSTYLE => "DIMSTYLE",
+        OBJ_VPENT_HDR_CONTROL => "VX_CONTROL",
+        OBJ_VPENT_HDR => "VX_TABLE_RECORD",
+        OBJ_GROUP => "GROUP",
+        OBJ_MLINESTYLE => "MLINESTYLE",
+        OBJ_OLE2FRAME => "OLE2FRAME",
+        OBJ_DUMMY => "DUMMY",
+        OBJ_LONG_TRANSACTION => "LONG_TRANSACTION",
+        OBJ_LWPOLYLINE => "LWPOLYLINE",
+        OBJ_HATCH => "HATCH",
+        OBJ_XRECORD => "XRECORD",
+        OBJ_PLACEHOLDER => "ACDBPLACEHOLDER",
+        OBJ_VBA_PROJECT => "VBA_PROJECT",
+        OBJ_LAYOUT => "LAYOUT",
+        OBJ_PROXY_ENTITY => "ACAD_PROXY_ENTITY",
+        OBJ_PROXY_OBJECT => "ACAD_PROXY_OBJECT",
+        _ => return None,
+    })
+}
+
 pub fn is_class_entity(is_an_entity: bool) -> bool {
     is_an_entity
 }
