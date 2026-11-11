@@ -221,6 +221,40 @@ mod tests {
     }
 
     #[test]
+    fn ac18_sparse_section_keeps_the_size_limits() {
+        // A sparse section is bounded by its furthest page, still with the 2x tolerance.
+        let far_page = |offset| DwgPageCrcInfo {
+            offset,
+            ..page(1, 0, 0)
+        };
+        let info = header_info(true, section(145, 8, 1, vec![far_page(64)]), HashMap::new());
+        rejected(&info, "size 145 exceeds its 1 page(s)");
+        // A page claiming the furthest offset possible lifts neither the section limit nor
+        // the decompressed budget.
+        let info = header_info(
+            true,
+            section(1 << 40, 8, 1, vec![far_page(u64::MAX)]),
+            HashMap::new(),
+        );
+        rejected(
+            &info,
+            "size 1099511627776 is outside the accepted range 0..=1073741824",
+        );
+        let info = header_info(
+            true,
+            section(512 << 20, 8, 1, vec![far_page(u64::MAX)]),
+            HashMap::new(),
+        );
+        for options in [DwgReadOptions::default(), DwgReadOptions::failsafe()] {
+            let mut reader = DwgReader::from_stream_with_options(
+                Cursor::new(Vec::new()),
+                options.with_max_decompressed_bytes(1 << 20),
+            );
+            assert!(reader.get_section_buffer("AcDb:Header", &info).is_err());
+        }
+    }
+
+    #[test]
     fn ac18_page_size_is_limited() {
         let too_big = MAX_DATA_PAGE_SIZE as u64 + 1;
         let info = header_info(
