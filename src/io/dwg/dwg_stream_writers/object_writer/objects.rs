@@ -878,18 +878,31 @@ impl<'a> DwgObjectWriter<'a> {
         // A visual style filed in the pre-R2010 layout must say so: the
         // reader rejects the record unless it carries the ACAD
         // `AcDbSavedByObjectVersion` marker that announces the down-level
-        // object version.
+        // object version. The marker is a label and its value: it updates the
+        // pair already there, or goes in as one unit ahead of the style's own
+        // ACAD values, which are kept as they are.
         let extra: Vec<(u64, Vec<u8>)> = if self.version.r2010_plus() {
             Vec::new()
         } else {
-            let mut marker = crate::xdata::ExtendedDataRecord::new("ACAD");
-            marker.add_value(crate::xdata::XDataValue::String(
-                "AcDbSavedByObjectVersion".to_string(),
-            ));
-            marker.add_value(crate::xdata::XDataValue::Integer16(0));
-            self.encode_xdata_record(&marker).into_iter().collect()
+            use crate::xdata::XDataValue;
+            let mut acad = crate::xdata::ExtendedDataRecord::new("ACAD");
+            acad.values = self
+                .existing_xdata_values(value.handle, "ACAD")
+                .unwrap_or_default();
+            let label = XDataValue::String("AcDbSavedByObjectVersion".to_string());
+            match acad.values.iter().position(|value| *value == label) {
+                Some(index)
+                    if matches!(acad.values.get(index + 1), Some(XDataValue::Integer16(_))) =>
+                {
+                    acad.values[index + 1] = XDataValue::Integer16(0);
+                }
+                _ => {
+                    acad.values.splice(0..0, [label, XDataValue::Integer16(0)]);
+                }
+            }
+            self.encode_xdata_record(&acad).into_iter().collect()
         };
-        self.write_common_non_entity_data_eed(
+        self.write_common_non_entity_data_replacing_eed(
             type_code,
             value.handle,
             value.owner,
