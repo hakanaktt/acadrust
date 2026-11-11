@@ -1,7 +1,7 @@
 //! Hatch entity and boundary path types
 
 use crate::entities::{Entity, EntityCommon};
-use crate::types::{BoundingBox3D, Color, Handle, Transform, Vector2, Vector3};
+use crate::types::{rotate_point_2d, BoundingBox3D, Color, Handle, Transform, Vector2, Vector3};
 
 /// Hatch pattern type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -378,11 +378,15 @@ impl HatchPattern {
         self.lines.push(line);
     }
 
-    /// Update pattern with scale and rotation
-    pub fn update(&mut self, _base_point: Vector2, angle: f64, scale: f64) {
+    /// Rotate the pattern lines by `angle` and scale them by `scale` about
+    /// `base_point`: base points, offsets and dashes, the way DWG and DXF
+    /// store the definition lines of a HATCH.
+    pub fn update(&mut self, base_point: Vector2, angle: f64, scale: f64) {
         for line in &mut self.lines {
             line.angle += angle;
-            line.offset = line.offset * scale;
+            line.base_point = base_point
+                + (rotate_point_2d(line.base_point, base_point, angle) - base_point) * scale;
+            line.offset = rotate_point_2d(line.offset, Vector2::ZERO, angle) * scale;
             for dash in &mut line.dash_lengths {
                 *dash *= scale;
             }
@@ -558,17 +562,13 @@ impl Hatch {
 
     /// Builder: Set the pattern angle
     pub fn with_pattern_angle(mut self, angle: f64) -> Self {
-        self.pattern_angle = angle;
-        self.pattern
-            .update(Vector2::new(0.0, 0.0), angle, self.pattern_scale);
+        self.set_pattern_angle(angle);
         self
     }
 
     /// Builder: Set the pattern scale
     pub fn with_pattern_scale(mut self, scale: f64) -> Self {
-        self.pattern_scale = scale;
-        self.pattern
-            .update(Vector2::new(0.0, 0.0), self.pattern_angle, scale);
+        self.set_pattern_scale(scale);
         self
     }
 
@@ -594,18 +594,24 @@ impl Hatch {
         self.seed_points.push(point);
     }
 
-    /// Set the pattern angle (updates pattern)
+    /// Set the pattern angle and rotate the pattern lines by the change,
+    /// keeping them stored transformed as in DWG and DXF.
     pub fn set_pattern_angle(&mut self, angle: f64) {
-        self.pattern_angle = angle;
         self.pattern
-            .update(Vector2::new(0.0, 0.0), angle, self.pattern_scale);
+            .update(Vector2::ZERO, angle - self.pattern_angle, 1.0);
+        self.pattern_angle = angle;
     }
 
-    /// Set the pattern scale (updates pattern)
+    /// Set the pattern scale and scale the pattern lines by the change,
+    /// keeping them stored transformed as in DWG and DXF.
     pub fn set_pattern_scale(&mut self, scale: f64) {
+        let ratio = if self.pattern_scale.abs() > f64::EPSILON {
+            scale / self.pattern_scale
+        } else {
+            scale
+        };
+        self.pattern.update(Vector2::ZERO, 0.0, ratio);
         self.pattern_scale = scale;
-        self.pattern
-            .update(Vector2::new(0.0, 0.0), self.pattern_angle, scale);
     }
 
     /// Get the number of boundary paths
