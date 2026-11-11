@@ -53,7 +53,7 @@ impl<'a> DwgObjectWriter<'a> {
 
     /// `write_predefined_bit`: see `read_render_settings` in the reader; only
     /// plain RENDERSETTINGS carries the R2013+ flag right after
-    /// `display_index`.
+    /// `display_index`, and only it stores its class version one higher.
     fn write_render_settings_data(
         &mut self,
         value: &RenderSettings,
@@ -62,7 +62,7 @@ impl<'a> DwgObjectWriter<'a> {
     ) {
         let class_version = if rapid_rt && self.dxf_version == crate::types::DxfVersion::AC1027 {
             value.class_version - 1
-        } else if !rapid_rt && self.version.r2013_plus(self.dxf_version) {
+        } else if !rapid_rt && write_predefined_bit {
             value.class_version + 1
         } else {
             value.class_version
@@ -1150,5 +1150,39 @@ mod object_data_tests {
                 object.dxf_name()
             );
         }
+    }
+
+    #[test]
+    fn mental_ray_class_version_is_not_shifted_from_r2013() {
+        // From R2010 on the object's data stream has the same layout and its
+        // strings go to the string stream, so the same object must give the
+        // same data bits at R2010 and R2018; a shifted class version breaks
+        // that.
+        let object = ClassObject {
+            handle: Handle::new(0x80),
+            owner: Handle::new(0x7F),
+            reactors: vec![Handle::new(0x7F)],
+            xdictionary_handle: None,
+            data: ClassObjectData::MentalRayRenderSettings(MentalRayRenderSettings {
+                base: RenderSettings {
+                    class_version: 2,
+                    name: "Draft".into(),
+                    ..RenderSettings::default()
+                },
+                version: 2,
+                ..MentalRayRenderSettings::default()
+            }),
+        };
+        let write = |version| {
+            let mut document = CadDocument::with_version(version);
+            document
+                .objects
+                .insert(object.handle, ObjectType::ClassObject(object.clone()));
+            let mut writer = DwgObjectWriter::new(&document).unwrap();
+            writer.writer.reset();
+            writer.write_class_object_data(&object.data);
+            writer.writer.main().to_bytes_snapshot()
+        };
+        assert_eq!(write(DxfVersion::AC1024), write(DxfVersion::AC1032));
     }
 }

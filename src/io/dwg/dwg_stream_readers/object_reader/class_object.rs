@@ -14,9 +14,11 @@ fn count(value: i32, reader: &DwgMergedReader) -> usize {
 /// MENTALRAYRENDERSETTINGS (its body starts right after `display_index`;
 /// consuming a bit there shifted every following field) nor for
 /// RAPIDRTRENDERSETTINGS, which stores the flag after its own fields.
+/// Only plain RENDERSETTINGS stores its class version one higher from R2013
+/// on (the same objects that carry the flag); MENTALRAYRENDERSETTINGS keeps
+/// the stored value in every version.
 fn read_render_settings(
     reader: &mut DwgMergedReader,
-    version: DwgVersion,
     dxf_version: DxfVersion,
     rapid_rt: bool,
     read_predefined_bit: bool,
@@ -25,7 +27,7 @@ fn read_render_settings(
     RenderSettings {
         class_version: if rapid_rt && dxf_version == DxfVersion::AC1027 {
             stored_version + 1
-        } else if !rapid_rt && version.r2013_plus(dxf_version) {
+        } else if !rapid_rt && read_predefined_bit {
             stored_version - 1
         } else {
             stored_version
@@ -594,13 +596,12 @@ pub fn read_class_object_data(
         }),
         "RENDERSETTINGS" => ClassObjectData::RenderSettings(read_render_settings(
             reader,
-            version,
             dxf_version,
             false,
             version.r2013_plus(dxf_version),
         )),
         "MENTALRAYRENDERSETTINGS" => {
-            let base = read_render_settings(reader, version, dxf_version, false, false);
+            let base = read_render_settings(reader, dxf_version, false, false);
             ClassObjectData::MentalRayRenderSettings(MentalRayRenderSettings {
                 base,
                 version: reader.read_bit_long(),
@@ -657,7 +658,7 @@ pub fn read_class_object_data(
             })
         }
         "RAPIDRTRENDERSETTINGS" => {
-            let mut base = read_render_settings(reader, version, dxf_version, true, false);
+            let mut base = read_render_settings(reader, dxf_version, true, false);
             let rapid_version = reader.read_bit_long();
             let render_target = reader.read_bit_long();
             let render_level = reader.read_bit_long();
