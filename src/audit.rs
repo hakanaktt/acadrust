@@ -152,6 +152,7 @@ pub enum RepairAction {
     ReindexEntities { count: usize },
     ReindexObject { old: Handle, new: Handle },
     RepairBlockOwners { count: usize },
+    ClearAttributeDefinitionFlags { count: usize },
     SynchronizeHandleAllocator,
 }
 
@@ -707,6 +708,49 @@ impl CadDocument {
             }
         }
 
+        // An object owned by a dictionary or a field must be listed by that
+        // owner; AutoCAD/ZWCAD AUDIT report such orphans (e.g. AcDbField).
+        for key in self.objects.keys() {
+            let Some(owner) = self.object_owner(*key) else { continue };
+            let listed = match self.objects.get(&owner) {
+                Some(ObjectType::Dictionary(d)) => d.entries.iter().any(|(_, t)| t == key),
+                Some(ObjectType::DictionaryWithDefault(d)) => {
+                    d.entries.iter().any(|(_, t)| t == key)
+                }
+                Some(ObjectType::Field(f)) => f.child_fields.contains(key),
+                _ => true,
+            };
+            // ZWCAD: "AcDbField Owner Id (0) Invalid".
+            let null_owner = owner.is_null() && *key != self.header.named_objects_dict_handle;
+            if !listed || null_owner {
+                report.issue(
+                    AuditIssueCode::OwnerMismatch,
+                    AuditSeverity::Error,
+                    AuditLocation::Reference { owner, target: *key },
+                    Some(*key),
+                    if null_owner { "object owner handle is null" } else { "object owner does not list the object" },
+                    false,
+                );
+            }
+        }
+
+        for block in self.block_records.iter() {
+            if block.flags.has_attributes && !self.block_has_attdef(block) {
+                report.issue(
+                    AuditIssueCode::OwnerMismatch,
+                    AuditSeverity::Error,
+                    AuditLocation::TableEntry {
+                        table: "BLOCK_RECORD".into(),
+                        name: block.name.clone(),
+                        handle: block.handle,
+                    },
+                    Some(block.handle),
+                    "block record has the attribute-definitions flag but no ATTDEF",
+                    true,
+                );
+            }
+        }
+
         let max_used_handle = known.iter().map(|handle| handle.value()).max().unwrap_or(0);
         if self.header.handle_seed <= max_used_handle || self.next_handle() <= max_used_handle {
             report.issue(
@@ -770,6 +814,12 @@ impl CadDocument {
         report
     }
 
+    fn block_has_attdef(&self, block: &crate::tables::BlockRecord) -> bool {
+        block.entity_handles.iter().any(|h| {
+            matches!(self.get_entity(*h), Some(EntityType::AttributeDefinition(_)))
+        })
+    }
+
     /// Apply only deterministic structural repairs and return before/after
     /// diagnostics.  Ambiguous references and duplicate handles are retained.
     pub fn repair(&mut self) -> RepairReport {
@@ -778,6 +828,20 @@ impl CadDocument {
         // Synchronize before allocating replacements. Parsed objects may
         // carry handles above the allocator's cached value.
         self.synchronize_handle_allocator();
+        let stale: Vec<Handle> = self
+            .block_records
+            .iter()
+            .filter(|b| b.flags.has_attributes && !self.block_has_attdef(b))
+            .map(|b| b.handle)
+            .collect();
+        for block in self.block_records.iter_mut() {
+            if stale.contains(&block.handle) {
+                block.flags.has_attributes = false;
+            }
+        }
+        if !stale.is_empty() {
+            actions.push(RepairAction::ClearAttributeDefinitionFlags { count: stale.len() });
+        }
         let renamed = self.resync_table_keys();
         if renamed > 0 {
             actions.push(RepairAction::ResyncTableKeys { count: renamed });
@@ -1026,6 +1090,32 @@ mod tests {
         assert_eq!(first.after.count(AuditIssueCode::StaleTableKey), 0);
         assert!(document.layers.get("Renamed").is_some());
         assert!(document.repair().actions.is_empty());
+    }
+
+    #[test]
+    fn attdef_flag_without_attdef_is_reported_and_cleared() {
+        let mut document = CadDocument::new();
+        let block = document.block_records.iter_mut().next().unwrap();
+        block.flags.has_attributes = true;
+        assert_eq!(document.audit().error_count(), 1);
+        let report = document.repair();
+        assert!(report.after.is_clean());
+        assert!(document.audit().is_clean());
+    }
+
+    #[test]
+    fn object_with_null_owner_is_reported() {
+        let mut document = CadDocument::new();
+        let dict = document
+            .objects
+            .values_mut()
+            .find_map(|o| match o {
+                ObjectType::Dictionary(d) if !d.owner.is_null() => Some(d),
+                _ => None,
+            })
+            .unwrap();
+        dict.owner = Handle::NULL;
+        assert!(document.audit().count(AuditIssueCode::OwnerMismatch) >= 1);
     }
 
     #[test]
