@@ -20,6 +20,7 @@
 //! |---|---|---|
 //! | 257/0 | 2RD start, 2RD end | fixed line |
 //! | 257/5 | BD length | line continuing the previous element |
+//! | 257/9 | — | line tangent to the curves before and after it |
 //! | 257/10 | BD, BS, BS, 2BD, BD, BD, 2BD first point, BL, 3 x BS, 2BD second point | line through two points |
 //! | 258/0 | 2RD centre, BD radius | whole circle |
 //! | 258/1 | 2RD centre, 2RD start | whole circle |
@@ -65,6 +66,8 @@ pub enum AlignmentElementKind {
     FixedLine { start: Vector2, end: Vector2 },
     /// Line continuing the previous element.
     FloatingLine { length: f64 },
+    /// Line tangent to the fixed arcs before and after it.
+    FreeLine,
     /// Arc through start, mid, and end points.
     FixedArc { start: Vector2, mid: Vector2, end: Vector2 },
     /// Arc continuing the previous element.
@@ -243,6 +246,7 @@ fn read_element(bits: &mut Bits) -> Option<AlignmentElement> {
             start: point(bits)?,
             end: point(bits)?,
         },
+        (257, Some(9)) => AlignmentElementKind::FreeLine,
         (257, Some(5)) => AlignmentElementKind::FloatingLine {
             length: bits.bit_double()?,
         },
@@ -875,12 +879,21 @@ fn solve_run(run: &[&AlignmentElement], out: &mut Vec<Vec<Vector2>>) {
                     Some(AlignmentElementKind::FreeArc { radius }) => run
                         .get(index + 1)
                         .and_then(|after| line_carrier(after))
-                        .and_then(|(b, v)| arc_then_fillet(*start, *mid, *end, *radius, b, v)),
+                        .and_then(|(b, v)| arc_then_fillet(*start, *mid, *end, *radius, b, v))
+                        .map(|solved| (solved, 1)),
+                    // A free line to the next fixed arc ends this arc where
+                    // the line leaves and starts that arc where it arrives.
+                    Some(AlignmentElementKind::FreeLine) => match run.get(index + 1).map(|after| &after.kind) {
+                        Some(AlignmentElementKind::FixedArc { start: a2, mid: m2, end: e2 }) => {
+                            arc_line_arc((*start, *mid, *end), (*a2, *m2, *e2)).map(|solved| (solved, 2))
+                        }
+                        _ => None,
+                    },
                     _ => None,
                 };
                 match fillet {
-                    Some(solved) => {
-                        index += 1;
+                    Some((solved, skip)) => {
+                        index += skip;
                         Some(solved)
                     }
                     None => three_point_arc(*start, *mid, *end),
@@ -1073,7 +1086,9 @@ fn solve_run(run: &[&AlignmentElement], out: &mut Vec<Vec<Vector2>>) {
                     },
                 ))
             }
-            AlignmentElementKind::Other { .. } => None,
+            // Solved with the fixed arc before it; on its own it has no
+            // position.
+            AlignmentElementKind::FreeLine | AlignmentElementKind::Other { .. } => None,
         };
         match solved {
             Some((q, end)) => {
@@ -1314,6 +1329,46 @@ fn offset_spiral(s: State, k: f64, inward: bool, length: f64, shape: SpiralShape
     }
 }
 
+/// Two fixed arcs joined by a line tangent to both, each travelled in its
+/// own direction: the first up to where the line leaves it, the line, then
+/// the second from where the line arrives.
+fn arc_line_arc(first: (Vector2, Vector2, Vector2), second: (Vector2, Vector2, Vector2)) -> Option<(Vec<Vector2>, State)> {
+    let (c1, r1, ccw1) = circle(first.0, first.1, first.2)?;
+    let (c2, r2, ccw2) = circle(second.0, second.1, second.2)?;
+    let side = |ccw: bool| if ccw { 1.0 } else { -1.0 };
+    let (s1, s2) = (side(ccw1), side(ccw2));
+    // Each centre sits `s r` along the line's left normal n from its
+    // tangent point, so n . (c2 - c1) = s2 r2 - s1 r1, and the line runs
+    // from the first arc towards the second.
+    let d = c2 - c1;
+    let length = d.x.hypot(d.y);
+    let u = unit(d)?;
+    let c = (s2 * r2 - s1 * r1) / length;
+    if c.abs() > 1.0 {
+        return None;
+    }
+    let n = u * c + left(u) * (1.0 - c * c).sqrt();
+    let leave = c1 - n * (s1 * r1);
+    let arrive = c2 - n * (s2 * r2);
+    let (mut q, at_leave, miss) = arc_to_point(arc_start_state(first.0, first.1, first.2), leave)?;
+    (miss < TOLERANCE).then_some(())?;
+    q.extend([leave, arrive]);
+    let k2 = s2 / r2;
+    let line_heading = heading(arrive - leave);
+    let (rest, end, miss) = arc_to_point(
+        State {
+            point: arrive,
+            heading: line_heading,
+            curvature: k2,
+        },
+        second.2,
+    )?;
+    (miss < TOLERANCE && normalize(line_heading - at_leave.heading).abs() < 1e-6).then_some(())?;
+    // The join repeats its point, as between any two elements.
+    q.extend(rest);
+    Some((q, end))
+}
+
 /// Left normal of a unit direction.
 fn left(u: Vector2) -> Vector2 {
     Vector2::new(-u.y, u.x)
@@ -1443,7 +1498,8 @@ fn fillet_then_arc(line: &PendingLine, radius: f64, a: Vector2, m: Vector2, c: V
     let k2 = if ccw { 1.0 / r } else { -1.0 / r };
     let (rest, end, miss) = arc_to_point(State { curvature: k2, ..at_meet }, c)?;
     (miss < TOLERANCE).then_some(())?;
-    q.extend(rest.into_iter().skip(1));
+    // The join repeats its point, as between any two elements.
+    q.extend(rest);
     Some((q, end))
 }
 
@@ -1459,7 +1515,8 @@ fn arc_then_fillet(a: Vector2, m: Vector2, c: Vector2, radius: f64, b: Vector2, 
     (miss < TOLERANCE).then_some(())?;
     let (rest, end, miss) = arc_to_point(State { curvature: -k, ..at_meet }, touch)?;
     (miss < TOLERANCE).then_some(())?;
-    q.extend(rest.into_iter().skip(1));
+    // The join repeats its point, as between any two elements.
+    q.extend(rest);
     Some((q, State { heading: heading(v), curvature: 0.0, ..end }))
 }
 
@@ -1697,12 +1754,12 @@ pub(super) fn masked_ranges(data: &[u8], start: usize, end: usize, first: f64, l
     let fits = |v: f64| v.is_finite() && v >= first - slack && v <= last + slack;
     let read = |pos: usize| -> Option<Vec<(f64, f64)>> {
         let mut bits = Bits::new(data, pos, end);
+        for _ in 0..3 {
+            (bits.bit_long()? == 2).then_some(())?;
+        }
         let n = usize::try_from(bits.bit_long()?).ok()?;
         if n == 0 || n > 64 {
             return None;
-        }
-        for _ in 0..3 {
-            (bits.bit_long()? == n as i32).then_some(())?;
         }
         let mut out = Vec::with_capacity(n);
         // A station other than the alignment's ends is written in full; the

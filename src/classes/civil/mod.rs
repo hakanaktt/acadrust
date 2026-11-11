@@ -11,6 +11,7 @@ mod alignment;
 mod bits;
 mod corridor;
 mod labels;
+mod network;
 mod profile;
 mod sample_lines;
 mod style;
@@ -19,6 +20,7 @@ mod tin;
 
 pub use alignment::{AlignmentElement, AlignmentElementKind, AlignmentPiece, GeometryPoint, SpiralShape};
 pub use labels::{parse_format, property, LabelPart, LabelText};
+pub use network::PartField;
 pub use profile::{ProfilePiece, ProfileViewFrame, Pvi};
 pub use sample_lines::SampleLines;
 pub use style::{DisplayComponent, Marker, ViewAxes, ViewAxis};
@@ -383,6 +385,32 @@ impl ArchEntityData {
         self.decode().handles.iter().take(3).skip(1).copied().find(|h| *h != 0)
     }
 
+    /// Start and end of a Civil 3D pipe (`AECC_PIPE`), as stored.
+    pub fn pipe_ends(&self) -> Option<(crate::types::Vector3, crate::types::Vector3)> {
+        if self.dxf_name != "AECC_PIPE" {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        network::pipe_ends(data, start, end)
+    }
+
+    /// Insertion point of a Civil 3D structure (`AECC_STRUCTURE`), found
+    /// inside the extents its cached preview records.
+    pub fn structure_position(&self) -> Option<crate::types::Vector3> {
+        if self.dxf_name != "AECC_STRUCTURE" {
+            return None;
+        }
+        let mut min = [f64::INFINITY; 2];
+        let mut max = [f64::NEG_INFINITY; 2];
+        for p in self.profiles.iter().flatten() {
+            min = [min[0].min(p.x), min[1].min(p.y)];
+            max = [max[0].max(p.x), max[1].max(p.y)];
+        }
+        (min[0] <= max[0]).then_some(())?;
+        let (data, start, end) = self.main_stream()?;
+        network::structure_position(data, start, end, min, max)
+    }
+
     /// Baseline point of a Civil 3D assembly and where each of its
     /// subassemblies attaches.
     pub fn assembly_layout(&self) -> Option<AssemblyLayout> {
@@ -560,6 +588,18 @@ impl ArchObject {
         }
         let (data, start, end) = self.main_stream()?;
         style::contour_intervals(data, start, end)
+    }
+
+    /// Number fields of a pipe network part definition
+    /// (`AECC_NETWORK_PART_DEF`): sizes, thicknesses and the like.
+    pub fn network_part_fields(&self) -> Vec<PartField> {
+        if self.dxf_name != "AECC_NETWORK_PART_DEF" {
+            return Vec::new();
+        }
+        let strings = self.decode().strings;
+        self.main_stream()
+            .map(|(data, start, end)| network::part_fields(data, start, end, &strings))
+            .unwrap_or_default()
     }
 
     /// UTF-16 strings the record stores inline (label formats and the

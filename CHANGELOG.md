@@ -2,6 +2,18 @@
 
 ### Unreleased
 
+- **Civil 3D pipe networks** - `ArchEntityData::pipe_ends` reads a pipe's
+  start and end, `structure_position` a structure's insertion point, and
+  `ArchObject::network_part_fields` a part definition's number fields
+  (inner diameter, wall thickness, structure diameter, ...) with their
+  units, in drawings from Civil 3D 2013 and 2018 on.
+
+- **Civil 3D alignments** - Masking regions read with any number of
+  regions (the list opens with three `BL 2` before its count). Free lines
+  between two fixed arcs are solved tangent to both, ending the first arc
+  and starting the second where the line meets them; composite solutions
+  keep their element joins, so each piece takes its own style component.
+
 - **Civil 3D spirals and curves** - Spiral records carry their shape:
   `SpiralShape` (clothoid, Bloss, sinusoidal, biquadratic, cubic parabola,
   Japanese cubic, sine half-wave) on `SpiralIn` / `SpiralOut`, each drawn
