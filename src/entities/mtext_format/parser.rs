@@ -1814,6 +1814,52 @@ mod tests {
         assert_eq!(doc.paragraphs[1].to_plain_text(), "Col2");
     }
 
+    #[test]
+    fn paragraph_alignment_reset_inherits_the_attachment_alignment() {
+        // `\pq*` is the alignment reset, not Justify: a centred paragraph
+        // followed by a `\pq*` reset and more single-line paragraphs stays
+        // centred in AutoCAD (survey-export pole labels do exactly this).
+        // Justified would leave each single-line paragraph ragged-left.
+        let doc = parse_mtext("{\\pqc;A\\P\\pq*;B\\PC}", false);
+        assert_eq!(
+            doc.paragraphs[0].properties.alignment,
+            Some(MTextParagraphAlignment::Center),
+            "the \\pqc; paragraph is centred"
+        );
+        assert_eq!(
+            doc.paragraphs[1].properties.alignment,
+            Some(MTextParagraphAlignment::Default),
+            "\\pq* is the reset, not Justified"
+        );
+        assert_eq!(
+            doc.paragraphs[2].properties.alignment, None,
+            "a bare paragraph break records no new alignment property"
+        );
+    }
+
+    #[test]
+    fn paragraph_alignment_reset_code_is_distinct_from_justify() {
+        assert_eq!(
+            MTextParagraphAlignment::from_char('*'),
+            MTextParagraphAlignment::Default,
+            "q* resets to the entity's attachment alignment"
+        );
+        assert_eq!(
+            MTextParagraphAlignment::from_char('j'),
+            MTextParagraphAlignment::Justified,
+            "qj stays Justified"
+        );
+        let doc = parse_mtext(r"{\pq*;A\P\pqj;B}", false);
+        assert_eq!(
+            doc.paragraphs[0].properties.alignment,
+            Some(MTextParagraphAlignment::Default)
+        );
+        assert_eq!(
+            doc.paragraphs[1].properties.alignment,
+            Some(MTextParagraphAlignment::Justified)
+        );
+    }
+
     // ========================================================================
     // Unicode escape
     // ========================================================================

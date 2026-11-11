@@ -171,10 +171,13 @@ impl MTextParagraphAlignment {
             'c' => MTextParagraphAlignment::Center,
             'j' => MTextParagraphAlignment::Justified,
             'd' => MTextParagraphAlignment::Distributed,
-            // ACAD serializes the paragraph *Justify* option as `\pq*` (the
-            // `*` that means "reset" in the other sub-codes), so a `q*` reads as
-            // justified rather than an alignment reset.
-            '*' => MTextParagraphAlignment::Justified,
+            // `\pq*` is the alignment *reset*: like the other sub-codes, `*`
+            // means "go back to the default", so the paragraph inherits the
+            // entity's attachment alignment. Civil 3D and survey exporters
+            // write it to cancel a preceding `\pqc;` or `\pqr;` block, and
+            // those labels stay centred in AutoCAD. Reading it as Justified
+            // instead left every following single-line paragraph ragged-left.
+            '*' => MTextParagraphAlignment::Default,
             _ => MTextParagraphAlignment::Default,
         }
     }
