@@ -1011,6 +1011,7 @@ impl DwgDocumentBuilder {
         let mut decoded_pass2 = 0usize;
         let mut diagnostics = Vec::new();
         let mut leader_diagnostics = Vec::new();
+        let mut preserved_diagnostics = Vec::new();
         let total_handles = handles.len();
         self.report_progress(55);
 
@@ -2596,7 +2597,11 @@ impl DwgDocumentBuilder {
                     diagnostic.section = Some("AcDb:AcDbObjects".to_string());
                     diagnostic.record_handle = Some(failure.handle);
                     diagnostic.record_type = Some(failure.type_code.to_string());
-                    push_read_diagnostic(&mut diagnostics, diagnostic);
+                    if failure.recoverable {
+                        push_read_diagnostic(&mut preserved_diagnostics, diagnostic);
+                    } else {
+                        push_read_diagnostic(&mut diagnostics, diagnostic);
+                    }
                 }
                 for (warning_handle, message) in chunk.output.warnings.drain(..) {
                     self.notifications
@@ -2622,6 +2627,12 @@ impl DwgDocumentBuilder {
                 pass2_records.len(),
                 worker_count,
             );
+        }
+        // Strict reads use the first diagnostic to explain a skipped record.
+        // Append preserved-object notices after the record failures so that
+        // they cannot use the failures' diagnostic budget.
+        for diagnostic in preserved_diagnostics {
+            push_read_diagnostic(&mut diagnostics, diagnostic);
         }
         // Every record is decoded; the post-pass reads no section bytes.
         self.obj_reader.release_section();
