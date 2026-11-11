@@ -907,9 +907,7 @@ pub struct MTextDocument {
 /// Returns `true` if the paragraph properties contain any non-default values
 /// that should be serialized into `\p...;` format.
 fn para_has_props(p: &ParagraphProperties) -> bool {
-    p.alignment
-        .as_ref()
-        .map_or(false, |a| !matches!(a, MTextParagraphAlignment::Default))
+    p.alignment.is_some()
         || p.first_line_indent.is_some()
         || p.left_margin.is_some()
         || p.right_margin.is_some()
@@ -1015,7 +1013,8 @@ impl MTextDocument {
                         MTextParagraphAlignment::Center => result.push_str("qc"),
                         MTextParagraphAlignment::Justified => result.push_str("qj"),
                         MTextParagraphAlignment::Distributed => result.push_str("qd"),
-                        MTextParagraphAlignment::Default => {}
+                        // The reset back to the attachment alignment.
+                        MTextParagraphAlignment::Default => result.push_str("q*"),
                     }
                 }
                 if let Some(v) = para_props.first_line_indent {

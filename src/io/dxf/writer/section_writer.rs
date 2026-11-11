@@ -6755,7 +6755,6 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         &mut self,
         value: &crate::objects::RenderSettings,
         write_has_predefined: bool,
-        rapid_rt: bool,
     ) -> Result<()> {
         let class_version = if write_has_predefined && self.dxf_version >= DxfVersion::AC1027 {
             value.class_version + 1
@@ -7170,11 +7169,11 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             }
             Data::RenderSettings(value) => {
                 self.write_class_object_header(object, "AcDbRenderSettings")?;
-                self.write_render_settings_dxf(value, true, false)
+                self.write_render_settings_dxf(value, true)
             }
             Data::MentalRayRenderSettings(value) => {
                 self.write_class_object_header(object, "AcDbRenderSettings")?;
-                self.write_render_settings_dxf(&value.base, false, false)?;
+                self.write_render_settings_dxf(&value.base, false)?;
                 self.writer.write_subclass("AcDbMentalRayRenderSettings")?;
                 self.writer.write_i32(90, value.version)?;
                 self.writer.write_i32(90, value.sampling_min)?;
@@ -7229,7 +7228,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             }
             Data::RapidRtRenderSettings(value) => {
                 self.write_class_object_header(object, "AcDbRenderSettings")?;
-                self.write_render_settings_dxf(&value.base, false, true)?;
+                self.write_render_settings_dxf(&value.base, false)?;
                 self.writer.write_subclass("AcDbRapidRTRenderSettings")?;
                 self.writer.write_i32(90, value.version)?;
                 self.writer.write_i32(70, value.render_target)?;

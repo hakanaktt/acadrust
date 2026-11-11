@@ -20,7 +20,6 @@ fn count(value: i32, reader: &DwgMergedReader) -> usize {
 /// RAPIDRTRENDERSETTINGS keep the stored value in every version.
 fn read_render_settings(
     reader: &mut DwgMergedReader,
-    dxf_version: DxfVersion,
     rapid_rt: bool,
     read_predefined_bit: bool,
 ) -> RenderSettings {
@@ -595,12 +594,11 @@ pub fn read_class_object_data(
         }),
         "RENDERSETTINGS" => ClassObjectData::RenderSettings(read_render_settings(
             reader,
-            dxf_version,
             false,
             version.r2013_plus(dxf_version),
         )),
         "MENTALRAYRENDERSETTINGS" => {
-            let base = read_render_settings(reader, dxf_version, false, false);
+            let base = read_render_settings(reader, false, false);
             ClassObjectData::MentalRayRenderSettings(MentalRayRenderSettings {
                 base,
                 version: reader.read_bit_long(),
@@ -657,7 +655,7 @@ pub fn read_class_object_data(
             })
         }
         "RAPIDRTRENDERSETTINGS" => {
-            let mut base = read_render_settings(reader, dxf_version, true, false);
+            let mut base = read_render_settings(reader, true, false);
             let rapid_version = reader.read_bit_long();
             let render_target = reader.read_bit_long();
             let render_level = reader.read_bit_long();

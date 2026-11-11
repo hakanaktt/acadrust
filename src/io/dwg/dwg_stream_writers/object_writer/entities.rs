@@ -6314,6 +6314,42 @@ mod tests {
             );
         }
     }
+
+    // ── legacy TABLE overrides (BL 93) below R2010 ──
+    //
+    // ODA's Open Design Specification (20.4.96.1): the header suppressed
+    // override (bit 0x0002) is "always true (do not read any data for this)".
+
+    #[test]
+    fn table_header_suppressed_override_writes_no_data() {
+        use crate::entities::table::LegacyTableStyleOverride;
+        let flags = 0x01 | 0x02 | 0x08 | 0x10;
+        for header_suppressed in [Some(true), Some(false), None] {
+            let value = LegacyTableStyleOverride {
+                flags,
+                title_suppressed: Some(true),
+                header_suppressed,
+                horizontal_cell_margin: Some(0.0864),
+                vertical_cell_margin: Some(0.0432),
+                ..LegacyTableStyleOverride::default()
+            };
+            for version in [DxfVersion::AC1018, DxfVersion::AC1021] {
+                let doc = CadDocument::with_version(version);
+                let mut w = DwgObjectWriter::new(&doc).unwrap();
+                w.write_legacy_table_style_override(&value);
+                let mut r = reference(version);
+                r.write_bit_long(flags);
+                r.write_bit(true); // title suppressed
+                r.write_bit_double(0.0864);
+                r.write_bit_double(0.0432);
+                assert_eq!(
+                    w.writer.main().to_bytes_snapshot(),
+                    r.to_bytes_snapshot(),
+                    "{version:?}, header suppressed {header_suppressed:?}"
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -6482,42 +6518,6 @@ mod polyline_vertex_linetype_tests {
             let mut w = DwgObjectWriter::new(&doc).unwrap();
             w.write_polyline2d(&polyline);
             assert_vertices_follow_owner(&w, version, "2D polyline");
-        }
-    }
-
-    // ── legacy TABLE overrides (BL 93) below R2010 ──
-    //
-    // ODA's Open Design Specification (20.4.96.1): the header suppressed
-    // override (bit 0x0002) is "always true (do not read any data for this)".
-
-    #[test]
-    fn table_header_suppressed_override_writes_no_data() {
-        use crate::entities::table::LegacyTableStyleOverride;
-        let flags = 0x01 | 0x02 | 0x08 | 0x10;
-        for header_suppressed in [Some(true), Some(false), None] {
-            let value = LegacyTableStyleOverride {
-                flags,
-                title_suppressed: Some(true),
-                header_suppressed,
-                horizontal_cell_margin: Some(0.0864),
-                vertical_cell_margin: Some(0.0432),
-                ..LegacyTableStyleOverride::default()
-            };
-            for version in [DxfVersion::AC1018, DxfVersion::AC1021] {
-                let doc = CadDocument::with_version(version);
-                let mut w = DwgObjectWriter::new(&doc).unwrap();
-                w.write_legacy_table_style_override(&value);
-                let mut r = reference(version);
-                r.write_bit_long(flags);
-                r.write_bit(true); // title suppressed
-                r.write_bit_double(0.0864);
-                r.write_bit_double(0.0432);
-                assert_eq!(
-                    w.writer.main().to_bytes_snapshot(),
-                    r.to_bytes_snapshot(),
-                    "{version:?}, header suppressed {header_suppressed:?}"
-                );
-            }
         }
     }
 }
