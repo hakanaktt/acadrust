@@ -115,85 +115,60 @@ pub(super) fn explode_hatch(hatch: &Hatch) -> Vec<EntityType> {
         return Vec::new();
     }
 
-    let scale = if hatch.pattern_scale.is_finite() && hatch.pattern_scale.abs() > EPS {
-        hatch.pattern_scale.abs()
-    } else {
-        1.0
-    };
+    // DWG and DXF store the definition lines already rotated by
+    // `pattern_angle`, scaled by `pattern_scale` and, for a double hatch,
+    // with both families present (DXF 53/43-46/49 are the transformed
+    // values; 52/41/77 only describe them).  `Hatch::set_pattern_angle` and
+    // `set_pattern_scale` keep that invariant, so the lines are used as
+    // stored here.
     let mut result = Vec::new();
     for line in &hatch.pattern.lines {
         let dash_lengths: Vec<f64> = line
             .dash_lengths
             .iter()
+            .copied()
             .filter(|d| d.is_finite())
-            .map(|d| *d * scale)
             .collect();
-        // DXF's double-pattern bit requests a second family rotated by 90°.
-        // The second family uses the same dash phase and spacing, rotated
-        // around the recorded hatch pattern origin.
-        let family_count = if hatch.is_double { 2 } else { 1 };
-        for family in 0..family_count {
-            let mut angle = line.angle
-                + if family == 1 {
-                    std::f64::consts::FRAC_PI_2
-                } else {
-                    0.0
-                };
-            // DXF stores the definition-line angle and the HATCH rotation
-            // independently.  `pattern_angle` is therefore applied exactly once
-            // here, after parsing.  Pattern builders that have already folded the
-            // rotation into line.angle leave pattern_angle at zero.
-            angle += hatch.pattern_angle;
-            if !angle.is_finite() {
+        if !line.angle.is_finite() {
+            continue;
+        }
+        let dir = Vector2::new(line.angle.cos(), line.angle.sin()).normalize();
+        if dir.length_squared() < EPS {
+            continue;
+        }
+        let mut offset = line.offset;
+        if offset.length_squared() < EPS {
+            // A zero offset is legal for a single definition line.  Avoid an
+            // unbounded loop while preserving that one line.
+            offset = Vector2::ZERO;
+        }
+        let origin = line.base_point;
+        let line_count = line_indices(origin, offset, &bounds);
+        for index in line_count {
+            let p = origin + offset * index as f64;
+            let intersections = line_intersections(hatch, p, dir);
+            if intersections.len() < 2 {
                 continue;
             }
-            let dir = Vector2::new(angle.cos(), angle.sin()).normalize();
-            if dir.length_squared() < EPS {
-                continue;
-            }
-            let mut offset = line.offset * scale;
-            if family == 1 {
-                offset = Vector2::new(-offset.y, offset.x);
-            }
-            if offset.length_squared() < EPS {
-                // A zero offset is legal for a single definition line.  Avoid an
-                // unbounded loop while preserving that one line.
-                offset = Vector2::ZERO;
-            }
-            let origin = if family == 1 {
-                let hatch_origin = hatch.pattern_origin();
-                let q = line.base_point - hatch_origin;
-                hatch_origin + Vector2::new(-q.y, q.x)
-            } else {
-                line.base_point
-            };
-            let line_count = line_indices(origin, offset, dir, &bounds);
-            for index in line_count {
-                let p = origin + offset * index as f64;
-                let intersections = line_intersections(hatch, p, dir);
-                if intersections.len() < 2 {
+            for pair in intersections.windows(2) {
+                let (ta, tb) = (pair[0], pair[1]);
+                if tb - ta <= INTERSECTION_EPS {
                     continue;
                 }
-                for pair in intersections.windows(2) {
-                    let (ta, tb) = (pair[0], pair[1]);
-                    if tb - ta <= INTERSECTION_EPS {
-                        continue;
-                    }
-                    let mid = p + dir * ((ta + tb) * 0.5);
-                    if !inside_fill(mid, &loops, hatch.style) {
-                        continue;
-                    }
-                    if dash_lengths.is_empty() {
-                        emit_line(
-                            &mut result,
-                            p + dir * ta,
-                            p + dir * tb,
-                            hatch,
-                            &normal_basis(hatch.normal),
-                        );
-                    } else {
-                        emit_dashes(&mut result, p, dir, ta, tb, &dash_lengths, hatch);
-                    }
+                let mid = p + dir * ((ta + tb) * 0.5);
+                if !inside_fill(mid, &loops, hatch.style) {
+                    continue;
+                }
+                if dash_lengths.is_empty() {
+                    emit_line(
+                        &mut result,
+                        p + dir * ta,
+                        p + dir * tb,
+                        hatch,
+                        &normal_basis(hatch.normal),
+                    );
+                } else {
+                    emit_dashes(&mut result, p, dir, ta, tb, &dash_lengths, hatch);
                 }
             }
         }
@@ -209,11 +184,10 @@ fn normal_basis(normal: Vector3) -> Matrix3 {
     })
 }
 
-fn line_indices(origin: Vector2, offset: Vector2, dir: Vector2, bounds: &Bounds) -> Vec<i32> {
+fn line_indices(origin: Vector2, offset: Vector2, bounds: &Bounds) -> Vec<i64> {
     if offset.length_squared() < EPS {
         return vec![0];
     }
-    let diagonal = bounds.diagonal().max(1.0);
     let spacing = offset.length();
     // The projection of all boundary points onto the offset direction gives a
     // tighter range than an arbitrary world-size cap.
@@ -231,19 +205,20 @@ fn line_indices(origin: Vector2, offset: Vector2, dir: Vector2, bounds: &Bounds)
         lo = lo.min(q);
         hi = hi.max(q);
     }
-    let mut first = (lo / spacing).floor() as i32 - 2;
-    let mut last = (hi / spacing).ceil() as i32 + 2;
-    // Degenerate or malformed offsets should still produce a finite result.
-    let cap = (diagonal / spacing).ceil() as i32 + 8;
-    first = first.max(-cap);
-    last = last.min(cap);
-    // Keep the unused argument explicit: it documents that direction controls
-    // the line while offset controls family spacing.
-    let _ = dir;
+    let first = (lo / spacing).floor() - 2.0;
+    let last = (hi / spacing).ceil() + 2.0;
+    // The indices count from the definition line's base point, which may lie
+    // far away from the boundary, so bound the number of lines rather than
+    // the index itself.  Degenerate or malformed offsets still produce a
+    // finite result.
+    let cap = (bounds.diagonal().max(1.0) / spacing).ceil() + 8.0;
+    if !(first.is_finite() && last.is_finite() && last - first <= cap) {
+        return Vec::new();
+    }
     // ACAD walks the visible scan lines from the positive offset side
     // toward the negative side (the order is observable in the generated
     // entity handles), so preserve that deterministic ordering.
-    (first..=last).rev().collect()
+    (first as i64..=last as i64).rev().collect()
 }
 
 fn emit_line(result: &mut Vec<EntityType>, a: Vector2, b: Vector2, hatch: &Hatch, basis: &Matrix3) {
@@ -947,26 +922,36 @@ mod tests {
     use crate::entities::hatch::{BoundaryPathFlags, HatchPattern, HatchPatternLine};
 
     fn square_hatch() -> Hatch {
+        square_hatch_at(0.0)
+    }
+
+    /// A 10 x 10 square hatch with its lower left corner at (`at`, `at`).
+    fn square_hatch_at(at: f64) -> Hatch {
         let mut h = Hatch::with_pattern(HatchPattern::new("TEST"));
         let mut p = BoundaryPath::with_flags(BoundaryPathFlags::EXTERNAL);
-        p.add_edge(BoundaryEdge::Line(LineEdge {
-            start: Vector2::new(0.0, 0.0),
-            end: Vector2::new(10.0, 0.0),
-        }));
-        p.add_edge(BoundaryEdge::Line(LineEdge {
-            start: Vector2::new(10.0, 0.0),
-            end: Vector2::new(10.0, 10.0),
-        }));
-        p.add_edge(BoundaryEdge::Line(LineEdge {
-            start: Vector2::new(10.0, 10.0),
-            end: Vector2::new(0.0, 10.0),
-        }));
-        p.add_edge(BoundaryEdge::Line(LineEdge {
-            start: Vector2::new(0.0, 10.0),
-            end: Vector2::new(0.0, 0.0),
-        }));
+        for (a, b) in [
+            ((0.0, 0.0), (10.0, 0.0)),
+            ((10.0, 0.0), (10.0, 10.0)),
+            ((10.0, 10.0), (0.0, 10.0)),
+            ((0.0, 10.0), (0.0, 0.0)),
+        ] {
+            p.add_edge(BoundaryEdge::Line(LineEdge {
+                start: Vector2::new(a.0 + at, a.1 + at),
+                end: Vector2::new(b.0 + at, b.1 + at),
+            }));
+        }
         h.add_path(p);
         h
+    }
+
+    fn lines(parts: &[EntityType]) -> Vec<&Line> {
+        parts
+            .iter()
+            .map(|e| match e {
+                EntityType::Line(line) => line,
+                _ => panic!("expected only LINEs"),
+            })
+            .collect()
     }
 
     #[test]
@@ -1062,31 +1047,108 @@ mod tests {
     }
 
     #[test]
-    fn double_pattern_adds_the_perpendicular_family() {
+    fn double_pattern_uses_the_stored_families() {
+        // DWG and DXF store both families of a double hatch as definition
+        // lines; the double flag must not add a third one.
         let mut h = square_hatch();
         h.is_double = true;
+        for angle in [0.0, std::f64::consts::FRAC_PI_2] {
+            h.pattern.lines.push(HatchPatternLine {
+                angle,
+                base_point: Vector2::new(1.0, 1.0),
+                offset: Vector2::new(-angle.sin(), angle.cos()) * 2.0,
+                dash_lengths: Vec::new(),
+            });
+        }
+        let parts = explode_hatch(&h);
+        let lines = lines(&parts);
+        let horizontal = lines
+            .iter()
+            .filter(|line| (line.start.y - line.end.y).abs() < 1e-7)
+            .count();
+        let vertical = lines
+            .iter()
+            .filter(|line| (line.start.x - line.end.x).abs() < 1e-7)
+            .count();
+        assert_eq!((horizontal, vertical, lines.len()), (5, 5, 10));
+    }
+
+    #[test]
+    fn stored_lines_are_not_scaled_or_rotated_again() {
+        // A hatch read from DWG/DXF with scale 0.1 and angle 0.5: the
+        // definition line (spacing 10 at 0 rad) is stored transformed.
+        let mut h = square_hatch();
+        h.pattern_scale = 0.1;
+        h.pattern_angle = 0.5;
+        let normal = Vector2::new(-(0.5f64).sin(), (0.5f64).cos());
         h.pattern.lines.push(HatchPatternLine {
-            angle: 0.0,
+            angle: 0.5,
             base_point: Vector2::ZERO,
-            offset: Vector2::new(0.0, 2.0),
+            offset: normal * 1.0,
             dash_lengths: Vec::new(),
         });
         let parts = explode_hatch(&h);
-        assert!(parts.len() >= 8);
-        let horizontal = parts
+        let mut distances: Vec<f64> = lines(&parts)
             .iter()
-            .filter(|e| match e {
-                EntityType::Line(line) => (line.start.y - line.end.y).abs() < 1e-7,
-                _ => false,
+            .map(|line| {
+                let d = line.end - line.start;
+                assert!((d.y.atan2(d.x).rem_euclid(std::f64::consts::PI) - 0.5).abs() < 1e-7);
+                line.start.x * normal.x + line.start.y * normal.y
             })
-            .count();
-        let vertical = parts
+            .collect();
+        distances.sort_by(f64::total_cmp);
+        assert!(distances.len() > 5);
+        for pair in distances.windows(2) {
+            assert!((pair[1] - pair[0] - 1.0).abs() < 1e-7);
+        }
+    }
+
+    #[test]
+    fn pattern_setters_store_transformed_lines() {
+        let mut h = square_hatch();
+        h.pattern.lines.push(HatchPatternLine {
+            angle: 0.0,
+            base_point: Vector2::new(0.0, 5.0),
+            offset: Vector2::new(0.0, 10.0),
+            dash_lengths: Vec::new(),
+        });
+        h.set_pattern_scale(0.2);
+        h.set_pattern_angle(std::f64::consts::FRAC_PI_2);
+        // Setting the same values again must not transform the lines again.
+        h.set_pattern_scale(0.2);
+        h.set_pattern_angle(std::f64::consts::FRAC_PI_2);
+        let parts = explode_hatch(&h);
+        let mut xs: Vec<f64> = lines(&parts)
             .iter()
-            .filter(|e| match e {
-                EntityType::Line(line) => (line.start.x - line.end.x).abs() < 1e-7,
-                _ => false,
+            .map(|line| {
+                assert!((line.start.x - line.end.x).abs() < 1e-7);
+                line.start.x
             })
-            .count();
-        assert!(horizontal >= 4 && vertical >= 4);
+            .collect();
+        xs.sort_by(f64::total_cmp);
+        let expected = [1.0, 3.0, 5.0, 7.0, 9.0];
+        assert_eq!(xs.len(), expected.len());
+        for (x, e) in xs.iter().zip(expected) {
+            assert!((x - e).abs() < 1e-7, "{xs:?}");
+        }
+    }
+
+    #[test]
+    fn boundary_far_from_the_base_point_gets_all_lines() {
+        let mut h = square_hatch_at(1000.0);
+        h.pattern.lines.push(HatchPatternLine {
+            angle: 0.0,
+            base_point: Vector2::new(0.0, 0.5),
+            offset: Vector2::new(0.0, 1.0),
+            dash_lengths: Vec::new(),
+        });
+        let parts = explode_hatch(&h);
+        let mut ys: Vec<f64> = lines(&parts).iter().map(|line| line.start.y).collect();
+        ys.sort_by(f64::total_cmp);
+        let expected: Vec<f64> = (0..10).map(|i| 1000.5 + i as f64).collect();
+        assert_eq!(ys.len(), expected.len(), "{ys:?}");
+        for (y, e) in ys.iter().zip(expected) {
+            assert!((y - e).abs() < 1e-7, "{ys:?}");
+        }
     }
 }
