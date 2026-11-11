@@ -11962,18 +11962,25 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             if f & 0x20 != 0 {
                 self.writer.write_double(140, style.text_height)?;
             }
-            for (color_bit, lw_bit, (color_code, weight_code, visibility_code), border) in [
-                (0x40, 0x400, (69, 279, 289), &style.top_border),
-                (0x80, 0x800, (65, 275, 285), &style.right_border),
-                (0x100, 0x1000, (66, 276, 286), &style.bottom_border),
-                (0x200, 0x2000, (68, 278, 288), &style.left_border),
-            ] {
-                if f & color_bit != 0 {
+            // Each edge's colour, line weight and visibility have their own
+            // legacy bits (0x40, 0x400, 0x4000, shifted by the edge).
+            for (i, ((color_code, weight_code, visibility_code), border)) in [
+                ((69, 279, 289), &style.top_border),
+                ((65, 275, 285), &style.right_border),
+                ((66, 276, 286), &style.bottom_border),
+                ((68, 278, 288), &style.left_border),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                if f & (0x40 << i) != 0 {
                     self.write_table_cell_color(color_code, border.color)?;
                 }
-                if f & lw_bit != 0 {
+                if f & (0x400 << i) != 0 {
                     self.writer
                         .write_i16(weight_code, border.line_weight.value())?;
+                }
+                if f & (0x4000 << i) != 0 {
                     self.writer.write_bool(visibility_code, !border.invisible)?;
                 }
             }

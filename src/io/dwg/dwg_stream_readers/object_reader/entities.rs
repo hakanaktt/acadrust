@@ -3918,9 +3918,8 @@ fn read_table_cell_data(
         _ => {}
     }
 
-    // Per-cell style override block (each conditional gated on the override
-    // flags; the grid line-weight bit gates both the weight and the visibility
-    // read, mirroring the source exactly to stay byte-aligned).
+    // Per-cell style override block: each field is present only when its bit
+    // is set in the override flags.
     if reader.read_bit() {
         let flags = reader.read_bit_long();
         let mut style = CellStyle::new();
@@ -3948,20 +3947,28 @@ fn read_table_cell_data(
         if flags & 0x20 != 0 {
             style.text_height = reader.read_bit_double();
         }
-        // Per edge: colour, line weight, visibility.
-        for (color_bit, lw_bit, border) in [
-            (0x40, 0x400, &mut style.top_border),
-            (0x80, 0x800, &mut style.right_border),
-            (0x100, 0x1000, &mut style.bottom_border),
-            (0x200, 0x2000, &mut style.left_border),
-        ] {
-            if flags & color_bit != 0 {
+        // Per edge (top, right, bottom, left): colour, line weight and
+        // visibility, each under its own bit. A virtual edge (the adjacent
+        // cell holds the shared edge) has no data, whatever its bits say.
+        for (edge, border) in [
+            &mut style.top_border,
+            &mut style.right_border,
+            &mut style.bottom_border,
+            &mut style.left_border,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if cell.virtual_edge & (1 << edge) != 0 {
+                continue;
+            }
+            if flags & (0x40 << edge) != 0 {
                 border.color = reader.read_cm_true_color();
             }
-            if flags & lw_bit != 0 {
+            if flags & (0x400 << edge) != 0 {
                 border.line_weight = crate::types::LineWeight::from_value(reader.read_bit_short());
             }
-            if flags & lw_bit != 0 {
+            if flags & (0x4000 << edge) != 0 {
                 border.invisible = reader.read_bit_short() == 0;
             }
         }
@@ -6800,6 +6807,167 @@ mod tests {
                     assert!(reader.check_error().is_ok());
                 }
             }
+        }
+    }
+
+    // ── legacy TABLE cell overrides (AcDbTable cell data below R2010) ──
+    //
+    // ODA's Open Design Specification (20.4.96.1): each edge (top, right,
+    // bottom, left) has a color bit 0x40 << i, a line weight bit 0x400 << i
+    // and a visibility bit 0x4000 << i, and an edge set in the virtual edge
+    // byte (RC 178) carries no border data. These encode one text cell that
+    // way, then a sentinel the reader must land on.
+
+    const SENTINEL: i32 = 0x0123_4567;
+
+    fn legacy_cell(
+        dwg: DwgVersion,
+        dxf: DxfVersion,
+        flags: i32,
+        virtual_edge: u8,
+        overrides: impl FnOnce(&mut DwgMergedWriter),
+    ) -> DwgMergedReader {
+        use crate::io::dwg::dwg_reference_type::DwgReferenceType::HardPointer;
+        make_reader(dwg, dxf, |w| {
+            if dwg.r2007_plus() {
+                // The record size, which locates the string stream.
+                w.save_position_for_size();
+            }
+            w.write_bit_short(1); // text cell
+            w.write_byte(0x0F); // edge flags
+            w.write_bit(false); // merged
+            w.write_bit(false); // auto fit
+            w.write_bit_long(1); // merge width
+            w.write_bit_long(1); // merge height
+            w.write_bit_double(0.0); // rotation
+            w.write_handle(HardPointer, 0); // value handle
+            if !dwg.r2007_plus() {
+                w.write_variable_text("cell");
+            }
+            w.write_bit(true); // has override
+            w.write_bit_long(flags);
+            w.write_byte(virtual_edge);
+            overrides(w);
+            if dwg.r2007_plus() {
+                w.write_bit_long(0); // cell flag
+                w.write_bit_long(1); // value flags: no value body
+                w.write_bit_long(4); // string
+                w.write_bit_long(0); // unit type
+                w.write_variable_text(""); // format
+                w.write_variable_text("cell"); // formatted value
+            }
+            w.write_bit_long(SENTINEL);
+        })
+    }
+
+    fn read_legacy_cell(
+        reader: &mut DwgMergedReader,
+        dwg: DwgVersion,
+        dxf: DxfVersion,
+    ) -> CellStyle {
+        if dwg.r2007_plus() {
+            let size = reader.read_raw_long();
+            reader.setup_text_and_handle(size);
+        }
+        let cell = read_table_cell_data(reader, dwg, dxf);
+        assert_eq!(
+            reader.read_bit_long(),
+            SENTINEL,
+            "{dxf:?}: the cell record ends elsewhere"
+        );
+        reader.check_error().expect("cell record");
+        assert_eq!(cell.text_value(), "cell", "{dxf:?}");
+        cell.style.expect("cell style")
+    }
+
+    #[test]
+    fn legacy_cell_edge_visibility_has_its_own_bit() {
+        // Text height, then the visibility of the top, right and left edges,
+        // with no line weight.
+        let flags = 0x20 | 0x4000 | 0x8000 | 0x20000;
+        for (dwg, dxf) in [
+            (DwgVersion::AC18, DxfVersion::AC1018),
+            (DwgVersion::AC21, DxfVersion::AC1021),
+        ] {
+            let mut reader = legacy_cell(dwg, dxf, flags, 0, |w| {
+                w.write_bit_double(2.5);
+                w.write_bit_short(0); // top: invisible
+                w.write_bit_short(1); // right: visible
+                w.write_bit_short(0); // left: invisible
+            });
+            let style = read_legacy_cell(&mut reader, dwg, dxf);
+            assert_eq!(style.override_flags, flags);
+            assert_eq!(style.text_height, 2.5);
+            assert!(style.top_border.invisible, "{dxf:?}: top");
+            assert!(!style.right_border.invisible, "{dxf:?}: right");
+            assert!(!style.bottom_border.invisible, "{dxf:?}: bottom");
+            assert!(style.left_border.invisible, "{dxf:?}: left");
+            for border in [
+                &style.top_border,
+                &style.right_border,
+                &style.bottom_border,
+                &style.left_border,
+            ] {
+                assert_eq!(border.line_weight, LineWeight::ByLayer, "{dxf:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn legacy_cell_line_weight_is_read_without_visibility() {
+        let flags = 0x400 | 0x1000; // top and bottom line weights
+        for (dwg, dxf) in [
+            (DwgVersion::AC18, DxfVersion::AC1018),
+            (DwgVersion::AC21, DxfVersion::AC1021),
+        ] {
+            let mut reader = legacy_cell(dwg, dxf, flags, 0, |w| {
+                w.write_bit_short(35);
+                w.write_bit_short(50);
+            });
+            let style = read_legacy_cell(&mut reader, dwg, dxf);
+            assert_eq!(style.top_border.line_weight, LineWeight::from_value(35));
+            assert_eq!(style.bottom_border.line_weight, LineWeight::from_value(50));
+            assert!(!style.top_border.invisible && !style.bottom_border.invisible);
+        }
+    }
+
+    #[test]
+    fn legacy_cell_virtual_edge_carries_no_border_data() {
+        // Color bits on the top and left edges; the top edge is virtual
+        // (its neighbour holds the shared edge), so only the left color is
+        // there.
+        let flags = 0x40 | 0x200;
+        for (dwg, dxf) in [
+            (DwgVersion::AC18, DxfVersion::AC1018),
+            (DwgVersion::AC21, DxfVersion::AC1021),
+        ] {
+            let mut reader = legacy_cell(dwg, dxf, flags, 0x01, |w| {
+                w.write_cm_true_color(&Color::from_index(3));
+            });
+            let style = read_legacy_cell(&mut reader, dwg, dxf);
+            assert_eq!(style.left_border.color, Color::from_index(3), "{dxf:?}");
+            assert_eq!(style.top_border.color, Color::ByBlock, "{dxf:?}");
+        }
+    }
+
+    #[test]
+    fn legacy_cell_virtual_edge_skips_all_three_fields() {
+        // Every field of the virtual bottom edge is flagged, none is stored;
+        // the right edge's visibility follows the text height.
+        let flags = 0x20 | 0x100 | 0x1000 | 0x10000 | 0x8000;
+        for (dwg, dxf) in [
+            (DwgVersion::AC18, DxfVersion::AC1018),
+            (DwgVersion::AC21, DxfVersion::AC1021),
+        ] {
+            let mut reader = legacy_cell(dwg, dxf, flags, 0x04, |w| {
+                w.write_bit_double(1.25);
+                w.write_bit_short(0); // right: invisible
+            });
+            let style = read_legacy_cell(&mut reader, dwg, dxf);
+            assert_eq!(style.text_height, 1.25);
+            assert!(style.right_border.invisible, "{dxf:?}: right");
+            assert!(!style.bottom_border.invisible, "{dxf:?}: bottom");
+            assert_eq!(style.bottom_border.line_weight, LineWeight::ByLayer);
         }
     }
 }
