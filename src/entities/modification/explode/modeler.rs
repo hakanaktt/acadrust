@@ -1,4 +1,5 @@
 use super::*;
+use crate::types::{Matrix4, Transform};
 
 pub(super) fn sat_face_points(
     doc: &crate::entities::acis::SatDocument,
@@ -153,8 +154,16 @@ pub(super) fn sat_edge_entity(
             .get(knots.len().saturating_sub(degree + 1))
             .copied()
             .unwrap_or(full_start);
-        let edge_start = edge.start_param();
-        let edge_end = edge.end_param();
+        // A reversed intcurve runs against its B-spline: curve parameter t
+        // is spline parameter -t, and the spline runs from the edge's end to
+        // its start.
+        let curve_reversed = curve.sense() == Sense::Reversed;
+        let (edge_start, edge_end) = if curve_reversed {
+            (-edge.end_param(), -edge.start_param())
+        } else {
+            (edge.start_param(), edge.end_param())
+        };
+        let reverse = reverse != curve_reversed;
         if (edge_start - full_start).abs() > 1e-9 || (edge_end - full_end).abs() > 1e-9 {
             let mut fit_points: Vec<Vector3> = curve
                 .sample_range(edge_start, edge_end, 32)
@@ -171,11 +180,15 @@ pub(super) fn sat_edge_entity(
             }
             return None;
         }
+        // The decoded control points are homogeneous (x·w, y·w, z·w, w).
         let mut spline = Spline::from_control_points(
             degree as i32,
             controls
                 .iter()
-                .map(|p| Vector3::new(p[0], p[1], p[2]))
+                .map(|p| {
+                    let w = if p[3].abs() > 1e-12 { p[3] } else { 1.0 };
+                    Vector3::new(p[0] / w, p[1] / w, p[2] / w)
+                })
                 .collect(),
         );
         spline.common = inherit_common(common);
@@ -235,14 +248,37 @@ pub(super) fn sat_region_curves(
     result
 }
 
+/// The body's `transform` record as a world transform (`world = scale·(p·M)
+/// + T`, row vectors), `None` when the body has none.
+fn body_placement(doc: &crate::entities::acis::SatDocument) -> Option<Transform> {
+    if !doc.records.iter().any(|r| r.entity_type == "transform") {
+        return None;
+    }
+    let (m, t, s) = doc.placement();
+    let mut matrix = Matrix4::identity();
+    for i in 0..3 {
+        for j in 0..3 {
+            matrix.m[i][j] = s * m[j][i];
+        }
+        matrix.m[i][3] = t[i];
+    }
+    Some(Transform::from_matrix(matrix))
+}
+
 pub(super) fn explode_region(region: &Region) -> Vec<EntityType> {
     if region.wires.is_empty() {
-        if let Some(doc) = region.parse_sat() {
+        // SAT text or binary SAB: a DWG 2013+ stores every body as SAB.
+        if let Some(doc) = region.acis_data.parse() {
             let mut result = Vec::new();
             for face in doc.faces() {
                 result.extend(sat_region_curves(&region.common, &doc, &face));
             }
             if !result.is_empty() {
+                if let Some(placement) = body_placement(&doc) {
+                    for entity in &mut result {
+                        entity.apply_transform(&placement);
+                    }
+                }
                 return result;
             }
         }

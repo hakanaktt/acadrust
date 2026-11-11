@@ -1415,6 +1415,13 @@ impl<'a> SatIntCurve<'a> {
         }
     }
 
+    /// Sense of the curve against its B-spline (the token after the history
+    /// pointer, `forward` or `reversed`). A `reversed` intcurve runs against
+    /// its spline: curve parameter t is spline parameter −t.
+    pub fn sense(&self) -> Sense {
+        self.record.token_sense(1)
+    }
+
     /// Parse the embedded spline block into homogeneous control points.
     pub fn bspline(&self) -> Option<(usize, Vec<f64>, Vec<[f64; 4]>)> {
         decode_bspline_curve(&self.record.tokens)
