@@ -2,6 +2,14 @@
 
 ### Unreleased
 
+- **Civil 3D profiles** - Layout profiles read every entity Civil 3D
+  writes: symmetric parabolas by length or K, circular curves by length,
+  radius or through a point, asymmetric parabolas, parabolas through three
+  points, between two points with K, radius or a grade, parabolas hanging
+  from the tangent before, tangents leaving a curve towards a point, and
+  free tangents between two curves. `ProfilePiece` gains `Circular` and
+  `AsymmetricParabola`.
+
 - **Civil 3D alignment elements** - Alignments read more of the element
   records Civil 3D 2018 and later write: the first spiral of a group kept
   as separate elements, headers with any parameter-lock byte, compound and
