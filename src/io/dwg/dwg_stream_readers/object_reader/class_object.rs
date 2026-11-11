@@ -14,6 +14,9 @@ fn count(value: i32, reader: &DwgMergedReader) -> usize {
 /// MENTALRAYRENDERSETTINGS (its body starts right after `display_index`;
 /// consuming a bit there shifted every following field) nor for
 /// RAPIDRTRENDERSETTINGS, which stores the flag after its own fields.
+///
+/// RAPIDRTRENDERSETTINGS keeps its class version as stored in every file
+/// version (2 in AutoCAD's R2013 and R2018 drawings).
 fn read_render_settings(
     reader: &mut DwgMergedReader,
     version: DwgVersion,
@@ -23,9 +26,7 @@ fn read_render_settings(
 ) -> RenderSettings {
     let stored_version = reader.read_bit_long();
     RenderSettings {
-        class_version: if rapid_rt && dxf_version == DxfVersion::AC1027 {
-            stored_version + 1
-        } else if !rapid_rt && version.r2013_plus(dxf_version) {
+        class_version: if !rapid_rt && version.r2013_plus(dxf_version) {
             stored_version - 1
         } else {
             stored_version
