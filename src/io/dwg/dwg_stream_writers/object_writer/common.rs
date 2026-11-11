@@ -315,7 +315,20 @@ impl<'a> DwgObjectWriter<'a> {
     /// never added, or renamed a layer in place so the entities still carry the
     /// old name. Fall back to layer "0", which every drawing has and which
     /// cannot be renamed or deleted, so the reference stays resolvable.
-    fn entity_layer_handle(&self, layer: &str) -> Handle {
+    ///
+    /// Every entity asks, and a table lookup normalizes the name into a new
+    /// string, so the answer is kept per name as written: the document is
+    /// borrowed for the whole write and cannot change under the cache.
+    fn entity_layer_handle(&mut self, layer: &str) -> Handle {
+        if let Some(&handle) = self.entity_layer_handles.get(layer) {
+            return handle;
+        }
+        let handle = self.resolve_entity_layer_handle(layer);
+        self.entity_layer_handles.insert(layer.to_owned(), handle);
+        handle
+    }
+
+    fn resolve_entity_layer_handle(&self, layer: &str) -> Handle {
         if let Some(entry) = self.document.layers.get(layer) {
             if !entry.handle.is_null() {
                 return entry.handle;

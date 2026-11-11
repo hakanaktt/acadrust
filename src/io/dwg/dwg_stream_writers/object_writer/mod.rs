@@ -151,6 +151,9 @@ pub struct DwgObjectWriter<'a> {
     /// Populated before writing any table controls so controls and records agree.
     #[allow(dead_code)]
     pub(super) linetype_handles: std::collections::HashMap<String, Handle>,
+    /// Layer handle written for each entity layer name, as spelled on the
+    /// entity; filled by `entity_layer_handle` on first use.
+    pub(super) entity_layer_handles: foldhash::HashMap<String, Handle>,
     /// Cached fallback for owners without a direct extension-dictionary handle.
     pub(super) xdic_owner_index: std::sync::Arc<std::collections::HashMap<Handle, Handle>>,
     pub(super) block_users: std::sync::Arc<std::collections::HashMap<Handle, Vec<Handle>>>,
@@ -303,6 +306,7 @@ impl<'a> DwgObjectWriter<'a> {
             class_counts_complete: true,
             owner_overrides: std::collections::HashMap::new(),
             linetype_handles: std::collections::HashMap::new(),
+            entity_layer_handles: foldhash::HashMap::default(),
             xdic_owner_index: std::sync::Arc::new(Self::build_xdic_owner_index(document)),
             block_users: std::sync::Arc::new(Self::build_block_users(document)),
             entity_modes: std::sync::Arc::new(Self::build_entity_modes(
@@ -2183,6 +2187,7 @@ impl<'a> DwgObjectWriter<'a> {
             live_handles: self.live_handles.clone(),
             owner_overrides: std::collections::HashMap::new(),
             linetype_handles: std::collections::HashMap::new(),
+            entity_layer_handles: foldhash::HashMap::default(),
         };
         for handle in handles {
             if let Some(&idx) = worker.document.entity_index.get(handle) {
