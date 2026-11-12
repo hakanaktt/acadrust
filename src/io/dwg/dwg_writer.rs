@@ -3555,7 +3555,7 @@ mod tests {
         let mut expected = doc.classes.clone();
         expected.retain_legacy_dwg_classes();
         assert_eq!(decoded.classes.len(), expected.len());
-        assert_eq!(decoded.objects.len(), 13);
+        assert_eq!(decoded.objects.len(), 14); // includes AcDbVariableDictionary (#408)
     }
 
     #[test]
