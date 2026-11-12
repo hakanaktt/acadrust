@@ -118,7 +118,12 @@ impl PlotStyleTable {
 
     /// Encode this table as CTB/STB file bytes.
     pub fn to_bytes(&self) -> crate::error::Result<Vec<u8>> {
-        compress_ctb(self.to_text().as_bytes())
+        let mut bytes = compress_ctb(self.to_text().as_bytes())?;
+        // A named table is tagged STBVER1 in the same header.
+        if self.is_stb {
+            bytes[19..22].copy_from_slice(b"STB");
+        }
+        Ok(bytes)
     }
 
     /// Resolve the effective print RGB color for the given ACI index.
@@ -178,7 +183,10 @@ impl PlotStyleTable {
         let mut s = String::new();
         let description = self.description.replace(['\r', '\n'], " ");
         s.push_str(&format!("description=\"{description}\n"));
-        s.push_str("aci_table_available=TRUE\n");
+        s.push_str(&format!(
+            "aci_table_available={}\n",
+            if self.is_stb { "FALSE" } else { "TRUE" }
+        ));
         // The factor scales every lineweight when applied, so write it in full.
         s.push_str(&format!("scale_factor={}\n", full_real(self.scale_factor)));
         s.push_str(&format!(
@@ -189,18 +197,39 @@ impl PlotStyleTable {
             "custom_lineweight_display_units={}\n",
             self.custom_lineweight_display_units
         ));
-        s.push_str("aci_table{\n");
-        for index in 0..255 {
-            s.push_str(&format!(" {index}=\"Color_{}\n", index + 1));
-        }
-        s.push_str("}\nplot_style{\n");
-        for (index, entry) in self.aci_entries.iter().enumerate().skip(1).take(255) {
-            let style_index = index - 1;
-            let style_name = if entry.name.is_empty() {
-                format!("Color_{index}")
-            } else {
-                entry.name.replace(['\r', '\n'], " ")
-            };
+        // A named table lists its styles, Normal first; a colour table its
+        // 255 colour styles behind the ACI name table.
+        let styles: Vec<(String, &PlotStyleEntry)> = if self.is_stb {
+            let mut named: Vec<_> = self.named_entries.iter().collect();
+            named.sort_by_key(|(name, _)| (name.as_str() != "Normal", name.as_str()));
+            named
+                .into_iter()
+                .map(|(name, entry)| (name.clone(), entry))
+                .collect()
+        } else {
+            s.push_str("aci_table{\n");
+            for index in 0..255 {
+                s.push_str(&format!(" {index}=\"Color_{}\n", index + 1));
+            }
+            s.push_str("}\n");
+            self.aci_entries
+                .iter()
+                .enumerate()
+                .skip(1)
+                .take(255)
+                .map(|(index, entry)| {
+                    let name = if entry.name.is_empty() {
+                        format!("Color_{index}")
+                    } else {
+                        entry.name.clone()
+                    };
+                    (name, entry)
+                })
+                .collect()
+        };
+        s.push_str("plot_style{\n");
+        for (style_index, (style_name, entry)) in styles.into_iter().enumerate() {
+            let style_name = style_name.replace(['\r', '\n'], " ");
             let localized_name = if entry.localized_name.is_empty() {
                 style_name.clone()
             } else {
@@ -776,6 +805,11 @@ apply_factor=FALSE\ncustom_lineweight_display_units=0\nplot_style{\n 0{\n  name=
         assert_eq!(black.lineweight, 8);
         assert!(table.named_entries.contains_key("Normal"));
         assert!(table.load_warnings.is_empty(), "{:?}", table.load_warnings);
+        // Written back, it keeps its STBVER1 tag.
+        let written = table.to_bytes().expect("write");
+        assert_eq!(&written[19..26], b"STBVER1");
+        let again = PlotStyleTable::from_bytes("named.stb", &written).expect("reloads");
+        assert!(again.named_entries.contains_key("Black"));
     }
 }
 
