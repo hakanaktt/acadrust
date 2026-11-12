@@ -5601,10 +5601,7 @@ impl DwgDocumentBuilder {
                     let mut e = Ole2Frame::new();
                     e.common = entity_common;
                     e.ole_object_type = OleObjectType::from_i16(data.object_type);
-                    e.upper_left_corner = data.upper_left;
-                    e.lower_right_corner = data.lower_right;
-                    e.storage = data.storage;
-                    e.envelope = data.envelope;
+                    (e.upper_left_corner, e.lower_right_corner) = e.set_payload(&data.data);
                     e.dwg_mode = data.mode;
                     e.is_paper_space = data.mode == 1;
                     e.lock_aspect = data.lock_aspect;

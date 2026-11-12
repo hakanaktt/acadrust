@@ -270,3 +270,86 @@ fn damaged_dxf_ole_chunks_do_not_panic() {
     assert_eq!(f.len(), 1);
     assert_eq!(f[0].encoded_payload(), vec![0x0A, 0x0B, 0xC0, 0xFF, 0xEE]);
 }
+
+/// OLE data as another CAD wrote it: the same compound file, but with bytes the codec does
+/// not re-create (here the slack after the last stream byte in its sector). Re-encoding it
+/// would change the compound file while the wrapper in front still describes the source one.
+fn foreign_payload() -> Vec<u8> {
+    let mut raw = framed(OleObjectType::Embedded, 0).encoded_payload();
+    let stream = pattern(9000, 2);
+    let at = raw
+        .windows(64)
+        .position(|w| w == &stream[..64])
+        .expect("stream bytes in the payload")
+        + stream.len();
+    let slack = (at
+        - raw
+            .windows(8)
+            .position(|w| w == [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1])
+            .unwrap())
+        % 512;
+    for b in &mut raw[at..at + (512 - slack) % 512] {
+        *b = 0xAB;
+    }
+    raw
+}
+
+#[test]
+fn source_ole_data_is_written_back_verbatim() {
+    let raw = foreign_payload();
+    let mut decoded = Ole2Frame::new();
+    let (ul, lr) = decoded.set_payload(&raw);
+    // Precondition: without the source bytes the codec would write a different compound file.
+    let mut rebuilt = decoded.clone();
+    rebuilt.source_storage = Default::default();
+    assert_ne!(
+        rebuilt.encoded_payload(),
+        raw,
+        "the sample must not re-encode canonically"
+    );
+
+    for version in VERSIONS {
+        let mut doc = CadDocument::with_version(version);
+        let mut ole = decoded.clone();
+        (ole.upper_left_corner, ole.lower_right_corner) = (ul, lr);
+        let kept = doc
+            .add_entity(EntityType::Ole2Frame(Box::new(ole.clone())))
+            .unwrap();
+        // Moving the frame rewrites the corners in the wrapper, not the compound file.
+        ole.upper_left_corner.x += 5.0;
+        ole.lower_right_corner.x += 5.0;
+        let moved = doc
+            .add_entity(EntityType::Ole2Frame(Box::new(ole)))
+            .unwrap();
+        let bytes = DwgWriter::write_to_vec(&doc).unwrap();
+        let read = DwgReader::from_stream(Cursor::new(bytes)).read().unwrap();
+        let data = |h| match read.get_entity(h) {
+            Some(EntityType::Ole2Frame(o)) => o.encoded_payload(),
+            _ => panic!("{version:?}: OLE2FRAME missing"),
+        };
+        assert_eq!(data(kept), raw, "{version:?}: unchanged frame");
+        let moved = data(moved);
+        assert_eq!(
+            moved[135..],
+            raw[135..],
+            "{version:?}: moved frame keeps its compound file"
+        );
+        assert_ne!(
+            moved[..98],
+            raw[..98],
+            "{version:?}: moved frame has new corners"
+        );
+    }
+
+    // Editing the storage falls back to the codec's own encoding.
+    assert!(!decoded.rewrites_source_storage());
+    let mut edited = decoded;
+    edited.storage.trailing_records.clear();
+    assert!(edited.rewrites_source_storage());
+    assert!(!rebuilt.rewrites_source_storage() && !Ole2Frame::new().rewrites_source_storage());
+    assert_eq!(edited.encoded_payload(), {
+        let mut fresh = edited.clone();
+        fresh.source_storage = Default::default();
+        fresh.encoded_payload()
+    });
+}

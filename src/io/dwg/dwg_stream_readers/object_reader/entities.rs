@@ -2302,6 +2302,8 @@ pub struct Ole2FrameData {
     /// Frame corners decoded from the OLE data blob (see `ole2frame_corners`).
     pub upper_left: Vector3,
     pub lower_right: Vector3,
+    /// The OLE data exactly as stored (see `Ole2Frame::set_payload`).
+    pub data: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
@@ -4334,6 +4336,7 @@ pub fn read_ole2frame(reader: &mut DwgMergedReader, version: DwgVersion) -> Ole2
         lock_aspect,
         upper_left,
         lower_right,
+        data,
     }
 }
 
