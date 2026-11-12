@@ -422,8 +422,9 @@ fn mirrored_dwg_entities_persist_after_raw_record_invalidation() {
             .unwrap();
         let mut expected = Vec::new();
         for handle in &handles {
-            let mut entity = document.get_entity(*handle).unwrap().clone();
-            assert!(entity.common().raw_record.is_some(), "{version:?}");
+            let source = document.get_entity(*handle).unwrap();
+            assert!(source.common().raw_record.is_some(), "{version:?}");
+            let mut entity = source.clone();
             entity.mirror_with_options(
                 Vector3::ZERO,
                 Vector3::UNIT_Y,
