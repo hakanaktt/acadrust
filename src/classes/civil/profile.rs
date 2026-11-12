@@ -933,3 +933,166 @@ pub(super) fn view_frame(
         })
     })
 }
+
+/// Profile Locking settings of a profile, from the
+/// `AECC_NOTIFICATIONINFOS` object it owns.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ProfileLocking {
+    /// Anchor profile geometry points to alignment geometry points (false:
+    /// anchor the profile to the alignment's start).
+    pub anchor_to_geometry: bool,
+    /// Modify affected entities (false: delete them).
+    pub modify_affected: bool,
+    /// Notify which entities are affected.
+    pub notify: bool,
+    /// Ids of the profile entities waiting to be reported as affected by
+    /// an alignment edit.
+    pub affected: Vec<i32>,
+}
+
+/// After the common object data: 18 bits (the same in every sample),
+/// `BL n, n x BL entity id, B anchor, B modify, B notify`.
+pub(super) fn locking(data: &[u8], start: usize, end: usize) -> Option<ProfileLocking> {
+    let mut bits = Bits::new(data, start + 18, end);
+    let n = bits.bit_long()?;
+    if !(0..10_000).contains(&n) {
+        return None;
+    }
+    let affected = (0..n).map(|_| bits.bit_long()).collect::<Option<Vec<_>>>()?;
+    Some(ProfileLocking {
+        anchor_to_geometry: bits.bit()?,
+        modify_affected: bits.bit()?,
+        notify: bits.bit()?,
+        affected,
+    })
+}
+
+/// Design Criteria check boxes of a profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ProfileCriteria {
+    pub criteria_based_design: bool,
+    pub design_criteria_file: bool,
+    pub design_check_set: bool,
+}
+
+/// The three bits 24, 23 and 22 before the first entity record's header
+/// (its 11-bit prefix included).
+pub(super) fn criteria(data: &[u8], start: usize, end: usize) -> Option<ProfileCriteria> {
+    let pos = (start + 24..end).find(|&pos| record_at(data, pos, end).is_some())?;
+    let bit = |back: usize| Bits::new(data, pos - back, end).bit();
+    Some(ProfileCriteria {
+        criteria_based_design: bit(24)?,
+        design_criteria_file: bit(23)?,
+        design_check_set: bit(22)?,
+    })
+}
+
+/// The minimum K values design criteria give a parabolic vertical curve.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct CurveMinimumK {
+    /// The curve entity's id.
+    pub id: i32,
+    /// Crest or sag, where the record says (a floating curve does not).
+    pub crest: Option<bool>,
+    /// Stopping sight distance; `None` without design criteria.
+    pub stopping_sight: Option<f64>,
+    /// Passing sight distance.
+    pub passing_sight: Option<f64>,
+    /// Most likely the headlight sight distance.
+    pub headlight_sight: Option<f64>,
+}
+
+/// After a parabola's value: `BL 0x1001` crest (`0x1000` sag) unless the
+/// record already gave it before the value, `BL 0`, 3 bits, then three
+/// BDs (-1 without criteria).
+pub(super) fn curve_minimum_k(data: &[u8], start: usize, end: usize) -> Vec<CurveMinimumK> {
+    let mut out: Vec<CurveMinimumK> = Vec::new();
+    for pos in start + 11..end {
+        let Some(record) = record_at(data, pos, end) else {
+            continue;
+        };
+        if out.iter().any(|c| c.id == record.id) {
+            continue;
+        }
+        let read = || -> Option<CurveMinimumK> {
+            let mut bits = Bits::new(data, pos - 11, end);
+            let prefix = bits.bits_value(8)?;
+            let low = bits.bits_value(3)?;
+            if (u32::from(prefix) << 3 | u32::from(low)) != 6 {
+                return None;
+            }
+            bits.pos += 23;
+            let constraint = bits.bit_long()?;
+            for _ in 0..3 {
+                bits.bit_long()?;
+            }
+            let point = |bits: &mut Bits| -> Option<()> {
+                bits.raw_double()?;
+                bits.raw_double()?;
+                Some(())
+            };
+            let sag_or_crest = |v: i32| match v {
+                0x1001 => Some(true),
+                0x1000 => Some(false),
+                _ => None,
+            };
+            // The constraint's own fields (see `record_at`), up to the
+            // curve's sag / crest flag where it comes before the value.
+            bits.bit_double()?;
+            // `Some` once the record's own fields held the flag.
+            let mut crest: Option<Option<bool>> = None;
+            match constraint {
+                0 | 2 => {
+                    bits.bit_double()?;
+                }
+                11 => (0..3).try_for_each(|_| point(&mut bits))?,
+                12 => {
+                    point(&mut bits)?;
+                    point(&mut bits)?;
+                    bits.bit_long()?;
+                    bits.bit_double()?;
+                }
+                13 => {
+                    point(&mut bits)?;
+                    point(&mut bits)?;
+                    crest = Some(Some(sag_or_crest(bits.bit_long()?)?));
+                    bits.bit_long()?;
+                    bits.bit_double()?;
+                }
+                32 => {
+                    point(&mut bits)?;
+                    crest = Some(sag_or_crest(bits.bit_long()?));
+                    bits.bit_long()?;
+                    bits.bit_double()?;
+                }
+                34 => {
+                    point(&mut bits)?;
+                    bits.bit_long()?;
+                    bits.bit_double()?;
+                }
+                _ => return None,
+            }
+            let crest = match crest {
+                Some(crest) => crest,
+                None => Some(sag_or_crest(bits.bit_long()?)?),
+            };
+            (bits.bit_long()? == 0).then_some(())?;
+            bits.pos += 3;
+            let k = |bits: &mut Bits| bits.bit_double().map(|v| (v >= 0.0).then_some(v));
+            Some(CurveMinimumK {
+                id: record.id,
+                crest,
+                stopping_sight: k(&mut bits)?,
+                passing_sight: k(&mut bits)?,
+                headlight_sight: k(&mut bits)?,
+            })
+        };
+        if let Some(curve) = read() {
+            out.push(curve);
+        }
+    }
+    out
+}

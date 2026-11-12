@@ -20,12 +20,12 @@ mod tin;
 mod topology;
 
 pub use alignment::{
-    display_station, AlignmentElement, AlignmentElementKind, AlignmentPiece, DesignSpeed, GeometryPoint, SpiralShape,
+    display_station, AlignmentCriteria, AlignmentElement, AlignmentType, OffsetParameters, OffsetRegion, WideningTransition, AlignmentElementKind, AlignmentPiece, DesignSpeed, GeometryPoint, SpiralShape,
     StationEquation,
 };
 pub use labels::{parse_format, property, LabelPart, LabelText};
 pub use network::PartField;
-pub use profile::{ProfilePiece, ProfileViewFrame, Pvi};
+pub use profile::{CurveMinimumK, ProfileCriteria, ProfileLocking, ProfilePiece, ProfileViewFrame, Pvi};
 pub use sample_lines::SampleLines;
 pub use style::{DisplayComponent, Marker, ViewAxes, ViewAxis};
 pub use subassembly::{AssemblyLayout, Attachment, SubassemblyShape};
@@ -263,17 +263,113 @@ impl ArchEntityData {
     }
 
     fn alignment_equations_and_speeds(&self) -> (Vec<StationEquation>, Vec<DesignSpeed>) {
-        let Some(first) = self.alignment_start_station() else {
+        let Some((first, last)) = self.alignment_station_range() else {
             return Default::default();
         };
+        self.main_stream()
+            .map(|(data, start, end)| alignment::equations_and_speeds(data, start, end, first, last))
+            .unwrap_or_default()
+    }
+
+    /// First and last station of the first solved run.
+    fn alignment_station_range(&self) -> Option<(f64, f64)> {
+        let first = self.alignment_start_station()?;
         let length: f64 = self
             .alignment_polylines()
             .first()
             .map(|run| run.windows(2).map(|w| w[0].distance(&w[1])).sum())
             .unwrap_or(0.0);
-        self.main_stream()
-            .map(|(data, start, end)| alignment::equations_and_speeds(data, start, end, first, first + length))
-            .unwrap_or_default()
+        Some((first, first + length))
+    }
+
+    /// Centerline, offset, curb return or miscellaneous, and the bit after
+    /// the type in the main stream.
+    fn alignment_type_at(&self) -> Option<(AlignmentType, usize)> {
+        let (first, last) = self.alignment_station_range()?;
+        let (data, start, end) = self.main_stream()?;
+        alignment::alignment_type(data, start, end, first, last)
+    }
+
+    /// Design Criteria and Constraint Editing settings of an alignment.
+    pub fn alignment_criteria(&self) -> Option<AlignmentCriteria> {
+        if self.civil_kind() != Some(CivilKind::Alignment) {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        alignment::criteria(data, start, end)
+    }
+
+    /// The design criteria file and the tables it names, as the Design
+    /// Criteria tab shows them: file, minimum radius table, transition
+    /// length table, attainment method. `None` without a criteria file.
+    pub fn alignment_criteria_file(&self) -> Option<[String; 4]> {
+        if self.civil_kind() != Some(CivilKind::Alignment) {
+            return None;
+        }
+        let strings = self.decode().strings;
+        // The file's path, then the same path under `<DATADIR>`, then the
+        // three tables.
+        let at = strings.iter().position(|s| s.contains("<DATADIR>"))?;
+        let get = |i: usize| strings.get(i).cloned().unwrap_or_default();
+        Some([get(at.checked_sub(1)?), get(at + 1), get(at + 2), get(at + 3)])
+    }
+
+    /// The design check set (`AECC_ALIGNMENT_DESIGN_CHECK_SET`) an
+    /// alignment points to. Civil 3D sets it on save whether or not the
+    /// check set is used. It is the last reference, before an offset's
+    /// parent and a curb return's six input references.
+    pub fn alignment_check_set(&self) -> Option<u64> {
+        let after = match self.alignment_type()? {
+            AlignmentType::Offset => 1,
+            AlignmentType::CurbReturn => 6,
+            _ => 0,
+        };
+        let handles = self.decode().handles;
+        handles.len().checked_sub(after + 1).map(|i| handles[i]).filter(|h| *h != 0)
+    }
+
+    /// The parent alignment of an offset alignment (its last reference).
+    pub fn alignment_offset_parent(&self) -> Option<u64> {
+        (self.alignment_type()? == AlignmentType::Offset)
+            .then(|| self.decode().handles.last().copied())
+            .flatten()
+            .filter(|h| *h != 0)
+    }
+
+    /// The two alignments a curb return connects: its last six references
+    /// name them as A, A, B, B, A, B.
+    pub fn alignment_connected_inputs(&self) -> Option<[u64; 2]> {
+        if self.alignment_type()? != AlignmentType::CurbReturn {
+            return None;
+        }
+        let handles = self.decode().handles;
+        let tail = handles.get(handles.len().checked_sub(6)?..)?;
+        (tail[0] == tail[1] && tail[2] == tail[3] && tail[4] == tail[0] && tail[5] == tail[2]).then(|| [tail[0], tail[2]])
+    }
+
+    /// The JSON string a connected alignment keeps its curve settings in
+    /// (`CurveType`, `CurveParameters`), and the layout string of an
+    /// alignment whose spiral groups are kept as separate elements.
+    pub fn alignment_layout_json(&self) -> Option<String> {
+        if self.civil_kind() != Some(CivilKind::Alignment) {
+            return None;
+        }
+        self.decode().strings.into_iter().find(|s| s.trim_start().starts_with('{'))
+    }
+
+    /// What kind of alignment this is (Alignment Properties' type).
+    pub fn alignment_type(&self) -> Option<AlignmentType> {
+        self.alignment_type_at().map(|(t, _)| t)
+    }
+
+    /// Offset, side, locking, regions, widenings and parent anchors of an
+    /// offset alignment.
+    pub fn alignment_offset_parameters(&self) -> Option<OffsetParameters> {
+        let (AlignmentType::Offset, pos) = self.alignment_type_at()? else {
+            return None;
+        };
+        let (data, _, end) = self.main_stream()?;
+        alignment::offset_parameters(data, pos, end)
     }
 
     /// Geometry points (TS, SC, PC, ...) along the first solved run of a
@@ -343,6 +439,59 @@ impl ArchEntityData {
             .unwrap_or_default()
     }
 
+    /// The profile in 3D over `alignment` (the alignment it belongs to),
+    /// where both exist: a point at every profile vertex, every centerline
+    /// vertex and the ends of the overlap, placed on the centerline at its
+    /// station with the profile's elevation. Station equations are not
+    /// applied.
+    pub fn profile_over(&self, alignment: &ArchEntityData) -> Vec<Vec<crate::types::Vector3>> {
+        let Some(first) = alignment.alignment_start_station() else {
+            return Vec::new();
+        };
+        let Some(run) = alignment.alignment_polylines().into_iter().next() else {
+            return Vec::new();
+        };
+        let mut along = vec![first];
+        for w in run.windows(2) {
+            along.push(along.last().unwrap() + w[0].distance(&w[1]));
+        }
+        // Linear interpolation of `values` over ascending `keys` at `k`.
+        fn lerp<T: Copy + std::ops::Add<Output = T> + std::ops::Sub<Output = T> + std::ops::Mul<f64, Output = T>>(keys: &[f64], values: &[T], k: f64) -> T {
+            let i = keys.partition_point(|s| *s <= k).clamp(1, keys.len() - 1);
+            let (k0, k1) = (keys[i - 1], keys[i]);
+            let t = if k1 > k0 { ((k - k0) / (k1 - k0)).clamp(0.0, 1.0) } else { 0.0 };
+            values[i - 1] + (values[i] - values[i - 1]) * t
+        }
+        if run.len() < 2 {
+            return Vec::new();
+        }
+        self.profile_polylines()
+            .into_iter()
+            .filter(|line| line.len() > 1 && line.windows(2).all(|w| w[0].x <= w[1].x))
+            .filter_map(|line| {
+                let stations: Vec<f64> = line.iter().map(|p| p.x).collect();
+                let elevations: Vec<f64> = line.iter().map(|p| p.y).collect();
+                let lo = stations[0].max(along[0]);
+                let hi = stations[stations.len() - 1].min(*along.last().unwrap());
+                if hi <= lo {
+                    return None;
+                }
+                let mut at: Vec<f64> = stations.iter().chain(&along).copied().filter(|s| (lo..=hi).contains(s)).collect();
+                at.extend([lo, hi]);
+                at.sort_by(f64::total_cmp);
+                at.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+                Some(
+                    at.into_iter()
+                        .map(|s| {
+                            let xy = lerp(&along, &run, s);
+                            crate::types::Vector3::new(xy.x, xy.y, lerp(&stations, &elevations, s))
+                        })
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+
     /// Tangents and vertical curves of a Civil 3D profile in
     /// station/elevation.
     pub fn profile_pieces(&self) -> Vec<(ProfilePiece, Vec<Vector2>)> {
@@ -362,6 +511,48 @@ impl ArchEntityData {
         self.main_stream()
             .map(|(data, start, end)| profile::pvis(data, start, end))
             .unwrap_or_default()
+    }
+
+    /// Design Criteria settings of a design profile.
+    pub fn profile_criteria(&self) -> Option<ProfileCriteria> {
+        if self.civil_kind() != Some(CivilKind::Profile) {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        profile::criteria(data, start, end)
+    }
+
+    /// Minimum K values design criteria give each parabolic vertical curve
+    /// of a design profile.
+    pub fn profile_curve_minimum_k(&self) -> Vec<CurveMinimumK> {
+        if self.civil_kind() != Some(CivilKind::Profile) {
+            return Vec::new();
+        }
+        self.main_stream()
+            .map(|(data, start, end)| profile::curve_minimum_k(data, start, end))
+            .unwrap_or_default()
+    }
+
+    /// The profile's name: the string after its label point names, which
+    /// end with `PVI`.
+    pub fn profile_name(&self) -> Option<String> {
+        if self.civil_kind() != Some(CivilKind::Profile) {
+            return None;
+        }
+        let strings = self.decode().strings;
+        let at = strings.iter().position(|s| s == "PVI")?;
+        strings.get(at + 1).cloned()
+    }
+
+    /// The design criteria file and its Minimum K Table, when a profile uses
+    /// one.
+    pub fn profile_criteria_file(&self) -> Option<[String; 2]> {
+        if self.civil_kind() != Some(CivilKind::Profile) {
+            return None;
+        }
+        let strings = self.decode().strings;
+        let at = strings.iter().position(|s| s.contains("<DATADIR>"))?;
+        Some([strings.get(at.checked_sub(1)?)?.clone(), strings.get(at + 1)?.clone()])
     }
 
     /// Placement and ranges of a Civil 3D profile view.
@@ -424,6 +615,55 @@ impl ArchEntityData {
         }
         // Body handles: a null, then the site container twice.
         self.decode().handles.iter().copied().find(|h| *h != 0)
+    }
+
+    /// Name and description of a feature line.
+    pub fn feature_line_name(&self) -> Option<(String, String)> {
+        if self.dxf_name != "AECC_FEATURE_LINE" {
+            return None;
+        }
+        // The class name, the description twice, then the name; without a
+        // description only the name.
+        let strings = self.decode().strings;
+        let texts: Vec<&String> = strings.iter().skip(1).filter(|s| !s.is_empty()).collect();
+        Some(match texts.as_slice() {
+            [description, _, name, ..] => ((*name).clone(), (*description).clone()),
+            [name] => ((*name).clone(), String::new()),
+            _ => (String::new(), String::new()),
+        })
+    }
+
+    /// Name and description of a site or parcel (`AECC_PARCEL`).
+    pub fn face_name(&self) -> Option<(String, String)> {
+        if self.dxf_name != "AECC_PARCEL" {
+            return None;
+        }
+        let strings = self.decode().strings;
+        (strings.first().map(String::as_str) == Some("AeccImpFace"))
+            .then(|| (strings.get(2).cloned().unwrap_or_default(), strings.get(3).cloned().unwrap_or_default()))
+    }
+
+    /// The site a parcel belongs to (its second reference); `None` for a
+    /// site itself.
+    pub fn parcel_site(&self) -> Option<u64> {
+        if self.dxf_name != "AECC_PARCEL" {
+            return None;
+        }
+        let handles = self.decode().handles;
+        (handles.first() == Some(&0)).then(|| handles.get(1).copied()).flatten().filter(|h| *h != 0)
+    }
+
+    /// The `AECC_FEATURE_STYLE` record an alignment's geometry points are
+    /// kept in: its site's container (owned by the site) or, for a siteless
+    /// alignment, its companion (owned by the alignment registry). The
+    /// alignment references it twice.
+    pub fn alignment_container(&self) -> Option<u64> {
+        if self.civil_kind() != Some(CivilKind::Alignment) {
+            return None;
+        }
+        let handles = self.decode().handles;
+        let (a, b) = (*handles.get(1)?, *handles.get(2)?);
+        (a != 0 && a == b).then_some(a)
     }
 
     /// Start and end of a Civil 3D pipe (`AECC_PIPE`), as stored.
@@ -530,6 +770,17 @@ impl ArchObject {
             return Vec::new();
         };
         refs[..site].iter().copied().filter(|h| *h != 0).collect()
+    }
+
+    /// Profile Locking settings kept in a profile's
+    /// `AECC_NOTIFICATIONINFOS` object (one of the objects the profile
+    /// references).
+    pub fn profile_locking(&self) -> Option<ProfileLocking> {
+        if !self.dxf_name.eq_ignore_ascii_case("AECC_NOTIFICATIONINFOS") {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        profile::locking(data, start, end)
     }
 
     /// Content, height and offset of a label text component

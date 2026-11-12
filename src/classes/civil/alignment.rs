@@ -2468,6 +2468,45 @@ pub(super) fn start_station(data: &[u8], start: usize, end: usize) -> f64 {
     0.0
 }
 
+/// Design Criteria and Constraint Editing check boxes of Alignment
+/// Properties.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct AlignmentCriteria {
+    pub criteria_based_design: bool,
+    pub design_criteria_file: bool,
+    pub design_check_set: bool,
+    /// Always perform implied tangency constraint swapping.
+    pub swap_tangency: bool,
+    /// Lock all parameter constraints (the lock new elements get).
+    pub lock_parameters: bool,
+    /// Check for tangency between elements.
+    pub check_tangency: bool,
+}
+
+/// The check boxes: after the start station (see [`start_station`]) one
+/// bit, then criteria-based design, criteria file, check set, tangency
+/// swapping, parameter lock and tangency check.
+pub(super) fn criteria(data: &[u8], start: usize, end: usize) -> Option<AlignmentCriteria> {
+    let window = end.min(start + 4096);
+    let pos = (start..window).find(|&pos| {
+        let mut bits = Bits::new(data, pos, end);
+        bits.bit_double() == Some(2.25) && bits.pos == pos + 66
+    })?;
+    let mut bits = Bits::new(data, pos + 66 + 16, end);
+    ((bits.bit()?, bits.bit()?, bits.bit()?) == (true, true, false)).then_some(())?;
+    bits.bit_double()?;
+    bits.bit()?;
+    Some(AlignmentCriteria {
+        criteria_based_design: bits.bit()?,
+        design_criteria_file: bits.bit()?,
+        design_check_set: bits.bit()?,
+        swap_tangency: bits.bit()?,
+        lock_parameters: bits.bit()?,
+        check_tangency: bits.bit()?,
+    })
+}
+
 /// A station equation: past `raw` (the station the alignment would have
 /// there) stations run on from `ahead`, up or down.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -2511,9 +2550,27 @@ pub(super) fn equations_and_speeds(
     first: f64,
     last: f64,
 ) -> (Vec<StationEquation>, Vec<DesignSpeed>) {
+    (start..end)
+        .find_map(|pos| post_cache_at(data, pos, end, first, last, false))
+        .map(|(equations, speeds, _)| (equations, speeds))
+        .unwrap_or_default()
+}
+
+/// The station equations and design speeds read at `pos`, and the bit
+/// after the speeds. `empty` also accepts a table with neither (an
+/// alignment whose start station was changed), which alone is too weak a
+/// pattern to search for.
+fn post_cache_at(
+    data: &[u8],
+    pos: usize,
+    end: usize,
+    first: f64,
+    last: f64,
+    empty: bool,
+) -> Option<(Vec<StationEquation>, Vec<DesignSpeed>, usize)> {
     let slack = 1e-3 * (last - first).abs().max(1.0);
     let fits = |v: f64| v.is_finite() && v >= first - slack && v <= last + slack;
-    let read = |pos: usize| -> Option<(Vec<StationEquation>, Vec<DesignSpeed>)> {
+    let read = |pos: usize| -> Option<(Vec<StationEquation>, Vec<DesignSpeed>, usize)> {
         let mut bits = Bits::new(data, pos, end);
         let k = bits.bit_long()?;
         if !(0..=64).contains(&k) {
@@ -2536,13 +2593,15 @@ pub(super) fn equations_and_speeds(
         }
         (bits.bit_long()? == 1).then_some(())?;
         let n = bits.bit_long()?;
-        if !(0..=256).contains(&n) || (k == 0 && n == 0) {
+        if !(0..=256).contains(&n) || (k == 0 && n == 0 && !empty) {
             return None;
         }
         let mut speeds = Vec::new();
         for _ in 0..n {
             (bits.bit_long()? == 1).then_some(())?;
-            let station = bits.bit_double().filter(|v| fits(*v))?;
+            // A speed keeps its station when the start station moves later,
+            // so it may lie before the start.
+            let station = bits.bit_double().filter(|v| fits(*v) || (*v < first && *v >= first - (last - first) - slack))?;
             let speed = bits.bit_double().filter(|v| v.is_normal() && *v >= 1.0 && *v < 1000.0)?;
             bits.pos += 128;
             if bits.pos > end {
@@ -2553,9 +2612,252 @@ pub(super) fn equations_and_speeds(
         let ordered = |a: &[f64]| a.windows(2).all(|w| w[0] <= w[1]);
         (ordered(&equations.iter().map(|e| e.raw).collect::<Vec<_>>())
             && ordered(&speeds.iter().map(|s| s.station).collect::<Vec<_>>()))
-        .then_some((equations, speeds))
+        .then_some((equations, speeds, bits.pos))
     };
-    (start..end).find_map(read).unwrap_or_default()
+    read(pos)
+}
+
+/// What kind of alignment a record is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum AlignmentType {
+    Centerline,
+    Offset,
+    /// A connected (curb return) alignment between two others.
+    CurbReturn,
+    Miscellaneous,
+    /// A value not seen in a sample (5 is most likely Rail).
+    Other(i32),
+}
+
+impl AlignmentType {
+    fn from_code(code: i32) -> Self {
+        match code {
+            1 => Self::Centerline,
+            2 => Self::Offset,
+            3 => Self::CurbReturn,
+            4 => Self::Miscellaneous,
+            other => Self::Other(other),
+        }
+    }
+}
+
+/// The alignment type and the bit after it: after the design speeds,
+/// `BD, BL 0, BL m, m x BD element id, BL type`.
+pub(super) fn alignment_type(data: &[u8], start: usize, end: usize, first: f64, last: f64) -> Option<(AlignmentType, usize)> {
+    let typed = |pos: usize, empty: bool| -> Option<(AlignmentType, usize)> {
+        let (_, _, pos) = post_cache_at(data, pos, end, first, last, empty)?;
+        let mut bits = Bits::new(data, pos, end);
+        bits.bit_double()?;
+        (bits.bit_long()? == 0).then_some(())?;
+        let m = bits.bit_long()?;
+        if !(0..=10_000).contains(&m) {
+            return None;
+        }
+        for _ in 0..m {
+            bits.bit_double()?;
+        }
+        let code = bits.bit_long()?;
+        let kind = AlignmentType::from_code(code);
+        let after = bits.pos;
+        // What follows the type confirms it: a centerline's `BL 2, 2, 2`,
+        // an offset's block, a curb return's `BL 1|2, BL 1|2`.
+        let confirmed = match kind {
+            AlignmentType::Offset => offset_parameters(data, after, end).is_some(),
+            AlignmentType::CurbReturn => (0..2).all(|_| bits.bit_long().is_some_and(|v| (1..=2).contains(&v))),
+            _ => (0..3).all(|_| bits.bit_long() == Some(2)),
+        };
+        confirmed.then_some((kind, after))
+    };
+    (start..end).find_map(|pos| typed(pos, false)).or_else(|| (start..end).find_map(|pos| typed(pos, true)))
+}
+
+/// A stretch of an offset alignment at one offset: the nominal offset or a
+/// widening.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct OffsetRegion {
+    /// Negative to the left of the parent.
+    pub offset: f64,
+    /// Station range of the parent the stretch follows.
+    pub parent_start: f64,
+    pub parent_end: f64,
+    /// The stretch's own station range.
+    pub start: f64,
+    pub end: f64,
+    /// 2 at the nominal offset, 1 for a widening.
+    pub kind: i32,
+    /// Element ids as made (not renumbered later).
+    pub first_element: i32,
+    pub last_element: i32,
+}
+
+/// A widening transition: `kind` 1 linear, 2 curve-line-curve,
+/// 4 curve-curve-reverse curve, 5 curve-reverse curve.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct WideningTransition {
+    pub kind: i32,
+    pub length: f64,
+    pub element: i32,
+    /// Curve radii for kinds 2, 4 and 5 (in the order the dialog lists
+    /// them); empty for a linear transition.
+    pub radii: Vec<f64>,
+}
+
+/// The parameters of an offset alignment.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct OffsetParameters {
+    /// Follows its parent (false once made static).
+    pub dynamic: bool,
+    /// The parent was deleted.
+    pub parent_deleted: bool,
+    /// Nominal offset, negative to the left of the parent.
+    pub offset: f64,
+    /// On the left of the parent.
+    pub left: bool,
+    /// Start and end stations locked to the parent's start and end.
+    pub lock_start: bool,
+    pub lock_end: bool,
+    /// Station locking (false: geometry locking).
+    pub station_locking: bool,
+    pub regions: Vec<OffsetRegion>,
+    pub transitions: Vec<WideningTransition>,
+    /// For each parent element id, the offset elements that follow it.
+    pub element_map: Vec<(i32, Vec<i32>)>,
+    /// The parent's stations that anchor the ends of every region and
+    /// transition, each with the GUID of the parent interval there.
+    pub anchors: Vec<(f64, [u8; 16])>,
+}
+
+/// `BD offset, BD parent from, BD parent to, BD from, BD to, BL kind,
+/// BL first element, BL last element, BL 0 x 5, BL 3`.
+fn offset_region(bits: &mut Bits) -> Option<OffsetRegion> {
+    let mut v = [0.0; 5];
+    for x in &mut v {
+        *x = bits.bit_double().filter(|v| v.is_finite())?;
+    }
+    let (kind, first_element, last_element) = (bits.bit_long()?, bits.bit_long()?, bits.bit_long()?);
+    for want in [0, 0, 0, 0, 0, 3] {
+        (bits.bit_long()? == want).then_some(())?;
+    }
+    Some(OffsetRegion {
+        offset: v[0],
+        parent_start: v[1],
+        parent_end: v[2],
+        start: v[3],
+        end: v[4],
+        kind,
+        first_element,
+        last_element,
+    })
+}
+
+fn guid(bits: &mut Bits) -> Option<[u8; 16]> {
+    let mut g = [0u8; 16];
+    for b in &mut g {
+        *b = bits.raw_short_byte()?;
+    }
+    Some(g)
+}
+
+/// The offset block after an offset alignment's type (`pos`):
+///
+/// ```text
+/// BL update (1 dynamic, 2 static), BL 2, BL 1 (2: parent deleted),
+/// BD offset, BL side (1 left, 2 right), B lock start, B lock end,
+/// BL lock mode (1 geometry, 2 station), BL n, n x region,
+/// BL t, t x { BL kind, BD length, BL element, kind values },
+/// BL k, k x { BL parent element, BL -1, BL n, n x BL element },
+/// BL a, a x { BD parent station, GUID }
+/// ```
+pub(super) fn offset_parameters(data: &[u8], pos: usize, end: usize) -> Option<OffsetParameters> {
+    let mut bits = Bits::new(data, pos, end);
+    let head = [bits.bit_long()?, bits.bit_long()?, bits.bit_long()?];
+    if !(1..=2).contains(&head[0]) || head[1] != 2 || !(1..=2).contains(&head[2]) {
+        return None;
+    }
+    let offset = bits.bit_double().filter(|v| v.is_finite())?;
+    let left = match bits.bit_long()? {
+        1 => true,
+        2 => false,
+        _ => return None,
+    };
+    let (lock_start, lock_end) = (bits.bit()?, bits.bit()?);
+    let lock_mode = bits.bit_long()?;
+    let n = bits.bit_long()?;
+    if !(1..=2).contains(&lock_mode) || !(1..=1000).contains(&n) {
+        return None;
+    }
+    let regions = (0..n).map(|_| offset_region(&mut bits)).collect::<Option<Vec<_>>>()?;
+    let t = bits.bit_long()?;
+    if !(0..=1000).contains(&t) {
+        return None;
+    }
+    let mut transitions = Vec::new();
+    for _ in 0..t {
+        let kind = bits.bit_long()?;
+        let length = bits.bit_double()?;
+        let element = bits.bit_long()?;
+        let radii = match kind {
+            // BD 0, BD 0, BL 2, BD 0.
+            1 => {
+                bits.bit_double()?;
+                bits.bit_double()?;
+                bits.bit_long()?;
+                bits.bit_double()?;
+                Vec::new()
+            }
+            // BD 0, then the radii.
+            2 | 4 => {
+                bits.bit_double()?;
+                (0..if kind == 2 { 2 } else { 3 }).map(|_| bits.bit_double()).collect::<Option<Vec<_>>>()?
+            }
+            // BD 0, B, BD radius.
+            5 => {
+                bits.bit_double()?;
+                bits.bit()?;
+                vec![bits.bit_double()?]
+            }
+            _ => return None,
+        };
+        transitions.push(WideningTransition { kind, length, element, radii });
+    }
+    let k = bits.bit_long()?;
+    if !(0..=10_000).contains(&k) {
+        return None;
+    }
+    let mut element_map = Vec::new();
+    for _ in 0..k {
+        let parent = bits.bit_long()?;
+        bits.bit_long()?;
+        let count = bits.bit_long()?;
+        if !(0..=10_000).contains(&count) {
+            return None;
+        }
+        element_map.push((parent, (0..count).map(|_| bits.bit_long()).collect::<Option<Vec<_>>>()?));
+    }
+    let a = bits.bit_long()?;
+    if !(0..=10_000).contains(&a) {
+        return None;
+    }
+    let anchors = (0..a)
+        .map(|_| Some((bits.bit_double()?, guid(&mut bits)?)))
+        .collect::<Option<Vec<_>>>()?;
+    Some(OffsetParameters {
+        dynamic: head[0] == 1,
+        parent_deleted: head[2] == 2,
+        offset,
+        left,
+        lock_start,
+        lock_end,
+        station_locking: lock_mode == 2,
+        regions,
+        transitions,
+        element_map,
+        anchors,
+    })
 }
 
 /// Bits that follow each mask range's stations.

@@ -51,11 +51,21 @@ pub struct TopologyVertex {
     pub point: Vector2,
     /// Elevation of the node (0 on alignments).
     pub z: f64,
+    /// The vertex's flags; see [`Self::is_elevation_point`].
+    pub flags: i32,
     /// Faces on the two sides of the segment starting here (0 at the last
     /// vertex, or where the record keeps no faces).
     pub faces: (i32, i32),
     /// `tan(sweep / 4)` of an arc starting here, positive to the left.
     pub bulge: f64,
+}
+
+impl TopologyVertex {
+    /// A feature line's elevation point (a vertex that only sets an
+    /// elevation between two PIs) rather than a PI.
+    pub fn is_elevation_point(&self) -> bool {
+        self.flags & 0x40_0000 != 0
+    }
 }
 
 /// A site's or alignment's topology: its edges as vertex runs.
@@ -172,7 +182,7 @@ fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> 
         let mut run = Vec::with_capacity(n as usize);
         for i in 0..n {
             let kind = bits.bit_long()?;
-            bits.bit_long()?;
+            let flags = bits.bit_long()?;
             let node = bits.bit_long()?;
             let faces = (bits.bit_long()?, bits.bit_long()?);
             if !(0..=2).contains(&kind) || (i + 1 == n) != (kind == 2) {
@@ -185,7 +195,7 @@ fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> 
                 0.0
             };
             let &(_, point, z) = nodes.iter().find(|m| m.0 == node)?;
-            run.push(TopologyVertex { point, z, faces, bulge });
+            run.push(TopologyVertex { point, z, flags, faces, bulge });
         }
         // A list after the vertices (empty on alignments; one entry once a
         // feature line has an elevation point), then three zeros.
