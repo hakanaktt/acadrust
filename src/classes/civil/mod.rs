@@ -414,6 +414,18 @@ impl ArchEntityData {
         self.decode().handles.iter().take(3).skip(1).copied().find(|h| *h != 0)
     }
 
+    /// Site container (`AECC_FEATURE_STYLE`) of a Civil 3D feature line
+    /// (`AECC_FEATURE_LINE`). The record keeps no geometry: its points are
+    /// an edge of the container's [`Topology`], see
+    /// [`ArchObject::site_members`].
+    pub fn feature_line_container(&self) -> Option<u64> {
+        if self.dxf_name != "AECC_FEATURE_LINE" {
+            return None;
+        }
+        // Body handles: a null, then the site container twice.
+        self.decode().handles.iter().copied().find(|h| *h != 0)
+    }
+
     /// Start and end of a Civil 3D pipe (`AECC_PIPE`), as stored.
     pub fn pipe_ends(&self) -> Option<(crate::types::Vector3, crate::types::Vector3)> {
         if self.dxf_name != "AECC_PIPE" {
@@ -504,6 +516,20 @@ impl ArchObject {
         }
         let (data, start, end) = self.main_stream()?;
         topology::topology(data, start, end)
+    }
+
+    /// Alignments and feature lines a site container (`AECC_FEATURE_STYLE`)
+    /// lists, in the order of its topology's edges: the references before
+    /// the site that owns it.
+    pub fn site_members(&self) -> Vec<u64> {
+        if !self.dxf_name.eq_ignore_ascii_case("AECC_FEATURE_STYLE") {
+            return Vec::new();
+        }
+        let refs = self.decode().handles;
+        let Some(site) = refs.iter().position(|h| *h == self.owner.value()) else {
+            return Vec::new();
+        };
+        refs[..site].iter().copied().filter(|h| *h != 0).collect()
     }
 
     /// Content, height and offset of a label text component
