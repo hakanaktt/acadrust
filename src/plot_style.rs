@@ -261,9 +261,11 @@ impl PlotStyleTable {
 /// code page those applications write descriptions in.
 fn decompress_ctb(data: &[u8]) -> crate::error::Result<(String, Vec<String>)> {
     const PREFIX: &[u8] = b"PIAFILEVERSION_2.0,CTBVER1,compress\r\npmzlibcodec";
+    // Named tables (.stb) share the header layout, tagged STBVER1.
+    const STB_PREFIX: &[u8] = b"PIAFILEVERSION_2.0,STBVER1,compress\r\npmzlibcodec";
     let mut warnings = Vec::new();
     let mut decoded;
-    if data.starts_with(PREFIX) {
+    if data.starts_with(PREFIX) || data.starts_with(STB_PREFIX) {
         if data.len() < 60 {
             return Err("CTB header is truncated".into());
         }
@@ -743,6 +745,37 @@ mod round_trip_tests {
         let reloaded = saved_and_reloaded(&table);
         assert_eq!(reloaded.lineweights, table.lineweights);
         assert_eq!(reloaded.resolve_lineweight(1), Some(0.035));
+    }
+}
+
+#[cfg(test)]
+mod named_table_header_tests {
+    use super::{compress_ctb, PlotStyleTable};
+
+    const STB_TEXT: &str = "description=\"\naci_table_available=FALSE\nscale_factor=1\n\
+apply_factor=FALSE\ncustom_lineweight_display_units=0\nplot_style{\n 0{\n  name=\"Normal\n\
+  localized_name=\"Normal\n  color=-1\n  mode_color=-1\n  color_policy=1\n  lineweight=0\n }\n\
+ 1{\n  name=\"Black\n  localized_name=\"Black\n  color=-1023410176\n  mode_color=-1023410176\n\
+  color_policy=5\n  lineweight=8\n }\n}\n";
+
+    /// A named plot style table as CAD applications write it: the same
+    /// 60-byte header as a CTB, tagged `STBVER1` instead of `CTBVER1`.
+    fn stb_file() -> Vec<u8> {
+        let mut bytes = compress_ctb(STB_TEXT.as_bytes()).expect("compress");
+        assert_eq!(&bytes[19..26], b"CTBVER1");
+        bytes[19..22].copy_from_slice(b"STB");
+        bytes
+    }
+
+    #[test]
+    fn a_named_table_with_the_stbver1_header_loads() {
+        let table = PlotStyleTable::from_bytes("named.stb", &stb_file()).expect("loads");
+        assert!(table.is_stb);
+        let black = table.named_entries.get("Black").expect("Black style");
+        assert_eq!(black.color, Some([0, 0, 0]));
+        assert_eq!(black.lineweight, 8);
+        assert!(table.named_entries.contains_key("Normal"));
+        assert!(table.load_warnings.is_empty(), "{:?}", table.load_warnings);
     }
 }
 
