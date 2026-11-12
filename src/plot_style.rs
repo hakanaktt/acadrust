@@ -747,6 +747,37 @@ mod round_trip_tests {
 }
 
 #[cfg(test)]
+mod named_table_header_tests {
+    use super::{compress_ctb, PlotStyleTable};
+
+    const STB_TEXT: &str = "description=\"\naci_table_available=FALSE\nscale_factor=1\n\
+apply_factor=FALSE\ncustom_lineweight_display_units=0\nplot_style{\n 0{\n  name=\"Normal\n\
+  localized_name=\"Normal\n  color=-1\n  mode_color=-1\n  color_policy=1\n  lineweight=0\n }\n\
+ 1{\n  name=\"Black\n  localized_name=\"Black\n  color=-1023410176\n  mode_color=-1023410176\n\
+  color_policy=5\n  lineweight=8\n }\n}\n";
+
+    /// A named plot style table as CAD applications write it: the same
+    /// 60-byte header as a CTB, tagged `STBVER1` instead of `CTBVER1`.
+    fn stb_file() -> Vec<u8> {
+        let mut bytes = compress_ctb(STB_TEXT.as_bytes()).expect("compress");
+        assert_eq!(&bytes[19..26], b"CTBVER1");
+        bytes[19..22].copy_from_slice(b"STB");
+        bytes
+    }
+
+    #[test]
+    fn a_named_table_with_the_stbver1_header_loads() {
+        let table = PlotStyleTable::from_bytes("named.stb", &stb_file()).expect("loads");
+        assert!(table.is_stb);
+        let black = table.named_entries.get("Black").expect("Black style");
+        assert_eq!(black.color, Some([0, 0, 0]));
+        assert_eq!(black.lineweight, 8);
+        assert!(table.named_entries.contains_key("Normal"));
+        assert!(table.load_warnings.is_empty(), "{:?}", table.load_warnings);
+    }
+}
+
+#[cfg(test)]
 mod lenient_loading_tests {
     use super::{compress_ctb, decode_plot_style_text, PlotStyleTable};
 
