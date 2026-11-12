@@ -261,9 +261,11 @@ impl PlotStyleTable {
 /// code page those applications write descriptions in.
 fn decompress_ctb(data: &[u8]) -> crate::error::Result<(String, Vec<String>)> {
     const PREFIX: &[u8] = b"PIAFILEVERSION_2.0,CTBVER1,compress\r\npmzlibcodec";
+    // Named tables (.stb) share the header layout, tagged STBVER1.
+    const STB_PREFIX: &[u8] = b"PIAFILEVERSION_2.0,STBVER1,compress\r\npmzlibcodec";
     let mut warnings = Vec::new();
     let mut decoded;
-    if data.starts_with(PREFIX) {
+    if data.starts_with(PREFIX) || data.starts_with(STB_PREFIX) {
         if data.len() < 60 {
             return Err("CTB header is truncated".into());
         }
