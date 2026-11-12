@@ -69,6 +69,50 @@ pub struct Ole2Frame {
     pub dwg_mode: i16,
     /// Preserve the OLE object's aspect ratio while resizing.
     pub lock_aspect: u8,
+    /// Compound-file bytes exactly as read, written back while `storage` is unchanged.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub source_storage: OleSourceStorage,
+}
+
+/// The compound file of an OLE2FRAME as it was read. Re-encoding a decoded compound file
+/// changes its sector layout and size, while the DWG wrapper in front of it still records
+/// the original size, so other DWG readers reject the rebuilt object and drop the frame.
+/// Keeping the source bytes makes an unedited (or only moved/resized) frame round-trip
+/// verbatim. Never part of entity equality.
+#[derive(Clone, Default)]
+pub struct OleSourceStorage(Option<(u64, std::sync::Arc<Vec<u8>>)>);
+
+impl OleSourceStorage {
+    fn digest(bytes: &[u8]) -> u64 {
+        use std::hash::{Hash, Hasher};
+        // Fixed-key SipHash: stable within a process, which is all the comparison needs.
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        bytes.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Source bytes, if `encoded` still matches what they decoded to.
+    fn matching(&self, encoded: &[u8]) -> Option<&[u8]> {
+        self.0
+            .as_ref()
+            .filter(|(digest, _)| *digest == Self::digest(encoded))
+            .map(|(_, raw)| raw.as_slice())
+    }
+}
+
+impl PartialEq for OleSourceStorage {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for OleSourceStorage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.0 {
+            Some((_, raw)) => write!(f, "OleSourceStorage({} bytes)", raw.len()),
+            None => f.write_str("OleSourceStorage(None)"),
+        }
+    }
 }
 
 impl Ole2Frame {
@@ -86,7 +130,24 @@ impl Ole2Frame {
             envelope: OleFrameEnvelope::None,
             dwg_mode: 0,
             lock_aspect: 0,
+            source_storage: OleSourceStorage::default(),
         }
+    }
+
+    /// Set the decoded payload of `data` (DWG/DXF OLE data) and remember its compound-file
+    /// bytes so the writers can emit them unchanged. Returns the decoded corners.
+    pub fn set_payload(&mut self, data: &[u8]) -> (Vector3, Vector3) {
+        let (storage, envelope, upper_left, lower_right) = Self::decode_payload(data);
+        self.storage = storage;
+        self.envelope = envelope;
+        self.source_storage = OleSourceStorage::default();
+        // The envelope's length does not depend on the corner values.
+        if let Some(raw) = data.get(self.encoded_envelope().len()..) {
+            let digest = OleSourceStorage::digest(&self.storage.encode());
+            self.source_storage =
+                OleSourceStorage(Some((digest, std::sync::Arc::new(raw.to_vec()))));
+        }
+        (upper_left, lower_right)
     }
 
     pub(crate) fn decode_payload(
@@ -164,7 +225,26 @@ impl Ole2Frame {
     }
 
     pub fn encoded_payload(&self) -> Vec<u8> {
-        let mut output = match &self.envelope {
+        let mut output = self.encoded_envelope();
+        let storage = self.storage.encode();
+        output.extend_from_slice(self.source_storage.matching(&storage).unwrap_or(&storage));
+        output
+    }
+
+    /// True when this frame came from a file but its compound file was changed, so the
+    /// writers re-encode it instead of keeping the source bytes. Other DWG readers may
+    /// reject such a rebuilt object, so callers can warn before saving.
+    pub fn rewrites_source_storage(&self) -> bool {
+        self.source_storage.0.is_some()
+            && self
+                .source_storage
+                .matching(&self.storage.encode())
+                .is_none()
+    }
+
+    /// The DWG wrapper in front of the compound file (marker, corners, extension records).
+    fn encoded_envelope(&self) -> Vec<u8> {
+        match &self.envelope {
             OleFrameEnvelope::None => Vec::new(),
             OleFrameEnvelope::Legacy { records } => {
                 crate::compound_file::BinaryRecord::join(records)
@@ -199,9 +279,7 @@ impl Ole2Frame {
                 ));
                 bytes
             }
-        };
-        output.extend_from_slice(&self.storage.encode());
-        output
+        }
     }
 }
 

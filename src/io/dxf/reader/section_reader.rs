@@ -12653,9 +12653,8 @@ impl<'a> SectionReader<'a> {
             }
         }
 
-        let (storage, envelope, _, _) = Ole2Frame::decode_payload(&data);
-        ole.storage = storage;
-        ole.envelope = envelope;
+        // DXF corners come from groups 10/11, not the payload.
+        ole.set_payload(&data);
 
         Ok(Some(ole))
     }
