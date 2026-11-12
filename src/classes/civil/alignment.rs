@@ -1023,11 +1023,17 @@ fn curvature_at(a: Vector2, b: Vector2, c: Vector2) -> f64 {
 
 fn piece_kind(points: &[Vector2]) -> Piece {
     let n = points.len();
-    if n < 4 {
+    if n < 3 {
         return Piece::Line;
     }
-    let k0 = curvature_at(points[0], points[1], points[2]);
-    let k1 = curvature_at(points[n - 3], points[n - 2], points[n - 1]);
+    // A short curve is solved into three points: its middle bends.
+    if n == 3 {
+        return if curvature_at(points[0], points[1], points[2]).abs() < 1e-6 { Piece::Line } else { Piece::Curve };
+    }
+    // Over each half: neighbouring points are too close for the bend
+    // between them to tell an arc from a spiral.
+    let k0 = curvature_at(points[0], points[n / 4], points[n / 2]);
+    let k1 = curvature_at(points[n - 1 - n / 2], points[n - 1 - n / 4], points[n - 1]);
     if k0.abs() < 1e-6 && k1.abs() < 1e-6 {
         Piece::Line
     } else if (k0 - k1).abs() <= 0.02 * k0.abs().max(k1.abs()) {
@@ -1067,16 +1073,34 @@ pub(super) fn pieces_by_kind(elements: &[AlignmentElement]) -> Vec<(Piece, Vec<V
         .collect()
 }
 
+/// Distance along a solved run to each of its points; a curve's chords
+/// are measured along its arc.
+fn run_distances(raw: &[Vector2], pieces: &[(usize, usize, Piece)]) -> Vec<f64> {
+    let mut radius = vec![None; raw.len()];
+    for &(a, b, kind) in pieces {
+        if kind == Piece::Curve && b - a >= 3 {
+            let k = curvature_at(raw[a], raw[(a + b) / 2], raw[b - 1]);
+            for r in &mut radius[a + 1..b] {
+                *r = (k.abs() > 1e-12).then(|| 1.0 / k.abs());
+            }
+        }
+    }
+    let mut distance_to = vec![0.0; raw.len()];
+    for i in 1..raw.len() {
+        let chord = raw[i].distance(&raw[i - 1]);
+        let arc = radius[i].map_or(chord, |r: f64| 2.0 * r * (chord / (2.0 * r)).min(1.0).asin());
+        distance_to[i] = distance_to[i - 1] + arc;
+    }
+    distance_to
+}
+
 /// Geometry points along the first solved run.
 pub(super) fn geometry_points(elements: &[AlignmentElement]) -> Vec<GeometryPoint> {
     let Some(raw) = raw_polylines(elements).into_iter().next() else {
         return Vec::new();
     };
     let pieces = split(&raw);
-    let mut distance_to = vec![0.0; raw.len()];
-    for i in 1..raw.len() {
-        distance_to[i] = distance_to[i - 1] + raw[i].distance(&raw[i - 1]);
-    }
+    let distance_to = run_distances(&raw, &pieces);
     let mut out = Vec::new();
     let mut push = |index: usize, name| {
         let index = index.min(raw.len() - 1);

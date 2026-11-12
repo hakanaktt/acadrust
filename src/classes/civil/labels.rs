@@ -6,6 +6,101 @@
 
 use super::bits::Bits;
 
+/// Bits that open a label record in groups whose records vary in size
+/// (geometry points between interval stations); the station follows as a
+/// `BD`.
+const RECORD_MARKER: &[u8] = b"00100000110100000000000000000010";
+
+/// Stations of the records opened by [`RECORD_MARKER`], in record order.
+/// Other fields open with the same bits; only a full-width double is taken,
+/// and a leading zero station (stored in two bits) when the first record
+/// holds one.
+pub(super) fn marked_stations(data: &[u8], start: usize, end: usize) -> Vec<f64> {
+    let bit = |p: usize| (data[p / 8] >> (7 - p % 8)) & 1;
+    let mut stations = Vec::new();
+    let mut first = true;
+    for pos in start..end.saturating_sub(RECORD_MARKER.len() + 66) {
+        if !RECORD_MARKER.iter().enumerate().all(|(i, c)| bit(pos + i) == c - b'0') {
+            continue;
+        }
+        let mut bits = Bits::new(data, pos + RECORD_MARKER.len(), end);
+        let at = bits.pos;
+        let Some(value) = bits.bit_double() else { continue };
+        if first && value == 0.0 {
+            stations.push(0.0);
+        }
+        first = false;
+        if bits.pos - at == 66 && value.is_finite() && value.abs() < 1e7 && value.abs() > 1e-9 {
+            stations.push(value);
+        }
+    }
+    stations
+}
+
+/// Bits before each geometry point kind a label group labels (groups
+/// written from Civil 3D 2018 on).
+const POINT_KIND_MARKER: &[u8] = b"0011001101010010011111111110100100000001";
+
+/// Geometry point kinds a geometry point label group labels: `1` the
+/// alignment's beginning, `2` its end. Each is the low byte of the `BL`
+/// after [`POINT_KIND_MARKER`].
+pub(super) fn geometry_point_kinds(data: &[u8], start: usize, end: usize) -> Vec<u8> {
+    let bit = |p: usize| (data[p / 8] >> (7 - p % 8)) & 1;
+    (start..end.saturating_sub(POINT_KIND_MARKER.len() + 34))
+        .filter(|&pos| POINT_KIND_MARKER.iter().enumerate().all(|(i, c)| bit(pos + i) == c - b'0'))
+        .filter_map(|pos| Bits::new(data, pos + POINT_KIND_MARKER.len(), end).bit_long())
+        .map(|v| (v & 0xFF) as u8)
+        .collect()
+}
+
+/// Bits of the `BD` that opens a label's placement block (groups written
+/// from Civil 3D 2018 on); read as a double it is about -26.515625.
+const PLACEMENT_MARKER: f64 = -26.515625;
+
+/// Where a dragged label sits, from the point it labels: the two `BD`s
+/// 178 and 244 bits past [`PLACEMENT_MARKER`]. A label left in place has
+/// no full doubles there.
+pub(super) fn dragged_offset(data: &[u8], start: usize, end: usize) -> Option<crate::types::Vector2> {
+    let at = (start..end).find(|&pos| full_double(data, pos, end).is_some_and(|v| (v - PLACEMENT_MARKER).abs() < 1e-6))?;
+    let x = full_double(data, at + 178, end)?;
+    let y = full_double(data, at + 244, end)?;
+    (x.abs() < 1e5 && y.abs() < 1e5).then(|| crate::types::Vector2::new(x, y))
+}
+
+/// Bits before the profile entity id of each label in a profile label
+/// group; 56 bits on the record holds a `BL` of the form `0x00FC____`
+/// (`0x00FC3108` for tangent labels, `0x00FC3408` for curve labels,
+/// `0x00FC320C` for PVI labels).
+const ENTITY_LABEL_PREFIX: &[u8] = b"00000000000001";
+
+fn is_entity_label_check(v: i32) -> bool {
+    v >> 16 == 0xFC && matches!(v & 0xFF, 0x08 | 0x0C)
+}
+
+/// Every value read as an entity id after [`ENTITY_LABEL_PREFIX`], with
+/// its bit offset from `start`, checked or not. A PVI label's record names
+/// the tangents on both sides of its PVI (one at the profile's ends).
+pub(super) fn entity_refs(data: &[u8], start: usize, end: usize) -> Vec<(usize, i32)> {
+    let bit = |p: usize| (data[p / 8] >> (7 - p % 8)) & 1;
+    let n = ENTITY_LABEL_PREFIX.len();
+    (start + n..end.saturating_sub(34))
+        .filter(|&pos| ENTITY_LABEL_PREFIX.iter().enumerate().all(|(i, c)| bit(pos - n + i) == c - b'0'))
+        .filter_map(|pos| Some((pos - start, Bits::new(data, pos, end).bit_long().filter(|v| *v > 0)?)))
+        .collect()
+}
+
+/// Ids of the profile entities a profile label group labels, in record
+/// order.
+pub(super) fn labelled_entity_ids(data: &[u8], start: usize, end: usize) -> Vec<i32> {
+    let bit = |p: usize| (data[p / 8] >> (7 - p % 8)) & 1;
+    let n = ENTITY_LABEL_PREFIX.len();
+    (start + n..end.saturating_sub(90))
+        .filter(|&pos| ENTITY_LABEL_PREFIX.iter().enumerate().all(|(i, c)| bit(pos - n + i) == c - b'0'))
+        .filter(|&pos| Bits::new(data, pos + 56, end).bit_long().is_some_and(is_entity_label_check))
+        .filter_map(|pos| Bits::new(data, pos, end).bit_long())
+        .collect()
+}
+
 /// Stations of the longest run of equally spaced records with rising values.
 /// A record whose station is 0 is 64 bits shorter: the BD stores zero in
 /// two bits.
@@ -126,6 +221,10 @@ pub mod property {
     pub const K_VALUE: u32 = 33_617_665;
     pub const SAMPLE_LINE_NAME: u32 = 67_280_896;
     pub const SAMPLE_LINE_STATION: u32 = 33_726_491;
+    pub const POINT_ELEVATION: u32 = 33_574_914;
+    pub const PROJECTION_STATION: u32 = 34_045_971;
+    pub const PROJECTION_ELEVATION: u32 = 34_045_970;
+    pub const ALIGNMENT_NAME: u32 = 167_825_414;
 }
 
 /// Formatting option codes.
@@ -235,6 +334,22 @@ pub struct LabelText {
     /// Which point of its anchor the text hangs from, for anchors with
     /// several (a data band: 0 top, 1 middle, 2 bottom).
     pub anchor_point: Option<u8>,
+    /// `false` when the label style hides the component.
+    pub visible: bool,
+}
+
+/// Bits that open a text component's general block; its visibility is
+/// the third bit after them.
+const COMPONENT_GENERAL: &[u8] = b"1110100100101101";
+
+/// Whether a text component is shown: unread (visible) without the block.
+pub(super) fn component_visible(data: &[u8], start: usize, end: usize) -> bool {
+    let bit = |p: usize| (data[p / 8] >> (7 - p % 8)) & 1;
+    let n = COMPONENT_GENERAL.len();
+    (start..end.saturating_sub(n + 3))
+        .take(1200)
+        .find(|&pos| COMPONENT_GENERAL.iter().enumerate().all(|(i, c)| bit(pos + i) == c - b'0'))
+        .is_none_or(|pos| bit(pos + n + 2) == 1)
 }
 
 /// BD at `pos` written in full.
@@ -256,11 +371,12 @@ fn plotted_size(v: f64) -> bool {
 /// after the component's header that reads as plotted sizes.
 // ponytail: found by probing; the fields before it vary with the style's
 // overrides. Read them in order once those are decoded.
-fn offsets(data: &[u8], from: usize, end: usize) -> Option<(f64, f64, f64)> {
+fn offsets(data: &[u8], from: usize, end: usize) -> Option<(f64, f64, f64, usize)> {
     offsets_within(data, from, end.min(from + 600))
 }
 
-fn offsets_within(data: &[u8], from: usize, end: usize) -> Option<(f64, f64, f64)> {
+/// X offset, y offset and border gap, with where the block starts.
+fn offsets_within(data: &[u8], from: usize, end: usize) -> Option<(f64, f64, f64, usize)> {
     (from..end).find_map(|pos| {
         let mut bits = Bits::new(data, pos, end);
         let mut values = [0.0; 4];
@@ -270,13 +386,26 @@ fn offsets_within(data: &[u8], from: usize, end: usize) -> Option<(f64, f64, f64
         bits.bit()?;
         let at = bits.pos;
         let gap = bits.bit_double()?;
-        (bits.pos == at + 66 && gap > 0.0 && plotted_size(gap)).then_some((values[0], values[2], gap))
+        (bits.pos == at + 66 && gap > 0.0 && plotted_size(gap)).then_some((values[0], values[2], gap, pos))
     })
 }
 
 /// A line component closes with its length and then its angle, both
-/// written in full.
+/// written in full. The length starts 142 bits before the record's end;
+/// a line along the label's direction has no angle and its length starts
+/// 86 bits before the end.
 pub(super) fn line_component(data: &[u8], start: usize, end: usize) -> Option<(f64, f64)> {
+    let length_at = |back: usize| {
+        end.checked_sub(back)
+            .filter(|p| *p >= start)
+            .and_then(|p| full_double(data, p, end))
+            .filter(|v| (1e-6..1.0).contains(v))
+    };
+    if length_at(142).is_none() {
+        if let Some(length) = length_at(86) {
+            return Some((length, 0.0));
+        }
+    }
     let angle_at = (start..end)
         .rev()
         .find(|&p| full_double(data, p, end).is_some_and(|v| (1e-3..=std::f64::consts::TAU).contains(&v.abs())))?;
@@ -299,18 +428,21 @@ pub(super) fn text_component(data: &[u8], start: usize, end: usize) -> Option<La
     let marker = (start..end)
         .find(|&pos| full_double(data, pos, end).is_some_and(|v| (v - COMPONENT_MARKER).abs() < 1e-6));
     let plotted = |v: f64| (v.abs() > 1e-6 && v.abs() < 1.0).then_some(v);
+    // Components written without the marker keep the same block; it is then
+    // the first one in the record.
+    let block = match marker {
+        Some(m) => offsets(data, m + 82, end),
+        None => offsets_within(data, start, end),
+    };
+    let (x_offset, y_offset, gap) = block.map_or((0.0, 0.0, 0.0), |(x, y, gap, _)| (x, y, gap));
+    // The height ends 68 bits before the marker; without one it starts 211
+    // bits before the offset block.
     let height = marker
         .and_then(|m| m.checked_sub(68))
+        .or_else(|| block.and_then(|(.., block_at)| block_at.checked_sub(211)))
         .and_then(|p| full_double(data, p, end))
         .and_then(plotted)
         .filter(|v| *v > 0.0);
-    // Components written without the marker keep the same block; it is then
-    // the first one in the record.
-    let (x_offset, y_offset, gap) = match marker {
-        Some(m) => offsets(data, m + 82, end),
-        None => offsets_within(data, start, end),
-    }
-    .unwrap_or((0.0, 0.0, 0.0));
     // A 16-bit header after the marker ends with the anchor point, when the
     // component's settings block (opening 1011) follows it directly.
     // ponytail: only that short header form is read; longer ones leave it
@@ -337,6 +469,7 @@ pub(super) fn text_component(data: &[u8], start: usize, end: usize) -> Option<La
         rotation,
         attachment,
         anchor_point,
+        visible: component_visible(data, start, end),
     })
 }
 
@@ -377,9 +510,12 @@ fn string_at(data: &[u8], pos: usize, end: usize) -> Option<(String, usize)> {
     if units.pop() != Some(0) {
         return None;
     }
-    // Label text is Latin script; anything else is a misaligned read.
-    let latin = |u: u16| (0x20..=0x24F).contains(&u) || (0x2000..=0x206F).contains(&u) || u == 0x09;
-    if units.is_empty() || !units.iter().all(|&u| latin(u)) {
+    // Label text is in a written script; control codes, surrogates and
+    // private-use units mean a misaligned read.
+    let script = |u: u16| {
+        matches!(u, 0x09 | 0x20..=0x24F | 0x370..=0x52F | 0x590..=0x6FF | 0x900..=0x97F | 0xE00..=0xEFF | 0x2000..=0x206F | 0x2100..=0x22FF | 0x3000..=0x30FF | 0x4E00..=0x9FFF | 0xAC00..=0xD7A3)
+    };
+    if units.is_empty() || !units.iter().all(|&u| script(u)) {
         return None;
     }
     Some((String::from_utf16(&units).ok()?, bits.pos))

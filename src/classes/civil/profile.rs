@@ -408,17 +408,17 @@ struct Segment {
 /// PVI of the tangents beside it, a floating curve hangs from the tangent
 /// before it, a floating tangent leaves the curve before it towards its
 /// point, a free tangent touches the curves on both sides.
-fn design(data: &[u8], start: usize, end: usize) -> Option<Vec<Segment>> {
+/// The longest chain of entity records from a first entity; a stray
+/// header can carry plausible ids.
+fn chain(data: &[u8], start: usize, end: usize) -> Vec<Record> {
     let records: Vec<Record> = (start..end).filter_map(|pos| record_at(data, pos, end)).collect();
-    // The longest chain from a first entity; a stray header can carry
-    // plausible ids.
-    let mut best: Vec<&Record> = Vec::new();
-    for first in records.iter().filter(|r| r.previous == 0) {
-        let mut chain = vec![first];
+    let mut best: Vec<usize> = Vec::new();
+    for (i, _) in records.iter().enumerate().filter(|(_, r)| r.previous == 0) {
+        let mut chain = vec![i];
         while chain.len() <= records.len() {
-            let next_id = chain.last().unwrap().next;
-            match records.iter().find(|r| next_id != 0 && r.id == next_id) {
-                Some(r) if !chain.iter().any(|c| c.id == r.id) => chain.push(r),
+            let next_id = records[*chain.last().unwrap()].next;
+            match records.iter().position(|r| next_id != 0 && r.id == next_id) {
+                Some(j) if !chain.iter().any(|c| records[*c].id == records[j].id) => chain.push(j),
                 _ => break,
             }
         }
@@ -426,7 +426,26 @@ fn design(data: &[u8], start: usize, end: usize) -> Option<Vec<Segment>> {
             best = chain;
         }
     }
-    let chain = best;
+    let mut records: Vec<Option<Record>> = records.into_iter().map(Some).collect();
+    best.into_iter().filter_map(|i| records[i].take()).collect()
+}
+
+/// Ids of a design profile's entities in link order, each marked `true`
+/// for a curve, with a fixed tangent's end station.
+pub(super) fn entity_ids(data: &[u8], start: usize, end: usize) -> Vec<(i32, bool, Option<f64>)> {
+    chain(data, start, end)
+        .iter()
+        .map(|r| match r.entity {
+            Entity::Tangent(_, b) => (r.id, false, Some(b.x)),
+            Entity::Curve(_) => (r.id, true, None),
+            _ => (r.id, false, None),
+        })
+        .collect()
+}
+
+fn design(data: &[u8], start: usize, end: usize) -> Option<Vec<Segment>> {
+    let owned = chain(data, start, end);
+    let chain: Vec<&Record> = owned.iter().collect();
     if chain.iter().all(|r| matches!(r.entity, Entity::Tangent(..))) {
         return None;
     }
@@ -802,7 +821,20 @@ pub struct Pvi {
 pub(super) fn pvis(data: &[u8], start: usize, end: usize) -> Vec<Pvi> {
     let Some(segments) = design(data, start, end) else {
         let Some(design) = tangent_design(data, start, end) else {
-            return Vec::new();
+            // Fixed tangents only, linked end to start: a PVI at each joint.
+            let tangents: Vec<(Vector2, Vector2)> = chain(data, start, end)
+                .iter()
+                .map_while(|r| match r.entity {
+                    Entity::Tangent(a, b) => Some((a, b)),
+                    _ => None,
+                })
+                .collect();
+            let linked = tangents.windows(2).all(|w| w[0].1.distance(&w[1].0) <= 1e-6 * (1.0 + w[0].1.x.abs()));
+            if tangents.is_empty() || !linked {
+                return Vec::new();
+            }
+            let at = |point: Vector2| Pvi { point, curve_length: 0.0 };
+            return std::iter::once(at(tangents[0].0)).chain(tangents.iter().map(|t| at(t.1))).collect();
         };
         let mut out = vec![Pvi { point: design.tangents[0].0, curve_length: 0.0 }];
         for (index, tangent) in design.tangents.iter().enumerate().skip(1) {
@@ -897,6 +929,38 @@ impl ProfileViewFrame {
             self.origin.y + (elevation - self.elevation_min) * self.vertical_scale,
         )
     }
+}
+
+/// Frame from the body alone: the view origin `3BD (x, y, 0)` sits 178
+/// bits before the range triple `(min, min, max)`; a later copy of the
+/// origin is followed 142 bits on by `BD` vertical scale.
+pub(super) fn view_frame_stored(data: &[u8], start: usize, end: usize) -> Option<ProfileViewFrame> {
+    let point = |bits: &mut Bits| {
+        let x = bits.bit_double()?;
+        let y = bits.bit_double()?;
+        (x.is_finite() && y.is_finite() && bits.bit_double()? == 0.0).then_some(Vector2::new(x, y))
+    };
+    let point_at = |pos: usize| point(&mut Bits::new(data, pos, end));
+    (start + 178..end).find_map(|pos| {
+        let mut bits = Bits::new(data, pos, end);
+        let a = point(&mut bits)?;
+        let b = point(&mut bits)?;
+        let c = point(&mut bits)?;
+        (a == b && c.x > a.x && c.y > a.y).then_some(())?;
+        let origin = point_at(pos - 178)?;
+        let vertical_scale = (pos..end).find_map(|q| {
+            (point_at(q)? == origin).then_some(())?;
+            Bits::new(data, q + 142, end).bit_double().filter(|v| v.is_finite() && *v > 0.0)
+        })?;
+        Some(ProfileViewFrame {
+            origin,
+            station_min: a.x,
+            station_max: c.x,
+            elevation_min: a.y,
+            elevation_max: c.y,
+            vertical_scale,
+        })
+    })
 }
 
 /// Range triple whose station span equals the frame width.

@@ -7,10 +7,11 @@
 //! ```text
 //! nodes: BL next free id, BL n, BL first id,
 //!        n x { BD x, BD y, BD z, 3 bits 010, BL next id (0 last) }
-//! edges: BL next free id, BL count, BL 0, BL 1, then per edge
-//!        BL flags, BL n, BL 0, n x { BL kind (0 line, 1 arc, 2 last),
-//!        BL flags, BL node, BL face a, BL face b, [arc: BD bulge, BL 0] },
-//!        BL m, m x BL, BL 0 x 3, and before the next edge BL 0, BL its id
+//! edges: BL next free id, BL slots, then per slot i either BL 2 (a free
+//!        slot: its member left) or BL 0, BL i, BL flags, BL n, BL 0,
+//!        n x { BL kind (0 line, 1 arc, 2 last), BL flags, BL node,
+//!        BL face a, BL face b, [arc: BD bulge, BL 0] },
+//!        BL m, m x BL, BL 0 x 3
 //! ```
 //!
 //! A feature line is an edge of its site's topology with its elevations in
@@ -168,15 +169,23 @@ fn node_list(data: &[u8], pos: usize, end: usize) -> Option<(Vec<(i32, Vector2, 
 fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> Option<Vec<Vec<TopologyVertex>>> {
     let mut bits = Bits::new(data, pos, end);
     let next_free = bits.bit_long()?;
-    let count = bits.bit_long()?;
-    if !(1..=10_000).contains(&count) || count >= next_free || bits.bit_long()? != 0 || bits.bit_long()? != 1 {
+    let slots = bits.bit_long()?;
+    if !(1..=10_000).contains(&slots) || slots >= next_free {
         return None;
     }
     let mut out = Vec::new();
-    for k in 0..count {
+    for slot in 1..=slots {
+        // A member that left keeps its slot as a lone 2.
+        match bits.bit_long()? {
+            2 => continue,
+            0 => {}
+            _ => return None,
+        }
+        (bits.bit_long()? == slot).then_some(())?;
         bits.bit_long()?;
+        // An edge can be left with no vertices; it keeps its place.
         let n = bits.bit_long()?;
-        if !(1..=100_000).contains(&n) || bits.bit_long()? != 0 {
+        if !(0..=100_000).contains(&n) || bits.bit_long()? != 0 {
             return None;
         }
         let mut run = Vec::with_capacity(n as usize);
@@ -185,7 +194,10 @@ fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> 
             let flags = bits.bit_long()?;
             let node = bits.bit_long()?;
             let faces = (bits.bit_long()?, bits.bit_long()?);
-            if !(0..=2).contains(&kind) || (i + 1 == n) != (kind == 2) {
+            // The last vertex ends the edge (2), or starts an arc back to
+            // the first one on a closed edge (a circle).
+            let last = i + 1 == n;
+            if !(0..=2).contains(&kind) || (!last && kind == 2) || (last && kind == 0) {
                 return None;
             }
             let bulge = if kind == 1 {
@@ -196,6 +208,10 @@ fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> 
             };
             let &(_, point, z) = nodes.iter().find(|m| m.0 == node)?;
             run.push(TopologyVertex { point, z, flags, faces, bulge });
+        }
+        if run.last().is_some_and(|v| v.bulge != 0.0) {
+            let first = run[0];
+            run.push(TopologyVertex { bulge: 0.0, faces: (0, 0), ..first });
         }
         // A list after the vertices (empty on alignments; one entry once a
         // feature line has an elevation point), then three zeros.
@@ -209,14 +225,9 @@ fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> 
         for _ in 0..3 {
             (bits.bit_long()? == 0).then_some(())?;
         }
-        if k + 1 < count {
-            (bits.bit_long()? == 0).then_some(())?;
-            let next = bits.bit_long()?;
-            (1..next_free).contains(&next).then_some(())?;
-        }
         out.push(run);
     }
-    Some(out)
+    (!out.is_empty()).then_some(out)
 }
 
 /// The topology in a site container or alignment companion body: the first

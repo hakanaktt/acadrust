@@ -204,7 +204,9 @@ pub(super) fn assembly_layout(
         let mut bits = Bits::new(data, pos, end);
         let x = bits.bit_double()?;
         let y = bits.bit_double()?;
-        let inside = x > min.x && x < max.x && y > min.y && y < max.y;
+        // Inclusive: a proxy that is a single line has no width.
+        let tol = 1e-6 * (1.0 + min.x.abs().max(min.y.abs()));
+        let inside = x >= min.x - tol && x <= max.x + tol && y >= min.y - tol && y <= max.y + tol;
         (inside && bits.bit_double()? == 0.0).then(|| Vector3::new(x, y, 0.0))
     })?;
     // Body handles: two nulls (one in Civil 3D 2013), the baseline style,

@@ -9,6 +9,7 @@
 
 mod alignment;
 mod bits;
+mod cogo;
 mod corridor;
 mod labels;
 mod network;
@@ -23,6 +24,7 @@ pub use alignment::{
     display_station, AlignmentCriteria, AlignmentElement, AlignmentType, OffsetParameters, OffsetRegion, WideningTransition, AlignmentElementKind, AlignmentPiece, DesignSpeed, GeometryPoint, SpiralShape,
     StationEquation,
 };
+pub use cogo::CogoPoint;
 pub use labels::{parse_format, property, LabelPart, LabelText};
 pub use network::PartField;
 pub use profile::{CurveMinimumK, ProfileCriteria, ProfileLocking, ProfilePiece, ProfileViewFrame, Pvi};
@@ -102,6 +104,14 @@ pub const ENTITY_CLASSES: &[(&str, &str, CivilKind)] = &[
         "AeccDbAlignmentGeomPointLabeling",
         CivilKind::Label,
     ),
+    ("AECC_PROFILE_PROJECTION_LABEL", "AeccDbProfileProjectionLabel", CivilKind::Label),
+    ("AECC_HORIZONTALGEOMETRYBAND_LABELGROUP", "AeccDbHorizontalGeometryBandLabeling", CivilKind::Label),
+    ("AECC_VERTICALGEOMETRYBAND_LABELGROUP", "AeccDbVerticalGeometryBandLabeling", CivilKind::Label),
+    ("AECC_SUPERELEVATIONBAND_LABELGROUP", "AeccDbSuperElevationBandLabeling", CivilKind::Label),
+    ("AECC_ALIGNMENT_STAEQU_LABEL_GROUP", "AeccDbAlignmentStaEquLabeling", CivilKind::Label),
+    ("AECC_ALIGNMENT_DESIGNSPEED_LABEL_GROUP", "AeccDbAlignmentDesignSpeedLabeling", CivilKind::Label),
+    ("AECC_ALIGNMENT_SUPERELEVATION_LABEL_GROUP", "AeccDbAlignmentSuperelevationLabeling", CivilKind::Label),
+    ("AECC_ALIGNMENT_VAGEOMPOINT_LABELING", "AeccDbAlignmentVAGeomPointLabeling", CivilKind::Label),
     (
         "AECC_PROFILEDATABAND_LABELGROUP",
         "AeccDbProfileDataBandLabeling",
@@ -218,7 +228,16 @@ impl ArchEntityData {
             return None;
         }
         let (data, start, end) = self.main_stream()?;
-        Some(alignment::elements(data, start, end))
+        let mut elements = alignment::elements(data, start, end);
+        // A record of a kind this crate does not know that no known element
+        // links to is a stray header read as a record.
+        let known_links: Vec<i16> = elements
+            .iter()
+            .filter(|e| !matches!(e.kind, AlignmentElementKind::Other { .. }))
+            .flat_map(|e| [e.previous, e.next])
+            .collect();
+        elements.retain(|e| !matches!(e.kind, AlignmentElementKind::Other { .. }) || known_links.contains(&e.id));
+        Some(elements)
     }
 
     /// Solved centerline of a Civil 3D alignment, one polyline per run of
@@ -415,8 +434,60 @@ impl ArchEntityData {
         if self.civil_kind() != Some(CivilKind::Label) {
             return Vec::new();
         }
+        // Groups whose records vary in size (geometry points between
+        // intervals) are only read through their record marker.
         self.main_stream()
-            .map(|(data, start, end)| labels::stations(data, start, end))
+            .map(|(data, start, end)| {
+                let marked = labels::marked_stations(data, start, end);
+                if marked.len() >= 2 { marked } else { labels::stations(data, start, end) }
+            })
+            .unwrap_or_default()
+    }
+
+    /// Geometry point kinds a geometry point label group
+    /// (`AECC_ALIGNMENT_GEOMPOINT_LABEL_GROUP`) is limited to: `1` the
+    /// alignment's beginning, `2` its end. Empty when the group does not
+    /// list them (every point is labelled).
+    pub fn label_geometry_point_kinds(&self) -> Vec<u8> {
+        if self.dxf_name != "AECC_ALIGNMENT_GEOMPOINT_LABEL_GROUP" {
+            return Vec::new();
+        }
+        self.main_stream()
+            .map(|(data, start, end)| labels::geometry_point_kinds(data, start, end))
+            .unwrap_or_default()
+    }
+
+    /// Offset from the labelled point to where a dragged label sits, `None`
+    /// for a label left in place.
+    pub fn label_dragged_offset(&self) -> Option<Vector2> {
+        if self.civil_kind() != Some(CivilKind::Label) {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        labels::dragged_offset(data, start, end)
+    }
+
+    /// Ids of the profile entities a profile label group
+    /// (`AECC_VALIGNMENT_*_LABEL_GROUP`) labels; see
+    /// [`Self::profile_entity_ids`].
+    pub fn label_entity_ids(&self) -> Vec<i32> {
+        if !self.dxf_name.starts_with("AECC_VALIGNMENT_") {
+            return Vec::new();
+        }
+        self.main_stream()
+            .map(|(data, start, end)| labels::labelled_entity_ids(data, start, end))
+            .unwrap_or_default()
+    }
+
+    /// Every entity id a profile label group's records name, with its bit
+    /// offset in the record; a PVI label names the tangents on both sides
+    /// of its PVI.
+    pub fn label_entity_refs(&self) -> Vec<(usize, i32)> {
+        if !self.dxf_name.starts_with("AECC_VALIGNMENT_") {
+            return Vec::new();
+        }
+        self.main_stream()
+            .map(|(data, start, end)| labels::entity_refs(data, start, end))
             .unwrap_or_default()
     }
 
@@ -513,6 +584,18 @@ impl ArchEntityData {
             .unwrap_or_default()
     }
 
+    /// Ids of a design profile's entities in link order, each marked `true`
+    /// for a curve, with a fixed tangent's end station; profile label
+    /// groups name the entities they label by these ids.
+    pub fn profile_entity_ids(&self) -> Vec<(i32, bool, Option<f64>)> {
+        if self.civil_kind() != Some(CivilKind::Profile) {
+            return Vec::new();
+        }
+        self.main_stream()
+            .map(|(data, start, end)| profile::entity_ids(data, start, end))
+            .unwrap_or_default()
+    }
+
     /// Design Criteria settings of a design profile.
     pub fn profile_criteria(&self) -> Option<ProfileCriteria> {
         if self.civil_kind() != Some(CivilKind::Profile) {
@@ -531,6 +614,20 @@ impl ArchEntityData {
         self.main_stream()
             .map(|(data, start, end)| profile::curve_minimum_k(data, start, end))
             .unwrap_or_default()
+    }
+
+    /// The alignment's name: its fourth string, or for a data shortcut (the
+    /// fourth string the source drawing) the name after `.dwg:` in the
+    /// reference.
+    pub fn alignment_name(&self) -> Option<String> {
+        if self.civil_kind() != Some(CivilKind::Alignment) {
+            return None;
+        }
+        let strings = self.decode().strings;
+        if let Some(reference) = strings.iter().find_map(|s| s.rsplit_once(".dwg:")) {
+            return Some(reference.1.to_string());
+        }
+        strings.get(3).filter(|s| !s.is_empty()).cloned()
     }
 
     /// The profile's name: the string after its label point names, which
@@ -560,6 +657,10 @@ impl ArchEntityData {
         if self.civil_kind() != Some(CivilKind::ProfileView) {
             return None;
         }
+        let (data, start, end) = self.main_stream()?;
+        if let Some(frame) = profile::view_frame_stored(data, start, end) {
+            return Some(frame);
+        }
         let frame = self.profiles.first()?;
         let min = Vector2::new(
             frame.iter().map(|p| p.x).fold(f64::INFINITY, f64::min),
@@ -569,7 +670,6 @@ impl ArchEntityData {
             frame.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max),
             frame.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max),
         );
-        let (data, start, end) = self.main_stream()?;
         profile::view_frame(data, start, end, min, max)
     }
 
@@ -666,6 +766,16 @@ impl ArchEntityData {
         (a != 0 && a == b).then_some(a)
     }
 
+    /// Number of the point a COGO point entity (`AECC_COGO_POINT`) shows;
+    /// the drawing's point database ([`ArchObject::cogo_points`]) holds it.
+    pub fn cogo_point_number(&self) -> Option<u32> {
+        if self.dxf_name != "AECC_COGO_POINT" {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        cogo::entity_number(data, start, end)
+    }
+
     /// Start and end of a Civil 3D pipe (`AECC_PIPE`), as stored.
     pub fn pipe_ends(&self) -> Option<(crate::types::Vector3, crate::types::Vector3)> {
         if self.dxf_name != "AECC_PIPE" {
@@ -747,6 +857,17 @@ impl ArchObject {
         object_kind_of(&self.dxf_name)
     }
 
+    /// Points of the drawing's point database (`AECC_POINT_NODE`).
+    pub fn cogo_points(&self) -> Vec<CogoPoint> {
+        if self.dxf_name != "AECC_POINT_NODE" {
+            return Vec::new();
+        }
+        let handles = self.decode().handles;
+        self.main_stream()
+            .map(|(data, start, end)| cogo::points(data, start, end, &handles))
+            .unwrap_or_default()
+    }
+
     /// Site topology a site container or alignment companion
     /// (`AECC_FEATURE_STYLE`) keeps: edges through nodes with the faces on
     /// their sides.
@@ -786,7 +907,7 @@ impl ArchObject {
     /// Content, height and offset of a label text component
     /// (`AECC_LABEL_TEXT_STYLE`).
     pub fn label_text(&self) -> Option<LabelText> {
-        if self.dxf_name != "AECC_LABEL_TEXT_STYLE" {
+        if self.dxf_name != "AECC_LABEL_TEXT_STYLE" && self.dxf_name != "AECC_LABEL_TEXT_PROPFIELDOBJECT_STYLE" {
             return None;
         }
         let (data, start, end) = self.main_stream()?;
@@ -819,9 +940,19 @@ impl ArchObject {
         labels::line_component(data, start, end)
     }
 
-    /// Plotted height of a Civil 3D profile view data band.
+    /// Whether a label style component (text, line, tick, ...) is shown;
+    /// `true` when the record does not say.
+    pub fn label_component_visible(&self) -> bool {
+        if !self.dxf_name.starts_with("AECC_LABEL_") {
+            return true;
+        }
+        self.main_stream()
+            .is_none_or(|(data, start, end)| labels::component_visible(data, start, end))
+    }
+
+    /// Plotted height of a Civil 3D profile view band.
     pub fn band_height(&self) -> Option<f64> {
-        if self.dxf_name != "AECC_PROFILE_VIEW_DATA_BAND_STYLE" {
+        if !(self.dxf_name.starts_with("AECC_PROFILE_VIEW_") && self.dxf_name.ends_with("_BAND_STYLE")) {
             return None;
         }
         let (data, start, end) = self.main_stream()?;
@@ -851,7 +982,7 @@ impl ArchObject {
 
     /// Point style of a Civil 3D marker style (`AECC_ROADWAYMARKER_STYLE`).
     pub fn marker(&self) -> Option<Marker> {
-        if self.dxf_name != "AECC_ROADWAYMARKER_STYLE" {
+        if self.dxf_name != "AECC_ROADWAYMARKER_STYLE" && self.dxf_name != "AECC_POINT_STYLE" {
             return None;
         }
         let (data, start, end) = self.main_stream()?;
