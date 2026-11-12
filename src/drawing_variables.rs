@@ -2,7 +2,7 @@ use crate::objects::{Dictionary, DictionaryVariable, ObjectType};
 use crate::types::Handle;
 use crate::CadDocument;
 
-const VARIABLES: &str = "AcDbVariableDictionary";
+pub(crate) const VARIABLES: &str = "AcDbVariableDictionary";
 
 impl CadDocument {
     /// Read a serialized drawing variable without modifying its dictionary.
@@ -109,6 +109,20 @@ mod tests {
     use std::io::Cursor;
 
     #[test]
+    fn new_document_has_variable_dictionary_after_dwg_round_trip() {
+        let document = CadDocument::new();
+        let bytes = DwgWriter::write_to_vec(&document).unwrap();
+        let read = DwgReader::from_stream(Cursor::new(bytes)).read().unwrap();
+        let ObjectType::Dictionary(root) =
+            read.objects.get(&read.header.named_objects_dict_handle).unwrap()
+        else {
+            panic!("named objects root is not a dictionary")
+        };
+        let handle = root.get(VARIABLES).expect("AcDbVariableDictionary missing");
+        assert!(matches!(read.objects.get(&handle), Some(ObjectType::Dictionary(_))));
+    }
+
+    #[test]
     fn drawing_variables_create_update_and_preserve_object_handles() {
         let mut document = CadDocument::new();
         assert!(document.set_drawing_variable("TEST", "first"));
@@ -145,7 +159,7 @@ mod tests {
         let ObjectType::Dictionary(root) = document.objects.get_mut(&root_handle).unwrap() else {
             unreachable!()
         };
-        root.add_entry(VARIABLES, wrong_handle);
+        root.insert(VARIABLES, wrong_handle);
         let object_count = document.objects.len();
         assert!(!document.set_drawing_variable("TEST", "value"));
         assert_eq!(document.objects.len(), object_count);

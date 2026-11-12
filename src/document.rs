@@ -2002,6 +2002,8 @@ impl CadDocument {
         root_dict.add_entry("ACAD_TABLESTYLE", tablestyle_dict_handle);
         self.objects
             .insert(root_dict_handle, ObjectType::Dictionary(root_dict));
+        // AUDIT expects every drawing to carry the variable dictionary, even empty (#408).
+        self.ensure_subdictionary(crate::drawing_variables::VARIABLES);
 
         // -- ACAD_GROUP dictionary (empty) --
         let mut group_dict = crate::objects::Dictionary::new();
