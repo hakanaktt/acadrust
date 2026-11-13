@@ -3112,6 +3112,11 @@ fn guid(bits: &mut Bits) -> Option<[u8; 16]> {
 /// BL a, a x { BD parent station, GUID }
 /// ```
 pub(super) fn offset_parameters(data: &[u8], pos: usize, end: usize) -> Option<OffsetParameters> {
+    offset_block(data, pos, end).map(|(parameters, _)| parameters)
+}
+
+/// The offset parameters and the bit after them.
+fn offset_block(data: &[u8], pos: usize, end: usize) -> Option<(OffsetParameters, usize)> {
     let mut bits = Bits::new(data, pos, end);
     let head = [bits.bit_long()?, bits.bit_long()?, bits.bit_long()?];
     if !(1..=2).contains(&head[0]) || head[1] != 2 || !(1..=2).contains(&head[2]) {
@@ -3184,7 +3189,7 @@ pub(super) fn offset_parameters(data: &[u8], pos: usize, end: usize) -> Option<O
     let anchors = (0..a)
         .map(|_| Some((bits.bit_double()?, guid(&mut bits)?)))
         .collect::<Option<Vec<_>>>()?;
-    Some(OffsetParameters {
+    let parameters = OffsetParameters {
         dynamic: head[0] == 1,
         parent_deleted: head[2] == 2,
         offset,
@@ -3196,7 +3201,8 @@ pub(super) fn offset_parameters(data: &[u8], pos: usize, end: usize) -> Option<O
         transitions,
         element_map,
         anchors,
-    })
+    };
+    Some((parameters, bits.pos))
 }
 
 /// Bits that follow each mask range's stations.
@@ -3244,18 +3250,20 @@ pub(super) fn masked_ranges(data: &[u8], start: usize, end: usize, first: f64, l
     if let Some((kind, after)) = post_cache_starts(data, start, end)
         .and_then(|at| at.into_iter().find_map(|pos| typed_at(data, pos, end, first, last, true)))
     {
-        if !matches!(kind, AlignmentType::Offset | AlignmentType::CurbReturn) {
-            let mut bits = Bits::new(data, after, end);
-            let count = (0..3).all(|_| bits.bit_long() == Some(2)).then(|| bits.bit_long()).flatten();
-            return match count {
-                Some(0) => Vec::new(),
-                _ => read(after).unwrap_or_default(),
-            };
+        // Offset and curb-return records end with their parameters: no list.
+        if matches!(kind, AlignmentType::Offset | AlignmentType::CurbReturn) {
+            return Vec::new();
         }
+        let mut bits = Bits::new(data, after, end);
+        let count = (0..3).all(|_| bits.bit_long() == Some(2)).then(|| bits.bit_long()).flatten();
+        return match count {
+            Some(0) => Vec::new(),
+            _ => read(after).unwrap_or_default(),
+        };
     }
-    // debt: offset and curb-return alignments (their parameters sit before
-    // the list) and records whose section 2 is not mapped: the last list
-    // that parses near the end of the body wins.
+    // debt: records whose type is not read (Civil 2013 records with the
+    // list before the type, records civil3drust wrote invalid): the last
+    // list that parses near the end of the body wins.
     (start..end).rev().find_map(read).unwrap_or_default()
 }
 
