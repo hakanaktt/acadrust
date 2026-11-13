@@ -734,6 +734,13 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.write_header_variable("$DIMADEC", |w| {
             w.write_i16(70, hdr.dim_angular_decimal_places)
         })?;
+        self.write_header_variable("$DIMALTRND", |w| w.write_double(40, hdr.dim_alt_rounding))?;
+        self.write_header_variable("$DIMAZIN", |w| {
+            w.write_i16(70, hdr.dim_alt_zero_suppression)
+        })?;
+        self.write_header_variable("$DIMUPT", |w| {
+            w.write_i16(70, if hdr.dim_user_positioned_text { 1 } else { 0 })
+        })?;
         self.write_header_variable("$DIMJUST", |w| {
             w.write_i16(70, hdr.dim_horizontal_justification)
         })?;
@@ -784,6 +791,17 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.write_header_variable("$DIMTFILLCLR", |w| {
                 w.write_i16(70, hdr.dim_text_fill_color.approximate_index())
             })?;
+        }
+        if self.dxf_version >= DxfVersion::AC1027 {
+            self.write_header_variable("$DIMTXTDIRECTION", |w| {
+                w.write_i16(70, if hdr.dim_text_direction { 1 } else { 0 })
+            })?;
+        }
+        if self.dxf_version >= DxfVersion::AC1032 {
+            self.write_header_variable("$DIMALTMZF", |w| w.write_double(40, hdr.dim_alt_mzf))?;
+            self.write_header_variable("$DIMALTMZS", |w| w.write_string(1, &hdr.dim_alt_mzs))?;
+            self.write_header_variable("$DIMMZF", |w| w.write_double(40, hdr.dim_mzf))?;
+            self.write_header_variable("$DIMMZS", |w| w.write_string(1, &hdr.dim_mzs))?;
         }
 
         // === Misc ===
