@@ -110,13 +110,37 @@ fn indices(bits: &mut Bits, limit: usize) -> Option<Vec<u32>> {
     Some(out)
 }
 
-/// Shape from the first point list a valid link list follows, with codes
-/// from `strings`, the record's text stream, where they start two strings
-/// after the script assembly name.
-// ponytail: probes every bit offset; parse the class header once its fields
-// are known.
+/// Where the point list sits, read field by field: the class keys (see
+/// `alignment::class_keys`) and 121 bits, or a record without keys (tag
+/// `010010`, RC 0) and 120 bits; then 3BD origin, 9 BD (rotation), BD,
+/// 62 bits.
+// ponytail: the 120/121 and 62-bit runs are skipped by length (zero or
+// constant in every sample).
+fn shape_at(data: &[u8], start: usize, end: usize) -> Option<usize> {
+    let mut bits = Bits::new(data, start, end);
+    if super::alignment::class_header(&mut bits)? == super::alignment::KEYED {
+        bits = Bits::new(data, start, end);
+        super::alignment::class_keys(&mut bits)?;
+        bits.pos += 121;
+    } else {
+        (bits.bits_value(8)? == 0).then_some(())?;
+        bits.pos += 120;
+    }
+    for _ in 0..13 {
+        bits.bit_double()?;
+    }
+    Some(bits.pos + 62)
+}
+
+/// Shape from the point list, with codes from `strings`, the record's text
+/// stream, where they start two strings after the script assembly name.
 pub(super) fn find(data: &[u8], start: usize, end: usize, strings: &[String]) -> Option<SubassemblyShape> {
-    let (mut shape, points, links, areas) = (start..end).find_map(|pos| read_at(data, pos, end))?;
+    let (mut shape, points, links, areas) = match shape_at(data, start, end).and_then(|pos| read_at(data, pos, end)) {
+        Some(found) => found,
+        // debt: a header neither form matches (none in the samples) is
+        // searched for its point list.
+        None => (start..end).find_map(|pos| read_at(data, pos, end))?,
+    };
     let first = strings.iter().position(|s| s == "AeccStockSubassemblyScriptsRC.dll").map(|i| i + 2);
     let mut codes = first.map(|i| strings[i.min(strings.len())..].iter());
     let mut take = |counts: &[usize]| -> Vec<Vec<String>> {

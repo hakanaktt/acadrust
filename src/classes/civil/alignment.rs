@@ -322,19 +322,34 @@ pub(super) fn key(bits: &mut Bits) -> Option<()> {
 // ponytail: the 65 and 7-bit runs are skipped by length (constant layout
 // in every sample); name their fields once a drawing varies them.
 pub(super) fn read_keys(bits: &mut Bits) -> Option<()> {
-    for want in [80, 0, 80, 80, 0] {
-        (bits.bit_long()? == want).then_some(())?;
-    }
-    bits.bit_long()?;
-    (bits.bits_value(6)? == 0b01_0101).then_some(())?;
-    for _ in 0..bits.bits_value(8)? {
-        key(bits)?;
-    }
-    (bits.bit_long()? == 0).then_some(())?;
+    class_keys(bits)?;
     bits.pos += 65;
     bits.bit_double()?;
     bits.pos += 7;
     Some(())
+}
+
+/// The class header and keys up to their closing `BL 0` (see
+/// [`read_keys`]).
+pub(super) fn class_keys(bits: &mut Bits) -> Option<()> {
+    (class_header(bits)? == KEYED).then_some(())?;
+    for _ in 0..bits.bits_value(8)? {
+        key(bits)?;
+    }
+    (bits.bit_long()? == 0).then_some(())
+}
+
+/// Tag of a class record that carries keys; `0b010010` (Civil 3D 2013
+/// records, labels) carries none.
+pub(super) const KEYED: u8 = 0b01_0101;
+
+/// `BL 80, 0, 80, 80, 0, BL`, then the 6-bit tag it returns.
+pub(super) fn class_header(bits: &mut Bits) -> Option<u8> {
+    for want in [80, 0, 80, 80, 0] {
+        (bits.bit_long()? == want).then_some(())?;
+    }
+    bits.bit_long()?;
+    bits.bits_value(6)
 }
 
 /// An alignment's own fields after [`read_keys`]: BL first element id, BD,
