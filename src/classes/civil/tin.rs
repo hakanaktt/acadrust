@@ -75,18 +75,33 @@ pub(super) fn find(data: &[u8], start: usize, end: usize) -> Option<TinSurface> 
     if let Some(surface) = triangulation_at(data, start, end).and_then(|pos| read_at(data, pos, end)) {
         return Some(surface);
     }
-    // debt: Civil 3D 2013 surfaces and surfaces with definition operations
-    // write other fields before the triangulation; it is found by probing.
+    // debt: surfaces whose first definition is neither form below or that
+    // hold an operation kind not mapped in [`operation`] (two in the
+    // samples, with kind 40) are found by probing.
     (start..end).find_map(|pos| read_at(data, pos, end))
+}
+
+/// How a surface's first definition is stored.
+#[derive(Clone, Copy)]
+enum First {
+    /// `BL 0, GUID`.
+    Reference,
+    /// Added vertices: `BL 0, BL n, n x 3BD`.
+    Vertices,
 }
 
 /// Where the triangulation starts, read field by field: the graph head (see
 /// profile::graph_head), 3BD origin, 9 BD, BD, `RC n`, `n` x 5 bits, then
-/// either 6 BL, 3 bits, GUID, `BL 0`, GUID, 70 bits, or (Civil 3D 2013) 111
-/// bits; then RL, `RS 0x05A2`, `RC k`, `k` x 2 bytes, "MMS01". The block
-/// that follows tells the two layouts apart.
-// ponytail: the 5-, 3-, 70- and 111-bit runs are skipped by length (the
-// same in every sample); a definition count other than 0 is not mapped.
+/// the definitions, or (Civil 3D 2013) 111 bits; then RL, `RS 0x05A2` (0x04A2
+/// from Civil 3D 2026), `RC k`, `k` x 2 bytes, "MMS01". The block that
+/// follows tells the layouts apart.
+///
+/// The definitions: `BL head`, 5 BL, 3 bits, GUID, the first definition (see
+/// [`First`]), the other definitions (see [`operation`]), then `BL, BL`,
+/// 2 bits. Bits 11 to 15 of `head` count the definitions, the first one
+/// included.
+// ponytail: the 5-, 3-, 2- and 111-bit runs are skipped by length (the same
+// in every sample).
 fn triangulation_at(data: &[u8], start: usize, end: usize) -> Option<usize> {
     let mut bits = Bits::new(data, start, end);
     super::profile::graph_head(&mut bits)?;
@@ -96,26 +111,103 @@ fn triangulation_at(data: &[u8], start: usize, end: usize) -> Option<usize> {
     let items = usize::from(bits.bits_value(8)?);
     bits.skip(5 * items)?;
     let at = bits.pos;
-    let layout = |bits: &mut Bits, civil_2013: bool| -> Option<()> {
-        if civil_2013 {
+    let layout = |bits: &mut Bits, first: Option<First>| -> Option<()> {
+        let Some(first) = first else {
             return bits.skip(111);
-        }
-        for _ in 0..6 {
+        };
+        let head = bits.bit_long()? as u32;
+        for _ in 0..5 {
             bits.bit_long()?;
         }
         bits.skip(3 + 128)?;
         (bits.bit_long()? == 0).then_some(())?;
-        bits.skip(128 + 70)
+        match first {
+            First::Reference => bits.skip(128)?,
+            First::Vertices => {
+                let n = usize::try_from(bits.bit_long()?).ok().filter(|n| n * 6 <= bits.remaining())?;
+                for _ in 0..3 * n {
+                    bits.bit_double()?;
+                }
+            }
+        }
+        for _ in 1..(head >> 11) & 0x1F {
+            operation(bits)?;
+        }
+        bits.bit_long()?;
+        bits.bit_long()?;
+        bits.skip(2)
     };
-    [false, true].into_iter().find_map(|civil_2013| {
+    [Some(First::Reference), Some(First::Vertices), None].into_iter().find_map(|first| {
         let mut bits = Bits::new(data, at, end);
-        layout(&mut bits, civil_2013)?;
+        layout(&mut bits, first)?;
         bits.raw_long()?;
-        (u16::from_le_bytes([bits.raw_short_byte()?, bits.raw_short_byte()?]) == 0x05A2).then_some(())?;
+        matches!(u16::from_le_bytes([bits.raw_short_byte()?, bits.raw_short_byte()?]), 0x05A2 | 0x04A2).then_some(())?;
         let k = usize::from(bits.raw_short_byte()?);
         bits.skip(16 * k)?;
         (b"MMS01".iter().all(|c| bits.raw_short_byte() == Some(*c))).then_some(bits.pos)
     })
+}
+
+/// One surface definition after the first: `BL kind, BL, BL, GUID, BL`,
+/// then by kind:
+///
+/// ```text
+/// 13 boundary, 14 breakline:  BD mid-ordinate distance, BL m,
+///                             m x { BL n, n x 3BD }, BL, BL, 3 x BD,
+///                             (boundary) BL type, BL
+///  0 point group:             nothing (the group is a reference)
+/// 17 raise:                   BD amount
+///  2 delete vertex:           BD x, BD y
+/// 22 add line:                BD x, BD y, BD x, BD y
+/// 34 transform:               16 RD (matrix, row by row), BL
+/// ```
+// ponytail: the three BD after the polylines are 0 in every sample, so they
+// are not told apart from BL; a polyline count other than 1 is not in the
+// samples.
+fn operation(bits: &mut Bits) -> Option<()> {
+    let kind = bits.bit_long()?;
+    bits.bit_long()?;
+    bits.bit_long()?;
+    bits.skip(128)?;
+    bits.bit_long()?;
+    match kind {
+        13 | 14 => {
+            bits.bit_long()?;
+            bits.bit_double()?;
+            for _ in 0..bits.bit_long()? {
+                let n = usize::try_from(bits.bit_long()?).ok().filter(|n| n * 6 <= bits.remaining())?;
+                for _ in 0..3 * n {
+                    bits.bit_double()?;
+                }
+            }
+            bits.bit_long()?;
+            bits.bit_long()?;
+            for _ in 0..3 {
+                bits.bit_double()?;
+            }
+            if kind == 13 {
+                bits.bit_long()?;
+                bits.bit_long()?;
+            }
+        }
+        0 => {}
+        17 => {
+            bits.bit_double()?;
+        }
+        2 | 22 => {
+            for _ in 0..if kind == 2 { 2 } else { 4 } {
+                bits.bit_double()?;
+            }
+        }
+        34 => {
+            for _ in 0..16 {
+                bits.raw_double()?;
+            }
+            bits.bit_long()?;
+        }
+        _ => return None,
+    }
+    Some(())
 }
 
 fn read_at(data: &[u8], pos: usize, end: usize) -> Option<TinSurface> {
@@ -294,5 +386,27 @@ impl TinSurface {
             }
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bits_of(s: &str) -> Vec<u8> {
+        let s: Vec<u8> = s.bytes().filter(|b| *b == b'0' || *b == b'1').collect();
+        s.chunks(8).map(|c| c.iter().enumerate().fold(0u8, |a, (i, b)| a | ((b - b'0') << (7 - i)))).collect()
+    }
+
+    #[test]
+    fn reads_a_raise_then_stops_at_an_unknown_kind() {
+        // BL 17, BL 9, BL 16, GUID, BL 0, BD 1.5; then BL 40, BL 9, BL 16.
+        let guid = "0".repeat(128);
+        let raise = format!("0100010001 0100001001 0100010000 {guid} 10 00{}", "0".repeat(48) + "1111100000111111");
+        let b = bits_of(&format!("{raise} 0100101000 0100001001 0100010000 {guid} 10 {}", "0".repeat(16)));
+        let mut bits = Bits::new(&b, 0, b.len() * 8);
+        assert!(operation(&mut bits).is_some());
+        assert_eq!(bits.pos, 30 + 128 + 2 + 66);
+        assert!(operation(&mut bits).is_none());
     }
 }
