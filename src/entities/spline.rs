@@ -311,6 +311,63 @@ impl Spline {
         })
     }
 
+    /// The clamped cubic NURBS through the fit points of a fit-point spline:
+    /// knots at the fit parameters (chord, square-root chord or uniform, by
+    /// `knot_parameterization`), four times at each end. The two missing
+    /// conditions are the start/end tangents when set, else a zero second
+    /// derivative at that end; a closed fit spline is treated the same, its
+    /// last fit point repeating the first. `None` when there is nothing to
+    /// interpolate or two consecutive fit points coincide.
+    pub(crate) fn interpolate_fit_cubic(&self) -> Option<ClampedSpline> {
+        let q = &self.fit_points;
+        if self.degree != 3 || q.len() < 2 || !self.control_points.is_empty() {
+            return None;
+        }
+        let n = q.len() - 1;
+        let mut params = vec![0.0];
+        let mut chord = 0.0;
+        for w in q.windows(2) {
+            let d = (w[1] - w[0]).length();
+            if d < 1e-12 {
+                return None;
+            }
+            chord += d;
+            let step = match self.knot_parameterization {
+                1 => d.sqrt(),
+                2 => 1.0,
+                _ => d,
+            };
+            params.push(params.last().unwrap() + step);
+        }
+        let (u0, un) = (params[0], params[n]);
+        let mut knots = vec![u0; 4];
+        knots.extend_from_slice(&params[1..n]);
+        knots.extend([un; 4]);
+        let m = n + 3;
+        // ponytail: dense Gaussian elimination, O(n^3); a banded solver if fit
+        // splines with thousands of points show up.
+        let row = |u: f64, d: usize| (0..m).map(|i| basis(&knots, i, 3, u, d)).collect::<Vec<_>>();
+        let unit = |i: usize| (0..m).map(|j| if j == i { 1.0 } else { 0.0 }).collect::<Vec<_>>();
+        let speed = chord / (un - u0);
+        let end = |u: f64, tangent: Vector3| {
+            if tangent == Vector3::ZERO {
+                (row(u, 2), Vector3::ZERO)
+            } else {
+                (row(u, 1), tangent.normalize() * speed)
+            }
+        };
+        let mut rows = vec![(unit(0), q[0]), end(u0, self.begin_tangent)];
+        rows.extend((1..n).map(|k| (row(params[k], 0), q[k])));
+        rows.push(end(un, self.end_tangent));
+        rows.push((unit(m - 1), q[n]));
+        let points = solve(rows)?;
+        Some(ClampedSpline {
+            points,
+            knots,
+            weights: Vec::new(),
+        })
+    }
+
     /// Get the number of control points
     pub fn control_point_count(&self) -> usize {
         self.control_points.len()
@@ -372,6 +429,64 @@ impl Entity for Spline {
     fn apply_mirror(&mut self, transform: &crate::types::Transform) {
         super::mirror::mirror_spline(self, transform);
     }
+}
+
+/// The `d`-th derivative of B-spline basis function `i` of degree `p` at `u`.
+/// The last non-empty knot span is closed, so `u` may be the end parameter.
+fn basis(knots: &[f64], i: usize, p: usize, u: f64, d: usize) -> f64 {
+    let ratio = |num: f64, den: f64| if den == 0.0 { 0.0 } else { num / den };
+    if p == 0 {
+        let (a, b) = (knots[i], knots[i + 1]);
+        let last = *knots.last().unwrap();
+        return if (a <= u && u < b) || (u == last && a < b && b == last) {
+            1.0
+        } else {
+            0.0
+        };
+    }
+    let (left, right) = (knots[i + p] - knots[i], knots[i + p + 1] - knots[i + 1]);
+    if d == 0 {
+        ratio(u - knots[i], left) * basis(knots, i, p - 1, u, 0)
+            + ratio(knots[i + p + 1] - u, right) * basis(knots, i + 1, p - 1, u, 0)
+    } else {
+        p as f64
+            * (ratio(basis(knots, i, p - 1, u, d - 1), left)
+                - ratio(basis(knots, i + 1, p - 1, u, d - 1), right))
+    }
+}
+
+/// Solve `rows` (coefficients, right-hand side) by Gaussian elimination with
+/// partial pivoting; `None` when singular.
+fn solve(mut rows: Vec<(Vec<f64>, Vector3)>) -> Option<Vec<Vector3>> {
+    let m = rows.len();
+    for c in 0..m {
+        let pivot = (c..m).max_by(|&a, &b| rows[a].0[c].abs().total_cmp(&rows[b].0[c].abs()))?;
+        if rows[pivot].0[c].abs() < 1e-14 {
+            return None;
+        }
+        rows.swap(c, pivot);
+        let (head, tail) = rows.split_at_mut(c + 1);
+        let (pr, pv) = (&head[c].0, head[c].1);
+        for (r, v) in tail.iter_mut() {
+            let f = r[c] / pr[c];
+            if f != 0.0 {
+                for j in c..m {
+                    r[j] -= f * pr[j];
+                }
+                *v = *v - pv * f;
+            }
+        }
+    }
+    let mut x = vec![Vector3::ZERO; m];
+    for c in (0..m).rev() {
+        let (r, v) = &rows[c];
+        let mut acc = *v;
+        for j in c + 1..m {
+            acc = acc - x[j] * r[j];
+        }
+        x[c] = acc * (1.0 / r[c]);
+    }
+    Some(x)
 }
 
 #[cfg(test)]

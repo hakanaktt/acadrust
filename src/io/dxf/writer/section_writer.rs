@@ -4739,7 +4739,11 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         let flags = crate::io::dxf::spline_flags::write(spline);
         self.writer.write_i16(70, flags)?;
 
-        let clamped = spline.clamp_periodic_cubic();
+        // A fit-point spline also gets its knots and control points: most
+        // readers evaluate the curve from those alone.
+        let clamped = spline
+            .clamp_periodic_cubic()
+            .or_else(|| spline.interpolate_fit_cubic());
         let (control_points, knots, weights) = clamped.as_ref().map_or(
             (&spline.control_points, &spline.knots, &spline.weights),
             |value| (&value.points, &value.knots, &value.weights),

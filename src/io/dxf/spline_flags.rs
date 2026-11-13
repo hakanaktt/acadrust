@@ -73,7 +73,7 @@ pub(super) fn write(spline: &Spline) -> i16 {
     if spline.flags.rational {
         flags |= 4;
     }
-    if spline.flags.planar {
+    if spline.flags.planar || spline.is_planar() {
         flags |= 8;
     }
     if spline.flags.linear {
