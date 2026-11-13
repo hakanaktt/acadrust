@@ -75,9 +75,10 @@ pub(super) fn find(data: &[u8], start: usize, end: usize) -> Option<TinSurface> 
     if let Some(surface) = triangulation_at(data, start, end).and_then(|pos| read_at(data, pos, end)) {
         return Some(surface);
     }
-    // debt: surfaces whose first definition is neither form below or that
-    // hold an operation kind not mapped in [`operation`] (two in the
-    // samples, with kind 40) are found by probing.
+    // debt: surfaces whose first definition is none of the forms below or
+    // that hold an operation kind not mapped in [`operation`] are found by
+    // probing; one in the samples, built on a surface of another drawing,
+    // whose definitions do not start where its graph head ends.
     (start..end).find_map(|pos| read_at(data, pos, end))
 }
 
@@ -88,6 +89,9 @@ enum First {
     Reference,
     /// Added vertices: `BL 0, BL n, n x 3BD`.
     Vertices,
+    /// Imported from a file: `BL 0`, the file's date as two BL halves of a
+    /// FILETIME (high first), `BL`. The file path is in the text stream.
+    Import,
 }
 
 /// Where the triangulation starts, read field by field: the graph head (see
@@ -129,6 +133,11 @@ fn triangulation_at(data: &[u8], start: usize, end: usize) -> Option<usize> {
                     bits.bit_double()?;
                 }
             }
+            First::Import => {
+                for _ in 0..3 {
+                    bits.bit_long()?;
+                }
+            }
         }
         for _ in 1..(head >> 11) & 0x1F {
             operation(bits)?;
@@ -137,7 +146,7 @@ fn triangulation_at(data: &[u8], start: usize, end: usize) -> Option<usize> {
         bits.bit_long()?;
         bits.skip(2)
     };
-    [Some(First::Reference), Some(First::Vertices), None].into_iter().find_map(|first| {
+    [Some(First::Reference), Some(First::Vertices), Some(First::Import), None].into_iter().find_map(|first| {
         let mut bits = Bits::new(data, at, end);
         layout(&mut bits, first)?;
         bits.raw_long()?;
@@ -157,9 +166,13 @@ fn triangulation_at(data: &[u8], start: usize, end: usize) -> Option<usize> {
 ///                             (boundary) BL type, BL
 ///  0 point group:             nothing (the group is a reference)
 /// 17 raise:                   BD amount
+///  1 (a point):              BD x, BD y, BD z
 ///  2 delete vertex:           BD x, BD y
-/// 22 add line:                BD x, BD y, BD x, BD y
+///  8, 22 (a line; 22 add line): BD x, BD y, BD x, BD y
+/// 35 (a polygon):             BL n, n x { RD x, RD y }
 /// 34 transform:               16 RD (matrix, row by row), BL
+/// 33 (after an import):      BL, BL (a FILETIME, high half first), BL
+/// 40:                         BL
 /// ```
 // ponytail: the three BD after the polylines are 0 in every sample, so they
 // are not told apart from BL; a polyline count other than 1 is not in the
@@ -194,15 +207,33 @@ fn operation(bits: &mut Bits) -> Option<()> {
         17 => {
             bits.bit_double()?;
         }
-        2 | 22 => {
-            for _ in 0..if kind == 2 { 2 } else { 4 } {
+        1 | 2 | 8 | 22 => {
+            for _ in 0..match kind {
+                1 => 3,
+                2 => 2,
+                _ => 4,
+            } {
                 bits.bit_double()?;
+            }
+        }
+        35 => {
+            for _ in 0..bits.bit_long()? {
+                bits.raw_double()?;
+                bits.raw_double()?;
             }
         }
         34 => {
             for _ in 0..16 {
                 bits.raw_double()?;
             }
+            bits.bit_long()?;
+        }
+        33 => {
+            for _ in 0..3 {
+                bits.bit_long()?;
+            }
+        }
+        40 => {
             bits.bit_long()?;
         }
         _ => return None,
@@ -399,14 +430,18 @@ mod tests {
     }
 
     #[test]
-    fn reads_a_raise_then_stops_at_an_unknown_kind() {
-        // BL 17, BL 9, BL 16, GUID, BL 0, BD 1.5; then BL 40, BL 9, BL 16.
+    fn reads_a_raise_and_a_kind_40_then_stops_at_an_unknown_kind() {
+        // BL 17, BL 9, BL 16, GUID, BL 0, BD 1.5; BL 40, BL 9, BL 16, GUID,
+        // BL 0, BL 1; then BL 41, BL 9, BL 16.
         let guid = "0".repeat(128);
         let raise = format!("0100010001 0100001001 0100010000 {guid} 10 00{}", "0".repeat(48) + "1111100000111111");
-        let b = bits_of(&format!("{raise} 0100101000 0100001001 0100010000 {guid} 10 {}", "0".repeat(16)));
+        let kind_40 = format!("0100101000 0100001001 0100010000 {guid} 10 0100000001");
+        let b = bits_of(&format!("{raise} {kind_40} 0100101001 0100001001 0100010000 {guid} 10 {}", "0".repeat(16)));
         let mut bits = Bits::new(&b, 0, b.len() * 8);
         assert!(operation(&mut bits).is_some());
         assert_eq!(bits.pos, 30 + 128 + 2 + 66);
+        assert!(operation(&mut bits).is_some());
+        assert_eq!(bits.pos, 2 * (30 + 128 + 2) + 66 + 10);
         assert!(operation(&mut bits).is_none());
     }
 }
