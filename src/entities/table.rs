@@ -1747,7 +1747,8 @@ impl Table {
         self.set_merged_ranges(ranges);
     }
 
-    pub(crate) fn canonical_merged_ranges(&self) -> Vec<CellRange> {
+    /// Read the explicit ranges and legacy merge anchors as one ordered list.
+    pub fn canonical_merged_ranges(&self) -> Vec<CellRange> {
         let row_count = self.rows.len();
         let column_count = self.columns.len();
         if row_count == 0 || column_count == 0 {

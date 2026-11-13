@@ -6,15 +6,28 @@
 //! data type. DWG files keep that content inside the table record.
 
 use crate::document::CadDocument;
-use crate::entities::table::{CellStylePropertyFlags as P, Table};
+use crate::entities::table::{CellStylePropertyFlags as P, CellType, Table, TableCellContentType};
 use crate::entities::EntityType;
+use crate::io::read::{push_read_diagnostic, ReadDiagnostic, ReadStage};
 use crate::objects::{
-    DataObject, DataObjectData, ObjectType, TableGeometry, TableGeometryCell, XRecordValue,
+    DataObject, DataObjectData, ObjectType, TableGeometry, TableGeometryCell, XRecord, XRecordValue,
 };
 use crate::types::Handle;
 
 const RECORD_KEY: &str = "ACAD_XREC_ROUNDTRIP";
 const MARKER: &str = "ACAD_ROUNDTRIP_2008_TABLE_ENTITY";
+
+fn table_section(record: &XRecord) -> Option<std::ops::Range<usize>> {
+    let start = record
+        .entries
+        .iter()
+        .position(|entry| entry.code == 102 && entry.value.as_string() == Some(MARKER))?;
+    let end = record.entries[start + 1..]
+        .iter()
+        .position(|entry| entry.code == 102)
+        .map_or(record.entries.len(), |offset| start + 1 + offset);
+    Some(start..end)
+}
 
 /// A table's roundtrip record.
 fn roundtrip_record(document: &CadDocument, table: Handle) -> Option<Handle> {
@@ -29,14 +42,13 @@ fn roundtrip_record(document: &CadDocument, table: Handle) -> Option<Handle> {
 /// The handle a table's roundtrip record keeps under `code` (360 the
 /// content object, 361 the geometry object).
 fn roundtrip_entry(document: &CadDocument, table: Handle, code: i32) -> Option<Handle> {
-    let Some(ObjectType::XRecord(record)) = document.objects.get(&roundtrip_record(document, table)?)
+    let Some(ObjectType::XRecord(record)) =
+        document.objects.get(&roundtrip_record(document, table)?)
     else {
         return None;
     };
-    record
-        .entries
+    record.entries[table_section(record)?]
         .iter()
-        .skip_while(|entry| entry.value.as_string() != Some(MARKER))
         .find(|entry| entry.code == code)
         .and_then(|entry| match entry.value {
             XRecordValue::Handle(handle) => Some(handle),
@@ -47,7 +59,11 @@ fn roundtrip_entry(document: &CadDocument, table: Handle, code: i32) -> Option<H
 /// The table content object a table's roundtrip record points to.
 fn roundtrip_content(document: &CadDocument, table: Handle) -> Option<Handle> {
     let content = roundtrip_entry(document, table, 360)?;
-    matches!(document.objects.get(&content), Some(ObjectType::TableContent(_))).then_some(content)
+    matches!(
+        document.objects.get(&content),
+        Some(ObjectType::TableContent(_))
+    )
+    .then_some(content)
 }
 
 /// The table geometry object a table's roundtrip record points to.
@@ -55,7 +71,10 @@ fn roundtrip_geometry(document: &CadDocument, table: Handle) -> Option<Handle> {
     let geometry = roundtrip_entry(document, table, 361)?;
     matches!(
         document.objects.get(&geometry),
-        Some(ObjectType::DataObject(DataObject { data: DataObjectData::TableGeometry(_), .. }))
+        Some(ObjectType::DataObject(DataObject {
+            data: DataObjectData::TableGeometry(_),
+            ..
+        }))
     )
     .then_some(geometry)
 }
@@ -91,39 +110,85 @@ fn table_handles(document: &CadDocument) -> Vec<Handle> {
         .collect()
 }
 
-/// Takes the data type and format a DXF table's content object keeps for
-/// each cell into the table record read from the same file.
-pub(crate) fn restore_table_entity_roundtrip(document: &mut CadDocument) {
+/// Completes the legacy DXF entity from its associated content and geometry.
+pub(crate) fn restore_table_entity_roundtrip(
+    document: &mut CadDocument,
+    diagnostics: &mut Vec<ReadDiagnostic>,
+) {
     for handle in table_handles(document) {
-        let Some(content) = roundtrip_content(document, handle) else {
-            continue;
-        };
-        let Some(ObjectType::TableContent(content)) = document.objects.get(&content).cloned() else {
-            continue;
-        };
-        let geometry = roundtrip_geometry(document, handle).and_then(|geometry| {
-            match document.objects.get(&geometry) {
-                Some(ObjectType::DataObject(DataObject {
-                    data: DataObjectData::TableGeometry(geometry),
-                    ..
-                })) => Some(geometry.clone()),
-                _ => None,
+        let content = roundtrip_entry(document, handle, 360).and_then(|target| {
+            if let Some(ObjectType::TableContent(content)) = document.objects.get(&target) {
+                return Some(content.clone());
             }
+            diagnose(
+                diagnostics,
+                handle,
+                format!("Invalid TABLECONTENT target {target:?}"),
+            );
+            None
+        });
+        let geometry = roundtrip_entry(document, handle, 361).and_then(|target| {
+            if let Some(ObjectType::DataObject(DataObject {
+                data: DataObjectData::TableGeometry(geometry),
+                ..
+            })) = document.objects.get(&target)
+            {
+                return Some(geometry.clone());
+            }
+            diagnose(
+                diagnostics,
+                handle,
+                format!("Invalid TABLEGEOMETRY target {target:?}"),
+            );
+            None
         });
         let Some(EntityType::Table(table)) = document.get_entity_mut(handle) else {
             continue;
         };
-        merge_formats(table, &content);
+        if let Some(content) = content {
+            if content.columns.len() == table.columns.len()
+                && content.rows.len() == table.rows.len()
+                && content
+                    .rows
+                    .iter()
+                    .zip(&table.rows)
+                    .all(|(source, target)| source.cells.len() == target.cells.len())
+            {
+                merge_contents(table, &content);
+            } else {
+                diagnose(
+                    diagnostics,
+                    handle,
+                    "TABLECONTENT dimensions do not match ACAD_TABLE",
+                );
+            }
+        }
         if let Some(geometry) = geometry {
-            merge_geometry(table, &geometry);
+            if geometry.columns as usize == table.columns.len()
+                && geometry.rows as usize == table.rows.len()
+                && geometry.cells.len() == table.rows.iter().map(|row| row.cells.len()).sum()
+            {
+                merge_geometry(table, &geometry);
+            } else {
+                diagnose(
+                    diagnostics,
+                    handle,
+                    "TABLEGEOMETRY dimensions do not match ACAD_TABLE",
+                );
+            }
         }
     }
 }
 
+fn diagnose(diagnostics: &mut Vec<ReadDiagnostic>, table: Handle, message: impl Into<String>) {
+    let mut diagnostic = ReadDiagnostic::new("invalid-table-adjunct", ReadStage::Objects, message);
+    diagnostic.section = Some("OBJECTS".into());
+    diagnostic.record_type = Some("ACAD_TABLE".into());
+    diagnostic.record_handle = Some(table.value());
+    push_read_diagnostic(diagnostics, diagnostic);
+}
+
 fn merge_geometry(table: &mut Table, geometry: &TableGeometry) {
-    if geometry.columns as usize != table.columns.len() {
-        return;
-    }
     let cells = table.rows.iter_mut().flat_map(|row| row.cells.iter_mut());
     for (cell, from) in cells.zip(&geometry.cells) {
         if cell.geometry_width_with_gap == 0.0 && cell.geometries.is_empty() {
@@ -135,18 +200,64 @@ fn merge_geometry(table: &mut Table, geometry: &TableGeometry) {
     }
 }
 
-fn merge_formats(table: &mut Table, content: &Table) {
+fn merge_contents(table: &mut Table, content: &Table) {
+    table.name.clone_from(&content.name);
+    table.description.clone_from(&content.description);
+    table.field_handles.clone_from(&content.field_handles);
+    table.base_style.clone_from(&content.base_style);
+    for (column, source) in table.columns.iter_mut().zip(&content.columns) {
+        column.name.clone_from(&source.name);
+        column.style.clone_from(&source.style);
+        column.style_id = source.style_id;
+        column.custom_data = source.custom_data;
+        column
+            .custom_data_items
+            .clone_from(&source.custom_data_items);
+    }
     for (row, source_row) in table.rows.iter_mut().zip(&content.rows) {
+        row.style.clone_from(&source_row.style);
+        row.style_id = source_row.style_id;
+        row.custom_data = source_row.custom_data;
+        row.custom_data_items
+            .clone_from(&source_row.custom_data_items);
         for (cell, source) in row.cells.iter_mut().zip(&source_row.cells) {
+            cell.style_id = source.style_id;
+            cell.tooltip.clone_from(&source.tooltip);
+            cell.state |= source.state;
+            cell.custom_data = source.custom_data;
+            cell.custom_data_items.clone_from(&source.custom_data_items);
+            cell.has_linked_data = source.has_linked_data;
+            cell.data_link_handle = source.data_link_handle;
+            cell.data_link_rows = source.data_link_rows;
+            cell.data_link_columns = source.data_link_columns;
+            cell.data_link_unknown = source.data_link_unknown;
             // The table record gives every cell an empty text; the content
             // object tells which cells hold no content at all.
             if source.contents.is_empty()
-                && cell
-                    .contents
-                    .iter()
-                    .all(|c| c.block_handle.is_none() && c.field_handle.is_none() && c.value.display().is_empty())
+                && cell.contents.iter().all(|c| {
+                    c.block_handle.is_none()
+                        && c.field_handle.is_none()
+                        && c.value.display().is_empty()
+                })
             {
                 cell.contents.clear();
+            }
+            // The legacy entity has only one slot and may put a generated
+            // display block there. The modern record holds the authored items.
+            if source.contents.len() > 1
+                || source.contents.first().is_some_and(|item| {
+                    matches!(
+                        item.content_type,
+                        TableCellContentType::Block | TableCellContentType::Field
+                    )
+                })
+            {
+                cell.contents.clone_from(&source.contents);
+                cell.cell_type = if cell.contents[0].content_type == TableCellContentType::Block {
+                    CellType::Block
+                } else {
+                    CellType::Text
+                };
             }
             for (value, from) in cell.contents.iter_mut().zip(&source.contents) {
                 let unset = value.format_property_flags == 0
@@ -172,6 +283,10 @@ fn merge_formats(table: &mut Table, content: &Table) {
             let Some(from) = source.style.as_ref() else {
                 continue;
             };
+            if cell.style.is_none() {
+                cell.style = Some(from.clone());
+                continue;
+            }
             for property in [P::DATA_TYPE, P::DATA_FORMAT] {
                 if !from.sets(property) || cell.style.as_ref().is_some_and(|s| s.sets(property)) {
                     continue;
@@ -213,16 +328,8 @@ pub(crate) fn prepare_table_entity_roundtrip(document: &mut std::borrow::Cow<'_,
                 if let Some(ObjectType::XRecord(xrecord)) = document.objects.get_mut(&record) {
                     // The record may carry other roundtrip data: replace only
                     // this table's section (a stale one, if any).
-                    if let Some(start) = xrecord
-                        .entries
-                        .iter()
-                        .position(|entry| entry.value.as_string() == Some(MARKER))
-                    {
-                        let end = xrecord.entries[start + 1..]
-                            .iter()
-                            .position(|entry| entry.code == 102)
-                            .map_or(xrecord.entries.len(), |offset| start + 1 + offset);
-                        xrecord.entries.drain(start..end);
+                    if let Some(section) = table_section(xrecord) {
+                        xrecord.entries.drain(section);
                     }
                     xrecord.add_string(102, MARKER);
                     xrecord.add_handle(360, content);
@@ -257,13 +364,26 @@ pub(crate) fn prepare_table_entity_roundtrip(document: &mut std::borrow::Cow<'_,
                     continue;
                 };
                 let geometry = document.allocate_handle();
-                let mut object = DataObject::new(DataObjectData::TableGeometry(TableGeometry::default()));
+                let mut object =
+                    DataObject::new(DataObjectData::TableGeometry(TableGeometry::default()));
                 object.handle = geometry;
                 object.owner = record;
-                document.objects.insert(geometry, ObjectType::DataObject(object));
+                document
+                    .objects
+                    .insert(geometry, ObjectType::DataObject(object));
                 if let Some(ObjectType::XRecord(xrecord)) = document.objects.get_mut(&record) {
-                    xrecord.entries.retain(|entry| entry.code != 361);
-                    xrecord.add_handle(361, geometry);
+                    if let Some(section) = table_section(xrecord) {
+                        if let Some(entry) = xrecord.entries[section.clone()]
+                            .iter_mut()
+                            .find(|entry| entry.code == 361)
+                        {
+                            entry.value = XRecordValue::Handle(geometry);
+                        } else {
+                            xrecord.add_handle(361, geometry);
+                            let entry = xrecord.entries.pop().expect("added geometry entry");
+                            xrecord.entries.insert(section.end, entry);
+                        }
+                    }
                 }
                 geometry
             }
@@ -275,14 +395,14 @@ pub(crate) fn prepare_table_entity_roundtrip(document: &mut std::borrow::Cow<'_,
         if let Some(record) = roundtrip_record(document, handle) {
             if let Some(ObjectType::XRecord(xrecord)) = document.objects.get_mut(&record) {
                 let last_row = table.rows.len().saturating_sub(1) as i32;
-                if let Some(entry) = xrecord
-                    .entries
-                    .iter_mut()
-                    .skip_while(|entry| entry.value.as_string() != Some(MARKER))
-                    .filter(|entry| entry.code == 90)
-                    .nth(2)
-                {
-                    entry.value = XRecordValue::Int32(last_row);
+                if let Some(section) = table_section(xrecord) {
+                    if let Some(entry) = xrecord.entries[section]
+                        .iter_mut()
+                        .filter(|entry| entry.code == 90)
+                        .nth(2)
+                    {
+                        entry.value = XRecordValue::Int32(last_row);
+                    }
                 }
             }
         }
