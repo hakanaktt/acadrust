@@ -6276,6 +6276,81 @@ mod tests {
         DwgMergedReader::new(data, dxf, hsb)
     }
 
+    /// Writes one wire the way the DWG format defines it: the transform's
+    /// scale is a single BD (uniform scale), not a 3BD. Built from raw
+    /// primitives so it does not depend on `ObjectWriter`.
+    fn write_spec_wire(
+        w: &mut DwgMergedWriter,
+        acis_index: i32,
+        points: &[Vector3],
+        transform: Option<(Vector3, Vector3, Vector3, Vector3, f64, [bool; 3])>,
+    ) {
+        w.write_byte(1); // wire type
+        w.write_bit_long(-7); // selection marker
+        w.write_bit_short(5); // colour
+        w.write_bit_long(acis_index);
+        w.write_bit_long(points.len() as i32);
+        for p in points {
+            w.write_3bit_double(*p);
+        }
+        match transform {
+            None => w.write_bit(false),
+            Some((x, y, z, t, scale, flags)) => {
+                w.write_bit(true);
+                w.write_3bit_double(x);
+                w.write_3bit_double(y);
+                w.write_3bit_double(z);
+                w.write_3bit_double(t);
+                w.write_bit_double(scale); // one BD, not a 3BD
+                for flag in flags {
+                    w.write_bit(flag);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn wire_transform_scale_is_one_bit_double_and_the_next_wire_stays_in_sync() {
+        let dwg = DwgVersion::AC24;
+        let dxf = DxfVersion::AC1032;
+        let (x, y, z) = (
+            Vector3::new(-1.0, 0.0, 0.0),
+            Vector3::new(0.0, -1.0, 0.0),
+            Vector3::UNIT_Z,
+        );
+        let t = Vector3::new(10.5, -20.25, 30.125);
+        let first_points = [Vector3::new(1.0, 2.0, 3.0), Vector3::new(4.0, 5.0, 6.0)];
+        let second_points = [Vector3::new(7.0, 8.0, 9.0)];
+        let mut reader = make_reader(dwg, dxf, |w| {
+            write_spec_wire(
+                w,
+                3,
+                &first_points,
+                Some((x, y, z, t, 2.5, [true, false, true])),
+            );
+            write_spec_wire(w, 4, &second_points, None);
+        });
+
+        let first = read_wire(&mut reader, false);
+        assert_eq!(first.acis_index, 3);
+        assert_eq!(first.selection_marker, -7);
+        assert_eq!(first.points, first_points.to_vec());
+        assert!(first.has_transform);
+        assert_eq!((first.x_axis, first.y_axis, first.z_axis), (x, y, z));
+        assert_eq!(first.translation, t);
+        assert_eq!(first.scale, Vector3::new(2.5, 2.5, 2.5));
+        assert!(first.has_rotation);
+        assert!(!first.has_reflection);
+        assert!(first.has_shear);
+
+        let second = read_wire(&mut reader, false);
+        assert_eq!(second.acis_index, 4);
+        assert_eq!(second.selection_marker, -7);
+        assert_eq!(second.points, second_points.to_vec());
+        assert!(!second.has_transform);
+        reader.check_error().expect("both wires decode cleanly");
+    }
+
     #[test]
     fn truncated_surface_sets_a_reader_error_instead_of_panicking() {
         let dwg = DwgVersion::AC18;
