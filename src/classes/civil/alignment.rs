@@ -770,7 +770,11 @@ fn read_element(bits: &mut Bits, member: Option<usize>, after_type: Option<usize
                 clockwise: bits.bit()?,
             }
         }
-        (260, Some(14)) => AlignmentElementKind::FreeSpiral,
+        (260, Some(14)) => {
+            // The spiral shape, as in the other kinds above (256: clothoid).
+            bits.bit_long()?;
+            AlignmentElementKind::FreeSpiral
+        }
         (260, Some(code @ (10 | 12))) => {
             bits.bit_long()?;
             AlignmentElementKind::FreeSpiralBetweenLines {
