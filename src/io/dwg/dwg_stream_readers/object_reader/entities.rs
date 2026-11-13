@@ -6223,7 +6223,9 @@ fn read_wire(reader: &mut DwgMergedReader, wide_color: bool) -> Wire {
         y_axis = reader.read_3bit_double();
         z_axis = reader.read_3bit_double();
         translation = reader.read_3bit_double();
-        scale = reader.read_3bit_double();
+        // The scale is one BD (uniform scale), not a 3BD.
+        let uniform = reader.read_bit_double();
+        scale = Vector3::new(uniform, uniform, uniform);
         has_rotation = reader.read_bit();
         has_reflection = reader.read_bit();
         has_shear = reader.read_bit();

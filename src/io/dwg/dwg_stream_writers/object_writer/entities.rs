@@ -5979,7 +5979,8 @@ impl<'a> DwgObjectWriter<'a> {
 
     /// Write a single wire struct (shared by wires and silhouette wires).
     /// Field order/types per LibreDWG `Dwg_3DSOLID_wire` (mirrors the reader):
-    /// RC type, BLd selection_marker, BS color, BLd acis_index, BL num_points.
+    /// RC type, BLd selection_marker, BS color, BLd acis_index, BL num_points;
+    /// a transform carries 4 x 3BD, one BD uniform scale, then 3 flag bits.
     fn write_wire(&mut self, wire: &Wire) {
         self.writer.write_byte(wire.wire_type as u8);
         self.writer.write_bit_long(wire.selection_marker);
@@ -6001,7 +6002,8 @@ impl<'a> DwgObjectWriter<'a> {
             self.writer.write_3bit_double(wire.y_axis);
             self.writer.write_3bit_double(wire.z_axis);
             self.writer.write_3bit_double(wire.translation);
-            self.writer.write_3bit_double(wire.scale);
+            // One BD: the transform scale is uniform.
+            self.writer.write_bit_double(wire.scale.x);
             self.writer.write_bit(wire.has_rotation);
             self.writer.write_bit(wire.has_reflection);
             self.writer.write_bit(wire.has_shear);
