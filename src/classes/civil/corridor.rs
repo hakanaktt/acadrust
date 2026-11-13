@@ -74,11 +74,9 @@ pub(super) fn baselines(data: &[u8], start: usize, end: usize) -> Vec<Groups> {
         return found;
     }
     // debt: records [`walk`] does not read are found by probing bit offsets
-    // for the first group of each baseline: a head whose corner block is
-    // followed by 24 more bits, or whose fields after BL 114 come one bit
-    // later; a 0x1015 target item whose words are not 0x..402A / 0x..09....
-    // (one RL and no tail, or a 0x0A word with another count byte); heads
-    // with a field other than 0 or 32 after the GUID.
+    // for the first group of each baseline: a head whose fields after its
+    // BL 114 hold one bit more than the 66 of every other sample, and heads
+    // with a field other than 0, 32 or 160 after the GUID.
     probe(data, start, end)
 }
 
@@ -108,12 +106,15 @@ fn probe(data: &[u8], start: usize, end: usize) -> Vec<Groups> {
 /// ```text
 /// head:     BL 80, 0, 80, 80, 0, BL, BL, 4 bits, RC n, n x key,
 ///           BL 0, 120 bits, BL 82, BL n, n x 4 bits, BL flag, [flag: GUID],
-///           BL a, [a = 32: BL, BL, RL], BL m, m x 3BD, BL 0, BL 32,
-///           RL packed, B
+///           BL a, then by a
+///             0:   BL m, m x 3BD
+///             32:  BL, BL, RL, BL m, m x 3BD
+///             160: 76 bits
+///           BL 0, BL 32, RC, RC baselines (top 5 bits), 1 bit,
+///           6 bits region count, BL record count (both of the first
+///           baseline's first region)
 /// flag:     set, each region block holds a GUID before its start and its
 ///           end station
-/// packed:   bits 11-15 baseline count, 17-22 the first baseline's region
-///           count, 23-30 its first region's record count less the B
 /// baseline: [after the first: BL 0, BL 0, BL region count, BL record
 ///           count], regions, then B, GUID, BL n, n x feature line group,
 ///           B, B, GUID
@@ -123,8 +124,9 @@ fn probe(data: &[u8], start: usize, end: usize) -> Vec<Groups> {
 ///           last applied subassembly has words before its -1, less 8 (10
 ///           of 18 and 7 of 15 in the samples)
 /// ```
-// ponytail: the 4 and 120-bit runs are skipped by length; they are the same
-// in every sample.
+// ponytail: the 4, 120 and (a = 160) 76-bit runs, the first RC, the low 3
+// bits of the second and the bit after it are skipped by length; they are
+// the same in every sample.
 fn walk(bits: &mut Bits) -> Option<Vec<Groups>> {
     for want in [80, 0, 80, 80, 0] {
         (bits.bit_long()? == want).then_some(())?;
@@ -144,25 +146,34 @@ fn walk(bits: &mut Bits) -> Option<Vec<Groups>> {
     if guids {
         bits.skip(128)?;
     }
-    match bits.bit_long()? {
-        0 => {}
+    let corners = match bits.bit_long()? {
+        0 => true,
         32 => {
             bits.bit_long()?;
             bits.bit_long()?;
             bits.raw_long()?;
+            true
+        }
+        160 => {
+            bits.skip(76)?;
+            false
         }
         _ => return None,
-    }
-    let corners = usize::try_from(bits.bit_long()?).ok().filter(|n| n * 6 <= bits.remaining())?;
-    for _ in 0..3 * corners {
-        bits.bit_double()?;
+    };
+    if corners {
+        let n = usize::try_from(bits.bit_long()?).ok().filter(|n| n * 6 <= bits.remaining())?;
+        for _ in 0..3 * n {
+            bits.bit_double()?;
+        }
     }
     (bits.bit_long()? == 0 && bits.bit_long()? == 32).then_some(())?;
-    let packed = bits.raw_long()? as u32;
-    let mut regions = (packed >> 17) & 0x3F;
-    let mut records = ((packed >> 23) & 0xFF) + u32::from(bits.bit()?);
+    bits.raw_short_byte()?;
+    let baselines = bits.raw_short_byte()? >> 3;
+    bits.skip(1)?;
+    let mut regions = u32::from(bits.bits_value(6)?);
+    let mut records = u32::try_from(bits.bit_long()?).ok()?;
     let mut out = Vec::new();
-    for baseline in 0..(packed >> 11) & 0x1F {
+    for baseline in 0..baselines {
         if baseline > 0 {
             (bits.bit_long()? == 0 && bits.bit_long()? == 0).then_some(())?;
             regions = u32::try_from(bits.bit_long()?).ok()?;
@@ -219,7 +230,8 @@ fn station(bits: &mut Bits, after_first: bool) -> Option<Option<u32>> {
 
 /// The assembly's groups of nodes `object, object, BL, BL, BL`; after a node
 /// `BL 80` opens the group's next node (the rest of its first object head
-/// follows), `BL 1` the next group, `BL 0` ends.
+/// follows), `BL 0` ends, any other value up to 79 opens the next group (1,
+/// 2 and 3 in the samples).
 fn assembly(bits: &mut Bits) -> Option<()> {
     loop {
         object(bits)?;
@@ -230,8 +242,8 @@ fn assembly(bits: &mut Bits) -> Option<()> {
             }
             match bits.bit_long()? {
                 80 => object_rest(bits)?,
-                1 => break,
                 0 => return Some(()),
+                1..=79 => break,
                 _ => return None,
             }
         }
@@ -293,49 +305,32 @@ fn body(bits: &mut Bits) -> Option<u32> {
 /// A target item: `BL type, BL 0`, then by the type's low byte
 ///
 /// ```text
-/// 0x15: object, RL a, RL b, (b >> 24) x object
-/// 0x17: BL k, k x object
+/// 0x15: object
+/// 0x17: BL k, k x object, BL
 /// ```
 ///
-/// then `BL, B, B choices, [BL n, n x BL], BL index`; a 0x15 item is
-/// followed by `((a >> 22) & 3) - 1` more items. Types carry flags above the
-/// low byte (0x1015, 0x1017, 0x1117, 0x20001117 in the samples).
+/// then `B, B choices, [BL n, n x BL], BL index`. Types carry flags above
+/// the low byte (0x1015, 0x1017, 0x1117, 0x20001117 in the samples).
 fn target(bits: &mut Bits) -> Option<()> {
     let kind = bits.bit_long()? & 0xFF;
     (bits.bit_long()? == 0).then_some(())?;
-    let mut more = 0;
     match kind {
-        0x15 => {
-            object(bits)?;
-            let a = bits.raw_long()? as u32;
-            let b = bits.raw_long()? as u32;
-            // ponytail: only the 0x..402A / 0x..09.... words of the samples
-            // are read; their other bits are not named.
-            (a & 0xFFFF == 0x402A && (b >> 16) & 0xFF == 0x09).then_some(())?;
-            more = ((a >> 22) & 3).checked_sub(1)?;
-            for _ in 0..b >> 24 {
-                object(bits)?;
-            }
-        }
+        0x15 => object(bits)?,
         0x17 => {
             for _ in 0..bits.bit_long()? {
                 object(bits)?;
             }
+            bits.bit_long()?;
         }
         _ => return None,
     }
-    bits.bit_long()?;
     bits.bit()?;
     if bits.bit()? {
         for _ in 0..bits.bit_long()? {
             bits.bit_long()?;
         }
     }
-    bits.bit_long()?;
-    for _ in 0..more {
-        target(bits)?;
-    }
-    Some(())
+    bits.bit_long().map(|_| ())
 }
 
 /// A region's block after its stations, returning the record count it gives
