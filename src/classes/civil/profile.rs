@@ -841,8 +841,10 @@ impl ProfileViewFrame {
 /// ```
 // ponytail: the 121/128, 5-bit and 258-bit runs are skipped by length
 // (zero or constant in every sample).
-fn view_frame_fields(data: &[u8], start: usize, end: usize) -> Option<ProfileViewFrame> {
-    let mut bits = Bits::new(data, start, end);
+/// The class data graph objects (profile views, TIN surfaces) open with:
+/// `BL 80, 2 bits, BL, BL, BL version`, then version 5: `BL key count`,
+/// keys (see alignment::key), `BL 0`, 121 bits; version 4: `BL 0`, 128 bits.
+pub(super) fn graph_head(bits: &mut Bits) -> Option<()> {
     (bits.bit_long()? == 80).then_some(())?;
     bits.pos += 2;
     bits.bit_long()?;
@@ -850,7 +852,7 @@ fn view_frame_fields(data: &[u8], start: usize, end: usize) -> Option<ProfileVie
     match bits.bit_long()? {
         5 => {
             for _ in 0..bits.bit_long()? {
-                super::alignment::key(&mut bits)?;
+                super::alignment::key(bits)?;
             }
             (bits.bit_long()? == 0).then_some(())?;
             bits.pos += 121;
@@ -862,6 +864,12 @@ fn view_frame_fields(data: &[u8], start: usize, end: usize) -> Option<ProfileVie
         }
         _ => return None,
     }
+    Some(())
+}
+
+fn view_frame_fields(data: &[u8], start: usize, end: usize) -> Option<ProfileViewFrame> {
+    let mut bits = Bits::new(data, start, end);
+    graph_head(&mut bits)?;
     let point = |bits: &mut Bits| -> Option<Vector2> {
         let p = Vector2::new(bits.bit_double()?, bits.bit_double()?);
         (p.x.is_finite() && p.y.is_finite() && bits.bit_double()? == 0.0).then_some(p)

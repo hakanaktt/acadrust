@@ -70,11 +70,42 @@ impl TinSurface {
     }
 }
 
-/// First triangulation block in `data[start..end]` (bit positions).
-// ponytail: probes every bit offset; a body without a triangulation costs a
-// full scan. Parse the class header instead once its fields are known.
+/// The triangulation block of a surface body.
 pub(super) fn find(data: &[u8], start: usize, end: usize) -> Option<TinSurface> {
+    if let Some(surface) = triangulation_at(data, start, end).and_then(|pos| read_at(data, pos, end)) {
+        return Some(surface);
+    }
+    // debt: Civil 3D 2013 surfaces and surfaces with definition operations
+    // write other fields before the triangulation; it is found by probing.
     (start..end).find_map(|pos| read_at(data, pos, end))
+}
+
+/// Where the triangulation starts, read field by field: the graph head (see
+/// profile::graph_head), 3BD origin, 9 BD, BD, `RC n`, `n` x 5 bits, 6 BL,
+/// 3 bits, GUID, `BL 0`, GUID, 70 bits, RL, `RS 0x05A2`, `RC k`, `k` x 2
+/// bytes, "MMS01".
+// ponytail: the 5-bit, 3-bit and 70-bit runs are skipped by length (the
+// same in every sample); a definition count other than 0 is not mapped.
+fn triangulation_at(data: &[u8], start: usize, end: usize) -> Option<usize> {
+    let mut bits = Bits::new(data, start, end);
+    super::profile::graph_head(&mut bits)?;
+    for _ in 0..13 {
+        bits.bit_double()?;
+    }
+    let items = usize::from(bits.bits_value(8)?);
+    let skip = |bits: &mut Bits, n: usize| (bits.remaining() >= n).then(|| bits.pos += n);
+    skip(&mut bits, 5 * items)?;
+    for _ in 0..6 {
+        bits.bit_long()?;
+    }
+    skip(&mut bits, 3 + 128)?;
+    (bits.bit_long()? == 0).then_some(())?;
+    skip(&mut bits, 128 + 70)?;
+    bits.raw_long()?;
+    (u16::from_le_bytes([bits.raw_short_byte()?, bits.raw_short_byte()?]) == 0x05A2).then_some(())?;
+    let k = usize::from(bits.raw_short_byte()?);
+    skip(&mut bits, 16 * k)?;
+    (b"MMS01".iter().all(|c| bits.raw_short_byte() == Some(*c))).then_some(bits.pos)
 }
 
 fn read_at(data: &[u8], pos: usize, end: usize) -> Option<TinSurface> {
