@@ -3705,18 +3705,6 @@ mod tests {
     }
 
     #[test]
-    fn reads_a_design_speed_of_zero() {
-        // BL 0 equations, BL 1, BL 1 speed: BL 1, BD 0 station, BD 0 speed, GUID.
-        let s = format!("10 0100000001 0100000001 0100000001 10 10 {}", "0".repeat(128));
-        let s: Vec<u8> = s.bytes().filter(|b| *b == b'0' || *b == b'1').collect();
-        let data: Vec<u8> = s.chunks(8).map(|c| c.iter().enumerate().fold(0u8, |a, (i, b)| a | ((b - b'0') << (7 - i)))).collect();
-        let (equations, speeds, pos) = post_cache_at(&data, 0, s.len(), 0.0, 200.0, true).unwrap();
-        assert!(equations.is_empty());
-        assert_eq!(speeds, vec![DesignSpeed { station: 0.0, speed: 0.0 }]);
-        assert_eq!(pos, s.len());
-    }
-
-    #[test]
     fn arc_leaves_line_and_reaches_point() {
         // Line along +x; a quarter circle of radius 10 from (5, 0) ends at (15, 10).
         let (touch, q, end) = arc_from_line_to_point(v(0.0, 0.0), v(1.0, 0.0), 10.0, v(15.0, 10.0)).unwrap();
@@ -3786,5 +3774,17 @@ mod tests {
         assert!(q[0].distance(&v(0.0, 30.0)) < 1e-9);
         assert!(end.point.distance(&v(0.0, 0.0)) < TOLERANCE);
         assert!((normalize(end.heading - PI)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn reads_a_design_speed_of_zero() {
+        // BL 0 equations, BL 1, BL 1 speed: BL 1, BD 0 station, BD 0 speed, GUID.
+        let s = format!("10 0100000001 0100000001 0100000001 10 10 {}", "0".repeat(128));
+        let s: Vec<u8> = s.bytes().filter(|b| *b == b'0' || *b == b'1').collect();
+        let data: Vec<u8> = s.chunks(8).map(|c| c.iter().enumerate().fold(0u8, |a, (i, b)| a | ((b - b'0') << (7 - i)))).collect();
+        let (equations, speeds, pos) = post_cache_at(&data, 0, s.len(), 0.0, 200.0, true).unwrap();
+        assert!(equations.is_empty());
+        assert_eq!(speeds, vec![DesignSpeed { station: 0.0, speed: 0.0 }]);
+        assert_eq!(pos, s.len());
     }
 }
