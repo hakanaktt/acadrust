@@ -1120,7 +1120,30 @@ impl DwgDocumentBuilder {
                         push_read_diagnostic(&mut diagnostics, diagnostic);
                     }
                 }
-                Ok(record) => record_catalog.push(record),
+                Ok(record) => {
+                    let (handle, offset, raw_type_code, _) = record;
+                    // A code below the class range that names no fixed type is
+                    // most likely a damaged record: the record is still kept
+                    // verbatim, but the caller is told.
+                    if raw_type_code < 500 && fixed_type_name(raw_type_code).is_none() {
+                        let message = format!(
+                            "Record at handle {handle:#X} has unknown fixed object type {raw_type_code}"
+                        );
+                        self.notifications
+                            .notify(NotificationType::Warning, message.clone());
+                        let mut diagnostic = ReadDiagnostic::new(
+                            "unknown-object-type",
+                            ReadStage::RecordStream,
+                            message,
+                        );
+                        diagnostic.source_offset = Some(offset as u64);
+                        diagnostic.source_offset_basis = Some("object-section-byte".to_string());
+                        diagnostic.section = Some("AcDb:AcDbObjects".to_string());
+                        diagnostic.record_handle = Some(handle);
+                        push_read_diagnostic(&mut diagnostics, diagnostic);
+                    }
+                    record_catalog.push(record);
+                }
                 Err((handle, source_offset, failure)) => {
                     skipped_catalog = skipped_catalog.saturating_add(1);
                     let message = match failure {

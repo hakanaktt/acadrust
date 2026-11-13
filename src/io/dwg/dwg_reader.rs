@@ -34,7 +34,7 @@ use std::path::Path;
 use byteorder::{LittleEndian, ReadBytesExt};
 
 use crate::error::DxfError;
-use crate::io::dwg::checksum::{apply_magic_sequence, apply_mask};
+use crate::io::dwg::checksum::{adler32_checksum, apply_magic_sequence, apply_mask};
 use crate::io::dwg::decompressor_ac18::decompress_ac18;
 use crate::io::dwg::decompressor_ac21::decompress_ac21;
 use crate::io::dwg::dwg21_metadata::Dwg21CompressedMetadata;
@@ -1327,6 +1327,27 @@ impl<R: Read + Seek> DwgReader<R> {
         self.read_with_stats().map(|outcome| outcome.document)
     }
 
+    /// Tell the caller that a page's stored checksum does not match the
+    /// bytes read: the data was damaged after it was written.
+    fn check_page_checksum(
+        &mut self,
+        section: &str,
+        source_offset: Option<u64>,
+        stored: u32,
+        computed: u32,
+    ) {
+        if stored == computed {
+            return;
+        }
+        let message = format!(
+            "{section}: page checksum mismatch at offset {:#X} (stored {stored:#010X}, computed {computed:#010X})",
+            source_offset.unwrap_or(0)
+        );
+        self.notifications
+            .notify(NotificationType::Warning, message.clone());
+        self.report_section_diagnostic("checksum-mismatch", section, source_offset, message);
+    }
+
     fn report_section_diagnostic(
         &mut self,
         code: &str,
@@ -2352,6 +2373,25 @@ impl<R: Read + Seek> DwgReader<R> {
             }
         }
 
+        // CRC-16 of every byte before it follows the locator records.
+        if (0..=6).contains(&record_count) {
+            let crc_at = self.stream.stream_position()?;
+            let stored = self.stream.read_u16::<LittleEndian>()?;
+            self.stream.seek(SeekFrom::Start(0))?;
+            let mut bytes = vec![0u8; crc_at as usize];
+            self.stream.read_exact(&mut bytes)?;
+            self.stream.seek(SeekFrom::Start(crc_at + 2))?;
+            let computed = crate::io::dwg::crc::crc16(crate::io::dwg::crc::CRC16_SEED, &bytes);
+            if stored != computed {
+                let message = format!(
+                    "AC15 file header: CRC mismatch (stored {stored:#06X}, computed {computed:#06X})"
+                );
+                self.notifications
+                    .notify(NotificationType::Warning, message.clone());
+                self.report_section_diagnostic("checksum-mismatch", "FileHeader", Some(crc_at), message);
+            }
+        }
+
         // Calculate AcDbObjects position.
         //
         // AcDbObjects is not in the locator table. It occupies the gap between
@@ -2485,11 +2525,11 @@ impl<R: Read + Seek> DwgReader<R> {
         self.stream.seek(SeekFrom::Start(page_map_address))?;
 
         // Read 20-byte system page header (NOT XOR-masked)
-        let _section_type = self.stream.read_i32::<LittleEndian>()?;
+        let section_type = self.stream.read_i32::<LittleEndian>()?;
         let decomp_size = self.stream.read_i32::<LittleEndian>()?;
         let comp_size = self.stream.read_i32::<LittleEndian>()?;
         let compression = self.stream.read_i32::<LittleEndian>()?;
-        let _checksum = self.stream.read_u32::<LittleEndian>()?;
+        let checksum = self.stream.read_u32::<LittleEndian>()?;
 
         // Read compressed data
         if comp_size <= 0 || comp_size > 10_000_000 {
@@ -2513,6 +2553,11 @@ impl<R: Read + Seek> DwgReader<R> {
         self.charge_decompressed_bytes(output_size, "AC18 page map")?;
         let mut compressed = try_zeroed_vec(comp_size as usize, "AC18 page map compressed data")?;
         self.stream.read_exact(&mut compressed)?;
+        let computed = system_page_checksum(
+            [section_type, decomp_size as i32, comp_size, compression],
+            &compressed,
+        );
+        self.check_page_checksum("AC18 page map", Some(page_map_address), checksum, computed);
 
         // Decompress
         let decompressed = if compression == 2 {
@@ -2578,11 +2623,11 @@ impl<R: Read + Seek> DwgReader<R> {
         self.stream.seek(SeekFrom::Start(page_offset as u64))?;
 
         // Read 20-byte system page header (NOT XOR-masked)
-        let _section_type = self.stream.read_i32::<LittleEndian>()?;
+        let section_type = self.stream.read_i32::<LittleEndian>()?;
         let decomp_size = self.stream.read_i32::<LittleEndian>()?;
         let comp_size = self.stream.read_i32::<LittleEndian>()?;
         let compression = self.stream.read_i32::<LittleEndian>()?;
-        let _checksum = self.stream.read_u32::<LittleEndian>()?;
+        let checksum = self.stream.read_u32::<LittleEndian>()?;
 
         // Read compressed data
         if comp_size <= 0 || comp_size > 10_000_000 {
@@ -2607,6 +2652,11 @@ impl<R: Read + Seek> DwgReader<R> {
         let mut compressed =
             try_zeroed_vec(comp_size as usize, "AC18 section map compressed data")?;
         self.stream.read_exact(&mut compressed)?;
+        let computed = system_page_checksum(
+            [section_type, decomp_size as i32, comp_size, compression],
+            &compressed,
+        );
+        self.check_page_checksum("AC18 section map", Some(page_offset as u64), checksum, computed);
 
         // Decompress
         let decompressed = if compression == 2 {
@@ -3533,7 +3583,7 @@ impl<R: Read + Seek> DwgReader<R> {
             let mut prepared = Vec::with_capacity(page_batch.len());
             for page in page_batch {
                 let page_number = page.page_number as i32;
-                let page_result = (|| -> Result<(usize, Vec<u8>), DxfError> {
+                let page_result = (|| -> Result<(usize, Vec<u8>, [u32; 4]), DxfError> {
                     let &(page_file_offset, _page_total_size) =
                         info.page_records.get(&page_number).ok_or_else(|| {
                             DxfError::Parse(format!(
@@ -3583,6 +3633,16 @@ impl<R: Read + Seek> DwgReader<R> {
                         format_args!("AC18 page {} compressed data", page_number),
                     )?;
                     self.stream.read_exact(&mut compressed)?;
+                    // Header checksum at 0x18 (its header with that field as
+                    // zero, seeded with the data checksum), data checksum at
+                    // 0x1C (the stored data, seed 0).
+                    let stored_header = u32::from_le_bytes(header[0x18..0x1C].try_into().unwrap());
+                    let stored_data = u32::from_le_bytes(header[0x1C..0x20].try_into().unwrap());
+                    let computed_data = adler32_checksum(0, &compressed);
+                    let mut zeroed = header;
+                    zeroed[0x18..0x1C].fill(0);
+                    let computed_header = adler32_checksum(stored_data, &zeroed);
+                    let checksums = [stored_header, computed_header, stored_data, computed_data];
                     if section.encrypted != 0 {
                         if let Some(key) = &self.decryption_key {
                             let mut rc4 = crate::io::dwg::security::Rc4::new(key);
@@ -3595,11 +3655,24 @@ impl<R: Read + Seek> DwgReader<R> {
                         }
                     }
 
-                    Ok((data_offset as usize, compressed))
+                    Ok((data_offset as usize, compressed, checksums))
                 })();
 
                 match page_result {
-                    Ok(page) => prepared.push(page),
+                    Ok((offset, data, checksums)) => {
+                        // An encrypted page's checksums are not checked: what
+                        // they cover is not settled for that layout.
+                        if section.encrypted == 0 {
+                            let at = info
+                                .page_records
+                                .get(&page_number)
+                                .map(|&(offset, _)| offset as u64);
+                            let name = format!("AC18 section '{section_name}' page {page_number}");
+                            self.check_page_checksum(&name, at, checksums[0], checksums[1]);
+                            self.check_page_checksum(&name, at, checksums[2], checksums[3]);
+                        }
+                        prepared.push((offset, data));
+                    }
                     Err(error) if failsafe => {
                         skipped_pages += 1;
                         let page_offset = info
@@ -3853,6 +3926,16 @@ impl std::fmt::Display for CrcExtractionReport {
 
         Ok(())
     }
+}
+
+/// The checksum of an AC18 system page (page map, section map): Adler-32 of
+/// its 20-byte header with the checksum field as zero, then of its data.
+fn system_page_checksum(header: [i32; 4], data: &[u8]) -> u32 {
+    let mut bytes = [0u8; 20];
+    for (slot, value) in bytes.chunks_exact_mut(4).zip(header) {
+        slot.copy_from_slice(&value.to_le_bytes());
+    }
+    adler32_checksum(adler32_checksum(0, &bytes), data)
 }
 
 #[cfg(test)]
