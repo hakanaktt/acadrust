@@ -825,8 +825,9 @@ impl ProfileViewFrame {
 /// A profile view's frame, read field by field:
 ///
 /// ```text
-/// BL 80, 2 bits, BL, BL, BL, BL key count, keys (see alignment::key),
-/// BL 0, 121 bits, 3BD origin, 9 BD (rotation), BD,
+/// BL 80, 2 bits, BL, BL, BL version, then version 5: BL key count, keys
+/// (see alignment::key), BL 0, 121 bits; version 4: BL 0, 128 bits;
+/// 3BD origin, 9 BD (rotation), BD,
 /// RC n, n x 5 bits, BL m, m x record, 1 bit,
 /// 3BD origin, BL, BL, 3 x 3BD range (min, min, max), 3 x 3BD (a copy),
 /// BL, BL byte count + UTF-16 title, BL 0, 7 x BD, 6 x BL,
@@ -834,20 +835,29 @@ impl ProfileViewFrame {
 /// record: BL 0, BL, BD, BL, BD, 258 bits, BL n, n x BL, BL n, n x BL,
 ///     BL index (1, 2, …), BD, BD
 /// ```
-// ponytail: the 121, 5-bit and 258-bit runs are skipped by length (zero or
-// constant in every sample).
+// ponytail: the 121/128, 5-bit and 258-bit runs are skipped by length
+// (zero or constant in every sample).
 fn view_frame_fields(data: &[u8], start: usize, end: usize) -> Option<ProfileViewFrame> {
     let mut bits = Bits::new(data, start, end);
     (bits.bit_long()? == 80).then_some(())?;
     bits.pos += 2;
-    for _ in 0..3 {
-        bits.bit_long()?;
+    bits.bit_long()?;
+    bits.bit_long()?;
+    match bits.bit_long()? {
+        5 => {
+            for _ in 0..bits.bit_long()? {
+                super::alignment::key(&mut bits)?;
+            }
+            (bits.bit_long()? == 0).then_some(())?;
+            bits.pos += 121;
+        }
+        // Civil 3D 2013: no keys.
+        4 => {
+            (bits.bit_long()? == 0).then_some(())?;
+            bits.pos += 128;
+        }
+        _ => return None,
     }
-    for _ in 0..bits.bit_long()? {
-        super::alignment::key(&mut bits)?;
-    }
-    (bits.bit_long()? == 0).then_some(())?;
-    bits.pos += 121;
     let point = |bits: &mut Bits| -> Option<Vector2> {
         let p = Vector2::new(bits.bit_double()?, bits.bit_double()?);
         (p.x.is_finite() && p.y.is_finite() && bits.bit_double()? == 0.0).then_some(p)
@@ -908,42 +918,9 @@ fn view_frame_fields(data: &[u8], start: usize, end: usize) -> Option<ProfileVie
     })
 }
 
-/// Frame from the body: [`view_frame_fields`]; a Civil 3D 2013 view
-/// without class keys (Kavşak AC82) is not mapped and is searched.
+/// Frame from the body: [`view_frame_fields`].
 pub(super) fn view_frame_stored(data: &[u8], start: usize, end: usize) -> Option<ProfileViewFrame> {
-    view_frame_fields(data, start, end).or_else(|| view_frame_search(data, start, end))
-}
-
-fn view_frame_search(data: &[u8], start: usize, end: usize) -> Option<ProfileViewFrame> {
-    // debt: the view origin `3BD (x, y, 0)` sits 178 bits before the range
-    // triple `(min, min, max)`; a later copy of the origin is followed 142
-    // bits on by `BD` vertical scale. Both are searched for.
-    let point = |bits: &mut Bits| {
-        let x = bits.bit_double()?;
-        let y = bits.bit_double()?;
-        (x.is_finite() && y.is_finite() && bits.bit_double()? == 0.0).then_some(Vector2::new(x, y))
-    };
-    let point_at = |pos: usize| point(&mut Bits::new(data, pos, end));
-    (start + 178..end).find_map(|pos| {
-        let mut bits = Bits::new(data, pos, end);
-        let a = point(&mut bits)?;
-        let b = point(&mut bits)?;
-        let c = point(&mut bits)?;
-        (a == b && c.x > a.x && c.y > a.y).then_some(())?;
-        let origin = point_at(pos - 178)?;
-        let vertical_scale = (pos..end).find_map(|q| {
-            (point_at(q)? == origin).then_some(())?;
-            Bits::new(data, q + 142, end).bit_double().filter(|v| v.is_finite() && *v > 0.0)
-        })?;
-        Some(ProfileViewFrame {
-            origin,
-            station_min: a.x,
-            station_max: c.x,
-            elevation_min: a.y,
-            elevation_max: c.y,
-            vertical_scale,
-        })
-    })
+    view_frame_fields(data, start, end)
 }
 
 /// Profile Locking settings of a profile, from the
