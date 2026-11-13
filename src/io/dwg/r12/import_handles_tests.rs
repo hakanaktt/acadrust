@@ -698,3 +698,33 @@ fn deleted_table_entries_stay_out_of_the_drawing() {
     assert!(names.contains(&"*D0") && names.contains(&"B"), "{names:?}");
     assert!(!names.contains(&"") && !names.contains(&"GONE"), "{names:?}");
 }
+
+/// The space BLOCK/ENDBLK marker handles reserved on import are not handed to
+/// the default objects the bridge creates (#371): a file with its own *ACTIVE
+/// viewport and entities stored with handles below the seed leaves the
+/// markers as the highest reserved handles.
+#[test]
+fn space_markers_are_not_reissued_to_bridge_defaults() {
+    use crate::Handle;
+    use std::collections::HashSet;
+    let mut tables: [Vec<EntityRecord>; 10] = std::array::from_fn(|_| Vec::new());
+    tables[1] = vec![record("LAYER", &[(2, "0"), (62, "7"), (6, "CONTINUOUS")])];
+    tables[2] = vec![record("STYLE", &[(2, "STANDARD"), (3, "txt")])];
+    tables[3] = vec![record("LTYPE", &[(2, "CONTINUOUS")])];
+    tables[6] = vec![record("VPORT", &[(2, "*ACTIVE"), (40, "8"), (41, "1.5")])];
+    tables[7] = vec![record("APPID", &[(2, "ACAD")])];
+    let entities = [
+        record("LINE", &[(5, "20"), (8, "0"), (11, "1")]),
+        record("LINE", &[(5, "21"), (8, "0"), (11, "2")]),
+    ];
+    let doc = read_document(&fixture(0x1000, &tables, &entities, &[]), None, None).unwrap();
+    let mut used: HashSet<Handle> = doc.objects.keys().copied().collect();
+    used.extend(doc.entities().map(|e| e.common().handle));
+    for name in ["*Model_Space", "*Paper_Space"] {
+        let block = doc.block_records.get(name).unwrap();
+        for marker in [block.block_entity_handle, block.block_end_handle] {
+            assert!(!marker.is_null(), "{name}");
+            assert!(!used.contains(&marker), "{name} marker {marker:?} reissued");
+        }
+    }
+}

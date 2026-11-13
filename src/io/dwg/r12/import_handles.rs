@@ -170,10 +170,28 @@ impl ImportHandles {
     }
 
     pub(super) fn apply_layouts(&self, document: &mut CadDocument) -> Result<()> {
+        // The reserved marker handles appear nowhere in the bridge, so its
+        // default objects may already hold them; such a marker takes a fresh
+        // handle instead (nothing refers to a marker but its block, #371).
+        let mut used = used_handles(document);
         for (name, offset) in [("*Paper_Space", 0), ("*Model_Space", 2)] {
+            if document.block_records.get(name).is_none() {
+                continue;
+            }
+            let mut marker = |reserved: u64| {
+                if used.insert(reserved) {
+                    Handle::new(reserved)
+                } else {
+                    let fresh = document.allocate_handle();
+                    used.insert(fresh.value());
+                    fresh
+                }
+            };
+            let begin = marker(self.space_markers + offset);
+            let end = marker(self.space_markers + offset + 1);
             if let Some(block) = document.block_records.get_mut(name) {
-                block.block_entity_handle = Handle::new(self.space_markers + offset);
-                block.block_end_handle = Handle::new(self.space_markers + offset + 1);
+                block.block_entity_handle = begin;
+                block.block_end_handle = end;
             }
         }
         for (name, offset) in [("Model", 113), ("Layout1", 109)] {
@@ -215,4 +233,38 @@ impl ImportHandles {
         }
         Ok(())
     }
+}
+
+/// Every handle the document's records hold.
+fn used_handles(document: &CadDocument) -> std::collections::HashSet<u64> {
+    use crate::tables::TableEntry;
+    let mut used: std::collections::HashSet<u64> =
+        document.objects.keys().map(|h| h.value()).collect();
+    used.extend(document.entities().map(|e| e.common().handle.value()));
+    macro_rules! table {
+        ($table:expr) => {
+            used.insert($table.handle().value());
+            used.extend($table.iter().map(|entry| entry.handle().value()));
+        };
+    }
+    table!(document.layers);
+    table!(document.line_types);
+    table!(document.text_styles);
+    table!(document.dim_styles);
+    table!(document.app_ids);
+    table!(document.views);
+    table!(document.vports);
+    table!(document.ucss);
+    table!(document.vx_table);
+    table!(document.block_records);
+    // The space blocks' markers are the ones being replaced.
+    let space = |name: &str| {
+        name.eq_ignore_ascii_case("*Model_Space") || name.eq_ignore_ascii_case("*Paper_Space")
+    };
+    for block in document.block_records.iter().filter(|b| !space(&b.name)) {
+        used.insert(block.block_entity_handle.value());
+        used.insert(block.block_end_handle.value());
+    }
+    used.remove(&0);
+    used
 }
