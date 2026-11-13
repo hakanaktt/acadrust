@@ -827,12 +827,13 @@ impl ProfileViewFrame {
 /// ```text
 /// BL 80, 2 bits, BL, BL, BL, BL key count, keys (see alignment::key),
 /// BL 0, 121 bits, 3BD origin, 9 BD (rotation), BD,
-/// RC n, n x 5 bits, BL 1, BL 0, BL, BD, BL, BL, 258 bits,
-/// BL n, n x BL, BL n, n x BL, BL n, n x (BD, BD), 1 bit,
+/// RC n, n x 5 bits, BL m, m x record, 1 bit,
 /// 3BD origin again, BL, BL, then the triple
+/// record: BL 0, BL, BD, BL, BD, 258 bits, BL n, n x BL, BL n, n x BL,
+///     BL index (1, 2, …), BD, BD
 /// ```
-// ponytail: the 121, 5-bit and 258-bit runs are skipped by length (constant
-// in every sample).
+// ponytail: the 121, 5-bit and 258-bit runs are skipped by length (zero or
+// constant in every sample).
 fn view_triple_at(data: &[u8], start: usize, end: usize) -> Option<usize> {
     let mut bits = Bits::new(data, start, end);
     (bits.bit_long()? == 80).then_some(())?;
@@ -852,19 +853,19 @@ fn view_triple_at(data: &[u8], start: usize, end: usize) -> Option<usize> {
     }
     let items = usize::from(bits.bits_value(8)?);
     bits.pos += 5 * items;
-    (bits.bit_long()? == 1).then_some(())?;
-    (bits.bit_long()? == 0).then_some(())?;
-    bits.bit_long()?;
-    bits.bit_double()?;
-    bits.bit_long()?;
-    bits.bit_long()?;
-    bits.pos += 258;
-    for _ in 0..2 {
-        for _ in 0..bits.bit_long()? {
-            bits.bit_long()?;
-        }
-    }
     for _ in 0..bits.bit_long()? {
+        (bits.bit_long()? == 0).then_some(())?;
+        bits.bit_long()?;
+        bits.bit_double()?;
+        bits.bit_long()?;
+        bits.bit_double()?;
+        bits.pos += 258;
+        for _ in 0..2 {
+            for _ in 0..bits.bit_long()? {
+                bits.bit_long()?;
+            }
+        }
+        bits.bit_long()?;
         bits.bit_double()?;
         bits.bit_double()?;
     }
@@ -909,8 +910,8 @@ pub(super) fn view_frame_stored(data: &[u8], start: usize, end: usize) -> Option
     };
     match view_triple_at(data, start, end) {
         Some(pos) => read(pos),
-        // debt: views with several records before the triple (Kemer) or
-        // a different list layout are searched for the triple.
+        // debt: a Civil 3D 2013 view without class keys (Kavşak AC82)
+        // lays these fields out differently; its triple is searched for.
         None => (start + 178..end).find_map(read),
     }
 }
