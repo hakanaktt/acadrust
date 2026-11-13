@@ -203,6 +203,12 @@ pub struct HeaderVariables {
     /// Independent current view/drafting state from an R12 header.
     #[cfg_attr(feature = "serde", serde(default))]
     pub legacy: Option<LegacyHeaderState>,
+    /// The `$DIM…` header variables a DXF file carried. `None` when the header
+    /// was read from a DWG or made new: every dimension variable is then the
+    /// drawing's own. A dimension variable a DXF left out keeps its default
+    /// here, and stands for the current dimension style's value.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub dxf_dim_variables: Option<std::collections::BTreeSet<String>>,
     // ==================== Version-specific Flags ====================
     /// REQUIREDVERSIONS (R2013+) - Bit coded required versions
     pub required_versions: i64,
@@ -861,6 +867,7 @@ impl Default for HeaderVariables {
     fn default() -> Self {
         Self {
             legacy: None,
+            dxf_dim_variables: None,
             // Version-specific flags
             required_versions: 0,
             acad_maintenance_version: 0,

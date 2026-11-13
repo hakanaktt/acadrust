@@ -5,6 +5,7 @@ pub(super) fn visit(d: &CadDocument, u: &mut HandleUsage) -> Result<()> {
     let h = &d.header;
     let HeaderVariables {
         legacy: _,
+        dxf_dim_variables: _,
         required_versions: _,
         acad_maintenance_version: _,
         associate_dimensions: _,

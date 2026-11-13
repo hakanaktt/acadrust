@@ -1642,6 +1642,9 @@ impl<'a> SectionReader<'a> {
         let mut custom_value_pending = false;
         let mut code_page_seen = false;
         let mut dimatfit_seen = false;
+        // The dimension variables this file carries; the others stand for the
+        // current dimension style's values.
+        let mut dim_variables = std::collections::BTreeSet::new();
 
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 && pair.value_string == "ENDSEC" {
@@ -1653,6 +1656,9 @@ impl<'a> SectionReader<'a> {
             }
 
             let var_name = &pair.value_string;
+            if var_name.starts_with("$DIM") {
+                dim_variables.insert(var_name.to_ascii_uppercase());
+            }
             match var_name.as_str() {
                 "$VIEWCTR" | "$VIEWDIR" | "$TARGET" | "$SNAPBASE" | "$SNAPUNIT" | "$GRIDUNIT"
                 | "$AXISUNIT" => {
@@ -3433,6 +3439,7 @@ impl<'a> SectionReader<'a> {
             }
         }
 
+        hdr.dxf_dim_variables = Some(dim_variables);
         Ok(())
     }
 
