@@ -276,69 +276,80 @@ impl SpiralShape {
     }
 }
 
-/// Design elements found in a main stream, keyed by their own ids.
-/// Where the element count sits, the class data before it read field by
-/// field (the forms Civil 3D 2018 on writes):
+/// Alignment class data up to the element count, read field by field:
 ///
 /// ```text
-/// BL 80, 0, 80, 80, 0, BL, BL 80, BL form, [form & 2: BL 0x01010034]
-/// plain (form & 0x1000): BL 0, 2 bits, BL 2, 66 bits (MIST1), 2 bits
-/// Properties (form & 1): BL, [form & 0x40 without 2: BL], 26 bits (MIST4),
-///     14 bits, 66 bits (MIST1), [BL 0x1600101F, 64-bit FILETIME]
-/// [BL 0x0D00D773, BL n] (MIST2), 160 bits, BD start station, 20 bits
+/// BL 80, 0, 80, 80, 0, BL, BL 80, 4 bits key count, count x key,
+/// BL 0, 65 bits, BD, 7 bits, BL first element id, BD, BD start station,
+/// 10 bits (criteria), BL
+/// key: BL (type << 24 | id), then by type: 0x01, 0x0D BL; 0x03 one byte;
+///      0x04 nothing; 0x0B BL n, n x BL; 0x13, 0x16 64 bits
 /// ```
-// ponytail: the 14, 160 and 20-bit runs are skipped by length (the same in
-// every sample); read their fields once a drawing varies them.
-fn element_count_at(data: &[u8], start: usize, end: usize) -> Option<usize> {
+///
+/// Keys seen: 0x0B001081 (geometry key, two BLs), 0x0D00D773 (re-save
+/// tag), 0x1600101F (date modified, FILETIME), 0x0109E0xx / 0x0409E0xx
+/// (Civil 3D 2013 properties).
+// ponytail: the 65 and 7-bit runs are skipped by length (constant layout
+// in every sample); name their fields once a drawing varies them.
+struct Section2 {
+    start_station: f64,
+    /// The 10 criteria bits after the start station.
+    criteria_at: usize,
+    count_at: usize,
+}
+
+fn section2(data: &[u8], start: usize, end: usize) -> Option<Section2> {
     let mut bits = Bits::new(data, start, end);
     for want in [80, 0, 80, 80, 0] {
         (bits.bit_long()? == want).then_some(())?;
     }
     bits.bit_long()?;
     (bits.bit_long()? == 80).then_some(())?;
-    let form = bits.bit_long()?;
-    if form & 2 != 0 {
-        (bits.bit_long()? == 0x0101_0034).then_some(())?;
-    }
-    if form & 0x1000 != 0 {
-        (bits.bit_long()? == 0).then_some(())?;
-        bits.pos += 2;
-        (bits.bit_long()? == 2).then_some(())?;
-        bits.pos += 66 + 2;
-    } else if form & 1 != 0 {
-        bits.bit_long()?;
-        if form & 0x40 != 0 && form & 2 == 0 {
-            bits.bit_long()?;
+    for _ in 0..bits.bits_value(4)? {
+        let key = bits.bit_long()? as u32;
+        match key >> 24 {
+            0x01 | 0x0D => {
+                bits.bit_long()?;
+            }
+            0x03 => {
+                bits.bits_value(8)?;
+            }
+            0x04 => {}
+            0x0B => {
+                for _ in 0..bits.bit_long()? {
+                    bits.bit_long()?;
+                }
+            }
+            0x13 | 0x16 => bits.pos += 64,
+            _ => return None,
         }
-        bits.pos += 26 + 14 + 66;
-        let at = bits.pos;
-        if bits.bit_long() == Some(0x1600_101F) {
-            bits.pos += 64;
-        } else {
-            bits.pos = at;
-        }
-    } else {
-        return None;
     }
-    let at = bits.pos;
-    if bits.bit_long() == Some(0x0D00_D773) {
-        bits.bit_long()?;
-    } else {
-        bits.pos = at;
-    }
-    bits.pos += 160;
+    (bits.bit_long()? == 0).then_some(())?;
+    bits.pos += 65;
     bits.bit_double()?;
-    bits.pos += 20;
-    (bits.pos < end).then_some(bits.pos)
+    bits.pos += 7;
+    bits.bit_long()?;
+    bits.bit_double()?;
+    let start_station = bits.bit_double()?;
+    let criteria_at = bits.pos;
+    bits.pos += 10;
+    bits.bit_long()?;
+    // The element list must follow: the RECOVER/AUDIT layout reads through
+    // these fields at the wrong places.
+    element_list_at(data, bits.pos, end)?;
+    Some(Section2 { start_station, criteria_at, count_at: bits.pos })
 }
 
+/// Design elements found in a main stream, keyed by their own ids.
 pub(super) fn elements(data: &[u8], start: usize, end: usize) -> Vec<AlignmentElement> {
     // The element list read by its grammar: count, records end to end.
-    if let Some(list) = element_count_at(data, start, end).and_then(|pos| element_list_at(data, pos, end)) {
+    if let Some(list) = section2(data, start, end).and_then(|s| element_list_at(data, s.count_at, end)) {
         return list;
     }
-    // debt: forms not read yet (Civil 3D 2013, a few Properties-form
-    // variants) find the list by trying positions.
+    // debt: two section 2 layouts are not mapped yet: records re-saved by
+    // RECOVER/AUDIT (8 bits more in the run after the BL 0) and a re-save
+    // tag of 3 (64 bits more after the start station, one cant sample).
+    // Find the list by trying positions.
     if let Some(list) = (start..end).find_map(|pos| element_list_at(data, pos, end)) {
         return list;
     }
@@ -2620,9 +2631,13 @@ fn reverse_curves(
     best.map(|(_, solved)| solved)
 }
 
-/// Start station: the BD after the header's `2.25` marker, 16 bits and three
-/// flags (`1 1 0`) later. Other flag layouts start at station 0.
+/// Start station: read from section 2 (see [`section2`]).
 pub(super) fn start_station(data: &[u8], start: usize, end: usize) -> f64 {
+    if let Some(s) = section2(data, start, end) {
+        return s.start_station;
+    }
+    // debt: re-saved section 2 layout; the BD after the `2.25` marker, 16
+    // bits and three flags (`1 1 0`) later, found by scanning.
     let window = end.min(start + 4096);
     for pos in start..window {
         let mut bits = Bits::new(data, pos, end);
@@ -2661,14 +2676,20 @@ pub struct AlignmentCriteria {
 /// bit, then criteria-based design, criteria file, check set, tangency
 /// swapping, parameter lock and tangency check.
 pub(super) fn criteria(data: &[u8], start: usize, end: usize) -> Option<AlignmentCriteria> {
-    let window = end.min(start + 4096);
-    let pos = (start..window).find(|&pos| {
-        let mut bits = Bits::new(data, pos, end);
-        bits.bit_double() == Some(2.25) && bits.pos == pos + 66
-    })?;
-    let mut bits = Bits::new(data, pos + 66 + 16, end);
-    ((bits.bit()?, bits.bit()?, bits.bit()?) == (true, true, false)).then_some(())?;
-    bits.bit_double()?;
+    let mut bits = if let Some(s) = section2(data, start, end) {
+        Bits::new(data, s.criteria_at, end)
+    } else {
+        // debt: re-saved section 2 layout, found by scanning for 2.25.
+        let window = end.min(start + 4096);
+        let pos = (start..window).find(|&pos| {
+            let mut bits = Bits::new(data, pos, end);
+            bits.bit_double() == Some(2.25) && bits.pos == pos + 66
+        })?;
+        let mut bits = Bits::new(data, pos + 66 + 16, end);
+        ((bits.bit()?, bits.bit()?, bits.bit()?) == (true, true, false)).then_some(())?;
+        bits.bit_double()?;
+        bits
+    };
     bits.bit()?;
     Some(AlignmentCriteria {
         criteria_based_design: bits.bit()?,
@@ -3595,3 +3616,4 @@ mod tests {
         assert!((normalize(end.heading - PI)).abs() < 1e-9);
     }
 }
+
