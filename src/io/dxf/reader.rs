@@ -437,6 +437,7 @@ impl DxfReader {
         document.restore_constraint_vertex_ids();
 
         source_records = source_records.saturating_add(skipped_source_records);
+        crate::objects::restore_table_entity_roundtrip(&mut document, &mut diagnostics);
         let stats = crate::io::read::ReadStats::from_document(
             &document,
             SourceFormat::Dxf,
@@ -453,7 +454,6 @@ impl DxfReader {
         document.source_path = self.source_path.take();
         crate::objects::restore_visual_style_roundtrip(&mut document);
         crate::objects::restore_table_style_roundtrip(&mut document);
-        crate::objects::restore_table_entity_roundtrip(&mut document);
         Ok(crate::io::read::ReadOutcome::new(document, stats))
     }
 

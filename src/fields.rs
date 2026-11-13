@@ -259,6 +259,15 @@ fn eval_acexpr(
     ctx: &dyn FieldContext,
     host: Handle,
 ) -> Option<String> {
+    eval_acexpr_value(doc, field, ctx, host).map(|(shown, _)| shown)
+}
+
+fn eval_acexpr_value(
+    doc: &CadDocument,
+    field: &FieldDef,
+    ctx: &dyn FieldContext,
+    host: Handle,
+) -> Option<(String, Option<f64>)> {
     let code = &field.code;
     let body = code.trim().strip_prefix("\\AcExpr").unwrap_or(code);
     // The formula's own format follows the expression; a nested field's
@@ -282,16 +291,17 @@ fn eval_acexpr(
     };
     let v = match p.parse_all() {
         Ok(v) => v,
-        Err(ExprError::Invalid) => return Some("####".into()),
+        Err(ExprError::Invalid) => return Some(("####".into(), None)),
         Err(ExprError::Unresolved) => return None,
     };
-    Some(match v {
+    let shown = match v {
         _ if !fmt.is_empty() => format_number(doc, v.real(), &fmt),
         // Cell formulas of the host table keep the plain numeric text.
         _ if p.used_cells => num_str(v.real()),
         Num::Int(n) => n.to_string(),
         Num::Real(x) => format!("{:.6}", x),
-    })
+    };
+    Some((shown, Some(v.real())))
 }
 
 /// The child fields of `parent`, in `%<\_FldIdx N>%` order (AutoCAD creates a
@@ -3522,7 +3532,9 @@ impl CadDocument {
         }
     }
 
-    fn register_fields(&mut self, all: Vec<Field>) {
+    /// Install newly allocated fields in the object store and the runtime
+    /// field index, and register them in the drawing's FIELDLIST.
+    pub fn register_fields(&mut self, all: Vec<Field>) {
         let list = self.field_list_handle();
         if let Some(ObjectType::FieldList(l)) = self.objects.get_mut(&list) {
             l.fields.extend(all.iter().map(|f| f.handle));
@@ -3703,6 +3715,95 @@ impl CadDocument {
         hosts: Option<&[Handle]>,
     ) -> (Vec<Handle>, usize) {
         self.restamp_fields(ctx, ctx, &|_, f| f.evaluation_option & event != 0, hosts)
+    }
+
+    /// Re-evaluate the FIELD objects referenced directly by a table's cells
+    /// on an explicit UPDATEFIELD, including their child fields.
+    pub fn update_table_cell_fields(
+        &mut self,
+        ctx: &dyn FieldContext,
+        host: Handle,
+    ) -> (bool, usize) {
+        let Some(EntityType::Table(table)) = self.get_entity(host) else {
+            return (false, 0);
+        };
+        let mut pending: Vec<_> = table
+            .rows
+            .iter()
+            .flat_map(|row| &row.cells)
+            .flat_map(|cell| &cell.contents)
+            .filter_map(|item| item.field_handle)
+            .collect();
+        let mut seen = std::collections::HashSet::new();
+        let mut values = Vec::new();
+        let mut found = 0;
+        while let Some(handle) = pending.pop() {
+            if !seen.insert(handle) {
+                continue;
+            }
+            let (Some(field), Some(ObjectType::Field(stored))) =
+                (self.fields.get(&handle), self.objects.get(&handle))
+            else {
+                continue;
+            };
+            pending.extend(stored.child_fields.iter().copied());
+            if field.evaluator != "_text" {
+                found += 1;
+            }
+            let fresh = if field.evaluator == "AcExpr" {
+                eval_acexpr_value(self, field, ctx, host)
+            } else {
+                eval_field(self, field, ctx, host).map(|shown| (shown, None))
+            };
+            let Some((shown, number)) = fresh else {
+                continue;
+            };
+            if field.evaluator.starts_with("AcSm") && shown == "####" {
+                continue;
+            }
+            let old = &stored.value;
+            let number = number.or_else(|| {
+                matches!(old.value_type, CellValueType::Long | CellValueType::Double)
+                    .then(|| shown.parse::<f64>().ok())
+                    .flatten()
+            });
+            let value = match number {
+                Some(number) => {
+                    let mut value =
+                        if matches!(old.value_type, CellValueType::Long | CellValueType::Double) {
+                            old.clone()
+                        } else {
+                            CellValue::number(number)
+                        };
+                    if value.value_type == CellValueType::Long
+                        && (number.fract() != 0.0
+                            || number < i32::MIN as f64
+                            || number > i32::MAX as f64)
+                    {
+                        value.value_type = CellValueType::Double;
+                        value.raw_type_code = CellValueType::Double as i32;
+                    }
+                    value.numeric_value = number;
+                    value.text = shown.clone();
+                    value.formatted_value = shown.clone();
+                    value
+                }
+                None => plot_value(field, &shown, ctx.now_julian()),
+            };
+            if value != *old || shown != stored.value_string {
+                values.push((handle, value, shown));
+            }
+        }
+        let changed = !values.is_empty();
+        for (handle, value, shown) in values {
+            if let Some(ObjectType::Field(field)) = self.objects.get_mut(&handle) {
+                field.value_string_length = shown.encode_utf16().count() as i32;
+                field.value_string = shown;
+                field.evaluation_status = 2;
+                field.value = value;
+            }
+        }
+        (changed, found)
     }
 
     pub fn refresh_table_formulas(&mut self, ctx: &dyn FieldContext, table: Handle) -> Vec<Handle> {
