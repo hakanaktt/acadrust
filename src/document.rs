@@ -3930,11 +3930,18 @@ impl CadDocument {
 
         // Determine the next *Paper_Space block name.
         // ACAD uses: *Paper_Space, *Paper_Space0, *Paper_Space1, …
-        let ps_count = self
-            .block_records
-            .iter()
-            .filter(|br| br.is_paper_space())
-            .count();
+        // A new layout goes after every existing tab. Counting the layouts
+        // would repeat a tab order once one before the last was deleted.
+        let tab_order = self
+            .objects
+            .values()
+            .filter_map(|obj| match obj {
+                ObjectType::Layout(l) => Some(l.tab_order),
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
         let block_name = if self.block_records.get("*Paper_Space").is_none() {
             "*Paper_Space".to_string()
         } else {
@@ -3956,7 +3963,7 @@ impl CadDocument {
         let mut layout = crate::objects::Layout::new(name);
         layout.handle = layout_handle;
         layout.owner = self.header.acad_layout_dict_handle;
-        layout.tab_order = ps_count as i16 + 1;
+        layout.tab_order = tab_order;
         layout.block_record = br_handle;
 
         // Link block record → layout
