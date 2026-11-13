@@ -57,7 +57,8 @@ pub(crate) fn paper_space_block_handle(document: &CadDocument) -> Handle {
 }
 
 /// Reserve the bare paper-space name for the active record without colliding
-/// with other layouts. Anonymous names retain their native ordinal encoding.
+/// with other layouts. An anonymous name is stored bare (`*U`), as AutoCAD
+/// stores it in the BLOCK_HEADER; the BLOCK marker keeps the number.
 fn dwg_block_name<'a>(
     document: &'a CadDocument,
     record: &'a BlockRecord,
@@ -2479,11 +2480,15 @@ impl<'a> DwgObjectWriter<'a> {
             &common.edge_visual_style_handle,
         );
 
-        self.writer.write_variable_text(dwg_block_name(
-            self.document,
-            record,
-            self.paper_space_block_handle,
-        ));
+        // An anonymous header stores the bare name (`*U`); its marker keeps the
+        // number (`*U2`), as AutoCAD writes them, so readers that name a
+        // definition after its marker can tell the definitions apart.
+        let marker_name = if record.flags.anonymous && record.name.starts_with('*') {
+            record.name.as_str()
+        } else {
+            dwg_block_name(self.document, record, self.paper_space_block_handle)
+        };
+        self.writer.write_variable_text(marker_name);
 
         self.register_object(common.handle);
     }
