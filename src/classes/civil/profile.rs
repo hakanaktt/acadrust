@@ -822,6 +822,59 @@ impl ProfileViewFrame {
     }
 }
 
+/// Where a profile view keeps its range triple, read field by field:
+///
+/// ```text
+/// BL 80, 2 bits, BL, BL, BL, BL key count, keys (see alignment::key),
+/// BL 0, 121 bits, 3BD origin, 9 BD (rotation), BD,
+/// RC n, n x 5 bits, BL 1, BL 0, BL, BD, BL, BL, 258 bits,
+/// BL n, n x BL, BL n, n x BL, BL n, n x (BD, BD), 1 bit,
+/// 3BD origin again, BL, BL, then the triple
+/// ```
+// ponytail: the 121, 5-bit and 258-bit runs are skipped by length (constant
+// in every sample).
+fn view_triple_at(data: &[u8], start: usize, end: usize) -> Option<usize> {
+    let mut bits = Bits::new(data, start, end);
+    (bits.bit_long()? == 80).then_some(())?;
+    bits.pos += 2;
+    for _ in 0..3 {
+        bits.bit_long()?;
+    }
+    for _ in 0..bits.bit_long()? {
+        super::alignment::key(&mut bits)?;
+    }
+    (bits.bit_long()? == 0).then_some(())?;
+    bits.pos += 121;
+    let point = |bits: &mut Bits| Some((bits.bit_double()?, bits.bit_double()?, bits.bit_double()?));
+    let origin = point(&mut bits)?;
+    for _ in 0..10 {
+        bits.bit_double()?;
+    }
+    let items = usize::from(bits.bits_value(8)?);
+    bits.pos += 5 * items;
+    (bits.bit_long()? == 1).then_some(())?;
+    (bits.bit_long()? == 0).then_some(())?;
+    bits.bit_long()?;
+    bits.bit_double()?;
+    bits.bit_long()?;
+    bits.bit_long()?;
+    bits.pos += 258;
+    for _ in 0..2 {
+        for _ in 0..bits.bit_long()? {
+            bits.bit_long()?;
+        }
+    }
+    for _ in 0..bits.bit_long()? {
+        bits.bit_double()?;
+        bits.bit_double()?;
+    }
+    bits.pos += 1;
+    (point(&mut bits)? == origin).then_some(())?;
+    bits.bit_long()?;
+    bits.bit_long()?;
+    Some(bits.pos)
+}
+
 /// Frame from the body alone: the view origin `3BD (x, y, 0)` sits 178
 /// bits before the range triple `(min, min, max)`; a later copy of the
 /// origin is followed 142 bits on by `BD` vertical scale.
@@ -832,13 +885,15 @@ pub(super) fn view_frame_stored(data: &[u8], start: usize, end: usize) -> Option
         (x.is_finite() && y.is_finite() && bits.bit_double()? == 0.0).then_some(Vector2::new(x, y))
     };
     let point_at = |pos: usize| point(&mut Bits::new(data, pos, end));
-    (start + 178..end).find_map(|pos| {
+    let read = |pos: usize| -> Option<ProfileViewFrame> {
         let mut bits = Bits::new(data, pos, end);
         let a = point(&mut bits)?;
         let b = point(&mut bits)?;
         let c = point(&mut bits)?;
         (a == b && c.x > a.x && c.y > a.y).then_some(())?;
         let origin = point_at(pos - 178)?;
+        // debt: the vertical scale follows a later copy of the origin past
+        // strings not read yet; that copy is searched for.
         let vertical_scale = (pos..end).find_map(|q| {
             (point_at(q)? == origin).then_some(())?;
             Bits::new(data, q + 142, end).bit_double().filter(|v| v.is_finite() && *v > 0.0)
@@ -851,7 +906,13 @@ pub(super) fn view_frame_stored(data: &[u8], start: usize, end: usize) -> Option
             elevation_max: c.y,
             vertical_scale,
         })
-    })
+    };
+    match view_triple_at(data, start, end) {
+        Some(pos) => read(pos),
+        // debt: views with several records before the triple (Kemer) or
+        // a different list layout are searched for the triple.
+        None => (start + 178..end).find_map(read),
+    }
 }
 
 /// Profile Locking settings of a profile, from the

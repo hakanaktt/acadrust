@@ -276,14 +276,45 @@ impl SpiralShape {
     }
 }
 
+/// One class key: `BL (type << 24 | id)`, then its value by type: 0x01,
+/// 0x0D BL; 0x02 BD; 0x03 one byte; 0x04, 0x12 nothing; 0x0B, 0x19 BL n,
+/// n x BL; 0x0C BL n, n x BD; 0x13, 0x16 64 bits.
+pub(super) fn key(bits: &mut Bits) -> Option<()> {
+    match bits.bit_long()? as u32 >> 24 {
+        0x01 | 0x0D => {
+            bits.bit_long()?;
+        }
+        0x02 => {
+            bits.bit_double()?;
+        }
+        0x03 => {
+            bits.bits_value(8)?;
+        }
+        0x04 | 0x12 => {}
+        0x0B | 0x19 => {
+            for _ in 0..bits.bit_long()? {
+                bits.bit_long()?;
+            }
+        }
+        0x0C => {
+            for _ in 0..bits.bit_long()? {
+                bits.bit_double()?;
+            }
+        }
+        0x13 | 0x16 => bits.pos += 64,
+        _ => return None,
+    }
+    Some(())
+}
+
 /// Class data alignments and profiles share, read up to their own fields:
 ///
 /// ```text
 /// BL 80, 0, 80, 80, 0, BL, 6 bits (010101), RC key count, count x key,
 /// BL 0, 65 bits, BD, 7 bits
-/// key: BL (type << 24 | id), then by type: 0x01, 0x0D BL; 0x03 one byte;
-///      0x04, 0x12 nothing; 0x0B BL n, n x BL; 0x13, 0x16 64 bits
 /// ```
+///
+/// (keys: see [`key`]).
 ///
 /// Keys seen: 0x0B001081 (geometry key, two BLs), 0x0D00D773 (re-save
 /// tag), 0x1600101F (date modified, FILETIME), 0x0109E0xx / 0x0409E0xx
@@ -297,23 +328,7 @@ pub(super) fn read_keys(bits: &mut Bits) -> Option<()> {
     bits.bit_long()?;
     (bits.bits_value(6)? == 0b01_0101).then_some(())?;
     for _ in 0..bits.bits_value(8)? {
-        let key = bits.bit_long()? as u32;
-        match key >> 24 {
-            0x01 | 0x0D => {
-                bits.bit_long()?;
-            }
-            0x03 => {
-                bits.bits_value(8)?;
-            }
-            0x04 | 0x12 => {}
-            0x0B => {
-                for _ in 0..bits.bit_long()? {
-                    bits.bit_long()?;
-                }
-            }
-            0x13 | 0x16 => bits.pos += 64,
-            _ => return None,
-        }
+        key(bits)?;
     }
     (bits.bit_long()? == 0).then_some(())?;
     bits.pos += 65;
