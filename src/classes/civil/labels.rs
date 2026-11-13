@@ -491,7 +491,8 @@ fn color(bits: &mut Bits) -> Option<()> {
 }
 
 /// Where the content string starts, read on from the gap: 4 bits, BD,
-/// color, BL, color, BL, BL, color, BL, BL, then 16 bits `1010010011111110`.
+/// color, BL, color, BL, BL, color, BL, BL, BL, `BL n`, `n` BLs, then the
+/// 12 bits `010011111110`.
 fn content_at(data: &[u8], pos: usize, end: usize) -> Option<usize> {
     let mut bits = Bits::new(data, pos, end);
     bits.skip(4)?;
@@ -502,10 +503,16 @@ fn content_at(data: &[u8], pos: usize, end: usize) -> Option<usize> {
     bits.bit_long()?;
     bits.bit_long()?;
     color(&mut bits)?;
-    bits.bit_long()?;
-    bits.bit_long()?;
-    let tag = (u16::from(bits.bits_value(8)?) << 8) | u16::from(bits.bits_value(8)?);
-    (tag == 0b1010_0100_1111_1110).then_some(bits.pos)
+    for _ in 0..3 {
+        bits.bit_long()?;
+    }
+    let n = bits.bit_long()?;
+    (0..=64).contains(&n).then_some(())?;
+    for _ in 0..n {
+        bits.bit_long()?;
+    }
+    let tag = (u16::from(bits.bits_value(4)?) << 8) | u16::from(bits.bits_value(8)?);
+    (tag == 0b0100_1111_1110).then_some(bits.pos)
 }
 
 /// X offset, y offset and border gap, with where the block starts.
@@ -550,16 +557,17 @@ pub(super) fn line_component(data: &[u8], start: usize, end: usize) -> Option<(f
 
 pub(super) fn text_component(data: &[u8], start: usize, end: usize) -> Option<LabelText> {
     // After the style's component lists: `BL, 2 bits, BD height, BL, BL
-    // color`, then the component itself (type tag, ...), whose general block
-    // starts 48 bits in. A height of 1.0 (a drawing unit) is the unset one.
+    // color`, then the component itself: `BL type tag, BL, BL, BL`, then its
+    // general block. A height of 1.0 (a drawing unit) is the unset one.
     let head = super::style::class_data(data, start, end).and_then(|at| {
         let mut bits = Bits::new(data, at, end);
         bits.bit_long()?;
         bits.pos += 2;
         let height = bits.bit_double()?;
-        bits.bit_long()?;
-        bits.bit_long()?;
-        Some(((0.0..1.0).contains(&height).then_some(height).filter(|v| *v > 0.0), bits.pos + 48))
+        for _ in 0..6 {
+            bits.bit_long()?;
+        }
+        Some(((0.0..1.0).contains(&height).then_some(height).filter(|v| *v > 0.0), bits.pos))
     });
     let height = head.and_then(|(height, _)| height);
     let general = head.map(|(_, at)| at);
@@ -569,8 +577,9 @@ pub(super) fn text_component(data: &[u8], start: usize, end: usize) -> Option<La
         .and_then(|(.., pos)| content_at(data, pos, end))
         .and_then(|pos| string_at(data, pos, end))
         .or_else(|| {
-            // debt: components the fields above do not read (about 3%) take
-            // the longest format string.
+            // debt: components the fields above do not read (33 of 1929 in
+            // the samples, other component tags) take the longest format
+            // string.
             inline_strings_at(data, start, end)
                 .into_iter()
                 .max_by_key(|(s, _)| (s.contains("<["), s.len()))
@@ -582,8 +591,8 @@ pub(super) fn text_component(data: &[u8], start: usize, end: usize) -> Option<La
     let (x_offset, y_offset, gap) = fields
         .map(|(x, y, gap, _)| (x, y, gap))
         .or_else(|| {
-            // debt: about 1% of components (no `1000` after the head,
-            // or fields that do not read as BLs) are found by probing.
+            // debt: components whose general block does not read (none in
+            // the samples) are found by probing.
             general.and_then(|at| offsets(data, at, end).map(|(x, y, gap, _)| (x, y, gap)))
         })
         .unwrap_or((0.0, 0.0, 0.0));
