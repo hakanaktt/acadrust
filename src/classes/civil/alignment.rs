@@ -276,36 +276,27 @@ impl SpiralShape {
     }
 }
 
-/// Alignment class data up to the element count, read field by field:
+/// Class data alignments and profiles share, read up to their own fields:
 ///
 /// ```text
-/// BL 80, 0, 80, 80, 0, BL, BL 80, 4 bits key count, count x key,
-/// BL 0, 65 bits, BD, 7 bits, BL first element id, BD, BD start station,
-/// 10 bits (criteria), BL
+/// BL 80, 0, 80, 80, 0, BL, 6 bits (010101), RC key count, count x key,
+/// BL 0, 65 bits, BD, 7 bits
 /// key: BL (type << 24 | id), then by type: 0x01, 0x0D BL; 0x03 one byte;
-///      0x04 nothing; 0x0B BL n, n x BL; 0x13, 0x16 64 bits
+///      0x04, 0x12 nothing; 0x0B BL n, n x BL; 0x13, 0x16 64 bits
 /// ```
 ///
 /// Keys seen: 0x0B001081 (geometry key, two BLs), 0x0D00D773 (re-save
 /// tag), 0x1600101F (date modified, FILETIME), 0x0109E0xx / 0x0409E0xx
-/// (Civil 3D 2013 properties).
+/// (Civil 3D 2013 properties), 0x0400FExx / 0x1200FFxx (profile flags).
 // ponytail: the 65 and 7-bit runs are skipped by length (constant layout
 // in every sample); name their fields once a drawing varies them.
-struct Section2 {
-    start_station: f64,
-    /// The 10 criteria bits after the start station.
-    criteria_at: usize,
-    count_at: usize,
-}
-
-fn section2(data: &[u8], start: usize, end: usize) -> Option<Section2> {
-    let mut bits = Bits::new(data, start, end);
+pub(super) fn read_keys(bits: &mut Bits) -> Option<()> {
     for want in [80, 0, 80, 80, 0] {
         (bits.bit_long()? == want).then_some(())?;
     }
     bits.bit_long()?;
-    (bits.bit_long()? == 80).then_some(())?;
-    for _ in 0..bits.bits_value(4)? {
+    (bits.bits_value(6)? == 0b01_0101).then_some(())?;
+    for _ in 0..bits.bits_value(8)? {
         let key = bits.bit_long()? as u32;
         match key >> 24 {
             0x01 | 0x0D => {
@@ -314,7 +305,7 @@ fn section2(data: &[u8], start: usize, end: usize) -> Option<Section2> {
             0x03 => {
                 bits.bits_value(8)?;
             }
-            0x04 => {}
+            0x04 | 0x12 => {}
             0x0B => {
                 for _ in 0..bits.bit_long()? {
                     bits.bit_long()?;
@@ -328,6 +319,21 @@ fn section2(data: &[u8], start: usize, end: usize) -> Option<Section2> {
     bits.pos += 65;
     bits.bit_double()?;
     bits.pos += 7;
+    Some(())
+}
+
+/// An alignment's own fields after [`read_keys`]: BL first element id, BD,
+/// BD start station, 10 bits (criteria), BL, then the element count.
+struct Section2 {
+    start_station: f64,
+    /// The 10 criteria bits after the start station.
+    criteria_at: usize,
+    count_at: usize,
+}
+
+fn section2(data: &[u8], start: usize, end: usize) -> Option<Section2> {
+    let mut bits = Bits::new(data, start, end);
+    read_keys(&mut bits)?;
     bits.bit_long()?;
     bits.bit_double()?;
     let start_station = bits.bit_double()?;
