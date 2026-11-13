@@ -4,13 +4,15 @@
 //! BS 0x04BE, BL id, BL n, n x BL, BL m, m x BL     n + m references
 //! [BL 0, B 1, RC count, count x key]              settings (alignment::read_key)
 //! BL 32, 3 bits
-//! 5 x { BL count, count x { BL index, component, 4 x BL } }
+//! 4 x { BL count, count x { BL index, component, 4 x BL } }
+//! 4 x { BL count, count x { BL index, component, 4 x BL, hatch } }
 //! ...                                             class data
 //! ```
 //!
-//! The five component lists are the view directions (plan, model,
-//! profile, section, ...); an empty one is a direction the class does not
-//! draw in. A component:
+//! The first four component lists are the view directions (plan, model,
+//! profile, section); an empty one is a direction the class does not draw
+//! in. The last four hold hatch components, each closed by its hatch
+//! block. A component:
 //!
 //! ```text
 //! BS v, BS v, BS 0, BS v      component tag; v is 70 in Civil 3D 2013
@@ -56,7 +58,9 @@ struct Layout {
     skipped: bool,
 }
 
-const COMPONENT_LISTS: usize = 5;
+const COMPONENT_LISTS: usize = 8;
+/// Lists whose entries carry no hatch block.
+const PLAIN_LISTS: usize = 4;
 
 fn layout(data: &[u8], start: usize, end: usize) -> Option<Layout> {
     let mut bits = Bits::new(data, start, end);
@@ -105,7 +109,7 @@ fn component_lists(data: &[u8], pos: usize, end: usize) -> Option<(Vec<(bool, Co
     (bits.bit_long()? == 32).then_some(())?;
     bits.pos += 3;
     let mut components = Vec::new();
-    for _ in 0..COMPONENT_LISTS {
+    for list in 0..COMPONENT_LISTS {
         let n = bits.bit_long()?;
         for _ in 0..n {
             bits.bit_long()?;
@@ -113,9 +117,26 @@ fn component_lists(data: &[u8], pos: usize, end: usize) -> Option<(Vec<(bool, Co
             for _ in 0..4 {
                 bits.bit_long()?;
             }
+            if list >= PLAIN_LISTS {
+                hatch(&mut bits)?;
+            }
         }
     }
     Some((components, bits.pos))
+}
+
+/// A hatch block: `BL 80, BL pattern type, BD scale, BD angle`, 13 bits.
+// ponytail: the 13 bits are `0010101000101` in every sample (about 600
+// blocks), so they are skipped by length; name their fields once a drawing
+// varies them.
+fn hatch(bits: &mut Bits) -> Option<()> {
+    (bits.bit_long()? == 80).then_some(())?;
+    bits.bit_long()?;
+    bits.bit_double()?;
+    bits.bit_double()?;
+    (bits.remaining() >= 13).then_some(())?;
+    bits.pos += 13;
+    Some(())
 }
 
 fn record(bits: &mut Bits) -> Option<(bool, Color, i16, f64)> {
@@ -282,13 +303,10 @@ pub struct Marker {
     pub absolute: bool,
 }
 
-/// After the component lists: `BL 0` three times, `BS kind`, two bits,
-/// `BD size`, then a byte whose value 2 marks an absolute size.
+/// After the component lists: `BS kind`, two bits, `BD size`, then a byte
+/// whose value 2 marks an absolute size.
 pub(super) fn marker(data: &[u8], start: usize, end: usize) -> Option<Marker> {
     let mut bits = Bits::new(data, layout(data, start, end)?.end, end);
-    for _ in 0..3 {
-        (bits.bit_long()? == 0).then_some(())?;
-    }
     let kind = bits.bit_short()?;
     bits.pos += 2;
     let size = bits.bit_double()?;
