@@ -277,12 +277,68 @@ impl SpiralShape {
 }
 
 /// Design elements found in a main stream, keyed by their own ids.
+/// Where the element count sits, the class data before it read field by
+/// field (the forms Civil 3D 2018 on writes):
+///
+/// ```text
+/// BL 80, 0, 80, 80, 0, BL, BL 80, BL form, [form & 2: BL 0x01010034]
+/// plain (form & 0x1000): BL 0, 2 bits, BL 2, 66 bits (MIST1), 2 bits
+/// Properties (form & 1): BL, [form & 0x40 without 2: BL], 26 bits (MIST4),
+///     14 bits, 66 bits (MIST1), [BL 0x1600101F, 64-bit FILETIME]
+/// [BL 0x0D00D773, BL n] (MIST2), 160 bits, BD start station, 20 bits
+/// ```
+// ponytail: the 14, 160 and 20-bit runs are skipped by length (the same in
+// every sample); read their fields once a drawing varies them.
+fn element_count_at(data: &[u8], start: usize, end: usize) -> Option<usize> {
+    let mut bits = Bits::new(data, start, end);
+    for want in [80, 0, 80, 80, 0] {
+        (bits.bit_long()? == want).then_some(())?;
+    }
+    bits.bit_long()?;
+    (bits.bit_long()? == 80).then_some(())?;
+    let form = bits.bit_long()?;
+    if form & 2 != 0 {
+        (bits.bit_long()? == 0x0101_0034).then_some(())?;
+    }
+    if form & 0x1000 != 0 {
+        (bits.bit_long()? == 0).then_some(())?;
+        bits.pos += 2;
+        (bits.bit_long()? == 2).then_some(())?;
+        bits.pos += 66 + 2;
+    } else if form & 1 != 0 {
+        bits.bit_long()?;
+        if form & 0x40 != 0 && form & 2 == 0 {
+            bits.bit_long()?;
+        }
+        bits.pos += 26 + 14 + 66;
+        let at = bits.pos;
+        if bits.bit_long() == Some(0x1600_101F) {
+            bits.pos += 64;
+        } else {
+            bits.pos = at;
+        }
+    } else {
+        return None;
+    }
+    let at = bits.pos;
+    if bits.bit_long() == Some(0x0D00_D773) {
+        bits.bit_long()?;
+    } else {
+        bits.pos = at;
+    }
+    bits.pos += 160;
+    bits.bit_double()?;
+    bits.pos += 20;
+    (bits.pos < end).then_some(bits.pos)
+}
+
 pub(super) fn elements(data: &[u8], start: usize, end: usize) -> Vec<AlignmentElement> {
-    // The element list read by its grammar: count, records end to end,
-    // interval block.
-    // debt: the list's start is found by trying positions, because the
-    // section before it (form, MIST1–MIST4, the 160-bit block) is not
-    // read field by field yet; read it and start there.
+    // The element list read by its grammar: count, records end to end.
+    if let Some(list) = element_count_at(data, start, end).and_then(|pos| element_list_at(data, pos, end)) {
+        return list;
+    }
+    // debt: forms not read yet (Civil 3D 2013, a few Properties-form
+    // variants) find the list by trying positions.
     if let Some(list) = (start..end).find_map(|pos| element_list_at(data, pos, end)) {
         return list;
     }
