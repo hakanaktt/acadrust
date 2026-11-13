@@ -464,8 +464,8 @@ fn general_head(bits: &mut Bits) -> Option<u8> {
 
 /// X offset, y offset and border gap read by their fields: the general
 /// head (see [`general_head`]), `1000`, 6 BL, B, BD x, BD, BD y, BD, B,
-/// BD gap.
-fn general_offsets(data: &[u8], at: usize, end: usize) -> Option<(f64, f64, f64)> {
+/// BD gap. Also returns the bit after the gap.
+fn general_offsets(data: &[u8], at: usize, end: usize) -> Option<(f64, f64, f64, usize)> {
     let mut bits = Bits::new(data, at, end);
     general_head(&mut bits)?;
     (bits.bits_value(4)? == 0b1000).then_some(())?;
@@ -478,7 +478,34 @@ fn general_offsets(data: &[u8], at: usize, end: usize) -> Option<(f64, f64, f64)
     let y = bits.bit_double()?;
     bits.bit_double()?;
     bits.bit()?;
-    Some((x, y, bits.bit_double()?))
+    let gap = bits.bit_double()?;
+    Some((x, y, gap, bits.pos))
+}
+
+/// A `CMC` color: BS, BL with the color method in its top byte, RC.
+fn color(bits: &mut Bits) -> Option<()> {
+    bits.bit_short()?;
+    let rgb = bits.bit_long()? as u32;
+    matches!(rgb >> 24, 0xC0..=0xC3 | 0xC8).then_some(())?;
+    bits.raw_short_byte().map(|_| ())
+}
+
+/// Where the content string starts, read on from the gap: 4 bits, BD,
+/// color, BL, color, BL, BL, color, BL, BL, then 16 bits `1010010011111110`.
+fn content_at(data: &[u8], pos: usize, end: usize) -> Option<usize> {
+    let mut bits = Bits::new(data, pos, end);
+    bits.skip(4)?;
+    bits.bit_double()?;
+    color(&mut bits)?;
+    bits.bit_long()?;
+    color(&mut bits)?;
+    bits.bit_long()?;
+    bits.bit_long()?;
+    color(&mut bits)?;
+    bits.bit_long()?;
+    bits.bit_long()?;
+    let tag = (u16::from(bits.bits_value(8)?) << 8) | u16::from(bits.bits_value(8)?);
+    (tag == 0b1010_0100_1111_1110).then_some(bits.pos)
 }
 
 /// X offset, y offset and border gap, with where the block starts.
@@ -522,15 +549,6 @@ pub(super) fn line_component(data: &[u8], start: usize, end: usize) -> Option<(f
 }
 
 pub(super) fn text_component(data: &[u8], start: usize, end: usize) -> Option<LabelText> {
-    // The content is the longest format string; rotation and attachment
-    // follow it.
-    let (content, after) = inline_strings_at(data, start, end)
-        .into_iter()
-        .max_by_key(|(s, _)| (s.contains("<["), s.len()))?;
-    let mut bits = Bits::new(data, after, end);
-    let rotation = bits.bit_double().filter(|v| v.abs() <= 10.0).unwrap_or(0.0);
-    bits.bit_double();
-    let attachment = bits.bit_short().and_then(|v| u8::try_from(v).ok()).filter(|v| *v <= 8).unwrap_or(6);
     // After the style's component lists: `BL, 2 bits, BD height, BL, BL
     // color`, then the component itself (type tag, ...), whose general block
     // starts 48 bits in. A height of 1.0 (a drawing unit) is the unset one.
@@ -545,13 +563,28 @@ pub(super) fn text_component(data: &[u8], start: usize, end: usize) -> Option<La
     });
     let height = head.and_then(|(height, _)| height);
     let general = head.map(|(_, at)| at);
-    let (x_offset, y_offset, gap) = general
-        .and_then(|at| {
-            general_offsets(data, at, end).or_else(|| {
-                // debt: about 1% of components (no `1000` after the head,
-                // or fields that do not read as BLs) are found by probing.
-                offsets(data, at, end).map(|(x, y, gap, _)| (x, y, gap))
-            })
+    let fields = general.and_then(|at| general_offsets(data, at, end));
+    // The content string, then rotation and attachment.
+    let (content, after) = fields
+        .and_then(|(.., pos)| content_at(data, pos, end))
+        .and_then(|pos| string_at(data, pos, end))
+        .or_else(|| {
+            // debt: components the fields above do not read (about 3%) take
+            // the longest format string.
+            inline_strings_at(data, start, end)
+                .into_iter()
+                .max_by_key(|(s, _)| (s.contains("<["), s.len()))
+        })?;
+    let mut bits = Bits::new(data, after, end);
+    let rotation = bits.bit_double().filter(|v| v.abs() <= 10.0).unwrap_or(0.0);
+    bits.bit_double();
+    let attachment = bits.bit_short().and_then(|v| u8::try_from(v).ok()).filter(|v| *v <= 8).unwrap_or(6);
+    let (x_offset, y_offset, gap) = fields
+        .map(|(x, y, gap, _)| (x, y, gap))
+        .or_else(|| {
+            // debt: about 1% of components (no `1000` after the head,
+            // or fields that do not read as BLs) are found by probing.
+            general.and_then(|at| offsets(data, at, end).map(|(x, y, gap, _)| (x, y, gap)))
         })
         .unwrap_or((0.0, 0.0, 0.0));
     // The anchor point, when the component's settings block (opening
