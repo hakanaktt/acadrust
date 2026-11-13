@@ -166,7 +166,8 @@ pub(crate) fn restore_table_entity_roundtrip(
         if let Some(geometry) = geometry {
             if geometry.columns as usize == table.columns.len()
                 && geometry.rows as usize == table.rows.len()
-                && geometry.cells.len() == table.rows.iter().map(|row| row.cells.len()).sum()
+                && geometry.cells.len()
+                    == table.rows.iter().map(|row| row.cells.len()).sum::<usize>()
             {
                 merge_geometry(table, &geometry);
             } else {
