@@ -449,13 +449,27 @@ fn offsets(data: &[u8], from: usize, end: usize) -> Option<(f64, f64, f64, usize
     offsets_within(data, from, end.min(from + 600))
 }
 
+/// The general block up to its fields: 12 flag bits, 32 bits more when
+/// flag 4 is clear, then the anchor point (4 bits) and 20 bits. Returns
+/// the anchor point.
+fn general_head(bits: &mut Bits) -> Option<u8> {
+    bits.bits_value(4)?;
+    if bits.bits_value(8)? & 0x80 == 0 {
+        bits.skip(32)?;
+    }
+    let point = bits.bits_value(4)?;
+    bits.skip(20)?;
+    Some(point)
+}
+
 /// X offset, y offset and border gap read by their fields: the general
-/// block's 12 flag bits, 32 bits whose last byte is a field mask, then for
-/// mask 0x8A `BL, BL, BL, BL, B, BD x, BD, BD y, BD, B, BD gap`.
+/// head (see [`general_head`]), `1000`, 6 BL, B, BD x, BD, BD y, BD, B,
+/// BD gap.
 fn general_offsets(data: &[u8], at: usize, end: usize) -> Option<(f64, f64, f64)> {
-    let mut bits = Bits::new(data, at + 12 + 24, end);
-    (bits.bits_value(8)? == 0x8A).then_some(())?;
-    for _ in 0..4 {
+    let mut bits = Bits::new(data, at, end);
+    general_head(&mut bits)?;
+    (bits.bits_value(4)? == 0b1000).then_some(())?;
+    for _ in 0..6 {
         bits.bit_long()?;
     }
     bits.bit()?;
@@ -534,28 +548,19 @@ pub(super) fn text_component(data: &[u8], start: usize, end: usize) -> Option<La
     let (x_offset, y_offset, gap) = general
         .and_then(|at| {
             general_offsets(data, at, end).or_else(|| {
-                // debt: general blocks with another field mask write more
-                // fields before the offsets; found by probing.
+                // debt: about 1% of components (no `1000` after the head,
+                // or fields that do not read as BLs) are found by probing.
                 offsets(data, at, end).map(|(x, y, gap, _)| (x, y, gap))
             })
         })
         .unwrap_or((0.0, 0.0, 0.0));
-    // A 16-bit header at the general block ends with the anchor point, when
-    // the component's settings block (opening 1011) follows it directly.
-    // ponytail: only that short header form is read; longer ones leave it
-    // unknown until their fields are decoded.
+    // The anchor point, when the component's settings block (opening
+    // 1011) follows it.
     let anchor_point = general.and_then(|at| {
         let mut bits = Bits::new(data, at, end);
-        let mut read = |n: usize| -> Option<u8> {
-            let mut v = 0u8;
-            for _ in 0..n {
-                v = (v << 1) | u8::from(bits.bit()?);
-            }
-            Some(v)
-        };
-        read(12)?;
-        let point = read(4)?;
-        (read(4)? == 0b1011).then_some(point)
+        let point = general_head(&mut bits)?;
+        bits.pos -= 20;
+        (bits.bits_value(4)? == 0b1011).then_some(point)
     });
     Some(LabelText {
         content: parse_format(&content),
