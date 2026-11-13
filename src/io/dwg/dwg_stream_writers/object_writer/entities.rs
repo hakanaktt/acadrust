@@ -5979,7 +5979,8 @@ impl<'a> DwgObjectWriter<'a> {
 
     /// Write a single wire struct (shared by wires and silhouette wires).
     /// Field order/types per LibreDWG `Dwg_3DSOLID_wire` (mirrors the reader):
-    /// RC type, BLd selection_marker, BS color, BLd acis_index, BL num_points.
+    /// RC type, BLd selection_marker, BS color, BLd acis_index, BL num_points;
+    /// a transform carries 4 x 3BD, one BD uniform scale, then 3 flag bits.
     fn write_wire(&mut self, wire: &Wire) {
         self.writer.write_byte(wire.wire_type as u8);
         self.writer.write_bit_long(wire.selection_marker);
@@ -6001,7 +6002,8 @@ impl<'a> DwgObjectWriter<'a> {
             self.writer.write_3bit_double(wire.y_axis);
             self.writer.write_3bit_double(wire.z_axis);
             self.writer.write_3bit_double(wire.translation);
-            self.writer.write_3bit_double(wire.scale);
+            // One BD: the transform scale is uniform.
+            self.writer.write_bit_double(wire.scale.x);
             self.writer.write_bit(wire.has_rotation);
             self.writer.write_bit(wire.has_reflection);
             self.writer.write_bit(wire.has_shear);
@@ -6083,6 +6085,65 @@ mod tests {
                 reader.check_error().unwrap();
             }
         }
+    }
+
+    #[test]
+    fn wire_transform_scale_is_written_as_one_bit_double() {
+        use crate::io::dwg::dwg_stream_writers::bit_writer::DwgBitWriter;
+
+        let document = CadDocument::with_version(DxfVersion::AC1032);
+        let mut writer = DwgObjectWriter::new(&document).unwrap();
+        let (x, y, z) = (
+            Vector3::new(-1.0, 0.0, 0.0),
+            Vector3::new(0.0, -1.0, 0.0),
+            Vector3::UNIT_Z,
+        );
+        let t = Vector3::new(10.5, -20.25, 30.125);
+        let wire = Wire {
+            selection_marker: -7,
+            color: Color::Index(5),
+            acis_index: 3,
+            points: vec![Vector3::new(1.0, 2.0, 3.0)],
+            has_transform: true,
+            has_rotation: true,
+            has_reflection: false,
+            has_shear: true,
+            x_axis: x,
+            y_axis: y,
+            z_axis: z,
+            translation: t,
+            scale: Vector3::new(2.5, 2.5, 2.5),
+            ..Wire::default()
+        };
+        writer.write_wire(&wire);
+
+        // The same wire, field by field, with the scale as a single BD.
+        let mut expected = DwgBitWriter::new(writer.version, DxfVersion::AC1032);
+        expected.write_byte(wire.wire_type as u8);
+        expected.write_bit_long(-7);
+        expected.write_bit_short(5);
+        expected.write_bit_long(3);
+        expected.write_bit_long(1);
+        expected.write_3bit_double(Vector3::new(1.0, 2.0, 3.0));
+        expected.write_bit(true);
+        expected.write_3bit_double(x);
+        expected.write_3bit_double(y);
+        expected.write_3bit_double(z);
+        expected.write_3bit_double(t);
+        expected.write_bit_double(2.5);
+        expected.write_bit(true);
+        expected.write_bit(false);
+        expected.write_bit(true);
+
+        assert_eq!(
+            writer.writer.main().position_in_bits(),
+            expected.position_in_bits(),
+            "a transformed wire must be exactly as long as the BD layout"
+        );
+        assert_eq!(
+            writer.writer.main().to_bytes_snapshot(),
+            expected.to_bytes_snapshot()
+        );
     }
 
     #[test]

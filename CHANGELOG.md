@@ -2,6 +2,12 @@
 
 ### Unreleased
 
+- **3DSOLID wire transform scale** - The scale in a wire's transform is
+  one BD (uniform scale), not a 3BD. Wireframes whose wires carry a
+  transform now decode in step with the stream, where reading the scale
+  as three values pushed every later field out of place. `Wire::scale`
+  keeps its three components, all equal when read from a DWG.
+
 - **Civil 3D station equations, design speeds and sites** -
   `ArchEntityData::alignment_station_equations` and
   `alignment_design_speeds` read an alignment's equations (raw station,
