@@ -446,13 +446,13 @@ impl ArchEntityData {
         // intervals) are only read through their record marker.
         self.main_stream()
             .map(|(data, start, end)| {
-                if self.dxf_name == "AECC_ALIGNMENT_STATION_LABEL_GROUP" {
-                    if let Some(stations) = labels::station_group_stations(data, start, end) {
+                if matches!(self.dxf_name.as_str(), "AECC_ALIGNMENT_STATION_LABEL_GROUP" | "AECC_ALIGNMENT_MINOR_STATION_LABEL_GROUP") {
+                    if let Some(stations) = labels::group_stations(data, start, end) {
                         return stations;
                     }
                 }
-                // debt: other label group classes, and station groups with an
-                // unmapped item mask, are searched for their stations.
+                // debt: other label group classes are searched for their
+                // stations.
                 let marked = labels::marked_stations(data, start, end);
                 if marked.len() >= 2 { marked } else { labels::stations(data, start, end) }
             })

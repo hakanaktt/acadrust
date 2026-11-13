@@ -37,36 +37,49 @@ pub(super) fn marked_stations(data: &[u8], start: usize, end: usize) -> Vec<f64>
     stations
 }
 
-/// Stations of a station label group (`AECC_ALIGNMENT_STATION_LABEL_GROUP`)
-/// read by its fields: a 293-bit header, `BL n`, `n` labels, a 294-bit
-/// trailer. A label is a key block (`BL k`, `k` keys; the station is key
-/// 0x0200D020, the first label holds the group's settings), 158 bits,
-/// `BL m` and `m` items (`BL, BL, BL, BL mask, BS`, mask 0x0CC04E08).
-// ponytail: the header and trailer are skipped by length (constant in every
-// sample); other item masks write more fields and are not mapped.
-pub(super) fn station_group_stations(data: &[u8], start: usize, end: usize) -> Option<Vec<f64>> {
+/// Stations of a station or minor station label group read by its
+/// fields: a 293-bit header, `BL n`, `n` labels, a 294-bit trailer. A label
+/// is a key block (`BL k`, `k` keys; the station is key 0x0200D020, the
+/// first label holds the group's settings), 44 bits, a key list (`BL k`,
+/// `k` keys without values), `BL`, `BL m` and `m` items: `BL x3, BL mask`,
+/// then for mask 0x0CC04E08 18 bits, for mask 0x0CC00208 (a dragged label)
+/// 7 bits, `BD`, `BD`, 5 bits.
+// ponytail: the header, the 44 bits, the item bits around the BDs and the
+// trailer are skipped by length (constant in every sample); name them once
+// a drawing varies them.
+pub(super) fn group_stations(data: &[u8], start: usize, end: usize) -> Option<Vec<f64>> {
     const HEADER: usize = 293;
-    const LABEL_TAIL: usize = 158;
     const TRAILER: usize = 294;
     const STATION: u32 = 0x0200_D020;
     let mut bits = Bits::new(data, start + HEADER, end);
+    let skip = |bits: &mut Bits, n: usize| (bits.remaining() >= n).then(|| bits.pos += n);
     let n = bits.bit_long()?;
     let mut stations = Vec::new();
     for _ in 0..n {
-        let k = bits.bit_long()?;
-        for _ in 0..k {
+        for _ in 0..bits.bit_long()? {
             if let (STATION, super::alignment::KeyValue::Double(station)) = super::alignment::read_key(&mut bits)? {
                 stations.push(station);
             }
         }
-        (bits.remaining() >= LABEL_TAIL).then_some(())?;
-        bits.pos += LABEL_TAIL;
+        skip(&mut bits, 44)?;
+        for _ in 0..bits.bit_long()? {
+            bits.bit_long()?;
+        }
+        bits.bit_long()?;
         for _ in 0..bits.bit_long()? {
             for _ in 0..3 {
                 bits.bit_long()?;
             }
-            (bits.bit_long()? as u32 == 0x0CC0_4E08).then_some(())?;
-            bits.bit_short()?;
+            match bits.bit_long()? as u32 {
+                0x0CC0_4E08 => skip(&mut bits, 18)?,
+                0x0CC0_0208 => {
+                    skip(&mut bits, 7)?;
+                    bits.bit_double()?;
+                    bits.bit_double()?;
+                    skip(&mut bits, 5)?;
+                }
+                _ => return None,
+            }
         }
     }
     (bits.remaining() == TRAILER).then_some(stations)
