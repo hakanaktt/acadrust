@@ -353,22 +353,37 @@ pub(super) fn class_header(bits: &mut Bits) -> Option<u8> {
 }
 
 /// An alignment's own fields after [`read_keys`]: BL first element id, BD,
-/// BD start station, 10 bits (criteria), BL, then the element count.
+/// BD start station, 7 criteria bits, BD track gauge, 1 bit, BL, then the
+/// element count.
 struct Section2 {
     start_station: f64,
-    /// The 10 criteria bits after the start station.
+    /// The 7 criteria bits after the start station.
     criteria_at: usize,
     count_at: usize,
 }
 
 fn section2(data: &[u8], start: usize, end: usize) -> Option<Section2> {
+    // Records re-saved by RECOVER/AUDIT have 8 bits more before the BD
+    // (2.1255 there instead of 2.25); the list that follows tells which.
+    // ponytail: the extra 8 bits are not named; one layout of each in the
+    // samples.
+    [65, 73].into_iter().find_map(|run| section2_with(data, start, end, run))
+}
+
+fn section2_with(data: &[u8], start: usize, end: usize, run: usize) -> Option<Section2> {
     let mut bits = Bits::new(data, start, end);
-    read_keys(&mut bits)?;
+    class_keys(&mut bits)?;
+    bits.pos += run;
+    bits.bit_double()?;
+    bits.pos += 7;
     bits.bit_long()?;
     bits.bit_double()?;
     let start_station = bits.bit_double()?;
     let criteria_at = bits.pos;
-    bits.pos += 10;
+    bits.pos += 7;
+    // The track gauge (0 unless the superelevation type is cant), one bit.
+    bits.bit_double()?;
+    bits.bit()?;
     bits.bit_long()?;
     // The element list must follow: the RECOVER/AUDIT layout reads through
     // these fields at the wrong places. A count of 0 must be followed by the
@@ -390,10 +405,8 @@ pub(super) fn elements(data: &[u8], start: usize, end: usize) -> Vec<AlignmentEl
     if let Some(s) = section2(data, start, end) {
         return element_list_at(data, s.count_at, end).unwrap_or_default();
     }
-    // debt: two section 2 layouts are not mapped yet: records re-saved by
-    // RECOVER/AUDIT (8 bits more in the run after the BL 0) and a re-save
-    // tag of 3 (64 bits more after the start station, one cant sample).
-    // Find the list by trying positions.
+    // debt: records civil3drust wrote invalid: the list is found by trying
+    // positions.
     if let Some(list) = (start..end).find_map(|pos| element_list_at(data, pos, end)) {
         return list;
     }
@@ -796,9 +809,14 @@ fn read_element(bits: &mut Bits, member: Option<usize>, after_type: Option<usize
             first: bits.bit_double()?,
             second: None,
         },
-        (275, Some(1)) => AlignmentElementKind::WideningCompoundReverse {
-            radii: [bits.bit_double()?, bits.bit_double()?, bits.bit_double()?],
-        },
+        (275, Some(1)) => {
+            let radii = [bits.bit_double()?, bits.bit_double()?, bits.bit_double()?];
+            // The transition's length along the parent and a flag (1 on the
+            // transition in, 0 on the one out).
+            bits.bit_double()?;
+            bits.bit()?;
+            AlignmentElementKind::WideningCompoundReverse { radii }
+        }
         (261, Some(162)) => {
             bits.bit_long()?;
             AlignmentElementKind::LineSpiralInto {
@@ -2691,8 +2709,8 @@ pub(super) fn start_station(data: &[u8], start: usize, end: usize) -> f64 {
     if let Some(s) = section2(data, start, end) {
         return s.start_station;
     }
-    // debt: re-saved section 2 layout; the BD after the `2.25` marker, 16
-    // bits and three flags (`1 1 0`) later, found by scanning.
+    // debt: records civil3drust wrote invalid; the BD after the `2.25`
+    // marker, 16 bits and three flags (`1 1 0`) later, found by scanning.
     let window = end.min(start + 4096);
     for pos in start..window {
         let mut bits = Bits::new(data, pos, end);
@@ -2734,7 +2752,7 @@ pub(super) fn criteria(data: &[u8], start: usize, end: usize) -> Option<Alignmen
     let mut bits = if let Some(s) = section2(data, start, end) {
         Bits::new(data, s.criteria_at, end)
     } else {
-        // debt: re-saved section 2 layout, found by scanning for 2.25.
+        // debt: records civil3drust wrote invalid, found by scanning for 2.25.
         let window = end.min(start + 4096);
         let pos = (start..window).find(|&pos| {
             let mut bits = Bits::new(data, pos, end);
