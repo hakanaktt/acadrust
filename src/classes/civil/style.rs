@@ -86,13 +86,20 @@ fn layout(data: &[u8], start: usize, end: usize) -> Option<Layout> {
     }
     refs += keys.iter().filter(|(key, _)| KeyValue::has_reference(*key)).count();
     let mut skipped = false;
-    let (components, end) = component_lists(data, bits.pos, end).or_else(|| {
-        // debt: some profile styles (S24's, one in Kemer) have 2 or 56 more
-        // bits before the BL 32 (the 56 with one more reference), not
-        // mapped; the lists are found past them.
-        skipped = true;
-        (bits.pos + 1..(bits.pos + 512).min(end)).find_map(|pos| component_lists(data, pos, end))
-    })?;
+    let (components, end) = component_lists(data, bits.pos, end)
+        .or_else(|| {
+            let mut bits = Bits::new(data, bits.pos, end);
+            let more = extra_keys(&mut bits)?;
+            let found = component_lists(data, bits.pos, end)?;
+            refs += more;
+            Some(found)
+        })
+        .or_else(|| {
+            // debt: a block before the BL 32 in neither form of
+            // [`extra_keys`] is found by probing past it.
+            skipped = true;
+            (bits.pos + 1..(bits.pos + 512).min(end)).find_map(|pos| component_lists(data, pos, end))
+        })?;
     Some(Layout {
         keys,
         refs,
@@ -100,6 +107,26 @@ fn layout(data: &[u8], start: usize, end: usize) -> Option<Layout> {
         end,
         skipped,
     })
+}
+
+/// The block some styles hold between their keys and the component lists
+/// (styles made new and their copies, not the ones a template brings):
+/// `B 1, B 1`, or `B 1, BL n, n x key, BL, B 1`. Returns the number of
+/// references its keys add.
+fn extra_keys(bits: &mut Bits) -> Option<usize> {
+    bits.bit()?.then_some(())?;
+    let mut refs = 0;
+    if !bits.bit()? {
+        bits.pos -= 1;
+        let n = bits.bit_long()?;
+        (0..=64).contains(&n).then_some(())?;
+        for _ in 0..n {
+            refs += usize::from(KeyValue::has_reference(read_key(bits)?.0));
+        }
+        bits.bit_long()?;
+        bits.bit()?.then_some(())?;
+    }
+    Some(refs)
 }
 
 /// The bit after a style's component lists, where its class data starts.
@@ -326,6 +353,28 @@ pub(super) fn marker(data: &[u8], start: usize, end: usize) -> Option<Marker> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn packed(s: &str) -> (Vec<u8>, usize) {
+        let s: Vec<u8> = s.bytes().filter(|b| *b == b'0' || *b == b'1').collect();
+        (s.chunks(8).map(|c| c.iter().enumerate().fold(0u8, |a, (i, b)| a | ((b - b'0') << (7 - i)))).collect(), s.len())
+    }
+
+    #[test]
+    fn reads_both_extra_key_forms() {
+        // B 1, B 1.
+        let (b, len) = packed("1 1");
+        let mut bits = Bits::new(&b, 0, len);
+        assert_eq!(extra_keys(&mut bits), Some(0));
+        assert_eq!(bits.pos, 2);
+        // B 1, BL 1, key 0x10010101 (a reference, no value), BL 1, B 1.
+        let (b, len) = packed("1 0100000001 00 00000001 00000001 00000001 00010000 0100000001 1");
+        let mut bits = Bits::new(&b, 0, len);
+        assert_eq!(extra_keys(&mut bits), Some(1));
+        assert_eq!(bits.pos, len);
+        // A list (BL 32 opens it) is not the block.
+        let (b, len) = packed("0100100000");
+        assert_eq!(extra_keys(&mut Bits::new(&b, 0, len)), None);
+    }
 
     /// One component record with tag value `v`: visible, ByLayer, lineweight
     /// -1, linetype scale 1.
