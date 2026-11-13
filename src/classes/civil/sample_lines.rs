@@ -1,9 +1,17 @@
 //! Sample line groups.
 //!
-//! A group stores one placement record per section view group (position,
-//! swath `BD -left, BD right`, ..., `BD 3337.0`), then the station range and
-//! increment (`BD start, BD end, BD increment`) 25 bits after the last one.
-//! The sample lines follow from those along the parent alignment.
+//! ```text
+//! BL 80, 0, 80, 80, 0, BL, BL id, 4 bits, RC n, n keys, 157 bits
+//! BL n, n sources { BL 1, BL 0, 128 bits, BL, 2 bits }
+//! BL 0, BL n, n placements {
+//!     BL index (1, 2, ...), 2 bits, GUID, 21 bits,
+//!     BD -left, BD right, B, BD 60, BL, 83 bits, BD 3337, 23 bits }
+//! 2 bits, BD first, BD last, B, BD increment (tangent, curve, spiral),
+//! BD left, BD right, 45 bits
+//! ```
+//!
+//! The station range, increments and swath close the record; the sample
+//! lines follow from those along the parent alignment.
 
 use super::bits::Bits;
 
@@ -18,47 +26,53 @@ pub struct SampleLines {
     pub right: f64,
 }
 
-/// `count` BDs at `pos`, each with whether it was written in full (not as
-/// the compact 0.0 / 1.0 forms).
-fn doubles_at(data: &[u8], pos: usize, end: usize, count: usize) -> Option<Vec<(f64, bool)>> {
-    let mut bits = Bits::new(data, pos, end);
-    (0..count)
-        .map(|_| {
-            let before = bits.pos;
-            let value = bits.bit_double().filter(|v| v.is_finite() && v.abs() < 1e7)?;
-            Some((value, bits.pos - before == 66))
-        })
-        .collect()
-}
-
-fn whole(x: f64) -> bool {
-    (x * 1000.0 - (x * 1000.0).round()).abs() < 1e-6 && x != 0.0
-}
-
-/// Each section view placement record ends with this BD.
+/// Each placement record ends with this BD.
 const PLACEMENT_END: f64 = 3337.0;
 
+// ponytail: the 157-, 128-, 21-, 83-, 23- and 45-bit runs are skipped by
+// length (the same bits in all four groups seen, zeros or constants; the
+// 128 bits are a per-placement GUID); name them once a drawing varies them.
 pub(super) fn sample_lines(data: &[u8], start: usize, end: usize) -> Option<SampleLines> {
-    // Last placement record; the station range follows it.
-    let anchor = (start..end)
-        .filter(|&pos| {
-            let mut bits = Bits::new(data, pos, end);
-            bits.bit_double() == Some(PLACEMENT_END) && bits.pos == pos + 66
-        })
-        .last()?;
-    let (left, right) = (anchor.saturating_sub(320)..anchor).find_map(|pos| {
-        let v = doubles_at(data, pos, end, 2)?;
-        let ((l, lr), (r, rr)) = (v[0], v[1]);
-        (lr && rr && l < 0.0 && r > 0.0 && whole(l) && whole(r) && -l <= 1000.0 && r <= 1000.0)
-            .then_some((-l, r))
-    })?;
-    let range = anchor + 66 + 25;
-    let mut bits = Bits::new(data, range, end);
+    let mut bits = Bits::new(data, start, end);
+    for want in [80, 0, 80, 80, 0] {
+        (bits.bit_long()? == want).then_some(())?;
+    }
+    bits.bit_long()?;
+    bits.bit_long()?;
+    bits.skip(4)?;
+    for _ in 0..bits.bits_value(8)? {
+        super::alignment::key(&mut bits)?;
+    }
+    bits.skip(157)?;
+    for _ in 0..bits.bit_long()? {
+        (bits.bit_long()? == 1 && bits.bit_long()? == 0).then_some(())?;
+        bits.skip(128)?;
+        bits.bit_long()?;
+        bits.skip(2)?;
+    }
+    (bits.bit_long()? == 0).then_some(())?;
+    for index in 1..=bits.bit_long()? {
+        (bits.bit_long()? == index).then_some(())?;
+        bits.skip(2 + 128 + 21)?;
+        bits.bit_double()?;
+        bits.bit_double()?;
+        bits.bit()?;
+        bits.bit_double()?;
+        bits.bit_long()?;
+        bits.skip(83)?;
+        (bits.bit_double()? == PLACEMENT_END).then_some(())?;
+        bits.skip(23)?;
+    }
+    bits.skip(2)?;
     let first = bits.bit_double()?;
     let last = bits.bit_double()?;
     bits.bit()?;
     let increment = bits.bit_double()?;
-    if !(last > first && increment > 0.0 && (last - first) / increment <= 5000.0) {
+    bits.bit_double()?;
+    bits.bit_double()?;
+    let left = bits.bit_double()?;
+    let right = bits.bit_double()?;
+    if bits.remaining() != 45 || !(last > first && increment > 0.0 && (last - first) / increment <= 5000.0) {
         return None;
     }
     let mut stations: Vec<f64> = (0..)

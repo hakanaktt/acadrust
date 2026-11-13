@@ -23,6 +23,11 @@ impl<'a> Bits<'a> {
         self.end.saturating_sub(self.pos)
     }
 
+    /// Moves past `count` bits, `None` when fewer remain.
+    pub fn skip(&mut self, count: usize) -> Option<()> {
+        (self.remaining() >= count).then(|| self.pos += count)
+    }
+
     fn bits(&mut self, count: usize) -> Option<u8> {
         if self.remaining() < count {
             return None;

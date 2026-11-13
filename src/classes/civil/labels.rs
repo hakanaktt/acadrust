@@ -59,7 +59,7 @@ fn group_labels(data: &[u8], start: usize, end: usize) -> Option<(Vec<f64>, usiz
                 stations.push(station);
             }
         }
-        skip(&mut bits, 44)?;
+        bits.skip(44)?;
         for _ in 0..bits.bit_long()? {
             bits.bit_long()?;
         }
@@ -69,22 +69,18 @@ fn group_labels(data: &[u8], start: usize, end: usize) -> Option<(Vec<f64>, usiz
                 bits.bit_long()?;
             }
             match bits.bit_long()? as u32 {
-                0x0CC0_4E08 => skip(&mut bits, 18)?,
+                0x0CC0_4E08 => bits.skip(18)?,
                 0x0CC0_0208 => {
-                    skip(&mut bits, 7)?;
+                    bits.skip(7)?;
                     bits.bit_double()?;
                     bits.bit_double()?;
-                    skip(&mut bits, 5)?;
+                    bits.skip(5)?;
                 }
                 _ => return None,
             }
         }
     }
     Some((stations, bits.pos))
-}
-
-fn skip(bits: &mut Bits, n: usize) -> Option<()> {
-    (bits.remaining() >= n).then(|| bits.pos += n)
 }
 
 /// Stations of a station or minor station label group: its labels (see
@@ -112,7 +108,7 @@ pub(super) fn group_point_kinds(data: &[u8], start: usize, end: usize) -> Option
     }
     bits.bit_double()?;
     bits.bit_double()?;
-    skip(&mut bits, 7)?;
+    bits.skip(7)?;
     let count = bits.bit_long()?;
     let kinds = (0..count).map(|_| bits.bit_long().map(|v| (v & 0xFF) as u8)).collect::<Option<Vec<_>>>()?;
     (bits.remaining() == 19).then_some(kinds)
