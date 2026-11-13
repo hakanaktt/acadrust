@@ -491,8 +491,8 @@ fn color(bits: &mut Bits) -> Option<()> {
 }
 
 /// Where the content string starts, read on from the gap: 4 bits, BD,
-/// color, BL, color, BL, BL, color, BL, BL, BL, `BL n`, `n` BLs, then the
-/// 12 bits `010011111110`.
+/// color, BL, color, BL, BL, color, BL, BL, BL, `BL n`, `n` BLs, BL, BL
+/// (63, 0 in text components).
 fn content_at(data: &[u8], pos: usize, end: usize) -> Option<usize> {
     let mut bits = Bits::new(data, pos, end);
     bits.skip(4)?;
@@ -508,11 +508,10 @@ fn content_at(data: &[u8], pos: usize, end: usize) -> Option<usize> {
     }
     let n = bits.bit_long()?;
     (0..=64).contains(&n).then_some(())?;
-    for _ in 0..n {
+    for _ in 0..n + 2 {
         bits.bit_long()?;
     }
-    let tag = (u16::from(bits.bits_value(4)?) << 8) | u16::from(bits.bits_value(8)?);
-    (tag == 0b0100_1111_1110).then_some(bits.pos)
+    Some(bits.pos)
 }
 
 /// X offset, y offset and border gap, with where the block starts.
@@ -577,9 +576,9 @@ pub(super) fn text_component(data: &[u8], start: usize, end: usize) -> Option<La
         .and_then(|(.., pos)| content_at(data, pos, end))
         .and_then(|pos| string_at(data, pos, end))
         .or_else(|| {
-            // debt: components the fields above do not read (33 of 1929 in
-            // the samples, other component tags) take the longest format
-            // string.
+            // debt: components the fields above do not read (8 of 1929 in
+            // the samples, component tag 0x0022001F) take the longest
+            // format string.
             inline_strings_at(data, start, end)
                 .into_iter()
                 .max_by_key(|(s, _)| (s.contains("<["), s.len()))
