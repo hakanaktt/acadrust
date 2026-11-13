@@ -2963,18 +2963,19 @@ impl AlignmentType {
     }
 }
 
-/// The alignment type and the bit after it: after the design speeds,
-/// `BD, BL 0, BL m, m x BD element id, BL type`.
 /// The type after the equations and speeds read at `pos` (see
-/// [`post_cache_at`]): `BD, BL 0, BL m, m x BD element id, BL type`,
-/// confirmed by what follows it.
+/// [`post_cache_at`]): `BD, BL superelevation (0 none, 1 a block, see
+/// [`superelevation`]), BL m, m x BD element id, BL type`, confirmed by
+/// what follows it.
 fn typed_at(data: &[u8], pos: usize, end: usize, first: f64, last: f64, empty: bool) -> Option<(AlignmentType, usize)> {
     let (_, _, pos) = post_cache_at(data, pos, end, first, last, empty)?;
     let mut bits = Bits::new(data, pos, end);
     bits.bit_double()?;
-    // debt: some Civil 2013 records have a list here (count, element id
-    // pairs, then slope tables), not mapped; their type is not read.
-    (bits.bit_long()? == 0).then_some(())?;
+    match bits.bit_long()? {
+        0 => {}
+        1 => superelevation(&mut bits)?,
+        _ => return None,
+    }
     let m = bits.bit_long()?;
     if !(0..=10_000).contains(&m) {
         return None;
@@ -2993,6 +2994,126 @@ fn typed_at(data: &[u8], pos: usize, end: usize, first: f64, last: f64, empty: b
         _ => (0..3).all(|_| bits.bit_long() == Some(2)),
     };
     confirmed.then_some((kind, after))
+}
+
+/// A superelevation node's head: `BL id, BL other, BL id, BL other` (the
+/// element id of the curve it belongs to and a second id, -1 when unset).
+fn superelevation_node(bits: &mut Bits) -> Option<()> {
+    let ids = [bits.bit_long()?, bits.bit_long()?];
+    (bits.bit_long()? == ids[0] && bits.bit_long()? == ids[1]).then_some(())
+}
+
+/// The fields of a critical station or lane after its `BL 3`: `BL value
+/// kind, BD station from the curve start, BD, B`.
+fn superelevation_station(bits: &mut Bits) -> Option<()> {
+    bits.bit_long()?;
+    bits.bit_double()?;
+    bits.bit_double()?;
+    bits.bit().map(|_| ())
+}
+
+/// One entry of the lane table at the end of a superelevation block:
+/// `BL kind`, `[kind 0: BD]`, `fields` BLs, `BL 0, BL 0, BD, BD, B, BL,
+/// B, B, BL`.
+fn superelevation_entry(bits: &mut Bits, fields: usize) -> Option<()> {
+    if bits.bit_long()? == 0 {
+        bits.bit_double()?;
+    }
+    for _ in 0..fields {
+        bits.bit_long()?;
+    }
+    (bits.bit_long()? == 0 && bits.bit_long()? == 0).then_some(())?;
+    bits.bit_double()?;
+    bits.bit_double()?;
+    bits.bit()?;
+    bits.bit_long()?;
+    bits.bit()?;
+    bits.bit()?;
+    bits.bit_long().map(|_| ())
+}
+
+/// An alignment's superelevation, read after its `BL 1`:
+///
+/// ```text
+/// B, BL k (curves), B,
+/// k x { node, BL 0, B, [last: BL], B }
+/// k x { node, B; node, B 0, B settings, [settings: 582 bits], 10 bits,
+///       BL kind, BL, BL v, then units until v is 0, [not last curve: B] }
+/// unit by v:  3     critical station: BL 3 read, station fields
+///             other a lane: v, BL, BL (side, inside/outside, lane or
+///                   shoulder), BL 3, station fields
+///             (station fields: see [`superelevation_station`])
+///             each unit is followed by a node, BL kind (0, or 1 or 8
+///             without a slope), [kind 0: BD slope], BL v
+/// lane table: 4 x { BL n, n x (BL, BL, BL) }, then per lane two entries
+///             (see [`superelevation_entry`]) with 4 and 1 fields,
+///             BL 0, BL 0, BL n, 2n x BL, RD
+/// ```
+// ponytail: the 582-bit settings, the 10 bits after them and the 4 lane
+// groups are the same in every sample.
+fn superelevation(bits: &mut Bits) -> Option<()> {
+    bits.bit()?;
+    let curves = bits.bit_long()?;
+    (1..=1000).contains(&curves).then_some(())?;
+    bits.bit()?;
+    for index in 0..curves {
+        superelevation_node(bits)?;
+        (bits.bit_long()? == 0).then_some(())?;
+        bits.bit()?;
+        if index + 1 == curves {
+            bits.bit_long()?;
+        }
+        bits.bit()?;
+    }
+    for index in 0..curves {
+        superelevation_node(bits)?;
+        bits.bit()?;
+        superelevation_node(bits)?;
+        (!bits.bit()?).then_some(())?;
+        if bits.bit()? {
+            bits.skip(582)?;
+        }
+        bits.skip(10)?;
+        bits.bit_long()?;
+        bits.bit_long()?;
+        let mut v = bits.bit_long()?;
+        while v != 0 {
+            if v != 3 {
+                bits.bit_long()?;
+                bits.bit_long()?;
+                (bits.bit_long()? == 3).then_some(())?;
+            }
+            superelevation_station(bits)?;
+            superelevation_node(bits)?;
+            if bits.bit_long()? == 0 {
+                bits.bit_double()?;
+            }
+            v = bits.bit_long()?;
+        }
+        if index + 1 < curves {
+            bits.bit()?;
+        }
+    }
+    let mut lanes = 0;
+    for _ in 0..4 {
+        let n = bits.bit_long()?;
+        (0..=16).contains(&n).then_some(())?;
+        for _ in 0..3 * n {
+            bits.bit_long()?;
+        }
+        lanes += n;
+    }
+    for _ in 0..lanes {
+        superelevation_entry(bits, 4)?;
+        superelevation_entry(bits, 1)?;
+    }
+    (bits.bit_long()? == 0 && bits.bit_long()? == 0).then_some(())?;
+    let n = bits.bit_long()?;
+    (0..=64).contains(&n).then_some(())?;
+    for _ in 0..2 * n {
+        bits.bit_long()?;
+    }
+    bits.raw_double().map(|_| ())
 }
 
 pub(super) fn alignment_type(data: &[u8], start: usize, end: usize, first: f64, last: f64) -> Option<(AlignmentType, usize)> {
@@ -3704,6 +3825,37 @@ mod tests {
     }
 
     #[test]
+    fn reads_a_superelevation_block_with_one_lane() {
+        let bl = |v: i32| match v {
+            0 => "10".to_string(),
+            -1 => format!("00{}", "1".repeat(32)),
+            v => format!("01{:08b}", v),
+        };
+        let node = format!("{}{}{}{}", bl(2), bl(-1), bl(2), bl(-1));
+        let bd50 = format!("00{}", 50.0f64.to_le_bytes().iter().map(|b| format!("{b:08b}")).collect::<String>());
+        let rd = 3.26f64.to_le_bytes().iter().map(|b| format!("{b:08b}")).collect::<String>();
+        let s = [
+            // B, one curve, B; its entry: node, BL 0, B, BL 1, B.
+            format!("0{}0", bl(1)),
+            format!("{node}{}0{}0", bl(0), bl(1)),
+            // The curve: node, B; node, B 0, no settings, 10 bits, then a
+            // critical station (kind 1, BL, BL 3), one lane, and the end.
+            format!("{node}0{node}00 0001010000 {}{}{}", bl(1), bl(0), bl(3)),
+            format!("{}{bd50}10 0", bl(10)),
+            format!("{node}{}10 {}{}{} {}{}{bd50}10 0", bl(0), bl(1), bl(0), bl(1), bl(3), bl(10)),
+            format!("{node}{}10 {}", bl(0), bl(0)),
+            // The lane table: 4 empty groups, BL 0, BL 0, BL 0, RD.
+            format!("{}{}{}{} {}{}{} {rd}", bl(0), bl(0), bl(0), bl(0), bl(0), bl(0), bl(0)),
+        ]
+        .concat();
+        let s: Vec<u8> = s.bytes().filter(|b| *b == b'0' || *b == b'1').collect();
+        let data: Vec<u8> = s.chunks(8).map(|c| c.iter().enumerate().fold(0u8, |a, (i, b)| a | ((b - b'0') << (7 - i)))).collect();
+        let mut bits = Bits::new(&data, 0, s.len());
+        assert_eq!(superelevation(&mut bits), Some(()));
+        assert_eq!(bits.pos, s.len());
+    }
+
+    #[test]
     fn arc_leaves_line_and_reaches_point() {
         // Line along +x; a quarter circle of radius 10 from (5, 0) ends at (15, 10).
         let (touch, q, end) = arc_from_line_to_point(v(0.0, 0.0), v(1.0, 0.0), 10.0, v(15.0, 10.0)).unwrap();
@@ -3775,3 +3927,4 @@ mod tests {
         assert!((normalize(end.heading - PI)).abs() < 1e-9);
     }
 }
+
