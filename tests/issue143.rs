@@ -92,7 +92,8 @@ fn marker_names(doc: &CadDocument, objects: &DwgObjectReader) -> HashMap<Handle,
         .collect()
 }
 
-// Paper-space headers are stored bare; their BLOCK markers keep the numbered name.
+// Paper-space and anonymous headers are stored bare; their BLOCK markers keep
+// the numbered name.
 fn assert_marker_names(
     doc: &CadDocument,
     objects: &DwgObjectReader,
@@ -107,6 +108,8 @@ fn assert_marker_names(
                 marker.to_uppercase().starts_with("*PAPER_SPACE"),
                 "{marker}"
             );
+        } else if block.flags.anonymous {
+            assert_eq!(marker, &block.name);
         } else {
             assert_eq!(marker, header);
         }
