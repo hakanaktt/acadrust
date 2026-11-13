@@ -77,8 +77,7 @@ pub(super) fn find(data: &[u8], start: usize, end: usize) -> Option<TinSurface> 
     }
     // debt: surfaces whose first definition is none of the forms below or
     // that hold an operation kind not mapped in [`operation`] are found by
-    // probing; one in the samples, built on a surface of another drawing,
-    // whose definitions do not start where its graph head ends.
+    // probing (none in the samples).
     (start..end).find_map(|pos| read_at(data, pos, end))
 }
 
@@ -100,12 +99,13 @@ enum First {
 /// from Civil 3D 2026), `RC k`, `k` x 2 bytes, "MMS01". The block that
 /// follows tells the layouts apart.
 ///
-/// The definitions: `BL head`, 5 BL, 3 bits, GUID, the first definition (see
+/// The definitions: 2 bits, `RL head`, 5 BL, 3 bits, GUID, the first definition (see
 /// [`First`]), the other definitions (see [`operation`]), then `BL, BL`,
 /// 2 bits. Bits 11 to 15 of `head` count the definitions, the first one
 /// included.
 // ponytail: the 5-, 3-, 2- and 111-bit runs are skipped by length (the same
-// in every sample).
+// in every sample). The 2 bits before the head are 00 in every sample but
+// one (01), so the head reads as a BL there too.
 fn triangulation_at(data: &[u8], start: usize, end: usize) -> Option<usize> {
     let mut bits = Bits::new(data, start, end);
     super::profile::graph_head(&mut bits)?;
@@ -119,7 +119,8 @@ fn triangulation_at(data: &[u8], start: usize, end: usize) -> Option<usize> {
         let Some(first) = first else {
             return bits.skip(111);
         };
-        let head = bits.bit_long()? as u32;
+        bits.skip(2)?;
+        let head = bits.raw_long()? as u32;
         for _ in 0..5 {
             bits.bit_long()?;
         }
