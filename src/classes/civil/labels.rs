@@ -372,6 +372,24 @@ fn offsets(data: &[u8], from: usize, end: usize) -> Option<(f64, f64, f64, usize
     offsets_within(data, from, end.min(from + 600))
 }
 
+/// X offset, y offset and border gap read by their fields: the general
+/// block's 12 flag bits, 32 bits whose last byte is a field mask, then for
+/// mask 0x8A `BL, BL, BL, BL, B, BD x, BD, BD y, BD, B, BD gap`.
+fn general_offsets(data: &[u8], at: usize, end: usize) -> Option<(f64, f64, f64)> {
+    let mut bits = Bits::new(data, at + 12 + 24, end);
+    (bits.bits_value(8)? == 0x8A).then_some(())?;
+    for _ in 0..4 {
+        bits.bit_long()?;
+    }
+    bits.bit()?;
+    let x = bits.bit_double()?;
+    bits.bit_double()?;
+    let y = bits.bit_double()?;
+    bits.bit_double()?;
+    bits.bit()?;
+    Some((x, y, bits.bit_double()?))
+}
+
 /// X offset, y offset and border gap, with where the block starts.
 fn offsets_within(data: &[u8], from: usize, end: usize) -> Option<(f64, f64, f64, usize)> {
     (from..end).find_map(|pos| {
@@ -436,8 +454,15 @@ pub(super) fn text_component(data: &[u8], start: usize, end: usize) -> Option<La
     });
     let height = head.and_then(|(height, _)| height);
     let general = head.map(|(_, at)| at);
-    let block = general.and_then(|at| offsets(data, at, end));
-    let (x_offset, y_offset, gap) = block.map_or((0.0, 0.0, 0.0), |(x, y, gap, _)| (x, y, gap));
+    let (x_offset, y_offset, gap) = general
+        .and_then(|at| {
+            general_offsets(data, at, end).or_else(|| {
+                // debt: general blocks with another field mask write more
+                // fields before the offsets; found by probing.
+                offsets(data, at, end).map(|(x, y, gap, _)| (x, y, gap))
+            })
+        })
+        .unwrap_or((0.0, 0.0, 0.0));
     // A 16-bit header at the general block ends with the anchor point, when
     // the component's settings block (opening 1011) follows it directly.
     // ponytail: only that short header form is read; longer ones leave it
