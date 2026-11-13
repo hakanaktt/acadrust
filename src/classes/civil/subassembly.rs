@@ -178,9 +178,8 @@ pub struct AssemblyLayout {
     pub attachments: Vec<Attachment>,
 }
 
-/// Attachment records each open with this tag (`v` is 70 in Civil 3D
-/// 2013 drawings, 80 from 2018); a record that holds a point index follows
-/// each one that does not. Returns `v`.
+/// An attachment record (`v` is 70 in Civil 3D 2013 drawings, 80 from
+/// 2018). Returns `v`.
 fn attachment_tag(bits: &mut Bits) -> Option<i16> {
     let v = bits.bit_short()?;
     (matches!(v, 70 | 80) && bits.bit_short()? == v && bits.bit_short()? == 0).then_some(())?;
@@ -194,24 +193,31 @@ fn attachment_tag(bits: &mut Bits) -> Option<i16> {
     (flags == [false, false, true, false, false]).then_some(v)
 }
 
-/// Parent point indices in subassembly order.
-fn attachment_points(data: &[u8], start: usize, end: usize) -> Vec<u32> {
+/// Parent point indices in subassembly order, read after the baseline
+/// point: 160 bits, then lists until an empty one, each `BL n` and `n`
+/// nodes (two attachment records, `BL point`, `BL`, `BL`), then 36 bits to
+/// the end of the body.
+// ponytail: the 160 and 36 bits are skipped by length (the same length in
+// every assembly seen); read them field by field once a drawing varies them.
+fn attachment_points(data: &[u8], pos: usize, end: usize) -> Option<Vec<u32>> {
+    let mut bits = Bits::new(data, pos, end);
+    (bits.remaining() >= 160).then_some(())?;
+    bits.pos += 160;
     let mut points = Vec::new();
-    for pos in start..end {
-        let mut bits = Bits::new(data, pos, end);
-        let Some(tag) = attachment_tag(&mut bits) else {
-            continue;
-        };
-        let body = bits.pos;
-        if bits.bit_short() == Some(tag) {
-            continue;
+    loop {
+        let n = bits.bit_long()?;
+        if n == 0 {
+            break;
         }
-        bits.pos = body;
-        if let Some(index) = bits.bit_long().and_then(|v| u32::try_from(v).ok()) {
-            points.push(index);
+        for _ in 0..n {
+            attachment_tag(&mut bits)?;
+            attachment_tag(&mut bits)?;
+            points.push(u32::try_from(bits.bit_long()?).ok()?);
+            bits.bit_long()?;
+            bits.bit_long()?;
         }
     }
-    points
+    (bits.remaining() == 36).then_some(points)
 }
 
 /// The baseline point is a `3BD` after the class header
@@ -243,7 +249,7 @@ pub(super) fn assembly_layout(data: &[u8], start: usize, end: usize, handles: &[
     // (subassembly, parent) pairs, then the drawing's Civil root.
     let style = handles.iter().take(3).position(|h| *h != 0)?;
     let pairs = handles.get(style + 1..handles.len().checked_sub(1)?)?;
-    let points = attachment_points(data, start, end);
+    let points = attachment_points(data, bits.pos, end)?;
     if pairs.len() % 2 != 0 || pairs.len() / 2 != points.len() {
         return None;
     }
