@@ -11,6 +11,9 @@
 //!       BL index
 //! ```
 //!
+//! Some subassemblies write the types with bit 0x20 set (0x1032, 0x1033,
+//! 0x1034); the items are read alike.
+//!
 //! The texts are in the record's text stream, in item order: the name, its
 //! display name and description (resource ids), an empty string, then for an
 //! integer each choice's (name, display name) and for a string its value.
@@ -52,6 +55,12 @@ pub struct Parameter {
 /// The parameter set starting at `bits`, texts from `strings` (advanced past
 /// the ones it uses).
 pub(super) fn read(bits: &mut Bits, strings: &mut std::slice::Iter<String>) -> Option<Vec<Parameter>> {
+    read_with(bits, &mut || strings.next().cloned())
+}
+
+/// The parameter set at `bits`, texts taken from `text` in order (a corridor
+/// record's texts are not followed, so it passes empty ones).
+pub(super) fn read_with(bits: &mut Bits, text: &mut dyn FnMut() -> Option<String>) -> Option<Vec<Parameter>> {
     (bits.bit_long()? == 0 && bits.bit_long()? == 0).then_some(())?;
     // ponytail: 6 bits, the same in every sample; name them once a record
     // varies them.
@@ -61,14 +70,14 @@ pub(super) fn read(bits: &mut Bits, strings: &mut std::slice::Iter<String>) -> O
         let n = bits.bit_long()?;
         (0..=10_000).contains(&n).then_some(())?;
         for _ in 0..n {
-            out.push(item(bits, strings, kind)?);
+            out.push(item(bits, text, kind)?);
         }
     }
     Some(out)
 }
 
-fn item(bits: &mut Bits, strings: &mut std::slice::Iter<String>, kind: i32) -> Option<Parameter> {
-    (bits.bit_long()? == kind).then_some(())?;
+fn item(bits: &mut Bits, text: &mut dyn FnMut() -> Option<String>, kind: i32) -> Option<Parameter> {
+    (bits.bit_long()? & !0x20 == kind).then_some(())?;
     let field = bits.bit_long()?;
     let value = match kind {
         INTEGER => Some(ParameterValue::Integer(bits.bit_long()?)),
@@ -85,7 +94,6 @@ fn item(bits: &mut Bits, strings: &mut std::slice::Iter<String>, kind: i32) -> O
         }
     }
     let index = bits.bit_long()?;
-    let mut text = || strings.next().cloned();
     let name = text()?;
     let display_name = text()?;
     let description = text()?;
