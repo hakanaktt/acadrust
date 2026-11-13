@@ -2809,8 +2809,9 @@ fn interval_block_end(data: &[u8], pos: usize, end: usize) -> Option<usize> {
     for _ in 0..3 {
         bits.bit_long()?;
     }
-    let k = bits.bit_long()?;
-    (0..=1000).contains(&k).then_some(())?;
+    let k = usize::try_from(bits.bit_long()?).ok()?;
+    // An interval takes at least 529 bits.
+    (k <= end.saturating_sub(bits.pos) / 529).then_some(())?;
     for _ in 0..k {
         bits.pos += 128;
         bits.bit()?;
@@ -2875,7 +2876,7 @@ pub(super) fn equations_and_speeds(
 ) -> (Vec<StationEquation>, Vec<DesignSpeed>) {
     match post_cache_starts(data, start, end) {
         Some(at) => at.into_iter().find_map(|pos| post_cache_at(data, pos, end, first, last, true)),
-        // debt: records whose section 2 is not mapped (see `elements`) are
+        // debt: records civil3drust wrote invalid (see `elements`) are
         // probed for both lists.
         None => (start..end).find_map(|pos| post_cache_at(data, pos, end, first, last, false)),
     }
@@ -2978,6 +2979,8 @@ fn typed_at(data: &[u8], pos: usize, end: usize, first: f64, last: f64, empty: b
     let (_, _, pos) = post_cache_at(data, pos, end, first, last, empty)?;
     let mut bits = Bits::new(data, pos, end);
     bits.bit_double()?;
+    // debt: some Civil 2013 records have a list here (count, element id
+    // pairs, then slope tables), not mapped; their type is not read.
     (bits.bit_long()? == 0).then_some(())?;
     let m = bits.bit_long()?;
     if !(0..=10_000).contains(&m) {
@@ -3003,7 +3006,7 @@ pub(super) fn alignment_type(data: &[u8], start: usize, end: usize, first: f64, 
     let typed = |pos: usize, empty: bool| typed_at(data, pos, end, first, last, empty);
     match post_cache_starts(data, start, end) {
         Some(at) => at.into_iter().find_map(|pos| typed(pos, true)),
-        // debt: records whose section 2 is not mapped are probed.
+        // debt: records civil3drust wrote invalid are probed.
         None => (start..end).find_map(|pos| typed(pos, false)).or_else(|| (start..end).find_map(|pos| typed(pos, true))),
     }
 }
