@@ -13,6 +13,7 @@ mod cogo;
 mod corridor;
 mod labels;
 mod network;
+mod parameters;
 mod profile;
 mod sample_lines;
 mod style;
@@ -27,6 +28,7 @@ pub use alignment::{
 pub use cogo::CogoPoint;
 pub use labels::{parse_format, property, LabelPart, LabelText};
 pub use network::PartField;
+pub use parameters::{Parameter, ParameterValue};
 pub use profile::{CurveMinimumK, ProfileCriteria, ProfileLocking, ProfilePiece, ProfileViewFrame, Pvi};
 pub use sample_lines::SampleLines;
 pub use style::{DisplayComponent, Marker, ViewAxes, ViewAxis};
@@ -687,6 +689,18 @@ impl ArchEntityData {
         self.main_stream()
             .map(|(data, start, end)| corridor::feature_lines(data, start, end))
             .unwrap_or_default()
+    }
+
+    /// Input parameters of a subassembly with their current
+    /// values, in the order the record stores them (integers, doubles,
+    /// strings).
+    pub fn subassembly_parameters(&self) -> Option<Vec<Parameter>> {
+        if self.civil_kind() != Some(CivilKind::Subassembly) {
+            return None;
+        }
+        let strings = self.decode().strings;
+        let (data, start, end) = self.main_stream()?;
+        subassembly::parameters(data, start, end, &strings)
     }
 
     /// Cross-section shape a Civil 3D subassembly last generated, in its
