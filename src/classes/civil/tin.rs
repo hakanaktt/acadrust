@@ -81,10 +81,11 @@ pub(super) fn find(data: &[u8], start: usize, end: usize) -> Option<TinSurface> 
 }
 
 /// Where the triangulation starts, read field by field: the graph head (see
-/// profile::graph_head), 3BD origin, 9 BD, BD, `RC n`, `n` x 5 bits, 6 BL,
-/// 3 bits, GUID, `BL 0`, GUID, 70 bits, RL, `RS 0x05A2`, `RC k`, `k` x 2
-/// bytes, "MMS01".
-// ponytail: the 5-bit, 3-bit and 70-bit runs are skipped by length (the
+/// profile::graph_head), 3BD origin, 9 BD, BD, `RC n`, `n` x 5 bits, then
+/// either 6 BL, 3 bits, GUID, `BL 0`, GUID, 70 bits, or (Civil 3D 2013) 111
+/// bits; then RL, `RS 0x05A2`, `RC k`, `k` x 2 bytes, "MMS01". The block
+/// that follows tells the two layouts apart.
+// ponytail: the 5-, 3-, 70- and 111-bit runs are skipped by length (the
 // same in every sample); a definition count other than 0 is not mapped.
 fn triangulation_at(data: &[u8], start: usize, end: usize) -> Option<usize> {
     let mut bits = Bits::new(data, start, end);
@@ -93,19 +94,32 @@ fn triangulation_at(data: &[u8], start: usize, end: usize) -> Option<usize> {
         bits.bit_double()?;
     }
     let items = usize::from(bits.bits_value(8)?);
-    let skip = |bits: &mut Bits, n: usize| (bits.remaining() >= n).then(|| bits.pos += n);
     skip(&mut bits, 5 * items)?;
-    for _ in 0..6 {
-        bits.bit_long()?;
-    }
-    skip(&mut bits, 3 + 128)?;
-    (bits.bit_long()? == 0).then_some(())?;
-    skip(&mut bits, 128 + 70)?;
-    bits.raw_long()?;
-    (u16::from_le_bytes([bits.raw_short_byte()?, bits.raw_short_byte()?]) == 0x05A2).then_some(())?;
-    let k = usize::from(bits.raw_short_byte()?);
-    skip(&mut bits, 16 * k)?;
-    (b"MMS01".iter().all(|c| bits.raw_short_byte() == Some(*c))).then_some(bits.pos)
+    let at = bits.pos;
+    let layout = |bits: &mut Bits, civil_2013: bool| -> Option<()> {
+        if civil_2013 {
+            return skip(bits, 111);
+        }
+        for _ in 0..6 {
+            bits.bit_long()?;
+        }
+        skip(bits, 3 + 128)?;
+        (bits.bit_long()? == 0).then_some(())?;
+        skip(bits, 128 + 70)
+    };
+    [false, true].into_iter().find_map(|civil_2013| {
+        let mut bits = Bits::new(data, at, end);
+        layout(&mut bits, civil_2013)?;
+        bits.raw_long()?;
+        (u16::from_le_bytes([bits.raw_short_byte()?, bits.raw_short_byte()?]) == 0x05A2).then_some(())?;
+        let k = usize::from(bits.raw_short_byte()?);
+        skip(&mut bits, 16 * k)?;
+        (b"MMS01".iter().all(|c| bits.raw_short_byte() == Some(*c))).then_some(bits.pos)
+    })
+}
+
+fn skip(bits: &mut Bits, n: usize) -> Option<()> {
+    (bits.remaining() >= n).then(|| bits.pos += n)
 }
 
 fn read_at(data: &[u8], pos: usize, end: usize) -> Option<TinSurface> {

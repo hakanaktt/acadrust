@@ -843,7 +843,8 @@ impl ProfileViewFrame {
 // (zero or constant in every sample).
 /// The class data graph objects (profile views, TIN surfaces) open with:
 /// `BL 80, 2 bits, BL, BL, BL version`, then version 5: `BL key count`,
-/// keys (see alignment::key), `BL 0`, 121 bits; version 4: `BL 0`, 128 bits.
+/// keys (see alignment::key), `BL 0`, 121 bits; version 4 (Civil 3D 2013):
+/// `BL 0`, 128 bits.
 pub(super) fn graph_head(bits: &mut Bits) -> Option<()> {
     (bits.bit_long()? == 80).then_some(())?;
     bits.pos += 2;
