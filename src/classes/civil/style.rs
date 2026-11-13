@@ -1,7 +1,16 @@
-//! Display components of Civil 3D object styles.
+//! Civil 3D object styles, read by their fields:
 //!
-//! A style lists one record per display component, per view direction
-//! (plan first, then model, ...), in the order the class defines:
+//! ```text
+//! BS 0x04BE, BL id, BL n, n x BL, BL m, m x BL     n + m references
+//! [BL 0, B 1, RC count, count x key]              settings (alignment::read_key)
+//! BL 32, 3 bits
+//! 5 x { BL count, count x { BL index, component, 4 x BL } }
+//! ...                                             class data
+//! ```
+//!
+//! The five component lists are the view directions (plan, model,
+//! profile, section, ...); an empty one is a direction the class does not
+//! draw in. A component:
 //!
 //! ```text
 //! BS v, BS v, BS 0, BS v      component tag; v is 70 in Civil 3D 2013
@@ -12,9 +21,11 @@
 //! BD   linetype scale
 //! ```
 //!
-//! Each record's layer and linetype come from the style's handles, one
-//! `(layer, linetype, plot style)` triple per record, in record order.
+//! The style's references run: the header's n + m, one per key that takes
+//! a reference (types 0x0F, 0x10, 0x12), one more, then a `(layer,
+//! linetype, plot style)` triple per component in record order.
 
+use super::alignment::{read_key, KeyValue};
 use super::bits::Bits;
 use crate::types::Color;
 
@@ -33,21 +44,78 @@ pub struct DisplayComponent {
     pub linetype_scale: f64,
 }
 
-/// `(visible, color, lineweight, linetype scale)` of each component record.
-fn records(data: &[u8], start: usize, end: usize) -> Vec<(bool, Color, i16, f64)> {
-    let mut out = Vec::new();
-    let mut pos = start;
-    while pos < end {
-        let mut bits = Bits::new(data, pos, end);
-        match record(&mut bits) {
-            Some(r) => {
-                out.push(r);
-                pos = bits.pos;
+/// A style record read up to the end of its component lists.
+struct Layout {
+    keys: Vec<(u32, KeyValue)>,
+    /// References before the components' triples.
+    refs: usize,
+    components: Vec<(bool, Color, i16, f64)>,
+    /// The bit after the component lists.
+    end: usize,
+    /// Bits skipped before the component lists (see [`layout`]).
+    skipped: bool,
+}
+
+const COMPONENT_LISTS: usize = 5;
+
+fn layout(data: &[u8], start: usize, end: usize) -> Option<Layout> {
+    let mut bits = Bits::new(data, start, end);
+    (bits.bit_short()? == 0x04BE).then_some(())?;
+    bits.bit_long()?;
+    let mut refs = 1;
+    for _ in 0..2 {
+        let n = usize::try_from(bits.bit_long()?).ok().filter(|n| *n <= bits.remaining() / 2)?;
+        for _ in 0..n {
+            bits.bit_long()?;
+        }
+        refs += n;
+    }
+    // A style without settings (feature styles) goes on with the BL below.
+    let mut keys = Vec::new();
+    let mut probe = Bits::new(data, bits.pos, end);
+    if probe.bit_long()? == 0 && probe.bit()? {
+        let count = probe.bits_value(8)?;
+        for _ in 0..count {
+            keys.push(read_key(&mut probe)?);
+        }
+        bits = probe;
+    }
+    refs += keys.iter().filter(|(key, _)| KeyValue::has_reference(*key)).count();
+    let mut skipped = false;
+    let (components, end) = component_lists(data, bits.pos, end).or_else(|| {
+        // debt: some profile styles (S24's, one in Kemer) have 2 or 56 more
+        // bits before the BL 32 (the 56 with one more reference), not
+        // mapped; the lists are found past them.
+        skipped = true;
+        (bits.pos + 1..(bits.pos + 512).min(end)).find_map(|pos| component_lists(data, pos, end))
+    })?;
+    Some(Layout {
+        keys,
+        refs,
+        components,
+        end,
+        skipped,
+    })
+}
+
+/// `BL 32`, 3 bits, then the component lists; the components and the bit
+/// after them.
+fn component_lists(data: &[u8], pos: usize, end: usize) -> Option<(Vec<(bool, Color, i16, f64)>, usize)> {
+    let mut bits = Bits::new(data, pos, end);
+    (bits.bit_long()? == 32).then_some(())?;
+    bits.pos += 3;
+    let mut components = Vec::new();
+    for _ in 0..COMPONENT_LISTS {
+        let n = bits.bit_long()?;
+        for _ in 0..n {
+            bits.bit_long()?;
+            components.push(record(&mut bits)?);
+            for _ in 0..4 {
+                bits.bit_long()?;
             }
-            None => pos += 1,
         }
     }
-    out
+    Some((components, bits.pos))
 }
 
 fn record(bits: &mut Bits) -> Option<(bool, Color, i16, f64)> {
@@ -71,9 +139,7 @@ fn record(bits: &mut Bits) -> Option<(bool, Color, i16, f64)> {
     Some((visible, color, lineweight, linetype_scale))
 }
 
-/// Records paired with their `(layer, linetype, plot style)` triples. A
-/// class writes its own references before the triples and some after them,
-/// so the triples start where the most of them name a layer.
+/// The components with their layer and linetype references.
 pub(super) fn components(
     data: &[u8],
     start: usize,
@@ -81,23 +147,28 @@ pub(super) fn components(
     handles: &[u64],
     is_layer: impl Fn(u64) -> bool,
 ) -> Vec<DisplayComponent> {
-    let records = records(data, start, end);
-    let Some(last) = handles.len().checked_sub(3 * records.len()) else {
+    let Some(layout) = layout(data, start, end) else {
         return Vec::new();
     };
-    let layers_at = |first: usize| {
-        handles[first..]
-            .chunks(3)
-            .take(records.len())
-            .filter(|refs| is_layer(refs[0]))
-            .count()
+    let count = layout.components.len();
+    let triples_at = |first: usize| -> Vec<&[u64]> { handles.get(first..).unwrap_or_default().chunks_exact(3).take(count).collect() };
+    let first = if layout.skipped {
+        // debt: the skipped bits hold references too; the triples start
+        // where the most of them name a layer.
+        (layout.refs..=handles.len().saturating_sub(3 * count))
+            .max_by_key(|&first| (triples_at(first).iter().filter(|t| is_layer(t[0])).count(), std::cmp::Reverse(first)))
+            .unwrap_or(layout.refs)
+    } else {
+        layout.refs
     };
-    let Some(first) = (0..=last).rev().max_by_key(|&first| layers_at(first)) else {
+    let triples = triples_at(first);
+    if triples.len() < count {
         return Vec::new();
-    };
-    records
+    }
+    layout
+        .components
         .into_iter()
-        .zip(handles[first..].chunks(3))
+        .zip(triples)
         .map(|((visible, color, lineweight, linetype_scale), refs)| DisplayComponent {
             visible,
             color,
@@ -109,50 +180,23 @@ pub(super) fn components(
         .collect()
 }
 
-/// Settings a style keeps as `key (10 bits), group (10 bits), BS type,
-/// value` records; type 2 is a `BD`. Returns `(key, group, value)` of every
-/// `BD` record, in record order.
-pub(super) fn keyed_doubles(data: &[u8], start: usize, end: usize) -> Vec<(u16, u16, f64)> {
-    let mut out = Vec::new();
-    let read = |pos: usize| -> Option<(u16, u16, f64)> {
-        let mut bits = Bits::new(data, pos, end);
-        let mut field = || -> Option<u16> {
-            let mut v = 0u16;
-            for _ in 0..10 {
-                v = (v << 1) | u16::from(bits.bit()?);
-            }
-            Some(v)
-        };
-        let key = field()?;
-        let group = field()?;
-        (bits.compact_short()? == 2).then_some(())?;
-        let value = bits.bit_double().filter(|v| v.is_finite())?;
-        Some((key, group, value))
-    };
-    for pos in start..end.saturating_sub(32) {
-        if let Some(record) = read(pos) {
-            out.push(record);
-        }
-    }
-    out
+/// The `BD` value of setting `key`.
+pub(super) fn setting(data: &[u8], start: usize, end: usize, key: u32) -> Option<f64> {
+    layout(data, start, end)?.keys.into_iter().find_map(|(k, value)| match value {
+        KeyValue::Double(v) if k == key => Some(v),
+        _ => None,
+    })
 }
 
-/// First value of `key` in `group`.
-pub(super) fn keyed(records: &[(u16, u16, f64)], key: u16, group: u16) -> Option<f64> {
-    records.iter().find(|r| r.0 == key && r.1 == group).map(|r| r.2)
-}
-
-/// Data band style height: key, group.
-pub(super) const BAND_HEIGHT: (u16, u16) = (0b00_0001_0111, 0);
-
-/// Surface style contour intervals: key, group.
-const MINOR_INTERVAL: (u16, u16) = (0b00_1100_0100, 0b01_1000_0000);
-const MAJOR_INTERVAL: (u16, u16) = (0b10_0001_0100, 0b01_1000_0000);
+/// Data band style height.
+pub(super) const BAND_HEIGHT: u32 = 0x0201_7001;
+/// Surface style contour intervals.
+const MINOR_INTERVAL: u32 = 0x0201_460C;
+const MAJOR_INTERVAL: u32 = 0x0201_4621;
 
 /// `(minor, major)` contour intervals of a surface style.
 pub(super) fn contour_intervals(data: &[u8], start: usize, end: usize) -> Option<(f64, f64)> {
-    let records = keyed_doubles(data, start, end);
-    let value = |(key, group): (u16, u16)| keyed(&records, key, group).filter(|v| *v > 0.0);
+    let value = |key: u32| setting(data, start, end, key).filter(|v| *v > 0.0);
     Some((value(MINOR_INTERVAL)?, value(MAJOR_INTERVAL)?))
 }
 
@@ -178,22 +222,24 @@ pub struct ViewAxes {
     pub bottom: ViewAxis,
 }
 
-/// Axis setting keys and the group of each axis.
-const AXIS_MAJOR_INTERVAL: u16 = 0b00_1100_0110;
-const AXIS_MINOR_INTERVAL: u16 = 0b00_1110_0110;
-const AXIS_MAJOR_TICK: u16 = 0b00_1101_0110;
-const AXIS_MINOR_TICK: u16 = 0b00_1111_0110;
-const AXIS_MAJOR_TEXT: u16 = 0b00_1000_0110;
-const AXIS_MINOR_TEXT: u16 = 0b00_1001_0110;
-const LEFT: u16 = 0b00_0100_0000;
-const RIGHT: u16 = 0b00_1000_0000;
-const TOP: u16 = 0b00_1100_0000;
-const BOTTOM: u16 = 0b01_0000_0000;
+/// Axis settings: `0x0201_6g_kk`, g the axis (1 left, 2 right, 3 top,
+/// 4 bottom), kk the setting.
+const AXIS_MAJOR_INTERVAL: u32 = 0x0C;
+const AXIS_MINOR_INTERVAL: u32 = 0x0E;
+const AXIS_MAJOR_TICK: u32 = 0x0D;
+const AXIS_MINOR_TICK: u32 = 0x0F;
+const AXIS_MAJOR_TEXT: u32 = 0x08;
+const AXIS_MINOR_TEXT: u32 = 0x09;
 
 pub(super) fn view_axes(data: &[u8], start: usize, end: usize) -> Option<ViewAxes> {
-    let records = keyed_doubles(data, start, end);
-    let axis = |group: u16| -> Option<ViewAxis> {
-        let value = |key: u16| keyed(&records, key, group);
+    let keys = layout(data, start, end)?.keys;
+    let axis = |group: u32| -> Option<ViewAxis> {
+        let value = |item: u32| {
+            keys.iter().find_map(|(k, v)| match v {
+                KeyValue::Double(v) if *k == 0x0201_6000 | group << 8 | item => Some(*v),
+                _ => None,
+            })
+        };
         Some(ViewAxis {
             major_interval: value(AXIS_MAJOR_INTERVAL).filter(|v| *v > 0.0)?,
             minor_interval: value(AXIS_MINOR_INTERVAL).filter(|v| *v > 0.0)?,
@@ -204,10 +250,10 @@ pub(super) fn view_axes(data: &[u8], start: usize, end: usize) -> Option<ViewAxe
         })
     };
     Some(ViewAxes {
-        left: axis(LEFT)?,
-        right: axis(RIGHT)?,
-        top: axis(TOP)?,
-        bottom: axis(BOTTOM)?,
+        left: axis(1)?,
+        right: axis(2)?,
+        top: axis(3)?,
+        bottom: axis(4)?,
     })
 }
 
@@ -236,30 +282,21 @@ pub struct Marker {
     pub absolute: bool,
 }
 
-/// After the last display component: `BL kind`, two bits, `BD size`, then
-/// a byte whose value 2 marks an absolute size.
+/// After the component lists: `BL 0` three times, `BS kind`, two bits,
+/// `BD size`, then a byte whose value 2 marks an absolute size.
 pub(super) fn marker(data: &[u8], start: usize, end: usize) -> Option<Marker> {
-    // The last component record, then the fields that follow it.
-    let last = (start..end).rev().find(|&pos| {
-        let mut bits = Bits::new(data, pos, end);
-        record(&mut bits).is_some()
-    })?;
-    let mut bits = Bits::new(data, last, end);
-    record(&mut bits)?;
-    let after = bits.pos;
-    (after..(after + 160).min(end)).find_map(|pos| {
-        let mut bits = Bits::new(data, pos, end);
-        let kind = bits.compact_short()?;
-        (bits.bit()? && !bits.bit()?).then_some(())?;
-        let at = bits.pos;
-        let size = bits.bit_double()?;
-        (bits.pos - at == 66 && size.is_finite() && size > 1e-6 && size < 1e5 && (0..128).contains(&kind)).then_some(())?;
-        let mode = bits.raw_short_byte()?;
-        Some(Marker {
-            kind: kind as u32,
-            size,
-            absolute: mode == 2,
-        })
+    let mut bits = Bits::new(data, layout(data, start, end)?.end, end);
+    for _ in 0..3 {
+        (bits.bit_long()? == 0).then_some(())?;
+    }
+    let kind = bits.bit_short()?;
+    bits.pos += 2;
+    let size = bits.bit_double()?;
+    let mode = bits.raw_short_byte()?;
+    Some(Marker {
+        kind: u32::try_from(kind).ok()?,
+        size,
+        absolute: mode == 2,
     })
 }
 
@@ -297,9 +334,9 @@ mod tests {
     fn reads_2013_and_2018_component_tags() {
         for v in [70, 80] {
             let data = record_bits(v);
-            assert_eq!(records(&data, 0, data.len() * 8), vec![(true, Color::ByLayer, -1, 1.0)], "tag {v}");
+            assert_eq!(record(&mut Bits::new(&data, 0, data.len() * 8)), Some((true, Color::ByLayer, -1, 1.0)), "tag {v}");
         }
         let data = record_bits(60);
-        assert!(records(&data, 0, data.len() * 8).is_empty());
+        assert_eq!(record(&mut Bits::new(&data, 0, data.len() * 8)), None);
     }
 }

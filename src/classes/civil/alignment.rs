@@ -276,35 +276,83 @@ impl SpiralShape {
     }
 }
 
-/// One class key: `BL (type << 24 | id)`, then its value by type: 0x01,
-/// 0x0D BL; 0x02 BD; 0x03 one byte; 0x04, 0x12 nothing; 0x0B, 0x19 BL n,
-/// n x BL; 0x0C BL n, n x BD; 0x13, 0x16 64 bits.
-pub(super) fn key(bits: &mut Bits) -> Option<()> {
-    match bits.bit_long()? as u32 >> 24 {
-        0x01 | 0x0D => {
-            bits.bit_long()?;
-        }
-        0x02 => {
-            bits.bit_double()?;
-        }
-        0x03 => {
-            bits.bits_value(8)?;
-        }
-        0x04 | 0x12 => {}
+/// The value of one class key, by the key's type byte.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) enum KeyValue {
+    /// 0x04; 0x0F, 0x10 and 0x12 take a reference from the handle stream.
+    None,
+    /// 0x01, 0x0D: BL.
+    Long(i32),
+    /// 0x02: BD.
+    Double(f64),
+    /// 0x03: one byte.
+    Byte(u8),
+    /// 0x09: three BD.
+    Vector([f64; 3]),
+    /// 0x0B, 0x19: BL n, n x BL.
+    Longs(Vec<i32>),
+    /// 0x0C: BL n, n x BD.
+    Doubles(Vec<f64>),
+    /// 0x0E: CMC (BS index, BL color, RC flags); the color word.
+    Color(u32),
+    /// 0x13, 0x16 (a FILETIME): 64 raw bits.
+    Raw(u64),
+    /// 0x18: BL byte count, UTF-16LE text.
+    Text(String),
+}
+
+impl KeyValue {
+    /// Whether the key takes a reference from the handle stream.
+    pub(super) fn has_reference(key: u32) -> bool {
+        matches!(key >> 24, 0x0F | 0x10 | 0x12)
+    }
+}
+
+/// One class key: `BL (type << 24 | id)`, then its value (see [`KeyValue`]).
+pub(super) fn read_key(bits: &mut Bits) -> Option<(u32, KeyValue)> {
+    let key = bits.bit_long()? as u32;
+    // A list holds at least two bits per value.
+    let count = |bits: &mut Bits| usize::try_from(bits.bit_long()?).ok().filter(|n| *n <= bits.remaining() / 2);
+    let value = match key >> 24 {
+        0x01 | 0x0D => KeyValue::Long(bits.bit_long()?),
+        0x02 => KeyValue::Double(bits.bit_double()?),
+        0x03 => KeyValue::Byte(bits.bits_value(8)?),
+        0x04 | 0x0F | 0x10 | 0x12 => KeyValue::None,
+        0x09 => KeyValue::Vector([bits.bit_double()?, bits.bit_double()?, bits.bit_double()?]),
         0x0B | 0x19 => {
-            for _ in 0..bits.bit_long()? {
-                bits.bit_long()?;
-            }
+            let n = count(bits)?;
+            KeyValue::Longs((0..n).map(|_| bits.bit_long()).collect::<Option<_>>()?)
         }
         0x0C => {
-            for _ in 0..bits.bit_long()? {
-                bits.bit_double()?;
-            }
+            let n = count(bits)?;
+            KeyValue::Doubles((0..n).map(|_| bits.bit_double()).collect::<Option<_>>()?)
         }
-        0x13 | 0x16 => bits.pos += 64,
+        0x0E => {
+            bits.bit_short()?;
+            let color = bits.bit_long()? as u32;
+            bits.bits_value(8)?;
+            KeyValue::Color(color)
+        }
+        0x13 | 0x16 => {
+            let low = bits.raw_long()? as u32;
+            let high = bits.raw_long()? as u32;
+            KeyValue::Raw(u64::from(high) << 32 | u64::from(low))
+        }
+        0x18 => {
+            let bytes = usize::try_from(bits.bit_long()?).ok().filter(|n| n % 2 == 0 && n * 8 <= bits.remaining())?;
+            let units = (0..bytes / 2)
+                .map(|_| Some(u16::from_le_bytes([bits.bits_value(8)?, bits.bits_value(8)?])))
+                .collect::<Option<Vec<_>>>()?;
+            KeyValue::Text(String::from_utf16_lossy(&units))
+        }
         _ => return None,
-    }
-    Some(())
+    };
+    Some((key, value))
+}
+
+/// One class key read past (see [`read_key`]).
+pub(super) fn key(bits: &mut Bits) -> Option<()> {
+    read_key(bits).map(|_| ())
 }
 
 /// Class data alignments and profiles share, read up to their own fields:

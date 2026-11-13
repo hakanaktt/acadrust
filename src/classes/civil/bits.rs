@@ -93,12 +93,6 @@ impl<'a> Bits<'a> {
         }
     }
 
-    /// BS written in its one-byte form (`01` + RC); `None` for other forms.
-    pub fn compact_short(&mut self) -> Option<i16> {
-        (self.bits(2)? == 1).then_some(())?;
-        self.byte().map(i16::from)
-    }
-
     /// BD: bit-coded double.
     pub fn bit_double(&mut self) -> Option<f64> {
         match self.bits(2)? {

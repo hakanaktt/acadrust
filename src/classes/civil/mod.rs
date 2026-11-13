@@ -910,8 +910,8 @@ impl ArchObject {
     /// style class defines them: every component of the plan view, then the
     /// model view and the other view directions.
     ///
-    /// `is_layer` tells layer handles apart, which places each component's
-    /// layer and linetype among the style's references.
+    /// `is_layer` tells layer handles apart; only styles with an unmapped
+    /// block before their component lists need it.
     pub fn display_components(&self, is_layer: impl Fn(u64) -> bool) -> Vec<DisplayComponent> {
         if self.civil_kind() != Some(CivilObjectKind::Style) {
             return Vec::new();
@@ -948,7 +948,7 @@ impl ArchObject {
             return None;
         }
         let (data, start, end) = self.main_stream()?;
-        style::keyed(&style::keyed_doubles(data, start, end), style::BAND_HEIGHT.0, style::BAND_HEIGHT.1).filter(|v| *v > 0.0)
+        style::setting(data, start, end, style::BAND_HEIGHT).filter(|v| *v > 0.0)
     }
 
     /// Block and plotted size of a Civil 3D label tick style.
