@@ -148,7 +148,9 @@ fn chord_flag_does_not_turn_a_control_spline_into_fit_method() {
 
 #[test]
 fn uniform_and_centripetal_fit_splines_survive_dwg_dxf_dwg() {
-    for (parameterization, flags) in [(0, 1056), (1, 1088), (2, 1152)] {
+    // Read from DWG, which does not store the planar bit (8): it follows the
+    // geometry, as in AutoCAD's own DXF.
+    for (parameterization, flags) in [(0, 1064), (1, 1096), (2, 1160)] {
         for target in [DxfVersion::AC1015, DxfVersion::AC1027, DxfVersion::AC1032] {
             let expected = fit_spline(parameterization);
             let mut doc = CadDocument::with_version(DxfVersion::AC1032);

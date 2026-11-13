@@ -73,7 +73,9 @@ pub(super) fn write(spline: &Spline) -> i16 {
     if spline.flags.rational {
         flags |= 4;
     }
-    if spline.flags.planar || spline.is_planar() {
+    // A DWG does not store the planar bit, so a spline read from one gets it
+    // from its geometry; a DXF spline keeps the bit it was read with.
+    if spline.flags.planar || (spline.dwg_scenario.is_some() && spline.is_planar()) {
         flags |= 8;
     }
     if spline.flags.linear {
