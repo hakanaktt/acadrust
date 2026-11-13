@@ -3181,10 +3181,9 @@ pub(super) fn offset_parameters(data: &[u8], pos: usize, end: usize) -> Option<O
 /// Bits that follow each mask range's stations.
 const MASK_TAIL_BITS: usize = 257;
 
-/// Station ranges an alignment hides (its masking): `BL n` four times, then
-/// `n` x `{ BD from, BD to, 257 bits }`. Ranges lie within `first..=last`.
-// ponytail: found by probing bit offsets for a list whose every range fits
-// the alignment; parse the records before it once their layout is known.
+/// Station ranges an alignment hides (its masking): after the type,
+/// `BL 2` three times, `BL n`, then `n` x `{ BD from, BD to, 257 bits }`.
+/// Ranges lie within `first..=last`.
 pub(super) fn masked_ranges(data: &[u8], start: usize, end: usize, first: f64, last: f64) -> Vec<(f64, f64)> {
     let slack = 1e-3 * (last - first).abs().max(1.0);
     let fits = |v: f64| v.is_finite() && v >= first - slack && v <= last + slack;
@@ -3219,7 +3218,23 @@ pub(super) fn masked_ranges(data: &[u8], start: usize, end: usize, first: f64, l
         }
         Some(out)
     };
-    // The list sits near the end of the body; the last one that parses wins.
+    // After the type of a centerline (or miscellaneous) alignment come
+    // `BL 2, 2, 2` and the list (see `read`).
+    if let Some((kind, after)) = post_cache_starts(data, start, end)
+        .and_then(|at| at.into_iter().find_map(|pos| typed_at(data, pos, end, first, last, true)))
+    {
+        if !matches!(kind, AlignmentType::Offset | AlignmentType::CurbReturn) {
+            let mut bits = Bits::new(data, after, end);
+            let count = (0..3).all(|_| bits.bit_long() == Some(2)).then(|| bits.bit_long()).flatten();
+            return match count {
+                Some(0) => Vec::new(),
+                _ => read(after).unwrap_or_default(),
+            };
+        }
+    }
+    // debt: offset and curb-return alignments (their parameters sit before
+    // the list) and records whose section 2 is not mapped: the last list
+    // that parses near the end of the body wins.
     (start..end).rev().find_map(read).unwrap_or_default()
 }
 
