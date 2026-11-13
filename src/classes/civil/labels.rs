@@ -37,6 +37,41 @@ pub(super) fn marked_stations(data: &[u8], start: usize, end: usize) -> Vec<f64>
     stations
 }
 
+/// Stations of a station label group (`AECC_ALIGNMENT_STATION_LABEL_GROUP`)
+/// read by its fields: a 293-bit header, `BL n`, `n` labels, a 294-bit
+/// trailer. A label is a key block (`BL k`, `k` keys; the station is key
+/// 0x0200D020, the first label holds the group's settings), 158 bits,
+/// `BL m` and `m` items (`BL, BL, BL, BL mask, BS`, mask 0x0CC04E08).
+// ponytail: the header and trailer are skipped by length (constant in every
+// sample); other item masks write more fields and are not mapped.
+pub(super) fn station_group_stations(data: &[u8], start: usize, end: usize) -> Option<Vec<f64>> {
+    const HEADER: usize = 293;
+    const LABEL_TAIL: usize = 158;
+    const TRAILER: usize = 294;
+    const STATION: u32 = 0x0200_D020;
+    let mut bits = Bits::new(data, start + HEADER, end);
+    let n = bits.bit_long()?;
+    let mut stations = Vec::new();
+    for _ in 0..n {
+        let k = bits.bit_long()?;
+        for _ in 0..k {
+            if let (STATION, super::alignment::KeyValue::Double(station)) = super::alignment::read_key(&mut bits)? {
+                stations.push(station);
+            }
+        }
+        (bits.remaining() >= LABEL_TAIL).then_some(())?;
+        bits.pos += LABEL_TAIL;
+        for _ in 0..bits.bit_long()? {
+            for _ in 0..3 {
+                bits.bit_long()?;
+            }
+            (bits.bit_long()? as u32 == 0x0CC0_4E08).then_some(())?;
+            bits.bit_short()?;
+        }
+    }
+    (bits.remaining() == TRAILER).then_some(stations)
+}
+
 /// Bits before each geometry point kind a label group labels (groups
 /// written from Civil 3D 2018 on).
 const POINT_KIND_MARKER: &[u8] = b"0011001101010010011111111110100100000001";
