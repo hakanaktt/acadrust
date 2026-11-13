@@ -102,6 +102,11 @@ fn layout(data: &[u8], start: usize, end: usize) -> Option<Layout> {
     })
 }
 
+/// The bit after a style's component lists, where its class data starts.
+pub(super) fn class_data(data: &[u8], start: usize, end: usize) -> Option<usize> {
+    Some(layout(data, start, end)?.end)
+}
+
 /// `BL 32`, 3 bits, then the component lists; the components and the bit
 /// after them.
 fn component_lists(data: &[u8], pos: usize, end: usize) -> Option<(Vec<(bool, Color, i16, f64)>, usize)> {

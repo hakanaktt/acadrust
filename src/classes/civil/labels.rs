@@ -359,9 +359,6 @@ fn full_double(data: &[u8], pos: usize, end: usize) -> Option<f64> {
     (bits.pos == pos + 66 && value.is_finite()).then_some(value)
 }
 
-/// Every field of a text component sits at a fixed distance from this BD.
-const COMPONENT_MARKER: f64 = 156_679.000_488_281_22;
-
 /// A plotted size: zero, or a short decimal well under a drawing unit.
 fn plotted_size(v: f64) -> bool {
     v == 0.0 || ((1e-6..0.1).contains(&v.abs()) && ((v * 1e6).round() - v * 1e6).abs() < 1e-3)
@@ -425,30 +422,28 @@ pub(super) fn text_component(data: &[u8], start: usize, end: usize) -> Option<La
     let rotation = bits.bit_double().filter(|v| v.abs() <= 10.0).unwrap_or(0.0);
     bits.bit_double();
     let attachment = bits.bit_short().and_then(|v| u8::try_from(v).ok()).filter(|v| *v <= 8).unwrap_or(6);
-    let marker = (start..end)
-        .find(|&pos| full_double(data, pos, end).is_some_and(|v| (v - COMPONENT_MARKER).abs() < 1e-6));
-    let plotted = |v: f64| (v.abs() > 1e-6 && v.abs() < 1.0).then_some(v);
-    // Components written without the marker keep the same block; it is then
-    // the first one in the record.
-    let block = match marker {
-        Some(m) => offsets(data, m + 82, end),
-        None => offsets_within(data, start, end),
-    };
+    // After the style's component lists: `BL, 2 bits, BD height, BL, BL
+    // color`, then the component itself (type tag, ...), whose general block
+    // starts 48 bits in. A height of 1.0 (a drawing unit) is the unset one.
+    let head = super::style::class_data(data, start, end).and_then(|at| {
+        let mut bits = Bits::new(data, at, end);
+        bits.bit_long()?;
+        bits.pos += 2;
+        let height = bits.bit_double()?;
+        bits.bit_long()?;
+        bits.bit_long()?;
+        Some(((0.0..1.0).contains(&height).then_some(height).filter(|v| *v > 0.0), bits.pos + 48))
+    });
+    let height = head.and_then(|(height, _)| height);
+    let general = head.map(|(_, at)| at);
+    let block = general.and_then(|at| offsets(data, at, end));
     let (x_offset, y_offset, gap) = block.map_or((0.0, 0.0, 0.0), |(x, y, gap, _)| (x, y, gap));
-    // The height ends 68 bits before the marker; without one it starts 211
-    // bits before the offset block.
-    let height = marker
-        .and_then(|m| m.checked_sub(68))
-        .or_else(|| block.and_then(|(.., block_at)| block_at.checked_sub(211)))
-        .and_then(|p| full_double(data, p, end))
-        .and_then(plotted)
-        .filter(|v| *v > 0.0);
-    // A 16-bit header after the marker ends with the anchor point, when the
-    // component's settings block (opening 1011) follows it directly.
+    // A 16-bit header at the general block ends with the anchor point, when
+    // the component's settings block (opening 1011) follows it directly.
     // ponytail: only that short header form is read; longer ones leave it
     // unknown until their fields are decoded.
-    let anchor_point = marker.and_then(|m| {
-        let mut bits = Bits::new(data, m + 82, end);
+    let anchor_point = general.and_then(|at| {
+        let mut bits = Bits::new(data, at, end);
         let mut read = |n: usize| -> Option<u8> {
             let mut v = 0u8;
             for _ in 0..n {
