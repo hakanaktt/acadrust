@@ -464,11 +464,27 @@ fn general_head(bits: &mut Bits) -> Option<u8> {
 
 /// X offset, y offset and border gap read by their fields: the general
 /// head (see [`general_head`]), `1000`, 6 BL, B, BD x, BD, BD y, BD, B,
-/// BD gap. Also returns the bit after the gap.
-fn general_offsets(data: &[u8], at: usize, end: usize) -> Option<(f64, f64, f64, usize)> {
+/// BD gap; or, in components with type tag 0x0022001F, `1000`, 5 BL,
+/// BD angle, BD, BD, B, BD x, BD y, B, BD gap. Also returns the bit after
+/// the gap.
+fn general_offsets(data: &[u8], at: usize, end: usize, turned: bool) -> Option<(f64, f64, f64, usize)> {
     let mut bits = Bits::new(data, at, end);
     general_head(&mut bits)?;
     (bits.bits_value(4)? == 0b1000).then_some(())?;
+    if turned {
+        for _ in 0..5 {
+            bits.bit_long()?;
+        }
+        for _ in 0..3 {
+            bits.bit_double()?;
+        }
+        bits.bit()?;
+        let x = bits.bit_double()?;
+        let y = bits.bit_double()?;
+        bits.bit()?;
+        let gap = bits.bit_double()?;
+        return Some((x, y, gap, bits.pos));
+    }
     for _ in 0..6 {
         bits.bit_long()?;
     }
@@ -563,22 +579,22 @@ pub(super) fn text_component(data: &[u8], start: usize, end: usize) -> Option<La
         bits.bit_long()?;
         bits.pos += 2;
         let height = bits.bit_double()?;
-        for _ in 0..6 {
-            bits.bit_long()?;
+        let mut header = [0; 6];
+        for v in &mut header {
+            *v = bits.bit_long()?;
         }
-        Some(((0.0..1.0).contains(&height).then_some(height).filter(|v| *v > 0.0), bits.pos))
+        Some(((0.0..1.0).contains(&height).then_some(height).filter(|v| *v > 0.0), bits.pos, header[2] == 0x0022_001F))
     });
-    let height = head.and_then(|(height, _)| height);
-    let general = head.map(|(_, at)| at);
-    let fields = general.and_then(|at| general_offsets(data, at, end));
+    let height = head.and_then(|(height, ..)| height);
+    let general = head.map(|(_, at, _)| at);
+    let fields = head.and_then(|(_, at, turned)| general_offsets(data, at, end, turned));
     // The content string, then rotation and attachment.
     let (content, after) = fields
         .and_then(|(.., pos)| content_at(data, pos, end))
         .and_then(|pos| string_at(data, pos, end))
         .or_else(|| {
-            // debt: components the fields above do not read (8 of 1929 in
-            // the samples, component tag 0x0022001F) take the longest
-            // format string.
+            // debt: components the fields above do not read (none in the
+            // samples) take the longest format string.
             inline_strings_at(data, start, end)
                 .into_iter()
                 .max_by_key(|(s, _)| (s.contains("<["), s.len()))
