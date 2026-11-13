@@ -822,19 +822,21 @@ impl ProfileViewFrame {
     }
 }
 
-/// Where a profile view keeps its range triple, read field by field:
+/// A profile view's frame, read field by field:
 ///
 /// ```text
 /// BL 80, 2 bits, BL, BL, BL, BL key count, keys (see alignment::key),
 /// BL 0, 121 bits, 3BD origin, 9 BD (rotation), BD,
 /// RC n, n x 5 bits, BL m, m x record, 1 bit,
-/// 3BD origin again, BL, BL, then the triple
+/// 3BD origin, BL, BL, 3 x 3BD range (min, min, max), 3 x 3BD (a copy),
+/// BL, BL byte count + UTF-16 title, BL 0, 7 x BD, 6 x BL,
+/// 3BD origin, 4 x BD, BD vertical scale
 /// record: BL 0, BL, BD, BL, BD, 258 bits, BL n, n x BL, BL n, n x BL,
 ///     BL index (1, 2, …), BD, BD
 /// ```
 // ponytail: the 121, 5-bit and 258-bit runs are skipped by length (zero or
 // constant in every sample).
-fn view_triple_at(data: &[u8], start: usize, end: usize) -> Option<usize> {
+fn view_frame_fields(data: &[u8], start: usize, end: usize) -> Option<ProfileViewFrame> {
     let mut bits = Bits::new(data, start, end);
     (bits.bit_long()? == 80).then_some(())?;
     bits.pos += 2;
@@ -846,7 +848,10 @@ fn view_triple_at(data: &[u8], start: usize, end: usize) -> Option<usize> {
     }
     (bits.bit_long()? == 0).then_some(())?;
     bits.pos += 121;
-    let point = |bits: &mut Bits| Some((bits.bit_double()?, bits.bit_double()?, bits.bit_double()?));
+    let point = |bits: &mut Bits| -> Option<Vector2> {
+        let p = Vector2::new(bits.bit_double()?, bits.bit_double()?);
+        (p.x.is_finite() && p.y.is_finite() && bits.bit_double()? == 0.0).then_some(p)
+    };
     let origin = point(&mut bits)?;
     for _ in 0..10 {
         bits.bit_double()?;
@@ -873,28 +878,59 @@ fn view_triple_at(data: &[u8], start: usize, end: usize) -> Option<usize> {
     (point(&mut bits)? == origin).then_some(())?;
     bits.bit_long()?;
     bits.bit_long()?;
-    Some(bits.pos)
+    let (a, b, c) = (point(&mut bits)?, point(&mut bits)?, point(&mut bits)?);
+    (a == b && c.x > a.x && c.y > a.y).then_some(())?;
+    for _ in 0..3 {
+        point(&mut bits)?;
+    }
+    bits.bit_long()?;
+    let title = usize::try_from(bits.bit_long()?).ok()?;
+    bits.pos += 8 * title;
+    (bits.bit_long()? == 0).then_some(())?;
+    for _ in 0..7 {
+        bits.bit_double()?;
+    }
+    for _ in 0..6 {
+        bits.bit_long()?;
+    }
+    (point(&mut bits)? == origin).then_some(())?;
+    for _ in 0..4 {
+        bits.bit_double()?;
+    }
+    let vertical_scale = bits.bit_double().filter(|v| v.is_finite() && *v > 0.0)?;
+    Some(ProfileViewFrame {
+        origin,
+        station_min: a.x,
+        station_max: c.x,
+        elevation_min: a.y,
+        elevation_max: c.y,
+        vertical_scale,
+    })
 }
 
-/// Frame from the body alone: the view origin `3BD (x, y, 0)` sits 178
-/// bits before the range triple `(min, min, max)`; a later copy of the
-/// origin is followed 142 bits on by `BD` vertical scale.
+/// Frame from the body: [`view_frame_fields`]; a Civil 3D 2013 view
+/// without class keys (Kavşak AC82) is not mapped and is searched.
 pub(super) fn view_frame_stored(data: &[u8], start: usize, end: usize) -> Option<ProfileViewFrame> {
+    view_frame_fields(data, start, end).or_else(|| view_frame_search(data, start, end))
+}
+
+fn view_frame_search(data: &[u8], start: usize, end: usize) -> Option<ProfileViewFrame> {
+    // debt: the view origin `3BD (x, y, 0)` sits 178 bits before the range
+    // triple `(min, min, max)`; a later copy of the origin is followed 142
+    // bits on by `BD` vertical scale. Both are searched for.
     let point = |bits: &mut Bits| {
         let x = bits.bit_double()?;
         let y = bits.bit_double()?;
         (x.is_finite() && y.is_finite() && bits.bit_double()? == 0.0).then_some(Vector2::new(x, y))
     };
     let point_at = |pos: usize| point(&mut Bits::new(data, pos, end));
-    let read = |pos: usize| -> Option<ProfileViewFrame> {
+    (start + 178..end).find_map(|pos| {
         let mut bits = Bits::new(data, pos, end);
         let a = point(&mut bits)?;
         let b = point(&mut bits)?;
         let c = point(&mut bits)?;
         (a == b && c.x > a.x && c.y > a.y).then_some(())?;
         let origin = point_at(pos - 178)?;
-        // debt: the vertical scale follows a later copy of the origin past
-        // strings not read yet; that copy is searched for.
         let vertical_scale = (pos..end).find_map(|q| {
             (point_at(q)? == origin).then_some(())?;
             Bits::new(data, q + 142, end).bit_double().filter(|v| v.is_finite() && *v > 0.0)
@@ -907,13 +943,7 @@ pub(super) fn view_frame_stored(data: &[u8], start: usize, end: usize) -> Option
             elevation_max: c.y,
             vertical_scale,
         })
-    };
-    match view_triple_at(data, start, end) {
-        Some(pos) => read(pos),
-        // debt: a Civil 3D 2013 view without class keys (Kavşak AC82)
-        // lays these fields out differently; its triple is searched for.
-        None => (start + 178..end).find_map(read),
-    }
+    })
 }
 
 /// Profile Locking settings of a profile, from the
