@@ -37,22 +37,20 @@ pub(super) fn marked_stations(data: &[u8], start: usize, end: usize) -> Vec<f64>
     stations
 }
 
-/// Stations of a station or minor station label group read by its
-/// fields: a 293-bit header, `BL n`, `n` labels, a 294-bit trailer. A label
-/// is a key block (`BL k`, `k` keys; the station is key 0x0200D020, the
-/// first label holds the group's settings), 44 bits, a key list (`BL k`,
-/// `k` keys without values), `BL`, `BL m` and `m` items: `BL x3, BL mask`,
-/// then for mask 0x0CC04E08 18 bits, for mask 0x0CC00208 (a dragged label)
-/// 7 bits, `BD`, `BD`, 5 bits.
-// ponytail: the header, the 44 bits, the item bits around the BDs and the
-// trailer are skipped by length (constant in every sample); name them once
-// a drawing varies them.
-pub(super) fn group_stations(data: &[u8], start: usize, end: usize) -> Option<Vec<f64>> {
+/// The labels of an alignment label group read by their fields: a 293-bit
+/// header, `BL n`, `n` labels. A label is a key block (`BL k`, `k` keys; a
+/// station label's station is key 0x0200D020, the first label holds the
+/// group's settings), 44 bits, a key list (`BL k`, `k` keys without values),
+/// `BL`, `BL m` and `m` items: `BL x3, BL mask`, then for mask 0x0CC04E08
+/// 18 bits, for mask 0x0CC00208 (a dragged label) 7 bits, `BD`, `BD`, 5
+/// bits. Returns the station keys' values and the bit after the labels.
+// ponytail: the header, the 44 bits and the item bits around the BDs are
+// skipped by length (constant in every sample); name them once a drawing
+// varies them.
+fn group_labels(data: &[u8], start: usize, end: usize) -> Option<(Vec<f64>, usize)> {
     const HEADER: usize = 293;
-    const TRAILER: usize = 294;
     const STATION: u32 = 0x0200_D020;
     let mut bits = Bits::new(data, start + HEADER, end);
-    let skip = |bits: &mut Bits, n: usize| (bits.remaining() >= n).then(|| bits.pos += n);
     let n = bits.bit_long()?;
     let mut stations = Vec::new();
     for _ in 0..n {
@@ -82,7 +80,42 @@ pub(super) fn group_stations(data: &[u8], start: usize, end: usize) -> Option<Ve
             }
         }
     }
-    (bits.remaining() == TRAILER).then_some(stations)
+    Some((stations, bits.pos))
+}
+
+fn skip(bits: &mut Bits, n: usize) -> Option<()> {
+    (bits.remaining() >= n).then(|| bits.pos += n)
+}
+
+/// Stations of a station or minor station label group: its labels (see
+/// [`group_labels`]), then a 294-bit trailer.
+pub(super) fn group_stations(data: &[u8], start: usize, end: usize) -> Option<Vec<f64>> {
+    let (stations, at) = group_labels(data, start, end)?;
+    (end - at == 294).then_some(stations)
+}
+
+/// Geometry point kinds a geometry point label group lists, read after its
+/// labels (see [`group_labels`]): a key block, `BL` x5, `BD, BD`, 7
+/// bits, `BL count`, `count` x `BL` (the low byte is the kind: 1 the
+/// alignment's beginning, 2 its end, 3 and up the points between), then 19
+/// bits.
+// ponytail: the 7 and 19 bits are skipped by length (constant in every
+// sample).
+pub(super) fn group_point_kinds(data: &[u8], start: usize, end: usize) -> Option<Vec<u8>> {
+    let (_, at) = group_labels(data, start, end)?;
+    let mut bits = Bits::new(data, at, end);
+    for _ in 0..bits.bit_long()? {
+        super::alignment::read_key(&mut bits)?;
+    }
+    for _ in 0..5 {
+        bits.bit_long()?;
+    }
+    bits.bit_double()?;
+    bits.bit_double()?;
+    skip(&mut bits, 7)?;
+    let count = bits.bit_long()?;
+    let kinds = (0..count).map(|_| bits.bit_long().map(|v| (v & 0xFF) as u8)).collect::<Option<Vec<_>>>()?;
+    (bits.remaining() == 19).then_some(kinds)
 }
 
 /// Bits before each geometry point kind a label group labels (groups

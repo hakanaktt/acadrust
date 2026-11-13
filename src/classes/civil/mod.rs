@@ -460,15 +460,17 @@ impl ArchEntityData {
     }
 
     /// Geometry point kinds a geometry point label group
-    /// (`AECC_ALIGNMENT_GEOMPOINT_LABEL_GROUP`) is limited to: `1` the
-    /// alignment's beginning, `2` its end. Empty when the group does not
-    /// list them (every point is labelled).
+    /// (`AECC_ALIGNMENT_GEOMPOINT_LABEL_GROUP`) labels: `1` the alignment's
+    /// beginning, `2` its end, `3` and up the geometry points between.
     pub fn label_geometry_point_kinds(&self) -> Vec<u8> {
         if self.dxf_name != "AECC_ALIGNMENT_GEOMPOINT_LABEL_GROUP" {
             return Vec::new();
         }
         self.main_stream()
-            .map(|(data, start, end)| labels::geometry_point_kinds(data, start, end))
+            .map(|(data, start, end)| {
+                // debt: groups whose labels do not read are searched.
+                labels::group_point_kinds(data, start, end).unwrap_or_else(|| labels::geometry_point_kinds(data, start, end))
+            })
             .unwrap_or_default()
     }
 
