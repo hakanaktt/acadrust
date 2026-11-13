@@ -233,13 +233,32 @@ fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> 
     (!out.is_empty()).then_some(out)
 }
 
-/// The topology in a site container or alignment companion body: the first
-/// node list an edge list follows.
+/// The topology in a site container or alignment companion body:
+///
+/// ```text
+/// BS 0x04BE, BL key (0 for a site container, 0x80000000 | n for a
+/// companion), BL 0, BL 0, BL 32, BL 210, 21 bits, BL 0x80000001,
+/// node list, edge list
+/// ```
+// ponytail: the 21 bits are skipped by length (constant in every sample).
 pub(super) fn topology(data: &[u8], start: usize, end: usize) -> Option<Topology> {
-    (start..end.saturating_sub(40)).find_map(|pos| {
+    let read = |pos: usize| -> Option<Topology> {
         let (nodes, after) = node_list(data, pos, end)?;
         Some(Topology {
             edges: edges(data, after, end, &nodes)?,
         })
-    })
+    };
+    let mut bits = Bits::new(data, start, end);
+    (bits.bit_short()? == 0x04BE).then_some(())?;
+    bits.bit_long()?;
+    for want in [0, 0, 32, 210] {
+        (bits.bit_long()? == want).then_some(())?;
+    }
+    bits.pos += 21;
+    if bits.bit_long()? as u32 == 0x8000_0001 {
+        return read(bits.pos);
+    }
+    // debt: a container whose feature line was edited (S316) has more
+    // fields after `BL 210`; its node list is found by trying positions.
+    (start..end.saturating_sub(40)).find_map(read)
 }
