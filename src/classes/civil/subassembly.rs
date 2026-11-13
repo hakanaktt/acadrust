@@ -54,7 +54,9 @@ fn header(bits: &mut Bits) -> Option<usize> {
 }
 
 /// Shape plus the code count of every point, link and area.
-fn read_at(data: &[u8], pos: usize, end: usize) -> Option<(SubassemblyShape, Vec<usize>, Vec<usize>, Vec<usize>)> {
+/// Also returns where the body continues, `None` when the area list did not
+/// read.
+fn read_at(data: &[u8], pos: usize, end: usize) -> Option<(SubassemblyShape, Vec<usize>, Vec<usize>, Vec<usize>, Option<usize>)> {
     let mut bits = Bits::new(data, pos, end);
     let point_count = count(&mut bits)?;
     let mut shape = SubassemblyShape::default();
@@ -75,6 +77,7 @@ fn read_at(data: &[u8], pos: usize, end: usize) -> Option<(SubassemblyShape, Vec
     }
     // Areas follow; a body without any keeps an empty list.
     let mut area_codes = Vec::new();
+    let mut after = None;
     let mut areas_bits = Bits::new(data, bits.pos, end);
     if let Some(area_count) = areas_bits.bit_long().and_then(|n| usize::try_from(n).ok()).filter(|n| *n <= MAX_COUNT as usize) {
         let mut areas = Vec::new();
@@ -92,9 +95,10 @@ fn read_at(data: &[u8], pos: usize, end: usize) -> Option<(SubassemblyShape, Vec
         if parsed {
             shape.areas = areas;
             area_codes = codes;
+            after = Some(areas_bits.pos);
         }
     }
-    Some((shape, point_codes, link_codes, area_codes))
+    Some((shape, point_codes, link_codes, area_codes, after))
 }
 
 /// `BL n, n x RL index`, every index below `limit`.
@@ -135,7 +139,7 @@ fn shape_at(data: &[u8], start: usize, end: usize) -> Option<usize> {
 /// Shape from the point list, with codes from `strings`, the record's text
 /// stream, where they start two strings after the script assembly name.
 pub(super) fn find(data: &[u8], start: usize, end: usize, strings: &[String]) -> Option<SubassemblyShape> {
-    let (mut shape, points, links, areas) = match shape_at(data, start, end).and_then(|pos| read_at(data, pos, end)) {
+    let (mut shape, points, links, areas, _) = match shape_at(data, start, end).and_then(|pos| read_at(data, pos, end)) {
         Some(found) => found,
         // debt: a header neither form matches (none in the samples) is
         // searched for its point list.
@@ -156,6 +160,16 @@ pub(super) fn find(data: &[u8], start: usize, end: usize, strings: &[String]) ->
     shape.link_codes = take(&links);
     shape.area_codes = take(&areas);
     Some(shape)
+}
+
+/// Input parameters a subassembly stores after its shape, texts taken after
+/// the shape's codes.
+pub(super) fn parameters(data: &[u8], start: usize, end: usize, strings: &[String]) -> Option<Vec<super::parameters::Parameter>> {
+    let (_, points, links, areas, after) = read_at(data, shape_at(data, start, end)?, end)?;
+    let first = strings.iter().position(|s| s == "AeccStockSubassemblyScriptsRC.dll")? + 2;
+    let codes: usize = points.iter().chain(&links).chain(&areas).sum();
+    let mut texts = strings.get(first + codes..)?.iter();
+    super::parameters::read(&mut Bits::new(data, after?, end), &mut texts)
 }
 
 /// Where a subassembly sits in its assembly.
