@@ -256,6 +256,14 @@ impl ArchEntityData {
             .unwrap_or_default()
     }
 
+    /// Solved pieces of a Civil 3D alignment with the signed curvature each
+    /// curve was solved with (0 for lines and spirals).
+    pub fn alignment_pieces_with_curvature(&self) -> Vec<(AlignmentPiece, f64, Vec<Vector2>)> {
+        self.alignment_elements()
+            .map(|elements| alignment::pieces_with_curvature(&elements))
+            .unwrap_or_default()
+    }
+
     /// Station ranges a Civil 3D alignment hides (its masking).
     pub fn alignment_masked_ranges(&self) -> Vec<(f64, f64)> {
         let Some(first) = self.alignment_start_station() else {
@@ -658,19 +666,7 @@ impl ArchEntityData {
             return None;
         }
         let (data, start, end) = self.main_stream()?;
-        if let Some(frame) = profile::view_frame_stored(data, start, end) {
-            return Some(frame);
-        }
-        let frame = self.profiles.first()?;
-        let min = Vector2::new(
-            frame.iter().map(|p| p.x).fold(f64::INFINITY, f64::min),
-            frame.iter().map(|p| p.y).fold(f64::INFINITY, f64::min),
-        );
-        let max = Vector2::new(
-            frame.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max),
-            frame.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max),
-        );
-        profile::view_frame(data, start, end, min, max)
+        profile::view_frame_stored(data, start, end)
     }
 
     /// Baseline and feature lines of a Civil 3D corridor as (station, world
@@ -787,6 +783,8 @@ impl ArchEntityData {
 
     /// Insertion point of a Civil 3D structure (`AECC_STRUCTURE`), found
     /// inside the extents its cached preview records.
+    // debt: located through the cache extents; no drawing at hand has a
+    // structure to work out the record's field order from.
     pub fn structure_position(&self) -> Option<crate::types::Vector3> {
         if self.dxf_name != "AECC_STRUCTURE" {
             return None;
@@ -808,15 +806,9 @@ impl ArchEntityData {
         if self.civil_kind() != Some(CivilKind::Assembly) {
             return None;
         }
-        let mut min = Vector2::new(f64::INFINITY, f64::INFINITY);
-        let mut max = Vector2::new(f64::NEG_INFINITY, f64::NEG_INFINITY);
-        for p in self.profiles.iter().flatten() {
-            min = Vector2::new(min.x.min(p.x), min.y.min(p.y));
-            max = Vector2::new(max.x.max(p.x), max.y.max(p.y));
-        }
         let handles = self.decode().handles;
         let (data, start, end) = self.main_stream()?;
-        subassembly::assembly_layout(data, start, end, &handles, (min, max))
+        subassembly::assembly_layout(data, start, end, &handles)
     }
 
     /// Feature lines of a Civil 3D corridor per baseline, each grouped by

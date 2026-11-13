@@ -59,10 +59,14 @@ enum Entity {
 }
 
 struct Record {
+    /// Kind prefix and constraint code.
+    code: (u32, i32),
     id: i32,
     previous: i32,
     next: i32,
     entity: Entity,
+    /// Where the fields this crate reads end.
+    end: usize,
 }
 
 /// `a` of a parabola (elevation'' = 2a) from K or a radius (R = 100 K).
@@ -158,10 +162,12 @@ fn record_at(data: &[u8], pos: usize, end: usize) -> Option<Record> {
         _ => return None,
     };
     Some(Record {
+        code: (prefix, constraint),
         id,
         previous,
         next,
         entity,
+        end: bits.pos,
     })
 }
 
@@ -410,8 +416,61 @@ struct Segment {
 /// point, a free tangent touches the curves on both sides.
 /// The longest chain of entity records from a first entity; a stray
 /// header can carry plausible ids.
+/// The entity list at `pos`: `BL n`, then n records end to end (each its
+/// 11-bit kind prefix, the record, and the fields after it: 4 bits after a
+/// tangent; after a curve `BL 0x1001, BL 0, 3 bits` or `BD, BD, 1 bit`,
+/// then three BD), IDs distinct and links inside the list.
+fn record_list_at(data: &[u8], pos: usize, end: usize) -> Option<Vec<Record>> {
+    let mut bits = Bits::new(data, pos, end);
+    let n = usize::try_from(bits.bit_long()?).ok().filter(|n| (1..100_000).contains(n))?;
+    let mut at = bits.pos;
+    let mut out: Vec<Record> = Vec::with_capacity(n);
+    let curve_tails = |from: usize| -> Vec<usize> {
+        let mut ends = Vec::new();
+        let mut b = Bits::new(data, from, end);
+        if b.bit_long() == Some(0x1001) && b.bit_long() == Some(0) {
+            b.pos += 3;
+            if (0..3).all(|_| b.bit_double().is_some()) {
+                ends.push(b.pos);
+            }
+        }
+        let mut b = Bits::new(data, from, end);
+        if b.bit_double().is_some() && b.bit_double().is_some() {
+            b.pos += 1;
+            if (0..3).all(|_| b.bit_double().is_some()) {
+                ends.push(b.pos);
+            }
+        }
+        ends
+    };
+    for i in 0..n {
+        let record = record_at(data, at + 11, end)?;
+        let last = i + 1 == n;
+        let ends = match record.code.0 {
+            2 => vec![record.end + 4],
+            _ => curve_tails(record.end),
+        };
+        let next = if last {
+            *ends.first().unwrap_or(&record.end)
+        } else {
+            ends.into_iter().find(|e| record_at(data, e + 11, end).is_some())?
+        };
+        out.push(record);
+        at = next;
+    }
+    let ids: Vec<i32> = out.iter().map(|r| r.id).collect();
+    let known = |id: i32| id == 0 || ids.contains(&id);
+    let distinct = ids.iter().enumerate().all(|(i, id)| !ids[..i].contains(id));
+    (distinct && out.iter().all(|r| known(r.previous) && known(r.next))).then_some(out)
+}
+
 fn chain(data: &[u8], start: usize, end: usize) -> Vec<Record> {
-    let records: Vec<Record> = (start..end).filter_map(|pos| record_at(data, pos, end)).collect();
+    // debt: the list's start is found by trying positions, because the
+    // fields before it are not read one by one yet; a profile whose list
+    // does not read is still searched record by record.
+    let records: Vec<Record> = (start..end)
+        .find_map(|pos| record_list_at(data, pos, end))
+        .unwrap_or_else(|| (start..end).filter_map(|pos| record_at(data, pos, end)).collect());
     let mut best: Vec<usize> = Vec::new();
     for (i, _) in records.iter().enumerate().filter(|(_, r)| r.previous == 0) {
         let mut chain = vec![i];
@@ -959,41 +1018,6 @@ pub(super) fn view_frame_stored(data: &[u8], start: usize, end: usize) -> Option
             elevation_min: a.y,
             elevation_max: c.y,
             vertical_scale,
-        })
-    })
-}
-
-/// Range triple whose station span equals the frame width.
-pub(super) fn view_frame(
-    data: &[u8],
-    start: usize,
-    end: usize,
-    min: Vector2,
-    max: Vector2,
-) -> Option<ProfileViewFrame> {
-    let width = max.x - min.x;
-    let height = max.y - min.y;
-    (start..end).find_map(|pos| {
-        let mut bits = Bits::new(data, pos, end);
-        let mut point = || {
-            let x = bits.bit_double()?;
-            let y = bits.bit_double()?;
-            (bits.bit_double()? == 0.0).then_some(Vector2::new(x, y))
-        };
-        let a = point()?;
-        let b = point()?;
-        let c = point()?;
-        let fits = a == b
-            && c.y > a.y
-            && ((c.x - a.x) - width).abs() <= 1e-6 * width.max(1.0)
-            && height > 0.0;
-        fits.then(|| ProfileViewFrame {
-            origin: min,
-            station_min: a.x,
-            station_max: c.x,
-            elevation_min: a.y,
-            elevation_max: c.y,
-            vertical_scale: height / (c.y - a.y),
         })
     })
 }

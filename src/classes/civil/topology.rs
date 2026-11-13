@@ -7,8 +7,8 @@
 //! ```text
 //! nodes: BL next free id, BL n, BL first id,
 //!        n x { BD x, BD y, BD z, 3 bits 010, BL next id (0 last) }
-//! edges: BL next free id, BL slots, then per slot i either BL 2 (a free
-//!        slot: its member left) or BL 0, BL i, BL flags, BL n, BL 0,
+//! edges: BL next free id, BL slots, then per slot either BL 2 (a free
+//!        slot: its member left) or BL 0, BL edge id, BL flags, BL n, BL 0,
 //!        n x { BL kind (0 line, 1 arc, 2 last), BL flags, BL node,
 //!        BL face a, BL face b, [arc: BD bulge, BL 0] },
 //!        BL m, m x BL, BL 0 x 3
@@ -174,14 +174,17 @@ fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> 
         return None;
     }
     let mut out = Vec::new();
-    for slot in 1..=slots {
+    for _ in 0..slots {
         // A member that left keeps its slot as a lone 2.
         match bits.bit_long()? {
             2 => continue,
             0 => {}
             _ => return None,
         }
-        (bits.bit_long()? == slot).then_some(())?;
+        // The slot's edge ID: its slot number in a container Civil 3D wrote
+        // in one go, any free ID once members moved between containers.
+        let id = bits.bit_long()?;
+        (1..next_free).contains(&id).then_some(())?;
         bits.bit_long()?;
         // An edge can be left with no vertices; it keeps its place.
         let n = bits.bit_long()?;

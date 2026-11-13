@@ -190,25 +190,31 @@ fn attachment_points(data: &[u8], start: usize, end: usize) -> Vec<u32> {
     points
 }
 
-/// `bounds` is the proxy extents; the baseline point is the first `3BD`
-/// with z = 0 inside them.
-pub(super) fn assembly_layout(
-    data: &[u8],
-    start: usize,
-    end: usize,
-    handles: &[u64],
-    bounds: (Vector2, Vector2),
-) -> Option<AssemblyLayout> {
-    let (min, max) = bounds;
-    let origin = (start..end).find_map(|pos| {
-        let mut bits = Bits::new(data, pos, end);
-        let x = bits.bit_double()?;
-        let y = bits.bit_double()?;
-        // Inclusive: a proxy that is a single line has no width.
-        let tol = 1e-6 * (1.0 + min.x.abs().max(min.y.abs()));
-        let inside = x >= min.x - tol && x <= max.x + tol && y >= min.y - tol && y <= max.y + tol;
-        (inside && bits.bit_double()? == 0.0).then(|| Vector3::new(x, y, 0.0))
-    })?;
+/// The baseline point is a `3BD` after the class header
+/// (`BL 80, 0, 80, 80, 0`, two BLs, a flag BL): with flag 64 after the
+/// date-modified block (`BL, BL, BL 0x1600101F`, 64-bit FILETIME) and 131
+/// bits; with flag 128 after 98 bits.
+// ponytail: the 131 and 98 bits are skipped by length (constant in every
+// assembly seen); read them field by field once a drawing varies them.
+pub(super) fn assembly_layout(data: &[u8], start: usize, end: usize, handles: &[u64]) -> Option<AssemblyLayout> {
+    let mut bits = Bits::new(data, start, end);
+    for want in [80, 0, 80, 80, 0] {
+        (bits.bit_long()? == want).then_some(())?;
+    }
+    bits.bit_long()?;
+    bits.bit_long()?;
+    match bits.bit_long()? {
+        64 => {
+            bits.bit_long()?;
+            bits.bit_long()?;
+            (bits.bit_long()? == 0x1600_101F).then_some(())?;
+            bits.pos += 64 + 131;
+        }
+        128 => bits.pos += 98,
+        _ => return None,
+    }
+    let origin = Vector3::new(bits.bit_double()?, bits.bit_double()?, bits.bit_double()?);
+    [origin.x, origin.y, origin.z].iter().all(|v| v.is_finite()).then_some(())?;
     // Body handles: two nulls (one in Civil 3D 2013), the baseline style,
     // (subassembly, parent) pairs, then the drawing's Civil root.
     let style = handles.iter().take(3).position(|h| *h != 0)?;

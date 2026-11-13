@@ -278,6 +278,17 @@ impl SpiralShape {
 
 /// Design elements found in a main stream, keyed by their own ids.
 pub(super) fn elements(data: &[u8], start: usize, end: usize) -> Vec<AlignmentElement> {
+    // The element list read by its grammar: count, records end to end,
+    // interval block.
+    // debt: the list's start is found by trying positions, because the
+    // section before it (form, MIST1–MIST4, the 160-bit block) is not
+    // read field by field yet; read it and start there.
+    if let Some(list) = (start..end).find_map(|pos| element_list_at(data, pos, end)) {
+        return list;
+    }
+    // debt: records some kinds still leave unread (free arcs through a
+    // point, compound spirals, the 2013 layout after the last record) are
+    // found by scanning for their headers.
     let mut out: Vec<AlignmentElement> = Vec::new();
     for pos in start..end {
         if !is_header(data, pos, end) {
@@ -303,6 +314,62 @@ fn is_header(data: &[u8], pos: usize, end: usize) -> bool {
     };
     (257..=280).contains(&element_type)
         && (matches!(bits.bit_short(), Some(0 | 2)) || header_type(data, pos, end).is_some_and(|t| matches!(t, 0x04 | 0x09 | 0x0D)))
+}
+
+/// One element record at `pos` read to its end: the record, then the
+/// fields some kinds keep after their geometry (spirals: `BD 0, 0, 1`, a
+/// spiral leaving its curve also its start point and direction as four
+/// RD before them; a placed spiral `BD 0, 1`; a free arc fitted to the
+/// curve after it `5 x BD 0, BL 1, BD 1`). A record that is not the last
+/// one ends where the next record starts; the last one is read without
+/// its optional fields.
+fn record_at(data: &[u8], pos: usize, end: usize, last: bool) -> Option<(AlignmentElement, usize)> {
+    if !is_header(data, pos, end) {
+        return None;
+    }
+    let member = member_body(data, pos, end);
+    let after_type = type_end(data, pos, end);
+    let mut bits = Bits::new(data, pos, end);
+    let element = read_element(&mut bits, member, after_type)?;
+    let at = bits.pos;
+    if last {
+        return Some((element, at));
+    }
+    let bds = |bits: &mut Bits, want: &[f64]| want.iter().all(|w| bits.bit_double() == Some(*w));
+    let tails: Vec<Box<dyn Fn(&mut Bits) -> bool>> = match &element.kind {
+        AlignmentElementKind::SpiralIn { .. } => vec![Box::new(move |b: &mut Bits| bds(b, &[0.0, 0.0, 1.0]))],
+        AlignmentElementKind::SpiralOut { .. } => vec![Box::new(move |b: &mut Bits| {
+            (0..4).all(|_| b.raw_double().is_some_and(f64::is_finite)) && bds(b, &[0.0, 0.0, 1.0])
+        })],
+        AlignmentElementKind::PlacedSpiral { .. } => vec![Box::new(move |b: &mut Bits| bds(b, &[0.0, 1.0]))],
+        AlignmentElementKind::FreeArc { .. } => vec![
+            Box::new(|_: &mut Bits| true),
+            Box::new(move |b: &mut Bits| bds(b, &[0.0; 5]) && b.bit_long() == Some(1) && bds(b, &[1.0])),
+        ],
+        _ => vec![Box::new(|_: &mut Bits| true)],
+    };
+    tails.iter().find_map(|tail| {
+        let mut b = Bits::new(data, at, end);
+        (tail(&mut b) && is_header(data, b.pos, end)).then_some((element.clone(), b.pos))
+    })
+}
+
+/// The element list at `pos`: `BL n`, then n records end to end whose
+/// IDs are distinct and whose links point inside the list.
+fn element_list_at(data: &[u8], pos: usize, end: usize) -> Option<Vec<AlignmentElement>> {
+    let mut bits = Bits::new(data, pos, end);
+    let n = usize::try_from(bits.bit_long()?).ok().filter(|n| (1..10_000).contains(n))?;
+    let mut at = bits.pos;
+    let mut out: Vec<AlignmentElement> = Vec::with_capacity(n);
+    for i in 0..n {
+        let (element, next) = record_at(data, at, end, i + 1 == n)?;
+        out.push(element);
+        at = next;
+    }
+    let ids: Vec<i16> = out.iter().map(|e| e.id).collect();
+    let known = |id: i16| id == 0 || ids.contains(&id);
+    let distinct = ids.iter().enumerate().all(|(i, id)| *id > 0 && !ids[..i].contains(id));
+    (distinct && out.iter().all(|e| known(e.previous) && known(e.next))).then_some(out)
 }
 
 /// The header's type byte. The flag and type bytes start at bit 29 of the
@@ -905,8 +972,48 @@ fn intersect(p: Vector2, u: Vector2, q: Vector2, v: Vector2) -> Option<Vector2> 
     Some(p + u * t)
 }
 
+thread_local! {
+    /// Pieces `walk` produced while a run was solved: first and last point
+    /// with what the element made them. Read back by [`pieces_by_kind`] so
+    /// a piece's kind comes from its element, not from its points.
+    static WALKED: std::cell::RefCell<Vec<(Vector2, Vector2, Piece, f64)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Notes what an element made of the points it solved (see [`WALKED`]),
+/// with a curve's signed curvature (0 for the other kinds).
+fn made(points: &[Vector2], kind: Piece, curvature: f64) {
+    if let (Some(first), Some(last)) = (points.first(), points.last()) {
+        WALKED.with(|w| w.borrow_mut().push((*first, *last, kind, curvature)));
+    }
+}
+
+/// Moves the notes of points that were moved by `shift` with them.
+fn shift_notes(points: &[Vector2], shift: Vector2) {
+    WALKED.with(|w| {
+        for note in w.borrow_mut().iter_mut() {
+            if points.iter().any(|p| p.distance(&note.0) < 1e-12) && points.iter().any(|p| p.distance(&note.1) < 1e-12) {
+                note.0 = note.0 + shift;
+                note.1 = note.1 + shift;
+            }
+        }
+    });
+}
+
 /// Points along a curve whose curvature changes linearly from `k0` to `k1`.
 fn walk(start: Vector2, h: f64, k0: f64, k1: f64, length: f64) -> (Vec<Vector2>, f64) {
+    let (points, end) = walk_points(start, h, k0, k1, length);
+    let kind = if (k1 - k0).abs() > 1e-12 {
+        Piece::Spiral
+    } else if k0.abs() > 1e-12 {
+        Piece::Curve
+    } else {
+        Piece::Line
+    };
+    made(&points, kind, if kind == Piece::Curve { k0 } else { 0.0 });
+    (points, end)
+}
+
+fn walk_points(start: Vector2, h: f64, k0: f64, k1: f64, length: f64) -> (Vec<Vector2>, f64) {
     let n = ((length / STEP).ceil() as usize).clamp(2, 20000);
     let ds = length / n as f64;
     let mut points = Vec::with_capacity(n + 1);
@@ -1010,42 +1117,9 @@ pub enum AlignmentPiece {
 
 use AlignmentPiece as Piece;
 
-/// Signed curvature at the middle vertex of three.
-fn curvature_at(a: Vector2, b: Vector2, c: Vector2) -> f64 {
-    let (ab, bc, ca) = (a.distance(&b), b.distance(&c), c.distance(&a));
-    let area2 = cross(b - a, c - a);
-    if ab * bc * ca < 1e-12 {
-        0.0
-    } else {
-        2.0 * area2 / (ab * bc * ca)
-    }
-}
-
-fn piece_kind(points: &[Vector2]) -> Piece {
-    let n = points.len();
-    if n < 3 {
-        return Piece::Line;
-    }
-    // A short curve is solved into three points: its middle bends.
-    if n == 3 {
-        return if curvature_at(points[0], points[1], points[2]).abs() < 1e-6 { Piece::Line } else { Piece::Curve };
-    }
-    // Over each half: neighbouring points are too close for the bend
-    // between them to tell an arc from a spiral.
-    let k0 = curvature_at(points[0], points[n / 4], points[n / 2]);
-    let k1 = curvature_at(points[n - 1 - n / 2], points[n - 1 - n / 4], points[n - 1]);
-    if k0.abs() < 1e-6 && k1.abs() < 1e-6 {
-        Piece::Line
-    } else if (k0 - k1).abs() <= 0.02 * k0.abs().max(k1.abs()) {
-        Piece::Curve
-    } else {
-        Piece::Spiral
-    }
-}
-
 /// `(start, end, kind)` index ranges of the pieces of a solved run. Every
 /// solved piece repeats its first point at the join.
-fn split(raw: &[Vector2]) -> Vec<(usize, usize, Piece)> {
+fn split_points(raw: &[Vector2]) -> Vec<(usize, usize)> {
     let mut joins = vec![0];
     for i in 1..raw.len() {
         if raw[i].distance(&raw[i - 1]) < 1e-9 {
@@ -1053,35 +1127,67 @@ fn split(raw: &[Vector2]) -> Vec<(usize, usize, Piece)> {
         }
     }
     joins.push(raw.len());
-    joins
-        .windows(2)
-        .filter(|w| w[1] > w[0] + 1)
-        .map(|w| (w[0], w[1], piece_kind(&raw[w[0]..w[1]])))
-        .collect()
+    joins.windows(2).filter(|w| w[1] > w[0] + 1).map(|w| (w[0], w[1])).collect()
 }
 
 /// Solved pieces of every run with their kind.
 pub(super) fn pieces_by_kind(elements: &[AlignmentElement]) -> Vec<(Piece, Vec<Vector2>)> {
-    raw_polylines(elements)
-        .iter()
-        .flat_map(|raw| {
-            split(raw)
-                .into_iter()
-                .map(|(a, b, kind)| (kind, raw[a..b].to_vec()))
-                .collect::<Vec<_>>()
-        })
+    pieces_with_curvature(elements).into_iter().map(|(kind, _, points)| (kind, points)).collect()
+}
+
+/// Solved pieces with the signed curvature a curve was solved with (0 for
+/// lines and spirals).
+pub(super) fn pieces_with_curvature(elements: &[AlignmentElement]) -> Vec<(Piece, f64, Vec<Vector2>)> {
+    let (raw, pieces) = solved_pieces(elements);
+    raw.iter()
+        .zip(pieces)
+        .flat_map(|(run, pieces)| pieces.into_iter().map(|(a, b, kind, k)| (kind, k, run[a..b].to_vec())).collect::<Vec<_>>())
         .collect()
+}
+
+/// Solve the elements, then split each run into pieces whose kind is the
+/// one their element made them (see [`WALKED`]); a piece no element
+/// walked (a fixed or floating line, a moved copy) keeps the kind its
+/// points show.
+fn solved_pieces(elements: &[AlignmentElement]) -> (Vec<Vec<Vector2>>, Vec<Vec<(usize, usize, Piece, f64)>>) {
+    WALKED.with(|w| w.borrow_mut().clear());
+    let raw = raw_polylines(elements);
+    let walked = WALKED.with(|w| std::mem::take(&mut *w.borrow_mut()));
+    let same = |a: Vector2, b: Vector2| a.distance(&b) <= 1e-9 * (1.0 + a.x.abs().max(a.y.abs()));
+    let pieces = raw
+        .iter()
+        .map(|run| {
+            split_points(run)
+                .into_iter()
+                .map(|(a, b)| {
+                    let points = &run[a..b];
+                    let (first, last) = (points[0], points[points.len() - 1]);
+                    // The solved end can be followed by the element's stored
+                    // end, a hair away.
+                    let before_last = points[points.len().saturating_sub(2)];
+                    // Only lines are laid without a note: two points.
+                    let (kind, curvature) = walked
+                        .iter()
+                        .find(|(f, l, _, _)| same(*f, first) && (same(*l, last) || same(*l, before_last)))
+                        .map_or((Piece::Line, 0.0), |w| (w.2, w.3));
+                    (a, b, kind, curvature)
+                })
+                .collect()
+        })
+        .collect();
+    (raw, pieces)
 }
 
 /// Distance along a solved run to each of its points; a curve's chords
 /// are measured along its arc.
-fn run_distances(raw: &[Vector2], pieces: &[(usize, usize, Piece)]) -> Vec<f64> {
+fn run_distances(raw: &[Vector2], pieces: &[(usize, usize, Piece, f64)]) -> Vec<f64> {
+    // A curve's chords are measured along its arc, at the radius its
+    // element solved it with.
     let mut radius = vec![None; raw.len()];
-    for &(a, b, kind) in pieces {
-        if kind == Piece::Curve && b - a >= 3 {
-            let k = curvature_at(raw[a], raw[(a + b) / 2], raw[b - 1]);
+    for &(a, b, kind, k) in pieces {
+        if kind == Piece::Curve && k.abs() > 1e-12 {
             for r in &mut radius[a + 1..b] {
-                *r = (k.abs() > 1e-12).then(|| 1.0 / k.abs());
+                *r = Some(1.0 / k.abs());
             }
         }
     }
@@ -1096,10 +1202,10 @@ fn run_distances(raw: &[Vector2], pieces: &[(usize, usize, Piece)]) -> Vec<f64> 
 
 /// Geometry points along the first solved run.
 pub(super) fn geometry_points(elements: &[AlignmentElement]) -> Vec<GeometryPoint> {
-    let Some(raw) = raw_polylines(elements).into_iter().next() else {
+    let (runs, pieces) = solved_pieces(elements);
+    let (Some(raw), Some(pieces)) = (runs.into_iter().next(), pieces.into_iter().next()) else {
         return Vec::new();
     };
-    let pieces = split(&raw);
     let distance_to = run_distances(&raw, &pieces);
     let mut out = Vec::new();
     let mut push = |index: usize, name| {
@@ -1113,30 +1219,9 @@ pub(super) fn geometry_points(elements: &[AlignmentElement]) -> Vec<GeometryPoin
     if let Some(first) = pieces.first() {
         push(first.0, "BP");
     }
-    // Curvature at either end of a piece, from points a metre apart so a
-    // tiny closing segment does not count.
-    let at_end = |p: &[Vector2]| -> f64 {
-        let mut picked = vec![p[0]];
-        for q in &p[1..] {
-            if picked.len() == 3 {
-                break;
-            }
-            if q.distance(picked.last().unwrap()) >= 1.0 {
-                picked.push(*q);
-            }
-        }
-        if picked.len() < 3 {
-            return 0.0;
-        }
-        curvature_at(picked[0], picked[1], picked[2])
-    };
-    let ends = |(a, b, _): (usize, usize, Piece)| {
-        let p = &raw[a..b];
-        let reversed: Vec<Vector2> = p.iter().rev().copied().collect();
-        (at_end(p), -at_end(&reversed))
-    };
     for pair in pieces.windows(2) {
-        let (k0, k1) = (ends(pair[0]).1, ends(pair[1]).0);
+        // Curves turning opposite ways meet in a reverse curve.
+        let (k0, k1) = (pair[0].3, pair[1].3);
         let name = match (pair[0].2, pair[1].2) {
             (Piece::Line, Piece::Spiral) => "TS",
             (Piece::Spiral, Piece::Curve) => "SC",
@@ -1815,6 +1900,7 @@ fn solve_run(run: &[&AlignmentElement], out: &mut Vec<Vec<Vector2>>) {
                 let q: Vec<Vector2> = (0..=n)
                     .map(|j| *center + direction(a0 + TAU * j as f64 / n as f64) * *radius)
                     .collect();
+                made(&q, Piece::Curve, 1.0 / radius);
                 Some((
                     q,
                     State {
@@ -1826,6 +1912,8 @@ fn solve_run(run: &[&AlignmentElement], out: &mut Vec<Vec<Vector2>>) {
             }
             AlignmentElementKind::Points { points: q } => {
                 close(&mut points, &mut pending, q[0]);
+                // The record stores the points joined straight.
+                made(q, Piece::Line, 0.0);
                 let n = q.len();
                 Some((
                     q.clone(),
@@ -1921,6 +2009,7 @@ fn three_point_arc(a: Vector2, b: Vector2, c: Vector2) -> Option<(Vec<Vector2>, 
         heading: a0 + sweep + if ccw { PI / 2.0 } else { -PI / 2.0 },
         curvature: if ccw { 1.0 / radius } else { -1.0 / radius },
     };
+    made(&points, Piece::Curve, end.curvature);
     Some((points, end))
 }
 
@@ -1976,6 +2065,7 @@ fn spiral(s: State, k: f64, inward: bool, length: f64, shape: SpiralShape) -> (V
         heading: heading_at(length),
         curvature: if inward { k } else { 0.0 },
     };
+    made(&points, Piece::Spiral, 0.0);
     (points, end)
 }
 
@@ -2060,6 +2150,7 @@ fn offset_spiral(s: State, k: f64, inward: bool, length: f64, shape: SpiralShape
             heading: s.heading + end_angle,
             curvature: k,
         };
+        made(&points, Piece::Spiral, 0.0);
         (points, end)
     } else {
         // Travelled backwards from its curved end: the same curve turning
@@ -2075,6 +2166,7 @@ fn offset_spiral(s: State, k: f64, inward: bool, length: f64, shape: SpiralShape
             heading: s.heading - leave + std::f64::consts::PI,
             curvature: 0.0,
         };
+        made(&points, Piece::Spiral, 0.0);
         (points, end)
     }
 }
@@ -2410,6 +2502,7 @@ fn fitted_curve(
         let line = pending.take()?;
         points.push(line.start);
         points.push(ts);
+        shift_notes(&q, ts);
         let q: Vec<Vector2> = q.into_iter().map(|p| ts + p).collect();
         let end = State {
             point: *q.last().unwrap(),
@@ -3015,6 +3108,7 @@ fn parallel_spiral(
         })
         .collect();
     let last = *moved.last()?;
+    made(&moved, Piece::Spiral, 0.0);
     Some((
         moved,
         State {
@@ -3098,6 +3192,7 @@ fn slide_between_lines(
     let (q, end) = pieces(begin, &parts);
     let shift = u * (-cross(end.point - b, v) / den);
     close(points, pending, line.start + shift);
+    shift_notes(&q, shift);
     Some((
         q.into_iter().map(|p| p + shift).collect(),
         State {
