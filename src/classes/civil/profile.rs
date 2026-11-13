@@ -65,6 +65,10 @@ struct Record {
     previous: i32,
     next: i32,
     entity: Entity,
+    /// Crest (`true`) or sag where the record says.
+    crest: Option<bool>,
+    /// A parabola's minimum K values from the list (-1 read as `None`).
+    minimum_k: Option<[Option<f64>; 3]>,
     /// Where the fields this crate reads end.
     end: usize,
 }
@@ -77,6 +81,14 @@ fn parabola_a(param: i32, value: f64, sag: bool) -> Option<f64> {
         _ => return None,
     };
     (k > 0.0 && k.is_finite()).then(|| if sag { 1.0 } else { -1.0 } / (200.0 * k))
+}
+
+fn sag_or_crest(flag: i32) -> Option<bool> {
+    match flag {
+        0x1001 => Some(true),
+        0x1000 => Some(false),
+        _ => None,
+    }
 }
 
 fn record_at(data: &[u8], pos: usize, end: usize) -> Option<Record> {
@@ -109,6 +121,7 @@ fn record_at(data: &[u8], pos: usize, end: usize) -> Option<Record> {
     };
     let positive = |v: f64| (v.is_finite() && v > 0.0).then_some(v);
     let zero = |bits: &mut Bits| (bits.bit_double()? == 0.0).then_some(());
+    let mut crest = None;
     let entity = match (prefix, constraint) {
         (2, 0) => Entity::Tangent(point(&mut bits)?, point(&mut bits)?),
         (2, 4) => Entity::Dependent(Some(point(&mut bits)?)),
@@ -133,15 +146,16 @@ fn record_at(data: &[u8], pos: usize, end: usize) -> Option<Record> {
         (6, 13) => {
             zero(&mut bits)?;
             let (a, b) = (point(&mut bits)?, point(&mut bits)?);
-            let sag = bits.bit_long()? == 0x1000;
+            let flag = bits.bit_long()?;
+            crest = sag_or_crest(flag);
             let param = bits.bit_long()?;
-            let k = parabola_a(param, bits.bit_double()?, sag)?;
+            let k = parabola_a(param, bits.bit_double()?, flag == 0x1000)?;
             Entity::Curve(CurveDef::ParabolaTwoPoints(a, b, k))
         }
         (6, 32) => {
             zero(&mut bits)?;
             let through = point(&mut bits)?;
-            bits.bit_long()?;
+            crest = sag_or_crest(bits.bit_long()?);
             let param = bits.bit_long()?;
             let a = parabola_a(param, bits.bit_double()?, true)?;
             Entity::Curve(CurveDef::ParabolaFloating(through, a))
@@ -167,6 +181,8 @@ fn record_at(data: &[u8], pos: usize, end: usize) -> Option<Record> {
         previous,
         next,
         entity,
+        crest,
+        minimum_k: None,
         end: bits.pos,
     })
 }
@@ -409,51 +425,47 @@ struct Segment {
     shape: Shape,
 }
 
-/// The entities of a design profile in link order, each resolved: fixed
-/// tangents and curves stand on their points, a free curve sits at the
-/// PVI of the tangents beside it, a floating curve hangs from the tangent
-/// before it, a floating tangent leaves the curve before it towards its
-/// point, a free tangent touches the curves on both sides.
-/// The longest chain of entity records from a first entity; a stray
-/// header can carry plausible ids.
 /// The entity list at `pos`: `BL n`, then n records end to end (each its
 /// 11-bit kind prefix, the record, and the fields after it: 4 bits after a
-/// tangent; after a curve `BL 0x1001, BL 0, 3 bits` or `BD, BD, 1 bit`,
-/// then three BD), IDs distinct and links inside the list.
+/// tangent, the parabola tail below after a parabola), IDs distinct and
+/// links inside the list.
 fn record_list_at(data: &[u8], pos: usize, end: usize) -> Option<Vec<Record>> {
     let mut bits = Bits::new(data, pos, end);
     let n = usize::try_from(bits.bit_long()?).ok().filter(|n| (1..100_000).contains(n))?;
     let mut at = bits.pos;
     let mut out: Vec<Record> = Vec::with_capacity(n);
-    let curve_tails = |from: usize| -> Vec<usize> {
-        let mut ends = Vec::new();
-        let mut b = Bits::new(data, from, end);
-        if b.bit_long() == Some(0x1001) && b.bit_long() == Some(0) {
-            b.pos += 3;
-            if (0..3).all(|_| b.bit_double().is_some()) {
-                ends.push(b.pos);
-            }
+    // After a parabola: `BL 0x1001` crest (`0x1000` sag) where the record
+    // did not give it (fixed by length or K), `BL 0`, 3 bits, then the
+    // three minimum K values (-1 without design criteria).
+    let parabola_tail = |record: &mut Record, crest_after: bool| -> Option<usize> {
+        let mut b = Bits::new(data, record.end, end);
+        if crest_after {
+            record.crest = Some(sag_or_crest(b.bit_long()?)?);
         }
-        let mut b = Bits::new(data, from, end);
-        if b.bit_double().is_some() && b.bit_double().is_some() {
-            b.pos += 1;
-            if (0..3).all(|_| b.bit_double().is_some()) {
-                ends.push(b.pos);
-            }
+        (b.bit_long()? == 0).then_some(())?;
+        b.pos += 3;
+        let mut k = [None; 3];
+        for v in &mut k {
+            *v = Some(b.bit_double()?).filter(|v| *v >= 0.0);
         }
-        ends
+        record.minimum_k = Some(k);
+        Some(b.pos)
     };
     for i in 0..n {
-        let record = record_at(data, at + 11, end)?;
+        let mut record = record_at(data, at + 11, end)?;
         let last = i + 1 == n;
-        let ends = match record.code.0 {
-            2 => vec![record.end + 4],
-            _ => curve_tails(record.end),
-        };
-        let next = if last {
-            *ends.first().unwrap_or(&record.end)
-        } else {
-            ends.into_iter().find(|e| record_at(data, e + 11, end).is_some())?
+        let next = match record.code {
+            (2, _) => record.end + 4,
+            (6, c) => parabola_tail(&mut record, matches!(c, 0 | 2))?,
+            _ if last => record.end,
+            // debt: no sample has a circular or asymmetric curve before
+            // another record; its tail is found by trying both forms.
+            _ => [true, false]
+                .into_iter()
+                .find_map(|after| {
+                    let mut probe = record_at(data, at + 11, end)?;
+                    parabola_tail(&mut probe, after).filter(|e| record_at(data, e + 11, end).is_some())
+                })?,
         };
         out.push(record);
         at = next;
@@ -531,6 +543,11 @@ fn design(data: &[u8], start: usize, end: usize) -> Option<Vec<Vec<Segment>>> {
     runs(data, start, end).iter().map(|run| solve(run)).collect()
 }
 
+/// One run's entities, each resolved: fixed tangents and curves stand on
+/// their points, a free curve sits at the PVI of the tangents beside it, a
+/// floating curve hangs from the tangent before it, a floating tangent
+/// leaves the curve before it towards its point, a free tangent touches the
+/// curves on both sides.
 fn solve(owned: &[Record]) -> Option<Vec<Segment>> {
     // A tangent running backwards (one closes a surface profile) ends what
     // is drawn.
@@ -908,97 +925,20 @@ pub struct CurveMinimumK {
     pub headlight_sight: Option<f64>,
 }
 
-/// After a parabola's value: `BL 0x1001` crest (`0x1000` sag) unless the
-/// record already gave it before the value, `BL 0`, 3 bits, then three
-/// BDs (-1 without criteria).
+/// The minimum K values of every parabola in the entity list (see
+/// [`record_list_at`]).
 pub(super) fn curve_minimum_k(data: &[u8], start: usize, end: usize) -> Vec<CurveMinimumK> {
-    let mut out: Vec<CurveMinimumK> = Vec::new();
-    for pos in start + 11..end {
-        let Some(record) = record_at(data, pos, end) else {
-            continue;
-        };
-        if out.iter().any(|c| c.id == record.id) {
-            continue;
-        }
-        let read = || -> Option<CurveMinimumK> {
-            let mut bits = Bits::new(data, pos - 11, end);
-            let prefix = bits.bits_value(8)?;
-            let low = bits.bits_value(3)?;
-            if (u32::from(prefix) << 3 | u32::from(low)) != 6 {
-                return None;
-            }
-            bits.pos += 23;
-            let constraint = bits.bit_long()?;
-            for _ in 0..3 {
-                bits.bit_long()?;
-            }
-            let point = |bits: &mut Bits| -> Option<()> {
-                bits.raw_double()?;
-                bits.raw_double()?;
-                Some(())
-            };
-            let sag_or_crest = |v: i32| match v {
-                0x1001 => Some(true),
-                0x1000 => Some(false),
-                _ => None,
-            };
-            // The constraint's own fields (see `record_at`), up to the
-            // curve's sag / crest flag where it comes before the value.
-            bits.bit_double()?;
-            // `Some` once the record's own fields held the flag.
-            let mut crest: Option<Option<bool>> = None;
-            match constraint {
-                0 | 2 => {
-                    bits.bit_double()?;
-                }
-                11 => (0..3).try_for_each(|_| point(&mut bits))?,
-                12 => {
-                    point(&mut bits)?;
-                    point(&mut bits)?;
-                    bits.bit_long()?;
-                    bits.bit_double()?;
-                }
-                13 => {
-                    point(&mut bits)?;
-                    point(&mut bits)?;
-                    crest = Some(Some(sag_or_crest(bits.bit_long()?)?));
-                    bits.bit_long()?;
-                    bits.bit_double()?;
-                }
-                32 => {
-                    point(&mut bits)?;
-                    crest = Some(sag_or_crest(bits.bit_long()?));
-                    bits.bit_long()?;
-                    bits.bit_double()?;
-                }
-                34 => {
-                    point(&mut bits)?;
-                    bits.bit_long()?;
-                    bits.bit_double()?;
-                }
-                _ => return None,
-            }
-            let crest = match crest {
-                Some(crest) => crest,
-                None => Some(sag_or_crest(bits.bit_long()?)?),
-            };
-            (bits.bit_long()? == 0).then_some(())?;
-            bits.pos += 3;
-            let k = |bits: &mut Bits| bits.bit_double().map(|v| (v >= 0.0).then_some(v));
+    chain(data, start, end)
+        .iter()
+        .filter_map(|r| {
+            let [stopping_sight, passing_sight, headlight_sight] = r.minimum_k?;
             Some(CurveMinimumK {
-                id: record.id,
-                crest,
-                stopping_sight: k(&mut bits)?,
-                passing_sight: k(&mut bits)?,
-                headlight_sight: k(&mut bits)?,
+                id: r.id,
+                crest: r.crest,
+                stopping_sight,
+                passing_sight,
+                headlight_sight,
             })
-        };
-        if let Some(curve) = read() {
-            out.push(curve);
-        }
-    }
-    out
+        })
+        .collect()
 }
-
-
-

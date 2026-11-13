@@ -3622,4 +3622,3 @@ mod tests {
         assert!((normalize(end.heading - PI)).abs() < 1e-9);
     }
 }
-
