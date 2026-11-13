@@ -160,7 +160,8 @@ fn outlines(bits: &mut Bits) -> Option<()> {
 ///
 /// ```text
 /// head:     BL 80, 0, 80, 80, 0, BL, BL, 4 bits, RC n, n x key,
-///           BL 0, 120 bits, BL 82, BL n, n x 4 bits, BL surfaces,
+///           2 bits, GUID (zero in newer files), 2 bits, RC 82, BL n,
+///           n x 4 bits, BL surfaces,
 ///           surfaces x { GUID, head (see [`surface`]) }, [newer heads or
 ///           none: BL 0], outlines (see [`outlines`]),
 ///           BL 0, BL 32, RC layout, RC baselines (top 5 bits), 1 bit,
@@ -177,8 +178,9 @@ fn outlines(bits: &mut Bits) -> Option<()> {
 ///           last applied subassembly has words before its -1, less 8 (10
 ///           of 18 and 7 of 15 in the samples)
 /// ```
-// ponytail: the 4 and 120-bit runs, the low 3 bits of the second RC and the
-// bit after it are skipped by length; they are the same in every sample.
+// ponytail: the 4-bit run, the 2-bit runs around the head's GUID (01 before
+// it, 01 or 11 after it), the low 3 bits of the second RC and the bit after
+// it are skipped by length.
 fn walk(bits: &mut Bits) -> Option<Vec<Groups>> {
     for want in [80, 0, 80, 80, 0] {
         (bits.bit_long()? == want).then_some(())?;
@@ -189,9 +191,8 @@ fn walk(bits: &mut Bits) -> Option<Vec<Groups>> {
     for _ in 0..bits.bits_value(8)? {
         super::alignment::key(bits)?;
     }
-    (bits.bit_long()? == 0).then_some(())?;
-    bits.skip(120)?;
-    (bits.bit_long()? == 82).then_some(())?;
+    bits.skip(2 + 128 + 2)?;
+    (bits.raw_short_byte()? == 82).then_some(())?;
     let styles = usize::try_from(bits.bit_long()?).ok()?;
     bits.skip(4 * styles)?;
     let surfaces = bits.bit_long()?;
