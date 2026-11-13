@@ -434,16 +434,20 @@ fn record_list_at(data: &[u8], pos: usize, end: usize) -> Option<Vec<Record>> {
     let n = usize::try_from(bits.bit_long()?).ok().filter(|n| (1..100_000).contains(n))?;
     let mut at = bits.pos;
     let mut out: Vec<Record> = Vec::with_capacity(n);
-    // After a parabola: `BL 0x1001` crest (`0x1000` sag) where the record
-    // did not give it (fixed by length or K), `BL 0`, 3 bits, then the
-    // three minimum K values (-1 without design criteria).
+    // After a parabola fixed by length or K: `BL 0x1001` crest (`0x1000`
+    // sag), `BL 0`, 3 bits; after the other parabolas: `BD, BD`, 1 bit.
+    // Then the three minimum K values (-1 without design criteria).
     let parabola_tail = |record: &mut Record, crest_after: bool| -> Option<usize> {
         let mut b = Bits::new(data, record.end, end);
         if crest_after {
             record.crest = Some(sag_or_crest(b.bit_long()?)?);
+            (b.bit_long()? == 0).then_some(())?;
+            b.pos += 3;
+        } else {
+            b.bit_double()?;
+            b.bit_double()?;
+            b.pos += 1;
         }
-        (b.bit_long()? == 0).then_some(())?;
-        b.pos += 3;
         let mut k = [None; 3];
         for v in &mut k {
             *v = Some(b.bit_double()?).filter(|v| *v >= 0.0);
@@ -477,7 +481,7 @@ fn record_list_at(data: &[u8], pos: usize, end: usize) -> Option<Vec<Record>> {
 }
 
 /// Where a profile's criteria bits and entity list sit: after the class
-/// keys (see [`super::alignment::read_keys`]), `BL, BD, BD, BD`, 10 bits,
+/// keys (see [`super::alignment::read_keys`]), `BL, BD, BD, BD, 5 x BS`,
 /// 10 bits (criteria in the last three), then the entity list.
 fn section(data: &[u8], start: usize, end: usize) -> Option<(usize, usize)> {
     let mut bits = Bits::new(data, start, end);
@@ -486,7 +490,9 @@ fn section(data: &[u8], start: usize, end: usize) -> Option<(usize, usize)> {
     for _ in 0..3 {
         bits.bit_double()?;
     }
-    bits.pos += 10;
+    for _ in 0..5 {
+        bits.bit_short()?;
+    }
     let criteria_at = bits.pos;
     bits.pos += 10;
     (bits.pos < end).then_some((criteria_at, bits.pos))
@@ -496,14 +502,12 @@ fn section(data: &[u8], start: usize, end: usize) -> Option<(usize, usize)> {
 /// record without a predecessor (a surface profile sampled in pieces has
 /// several, and Civil 3D draws them all).
 fn runs(data: &[u8], start: usize, end: usize) -> Vec<Vec<Record>> {
-    let list = section(data, start, end).map(|(_, list)| list);
-    let records: Vec<Record> = match list.map(|list| (list, Bits::new(data, list, end).bit_long())) {
-        Some((_, Some(0))) => Vec::new(),
-        Some((list, _)) if record_list_at(data, list, end).is_some() => record_list_at(data, list, end).unwrap_or_default(),
-        // debt: a profile whose flags before the criteria differ (S311
-        // locking) has more fields there; it is searched record by record.
-        _ => (start..end).filter_map(|pos| record_at(data, pos, end)).collect(),
-    };
+    let records: Vec<Record> = section(data, start, end)
+        .and_then(|(_, list)| match Bits::new(data, list, end).bit_long()? {
+            0 => Some(Vec::new()),
+            _ => record_list_at(data, list, end),
+        })
+        .unwrap_or_default();
     let mut runs: Vec<Vec<usize>> = Vec::new();
     for (i, _) in records.iter().enumerate().filter(|(_, r)| r.previous == 0) {
         let mut run = vec![i];
