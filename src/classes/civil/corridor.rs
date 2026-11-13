@@ -74,9 +74,9 @@ pub(super) fn baselines(data: &[u8], start: usize, end: usize) -> Vec<Groups> {
         return found;
     }
     // debt: records [`walk`] does not read are found by probing bit offsets
-    // for the first group of each baseline: a head whose fields after its
-    // BL 114 hold one bit more than the 66 of every other sample, and heads
-    // with a field other than 0, 32 or 160 after the GUID.
+    // for the first group of each baseline: one in the samples, whose
+    // surface (two link codes, older layout) is followed by the 32 after
+    // its BL 0 as 8 bits without a BL code.
     probe(data, start, end)
 }
 
@@ -101,20 +101,73 @@ fn probe(data: &[u8], start: usize, end: usize) -> Vec<Groups> {
     out
 }
 
+/// A corridor surface's head after its GUID; returns whether it has the
+/// newer layout:
+///
+/// ```text
+/// B, B built, RC layout: 0x20 (older files) or 0xA0
+/// [0x20: BL, 4 bits]
+/// 3 bits n (link codes), n x B (the code is added as a breakline)
+/// BL 0, BL m (feature line codes), m x B
+/// [0xA0: BL overhang correction (0 none, 1 top links)]
+/// ```
+// ponytail: the 4 bits after the BL of an older surface are 0 in every
+// sample.
+fn surface(bits: &mut Bits) -> Option<bool> {
+    bits.bit()?;
+    bits.bit()?;
+    let newer = match bits.raw_short_byte()? {
+        0x20 => {
+            bits.bit_long()?;
+            bits.skip(4)?;
+            false
+        }
+        0xA0 => true,
+        _ => return None,
+    };
+    let codes = usize::from(bits.bits_value(3)?);
+    bits.skip(codes)?;
+    // debt: this BL has no other value in the samples; what follows a
+    // different one is not mapped.
+    (bits.bit_long()? == 0).then_some(())?;
+    let feature_codes = usize::try_from(bits.bit_long()?).ok().filter(|n| *n <= bits.remaining())?;
+    bits.skip(feature_codes)?;
+    if newer {
+        bits.bit_long()?;
+    }
+    Some(newer)
+}
+
+/// The surfaces' boundaries and masks: `BL n` (one per surface that has
+/// any), `n x { BL k, k x { BL kind, BL m, m x 3BD } }`. The kinds:
+/// 0x80000002 the corridor extents (its outline in older files, none in
+/// newer ones), 0x40000002 an outside and 0x40000001 an inside boundary,
+/// 0x40000004 a mask.
+fn outlines(bits: &mut Bits) -> Option<()> {
+    for _ in 0..bits.bit_long()? {
+        for _ in 0..bits.bit_long()? {
+            bits.bit_long()?;
+            let m = usize::try_from(bits.bit_long()?).ok().filter(|m| m * 6 <= bits.remaining())?;
+            for _ in 0..3 * m {
+                bits.bit_double()?;
+            }
+        }
+    }
+    Some(())
+}
+
 /// The record read field by field:
 ///
 /// ```text
 /// head:     BL 80, 0, 80, 80, 0, BL, BL, 4 bits, RC n, n x key,
-///           BL 0, 120 bits, BL 82, BL n, n x 4 bits, BL flag, [flag: GUID],
-///           BL a, then by a
-///             0:   BL m, m x 3BD
-///             32:  BL, BL, RL, BL m, m x 3BD
-///             160: 76 bits
-///           BL 0, BL 32, RC, RC baselines (top 5 bits), 1 bit,
+///           BL 0, 120 bits, BL 82, BL n, n x 4 bits, BL surfaces,
+///           surfaces x { GUID, head (see [`surface`]) }, [newer heads or
+///           none: BL 0], outlines (see [`outlines`]),
+///           BL 0, BL 32, RC layout, RC baselines (top 5 bits), 1 bit,
 ///           6 bits region count, BL record count (both of the first
 ///           baseline's first region)
-/// flag:     set, each region block holds a GUID before its start and its
-///           end station
+/// layout:   0x28: each region block holds a GUID before its start and its
+///           end station; 0x48: it does not
 /// baseline: [after the first: BL 0, BL 0, BL region count, BL record
 ///           count], regions, then B, GUID, BL n, n x feature line group,
 ///           B, B, GUID
@@ -124,9 +177,8 @@ fn probe(data: &[u8], start: usize, end: usize) -> Vec<Groups> {
 ///           last applied subassembly has words before its -1, less 8 (10
 ///           of 18 and 7 of 15 in the samples)
 /// ```
-// ponytail: the 4, 120 and (a = 160) 76-bit runs, the first RC, the low 3
-// bits of the second and the bit after it are skipped by length; they are
-// the same in every sample.
+// ponytail: the 4 and 120-bit runs, the low 3 bits of the second RC and the
+// bit after it are skipped by length; they are the same in every sample.
 fn walk(bits: &mut Bits) -> Option<Vec<Groups>> {
     for want in [80, 0, 80, 80, 0] {
         (bits.bit_long()? == want).then_some(())?;
@@ -142,32 +194,25 @@ fn walk(bits: &mut Bits) -> Option<Vec<Groups>> {
     (bits.bit_long()? == 82).then_some(())?;
     let styles = usize::try_from(bits.bit_long()?).ok()?;
     bits.skip(4 * styles)?;
-    let guids = bits.bit_long()? != 0;
-    if guids {
+    let surfaces = bits.bit_long()?;
+    (0..=64).contains(&surfaces).then_some(())?;
+    // A record without surfaces has the newer layout's BL 0.
+    let mut newer = true;
+    for _ in 0..surfaces {
         bits.skip(128)?;
+        newer = surface(bits)?;
     }
-    let corners = match bits.bit_long()? {
-        0 => true,
-        32 => {
-            bits.bit_long()?;
-            bits.bit_long()?;
-            bits.raw_long()?;
-            true
-        }
-        160 => {
-            bits.skip(76)?;
-            false
-        }
+    // debt: this BL has no other value in the samples.
+    if newer {
+        (bits.bit_long()? == 0).then_some(())?;
+    }
+    outlines(bits)?;
+    (bits.bit_long()? == 0 && bits.bit_long()? == 32).then_some(())?;
+    let guids = match bits.raw_short_byte()? {
+        0x28 => true,
+        0x48 => false,
         _ => return None,
     };
-    if corners {
-        let n = usize::try_from(bits.bit_long()?).ok().filter(|n| n * 6 <= bits.remaining())?;
-        for _ in 0..3 * n {
-            bits.bit_double()?;
-        }
-    }
-    (bits.bit_long()? == 0 && bits.bit_long()? == 32).then_some(())?;
-    bits.raw_short_byte()?;
     let baselines = bits.raw_short_byte()? >> 3;
     bits.skip(1)?;
     let mut regions = u32::from(bits.bits_value(6)?);
@@ -421,6 +466,21 @@ mod tests {
     fn bits_of(s: &str) -> Vec<u8> {
         let s: Vec<u8> = s.bytes().filter(|b| *b == b'0' || *b == b'1').collect();
         s.chunks(8).map(|c| c.iter().enumerate().fold(0u8, |a, (i, b)| a | ((b - b'0') << (7 - i)))).collect()
+    }
+
+    #[test]
+    fn reads_an_older_surface_with_two_link_codes_and_an_outline() {
+        // B, B built, RC 0x20, BL 114, 4 bits; two link codes, both
+        // breaklines; BL 0, no feature line codes; one list with one
+        // extents outline of one corner.
+        let s = "0 1 00100000 01 01110010 0000 010 1 1 10 10 01 00000001 01 00000001
+                 00 00000010 00000000 00000000 10000000 01 00000001 10 10 10";
+        let b = bits_of(s);
+        let len = s.bytes().filter(|c| *c == b'0' || *c == b'1').count();
+        let mut bits = Bits::new(&b, 0, len);
+        assert_eq!(surface(&mut bits), Some(false));
+        assert_eq!(outlines(&mut bits), Some(()));
+        assert_eq!(bits.pos, len);
     }
 
     #[test]
