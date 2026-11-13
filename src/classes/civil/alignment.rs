@@ -371,16 +371,24 @@ fn section2(data: &[u8], start: usize, end: usize) -> Option<Section2> {
     bits.pos += 10;
     bits.bit_long()?;
     // The element list must follow: the RECOVER/AUDIT layout reads through
-    // these fields at the wrong places.
-    element_list_at(data, bits.pos, end)?;
+    // these fields at the wrong places. A count of 0 must be followed by the
+    // interval block, the equations, speeds and type.
+    let mut count = Bits::new(data, bits.pos, end);
+    let listed = match count.bit_long()? {
+        0 => interval_block_end(data, count.pos, end)
+            .and_then(|pos| typed_at(data, pos, end, f64::MIN, f64::MAX, true))
+            .is_some(),
+        _ => element_list_at(data, bits.pos, end).is_some(),
+    };
+    listed.then_some(())?;
     Some(Section2 { start_station, criteria_at, count_at: bits.pos })
 }
 
 /// Design elements found in a main stream, keyed by their own ids.
 pub(super) fn elements(data: &[u8], start: usize, end: usize) -> Vec<AlignmentElement> {
     // The element list read by its grammar: count, records end to end.
-    if let Some(list) = section2(data, start, end).and_then(|s| element_list_at(data, s.count_at, end)) {
-        return list;
+    if let Some(s) = section2(data, start, end) {
+        return element_list_at(data, s.count_at, end).unwrap_or_default();
     }
     // debt: two section 2 layouts are not mapped yet: records re-saved by
     // RECOVER/AUDIT (8 bits more in the run after the BL 0) and a re-save
@@ -438,23 +446,34 @@ fn record_at(data: &[u8], pos: usize, end: usize, last: bool) -> Option<(Alignme
     if last {
         return Some((element, at));
     }
-    let bds = |bits: &mut Bits, want: &[f64]| want.iter().all(|w| bits.bit_double() == Some(*w));
-    let tails: Vec<Box<dyn Fn(&mut Bits) -> bool>> = match &element.kind {
-        AlignmentElementKind::SpiralIn { .. } => vec![Box::new(move |b: &mut Bits| bds(b, &[0.0, 0.0, 1.0]))],
-        AlignmentElementKind::SpiralOut { .. } => vec![Box::new(move |b: &mut Bits| {
-            (0..4).all(|_| b.raw_double().is_some_and(f64::is_finite)) && bds(b, &[0.0, 0.0, 1.0])
-        })],
-        AlignmentElementKind::PlacedSpiral { .. } => vec![Box::new(move |b: &mut Bits| bds(b, &[0.0, 1.0]))],
-        AlignmentElementKind::FreeArc { .. } => vec![
-            Box::new(|_: &mut Bits| true),
-            Box::new(move |b: &mut Bits| bds(b, &[0.0; 5]) && b.bit_long() == Some(1) && bds(b, &[1.0])),
-        ],
-        _ => vec![Box::new(|_: &mut Bits| true)],
-    };
-    tails.iter().find_map(|tail| {
+    tails(&element.kind).iter().find_map(|tail| {
         let mut b = Bits::new(data, at, end);
         (tail(&mut b) && is_header(data, b.pos, end)).then_some((element.clone(), b.pos))
     })
+}
+
+type Tail = Box<dyn Fn(&mut Bits) -> bool>;
+
+/// The fields after an element record, by kind: spirals' BDs and a free
+/// arc's optional block.
+fn tails(kind: &AlignmentElementKind) -> Vec<Tail> {
+    fn bds(bits: &mut Bits, want: &[f64]) -> bool {
+        want.iter().all(|w| bits.bit_double() == Some(*w))
+    }
+    match kind {
+        AlignmentElementKind::SpiralIn { .. } | AlignmentElementKind::CompoundSpiral { .. } => {
+            vec![Box::new(|b: &mut Bits| bds(b, &[0.0, 0.0, 1.0]))]
+        }
+        AlignmentElementKind::SpiralOut { .. } => vec![Box::new(|b: &mut Bits| {
+            (0..4).all(|_| b.raw_double().is_some_and(f64::is_finite)) && bds(b, &[0.0, 0.0, 1.0])
+        })],
+        AlignmentElementKind::PlacedSpiral { .. } => vec![Box::new(|b: &mut Bits| bds(b, &[0.0, 1.0]))],
+        AlignmentElementKind::FreeArc { .. } => vec![
+            Box::new(|_: &mut Bits| true),
+            Box::new(|b: &mut Bits| bds(b, &[0.0; 5]) && b.bit_long() == Some(1) && bds(b, &[1.0])),
+        ],
+        _ => vec![Box::new(|_: &mut Bits| true)],
+    }
 }
 
 /// The element list at `pos`: `BL n`, then n records end to end whose
@@ -2766,6 +2785,62 @@ pub fn display_station(equations: &[StationEquation], raw: f64) -> f64 {
         .map_or(raw, |e| if e.increasing { e.ahead + (raw - e.raw) } else { e.ahead - (raw - e.raw) })
 }
 
+/// The end of the interval block at `pos` (see [`post_cache_starts`]).
+fn interval_block_end(data: &[u8], pos: usize, end: usize) -> Option<usize> {
+    let mut bits = Bits::new(data, pos, end);
+    for _ in 0..3 {
+        bits.bit_long()?;
+    }
+    let k = bits.bit_long()?;
+    (0..=1000).contains(&k).then_some(())?;
+    for _ in 0..k {
+        bits.pos += 128;
+        bits.bit()?;
+        bits.bit_long()?;
+        for _ in 0..4 {
+            bits.bit_double()?;
+        }
+        for _ in 0..3 {
+            bits.bit_long()?;
+        }
+        bits.pos += 6 * 64;
+    }
+    (bits.pos < end).then_some(bits.pos)
+}
+
+/// Where the station equations start, read field by field: the element
+/// list (see [`section2`]), the last record's tail, then the interval block
+///
+/// ```text
+/// BL, BL, BL, BL n, n x { GUID, B, BL kind, BD, BD station,
+///     BD distance, BD length, BL element, BL before, BL after, 6 RD }
+/// ```
+///
+/// A free arc last has two tail forms; both positions are returned and the
+/// lists after them settle which one holds.
+fn post_cache_starts(data: &[u8], start: usize, end: usize) -> Option<Vec<usize>> {
+    let count_at = section2(data, start, end)?.count_at;
+    let mut bits = Bits::new(data, count_at, end);
+    let n = usize::try_from(bits.bit_long()?).ok().filter(|n| *n < 10_000)?;
+    let intervals = |pos: usize| interval_block_end(data, pos, end);
+    if n == 0 {
+        return intervals(bits.pos).map(|pos| vec![pos]);
+    }
+    let mut at = bits.pos;
+    for _ in 1..n {
+        at = record_at(data, at, end, false)?.1;
+    }
+    let (element, body_end) = record_at(data, at, end, true)?;
+    let ends: Vec<usize> = tails(&element.kind)
+        .iter()
+        .filter_map(|tail| {
+            let mut b = Bits::new(data, body_end, end);
+            tail(&mut b).then_some(b.pos).and_then(intervals)
+        })
+        .collect();
+    (!ends.is_empty()).then_some(ends)
+}
+
 /// The station equations and design speeds after an alignment's
 /// intervals: `BL k`, `k x { '00' 0xBE 0x04, BD raw, GUID, BD back,
 /// BD ahead, B increasing }`, then `BL 1, BL n`,
@@ -2780,10 +2855,14 @@ pub(super) fn equations_and_speeds(
     first: f64,
     last: f64,
 ) -> (Vec<StationEquation>, Vec<DesignSpeed>) {
-    (start..end)
-        .find_map(|pos| post_cache_at(data, pos, end, first, last, false))
-        .map(|(equations, speeds, _)| (equations, speeds))
-        .unwrap_or_default()
+    match post_cache_starts(data, start, end) {
+        Some(at) => at.into_iter().find_map(|pos| post_cache_at(data, pos, end, first, last, true)),
+        // debt: records whose section 2 is not mapped (see `elements`) are
+        // probed for both lists.
+        None => (start..end).find_map(|pos| post_cache_at(data, pos, end, first, last, false)),
+    }
+    .map(|(equations, speeds, _)| (equations, speeds))
+    .unwrap_or_default()
 }
 
 /// The station equations and design speeds read at `pos`, and the bit
@@ -2874,32 +2953,41 @@ impl AlignmentType {
 
 /// The alignment type and the bit after it: after the design speeds,
 /// `BD, BL 0, BL m, m x BD element id, BL type`.
-pub(super) fn alignment_type(data: &[u8], start: usize, end: usize, first: f64, last: f64) -> Option<(AlignmentType, usize)> {
-    let typed = |pos: usize, empty: bool| -> Option<(AlignmentType, usize)> {
-        let (_, _, pos) = post_cache_at(data, pos, end, first, last, empty)?;
-        let mut bits = Bits::new(data, pos, end);
+/// The type after the equations and speeds read at `pos` (see
+/// [`post_cache_at`]): `BD, BL 0, BL m, m x BD element id, BL type`,
+/// confirmed by what follows it.
+fn typed_at(data: &[u8], pos: usize, end: usize, first: f64, last: f64, empty: bool) -> Option<(AlignmentType, usize)> {
+    let (_, _, pos) = post_cache_at(data, pos, end, first, last, empty)?;
+    let mut bits = Bits::new(data, pos, end);
+    bits.bit_double()?;
+    (bits.bit_long()? == 0).then_some(())?;
+    let m = bits.bit_long()?;
+    if !(0..=10_000).contains(&m) {
+        return None;
+    }
+    for _ in 0..m {
         bits.bit_double()?;
-        (bits.bit_long()? == 0).then_some(())?;
-        let m = bits.bit_long()?;
-        if !(0..=10_000).contains(&m) {
-            return None;
-        }
-        for _ in 0..m {
-            bits.bit_double()?;
-        }
-        let code = bits.bit_long()?;
-        let kind = AlignmentType::from_code(code);
-        let after = bits.pos;
-        // What follows the type confirms it: a centerline's `BL 2, 2, 2`,
-        // an offset's block, a curb return's `BL 1|2, BL 1|2`.
-        let confirmed = match kind {
-            AlignmentType::Offset => offset_parameters(data, after, end).is_some(),
-            AlignmentType::CurbReturn => (0..2).all(|_| bits.bit_long().is_some_and(|v| (1..=2).contains(&v))),
-            _ => (0..3).all(|_| bits.bit_long() == Some(2)),
-        };
-        confirmed.then_some((kind, after))
+    }
+    let code = bits.bit_long()?;
+    let kind = AlignmentType::from_code(code);
+    let after = bits.pos;
+    // What follows the type confirms it: a centerline's `BL 2, 2, 2`,
+    // an offset's block, a curb return's `BL 1|2, BL 1|2`.
+    let confirmed = match kind {
+        AlignmentType::Offset => offset_parameters(data, after, end).is_some(),
+        AlignmentType::CurbReturn => (0..2).all(|_| bits.bit_long().is_some_and(|v| (1..=2).contains(&v))),
+        _ => (0..3).all(|_| bits.bit_long() == Some(2)),
     };
-    (start..end).find_map(|pos| typed(pos, false)).or_else(|| (start..end).find_map(|pos| typed(pos, true)))
+    confirmed.then_some((kind, after))
+}
+
+pub(super) fn alignment_type(data: &[u8], start: usize, end: usize, first: f64, last: f64) -> Option<(AlignmentType, usize)> {
+    let typed = |pos: usize, empty: bool| typed_at(data, pos, end, first, last, empty);
+    match post_cache_starts(data, start, end) {
+        Some(at) => at.into_iter().find_map(|pos| typed(pos, true)),
+        // debt: records whose section 2 is not mapped are probed.
+        None => (start..end).find_map(|pos| typed(pos, false)).or_else(|| (start..end).find_map(|pos| typed(pos, true))),
+    }
 }
 
 /// A stretch of an offset alignment at one offset: the nominal offset or a
