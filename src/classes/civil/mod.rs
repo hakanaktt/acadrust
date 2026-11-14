@@ -829,6 +829,17 @@ impl ArchEntityData {
         network::structure_at(data, start, end)
     }
 
+    /// Rotation (radians, about Z) of a Civil 3D structure, pressure fitting
+    /// or appurtenance (`AECC_STRUCTURE`, `AECC_FITTING`,
+    /// `AECC_APPURTENANCE`).
+    pub fn network_part_rotation(&self) -> Option<f64> {
+        if !matches!(self.dxf_name.as_str(), "AECC_STRUCTURE" | "AECC_FITTING" | "AECC_APPURTENANCE") {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        network::part_rotation(data, start, end)
+    }
+
     /// Start, end and bulge of a Civil 3D pressure pipe
     /// (`AECC_PRESSUREPIPE`); the bulge is 0 for a straight pipe.
     pub fn pressure_pipe(&self) -> Option<(crate::types::Vector3, crate::types::Vector3, f64)> {

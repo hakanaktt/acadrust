@@ -18,7 +18,8 @@
 //!
 //! ```text
 //! class header and keys (super::alignment), 3 bits (010), GUID
-//! structure, pressure fitting, appurtenance: 3BD insertion point
+//! structure, pressure fitting, appurtenance: 3BD insertion point,
+//!            3 x 3BD axes (X, Y, Z; the rotation is the X axis's angle)
 //! pipe:      26 bits, BL 80, BS 0x04BE, BL 80, BL 80, BL n, BL 0,
 //!            n x { field, BL separator (0, then 1 or 2 after the last) },
 //!            3 x BL, GUID, 1 bit, 17 x BD, 2 bits, 3BD start, 3BD end
@@ -112,6 +113,16 @@ fn part_head(bits: &mut Bits) -> Option<()> {
 fn point(bits: &mut Bits) -> Option<Vector3> {
     let p = Vector3::new(bits.bit_double()?, bits.bit_double()?, bits.bit_double()?);
     [p.x, p.y, p.z].into_iter().all(f64::is_finite).then_some(p)
+}
+
+/// A structure's (or pressure fitting's or appurtenance's) rotation about
+/// its Z axis: the angle of the X axis stored after the insertion point.
+pub(super) fn part_rotation(data: &[u8], start: usize, end: usize) -> Option<f64> {
+    let mut bits = Bits::new(data, start, end);
+    part_head(&mut bits)?;
+    point(&mut bits)?;
+    let x = point(&mut bits)?;
+    Some(x.y.atan2(x.x))
 }
 
 /// A structure's insertion point, read by the record's fields.
