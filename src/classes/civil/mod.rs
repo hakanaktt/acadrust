@@ -34,7 +34,7 @@ pub use network::PartField;
 pub use parameters::{Parameter, ParameterValue};
 pub use profile::{CurveMinimumK, ProfileCriteria, ProfileLocking, ProfilePiece, ProfileViewFrame, Pvi};
 pub use sample_lines::SampleLines;
-pub use section::{SectionGeometry, SectionViewFrame};
+pub use section::{MassHaulViewFrame, SectionGeometry, SectionViewFrame};
 pub use style::{DisplayComponent, Marker, ViewAxes, ViewAxis};
 pub use subassembly::{AssemblyLayout, Attachment, SubassemblyShape};
 pub use topology::{Topology, TopologyVertex};
@@ -817,6 +817,16 @@ impl ArchEntityData {
         }
         let (data, start, end) = self.main_stream()?;
         section::view_frame(data, start, end)
+    }
+
+    /// Frame of a Civil 3D mass haul view (`AECC_MASS_HAUL_VIEW`): where it
+    /// draws stations and volumes.
+    pub fn mass_haul_view_frame(&self) -> Option<MassHaulViewFrame> {
+        if self.dxf_name != "AECC_MASS_HAUL_VIEW" {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        section::mass_haul_view_frame(data, start, end)
     }
 
     /// Start and end of a Civil 3D pipe (`AECC_PIPE`), as stored.

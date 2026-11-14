@@ -21,6 +21,10 @@
 //! 3BD origin, 4 x BD, BD vertical scale
 //! record: BL 0, BL, BD, BL, BD, BL index, BD, BD
 //! ```
+//!
+//! A mass haul view (`AECC_MASS_HAUL_VIEW`) has the same layout, with
+//! stations for offsets and volumes for elevations; its origin is the
+//! lowest station at volume 0 and keeps the view's elevation.
 
 use super::bits::Bits;
 use crate::types::Vector2;
@@ -32,6 +36,42 @@ use crate::types::Vector2;
 pub struct SectionGeometry {
     pub points: Vec<Vector2>,
     pub links: Vec<(u32, u32)>,
+}
+
+/// A mass haul view's frame: where it draws stations and volumes.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct MassHaulViewFrame {
+    /// Drawing position of (`station_min`, volume 0).
+    pub origin: Vector2,
+    pub station_min: f64,
+    pub station_max: f64,
+    pub volume_min: f64,
+    pub volume_max: f64,
+    /// Drawing units per volume unit.
+    pub vertical_scale: f64,
+}
+
+impl MassHaulViewFrame {
+    /// Drawing position of a station and volume.
+    pub fn to_drawing(&self, station: f64, volume: f64) -> Vector2 {
+        Vector2::new(
+            self.origin.x + station - self.station_min,
+            self.origin.y + volume * self.vertical_scale,
+        )
+    }
+}
+
+pub(super) fn mass_haul_view_frame(data: &[u8], start: usize, end: usize) -> Option<MassHaulViewFrame> {
+    let f = view_frame(data, start, end)?;
+    Some(MassHaulViewFrame {
+        origin: f.origin,
+        station_min: f.offset_min,
+        station_max: f.offset_max,
+        volume_min: f.elevation_min,
+        volume_max: f.elevation_max,
+        vertical_scale: f.vertical_scale,
+    })
 }
 
 /// A section view's frame: the drawing position of offset 0 at the lowest
@@ -68,7 +108,12 @@ pub(super) fn view_frame(data: &[u8], start: usize, end: usize) -> Option<Sectio
         let p = Vector2::new(bits.bit_double()?, bits.bit_double()?);
         (p.x.is_finite() && p.y.is_finite() && bits.bit_double()? == 0.0).then_some(p)
     };
-    let origin = point(&mut bits)?;
+    // The origin keeps the view's elevation (0 for a section view).
+    let anchor = |bits: &mut Bits| -> Option<Vector2> {
+        let p = Vector2::new(bits.bit_double()?, bits.bit_double()?);
+        (p.x.is_finite() && p.y.is_finite() && bits.bit_double()?.is_finite()).then_some(p)
+    };
+    let origin = anchor(&mut bits)?;
     for _ in 0..10 {
         bits.bit_double()?;
     }
@@ -85,7 +130,7 @@ pub(super) fn view_frame(data: &[u8], start: usize, end: usize) -> Option<Sectio
         bits.bit_double()?;
     }
     bits.skip(1)?;
-    (point(&mut bits)? == origin).then_some(())?;
+    (anchor(&mut bits)? == origin).then_some(())?;
     bits.bit_long()?;
     bits.bit_long()?;
     let (low, _, high) = (point(&mut bits)?, point(&mut bits)?, point(&mut bits)?);
@@ -103,7 +148,7 @@ pub(super) fn view_frame(data: &[u8], start: usize, end: usize) -> Option<Sectio
     for _ in 0..6 {
         bits.bit_long()?;
     }
-    (point(&mut bits)? == origin).then_some(())?;
+    (anchor(&mut bits)? == origin).then_some(())?;
     for _ in 0..4 {
         bits.bit_double()?;
     }
