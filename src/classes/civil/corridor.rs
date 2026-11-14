@@ -144,28 +144,36 @@ fn surface(bits: &mut Bits, head_guid: bool) -> Option<bool> {
 }
 
 /// The surfaces' boundaries and masks: `BL n` (one per surface that has
-/// any), `n x { BL k, k x { BL kind, BL m, m x 3BD, [kind without flags:
-/// GUID, BL, BL, B, B, 3BD, GUID] } }`. The kinds: 0x80000002 the corridor
+/// any), `n x { BL k, k x { BL kind, BL m, items } }`. Kinds with a flag
+/// above the low 16 bits hold `m x 3BD` corners: 0x80000002 the corridor
 /// extents (its outline in some files, none in others), 0x40000002 an
-/// outside and 0x40000001 an inside boundary, 0x40000004 a mask; records
-/// with a head GUID write 2 with two corners.
+/// outside and 0x40000001 an inside boundary from a polygon, 0x40000004 a
+/// mask. Kinds without flags, 2 outside and 1 inside, are drawn along
+/// feature lines and hold `m` components:
+///
+/// ```text
+/// BL, BL feature line, B reversed, BD start station, BD end station,
+/// B start at the line's start, B end at its end, B, GUID
+/// ```
 fn outlines(bits: &mut Bits) -> Option<()> {
     for _ in 0..bits.bit_long()? {
         for _ in 0..bits.bit_long()? {
             let kind = bits.bit_long()? as u32;
             let m = usize::try_from(bits.bit_long()?).ok().filter(|m| m * 6 <= bits.remaining())?;
-            for _ in 0..3 * m {
-                bits.bit_double()?;
-            }
             if kind < 0x1_0000 {
-                bits.skip(128)?;
-                bits.bit_long()?;
-                bits.bit_long()?;
-                bits.skip(2)?;
-                for _ in 0..3 {
+                for _ in 0..m {
+                    bits.bit_long()?;
+                    bits.bit_long()?;
+                    bits.bit()?;
+                    bits.bit_double()?;
+                    bits.bit_double()?;
+                    bits.skip(3)?;
+                    bits.skip(128)?;
+                }
+            } else {
+                for _ in 0..3 * m {
                     bits.bit_double()?;
                 }
-                bits.skip(128)?;
             }
         }
     }
@@ -524,6 +532,22 @@ mod tests {
     fn bits_of(s: &str) -> Vec<u8> {
         let s: Vec<u8> = s.bytes().filter(|b| *b == b'0' || *b == b'1').collect();
         s.chunks(8).map(|c| c.iter().enumerate().fold(0u8, |a, (i, b)| a | ((b - b'0') << (7 - i)))).collect()
+    }
+
+    #[test]
+    fn reads_a_boundary_along_feature_lines() {
+        // One list with one outside boundary (kind 2) of two components:
+        // {BL 0, BL 0, B 0, BD 0, BD 0, B 1, B 1, B 0, GUID} and the same
+        // on feature line 1, reversed.
+        let zeros = "0".repeat(128);
+        let s = format!(
+            "0100000001 0100000001 0100000010 0100000010 10 10 0 10 10 110 {zeros} 10 0100000001 1 10 10 110 {zeros}"
+        );
+        let b = bits_of(&s);
+        let len = s.bytes().filter(|c| *c == b'0' || *c == b'1').count();
+        let mut bits = Bits::new(&b, 0, len);
+        assert_eq!(outlines(&mut bits), Some(()));
+        assert_eq!(bits.pos, len);
     }
 
     #[test]
