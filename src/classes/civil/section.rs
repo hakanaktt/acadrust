@@ -10,6 +10,17 @@
 //!
 //! A surface section links each point to the next; a corridor section's
 //! links and the code data after them are not mapped.
+//!
+//! A section view (`AECC_GRAPH_SECTION_VIEW`) has the profile view's
+//! graph layout (see [`super::profile`]) with shorter band records:
+//!
+//! ```text
+//! graph head, 3BD origin, 10 BD, RC n, n x 5 bits, BL m, m x record, 1 bit,
+//! 3BD origin, BL, BL, 3 x 3BD range (min, centre, max), 3 x 3BD,
+//! BL, BL byte count + UTF-16 title, BL 0, 7 x BD, 6 x BL,
+//! 3BD origin, 4 x BD, BD vertical scale
+//! record: BL 0, BL, BD, BL, BD, BL index, BD, BD
+//! ```
 
 use super::bits::Bits;
 use crate::types::Vector2;
@@ -21,6 +32,90 @@ use crate::types::Vector2;
 pub struct SectionGeometry {
     pub points: Vec<Vector2>,
     pub links: Vec<(u32, u32)>,
+}
+
+/// A section view's frame: the drawing position of offset 0 at the lowest
+/// elevation, the offset and elevation ranges and the vertical scale.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SectionViewFrame {
+    /// Drawing position of (offset 0, `elevation_min`).
+    pub origin: Vector2,
+    pub offset_min: f64,
+    pub offset_max: f64,
+    pub elevation_min: f64,
+    pub elevation_max: f64,
+    /// Drawing units per elevation unit.
+    pub vertical_scale: f64,
+}
+
+impl SectionViewFrame {
+    /// Drawing position of an offset and elevation.
+    pub fn to_drawing(&self, offset: f64, elevation: f64) -> Vector2 {
+        Vector2::new(
+            self.origin.x + offset,
+            self.origin.y + (elevation - self.elevation_min) * self.vertical_scale,
+        )
+    }
+}
+
+// ponytail: the 5-bit runs, the band records' values and the fields
+// between the ranges and the vertical scale are read past by their sizes.
+pub(super) fn view_frame(data: &[u8], start: usize, end: usize) -> Option<SectionViewFrame> {
+    let mut bits = Bits::new(data, start, end);
+    super::profile::graph_head(&mut bits)?;
+    let point = |bits: &mut Bits| -> Option<Vector2> {
+        let p = Vector2::new(bits.bit_double()?, bits.bit_double()?);
+        (p.x.is_finite() && p.y.is_finite() && bits.bit_double()? == 0.0).then_some(p)
+    };
+    let origin = point(&mut bits)?;
+    for _ in 0..10 {
+        bits.bit_double()?;
+    }
+    let items = usize::from(bits.bits_value(8)?);
+    bits.skip(5 * items)?;
+    for _ in 0..bits.bit_long()? {
+        (bits.bit_long()? == 0).then_some(())?;
+        bits.bit_long()?;
+        bits.bit_double()?;
+        bits.bit_long()?;
+        bits.bit_double()?;
+        bits.bit_long()?;
+        bits.bit_double()?;
+        bits.bit_double()?;
+    }
+    bits.skip(1)?;
+    (point(&mut bits)? == origin).then_some(())?;
+    bits.bit_long()?;
+    bits.bit_long()?;
+    let (low, _, high) = (point(&mut bits)?, point(&mut bits)?, point(&mut bits)?);
+    (high.x > low.x && high.y > low.y).then_some(())?;
+    for _ in 0..3 {
+        point(&mut bits)?;
+    }
+    bits.bit_long()?;
+    let title = usize::try_from(bits.bit_long()?).ok().filter(|n| n * 8 <= bits.remaining())?;
+    bits.skip(8 * title)?;
+    (bits.bit_long()? == 0).then_some(())?;
+    for _ in 0..7 {
+        bits.bit_double()?;
+    }
+    for _ in 0..6 {
+        bits.bit_long()?;
+    }
+    (point(&mut bits)? == origin).then_some(())?;
+    for _ in 0..4 {
+        bits.bit_double()?;
+    }
+    let vertical_scale = bits.bit_double().filter(|v| v.is_finite() && *v > 0.0)?;
+    Some(SectionViewFrame {
+        origin,
+        offset_min: low.x,
+        offset_max: high.x,
+        elevation_min: low.y,
+        elevation_max: high.y,
+        vertical_scale,
+    })
 }
 
 // ponytail: the 2-bit runs, the flags and the BL closing each point and
