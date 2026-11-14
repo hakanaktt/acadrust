@@ -31,9 +31,11 @@
 //!
 //! ```text
 //! 36 bits, 2 x port, 18 bits, 3BD start, 3BD end, BD bulge
-//! port: 3BD position, 3BD direction, BD engagement length, BL connected
-//!       index (-1 when open), BD outside diameter, BD nominal diameter,
-//!       BD wall thickness, BD deflection, BD, 8 bits
+//! port: 3BD position, 3BD direction, BD engagement length,
+//!       BL port index of the part it connects to (-1 when open),
+//!       BD outside diameter, BD nominal diameter, BD wall thickness,
+//!       BD deflection, BD, 8 bits
+//! references: ..., start's part, end's part, one more
 //! ```
 //!
 //! The ports are the pipe's ends (the start's direction points back along
@@ -148,21 +150,26 @@ pub struct PressurePipe {
     pub nominal_diameter: f64,
     pub wall_thickness: f64,
     pub deflection: f64,
+    /// Part the start and the end connect to: (handle, that part's port
+    /// index); `None` for an open end.
+    pub start_connection: Option<(u64, i32)>,
+    pub end_connection: Option<(u64, i32)>,
 }
 
 // ponytail: the 36, 18 and 8-bit runs and the ports' fifth number (1 in
 // every sample) are read past; both ports carry the same sizes.
-pub(super) fn pressure_pipe(data: &[u8], start: usize, end: usize) -> Option<PressurePipe> {
+pub(super) fn pressure_pipe(data: &[u8], start: usize, end: usize, handles: &[u64]) -> Option<PressurePipe> {
     let mut bits = Bits::new(data, start, end);
     part_head(&mut bits)?;
     bits.skip(36)?;
     let mut sizes = [0.0; 4];
-    for _ in 0..2 {
+    let mut ports = [-1; 2];
+    for port in &mut ports {
         // Port: position, direction, engagement length, connected index.
         point(&mut bits)?;
         point(&mut bits)?;
         bits.bit_double()?;
-        bits.bit_long()?;
+        *port = bits.bit_long()?;
         for size in &mut sizes {
             *size = bits.bit_double()?;
         }
@@ -173,7 +180,22 @@ pub(super) fn pressure_pipe(data: &[u8], start: usize, end: usize) -> Option<Pre
     let (a, b) = (point(&mut bits)?, point(&mut bits)?);
     let bulge = bits.bit_double().filter(|v| v.is_finite())?;
     let [outside_diameter, nominal_diameter, wall_thickness, deflection] = sizes;
-    Some(PressurePipe { start: a, end: b, bulge, outside_diameter, nominal_diameter, wall_thickness, deflection })
+    // The connected parts are the third and second last references.
+    let connected = |port: i32, from_end: usize| {
+        let handle = *handles.len().checked_sub(from_end).and_then(|i| handles.get(i))?;
+        (port >= 0 && handle != 0).then_some((handle, port))
+    };
+    Some(PressurePipe {
+        start: a,
+        end: b,
+        bulge,
+        outside_diameter,
+        nominal_diameter,
+        wall_thickness,
+        deflection,
+        start_connection: connected(ports[0], 3),
+        end_connection: connected(ports[1], 2),
+    })
 }
 
 /// A pipe read by its fields: the numbers of its part data fields in record

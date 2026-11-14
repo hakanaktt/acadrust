@@ -846,8 +846,9 @@ impl ArchEntityData {
         if self.dxf_name != "AECC_PRESSUREPIPE" {
             return None;
         }
+        let handles = self.decode().handles;
         let (data, start, end) = self.main_stream()?;
-        network::pressure_pipe(data, start, end)
+        network::pressure_pipe(data, start, end, &handles)
     }
 
     /// Start and end of a Civil 3D pipe (`AECC_PIPE`), as stored.
