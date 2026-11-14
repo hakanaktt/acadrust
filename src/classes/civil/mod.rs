@@ -30,7 +30,7 @@ pub use alignment::{
 pub use cogo::CogoPoint;
 pub use grading::{CriteriaValue, GradingCriteria};
 pub use labels::{parse_format, property, LabelPart, LabelText};
-pub use network::PartField;
+pub use network::{PartField, PressurePipe};
 pub use parameters::{Parameter, ParameterValue};
 pub use profile::{CurveMinimumK, ProfileCriteria, ProfileLocking, ProfilePiece, ProfileViewFrame, Pvi};
 pub use sample_lines::SampleLines;
@@ -840,9 +840,9 @@ impl ArchEntityData {
         network::part_rotation(data, start, end)
     }
 
-    /// Start, end and bulge of a Civil 3D pressure pipe
-    /// (`AECC_PRESSUREPIPE`); the bulge is 0 for a straight pipe.
-    pub fn pressure_pipe(&self) -> Option<(crate::types::Vector3, crate::types::Vector3, f64)> {
+    /// Ends, bulge and joint sizes of a Civil 3D pressure pipe
+    /// (`AECC_PRESSUREPIPE`).
+    pub fn pressure_pipe(&self) -> Option<PressurePipe> {
         if self.dxf_name != "AECC_PRESSUREPIPE" {
             return None;
         }
