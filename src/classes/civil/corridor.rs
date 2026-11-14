@@ -74,9 +74,10 @@ pub(super) fn baselines(data: &[u8], start: usize, end: usize) -> Vec<Groups> {
         return found;
     }
     // debt: records [`walk`] does not read are found by probing bit offsets
-    // for the first group of each baseline: one in the samples, whose
-    // surface (two link codes, older layout) is followed by the 32 right
-    // after its BL 0, without the 2 bits before it.
+    // for the first group of each baseline: one in the samples, written by
+    // an older program, whose run after the outlines is `BL 0, RC 32,
+    // RC 0x28, 2 bits, RC 0x28` where others have `BL 0, 2 bits, RC 32,
+    // RC 0x28`; the program writes the latter once it rebuilds the record.
     probe(data, start, end)
 }
 
