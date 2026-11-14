@@ -824,13 +824,39 @@ pub fn read_layout_print_config(reader: &mut DwgMergedReader) -> ExtendedEntityD
     })
 }
 
-pub fn read_proxy_entity(
+/// Fields of a proxy entity or object (ACAD_PROXY_ENTITY, ACAD_PROXY_OBJECT)
+/// that come before its data.
+pub(crate) struct ProxyFields {
+    pub class_id: i32,
+    pub dxf_subclass: String,
+    pub version: i32,
+    pub dwg_version: i32,
+    pub maintenance_version: i32,
+    pub from_dxf: bool,
+}
+
+/// Reads the fields of a proxy record before its data (ODA specification
+/// 20.4.90). From R2000 they are the class number (DXF 91), the R2004+ class
+/// name, the data format (DXF 95; version and maintenance version apart from
+/// R2018) and the origin bit (DXF 70). R13 and R14 store the record type
+/// (DXF 90, 498 or 499) and the class number: their data has no format of its
+/// own and no origin bit, so these are left 0 and `false`.
+pub(crate) fn read_proxy_fields(
     reader: &mut DwgMergedReader,
     version: DwgVersion,
     dxf_version: DxfVersion,
-    proxy_data: Vec<u8>,
-    current_handle: u64,
-) -> ExtendedEntityData {
+) -> ProxyFields {
+    if !version.r2000_plus() {
+        let _record_type = reader.read_bit_long();
+        return ProxyFields {
+            class_id: reader.read_bit_long(),
+            dxf_subclass: String::new(),
+            version: 0,
+            dwg_version: 0,
+            maintenance_version: 0,
+            from_dxf: false,
+        };
+    }
     let class_id = reader.read_bit_long();
     let dxf_subclass = if dxf_version > DxfVersion::AC1015 {
         reader.read_variable_text()
@@ -845,11 +871,31 @@ pub fn read_proxy_entity(
         let combined = reader.read_bit_long();
         (combined, combined & 0xffff, combined >> 16)
     };
-    let from_dxf = if version.r2000_plus() {
-        reader.read_bit()
-    } else {
-        false
-    };
+    ProxyFields {
+        class_id,
+        dxf_subclass,
+        version: version_value,
+        dwg_version,
+        maintenance_version,
+        from_dxf: reader.read_bit(),
+    }
+}
+
+pub fn read_proxy_entity(
+    reader: &mut DwgMergedReader,
+    version: DwgVersion,
+    dxf_version: DxfVersion,
+    proxy_data: Vec<u8>,
+    current_handle: u64,
+) -> ExtendedEntityData {
+    let ProxyFields {
+        class_id,
+        dxf_subclass,
+        version: version_value,
+        dwg_version,
+        maintenance_version,
+        from_dxf,
+    } = read_proxy_fields(reader, version, dxf_version);
     let (payload, text_payload, object_ids) = read_proxy_payload(reader, current_handle);
     if let Some(envelope) =
         crate::objects::semantic_property::decode_registered_class_envelope(&payload)

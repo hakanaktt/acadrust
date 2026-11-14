@@ -465,31 +465,14 @@ impl<'a> DwgObjectWriter<'a> {
                 self.write_point_cloud_ex_data(data);
             }
             ExtendedEntityData::Proxy(data) => {
-                self.writer.write_bit_long(data.class_id);
-                if self.dxf_version > crate::types::DxfVersion::AC1015 {
-                    let dxf_subclass = if data.dxf_subclass.is_empty() {
-                        self.document
-                            .classes
-                            .iter()
-                            .find(|class| i32::from(class.class_number) == data.class_id)
-                            .map(|class| class.dxf_name.as_str())
-                            .unwrap_or("")
-                    } else {
-                        &data.dxf_subclass
-                    };
-                    self.writer.write_variable_text(dxf_subclass);
-                }
-                if self.version.r2018_plus(self.dxf_version) {
-                    self.writer.write_bit_long(data.dwg_version);
-                    self.writer.write_bit_long(data.maintenance_version);
-                } else {
-                    self.writer.write_bit_long(
-                        (data.maintenance_version << 16) | (data.dwg_version & 0xffff),
-                    );
-                }
-                if self.version.r2000_plus() {
-                    self.writer.write_bit(data.from_dxf);
-                }
+                self.write_proxy_fields(
+                    common::OBJ_PROXY_ENTITY,
+                    data.class_id,
+                    &data.dxf_subclass,
+                    data.dwg_version,
+                    data.maintenance_version,
+                    data.from_dxf,
+                );
                 let payload = data.payload.data();
                 for bit_index in 0..data.payload.bit_count as usize {
                     let byte = payload.get(bit_index / 8).copied().unwrap_or(0);
@@ -549,20 +532,15 @@ impl<'a> DwgObjectWriter<'a> {
                 } else {
                     // The proxy names the record's class; 498 is the proxy
                     // type code, not a class.
-                    self.writer
-                        .write_bit_long(i32::from(self.class_type_code(&data.dxf_name, 0)));
-                    if self.dxf_version > crate::types::DxfVersion::AC1015 {
-                        self.writer.write_variable_text(&data.dxf_name);
-                    }
-                    if self.version.r2018_plus(self.dxf_version) {
-                        self.writer.write_bit_long(0);
-                        self.writer.write_bit_long(0);
-                    } else {
-                        self.writer.write_bit_long(0);
-                    }
-                    if self.version.r2000_plus() {
-                        self.writer.write_bit(true);
-                    }
+                    let class_id = i32::from(self.class_type_code(&data.dxf_name, 0));
+                    self.write_proxy_fields(
+                        common::OBJ_PROXY_ENTITY,
+                        class_id,
+                        &data.dxf_name,
+                        0,
+                        0,
+                        true,
+                    );
                     let payload =
                         crate::objects::semantic_property::encode_registered_class_envelope(
                             &data.dxf_name,
