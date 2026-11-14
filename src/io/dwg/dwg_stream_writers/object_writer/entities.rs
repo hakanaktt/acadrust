@@ -3743,20 +3743,16 @@ impl<'a> DwgObjectWriter<'a> {
         );
     }
 
-    /// Pre-R2010 flat-format cell.
+    /// Pre-R2010 flat-format cell, in the legacy layout
+    /// ([`TableCell::legacy_layout`]).
     fn write_table_cell_data(&mut self, cell: &TableCell) {
+        let cell = cell.legacy_layout();
+        let cell: &TableCell = &cell;
+        // 1 (text) or 2 (block): an empty text cell is a text cell with an
+        // empty value, as ODA writes it; ODA reads no value handle for a type
+        // of 0 and loses its place in the handle stream.
         let cell_type = match cell.cell_type {
             CellType::Block => 2,
-            // Below R2007 an empty text cell is still a text cell with an empty
-            // string, as AutoCAD writes it: a type of 0 is not a cell type there and
-            // the reader loses its place after the first one.
-            CellType::Text
-                if cell.contents.is_empty()
-                    && cell.value_handle.is_none()
-                    && self.version.r2007_plus() =>
-            {
-                0
-            }
             CellType::Text => 1,
         };
         self.writer.write_bit_short(cell_type);
@@ -3778,14 +3774,10 @@ impl<'a> DwgObjectWriter<'a> {
         self.writer.write_bit_long(cell.merge_width);
         self.writer.write_bit_long(cell.merge_height);
         self.writer.write_bit_double(cell.rotation);
-        // The reader takes the text from the cell only when this handle is 0, so
-        // the same value has to decide whether the text is written (a cell whose
-        // first content holds a block handle has a handle and no text here).
-        let value_handle = cell
-            .value_handle
-            .or_else(|| cell.contents.first().and_then(|c| c.block_handle))
-            .map(|h| h.value())
-            .unwrap_or(0);
+        // The block record or the FIELD. The reader takes the text from the
+        // cell only when this handle is 0, so the same value decides whether
+        // the text is written.
+        let value_handle = cell.value_handle.map(|h| h.value()).unwrap_or(0);
         self.writer
             .write_handle(DwgReferenceType::HardPointer, value_handle);
         if cell_type == 1 {
@@ -4097,9 +4089,11 @@ impl<'a> DwgObjectWriter<'a> {
                 DwgReferenceType::HardPointer,
                 e.table_style_handle.map(|h| h.value()).unwrap_or(0),
             );
-            for row in &e.rows {
-                for cell in &row.cells {
-                    self.write_table_cell_data(cell);
+            for (r, row) in e.rows.iter().enumerate() {
+                for c in 0..row.cells.len() {
+                    if let Some(cell) = e.legacy_layout_cell(r, c) {
+                        self.write_table_cell_data(&cell);
+                    }
                 }
             }
             self.writer.write_bit(e.legacy_style_override.is_some());
