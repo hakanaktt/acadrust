@@ -34,7 +34,7 @@ pub use network::PartField;
 pub use parameters::{Parameter, ParameterValue};
 pub use profile::{CurveMinimumK, ProfileCriteria, ProfileLocking, ProfilePiece, ProfileViewFrame, Pvi};
 pub use sample_lines::SampleLines;
-pub use section::{SectionGeometry, SectionViewFrame};
+pub use section::{MassHaulViewFrame, SectionGeometry, SectionViewFrame};
 pub use style::{DisplayComponent, Marker, ViewAxes, ViewAxis};
 pub use subassembly::{AssemblyLayout, Attachment, SubassemblyShape};
 pub use topology::{Topology, TopologyVertex};
@@ -817,6 +817,28 @@ impl ArchEntityData {
         }
         let (data, start, end) = self.main_stream()?;
         section::view_frame(data, start, end)
+    }
+
+    /// Balance curve of a Civil 3D mass haul line (`AECC_MASSHAULLINE`):
+    /// (station, cumulative volume) pairs; place them with the frame of the
+    /// mass haul view that shows the line.
+    pub fn mass_haul_points(&self) -> Vec<crate::types::Vector2> {
+        if self.dxf_name != "AECC_MASSHAULLINE" {
+            return Vec::new();
+        }
+        self.main_stream()
+            .and_then(|(data, start, end)| section::mass_haul_points(data, start, end))
+            .unwrap_or_default()
+    }
+
+    /// Frame of a Civil 3D mass haul view (`AECC_MASS_HAUL_VIEW`): where it
+    /// draws stations and volumes.
+    pub fn mass_haul_view_frame(&self) -> Option<MassHaulViewFrame> {
+        if self.dxf_name != "AECC_MASS_HAUL_VIEW" {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        section::mass_haul_view_frame(data, start, end)
     }
 
     /// Start and end of a Civil 3D pipe (`AECC_PIPE`), as stored.
