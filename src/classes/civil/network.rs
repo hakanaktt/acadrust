@@ -18,7 +18,7 @@
 //!
 //! ```text
 //! class header and keys (super::alignment), 3 bits (010), GUID
-//! structure: 3BD insertion point
+//! structure, pressure fitting, appurtenance: 3BD insertion point
 //! pipe:      26 bits, BL 80, BS 0x04BE, BL 80, BL 80, BL n, BL 0,
 //!            n x { field, BL separator (0, then 1 or 2 after the last) },
 //!            3 x BL, GUID, 1 bit, 17 x BD, 2 bits, 3BD start, 3BD end

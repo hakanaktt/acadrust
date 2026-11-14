@@ -819,6 +819,16 @@ impl ArchEntityData {
         section::view_frame(data, start, end)
     }
 
+    /// Insertion point of a Civil 3D pressure fitting or appurtenance
+    /// (`AECC_FITTING`, `AECC_APPURTENANCE`), stored like a structure's.
+    pub fn pressure_part_position(&self) -> Option<crate::types::Vector3> {
+        if !matches!(self.dxf_name.as_str(), "AECC_FITTING" | "AECC_APPURTENANCE") {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        network::structure_at(data, start, end)
+    }
+
     /// Start, end and bulge of a Civil 3D pressure pipe
     /// (`AECC_PRESSUREPIPE`); the bulge is 0 for a straight pipe.
     pub fn pressure_pipe(&self) -> Option<(crate::types::Vector3, crate::types::Vector3, f64)> {
