@@ -8649,6 +8649,43 @@ mod tests {
             ]
         );
     }
+
+    /// An unnamed ordinary STYLE that complex linetypes draw shapes from is
+    /// the shape-file style behind them, stored without its shape-file flag;
+    /// the read names that role instead of reporting a bare unnamed style
+    /// (#311). The DWG writer writes such a style with the flag (#370), so
+    /// the document is checked as a file from another writer reads.
+    #[test]
+    fn unnamed_style_names_the_linetypes_that_use_it() {
+        use crate::tables::linetype::LineTypeComplexContent;
+        use crate::tables::{LineType, LineTypeComplexData, LineTypeElement, TextStyle};
+        let mut document = CadDocument::new();
+        let mut style = TextStyle::new("");
+        style.font_file = "ltypeshp.shx".into();
+        style.handle = Handle::new(0x500);
+        document.text_styles.add_allow_duplicate(style);
+        let mut linetype = LineType::new("ZIGZAG");
+        let mut dash = LineTypeElement::dash(0.0);
+        dash.complex = Some(LineTypeComplexData {
+            content: LineTypeComplexContent::Shape { shape_number: 131 },
+            style_handle: Handle::new(0x500),
+            ..LineTypeComplexData::default()
+        });
+        linetype.elements.push(dash);
+        document.line_types.add(linetype).unwrap();
+
+        let mut diagnostics = Vec::new();
+        source_state_diagnostics(&document, &mut diagnostics);
+        let message = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "unnamed-text-style")
+            .map(|diagnostic| diagnostic.message.as_str())
+            .expect("the unnamed style is reported");
+        assert!(
+            message.contains("ZIGZAG") && message.contains("ltypeshp.shx"),
+            "{message}"
+        );
+    }
 }
 
 fn read_registered_payload(
