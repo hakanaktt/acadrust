@@ -177,7 +177,7 @@ fn outlines(bits: &mut Bits) -> Option<()> {
 /// ```text
 /// head:     BL 80, 0, 80, 80, 0, BL, BL, 4 bits, RC n, n x key,
 ///           2 bits, GUID (zero in newer files), 2 bits, RC 82, BL n,
-///           n x 4 bits, BL surfaces,
+///           n x { 2 bits, BL }, BL surfaces,
 ///           surfaces x { GUID, head (see [`surface`]) }, [newer heads or
 ///           none: BL 0], outlines (see [`outlines`]),
 ///           BL 0, 2 bits, RC 32, RC layout, RC baselines (top 5 bits), 1 bit,
@@ -216,8 +216,10 @@ fn walk(bits: &mut Bits) -> Option<Vec<Groups>> {
         .any(|b| *b != 0);
     bits.skip(2)?;
     (bits.raw_short_byte()? == 82).then_some(())?;
-    let styles = usize::try_from(bits.bit_long()?).ok()?;
-    bits.skip(4 * styles)?;
+    for _ in 0..bits.bit_long()? {
+        bits.skip(2)?;
+        bits.bit_long()?;
+    }
     let surfaces = bits.bit_long()?;
     (0..=64).contains(&surfaces).then_some(())?;
     // A record without surfaces has the newer layout's BL 0.
@@ -260,6 +262,12 @@ fn walk(bits: &mut Bits) -> Option<Vec<Groups>> {
             }
             records = region(bits, guids, words)?;
         }
+        // A last baseline whose regions give no record count has nothing
+        // built: no feature line groups follow.
+        if records == 0 && baseline + 1 == baselines {
+            out.push(Vec::new());
+            break;
+        }
         (records == 1).then_some(())?;
         bits.bit()?;
         bits.skip(128)?;
@@ -297,7 +305,7 @@ fn station(bits: &mut Bits, after_first: bool) -> Option<Option<u32>> {
     assembly(bits)?;
     let mut words = None;
     for _ in 0..bits.bit_long()? {
-        words = Some(body(bits)?);
+        words = Some(body(bits, words)?);
     }
     (bits.bit_long()? == 19).then_some(words)
 }
@@ -326,18 +334,26 @@ fn assembly(bits: &mut Bits) -> Option<()> {
 
 /// One applied subassembly: `object, BL 8, object`, its shape, its parameter
 /// set, then words until `-1`: each a count of target items, or
-/// `0x8004xxxx` with no items. Returns the number of words.
+/// `0x8004xxxx` with no items. Returns the number of words. A subassembly
+/// with an empty shape and parameter set writes as many words as the
+/// station's previous one, then 0 where the others have `-1`.
 ///
 /// ```text
 /// shape:  BL n, n x { BL, BL, BD station, BD offset, BD elevation }
 ///         BL m, m x { BL code, B, B, BL k, k x RL point }
 ///         BL a, a x { BL code, B, B, BL k, k x RL link, BL }
 /// ```
-fn body(bits: &mut Bits) -> Option<u32> {
+// debt: the word count of an empty subassembly is taken from the station's
+// previous one (19 words in every sample); the field that holds it is not
+// found.
+fn body(bits: &mut Bits, previous: Option<u32>) -> Option<u32> {
     object(bits)?;
     (bits.bit_long()? == 8).then_some(())?;
     object(bits)?;
-    for _ in 0..bits.bit_long()? {
+    let mut empty = true;
+    let points = bits.bit_long()?;
+    empty &= points == 0;
+    for _ in 0..points {
         bits.bit_long()?;
         bits.bit_long()?;
         for _ in 0..3 {
@@ -345,7 +361,9 @@ fn body(bits: &mut Bits) -> Option<u32> {
         }
     }
     for areas in [false, true] {
-        for _ in 0..bits.bit_long()? {
+        let n = bits.bit_long()?;
+        empty &= n == 0;
+        for _ in 0..n {
             bits.bit_long()?;
             bits.bit()?;
             bits.bit()?;
@@ -357,9 +375,14 @@ fn body(bits: &mut Bits) -> Option<u32> {
             }
         }
     }
-    super::parameters::read_with(bits, &mut || Some(String::new()))?;
+    empty &= super::parameters::read_with(bits, &mut || Some(String::new()))?.is_empty();
+    let fixed = previous.filter(|_| empty);
     let mut words = 0;
     loop {
+        if fixed == Some(words) {
+            bits.bit_long()?;
+            return fixed;
+        }
         let count = bits.bit_long()?;
         match count {
             -1 => return Some(words),
