@@ -518,20 +518,15 @@ impl<'a> DwgObjectWriter<'a> {
             );
             // The proxy names the record's class; 499 is the proxy type
             // code, not a class.
-            self.writer
-                .write_bit_long(i32::from(self.class_type_code(&value.dxf_name, 0)));
-            if self.dxf_version > crate::types::DxfVersion::AC1015 {
-                self.writer.write_variable_text(&value.dxf_name);
-            }
-            if self.version.r2018_plus(self.dxf_version) {
-                self.writer.write_bit_long(0);
-                self.writer.write_bit_long(0);
-            } else {
-                self.writer.write_bit_long(0);
-            }
-            if self.version.r2000_plus() {
-                self.writer.write_bit(true);
-            }
+            let class_id = i32::from(self.class_type_code(&value.dxf_name, 0));
+            self.write_proxy_fields(
+                common::OBJ_PROXY_OBJECT,
+                class_id,
+                &value.dxf_name,
+                0,
+                0,
+                true,
+            );
             self.write_registered_payload(&payload, &value.object_ids);
             self.register_object(value.handle);
             return;
@@ -743,6 +738,51 @@ impl<'a> DwgObjectWriter<'a> {
         }
     }
 
+    /// Writes the fields of a proxy record (ACAD_PROXY_ENTITY or
+    /// ACAD_PROXY_OBJECT, `record_type`) before its data (ODA specification
+    /// 20.4.90). From R2000: the class number (DXF 91), the R2004+ class name
+    /// (from the class table when `dxf_subclass` is empty), the data format
+    /// (DXF 95) and the origin bit (DXF 70). R13 and R14 store the record type
+    /// (DXF 90) and the class number only, as ODA does: it reads the second BL
+    /// as the class.
+    pub(super) fn write_proxy_fields(
+        &mut self,
+        record_type: i16,
+        class_id: i32,
+        dxf_subclass: &str,
+        dwg_version: i32,
+        maintenance_version: i32,
+        from_dxf: bool,
+    ) {
+        if !self.version.r2000_plus() {
+            self.writer.write_bit_long(i32::from(record_type));
+            self.writer.write_bit_long(class_id);
+            return;
+        }
+        self.writer.write_bit_long(class_id);
+        if self.dxf_version > crate::types::DxfVersion::AC1015 {
+            let dxf_subclass = if dxf_subclass.is_empty() {
+                self.document
+                    .classes
+                    .iter()
+                    .find(|class| i32::from(class.class_number) == class_id)
+                    .map(|class| class.dxf_name.as_str())
+                    .unwrap_or("")
+            } else {
+                dxf_subclass
+            };
+            self.writer.write_variable_text(dxf_subclass);
+        }
+        if self.version.r2018_plus(self.dxf_version) {
+            self.writer.write_bit_long(dwg_version);
+            self.writer.write_bit_long(maintenance_version);
+        } else {
+            self.writer
+                .write_bit_long((maintenance_version << 16) | (dwg_version & 0xffff));
+        }
+        self.writer.write_bit(from_dxf);
+    }
+
     fn write_proxy_object(&mut self, value: &ProxyObject) {
         self.write_common_non_entity_data(
             common::OBJ_PROXY_OBJECT,
@@ -751,30 +791,14 @@ impl<'a> DwgObjectWriter<'a> {
             &value.reactors,
             &value.xdictionary_handle,
         );
-        self.writer.write_bit_long(value.class_id);
-        if self.dxf_version > crate::types::DxfVersion::AC1015 {
-            let dxf_subclass = if value.dxf_subclass.is_empty() {
-                self.document
-                    .classes
-                    .iter()
-                    .find(|class| i32::from(class.class_number) == value.class_id)
-                    .map(|class| class.dxf_name.as_str())
-                    .unwrap_or("")
-            } else {
-                &value.dxf_subclass
-            };
-            self.writer.write_variable_text(dxf_subclass);
-        }
-        if self.version.r2018_plus(self.dxf_version) {
-            self.writer.write_bit_long(value.dwg_version);
-            self.writer.write_bit_long(value.maintenance_version);
-        } else {
-            self.writer
-                .write_bit_long((value.maintenance_version << 16) | (value.dwg_version & 0xffff));
-        }
-        if self.version.r2000_plus() {
-            self.writer.write_bit(value.from_dxf);
-        }
+        self.write_proxy_fields(
+            common::OBJ_PROXY_OBJECT,
+            value.class_id,
+            &value.dxf_subclass,
+            value.dwg_version,
+            value.maintenance_version,
+            value.from_dxf,
+        );
         let payload = value.payload.data();
         for bit_index in 0..value.payload.bit_count as usize {
             let byte = payload.get(bit_index / 8).copied().unwrap_or(0);
@@ -3265,5 +3289,83 @@ mod dgn_line_style_tests {
             assert_eq!(r.main_remaining_bits(), 0, "{version:?}: data left over");
             assert_eq!(r.read_handle(), 0x4c, "{version:?}: block");
         }
+    }
+}
+
+#[cfg(test)]
+mod proxy_object_layout_tests {
+    //! ACAD_PROXY_OBJECT fields before the data, as for the proxy entity
+    //! (ODA specification 20.4.90): R13 and R14 hold the type (DXF 90, 499)
+    //! and the class number, R2000 the class number, the data format and the
+    //! origin bit.
+
+    use super::*;
+    use crate::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
+    use crate::io::dwg::dwg_stream_readers::object_reader::DwgObjectReader;
+    use crate::objects::{ProxyObject, ProxyPayload};
+    use crate::CadDocument;
+
+    const CLASS: i32 = 511;
+    const DATA: [u8; 3] = [0x3C, 0xC3, 0x99];
+
+    /// Writes a proxy object in `version` and returns a reader after its
+    /// common object data.
+    fn written_body(version: DxfVersion) -> DwgMergedReader {
+        let doc = CadDocument::with_version(version);
+        let object = ProxyObject {
+            handle: Handle::new(0x7000),
+            owner: doc.header.named_objects_dict_handle,
+            proxy_id: 499,
+            class_id: CLASS,
+            version: 0x15,
+            dwg_version: 0x15,
+            payload: ProxyPayload::from_bytes(&DATA),
+            ..Default::default()
+        };
+        let mut writer = DwgObjectWriter::new(&doc).unwrap();
+        writer.write_proxy_object(&object);
+        let offset = writer.handle_map()[0].1 as usize;
+        let reader =
+            DwgObjectReader::new(writer.output().to_vec(), version, Default::default()).unwrap();
+        let (kind, mut record) = reader.read_record_at(offset).unwrap();
+        assert_eq!(kind, common::OBJ_PROXY_OBJECT, "{version:?}");
+        reader.read_common_non_entity_data(&mut record, kind);
+        record
+    }
+
+    fn assert_data(record: &mut DwgMergedReader, version: DxfVersion) {
+        let mut data = [0u8; 3];
+        for bit in 0..24 {
+            if record.read_bit() {
+                data[bit / 8] |= 0x80 >> (bit % 8);
+            }
+        }
+        record.check_error().unwrap();
+        assert_eq!(data, DATA, "{version:?}: data");
+        assert_eq!(
+            record.main_remaining_bits(),
+            0,
+            "{version:?}: bits left over"
+        );
+    }
+
+    #[test]
+    fn r13_and_r14_proxy_object_holds_its_type_and_class_before_the_data() {
+        for version in [DxfVersion::AC1012, DxfVersion::AC1014] {
+            let mut record = written_body(version);
+            assert_eq!(record.read_bit_long(), 499, "{version:?}: DXF 90");
+            assert_eq!(record.read_bit_long(), CLASS, "{version:?}: class number");
+            assert_data(&mut record, version);
+        }
+    }
+
+    #[test]
+    fn r2000_proxy_object_holds_its_class_format_and_origin_before_the_data() {
+        let version = DxfVersion::AC1015;
+        let mut record = written_body(version);
+        assert_eq!(record.read_bit_long(), CLASS, "class number");
+        assert_eq!(record.read_bit_long(), 0x15, "data format");
+        assert!(!record.read_bit(), "origin");
+        assert_data(&mut record, version);
     }
 }

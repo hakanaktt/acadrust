@@ -465,31 +465,14 @@ impl<'a> DwgObjectWriter<'a> {
                 self.write_point_cloud_ex_data(data);
             }
             ExtendedEntityData::Proxy(data) => {
-                self.writer.write_bit_long(data.class_id);
-                if self.dxf_version > crate::types::DxfVersion::AC1015 {
-                    let dxf_subclass = if data.dxf_subclass.is_empty() {
-                        self.document
-                            .classes
-                            .iter()
-                            .find(|class| i32::from(class.class_number) == data.class_id)
-                            .map(|class| class.dxf_name.as_str())
-                            .unwrap_or("")
-                    } else {
-                        &data.dxf_subclass
-                    };
-                    self.writer.write_variable_text(dxf_subclass);
-                }
-                if self.version.r2018_plus(self.dxf_version) {
-                    self.writer.write_bit_long(data.dwg_version);
-                    self.writer.write_bit_long(data.maintenance_version);
-                } else {
-                    self.writer.write_bit_long(
-                        (data.maintenance_version << 16) | (data.dwg_version & 0xffff),
-                    );
-                }
-                if self.version.r2000_plus() {
-                    self.writer.write_bit(data.from_dxf);
-                }
+                self.write_proxy_fields(
+                    common::OBJ_PROXY_ENTITY,
+                    data.class_id,
+                    &data.dxf_subclass,
+                    data.dwg_version,
+                    data.maintenance_version,
+                    data.from_dxf,
+                );
                 let payload = data.payload.data();
                 for bit_index in 0..data.payload.bit_count as usize {
                     let byte = payload.get(bit_index / 8).copied().unwrap_or(0);
@@ -549,20 +532,15 @@ impl<'a> DwgObjectWriter<'a> {
                 } else {
                     // The proxy names the record's class; 498 is the proxy
                     // type code, not a class.
-                    self.writer
-                        .write_bit_long(i32::from(self.class_type_code(&data.dxf_name, 0)));
-                    if self.dxf_version > crate::types::DxfVersion::AC1015 {
-                        self.writer.write_variable_text(&data.dxf_name);
-                    }
-                    if self.version.r2018_plus(self.dxf_version) {
-                        self.writer.write_bit_long(0);
-                        self.writer.write_bit_long(0);
-                    } else {
-                        self.writer.write_bit_long(0);
-                    }
-                    if self.version.r2000_plus() {
-                        self.writer.write_bit(true);
-                    }
+                    let class_id = i32::from(self.class_type_code(&data.dxf_name, 0));
+                    self.write_proxy_fields(
+                        common::OBJ_PROXY_ENTITY,
+                        class_id,
+                        &data.dxf_name,
+                        0,
+                        0,
+                        true,
+                    );
                     let payload =
                         crate::objects::semantic_property::encode_registered_class_envelope(
                             &data.dxf_name,
@@ -6617,5 +6595,100 @@ mod polyline_vertex_linetype_tests {
             w.write_polyline2d(&polyline);
             assert_vertices_follow_owner(&w, version, "2D polyline");
         }
+    }
+}
+
+#[cfg(test)]
+mod proxy_entity_layout_tests {
+    //! ACAD_PROXY_ENTITY fields before the data (ODA specification 20.4.90).
+    //! From R2000 the record holds the class number (DXF 91), the data format
+    //! (DXF 95) and the origin bit (DXF 70). R13 and R14 hold the type (DXF
+    //! 90, 498) and the class number, and nothing else before the data: ODA
+    //! writes them so and reads the second BL as the class.
+
+    use super::*;
+    use crate::entities::extended_entity::{ExtendedEntity, ExtendedEntityData, ProxyEntityData};
+    use crate::entities::EntityCommon;
+    use crate::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
+    use crate::io::dwg::dwg_stream_readers::object_reader::DwgObjectReader;
+    use crate::objects::ProxyPayload;
+    use crate::types::{DxfVersion, Handle};
+    use crate::CadDocument;
+
+    const CLASS: i32 = 510;
+    const DATA: [u8; 3] = [0xA5, 0x5A, 0xC3];
+
+    fn proxy(doc: &CadDocument) -> ExtendedEntity {
+        let mut common = EntityCommon::new();
+        common.handle = Handle::new(0x7000);
+        common.owner_handle = doc.header.model_space_block_handle;
+        ExtendedEntity {
+            common,
+            data: ExtendedEntityData::Proxy(ProxyEntityData {
+                proxy_id: 498,
+                class_id: CLASS,
+                dxf_subclass: String::new(),
+                version: 0x15,
+                dwg_version: 0x15,
+                maintenance_version: 0,
+                from_dxf: false,
+                // An empty graphics metafile: size 8, no records.
+                graphics: ProxyPayload::from_bytes(&[8, 0, 0, 0, 0, 0, 0, 0]),
+                payload: ProxyPayload::from_bytes(&DATA),
+                text_payload: ProxyPayload::default(),
+                object_ids: Vec::new(),
+            }),
+        }
+    }
+
+    /// Writes the proxy in `version` and returns a reader after its common
+    /// entity data.
+    fn written_body(version: DxfVersion) -> DwgMergedReader {
+        let doc = CadDocument::with_version(version);
+        let mut writer = DwgObjectWriter::new(&doc).unwrap();
+        writer.write_extended_entity(&proxy(&doc));
+        let offset = writer.handle_map[0].1 as usize;
+        let reader =
+            DwgObjectReader::new(writer.output.clone(), version, Default::default()).unwrap();
+        let (type_code, mut record) = reader.read_record_at(offset).unwrap();
+        assert_eq!(type_code, common::OBJ_PROXY_ENTITY, "{version:?}");
+        reader.read_common_entity_data(&mut record, type_code);
+        record
+    }
+
+    fn assert_data(record: &mut DwgMergedReader, version: DxfVersion) {
+        let mut data = [0u8; 3];
+        for bit in 0..24 {
+            if record.read_bit() {
+                data[bit / 8] |= 0x80 >> (bit % 8);
+            }
+        }
+        record.check_error().unwrap();
+        assert_eq!(data, DATA, "{version:?}: data");
+        assert_eq!(
+            record.main_remaining_bits(),
+            0,
+            "{version:?}: bits left over"
+        );
+    }
+
+    #[test]
+    fn r13_and_r14_proxy_entity_holds_its_type_and_class_before_the_data() {
+        for version in [DxfVersion::AC1012, DxfVersion::AC1014] {
+            let mut record = written_body(version);
+            assert_eq!(record.read_bit_long(), 498, "{version:?}: DXF 90");
+            assert_eq!(record.read_bit_long(), CLASS, "{version:?}: class number");
+            assert_data(&mut record, version);
+        }
+    }
+
+    #[test]
+    fn r2000_proxy_entity_holds_its_class_format_and_origin_before_the_data() {
+        let version = DxfVersion::AC1015;
+        let mut record = written_body(version);
+        assert_eq!(record.read_bit_long(), CLASS, "class number");
+        assert_eq!(record.read_bit_long(), 0x15, "data format");
+        assert!(!record.read_bit(), "origin");
+        assert_data(&mut record, version);
     }
 }

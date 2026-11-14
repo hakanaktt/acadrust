@@ -6724,36 +6724,18 @@ impl DwgDocumentBuilder {
                     }
                 }
                 OBJ_PROXY_OBJECT => {
-                    let class_id = reader.read_bit_long();
-                    let dxf_subclass = if self.obj_reader.dxf_version()
-                        > crate::types::DxfVersion::AC1015
-                    {
-                        reader.read_variable_text()
-                    } else {
-                        String::new()
-                    };
-                    let (version, dwg_version, maintenance_version) = if self
-                        .obj_reader
-                        .version()
-                        .r2018_plus(self.obj_reader.dxf_version())
-                    {
-                        let dwg_version = reader.read_bit_long();
-                        let maintenance_version = reader.read_bit_long();
-                        (
-                            (maintenance_version << 16)
-                                | (dwg_version & 0xffff),
-                            dwg_version,
-                            maintenance_version,
-                        )
-                    } else {
-                        let version = reader.read_bit_long();
-                        (version, version & 0xffff, version >> 16)
-                    };
-                    let from_dxf = if self.obj_reader.version().r2000_plus() {
-                        reader.read_bit()
-                    } else {
-                        false
-                    };
+                    let entities::ProxyFields {
+                        class_id,
+                        dxf_subclass,
+                        version,
+                        dwg_version,
+                        maintenance_version,
+                        from_dxf,
+                    } = entities::read_proxy_fields(
+                        &mut reader,
+                        self.obj_reader.version(),
+                        self.obj_reader.dxf_version(),
+                    );
                     let object_data_bits = reader.main_remaining_bits() as u32;
                     let mut object_data =
                         vec![0u8; object_data_bits.div_ceil(8) as usize];
