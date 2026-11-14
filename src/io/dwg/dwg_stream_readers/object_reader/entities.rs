@@ -3971,7 +3971,7 @@ fn read_table_cell_data(
                 border.line_weight = crate::types::LineWeight::from_value(reader.read_bit_short());
             }
             if flags & (0x4000 << edge) != 0 {
-                border.invisible = reader.read_bit_short() == 0;
+                border.invisible = reader.read_bit_short() != 0;
             }
         }
         cell.style = Some(style);

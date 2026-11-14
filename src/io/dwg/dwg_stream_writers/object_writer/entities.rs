@@ -3860,7 +3860,7 @@ impl<'a> DwgObjectWriter<'a> {
                     self.writer.write_bit_short(border.line_weight.as_i16());
                 }
                 if flags & (0x4000 << edge) != 0 {
-                    self.writer.write_bit_short((!border.invisible) as i16);
+                    self.writer.write_bit_short(border.invisible as i16);
                 }
             }
         }

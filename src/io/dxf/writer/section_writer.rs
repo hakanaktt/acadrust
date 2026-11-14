@@ -12003,7 +12003,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                         .write_i16(weight_code, border.line_weight.value())?;
                 }
                 if f & (0x4000 << i) != 0 {
-                    self.writer.write_bool(visibility_code, !border.invisible)?;
+                    self.writer.write_bool(visibility_code, border.invisible)?;
                 }
             }
         } else if let Some(ref style) = cell.style {
@@ -12025,7 +12025,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 self.write_table_cell_color(color_code, border.color)?;
                 self.writer
                     .write_i16(weight_code, border.line_weight.value())?;
-                self.writer.write_bool(visibility_code, !border.invisible)?;
+                self.writer.write_bool(visibility_code, border.invisible)?;
             }
         }
 

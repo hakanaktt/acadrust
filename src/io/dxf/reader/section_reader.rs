@@ -21071,7 +21071,7 @@ impl<'a> SectionReader<'a> {
                             288 => &mut style.left_border,
                             _ => &mut style.top_border,
                         };
-                        border.invisible = !value;
+                        border.invisible = value;
                     }
                 }
                 331 => {
