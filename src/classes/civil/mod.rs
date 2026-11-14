@@ -819,6 +819,18 @@ impl ArchEntityData {
         section::view_frame(data, start, end)
     }
 
+    /// Balance curve of a Civil 3D mass haul line (`AECC_MASSHAULLINE`):
+    /// (station, cumulative volume) pairs; place them with the frame of the
+    /// mass haul view that shows the line.
+    pub fn mass_haul_points(&self) -> Vec<crate::types::Vector2> {
+        if self.dxf_name != "AECC_MASSHAULLINE" {
+            return Vec::new();
+        }
+        self.main_stream()
+            .and_then(|(data, start, end)| section::mass_haul_points(data, start, end))
+            .unwrap_or_default()
+    }
+
     /// Frame of a Civil 3D mass haul view (`AECC_MASS_HAUL_VIEW`): where it
     /// draws stations and volumes.
     pub fn mass_haul_view_frame(&self) -> Option<MassHaulViewFrame> {

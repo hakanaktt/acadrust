@@ -74,6 +74,25 @@ pub(super) fn mass_haul_view_frame(data: &[u8], start: usize, end: usize) -> Opt
     })
 }
 
+/// Stations and volumes of a mass haul line (`AECC_MASSHAULLINE`): its
+/// balance curve as `BL n, n x 3BD (station, volume, 0)`, stations rising.
+// debt: found as the first such list in the record; the fields before it
+// (a section-like head with two GUIDs) are not mapped, one drawing at hand.
+pub(super) fn mass_haul_points(data: &[u8], start: usize, end: usize) -> Option<Vec<Vector2>> {
+    (start..end.min(start + 4096)).find_map(|pos| {
+        let mut bits = Bits::new(data, pos, end);
+        let n = usize::try_from(bits.bit_long()?).ok().filter(|n| *n >= 2 && n * 6 <= bits.remaining())?;
+        let mut points = Vec::with_capacity(n);
+        for _ in 0..n {
+            let p = Vector2::new(bits.bit_double()?, bits.bit_double()?);
+            (p.x.is_finite() && p.y.is_finite() && bits.bit_double()? == 0.0).then_some(())?;
+            points.push(p);
+        }
+        let rising = points.windows(2).all(|w| w[0].x <= w[1].x) && points[0].x < points[n - 1].x;
+        rising.then_some(points)
+    })
+}
+
 /// A section view's frame: the drawing position of offset 0 at the lowest
 /// elevation, the offset and elevation ranges and the vertical scale.
 #[derive(Debug, Clone, PartialEq)]
