@@ -204,7 +204,8 @@ pub fn object_kind_of(dxf_name: &str) -> Option<CivilObjectKind> {
         CivilObjectKind::Settings
     } else if name.starts_with("AECC_LABEL_") || name.ends_with("_TABLE_STYLE") {
         CivilObjectKind::LabelStyle
-    } else if name.contains("_STYLE") {
+    } else if name.contains("_STYLE") && name != "AECC_FEATURE_STYLE" {
+        // (AECC_FEATURE_STYLE is a site container, no display components.)
         CivilObjectKind::Style
     } else {
         CivilObjectKind::Other
