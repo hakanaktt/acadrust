@@ -847,15 +847,17 @@ impl ArchEntityData {
         if self.dxf_name != "AECC_STRUCTURE" {
             return None;
         }
+        let (data, start, end) = self.main_stream()?;
+        if let Some(p) = network::structure_at(data, start, end) {
+            return Some(p);
+        }
+        // debt: a record the field reader rejects is still located through
+        // the cache extents; replace once such a record's layout is known.
         let mut min = [f64::INFINITY; 2];
         let mut max = [f64::NEG_INFINITY; 2];
         for p in self.profiles.iter().flatten() {
             min = [min[0].min(p.x), min[1].min(p.y)];
             max = [max[0].max(p.x), max[1].max(p.y)];
-        }
-        let (data, start, end) = self.main_stream()?;
-        if let Some(p) = network::structure_at(data, start, end) {
-            return Some(p);
         }
         (min[0] <= max[0]).then_some(())?;
         network::structure_position(data, start, end, min, max)

@@ -168,6 +168,8 @@ pub(super) fn pipe_ends(data: &[u8], start: usize, end: usize) -> Option<(Vector
     if let Some((_, a, b)) = pipe_record(data, start, end) {
         return Some((a, b));
     }
+    // debt: a record the field reader rejects falls back to the bit-pattern
+    // search below; replace once such a record's layout is known.
     const LEAD: &[u8] = b"01010101010100";
     let bit = |p: usize| (data[p / 8] >> (7 - p % 8)) & 1;
     let plausible = |v: f64| v.is_finite() && (v == 0.0 || (1e-9..1e9).contains(&v.abs()));
