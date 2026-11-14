@@ -26,6 +26,16 @@
 //!            B has number, [BD number], BL 1
 //! ```
 //!
+//! A pressure pipe (`AECC_PRESSUREPIPE`) has the same head, then:
+//!
+//! ```text
+//! 36 bits, 2 x port, 18 bits, 3BD start, 3BD end, BD bulge
+//! port: 3BD point, 3BD direction, BD, BL -1, 5 x BD, 8 bits
+//! ```
+//!
+//! The ports are the pipe's ends (the start's direction points back along
+//! the pipe); the bulge is 0 for a straight pipe.
+//!
 //! The pipe's fields are the part data the pipe keeps itself, in the order
 //! of its text stream's `AeccNetworkPartDataField` groups. A field's kind is
 //! 101 for a unitless number, 104 for a length and 301 for a text, whose
@@ -109,6 +119,29 @@ pub(super) fn structure_at(data: &[u8], start: usize, end: usize) -> Option<Vect
     let mut bits = Bits::new(data, start, end);
     part_head(&mut bits)?;
     point(&mut bits)
+}
+
+/// A pressure pipe's start, end and bulge (0 for a straight pipe).
+// ponytail: the 36, 18 and 8-bit runs and the ports' numbers are read past
+// (the same in every sample).
+pub(super) fn pressure_pipe(data: &[u8], start: usize, end: usize) -> Option<(Vector3, Vector3, f64)> {
+    let mut bits = Bits::new(data, start, end);
+    part_head(&mut bits)?;
+    bits.skip(36)?;
+    for _ in 0..2 {
+        point(&mut bits)?;
+        point(&mut bits)?;
+        bits.bit_double()?;
+        (bits.bit_long()? == -1).then_some(())?;
+        for _ in 0..5 {
+            bits.bit_double()?;
+        }
+        bits.skip(8)?;
+    }
+    bits.skip(18)?;
+    let (a, b) = (point(&mut bits)?, point(&mut bits)?);
+    let bulge = bits.bit_double().filter(|v| v.is_finite())?;
+    Some((a, b, bulge))
 }
 
 /// A pipe read by its fields: the numbers of its part data fields in record

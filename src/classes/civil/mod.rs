@@ -819,6 +819,16 @@ impl ArchEntityData {
         section::view_frame(data, start, end)
     }
 
+    /// Start, end and bulge of a Civil 3D pressure pipe
+    /// (`AECC_PRESSUREPIPE`); the bulge is 0 for a straight pipe.
+    pub fn pressure_pipe(&self) -> Option<(crate::types::Vector3, crate::types::Vector3, f64)> {
+        if self.dxf_name != "AECC_PRESSUREPIPE" {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        network::pressure_pipe(data, start, end)
+    }
+
     /// Start and end of a Civil 3D pipe (`AECC_PIPE`), as stored.
     pub fn pipe_ends(&self) -> Option<(crate::types::Vector3, crate::types::Vector3)> {
         if self.dxf_name != "AECC_PIPE" {
