@@ -191,8 +191,8 @@ fn outlines(bits: &mut Bits) -> Option<()> {
 /// region:   records (see [`station`]), then its block (see [`region`]),
 ///           which gives the next region's record count, 1 after the last;
 ///           the block's target entries hold as many lists as the region's
-///           last applied subassembly has words before its -1, less 8 (10
-///           of 18 and 7 of 15 in the samples)
+///           last applied subassembly has words, less 8 (10
+///           of 18 in the samples)
 /// ```
 // ponytail: the 4-bit run, the 2-bit runs around the head's GUID (01 before
 // it, 01 or 11 after it), before the 32 (01 or 11) and opening each later
@@ -305,7 +305,7 @@ fn station(bits: &mut Bits, after_first: bool) -> Option<Option<u32>> {
     assembly(bits)?;
     let mut words = None;
     for _ in 0..bits.bit_long()? {
-        words = Some(body(bits, words)?);
+        words = Some(body(bits)?);
     }
     (bits.bit_long()? == 19).then_some(words)
 }
@@ -332,28 +332,27 @@ fn assembly(bits: &mut Bits) -> Option<()> {
     }
 }
 
+/// Words of an applied subassembly before its end.
+const WORDS: u32 = 18;
+
 /// One applied subassembly: `object, BL 8, object`, its shape, its parameter
-/// set, then words until `-1`: each a count of target items, or
-/// `0x8004xxxx` with no items. Returns the number of words. A subassembly
-/// with an empty shape and parameter set writes as many words as the
-/// station's previous one, then 0 where the others have `-1`.
+/// set, then 18 words, each a count of target items or `0x8004xxxx` with no
+/// items, and `BL -1` (0 when the shape and parameter set are empty).
+/// Returns the number of words.
 ///
 /// ```text
 /// shape:  BL n, n x { BL, BL, BD station, BD offset, BD elevation }
 ///         BL m, m x { BL code, B, B, BL k, k x RL point }
 ///         BL a, a x { BL code, B, B, BL k, k x RL link, BL }
 /// ```
-// debt: the word count of an empty subassembly is taken from the station's
-// previous one (19 words in every sample); the field that holds it is not
-// found.
-fn body(bits: &mut Bits, previous: Option<u32>) -> Option<u32> {
+// ponytail: the word list is read as 18 words and its end; every sample
+// (all versions, 39084 lists) has 18. A list ending earlier with -1 is still
+// read.
+fn body(bits: &mut Bits) -> Option<u32> {
     object(bits)?;
     (bits.bit_long()? == 8).then_some(())?;
     object(bits)?;
-    let mut empty = true;
-    let points = bits.bit_long()?;
-    empty &= points == 0;
-    for _ in 0..points {
+    for _ in 0..bits.bit_long()? {
         bits.bit_long()?;
         bits.bit_long()?;
         for _ in 0..3 {
@@ -361,9 +360,7 @@ fn body(bits: &mut Bits, previous: Option<u32>) -> Option<u32> {
         }
     }
     for areas in [false, true] {
-        let n = bits.bit_long()?;
-        empty &= n == 0;
-        for _ in 0..n {
+        for _ in 0..bits.bit_long()? {
             bits.bit_long()?;
             bits.bit()?;
             bits.bit()?;
@@ -375,13 +372,11 @@ fn body(bits: &mut Bits, previous: Option<u32>) -> Option<u32> {
             }
         }
     }
-    empty &= super::parameters::read_with(bits, &mut || Some(String::new()))?.is_empty();
-    let fixed = previous.filter(|_| empty);
+    super::parameters::read_with(bits, &mut || Some(String::new()))?;
     let mut words = 0;
     loop {
-        if fixed == Some(words) {
-            bits.bit_long()?;
-            return fixed;
+        if words == WORDS {
+            return matches!(bits.bit_long()?, -1 | 0).then_some(words);
         }
         let count = bits.bit_long()?;
         match count {
