@@ -1030,8 +1030,9 @@ impl ArchObject {
         if self.dxf_name != "AECC_GRADING_CRITERIA" {
             return None;
         }
+        let handles = self.decode().handles;
         let (data, start, end) = self.main_stream()?;
-        grading::criteria(data, start, end)
+        grading::criteria(data, start, end, &handles)
     }
 
     /// Profile Locking settings kept in a profile's
