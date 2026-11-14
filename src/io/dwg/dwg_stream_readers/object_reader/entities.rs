@@ -6972,9 +6972,9 @@ mod tests {
         ] {
             let mut reader = legacy_cell(dwg, dxf, flags, 0, |w| {
                 w.write_bit_double(2.5);
-                w.write_bit_short(0); // top: invisible
-                w.write_bit_short(1); // right: visible
-                w.write_bit_short(0); // left: invisible
+                w.write_bit_short(1); // top: invisible
+                w.write_bit_short(0); // right: visible
+                w.write_bit_short(1); // left: invisible
             });
             let style = read_legacy_cell(&mut reader, dwg, dxf);
             assert_eq!(style.override_flags, flags);
@@ -7042,7 +7042,7 @@ mod tests {
         ] {
             let mut reader = legacy_cell(dwg, dxf, flags, 0x04, |w| {
                 w.write_bit_double(1.25);
-                w.write_bit_short(0); // right: invisible
+                w.write_bit_short(1); // right: invisible
             });
             let style = read_legacy_cell(&mut reader, dwg, dxf);
             assert_eq!(style.text_height, 1.25);

@@ -6311,9 +6311,9 @@ mod tests {
         style.left_border.invisible = true;
         let mut r = overridden_head(DxfVersion::AC1018, 0x0B, flags, 0);
         r.write_bit_double(2.5);
-        r.write_bit_short(0); // top: invisible
-        r.write_bit_short(1); // right: visible
-        r.write_bit_short(0); // left: invisible
+        r.write_bit_short(1); // top: invisible
+        r.write_bit_short(0); // right: visible
+        r.write_bit_short(1); // left: invisible
         assert_eq!(
             cell_main_stream(DxfVersion::AC1018, &cell),
             r.to_bytes_snapshot()

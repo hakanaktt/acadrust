@@ -221,3 +221,66 @@ fn legacy_weight_and_visibility_convert_to_their_own_r2010_properties() {
         assert!(style.left_border.invisible, "{version:?}");
     }
 }
+
+/// The line indices of the values of `codes` in the first cell of the first
+/// ACAD_TABLE, from its 171 to the next 171.
+fn first_cell_value_lines(lines: &[&str], codes: &[i32]) -> Vec<(i32, usize)> {
+    let start = (0..lines.len() / 2)
+        .position(|i| lines[2 * i].trim() == "0" && lines[2 * i + 1].trim() == "ACAD_TABLE")
+        .unwrap();
+    let mut found = Vec::new();
+    let mut cells = 0;
+    for i in start + 1..lines.len() / 2 {
+        let code = lines[2 * i].trim().parse::<i32>().unwrap();
+        if code == 171 {
+            cells += 1;
+            if cells == 2 {
+                break;
+            }
+        }
+        if cells == 1 && codes.contains(&code) {
+            found.push((code, 2 * i + 1));
+        }
+    }
+    found
+}
+
+#[test]
+fn dxf_cell_edge_visibility_1_means_invisible() {
+    // ODA's cell edge visibility (289, 285, 286, 288 below R2010) is 1 for
+    // an invisible edge: AutoCAD draws such an edge on DEFPOINTS, and ODA
+    // turns it into the R2010+ border invisibility 1. The table and table
+    // style groups 284-289 have the other sense and are not touched here.
+    const RIGHT_VISIBILITY: i32 = 0x8000;
+    for version in [DxfVersion::AC1018, DxfVersion::AC1021] {
+        let mut source = Table::new(Vector3::ZERO, 1, 1);
+        source.set_cell_text(0, 0, "cell");
+        let mut style = legacy_style(TOP_VISIBILITY | RIGHT_VISIBILITY);
+        style.top_border.invisible = true;
+        style.right_border.invisible = false;
+        source.rows[0].cells[0].style = Some(style);
+        let (document, handle) = table_document(version, source);
+
+        let dxf = dxf_text(&document);
+        let lines: Vec<&str> = dxf.lines().collect();
+        let values: Vec<(i32, i32)> = first_cell_value_lines(&lines, &[289, 285])
+            .into_iter()
+            .map(|(code, line)| (code, lines[line].trim().parse().unwrap()))
+            .collect();
+        assert_eq!(values, [(289, 1), (285, 0)], "{version:?}: written");
+
+        // The other way round: top visible, right invisible.
+        let mut edited: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+        for (code, line) in first_cell_value_lines(&lines, &[289, 285]) {
+            edited[line] = if code == 289 { "     0" } else { "     1" }.into();
+        }
+        let read = DxfReader::from_reader(Cursor::new(edited.join("\n").into_bytes()))
+            .unwrap()
+            .read()
+            .unwrap();
+        let style = table(&read, handle).rows[0].cells[0].style.clone().unwrap();
+        assert_eq!(style.override_flags, TOP_VISIBILITY | RIGHT_VISIBILITY);
+        assert!(!style.top_border.invisible, "{version:?}: top read");
+        assert!(style.right_border.invisible, "{version:?}: right read");
+    }
+}
