@@ -576,8 +576,14 @@ pub(crate) fn transform_dimension(e: &mut Dimension, transform: &Transform) {
                 d.ext_line_rotation = ext_line_rotation;
             }
         }
-        Dimension::Radius(d) => d.angle_vertex = transform.apply(d.angle_vertex),
-        Dimension::Diameter(d) => d.angle_vertex = transform.apply(d.angle_vertex),
+        Dimension::Radius(d) => {
+            d.angle_vertex = transform.apply(d.angle_vertex);
+            d.leader_length *= transform.apply_rotation(Vector3::new(1.0, 0.0, 0.0)).length();
+        }
+        Dimension::Diameter(d) => {
+            d.angle_vertex = transform.apply(d.angle_vertex);
+            d.leader_length *= transform.apply_rotation(Vector3::new(1.0, 0.0, 0.0)).length();
+        }
         Dimension::Angular2Ln(d) => {
             d.dimension_arc = transform.apply(d.dimension_arc);
             d.first_point = transform.apply(d.first_point);
@@ -1095,8 +1101,12 @@ pub(crate) fn transform_leader(e: &mut Leader, transform: &Transform) {
     for vertex in &mut e.vertices {
         *vertex = transform.apply(*vertex);
     }
-    e.block_offset = transform.apply(e.block_offset);
-    e.annotation_offset = transform.apply(e.annotation_offset);
+    // Offsets from the last vertex: they turn and scale, never move.
+    e.block_offset = transform.apply_rotation(e.block_offset);
+    e.annotation_offset = transform.apply_rotation(e.annotation_offset);
+    let scale_factor = transform.apply_rotation(Vector3::new(1.0, 0.0, 0.0)).length();
+    e.text_height *= scale_factor;
+    e.text_width *= scale_factor;
     e.horizontal_direction = transform.apply_rotation(e.horizontal_direction).normalize();
     e.normal = transform.apply_rotation(e.normal).normalize();
 }

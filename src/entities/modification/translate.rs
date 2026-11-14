@@ -328,8 +328,6 @@ pub(crate) fn translate_leader(e: &mut Leader, offset: Vector3) {
     for vertex in &mut e.vertices {
         *vertex = *vertex + offset;
     }
-    e.block_offset = e.block_offset + offset;
-    e.annotation_offset = e.annotation_offset + offset;
 }
 
 // ── MultiLeader ──────────────────────────────────────────────────────────────
