@@ -165,6 +165,7 @@ pub use xline::XLine;
 /// Common fields live on [`EntityCommon`]. Implement [`Self::common`] and
 /// [`Self::common_mut`]; the handle, layer, color, line weight, transparency,
 /// and visibility methods forward to those.
+#[whichever::dispatchable]
 pub trait Entity {
     /// Common entity fields.
     fn common(&self) -> &EntityCommon;
@@ -759,6 +760,7 @@ impl Default for EntityCommon {
 /// Enumeration of all entity types for type-safe storage
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[whichever::dispatch(Entity, from = false)]
 pub enum EntityType {
     /// Point entity
     Point(Point),
@@ -781,14 +783,18 @@ pub enum EntityType {
     /// Text entity
     Text(Text),
     /// Multi-line text entity
+    #[dispatch(deref)]
     MText(Box<MText>),
     /// Spline entity
     Spline(Spline),
     /// Helix entity (spline-derived 3D spiral)
+    #[dispatch(deref)]
     Helix(Box<Helix>),
     /// Dimension entity
+    #[dispatch(deref)]
     Dimension(Box<Dimension>),
     /// Hatch entity
+    #[dispatch(deref)]
     Hatch(Box<Hatch>),
     /// Solid entity
     Solid(Solid),
@@ -805,6 +811,7 @@ pub enum EntityType {
     /// XLine entity (construction line, infinite)
     XLine(XLine),
     /// Viewport entity (paper space viewport)
+    #[dispatch(deref)]
     Viewport(Box<Viewport>),
     /// Attribute definition entity
     AttributeDefinition(AttributeDefinition),
@@ -813,6 +820,7 @@ pub enum EntityType {
     /// Leader entity
     Leader(Leader),
     /// MultiLeader entity
+    #[dispatch(deref)]
     MultiLeader(Box<MultiLeader>),
     /// MLine (multiline) entity
     MLine(MLine),
@@ -827,8 +835,10 @@ pub enum EntityType {
     /// Body entity
     Body(Body),
     /// Surface entity (ACAD_SURFACE family: lofted/swept/extruded/etc.)
+    #[dispatch(deref)]
     Surface(Box<Surface>),
     /// Table entity
+    #[dispatch(deref)]
     Table(Box<Table>),
     /// Tolerance entity (geometric tolerancing)
     Tolerance(Tolerance),
@@ -843,14 +853,17 @@ pub enum EntityType {
     /// End-of-sequence marker
     Seqend(Seqend),
     /// OLE2 embedded object
+    #[dispatch(deref)]
     Ole2Frame(Box<Ole2Frame>),
     /// Polygon mesh (3D surface mesh)
     PolygonMesh(PolygonMeshEntity),
     /// Light entity (point / spot / distant light source)
+    #[dispatch(deref)]
     Light(Box<Light>),
     SectionSymbol(SectionSymbol),
     ViewBorder(ViewBorder),
     /// Structured class-based and legacy entities.
+    #[dispatch(deref)]
     Extended(Box<ExtendedEntity>),
     /// Unknown / unsupported entity type (common fields only)
     Unknown(UnknownEntity),
@@ -882,120 +895,22 @@ impl EntityType {
 
     /// Get a reference to the entity trait object
     pub fn as_entity(&self) -> &dyn Entity {
-        match self {
-            EntityType::Point(e) => e,
-            EntityType::Line(e) => e,
-            EntityType::Circle(e) => e,
-            EntityType::Arc(e) => e,
-            EntityType::Ellipse(e) => e,
-            EntityType::Polyline(e) => e,
-            EntityType::Polyline2D(e) => e,
-            EntityType::Polyline3D(e) => e,
-            EntityType::LwPolyline(e) => e,
-            EntityType::Text(e) => e,
-            EntityType::MText(e) => e.as_ref(),
-            EntityType::Spline(e) => e,
-            EntityType::Helix(e) => e.as_ref(),
-            EntityType::Dimension(e) => e.as_ref(),
-            EntityType::Hatch(e) => e.as_ref(),
-            EntityType::Solid(e) => e,
-            EntityType::Face3D(e) => e,
-            EntityType::Insert(e) => e,
-            EntityType::Block(e) => e,
-            EntityType::BlockEnd(e) => e,
-            EntityType::Ray(e) => e,
-            EntityType::XLine(e) => e,
-            EntityType::Viewport(e) => e.as_ref(),
-            EntityType::AttributeDefinition(e) => e,
-            EntityType::AttributeEntity(e) => e,
-            EntityType::Leader(e) => e,
-            EntityType::MultiLeader(e) => e.as_ref(),
-            EntityType::MLine(e) => e,
-            EntityType::Mesh(e) => e,
-            EntityType::RasterImage(e) => e,
-            EntityType::Solid3D(e) => e,
-            EntityType::Region(e) => e,
-            EntityType::Body(e) => e,
-            EntityType::Surface(e) => e.as_ref(),
-            EntityType::Table(e) => e.as_ref(),
-            EntityType::Tolerance(e) => e,
-            EntityType::PolyfaceMesh(e) => e,
-            EntityType::Wipeout(e) => e,
-            EntityType::Shape(e) => e,
-            EntityType::Underlay(e) => e,
-            EntityType::Seqend(e) => e,
-            EntityType::Ole2Frame(e) => e.as_ref(),
-            EntityType::PolygonMesh(e) => e,
-            EntityType::Light(e) => e.as_ref(),
-            EntityType::SectionSymbol(e) => e,
-            EntityType::ViewBorder(e) => e,
-            EntityType::Extended(e) => e.as_ref(),
-            EntityType::Unknown(e) => e,
-        }
+        self
     }
 
     /// Get a mutable reference to the entity trait object
     pub fn as_entity_mut(&mut self) -> &mut dyn Entity {
-        match self {
-            EntityType::Point(e) => e,
-            EntityType::Line(e) => e,
-            EntityType::Circle(e) => e,
-            EntityType::Arc(e) => e,
-            EntityType::Ellipse(e) => e,
-            EntityType::Polyline(e) => e,
-            EntityType::Polyline2D(e) => e,
-            EntityType::Polyline3D(e) => e,
-            EntityType::LwPolyline(e) => e,
-            EntityType::MText(e) => e.as_mut(),
-            EntityType::Text(e) => e,
-            EntityType::Spline(e) => e,
-            EntityType::Helix(e) => e.as_mut(),
-            EntityType::Dimension(e) => e.as_mut(),
-            EntityType::Hatch(e) => e.as_mut(),
-            EntityType::Solid(e) => e,
-            EntityType::Face3D(e) => e,
-            EntityType::Insert(e) => e,
-            EntityType::Block(e) => e,
-            EntityType::BlockEnd(e) => e,
-            EntityType::Ray(e) => e,
-            EntityType::XLine(e) => e,
-            EntityType::Viewport(e) => e.as_mut(),
-            EntityType::AttributeDefinition(e) => e,
-            EntityType::AttributeEntity(e) => e,
-            EntityType::Leader(e) => e,
-            EntityType::MultiLeader(e) => e.as_mut(),
-            EntityType::MLine(e) => e,
-            EntityType::Mesh(e) => e,
-            EntityType::RasterImage(e) => e,
-            EntityType::Solid3D(e) => e,
-            EntityType::Region(e) => e,
-            EntityType::Body(e) => e,
-            EntityType::Surface(e) => e.as_mut(),
-            EntityType::Table(e) => e.as_mut(),
-            EntityType::Tolerance(e) => e,
-            EntityType::PolyfaceMesh(e) => e,
-            EntityType::Wipeout(e) => e,
-            EntityType::Shape(e) => e,
-            EntityType::Underlay(e) => e,
-            EntityType::Seqend(e) => e,
-            EntityType::Ole2Frame(e) => e.as_mut(),
-            EntityType::PolygonMesh(e) => e,
-            EntityType::Light(e) => e.as_mut(),
-            EntityType::SectionSymbol(e) => e,
-            EntityType::ViewBorder(e) => e,
-            EntityType::Extended(e) => e.as_mut(),
-            EntityType::Unknown(e) => e,
-        }
+        self
     }
 
     /// Get a reference to the entity's common data
     pub fn common(&self) -> &EntityCommon {
-        self.as_entity().common()
+        Entity::common(self)
     }
 
     /// Get a mutable reference to the entity's common data
     pub fn common_mut(&mut self) -> &mut EntityCommon {
-        self.as_entity_mut().common_mut()
+        Entity::common_mut(self)
     }
 }
 
