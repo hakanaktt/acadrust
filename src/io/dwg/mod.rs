@@ -91,7 +91,7 @@ pub use dwg_reader::DwgReadOptions;
 pub use dwg_reader::DwgReader;
 pub use dwg_reference_type::DwgReferenceType;
 pub use dwg_version::DwgVersion;
-pub use dwg_writer::DwgWriter;
+pub use dwg_writer::{DwgWriteDiagnostic, DwgWriter};
 pub use mesh_budget::MeshFaceBudget;
 
 pub(crate) fn sab_fingerprint<'a>(

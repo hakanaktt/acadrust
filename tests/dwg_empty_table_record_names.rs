@@ -225,3 +225,67 @@ fn unnamed_records_are_written_unchanged() {
         assert!(!style.is_shape_file, "{version:?}");
     }
 }
+
+fn reported(document: &CadDocument) -> Vec<(String, Handle)> {
+    let mut reported: Vec<(String, Handle)> = DwgWriter::write_diagnostics(document)
+        .into_iter()
+        .map(|diagnostic| {
+            assert_eq!(diagnostic.code, "unnamed-table-record");
+            assert!(
+                diagnostic.message.contains(&diagnostic.table)
+                    && diagnostic
+                        .message
+                        .contains(&format!("{:#X}", diagnostic.handle.value())),
+                "{}",
+                diagnostic.message
+            );
+            (diagnostic.table, diagnostic.handle)
+        })
+        .collect();
+    reported.sort();
+    reported
+}
+
+/// Each unnamed record that is written unchanged is reported with its table
+/// and its handle, and nothing else is.
+#[test]
+fn unnamed_records_are_reported_with_table_and_handle() {
+    for version in VERSIONS {
+        assert!(
+            reported(&CadDocument::with_version(version)).is_empty(),
+            "{version:?}"
+        );
+        let (document, records) = document_with_unnamed_records(version);
+        let mut expected: Vec<(String, Handle)> = records
+            .into_iter()
+            .map(|(table, handle)| (table.to_string(), handle))
+            .collect();
+        expected.sort();
+        assert_eq!(reported(&document), expected, "{version:?}");
+    }
+}
+
+/// The unnamed STYLE behind shape segments is written as a shape file and is
+/// not reported; one that only text segments use is.
+#[test]
+fn unnamed_shape_style_is_not_reported() {
+    for version in VERSIONS {
+        let (document, _) = document_with_segment_style(
+            version,
+            "",
+            LineTypeComplexContent::Shape { shape_number: 131 },
+        );
+        assert!(reported(&document).is_empty(), "{version:?}");
+
+        let (document, handle) = document_with_segment_style(
+            version,
+            "",
+            LineTypeComplexContent::Text { text: "GAS".into() },
+        );
+        assert_eq!(
+            reported(&document),
+            [("STYLE".to_string(), handle)],
+            "{version:?}"
+        );
+    }
+}

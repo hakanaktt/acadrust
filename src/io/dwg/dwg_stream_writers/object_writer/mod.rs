@@ -1028,12 +1028,15 @@ impl<'a> DwgObjectWriter<'a> {
             .iter()
             .map(|s| s.clone())
             .collect();
+        let shape_files = crate::io::dwg::dwg_writer::unnamed_shape_styles(self.document);
         for style in &entries {
-            self.write_text_style(style);
+            self.write_text_style(style, shape_files.contains(&style.handle));
         }
     }
 
-    fn write_text_style(&mut self, style: &crate::tables::TextStyle) {
+    /// `as_shape_file`: an unnamed STYLE that linetype shape segments draw
+    /// from, written with the shape-file flag (#370).
+    fn write_text_style(&mut self, style: &crate::tables::TextStyle, as_shape_file: bool) {
         let mut eed: Vec<(u64, Vec<u8>)> = self
             .annotative_eed_block_for_handle(style.handle, style.annotative)
             .into_iter()
@@ -1067,7 +1070,7 @@ impl<'a> DwgObjectWriter<'a> {
         self.write_xref_dependant_bit_value(style.xref_dependent);
 
         // Shape file flag
-        self.writer.write_bit(style.is_shape_file);
+        self.writer.write_bit(style.is_shape_file || as_shape_file);
         // Vertical flag
         self.writer.write_bit(style.is_vertical);
 

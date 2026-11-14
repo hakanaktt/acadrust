@@ -187,6 +187,105 @@ impl DwgWriter {
         Self::write_to_writer(&mut buffer, document)?;
         Ok(buffer.into_inner())
     }
+
+    /// Records a DWG save of `document` writes as they are although readers
+    /// built on ODA refuse the file over them (#370).
+    ///
+    /// An empty name is legal in DWG only on a shape-file STYLE. The unnamed
+    /// ordinary STYLE that linetype shape segments draw from is written with
+    /// the shape-file flag (#311) and is not listed. Every other record with
+    /// an empty name is written unchanged under its handle and listed here
+    /// with its table; the writer does not rename it, that is the caller's
+    /// choice. A record without a handle is listed with the null handle, as
+    /// the save assigns one. Empty for R12, whose tables are written by the
+    /// R12 writer.
+    pub fn write_diagnostics(document: &CadDocument) -> Vec<DwgWriteDiagnostic> {
+        if document.version == DxfVersion::AC1009 {
+            return Vec::new();
+        }
+        fn unnamed<'a, T: crate::tables::TableEntry + 'a>(
+            table: &'static str,
+            entries: impl Iterator<Item = &'a T>,
+            records: &mut Vec<(&'static str, Handle)>,
+        ) {
+            records.extend(
+                entries
+                    .filter(|entry| entry.name().is_empty())
+                    .map(|entry| (table, entry.handle())),
+            );
+        }
+        let shape_files = unnamed_shape_styles(document);
+        let mut records = Vec::new();
+        unnamed("BLOCK_RECORD", document.block_records.iter(), &mut records);
+        unnamed("LAYER", document.layers.iter(), &mut records);
+        let styles = document
+            .text_styles
+            .iter()
+            .filter(|style| !style.is_shape_file && !shape_files.contains(&style.handle));
+        unnamed("STYLE", styles, &mut records);
+        unnamed("LTYPE", document.line_types.iter(), &mut records);
+        unnamed("VIEW", document.views.iter(), &mut records);
+        unnamed("UCS", document.ucss.iter(), &mut records);
+        unnamed("VPORT", document.vports.iter(), &mut records);
+        unnamed("APPID", document.app_ids.iter(), &mut records);
+        unnamed("DIMSTYLE", document.dim_styles.iter(), &mut records);
+        records
+            .into_iter()
+            .map(|(table, handle)| DwgWriteDiagnostic {
+                code: "unnamed-table-record".to_string(),
+                table: table.to_string(),
+                handle,
+                message: format!(
+                    "{table} {:#X} has an empty name and is written unchanged; \
+                     readers built on ODA refuse a DWG with an unnamed {table} record",
+                    handle.value()
+                ),
+            })
+            .collect()
+    }
+}
+
+/// A record a DWG save writes as it is although other readers may refuse the
+/// file over it. Listed by [`DwgWriter::write_diagnostics`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DwgWriteDiagnostic {
+    /// Stable identifier of the kind, such as `unnamed-table-record`.
+    pub code: String,
+    /// Symbol table of the record, such as `LAYER` or `APPID`.
+    pub table: String,
+    /// Handle of the record.
+    pub handle: Handle,
+    /// Human-readable description.
+    pub message: String,
+}
+
+/// Handles of the unnamed ordinary STYLE records that linetype shape segments
+/// draw from: the shape file behind complex linetypes, stored without its
+/// flag (#311). An empty name is legal in DWG only on a shape-file STYLE, so
+/// the writer writes these with the flag; the document keeps them as they
+/// are (#370).
+pub(crate) fn unnamed_shape_styles(document: &CadDocument) -> std::collections::HashSet<Handle> {
+    use crate::tables::linetype::LineTypeComplexContent;
+    let unnamed: std::collections::HashSet<Handle> = document
+        .text_styles
+        .iter()
+        .filter(|style| !style.is_shape_file && style.name.is_empty() && !style.handle.is_null())
+        .map(|style| style.handle)
+        .collect();
+    if unnamed.is_empty() {
+        return unnamed;
+    }
+    document
+        .line_types
+        .iter()
+        .flat_map(|linetype| linetype.elements.iter())
+        .filter_map(|element| element.complex.as_ref())
+        .filter(|complex| {
+            matches!(complex.content, LineTypeComplexContent::Shape { .. })
+                && unnamed.contains(&complex.style_handle)
+        })
+        .map(|complex| complex.style_handle)
+        .collect()
 }
 
 pub(crate) fn prepare_active_viewport_elevation(document: &mut std::borrow::Cow<'_, CadDocument>) {
