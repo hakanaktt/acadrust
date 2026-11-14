@@ -11,8 +11,9 @@
 //!       BL index
 //! ```
 //!
-//! Some subassemblies write the types with bit 0x20 set (0x1032, 0x1033,
-//! 0x1034); the items are read alike.
+//! The types carry flags in bits 0x10, 0x20 and above the low 16 bits
+//! (0x1032, 0x1022, 0x80001012 in the samples); the items are read alike,
+//! by the type's other bits.
 //!
 //! The texts are in the record's text stream, in item order: the name, its
 //! display name and description (resource ids), an empty string, then for an
@@ -20,9 +21,11 @@
 
 use super::bits::Bits;
 
-const INTEGER: i32 = 0x1012;
-const DOUBLE: i32 = 0x1013;
-const STRING: i32 = 0x1014;
+const INTEGER: i32 = 0x1002;
+const DOUBLE: i32 = 0x1003;
+const STRING: i32 = 0x1004;
+/// The type bits that are not flags.
+const TYPE: i32 = 0xFFCF;
 
 /// Value of one parameter.
 #[derive(Debug, Clone, PartialEq)]
@@ -77,7 +80,7 @@ pub(super) fn read_with(bits: &mut Bits, text: &mut dyn FnMut() -> Option<String
 }
 
 fn item(bits: &mut Bits, text: &mut dyn FnMut() -> Option<String>, kind: i32) -> Option<Parameter> {
-    (bits.bit_long()? & !0x20 == kind).then_some(())?;
+    (bits.bit_long()? & TYPE == kind).then_some(())?;
     let field = bits.bit_long()?;
     let value = match kind {
         INTEGER => Some(ParameterValue::Integer(bits.bit_long()?)),
@@ -139,5 +142,20 @@ mod tests {
         assert_eq!(read[0].index, 3);
         assert_eq!((read[1].kind, read[1].value.clone(), read[1].index), (16, ParameterValue::Double(1.0), 4));
         assert_eq!(read[2].value, ParameterValue::Text("R2019".into()));
+    }
+
+    #[test]
+    fn reads_types_with_flags() {
+        // Integers: BL 2, {0x1022, BL 0, BL 5, B 0, B 0, BL 0},
+        // {0x80001012, BL 0, BL 6, B 0, B 0, BL 1}; no doubles or strings.
+        let b = bits_of(
+            "10 10 011010 0100000010
+             00 00100010 00010000 00000000 00000000 10 0100000101 0 0 10
+             00 00010010 00010000 00000000 10000000 10 0100000110 0 0 0100000001
+             10 10 0000",
+        );
+        let texts: Vec<String> = ["A", "", "", "", "B", "", "", ""].iter().map(|s| s.to_string()).collect();
+        let read = read(&mut Bits::new(&b, 0, b.len() * 8), &mut texts.iter()).unwrap();
+        assert_eq!(read.iter().map(|p| p.value.clone()).collect::<Vec<_>>(), [ParameterValue::Integer(5), ParameterValue::Integer(6)]);
     }
 }
