@@ -12,6 +12,7 @@ mod bits;
 mod cogo;
 mod corridor;
 mod grading;
+mod intersection;
 mod labels;
 mod network;
 mod parameters;
@@ -29,6 +30,7 @@ pub use alignment::{
 };
 pub use cogo::CogoPoint;
 pub use grading::{CriteriaValue, GradingCriteria};
+pub use intersection::IntersectionLayout;
 pub use labels::{parse_format, property, LabelPart, LabelText};
 pub use network::PartField;
 pub use parameters::{Parameter, ParameterValue};
@@ -817,6 +819,16 @@ impl ArchEntityData {
         }
         let (data, start, end) = self.main_stream()?;
         section::view_frame(data, start, end)
+    }
+
+    /// Road stations and region angles of a Civil 3D intersection
+    /// (`AECC_INTERSECTION`).
+    pub fn intersection_layout(&self) -> Option<IntersectionLayout> {
+        if self.dxf_name != "AECC_INTERSECTION" {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        intersection::layout(data, start, end)
     }
 
     /// Start and end of a Civil 3D pipe (`AECC_PIPE`), as stored.
