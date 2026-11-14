@@ -5193,6 +5193,12 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         if !path.flags.is_polyline() {
             self.writer.write_i32(93, path.edges.len() as i32)?;
+        } else if path.edges.is_empty() {
+            // A polyline path with no vertices (a DWG can hold one) still needs
+            // its header, or 97 follows 92 and the DXF is refused.
+            self.writer.write_i16(72, 0)?;
+            self.writer.write_i16(73, 0)?;
+            self.writer.write_i32(93, 0)?;
         }
 
         for edge in &path.edges {
