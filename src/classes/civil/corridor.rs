@@ -209,7 +209,11 @@ fn walk(bits: &mut Bits) -> Option<Vec<Groups>> {
         super::alignment::key(bits)?;
     }
     bits.skip(2)?;
-    let head_guid = (0..16).map(|_| bits.raw_short_byte()).collect::<Option<Vec<u8>>>()?.iter().any(|b| *b != 0);
+    let head_guid = (0..16)
+        .map(|_| bits.raw_short_byte())
+        .collect::<Option<Vec<u8>>>()?
+        .iter()
+        .any(|b| *b != 0);
     bits.skip(2)?;
     (bits.raw_short_byte()? == 82).then_some(())?;
     let styles = usize::try_from(bits.bit_long()?).ok()?;
