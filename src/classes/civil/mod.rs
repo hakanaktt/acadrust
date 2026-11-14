@@ -923,6 +923,16 @@ impl ArchObject {
             .unwrap_or_default()
     }
 
+    /// Numbers of the points a Civil 3D point group (`AECC_POINT_PG`) holds.
+    pub fn point_group_numbers(&self) -> Vec<u32> {
+        if self.dxf_name != "AECC_POINT_PG" {
+            return Vec::new();
+        }
+        self.main_stream()
+            .and_then(|(data, start, end)| cogo::group_numbers(data, start, end))
+            .unwrap_or_default()
+    }
+
     /// Site topology a site container or alignment companion
     /// (`AECC_FEATURE_STYLE`) keeps: edges through nodes with the faces on
     /// their sides.
