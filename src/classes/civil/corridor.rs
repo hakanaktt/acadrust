@@ -168,8 +168,8 @@ fn outlines(bits: &mut Bits) -> Option<()> {
 ///           n x { 2 bits, BL }, BL surfaces,
 ///           surfaces x { GUID, head (see [`surface`]) }, BL 0, outlines
 ///           (see [`outlines`]),
-///           BL 0, 2 bits, RC 32 (two bytes 0x80, 0xA0 after the bits 00),
-///           RC layout, RC baselines (top 5 bits), 1 bit,
+///           BL 0, 2 bits, RC 32, RC layout (older form: RC 32, RC layout,
+///           2 bits, RC layout), RC baselines (top 5 bits), 1 bit,
 ///           6 bits region count, BL record count (both of the first
 ///           baseline's first region)
 /// layout:   0x28: each region block holds a GUID before its start and its
@@ -184,7 +184,7 @@ fn outlines(bits: &mut Bits) -> Option<()> {
 ///           of 18 in the samples)
 /// ```
 // ponytail: the 4-bit run, the 2-bit runs around the head's GUID (01 before
-// it, 01 or 11 after it), before the 32 (only 00 is told apart) and opening each later
+// it, 01 or 11 after it), before the 32 (01 or 11) and opening each later
 // baseline (00, 01, 10 or 11), the low 3 bits of the second RC and the bit
 // after it are skipped by length.
 fn walk(bits: &mut Bits) -> Option<Vec<Groups>> {
@@ -213,14 +213,24 @@ fn walk(bits: &mut Bits) -> Option<Vec<Groups>> {
     (bits.bit_long()? == 0).then_some(())?;
     outlines(bits)?;
     (bits.bit_long()? == 0).then_some(())?;
-    // debt: after the bits 00 (one record of the samples, written by an
-    // older program; the program writes 01 and 32 once it rebuilds it) the
-    // 32 is two bytes, 0x80 and 0xA0; their meaning is not found.
-    match bits.bits_value(2)? {
-        0 => (bits.raw_short_byte()? == 0x80 && bits.raw_short_byte()? == 0xA0).then_some(())?,
-        _ => (bits.raw_short_byte()? == 32).then_some(())?,
+    // The bits before the 32 are 01 or 11. Bits 00 are the top of the 32 in
+    // the form one record of the samples has, written by an older program
+    // (it writes the other form once it rebuilds the record): `RC 32,
+    // RC layout, 2 bits, RC layout`.
+    let at = bits.pos;
+    let older = bits.bits_value(2)? == 0;
+    let mut layout = None;
+    if older {
+        bits.pos = at;
+        (bits.raw_short_byte()? == 32).then_some(())?;
+        layout = Some(bits.raw_short_byte()?);
+        bits.skip(2)?;
+    } else {
+        (bits.raw_short_byte()? == 32).then_some(())?;
     }
-    let guids = match bits.raw_short_byte()? {
+    let byte = bits.raw_short_byte()?;
+    layout.map_or(true, |first| first == byte).then_some(())?;
+    let guids = match byte {
         0x28 => true,
         0x48 => false,
         _ => return None,
