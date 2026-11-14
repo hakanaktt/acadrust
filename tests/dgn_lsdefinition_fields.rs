@@ -1,10 +1,15 @@
-//! A DGN line-style definition whose fields after the UID do not fit the order
-//! they are read in.
+//! The fields of a DGN line-style definition (`AcDbLSDefinition`) in the order
+//! the file stores them (#372).
 //!
-//! A drawing was found whose `AcDbLSDefinition` keeps 11 bits after the UID:
-//! `11011011011`. Read as B, BD, BD, BL and four B, the record ends inside the
-//! BL: the read failed, the definition was kept as a raw record, and the
-//! drawing opened in recovery.
+//! After the version and the style number come the unit scale, the units type,
+//! the continuous flag, the unit definition and four more flags; the 16-byte
+//! component UID is last. The name is in the string stream from R2007 on, and
+//! a TV between the flags and the UID in R2004 and older. The UID was read
+//! right after the style number: it took the unit fields and the start of the
+//! real UID, and the fields were read from its end.
+//!
+//! Bits that do not fit that order are kept as read in `undecoded_fields` and
+//! written back unchanged.
 
 use std::io::Cursor;
 
@@ -14,7 +19,6 @@ use acadrust::io::dwg::dwg_reference_type::DwgReferenceType;
 use acadrust::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader;
 use acadrust::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
 use acadrust::io::dwg::dwg_stream_readers::object_reader::dgn_linestyle::read_dgn_line_style_data;
-use acadrust::io::dwg::dwg_stream_writers::bit_writer::DwgBitWriter;
 use acadrust::io::dwg::dwg_stream_writers::DwgMergedWriter;
 use acadrust::io::dwg::DwgVersion;
 use acadrust::objects::{DgnLineStyleData, DgnLineStyleObject, Dictionary, ObjectType};
@@ -25,58 +29,93 @@ const UID: [u8; 16] = [
     0x5a, 0x31, 0x0c, 0x77, 0x9e, 0x42, 0x4b, 0x18, 0x8d, 0x06, 0x63, 0xf1, 0x27, 0xb4, 0x90, 0x3e,
 ];
 const NAME: &str = "{ Synthetic Line }";
-/// The bits found after the UID.
-const FOUND: &str = "11011011011";
+const ROOT: u64 = 0x2a;
 
-const VERSIONS: [DxfVersion; 4] = [
+const VERSIONS: [DxfVersion; 5] = [
+    DxfVersion::AC1015,
     DxfVersion::AC1018,
     DxfVersion::AC1024,
     DxfVersion::AC1027,
     DxfVersion::AC1032,
 ];
 
-fn write_found(main: &mut DwgBitWriter) {
-    for bit in FOUND.chars() {
-        main.write_bit(bit == '1');
+/// The definition the records below hold.
+fn expected(root_component: Handle) -> DgnLineStyleData {
+    DgnLineStyleData::Definition {
+        description: NAME.to_string(),
+        version: 1,
+        style_number: 7,
+        component_uid: UID,
+        is_continuous: true,
+        unit_definition: 1.0,
+        unit_scale: 0.25,
+        units_type: 3,
+        is_element: false,
+        is_physical: true,
+        is_scale_independent: false,
+        is_snappable: true,
+        root_component,
+        undecoded_fields: None,
+        properties: Vec::new(),
     }
 }
 
-/// The written order: B, BD, BD, BL, four B.
-fn write_fields_in_order(main: &mut DwgBitWriter) {
-    main.write_bit(true);
-    main.write_bit_double(2.5);
-    main.write_bit_double(1.0);
-    main.write_bit_long(3);
-    main.write_bit(false);
-    main.write_bit(true);
-    main.write_bit(false);
-    main.write_bit(true);
+/// The definition's fields after the style number, as the file stores them.
+fn file_fields(writer: &mut DwgMergedWriter) {
+    writer.write_bit_double(0.25); // unit scale
+    writer.write_bit_long(3); // units type
+    writer.write_bit(true); // is continuous
+    writer.write_bit_double(1.0); // unit definition
+    writer.write_bit(false); // is element
+    writer.write_bit(true); // is physical
+    writer.write_bit(false); // is scale independent
+    writer.write_bit(true); // is snappable
+    writer.write_variable_text(NAME); // a TV here in R2004 and older
+    writer.write_bytes(&UID);
 }
 
-/// A definition record body: name, version 1, style 0, the UID, then `tail`,
-/// with a null root component in the handle stream.
-fn definition_bits(tail: fn(&mut DwgBitWriter), dxf_version: DxfVersion) -> (DwgMergedReader, i64) {
+/// The fields as the file stores them, then three bits no known layout has.
+fn file_fields_and_more(writer: &mut DwgMergedWriter) {
+    file_fields(writer);
+    writer.write_bit(true);
+    writer.write_bit(false);
+    writer.write_bit(true);
+}
+
+/// The fields as the file stores them, with the record ending inside the UID.
+fn short_uid(writer: &mut DwgMergedWriter) {
+    writer.write_bit_double(0.25);
+    writer.write_bit_long(3);
+    writer.write_bit(true);
+    writer.write_bit_double(1.0);
+    for _ in 0..4 {
+        writer.write_bit(false);
+    }
+    writer.write_variable_text(NAME);
+    writer.write_bytes(&UID[..10]);
+}
+
+/// The body of a definition record: version 1, style 7, then `fields`, with
+/// the root component in the handle stream. Returns a reader over it and the
+/// bit where the main data ends.
+fn definition_bits(
+    fields: fn(&mut DwgMergedWriter),
+    dxf_version: DxfVersion,
+) -> (DwgMergedReader, i64) {
     let version = DwgVersion::from_dxf_version(dxf_version).unwrap();
-    let mut main = DwgBitWriter::new(version, dxf_version);
-    let mut text = DwgBitWriter::new(version, dxf_version);
-    let mut handles = DwgBitWriter::new(version, dxf_version);
+    let mut writer = DwgMergedWriter::new(version, dxf_version);
+    writer.write_bit_long(1);
+    writer.write_bit_long(7);
+    fields(&mut writer);
+    writer.write_handle(DwgReferenceType::HardPointer, ROOT);
+    let end = writer.main().position_in_bits();
     let split_text = version.r2007_plus();
-    if split_text {
-        text.write_variable_text(NAME);
-    } else {
-        main.write_variable_text(NAME);
-    }
-    main.write_bit_long(1);
-    main.write_bit_long(0);
-    main.write_bytes(&UID);
-    tail(&mut main);
-    handles.write_handle(DwgReferenceType::HardPointer, 0);
-    let end = main.position_in_bits();
     let mut reader = DwgMergedReader::from_readers(
-        DwgBitReader::new(main.into_bytes(), version, dxf_version),
-        split_text.then(|| DwgBitReader::new(text.into_bytes(), version, dxf_version)),
+        DwgBitReader::new(writer.main().to_bytes_snapshot(), version, dxf_version),
+        split_text
+            .then(|| DwgBitReader::new(writer.text().to_bytes_snapshot(), version, dxf_version)),
         Some(DwgBitReader::new(
-            handles.into_bytes(),
+            writer.handle_writer().to_bytes_snapshot(),
             version,
             dxf_version,
         )),
@@ -87,8 +126,12 @@ fn definition_bits(tail: fn(&mut DwgBitWriter), dxf_version: DxfVersion) -> (Dwg
 }
 
 /// A drawing holding one line and one LSDEFINITION stored as the raw record
-/// `tail` gives, as a DWG read from a file keeps a record it could not decode.
-fn drawing_with_definition(version: DxfVersion, tail: fn(&mut DwgBitWriter)) -> (Vec<u8>, Handle) {
+/// `fields` gives, as a DWG read from a file keeps a record it could not
+/// decode. Returns the drawing and the definition's handle.
+fn drawing_with_definition(
+    version: DxfVersion,
+    fields: fn(&mut DwgMergedWriter),
+) -> (Vec<u8>, Handle) {
     let mut document = CadDocument::with_version(version);
     document.dwg_source_version = Some(version);
     document.classes.clear();
@@ -127,12 +170,11 @@ fn drawing_with_definition(version: DxfVersion, tail: fn(&mut DwgBitWriter)) -> 
     if version >= DxfVersion::AC1027 {
         writer.write_bit(false);
     }
-    writer.write_variable_text(NAME);
     writer.write_bit_long(1);
-    writer.write_bit_long(0);
-    writer.write_bytes(&UID);
-    tail(writer.main_mut());
-    writer.write_handle(DwgReferenceType::HardPointer, 0);
+    writer.write_bit_long(7);
+    fields(&mut writer);
+    // The root component; nothing here needs it to resolve.
+    writer.write_handle(DwgReferenceType::HardPointer, ROOT);
     let raw = writer.merge();
     let handle_bits = raw.len() as i64 * 8 - writer.handle_start_bits();
     document.objects.insert(
@@ -170,94 +212,136 @@ fn read_definition(bytes: Vec<u8>, handle: Handle, version: DxfVersion) -> DgnLi
     }
 }
 
+/// The bits `fields` writes after the style number, as `undecoded_fields` keeps them.
+fn bits_after_style_number(fields: fn(&mut DwgMergedWriter), dxf_version: DxfVersion) -> String {
+    let version = DwgVersion::from_dxf_version(dxf_version).unwrap();
+    let mut writer = DwgMergedWriter::new(version, dxf_version);
+    fields(&mut writer);
+    let count = writer.main().position_in_bits() as usize;
+    let bytes = writer.main().to_bytes_snapshot();
+    (0..count)
+        .map(|bit| {
+            if bytes[bit / 8] & (0x80 >> (bit % 8)) != 0 {
+                '1'
+            } else {
+                '0'
+            }
+        })
+        .collect()
+}
+
+fn payload_bits(data: &DgnLineStyleData) -> Option<String> {
+    let DgnLineStyleData::Definition {
+        undecoded_fields, ..
+    } = data
+    else {
+        panic!("not a definition: {data:?}");
+    };
+    undecoded_fields.as_ref().map(|payload| {
+        let bytes = payload.data();
+        (0..payload.bit_count as usize)
+            .map(|bit| {
+                if bytes[bit / 8] & (0x80 >> (bit % 8)) != 0 {
+                    '1'
+                } else {
+                    '0'
+                }
+            })
+            .collect()
+    })
+}
+
 #[test]
-fn a_definition_with_the_found_bits_reads_whole() {
+fn a_definition_reads_in_the_file_layout() {
     for dxf_version in VERSIONS {
-        let (mut reader, end) = definition_bits(write_found, dxf_version);
+        let (mut reader, end) = definition_bits(file_fields, dxf_version);
         let data = read_dgn_line_style_data(&mut reader, "LSDEFINITION").unwrap();
         reader
             .check_error()
             .unwrap_or_else(|error| panic!("{dxf_version:?}: {error}"));
+        assert_eq!(data, expected(Handle::from(ROOT)), "{dxf_version:?}");
         assert_eq!(reader.position_in_bits(), end, "{dxf_version:?}");
-        let DgnLineStyleData::Definition {
-            description,
-            version,
-            style_number,
-            component_uid,
-            ..
-        } = data
-        else {
-            panic!("{dxf_version:?}: not a definition: {data:?}");
-        };
-        assert_eq!(description, NAME, "{dxf_version:?}");
-        assert_eq!((version, style_number), (1, 0), "{dxf_version:?}");
-        assert_eq!(component_uid, UID, "{dxf_version:?}");
     }
 }
 
 #[test]
-fn a_drawing_with_the_found_bits_opens_without_recovery() {
+fn a_drawing_with_a_definition_opens_with_its_fields() {
     for version in VERSIONS {
-        let (bytes, handle) = drawing_with_definition(version, write_found);
-        let data = read_definition(bytes, handle, version);
-        let DgnLineStyleData::Definition { description, .. } = data else {
-            panic!("{version:?}: not a definition: {data:?}");
-        };
-        assert_eq!(description, NAME, "{version:?}");
-    }
-}
-
-#[test]
-fn the_found_bits_survive_dwg_save() {
-    for version in VERSIONS {
-        let (bytes, handle) = drawing_with_definition(version, write_found);
-        let outcome = DwgReader::from_stream(Cursor::new(bytes))
-            .read_with_stats()
-            .unwrap();
-        let first = match outcome.document.objects.get(&handle) {
-            Some(ObjectType::DgnLineStyle(DgnLineStyleObject { data, .. })) => data.clone(),
-            other => panic!("{version:?}: no line-style definition, read {other:?}"),
-        };
-        let saved = DwgWriter::write_to_vec(&outcome.document).unwrap();
+        let (bytes, handle) = drawing_with_definition(version, file_fields);
         assert_eq!(
-            read_definition(saved, handle, version),
-            first,
+            read_definition(bytes, handle, version),
+            expected(Handle::from(ROOT)),
             "{version:?}"
         );
     }
 }
 
 #[test]
-fn fields_in_the_written_order_read_as_before() {
-    for dxf_version in VERSIONS {
-        let (mut reader, end) = definition_bits(write_fields_in_order, dxf_version);
-        let data = read_dgn_line_style_data(&mut reader, "LSDEFINITION").unwrap();
-        reader.check_error().unwrap();
-        assert_eq!(reader.position_in_bits(), end, "{dxf_version:?}");
-        let DgnLineStyleData::Definition {
-            is_continuous,
-            unit_definition,
-            unit_scale,
-            units_type,
-            is_element,
-            is_physical,
-            is_scale_independent,
-            is_snappable,
-            ..
-        } = data
-        else {
-            panic!("{dxf_version:?}: not a definition: {data:?}");
-        };
-        assert!(is_continuous, "{dxf_version:?}");
+fn a_definition_survives_dwg_save_in_the_file_layout() {
+    for version in VERSIONS {
+        let (bytes, handle) = drawing_with_definition(version, file_fields);
+        let outcome = DwgReader::from_stream(Cursor::new(bytes))
+            .read_with_stats()
+            .unwrap();
+        let saved = DwgWriter::write_to_vec(&outcome.document).unwrap();
         assert_eq!(
-            (unit_definition, unit_scale, units_type),
-            (2.5, 1.0, 3),
-            "{dxf_version:?}"
+            read_definition(saved, handle, version),
+            expected(Handle::from(ROOT)),
+            "{version:?}"
         );
-        assert_eq!(
-            (is_element, is_physical, is_scale_independent, is_snappable),
-            (false, true, false, true),
-            "{dxf_version:?}"
-        );
+    }
+}
+
+#[test]
+fn bits_that_do_not_fit_the_file_layout_are_kept_as_read() {
+    for fields in [file_fields_and_more, short_uid] {
+        for dxf_version in VERSIONS {
+            let (mut reader, end) = definition_bits(fields, dxf_version);
+            let data = read_dgn_line_style_data(&mut reader, "LSDEFINITION").unwrap();
+            reader
+                .check_error()
+                .unwrap_or_else(|error| panic!("{dxf_version:?}: {error}"));
+            assert_eq!(reader.position_in_bits(), end, "{dxf_version:?}");
+            assert_eq!(
+                payload_bits(&data),
+                Some(bits_after_style_number(fields, dxf_version)),
+                "{dxf_version:?}"
+            );
+            let DgnLineStyleData::Definition {
+                version,
+                style_number,
+                component_uid,
+                root_component,
+                ..
+            } = data
+            else {
+                unreachable!();
+            };
+            assert_eq!((version, style_number), (1, 7), "{dxf_version:?}");
+            assert_eq!(component_uid, [0; 16], "{dxf_version:?}");
+            assert_eq!(root_component, Handle::from(ROOT), "{dxf_version:?}");
+        }
+    }
+}
+
+#[test]
+fn bits_that_do_not_fit_survive_dwg_save() {
+    for fields in [file_fields_and_more, short_uid] {
+        for version in VERSIONS {
+            let (bytes, handle) = drawing_with_definition(version, fields);
+            let first = read_definition(bytes.clone(), handle, version);
+            assert_eq!(
+                payload_bits(&first),
+                Some(bits_after_style_number(fields, version)),
+                "{version:?}"
+            );
+            let document = DwgReader::from_stream(Cursor::new(bytes)).read().unwrap();
+            let saved = DwgWriter::write_to_vec(&document).unwrap();
+            assert_eq!(
+                read_definition(saved, handle, version),
+                first,
+                "{version:?}"
+            );
+        }
     }
 }

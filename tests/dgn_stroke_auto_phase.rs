@@ -62,13 +62,14 @@ fn autocad_bits(
     let mut main = DwgBitWriter::new(version, dxf_version);
     let mut text = DwgBitWriter::new(version, dxf_version);
     let split_text = version.r2007_plus();
+    // The name follows the component type in R2004 and older (#372).
+    main.write_bit_long(1); // version
+    main.write_bit_long(3); // stroke pattern component
     if split_text {
         text.write_variable_text("Leader Line - Stroke");
     } else {
         main.write_variable_text("Leader Line - Stroke");
     }
-    main.write_bit_long(1); // version
-    main.write_bit_long(3); // stroke pattern component
     main.write_bytes(&UID);
     main.write_bit_double(1.0); // scale
     main.write_bytes(&[1]); // property flags
