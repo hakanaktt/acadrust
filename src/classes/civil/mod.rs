@@ -16,6 +16,7 @@ mod network;
 mod parameters;
 mod profile;
 mod sample_lines;
+mod section;
 mod style;
 mod subassembly;
 mod tin;
@@ -31,6 +32,7 @@ pub use network::PartField;
 pub use parameters::{Parameter, ParameterValue};
 pub use profile::{CurveMinimumK, ProfileCriteria, ProfileLocking, ProfilePiece, ProfileViewFrame, Pvi};
 pub use sample_lines::SampleLines;
+pub use section::{SectionGeometry, SectionViewFrame};
 pub use style::{DisplayComponent, Marker, ViewAxes, ViewAxis};
 pub use subassembly::{AssemblyLayout, Attachment, SubassemblyShape};
 pub use topology::{Topology, TopologyVertex};
@@ -793,6 +795,26 @@ impl ArchEntityData {
         }
         let (data, start, end) = self.main_stream()?;
         cogo::entity_number(data, start, end)
+    }
+
+    /// Points of a Civil 3D section (`AECC_SECTION`, `AECC_SECTION_CORRIDOR`)
+    /// in its (offset, elevation) frame, with the point pairs it links.
+    pub fn section_geometry(&self) -> Option<SectionGeometry> {
+        if !matches!(self.dxf_name.as_str(), "AECC_SECTION" | "AECC_SECTION_CORRIDOR") {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        section::geometry(data, start, end)
+    }
+
+    /// Frame of a Civil 3D section view (`AECC_GRAPH_SECTION_VIEW`): where it
+    /// draws offsets and elevations.
+    pub fn section_view_frame(&self) -> Option<SectionViewFrame> {
+        if self.dxf_name != "AECC_GRAPH_SECTION_VIEW" {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        section::view_frame(data, start, end)
     }
 
     /// Start and end of a Civil 3D pipe (`AECC_PIPE`), as stored.
