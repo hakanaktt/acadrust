@@ -11849,8 +11849,14 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     fn write_table_cells(&mut self, table: &table::Table) -> Result<()> {
         let merged_ranges = table.canonical_merged_ranges();
         let index = table::MergedCellIndex::new(table, &merged_ranges);
+        // Below R2010 a cell follows the legacy layout of the DWG cell.
+        let legacy = self.dxf_version < DxfVersion::AC1024;
         for (row_index, row) in table.rows.iter().enumerate() {
             for (column_index, cell) in row.cells.iter().enumerate() {
+                let legacy_cell = legacy
+                    .then(|| table.legacy_layout_cell(row_index, column_index))
+                    .flatten();
+                let cell = legacy_cell.as_deref().unwrap_or(cell);
                 let merged_range = index
                     .first(row_index, column_index)
                     .and_then(|i| merged_ranges.get(i));
@@ -11893,11 +11899,16 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_i16(176, merge_height as i16)?;
         // AutoCAD takes a cell override only when its legacy bit is set in the
         // cell override flag (91, 177 before R2007). Legacy bits read from DXF
-        // are in `cell.flag` already.
-        let overrides = cell
-            .style
-            .as_ref()
-            .map_or(0, |s| s.property_override_bits());
+        // are in `cell.flag` already. Below R2010 the cell is in the legacy
+        // layout and its style holds the legacy word.
+        let legacy = self.dxf_version < DxfVersion::AC1024;
+        let overrides = cell.style.as_ref().map_or(0, |s| {
+            if legacy {
+                s.legacy_override_flags()
+            } else {
+                s.property_override_bits()
+            }
+        });
         if self.dxf_version >= DxfVersion::AC1021 {
             self.writer.write_i32(91, cell.flag | overrides)?;
             self.writer.write_i32(92, cell.state.bits() as i32)?;
@@ -11961,10 +11972,15 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             }
         }
 
-        // Cell style: only the overridden properties when the cell says which.
-        // A style with no stored override bits writes everything (below);
-        // the property-flag bits then only add to the cell flag above.
-        if let Some(style) = cell.style.as_ref().filter(|s| s.override_flags != 0) {
+        // Cell style: only the overridden properties when the cell says which
+        // (always below R2010). A style with no stored override bits writes
+        // everything (below); the property-flag bits then only add to the
+        // cell flag above.
+        if let Some(style) = cell
+            .style
+            .as_ref()
+            .filter(|s| legacy || s.override_flags != 0)
+        {
             let f = style.legacy_override_flags();
             if f & 0x01 != 0 {
                 self.writer.write_i16(170, style.alignment as i16)?;

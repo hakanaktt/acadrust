@@ -3743,20 +3743,16 @@ impl<'a> DwgObjectWriter<'a> {
         );
     }
 
-    /// Pre-R2010 flat-format cell.
+    /// Pre-R2010 flat-format cell, in the legacy layout
+    /// ([`TableCell::legacy_layout`]).
     fn write_table_cell_data(&mut self, cell: &TableCell) {
+        let cell = cell.legacy_layout();
+        let cell: &TableCell = &cell;
+        // 1 (text) or 2 (block): an empty text cell is a text cell with an
+        // empty value, as ODA writes it; ODA reads no value handle for a type
+        // of 0 and loses its place in the handle stream.
         let cell_type = match cell.cell_type {
             CellType::Block => 2,
-            // Below R2007 an empty text cell is still a text cell with an empty
-            // string, as AutoCAD writes it: a type of 0 is not a cell type there and
-            // the reader loses its place after the first one.
-            CellType::Text
-                if cell.contents.is_empty()
-                    && cell.value_handle.is_none()
-                    && self.version.r2007_plus() =>
-            {
-                0
-            }
             CellType::Text => 1,
         };
         self.writer.write_bit_short(cell_type);
@@ -3778,14 +3774,10 @@ impl<'a> DwgObjectWriter<'a> {
         self.writer.write_bit_long(cell.merge_width);
         self.writer.write_bit_long(cell.merge_height);
         self.writer.write_bit_double(cell.rotation);
-        // The reader takes the text from the cell only when this handle is 0, so
-        // the same value has to decide whether the text is written (a cell whose
-        // first content holds a block handle has a handle and no text here).
-        let value_handle = cell
-            .value_handle
-            .or_else(|| cell.contents.first().and_then(|c| c.block_handle))
-            .map(|h| h.value())
-            .unwrap_or(0);
+        // The block record or the FIELD. The reader takes the text from the
+        // cell only when this handle is 0, so the same value decides whether
+        // the text is written.
+        let value_handle = cell.value_handle.map(|h| h.value()).unwrap_or(0);
         self.writer
             .write_handle(DwgReferenceType::HardPointer, value_handle);
         if cell_type == 1 {
@@ -4097,9 +4089,11 @@ impl<'a> DwgObjectWriter<'a> {
                 DwgReferenceType::HardPointer,
                 e.table_style_handle.map(|h| h.value()).unwrap_or(0),
             );
-            for row in &e.rows {
-                for cell in &row.cells {
-                    self.write_table_cell_data(cell);
+            for (r, row) in e.rows.iter().enumerate() {
+                for c in 0..row.cells.len() {
+                    if let Some(cell) = e.legacy_layout_cell(r, c) {
+                        self.write_table_cell_data(&cell);
+                    }
                 }
             }
             self.writer.write_bit(e.legacy_style_override.is_some());
@@ -6231,7 +6225,7 @@ mod tests {
     fn the_text_is_written_only_when_the_value_handle_is_zero() {
         let mut cell = TableCell::new();
         cell.contents.push(CellContent::text("not written"));
-        cell.contents[0].block_handle = Some(Handle::new(0x55));
+        cell.value_handle = Some(Handle::new(0x55));
         let mut r = reference(DxfVersion::AC1018);
         cell_head(&mut r, 1);
         r.write_bit(false); // no style, and no text: the reader sees handle 0x55
@@ -6244,6 +6238,7 @@ mod tests {
         cell.contents.push(CellContent::text("x"));
         let mut style = CellStyle::new();
         style.override_flags = 0x08; // content color
+        style.legacy_override_bits = true;
         style.content_color = Color::Index(5);
         cell.style = Some(style);
         let mut r = reference(DxfVersion::AC1015);
@@ -6254,6 +6249,48 @@ mod tests {
         r.write_byte(0); // virtual edge
         r.write_cm_true_color(&Color::Index(5));
         assert_eq!(cell_main_stream(DxfVersion::AC1015, &cell), r.to_bytes_snapshot());
+    }
+
+    #[test]
+    fn an_empty_text_cell_is_a_text_cell_from_r2007_on() {
+        // ODA's specification knows cell types 1 (text) and 2 (block) only;
+        // ODA reads no value handle for a type of 0.
+        let doc = CadDocument::with_version(DxfVersion::AC1021);
+        let mut r = DwgObjectWriter::new(&doc).unwrap();
+        r.writer.write_bit_short(1); // text cell
+        r.writer.write_byte(0); // edge flags
+        r.writer.write_bit(false); // merged
+        r.writer.write_bit(false); // auto fit
+        r.writer.write_bit_long(1); // merge width
+        r.writer.write_bit_long(1); // merge height
+        r.writer.write_bit_double(0.0); // rotation
+        r.writer.write_bit(false); // no style
+        r.writer.write_bit_long(0); // flag
+        r.write_table_cad_value(&crate::entities::table::CellValue::new());
+        assert_eq!(
+            cell_main_stream(DxfVersion::AC1021, &TableCell::new()),
+            r.writer.main().to_bytes_snapshot()
+        );
+    }
+
+    #[test]
+    fn a_block_content_makes_a_block_cell() {
+        // The cell type says text; the content is a block, so the cell is a
+        // block cell (type 2) with its scale and no attributes.
+        let mut cell = TableCell::new();
+        cell.contents.push(CellContent::block(Handle::new(0x55)));
+        for version in [DxfVersion::AC1015, DxfVersion::AC1018] {
+            let mut r = reference(version);
+            cell_head(&mut r, 2);
+            r.write_bit_double(1.0); // block scale
+            r.write_bit(false); // no attributes
+            r.write_bit(false); // no style
+            assert_eq!(
+                cell_main_stream(version, &cell),
+                r.to_bytes_snapshot(),
+                "{version:?}"
+            );
+        }
     }
 
     // ── legacy TABLE cell overrides below R2010 ──

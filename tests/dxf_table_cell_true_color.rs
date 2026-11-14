@@ -3,6 +3,7 @@
 
 use std::io::Cursor;
 
+use acadrust::entities::table::{BorderPropertyFlags, CellEdgeFlags};
 use acadrust::entities::{CellStyle, CellStylePropertyFlags as P, EntityType, Table, TableCell};
 use acadrust::types::{Color, DxfVersion, Vector3};
 use acadrust::{CadDocument, DxfReader, DxfWriter};
@@ -21,6 +22,8 @@ fn cell_true_colors_survive_dxf() {
         style.background_color = background;
         style.fill_enabled = true;
         style.top_border.color = border;
+        style.applied_border_edges = CellEdgeFlags::TOP;
+        style.top_border.override_flags = BorderPropertyFlags::COLOR;
         style.property_flags = P::CONTENT_COLOR | P::BACKGROUND_COLOR;
         cell.style = Some(style);
         table.rows[1].cells[0] = cell;
