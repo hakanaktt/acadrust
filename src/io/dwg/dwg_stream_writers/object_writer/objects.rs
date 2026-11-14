@@ -3267,3 +3267,81 @@ mod dgn_line_style_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod proxy_object_layout_tests {
+    //! ACAD_PROXY_OBJECT fields before the data, as for the proxy entity
+    //! (ODA specification 20.4.90): R13 and R14 hold the type (DXF 90, 499)
+    //! and the class number, R2000 the class number, the data format and the
+    //! origin bit.
+
+    use super::*;
+    use crate::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
+    use crate::io::dwg::dwg_stream_readers::object_reader::DwgObjectReader;
+    use crate::objects::{ProxyObject, ProxyPayload};
+    use crate::CadDocument;
+
+    const CLASS: i32 = 511;
+    const DATA: [u8; 3] = [0x3C, 0xC3, 0x99];
+
+    /// Writes a proxy object in `version` and returns a reader after its
+    /// common object data.
+    fn written_body(version: DxfVersion) -> DwgMergedReader {
+        let doc = CadDocument::with_version(version);
+        let object = ProxyObject {
+            handle: Handle::new(0x7000),
+            owner: doc.header.named_objects_dict_handle,
+            proxy_id: 499,
+            class_id: CLASS,
+            version: 0x15,
+            dwg_version: 0x15,
+            payload: ProxyPayload::from_bytes(&DATA),
+            ..Default::default()
+        };
+        let mut writer = DwgObjectWriter::new(&doc).unwrap();
+        writer.write_proxy_object(&object);
+        let offset = writer.handle_map()[0].1 as usize;
+        let reader =
+            DwgObjectReader::new(writer.output().to_vec(), version, Default::default()).unwrap();
+        let (kind, mut record) = reader.read_record_at(offset).unwrap();
+        assert_eq!(kind, common::OBJ_PROXY_OBJECT, "{version:?}");
+        reader.read_common_non_entity_data(&mut record, kind);
+        record
+    }
+
+    fn assert_data(record: &mut DwgMergedReader, version: DxfVersion) {
+        let mut data = [0u8; 3];
+        for bit in 0..24 {
+            if record.read_bit() {
+                data[bit / 8] |= 0x80 >> (bit % 8);
+            }
+        }
+        record.check_error().unwrap();
+        assert_eq!(data, DATA, "{version:?}: data");
+        assert_eq!(
+            record.main_remaining_bits(),
+            0,
+            "{version:?}: bits left over"
+        );
+    }
+
+    #[test]
+    fn r13_and_r14_proxy_object_holds_its_type_and_class_before_the_data() {
+        for version in [DxfVersion::AC1012, DxfVersion::AC1014] {
+            let mut record = written_body(version);
+            assert_eq!(record.read_bit_long(), 499, "{version:?}: DXF 90");
+            assert_eq!(record.read_bit_long(), CLASS, "{version:?}: class number");
+            assert_data(&mut record, version);
+        }
+    }
+
+    #[test]
+    fn r2000_proxy_object_holds_its_class_format_and_origin_before_the_data() {
+        let version = DxfVersion::AC1015;
+        let mut record = written_body(version);
+        assert_eq!(record.read_bit_long(), CLASS, "class number");
+        assert_eq!(record.read_bit_long(), 0x15, "data format");
+        assert!(!record.read_bit(), "origin");
+        assert_data(&mut record, version);
+    }
+}
