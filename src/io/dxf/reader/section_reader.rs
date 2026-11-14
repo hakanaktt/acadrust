@@ -8876,7 +8876,14 @@ impl<'a> SectionReader<'a> {
                 },
                 331 => {
                     if let DataObjectData::BreakData(value) = &mut obj.data {
-                        value.dimension_reference = parse_dxf_handle(&pair.value_string);
+                        let handle = parse_dxf_handle(&pair.value_string);
+                        if section == "AcDbBreakPointRef" {
+                            if let Some(reference) = value.point_references.last_mut() {
+                                reference.subentity_object = handle;
+                            }
+                        } else {
+                            value.dimension_reference = handle;
+                        }
                     }
                 }
                 40 => match &mut obj.data {
@@ -8954,6 +8961,15 @@ impl<'a> SectionReader<'a> {
                         }
                     }
                 }
+                73 => {
+                    if let DataObjectData::BreakData(value) = &mut obj.data {
+                        if section == "AcDbBreakPointRef" {
+                            if let Some(reference) = value.point_references.last_mut() {
+                                reference.subentity_type = pair.as_i32().unwrap_or_default();
+                            }
+                        }
+                    }
+                }
                 90 => match &mut obj.data {
                     DataObjectData::LayerIndex(value) => {
                         if !layer_header_seen {
@@ -9026,8 +9042,15 @@ impl<'a> SectionReader<'a> {
                     }
                     _ => {}
                 },
-                92 => {
-                    if let DataObjectData::CellStyleMap(value) = &mut obj.data {
+                92 => match &mut obj.data {
+                    DataObjectData::BreakData(value) => {
+                        if section == "AcDbBreakPointRef" {
+                            if let Some(reference) = value.point_references.last_mut() {
+                                reference.subentity_index = pair.as_i32().unwrap_or_default();
+                            }
+                        }
+                    }
+                    DataObjectData::CellStyleMap(value) => {
                         if let Some(cell) = value.cells.last_mut() {
                             let number = pair.as_i32().unwrap_or_default();
                             match style_section.as_str() {
@@ -9047,7 +9070,8 @@ impl<'a> SectionReader<'a> {
                             }
                         }
                     }
-                }
+                    _ => {}
+                },
                 93 => match &mut obj.data {
                     DataObjectData::CellStyleMap(value) => {
                         if let Some(cell) = value.cells.last_mut() {

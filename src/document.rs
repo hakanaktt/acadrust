@@ -6308,6 +6308,13 @@ impl CadDocument {
                                 {
                                     value.reserved_reference = *new_handle;
                                 }
+                                for reference in &mut value.point_references {
+                                    if let Some(new_handle) =
+                                        remap_map.get(&reference.subentity_object.value())
+                                    {
+                                        reference.subentity_object = *new_handle;
+                                    }
+                                }
                             }
                             DataObjectData::IdBuffer(value) => {
                                 for reference in &mut value.object_ids {
