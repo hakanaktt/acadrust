@@ -251,6 +251,32 @@ bitflags! {
     }
 }
 
+impl CellEdgeFlags {
+    /// The edges as an R2010+ cell style stores them (AcDb::GridLineType:
+    /// 1 top, 2 inside horizontal, 4 bottom, 8 left, 0x10 inside vertical,
+    /// 0x20 right). These flags' own bits are the legacy cell's edge byte,
+    /// where 2 is the right edge; the two differ only in 2 and 0x20.
+    pub fn grid_line_type(self) -> u32 {
+        swap_right_inside_horizontal(self.bits())
+    }
+
+    /// The edges of an R2010+ grid line type value; see [`Self::grid_line_type`].
+    pub fn from_grid_line_type(value: u32) -> Self {
+        Self::from_bits_retain(swap_right_inside_horizontal(value))
+    }
+}
+
+fn swap_right_inside_horizontal(bits: u32) -> u32 {
+    let mut out = bits & !0x22;
+    if bits & 0x02 != 0 {
+        out |= 0x20;
+    }
+    if bits & 0x20 != 0 {
+        out |= 0x02;
+    }
+    out
+}
+
 bitflags! {
     /// Cell state flags.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -932,7 +958,7 @@ impl CellStyle {
                 return self
                     .additional_borders
                     .iter()
-                    .find(|(bits, _)| *bits == edge.bits())
+                    .find(|(bits, _)| *bits == edge.grid_line_type())
                     .map(|(_, border)| border)
             }
         };
@@ -2605,6 +2631,18 @@ impl Default for TableBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn grid_line_type_is_the_r2010_edge_value() {
+        // AcDb::GridLineType: 0x20 right, 2 inside horizontal (#453).
+        assert_eq!(CellEdgeFlags::RIGHT.grid_line_type(), 0x20);
+        assert_eq!(CellEdgeFlags::INSIDE_HORIZONTAL.grid_line_type(), 2);
+        assert_eq!(
+            CellEdgeFlags::from_grid_line_type(0x21),
+            CellEdgeFlags::TOP | CellEdgeFlags::RIGHT
+        );
+        assert_eq!(CellEdgeFlags::LEFT.grid_line_type(), 8);
+    }
 
     #[test]
     fn test_table_creation() {

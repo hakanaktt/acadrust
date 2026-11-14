@@ -3535,7 +3535,7 @@ impl<'a> DwgObjectWriter<'a> {
             (CellEdgeFlags::LEFT, &style.left_border),
         ] {
             if style.applied_border_edges.contains(edge) {
-                borders.push((edge.bits(), border));
+                borders.push((edge.grid_line_type(), border));
             }
         }
         borders.extend(

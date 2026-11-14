@@ -67,7 +67,7 @@ fn border_override(edge: CellEdgeFlags, property: BorderPropertyFlags) -> CellSt
         _ => {
             let mut border = acadrust::entities::table::CellBorder::new();
             border.override_flags = property;
-            style.additional_borders.push((edge.bits(), border));
+            style.additional_borders.push((edge.grid_line_type(), border));
             return style;
         }
     };
