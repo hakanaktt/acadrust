@@ -101,35 +101,20 @@ fn probe(data: &[u8], start: usize, end: usize) -> Vec<Groups> {
     out
 }
 
-/// A corridor surface's head after its GUID; returns whether it has the
-/// newer layout:
+/// A corridor surface's head after its GUID:
 ///
 /// ```text
 /// B, B built, RC 0x20 or 0xA0
-/// [older: BL, 4 bits]
 /// 3 bits n (link codes), n x B (the code is added as a breakline)
 /// BL 0, BL m (feature line codes), m x B
-/// [newer: BL overhang correction (0 none, 1 top links)]
+/// BL overhang correction (0 none, 1 top links)
 /// ```
-///
-/// The older layout is that of a 0x20 surface in a record whose head GUID is
-/// zero; 0x20 surfaces of records with a head GUID have the newer one.
-// debt: the older layout is told apart by what the samples show (files of
-// one period write it); the field that selects it is not found.
-// ponytail: the 4 bits after the BL of an older surface are 0 in every
-// sample.
-fn surface(bits: &mut Bits, head_guid: bool) -> Option<bool> {
+// ponytail: the RC is read as 0x20 or 0xA0 (a file rebuilt by the program
+// turns 0x20 into 0xA0 and leaves the rest alike); its bits are not named.
+fn surface(bits: &mut Bits) -> Option<()> {
     bits.bit()?;
     bits.bit()?;
-    let newer = match bits.raw_short_byte()? {
-        0x20 if !head_guid => {
-            bits.bit_long()?;
-            bits.skip(4)?;
-            false
-        }
-        0x20 | 0xA0 => true,
-        _ => return None,
-    };
+    matches!(bits.raw_short_byte()?, 0x20 | 0xA0).then_some(())?;
     let codes = usize::from(bits.bits_value(3)?);
     bits.skip(codes)?;
     // debt: this BL has no other value in the samples; what follows a
@@ -137,10 +122,7 @@ fn surface(bits: &mut Bits, head_guid: bool) -> Option<bool> {
     (bits.bit_long()? == 0).then_some(())?;
     let feature_codes = usize::try_from(bits.bit_long()?).ok().filter(|n| *n <= bits.remaining())?;
     bits.skip(feature_codes)?;
-    if newer {
-        bits.bit_long()?;
-    }
-    Some(newer)
+    bits.bit_long().map(|_| ())
 }
 
 /// The surfaces' boundaries and masks: `BL n` (one per surface that has
@@ -186,8 +168,8 @@ fn outlines(bits: &mut Bits) -> Option<()> {
 /// head:     BL 80, 0, 80, 80, 0, BL, BL, 4 bits, RC n, n x key,
 ///           2 bits, GUID (zero in newer files), 2 bits, RC 82, BL n,
 ///           n x { 2 bits, BL }, BL surfaces,
-///           surfaces x { GUID, head (see [`surface`]) }, [newer heads or
-///           none: BL 0], outlines (see [`outlines`]),
+///           surfaces x { GUID, head (see [`surface`]) }, BL 0, outlines
+///           (see [`outlines`]),
 ///           BL 0, 2 bits, RC 32, RC layout, RC baselines (top 5 bits), 1 bit,
 ///           6 bits region count, BL record count (both of the first
 ///           baseline's first region)
@@ -216,13 +198,7 @@ fn walk(bits: &mut Bits) -> Option<Vec<Groups>> {
     for _ in 0..bits.bits_value(8)? {
         super::alignment::key(bits)?;
     }
-    bits.skip(2)?;
-    let head_guid = (0..16)
-        .map(|_| bits.raw_short_byte())
-        .collect::<Option<Vec<u8>>>()?
-        .iter()
-        .any(|b| *b != 0);
-    bits.skip(2)?;
+    bits.skip(2 + 128 + 2)?;
     (bits.raw_short_byte()? == 82).then_some(())?;
     for _ in 0..bits.bit_long()? {
         bits.skip(2)?;
@@ -230,16 +206,12 @@ fn walk(bits: &mut Bits) -> Option<Vec<Groups>> {
     }
     let surfaces = bits.bit_long()?;
     (0..=64).contains(&surfaces).then_some(())?;
-    // A record without surfaces has the newer layout's BL 0.
-    let mut newer = true;
     for _ in 0..surfaces {
         bits.skip(128)?;
-        newer = surface(bits, head_guid)?;
+        surface(bits)?;
     }
     // debt: this BL has no other value in the samples.
-    if newer {
-        (bits.bit_long()? == 0).then_some(())?;
-    }
+    (bits.bit_long()? == 0).then_some(())?;
     outlines(bits)?;
     (bits.bit_long()? == 0).then_some(())?;
     bits.skip(2)?;
@@ -551,16 +523,17 @@ mod tests {
     }
 
     #[test]
-    fn reads_an_older_surface_with_two_link_codes_and_an_outline() {
-        // B, B built, RC 0x20, BL 114, 4 bits; two link codes, both
-        // breaklines; BL 0, no feature line codes; one list with one
+    fn reads_a_surface_with_two_link_codes_and_an_outline() {
+        // B, B built, RC 0x20; two link codes, both breaklines; BL 0, one
+        // feature line code; BL 0 overhang; then BL 0 and one list with one
         // extents outline of one corner.
-        let s = "0 1 00100000 01 01110010 0000 010 1 1 10 10 01 00000001 01 00000001
+        let s = "0 1 00100000 010 1 1 10 0100000001 1 10 10 01 00000001 01 00000001
                  00 00000010 00000000 00000000 10000000 01 00000001 10 10 10";
         let b = bits_of(s);
         let len = s.bytes().filter(|c| *c == b'0' || *c == b'1').count();
         let mut bits = Bits::new(&b, 0, len);
-        assert_eq!(surface(&mut bits, false), Some(false));
+        assert_eq!(surface(&mut bits), Some(()));
+        assert_eq!(bits.bit_long(), Some(0));
         assert_eq!(outlines(&mut bits), Some(()));
         assert_eq!(bits.pos, len);
     }
