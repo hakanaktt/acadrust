@@ -73,11 +73,8 @@ pub(super) fn baselines(data: &[u8], start: usize, end: usize) -> Vec<Groups> {
     if let Some(found) = walk(&mut Bits::new(data, start, end)) {
         return found;
     }
-    // debt: records [`walk`] does not read are found by probing bit offsets
-    // for the first group of each baseline: one in the samples, written by
-    // an older program, whose run after the outlines is `BL 0, RC 32,
-    // RC 0x28, 2 bits, RC 0x28` where others have `BL 0, 2 bits, RC 32,
-    // RC 0x28`; the program writes the latter once it rebuilds the record.
+    // debt: records [`walk`] does not read (none in the samples) are found
+    // by probing bit offsets for the first group of each baseline.
     probe(data, start, end)
 }
 
@@ -171,7 +168,8 @@ fn outlines(bits: &mut Bits) -> Option<()> {
 ///           n x { 2 bits, BL }, BL surfaces,
 ///           surfaces x { GUID, head (see [`surface`]) }, BL 0, outlines
 ///           (see [`outlines`]),
-///           BL 0, 2 bits, RC 32, RC layout, RC baselines (top 5 bits), 1 bit,
+///           BL 0, 2 bits, RC 32 (two bytes 0x80, 0xA0 after the bits 00),
+///           RC layout, RC baselines (top 5 bits), 1 bit,
 ///           6 bits region count, BL record count (both of the first
 ///           baseline's first region)
 /// layout:   0x28: each region block holds a GUID before its start and its
@@ -186,7 +184,7 @@ fn outlines(bits: &mut Bits) -> Option<()> {
 ///           of 18 in the samples)
 /// ```
 // ponytail: the 4-bit run, the 2-bit runs around the head's GUID (01 before
-// it, 01 or 11 after it), before the 32 (01 or 11) and opening each later
+// it, 01 or 11 after it), before the 32 (only 00 is told apart) and opening each later
 // baseline (00, 01, 10 or 11), the low 3 bits of the second RC and the bit
 // after it are skipped by length.
 fn walk(bits: &mut Bits) -> Option<Vec<Groups>> {
@@ -215,8 +213,13 @@ fn walk(bits: &mut Bits) -> Option<Vec<Groups>> {
     (bits.bit_long()? == 0).then_some(())?;
     outlines(bits)?;
     (bits.bit_long()? == 0).then_some(())?;
-    bits.skip(2)?;
-    (bits.raw_short_byte()? == 32).then_some(())?;
+    // debt: after the bits 00 (one record of the samples, written by an
+    // older program; the program writes 01 and 32 once it rebuilds it) the
+    // 32 is two bytes, 0x80 and 0xA0; their meaning is not found.
+    match bits.bits_value(2)? {
+        0 => (bits.raw_short_byte()? == 0x80 && bits.raw_short_byte()? == 0xA0).then_some(())?,
+        _ => (bits.raw_short_byte()? == 32).then_some(())?,
+    }
     let guids = match bits.raw_short_byte()? {
         0x28 => true,
         0x48 => false,
