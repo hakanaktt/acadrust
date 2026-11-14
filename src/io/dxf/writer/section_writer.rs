@@ -9520,6 +9520,9 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                     self.writer.write_i32(91, reference.identifier)?;
                     self.writer.write_point3d(10, reference.first_point)?;
                     self.writer.write_point3d(11, reference.second_point)?;
+                    self.writer.write_handle(331, reference.subentity_object)?;
+                    self.writer.write_i32(73, reference.subentity_type)?;
+                    self.writer.write_i32(92, reference.subentity_index)?;
                 }
             }
             DataObjectData::BreakPointRef => {

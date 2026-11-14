@@ -228,3 +228,78 @@ fn point_reference_fields_read_beside_subentity_path() {
         assert_eq!(read.second_point, expected.second_point);
     }
 }
+
+/// The DXF reader puts each reference's `331`, `73` and `92` into its
+/// sub-entity path.
+#[test]
+fn dxf_reader_reads_subentity_path() {
+    let fixture = fixture();
+    let document = read_dxf(dxf_with_paths(&fixture));
+    let references = &break_data(&document).point_references;
+    assert_eq!(references.len(), 2);
+    for (reference, (object, subentity_type, subentity_index)) in references.iter().zip(PATHS) {
+        assert_eq!(reference.subentity_object, fixture.objects[object]);
+        assert_eq!(reference.subentity_type, subentity_type);
+        assert_eq!(reference.subentity_index, subentity_index);
+    }
+}
+
+/// A sub-entity path set on the model goes through a DXF save and read.
+#[test]
+fn subentity_path_set_on_model_round_trips_through_dxf() {
+    let mut fixture = fixture();
+    let objects = fixture.objects;
+    let reference = fixture
+        .document
+        .objects
+        .values_mut()
+        .find_map(|object| match object {
+            ObjectType::DataObject(DataObject {
+                data: DataObjectData::BreakData(value),
+                ..
+            }) => value.point_references.last_mut(),
+            _ => None,
+        })
+        .unwrap();
+    reference.subentity_object = objects[0];
+    reference.subentity_type = 2;
+    reference.subentity_index = 7;
+
+    let written = DxfWriter::new(&fixture.document).write_to_vec().unwrap();
+    let document = read_dxf(written);
+    let references = &break_data(&document).point_references;
+    assert_eq!(references[0].subentity_object, Handle::NULL);
+    assert_eq!(references[0].subentity_type, 0);
+    assert_eq!(references[0].subentity_index, 0);
+    assert_eq!(references[1].subentity_object, objects[0]);
+    assert_eq!(references[1].subentity_type, 2);
+    assert_eq!(references[1].subentity_index, 7);
+    assert_eq!(break_data(&document).dimension_reference, fixture.dimension);
+}
+
+/// Serde input written before the sub-entity path existed still reads, with
+/// an empty path.
+#[cfg(feature = "serde")]
+#[test]
+fn serde_input_without_subentity_path_reads_empty_path() {
+    let mut legacy = serde_json::to_value(BreakPointReference {
+        identifier: 5,
+        subentity_object: Handle::new(0x2A),
+        subentity_type: 2,
+        subentity_index: 3,
+        ..BreakPointReference::default()
+    })
+    .unwrap();
+    let fields = legacy.as_object_mut().unwrap();
+    for field in ["subentity_object", "subentity_type", "subentity_index"] {
+        assert!(fields.remove(field).is_some(), "{field} is serialized");
+    }
+    let decoded: BreakPointReference = serde_json::from_value(legacy).unwrap();
+    assert_eq!(
+        decoded,
+        BreakPointReference {
+            identifier: 5,
+            ..BreakPointReference::default()
+        }
+    );
+}

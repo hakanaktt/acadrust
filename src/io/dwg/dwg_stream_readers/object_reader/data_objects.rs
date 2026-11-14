@@ -34,6 +34,7 @@ pub fn read_data_object_data(
                     first_point: reader.read_3bit_double(),
                     second_point: reader.read_3bit_double(),
                     trailing_version: reader.read_bit_short(),
+                    ..BreakPointReference::default()
                 });
             }
             let dimension_reference = Handle::from(reader.read_handle());

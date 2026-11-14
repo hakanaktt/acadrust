@@ -98,6 +98,18 @@ pub struct BreakPointReference {
     pub second_point: Vector3,
     /// Internal trailing version field not exposed by Autodesk DXF.
     pub trailing_version: i16,
+    /// Object of the sub-entity path (DXF 331).
+    /// Missing values in field-named Serde input default to a null handle.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub subentity_object: Handle,
+    /// Sub-entity type of the path (DXF 73).
+    /// Missing values in field-named Serde input default to 0.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub subentity_type: i32,
+    /// Sub-entity index of the path (DXF 92).
+    /// Missing values in field-named Serde input default to 0.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub subentity_index: i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
