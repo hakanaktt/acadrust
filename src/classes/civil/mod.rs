@@ -828,10 +828,21 @@ impl ArchEntityData {
         network::pipe_ends(data, start, end)
     }
 
-    /// Insertion point of a Civil 3D structure (`AECC_STRUCTURE`), found
-    /// inside the extents its cached preview records.
-    // debt: located through the cache extents; no drawing at hand has a
-    // structure to work out the record's field order from.
+    /// Number fields of the part data a Civil 3D pipe (`AECC_PIPE`) keeps
+    /// itself: flow coefficients, minimum curve radius and the like.
+    pub fn pipe_part_fields(&self) -> Vec<PartField> {
+        if self.dxf_name != "AECC_PIPE" {
+            return Vec::new();
+        }
+        let strings = self.decode().strings;
+        self.main_stream()
+            .map(|(data, start, end)| network::pipe_fields(data, start, end, &strings))
+            .unwrap_or_default()
+    }
+
+    /// Insertion point of a Civil 3D structure (`AECC_STRUCTURE`); a record
+    /// laid out otherwise is searched inside the extents its cached preview
+    /// records.
     pub fn structure_position(&self) -> Option<crate::types::Vector3> {
         if self.dxf_name != "AECC_STRUCTURE" {
             return None;
@@ -842,8 +853,11 @@ impl ArchEntityData {
             min = [min[0].min(p.x), min[1].min(p.y)];
             max = [max[0].max(p.x), max[1].max(p.y)];
         }
-        (min[0] <= max[0]).then_some(())?;
         let (data, start, end) = self.main_stream()?;
+        if let Some(p) = network::structure_at(data, start, end) {
+            return Some(p);
+        }
+        (min[0] <= max[0]).then_some(())?;
         network::structure_position(data, start, end, min, max)
     }
 
