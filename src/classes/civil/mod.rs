@@ -30,7 +30,7 @@ pub use alignment::{
 pub use cogo::CogoPoint;
 pub use grading::{CriteriaValue, GradingCriteria};
 pub use labels::{parse_format, property, LabelPart, LabelText};
-pub use network::PartField;
+pub use network::{PartField, PressurePipe};
 pub use parameters::{Parameter, ParameterValue};
 pub use profile::{CurveMinimumK, ProfileCriteria, ProfileLocking, ProfilePiece, ProfileViewFrame, Pvi};
 pub use sample_lines::SampleLines;
@@ -839,6 +839,38 @@ impl ArchEntityData {
         }
         let (data, start, end) = self.main_stream()?;
         section::mass_haul_view_frame(data, start, end)
+    }
+
+    /// Insertion point of a Civil 3D pressure fitting or appurtenance
+    /// (`AECC_FITTING`, `AECC_APPURTENANCE`), stored like a structure's.
+    pub fn pressure_part_position(&self) -> Option<crate::types::Vector3> {
+        if !matches!(self.dxf_name.as_str(), "AECC_FITTING" | "AECC_APPURTENANCE") {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        network::structure_at(data, start, end)
+    }
+
+    /// Rotation (radians, about Z) of a Civil 3D structure, pressure fitting
+    /// or appurtenance (`AECC_STRUCTURE`, `AECC_FITTING`,
+    /// `AECC_APPURTENANCE`).
+    pub fn network_part_rotation(&self) -> Option<f64> {
+        if !matches!(self.dxf_name.as_str(), "AECC_STRUCTURE" | "AECC_FITTING" | "AECC_APPURTENANCE") {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        network::part_rotation(data, start, end)
+    }
+
+    /// Ends, bulge and joint sizes of a Civil 3D pressure pipe
+    /// (`AECC_PRESSUREPIPE`).
+    pub fn pressure_pipe(&self) -> Option<PressurePipe> {
+        if self.dxf_name != "AECC_PRESSUREPIPE" {
+            return None;
+        }
+        let handles = self.decode().handles;
+        let (data, start, end) = self.main_stream()?;
+        network::pressure_pipe(data, start, end, &handles)
     }
 
     /// Start and end of a Civil 3D pipe (`AECC_PIPE`), as stored.

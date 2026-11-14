@@ -281,7 +281,7 @@ impl SpiralShape {
 pub(super) enum KeyValue {
     /// 0x04; 0x0F, 0x10 and 0x12 take a reference from the handle stream.
     None,
-    /// 0x01, 0x0D: BL.
+    /// 0x01, 0x0A, 0x0D: BL.
     Long(i32),
     /// 0x02: BD.
     Double(f64),
@@ -314,7 +314,7 @@ pub(super) fn read_key(bits: &mut Bits) -> Option<(u32, KeyValue)> {
     // A list holds at least two bits per value.
     let count = |bits: &mut Bits| usize::try_from(bits.bit_long()?).ok().filter(|n| *n <= bits.remaining() / 2);
     let value = match key >> 24 {
-        0x01 | 0x0D => KeyValue::Long(bits.bit_long()?),
+        0x01 | 0x0A | 0x0D => KeyValue::Long(bits.bit_long()?),
         0x02 => KeyValue::Double(bits.bit_double()?),
         0x03 => KeyValue::Byte(bits.bits_value(8)?),
         0x04 | 0x0F | 0x10 | 0x12 => KeyValue::None,
