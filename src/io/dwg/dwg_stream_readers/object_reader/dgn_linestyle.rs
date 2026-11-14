@@ -11,18 +11,16 @@ pub fn read_dgn_line_style_data(
     reader: &mut DwgMergedReader,
     dxf_name: &str,
 ) -> Option<DgnLineStyleData> {
-    let description = reader.read_variable_text();
     let version = reader.read_bit_long();
     let component_type = reader.read_bit_long();
-    let component_uid = read_uid(reader);
 
     if dxf_name.eq_ignore_ascii_case("LSDEFINITION") {
         let (fields, undecoded_fields) = read_definition_fields(reader);
         return Some(DgnLineStyleData::Definition {
-            description,
+            description: fields.description,
             version,
             style_number: component_type,
-            component_uid,
+            component_uid: fields.component_uid,
             is_continuous: fields.is_continuous,
             unit_definition: fields.unit_definition,
             unit_scale: fields.unit_scale,
@@ -38,6 +36,10 @@ pub fn read_dgn_line_style_data(
     }
 
     let kind = DgnLsComponentType::from_code(component_type)?;
+    // A TV after the component type in R2004 and older, in the string
+    // stream from R2007 on.
+    let description = reader.read_variable_text();
+    let component_uid = read_uid(reader);
     let scale = reader.read_bit_double();
     let property_flags = read_byte(reader);
     let component = match kind {
@@ -119,6 +121,8 @@ pub fn read_dgn_line_style_data(
 
 #[derive(Default)]
 struct DefinitionFields {
+    description: String,
+    component_uid: [u8; 16],
     is_continuous: bool,
     unit_definition: f64,
     unit_scale: f64,
@@ -129,16 +133,22 @@ struct DefinitionFields {
     is_snappable: bool,
 }
 
-/// The fields of an `AcDbLSDefinition` after its UID.
+/// The fields of an `AcDbLSDefinition` after its style number.
 ///
-/// They are read in the order the writer uses, from a copy of the bits that
-/// are left in the main stream. Some drawings store bits that do not fit
-/// that order (the record ends inside a field), and the order they do fit is
-/// not known. Those bits are returned as they are, so the definition still
-/// reads and is written back unchanged, and the fields keep their defaults.
+/// The file stores BD unit scale, BL units type, B is continuous, BD unit
+/// definition, B is element, B is physical, B is scale independent, B is
+/// snappable, the name and the 16-byte component UID. The name is a TV in
+/// the main stream in R2004 and older and in the string stream from R2007 on.
+///
+/// The order is first checked on a copy of the bits left in the main stream.
+/// Bits that do not fit it (the record ends inside a field, or bits are left
+/// after the UID) are returned as they are, so the definition still reads
+/// and is written back unchanged, and the fields keep their defaults; in
+/// R2004 and older the name is among those bits.
 fn read_definition_fields(
     reader: &mut DwgMergedReader,
 ) -> (DefinitionFields, Option<ProxyPayload>) {
+    let start = reader.position_in_bits();
     let bit_count = reader.main_remaining_bits().max(0);
     let mut data = vec![0u8; (bit_count as usize).div_ceil(8)];
     for bit_index in 0..bit_count as usize {
@@ -147,26 +157,57 @@ fn read_definition_fields(
         }
     }
 
-    let mut bits = DwgBitReader::new(data.clone(), reader.main().version(), reader.dxf_version());
-    bits.set_end_bit(bit_count);
-    let fields = DefinitionFields {
-        is_continuous: bits.read_bit(),
-        unit_definition: bits.read_bit_double(),
-        unit_scale: bits.read_bit_double(),
-        units_type: bits.read_bit_long(),
-        is_element: bits.read_bit(),
-        is_physical: bits.read_bit(),
-        is_scale_independent: bits.read_bit(),
-        is_snappable: bits.read_bit(),
-    };
-    if bits.check_error().is_ok() {
-        (fields, None)
-    } else {
-        (
-            DefinitionFields::default(),
+    let name_in_main = !reader.main().version().r2007_plus();
+    if !definition_fields_fit(&data, bit_count, reader) {
+        let description = if name_in_main {
+            String::new()
+        } else {
+            reader.read_variable_text()
+        };
+        return (
+            DefinitionFields {
+                description,
+                ..DefinitionFields::default()
+            },
             Some(ProxyPayload::from_bits(&data, bit_count as u32)),
-        )
+        );
     }
+
+    reader.set_position_in_bits(start);
+    let fields = DefinitionFields {
+        unit_scale: reader.read_bit_double(),
+        units_type: reader.read_bit_long(),
+        is_continuous: reader.read_bit(),
+        unit_definition: reader.read_bit_double(),
+        is_element: reader.read_bit(),
+        is_physical: reader.read_bit(),
+        is_scale_independent: reader.read_bit(),
+        is_snappable: reader.read_bit(),
+        description: reader.read_variable_text(),
+        component_uid: read_uid(reader),
+    };
+    (fields, None)
+}
+
+/// Whether the `bit_count` bits of `data` hold exactly the fields of a
+/// definition after its style number, in the order the file stores them.
+fn definition_fields_fit(data: &[u8], bit_count: i64, reader: &DwgMergedReader) -> bool {
+    let version = reader.main().version();
+    let mut bits = DwgBitReader::new(data.to_vec(), version, reader.dxf_version());
+    bits.set_end_bit(bit_count);
+    bits.read_bit_double();
+    bits.read_bit_long();
+    bits.read_bit();
+    bits.read_bit_double();
+    for _ in 0..4 {
+        bits.read_bit();
+    }
+    if !version.r2007_plus() {
+        bits.read_variable_text();
+    }
+    bits.read_bytes(16);
+    // R13 and R14 records do not say where their main data ends.
+    bits.check_error().is_ok() && (bits.remaining_bits() == 0 || !version.r2000_plus())
 }
 
 fn read_uid(reader: &mut DwgMergedReader) -> [u8; 16] {

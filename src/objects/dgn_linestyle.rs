@@ -33,9 +33,10 @@ pub enum DgnLineStyleData {
         is_scale_independent: bool,
         is_snappable: bool,
         root_component: Handle,
-        /// The bits after the UID, kept as read when they do not fit the
-        /// fields above, which then keep their defaults. Written back as
-        /// they are.
+        /// The bits after the style number, kept as read when they do not
+        /// fit the fields above, which then keep their defaults (the UID
+        /// too; in R2004 and older the name is among these bits). Written
+        /// back as they are.
         undecoded_fields: Option<super::ProxyPayload>,
         properties: Vec<super::SemanticProperty>,
     },

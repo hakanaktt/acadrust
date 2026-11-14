@@ -575,21 +575,27 @@ impl<'a> DwgObjectWriter<'a> {
                 undecoded_fields,
                 ..
             } => {
-                self.writer.write_variable_text(description);
                 self.writer.write_bit_long(*version);
                 self.writer.write_bit_long(*style_number);
-                self.writer.write_bytes(component_uid);
                 if let Some(fields) = undecoded_fields {
+                    // The bits after the style number, as read. In R2004 and
+                    // older the name is among them.
+                    if self.version.r2007_plus() {
+                        self.writer.write_variable_text(description);
+                    }
                     self.write_registered_payload(fields, &[]);
                 } else {
-                    self.writer.write_bit(*is_continuous);
-                    self.writer.write_bit_double(*unit_definition);
                     self.writer.write_bit_double(*unit_scale);
                     self.writer.write_bit_long(*units_type);
+                    self.writer.write_bit(*is_continuous);
+                    self.writer.write_bit_double(*unit_definition);
                     self.writer.write_bit(*is_element);
                     self.writer.write_bit(*is_physical);
                     self.writer.write_bit(*is_scale_independent);
                     self.writer.write_bit(*is_snappable);
+                    // In the string stream from R2007 on.
+                    self.writer.write_variable_text(description);
+                    self.writer.write_bytes(component_uid);
                 }
                 self.writer
                     .write_handle(DwgReferenceType::HardPointer, root_component.value());
@@ -604,9 +610,10 @@ impl<'a> DwgObjectWriter<'a> {
                 component,
                 ..
             } => {
-                self.writer.write_variable_text(description);
                 self.writer.write_bit_long(*version);
                 self.writer.write_bit_long(kind.code());
+                // In the string stream from R2007 on.
+                self.writer.write_variable_text(description);
                 self.writer.write_bytes(component_uid);
                 self.writer.write_bit_double(*scale);
                 self.writer.write_bytes(&[*property_flags]);
