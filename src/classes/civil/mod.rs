@@ -11,6 +11,7 @@ mod alignment;
 mod bits;
 mod cogo;
 mod corridor;
+mod grading;
 mod labels;
 mod network;
 mod parameters;
@@ -27,6 +28,7 @@ pub use alignment::{
     StationEquation,
 };
 pub use cogo::CogoPoint;
+pub use grading::{CriteriaValue, GradingCriteria};
 pub use labels::{parse_format, property, LabelPart, LabelText};
 pub use network::PartField;
 pub use parameters::{Parameter, ParameterValue};
@@ -928,6 +930,16 @@ impl ArchObject {
             return Vec::new();
         };
         refs[..site].iter().copied().filter(|h| *h != 0).collect()
+    }
+
+    /// Target and projection settings of a Civil 3D grading criteria
+    /// (`AECC_GRADING_CRITERIA`).
+    pub fn grading_criteria(&self) -> Option<GradingCriteria> {
+        if self.dxf_name != "AECC_GRADING_CRITERIA" {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        grading::criteria(data, start, end)
     }
 
     /// Profile Locking settings kept in a profile's
