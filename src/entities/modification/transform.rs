@@ -470,6 +470,11 @@ fn transform_dimension_angle(
     }
 }
 
+/// Whether a transform left a dimension in its own plane.
+fn same_plane(old_normal: Vector3, new_normal: Vector3) -> bool {
+    (old_normal - new_normal).length_squared() < 1e-18
+}
+
 pub(crate) fn transform_dimension(e: &mut Dimension, transform: &Transform) {
     e.base_mut().common.raw_record = None;
     if let Dimension::Ordinate(d) = e {
@@ -492,6 +497,12 @@ pub(crate) fn transform_dimension(e: &mut Dimension, transform: &Transform) {
         d.base.insertion_point = new_wcs_to_ocs * transform.apply(old_ocs * d.base.insertion_point);
         d.base.normal = new_normal;
 
+        // The horizontal direction is fixed in the plane: a rotate or mirror
+        // in it keeps measuring along the same axis.
+        if same_plane(old_normal, new_normal) {
+            d.refresh_measurement();
+            return;
+        }
         let transformed_axis = new_wcs_to_ocs * transform.apply_rotation(old_axis);
         let mut new_axis_angle = old_axis_angle;
         if transformed_axis.length_squared() > 1e-24 {
@@ -511,8 +522,10 @@ pub(crate) fn transform_dimension(e: &mut Dimension, transform: &Transform) {
     let new_normal = transform_normal(transform, old_normal);
     // A mirror moves a dimension but never mirrors its text: the text keeps
     // the direction it reads in (0 still meaning along the dimension line),
-    // as mirrored text does with MIRRTEXT off.
-    let keep_text = is_reflecting(transform);
+    // as mirrored text does with MIRRTEXT off. The horizontal direction and
+    // the text rotation measured from it are fixed in the plane, so a rotate
+    // in it keeps them too.
+    let keep_text = is_reflecting(transform) || same_plane(old_normal, new_normal);
     // A text rotation of 0 is "along the dimension line", not an angle: the
     // text turns with the line, so it stays 0.
     let text_rotation = if keep_text || e.base().text_rotation == 0.0 {
