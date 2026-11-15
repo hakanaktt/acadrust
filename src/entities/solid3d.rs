@@ -417,6 +417,10 @@ impl AcisData {
     /// append it at serialisation time.  This keeps the representation
     /// consistent regardless of the data source (DXF reader, DWG reader,
     /// user API).
+    ///
+    /// Text that is only whitespace once the terminator is gone (the
+    /// `1 ""` group a body without ACIS data is saved as) gives an empty
+    /// string, so that `has_data()` stays false for it.
     pub fn strip_sat_terminator(sat: &str) -> String {
         let mut result = String::with_capacity(sat.len());
         for line in sat.lines() {
@@ -425,6 +429,9 @@ impl AcisData {
             }
             result.push_str(line);
             result.push('\n');
+        }
+        if result.trim().is_empty() {
+            result.clear();
         }
         result
     }
