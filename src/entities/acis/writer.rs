@@ -172,7 +172,7 @@ impl SatWriter {
 ///
 /// Uses scientific notation (e.g. `9.9999999999999995e-007`) for very
 /// small or very large values, matching the ACIS convention.
-fn format_float(v: f64) -> String {
+pub(crate) fn format_float(v: f64) -> String {
     if v == 0.0 {
         // A negative zero keeps its sign, as the reference application writes it.
         if v.is_sign_negative() { "-0" } else { "0" }.to_string()
