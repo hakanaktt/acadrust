@@ -6125,6 +6125,59 @@ impl CadDocument {
             self.entity_index.insert(new_handle, index);
         }
 
+        // --- 1c-bis. Resolve APPID entries that share a handle ---
+        // A file can give an application id the handle of another record (an
+        // entry of another table, an entity, an object) or of an earlier
+        // application id. Writers would emit both under one handle, which
+        // CAD applications reject. The model refers to an application id by
+        // name only (`ExtendedDataRecord::application_name`), so the APPID
+        // entry takes a fresh handle and the other record keeps its own.
+        let mut taken: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        macro_rules! take_table {
+            ($tbl:expr) => {
+                for e in $tbl.iter() {
+                    taken.insert(e.handle().value());
+                }
+            };
+        }
+        take_table!(self.layers);
+        take_table!(self.line_types);
+        take_table!(self.text_styles);
+        take_table!(self.dim_styles);
+        take_table!(self.views);
+        take_table!(self.vports);
+        take_table!(self.ucss);
+        take_table!(self.vx_table);
+        take_table!(self.block_records);
+        for e in self.entities.iter() {
+            taken.insert(e.common().handle.value());
+        }
+        taken.extend(self.objects.keys().map(|handle| handle.value()));
+        for control in [
+            self.vports.handle(),
+            self.line_types.handle(),
+            self.layers.handle(),
+            self.text_styles.handle(),
+            self.views.handle(),
+            self.ucss.handle(),
+            self.app_ids.handle(),
+            self.dim_styles.handle(),
+            self.block_records.handle(),
+            self.vx_table.handle(),
+        ] {
+            taken.insert(control.value());
+        }
+        let mut next_handle = self.next_handle;
+        for entry in self.app_ids.iter_mut() {
+            let handle = entry.handle.value();
+            if handle != 0 && !taken.insert(handle) {
+                entry.handle = Handle::new(next_handle);
+                taken.insert(next_handle);
+                next_handle += 1;
+            }
+        }
+        self.next_handle = next_handle;
+
         // --- 1d. Resolve object handle collisions ---
         // Dictionary and other objects created by initialize_defaults() may
         // have handles that collide with file-sourced handles.
