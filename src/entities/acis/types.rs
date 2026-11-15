@@ -536,6 +536,10 @@ impl fmt::Display for SatToken {
                 {
                     if matches!(*tag, 0x0D | 0x0E) {
                         write!(f, "{}", value)
+                    } else if *tag == 0x12 {
+                        // An ASM literal string is the record's own fields
+                        // (a `transform` body), not a counted string.
+                        write!(f, "{}", value.trim_end())
                     } else {
                         write!(f, "@{} {}", value.len(), value)
                     }
