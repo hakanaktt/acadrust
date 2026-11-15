@@ -864,6 +864,25 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.write_header_variable("$SURFTYPE", |w| w.write_i16(70, hdr.surface_type))?;
         self.write_header_variable("$SURFU", |w| w.write_i16(70, hdr.surface_u_density))?;
         self.write_header_variable("$SURFV", |w| w.write_i16(70, hdr.surface_v_density))?;
+        // USERI1-5 / USERR1-5, in the reference header order (before $WORLDVIEW).
+        for (name, value) in [
+            ("$USERI1", hdr.user_int1),
+            ("$USERI2", hdr.user_int2),
+            ("$USERI3", hdr.user_int3),
+            ("$USERI4", hdr.user_int4),
+            ("$USERI5", hdr.user_int5),
+        ] {
+            self.write_header_variable(name, |w| w.write_i16(70, value))?;
+        }
+        for (name, value) in [
+            ("$USERR1", hdr.user_real1),
+            ("$USERR2", hdr.user_real2),
+            ("$USERR3", hdr.user_real3),
+            ("$USERR4", hdr.user_real4),
+            ("$USERR5", hdr.user_real5),
+        ] {
+            self.write_header_variable(name, |w| w.write_double(40, value))?;
+        }
         self.write_header_variable("$WORLDVIEW", |w| {
             w.write_i16(70, if hdr.world_view { 1 } else { 0 })
         })?;
