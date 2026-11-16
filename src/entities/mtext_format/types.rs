@@ -311,9 +311,10 @@ impl ParagraphProperties {
     }
 }
 
-/// Line spacing mode from `se` (exact) or `sm` (multiple) inside `\p...;`.
+/// Line spacing mode from `se` (exact), `sa` (at least) or `sm` (multiple)
+/// inside `\p...;`.
 ///
-/// Neither value is a distance. Both are factors of the default line pitch,
+/// None of the values is a distance. All are factors of the default line pitch,
 /// [`DEFAULT_PITCH_FACTOR`](Self::DEFAULT_PITCH_FACTOR) × text height. They
 /// differ in where a line's baseline sits in its slot (see
 /// [`baseline_offset`](Self::baseline_offset)).
@@ -328,6 +329,9 @@ pub enum MTextLineSpacing {
     Exact(f64),
     /// Multiple spacing factor `sm<n>`: pitch `n` × 5/3 × text height.
     Multiple(f64),
+    /// At-least spacing factor `sa<n>`: pitch `n` × 5/3 × text height, or
+    /// more where a line holds taller text.
+    AtLeast(f64),
 }
 
 impl MTextLineSpacing {
@@ -339,7 +343,7 @@ impl MTextLineSpacing {
     pub fn line_pitch(&self, text_height: f64, entity_factor: f64) -> f64 {
         let factor = match *self {
             Self::Default => entity_factor,
-            Self::Exact(factor) | Self::Multiple(factor) => factor,
+            Self::Exact(factor) | Self::Multiple(factor) | Self::AtLeast(factor) => factor,
         };
         factor * Self::DEFAULT_PITCH_FACTOR * text_height
     }
@@ -351,7 +355,7 @@ impl MTextLineSpacing {
     pub fn baseline_offset(&self, text_height: f64) -> f64 {
         match *self {
             Self::Exact(factor) => factor * text_height,
-            Self::Default | Self::Multiple(_) => text_height,
+            Self::Default | Self::Multiple(_) | Self::AtLeast(_) => text_height,
         }
     }
 }
@@ -1040,6 +1044,9 @@ impl MTextDocument {
                         }
                         MTextLineSpacing::Multiple(v) => {
                             write!(result, ",sm{}", v).ok();
+                        }
+                        MTextLineSpacing::AtLeast(v) => {
+                            write!(result, ",sa{}", v).ok();
                         }
                     }
                 }

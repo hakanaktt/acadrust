@@ -1006,8 +1006,8 @@ impl MTextParser {
                     i += 1;
                 }
             } else if ch == 's' && i + 1 < chars.len() {
-                // Line spacing: s* (entity default), se<n> (exact), or
-                // sm<n> (multiple).
+                // Line spacing: s* (entity default), se<n> (exact), sa<n>
+                // (at least) or sm<n> (multiple).
                 let sub = chars[i + 1];
                 if sub == '*' {
                     self.current_paragraph.properties.line_spacing =
@@ -1018,7 +1018,7 @@ impl MTextParser {
                     }
                     continue;
                 }
-                if sub == 'e' || sub == 'm' {
+                if sub == 'e' || sub == 'm' || sub == 'a' {
                     let start = i + 2;
                     let mut k = start;
                     while k < chars.len()
@@ -1027,11 +1027,11 @@ impl MTextParser {
                         k += 1;
                     }
                     if let Ok(v) = chars[start..k].iter().collect::<String>().parse::<f64>() {
-                        self.current_paragraph.properties.line_spacing = if sub == 'e' {
-                            Some(MTextLineSpacing::Exact(v))
-                        } else {
-                            Some(MTextLineSpacing::Multiple(v))
-                        };
+                        self.current_paragraph.properties.line_spacing = Some(match sub {
+                            'e' => MTextLineSpacing::Exact(v),
+                            'a' => MTextLineSpacing::AtLeast(v),
+                            _ => MTextLineSpacing::Multiple(v),
+                        });
                     }
                     i = k;
                     if i < chars.len() && chars[i] == ',' {
