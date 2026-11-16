@@ -226,6 +226,9 @@ pub enum StackingType {
     Diagonal = 1,
     /// Stacked limit (no line): `\S<num>^<den>;`
     Limit = 2,
+    /// Decimal stack, the halves lined up on their decimal points:
+    /// `\S<num>~.<den>;` (the character after `~` is the decimal point).
+    Decimal = 3,
 }
 
 impl StackingType {
@@ -235,6 +238,7 @@ impl StackingType {
             '/' => StackingType::Horizontal,
             '#' => StackingType::Diagonal,
             '^' => StackingType::Limit,
+            '~' => StackingType::Decimal,
             _ => StackingType::Horizontal,
         }
     }
@@ -261,7 +265,9 @@ impl StackingData {
         match self.stacking_type {
             StackingType::Horizontal => format!("{}/{}", self.numerator, self.denominator),
             StackingType::Diagonal => format!("{}/{}", self.numerator, self.denominator),
-            StackingType::Limit => format!("{} {}", self.numerator, self.denominator),
+            StackingType::Limit | StackingType::Decimal => {
+                format!("{} {}", self.numerator, self.denominator)
+            }
         }
     }
 }
@@ -1080,9 +1086,10 @@ impl MTextDocument {
 
                 if let Some(ref stack) = span.stacking {
                     let sep = match stack.stacking_type {
-                        StackingType::Horizontal => '/',
-                        StackingType::Diagonal => '#',
-                        StackingType::Limit => '^',
+                        StackingType::Horizontal => "/",
+                        StackingType::Diagonal => "#",
+                        StackingType::Limit => "^",
+                        StackingType::Decimal => "~.",
                     };
                     write!(
                         result,

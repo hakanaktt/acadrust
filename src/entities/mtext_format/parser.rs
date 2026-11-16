@@ -858,7 +858,8 @@ impl MTextParser {
     }
 
     /// Parse stacking: \S{numerator}/{denominator};
-    /// Separators: / (horizontal), # (diagonal), ^ (limit)
+    /// Separators: / (horizontal), # (diagonal), ^ (limit), ~ (decimal, with
+    /// the decimal point after it)
     fn parse_stacking_code(&mut self) {
         let expr = self.parse_semicolon_value();
 
@@ -873,11 +874,14 @@ impl MTextParser {
 
         while i < chars.len() {
             let ch = chars[i];
-            if !found_sep && matches!(ch, '/' | '#' | '^') {
+            if !found_sep && matches!(ch, '/' | '#' | '^' | '~') {
                 found_sep = true;
                 stacking_type = StackingType::from_char(ch);
                 if ch == '^' && i + 1 < chars.len() && chars[i + 1] == ' ' {
                     i += 1; // ^ may be followed by space
+                }
+                if ch == '~' && i + 1 < chars.len() && matches!(chars[i + 1], '.' | ',') {
+                    i += 1; // the decimal point the halves line up on
                 }
             } else if found_sep {
                 denominator.push(ch);
