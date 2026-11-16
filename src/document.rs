@@ -2322,6 +2322,52 @@ impl CadDocument {
         });
     }
 
+    /// Wipeout frame mode of the drawing (WIPEOUTFRAME): group 70 of the
+    /// `AcDbWipeoutVariables` object under `ACAD_WIPEOUT_VARS` in the named
+    /// object dictionary. 0 = hidden, 1 = displayed and plotted, 2 = displayed
+    /// but not plotted. Without the object AutoCAD uses 1.
+    pub fn wipeout_frame(&self) -> i16 {
+        self.wipeout_variables_handle()
+            .and_then(|handle| match self.objects.get(&handle) {
+                Some(ObjectType::WipeoutVariables(variables)) => Some(variables.display_frame),
+                _ => None,
+            })
+            .unwrap_or(1)
+    }
+
+    /// Sets the wipeout frame mode of the drawing (see [`Self::wipeout_frame`]),
+    /// creating the `ACAD_WIPEOUT_VARS` object when the drawing has none.
+    pub fn set_wipeout_frame(&mut self, mode: i16) {
+        if let Some(handle) = self.wipeout_variables_handle() {
+            if let Some(ObjectType::WipeoutVariables(variables)) = self.objects.get_mut(&handle) {
+                variables.display_frame = mode;
+                return;
+            }
+        }
+        let root = self.header.named_objects_dict_handle;
+        if !matches!(self.objects.get(&root), Some(ObjectType::Dictionary(_))) {
+            return;
+        }
+        let handle = self.allocate_handle();
+        let mut variables = crate::objects::WipeoutVariables::new();
+        variables.handle = handle;
+        variables.owner = root;
+        variables.display_frame = mode;
+        self.objects
+            .insert(handle, ObjectType::WipeoutVariables(variables));
+        if let Some(ObjectType::Dictionary(dictionary)) = self.objects.get_mut(&root) {
+            dictionary.add_entry("ACAD_WIPEOUT_VARS", handle);
+        }
+    }
+
+    /// Handle stored under `ACAD_WIPEOUT_VARS` in the named object dictionary.
+    fn wipeout_variables_handle(&self) -> Option<Handle> {
+        match self.objects.get(&self.header.named_objects_dict_handle) {
+            Some(ObjectType::Dictionary(dictionary)) => dictionary.get("ACAD_WIPEOUT_VARS"),
+            _ => None,
+        }
+    }
+
     /// Allocate a new unique handle
     pub fn allocate_handle(&mut self) -> Handle {
         // The DWG reader inserts objects straight into `objects` without

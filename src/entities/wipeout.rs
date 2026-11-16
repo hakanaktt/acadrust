@@ -408,16 +408,23 @@ impl Wipeout {
         self.clip_boundary_vertices.len()
     }
 
-    /// Sets the frame visibility (via flags).
-    pub fn set_frame_visible(&mut self, visible: bool) {
-        if visible {
-            self.flags |= WipeoutDisplayFlags::SHOW_IMAGE;
-        } else {
-            self.flags -= WipeoutDisplayFlags::SHOW_IMAGE;
-        }
-    }
+    /// Does nothing: a wipeout has no frame switch of its own.
+    ///
+    /// The frame of every wipeout is the drawing-wide WIPEOUTFRAME setting
+    /// (`WipeoutVariables::display_frame`, see
+    /// [`CadDocument::set_wipeout_frame`](crate::document::CadDocument::set_wipeout_frame)).
+    /// This method used to clear `SHOW_IMAGE` (DXF 70 bit 1, "Show image"),
+    /// which turns the wipeout itself off instead of hiding its frame.
+    #[deprecated(
+        note = "the wipeout frame is a drawing setting: use CadDocument::set_wipeout_frame"
+    )]
+    pub fn set_frame_visible(&mut self, _visible: bool) {}
 
-    /// Returns true if the frame is visible.
+    /// Returns true if the wipeout is shown (`SHOW_IMAGE`).
+    ///
+    /// Despite the name, this is not the frame: see
+    /// [`CadDocument::wipeout_frame`](crate::document::CadDocument::wipeout_frame).
+    #[deprecated(note = "the wipeout frame is a drawing setting: use CadDocument::wipeout_frame")]
     pub fn is_frame_visible(&self) -> bool {
         self.flags.contains(WipeoutDisplayFlags::SHOW_IMAGE)
     }
@@ -550,6 +557,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_hiding_frame_keeps_wipeout_shown() {
+        // The frame is the drawing-wide WIPEOUTFRAME setting; hiding it must
+        // not turn the wipeout itself off (DXF 70 bit 1, "Show image").
+        let mut wipeout = Wipeout::rectangular(Vector3::ZERO, 10.0, 5.0);
+        #[allow(deprecated)]
+        wipeout.set_frame_visible(false);
+        assert!(wipeout.flags.contains(WipeoutDisplayFlags::SHOW_IMAGE));
+    }
+
+    #[test]
+    fn test_wipeout_frame_is_a_drawing_setting() {
+        let mut document = crate::document::CadDocument::new();
+        assert_eq!(document.wipeout_frame(), 1);
+        document.set_wipeout_frame(0);
+        assert_eq!(document.wipeout_frame(), 0);
+        document.set_wipeout_frame(2);
+        assert_eq!(document.wipeout_frame(), 2);
+        let stored = document
+            .objects
+            .values()
+            .filter(|object| matches!(object, crate::objects::ObjectType::WipeoutVariables(_)))
+            .count();
+        assert_eq!(stored, 1);
+    }
+
+    #[test]
     fn test_wipeout_creation() {
         let wipeout = Wipeout::new();
         assert_eq!(wipeout.insertion_point, Vector3::ZERO);
@@ -677,18 +710,6 @@ mod tests {
 
         assert!((wipeout.width() - 50.0).abs() < 1e-10);
         assert!((wipeout.height() - 25.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_frame_visibility() {
-        let mut wipeout = Wipeout::new();
-        assert!(wipeout.is_frame_visible());
-
-        wipeout.set_frame_visible(false);
-        assert!(!wipeout.is_frame_visible());
-
-        wipeout.set_frame_visible(true);
-        assert!(wipeout.is_frame_visible());
     }
 
     #[test]
