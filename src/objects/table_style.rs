@@ -580,7 +580,8 @@ impl TableCellStyleData {
     /// Whether an edge is hidden. The grid record stores a "hidden" flag,
     /// read into `is_invisible` inverted.
     pub fn edge_hidden(&self, edge: i32) -> bool {
-        self.grid(edge).is_some_and(|grid| !grid.border.is_invisible)
+        self.grid(edge)
+            .is_some_and(|grid| !grid.border.is_invisible)
     }
 
     pub fn set_edge_hidden(&mut self, edge: i32, hidden: bool) {
@@ -953,8 +954,20 @@ impl TableStyle {
             self.data_row_style.text_height,
         );
         let rows = [
-            (&self.title_row_style, 1, CELL_CLASS_LABEL, TITLE_CELL_STYLE, TableCellStyleData::MERGE_ALL),
-            (&self.header_row_style, 2, CELL_CLASS_LABEL, HEADER_CELL_STYLE, 0),
+            (
+                &self.title_row_style,
+                1,
+                CELL_CLASS_LABEL,
+                TITLE_CELL_STYLE,
+                TableCellStyleData::MERGE_ALL,
+            ),
+            (
+                &self.header_row_style,
+                2,
+                CELL_CLASS_LABEL,
+                HEADER_CELL_STYLE,
+                0,
+            ),
             (&self.data_row_style, 3, CELL_CLASS_DATA, DATA_CELL_STYLE, 0),
         ];
         self.modern_overrides = rows
@@ -1158,8 +1171,7 @@ pub(crate) fn prepare_table_style_templates(
             dictionary
         } else {
             if let Some(dictionary) = document.extension_dictionary_handle(style) {
-                if let Some(ObjectType::Dictionary(entries)) =
-                    document.objects.get_mut(&dictionary)
+                if let Some(ObjectType::Dictionary(entries)) = document.objects.get_mut(&dictionary)
                 {
                     entries.remove(TEMPLATE_KEY);
                 }
@@ -1197,8 +1209,11 @@ pub(crate) fn restore_table_style_roundtrip(document: &mut crate::document::CadD
                     return None;
                 };
                 let template = entries.get(TEMPLATE_KEY)?;
-                matches!(document.objects.get(&template), Some(ObjectType::TableTemplate(_)))
-                    .then_some((*handle, template))
+                matches!(
+                    document.objects.get(&template),
+                    Some(ObjectType::TableTemplate(_))
+                )
+                .then_some((*handle, template))
             }
             _ => None,
         })
@@ -1313,7 +1328,9 @@ pub(crate) fn prepare_table_style_cell_maps(
                 _ => None,
             });
         stored.is_none_or(|cells| {
-            !cells.iter().eq(style.modern_overrides.iter().map(|(_, cell)| cell))
+            !cells
+                .iter()
+                .eq(style.modern_overrides.iter().map(|(_, cell)| cell))
         })
     });
     if stale {
@@ -1465,7 +1482,10 @@ mod tests {
     fn test_header_row_style() {
         let style = TableStyle::default();
         assert!((style.header_row_style.text_height - 0.25).abs() < 1e-10);
-        assert_eq!(style.header_row_style.alignment, CellAlignment::MiddleCenter);
+        assert_eq!(
+            style.header_row_style.alignment,
+            CellAlignment::MiddleCenter
+        );
     }
 
     #[test]

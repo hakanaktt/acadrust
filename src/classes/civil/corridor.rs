@@ -81,7 +81,9 @@ pub(super) fn baselines(data: &[u8], start: usize, end: usize) -> Vec<Groups> {
 fn probe(data: &[u8], start: usize, end: usize) -> Vec<Groups> {
     let mut out = Vec::new();
     let mut from = start;
-    while let Some(mut pos) = (from..end).find(|&pos| group(&mut Bits::new(data, pos, end), true).is_some()) {
+    while let Some(mut pos) =
+        (from..end).find(|&pos| group(&mut Bits::new(data, pos, end), true).is_some())
+    {
         let mut groups = Vec::new();
         loop {
             let mut bits = Bits::new(data, pos, end);
@@ -118,7 +120,9 @@ fn surface(bits: &mut Bits) -> Option<()> {
     // debt: this BL has no other value in the samples; what follows a
     // different one is not mapped.
     (bits.bit_long()? == 0).then_some(())?;
-    let feature_codes = usize::try_from(bits.bit_long()?).ok().filter(|n| *n <= bits.remaining())?;
+    let feature_codes = usize::try_from(bits.bit_long()?)
+        .ok()
+        .filter(|n| *n <= bits.remaining())?;
     bits.skip(feature_codes)?;
     bits.bit_long().map(|_| ())
 }
@@ -139,7 +143,9 @@ fn outlines(bits: &mut Bits) -> Option<()> {
     for _ in 0..bits.bit_long()? {
         for _ in 0..bits.bit_long()? {
             let kind = bits.bit_long()? as u32;
-            let m = usize::try_from(bits.bit_long()?).ok().filter(|m| m * 6 <= bits.remaining())?;
+            let m = usize::try_from(bits.bit_long()?)
+                .ok()
+                .filter(|m| m * 6 <= bits.remaining())?;
             if kind < 0x1_0000 {
                 for _ in 0..m {
                     bits.bit_long()?;
@@ -266,7 +272,11 @@ fn walk(bits: &mut Bits) -> Option<Vec<Groups>> {
         bits.bit()?;
         bits.skip(128)?;
         let n = bits.bit_long()?;
-        out.push((0..n).map(|_| fields_group(bits)).collect::<Option<Groups>>()?);
+        out.push(
+            (0..n)
+                .map(|_| fields_group(bits))
+                .collect::<Option<Groups>>()?,
+        );
         bits.bit()?;
         bits.bit()?;
         bits.skip(128)?;
@@ -488,11 +498,14 @@ fn fields_group(bits: &mut Bits) -> Option<Vec<Vec<(f64, Vector3)>>> {
     let n = bits.bit_long()?;
     (0..n)
         .map(|_| {
-            let n = usize::try_from(bits.bit_long()?).ok().filter(|n| n * 9 <= bits.remaining())?;
+            let n = usize::try_from(bits.bit_long()?)
+                .ok()
+                .filter(|n| n * 9 <= bits.remaining())?;
             (0..n)
                 .map(|_| {
                     let station = bits.bit_double()?;
-                    let point = Vector3::new(bits.bit_double()?, bits.bit_double()?, bits.bit_double()?);
+                    let point =
+                        Vector3::new(bits.bit_double()?, bits.bit_double()?, bits.bit_double()?);
                     bits.bit()?;
                     Some((station, point))
                 })
@@ -502,13 +515,20 @@ fn fields_group(bits: &mut Bits) -> Option<Vec<Vec<(f64, Vector3)>>> {
 }
 
 /// Feature line groups of every baseline, one after another.
-pub(super) fn feature_line_groups(data: &[u8], start: usize, end: usize) -> Vec<Vec<Vec<(f64, Vector3)>>> {
+pub(super) fn feature_line_groups(
+    data: &[u8],
+    start: usize,
+    end: usize,
+) -> Vec<Vec<Vec<(f64, Vector3)>>> {
     baselines(data, start, end).into_iter().flatten().collect()
 }
 
 /// Every feature line segment of a corridor.
 pub(super) fn feature_lines(data: &[u8], start: usize, end: usize) -> Vec<Vec<(f64, Vector3)>> {
-    feature_line_groups(data, start, end).into_iter().flatten().collect()
+    feature_line_groups(data, start, end)
+        .into_iter()
+        .flatten()
+        .collect()
 }
 
 #[cfg(test)]
@@ -517,7 +537,13 @@ mod tests {
 
     fn bits_of(s: &str) -> Vec<u8> {
         let s: Vec<u8> = s.bytes().filter(|b| *b == b'0' || *b == b'1').collect();
-        s.chunks(8).map(|c| c.iter().enumerate().fold(0u8, |a, (i, b)| a | ((b - b'0') << (7 - i)))).collect()
+        s.chunks(8)
+            .map(|c| {
+                c.iter()
+                    .enumerate()
+                    .fold(0u8, |a, (i, b)| a | ((b - b'0') << (7 - i)))
+            })
+            .collect()
     }
 
     #[test]

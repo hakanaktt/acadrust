@@ -8,8 +8,8 @@
 
 use acadrust::document::CadDocument;
 use acadrust::entities::hatch::{
-    BoundaryEdge, BoundaryPath, BoundaryPathFlags, CircularArcEdge, EllipticArcEdge,
-    HatchPattern, HatchPatternLine, HatchPatternType, LineEdge,
+    BoundaryEdge, BoundaryPath, BoundaryPathFlags, CircularArcEdge, EllipticArcEdge, HatchPattern,
+    HatchPatternLine, HatchPatternType, LineEdge,
 };
 use acadrust::entities::{EntityType, Hatch};
 use acadrust::io::dwg::{DwgReader, DwgWriter};
@@ -65,7 +65,9 @@ fn test_dwg_and_dxf_give_the_same_circular_arc_edge() {
     );
 
     // Read back DWG
-    let dwg_doc = DwgReader::from_stream(Cursor::new(dwg_bytes)).read().expect("DWG read");
+    let dwg_doc = DwgReader::from_stream(Cursor::new(dwg_bytes))
+        .read()
+        .expect("DWG read");
     let dwg_edge = match &dwg_doc.entities().next().unwrap() {
         EntityType::Hatch(h) => match &h.paths[0].edges[0] {
             BoundaryEdge::CircularArc(a) => a.clone(),
@@ -75,7 +77,10 @@ fn test_dwg_and_dxf_give_the_same_circular_arc_edge() {
     };
 
     // Read back DXF
-    let dxf_doc = DxfReader::from_reader(Cursor::new(dxf_bytes)).unwrap().read().unwrap();
+    let dxf_doc = DxfReader::from_reader(Cursor::new(dxf_bytes))
+        .unwrap()
+        .read()
+        .unwrap();
     let dxf_edge = match &dxf_doc.entities().next().unwrap() {
         EntityType::Hatch(h) => match &h.paths[0].edges[0] {
             BoundaryEdge::CircularArc(a) => a.clone(),
@@ -110,7 +115,9 @@ fn test_dwg_and_dxf_give_the_same_circular_arc_edge() {
     assert!(!dxf_edge.counter_clockwise);
 
     // Saving DWG as DXF should keep the same stored angles in the DXF file
-    let dwg_as_dxf_bytes = DxfWriter::new(&dwg_doc).write_to_vec().expect("DWG as DXF write");
+    let dwg_as_dxf_bytes = DxfWriter::new(&dwg_doc)
+        .write_to_vec()
+        .expect("DWG as DXF write");
     let (s_dwg_dxf, e_dwg_dxf) = stored_dxf_angles(&dwg_as_dxf_bytes);
     assert!(
         (s_dwg_dxf - 270.0).abs() < 1e-9 && (e_dwg_dxf - 90.0).abs() < 1e-9,
@@ -215,7 +222,10 @@ fn test_explode_hatch_with_clockwise_circular_arc_fills_correct_side() {
             assert!(
                 line.start.x >= -1e-6 && line.end.x >= -1e-6,
                 "Pattern line was placed on the wrong side: ({}, {}) to ({}, {})",
-                line.start.x, line.start.y, line.end.x, line.end.y
+                line.start.x,
+                line.start.y,
+                line.end.x,
+                line.end.y
             );
         }
     }
@@ -236,7 +246,11 @@ fn test_explode_hatch_with_clockwise_circular_arc_fills_correct_side() {
     let min_x = center_line.start.x.min(center_line.end.x);
     let max_x = center_line.start.x.max(center_line.end.x);
     assert!(min_x.abs() < 0.1, "min_x should be near 0, got {}", min_x);
-    assert!((max_x - 5.0).abs() < 0.1, "max_x should be near 5.0, got {}", max_x);
+    assert!(
+        (max_x - 5.0).abs() < 0.1,
+        "max_x should be near 5.0, got {}",
+        max_x
+    );
 }
 
 #[test]
@@ -278,7 +292,10 @@ fn test_explode_hatch_with_clockwise_elliptic_arc_fills_correct_side() {
             assert!(
                 line.start.x >= -1e-6 && line.end.x >= -1e-6,
                 "Pattern line was placed on the wrong side: ({}, {}) to ({}, {})",
-                line.start.x, line.start.y, line.end.x, line.end.y
+                line.start.x,
+                line.start.y,
+                line.end.x,
+                line.end.y
             );
         }
     }
@@ -299,5 +316,9 @@ fn test_explode_hatch_with_clockwise_elliptic_arc_fills_correct_side() {
     let min_x = center_line.start.x.min(center_line.end.x);
     let max_x = center_line.start.x.max(center_line.end.x);
     assert!(min_x.abs() < 0.1, "min_x should be near 0, got {}", min_x);
-    assert!((max_x - 10.0).abs() < 0.1, "max_x should be near 10.0, got {}", max_x);
+    assert!(
+        (max_x - 10.0).abs() < 0.1,
+        "max_x should be near 10.0, got {}",
+        max_x
+    );
 }

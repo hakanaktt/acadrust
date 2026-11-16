@@ -683,8 +683,8 @@ fn looks_like_negative_index(s: &str) -> bool {
 pub(crate) fn normalize_v400_tokens(entity_type: &str, tokens: &mut Vec<SatToken>) {
     let base = base_entity_type(entity_type);
     match base {
-        "body" | "lump" | "shell" | "subshell" | "wire" | "face" | "loop" | "vertex"
-        | "coedge" | "edge" | "point" | "transform" | "surface" | "curve" | "pcurve" => {}
+        "body" | "lump" | "shell" | "subshell" | "wire" | "face" | "loop" | "vertex" | "coedge"
+        | "edge" | "point" | "transform" | "surface" | "curve" | "pcurve" => {}
         // Unknown entity types (attributes, etc.): leave unchanged.
         _ => return,
     }

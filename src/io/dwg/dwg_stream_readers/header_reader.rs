@@ -881,10 +881,7 @@ fn read_header_fields(r: &mut SectionReader, v: DxfVersion, h: &mut HeaderVariab
 
         // LibreDWG's writer stops the R2004 header here, so the two BitLongs and
         // the bit after them are optional as well, like the AC1014 tail above.
-        if r2004_plus(v)
-            && r.try_read_bit_long().is_some()
-            && r.try_read_bit_long().is_some()
-        {
+        if r2004_plus(v) && r.try_read_bit_long().is_some() && r.try_read_bit_long().is_some() {
             let _ = r.read_bit();
         }
     }

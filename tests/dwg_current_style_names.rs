@@ -37,7 +37,10 @@ fn roundtrip(version: DxfVersion) {
         .expect("read dwg");
     let h = &loaded.header;
     assert_eq!(h.current_dimstyle_name, "MyDim", "{version:?} $DIMSTYLE");
-    assert_eq!(h.current_text_style_name, "MyText", "{version:?} $TEXTSTYLE");
+    assert_eq!(
+        h.current_text_style_name, "MyText",
+        "{version:?} $TEXTSTYLE"
+    );
     assert_eq!(h.current_linetype_name, "MyDash", "{version:?} $CELTYPE");
 }
 

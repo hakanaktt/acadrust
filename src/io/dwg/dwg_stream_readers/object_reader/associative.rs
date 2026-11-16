@@ -1229,7 +1229,11 @@ pub fn read_associative_data(
             let parameter = handle(reader);
             let has_action = reader.read_bit();
             // A detached edge stores no cached curve after the flag.
-            let action_type = if has_action { reader.read_bit_long() } else { 0 };
+            let action_type = if has_action {
+                reader.read_bit_long()
+            } else {
+                0
+            };
             let subcurve_kind = match action_type {
                 11 => AssocSubcurveKind::Arc,
                 17 => AssocSubcurveKind::Ellipse,

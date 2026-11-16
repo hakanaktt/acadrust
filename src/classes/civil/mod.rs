@@ -25,8 +25,9 @@ mod tin;
 mod topology;
 
 pub use alignment::{
-    display_station, AlignmentCriteria, AlignmentElement, AlignmentType, OffsetParameters, OffsetRegion, WideningTransition, AlignmentElementKind, AlignmentPiece, DesignSpeed, GeometryPoint, SpiralShape,
-    StationEquation,
+    display_station, AlignmentCriteria, AlignmentElement, AlignmentElementKind, AlignmentPiece,
+    AlignmentType, DesignSpeed, GeometryPoint, OffsetParameters, OffsetRegion, SpiralShape,
+    StationEquation, WideningTransition,
 };
 pub use cogo::CogoPoint;
 pub use grading::{CriteriaValue, GradingCriteria};
@@ -34,13 +35,15 @@ pub use intersection::IntersectionLayout;
 pub use labels::{parse_format, property, LabelPart, LabelText};
 pub use network::{PartField, PressurePipe};
 pub use parameters::{Parameter, ParameterValue};
-pub use profile::{CurveMinimumK, ProfileCriteria, ProfileLocking, ProfilePiece, ProfileViewFrame, Pvi};
+pub use profile::{
+    CurveMinimumK, ProfileCriteria, ProfileLocking, ProfilePiece, ProfileViewFrame, Pvi,
+};
 pub use sample_lines::SampleLines;
 pub use section::{MassHaulViewFrame, SectionGeometry, SectionViewFrame};
 pub use style::{DisplayComponent, Marker, ViewAxes, ViewAxis};
 pub use subassembly::{AssemblyLayout, Attachment, SubassemblyShape};
-pub use topology::{Topology, TopologyVertex};
 pub use tin::{TinSurface, TinTriangle, TinVertex};
+pub use topology::{Topology, TopologyVertex};
 
 use super::arch::{ArchEntityData, ArchObject};
 use crate::types::Vector2;
@@ -86,11 +89,23 @@ pub enum CivilObjectKind {
 pub const ENTITY_CLASSES: &[(&str, &str, CivilKind)] = &[
     ("AECC_ALIGNMENT", "AeccDbAlignment", CivilKind::Alignment),
     ("AECC_PROFILE", "AeccDbVAlignment", CivilKind::Profile),
-    ("AECC_PROFILE_VIEW", "AeccDbGraphProfile", CivilKind::ProfileView),
-    ("AECC_TIN_SURFACE", "AeccDbSurfaceTin", CivilKind::TinSurface),
+    (
+        "AECC_PROFILE_VIEW",
+        "AeccDbGraphProfile",
+        CivilKind::ProfileView,
+    ),
+    (
+        "AECC_TIN_SURFACE",
+        "AeccDbSurfaceTin",
+        CivilKind::TinSurface,
+    ),
     ("AECC_CORRIDOR", "AeccDbCorridor", CivilKind::Corridor),
     ("AECC_ASSEMBLY", "AeccDbAssembly", CivilKind::Assembly),
-    ("AECC_SUBASSEMBLY", "AeccDbSubassembly", CivilKind::Subassembly),
+    (
+        "AECC_SUBASSEMBLY",
+        "AeccDbSubassembly",
+        CivilKind::Subassembly,
+    ),
     ("AECC_PARCEL", "AeccDbFace", CivilKind::Parcel),
     (
         "AECC_SAMPLE_LINE_GROUP",
@@ -112,14 +127,46 @@ pub const ENTITY_CLASSES: &[(&str, &str, CivilKind)] = &[
         "AeccDbAlignmentGeomPointLabeling",
         CivilKind::Label,
     ),
-    ("AECC_PROFILE_PROJECTION_LABEL", "AeccDbProfileProjectionLabel", CivilKind::Label),
-    ("AECC_HORIZONTALGEOMETRYBAND_LABELGROUP", "AeccDbHorizontalGeometryBandLabeling", CivilKind::Label),
-    ("AECC_VERTICALGEOMETRYBAND_LABELGROUP", "AeccDbVerticalGeometryBandLabeling", CivilKind::Label),
-    ("AECC_SUPERELEVATIONBAND_LABELGROUP", "AeccDbSuperElevationBandLabeling", CivilKind::Label),
-    ("AECC_ALIGNMENT_STAEQU_LABEL_GROUP", "AeccDbAlignmentStaEquLabeling", CivilKind::Label),
-    ("AECC_ALIGNMENT_DESIGNSPEED_LABEL_GROUP", "AeccDbAlignmentDesignSpeedLabeling", CivilKind::Label),
-    ("AECC_ALIGNMENT_SUPERELEVATION_LABEL_GROUP", "AeccDbAlignmentSuperelevationLabeling", CivilKind::Label),
-    ("AECC_ALIGNMENT_VAGEOMPOINT_LABELING", "AeccDbAlignmentVAGeomPointLabeling", CivilKind::Label),
+    (
+        "AECC_PROFILE_PROJECTION_LABEL",
+        "AeccDbProfileProjectionLabel",
+        CivilKind::Label,
+    ),
+    (
+        "AECC_HORIZONTALGEOMETRYBAND_LABELGROUP",
+        "AeccDbHorizontalGeometryBandLabeling",
+        CivilKind::Label,
+    ),
+    (
+        "AECC_VERTICALGEOMETRYBAND_LABELGROUP",
+        "AeccDbVerticalGeometryBandLabeling",
+        CivilKind::Label,
+    ),
+    (
+        "AECC_SUPERELEVATIONBAND_LABELGROUP",
+        "AeccDbSuperElevationBandLabeling",
+        CivilKind::Label,
+    ),
+    (
+        "AECC_ALIGNMENT_STAEQU_LABEL_GROUP",
+        "AeccDbAlignmentStaEquLabeling",
+        CivilKind::Label,
+    ),
+    (
+        "AECC_ALIGNMENT_DESIGNSPEED_LABEL_GROUP",
+        "AeccDbAlignmentDesignSpeedLabeling",
+        CivilKind::Label,
+    ),
+    (
+        "AECC_ALIGNMENT_SUPERELEVATION_LABEL_GROUP",
+        "AeccDbAlignmentSuperelevationLabeling",
+        CivilKind::Label,
+    ),
+    (
+        "AECC_ALIGNMENT_VAGEOMPOINT_LABELING",
+        "AeccDbAlignmentVAGeomPointLabeling",
+        CivilKind::Label,
+    ),
     (
         "AECC_PROFILEDATABAND_LABELGROUP",
         "AeccDbProfileDataBandLabeling",
@@ -245,7 +292,9 @@ impl ArchEntityData {
             .filter(|e| !matches!(e.kind, AlignmentElementKind::Other { .. }))
             .flat_map(|e| [e.previous, e.next])
             .collect();
-        elements.retain(|e| !matches!(e.kind, AlignmentElementKind::Other { .. }) || known_links.contains(&e.id));
+        elements.retain(|e| {
+            !matches!(e.kind, AlignmentElementKind::Other { .. }) || known_links.contains(&e.id)
+        });
         Some(elements)
     }
 
@@ -284,7 +333,9 @@ impl ArchEntityData {
             .map(|run| run.windows(2).map(|w| w[0].distance(&w[1])).sum())
             .unwrap_or(0.0);
         self.main_stream()
-            .map(|(data, start, end)| alignment::masked_ranges(data, start, end, first, first + length))
+            .map(|(data, start, end)| {
+                alignment::masked_ranges(data, start, end, first, first + length)
+            })
             .unwrap_or_default()
     }
 
@@ -303,7 +354,9 @@ impl ArchEntityData {
             return Default::default();
         };
         self.main_stream()
-            .map(|(data, start, end)| alignment::equations_and_speeds(data, start, end, first, last))
+            .map(|(data, start, end)| {
+                alignment::equations_and_speeds(data, start, end, first, last)
+            })
             .unwrap_or_default()
     }
 
@@ -347,7 +400,12 @@ impl ArchEntityData {
         // three tables.
         let at = strings.iter().position(|s| s.contains("<DATADIR>"))?;
         let get = |i: usize| strings.get(i).cloned().unwrap_or_default();
-        Some([get(at.checked_sub(1)?), get(at + 1), get(at + 2), get(at + 3)])
+        Some([
+            get(at.checked_sub(1)?),
+            get(at + 1),
+            get(at + 2),
+            get(at + 3),
+        ])
     }
 
     /// The design check set (`AECC_ALIGNMENT_DESIGN_CHECK_SET`) an
@@ -361,7 +419,11 @@ impl ArchEntityData {
             _ => 0,
         };
         let handles = self.decode().handles;
-        handles.len().checked_sub(after + 1).map(|i| handles[i]).filter(|h| *h != 0)
+        handles
+            .len()
+            .checked_sub(after + 1)
+            .map(|i| handles[i])
+            .filter(|h| *h != 0)
     }
 
     /// The parent alignment of an offset alignment (its last reference).
@@ -380,7 +442,8 @@ impl ArchEntityData {
         }
         let handles = self.decode().handles;
         let tail = handles.get(handles.len().checked_sub(6)?..)?;
-        (tail[0] == tail[1] && tail[2] == tail[3] && tail[4] == tail[0] && tail[5] == tail[2]).then(|| [tail[0], tail[2]])
+        (tail[0] == tail[1] && tail[2] == tail[3] && tail[4] == tail[0] && tail[5] == tail[2])
+            .then(|| [tail[0], tail[2]])
     }
 
     /// The JSON string a connected alignment keeps its curve settings in
@@ -390,7 +453,10 @@ impl ArchEntityData {
         if self.civil_kind() != Some(CivilKind::Alignment) {
             return None;
         }
-        self.decode().strings.into_iter().find(|s| s.trim_start().starts_with('{'))
+        self.decode()
+            .strings
+            .into_iter()
+            .find(|s| s.trim_start().starts_with('{'))
     }
 
     /// What kind of alignment this is (Alignment Properties' type).
@@ -455,7 +521,11 @@ impl ArchEntityData {
         // intervals) are only read through their record marker.
         self.main_stream()
             .map(|(data, start, end)| {
-                if matches!(self.dxf_name.as_str(), "AECC_ALIGNMENT_STATION_LABEL_GROUP" | "AECC_ALIGNMENT_MINOR_STATION_LABEL_GROUP") {
+                if matches!(
+                    self.dxf_name.as_str(),
+                    "AECC_ALIGNMENT_STATION_LABEL_GROUP"
+                        | "AECC_ALIGNMENT_MINOR_STATION_LABEL_GROUP"
+                ) {
                     if let Some(stations) = labels::group_stations(data, start, end) {
                         return stations;
                     }
@@ -463,7 +533,11 @@ impl ArchEntityData {
                 // debt: other label group classes are searched for their
                 // stations.
                 let marked = labels::marked_stations(data, start, end);
-                if marked.len() >= 2 { marked } else { labels::stations(data, start, end) }
+                if marked.len() >= 2 {
+                    marked
+                } else {
+                    labels::stations(data, start, end)
+                }
             })
             .unwrap_or_default()
     }
@@ -478,7 +552,8 @@ impl ArchEntityData {
         self.main_stream()
             .map(|(data, start, end)| {
                 // debt: groups whose labels do not read are searched.
-                labels::group_point_kinds(data, start, end).unwrap_or_else(|| labels::geometry_point_kinds(data, start, end))
+                labels::group_point_kinds(data, start, end)
+                    .unwrap_or_else(|| labels::geometry_point_kinds(data, start, end))
             })
             .unwrap_or_default()
     }
@@ -553,10 +628,23 @@ impl ArchEntityData {
             along.push(along.last().unwrap() + w[0].distance(&w[1]));
         }
         // Linear interpolation of `values` over ascending `keys` at `k`.
-        fn lerp<T: Copy + std::ops::Add<Output = T> + std::ops::Sub<Output = T> + std::ops::Mul<f64, Output = T>>(keys: &[f64], values: &[T], k: f64) -> T {
+        fn lerp<
+            T: Copy
+                + std::ops::Add<Output = T>
+                + std::ops::Sub<Output = T>
+                + std::ops::Mul<f64, Output = T>,
+        >(
+            keys: &[f64],
+            values: &[T],
+            k: f64,
+        ) -> T {
             let i = keys.partition_point(|s| *s <= k).clamp(1, keys.len() - 1);
             let (k0, k1) = (keys[i - 1], keys[i]);
-            let t = if k1 > k0 { ((k - k0) / (k1 - k0)).clamp(0.0, 1.0) } else { 0.0 };
+            let t = if k1 > k0 {
+                ((k - k0) / (k1 - k0)).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
             values[i - 1] + (values[i] - values[i - 1]) * t
         }
         if run.len() < 2 {
@@ -573,7 +661,12 @@ impl ArchEntityData {
                 if hi <= lo {
                     return None;
                 }
-                let mut at: Vec<f64> = stations.iter().chain(&along).copied().filter(|s| (lo..=hi).contains(s)).collect();
+                let mut at: Vec<f64> = stations
+                    .iter()
+                    .chain(&along)
+                    .copied()
+                    .filter(|s| (lo..=hi).contains(s))
+                    .collect();
                 at.extend([lo, hi]);
                 at.sort_by(f64::total_cmp);
                 at.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
@@ -675,7 +768,10 @@ impl ArchEntityData {
         }
         let strings = self.decode().strings;
         let at = strings.iter().position(|s| s.contains("<DATADIR>"))?;
-        Some([strings.get(at.checked_sub(1)?)?.clone(), strings.get(at + 1)?.clone()])
+        Some([
+            strings.get(at.checked_sub(1)?)?.clone(),
+            strings.get(at + 1)?.clone(),
+        ])
     }
 
     /// Placement and ranges of a Civil 3D profile view.
@@ -728,7 +824,13 @@ impl ArchEntityData {
         }
         // Body handles: two nulls (one in Civil 3D 2013), then the owning
         // assembly.
-        self.decode().handles.iter().take(3).skip(1).copied().find(|h| *h != 0)
+        self.decode()
+            .handles
+            .iter()
+            .take(3)
+            .skip(1)
+            .copied()
+            .find(|h| *h != 0)
     }
 
     /// Site container (`AECC_FEATURE_STYLE`) of a Civil 3D feature line
@@ -765,8 +867,12 @@ impl ArchEntityData {
             return None;
         }
         let strings = self.decode().strings;
-        (strings.first().map(String::as_str) == Some("AeccImpFace"))
-            .then(|| (strings.get(2).cloned().unwrap_or_default(), strings.get(3).cloned().unwrap_or_default()))
+        (strings.first().map(String::as_str) == Some("AeccImpFace")).then(|| {
+            (
+                strings.get(2).cloned().unwrap_or_default(),
+                strings.get(3).cloned().unwrap_or_default(),
+            )
+        })
     }
 
     /// The site a parcel belongs to (its second reference); `None` for a
@@ -776,7 +882,10 @@ impl ArchEntityData {
             return None;
         }
         let handles = self.decode().handles;
-        (handles.first() == Some(&0)).then(|| handles.get(1).copied()).flatten().filter(|h| *h != 0)
+        (handles.first() == Some(&0))
+            .then(|| handles.get(1).copied())
+            .flatten()
+            .filter(|h| *h != 0)
     }
 
     /// The `AECC_FEATURE_STYLE` record an alignment's geometry points are
@@ -805,7 +914,10 @@ impl ArchEntityData {
     /// Points of a Civil 3D section (`AECC_SECTION`, `AECC_SECTION_CORRIDOR`)
     /// in its (offset, elevation) frame, with the point pairs it links.
     pub fn section_geometry(&self) -> Option<SectionGeometry> {
-        if !matches!(self.dxf_name.as_str(), "AECC_SECTION" | "AECC_SECTION_CORRIDOR") {
+        if !matches!(
+            self.dxf_name.as_str(),
+            "AECC_SECTION" | "AECC_SECTION_CORRIDOR"
+        ) {
             return None;
         }
         let (data, start, end) = self.main_stream()?;
@@ -858,7 +970,10 @@ impl ArchEntityData {
     /// or appurtenance (`AECC_STRUCTURE`, `AECC_FITTING`,
     /// `AECC_APPURTENANCE`).
     pub fn network_part_rotation(&self) -> Option<f64> {
-        if !matches!(self.dxf_name.as_str(), "AECC_STRUCTURE" | "AECC_FITTING" | "AECC_APPURTENANCE") {
+        if !matches!(
+            self.dxf_name.as_str(),
+            "AECC_STRUCTURE" | "AECC_FITTING" | "AECC_APPURTENANCE"
+        ) {
             return None;
         }
         let (data, start, end) = self.main_stream()?;
@@ -1050,7 +1165,9 @@ impl ArchObject {
     /// Content, height and offset of a label text component
     /// (`AECC_LABEL_TEXT_STYLE`).
     pub fn label_text(&self) -> Option<LabelText> {
-        if self.dxf_name != "AECC_LABEL_TEXT_STYLE" && self.dxf_name != "AECC_LABEL_TEXT_PROPFIELDOBJECT_STYLE" {
+        if self.dxf_name != "AECC_LABEL_TEXT_STYLE"
+            && self.dxf_name != "AECC_LABEL_TEXT_PROPFIELDOBJECT_STYLE"
+        {
             return None;
         }
         let (data, start, end) = self.main_stream()?;
@@ -1095,7 +1212,9 @@ impl ArchObject {
 
     /// Plotted height of a Civil 3D profile view band.
     pub fn band_height(&self) -> Option<f64> {
-        if !(self.dxf_name.starts_with("AECC_PROFILE_VIEW_") && self.dxf_name.ends_with("_BAND_STYLE")) {
+        if !(self.dxf_name.starts_with("AECC_PROFILE_VIEW_")
+            && self.dxf_name.ends_with("_BAND_STYLE"))
+        {
             return None;
         }
         let (data, start, end) = self.main_stream()?;
@@ -1108,7 +1227,13 @@ impl ArchObject {
             return None;
         }
         // The block is the style's last non-null reference.
-        let block = self.decode().handles.iter().rev().copied().find(|h| *h != 0)?;
+        let block = self
+            .decode()
+            .handles
+            .iter()
+            .rev()
+            .copied()
+            .find(|h| *h != 0)?;
         let (data, start, end) = self.main_stream()?;
         Some((block, style::tick_size(data, start, end)?))
     }
@@ -1205,12 +1330,15 @@ impl ArchObject {
     fn main_stream(&self) -> Option<(&[u8], usize, usize)> {
         let objects = crate::io::dwg::dwg_stream_readers::object_reader::DwgObjectReader::new(
             Vec::new(),
-            self.raw_dwg_version.unwrap_or(crate::types::DxfVersion::AC1032),
+            self.raw_dwg_version
+                .unwrap_or(crate::types::DxfVersion::AC1032),
             Default::default(),
         )
         .ok()?;
         let raw = self.raw_dwg_data.as_deref()?;
-        let (type_code, mut reader) = objects.read_raw_record(raw, self.raw_dwg_handle_bits).ok()?;
+        let (type_code, mut reader) = objects
+            .read_raw_record(raw, self.raw_dwg_handle_bits)
+            .ok()?;
         reader.set_ref_handle(self.handle.value());
         objects.read_common_non_entity_data(&mut reader, type_code);
         let start = usize::try_from(reader.position_in_bits()).ok()?;

@@ -9,13 +9,34 @@ use acadrust::io::dxf::code_page::{
 
 #[test]
 fn issue_216_stand_in_names_are_not_faithful() {
-    for name in ["ISO8859-1", "ISO8859-9", "ansi1252", "SOMETHING_UNKNOWN", "ANSI_1255", "ANSI_932"] {
+    for name in [
+        "ISO8859-1",
+        "ISO8859-9",
+        "ansi1252",
+        "SOMETHING_UNKNOWN",
+        "ANSI_1255",
+        "ANSI_932",
+    ] {
         assert!(!code_page_is_faithful(name), "{name} is a stand-in");
-        assert!(!encoding_from_code_page(name).unwrap().is_faithful(), "{name}");
+        assert!(
+            !encoding_from_code_page(name).unwrap().is_faithful(),
+            "{name}"
+        );
     }
-    for name in ["ANSI_1252", "ANSI_1251", "DOS866", "KOREAN", "ANSI_949", "DOS437", "JOHAB"] {
+    for name in [
+        "ANSI_1252",
+        "ANSI_1251",
+        "DOS866",
+        "KOREAN",
+        "ANSI_949",
+        "DOS437",
+        "JOHAB",
+    ] {
         assert!(code_page_is_faithful(name), "{name} is the code page");
-        assert!(encoding_from_code_page(name).unwrap().is_faithful(), "{name}");
+        assert!(
+            encoding_from_code_page(name).unwrap().is_faithful(),
+            "{name}"
+        );
     }
 }
 
@@ -37,9 +58,16 @@ fn issue_216_an_index_outside_the_table_names_no_code_page() {
     for index in [0u16, 45, 99, 65535] {
         let page = encoding_from_dwg_code_page(index);
         assert!(!page.is_faithful(), "index {index}");
-        assert_eq!(decode_cif_escapes_in("94\\U+00B0", page), "94\u{B0}", "index {index}");
+        assert_eq!(
+            decode_cif_escapes_in("94\\U+00B0", page),
+            "94\u{B0}",
+            "index {index}"
+        );
     }
-    assert!(encoding_from_dwg_code_page(30).is_faithful(), "30 is ANSI_1252");
+    assert!(
+        encoding_from_dwg_code_page(30).is_faithful(),
+        "30 is ANSI_1252"
+    );
 }
 
 #[test]

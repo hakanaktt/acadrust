@@ -68,7 +68,9 @@ fn layout(data: &[u8], start: usize, end: usize) -> Option<Layout> {
     bits.bit_long()?;
     let mut refs = 1;
     for _ in 0..2 {
-        let n = usize::try_from(bits.bit_long()?).ok().filter(|n| *n <= bits.remaining() / 2)?;
+        let n = usize::try_from(bits.bit_long()?)
+            .ok()
+            .filter(|n| *n <= bits.remaining() / 2)?;
         for _ in 0..n {
             bits.bit_long()?;
         }
@@ -84,7 +86,10 @@ fn layout(data: &[u8], start: usize, end: usize) -> Option<Layout> {
         }
         bits = probe;
     }
-    refs += keys.iter().filter(|(key, _)| KeyValue::has_reference(*key)).count();
+    refs += keys
+        .iter()
+        .filter(|(key, _)| KeyValue::has_reference(*key))
+        .count();
     let mut skipped = false;
     let (components, end) = component_lists(data, bits.pos, end)
         .or_else(|| {
@@ -98,7 +103,8 @@ fn layout(data: &[u8], start: usize, end: usize) -> Option<Layout> {
             // debt: a block before the BL 32 in neither form of
             // [`extra_keys`] is found by probing past it.
             skipped = true;
-            (bits.pos + 1..(bits.pos + 512).min(end)).find_map(|pos| component_lists(data, pos, end))
+            (bits.pos + 1..(bits.pos + 512).min(end))
+                .find_map(|pos| component_lists(data, pos, end))
         })?;
     Some(Layout {
         keys,
@@ -136,7 +142,11 @@ pub(super) fn class_data(data: &[u8], start: usize, end: usize) -> Option<usize>
 
 /// `BL 32`, 3 bits, then the component lists; the components and the bit
 /// after them.
-fn component_lists(data: &[u8], pos: usize, end: usize) -> Option<(Vec<(bool, Color, i16, f64)>, usize)> {
+fn component_lists(
+    data: &[u8],
+    pos: usize,
+    end: usize,
+) -> Option<(Vec<(bool, Color, i16, f64)>, usize)> {
     let mut bits = Bits::new(data, pos, end);
     (bits.bit_long()? == 32).then_some(())?;
     bits.pos += 3;
@@ -172,7 +182,12 @@ fn hatch(bits: &mut Bits) -> Option<()> {
 }
 
 fn record(bits: &mut Bits) -> Option<(bool, Color, i16, f64)> {
-    let tag = [bits.bit_short()?, bits.bit_short()?, bits.bit_short()?, bits.bit_short()?];
+    let tag = [
+        bits.bit_short()?,
+        bits.bit_short()?,
+        bits.bit_short()?,
+        bits.bit_short()?,
+    ];
     (matches!(tag[0], 70 | 80) && tag == [tag[0], tag[0], 0, tag[0]]).then_some(())?;
     let visible = bits.bit()?;
     bits.bit_short()?;
@@ -204,12 +219,24 @@ pub(super) fn components(
         return Vec::new();
     };
     let count = layout.components.len();
-    let triples_at = |first: usize| -> Vec<&[u64]> { handles.get(first..).unwrap_or_default().chunks_exact(3).take(count).collect() };
+    let triples_at = |first: usize| -> Vec<&[u64]> {
+        handles
+            .get(first..)
+            .unwrap_or_default()
+            .chunks_exact(3)
+            .take(count)
+            .collect()
+    };
     let first = if layout.skipped {
         // debt: the skipped bits hold references too; the triples start
         // where the most of them name a layer.
         (layout.refs..=handles.len().saturating_sub(3 * count))
-            .max_by_key(|&first| (triples_at(first).iter().filter(|t| is_layer(t[0])).count(), std::cmp::Reverse(first)))
+            .max_by_key(|&first| {
+                (
+                    triples_at(first).iter().filter(|t| is_layer(t[0])).count(),
+                    std::cmp::Reverse(first),
+                )
+            })
             .unwrap_or(layout.refs)
     } else {
         layout.refs
@@ -222,23 +249,28 @@ pub(super) fn components(
         .components
         .into_iter()
         .zip(triples)
-        .map(|((visible, color, lineweight, linetype_scale), refs)| DisplayComponent {
-            visible,
-            color,
-            layer: refs[0],
-            linetype: refs[1],
-            lineweight,
-            linetype_scale,
-        })
+        .map(
+            |((visible, color, lineweight, linetype_scale), refs)| DisplayComponent {
+                visible,
+                color,
+                layer: refs[0],
+                linetype: refs[1],
+                lineweight,
+                linetype_scale,
+            },
+        )
         .collect()
 }
 
 /// The `BD` value of setting `key`.
 pub(super) fn setting(data: &[u8], start: usize, end: usize, key: u32) -> Option<f64> {
-    layout(data, start, end)?.keys.into_iter().find_map(|(k, value)| match value {
-        KeyValue::Double(v) if k == key => Some(v),
-        _ => None,
-    })
+    layout(data, start, end)?
+        .keys
+        .into_iter()
+        .find_map(|(k, value)| match value {
+            KeyValue::Double(v) if k == key => Some(v),
+            _ => None,
+        })
 }
 
 /// Data band style height.
@@ -356,7 +388,16 @@ mod tests {
 
     fn packed(s: &str) -> (Vec<u8>, usize) {
         let s: Vec<u8> = s.bytes().filter(|b| *b == b'0' || *b == b'1').collect();
-        (s.chunks(8).map(|c| c.iter().enumerate().fold(0u8, |a, (i, b)| a | ((b - b'0') << (7 - i)))).collect(), s.len())
+        (
+            s.chunks(8)
+                .map(|c| {
+                    c.iter()
+                        .enumerate()
+                        .fold(0u8, |a, (i, b)| a | ((b - b'0') << (7 - i)))
+                })
+                .collect(),
+            s.len(),
+        )
     }
 
     #[test]
@@ -382,7 +423,11 @@ mod tests {
         let mut bits = String::new();
         let byte = |b: u8| format!("{b:08b}");
         for tag in [v, v, 0, v] {
-            bits += &if tag == 0 { "10".to_string() } else { format!("01{}", byte(tag)) };
+            bits += &if tag == 0 {
+                "10".to_string()
+            } else {
+                format!("01{}", byte(tag))
+            };
         }
         bits += "1"; // visible
         bits += "10"; // BS 0
@@ -399,14 +444,21 @@ mod tests {
         while bits.len() % 8 != 0 {
             bits.push('0');
         }
-        bits.as_bytes().chunks(8).map(|c| u8::from_str_radix(std::str::from_utf8(c).unwrap(), 2).unwrap()).collect()
+        bits.as_bytes()
+            .chunks(8)
+            .map(|c| u8::from_str_radix(std::str::from_utf8(c).unwrap(), 2).unwrap())
+            .collect()
     }
 
     #[test]
     fn reads_2013_and_2018_component_tags() {
         for v in [70, 80] {
             let data = record_bits(v);
-            assert_eq!(record(&mut Bits::new(&data, 0, data.len() * 8)), Some((true, Color::ByLayer, -1, 1.0)), "tag {v}");
+            assert_eq!(
+                record(&mut Bits::new(&data, 0, data.len() * 8)),
+                Some((true, Color::ByLayer, -1, 1.0)),
+                "tag {v}"
+            );
         }
         let data = record_bits(60);
         assert_eq!(record(&mut Bits::new(&data, 0, data.len() * 8)), None);

@@ -292,11 +292,7 @@ impl DwgObjectReader {
     }
 
     /// Decode an already captured merged record without adding file framing.
-    pub fn read_raw_record(
-        &self,
-        data: &[u8],
-        handle_bits: i64,
-    ) -> Result<(i16, DwgMergedReader)> {
+    pub fn read_raw_record(&self, data: &[u8], handle_bits: i64) -> Result<(i16, DwgMergedReader)> {
         let size = data.len();
         let merged_data: Arc<[u8]> = Arc::from(data);
 

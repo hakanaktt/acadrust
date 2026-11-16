@@ -323,8 +323,7 @@ impl<'a> SectionReader<'a> {
                 95 => current_edge = pair.as_i32().unwrap_or(0) as u32,
                 302 if pair.value_string == "GRIDFORMAT" => {
                     let border = self.read_table_grid_format_dxf()?;
-                    style.applied_border_edges |=
-                        CellEdgeFlags::from_grid_line_type(current_edge);
+                    style.applied_border_edges |= CellEdgeFlags::from_grid_line_type(current_edge);
                     match current_edge {
                         1 => style.top_border = border,
                         0x20 => style.right_border = border,

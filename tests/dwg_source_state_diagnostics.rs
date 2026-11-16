@@ -17,7 +17,9 @@ fn stored_inconsistencies_are_reported() {
     vertex.bulge = f64::NAN;
     polyline.add_vertex(vertex);
     polyline.add_point(Vector2::new(2.0, 1.0));
-    document.add_entity(EntityType::LwPolyline(polyline)).unwrap();
+    document
+        .add_entity(EntityType::LwPolyline(polyline))
+        .unwrap();
 
     let mut linetype = LineType::new("UNSTYLED");
     let mut dash = LineTypeElement::dash(5.0);

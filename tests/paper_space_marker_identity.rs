@@ -37,7 +37,10 @@ fn paper_space_keeps_its_own_end_marker() {
             .iter()
             .find(|record| record.handle == paper)
             .unwrap();
-        assert_eq!(record.block_end_handle, end, "{version:?}: record end marker");
+        assert_eq!(
+            record.block_end_handle, end,
+            "{version:?}: record end marker"
+        );
 
         let mut ends = Vec::new();
         read.semantic_inventory_v1().visit(|part| {

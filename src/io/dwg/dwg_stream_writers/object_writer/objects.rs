@@ -1411,7 +1411,11 @@ impl<'a> DwgObjectWriter<'a> {
         let cell_style = TableCellStyleData {
             style_type: 5,
             data_flags: 1,
-            merge_flags: if flow_up { TableCellStyleData::FLOW_UP } else { 0 },
+            merge_flags: if flow_up {
+                TableCellStyleData::FLOW_UP
+            } else {
+                0
+            },
             background_color: Color::None,
             content_layout: 1,
             content_format: TableContentFormat {

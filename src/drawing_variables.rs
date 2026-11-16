@@ -113,13 +113,18 @@ mod tests {
         let document = CadDocument::new();
         let bytes = DwgWriter::write_to_vec(&document).unwrap();
         let read = DwgReader::from_stream(Cursor::new(bytes)).read().unwrap();
-        let ObjectType::Dictionary(root) =
-            read.objects.get(&read.header.named_objects_dict_handle).unwrap()
+        let ObjectType::Dictionary(root) = read
+            .objects
+            .get(&read.header.named_objects_dict_handle)
+            .unwrap()
         else {
             panic!("named objects root is not a dictionary")
         };
         let handle = root.get(VARIABLES).expect("AcDbVariableDictionary missing");
-        assert!(matches!(read.objects.get(&handle), Some(ObjectType::Dictionary(_))));
+        assert!(matches!(
+            read.objects.get(&handle),
+            Some(ObjectType::Dictionary(_))
+        ));
     }
 
     #[test]

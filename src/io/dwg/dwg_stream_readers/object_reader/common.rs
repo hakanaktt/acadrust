@@ -158,10 +158,10 @@ pub const OBJ_DBCOLOR: i16 = 0x81; // 129
 pub const OBJ_WIPEOUTVARIABLES: i16 = 0x82; // 130
 pub const OBJ_TABLECONTENT: i16 = 0x69; // 105
 pub const OBJ_TABLESTYLE: i16 = 0x6A; // 106
-// AcDbTableTemplate is always class-based; 0x8F is a free internal sentinel.
+                                      // AcDbTableTemplate is always class-based; 0x8F is a free internal sentinel.
 pub const OBJ_TABLETEMPLATE: i16 = 0x8F; // 143
-                                      // GEODATA has no fixed DWG type code (it is always class-based); 0x83 is a free
-                                      // internal sentinel used by the class-number map + builder dispatch.
+                                         // GEODATA has no fixed DWG type code (it is always class-based); 0x83 is a free
+                                         // internal sentinel used by the class-number map + builder dispatch.
 pub const OBJ_GEODATA: i16 = 0x83; // 131
                                    // AcDbBlockVisibilityParameter is always class-based; 0x84 is a free internal
                                    // sentinel for the class-number map + builder dispatch.

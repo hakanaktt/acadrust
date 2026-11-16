@@ -625,9 +625,8 @@ pub(crate) fn merge(doc: &mut CadDocument) {
     for handle in keep_dictionaries {
         let mut shared = None;
         if let Some(ObjectType::Dictionary(d)) = doc.objects.get_mut(&handle) {
-            d.entries.retain(|(key, h)| {
-                key != MLATT && !(key == ROUNDTRIP && drop_objects.contains(h))
-            });
+            d.entries
+                .retain(|(key, h)| key != MLATT && !(key == ROUNDTRIP && drop_objects.contains(h)));
             shared = d.get(ROUNDTRIP);
         }
         // A shared round-trip record keeps everything but the height.

@@ -57,13 +57,19 @@ pub struct Parameter {
 
 /// The parameter set starting at `bits`, texts from `strings` (advanced past
 /// the ones it uses).
-pub(super) fn read(bits: &mut Bits, strings: &mut std::slice::Iter<String>) -> Option<Vec<Parameter>> {
+pub(super) fn read(
+    bits: &mut Bits,
+    strings: &mut std::slice::Iter<String>,
+) -> Option<Vec<Parameter>> {
     read_with(bits, &mut || strings.next().cloned())
 }
 
 /// The parameter set at `bits`, texts taken from `text` in order (a corridor
 /// record's texts are not followed, so it passes empty ones).
-pub(super) fn read_with(bits: &mut Bits, text: &mut dyn FnMut() -> Option<String>) -> Option<Vec<Parameter>> {
+pub(super) fn read_with(
+    bits: &mut Bits,
+    text: &mut dyn FnMut() -> Option<String>,
+) -> Option<Vec<Parameter>> {
     (bits.bit_long()? == 0 && bits.bit_long()? == 0).then_some(())?;
     // ponytail: 6 bits, the same in every sample; name them once a record
     // varies them.
@@ -109,7 +115,15 @@ fn item(bits: &mut Bits, text: &mut dyn FnMut() -> Option<String>, kind: i32) ->
         Some(v) => v,
         None => ParameterValue::Text(text()?),
     };
-    Some(Parameter { name, display_name, description, value, kind: field, choices, index })
+    Some(Parameter {
+        name,
+        display_name,
+        description,
+        value,
+        kind: field,
+        choices,
+        index,
+    })
 }
 
 #[cfg(test)]
@@ -118,7 +132,13 @@ mod tests {
 
     fn bits_of(s: &str) -> Vec<u8> {
         let s: Vec<u8> = s.bytes().filter(|b| *b == b'0' || *b == b'1').collect();
-        s.chunks(8).map(|c| c.iter().enumerate().fold(0u8, |a, (i, b)| a | ((b - b'0') << (7 - i)))).collect()
+        s.chunks(8)
+            .map(|c| {
+                c.iter()
+                    .enumerate()
+                    .fold(0u8, |a, (i, b)| a | ((b - b'0') << (7 - i)))
+            })
+            .collect()
     }
 
     #[test]
@@ -131,16 +151,40 @@ mod tests {
              0100000001 00 00010011 00010000 00000000 00000000 0100010000 01 0 0 0100000100
              0100000001 00 00010100 00010000 00000000 00000000 10 0 0 10 0000000",
         );
-        let texts: Vec<String> = ["CrownPtOnInside", "1", "2", "", "Yes", "Y", "No", "N", "Width", "3", "4", "", "Version", "5", "6", "", "R2019"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let texts: Vec<String> = [
+            "CrownPtOnInside",
+            "1",
+            "2",
+            "",
+            "Yes",
+            "Y",
+            "No",
+            "N",
+            "Width",
+            "3",
+            "4",
+            "",
+            "Version",
+            "5",
+            "6",
+            "",
+            "R2019",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
         let read = read(&mut Bits::new(&b, 0, b.len() * 8), &mut texts.iter()).unwrap();
         assert_eq!(read.len(), 3);
         assert_eq!(read[0].value, ParameterValue::Integer(1));
-        assert_eq!(read[0].choices, vec![("Yes".into(), "Y".into(), 1), ("No".into(), "N".into(), 0)]);
+        assert_eq!(
+            read[0].choices,
+            vec![("Yes".into(), "Y".into(), 1), ("No".into(), "N".into(), 0)]
+        );
         assert_eq!(read[0].index, 3);
-        assert_eq!((read[1].kind, read[1].value.clone(), read[1].index), (16, ParameterValue::Double(1.0), 4));
+        assert_eq!(
+            (read[1].kind, read[1].value.clone(), read[1].index),
+            (16, ParameterValue::Double(1.0), 4)
+        );
         assert_eq!(read[2].value, ParameterValue::Text("R2019".into()));
     }
 
@@ -154,8 +198,14 @@ mod tests {
              00 00010010 00010000 00000000 10000000 10 0100000110 0 0 0100000001
              10 10 0000",
         );
-        let texts: Vec<String> = ["A", "", "", "", "B", "", "", ""].iter().map(|s| s.to_string()).collect();
+        let texts: Vec<String> = ["A", "", "", "", "B", "", "", ""]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         let read = read(&mut Bits::new(&b, 0, b.len() * 8), &mut texts.iter()).unwrap();
-        assert_eq!(read.iter().map(|p| p.value.clone()).collect::<Vec<_>>(), [ParameterValue::Integer(5), ParameterValue::Integer(6)]);
+        assert_eq!(
+            read.iter().map(|p| p.value.clone()).collect::<Vec<_>>(),
+            [ParameterValue::Integer(5), ParameterValue::Integer(6)]
+        );
     }
 }

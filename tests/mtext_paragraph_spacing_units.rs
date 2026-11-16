@@ -74,7 +74,10 @@ fn exact_line_spacing_moves_the_baseline_within_the_line_slot() {
         let exact = MTextLineSpacing::Exact(2.0);
         let multiple = MTextLineSpacing::Multiple(2.0);
         assert!(close(exact.baseline_offset(h), 2.0 * h));
-        assert!(close(exact.baseline_offset(h) - multiple.baseline_offset(h), h));
+        assert!(close(
+            exact.baseline_offset(h) - multiple.baseline_offset(h),
+            h
+        ));
         // se0.5 raises it by half a height.
         let half = MTextLineSpacing::Exact(0.5);
         assert!(close(half.baseline_offset(h) - h, -0.5 * h));
@@ -85,7 +88,10 @@ fn exact_line_spacing_moves_the_baseline_within_the_line_slot() {
 fn default_line_spacing_uses_the_entity_factor() {
     for h in HEIGHTS {
         let pitch = MTextLineSpacing::Default.line_pitch(h, 1.25);
-        assert!(close(pitch, 1.25 * 5.0 / 3.0 * h), "default at H={h}: {pitch}");
+        assert!(
+            close(pitch, 1.25 * 5.0 / 3.0 * h),
+            "default at H={h}: {pitch}"
+        );
         assert!(close(MTextLineSpacing::Default.baseline_offset(h), h));
     }
 }

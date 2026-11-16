@@ -1654,10 +1654,9 @@ fn prepare_header(
     {
         let is_default_name = h.current_text_style_name.eq_ignore_ascii_case("Standard");
         let handle_is_valid_custom = !h.current_text_style_handle.is_null()
-            && document
-                .text_styles
-                .iter()
-                .any(|t| t.handle == h.current_text_style_handle && !t.name.eq_ignore_ascii_case("Standard"));
+            && document.text_styles.iter().any(|t| {
+                t.handle == h.current_text_style_handle && !t.name.eq_ignore_ascii_case("Standard")
+            });
         if !is_default_name || !handle_is_valid_custom {
             h.current_text_style_handle = s.handle;
         }
@@ -1669,10 +1668,9 @@ fn prepare_header(
     {
         let is_default_name = h.current_dimstyle_name.eq_ignore_ascii_case("Standard");
         let handle_is_valid_custom = !h.current_dimstyle_handle.is_null()
-            && document
-                .dim_styles
-                .iter()
-                .any(|d| d.handle == h.current_dimstyle_handle && !d.name.eq_ignore_ascii_case("Standard"));
+            && document.dim_styles.iter().any(|d| {
+                d.handle == h.current_dimstyle_handle && !d.name.eq_ignore_ascii_case("Standard")
+            });
         if !is_default_name || !handle_is_valid_custom {
             h.current_dimstyle_handle = s.handle;
         }

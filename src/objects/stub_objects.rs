@@ -1313,7 +1313,10 @@ mod tests {
         assert_eq!(dict.get_or_default("NORMAL"), Handle::new(0xBB));
 
         // replacement
-        assert_eq!(dict.insert("NORMAL", Handle::new(0xCC)), Some(Handle::new(0xBB)));
+        assert_eq!(
+            dict.insert("NORMAL", Handle::new(0xCC)),
+            Some(Handle::new(0xBB))
+        );
         assert_eq!(dict.get("normal"), Some(Handle::new(0xCC)));
 
         // remove

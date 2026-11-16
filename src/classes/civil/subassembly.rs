@@ -56,7 +56,17 @@ fn header(bits: &mut Bits) -> Option<usize> {
 /// Shape plus the code count of every point, link and area.
 /// Also returns where the body continues, `None` when the area list did not
 /// read.
-fn read_at(data: &[u8], pos: usize, end: usize) -> Option<(SubassemblyShape, Vec<usize>, Vec<usize>, Vec<usize>, Option<usize>)> {
+fn read_at(
+    data: &[u8],
+    pos: usize,
+    end: usize,
+) -> Option<(
+    SubassemblyShape,
+    Vec<usize>,
+    Vec<usize>,
+    Vec<usize>,
+    Option<usize>,
+)> {
     let mut bits = Bits::new(data, pos, end);
     let point_count = count(&mut bits)?;
     let mut shape = SubassemblyShape::default();
@@ -79,12 +89,20 @@ fn read_at(data: &[u8], pos: usize, end: usize) -> Option<(SubassemblyShape, Vec
     let mut area_codes = Vec::new();
     let mut after = None;
     let mut areas_bits = Bits::new(data, bits.pos, end);
-    if let Some(area_count) = areas_bits.bit_long().and_then(|n| usize::try_from(n).ok()).filter(|n| *n <= MAX_COUNT as usize) {
+    if let Some(area_count) = areas_bits
+        .bit_long()
+        .and_then(|n| usize::try_from(n).ok())
+        .filter(|n| *n <= MAX_COUNT as usize)
+    {
         let mut areas = Vec::new();
         let mut codes = Vec::new();
         let parsed = (0..area_count).all(|_| {
-            let Some(k) = header(&mut areas_bits) else { return false };
-            let Some(links) = indices(&mut areas_bits, link_count) else { return false };
+            let Some(k) = header(&mut areas_bits) else {
+                return false;
+            };
+            let Some(links) = indices(&mut areas_bits, link_count) else {
+                return false;
+            };
             if areas_bits.bit_long().is_none() {
                 return false;
             }
@@ -138,14 +156,23 @@ fn shape_at(data: &[u8], start: usize, end: usize) -> Option<usize> {
 
 /// Shape from the point list, with codes from `strings`, the record's text
 /// stream, where they start two strings after the script assembly name.
-pub(super) fn find(data: &[u8], start: usize, end: usize, strings: &[String]) -> Option<SubassemblyShape> {
-    let (mut shape, points, links, areas, _) = match shape_at(data, start, end).and_then(|pos| read_at(data, pos, end)) {
-        Some(found) => found,
-        // debt: a header neither form matches (none in the samples) is
-        // searched for its point list.
-        None => (start..end).find_map(|pos| read_at(data, pos, end))?,
-    };
-    let first = strings.iter().position(|s| s == "AeccStockSubassemblyScriptsRC.dll").map(|i| i + 2);
+pub(super) fn find(
+    data: &[u8],
+    start: usize,
+    end: usize,
+    strings: &[String],
+) -> Option<SubassemblyShape> {
+    let (mut shape, points, links, areas, _) =
+        match shape_at(data, start, end).and_then(|pos| read_at(data, pos, end)) {
+            Some(found) => found,
+            // debt: a header neither form matches (none in the samples) is
+            // searched for its point list.
+            None => (start..end).find_map(|pos| read_at(data, pos, end))?,
+        };
+    let first = strings
+        .iter()
+        .position(|s| s == "AeccStockSubassemblyScriptsRC.dll")
+        .map(|i| i + 2);
     let mut codes = first.map(|i| strings[i.min(strings.len())..].iter());
     let mut take = |counts: &[usize]| -> Vec<Vec<String>> {
         counts
@@ -164,9 +191,17 @@ pub(super) fn find(data: &[u8], start: usize, end: usize, strings: &[String]) ->
 
 /// Input parameters a subassembly stores after its shape, texts taken after
 /// the shape's codes.
-pub(super) fn parameters(data: &[u8], start: usize, end: usize, strings: &[String]) -> Option<Vec<super::parameters::Parameter>> {
+pub(super) fn parameters(
+    data: &[u8],
+    start: usize,
+    end: usize,
+    strings: &[String],
+) -> Option<Vec<super::parameters::Parameter>> {
     let (_, points, links, areas, after) = read_at(data, shape_at(data, start, end)?, end)?;
-    let first = strings.iter().position(|s| s == "AeccStockSubassemblyScriptsRC.dll")? + 2;
+    let first = strings
+        .iter()
+        .position(|s| s == "AeccStockSubassemblyScriptsRC.dll")?
+        + 2;
     let codes: usize = points.iter().chain(&links).chain(&areas).sum();
     let mut texts = strings.get(first + codes..)?.iter();
     super::parameters::read(&mut Bits::new(data, after?, end), &mut texts)
@@ -203,7 +238,13 @@ fn attachment_tag(bits: &mut Bits) -> Option<i16> {
     let code = (u8::from(bits.bit()?) << 1) | u8::from(bits.bit()?);
     let byte = bits.raw_short_byte()?;
     (matches!((set, code, byte), (true, 1, 240) | (false, 0, 0x40))).then_some(())?;
-    let flags = [bits.bit()?, bits.bit()?, bits.bit()?, bits.bit()?, bits.bit()?];
+    let flags = [
+        bits.bit()?,
+        bits.bit()?,
+        bits.bit()?,
+        bits.bit()?,
+        bits.bit()?,
+    ];
     (flags == [false, false, true, false, false]).then_some(v)
 }
 
@@ -240,7 +281,12 @@ fn attachment_points(data: &[u8], pos: usize, end: usize) -> Option<Vec<u32>> {
 /// bits; with flag 128 after 98 bits.
 // ponytail: the 131 and 98 bits are skipped by length (constant in every
 // assembly seen); read them field by field once a drawing varies them.
-pub(super) fn assembly_layout(data: &[u8], start: usize, end: usize, handles: &[u64]) -> Option<AssemblyLayout> {
+pub(super) fn assembly_layout(
+    data: &[u8],
+    start: usize,
+    end: usize,
+    handles: &[u64],
+) -> Option<AssemblyLayout> {
     let mut bits = Bits::new(data, start, end);
     for want in [80, 0, 80, 80, 0] {
         (bits.bit_long()? == want).then_some(())?;
@@ -258,7 +304,10 @@ pub(super) fn assembly_layout(data: &[u8], start: usize, end: usize, handles: &[
         _ => return None,
     }
     let origin = Vector3::new(bits.bit_double()?, bits.bit_double()?, bits.bit_double()?);
-    [origin.x, origin.y, origin.z].iter().all(|v| v.is_finite()).then_some(())?;
+    [origin.x, origin.y, origin.z]
+        .iter()
+        .all(|v| v.is_finite())
+        .then_some(())?;
     // Body handles: two nulls (one in Civil 3D 2013), the baseline style,
     // (subassembly, parent) pairs, then the drawing's Civil root.
     let style = handles.iter().take(3).position(|h| *h != 0)?;
@@ -276,5 +325,8 @@ pub(super) fn assembly_layout(data: &[u8], start: usize, end: usize, handles: &[
             point,
         })
         .collect();
-    Some(AssemblyLayout { origin, attachments })
+    Some(AssemblyLayout {
+        origin,
+        attachments,
+    })
 }

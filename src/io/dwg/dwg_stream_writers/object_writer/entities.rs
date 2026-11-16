@@ -6162,8 +6162,8 @@ mod tests {
     // expects, built field by field with a writer of the same version.
 
     use crate::entities::table::{CellContent, CellStyle, TableCell};
-    use crate::io::dwg::DwgVersion;
     use crate::io::dwg::dwg_stream_writers::bit_writer::DwgBitWriter;
+    use crate::io::dwg::DwgVersion;
     use crate::types::Color;
 
     fn cell_main_stream(version: DxfVersion, cell: &TableCell) -> Vec<u8> {
@@ -6196,7 +6196,10 @@ mod tests {
         cell_head(&mut r, 1);
         r.write_variable_text("");
         r.write_bit(false); // no style
-        assert_eq!(cell_main_stream(DxfVersion::AC1015, &cell), r.to_bytes_snapshot());
+        assert_eq!(
+            cell_main_stream(DxfVersion::AC1015, &cell),
+            r.to_bytes_snapshot()
+        );
     }
 
     #[test]
@@ -6207,7 +6210,10 @@ mod tests {
         let mut r = reference(DxfVersion::AC1018);
         cell_head(&mut r, 1);
         r.write_bit(false); // no style, and no text: the reader sees handle 0x55
-        assert_eq!(cell_main_stream(DxfVersion::AC1018, &cell), r.to_bytes_snapshot());
+        assert_eq!(
+            cell_main_stream(DxfVersion::AC1018, &cell),
+            r.to_bytes_snapshot()
+        );
     }
 
     #[test]
@@ -6226,7 +6232,10 @@ mod tests {
         r.write_bit_long(0x08);
         r.write_byte(0); // virtual edge
         r.write_cm_true_color(&Color::Index(5));
-        assert_eq!(cell_main_stream(DxfVersion::AC1015, &cell), r.to_bytes_snapshot());
+        assert_eq!(
+            cell_main_stream(DxfVersion::AC1015, &cell),
+            r.to_bytes_snapshot()
+        );
     }
 
     #[test]

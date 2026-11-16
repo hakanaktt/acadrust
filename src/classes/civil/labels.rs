@@ -20,12 +20,18 @@ pub(super) fn marked_stations(data: &[u8], start: usize, end: usize) -> Vec<f64>
     let mut stations = Vec::new();
     let mut first = true;
     for pos in start..end.saturating_sub(RECORD_MARKER.len() + 66) {
-        if !RECORD_MARKER.iter().enumerate().all(|(i, c)| bit(pos + i) == c - b'0') {
+        if !RECORD_MARKER
+            .iter()
+            .enumerate()
+            .all(|(i, c)| bit(pos + i) == c - b'0')
+        {
             continue;
         }
         let mut bits = Bits::new(data, pos + RECORD_MARKER.len(), end);
         let at = bits.pos;
-        let Some(value) = bits.bit_double() else { continue };
+        let Some(value) = bits.bit_double() else {
+            continue;
+        };
         if first && value == 0.0 {
             stations.push(0.0);
         }
@@ -55,7 +61,9 @@ fn group_labels(data: &[u8], start: usize, end: usize) -> Option<(Vec<f64>, usiz
     let mut stations = Vec::new();
     for _ in 0..n {
         for _ in 0..bits.bit_long()? {
-            if let (STATION, super::alignment::KeyValue::Double(station)) = super::alignment::read_key(&mut bits)? {
+            if let (STATION, super::alignment::KeyValue::Double(station)) =
+                super::alignment::read_key(&mut bits)?
+            {
                 stations.push(station);
             }
         }
@@ -110,7 +118,9 @@ pub(super) fn group_point_kinds(data: &[u8], start: usize, end: usize) -> Option
     bits.bit_double()?;
     bits.skip(7)?;
     let count = bits.bit_long()?;
-    let kinds = (0..count).map(|_| bits.bit_long().map(|v| (v & 0xFF) as u8)).collect::<Option<Vec<_>>>()?;
+    let kinds = (0..count)
+        .map(|_| bits.bit_long().map(|v| (v & 0xFF) as u8))
+        .collect::<Option<Vec<_>>>()?;
     (bits.remaining() == 19).then_some(kinds)
 }
 
@@ -124,7 +134,12 @@ const POINT_KIND_MARKER: &[u8] = b"0011001101010010011111111110100100000001";
 pub(super) fn geometry_point_kinds(data: &[u8], start: usize, end: usize) -> Vec<u8> {
     let bit = |p: usize| (data[p / 8] >> (7 - p % 8)) & 1;
     (start..end.saturating_sub(POINT_KIND_MARKER.len() + 34))
-        .filter(|&pos| POINT_KIND_MARKER.iter().enumerate().all(|(i, c)| bit(pos + i) == c - b'0'))
+        .filter(|&pos| {
+            POINT_KIND_MARKER
+                .iter()
+                .enumerate()
+                .all(|(i, c)| bit(pos + i) == c - b'0')
+        })
         .filter_map(|pos| Bits::new(data, pos + POINT_KIND_MARKER.len(), end).bit_long())
         .map(|v| (v & 0xFF) as u8)
         .collect()
@@ -137,8 +152,14 @@ const PLACEMENT_MARKER: f64 = -26.515625;
 /// Where a dragged label sits, from the point it labels: the two `BD`s
 /// 178 and 244 bits past [`PLACEMENT_MARKER`]. A label left in place has
 /// no full doubles there.
-pub(super) fn dragged_offset(data: &[u8], start: usize, end: usize) -> Option<crate::types::Vector2> {
-    let at = (start..end).find(|&pos| full_double(data, pos, end).is_some_and(|v| (v - PLACEMENT_MARKER).abs() < 1e-6))?;
+pub(super) fn dragged_offset(
+    data: &[u8],
+    start: usize,
+    end: usize,
+) -> Option<crate::types::Vector2> {
+    let at = (start..end).find(|&pos| {
+        full_double(data, pos, end).is_some_and(|v| (v - PLACEMENT_MARKER).abs() < 1e-6)
+    })?;
     let x = full_double(data, at + 178, end)?;
     let y = full_double(data, at + 244, end)?;
     (x.abs() < 1e5 && y.abs() < 1e5).then(|| crate::types::Vector2::new(x, y))
@@ -161,8 +182,18 @@ pub(super) fn entity_refs(data: &[u8], start: usize, end: usize) -> Vec<(usize, 
     let bit = |p: usize| (data[p / 8] >> (7 - p % 8)) & 1;
     let n = ENTITY_LABEL_PREFIX.len();
     (start + n..end.saturating_sub(34))
-        .filter(|&pos| ENTITY_LABEL_PREFIX.iter().enumerate().all(|(i, c)| bit(pos - n + i) == c - b'0'))
-        .filter_map(|pos| Some((pos - start, Bits::new(data, pos, end).bit_long().filter(|v| *v > 0)?)))
+        .filter(|&pos| {
+            ENTITY_LABEL_PREFIX
+                .iter()
+                .enumerate()
+                .all(|(i, c)| bit(pos - n + i) == c - b'0')
+        })
+        .filter_map(|pos| {
+            Some((
+                pos - start,
+                Bits::new(data, pos, end).bit_long().filter(|v| *v > 0)?,
+            ))
+        })
         .collect()
 }
 
@@ -172,8 +203,17 @@ pub(super) fn labelled_entity_ids(data: &[u8], start: usize, end: usize) -> Vec<
     let bit = |p: usize| (data[p / 8] >> (7 - p % 8)) & 1;
     let n = ENTITY_LABEL_PREFIX.len();
     (start + n..end.saturating_sub(90))
-        .filter(|&pos| ENTITY_LABEL_PREFIX.iter().enumerate().all(|(i, c)| bit(pos - n + i) == c - b'0'))
-        .filter(|&pos| Bits::new(data, pos + 56, end).bit_long().is_some_and(is_entity_label_check))
+        .filter(|&pos| {
+            ENTITY_LABEL_PREFIX
+                .iter()
+                .enumerate()
+                .all(|(i, c)| bit(pos - n + i) == c - b'0')
+        })
+        .filter(|&pos| {
+            Bits::new(data, pos + 56, end)
+                .bit_long()
+                .is_some_and(is_entity_label_check)
+        })
         .filter_map(|pos| Bits::new(data, pos, end).bit_long())
         .collect()
 }
@@ -189,7 +229,9 @@ pub(super) fn stations(data: &[u8], start: usize, end: usize) -> Vec<f64> {
         if raw != Some((false, false)) {
             continue;
         }
-        let Some(value) = bits.raw_double() else { continue };
+        let Some(value) = bits.raw_double() else {
+            continue;
+        };
         let centi = value * 100.0;
         if value.abs() >= 0.01 && value.abs() < 1e7 && (centi - centi.round()).abs() < 1e-6 {
             found.push((pos, value));
@@ -233,7 +275,8 @@ pub(super) fn stations(data: &[u8], start: usize, end: usize) -> Vec<f64> {
                 if head > 0.0 && at >= start + stride - 64 && zero(at - (stride - 64)) {
                     run.insert(0, 0.0);
                     at -= stride - 64;
-                } else if let Some(v) = at.checked_sub(stride).and_then(full).filter(|v| *v < head) {
+                } else if let Some(v) = at.checked_sub(stride).and_then(full).filter(|v| *v < head)
+                {
                     run.insert(0, v);
                     at -= stride;
                 } else {
@@ -260,9 +303,17 @@ pub(super) fn anchor(data: &[u8], start: usize, end: usize) -> Option<crate::typ
     (start..end).find_map(|pos| {
         let mut bits = Bits::new(data, pos, end);
         let x = bits.bit_double()?;
-        let y = (bits.pos == pos + 66).then(|| bits.bit_double()).flatten()?;
+        let y = (bits.pos == pos + 66)
+            .then(|| bits.bit_double())
+            .flatten()?;
         let full = bits.pos == pos + 132;
-        (full && x.is_finite() && y.is_finite() && x.abs() > 1e3 && y.abs() > 1e3 && x.abs() < 1e8 && y.abs() < 1e8)
+        (full
+            && x.is_finite()
+            && y.is_finite()
+            && x.abs() > 1e3
+            && y.abs() > 1e3
+            && x.abs() < 1e8
+            && y.abs() < 1e8)
             .then(|| crate::types::Vector2::new(x, y))
     })
 }
@@ -274,7 +325,10 @@ pub enum LabelPart {
     Text(String),
     /// `<[property(option|option|...)]>`: a property of the labeled object
     /// with its formatting options.
-    Field { property: u32, options: Vec<u32> },
+    Field {
+        property: u32,
+        options: Vec<u32>,
+    },
     /// `\P`
     NewLine,
 }
@@ -328,8 +382,16 @@ impl LabelPart {
             .find(|o| (option::PRECISION_0..=option::PRECISION_MAX).contains(*o))
             .map_or(2, |o| (o - option::PRECISION_0) as usize);
         if options.contains(&option::STATION) {
-            let precision = if options.contains(&option::STATION_WHOLE) { 0 } else { precision };
-            let digits = if options.contains(&option::STATION_PLUS_HUNDREDS) { 2 } else { 3 };
+            let precision = if options.contains(&option::STATION_WHOLE) {
+                0
+            } else {
+                precision
+            };
+            let digits = if options.contains(&option::STATION_PLUS_HUNDREDS) {
+                2
+            } else {
+                3
+            };
             let unit = 10f64.powi(digits as i32);
             // Round first so the minor part never shows as a whole unit.
             let scale = 10f64.powi(precision as i32);
@@ -337,8 +399,18 @@ impl LabelPart {
             let major = (rounded / unit).floor();
             let minor = rounded - major * unit;
             let sign = if value < 0.0 { "-" } else { "" };
-            let width = if precision == 0 { digits } else { digits + 1 + precision };
-            return format!("{sign}{}+{:0width$.precision$}", major as i64, minor, width = width, precision = precision);
+            let width = if precision == 0 {
+                digits
+            } else {
+                digits + 1 + precision
+            };
+            return format!(
+                "{sign}{}+{:0width$.precision$}",
+                major as i64,
+                minor,
+                width = width,
+                precision = precision
+            );
         }
         if options.contains(&option::PERCENT) {
             return format!("{:.precision$}%", value * 100.0, precision = precision);
@@ -371,7 +443,10 @@ pub fn parse_format(format: &str) -> Vec<LabelPart> {
                 };
                 if let Ok(property) = id.trim().parse() {
                     flush(&mut text, &mut parts);
-                    let options = options.split('|').filter_map(|o| o.trim().parse().ok()).collect();
+                    let options = options
+                        .split('|')
+                        .filter_map(|o| o.trim().parse().ok())
+                        .collect();
                     parts.push(LabelPart::Field { property, options });
                     rest = &after[close + 2..];
                     continue;
@@ -425,7 +500,12 @@ pub(super) fn component_visible(data: &[u8], start: usize, end: usize) -> bool {
     let n = COMPONENT_GENERAL.len();
     (start..end.saturating_sub(n + 3))
         .take(1200)
-        .find(|&pos| COMPONENT_GENERAL.iter().enumerate().all(|(i, c)| bit(pos + i) == c - b'0'))
+        .find(|&pos| {
+            COMPONENT_GENERAL
+                .iter()
+                .enumerate()
+                .all(|(i, c)| bit(pos + i) == c - b'0')
+        })
         .is_none_or(|pos| bit(pos + n + 2) == 1)
 }
 
@@ -467,7 +547,12 @@ fn general_head(bits: &mut Bits) -> Option<u8> {
 /// BD gap; or, in components with type tag 0x0022001F, `1000`, 5 BL,
 /// BD angle, BD, BD, B, BD x, BD y, B, BD gap. Also returns the bit after
 /// the gap.
-fn general_offsets(data: &[u8], at: usize, end: usize, turned: bool) -> Option<(f64, f64, f64, usize)> {
+fn general_offsets(
+    data: &[u8],
+    at: usize,
+    end: usize,
+    turned: bool,
+) -> Option<(f64, f64, f64, usize)> {
     let mut bits = Bits::new(data, at, end);
     general_head(&mut bits)?;
     (bits.bits_value(4)? == 0b1000).then_some(())?;
@@ -541,7 +626,8 @@ fn offsets_within(data: &[u8], from: usize, end: usize) -> Option<(f64, f64, f64
         bits.bit()?;
         let at = bits.pos;
         let gap = bits.bit_double()?;
-        (bits.pos == at + 66 && gap > 0.0 && plotted_size(gap)).then_some((values[0], values[2], gap, pos))
+        (bits.pos == at + 66 && gap > 0.0 && plotted_size(gap))
+            .then_some((values[0], values[2], gap, pos))
     })
 }
 
@@ -561,13 +647,17 @@ pub(super) fn line_component(data: &[u8], start: usize, end: usize) -> Option<(f
             return Some((length, 0.0));
         }
     }
-    let angle_at = (start..end)
-        .rev()
-        .find(|&p| full_double(data, p, end).is_some_and(|v| (1e-3..=std::f64::consts::TAU).contains(&v.abs())))?;
-    let length_at = (start..angle_at.checked_sub(66)?).rev().find(|&p| {
-        full_double(data, p, end).is_some_and(|v| (1e-6..1.0).contains(&v) && ((v * 1e6).round() - v * 1e6).abs() < 1e-3)
+    let angle_at = (start..end).rev().find(|&p| {
+        full_double(data, p, end).is_some_and(|v| (1e-3..=std::f64::consts::TAU).contains(&v.abs()))
     })?;
-    Some((full_double(data, length_at, end)?, full_double(data, angle_at, end)?))
+    let length_at = (start..angle_at.checked_sub(66)?).rev().find(|&p| {
+        full_double(data, p, end)
+            .is_some_and(|v| (1e-6..1.0).contains(&v) && ((v * 1e6).round() - v * 1e6).abs() < 1e-3)
+    })?;
+    Some((
+        full_double(data, length_at, end)?,
+        full_double(data, angle_at, end)?,
+    ))
 }
 
 pub(super) fn text_component(data: &[u8], start: usize, end: usize) -> Option<LabelText> {
@@ -583,7 +673,14 @@ pub(super) fn text_component(data: &[u8], start: usize, end: usize) -> Option<La
         for v in &mut header {
             *v = bits.bit_long()?;
         }
-        Some(((0.0..1.0).contains(&height).then_some(height).filter(|v| *v > 0.0), bits.pos, header[2] == 0x0022_001F))
+        Some((
+            (0.0..1.0)
+                .contains(&height)
+                .then_some(height)
+                .filter(|v| *v > 0.0),
+            bits.pos,
+            header[2] == 0x0022_001F,
+        ))
     });
     let height = head.and_then(|(height, ..)| height);
     let general = head.map(|(_, at, _)| at);
@@ -602,7 +699,11 @@ pub(super) fn text_component(data: &[u8], start: usize, end: usize) -> Option<La
     let mut bits = Bits::new(data, after, end);
     let rotation = bits.bit_double().filter(|v| v.abs() <= 10.0).unwrap_or(0.0);
     bits.bit_double();
-    let attachment = bits.bit_short().and_then(|v| u8::try_from(v).ok()).filter(|v| *v <= 8).unwrap_or(6);
+    let attachment = bits
+        .bit_short()
+        .and_then(|v| u8::try_from(v).ok())
+        .filter(|v| *v <= 8)
+        .unwrap_or(6);
     let (x_offset, y_offset, gap) = fields
         .map(|(x, y, gap, _)| (x, y, gap))
         .or_else(|| {
@@ -635,7 +736,10 @@ pub(super) fn text_component(data: &[u8], start: usize, end: usize) -> Option<La
 /// UTF-16 strings stored inline as `BL byte length` + code units with a
 /// null terminator, in record order.
 pub(super) fn inline_strings(data: &[u8], start: usize, end: usize) -> Vec<String> {
-    inline_strings_at(data, start, end).into_iter().map(|(s, _)| s).collect()
+    inline_strings_at(data, start, end)
+        .into_iter()
+        .map(|(s, _)| s)
+        .collect()
 }
 
 /// Inline strings with the bit position after each.
@@ -648,7 +752,10 @@ fn inline_strings_at(data: &[u8], start: usize, end: usize) -> Vec<(String, usiz
     found.sort_by(|a, b| (b.1 - b.0).cmp(&(a.1 - a.0)));
     let mut kept: Vec<(usize, usize, String)> = Vec::new();
     for candidate in found {
-        if kept.iter().all(|k| candidate.1 <= k.0 || candidate.0 >= k.1) {
+        if kept
+            .iter()
+            .all(|k| candidate.1 <= k.0 || candidate.0 >= k.1)
+        {
             kept.push(candidate);
         }
     }
@@ -664,16 +771,17 @@ fn string_at(data: &[u8], pos: usize, end: usize) -> Option<(String, usize)> {
     }
     let mut units = Vec::with_capacity(length / 2);
     for _ in 0..length / 2 {
-        units.push(u16::from_le_bytes([bits.raw_short_byte()?, bits.raw_short_byte()?]));
+        units.push(u16::from_le_bytes([
+            bits.raw_short_byte()?,
+            bits.raw_short_byte()?,
+        ]));
     }
     if units.pop() != Some(0) {
         return None;
     }
     // Label text is in a written script; control codes, surrogates and
     // private-use units mean a misaligned read.
-    let script = |u: u16| {
-        matches!(u, 0x09 | 0x20..=0x24F | 0x370..=0x52F | 0x590..=0x6FF | 0x900..=0x97F | 0xE00..=0xEFF | 0x2000..=0x206F | 0x2100..=0x22FF | 0x3000..=0x30FF | 0x4E00..=0x9FFF | 0xAC00..=0xD7A3)
-    };
+    let script = |u: u16| matches!(u, 0x09 | 0x20..=0x24F | 0x370..=0x52F | 0x590..=0x6FF | 0x900..=0x97F | 0xE00..=0xEFF | 0x2000..=0x206F | 0x2100..=0x22FF | 0x3000..=0x30FF | 0x4E00..=0x9FFF | 0xAC00..=0xD7A3);
     if units.is_empty() || !units.iter().all(|&u| script(u)) {
         return None;
     }

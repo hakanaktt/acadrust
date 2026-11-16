@@ -17,7 +17,9 @@ fn dwg_roundtrip(version: DxfVersion, set: impl FnOnce(&mut CadDocument)) -> Cad
 }
 
 fn dxf_header(vars: &str) -> acadrust::document::HeaderVariables {
-    let text = format!("  0\nSECTION\n  2\nHEADER\n  9\n$ACADVER\n  1\nAC1032\n{vars}  0\nENDSEC\n  0\nEOF\n");
+    let text = format!(
+        "  0\nSECTION\n  2\nHEADER\n  9\n$ACADVER\n  1\nAC1032\n{vars}  0\nENDSEC\n  0\nEOF\n"
+    );
     DxfReader::from_reader(Cursor::new(text.into_bytes()))
         .expect("open")
         .read()

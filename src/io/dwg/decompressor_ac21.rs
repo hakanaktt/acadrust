@@ -38,7 +38,11 @@ pub fn decompress_ac21(source: &[u8], initial_offset: u32, length: u32, buffer: 
 
 /// Inner decompression loop — caller guarantees `buffer.len() >= 32`.
 fn decompress_ac21_inner(source: &[u8], initial_offset: u32, length: u32, buffer: &mut [u8]) {
-    if source.is_empty() || (initial_offset as usize) >= source.len() || length == 0 || buffer.is_empty() {
+    if source.is_empty()
+        || (initial_offset as usize) >= source.len()
+        || length == 0
+        || buffer.is_empty()
+    {
         return;
     }
     let mut source_offset: u32 = 0;

@@ -6292,8 +6292,12 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 ObjectType::PlotSettings(plotsettings) => self.write_plot_settings(plotsettings)?,
                 ObjectType::MultiLeaderStyle(style) => self.write_multileader_style(style)?,
                 ObjectType::TableStyle(style) => self.write_table_style(style, document)?,
-                ObjectType::TableContent(table) => self.write_table_content_object_dxf(table, false)?,
-                ObjectType::TableTemplate(table) => self.write_table_content_object_dxf(table, true)?,
+                ObjectType::TableContent(table) => {
+                    self.write_table_content_object_dxf(table, false)?
+                }
+                ObjectType::TableTemplate(table) => {
+                    self.write_table_content_object_dxf(table, true)?
+                }
                 ObjectType::Scale(scale) => self.write_scale(scale)?,
                 ObjectType::ObjectContextData(ctx) => self.write_object_context_data(ctx)?,
                 ObjectType::SortEntitiesTable(table) => self.write_sort_entities_table(table)?,
@@ -8584,7 +8588,11 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// The reactor and extension-dictionary groups of a TABLESTYLE: its cell
     /// style map and starting table live in that dictionary, and readers
     /// reach them through the link.
-    fn write_table_style_links(&mut self, style: &TableStyle, document: &CadDocument) -> Result<()> {
+    fn write_table_style_links(
+        &mut self,
+        style: &TableStyle,
+        document: &CadDocument,
+    ) -> Result<()> {
         let valid = |h: &Handle| {
             *h != Handle::NULL && (self.valid_handles.is_empty() || self.valid_handles.contains(h))
         };
@@ -8593,7 +8601,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer.write_handle(330, style.owner_handle)?;
             self.writer.write_string(102, "}")?;
         }
-        if let Some(xdictionary) = document.extension_dictionary_handle(style.handle).filter(valid) {
+        if let Some(xdictionary) = document
+            .extension_dictionary_handle(style.handle)
+            .filter(valid)
+        {
             self.writer.write_string(102, "{ACAD_XDICTIONARY")?;
             self.writer.write_handle(360, xdictionary)?;
             self.writer.write_string(102, "}")?;
@@ -11305,7 +11316,12 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         handle
             .or_else(|| {
                 (!name.is_empty())
-                    .then(|| self.text_style_names.iter().find(|(_, n)| n.eq_ignore_ascii_case(name)).map(|(h, _)| *h))
+                    .then(|| {
+                        self.text_style_names
+                            .iter()
+                            .find(|(_, n)| n.eq_ignore_ascii_case(name))
+                            .map(|(h, _)| *h)
+                    })
                     .flatten()
             })
             .unwrap_or(Handle::NULL)
@@ -11523,9 +11539,19 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         Ok(())
     }
 
-    fn write_table_content_object_dxf(&mut self, table: &table::Table, template: bool) -> Result<()> {
-        self.writer
-            .write_string(0, if template { "TABLETEMPLATE" } else { "TABLECONTENT" })?;
+    fn write_table_content_object_dxf(
+        &mut self,
+        table: &table::Table,
+        template: bool,
+    ) -> Result<()> {
+        self.writer.write_string(
+            0,
+            if template {
+                "TABLETEMPLATE"
+            } else {
+                "TABLECONTENT"
+            },
+        )?;
         self.writer.write_handle(5, table.common.handle)?;
         if !table.common.reactors.is_empty() {
             self.writer.write_string(102, "{ACAD_REACTORS")?;

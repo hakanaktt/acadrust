@@ -581,7 +581,10 @@ fn read_accessor_vec3(
             Some(o) => o,
             None => break,
         };
-        if offset.checked_add(12).map_or(true, |end| end > buffer.len()) {
+        if offset
+            .checked_add(12)
+            .map_or(true, |end| end > buffer.len())
+        {
             break;
         }
         let x = f32::from_le_bytes([
@@ -956,7 +959,9 @@ mod tests {
   "accessors": [{"bufferView": 0, "componentType": 5126, "count": 2000000000, "type": "VEC3"}],
   "meshes": [{"primitives": [{"attributes": {"POSITION": 0}}]}]
 }"#;
-        let doc = GltfImporter::from_bytes(json.as_bytes().to_vec()).import().unwrap();
+        let doc = GltfImporter::from_bytes(json.as_bytes().to_vec())
+            .import()
+            .unwrap();
         assert_eq!(doc.entities().count(), 0);
     }
 

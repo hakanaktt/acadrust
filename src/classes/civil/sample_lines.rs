@@ -72,7 +72,9 @@ pub(super) fn sample_lines(data: &[u8], start: usize, end: usize) -> Option<Samp
     bits.bit_double()?;
     let left = bits.bit_double()?;
     let right = bits.bit_double()?;
-    if bits.remaining() != 45 || !(last > first && increment > 0.0 && (last - first) / increment <= 5000.0) {
+    if bits.remaining() != 45
+        || !(last > first && increment > 0.0 && (last - first) / increment <= 5000.0)
+    {
         return None;
     }
     let mut stations: Vec<f64> = (0..)

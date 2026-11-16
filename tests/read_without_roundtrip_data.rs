@@ -30,13 +30,21 @@ fn skip_roundtrip_data_keeps_the_model_and_drops_the_verbatim_bytes() {
         let lean = read(&dwg, DwgReadOptions::default().without_roundtrip_data());
 
         // The default read keeps what a byte-exact re-save needs.
-        assert!(full.entities().any(|e| e.common().raw_record.is_some()), "{version:?}");
         assert!(
-            full.entities().any(|e| !e.common().extended_data.raw_dwg_eed.is_empty()),
+            full.entities().any(|e| e.common().raw_record.is_some()),
+            "{version:?}"
+        );
+        assert!(
+            full.entities()
+                .any(|e| !e.common().extended_data.raw_dwg_eed.is_empty()),
             "{version:?}"
         );
 
-        assert_eq!(lean.entities().count(), full.entities().count(), "{version:?}");
+        assert_eq!(
+            lean.entities().count(),
+            full.entities().count(),
+            "{version:?}"
+        );
         for entity in lean.entities() {
             let common = entity.common();
             assert!(common.raw_record.is_none(), "{version:?}");
@@ -50,8 +58,15 @@ fn skip_roundtrip_data_keeps_the_model_and_drops_the_verbatim_bytes() {
         }
 
         // A save re-encodes every entity and still carries the XDATA.
-        let resaved = read(&DwgWriter::write_to_vec(&lean).unwrap(), DwgReadOptions::default());
-        assert_eq!(resaved.entities().count(), full.entities().count(), "{version:?}");
+        let resaved = read(
+            &DwgWriter::write_to_vec(&lean).unwrap(),
+            DwgReadOptions::default(),
+        );
+        assert_eq!(
+            resaved.entities().count(),
+            full.entities().count(),
+            "{version:?}"
+        );
         let values: Vec<_> = resaved
             .entities()
             .flat_map(|e| e.common().extended_data.records().to_vec())

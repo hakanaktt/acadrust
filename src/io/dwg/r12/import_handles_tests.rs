@@ -696,7 +696,10 @@ fn deleted_table_entries_stay_out_of_the_drawing() {
         .map(|pair| pair[1])
         .collect();
     assert!(names.contains(&"*D0") && names.contains(&"B"), "{names:?}");
-    assert!(!names.contains(&"") && !names.contains(&"GONE"), "{names:?}");
+    assert!(
+        !names.contains(&"") && !names.contains(&"GONE"),
+        "{names:?}"
+    );
 }
 
 /// The space BLOCK/ENDBLK marker handles reserved on import are not handed to

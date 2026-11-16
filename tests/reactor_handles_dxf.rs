@@ -47,9 +47,7 @@ fn test_entity_reactors_written_and_filtered() {
     circle.common.reactors.push(Handle::new(0xDEADBEEF));
     circle.common.reactors.push(line2_handle);
 
-    let circle_handle = document
-        .add_entity(EntityType::Circle(circle))
-        .unwrap();
+    let circle_handle = document.add_entity(EntityType::Circle(circle)).unwrap();
 
     let bytes = DxfWriter::new(&document).write_to_vec().unwrap();
     let text = String::from_utf8_lossy(&bytes);
@@ -69,7 +67,10 @@ fn test_entity_reactors_written_and_filtered() {
     let EntityType::Circle(read_circle) = read.get_entity(circle_handle).unwrap() else {
         panic!("expected circle");
     };
-    assert_eq!(read_circle.common.reactors, vec![line1_handle, line2_handle]);
+    assert_eq!(
+        read_circle.common.reactors,
+        vec![line1_handle, line2_handle]
+    );
 }
 
 #[test]

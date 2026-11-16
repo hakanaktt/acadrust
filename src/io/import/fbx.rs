@@ -546,9 +546,9 @@ fn decompress_array_data(
     } else {
         // Uncompressed
         let byte_len = expected;
-        let uncompressed_end = pos.checked_add(byte_len).ok_or_else(|| {
-            DxfError::ImportError("FBX array offset overflow".to_string())
-        })?;
+        let uncompressed_end = pos
+            .checked_add(byte_len)
+            .ok_or_else(|| DxfError::ImportError("FBX array offset overflow".to_string()))?;
         if uncompressed_end > data.len() {
             return Err(DxfError::ImportError("FBX array out of bounds".to_string()));
         }
@@ -1202,7 +1202,10 @@ Connections: {
         let mut cursor = Cursor::new(&b""[..]);
         let res = decompress_array_data(&[], &mut cursor, 1, 0, 8, 0x3FFF_FFFF);
         assert!(res.is_err());
-        assert!(res.unwrap_err().to_string().contains("exceeds maximum limit"));
+        assert!(res
+            .unwrap_err()
+            .to_string()
+            .contains("exceeds maximum limit"));
     }
 
     #[test]
@@ -1211,7 +1214,7 @@ Connections: {
         let mut data = Vec::new();
         data.extend_from_slice(b"Kaydara FBX Binary  \x00\x1a\x00"); // 23 bytes
         data.extend_from_slice(&7300u32.to_le_bytes()); // version at 23..27
-        // Node at 27: end_offset = 27 (<= pos), num_prop=0, prop_len=0, name_len=1, name="A"
+                                                        // Node at 27: end_offset = 27 (<= pos), num_prop=0, prop_len=0, name_len=1, name="A"
         data.extend_from_slice(&27u32.to_le_bytes()); // end_offset = 27
         data.extend_from_slice(&0u32.to_le_bytes()); // num_properties
         data.extend_from_slice(&0u32.to_le_bytes()); // property_list_len

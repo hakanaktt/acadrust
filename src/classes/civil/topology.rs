@@ -33,7 +33,11 @@ fn segment_points(a: Vector2, b: Vector2, bulge: f64) -> Vec<Vector2> {
     let mid = (a + b) * 0.5;
     let normal = Vector2::new(-chord.y, chord.x) * (1.0 / chord.length());
     let rise = radius * (sweep / 2.0).cos().abs();
-    let side = if sweep.abs() < std::f64::consts::PI { 1.0 } else { -1.0 } * bulge.signum();
+    let side = if sweep.abs() < std::f64::consts::PI {
+        1.0
+    } else {
+        -1.0
+    } * bulge.signum();
     let center = mid + normal * (rise * side);
     let a0 = (a.y - center.y).atan2(a.x - center.x);
     let n = ((sweep.abs() * radius).ceil() as usize).clamp(4, 2048);
@@ -91,7 +95,12 @@ impl Topology {
             let (a, b) = (w[0], w[1]);
             let points = segment_points(a.point, b.point, a.bulge);
             let n = points.len() as f64;
-            out.extend(points.iter().enumerate().map(|(i, p)| Vector3::new(p.x, p.y, a.z + (b.z - a.z) * i as f64 / n)));
+            out.extend(
+                points
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| Vector3::new(p.x, p.y, a.z + (b.z - a.z) * i as f64 / n)),
+            );
         }
         out.extend(edge.last().map(|v| Vector3::new(v.point.x, v.point.y, v.z)));
         out
@@ -110,7 +119,8 @@ impl Topology {
                 }
             }
         }
-        let near = |a: Vector2, b: Vector2| a.distance(&b) <= 1e-6 * (1.0 + a.x.abs().max(a.y.abs()));
+        let near =
+            |a: Vector2, b: Vector2| a.distance(&b) <= 1e-6 * (1.0 + a.x.abs().max(a.y.abs()));
         let mut loops = Vec::new();
         while let Some((a, b, bulge)) = segments.pop() {
             let mut run = vec![(a, bulge)];
@@ -133,7 +143,10 @@ impl Topology {
         self.face_boundary(face)
             .into_iter()
             .map(|run| {
-                let mut points: Vec<Vector2> = run.windows(2).flat_map(|w| segment_points(w[0].0, w[1].0, w[0].1)).collect();
+                let mut points: Vec<Vector2> = run
+                    .windows(2)
+                    .flat_map(|w| segment_points(w[0].0, w[1].0, w[0].1))
+                    .collect();
                 points.extend(run.last().map(|p| p.0));
                 points
             })
@@ -146,18 +159,28 @@ fn node_list(data: &[u8], pos: usize, end: usize) -> Option<(Vec<(i32, Vector2, 
     let next_free = bits.bit_long()?;
     let n = bits.bit_long()?;
     let mut id = bits.bit_long()?;
-    if !(1..=100_000).contains(&n) || next_free > 1_000_000 || n >= next_free || id < 1 || id >= next_free {
+    if !(1..=100_000).contains(&n)
+        || next_free > 1_000_000
+        || n >= next_free
+        || id < 1
+        || id >= next_free
+    {
         return None;
     }
     let mut nodes: Vec<(i32, Vector2, f64)> = Vec::with_capacity(n as usize);
     for i in 0..n {
         let (x, y, z) = (bits.bit_double()?, bits.bit_double()?, bits.bit_double()?);
-        if ![x, y, z].iter().all(|v| v.is_finite() && v.abs() < 1e12) || bits.bits_value(3)? != 0b010 {
+        if ![x, y, z].iter().all(|v| v.is_finite() && v.abs() < 1e12)
+            || bits.bits_value(3)? != 0b010
+        {
             return None;
         }
         let next = bits.bit_long()?;
         let last = i + 1 == n;
-        if last != (next == 0) || (!last && !(1..next_free).contains(&next)) || nodes.iter().any(|m| m.0 == id) {
+        if last != (next == 0)
+            || (!last && !(1..next_free).contains(&next))
+            || nodes.iter().any(|m| m.0 == id)
+        {
             return None;
         }
         nodes.push((id, Vector2::new(x, y), z));
@@ -166,7 +189,12 @@ fn node_list(data: &[u8], pos: usize, end: usize) -> Option<(Vec<(i32, Vector2, 
     Some((nodes, bits.pos))
 }
 
-fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> Option<Vec<Vec<TopologyVertex>>> {
+fn edges(
+    data: &[u8],
+    pos: usize,
+    end: usize,
+    nodes: &[(i32, Vector2, f64)],
+) -> Option<Vec<Vec<TopologyVertex>>> {
     let mut bits = Bits::new(data, pos, end);
     let next_free = bits.bit_long()?;
     let slots = bits.bit_long()?;
@@ -210,11 +238,21 @@ fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> 
                 0.0
             };
             let &(_, point, z) = nodes.iter().find(|m| m.0 == node)?;
-            run.push(TopologyVertex { point, z, flags, faces, bulge });
+            run.push(TopologyVertex {
+                point,
+                z,
+                flags,
+                faces,
+                bulge,
+            });
         }
         if run.last().is_some_and(|v| v.bulge != 0.0) {
             let first = run[0];
-            run.push(TopologyVertex { bulge: 0.0, faces: (0, 0), ..first });
+            run.push(TopologyVertex {
+                bulge: 0.0,
+                faces: (0, 0),
+                ..first
+            });
         }
         // A list after the vertices (empty on alignments; one entry once a
         // feature line has an elevation point), then three zeros.

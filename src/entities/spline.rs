@@ -346,8 +346,16 @@ impl Spline {
         let m = n + 3;
         // ponytail: dense Gaussian elimination, O(n^3); a banded solver if fit
         // splines with thousands of points show up.
-        let row = |u: f64, d: usize| (0..m).map(|i| basis(&knots, i, 3, u, d)).collect::<Vec<_>>();
-        let unit = |i: usize| (0..m).map(|j| if j == i { 1.0 } else { 0.0 }).collect::<Vec<_>>();
+        let row = |u: f64, d: usize| {
+            (0..m)
+                .map(|i| basis(&knots, i, 3, u, d))
+                .collect::<Vec<_>>()
+        };
+        let unit = |i: usize| {
+            (0..m)
+                .map(|j| if j == i { 1.0 } else { 0.0 })
+                .collect::<Vec<_>>()
+        };
         let speed = chord / (un - u0);
         let end = |u: f64, tangent: Vector3| {
             if tangent == Vector3::ZERO {

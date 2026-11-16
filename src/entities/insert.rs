@@ -863,10 +863,7 @@ mod tests {
     /// A DWG stores an INSERT scale as a plain double, so a file can hold 0.0.
     /// No setter lets a caller build one (they rewrite anything under SCALE_EPSILON),
     /// so I put the zero into the private field and write the file myself.
-    fn zero_scale_round_trip(
-        version: crate::types::DxfVersion,
-        columns: u16,
-    ) -> Vec<Insert> {
+    fn zero_scale_round_trip(version: crate::types::DxfVersion, columns: u16) -> Vec<Insert> {
         use crate::tables::BlockRecord;
         use crate::{CadDocument, DwgReader, DwgWriter};
 
@@ -907,14 +904,22 @@ mod tests {
         ] {
             let inserts = zero_scale_round_trip(version, 1);
             assert_eq!(inserts.len(), 1, "{version:?}");
-            assert_eq!(inserts[0].x_scale().to_bits(), 1.0f64.to_bits(), "{version:?}");
+            assert_eq!(
+                inserts[0].x_scale().to_bits(),
+                1.0f64.to_bits(),
+                "{version:?}"
+            );
             assert_eq!(
                 inserts[0].y_scale().to_bits(),
                 0.0f64.to_bits(),
                 "{version:?}: the file stores 0.0, the reader returned {:e}",
                 inserts[0].y_scale()
             );
-            assert_eq!(inserts[0].z_scale().to_bits(), 1.0f64.to_bits(), "{version:?}");
+            assert_eq!(
+                inserts[0].z_scale().to_bits(),
+                1.0f64.to_bits(),
+                "{version:?}"
+            );
         }
     }
 
@@ -944,7 +949,10 @@ mod tests {
         i.set_x_scale(0.0);
         i.set_y_scale(0.0);
         i.set_z_scale(0.0);
-        assert_eq!((i.x_scale(), i.y_scale(), i.z_scale()), (SCALE_EPSILON, SCALE_EPSILON, SCALE_EPSILON));
+        assert_eq!(
+            (i.x_scale(), i.y_scale(), i.z_scale()),
+            (SCALE_EPSILON, SCALE_EPSILON, SCALE_EPSILON)
+        );
     }
 
     /// Helper – approximate equality for f64

@@ -32,6 +32,10 @@ fn dwg_entity_reactors_to_missing_handles_are_dropped() {
     let back = DwgReader::from_file(&path).unwrap().read().unwrap();
     let _ = std::fs::remove_file(&path);
 
-    let reactors = &back.get_entity(circle_handle).expect("circle survives").common().reactors;
+    let reactors = &back
+        .get_entity(circle_handle)
+        .expect("circle survives")
+        .common()
+        .reactors;
     assert_eq!(reactors, &vec![line1_handle, line2_handle]);
 }

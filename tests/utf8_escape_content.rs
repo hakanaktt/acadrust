@@ -68,8 +68,16 @@ fn a_utf16_dwg_keeps_a_cif_escape_as_content() {
 fn a_late_drawing_still_decodes_a_mif_escape() {
     for version in LATE {
         let doc = doc_with("\\M+5BCFE", version);
-        assert_eq!(first_text(&dxf_round_trip(&doc)), "\u{4ef6}", "dxf {version:?}");
-        assert_eq!(first_text(&dwg_round_trip(&doc)), "\u{4ef6}", "dwg {version:?}");
+        assert_eq!(
+            first_text(&dxf_round_trip(&doc)),
+            "\u{4ef6}",
+            "dxf {version:?}"
+        );
+        assert_eq!(
+            first_text(&dwg_round_trip(&doc)),
+            "\u{4ef6}",
+            "dwg {version:?}"
+        );
     }
 }
 

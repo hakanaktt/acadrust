@@ -35,7 +35,9 @@ pub(super) fn layout(data: &[u8], start: usize, end: usize) -> Option<Intersecti
     bits.skip(2 + 128 + 2)?;
     bits.bit_long()?;
     bits.bit_long()?;
-    let n = usize::try_from(bits.bit_long()?).ok().filter(|n| *n * 60 <= bits.remaining())?;
+    let n = usize::try_from(bits.bit_long()?)
+        .ok()
+        .filter(|n| *n * 60 <= bits.remaining())?;
     bits.bit_long()?;
     let mut road_stations = Vec::with_capacity(n);
     for _ in 0..n {
@@ -51,5 +53,8 @@ pub(super) fn layout(data: &[u8], start: usize, end: usize) -> Option<Intersecti
         region_angles.push(bits.bit_double().filter(|v| v.is_finite())?);
         bits.skip(2)?;
     }
-    Some(IntersectionLayout { road_stations, region_angles })
+    Some(IntersectionLayout {
+        road_stations,
+        region_angles,
+    })
 }

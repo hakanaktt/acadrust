@@ -191,7 +191,10 @@ fn emptied_imagedef_reactors_are_derived_after_dwg_load() {
     definition_mut(&mut loaded, def).reactors.clear();
     let again = dwg_round_trip(&loaded);
     let owner = definition(&again, def).owner;
-    assert_eq!(definition(&again, def).reactors, vec![owner, reactor_handle]);
+    assert_eq!(
+        definition(&again, def).reactors,
+        vec![owner, reactor_handle]
+    );
 }
 
 #[test]

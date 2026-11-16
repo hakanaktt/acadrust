@@ -129,11 +129,19 @@ fn record_at(data: &[u8], pos: usize, end: usize) -> Option<Record> {
         (6, 0 | 2) => {
             zero(&mut bits)?;
             let v = positive(bits.bit_double()?)?;
-            Entity::Curve(if constraint == 0 { CurveDef::ParabolaLength(v) } else { CurveDef::ParabolaK(v) })
+            Entity::Curve(if constraint == 0 {
+                CurveDef::ParabolaLength(v)
+            } else {
+                CurveDef::ParabolaK(v)
+            })
         }
         (6, 11) => {
             zero(&mut bits)?;
-            Entity::Curve(CurveDef::ParabolaThreePoints([point(&mut bits)?, point(&mut bits)?, point(&mut bits)?]))
+            Entity::Curve(CurveDef::ParabolaThreePoints([
+                point(&mut bits)?,
+                point(&mut bits)?,
+                point(&mut bits)?,
+            ]))
         }
         (6, 12) => {
             zero(&mut bits)?;
@@ -169,10 +177,17 @@ fn record_at(data: &[u8], pos: usize, end: usize) -> Option<Record> {
         }
         (4, 0 | 9) => {
             let v = positive(bits.bit_double()?)?;
-            Entity::Curve(if constraint == 0 { CurveDef::CircularLength(v) } else { CurveDef::CircularRadius(v) })
+            Entity::Curve(if constraint == 0 {
+                CurveDef::CircularLength(v)
+            } else {
+                CurveDef::CircularRadius(v)
+            })
         }
         (4, 7) => Entity::Curve(CurveDef::CircularThrough(point(&mut bits)?)),
-        (8, 10) => Entity::Curve(CurveDef::Asymmetric(positive(bits.bit_double()?)?, positive(bits.bit_double()?)?)),
+        (8, 10) => Entity::Curve(CurveDef::Asymmetric(
+            positive(bits.bit_double()?)?,
+            positive(bits.bit_double()?)?,
+        )),
         _ => return None,
     };
     Some(Record {
@@ -292,11 +307,14 @@ fn placed_circle(pvi: Vector2, g1: f64, g2: f64, def: CurveDef) -> Option<(Vecto
             let c = d.dot(&d);
             let disc = (b * b - 4.0 * a * c).max(0.0).sqrt();
             // The radius whose arc spans the point's station.
-            [(-b + disc) / (2.0 * a), (-b - disc) / (2.0 * a)].into_iter().filter(|r| *r > 0.0).find(|r| {
-                let x1 = pvi.x + r * (w.x + s * u1.y);
-                let x2 = pvi.x + r * (w.x + s * u2.y);
-                (x1.min(x2) - 1e-9..=x1.max(x2) + 1e-9).contains(&p.x)
-            })?
+            [(-b + disc) / (2.0 * a), (-b - disc) / (2.0 * a)]
+                .into_iter()
+                .filter(|r| *r > 0.0)
+                .find(|r| {
+                    let x1 = pvi.x + r * (w.x + s * u1.y);
+                    let x2 = pvi.x + r * (w.x + s * u2.y);
+                    (x1.min(x2) - 1e-9..=x1.max(x2) + 1e-9).contains(&p.x)
+                })?
         }
         _ => return None,
     };
@@ -306,9 +324,17 @@ fn placed_circle(pvi: Vector2, g1: f64, g2: f64, def: CurveDef) -> Option<(Vecto
 /// A resolved profile entity's shape.
 #[derive(Clone, Copy)]
 enum Shape {
-    Line { x0: f64, y0: f64, grade: f64 },
+    Line {
+        x0: f64,
+        y0: f64,
+        grade: f64,
+    },
     /// elevation = a s^2 + b s + c.
-    Parabola { a: f64, b: f64, c: f64 },
+    Parabola {
+        a: f64,
+        b: f64,
+        c: f64,
+    },
     Placed(Placed),
 }
 
@@ -378,7 +404,9 @@ fn parabola_through(p: [Vector2; 3]) -> Option<Shape> {
         return None;
     }
     let a = (p2.x * (p1.y - p0.y) + p1.x * (p0.y - p2.y) + p0.x * (p2.y - p1.y)) / d;
-    let b = (p2.x * p2.x * (p0.y - p1.y) + p1.x * p1.x * (p2.y - p0.y) + p0.x * p0.x * (p1.y - p2.y)) / d;
+    let b =
+        (p2.x * p2.x * (p0.y - p1.y) + p1.x * p1.x * (p2.y - p0.y) + p0.x * p0.x * (p1.y - p2.y))
+            / d;
     Some(Shape::Parabola {
         a,
         b,
@@ -431,7 +459,9 @@ struct Segment {
 /// links inside the list.
 fn record_list_at(data: &[u8], pos: usize, end: usize) -> Option<Vec<Record>> {
     let mut bits = Bits::new(data, pos, end);
-    let n = usize::try_from(bits.bit_long()?).ok().filter(|n| (1..100_000).contains(n))?;
+    let n = usize::try_from(bits.bit_long()?)
+        .ok()
+        .filter(|n| (1..100_000).contains(n))?;
     let mut at = bits.pos;
     let mut out: Vec<Record> = Vec::with_capacity(n);
     // After a parabola fixed by length or K: `BL 0x1001` crest (`0x1000`
@@ -464,12 +494,10 @@ fn record_list_at(data: &[u8], pos: usize, end: usize) -> Option<Vec<Record>> {
             _ if last => record.end,
             // debt: no sample has a circular or asymmetric curve before
             // another record; its tail is found by trying both forms.
-            _ => [true, false]
-                .into_iter()
-                .find_map(|after| {
-                    let mut probe = record_at(data, at + 11, end)?;
-                    parabola_tail(&mut probe, after).filter(|e| record_at(data, e + 11, end).is_some())
-                })?,
+            _ => [true, false].into_iter().find_map(|after| {
+                let mut probe = record_at(data, at + 11, end)?;
+                parabola_tail(&mut probe, after).filter(|e| record_at(data, e + 11, end).is_some())
+            })?,
         };
         out.push(record);
         at = next;
@@ -521,7 +549,9 @@ fn runs(data: &[u8], start: usize, end: usize) -> Vec<Vec<Record>> {
         runs.push(run);
     }
     let mut records: Vec<Option<Record>> = records.into_iter().map(Some).collect();
-    runs.into_iter().map(|run| run.into_iter().filter_map(|i| records[i].take()).collect()).collect()
+    runs.into_iter()
+        .map(|run| run.into_iter().filter_map(|i| records[i].take()).collect())
+        .collect()
 }
 
 /// Every entity record in link order, run after run.
@@ -544,7 +574,10 @@ pub(super) fn entity_ids(data: &[u8], start: usize, end: usize) -> Vec<(i32, boo
 
 /// Every run's entities resolved into drawn segments.
 fn design(data: &[u8], start: usize, end: usize) -> Option<Vec<Vec<Segment>>> {
-    runs(data, start, end).iter().map(|run| solve(run)).collect()
+    runs(data, start, end)
+        .iter()
+        .map(|run| solve(run))
+        .collect()
 }
 
 /// One run's entities, each resolved: fixed tangents and curves stand on
@@ -572,7 +605,15 @@ fn solve(owned: &[Record]) -> Option<Vec<Segment>> {
                     (last.distance(&a) <= 1e-6 * (1.0 + a.x.abs())).then_some(())?;
                 }
                 // A step (no station length) draws nothing.
-                shape[i] = Some(if b.x > a.x { Shape::line(a, b) } else { Shape::Line { x0: a.x, y0: a.y, grade: 0.0 } });
+                shape[i] = Some(if b.x > a.x {
+                    Shape::line(a, b)
+                } else {
+                    Shape::Line {
+                        x0: a.x,
+                        y0: a.y,
+                        grade: 0.0,
+                    }
+                });
                 (from[i], to[i]) = (Some(a), Some(b));
             }
             Entity::Dependent(through) => to[i] = through,
@@ -589,8 +630,16 @@ fn solve(owned: &[Record]) -> Option<Vec<Segment>> {
             Entity::Curve(CurveDef::ParabolaTwoPointsGrade(p, q, at_end, g)) => {
                 let l = q.x - p.x;
                 let chord = (q.y - p.y) / l;
-                let a = if at_end { (g - chord) / l } else { (chord - g) / l };
-                shape[i] = Some(Shape::parabola(p, if at_end { g - 2.0 * a * l } else { g }, a));
+                let a = if at_end {
+                    (g - chord) / l
+                } else {
+                    (chord - g) / l
+                };
+                shape[i] = Some(Shape::parabola(
+                    p,
+                    if at_end { g - 2.0 * a * l } else { g },
+                    a,
+                ));
                 (from[i], to[i]) = (Some(p), Some(q));
             }
             Entity::Curve(_) => {}
@@ -645,7 +694,12 @@ fn solve(owned: &[Record]) -> Option<Vec<Segment>> {
                         Form::Circle { center, radius }
                     }
                 };
-                let placed = Placed { pvi: a1, g1, g2, form };
+                let placed = Placed {
+                    pvi: a1,
+                    g1,
+                    g2,
+                    form,
+                };
                 shape[i] = Some(Shape::Placed(placed));
                 (from[i], to[i]) = (Some(placed.start()), Some(placed.end()));
                 to[prev?] = from[i];
@@ -654,7 +708,11 @@ fn solve(owned: &[Record]) -> Option<Vec<Segment>> {
             Entity::Dependent(Some(p)) => {
                 let before = shape[prev?]?;
                 let lo = from[prev?]?.x;
-                let s = root(|t| before.elevation_at(t) + before.grade_at(t) * (p.x - t) - p.y, lo, p.x)?;
+                let s = root(
+                    |t| before.elevation_at(t) + before.grade_at(t) * (p.x - t) - p.y,
+                    lo,
+                    p.x,
+                )?;
                 let q = before.at(s);
                 shape[i] = Some(Shape::line(q, p));
                 from[i] = Some(q);
@@ -669,7 +727,10 @@ fn solve(owned: &[Record]) -> Option<Vec<Segment>> {
                 let touch = |t1: f64| -> Option<(f64, f64)> {
                     let g = before.grade_at(t1);
                     let t2 = root(|t| after.grade_at(t) - g, lo2, hi2)?;
-                    Some((t2, after.elevation_at(t2) - (before.elevation_at(t1) + g * (t2 - t1))))
+                    Some((
+                        t2,
+                        after.elevation_at(t2) - (before.elevation_at(t1) + g * (t2 - t1)),
+                    ))
                 };
                 let t1 = root(|t| touch(t).map_or(f64::NAN, |v| v.1), lo1, hi1)?;
                 let t2 = touch(t1)?.0;
@@ -726,7 +787,9 @@ pub(super) fn polylines(data: &[u8], start: usize, end: usize) -> Vec<Vec<Vector
     let mut out: Vec<Vec<Vector2>> = Vec::new();
     for (_, run) in pieces(data, start, end) {
         match out.last_mut() {
-            Some(last) if last.last().is_some_and(|p| p.distance(&run[0]) < 1e-9) => last.extend(&run[1..]),
+            Some(last) if last.last().is_some_and(|p| p.distance(&run[0]) < 1e-9) => {
+                last.extend(&run[1..])
+            }
             _ => out.push(run),
         }
     }
@@ -746,20 +809,30 @@ pub struct Pvi {
 /// PVIs of a profile: its start, every joint (a curve's PVI where the
 /// grades on both sides of it meet), and its end.
 pub(super) fn pvis(data: &[u8], start: usize, end: usize) -> Vec<Pvi> {
-    design(data, start, end).unwrap_or_default().iter().flat_map(|run| run_pvis(run)).collect()
+    design(data, start, end)
+        .unwrap_or_default()
+        .iter()
+        .flat_map(|run| run_pvis(run))
+        .collect()
 }
 
 fn run_pvis(segments: &[Segment]) -> Vec<Pvi> {
     let Some(first) = segments.first() else {
         return Vec::new();
     };
-    let at = |point: Vector2| Pvi { point, curve_length: 0.0 };
+    let at = |point: Vector2| Pvi {
+        point,
+        curve_length: 0.0,
+    };
     let mut out = vec![at(first.start)];
     for (i, s) in segments.iter().enumerate() {
         match s.shape {
             Shape::Line { .. } => {
                 // Two tangents meeting without a curve.
-                if segments.get(i + 1).is_some_and(|n| matches!(n.shape, Shape::Line { .. })) {
+                if segments
+                    .get(i + 1)
+                    .is_some_and(|n| matches!(n.shape, Shape::Line { .. }))
+                {
                     out.push(at(s.end));
                 }
             }
@@ -961,7 +1034,9 @@ pub(super) fn locking(data: &[u8], start: usize, end: usize) -> Option<ProfileLo
     if !(0..10_000).contains(&n) {
         return None;
     }
-    let affected = (0..n).map(|_| bits.bit_long()).collect::<Option<Vec<_>>>()?;
+    let affected = (0..n)
+        .map(|_| bits.bit_long())
+        .collect::<Option<Vec<_>>>()?;
     Some(ProfileLocking {
         anchor_to_geometry: bits.bit()?,
         modify_affected: bits.bit()?,

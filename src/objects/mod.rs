@@ -22,9 +22,11 @@ mod scale;
 pub(crate) mod semantic_property;
 mod sort_entities_table;
 mod stub_objects;
-mod table_style;
 mod table_entity_roundtrip;
-pub(crate) use table_entity_roundtrip::{prepare_table_entity_roundtrip, restore_table_entity_roundtrip};
+mod table_style;
+pub(crate) use table_entity_roundtrip::{
+    prepare_table_entity_roundtrip, restore_table_entity_roundtrip,
+};
 mod xrecord;
 
 pub use associative::*;
@@ -122,14 +124,12 @@ pub use stub_objects::{
 };
 pub(crate) use table_style::{
     apply_cell_style_to_row, prepare_table_style_cell_maps, prepare_table_style_templates,
-    restore_table_style_roundtrip,
-    row_cell_style,
-    store_table_style_roundtrip,
+    restore_table_style_roundtrip, row_cell_style, store_table_style_roundtrip,
 };
 pub use table_style::{
-    CellAlignment, NamedTableCellStyle, RowCellStyle, TableBorderPropertyFlags, TableBorderType,
-    TableCellBorder, TableCellStyleData, TableCellStylePropertyFlags, TableContentFormat,
-    TableFlowDirection, TableGridFormat, TableStyle, TableStyleFlags, is_row_cell_style,
+    is_row_cell_style, CellAlignment, NamedTableCellStyle, RowCellStyle, TableBorderPropertyFlags,
+    TableBorderType, TableCellBorder, TableCellStyleData, TableCellStylePropertyFlags,
+    TableContentFormat, TableFlowDirection, TableGridFormat, TableStyle, TableStyleFlags,
     CELL_CLASS_DATA, CELL_CLASS_LABEL, DATA_CELL_STYLE, HEADER_CELL_STYLE, TABLE_GRID_EDGES,
     TITLE_CELL_STYLE,
 };
@@ -660,7 +660,9 @@ impl ObjectType {
             ObjectType::PlotSettings(value) => value.handle,
             ObjectType::MultiLeaderStyle(value) => value.handle,
             ObjectType::TableStyle(value) => value.handle,
-            ObjectType::TableContent(value) | ObjectType::TableTemplate(value) => value.common.handle,
+            ObjectType::TableContent(value) | ObjectType::TableTemplate(value) => {
+                value.common.handle
+            }
             ObjectType::Scale(value) => value.handle,
             ObjectType::ObjectContextData(value) => value.handle,
             ObjectType::SortEntitiesTable(value) => value.handle,
@@ -897,7 +899,10 @@ mod tests {
 
         // remove_entry
         assert_eq!(dict.remove_entry("NonExistent"), None);
-        assert_eq!(dict.remove_entry("BETA"), Some(("Beta".to_string(), Handle::new(30))));
+        assert_eq!(
+            dict.remove_entry("BETA"),
+            Some(("Beta".to_string(), Handle::new(30)))
+        );
         assert!(dict.is_empty());
 
         // iterators and clear
@@ -908,7 +913,10 @@ mod tests {
         let values: Vec<Handle> = dict.values().collect();
         assert_eq!(values, vec![Handle::new(1), Handle::new(2)]);
         let pairs: Vec<(&str, Handle)> = dict.iter().collect();
-        assert_eq!(pairs, vec![("One", Handle::new(1)), ("Two", Handle::new(2))]);
+        assert_eq!(
+            pairs,
+            vec![("One", Handle::new(1)), ("Two", Handle::new(2))]
+        );
 
         dict.clear();
         assert!(dict.is_empty());

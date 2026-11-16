@@ -64,8 +64,15 @@ fn v400_edges_get_their_vertex_parameters() {
         edge_params(&doc),
         [(-5.0, 5.0), (0.0, 10.0), (-10.0, 0.0), (0.0, 5.0)]
     );
-    let edge = doc.records.iter().find(|r| r.entity_type == "edge").unwrap();
-    assert_eq!(edge.tokens.last().and_then(|t| t.as_string()), Some("unknown"));
+    let edge = doc
+        .records
+        .iter()
+        .find(|r| r.entity_type == "edge")
+        .unwrap();
+    assert_eq!(
+        edge.tokens.last().and_then(|t| t.as_string()),
+        Some("unknown")
+    );
 }
 
 #[test]

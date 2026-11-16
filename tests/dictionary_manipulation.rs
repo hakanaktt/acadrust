@@ -19,7 +19,10 @@ fn test_dictionary_collection_manipulation() {
     assert_eq!(dict.len(), 1);
 
     // insert replacement returns old handle
-    assert_eq!(dict.insert("LAYER1", Handle::new(0x20)), Some(Handle::new(0x10)));
+    assert_eq!(
+        dict.insert("LAYER1", Handle::new(0x20)),
+        Some(Handle::new(0x10))
+    );
     assert_eq!(dict.get("layer1"), Some(Handle::new(0x20)));
     assert_eq!(dict.len(), 1);
 
@@ -38,7 +41,10 @@ fn test_dictionary_collection_manipulation() {
     assert_eq!(dict.len(), 1);
 
     // remove_entry
-    assert_eq!(dict.remove_entry("layer2"), Some(("Layer2".to_string(), Handle::new(0x30))));
+    assert_eq!(
+        dict.remove_entry("layer2"),
+        Some(("Layer2".to_string(), Handle::new(0x30)))
+    );
     assert!(dict.is_empty());
 
     // iterators
@@ -49,7 +55,10 @@ fn test_dictionary_collection_manipulation() {
     let values: Vec<Handle> = dict.values().collect();
     assert_eq!(values, vec![Handle::new(1), Handle::new(2)]);
     let pairs: Vec<(&str, Handle)> = dict.iter().collect();
-    assert_eq!(pairs, vec![("Alpha", Handle::new(1)), ("Beta", Handle::new(2))]);
+    assert_eq!(
+        pairs,
+        vec![("Alpha", Handle::new(1)), ("Beta", Handle::new(2))]
+    );
 
     // clear
     dict.clear();
@@ -77,7 +86,10 @@ fn test_dictionary_with_default_manipulation() {
     assert_eq!(dict.get_or_default("STYLE1"), Handle::new(0x200));
 
     // replacement
-    assert_eq!(dict.insert("STYLE1", Handle::new(0x300)), Some(Handle::new(0x200)));
+    assert_eq!(
+        dict.insert("STYLE1", Handle::new(0x300)),
+        Some(Handle::new(0x200))
+    );
     assert_eq!(dict.get("style1"), Some(Handle::new(0x300)));
 
     // remove
@@ -119,22 +131,36 @@ fn test_document_group_helpers_and_reactors() {
     let mut doc = CadDocument::new();
 
     // Add entities
-    let line1 = doc.add_entity(EntityType::Line(Line::from_points(
-        Vector3::ZERO,
-        Vector3::UNIT_X,
-    ))).unwrap();
-    let line2 = doc.add_entity(EntityType::Line(Line::from_points(
-        Vector3::UNIT_X,
-        Vector3::UNIT_Y,
-    ))).unwrap();
+    let line1 = doc
+        .add_entity(EntityType::Line(Line::from_points(
+            Vector3::ZERO,
+            Vector3::UNIT_X,
+        )))
+        .unwrap();
+    let line2 = doc
+        .add_entity(EntityType::Line(Line::from_points(
+            Vector3::UNIT_X,
+            Vector3::UNIT_Y,
+        )))
+        .unwrap();
 
     // create_group
     let group_h = doc.create_group("SteelBeams", &[line1, line2]).unwrap();
     assert_ne!(group_h, Handle::NULL);
 
     // verify entity reactors contain group handle
-    assert!(doc.get_entity(line1).unwrap().common().reactors.contains(&group_h));
-    assert!(doc.get_entity(line2).unwrap().common().reactors.contains(&group_h));
+    assert!(doc
+        .get_entity(line1)
+        .unwrap()
+        .common()
+        .reactors
+        .contains(&group_h));
+    assert!(doc
+        .get_entity(line2)
+        .unwrap()
+        .common()
+        .reactors
+        .contains(&group_h));
 
     // verify group lookup
     let group = doc.get_group("steelbeams").expect("group should exist");
@@ -146,18 +172,30 @@ fn test_document_group_helpers_and_reactors() {
     assert_eq!(doc.get_group_by_handle(group_h).unwrap().name, "SteelBeams");
 
     // add_entity_to_group
-    let line3 = doc.add_entity(EntityType::Line(Line::from_points(
-        Vector3::UNIT_Y,
-        Vector3::ZERO,
-    ))).unwrap();
+    let line3 = doc
+        .add_entity(EntityType::Line(Line::from_points(
+            Vector3::UNIT_Y,
+            Vector3::ZERO,
+        )))
+        .unwrap();
     doc.add_entity_to_group("SteelBeams", line3).unwrap();
     assert!(doc.get_group("SteelBeams").unwrap().contains(line3));
-    assert!(doc.get_entity(line3).unwrap().common().reactors.contains(&group_h));
+    assert!(doc
+        .get_entity(line3)
+        .unwrap()
+        .common()
+        .reactors
+        .contains(&group_h));
 
     // remove_entity_from_group
     doc.remove_entity_from_group("SteelBeams", line2).unwrap();
     assert!(!doc.get_group("SteelBeams").unwrap().contains(line2));
-    assert!(!doc.get_entity(line2).unwrap().common().reactors.contains(&group_h));
+    assert!(!doc
+        .get_entity(line2)
+        .unwrap()
+        .common()
+        .reactors
+        .contains(&group_h));
 
     // create_unnamed_group
     let unnamed_h = doc.create_unnamed_group(&[line1]).unwrap();
@@ -171,24 +209,38 @@ fn test_document_group_helpers_and_reactors() {
     assert_eq!(doc.get_group("SteelBeams"), None);
     assert!(!doc.objects.contains_key(&group_h));
     // entity reactors for line1 and line3 no longer contain group_h
-    assert!(!doc.get_entity(line1).unwrap().common().reactors.contains(&group_h));
-    assert!(!doc.get_entity(line3).unwrap().common().reactors.contains(&group_h));
+    assert!(!doc
+        .get_entity(line1)
+        .unwrap()
+        .common()
+        .reactors
+        .contains(&group_h));
+    assert!(!doc
+        .get_entity(line3)
+        .unwrap()
+        .common()
+        .reactors
+        .contains(&group_h));
 }
 
 #[test]
 fn test_group_and_subdictionary_dxf_roundtrip() {
     let mut doc = CadDocument::new();
 
-    let line = doc.add_entity(EntityType::Line(Line::from_points(
-        Vector3::ZERO,
-        Vector3::UNIT_X,
-    ))).unwrap();
+    let line = doc
+        .add_entity(EntityType::Line(Line::from_points(
+            Vector3::ZERO,
+            Vector3::UNIT_X,
+        )))
+        .unwrap();
 
     let _group_h = doc.create_group("GroupRoundtrip", &[line]).unwrap();
     let _subdict_h = doc.ensure_subdictionary("SubdictRoundtrip");
 
     // Write to DXF
-    let bytes = DxfWriter::new(&doc).write_to_vec().expect("DXF write failed");
+    let bytes = DxfWriter::new(&doc)
+        .write_to_vec()
+        .expect("DXF write failed");
 
     // Read back from DXF
     let read_doc = DxfReader::from_reader(Cursor::new(bytes))
@@ -198,7 +250,10 @@ fn test_group_and_subdictionary_dxf_roundtrip() {
 
     // Verify sub-dictionary roundtrip
     let rt_subdict = read_doc.get_subdictionary("SubdictRoundtrip");
-    assert!(rt_subdict.is_some(), "sub-dictionary should survive roundtrip");
+    assert!(
+        rt_subdict.is_some(),
+        "sub-dictionary should survive roundtrip"
+    );
 
     // Verify group roundtrip
     let rt_group = read_doc.get_group("GroupRoundtrip");

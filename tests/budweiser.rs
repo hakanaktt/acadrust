@@ -4,8 +4,8 @@
 //! in the `budweiser/` directory, including unencrypted and password-protected
 //! drawings with clean-room RC4/MD5 decryption.
 
-use std::path::Path;
 use acadrust::io::dwg::{DwgReader, DwgWriter};
+use std::path::Path;
 
 #[test]
 fn test_budweiser_unencrypted() {
@@ -29,7 +29,8 @@ fn test_budweiser_unencrypted() {
         // Strict read
         let mut reader = DwgReader::from_file(path)
             .unwrap_or_else(|e| panic!("Failed to create reader for {}: {:?}", file_path, e));
-        let doc = reader.read()
+        let doc = reader
+            .read()
             .unwrap_or_else(|e| panic!("Failed to read {} in strict mode: {:?}", file_path, e));
 
         let entity_count = doc.entities().count();
@@ -47,7 +48,8 @@ fn test_budweiser_unencrypted() {
             .unwrap_or_else(|e| panic!("Failed to write {} to DWG: {:?}", file_path, e));
 
         let mut reread_reader = DwgReader::from_stream(std::io::Cursor::new(&written_bytes));
-        let reread_doc = reread_reader.read()
+        let reread_doc = reread_reader
+            .read()
             .unwrap_or_else(|e| panic!("Failed to re-read written DWG for {}: {:?}", file_path, e));
 
         assert_eq!(
@@ -107,7 +109,10 @@ fn test_budweiser_encrypted() {
             .unwrap()
             .with_password("budweiser");
         let doc = reader.read().unwrap_or_else(|e| {
-            panic!("Failed to decrypt and read {} with password: {:?}", file_path, e)
+            panic!(
+                "Failed to decrypt and read {} with password: {:?}",
+                file_path, e
+            )
         });
 
         let entity_count = doc.entities().count();
@@ -125,7 +130,8 @@ fn test_budweiser_encrypted() {
             .unwrap_or_else(|e| panic!("Failed to write {} to DWG: {:?}", file_path, e));
 
         let mut reread_reader = DwgReader::from_stream(std::io::Cursor::new(&written_bytes));
-        let reread_doc = reread_reader.read()
+        let reread_doc = reread_reader
+            .read()
             .unwrap_or_else(|e| panic!("Failed to re-read written DWG for {}: {:?}", file_path, e));
 
         assert_eq!(

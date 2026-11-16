@@ -28,9 +28,7 @@ fn sab() -> Vec<u8> {
     SabWriter::write(&build_box([10.0, 20.0, -5.0], 2.0, 3.0, 4.0))
 }
 
-fn ac1032_surface_record_with_extra_body(
-    bit_offset: i64,
-) -> (DwgMergedReader, Vec<u8>, i64) {
+fn ac1032_surface_record_with_extra_body(bit_offset: i64) -> (DwgMergedReader, Vec<u8>, i64) {
     let dxf_version = DxfVersion::AC1032;
     let version = DwgVersion::from_dxf_version(dxf_version).unwrap();
     let mut writer = DwgBitWriter::new(version, dxf_version);
@@ -101,7 +99,10 @@ fn ac1032_surface_with_extra_modeler_body_decodes_without_array_count_error() {
     assert_eq!(surface.u_isolines, 17);
     assert_eq!(surface.v_isolines, 29);
     assert_eq!(surface.acis.wires[0].color, Color::ByLayer);
-    let extra = surface.acis.extra_acis_data.expect("extra ACIS data must be present");
+    let extra = surface
+        .acis
+        .extra_acis_data
+        .expect("extra ACIS data must be present");
     assert_eq!(extra.sab_data, geometry);
 }
 
@@ -114,11 +115,15 @@ fn ac1032_surface_document_roundtrip_with_extra_modeler_body() {
     surface.acis_data.extra_acis_data = Some(Box::new(AcisData::from_sab(sab())));
     surface.u_isolines = 6;
     surface.v_isolines = 8;
-    let handle = document.add_entity(EntityType::Surface(Box::new(surface))).unwrap();
+    let handle = document
+        .add_entity(EntityType::Surface(Box::new(surface)))
+        .unwrap();
 
     let bytes = DwgWriter::write_to_vec(&document).unwrap();
     let mut reader = DwgReader::from_stream(Cursor::new(bytes));
-    let restored = reader.read().expect("strict read must succeed for AC1032 surface with extra modeler body");
+    let restored = reader
+        .read()
+        .expect("strict read must succeed for AC1032 surface with extra modeler body");
     let EntityType::Surface(restored_surface) = restored.get_entity(handle).unwrap() else {
         panic!("expected surface entity");
     };

@@ -1,10 +1,10 @@
 use std::io::Cursor;
 
+use acadrust::notification::NotificationType;
 use acadrust::objects::{
     AssocAction, AssocEvalValue, AssocEvalVariant, AssocValueParam, AssocValueParamVariable,
     AssocVariable, AssociativeData, AssociativeObject, ObjectType,
 };
-use acadrust::notification::NotificationType;
 use acadrust::types::Handle;
 use acadrust::{CadDocument, DxfReader, DxfWriter};
 

@@ -44,9 +44,15 @@ fn dwg_r2000_plus_to_dxf_keeps_unitmode() {
 fn r12_dwg_to_modern_dwg_keeps_unitmode() {
     let mut r12 = CadDocument::with_version(DxfVersion::AC1009);
     r12.header.unit_mode = 1;
-    r12.header.legacy.get_or_insert_with(Default::default).unit_mode = 1;
+    r12.header
+        .legacy
+        .get_or_insert_with(Default::default)
+        .unit_mode = 1;
     let read = dwg(&r12);
-    assert_eq!(read.header.unit_mode, 1, "r12 reader mirrors into unit_mode");
+    assert_eq!(
+        read.header.unit_mode, 1,
+        "r12 reader mirrors into unit_mode"
+    );
 
     let mut modern = read;
     modern.version = DxfVersion::AC1032;

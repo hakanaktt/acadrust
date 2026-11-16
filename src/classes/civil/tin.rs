@@ -66,13 +66,19 @@ impl TinSurface {
         self.triangles
             .iter()
             .filter(|triangle| triangle.is_visible())
-            .map(|triangle| triangle.vertices.map(|v| self.vertices[v as usize].position))
+            .map(|triangle| {
+                triangle
+                    .vertices
+                    .map(|v| self.vertices[v as usize].position)
+            })
     }
 }
 
 /// The triangulation block of a surface body.
 pub(super) fn find(data: &[u8], start: usize, end: usize) -> Option<TinSurface> {
-    if let Some(surface) = triangulation_at(data, start, end).and_then(|pos| read_at(data, pos, end)) {
+    if let Some(surface) =
+        triangulation_at(data, start, end).and_then(|pos| read_at(data, pos, end))
+    {
         return Some(surface);
     }
     // debt: surfaces whose first definition is none of the forms below or
@@ -129,7 +135,9 @@ fn triangulation_at(data: &[u8], start: usize, end: usize) -> Option<usize> {
         match first {
             First::Reference => bits.skip(128)?,
             First::Vertices => {
-                let n = usize::try_from(bits.bit_long()?).ok().filter(|n| n * 6 <= bits.remaining())?;
+                let n = usize::try_from(bits.bit_long()?)
+                    .ok()
+                    .filter(|n| n * 6 <= bits.remaining())?;
                 for _ in 0..3 * n {
                     bits.bit_double()?;
                 }
@@ -147,11 +155,22 @@ fn triangulation_at(data: &[u8], start: usize, end: usize) -> Option<usize> {
         bits.bit_long()?;
         bits.skip(2)
     };
-    [Some(First::Reference), Some(First::Vertices), Some(First::Import), None].into_iter().find_map(|first| {
+    [
+        Some(First::Reference),
+        Some(First::Vertices),
+        Some(First::Import),
+        None,
+    ]
+    .into_iter()
+    .find_map(|first| {
         let mut bits = Bits::new(data, at, end);
         layout(&mut bits, first)?;
         bits.raw_long()?;
-        matches!(u16::from_le_bytes([bits.raw_short_byte()?, bits.raw_short_byte()?]), 0x05A2 | 0x04A2).then_some(())?;
+        matches!(
+            u16::from_le_bytes([bits.raw_short_byte()?, bits.raw_short_byte()?]),
+            0x05A2 | 0x04A2
+        )
+        .then_some(())?;
         let k = usize::from(bits.raw_short_byte()?);
         bits.skip(16 * k)?;
         (b"MMS01".iter().all(|c| bits.raw_short_byte() == Some(*c))).then_some(bits.pos)
@@ -189,7 +208,9 @@ fn operation(bits: &mut Bits) -> Option<()> {
             bits.bit_long()?;
             bits.bit_double()?;
             for _ in 0..bits.bit_long()? {
-                let n = usize::try_from(bits.bit_long()?).ok().filter(|n| n * 6 <= bits.remaining())?;
+                let n = usize::try_from(bits.bit_long()?)
+                    .ok()
+                    .filter(|n| n * 6 <= bits.remaining())?;
                 for _ in 0..3 * n {
                     bits.bit_double()?;
                 }
@@ -336,7 +357,11 @@ fn chain<K: Copy + Eq + std::hash::Hash>(segments: &[(K, K)]) -> Vec<Vec<K>> {
         }
         used[first] = true;
         let (a, b) = segments[first];
-        let mut keys = if at[&a].len() == 1 { vec![a, b] } else { vec![b, a] };
+        let mut keys = if at[&a].len() == 1 {
+            vec![a, b]
+        } else {
+            vec![b, a]
+        };
         loop {
             let tail = *keys.last().unwrap();
             let Some(&next) = at[&tail].iter().find(|&&i| !used[i]) else {
@@ -373,7 +398,11 @@ impl TinSurface {
         }
         chain(&edges)
             .into_iter()
-            .map(|keys| keys.iter().map(|&v| self.vertices[v as usize].position).collect())
+            .map(|keys| {
+                keys.iter()
+                    .map(|&v| self.vertices[v as usize].position)
+                    .collect()
+            })
             .collect()
     }
 
@@ -391,7 +420,8 @@ impl TinSurface {
             let v = triangle.vertices;
             let z = v.map(|i| self.vertices[i as usize].position.z);
             let low = (z.iter().copied().fold(f64::INFINITY, f64::min) / interval).ceil() as i64;
-            let high = (z.iter().copied().fold(f64::NEG_INFINITY, f64::max) / interval).floor() as i64;
+            let high =
+                (z.iter().copied().fold(f64::NEG_INFINITY, f64::max) / interval).floor() as i64;
             for level in low..=high {
                 let h = level as f64 * interval;
                 let crossed: Vec<Edge> = (0..3)
@@ -409,7 +439,10 @@ impl TinSurface {
         for (level, segments) in ordered {
             let h = level as f64 * interval;
             let at = |(a, b): Edge| {
-                let (p, q) = (self.vertices[a as usize].position, self.vertices[b as usize].position);
+                let (p, q) = (
+                    self.vertices[a as usize].position,
+                    self.vertices[b as usize].position,
+                );
                 let t = (h - p.z) / (q.z - p.z);
                 Vector3::new(p.x + (q.x - p.x) * t, p.y + (q.y - p.y) * t, h)
             };
@@ -427,7 +460,13 @@ mod tests {
 
     fn bits_of(s: &str) -> Vec<u8> {
         let s: Vec<u8> = s.bytes().filter(|b| *b == b'0' || *b == b'1').collect();
-        s.chunks(8).map(|c| c.iter().enumerate().fold(0u8, |a, (i, b)| a | ((b - b'0') << (7 - i)))).collect()
+        s.chunks(8)
+            .map(|c| {
+                c.iter()
+                    .enumerate()
+                    .fold(0u8, |a, (i, b)| a | ((b - b'0') << (7 - i)))
+            })
+            .collect()
     }
 
     #[test]
@@ -435,9 +474,15 @@ mod tests {
         // BL 17, BL 9, BL 16, GUID, BL 0, BD 1.5; BL 40, BL 9, BL 16, GUID,
         // BL 0, BL 1; then BL 41, BL 9, BL 16.
         let guid = "0".repeat(128);
-        let raise = format!("0100010001 0100001001 0100010000 {guid} 10 00{}", "0".repeat(48) + "1111100000111111");
+        let raise = format!(
+            "0100010001 0100001001 0100010000 {guid} 10 00{}",
+            "0".repeat(48) + "1111100000111111"
+        );
         let kind_40 = format!("0100101000 0100001001 0100010000 {guid} 10 0100000001");
-        let b = bits_of(&format!("{raise} {kind_40} 0100101001 0100001001 0100010000 {guid} 10 {}", "0".repeat(16)));
+        let b = bits_of(&format!(
+            "{raise} {kind_40} 0100101001 0100001001 0100010000 {guid} 10 {}",
+            "0".repeat(16)
+        ));
         let mut bits = Bits::new(&b, 0, b.len() * 8);
         assert!(operation(&mut bits).is_some());
         assert_eq!(bits.pos, 30 + 128 + 2 + 66);

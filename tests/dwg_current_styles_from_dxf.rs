@@ -172,12 +172,16 @@ fn case_insensitive_style_name_matching_in_dwg() {
         .expect("read dwg");
 
     assert!(
-        back.header.current_text_style_name.eq_ignore_ascii_case("MYTXT"),
+        back.header
+            .current_text_style_name
+            .eq_ignore_ascii_case("MYTXT"),
         "expected MYTXT (case-insensitive), got {}",
         back.header.current_text_style_name
     );
     assert!(
-        back.header.current_dimstyle_name.eq_ignore_ascii_case("MYDIM"),
+        back.header
+            .current_dimstyle_name
+            .eq_ignore_ascii_case("MYDIM"),
         "expected MYDIM (case-insensitive), got {}",
         back.header.current_dimstyle_name
     );

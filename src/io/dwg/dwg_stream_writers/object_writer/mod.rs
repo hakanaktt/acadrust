@@ -369,21 +369,48 @@ impl<'a> DwgObjectWriter<'a> {
         for e in document.entities() {
             s.insert(e.common().handle.value());
             if let EntityType::Insert(i) = e {
-                for a in &i.attributes { s.insert(a.common.handle.value()); }
-                if let Some(h) = i.seqend_handle { s.insert(h.value()); }
+                for a in &i.attributes {
+                    s.insert(a.common.handle.value());
+                }
+                if let Some(h) = i.seqend_handle {
+                    s.insert(h.value());
+                }
             }
         }
-        for h in document.objects.keys() { s.insert(h.value()); }
-        macro_rules! tbl { ($t:expr) => { s.insert($t.handle().value()); for x in $t.iter() { s.insert(x.handle().value()); } } }
-        tbl!(document.layers); tbl!(document.line_types); tbl!(document.text_styles); tbl!(document.block_records);
-        tbl!(document.dim_styles); tbl!(document.app_ids); tbl!(document.views); tbl!(document.vports); tbl!(document.ucss);
-        for b in document.block_records.iter() { s.insert(b.block_entity_handle.value()); s.insert(b.block_end_handle.value()); }
+        for h in document.objects.keys() {
+            s.insert(h.value());
+        }
+        macro_rules! tbl {
+            ($t:expr) => {
+                s.insert($t.handle().value());
+                for x in $t.iter() {
+                    s.insert(x.handle().value());
+                }
+            };
+        }
+        tbl!(document.layers);
+        tbl!(document.line_types);
+        tbl!(document.text_styles);
+        tbl!(document.block_records);
+        tbl!(document.dim_styles);
+        tbl!(document.app_ids);
+        tbl!(document.views);
+        tbl!(document.vports);
+        tbl!(document.ucss);
+        for b in document.block_records.iter() {
+            s.insert(b.block_entity_handle.value());
+            s.insert(b.block_end_handle.value());
+        }
         s
     }
 
     /// Reactors that still point at something in this document.
     pub(super) fn live_reactors(&self, reactors: &[Handle]) -> Vec<Handle> {
-        reactors.iter().copied().filter(|r| self.live_handles.contains(&r.value())).collect()
+        reactors
+            .iter()
+            .copied()
+            .filter(|r| self.live_handles.contains(&r.value()))
+            .collect()
     }
 
     /// owner → child dictionary (see `xdic_owner_index`). Mirrors the fallback in

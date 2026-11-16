@@ -107,8 +107,16 @@ fn periodic_spline_writes_valid_nurbs_to_dxf() {
         dxf_a2.control_points.len() + (dxf_a2.degree as usize) + 1,
         "DXF periodic spline must satisfy knots = control_points + degree + 1"
     );
-    assert_eq!(dxf_a2.control_points.len(), 7, "expected 7 control points for clamped periodic cubic spline");
-    assert_eq!(dxf_a2.knots.len(), 11, "expected 11 knots for clamped periodic cubic spline");
+    assert_eq!(
+        dxf_a2.control_points.len(),
+        7,
+        "expected 7 control points for clamped periodic cubic spline"
+    );
+    assert_eq!(
+        dxf_a2.knots.len(),
+        11,
+        "expected 11 knots for clamped periodic cubic spline"
+    );
     assert!(
         dxf_a2.flags.closed,
         "periodic spline in DXF must be marked closed"

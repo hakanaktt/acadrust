@@ -6,19 +6,67 @@
 
 /// DXF name, C++ class and registering application of each class.
 pub const OBJECT_CLASSES: &[(&str, &str, &str)] = &[
-    ("DMMAPMANAGER", "AcMapDMMapManager", "AcMapDisplayManagement"),
-    ("DMSTYLELIBRARY", "AcMapDMStyleLibrary", "AcMapDisplayManagement"),
-    ("DMSTYLECATEGORY", "AcMapDMStyleCategory", "AcMapDisplayManagement"),
+    (
+        "DMMAPMANAGER",
+        "AcMapDMMapManager",
+        "AcMapDisplayManagement",
+    ),
+    (
+        "DMSTYLELIBRARY",
+        "AcMapDMStyleLibrary",
+        "AcMapDisplayManagement",
+    ),
+    (
+        "DMSTYLECATEGORY",
+        "AcMapDMStyleCategory",
+        "AcMapDisplayManagement",
+    ),
     ("DMMAP", "AcMapDMMap", "AcMapDisplayManagement"),
-    ("DMBASEELEMENT", "AcMapDMBaseElement", "AcMapDisplayManagement"),
-    ("DMDEFAULTSTYLE", "AcMapDMDefaultStyle", "AcMapDisplayManagement"),
-    ("DMSTYLEREFERENCE", "AcMapDMStyleReference", "AcMapDisplayManagement"),
-    ("DMSURROGATESTYLESETS", "AcMapDMSurrogateStyleSets", "AcMapDisplayManagement"),
-    ("DMSTYLIZEDENTITIESTABLE", "AcMapDMStylizedEntitiesTable", "AcMapDisplayManagement"),
-    ("MAPGWSUNDOOBJECT", "AcMapGWSUndoRecorder", "AcMapFeatureSourceManager"),
-    ("MAPRESOURCEMANAGEROBJECT", "AcMapResourceManager", "AcMapSharedComponents"),
-    ("MAPFSMRVOBJECT", "AcMapDMResourceVersionObject", "AcMapFeatureSourceManager"),
-    ("MAPMETADATAOBJECT", "AcMapMetadataPersistObject", "AcMapFeatureSourceManager"),
+    (
+        "DMBASEELEMENT",
+        "AcMapDMBaseElement",
+        "AcMapDisplayManagement",
+    ),
+    (
+        "DMDEFAULTSTYLE",
+        "AcMapDMDefaultStyle",
+        "AcMapDisplayManagement",
+    ),
+    (
+        "DMSTYLEREFERENCE",
+        "AcMapDMStyleReference",
+        "AcMapDisplayManagement",
+    ),
+    (
+        "DMSURROGATESTYLESETS",
+        "AcMapDMSurrogateStyleSets",
+        "AcMapDisplayManagement",
+    ),
+    (
+        "DMSTYLIZEDENTITIESTABLE",
+        "AcMapDMStylizedEntitiesTable",
+        "AcMapDisplayManagement",
+    ),
+    (
+        "MAPGWSUNDOOBJECT",
+        "AcMapGWSUndoRecorder",
+        "AcMapFeatureSourceManager",
+    ),
+    (
+        "MAPRESOURCEMANAGEROBJECT",
+        "AcMapResourceManager",
+        "AcMapSharedComponents",
+    ),
+    (
+        "MAPFSMRVOBJECT",
+        "AcMapDMResourceVersionObject",
+        "AcMapFeatureSourceManager",
+    ),
+    (
+        "MAPMETADATAOBJECT",
+        "AcMapMetadataPersistObject",
+        "AcMapFeatureSourceManager",
+    ),
 ];
 
 /// C++ class name of a known Map 3D object class.

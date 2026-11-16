@@ -47,7 +47,11 @@ fn a_null_handle_keeps_the_later_values_in_place() {
     let (_, values) = round_trip(|_| Handle::NULL);
     assert_eq!(
         values,
-        vec![text("first"), XDataValue::Handle(Handle::NULL), text("last")]
+        vec![
+            text("first"),
+            XDataValue::Handle(Handle::NULL),
+            text("last")
+        ]
     );
 }
 
@@ -56,7 +60,11 @@ fn a_dangling_handle_is_cleared_and_keeps_the_later_values_in_place() {
     let (_, values) = round_trip(|_| Handle::new(0xFF_FFFF));
     assert_eq!(
         values,
-        vec![text("first"), XDataValue::Handle(Handle::NULL), text("last")]
+        vec![
+            text("first"),
+            XDataValue::Handle(Handle::NULL),
+            text("last")
+        ]
     );
 }
 

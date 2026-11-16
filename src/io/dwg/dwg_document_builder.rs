@@ -195,14 +195,23 @@ fn source_state_diagnostics(document: &CadDocument, diagnostics: &mut Vec<ReadDi
     }
     for linetype in document.line_types.iter() {
         use crate::tables::linetype::LineTypeComplexContent;
-        let unstyled = linetype.elements.iter().enumerate().find_map(|(index, element)| {
-            element.complex.as_ref().and_then(|complex| match complex.content {
-                LineTypeComplexContent::Shape { shape_number } if complex.style_handle.is_null() => {
-                    Some((index, shape_number, complex.source_flags))
-                }
-                _ => None,
-            })
-        });
+        let unstyled = linetype
+            .elements
+            .iter()
+            .enumerate()
+            .find_map(|(index, element)| {
+                element
+                    .complex
+                    .as_ref()
+                    .and_then(|complex| match complex.content {
+                        LineTypeComplexContent::Shape { shape_number }
+                            if complex.style_handle.is_null() =>
+                        {
+                            Some((index, shape_number, complex.source_flags))
+                        }
+                        _ => None,
+                    })
+            });
         if let Some((index, shape_number, flags)) = unstyled {
             // Shape 0 under the bare shape flag is what simple linetypes
             // carry in some files on every segment: a flag with nothing to
@@ -3437,8 +3446,9 @@ impl DwgDocumentBuilder {
                         let xd = &mut std::sync::Arc::make_mut(entity).common_mut().extended_data;
                         if self.skip_roundtrip_data {
                             // A decoded block is only kept for a byte-exact re-save.
-                            xd.raw_dwg_eed
-                                .retain(|(app, _)| !records.iter().any(|(decoded, _)| decoded == app));
+                            xd.raw_dwg_eed.retain(|(app, _)| {
+                                !records.iter().any(|(decoded, _)| decoded == app)
+                            });
                             xd.raw_dwg_eed.shrink_to_fit();
                         }
                         for (_, record) in records {

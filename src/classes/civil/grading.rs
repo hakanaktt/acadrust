@@ -84,12 +84,19 @@ pub struct GradingCriteria {
 
 // ponytail: keys 0x31x1 (a copy of each slope), 0x31x3, 0x3024, 0x3130,
 // 0x1008 and 0x1010 are read past; no criteria property changed them.
-pub(super) fn criteria(data: &[u8], start: usize, end: usize, handles: &[u64]) -> Option<GradingCriteria> {
+pub(super) fn criteria(
+    data: &[u8],
+    start: usize,
+    end: usize,
+    handles: &[u64],
+) -> Option<GradingCriteria> {
     let mut bits = Bits::new(data, start, end);
     (bits.bit_short()? == 0x04BE).then_some(())?;
     bits.bit_long()?;
     let list = |bits: &mut Bits| {
-        let n = usize::try_from(bits.bit_long()?).ok().filter(|n| *n <= bits.remaining() / 2)?;
+        let n = usize::try_from(bits.bit_long()?)
+            .ok()
+            .filter(|n| *n <= bits.remaining() / 2)?;
         (0..n).map(|_| bits.bit_long()).collect::<Option<Vec<_>>>()
     };
     let derived = list(&mut bits)?;
@@ -97,7 +104,11 @@ pub(super) fn criteria(data: &[u8], start: usize, end: usize, handles: &[u64]) -
     let mut refs = derived.len() + list(&mut bits)?.len();
     (bits.bit_long()? == 0 && bits.bit()?).then_some(())?;
     let derived_criteria = handles.iter().take(derived.len()).copied().collect();
-    let mut out = GradingCriteria { derived, derived_criteria, ..Default::default() };
+    let mut out = GradingCriteria {
+        derived,
+        derived_criteria,
+        ..Default::default()
+    };
     for _ in 0..bits.bits_value(8)? {
         let at = bits.pos;
         let key = bits.bit_long()? as u32;
@@ -109,9 +120,27 @@ pub(super) fn criteria(data: &[u8], start: usize, end: usize, handles: &[u64]) -
         };
         let locked = key & LOCKED != 0;
         let takes_reference = matches!((key >> 24) & 0x3F, 0x0F | 0x10 | 0x12);
-        let f = CriteriaValue { value: if let KeyValue::Double(d) = value { Some(d) } else { None }, locked };
-        let i = CriteriaValue { value: if let KeyValue::Long(l) = value { Some(l) } else { None }, locked };
-        let stamp = if let KeyValue::Raw(r) = value { Some(r) } else { None };
+        let f = CriteriaValue {
+            value: if let KeyValue::Double(d) = value {
+                Some(d)
+            } else {
+                None
+            },
+            locked,
+        };
+        let i = CriteriaValue {
+            value: if let KeyValue::Long(l) = value {
+                Some(l)
+            } else {
+                None
+            },
+            locked,
+        };
+        let stamp = if let KeyValue::Raw(r) = value {
+            Some(r)
+        } else {
+            None
+        };
         match key & 0xFFFF {
             0x3001 => out.target = i,
             0x3002 => out.elevation = f,
@@ -133,7 +162,9 @@ pub(super) fn criteria(data: &[u8], start: usize, end: usize, handles: &[u64]) -
             0x3090 => out.search_order = i,
             0x101E => out.created = stamp,
             0x101F => out.modified = stamp,
-            0x3008 if takes_reference => out.target_surface = handles.get(refs).copied().filter(|h| *h != 0),
+            0x3008 if takes_reference => {
+                out.target_surface = handles.get(refs).copied().filter(|h| *h != 0)
+            }
             _ => {}
         }
         refs += usize::from(takes_reference);
@@ -147,7 +178,13 @@ mod tests {
 
     fn bits_of(s: &str) -> Vec<u8> {
         let s: Vec<u8> = s.bytes().filter(|b| *b == b'0' || *b == b'1').collect();
-        s.chunks(8).map(|c| c.iter().enumerate().fold(0u8, |a, (i, b)| a | ((b - b'0') << (7 - i)))).collect()
+        s.chunks(8)
+            .map(|c| {
+                c.iter()
+                    .enumerate()
+                    .fold(0u8, |a, (i, b)| a | ((b - b'0') << (7 - i)))
+            })
+            .collect()
     }
 
     #[test]
@@ -162,9 +199,27 @@ mod tests {
              00 00100000 00110001 01000011 01001101 0000000",
         );
         let read = criteria(&b, 0, b.len() * 8, &[]).unwrap();
-        assert_eq!(read.distance, CriteriaValue { value: Some(1.0), locked: false });
-        assert_eq!(read.target, CriteriaValue { value: Some(3), locked: true });
-        assert_eq!(read.slope_format, CriteriaValue { value: None, locked: true });
+        assert_eq!(
+            read.distance,
+            CriteriaValue {
+                value: Some(1.0),
+                locked: false
+            }
+        );
+        assert_eq!(
+            read.target,
+            CriteriaValue {
+                value: Some(3),
+                locked: true
+            }
+        );
+        assert_eq!(
+            read.slope_format,
+            CriteriaValue {
+                value: None,
+                locked: true
+            }
+        );
         assert_eq!(read.slope, CriteriaValue::default());
     }
 }

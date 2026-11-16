@@ -1491,7 +1491,8 @@ pub fn read_spline(
         }
     }
 
-    if scenario != 1 && !closed && fit_points.len() >= 3 && fit_points.first() == fit_points.last() {
+    if scenario != 1 && !closed && fit_points.len() >= 3 && fit_points.first() == fit_points.last()
+    {
         closed = true;
     }
 
@@ -5769,7 +5770,14 @@ fn read_acis_entity_impl(
                 frame = wide;
             }
         }
-        (point_present, point, isolines, isoline_present, wires, silhouettes) = frame;
+        (
+            point_present,
+            point,
+            isolines,
+            isoline_present,
+            wires,
+            silhouettes,
+        ) = frame;
     }
 
     // Native pre-R2007 SAT records can end at an absent wireframe flag,
@@ -6240,7 +6248,14 @@ fn read_wireframe(
             wires: sil_wires,
         });
     }
-    (point_present, point, isolines, isoline_present, wires, silhouettes)
+    (
+        point_present,
+        point,
+        isolines,
+        isoline_present,
+        wires,
+        silhouettes,
+    )
 }
 
 /// One cached wire of an ACIS entity; `wide_color` reads its colour as a BL

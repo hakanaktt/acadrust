@@ -28,11 +28,15 @@ fn pellipse_as_a_bool_is_read() {
 
 #[test]
 fn pucsbase_is_read() {
-    assert_eq!(header("  9\n$PUCSBASE\n  2\nMyPaperUcs\n").paper_ucs_base, "MyPaperUcs");
+    assert_eq!(
+        header("  9\n$PUCSBASE\n  2\nMyPaperUcs\n").paper_ucs_base,
+        "MyPaperUcs"
+    );
 }
 
 #[test]
 fn neighbours_of_the_new_arms_are_unaffected() {
-    let h = header("  9\n$PELLIPSE\n 70\n     1\n  9\n$PUCSBASE\n  2\nP\n  9\n$CSHADOW\n280\n     2\n");
+    let h =
+        header("  9\n$PELLIPSE\n 70\n     1\n  9\n$PUCSBASE\n  2\nP\n  9\n$CSHADOW\n280\n     2\n");
     assert_eq!(h.cast_shadow, 2);
 }

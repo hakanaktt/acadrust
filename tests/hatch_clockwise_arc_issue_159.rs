@@ -44,7 +44,10 @@ fn stored_angles(bytes: &[u8]) -> (f64, f64) {
 }
 
 fn read_back(bytes: Vec<u8>) -> (f64, f64, bool) {
-    let doc = DxfReader::from_reader(Cursor::new(bytes)).unwrap().read().unwrap();
+    let doc = DxfReader::from_reader(Cursor::new(bytes))
+        .unwrap()
+        .read()
+        .unwrap();
     for e in doc.entities() {
         if let EntityType::Hatch(h) = e {
             if let BoundaryEdge::CircularArc(a) = &h.paths[0].edges[0] {
@@ -63,7 +66,10 @@ fn issue_159_a_clockwise_arc_edge_is_stored_with_complementary_angles() {
         .write_to_vec()
         .unwrap();
     let (s, e) = stored_angles(&bytes);
-    assert!((s - 270.0).abs() < 1e-9 && (e - 90.0).abs() < 1e-9, "stored {s} {e}");
+    assert!(
+        (s - 270.0).abs() < 1e-9 && (e - 90.0).abs() < 1e-9,
+        "stored {s} {e}"
+    );
 }
 
 #[test]
@@ -72,7 +78,10 @@ fn issue_159_a_clockwise_arc_edge_reads_back_as_it_was_written() {
         .write_to_vec()
         .unwrap();
     let (s, e, ccw) = read_back(bytes);
-    assert!((s - 3.0 * FRAC_PI_2).abs() < 1e-9 && (e - FRAC_PI_2).abs() < 1e-9, "{s} {e}");
+    assert!(
+        (s - 3.0 * FRAC_PI_2).abs() < 1e-9 && (e - FRAC_PI_2).abs() < 1e-9,
+        "{s} {e}"
+    );
     assert!(!ccw);
 }
 
@@ -81,21 +90,35 @@ fn issue_159_a_dxf_that_autocad_would_write_reads_as_the_same_arc() {
     // What AutoCAD stores for the clockwise arc from 90 to 270 degrees: 270 and 90 with the
     // counter-clockwise flag 0. Made here from a counter-clockwise edge of those two angles,
     // whose flag is the only thing to change.
-    let bytes = DxfWriter::new(&doc_with(1.5 * PI, FRAC_PI_2, true)).write_to_vec().unwrap();
+    let bytes = DxfWriter::new(&doc_with(1.5 * PI, FRAC_PI_2, true))
+        .write_to_vec()
+        .unwrap();
     let text = String::from_utf8_lossy(&bytes).replace('\r', "");
     let at = text.find("\nHATCH\n").expect("a HATCH record");
     let flag = text[at..].find("\n 73\n     1\n").expect("the arc's flag") + at;
-    let edited = format!("{}\n 73\n     0\n{}", &text[..flag], &text[flag + "\n 73\n     1\n".len()..]);
+    let edited = format!(
+        "{}\n 73\n     0\n{}",
+        &text[..flag],
+        &text[flag + "\n 73\n     1\n".len()..]
+    );
     let (s, e, ccw) = read_back(edited.into_bytes());
     assert!(!ccw, "the flag is 0");
-    assert!((s - 1.5 * PI).abs() < 1e-9 && (e - FRAC_PI_2).abs() < 1e-9, "read {s} {e}");
+    assert!(
+        (s - 1.5 * PI).abs() < 1e-9 && (e - FRAC_PI_2).abs() < 1e-9,
+        "read {s} {e}"
+    );
 }
 
 #[test]
 fn issue_159_a_counter_clockwise_arc_edge_keeps_its_angles() {
-    let bytes = DxfWriter::new(&doc_with(0.25 * PI, 0.75 * PI, true)).write_to_vec().unwrap();
+    let bytes = DxfWriter::new(&doc_with(0.25 * PI, 0.75 * PI, true))
+        .write_to_vec()
+        .unwrap();
     let (s, e) = stored_angles(&bytes);
-    assert!((s - 45.0).abs() < 1e-9 && (e - 135.0).abs() < 1e-9, "stored {s} {e}");
+    assert!(
+        (s - 45.0).abs() < 1e-9 && (e - 135.0).abs() < 1e-9,
+        "stored {s} {e}"
+    );
     let (s, e, ccw) = read_back(bytes);
     assert!(ccw && (s - 0.25 * PI).abs() < 1e-9 && (e - 0.75 * PI).abs() < 1e-9);
 }

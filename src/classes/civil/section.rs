@@ -62,7 +62,11 @@ impl MassHaulViewFrame {
     }
 }
 
-pub(super) fn mass_haul_view_frame(data: &[u8], start: usize, end: usize) -> Option<MassHaulViewFrame> {
+pub(super) fn mass_haul_view_frame(
+    data: &[u8],
+    start: usize,
+    end: usize,
+) -> Option<MassHaulViewFrame> {
     let f = view_frame(data, start, end)?;
     Some(MassHaulViewFrame {
         origin: f.origin,
@@ -81,7 +85,9 @@ pub(super) fn mass_haul_view_frame(data: &[u8], start: usize, end: usize) -> Opt
 pub(super) fn mass_haul_points(data: &[u8], start: usize, end: usize) -> Option<Vec<Vector2>> {
     (start..end.min(start + 4096)).find_map(|pos| {
         let mut bits = Bits::new(data, pos, end);
-        let n = usize::try_from(bits.bit_long()?).ok().filter(|n| *n >= 2 && n * 6 <= bits.remaining())?;
+        let n = usize::try_from(bits.bit_long()?)
+            .ok()
+            .filter(|n| *n >= 2 && n * 6 <= bits.remaining())?;
         let mut points = Vec::with_capacity(n);
         for _ in 0..n {
             let p = Vector2::new(bits.bit_double()?, bits.bit_double()?);
@@ -158,7 +164,9 @@ pub(super) fn view_frame(data: &[u8], start: usize, end: usize) -> Option<Sectio
         point(&mut bits)?;
     }
     bits.bit_long()?;
-    let title = usize::try_from(bits.bit_long()?).ok().filter(|n| n * 8 <= bits.remaining())?;
+    let title = usize::try_from(bits.bit_long()?)
+        .ok()
+        .filter(|n| n * 8 <= bits.remaining())?;
     bits.skip(8 * title)?;
     (bits.bit_long()? == 0).then_some(())?;
     for _ in 0..7 {
@@ -196,7 +204,9 @@ pub(super) fn geometry(data: &[u8], start: usize, end: usize) -> Option<SectionG
     for _ in 0..12 {
         bits.bit_double()?;
     }
-    let n = usize::try_from(bits.bit_long()?).ok().filter(|n| n * 14 <= bits.remaining())?;
+    let n = usize::try_from(bits.bit_long()?)
+        .ok()
+        .filter(|n| n * 14 <= bits.remaining())?;
     let points = (0..n)
         .map(|_| {
             bits.skip(8)?;
@@ -205,7 +215,9 @@ pub(super) fn geometry(data: &[u8], start: usize, end: usize) -> Option<SectionG
             Some(point)
         })
         .collect::<Option<Vec<_>>>()?;
-    let m = usize::try_from(bits.bit_long()?).ok().filter(|m| m * 14 <= bits.remaining())?;
+    let m = usize::try_from(bits.bit_long()?)
+        .ok()
+        .filter(|m| m * 14 <= bits.remaining())?;
     let links = (0..m)
         .map(|_| {
             bits.skip(8)?;
@@ -224,7 +236,13 @@ mod tests {
 
     fn bits_of(s: &str) -> Vec<u8> {
         let s: Vec<u8> = s.bytes().filter(|b| *b == b'0' || *b == b'1').collect();
-        s.chunks(8).map(|c| c.iter().enumerate().fold(0u8, |a, (i, b)| a | ((b - b'0') << (7 - i)))).collect()
+        s.chunks(8)
+            .map(|c| {
+                c.iter()
+                    .enumerate()
+                    .fold(0u8, |a, (i, b)| a | ((b - b'0') << (7 - i)))
+            })
+            .collect()
     }
 
     #[test]
@@ -240,7 +258,10 @@ mod tests {
         let b = bits_of(&s);
         let len = s.bytes().filter(|c| *c == b'0' || *c == b'1').count();
         let read = geometry(&b, 0, len).unwrap();
-        assert_eq!(read.points, vec![Vector2::new(0.0, 1.0), Vector2::new(1.0, 0.0)]);
+        assert_eq!(
+            read.points,
+            vec![Vector2::new(0.0, 1.0), Vector2::new(1.0, 0.0)]
+        );
         assert_eq!(read.links, vec![(0, 1)]);
     }
 }

@@ -28,7 +28,8 @@ fn roundtrip(version: DxfVersion) -> PolygonMesh {
     doc.add_entity(EntityType::PolygonMesh(mesh)).unwrap();
     let bytes = DwgWriter::write_to_vec(&doc).unwrap();
     let read = DwgReader::from_stream(Cursor::new(bytes)).read().unwrap();
-    let mesh = read.entities()
+    let mesh = read
+        .entities()
         .find_map(|e| match e {
             EntityType::PolygonMesh(mesh) => Some(mesh.clone()),
             _ => None,

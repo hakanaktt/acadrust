@@ -711,7 +711,9 @@ impl CadDocument {
         // An object owned by a dictionary or a field must be listed by that
         // owner; CAD auditors report such orphans (e.g. AcDbField).
         for key in self.objects.keys() {
-            let Some(owner) = self.object_owner(*key) else { continue };
+            let Some(owner) = self.object_owner(*key) else {
+                continue;
+            };
             let listed = match self.objects.get(&owner) {
                 Some(ObjectType::Dictionary(d)) => d.entries.iter().any(|(_, t)| t == key),
                 Some(ObjectType::DictionaryWithDefault(d)) => {
@@ -726,9 +728,16 @@ impl CadDocument {
                 report.issue(
                     AuditIssueCode::OwnerMismatch,
                     AuditSeverity::Error,
-                    AuditLocation::Reference { owner, target: *key },
+                    AuditLocation::Reference {
+                        owner,
+                        target: *key,
+                    },
                     Some(*key),
-                    if null_owner { "object owner handle is null" } else { "object owner does not list the object" },
+                    if null_owner {
+                        "object owner handle is null"
+                    } else {
+                        "object owner does not list the object"
+                    },
                     false,
                 );
             }
@@ -816,7 +825,10 @@ impl CadDocument {
 
     fn block_has_attdef(&self, block: &crate::tables::BlockRecord) -> bool {
         block.entity_handles.iter().any(|h| {
-            matches!(self.get_entity(*h), Some(EntityType::AttributeDefinition(_)))
+            matches!(
+                self.get_entity(*h),
+                Some(EntityType::AttributeDefinition(_))
+            )
         })
     }
 

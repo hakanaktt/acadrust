@@ -216,10 +216,13 @@ fn hatch_large_vertex_count_is_not_truncated() {
         .unwrap()
         .read()
         .expect("Large hatch should parse successfully");
-    let hatch = doc.entities().find_map(|e| match e {
-        EntityType::Hatch(h) => Some(h),
-        _ => None,
-    }).expect("Hatch missing");
+    let hatch = doc
+        .entities()
+        .find_map(|e| match e {
+            EntityType::Hatch(h) => Some(h),
+            _ => None,
+        })
+        .expect("Hatch missing");
     let boundary = &hatch.paths[0];
     match &boundary.edges[0] {
         acadrust::entities::hatch::BoundaryEdge::Polyline(poly) => {

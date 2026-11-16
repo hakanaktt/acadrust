@@ -91,7 +91,9 @@ pub(super) fn group_numbers(data: &[u8], start: usize, end: usize) -> Option<Vec
     (bits.bit_short()? == 0x04BE).then_some(())?;
     bits.bit_long()?;
     for _ in 0..2 {
-        let n = usize::try_from(bits.bit_long()?).ok().filter(|n| *n <= bits.remaining() / 2)?;
+        let n = usize::try_from(bits.bit_long()?)
+            .ok()
+            .filter(|n| *n <= bits.remaining() / 2)?;
         for _ in 0..n {
             bits.bit_long()?;
         }
@@ -110,10 +112,13 @@ pub(super) fn group_numbers(data: &[u8], start: usize, end: usize) -> Option<Vec
         bits.skip(6)?;
         bits.bit_long()?;
     }
-    let n = usize::try_from(bits.bit_long()?).ok().filter(|n| n * 32 <= bits.remaining())?;
-    (0..n).map(|_| u32::try_from(bits.raw_long()?).ok()).collect()
+    let n = usize::try_from(bits.bit_long()?)
+        .ok()
+        .filter(|n| n * 32 <= bits.remaining())?;
+    (0..n)
+        .map(|_| u32::try_from(bits.raw_long()?).ok())
+        .collect()
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -121,7 +126,13 @@ mod tests {
 
     fn bits_of(s: &str) -> Vec<u8> {
         let s: Vec<u8> = s.bytes().filter(|b| *b == b'0' || *b == b'1').collect();
-        s.chunks(8).map(|c| c.iter().enumerate().fold(0u8, |a, (i, b)| a | ((b - b'0') << (7 - i)))).collect()
+        s.chunks(8)
+            .map(|c| {
+                c.iter()
+                    .enumerate()
+                    .fold(0u8, |a, (i, b)| a | ((b - b'0') << (7 - i)))
+            })
+            .collect()
     }
 
     #[test]

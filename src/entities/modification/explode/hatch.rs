@@ -10,8 +10,8 @@
 use std::f64::consts::TAU;
 
 use crate::entities::hatch::{
-    BoundaryEdge, BoundaryPath, EllipticArcEdge, Hatch, HatchStyleType, LineEdge,
-    PolylineEdge, SplineEdge,
+    BoundaryEdge, BoundaryPath, EllipticArcEdge, Hatch, HatchStyleType, LineEdge, PolylineEdge,
+    SplineEdge,
 };
 use crate::entities::{EntityCommon, EntityType, Line, Point};
 use crate::types::{Handle, Matrix3, Vector2, Vector3};
