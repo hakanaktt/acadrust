@@ -550,6 +550,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_hiding_frame_keeps_wipeout_shown() {
+        // The frame is the drawing-wide WIPEOUTFRAME setting; hiding it must
+        // not turn the wipeout itself off (DXF 70 bit 1, "Show image").
+        let mut wipeout = Wipeout::rectangular(Vector3::ZERO, 10.0, 5.0);
+        #[allow(deprecated)]
+        wipeout.set_frame_visible(false);
+        assert!(wipeout.flags.contains(WipeoutDisplayFlags::SHOW_IMAGE));
+    }
+
+    #[test]
     fn test_wipeout_creation() {
         let wipeout = Wipeout::new();
         assert_eq!(wipeout.insertion_point, Vector3::ZERO);
