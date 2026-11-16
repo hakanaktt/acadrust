@@ -1044,6 +1044,14 @@ impl MTextParser {
                     continue;
                 }
                 i += 1;
+            } else if ch == 't' && chars.get(i + 1) == Some(&'z') {
+                // `tz` clears the tab stops; kept as the one stop at 0 that
+                // `t0` reads as.
+                self.current_paragraph.properties.tab_stops = vec![TabStop::Left(0.0)];
+                i += 2;
+                if i < chars.len() && chars[i] == ',' {
+                    i += 1;
+                }
             } else if ch == 't' && i + 1 < chars.len() {
                 // Tab stops: comma-separated, each optionally prefixed by
                 // `c`/`r`/`D` (center/right/decimal); no prefix = left.
