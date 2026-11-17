@@ -4035,6 +4035,9 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         // Named plot style (R2000+, `$PSTYLEMODE 0`): the placeholder the entity points at,
         // as the LAYER writer does. ByLayer/ByBlock have no handle.
+        if self.dxf_version >= DxfVersion::AC1015 && matches!(common.plotstyle_flags, 1 | 2) {
+            self.writer.write_i16(380, i16::from(common.plotstyle_flags))?;
+        }
         if self.dxf_version >= DxfVersion::AC1015 && common.plotstyle_flags == 0b11 {
             if let Some(handle) = common.plotstyle_handle.filter(|h| {
                 !h.is_null() && (self.valid_handles.is_empty() || self.valid_handles.contains(h))

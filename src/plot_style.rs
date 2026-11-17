@@ -292,9 +292,13 @@ fn decompress_ctb(data: &[u8]) -> crate::error::Result<(String, Vec<String>)> {
     const PREFIX: &[u8] = b"PIAFILEVERSION_2.0,CTBVER1,compress\r\npmzlibcodec";
     // Named tables (.stb) share the header layout, tagged STBVER1.
     const STB_PREFIX: &[u8] = b"PIAFILEVERSION_2.0,STBVER1,compress\r\npmzlibcodec";
+    const TTB_PREFIX: &[u8] = b"PIAFILEVERSION_2.0,TTBVER1,compress\r\npmzlibcodec";
     let mut warnings = Vec::new();
     let mut decoded;
-    if data.starts_with(PREFIX) || data.starts_with(STB_PREFIX) {
+    if [PREFIX, STB_PREFIX, TTB_PREFIX]
+        .into_iter()
+        .any(|prefix| data.starts_with(prefix))
+    {
         if data.len() < 60 {
             return Err("CTB header is truncated".into());
         }
@@ -810,6 +814,18 @@ apply_factor=FALSE\ncustom_lineweight_display_units=0\nplot_style{\n 0{\n  name=
         assert_eq!(&written[19..26], b"STBVER1");
         let again = PlotStyleTable::from_bytes("named.stb", &written).expect("reloads");
         assert!(again.named_entries.contains_key("Black"));
+    }
+
+    #[test]
+    fn a_named_table_with_the_ttbver1_header_loads() {
+        let mut bytes = stb_file();
+        bytes[19..22].copy_from_slice(b"TTB");
+        let table = PlotStyleTable::from_bytes("named.stb", &bytes).expect("loads TTBVER1");
+        assert!(table.is_stb);
+        let black = table.named_entries.get("Black").expect("Black style");
+        assert_eq!(black.color, Some([0, 0, 0]));
+        assert_eq!(black.lineweight, 8);
+        assert!(table.load_warnings.is_empty(), "{:?}", table.load_warnings);
     }
 }
 

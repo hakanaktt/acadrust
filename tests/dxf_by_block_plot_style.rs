@@ -1,12 +1,7 @@
-//! A ByBlock plot style (group 380 = 1, `AcDb::PlotStyleNameType`) on an entity
-//! must be read from DXF and survive the DWG round trip.
-//!
-//! The DXF reader has no arm for group 380: an entity's `plotstyle_flags` stay
-//! 0 (ByLayer), so a DWG written from a DXF whose entities plot ByBlock
-//! (`$PSTYLEMODE 0`) loses that and plots them ByLayer.
+//! Entity plot styles must survive DXF and DWG round trips in named mode.
 
 use acadrust::entities::EntityType;
-use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader};
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
 use std::io::Cursor;
 
 /// Named plot styles on (`$PSTYLEMODE 0`); the LINE plots ByBlock (380 = 1).
@@ -138,20 +133,20 @@ ENDSEC
 EOF
 "#;
 
-fn assert_by_block(doc: &CadDocument, stage: &str) {
+fn assert_plot_style(doc: &CadDocument, stage: &str, flag: u8) {
     let line = doc
         .entities()
         .find(|e| matches!(e, EntityType::Line(_)))
         .unwrap_or_else(|| panic!("{stage}: the LINE"));
     assert_eq!(
         line.common().plotstyle_flags,
-        0b01,
-        "{stage}: the LINE's plot style (380 = 1) must be ByBlock"
+        flag,
+        "{stage}: the LINE's plot style must match group 380"
     );
     assert_eq!(
         line.common().plotstyle_handle,
         None,
-        "{stage}: a ByBlock plot style has no handle"
+        "{stage}: ByBlock and explicit Normal have no handle"
     );
 }
 
@@ -161,7 +156,7 @@ fn dxf_reader_keeps_by_block_plot_style() {
         .expect("open dxf")
         .read()
         .expect("read dxf");
-    assert_by_block(&doc, "dxf");
+    assert_plot_style(&doc, "dxf", 1);
 }
 
 #[test]
@@ -174,5 +169,30 @@ fn dxf_to_dwg_keeps_by_block_plot_style() {
     let back = DwgReader::from_stream(Cursor::new(dwg))
         .read()
         .expect("read dwg");
-    assert_by_block(&back, "dwg");
+    assert_plot_style(&back, "dwg", 1);
+}
+
+#[test]
+fn dxf_round_trip_keeps_by_block_and_explicit_normal() {
+    for flag in [1, 2] {
+        let source = DXF_BY_BLOCK_PLOT_STYLE.replace("380\n1\n", &format!("380\n{flag}\n"));
+        let doc = DxfReader::from_reader(Cursor::new(source))
+            .expect("open DXF")
+            .read()
+            .expect("read DXF");
+        assert_plot_style(&doc, "input DXF", flag);
+
+        let output = DxfWriter::new(&doc).write_to_vec().expect("write DXF");
+        let ascii = std::str::from_utf8(&output).expect("read ASCII DXF");
+        let lines: Vec<_> = ascii.lines().map(str::trim).collect();
+        let expected = flag.to_string();
+        assert!(lines
+            .chunks_exact(2)
+            .any(|pair| pair == ["380", expected.as_str()]));
+        let back = DxfReader::from_reader(Cursor::new(output))
+            .expect("open output DXF")
+            .read()
+            .expect("read output DXF");
+        assert_plot_style(&back, "output DXF", flag);
+    }
 }
