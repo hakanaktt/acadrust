@@ -3284,6 +3284,14 @@ impl CadDocument {
             }
         }
 
+        // Detach the kept dictionaries so removing the old texts does not take
+        // the cell fields with them; they are reattached to the new texts below.
+        for (xdict, _) in carried.values() {
+            if let Some(ObjectType::Dictionary(d)) = self.objects.get_mut(xdict) {
+                d.owner = Handle::NULL;
+            }
+        }
+
         let owner = match record {
             Some((handle, _, old)) => {
                 for h in &old {

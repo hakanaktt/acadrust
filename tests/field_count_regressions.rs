@@ -284,3 +284,65 @@ fn field_in_an_empty_table_cell_survives_refresh_and_serialization() {
         assert_eq!(content.field_handle, Some(field));
     }
 }
+
+#[test]
+fn field_cell_text_survives_a_block_redraw_after_a_row_is_added() {
+    let mut doc = CadDocument::new();
+    let table = doc
+        .add_entity(EntityType::Table(Box::new(Table::new(Vector3::ZERO, 1, 1))))
+        .unwrap();
+    let field = doc
+        .build_table_block(
+            table,
+            vec![(
+                0,
+                0,
+                "%<\\_FldIdx 0>%".into(),
+                vec![NewField::new("\\AcExpr (2+3)", "5")],
+            )],
+        )
+        .unwrap()[0]
+        .unwrap();
+    assert_eq!(table_texts(&doc, table), ["5"]);
+
+    let Some(EntityType::Table(value)) = doc.get_entity_mut(table) else {
+        panic!("expected table")
+    };
+    value.add_row();
+    assert!(doc.refresh_table_block(table));
+    assert_eq!(table_texts(&doc, table), ["5"]);
+
+    // The cell's field and its dictionaries outlive the old block texts.
+    assert!(doc.objects.contains_key(&field), "cell field was removed");
+    let EntityType::Table(value) = doc.get_entity(table).unwrap() else {
+        panic!("expected table")
+    };
+    let hosts: Vec<Handle> = doc
+        .block_records
+        .get(&value.block_name)
+        .unwrap()
+        .entity_handles
+        .iter()
+        .filter_map(|h| match doc.get_entity(*h) {
+            Some(EntityType::MText(m)) => m.common.xdictionary_handle,
+            _ => None,
+        })
+        .collect();
+    assert_eq!(hosts.len(), 1);
+    assert!(
+        doc.objects.contains_key(&hosts[0]),
+        "cell text points at a removed dictionary"
+    );
+    assert_eq!(
+        fields::cell_field_text(
+            &doc,
+            field,
+            table,
+            &Context {
+                sheet_set: SheetSetDatabase::new("", "")
+            }
+        )
+        .as_deref(),
+        Some("5")
+    );
+}
