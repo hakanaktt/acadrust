@@ -1,5 +1,6 @@
 //! COGO points, the point database and the `_All Points` group.
 
+use super::groups::{refresh_groups, ALL_POINTS_ID, set_query, write_group, write_group_node, Entry, Group, GREATER};
 use super::support::*;
 use crate::classes::civil::CogoPoint;
 use crate::entities::{EntityCommon, EntityType, ExtendedEntityData};
@@ -8,27 +9,11 @@ use crate::io::dwg::dwg_stream_writers::DwgMergedWriter;
 use crate::types::{Handle, Vector3};
 use crate::CadDocument;
 
-/// Id of the `_All Points` group in the point group node.
-const ALL_POINTS_ID: i32 = 33;
 /// Text id of the `_All Points` query (the application numbers texts
 /// `0x80000000 | n` per session; a written drawing can number its own).
 const QUERY_TAG: i32 = 0x8000_0001_u32 as i32;
 /// First text id given to point descriptions.
 const FIRST_DESCRIPTION_TAG: u32 = 0x8000_0002;
-
-/// The bits after the point numbers of `_All Points`: the same 564 bits in
-/// WP01, WP02, WP06, WP07, WP08 and WP10 (the group's override and query
-/// settings, not mapped field by field).
-const ALL_POINTS_TAIL: &str = "001000010000001000110010110101011110000001110110101111000101010100010000010000001000110010110101011110000001110110101111000101010100010000010000001000110010110101011110000001110110101111000101010100010000010000001000110010110101011110000001110110101111000101011100010000010000001000110010110101011110000001110110101111000101011100010000010000001000110010110101011110000001110110101111000101011100010010100101010111101010101010100000000000000000000000000000000000000000000000000000000000000000101010000000000000000000000000000000000000000000000000000000000000000010";
-/// Outer `_All Points` query statement after `BL 75, BL 1, BL tag`
-/// (the same in every sample).
-const QUERY_OUTER_TAIL: &str = "100100010";
-/// Inner query statement after `BL tag, BL 0, BL 0`: the query tree for
-/// `PointNumber > 0`: 113 bits, the same in every sample.
-const QUERY_INNER_TAIL: &str = "01000010000000100000000010101000000000000000000011100000011000000000000000001010100000000000000000001010001001110";
-const QUERY_INNER_STRINGS: [&str; 12] = [
-    "Point Group Query - _All Points", "", "0", "AeccQueryNodePARENS", "", "AeccQueryNodeGT", "AeccQueryNodeATTRID", "", "", "AeccQueryNodeCONST", "", "",
-];
 
 /// Points of the drawing, in database order (empty without a database).
 pub fn cogo_points(doc: &CadDocument) -> Vec<CogoPoint> {
@@ -40,24 +25,24 @@ fn finite(p: Vector3) -> bool {
 }
 
 /// Handles of the point support objects, created on the first point.
-struct Support {
-    database: Handle,
-    group_node: Handle,
-    all_points: Handle,
-    class_node: u64,
-    defaults: Defaults,
+pub(super) struct Support {
+    pub database: Handle,
+    pub group_node: Handle,
+    pub all_points: Handle,
+    pub class_node: u64,
+    pub defaults: Defaults,
 }
 
 /// The drawing's default point styles and the nodes a point group and the
 /// database refer to.
 #[derive(Clone, Copy)]
-struct Defaults {
-    point_style: u64,
-    label_style: u64,
+pub(super) struct Defaults {
+    pub point_style: u64,
+    pub label_style: u64,
     /// Settings node of the create-points command (a point group's).
-    create_settings: u64,
+    pub create_settings: u64,
     /// Class node of COGO points (the database's last reference).
-    class_node: u64,
+    pub class_node: u64,
 }
 
 /// Settings node named `name` (its first text).
@@ -89,7 +74,7 @@ fn defaults(doc: &CadDocument) -> Option<Defaults> {
     (point_style != 0 && label_style != 0).then_some(Defaults { point_style, label_style, create_settings, class_node })
 }
 
-fn support(doc: &mut CadDocument) -> Result<Support, DxfError> {
+pub(super) fn support(doc: &mut CadDocument) -> Result<Support, DxfError> {
     let defaults = defaults(doc).ok_or_else(|| invalid("drawing has no civil point styles"))?;
     ensure_civil(doc)?;
     if let (Some(database), Some(group_node)) = (root_node(doc, KEY_POINTS), root_node(doc, KEY_POINT_GROUPS)) {
@@ -103,79 +88,15 @@ fn support(doc: &mut CadDocument) -> Result<Support, DxfError> {
     let database = doc.allocate_handle();
     let group_node = doc.allocate_handle();
     let all_points = doc.allocate_handle();
-    let outer = doc.allocate_handle();
-    let inner = doc.allocate_handle();
     write_database(doc, database, root, &[], defaults.class_node)?;
-    write_group_node(doc, group_node, root, &[(ALL_POINTS_ID, all_points)], defaults)?;
-    write_outer_query(doc, outer, root, inner, QUERY_TAG)?;
-    write_inner_query(doc, inner, outer, QUERY_TAG)?;
+    let all = Entry { id: ALL_POINTS_ID, handle: all_points, name: String::new() };
+    write_group_node(doc, group_node, root, &[all], defaults.label_style, defaults.point_style)?;
+    let inner = set_query(doc, "Point Group Query - _All Points", QUERY_TAG, GREATER, &[0])?;
     let s = Support { database, group_node, all_points, class_node: defaults.class_node, defaults };
     write_all_points(doc, &s, inner, &[])?;
     set_root_entry(doc, KEY_POINTS, database)?;
     set_root_entry(doc, KEY_POINT_GROUPS, group_node)?;
-    set_root_entry(doc, KEY_ALL_POINTS_QUERY, outer)?;
     Ok(s)
-}
-
-/// The point group node (Root key 32): group ids in draw order and the
-/// drawing's default label and point styles.
-fn write_group_node(doc: &mut CadDocument, handle: Handle, root: Handle, groups: &[(i32, Handle)], defaults: Defaults) -> Result<(), DxfError> {
-    let mut refs: Vec<Ref> = groups.iter().map(|g| soft_owner(g.1.value())).collect();
-    refs.push(hard_pointer(defaults.label_style));
-    refs.push(hard_pointer(defaults.point_style));
-    put_object(
-        doc,
-        "AECC_POINT_GROUP_NODE",
-        handle,
-        root,
-        Vec::new(),
-        |w| {
-            w.write_bit_long(KEY_POINT_GROUPS);
-            w.write_bit_long(groups.len() as i32);
-            for g in groups {
-                w.write_bit_long(g.0);
-            }
-            w.write_bit_long(0);
-            bits(w, "010");
-        },
-        Body { refs, strings: vec![String::new()] },
-    )
-}
-
-/// Outer `_All Points` query statement (Root key 75).
-fn write_outer_query(doc: &mut CadDocument, handle: Handle, root: Handle, inner: Handle, tag: i32) -> Result<(), DxfError> {
-    put_object(
-        doc,
-        "AECC_QUERY_STATEMENT",
-        handle,
-        root,
-        Vec::new(),
-        |w| {
-            w.write_bit_long(KEY_ALL_POINTS_QUERY);
-            w.write_bit_long(1);
-            w.write_bit_long(tag);
-            bits(w, QUERY_OUTER_TAIL);
-        },
-        Body { refs: vec![soft_owner(inner.value())], strings: vec![String::new(), "Point Group Query - _All Points".into(), String::new()] },
-    )
-}
-
-/// Inner query statement: the query tree for `PointNumber > 0`.
-fn write_inner_query(doc: &mut CadDocument, handle: Handle, outer: Handle, tag: i32) -> Result<(), DxfError> {
-    put_object(
-        doc,
-        "AECC_QUERY_STATEMENT",
-        handle,
-        outer,
-        Vec::new(),
-        |w| {
-            w.write_bit_long(tag);
-            w.write_bit_long(0);
-            w.write_bit_long(0);
-            bits(w, QUERY_INNER_TAIL);
-        },
-        Body { refs: Vec::new(), strings: QUERY_INNER_STRINGS.iter().map(|s| s.to_string()).collect() },
-    )
 }
 
 /// The `_All Points` group holding `numbers` (ascending); `query` is the
@@ -186,33 +107,9 @@ fn write_all_points(doc: &mut CadDocument, s: &Support, query: Handle, numbers: 
     // Styles and the settings node stay as the group has them.
     let old = object(doc, s.all_points).map(|o| o.decode().handles).unwrap_or_default();
     let keep = |i: usize, new: u64| old.get(i).copied().unwrap_or(new);
-    let refs = [keep(0, 0), keep(1, s.defaults.point_style), query.value(), s.database.value(), s.group_node.value(), keep(5, s.defaults.create_settings), 0, 0];
-    put_object(
-        doc,
-        "AECC_POINT_PG",
-        s.all_points,
-        s.group_node,
-        Vec::new(),
-        |w| {
-            w.write_bit_long(ALL_POINTS_ID);
-            w.write_bit_long(0);
-            w.write_bit_long(0);
-            // `a` = 0 is stored in its byte form; then 5 + 6 constant bits.
-            bl_byte(w, 0);
-            bits(w, "00000100000");
-            w.write_bit_long(0); // serial
-            w.write_bit_long(numbers.len() as i32);
-            for n in &numbers {
-                w.write_raw_long(*n as i32);
-            }
-            bits(w, ALL_POINTS_TAIL);
-        },
-        // label style, point style, query, database, group node, settings node, 0, 0
-        Body {
-            refs: refs.into_iter().map(hard_pointer).collect(),
-            strings: vec![String::new(), "AeccImpAllPointsPG".into()],
-        },
-    )
+    let refs = [keep(0, 0), keep(1, s.defaults.point_style), query.value(), s.database.value(), s.group_node.value(), keep(5, s.defaults.create_settings)];
+    let g = Group { id: ALL_POINTS_ID, serial: 0, name: None, description: "", numbers, extents: None, refs };
+    write_group(doc, s.all_points, s.group_node, &g)
 }
 
 fn write_database(doc: &mut CadDocument, handle: Handle, root: Handle, points: &[CogoPoint], class_node: u64) -> Result<(), DxfError> {
@@ -286,7 +183,8 @@ fn store(doc: &mut CadDocument, s: &Support, points: &[CogoPoint]) -> Result<(),
     write_database(doc, s.database, root, points, s.class_node)?;
     let query = object(doc, s.all_points).and_then(|o| o.decode().handles.get(2).copied()).map(Handle::new).unwrap_or(Handle::NULL);
     let numbers: Vec<u32> = points.iter().map(|p| p.number).collect();
-    write_all_points(doc, s, query, &numbers)
+    write_all_points(doc, s, query, &numbers)?;
+    refresh_groups(doc, s, points)
 }
 
 fn put_point(doc: &mut CadDocument, handle: Option<Handle>, number: u32, layer: Option<&str>) -> Result<Handle, DxfError> {
@@ -413,7 +311,9 @@ mod tests {
     }
 
     fn round_trip(doc: &CadDocument) -> CadDocument {
-        let path = std::env::temp_dir().join(format!("civil-points-{}.dwg", std::process::id()));
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("civil-points-{}-{n}.dwg", std::process::id()));
         DwgWriter::write_to_file(&path, doc).unwrap();
         let back = DwgReader::from_file(&path).unwrap().read().unwrap();
         let _ = std::fs::remove_file(&path);
@@ -474,5 +374,31 @@ mod tests {
         assert_eq!(handle_of(&back, 7), p2);
         let group = object(&back, root_node(&back, KEY_POINT_GROUPS).unwrap()).unwrap().decode().handles[0];
         assert_eq!(object(&back, Handle::new(group)).unwrap().point_group_numbers(), vec![5, 7]);
+    }
+
+    #[test]
+    fn number_list_groups_follow_their_points() {
+        let mut doc = drawing();
+        for n in 1..=6 {
+            add_cogo_point(&mut doc, Some(n), Vector3::new(10.0 * n as f64, 5.0, n as f64), None, None, None).unwrap();
+        }
+        let g = crate::classes::civil::add_point_group(&mut doc, "G", Some("even"), &[2, 4, 6, 8]).unwrap();
+        assert!(crate::classes::civil::add_point_group(&mut doc, "g", None, &[1]).is_err());
+        let back = round_trip(&doc);
+        assert_eq!(object(&back, g).unwrap().point_group_numbers(), vec![2, 4, 6]);
+        let group_node = root_node(&back, KEY_POINT_GROUPS).unwrap();
+        let names: Vec<_> = super::super::groups::entries(&back, group_node).unwrap().into_iter().map(|e| e.name).collect();
+        assert_eq!(names, vec!["".to_string(), "G".into()]);
+
+        // A new point with a listed number joins; a removed one leaves.
+        let mut doc = back;
+        add_cogo_point(&mut doc, Some(8), Vector3::new(1.0, 1.0, 1.0), None, None, None).unwrap();
+        let p4 = handle_of(&doc, 4);
+        remove_cogo_point(&mut doc, p4).unwrap();
+        crate::classes::civil::set_point_group(&mut doc, g, "H", None, &[1, 8]).unwrap();
+        let back = round_trip(&doc);
+        assert_eq!(object(&back, g).unwrap().point_group_numbers(), vec![1, 8]);
+        let all = object(&back, group_node).unwrap().decode().handles[0];
+        assert_eq!(object(&back, Handle::new(all)).unwrap().point_group_numbers(), vec![1, 2, 3, 5, 6, 8]);
     }
 }

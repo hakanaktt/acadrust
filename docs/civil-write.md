@@ -106,42 +106,85 @@ descriptions from `0x80000002` (equal texts share an id).
 BS 0x04BE, BL 32, BL n, n × BL group id, BL 0, 3 bits 010
 handles: n × group (soft owner), default label style, default point style
          (hard pointers)
-strings: ""
+strings: one text (empty in every sample), then the names of the groups
+         other than `_All Points`, in stored order
 ```
 
-### `_All Points` (`AECC_POINT_PG`, owner the group node)
+The ids are stored by hash bucket (id mod 8), a new id last in its bucket;
+`_All Points` is 33. A group whose id falls in bucket 0 is stored before
+`_All Points`, and the application's audit then reports the group node as
+not repaired (R16 with ids `0x80000100` and `0x80010000`); the application
+gives no group such an id in the samples, so the writer skips those ids.
+Written groups take ids from `0x80010001` up, their query the next id.
+
+### Point groups (`AECC_POINT_PG`, owner the group node)
 
 ```text
-BS 0x04BE, BL 33, BL 0, BL 0, BL 0 written in its one-byte form,
-5 bits 00000, 6 bits 100000, BL 0 (serial), BL count, count × RL number,
-564 bits (constant in WP01, WP02, WP06, WP07, WP08, WP10)
-handles (hard pointers): 0, point style, inner query, database, group node,
-         create-points settings node, 0, 0
-strings: "", "AeccImpAllPointsPG"
+BS 0x04BE, BL id, BL 0, BL 0 (no override lists, no keys),
+BL 0 written in its one-byte form, 5 bits 00000, 6 bits 100000,
+BL serial, BL count, count × RL number,
+2 bits 00, BD 0, 3BD extents min, 3BD extents max,
+164 bits (the same in `_All Points` and every named group of WP01, WP08,
+WP10 and WG01: the group's override settings, not mapped field by field)
+handles (hard pointers): label style, point style, inner query, database,
+         group node, create-points settings node, 0, 0
+strings: `_All Points`: "", "AeccImpAllPointsPG"
+         named group: name, description, "AeccImpPG"
 ```
 
-Numbers are ascending. The 564-bit tail holds the group's override and
-query settings; it is written as the proven constant. Other groups have a
-different tail (WP08 group `G`), so `add_point_group` is not written yet.
+`_All Points` has id 33, serial 0, no label style, and always the extents
+pair (1e20, 1e20, 1e20) / (-1e20, -1e20, -1e20); a named group stores the
+extents of its points (that pair when it has none). The serial is twice
+the group's position in the group node. Numbers are ascending.
 
 ### Query statements (`AECC_QUERY_STATEMENT`)
 
 Outer (owner Root, key 75):
-`BS 0x04BE, BL 75, BL 1, BL text id, 9 bits 100100010 (constant)`;
-handle: inner (soft owner); strings `""`, `"Point Group Query - _All
-Points"`, `""`.
 
-Inner (owner the outer): `BS 0x04BE, BL text id, BL 0, BL 0`, then the
-113-bit query tree for `PointNumber > 0` (constant); strings
-`"Point Group Query - _All Points"`, `""`, `"0"`,
-`"AeccQueryNodePARENS"`, `""`, `"AeccQueryNodeGT"`,
-`"AeccQueryNodeATTRID"`, `""`, `""`, `"AeccQueryNodeCONST"`, `""`, `""`.
+```text
+BS 0x04BE, BL 75, BL n, n × BL query text id, 9 bits 100100010
+handles: n × inner query (soft owner)
+strings: "", the n query titles, ""
+```
+
+The text ids are stored by hash bucket like the group ids.
+
+Inner (owner the outer), the query `(number = v1 OR number = v2 OR ...)`
+(`_All Points`: `(number > 0)`):
+
+```text
+BS 0x04BE, BL text id, BL 0, BL 0, 5 bits 01000,
+BL k (number of values, byte form), 8 zero bits,
+then one record per node in pre-order; each opens with BL 80 (byte form)
+and 15 zero bits:
+  parentheses: 3 bits (111 when its child is a leaf, 110 when it is an OR),
+               byte comparison of a leaf child (1 equal, 3 greater) or 1,
+               two zero bytes
+  OR (k - 1, left-deep): 3 bits (100, the last 101), bytes 1, 3, 0
+  leaf (one per value): 1 bit 1, BL 19 (the point number attribute),
+               BL value, a zero byte except after the last leaf
+strings: "Point Group Query - <name>", "", the values,
+         "AeccQueryNodePARENS", "", (k - 1) × "AeccQueryNodeOR",
+         per value "AeccQueryNodeEQ" (or "...GT"), "AeccQueryNodeATTRID",
+         "", "", "AeccQueryNodeCONST", "", ""
+```
+
+This reproduces the `_All Points` query and the number-list queries of
+WP08 (2, 4, 6) and WG01 (5; 7; 2, 4) bit for bit. Range values (`2-6`)
+are stored with generated parentheses and an AND of two comparisons and are
+not written.
 
 ### Edits
 
 `set_cogo_point` and `remove_cogo_point` rewrite the database and
 `_All Points` from the points read back; the group keeps its styles and
-settings node. Removing a point erases its entity.
+settings node. Removing a point erases its entity. Every named group whose
+record has no overrides and whose query is a number list is rewritten with
+its members among the new points (`add_cogo_point` too).
+
+`add_point_group(doc, name, description, numbers)` writes a group with a
+number-list query; `set_point_group` renames such a group and gives it a
+new list.
 
 ## 4. Reference check
 
@@ -160,6 +203,13 @@ the drawn extents equal those of a point the application makes; after the
 API sets point 1's elevation to 11 and saves, acadrust reads point 1 at
 (100, 200, 11) with its description and styles, point 2 unchanged.
 
+Point groups (the same drawing with points 1 to 6, group `G` listing 2,
+4, 6 and group `Q` listing 1, 3, 7): opens without a message, AUDIT 0
+errors, the API lists `G` with numbers 2, 4, 6 and the query string
+`(PointNumber=2 OR PointNumber=4 OR PointNumber=6)`, `Q` with 1, 3. Then
+acadrust removes point 3, adds point 7 and renames `G` to `H` listing 1, 5:
+AUDIT 0 errors, `H` holds 1, 5, `Q` 1, 7, `_All Points` 1, 2, 4, 5, 6, 7.
+
 A wrong bit count in a query statement makes the application refuse the
 whole drawing with a recovery prompt, so every constant run above was
 taken from the records and checked bit for bit against them.
@@ -169,8 +219,9 @@ taken from the records and checked bit for bit against them.
 - Style records (point style, label collector style and its component
   styles, settings nodes, class nodes): needed to write points, and every
   other kind, into a drawing that has no tree.
-- Point groups other than `_All Points` (the 564-bit tail), point styles
-  per group, draw order.
+- Point groups with other queries (ranges, descriptions, elevations,
+  names), override styles per group, more than seven groups (the bucket
+  rule is checked up to seven).
 - Alignments, surfaces, profiles, sites, sections, corridors, pipe
   networks: not written.
 
@@ -180,7 +231,7 @@ taken from the records and checked bit for bit against them.
 |---|---|---|---|---|---|
 | root tree node | yes | yes | yes (empty root: AUDIT 0) | — | — |
 | COGO points, database, `_All Points` | yes | yes, in a drawing with the tree | yes (§4) | not needed (the application draws points from the database) | style, settings and class node records for drawings without the tree |
-| other point groups | numbers only | no | — | — | 564-bit tail |
+| point groups (number lists) | yes | yes, in a drawing with the tree | yes (§4) | not needed (the application lists the written members) | other query kinds, override settings |
 | point / label styles | partly | no | — | — | style records not decoded |
 | alignments | yes | no | — | — | geometry stamp, constant runs, label sets, styles |
 | TIN surfaces | yes (with points) | no | — | — | empty-surface layout, point-group definition, styles |
