@@ -3040,7 +3040,7 @@ fn superelevation_entry(bits: &mut Bits, fields: usize) -> Option<()> {
 /// An alignment's superelevation, read after its `BL 1`:
 ///
 /// ```text
-/// B, BL k (curves), B,
+/// B, BL k (curves), B, [k = 0: 1 bit],
 /// k x { node, BL 0, B, [last: BL], B }
 /// k x { node, B; node, B 0, B settings, [settings: 582 bits], 10 bits,
 ///       BL kind, BL, BL v, then units until v is 0, [not last curve: B] }
@@ -3059,8 +3059,14 @@ fn superelevation_entry(bits: &mut Bits, fields: usize) -> Option<()> {
 fn superelevation(bits: &mut Bits) -> Option<()> {
     bits.bit()?;
     let curves = bits.bit_long()?;
-    (1..=1000).contains(&curves).then_some(())?;
+    (0..=1000).contains(&curves).then_some(())?;
     bits.bit()?;
+    if curves == 0 {
+        // A block with no curves (lanes only, as after a start-station
+        // change) carries one more bit before the lane table; 0 in the
+        // sample.
+        bits.bit()?;
+    }
     for index in 0..curves {
         superelevation_node(bits)?;
         (bits.bit_long()? == 0).then_some(())?;
@@ -3851,6 +3857,42 @@ mod tests {
             format!("{node}{}10 {}", bl(0), bl(0)),
             // The lane table: 4 empty groups, BL 0, BL 0, BL 0, RD.
             format!("{}{}{}{} {}{}{} {rd}", bl(0), bl(0), bl(0), bl(0), bl(0), bl(0), bl(0)),
+        ]
+        .concat();
+        let s: Vec<u8> = s.bytes().filter(|b| *b == b'0' || *b == b'1').collect();
+        let data: Vec<u8> = s.chunks(8).map(|c| c.iter().enumerate().fold(0u8, |a, (i, b)| a | ((b - b'0') << (7 - i)))).collect();
+        let mut bits = Bits::new(&data, 0, s.len());
+        assert_eq!(superelevation(&mut bits), Some(()));
+        assert_eq!(bits.pos, s.len());
+    }
+
+    #[test]
+    fn reads_a_lanes_only_superelevation_block() {
+        // After a start-station change: B 0, no curves, B 1, one more bit
+        // (0), then one lane (side 1, inside 0, lane 1) and its two entries.
+        let bl = |v: i32| match v {
+            0 => "10".to_string(),
+            -1 => format!("00{}", "1".repeat(32)),
+            v => format!("01{:08b}", v),
+        };
+        let bd = |v: f64| format!("00{}", v.to_le_bytes().iter().map(|b| format!("{b:08b}")).collect::<String>());
+        let entry = |kind: i32, fields: &[i32]| {
+            let mut e = bl(kind);
+            if kind == 0 {
+                e += "10";
+            }
+            for f in fields {
+                e += &bl(*f);
+            }
+            format!("{e}{}{}{}{} 0{}10{}", bl(0), bl(0), bd(0.5), "01", bl(-1), bl(-1))
+        };
+        let rd = 3.26f64.to_le_bytes().iter().map(|b| format!("{b:08b}")).collect::<String>();
+        let s = [
+            format!("0{}1 0", bl(0)),
+            format!("{}{}{}{} {}{}{}", bl(1), bl(1), bl(0), bl(1), bl(0), bl(0), bl(0)),
+            entry(8, &[1, 0, 1, 1]),
+            entry(0, &[2]),
+            format!("{}{}{}{}{} {rd}", bl(0), bl(0), bl(1), bl(1), bl(1)),
         ]
         .concat();
         let s: Vec<u8> = s.bytes().filter(|b| *b == b'0' || *b == b'1').collect();

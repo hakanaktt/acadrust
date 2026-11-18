@@ -984,9 +984,9 @@ impl ArchObject {
         if self.dxf_name != "AECC_POINT_NODE" {
             return Vec::new();
         }
-        let handles = self.decode().handles;
+        let decoded = self.decode();
         self.main_stream()
-            .map(|(data, start, end)| cogo::points(data, start, end, &handles))
+            .map(|(data, start, end)| cogo::points(data, start, end, &decoded.handles, &decoded.strings))
             .unwrap_or_default()
     }
 
