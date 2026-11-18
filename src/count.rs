@@ -308,18 +308,36 @@ fn nested_matches(
     found.push(outline);
 }
 
+/// Closed flag and (x, y, bulge) per vertex, as stored, of a light or an
+/// old-style 2D polyline. Curve-fit / spline-fit helper vertices of an
+/// old-style polyline are used as stored.
+fn polyline_points(e: &EntityType) -> Option<(bool, Vec<[f64; 3]>)> {
+    match e {
+        EntityType::LwPolyline(pl) => Some((
+            pl.is_closed,
+            pl.vertices
+                .iter()
+                .map(|v| [v.location.x, v.location.y, v.bulge])
+                .collect(),
+        )),
+        EntityType::Polyline2D(pl) => Some((
+            pl.is_closed(),
+            pl.vertices
+                .iter()
+                .map(|v| [v.location.x, v.location.y, v.bulge])
+                .collect(),
+        )),
+        _ => None,
+    }
+}
+
 fn polyline_shape(e: &EntityType) -> Option<Vec<[f64; 3]>> {
-    let EntityType::LwPolyline(pl) = e else {
-        return None;
-    };
-    let n = pl.vertices.len();
-    let segs = if pl.is_closed { n } else { n.saturating_sub(1) };
+    let (closed, pts) = polyline_points(e)?;
+    let n = pts.len();
+    let segs = if closed { n } else { n.saturating_sub(1) };
     let dir = |i: usize| {
-        let (a, b) = (
-            pl.vertices[i % n].location,
-            pl.vertices[(i + 1) % n].location,
-        );
-        (b.x - a.x, b.y - a.y)
+        let (a, b) = (pts[i % n], pts[(i + 1) % n]);
+        (b[0] - a[0], b[1] - a[1])
     };
     let total: f64 = (0..segs).map(|i| dir(i).0.hypot(dir(i).1)).sum();
     if total <= 1e-12 {
@@ -329,13 +347,13 @@ fn polyline_shape(e: &EntityType) -> Option<Vec<[f64; 3]>> {
         (0..segs)
             .map(|i| {
                 let (dx, dy) = dir(i);
-                let turn = if pl.is_closed || i + 1 < segs {
+                let turn = if closed || i + 1 < segs {
                     let (ex, ey) = dir(i + 1);
                     (dx * ey - dy * ex).atan2(dx * ex + dy * ey)
                 } else {
                     0.0
                 };
-                [dx.hypot(dy) / total, turn, pl.vertices[i].bulge]
+                [dx.hypot(dy) / total, turn, pts[i][2]]
             })
             .collect(),
     )
@@ -375,12 +393,14 @@ fn similar(target: &EntityType, e: &EntityType) -> bool {
                     sweep(b.start_parameter, b.end_parameter),
                 )
         }
-        (EntityType::LwPolyline(a), EntityType::LwPolyline(b)) => {
-            a.is_closed == b.is_closed
+        (EntityType::LwPolyline(_), EntityType::LwPolyline(_))
+        | (EntityType::Polyline2D(_), EntityType::Polyline2D(_)) => {
+            let closed = polyline_points(target).map(|p| p.0);
+            closed == polyline_points(e).map(|p| p.0)
                 && same_shape(
                     polyline_shape(target).as_deref(),
                     polyline_shape(e).as_deref(),
-                    a.is_closed,
+                    closed.unwrap_or(false),
                 )
         }
         // Texts and multiline texts match one another by their string.
