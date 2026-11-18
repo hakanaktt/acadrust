@@ -1098,7 +1098,7 @@ impl Default for TableStyle {
     }
 }
 
-const CELL_STYLE_MAP_KEY: &str = "ACAD_ROUNDTRIP_2008_TABLESTYLE_CELLSTYLEMAP";
+pub(crate) const CELL_STYLE_MAP_KEY: &str = "ACAD_ROUNDTRIP_2008_TABLESTYLE_CELLSTYLEMAP";
 /// A DXF file keeps a table style's starting table in its extension
 /// dictionary under this key; a DWG file in the style record.
 const TEMPLATE_KEY: &str = "ACAD_ROUNDTRIP_2008_TABLESTYLE_TEMPLATE";
