@@ -379,6 +379,7 @@ pub(crate) fn transform_mtext(e: &mut MText, transform: &Transform) {
     if let Some(ref mut h) = e.rectangle_height {
         *h *= scale_factor;
     }
+    scale_inline_heights(&mut e.value, scale_factor);
     let new_normal = transform.apply_rotation(old_normal).normalize();
     // The x-axis direction is a unit vector: AutoCAD's AUDIT rejects an MTEXT
     // whose direction carries the scale factor.
@@ -393,6 +394,40 @@ pub(crate) fn transform_mtext(e: &mut MText, transform: &Transform) {
     } else {
         e.rotation = 0.0;
     }
+}
+
+/// Multiplies every absolute `\H<h>;` height code in MTEXT `contents` by
+/// `factor`; relative `\H<k>x;` codes already follow the entity height.
+pub(crate) fn scale_inline_heights(contents: &mut String, factor: f64) {
+    if (factor - 1.0).abs() < 1e-12 || !contents.contains("\\H") {
+        return;
+    }
+    let mut out = String::with_capacity(contents.len());
+    let mut rest = contents.as_str();
+    while let Some(i) = rest.find('\\') {
+        out.push_str(&rest[..i]);
+        rest = &rest[i..];
+        let next = rest[1..].chars().next();
+        if next == Some('H') {
+            if let Some(end) = rest.find(';') {
+                let value = &rest[2..end];
+                if !value.ends_with(['x', 'X']) {
+                    if let Ok(h) = value.trim().parse::<f64>() {
+                        out.push_str(&format!("\\H{};", h * factor));
+                        rest = &rest[end + 1..];
+                        continue;
+                    }
+                }
+            }
+        }
+        // Any other code (or `\\`) is copied with its next char so an
+        // escaped backslash never starts a code.
+        let len = 1 + next.map_or(0, char::len_utf8);
+        out.push_str(&rest[..len]);
+        rest = &rest[len..];
+    }
+    out.push_str(rest);
+    *contents = out;
 }
 
 // ── Spline ───────────────────────────────────────────────────────────────────
@@ -1173,6 +1208,7 @@ pub(crate) fn transform_multileader(e: &mut MultiLeader, transform: &Transform) 
     e.dogleg_length *= scale_factor;
     e.context.arrowhead_size *= scale_factor;
     e.context.text_height *= scale_factor;
+    scale_inline_heights(&mut e.context.text_string, scale_factor);
     e.context.landing_gap *= scale_factor;
     e.context.text_width *= scale_factor;
     e.context.text_boundary_height *= scale_factor;
