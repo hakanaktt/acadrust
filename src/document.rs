@@ -117,6 +117,7 @@ pub(crate) mod handle_usage;
 pub use handle_reservation::{HandleReservation, HandleReservationError, HandleReservationIter};
 mod legacy_header;
 mod semantic_inventory;
+mod app_id_usage;
 pub(crate) use dim_header::{
     apply_dimension_arrow_header, dimension_arrow_dxf_name, sync_dimension_arrow_header,
 };
