@@ -148,6 +148,35 @@ fn read_strings(reader: &DwgMergedReader) -> Vec<String> {
     strings
 }
 
+impl ArchObject {
+    /// Class-body references with their reference kind (2 soft owner,
+    /// 3 hard owner, 4 soft pointer, 5 hard pointer), in stream order.
+    pub fn typed_handles(&self) -> Vec<(u64, u8)> {
+        open_object(self).map(|r| read_typed_handles(&r)).unwrap_or_default()
+    }
+}
+
+impl ArchEntityData {
+    /// Class-body references with their reference kind, in stream order.
+    pub fn typed_handles(&self) -> Vec<(u64, u8)> {
+        open_entity(self).map(|r| read_typed_handles(&r)).unwrap_or_default()
+    }
+}
+
+fn read_typed_handles(reader: &DwgMergedReader) -> Vec<(u64, u8)> {
+    let mut reader = reader.clone();
+    let mut handles = Vec::new();
+    while reader.handle_remaining_bits() >= 8 && handles.len() < 10_000 {
+        let remaining = reader.handle_remaining_bits();
+        let (value, kind) = reader.read_typed_handle();
+        if reader.check_error().is_err() || reader.handle_remaining_bits() >= remaining {
+            break;
+        }
+        handles.push((value, kind.code()));
+    }
+    handles
+}
+
 fn read_handles(reader: &DwgMergedReader) -> Vec<u64> {
     let mut reader = reader.clone();
     let mut handles = Vec::new();
