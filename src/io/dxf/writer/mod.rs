@@ -346,6 +346,7 @@ impl<'a> DxfWriter<'a> {
         if output_version >= crate::types::DxfVersion::AC1021 {
             crate::objects::prepare_table_entity_roundtrip(&mut prepared);
         }
+        crate::objects::prepare_table_recompose_data(&mut prepared);
         // Before R2018 a multiline attribute is written the way AutoCAD
         // down-saves it: one line per attribute plus an ACAD_MLATT record.
         if (crate::types::DxfVersion::AC1015..crate::types::DxfVersion::AC1032)

@@ -24,7 +24,9 @@ mod sort_entities_table;
 mod stub_objects;
 mod table_style;
 mod table_entity_roundtrip;
-pub(crate) use table_entity_roundtrip::{prepare_table_entity_roundtrip, restore_table_entity_roundtrip};
+pub(crate) use table_entity_roundtrip::{
+    prepare_table_entity_roundtrip, prepare_table_recompose_data, restore_table_entity_roundtrip,
+};
 mod xrecord;
 
 pub use associative::*;

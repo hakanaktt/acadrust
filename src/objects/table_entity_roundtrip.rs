@@ -10,7 +10,8 @@ use crate::entities::table::{CellStylePropertyFlags as P, CellType, Table, Table
 use crate::entities::EntityType;
 use crate::io::read::{push_read_diagnostic, ReadDiagnostic, ReadStage};
 use crate::objects::{
-    DataObject, DataObjectData, ObjectType, TableGeometry, TableGeometryCell, XRecord, XRecordValue,
+    DataObject, DataObjectData, ObjectType, TableGeometry, TableGeometryCell, XRecord, XRecordEntry,
+    XRecordValue,
 };
 use crate::types::Handle;
 
@@ -108,6 +109,90 @@ fn table_handles(document: &CadDocument) -> Vec<Handle> {
             _ => None,
         })
         .collect()
+}
+
+/// Key of the root dictionary's recompose record.
+const RECOMPOSE_KEY: &str = "ACDB_RECOMPOSE_DATA";
+
+/// Before a DXF write, after the table styles' cell style maps and the
+/// tables' roundtrip records are in place: the root dictionary's recompose
+/// record lists the table styles and tables that keep their R2010+ data in
+/// those records. A reader rebuilds only the objects listed there; a table
+/// style left out loses every cell style beyond title, header and data.
+pub(crate) fn prepare_table_recompose_data(document: &mut std::borrow::Cow<'_, CadDocument>) {
+    let in_dictionary = |document: &CadDocument, owner: Handle, key: &str| {
+        document
+            .extension_dictionary_handle(owner)
+            .and_then(|dictionary| match document.objects.get(&dictionary) {
+                Some(ObjectType::Dictionary(entries)) => entries.get(key),
+                _ => None,
+            })
+            .is_some()
+    };
+    let mut targets: Vec<Handle> = document
+        .objects
+        .iter()
+        .filter_map(|(handle, object)| match object {
+            ObjectType::TableStyle(_)
+                if in_dictionary(document, *handle, super::table_style::CELL_STYLE_MAP_KEY) =>
+            {
+                Some(*handle)
+            }
+            _ => None,
+        })
+        .collect();
+    targets.sort();
+    targets.extend(
+        table_handles(document)
+            .into_iter()
+            .filter(|table| roundtrip_record(document, *table).is_some()),
+    );
+    let root = document.header.named_objects_dict_handle;
+    let existing = document
+        .named_objects_dictionary()
+        .and_then(|dictionary| dictionary.get(RECOMPOSE_KEY));
+    let entries: Vec<XRecordEntry> = std::iter::once(XRecordEntry::int32(90, 1))
+        .chain(targets.iter().map(|handle| XRecordEntry::handle(330, *handle)))
+        .collect();
+    let current = existing.and_then(|record| match document.objects.get(&record) {
+        Some(ObjectType::XRecord(record)) => Some(&record.entries),
+        _ => None,
+    });
+    if targets.is_empty() && existing.is_none() || current == Some(&entries) {
+        return;
+    }
+    let document = document.to_mut();
+    if targets.is_empty() {
+        if let Some(dictionary) = document.named_objects_dictionary_mut() {
+            dictionary.remove(RECOMPOSE_KEY);
+        }
+        if let Some(record) = existing {
+            document.objects.remove(&record);
+        }
+        return;
+    }
+    let handle = match existing {
+        Some(record) if matches!(document.objects.get(&record), Some(ObjectType::XRecord(_))) => {
+            record
+        }
+        _ => document.allocate_handle(),
+    };
+    let mut record = XRecord::named(RECOMPOSE_KEY);
+    record.handle = handle;
+    record.owner = root;
+    record.reactors = vec![root];
+    record.cloning_flags = crate::objects::DictionaryCloningFlags::KeepExisting;
+    for entry in entries {
+        record.add_entry(entry);
+    }
+    record.synchronize_object_references();
+    document.objects.insert(handle, ObjectType::XRecord(record));
+    if existing != Some(handle) {
+        if let Some(dictionary) = document.named_objects_dictionary_mut() {
+            dictionary.remove(RECOMPOSE_KEY);
+            dictionary.add_entry(RECOMPOSE_KEY, handle);
+        }
+    }
 }
 
 /// Completes the legacy DXF entity from its associated content and geometry.
