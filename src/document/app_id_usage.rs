@@ -21,8 +21,9 @@ impl CadDocument {
     /// The APPID records that no extended data in the drawing names: the
     /// entities (attributes and mesh vertices included), the verbatim DWG
     /// extended data of objects and table records, their DXF extended data,
-    /// and the DXF groups kept verbatim for unsupported records. These can be
-    /// removed without leaving a reference to a missing application.
+    /// and the DXF groups kept verbatim for unsupported records; a record
+    /// that owns objects is in use too. These can be removed without leaving
+    /// a reference to a missing application or owner.
     pub fn unused_app_ids(&self) -> Vec<Handle> {
         let mut handles = HashSet::new();
         let mut names = HashSet::new();
@@ -93,6 +94,15 @@ impl CadDocument {
             handles.extend(blocks.iter().map(|(app, _)| *app));
         }
         names.extend(WRITER_APPS.iter().map(|name| name.to_uppercase()));
+        // A record that owns objects (its extension dictionary) stays, or
+        // they would name a missing owner.
+        handles.extend(self.xdic_by_handle.keys().map(|owner| owner.value()));
+        handles.extend(
+            self.objects
+                .keys()
+                .filter_map(|h| self.object_owner(*h))
+                .map(|owner| owner.value()),
+        );
         self.app_ids
             .iter()
             .filter(|app| {
