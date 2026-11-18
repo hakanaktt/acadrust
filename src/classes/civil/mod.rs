@@ -8,6 +8,7 @@
 //! geometry the class body stores.
 
 mod alignment;
+pub mod create;
 mod bits;
 mod cogo;
 mod corridor;
@@ -29,6 +30,7 @@ pub use alignment::{
     StationEquation,
 };
 pub use cogo::CogoPoint;
+pub use create::{add_cogo_point, cogo_points, ensure_civil, remove_cogo_point, set_cogo_point};
 pub use grading::{CriteriaValue, GradingCriteria};
 pub use intersection::IntersectionLayout;
 pub use labels::{parse_format, property, LabelPart, LabelText};

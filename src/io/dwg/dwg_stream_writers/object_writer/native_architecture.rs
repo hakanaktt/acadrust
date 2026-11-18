@@ -129,6 +129,20 @@ impl DwgObjectWriter<'_> {
         self.finish_architecture_record()
     }
 
+    /// A civil record: like an Arch object, with the reactors given.
+    pub(crate) fn encode_civil_object(
+        &mut self,
+        type_code: i16,
+        handle: Handle,
+        owner: Handle,
+        reactors: &[Handle],
+        body: impl FnOnce(&mut DwgMergedWriter),
+    ) -> (Vec<u8>, i64) {
+        self.write_common_non_entity_data(type_code, handle, owner, reactors, &None);
+        body(&mut self.writer);
+        self.finish_architecture_record()
+    }
+
     fn finish_architecture_record(&mut self) -> (Vec<u8>, i64) {
         let raw = self.writer.merge();
         let handle_bits = raw.len() as i64 * 8 - self.writer.handle_start_bits();
