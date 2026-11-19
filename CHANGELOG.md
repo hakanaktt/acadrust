@@ -2,6 +2,14 @@
 
 ### Unreleased
 
+- **Section size limit as a read option** -
+  `DwgReadOptions::max_section_bytes` (`with_max_section_bytes`) replaces
+  the fixed 1 GiB bound on one decompressed section. Large drawings can
+  exceed it: a 424 MB AC1032 file with 10,000 proxy entities has an
+  `AcDb:AcDbObjects` section of about 1.25 GB and read as an empty
+  document (diagnostic `objects-extract-failed`). The default stays
+  1 GiB; `max_decompressed_bytes` still caps the whole read.
+
 - **3DSOLID wire transform scale** - The scale in a wire's transform is
   one BD (uniform scale), not a 3BD. Wireframes whose wires carry a
   transform now decode in step with the stream, where reading the scale
