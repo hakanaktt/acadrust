@@ -1037,6 +1037,28 @@ the check harness changes no corridor, the application's own included (a
 built corridor keeps its stations after a frequency edit and a rebuild),
 so the built result of a written corridor is not checked.
 
+### Code set styles read back
+
+A code set style (`AECC_ROADWAY_STYLE_SET`) lists its entries in its class
+data (after the component lists):
+
+```text
+6 x { BL kind, BL 0, BL 0 }                 defaults: uncoded markers, links,
+                                            shapes, then markers, links,
+                                            shapes of unlisted codes
+3 x { BL n, n x { BL kind, BL 0, BL 0 } }   listed point, link, area codes
+```
+
+`kind` is 1 point, 2 link, 3 area. Each entry has five references
+(material, style, label style, feature line style, blank) after the
+record's owned children, and each listed code four texts (code, name,
+description, blank) at the end of the text stream. `code_set()` and
+`code_set_defaults()` read the record so: the default code set a new
+drawing gets (no codes) returns its default marker, link and shape
+styles; the code sets of the sample drawings with codes return the same
+codes and defaults as before, and those whose codes have no name (which
+were not read) now read.
+
 ### Assemblies and package subassemblies
 
 `add_assembly(doc, name, location, layer)` writes an empty assembly with
