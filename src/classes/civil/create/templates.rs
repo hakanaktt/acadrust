@@ -20,6 +20,9 @@ pub(super) enum Target {
     ByBlock,
     /// The text style "Standard".
     Standard,
+    /// The style `id` of the style tree's collection `key` (written
+    /// before this table).
+    Style(i32, i32),
 }
 
 /// A piece of a template's fields after the version word.
@@ -69,11 +72,21 @@ pub(super) fn write_templates(doc: &mut CadDocument, styles: Handle, templates: 
             Target::Layer0 => doc.layers.get("0")?.handle.value(),
             Target::ByBlock => doc.line_types.get("ByBlock")?.handle.value(),
             Target::Standard => doc.text_styles.get("Standard")?.handle.value(),
+            Target::Style(key, id) => {
+                let tree = read_node(doc, root_node(doc, super::tree::KEY_STYLES)?)?;
+                let collection = tree.children.iter().find(|c| c.0 == key)?.1;
+                read_node(doc, Handle::new(collection))?.children.iter().find(|c| c.0 == id)?.1
+            }
             _ => 0,
         })
     };
     for t in [Target::Layer0, Target::ByBlock, Target::Standard] {
         table(doc, t).ok_or_else(|| invalid("drawing lacks layer 0, the ByBlock linetype or the Standard text style"))?;
+    }
+    for t in templates.iter().flat_map(|t| t.refs.iter().map(|r| r.1)) {
+        if matches!(t, Target::Style(..)) && table(doc, t).is_none() {
+            return Err(invalid("a style these styles refer to is missing"));
+        }
     }
     let handles: Vec<Handle> = templates.iter().map(|_| doc.allocate_handle()).collect();
     let now = file_time().to_le_bytes();
