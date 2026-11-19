@@ -773,28 +773,59 @@ texts: "AeccImpFace", "", "" (the application names the parcel from its
 In the container a closed edge has flags 0x31 and no last point: its last
 point starts the segment back to the first (flags 0x22 on the last
 member, 0x32 otherwise); its nodes take ids in path order. The face section
-lists the outside face and one face per parcel:
+lists every face:
 
 ```text
-BL next free face id, BL count (0 without members),
-outside face: BL 1, BL 1, BL flags (6 with two or more lot lines, else
-  14), BL m, per member {BL its first node, BL 0}
-per parcel: BL face, BL face, BL 14, BL 1, BL entry node, BL 1
+BL next free face id (faces + 1), BL count (0 without members),
+per face: BL id, BL id, BL flags, BL loops, per loop {BL node, BL k}
 BL 1, BL 1, BL p + 1, 10 x BL 1, BL p, BL 1 .. p, 5 x BL 0
-references after the site's pair: per parcel {parcel (soft), soft 0}
+references after the site's pair: per parcel {parcel (soft), soft 0},
+  in face order (face 2 on)
 ```
 
-The faces are numbered from 2 in member order; a lot line's segments have
-its face on the inside and 1 outside (left/right as the line runs). A
-counterclockwise line's entry node is its first, a clockwise one's its last.
-The node records follow the application's hash order: eight buckets by id
-mod 8, each in id order (WP15, WP16: 30 and 50 nodes; the earlier rule,
-seven buckets newest first, gives the same order up to 14 nodes and is
-replaced). The area label goes in the middle of the parcel's extents; the
-application takes the parcel's face from that point, so where it falls on
-the boundary (a right triangle) the writer takes the middle of the widest
-run of the horizontal line through it inside the parcel (the application
-itself takes another inner point there).
+A loop entry is a half-edge with the face on its right: its start node
+and its index among the node's half-edges sorted by angle
+(counterclockwise from +x). Faces and their entries follow how the
+application adds a member: the member is split where it meets the
+earlier lines (and they where it meets them), then its segments go in one
+at a time.
+
+- Node ids: the member's own points first (an open one's ends, then its
+  inner points; a closed one's in path order; a point on an earlier node
+  takes that node), then the new crossing points in the member's order.
+  A point of the member that lies on an earlier segment is inserted into
+  that segment; an earlier node on the member is inserted into the member.
+- The first segment of a site makes the outside face 1, its entry the
+  segment. A segment off every line opens a new loop of the face around
+  it (entry: the segment).
+- A segment that splits a face: the part holding the face's entry keeps
+  the face and the other part becomes the next face, its entry the
+  segment's half-edge on that side. An entry the member's crossings split
+  is void: a split face then keeps the part on the segment's right (entry
+  the segment) and the new face takes the left; a face the member does
+  not split takes the half-edge that followed its old entry.
+- A segment that closes a loop bounding its own face: the bounded part
+  is the new face (entry: the segment's half-edge inside); the outer part
+  stays with the old face, whose entry on the loop, if inside, moves to
+  the half-edge leaving the same node outside.
+- Face flags: 14, or 6 once a later member split the face, closed a loop
+  in it, ran a line into it from an earlier line, or added an elevation
+  point (outside face).
+- Edge flag 0x80 marks an edge another member's crossing added nodes to;
+  those points have flags 0x400 (instead of 2). A point on a node an
+  earlier member made carries 0x800000 (WP08, WP19); 0x80 (first point)
+  only marks an edge that starts off every earlier line.
+
+A parcel is written for every face but the outside one, numbered in face
+order (number = face - 1); a parcel whose face a later lot line cuts keeps
+its record and moves its label into what is left of its face. The label
+goes in the middle of the face's extents; the application takes the
+parcel's face from that point, so where it falls on the boundary or on a
+line inside the face (a right triangle, WP10's loose line) the writer
+takes the middle of the widest run of the horizontal line through it
+inside the face (the application itself takes another inner point for the
+triangle). The node records follow the application's hash order: eight
+buckets by id mod 8, each in id order (WP15, WP16: 30 and 50 nodes).
 
 Samples WP03 (one counterclockwise rectangle), WP06 (clockwise), WP12 to
 WP14 (two to four disjoint lot lines, one clockwise, one a triangle) and
@@ -808,12 +839,30 @@ with an alignment, a parcel, a feature line and a second parcel (E-P3)
 open with AUDIT 0 errors; the API lists every parcel with its number, area
 and extents, and LIST its boundary.
 
-Not written: lot lines that cross or touch other members (the application
-splits both at the intersection, inserting nodes flagged 0x400, and
-re-faces the site: WP04, WP05, WP09 to WP11), open lot lines, lot lines
-with arcs, and the order of the remaining faces after a split. A lot line
-alone (no closed loop) makes no parcel; alignments that close a loop make
-none either (WP01).
+`add_lot_line(doc, site, vertices, closed, layer)` writes an open or
+closed lot line that may cross or touch the site's other lot lines (not
+its alignments or feature lines) and returns it with the parcels of the
+faces it makes. Samples WP04 (a line across a rectangle), WP05 (and a
+disjoint rectangle), WP08 (two open lines closing a loop), WP09 (a T
+junction), WP10 (a loose line crossing one side), WP11 (a T and a cross),
+WP18 (one line crossing the same side twice), WP19 (a line through a
+corner and across a side) and WP20 (one line crossing two sides twice
+each): written for the same lines, node ids, coordinates, faces of every
+segment, face entries, face flags and the tail equal the samples'; only
+the newest member's point flags 0x10 and 0x20 differ (the application's
+marks from walking the faces; the writer keeps the rule of members that
+meet nothing). Checks E-X1 (WP20's lines), E-X2 (WP11's and a disjoint
+rectangle), E-X3 (a diagonal through a corner, then a line crossing the
+same side twice whose corner lies on the diagonal) and E-X4 (two open
+lines closing a loop and a loose line into it), written into a new
+drawing, open with AUDIT 0 errors and the API lists every parcel with its
+number, area and extents; the application adds a further crossing line
+to E-X1 and splits its parcels right.
+
+Not written: lot lines with arcs (crossing arcs would need their bulges
+split), lot lines meeting alignments or feature lines, members running
+along each other. A lot line alone (no closed loop) makes no parcel;
+alignments that close a loop make none either (WP01).
 
 ## 3h. Profile views
 
@@ -1282,8 +1331,8 @@ taken from the records and checked bit for bit against them.
 - Profiles with other curve constraints (fixed or floating curves, curves
   by K or through a point), profiles of alignments the application has
   changed.
-- Crossing members on a site (their splits and faces), open lot lines and
-  lot lines with arcs, parcel and feature line styles other than the
+- Alignments and feature lines that meet other members on a site, lot
+  lines with arcs, parcel and feature line styles other than the
   defaults;
   sections, corridors, pipe networks: not written.
 - Profile views with a vertical scale or style other than the default;
@@ -1301,8 +1350,8 @@ taken from the records and checked bit for bit against them.
 | alignments (fixed lines, free arcs and spiral-curve-spirals, siteless) | yes | yes (a new drawing gets §3b) | yes (§4) | not needed (the application solves the stored elements) | other constraints, sites, labels |
 | TIN surfaces (added points) | yes | yes (a new drawing gets §3d) | yes (§4) | not needed (the stored triangulation is drawn; the application rebuilds it after an edit) | other definitions |
 | layout profiles (fixed tangents; free symmetric and asymmetric parabolas, free circular curves) | yes | yes (a new drawing gets §3f) | yes (§4) | not needed (the application solves the stored entities) | fixed and floating curves |
-| sites, alignments and feature lines (arcs, elevation points) on a site | yes | yes (a new drawing gets the node of sites and the default parcel and feature line styles, §2c) | yes (§4) | not needed (the application rewrites the site's cache) | crossing members; containers the application edited after inserting elevation points |
-| parcels inside closed lot lines | yes (number, face, boundary) | yes (§3g) | yes (§3g) | not needed | crossing or touching members, open lot lines, arcs |
+| sites, alignments and feature lines (arcs, elevation points) on a site | yes | yes (a new drawing gets the node of sites and the default parcel and feature line styles, §2c) | yes (§4) | not needed (the application rewrites the site's cache) | alignments or feature lines meeting other members; containers the application edited after inserting elevation points |
+| parcels of closed and open, crossing and touching lot lines | yes (number, face, boundary) | yes (§3g) | yes (§3g) | not needed | arcs; lot lines meeting alignments or feature lines |
 | profile views (automatic or user ranges) and their profile label groups | yes (frame) | yes (a new drawing gets the default view style, §3h) | yes (§3h) | not needed (the application recomputes the view from its style) | other styles and vertical scales |
 | corridors (one baseline, one region, unbuilt) | yes | yes, with an assembly of the drawing (§3i) | yes (§3i) | the corridor is written out of date and built by the application's rebuild | assemblies and subassemblies, built results, surfaces, several regions or baselines |
 | sample line groups and two-vertex sample lines | yes | yes, with the drawing's sample line label style (§3j) | yes (§3j) | not needed | lines with more vertices |
