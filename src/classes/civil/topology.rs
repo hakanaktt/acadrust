@@ -237,10 +237,12 @@ fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> 
 ///
 /// ```text
 /// BS 0x04BE, BL key (0 for a site container, 0x80000000 | n for a
-/// companion), BL 0, BL 0, BL 32, BL 210, 21 bits, BL 0x80000001,
-/// node list, edge list
+/// companion), BL 0, BL 0, BL 32, 7 bits 0111010,
+/// elevation points: BL next free key, BL k, k x {BL key, BL 21, BD the
+///   point's index in its feature line, 17 bits, BL key, BL 0, BL 0,
+///   BD elevation, B 0, BL 0}, BL 1, BL 0,
+/// BL 0x80000001, node list, edge list
 /// ```
-// ponytail: the 21 bits are skipped by length (constant in every sample).
 pub(super) fn topology(data: &[u8], start: usize, end: usize) -> Option<Topology> {
     let read = |pos: usize| -> Option<Topology> {
         let (nodes, after) = node_list(data, pos, end)?;
@@ -251,14 +253,34 @@ pub(super) fn topology(data: &[u8], start: usize, end: usize) -> Option<Topology
     let mut bits = Bits::new(data, start, end);
     (bits.bit_short()? == 0x04BE).then_some(())?;
     bits.bit_long()?;
-    for want in [0, 0, 32, 210] {
+    for want in [0, 0, 32] {
         (bits.bit_long()? == want).then_some(())?;
     }
-    bits.pos += 21;
-    if bits.bit_long()? as u32 == 0x8000_0001 {
+    bits.skip(7)?;
+    let head = (|| {
+        bits.bit_long()?;
+        let count = bits.bit_long()?;
+        (0..=100_000).contains(&count).then_some(())?;
+        for _ in 0..count {
+            bits.bit_long()?;
+            bits.bit_long()?;
+            bits.bit_double()?;
+            bits.skip(17)?;
+            for _ in 0..3 {
+                bits.bit_long()?;
+            }
+            bits.bit_double()?;
+            bits.bit()?;
+            bits.bit_long()?;
+        }
+        bits.bit_long()?;
+        bits.bit_long()?;
+        (bits.bit_long()? as u32 == 0x8000_0001).then_some(())
+    })();
+    if head.is_some() {
         return read(bits.pos);
     }
-    // debt: a container whose feature line was edited (S316) has more
-    // fields after `BL 210`; its node list is found by trying positions.
+    // debt: a container whose head does not follow the layout above is
+    // read by trying positions for its node list.
     (start..end.saturating_sub(40)).find_map(read)
 }
