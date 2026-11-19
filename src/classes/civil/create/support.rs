@@ -51,6 +51,7 @@ const CLASSES: &[Class] = &[
     Class { dxf: "AECC_ALIGNMENT_STYLE", cpp: "AeccDbAlignmentStyle", module: "AeccLand130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_ALIGNMENT_PARCEL_NODE", cpp: "AeccDbAlignmentParcelNode", module: "AeccLand130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_FEATURE_STYLE", cpp: "AeccDbFeatureStyle", module: "AeccLand130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_SURFACE_STYLE", cpp: "AeccDbSurfaceStyle", module: "AeccLand130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_TIN_SURFACE", cpp: "AeccDbSurfaceTin", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_ALIGNMENT", cpp: "AeccDbAlignment", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_COGO_POINT", cpp: "AeccDbCogoPoint", module: "AeccLand130", proxy_flags: 0x33c, entity: true },

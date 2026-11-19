@@ -1,14 +1,13 @@
 //! TIN surfaces built from points (`AECC_TIN_SURFACE`).
 
 use super::support::*;
+use super::tree::{ensure_surface_tree, KEY_SURFACE_STYLES};
 use crate::entities::EntityCommon;
 use crate::error::DxfError;
 use crate::io::dwg::dwg_stream_writers::DwgMergedWriter;
 use crate::types::{Handle, Vector3};
 use crate::CadDocument;
 
-/// Style tree key of the surface style collection.
-const KEY_SURFACE_STYLES: i32 = 77;
 /// How far the four bounding corners lie outside the points' extents.
 const CORNER_MARGIN: f64 = 100.0;
 /// Flags of a bounding corner and of a surface point.
@@ -22,10 +21,6 @@ const POINT: u32 = 0x80;
 pub(super) struct Triangulation {
     pub vertices: Vec<Vector3>,
     pub triangles: Vec<[usize; 3]>,
-}
-
-fn orient(a: Vector3, b: Vector3, c: Vector3) -> f64 {
-    (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
 }
 
 /// `true` when `p` is inside the circle through the counter-clockwise
@@ -237,16 +232,20 @@ pub(super) fn write_surface(doc: &mut CadDocument, common: EntityCommon, name: &
 
 /// Adds a TIN surface triangulated from `points` (three or more, distinct
 /// in plan) with the drawing's default surface style, on `layer` (layer
-/// "0" when `None`). The drawing must hold the surface style collection.
+/// "0" when `None`). A drawing without a surface style collection gets
+/// one (`tree.rs`).
 pub fn add_tin_surface(doc: &mut CadDocument, name: &str, points: &[Vector3], layer: Option<&str>) -> Result<Handle, DxfError> {
     let finite = points.iter().all(|p| p.x.is_finite() && p.y.is_finite() && p.z.is_finite());
     let distinct = points.iter().enumerate().all(|(i, p)| points[..i].iter().all(|q| q.x != p.x || q.y != p.y));
     if points.len() < 3 || !finite || !distinct {
         return Err(invalid("a surface needs three or more finite points, distinct in plan"));
     }
-    let style = default_style(doc).ok_or_else(|| invalid("drawing has no surface styles"))?;
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
+    if default_style(doc).is_none() {
+        ensure_surface_tree(doc)?;
+    }
+    let style = default_style(doc).ok_or_else(|| invalid("drawing has no surface styles"))?;
     let tin = triangulate(points);
     let common = EntityCommon {
         handle: doc.allocate_handle(),
@@ -263,6 +262,10 @@ mod tests {
     use super::*;
     use crate::io::dwg::{DwgReader, DwgWriter};
     use crate::types::DxfVersion;
+
+    fn orient(a: Vector3, b: Vector3, c: Vector3) -> f64 {
+        (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+    }
 
     /// A drawing with a stand-in style tree (only the keys and references
     /// the surface writer looks up).
@@ -325,5 +328,24 @@ mod tests {
         let drawn: Vec<_> = tin.visible_triangles().collect();
         assert_eq!(drawn.len(), 1);
         assert!(pts.iter().all(|p| drawn[0].contains(p)));
+    }
+
+    #[test]
+    fn a_new_drawing_gets_its_surface_style() {
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let pts = [Vector3::new(0.0, 0.0, 0.0), Vector3::new(10.0, 0.0, 1.0), Vector3::new(0.0, 10.0, 2.0)];
+        add_tin_surface(&mut doc, "S", &pts, None).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-tin-new-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let style = default_style(&back).unwrap();
+        let o = object(&back, Handle::new(style)).unwrap();
+        assert_eq!(o.dxf_name, "AECC_SURFACE_STYLE");
+        // The name, the 17 key texts and two texts per component.
+        let d = o.decode();
+        assert_eq!(d.strings.len(), 1 + 17 + 2 * 25);
+        assert!(d.strings.iter().any(|t| t.ends_with(";ANSI31")));
     }
 }
