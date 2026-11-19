@@ -239,7 +239,9 @@ BS 0x04BE, BL 34, BL 0, BL 0, 3 bits 010
 BL count, count × { BL 1, 3BD position, BL number, BS 0x0420 }
 BL n, n × BL number          points with their own point style
 BL m, m × BL number          points with their own label style
-BL 0, BL 0, BL 0
+BL 0
+BL j, j × { BL number, BL text id }   named points
+BL j, j × { BL text id, BL number }   the same keyed by name
 BL k, k × { BL number, BL text id }
 13 × BL 0
 handles: n × point style (hard pointer), m × label style (hard pointer),
@@ -343,9 +345,41 @@ the whole text, case ignored, `*` any run and `?` one character (WQ03:
 `TEST` selects TEST and test, not TESTS); it stores a name query in lower
 case. Number ranges (`2-6`) are stored with generated parentheses, an AND
 of two comparisons and an equal leaf holding the range text; the writer
-lists the numbers instead (the same members). Names and full descriptions
-(which depend on point names and description keys) and exclusions are not
-written.
+lists the numbers instead (the same members).
+
+Names (`PointQuery::Names`, kept in lower case) and full descriptions
+(`PointQuery::FullDescription`; the writer adds no description keys, so a
+point's full description is its raw description) take the rows of the
+table above. Elevation ranges (`PointQuery::ElevationRange`) and
+exclusions (`PointQuery::Excluding`) are written as the application
+stores them (WQ04, every query equal bit for bit and in its texts):
+
+```text
+statement: (include) AND NOT (exclude), either part optional
+constants: the included part's texts, "" when both parts are present,
+           the excluded part's texts; a range's text is "low-high"
+records:   the included part's parentheses and ORs, the excluded part's,
+           then the included part's leaves, the excluded part's
+           (AND, NOT and a range's generated parentheses have no record)
+parentheses: number bit, 1, single constant, comparison byte (equal for
+           a range), byte 0 (2 under the NOT), seven zero bits
+range:     three leaves: low (BD), high (BD), and an equal leaf of id 8
+           without a constant
+the last node record of the included part ends with a constant 52-bit
+mark before its seven zero bits when an excluded part follows
+texts:     ["AND"], part: ["NOT", ""], "PARENS", "", ORs, leaves; a range
+           leaf is "GENERATED_PARENS", "", "AND", then GTE, LTE and EQ
+           leaves and the range text
+```
+
+Point names live in the point database: after the label style list,
+`BL 0`, the names by number `BL j, j x {BL number, BL text id}`, the same
+keyed by text `BL j, j x {BL text id, BL number}`, then the descriptions;
+the texts list the names twice, then the descriptions; names and
+descriptions share the text ids. `set_cogo_point_name` names a point
+(names are unique, case ignored). A drawing written with named points and
+groups of every kind above (E-Q5) opens with AUDIT 0; the application
+lists the queries as its own and the same members.
 
 ### Edits
 
@@ -1781,8 +1815,8 @@ taken from the records and checked bit for bit against them.
 | kind | read by fields | write | reference check passed | rebuild flag used | blocked by |
 |---|---|---|---|---|---|
 | root tree node | yes | yes | yes (empty root: AUDIT 0) | — | — |
-| COGO points, database, `_All Points` | yes | yes (a new drawing gets §2a) | yes (§4) | not needed (the application draws points from the database) | — |
-| point groups (number lists, elevation comparisons, description patterns) | yes | yes | yes (§4) | not needed (the application lists the written members) | names, full descriptions, exclusions, override settings |
+| COGO points (with names), database, `_All Points` | yes | yes (a new drawing gets §2a) | yes (§4) | not needed (the application draws points from the database) | — |
+| point groups (number lists, elevation comparisons and ranges, description, name and full description patterns, exclusions) | yes | yes | yes (§4) | not needed (the application lists the written members) | number ranges (listed as numbers), override settings |
 | point style, its collection, class and settings nodes | yes | yes, in a drawing without the tree (§2a) | yes (§4) | not needed | — |
 | label styles: label node, point, sample line and profile label roots and default styles, profile label set | partly | yes, the defaults in a new drawing (§2b) | yes (§2b) | not needed | other label roots, styles other than the defaults (the settings are constant runs) |
 | alignments (fixed lines, free arcs and spiral-curve-spirals, siteless) | yes | yes (a new drawing gets §3b) | yes (§4) | not needed (the application solves the stored elements) | other constraints, sites, labels |
