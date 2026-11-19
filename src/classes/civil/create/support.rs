@@ -77,6 +77,9 @@ const CLASSES: &[Class] = &[
     Class { dxf: "AECC_VALIGNMENT_CRESTCURVE_LABEL_GROUP", cpp: "AeccDbVAlignmentCrestCurveLabeling", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_ASSEMBLY", cpp: "AeccDbAssembly", module: "AeccRoadway130", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_CORRIDOR", cpp: "AeccDbCorridor", module: "AeccRoadway130", proxy_flags: 0x37d, entity: true },
+    Class { dxf: "AECC_SAMPLE_LINE_STYLE", cpp: "AeccDbSampleLineStyle", module: "AeccLand130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_SAMPLE_LINE_GROUP", cpp: "AeccDbSampleLineGroup", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
+    Class { dxf: "AECC_SAMPLE_LINE", cpp: "AeccDbSampleLine", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_COGO_POINT", cpp: "AeccDbCogoPoint", module: "AeccLand130", proxy_flags: 0x33c, entity: true },
 ];
 

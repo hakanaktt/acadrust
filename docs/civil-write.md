@@ -780,6 +780,52 @@ the check harness changes no corridor, the application's own included (a
 built corridor keeps its stations after a frequency edit and a rebuild),
 so the built result of a written corridor is not checked.
 
+## 3j. Sample lines
+
+`add_sample_line_group(doc, alignment, name, layer)` writes an empty
+sample line group of an alignment; `add_sample_line(doc, group, name,
+station, left, right, layer)` adds a two-vertex sample line at a station,
+reaching `left` to the left and `right` to the right of the alignment. The
+alignment is written again with the group: the third count after its
+elements (`BL n, BL v, BL g, BL n`) is the number of groups, and the
+groups follow the profiles and views in its references. Adding a line
+changes only the group (its line count and references).
+
+```text
+group (AECC_SAMPLE_LINE_GROUP, an entity in model space):
+  BL 80, 0, 80, 80, 0, BL 0x10025F04, BL 0x40000353, 4 bits 0101,
+  RC 1, key 0x0B001081 (BL 2, two values; written 0), a 155-bit run,
+  BL line count, a 395-bit run
+  references: soft 0, hard owner 0, alignment, hard 0, the lines (soft,
+    by station), soft 0 x 3, sample line style, label style (hard)
+  texts: "AeccImpSampleLineGroup", "", name, "", "", "0", "0", "", "", ""
+line (AECC_SAMPLE_LINE):
+  BL 80, 0, 80, 80, 0, BL 0x10025F04, BL 0x40008353, 4 bits 0010, RC 0,
+  120 zero bits, 3BD 0, 9 BD identity, BD station,
+  two vertices {BL 1, BD 0, BD offset (right positive), BD 0},
+  a 100-bit run ending with the version word
+  references: soft 0, hard owner 0, hard 0, soft 0, soft 0, style, group
+    (hard)
+  texts: "AeccImpSampleLine", "", name, ""
+```
+
+The class word of a line is 0x40008353 or 0x40000354 in the samples (the
+first line of a session has the first); the writer writes the first. The
+groups (no to three lines) and lines of WL10 to WL13 are reproduced bit
+for bit apart from the stamp and that word, and the alignment bit for bit.
+With the group and three lines written into WR00 (E-L1) the application
+opens the drawing with AUDIT 0 errors and lists the group, its lines in
+station order, their stations and the left, center and right vertices of
+each.
+
+The group's label style is the default sample line label style (style
+tree key 3, then 0x112, 0x1002A00F, id 30). Written with no label style
+(E-L2, a new drawing) the group opens but AUDIT reports its null label
+style, so a drawing without label styles is refused; a drawing without
+the sample line style collection (style tree key 0xCD5) gets it and its
+default style (the users and dates, plan components 0 and 1, model
+components 0 and 1 hidden), which the application accepts (E-L2).
+
 ## 4. Reference check
 
 For every written drawing the check opens it in its own reference instance
@@ -948,4 +994,5 @@ taken from the records and checked bit for bit against them.
 | sites, alignments and feature lines on a site | yes | yes (a new drawing gets the node of sites, no styles) | yes (§4) | not needed (the application rewrites the site's cache) | parcels, crossing members, feature line arcs and elevation points |
 | profile views and their profile label groups | yes (frame) | yes (a new drawing gets the default view style, §3h) | yes (§3h) | not needed (the application recomputes the view from its style) | other ranges and styles, label groups in a new drawing (no label set) |
 | corridors (one baseline, one region, unbuilt) | yes | yes, with an assembly of the drawing (§3i) | yes (§3i) | the corridor is written out of date and built by the application's rebuild | assemblies and subassemblies, built results, surfaces, several regions or baselines |
+| sample line groups and two-vertex sample lines | yes | yes, with the drawing's sample line label style (§3j) | yes (§3j) | not needed | label styles in a new drawing, lines with more vertices |
 | parcels, gradings, sections, networks | partly | no | — | — | not started |

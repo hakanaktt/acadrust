@@ -463,7 +463,7 @@ pub fn add_alignment_on_site(doc: &mut CadDocument, site: Handle, name: &str, ve
     };
     members.push(Member { handle: common.handle.value(), elevations: vec![0.0; path.len()], path, feature_line: false });
     write_container(doc, container, site, &members, line_style)?;
-    write_alignment(doc, common, name, &elements, style, container.value(), members.len() as i32, None, &[], &[])
+    write_alignment(doc, common, name, &elements, style, container.value(), members.len() as i32, None, &[], &[], &[])
 }
 
 /// The feature line record (`AECC_FEATURE_LINE`; its points are its edge
