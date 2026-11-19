@@ -1,14 +1,13 @@
 //! Alignments made of fixed lines (`AECC_ALIGNMENT`).
 
 use super::support::*;
+use super::tree::{ensure_alignment_tree, KEY_ALIGNMENT_STYLES, KEY_DEFAULT_FEATURE, KEY_SITELESS};
 use crate::entities::EntityCommon;
 use crate::error::DxfError;
 use crate::io::dwg::dwg_stream_writers::DwgMergedWriter;
 use crate::types::{Handle, Vector2};
 use crate::CadDocument;
 
-/// Style tree key of the alignment style collection.
-const KEY_ALIGNMENT_STYLES: i32 = 93;
 /// Element kind of a line, and the constraint of a fixed line.
 const LINE: i32 = 257;
 const FIXED: i16 = 0;
@@ -29,10 +28,6 @@ fn default_style(doc: &CadDocument) -> Option<u64> {
     object(doc, Handle::new(head))?.decode().handles.first().copied().filter(|h| *h != 0)
 }
 
-/// Root key of the node that holds siteless alignments.
-const KEY_SITELESS: i32 = 336;
-/// Key of that node's default feature style, which lists the companions.
-const KEY_DEFAULT_FEATURE: i32 = 30;
 /// First text id given to a written companion (kept apart from the other
 /// writers' ids).
 const FIRST_COMPANION_TAG: u32 = 0x8003_0001;
@@ -220,16 +215,20 @@ pub(super) fn write_alignment(doc: &mut CadDocument, common: EntityCommon, name:
 }
 
 /// Adds an alignment through `vertices` (fixed lines, no curves) on
-/// `layer` (layer "0" when `None`).
+/// `layer` (layer "0" when `None`). A drawing without an alignment style
+/// collection or a node for siteless alignments gets them (`tree.rs`).
 pub fn add_alignment(doc: &mut CadDocument, name: &str, vertices: &[Vector2], layer: Option<&str>) -> Result<Handle, DxfError> {
     if vertices.len() < 2 || vertices.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) || vertices.windows(2).any(|w| w[0] == w[1]) {
         return Err(invalid("an alignment needs two or more distinct finite vertices"));
     }
+    let layer = layer.unwrap_or("0");
+    let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
+    if default_style(doc).is_none() || companion_node(doc).is_none() {
+        ensure_alignment_tree(doc)?;
+    }
     let style = default_style(doc).ok_or_else(|| invalid("drawing has no alignment styles"))?;
     let node = companion_node(doc).ok_or_else(|| invalid("drawing has no node for siteless alignments"))?;
     let used = read_node(doc, node).ok_or_else(|| invalid("feature style node cannot be read"))?;
-    let layer = layer.unwrap_or("0");
-    let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
     let tag = (FIRST_COMPANION_TAG..).find(|t| used.children.iter().all(|c| c.0 as u32 != *t)).unwrap_or(FIRST_COMPANION_TAG);
     let common = EntityCommon {
         handle: doc.allocate_handle(),
@@ -306,5 +305,30 @@ mod tests {
         assert_eq!(read(second).2, vec![v[1..].to_vec()]);
         let feature = companion_node(&back).unwrap();
         assert_eq!(read_node(&back, feature).unwrap().children.len(), 2);
+    }
+
+    #[test]
+    fn a_new_drawing_gets_its_alignment_style_and_siteless_node() {
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let v = [Vector2::new(0.0, 0.0), Vector2::new(100.0, 0.0)];
+        let h = add_alignment(&mut doc, "AL1", &v, None).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-alignment-new-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        for key in [31, 5, 45, KEY_SITELESS] {
+            assert!(root_node(&back, key).is_some(), "root key {key}");
+        }
+        let style = default_style(&back).unwrap();
+        assert_eq!(object(&back, Handle::new(style)).unwrap().dxf_name, "AECC_ALIGNMENT_STYLE");
+        assert_eq!(read_node(&back, companion_node(&back).unwrap()).unwrap().children.len(), 1);
+        match back.get_entity(h) {
+            Some(crate::entities::EntityType::Extended(x)) => match &x.data {
+                crate::entities::ExtendedEntityData::Arch(a) => assert_eq!(a.alignment_polylines(), vec![v.to_vec()]),
+                _ => panic!(),
+            },
+            _ => panic!(),
+        }
     }
 }

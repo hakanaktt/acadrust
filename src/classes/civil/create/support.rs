@@ -48,6 +48,8 @@ const CLASSES: &[Class] = &[
     Class { dxf: "AECC_ROOT_SETTINGS_NODE", cpp: "AeccDbRootSettingsNode", module: "AeccvBase130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_USER_DEFINED_ATTRIBUTE_CLASSIFICATION", cpp: "AeccDbUserDefinedAttributeClassification", module: "AeccvBase130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_POINT_STYLE", cpp: "AeccDbPointStyle", module: "AeccLand130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_ALIGNMENT_STYLE", cpp: "AeccDbAlignmentStyle", module: "AeccLand130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_ALIGNMENT_PARCEL_NODE", cpp: "AeccDbAlignmentParcelNode", module: "AeccLand130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_FEATURE_STYLE", cpp: "AeccDbFeatureStyle", module: "AeccLand130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_ALIGNMENT", cpp: "AeccDbAlignment", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_COGO_POINT", cpp: "AeccDbCogoPoint", module: "AeccLand130", proxy_flags: 0x33c, entity: true },
