@@ -291,7 +291,10 @@ take a number list.
 ## 3a. Alignments
 
 `add_alignment(doc, name, vertices, layer)` writes an alignment of fixed
-lines through the vertices (no curves), with the drawing's default
+lines through the vertices; `add_alignment_with_curves(doc, name,
+vertices, radii, layer)` adds a free arc of the given radius at inner
+vertices (0 for none), tangent to the lines before and after the vertex.
+Both use the drawing's default
 alignment style (the first style of the style tree's alignment style
 collection, key 93). A drawing that lacks that collection or the node of
 siteless alignments (root key 336) gets them (§3b); a drawing without any
@@ -319,20 +322,29 @@ RC 1, key 0x0B001081: BL 2, BL 0, BL 0
 BL 0 (byte form), 65 zero bits, BD 2.25, 7 bits 0111010
 BL 1 (first element id), BD 0, BD start station (0)
 7 bits 0000011, BD 0 (track gauge), B 0, BL 1
-BL n, n x {BL 257, BS 2, B 0, BS 0 (fixed), BS id, BS previous id,
-           BS next id, 2RD start, 2RD end}
+BL n, the lines then the arcs:
+  line: BL 257, BS 2, B 0, BS 0 (fixed), BS id, BS previous id,
+        BS next id, 2RD start, 2RD end (the vertices)
+  arc:  BL 258, BS 2, B 0, B 0, BD -1 (no design speed), BD -1, BS 1,
+        BD -1, BL 29 (fitted between two lines), B 0, BS id, BS previous
+        id, BS next id, BD radius
 BL 0 x 4 (intervals), BL 0 (equations), BL 1, BL 0 (design speeds)
 BD 100 (station increment), BL 0 (no superelevation), BL 0, BL 1
 (centerline), BL 2, 2, 2, 0, 3, B 0, BS 0x04BE
 handles: soft pointer 0, companion (hard pointer, twice), soft pointer 0,
          style (hard pointer), hard pointer 0
-strings: "AeccImpAlignment", "", "", name, five empty texts
+strings: "AeccImpAlignment", "", "", name, five empty texts, three more
+         per arc
 ```
 
 The key `0x0B001081` holds a value the application derives from the
 geometry (the same in two samples with the same line, different for other
-lines); written as 0 it is accepted (A4). The rest equals WA01 and WA02
-bit for bit (elements are ids 1..n in station order, linked in a chain).
+lines); written as 0 it is accepted (A4). The lines are ids 1..n in
+station order, each running from vertex to vertex (the application solves
+where an arc cuts them); the arcs take the ids after the lines in station
+order, and the links follow the path (WA03: lines 1 and 2, arc 3 between
+them, 1 -> 3 -> 2). The rest equals WA01 and WA02, and with WA03's
+polyline and radius WA03, bit for bit.
 
 ### Companion (`AECC_FEATURE_STYLE`)
 
@@ -346,21 +358,27 @@ BS 0x04BE, BL text id, BL 0 (no children), BL 0, BL 32, BL 210,
 21 bits 000000110010000000110, BL 0x80000001,
 nodes: BL n + 1 (next free id), BL n, BL 1 (first id),
        n x {3BD point (z 0), 3 bits 010, BL next id (0 last)}
-       (the ends are nodes 1 and 2, the inner vertices 3...)
+       (the ends are nodes 1 and 2, the inner points 3...)
 edges: BL 2, BL 1 (slots), BL 0, BL 1 (id), BL 48 (flags), BL n, BL 0,
-       n x {BL kind (0 line, 2 last), BL flags, BL node, BL face, BL face}
-       (flags 2, plus 0x30 when another segment follows; last 10; faces
-       1 = outside, 0 on the last vertex), BL 0, BL 0 x 3
+       n x {BL kind (0 line, 1 arc, 2 last), BL flags, BL node, BL face,
+            BL face, an arc: BD bulge (tan of a quarter of its signed
+            angle), BL 0}
+       (flags 2, plus 0x30 when another segment follows and 0x010F0000
+       for an arc; last 10; faces 1 = outside, 0 on the last point),
+       BL 0, BL 0 x 3
 faces: BL 2, BL 1, {BL 1, BL 1, BL 7, BL 1, BL 1, BL 0}, BL 0,
        6 x {BL 1, BL 100}, 6 x BL 0
 handles: the alignment (soft pointer), three empty soft pointers
 strings: name, ""
 ```
 
-The default feature style gains the companion as a child (its other
-fields are kept as the drawing has them). Written for a line and two
-lines, the companions equal WA01's and WA02's bit for bit apart from the
-text id. An alignment that refers to no companion stops the application
+The points are the solved path: the ends, then per inner vertex either
+the vertex or, with an arc, its two tangent points (`R tan(delta / 2)`
+before and after the vertex). The default feature style gains the
+companion as a child (its other fields are kept as the drawing has them).
+Written for a line and two lines, the companions equal WA01's and WA02's
+bit for bit apart from the text id; for WA03 the tangent points and the
+bulge differ from the application's in the last bits. An alignment that refers to no companion stops the application
 while it opens the drawing (A1); a companion without its topology is
 refused (`Errors Found`, A6).
 
@@ -490,6 +508,16 @@ values as WS03 (mean elevation 2.7708, 11 triangles, edge lengths 7.07 to
 surface and saves, acadrust reads the rebuilt triangulation (14
 vertices, 11 drawn triangles).
 
+Curves (new drawings with `AL1` written by acadrust through (0, 0),
+(100, 0), (200, 50) with radius 169.443; through (0, 0), (100, 0),
+(200, 50), (250, 150) with radii 50 and 30; and through (0, 0), (100, 0),
+(200, -50), (300, -50), (350, 50) with radii 50 (a right turn), none and
+40): AUDIT 0 errors; the API lists the lines and arcs with their links,
+the arcs with the written radii, the tangent points the writer computes
+(to 1e-13), centers on the inside of the turn (clockwise for the right
+turn) and stations 0 to 210.365, 322.487 and 418.026; the first equals
+WA03's alignment (stations and arc length 78.562).
+
 A new drawing with surface `S` from WS03's ten points, alignment `AL1`
 through (0, 0), (20, 20) and point 1 at (5, 15, 2), all written by
 acadrust (§2a, §3b, §3d): opens without a message, AUDIT 0 errors, the
@@ -508,8 +536,8 @@ taken from the records and checked bit for bit against them.
   one.
 - Point groups by name or full description, with exclusions, AND of
   several criteria, elevation ranges, override styles per group.
-- Alignments with curves or spirals, on a site, offset alignments,
-  labels; the written alignment style draws no markers (no marker style
+- Alignments with spirals, on a site, offset alignments, labels, design
+  speeds; the written alignment style draws no markers (no marker style
   is written).
 - Surfaces from point groups, breaklines, boundaries or edits.
 - Profiles, sites, sections, corridors, pipe networks: not written.
@@ -523,6 +551,6 @@ taken from the records and checked bit for bit against them.
 | point groups (number lists, elevation comparisons, description patterns) | yes | yes | yes (§4) | not needed (the application lists the written members) | names, full descriptions, exclusions, override settings |
 | point style, its collection, class and settings nodes | yes | yes, in a drawing without the tree (§2a) | yes (§4) | not needed | — |
 | label styles | partly | no | — | — | label node settings (1621 bits), collector and text style records |
-| alignments (fixed lines, siteless) | yes | yes (a new drawing gets §3b) | yes (§4) | not needed (the application solves the stored elements) | curves, spirals, sites, labels |
+| alignments (fixed lines and free arcs, siteless) | yes | yes (a new drawing gets §3b) | yes (§4) | not needed (the application solves the stored elements) | spirals, sites, labels |
 | TIN surfaces (added points) | yes | yes (a new drawing gets §3d) | yes (§4) | not needed (the stored triangulation is drawn; the application rebuilds it after an edit) | other definitions |
 | profiles, views, sites, parcels, feature lines, gradings, sections, corridors, networks | partly | no | — | — | not started |
