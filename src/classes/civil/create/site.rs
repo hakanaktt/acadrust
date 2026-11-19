@@ -22,7 +22,7 @@ const FIRST_SITE_TAG: u32 = 0x8004_0001;
 
 /// The default style of the style tree's collection `key`: its child with
 /// the default style id (30), or its only child.
-fn default_style_of(doc: &CadDocument, key: i32) -> Option<u64> {
+pub(super) fn default_style_of(doc: &CadDocument, key: i32) -> Option<u64> {
     let tree = read_node(doc, root_node(doc, KEY_STYLES)?)?;
     let head = tree.children.iter().find(|c| c.0 == key)?.1;
     let o = object(doc, Handle::new(head))?;
@@ -463,7 +463,7 @@ pub fn add_alignment_on_site(doc: &mut CadDocument, site: Handle, name: &str, ve
     };
     members.push(Member { handle: common.handle.value(), elevations: vec![0.0; path.len()], path, feature_line: false });
     write_container(doc, container, site, &members, line_style)?;
-    write_alignment(doc, common, name, &elements, style, container.value(), members.len() as i32, None, &[])
+    write_alignment(doc, common, name, &elements, style, container.value(), members.len() as i32, None, &[], &[])
 }
 
 /// The feature line record (`AECC_FEATURE_LINE`; its points are its edge

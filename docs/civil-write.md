@@ -652,6 +652,74 @@ drawing without parcel or feature line styles gives the site and its
 container none: the application opens such a site (E-S12, E-S13), AUDIT 0
 errors, lists its alignments and keeps the site without a style.
 
+## 3h. Profile views
+
+`add_profile_view(doc, alignment, name, origin, layer)` writes a profile
+view of an alignment and all its profiles, its lower left corner at
+`origin`, with the drawing's default profile view style (style tree key
+53) and the range a new view gets: stations from 200 before the
+alignment's start to 200 past its end, elevations from the profiles'
+lowest to their highest rounded out to 10, with 20 more below and above
+(WV01: alignment 0-100, profile 10-20, view -200-300 and -10-40; WV03:
+0-300 and 2-24.5, view -200-500 and -20-50). The alignment is written
+again with the view: its record's second count after the elements (`BL
+n, BL v, BL 0, BL n`) is the number of views, and the views follow the
+profiles in its references (soft pointers, oldest first).
+
+The view record (`AECC_PROFILE_VIEW`, an entity in model space) is the
+reader's frame (`view_frame_fields`) followed by 4841 bits of graph
+settings: the graph's title and frame, its four axes (left and right
+titled "Elevation", bottom and top "Station"), the range again and four
+values 10. Within them only 35 doubles depend on the view, all from the
+range: the width and height, their halves, the station and elevation
+limits; the rest (the default style's settings, with fixed values 1/6,
+1/12, -1/12, 1/48 and a title angle of 270 degrees) is the same in WV01
+to WV04, so it is written as constant runs between the named values. The
+references: soft 0, hard owner 0, the style, the alignment (hard), per
+profile its record (soft), its style (hard) and a hard 0, then hard 0 x
+4, soft 0, hard 0; texts "", "", name, "", name, "". The records written
+for WV01 to WV04's origins, ranges and profiles equal theirs bit for bit.
+
+The application recomputes the view from its style when it opens the
+drawing: a view written with an empty style (E-V2: no settings, no
+components) opens with the alignment's own range and a vertical scale of
+1. A drawing without the profile view style collection therefore gets the
+default style: the collection (`AECC_PROFILE_VIEW_STYLE` id 53, listing
+id 30) and the default style, both the style layout of §2a with the
+application's 168 settings in stored order (16 references to the text
+style "Standard", 16 label format codes of type 0x18, the users and the
+dates) and 36 plan components (ByBlock lineweight and linetype, the
+application's colors); no class data. Both equal WV01's records apart
+from the dates. A view written into a new drawing with them (E-V3) opens
+with AUDIT 0 errors and the API values of the application's own view:
+station -200 to 300, elevations 10-20, extents (0, -100) to (500, 400).
+
+When the drawing has a default profile label set (style tree key 96, id
+30), each profile gets four label groups in the view, entities in model
+space: lines (a label per tangent), PVIs (two labels: the first and the
+last tangent), sag curves and crest curves (a label per curve; a curve is
+a crest where the grade falls across it). Their styles are the label
+set's references 1 to 4 (line, PVI, sag, crest).
+
+```text
+293-bit run (the same in the four kinds), BL n, n labels, the kind's end
+label: the kind's template around the labelled entity's id (BL):
+  line 186 + 126 bits, curve 86 + 126 bits, PVI at the start 44 + 238
+  bits, PVI at the end 122 + 224 bits
+end: line 346, PVI 410, curve 346 bits (sag and crest the same)
+references: soft 0, soft 0, profile (soft), label style (hard), view
+  (soft), per label {profile (hard), view (soft)}
+texts: "AeccImpVAlignmentLineLabeling" (PVI..., SagCurve..., CrestCurve...),
+  four empty texts
+```
+
+The groups of WV01, WV02 and WV03 (two and four line labels, none to two
+curve labels) are reproduced bit for bit. With the view written into WR01
+(E-V1: view, groups and the alignment equal WV01's bit for bit) the
+application opens the drawing with AUDIT 0 errors and lists the view with
+the same API values as its own. A new drawing has no profile label set,
+so its views have no label groups.
+
 ## 4. Reference check
 
 For every written drawing the check opens it in its own reference instance
@@ -802,6 +870,8 @@ taken from the records and checked bit for bit against them.
 - Parcels, crossing members on a site (their splits and faces), feature
   lines with arcs or elevation points, parcel and feature line styles;
   sections, corridors, pipe networks: not written.
+- Profile views with a range, vertical scale or style other than the
+  default; the graph settings between the named values are constant runs.
 
 ## 6. Status
 
@@ -816,5 +886,5 @@ taken from the records and checked bit for bit against them.
 | TIN surfaces (added points) | yes | yes (a new drawing gets §3d) | yes (§4) | not needed (the stored triangulation is drawn; the application rebuilds it after an edit) | other definitions |
 | layout profiles (fixed tangents; free symmetric and asymmetric parabolas, free circular curves) | yes | yes (a new drawing gets §3f) | yes (§4) | not needed (the application solves the stored entities) | fixed and floating curves |
 | sites, alignments and feature lines on a site | yes | yes (a new drawing gets the node of sites, no styles) | yes (§4) | not needed (the application rewrites the site's cache) | parcels, crossing members, feature line arcs and elevation points |
-| profile views | yes (frame) | no | — | — | the view record's 4800-bit graph settings, label groups, view style |
+| profile views and their profile label groups | yes (frame) | yes (a new drawing gets the default view style, §3h) | yes (§3h) | not needed (the application recomputes the view from its style) | other ranges and styles, label groups in a new drawing (no label set) |
 | parcels, gradings, sections, corridors, networks | partly | no | — | — | not started |

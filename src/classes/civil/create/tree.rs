@@ -114,12 +114,16 @@ pub(super) enum Value {
     Reference(Shared),
     /// Type 0x0E: a color, `BS 0, BL method and value, RC 0`.
     Color(u32),
-    /// Type 0x0D.
+    /// Types 1 and 0x0D.
     Long(i32),
     /// Type 2.
     Double(f64),
     /// Type 3.
     Byte(u8),
+    /// Type 9: `3BD`.
+    Point([f64; 3]),
+    /// Type 0x18: `BL` byte count, UTF-16 with its terminator.
+    Wide(&'static str),
     /// Type 0x16: a FILETIME, written as the time of writing.
     Time,
 }
@@ -230,6 +234,17 @@ pub(super) fn style(doc: &mut CadDocument, handle: Handle, owner: Handle, st: St
                     Value::Long(v) => w.write_bit_long(*v),
                     Value::Double(v) => w.write_bit_double(*v),
                     Value::Byte(v) => byte(w, *v),
+                    Value::Point(p) => {
+                        for v in p {
+                            w.write_bit_double(*v);
+                        }
+                    }
+                    Value::Wide(t) => {
+                        let mut bytes: Vec<u8> = t.encode_utf16().flat_map(u16::to_le_bytes).collect();
+                        bytes.extend([0, 0]);
+                        w.write_bit_long(bytes.len() as i32);
+                        w.write_bytes(&bytes);
+                    }
                     Value::Time => w.write_bytes(&now),
                 }
             }
@@ -307,7 +322,7 @@ fn point_style(doc: &mut CadDocument, handle: Handle, owner: Handle, id: i32, ch
 }
 
 /// The CMC color word: method byte high, value low.
-fn color_word(c: Color) -> u32 {
+pub(super) fn color_word(c: Color) -> u32 {
     match c {
         Color::ByLayer => 0xC000_0000,
         Color::ByBlock => 0xC100_0000,

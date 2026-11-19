@@ -69,6 +69,12 @@ const CLASSES: &[Class] = &[
     Class { dxf: "AECC_DB_FIXED_PARABOLA_HLPTPATSPEAK", cpp: "AeccDbVAlignFixedParabolaHLPtPatsPeakInfos", module: "AeccLand130", proxy_flags: 0x77c, entity: false },
     Class { dxf: "AECC_DB_FIXED_ARC_HLPT", cpp: "AeccDbVAlignFixedArcHLPtInfos", module: "AeccLand130", proxy_flags: 0x77c, entity: false },
     Class { dxf: "AECC_DB_FLOAT_TANGENT_GRADELEN", cpp: "AeccDbVAlignFloatTangentGradeLenInfos", module: "AeccLand130", proxy_flags: 0x77c, entity: false },
+    Class { dxf: "AECC_PROFILE_VIEW_STYLE", cpp: "AeccDbGraphStyleProfile", module: "AeccLand130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_PROFILE_VIEW", cpp: "AeccDbGraphProfile", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
+    Class { dxf: "AECC_VALIGNMENT_LINE_LABEL_GROUP", cpp: "AeccDbVAlignmentLineLabeling", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
+    Class { dxf: "AECC_VALIGNMENT_PVI_LABEL_GROUP", cpp: "AeccDbVAlignmentPVILabeling", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
+    Class { dxf: "AECC_VALIGNMENT_SAGCURVE_LABEL_GROUP", cpp: "AeccDbVAlignmentSagCurveLabeling", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
+    Class { dxf: "AECC_VALIGNMENT_CRESTCURVE_LABEL_GROUP", cpp: "AeccDbVAlignmentCrestCurveLabeling", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_COGO_POINT", cpp: "AeccDbCogoPoint", module: "AeccLand130", proxy_flags: 0x33c, entity: true },
 ];
 
