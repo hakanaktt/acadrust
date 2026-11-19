@@ -800,7 +800,7 @@ fn add_lot_line_on(doc: &mut CadDocument, site: Handle, points: &[(Vector2, f64)
     }
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
-    let (container, mut members, mut parcels, line_style) = members_of(doc, site)?;
+    let (container, mut members, parcels, line_style) = members_of(doc, site)?;
     let met = members.iter().filter(|m| paths_meet(&m.outline(), &outline)).map(|m| m.kind).collect::<Vec<_>>();
     let arcs = |p: &[PathPoint]| p.iter().any(|q| q.1.is_some());
     let met_arcs = members.iter().any(|m| arcs(&m.path) && paths_meet(&m.outline(), &outline));
@@ -825,31 +825,61 @@ fn add_lot_line_on(doc: &mut CadDocument, site: Handle, points: &[(Vector2, f64)
     let line = common(doc);
     members.push(Member { handle: line.handle.value(), path, elevations: vec![0.0; n], elevation_points: vec![false; n], kind: MemberKind::LotLine { closed } });
     let inputs: Vec<Input> = members.iter().map(|m| Input { path: &m.path, elevations: &m.elevations, closed: m.closed() }).collect();
-    let faces = build(&inputs).map_err(invalid)?.faces.len();
-    let old = parcels.len();
-    let mut made = Vec::new();
-    for _ in old + 1..faces {
-        let c = common(doc);
-        parcels.push(c.handle.value());
-        made.push(c);
+    let arrangement = build(&inputs).map_err(invalid)?;
+    let faces = arrangement.faces.len();
+    // The earlier parcels: (record, number, face, label).
+    let earlier: Vec<(u64, i32, i32, Vector2)> = parcels
+        .iter()
+        .map(|h| match doc.get_entity(Handle::new(*h)) {
+            Some(EntityType::Extended(x)) => match &x.data {
+                ExtendedEntityData::Arch(a) => a.parcel_face().zip(a.parcel_label()).map(|((n, f), l)| (*h, n, f, l)),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect::<Option<_>>()
+        .ok_or_else(|| invalid("a parcel of the site cannot be read"))?;
+    // A parcel keeps the face its label lies in; the faces left over get
+    // new parcels, the new faces first (WP19, WP20).
+    let mut owner: Vec<Option<(u64, i32)>> = vec![None; faces];
+    for &(h, number, face, label) in &earlier {
+        let f = if met.is_empty() { Some(face) } else { arrangement.face_at(label, face) };
+        let slot = f.and_then(|f| owner.get_mut(f as usize - 1)).filter(|s| s.is_none()).ok_or_else(|| invalid("a parcel's label is in no face of its own"))?;
+        *slot = Some((h, number));
     }
+    let before = earlier.len() + 1;
+    let mut free: Vec<usize> = (1..faces).filter(|i| owner[*i].is_none()).collect();
+    free.sort_by_key(|i| (*i < before, *i));
+    let mut number = earlier.iter().map(|e| e.1).max().unwrap_or(0);
+    let mut made = Vec::new();
+    for i in free {
+        let c = common(doc);
+        number += 1;
+        owner[i] = Some((c.handle.value(), number));
+        made.push((c, number, i as i32 + 1));
+    }
+    let parcels: Vec<u64> = owner[1.min(faces)..].iter().map(|o| o.map_or(0, |o| o.0)).collect();
     let arrangement = write_container(doc, container, site, &members, &parcels, line_style)?;
     let segment = write_lot_line(doc, line, members.len() as i32, container)?;
-    // The earlier parcels keep their records; their labels follow their faces.
+    // The earlier parcels keep their records and numbers; their faces and
+    // labels follow the split.
     if !met.is_empty() {
-        for (i, p) in parcels[..old].iter().enumerate() {
-            let Some(EntityType::Extended(x)) = doc.get_entity(Handle::new(*p)) else { continue };
+        for (i, o) in owner.iter().enumerate().skip(1) {
+            let Some((h, number)) = *o else { continue };
+            if made.iter().any(|m| m.0.handle.value() == h) {
+                continue;
+            }
+            let Some(EntityType::Extended(x)) = doc.get_entity(Handle::new(h)) else { continue };
             let ExtendedEntityData::Arch(a) = &x.data else { continue };
             let refs = a.typed_handles();
             let (style, label_style) = (refs.get(3).map_or(style, |r| r.0), refs.get(4).map_or(label_style, |r| r.0));
             let common = x.common.clone();
-            write_parcel(doc, common, site, i as i32 + 1, i as i32 + 2, arrangement.faces[i + 1].label, style, label_style)?;
+            write_parcel(doc, common, site, number, i as i32 + 1, arrangement.faces[i].label, style, label_style)?;
         }
     }
     let mut out = Vec::new();
-    for (k, c) in made.into_iter().enumerate() {
-        let face = old + k + 2;
-        out.push(write_parcel(doc, c, site, face as i32 - 1, face as i32, arrangement.faces[face - 1].label, style, label_style)?);
+    for (c, number, face) in made {
+        out.push(write_parcel(doc, c, site, number, face, arrangement.faces[face as usize - 1].label, style, label_style)?);
     }
     Ok((segment, out))
 }
@@ -1108,6 +1138,14 @@ mod tests {
             assert_eq!(loops.len(), 1);
             assert!((area(&loops[0]).abs() - 1250.0).abs() < 1e-9);
         }
+        // A line through a parcel's label: the parcel follows its label,
+        // the faces left over get new parcels, new faces first.
+        let s2 = add_site(&mut back, "Site 2", "").unwrap();
+        let (_, p) = add_lot_line(&mut back, s2, &[w(0.0, 0.0), w(100.0, 0.0), w(100.0, 50.0), w(0.0, 50.0)], true, None).unwrap();
+        let (_, more) = add_lot_line(&mut back, s2, &[w(30.0, -20.0), w(30.0, 70.0), w(70.0, 70.0), w(70.0, -20.0)], false, None).unwrap();
+        let faces: Vec<(i32, i32)> = p.iter().chain(&more).map(|h| arch(&back, *h).parcel_face().unwrap()).collect();
+        assert_eq!(faces, vec![(1, 3), (2, 4), (3, 5), (4, 2)]);
+        assert_eq!(arch(&back, more[1]).parcel_label(), Some(v(85.0, 25.0)));
         // The site still takes members; the alignment keeps its edge.
         assert!(add_lot_line(&mut back, s, &[w(200.0, 0.0), w(300.0, 0.0), w(300.0, 50.0)], true, None).is_ok());
         assert_eq!(object(&back, Handle::new(container)).unwrap().site_members()[0], a.value());

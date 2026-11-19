@@ -55,6 +55,8 @@ pub(super) struct Face {
     pub entries: Vec<(i32, i32)>,
     /// A point inside the face (for a parcel's label).
     pub label: Vector2,
+    /// The face's boundary loops as straight pieces.
+    loops: Loops,
 }
 
 pub(super) struct Arrangement {
@@ -505,7 +507,7 @@ fn finish(s: &State) -> Result<Arrangement, &'static str> {
                 })
                 .collect();
             let loops: Vec<Vec<Half>> = f.entries.iter().map(|e| s.cycle(&segments, e.half())).collect();
-            Face { flags: if f.dirty { 6 } else { 14 }, entries, label: label_point(s, &segments, &loops) }
+            Face { flags: if f.dirty { 6 } else { 14 }, entries, label: label_point(s, &segments, &loops), loops: face_loops(s, &segments, &loops) }
         })
         .collect();
     Ok(Arrangement { nodes: s.nodes.clone(), edges, faces })
@@ -538,15 +540,94 @@ fn arc_points(p: Vector2, q: Vector2, bulge: f64, n: usize, extremes: bool) -> V
     out
 }
 
-/// Where a parcel's area label goes: the middle of its extents (arcs
-/// included, WP21) when that is inside the face (WP03 to WP16), else the
-/// middle of the widest run of the horizontal line through it inside the
-/// face (a loose line inside the face bounds it on both sides, WP10). The
-/// application takes the parcel's face from this point: with it on the
-/// boundary it gives the parcel another face (E-P2).
-// ponytail: the application's own fallback (WP17's right triangle: the
-// centroid of one of its triangles) is not followed; any inner point gives
-// the parcel its face.
+/// A face's boundary loops as straight pieces (arcs divided).
+type Loops = Vec<Vec<(Vector2, Vector2)>>;
+
+fn face_loops(s: &State, segments: &[(usize, usize, f64)], loops: &[Vec<Half>]) -> Loops {
+    let bulge = |h: &Half| segments.iter().find_map(|&(a, b, g)| if (a, b) == *h { Some(g) } else if (b, a) == *h { Some(-g) } else { None }).unwrap_or(0.0);
+    loops
+        .iter()
+        .map(|run| {
+            run.iter()
+                .flat_map(|h| {
+                    let (p, q) = (s.nodes[h.0].0, s.nodes[h.1].0);
+                    let mut points = arc_points(p, q, bulge(h), 64, false);
+                    points.push(q);
+                    points.windows(2).map(|w| (w[0], w[1])).collect::<Vec<_>>()
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn loop_area(pieces: &[(Vector2, Vector2)]) -> f64 {
+    pieces.iter().map(|(a, b)| a.cross(b)).sum()
+}
+
+fn inside_loop(pieces: &[(Vector2, Vector2)], p: Vector2) -> bool {
+    pieces.iter().fold(false, |acc, (a, b)| if (a.y > p.y) != (b.y > p.y) && p.x < a.x + (p.y - a.y) * (b.x - a.x) / (b.y - a.y) { !acc } else { acc })
+}
+
+fn distance(pieces: &Loops, p: Vector2) -> f64 {
+    pieces
+        .iter()
+        .flatten()
+        .map(|(a, b)| {
+            let d = *b - *a;
+            let t = if d.dot(&d) == 0.0 { 0.0 } else { ((p - *a).dot(&d) / d.dot(&d)).clamp(0.0, 1.0) };
+            (p - (*a + d * t)).length()
+        })
+        .fold(f64::INFINITY, f64::min)
+}
+
+/// Whether `p` lies inside a bounded face: inside its outline and outside
+/// the loops of what lies within it.
+fn face_holds(loops: &Loops, p: Vector2) -> bool {
+    let mut outline = false;
+    for l in loops {
+        let area = loop_area(l);
+        if area < 0.0 && inside_loop(l, p) {
+            outline = true;
+        } else if area > 0.0 && inside_loop(l, p) {
+            return false;
+        }
+    }
+    outline
+}
+
+fn loop_area_abs(loops: &Loops) -> f64 {
+    loops.iter().map(|l| loop_area(l)).filter(|a| *a < 0.0).map(f64::abs).sum()
+}
+
+impl Arrangement {
+    /// The bounded face holding `p`: `prefer` when `p` lies on its
+    /// boundary or inside it, else the smallest face around it.
+    pub(super) fn face_at(&self, p: Vector2, prefer: i32) -> Option<i32> {
+        if let Some(f) = self.faces.get((prefer.max(1) - 1) as usize).filter(|_| prefer >= 2) {
+            let scale = 1e-9 * (1.0 + p.x.abs().max(p.y.abs()));
+            if distance(&f.loops, p) <= scale || face_holds(&f.loops, p) {
+                return Some(prefer);
+            }
+        }
+        (1..self.faces.len())
+            .filter(|i| face_holds(&self.faces[*i].loops, p))
+            .min_by(|a, b| loop_area_abs(&self.faces[*a].loops).total_cmp(&loop_area_abs(&self.faces[*b].loops)))
+            .map(|i| i as i32 + 1)
+    }
+}
+
+/// Where a parcel's area label goes (WP03 to WP21). From the middle of
+/// the face's extents (arcs included) the label slides along the
+/// horizontal or the vertical line through it, whichever gets farther
+/// from the boundary, to the nearest point as far from the boundary as
+/// that line gets (rightward or upward on a tie). The middle stays when
+/// one of the two lines gets no deeper there (rectangles, WP14's
+/// triangle); a loose line pushes it aside (WP10),
+/// a notch up (WP18), a diagonal side to where the side stops mattering
+/// (WP19). A middle off a triangle gives its centroid (WP17).
+// ponytail: the slide samples 4096 points along each line, then refines;
+// other faces whose middle is off the face take the middle of the widest
+// run of the horizontal line through it.
 fn label_point(s: &State, segments: &[(usize, usize, f64)], loops: &[Vec<Half>]) -> Vector2 {
     let bulge = |h: &Half| segments.iter().find_map(|&(a, b, g)| if (a, b) == *h { Some(g) } else if (b, a) == *h { Some(-g) } else { None }).unwrap_or(0.0);
     let ends: Vec<(Vector2, Vector2, f64)> = loops.iter().flatten().map(|h| (s.nodes[h.0].0, s.nodes[h.1].0, bulge(h))).collect();
@@ -554,20 +635,70 @@ fn label_point(s: &State, segments: &[(usize, usize, f64)], loops: &[Vec<Half>])
     let extents: Vec<Vector2> = ends.iter().flat_map(|e| arc_points(e.0, e.1, e.2, 1, true)).collect();
     let (lo, hi) = extents.iter().fold((first.0, first.0), |(lo, hi), p| (Vector2::new(lo.x.min(p.x), lo.y.min(p.y)), Vector2::new(hi.x.max(p.x), hi.y.max(p.y))));
     let c = (lo + hi) * 0.5;
-    let halves: Vec<(Vector2, Vector2)> = ends
-        .iter()
-        .flat_map(|e| {
-            let mut run = arc_points(e.0, e.1, e.2, 64, false);
-            run.push(e.1);
-            run.windows(2).map(|w| (w[0], w[1])).collect::<Vec<_>>()
-        })
-        .collect();
-    let mut xs: Vec<f64> = halves.iter().filter(|(a, b)| (a.y <= c.y) != (b.y <= c.y)).map(|(a, b)| a.x + (c.y - a.y) * (b.x - a.x) / (b.y - a.y)).collect();
-    xs.sort_by(f64::total_cmp);
-    let eps = 1e-9 * (hi - lo).length().max(1.0);
-    let runs: Vec<(f64, f64)> = xs.chunks_exact(2).map(|r| (r[0], r[1])).collect();
-    if runs.iter().any(|r| r.0 + eps < c.x && c.x < r.1 - eps) {
-        return c;
+    let pieces = face_loops(s, segments, loops);
+    let scale = (hi - lo).length().max(1.0);
+    if !face_holds(&pieces, c) {
+        if ends.len() == 3 && ends.iter().all(|e| e.2 == 0.0) {
+            return (ends[0].0 + ends[1].0 + ends[2].0) * (1.0 / 3.0);
+        }
+        let halves: Vec<(Vector2, Vector2)> = pieces.iter().flatten().copied().collect();
+        let mut xs: Vec<f64> = halves.iter().filter(|(a, b)| (a.y <= c.y) != (b.y <= c.y)).map(|(a, b)| a.x + (c.y - a.y) * (b.x - a.x) / (b.y - a.y)).collect();
+        xs.sort_by(f64::total_cmp);
+        let runs: Vec<(f64, f64)> = xs.chunks_exact(2).map(|r| (r[0], r[1])).collect();
+        return runs.iter().max_by(|a, b| (a.1 - a.0).total_cmp(&(b.1 - b.0))).map_or(c, |r| Vector2::new((r.0 + r.1) / 2.0, c.y));
     }
-    runs.iter().max_by(|a, b| (a.1 - a.0).total_cmp(&(b.1 - b.0))).map_or(c, |r| Vector2::new((r.0 + r.1) / 2.0, c.y))
+    let depth = |p: Vector2| if face_holds(&pieces, p) { distance(&pieces, p) } else { -1.0 };
+    let tol = 1e-12 * scale;
+    let mut best: Option<(f64, Vector2)> = None;
+    for axis in [Vector2::new(1.0, 0.0), Vector2::new(0.0, 1.0)] {
+        let (from, to) = if axis.x != 0.0 { (lo.x - c.x, hi.x - c.x) } else { (lo.y - c.y, hi.y - c.y) };
+        let n = 4096;
+        let at = |t: f64| c + axis * t;
+        let step = (to - from) / n as f64;
+        let samples: Vec<(f64, f64)> = (0..=n).map(|i| from + step * i as f64).map(|t| (t, depth(at(t)))).collect();
+        // The farthest depth along the line, refined around the best sample.
+        let m = samples.iter().max_by(|x, y| x.1.total_cmp(&y.1)).map_or(0.0, |m| m.0);
+        let (mut a, mut b) = (m - step, m + step);
+        for _ in 0..200 {
+            let (m1, m2) = (a + (b - a) / 3.0, b - (b - a) / 3.0);
+            if depth(at(m1)) < depth(at(m2)) {
+                a = m1;
+            } else {
+                b = m2;
+            }
+        }
+        let peak = (a + b) / 2.0;
+        let top = depth(at(peak)).max(depth(at(0.0)));
+        let reaches = |t: f64| depth(at(t)) >= top - tol;
+        // The nearest point reaching it, rightward or upward first.
+        if reaches(0.0) {
+            // The middle is as deep as its line gets: it stays (WP14).
+            return c;
+        }
+        let t = {
+            let near = samples
+                .iter()
+                .filter(|x| x.1 >= top - 1e-6 * scale)
+                .min_by(|x, y| (x.0.abs(), -x.0.signum()).partial_cmp(&(y.0.abs(), -y.0.signum())).unwrap())
+                .map_or(peak, |x| x.0);
+            let mut outer = if reaches(near) { near } else { peak };
+            let mut inner = outer - step * outer.signum();
+            if reaches(inner) {
+                inner = 0.0;
+            }
+            for _ in 0..200 {
+                let mid = (inner + outer) / 2.0;
+                if reaches(mid) {
+                    outer = mid;
+                } else {
+                    inner = mid;
+                }
+            }
+            outer
+        };
+        if best.is_none_or(|b| top > b.0 + 1e-9 * scale) {
+            best = Some((top, at(t)));
+        }
+    }
+    best.map_or(c, |b| b.1)
 }
