@@ -20,6 +20,8 @@ pub(super) enum Target {
     ByBlock,
     /// The text style "Standard".
     Standard,
+    /// The material "ByLayer", or null in a drawing without it.
+    ByLayerMaterial,
     /// The style `id` of the style tree's collection `key` (written
     /// before this table).
     Style(i32, i32),
@@ -72,6 +74,7 @@ pub(super) fn write_templates(doc: &mut CadDocument, styles: Handle, templates: 
             Target::Layer0 => doc.layers.get("0")?.handle.value(),
             Target::ByBlock => doc.line_types.get("ByBlock")?.handle.value(),
             Target::Standard => doc.text_styles.get("Standard")?.handle.value(),
+            Target::ByLayerMaterial => doc.objects.iter().find_map(|(h, o)| matches!(o, crate::objects::ObjectType::Material(m) if m.name == "ByLayer").then_some(h.value())).unwrap_or(0),
             Target::Style(key, id) => {
                 let tree = read_node(doc, root_node(doc, super::tree::KEY_STYLES)?)?;
                 let collection = tree.children.iter().find(|c| c.0 == key)?.1;

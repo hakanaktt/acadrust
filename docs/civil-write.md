@@ -1385,8 +1385,17 @@ W-K01b, W-K02 to W-K05) and the editor's previews.
 
 `add_pipe_network`, `add_structure` and `add_pipe` write a network that
 uses the drawing's first parts list (`AECC_NETWORK_PART_LIST`; the
-application's templates have one, a drawing written by acadrust has
-none), its null structure and its 12 inch corrugated metal pipe.
+application's templates have one), its null structure and its 12 inch
+corrugated metal pipe. A drawing without a parts list gets the
+application's default one: the part catalog node (root key 0x136, as N02
+holds it: listing the fields of the null structure's and the pipe's part
+definitions), the parts list "Standard" and its 33 families with their
+size filters, written as N02's records with their references mapped (each
+filter's style is the default pipe or structure style; no rules; the
+material "ByLayer" or null), and the default pipe style (style tree key
+0x116) and structure style (0x117) written from templates as in §2c. The
+network rules are not written (the application's records name a rules
+module by its installed path).
 
 What the application adds with the first network, structure and pipe
 (samples N00-N03, the application's own, over WT01):
@@ -1447,6 +1456,25 @@ catalog node does not list the null structure's fields (a drawing that
 has never had one); pipes need no catalog fields. The written structure
 has no body block: the application lists it at its position, but its
 extents are the cached outline's.
+
+The catalog node's data after the fields holds the application's memory
+addresses (8-byte values that differ between WT01 and N00, two drawings
+of the same template), so it cannot be decoded. Measured:
+
+| written | result |
+|---|---|
+| a new drawing with the default parts list and styles (E-N32, E-N33) | AUDIT 0 |
+| the same with an empty network (E-N34) | AUDIT 0; the network lists the parts list "Standard" |
+| the same with the null structure's part definition and no part (E-N39) | AUDIT 0 |
+| a new drawing with a structure, a pipe or both (E-N30, E-N37, E-N38; with WT01's class table, E-N40) | "Errors Found" on opening |
+| N00 with N02's catalog node (copied, E-N36, or rewritten from the template, E-N35) and a structure | the application does not finish opening (as without the fields), while N01's node works (E-N21) |
+| WT01 with N02's catalog node, a structure and a pipe (E-N31) | does not finish opening |
+
+A new drawing's root lacks most of the application's root entries (the
+format manager, root key 0x4C, the storm sewer import defaults 0x16C,
+and all but two root settings); what the parts need from them is not
+known. `add_structure` and `add_pipe` therefore refuse a drawing without
+the format manager.
 
 ## 4. Reference check
 
@@ -1625,5 +1653,5 @@ taken from the records and checked bit for bit against them.
 | sections of a TIN surface (unsampled) | yes (geometry once sampled) | yes (§3j) | yes (§3j) | the application samples the source | corridor sources, lines added after sampling |
 | section views of a line (default style, unsampled section) | yes (frame) | yes, with the drawing's section view style or the default one (§3j, §2c) | yes (§3j, §2c) | not needed | sampled sections, several sections |
 | intersections of two crossing roads (the object only) | yes (stations, angles) | yes, with the drawing's intersection style or the default one (§3k, §2c) | yes (§3k, §2c) | not needed | offset alignments, curb returns, corridor regions and locking actions; tee junctions |
-| gravity pipe networks: null structures and 12 inch pipes, unconnected | partly (part positions, pipe ends, sizes of older part definitions) | yes, in a drawing with a parts list (§3m) | yes (§3m) | not needed (the application recomputes outlines, lengths and extents) | other families and sizes, connections, the structure's body block, the parts list of a new drawing |
+| gravity pipe networks: null structures and 12 inch pipes, unconnected | partly (part positions, pipe ends, sizes of older part definitions) | yes, in a drawing the application opened; a new drawing gets the default parts list and styles and an empty network (§3m) | yes (§3m) | not needed (the application recomputes outlines, lengths and extents) | other families and sizes, connections, the structure's body block, parts in a new drawing, a structure in a drawing whose catalog lacks its fields |
 | pressure networks, gradings, mass haul | partly | no | — | — | not started |

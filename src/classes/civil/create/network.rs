@@ -20,6 +20,10 @@ use crate::CadDocument;
 
 /// Named-objects entry holding the part definitions, keyed by size.
 const PART_DEFS: &str = "AECC_NETWORK_PART_DEFS";
+/// Root key of the format manager.
+const KEY_FORMAT_MANAGER: i32 = 0x4C;
+/// Root key of the part catalog node, the parts lists' owner.
+const KEY_PART_CATALOG: i32 = 0x136;
 const STRUCTURE_TEMPLATE: (i32, &str) = (0x125, "Structure - (<[67112990(2449)]>)");
 const PIPE_TEMPLATE: (i32, &str) = (0x126, "Pipe - (<[67112990(2449)]>)");
 
@@ -88,7 +92,24 @@ fn family_style(doc: &CadDocument, list: Handle, family: &str) -> Option<(u64, u
     })?;
     let filter = object(doc, Handle::new(*item.decode().handles.first()?))?;
     let refs = filter.decode().handles;
-    Some((*refs.get(1)?, *refs.get(2)?)).filter(|(s, r)| *s != 0 && *r != 0)
+    Some((*refs.get(1)?, *refs.get(2)?)).filter(|(s, _)| *s != 0)
+}
+
+/// The application's default parts list (with its catalog node under the
+/// root and the default pipe and structure styles) when the drawing has no
+/// parts list. Its size filters name no rules.
+fn ensure_parts_list(doc: &mut CadDocument) -> Result<Handle, DxfError> {
+    if let Some(list) = parts_list(doc) {
+        return Ok(list);
+    }
+    if root_node(doc, KEY_PART_CATALOG).is_some() {
+        return Err(invalid("drawing has a part catalog without a parts list"));
+    }
+    super::default_styles::ensure_pipe_network_styles(doc)?;
+    let root = ensure_civil(doc)?;
+    let handles = super::templates::write_templates(doc, root, PARTS_LIST)?;
+    set_root_entry(doc, KEY_PART_CATALOG, handles[0])?;
+    Ok(handles[1])
 }
 
 /// The part definition of `part`, written when the drawing lacks it, under
@@ -222,13 +243,13 @@ fn read_network(doc: &CadDocument, network: Handle) -> Option<Network> {
 }
 
 /// Adds an empty gravity pipe network named `name` on `layer` (layer "0"
-/// when `None`) that uses the drawing's first parts list. The drawing must
-/// have a parts list (the application's templates have one).
+/// when `None`) that uses the drawing's first parts list; a drawing
+/// without one gets the application's default parts list.
 pub fn add_pipe_network(doc: &mut CadDocument, name: &str, layer: Option<&str>) -> Result<Handle, DxfError> {
     if name.is_empty() {
         return Err(invalid("a pipe network needs a name"));
     }
-    let list = parts_list(doc).ok_or_else(|| invalid("drawing has no parts list"))?;
+    let list = ensure_parts_list(doc)?;
     let common = entity_common(doc, layer)?;
     ensure_name_template(doc, STRUCTURE_TEMPLATE)?;
     ensure_name_template(doc, PIPE_TEMPLATE)?;
@@ -239,6 +260,13 @@ pub fn add_pipe_network(doc: &mut CadDocument, name: &str, layer: Option<&str>) 
 /// number in the network) and adds it to the network's lists.
 fn place(doc: &mut CadDocument, network: Handle, part: &Part, structure: bool, write: impl FnOnce(&mut CadDocument, EntityCommon, Vec<Ref>, usize) -> Result<Handle, DxfError>) -> Result<Handle, DxfError> {
     let mut net = read_network(doc, network).ok_or_else(|| invalid("not a pipe network"))?;
+    // ponytail: a drawing written from scratch (no format manager, root
+    // key 0x4C, and few root settings) does not open once it holds a part;
+    // what the parts need from the application's tree is not known, so a
+    // drawing without the format manager is refused.
+    if root_node(doc, KEY_FORMAT_MANAGER).is_none() {
+        return Err(invalid("drawing lacks the application's settings that pipe network parts need"));
+    }
     let (style, rules) = family_style(doc, Handle::new(net.list), part.family).ok_or_else(|| invalid("the network's parts list lacks the part's family"))?;
     if structure && !catalog_lists_structure_fields(doc, Handle::new(net.list)) {
         return Err(invalid("the parts list's catalog does not list the structure's fields yet"));
@@ -368,6 +396,10 @@ mod tests {
         strings.extend(STRUCTURE_CATALOG_FIELDS.iter().flat_map(|f| texts(f.2)));
         put_object(doc, "AECC_NETWORK_PART_CATALOG_DEF_NODE", catalog, root, Vec::new(), |w| bits(w, &format!("{FIELD_MARK}01010100000101010000{:010b}10{records}", 0b01_0000_0000 | STRUCTURE_CATALOG_FIELDS.len())), Body { refs: vec![soft_owner(list.value())], strings }).unwrap();
         put_object(doc, "AECC_NETWORK_PART_LIST", list, catalog, Vec::new(), |_| {}, Body { refs: Vec::new(), strings: vec![String::new()] }).unwrap();
+        // A stand-in format manager (the parts' guard looks for it).
+        let manager = doc.allocate_handle();
+        put_object(doc, "AECC_PIPE_STYLE", manager, root, Vec::new(), |_| {}, Body { refs: Vec::new(), strings: Vec::new() }).unwrap();
+        set_root_entry(doc, KEY_FORMAT_MANAGER, manager).unwrap();
         let mut styles = [0; 4];
         for (i, family) in [NULL_STRUCTURE.family, CORRUGATED_PIPE_12.family].into_iter().enumerate() {
             let [item, filter, style, rules] = [(); 4].map(|_| doc.allocate_handle());
@@ -385,9 +417,18 @@ mod tests {
     #[test]
     fn networks_list_their_parts_and_parts_keep_their_places() {
         let v = Vector3::new;
+        // A drawing without a parts list gets the default one and its
+        // styles; parts are refused there.
+        let mut fresh = CadDocument::new();
+        fresh.version = DxfVersion::AC1032;
+        let n0 = add_pipe_network(&mut fresh, "N", None).unwrap();
+        let list = parts_list(&fresh).unwrap();
+        assert_eq!(read_network(&fresh, n0).unwrap().list, list.value());
+        assert_eq!(fresh.objects.values().filter(|o| matches!(o, ObjectType::Arch(a) if a.dxf_name == "AECC_NETWORK_PART_FAMILY_ITEM" && a.owner == list)).count(), 33);
+        assert!(family_style(&fresh, list, NULL_STRUCTURE.family).is_some());
+        assert!(add_structure(&mut fresh, n0, v(0.0, 0.0, 0.0), 0.0).is_err());
         let mut doc = CadDocument::new();
         doc.version = DxfVersion::AC1032;
-        assert!(add_pipe_network(&mut doc, "N", None).is_err(), "no parts list");
         let styles = with_parts_list(&mut doc);
         assert!(add_pipe_network(&mut doc, "", None).is_err());
         let n = add_pipe_network(&mut doc, "NW1", None).unwrap();
