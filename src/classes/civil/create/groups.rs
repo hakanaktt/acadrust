@@ -334,8 +334,8 @@ pub(super) fn refresh_groups(doc: &mut CadDocument, s: &Support, points: &[CogoP
 
 /// Adds a point group holding the points whose numbers are in `numbers`
 /// (its query lists them; points added later with one of these numbers
-/// join it). The drawing must hold the civil settings and style tree, as
-/// for [`super::add_cogo_point`].
+/// join it). The drawing's point support is found or written as for
+/// [`super::add_cogo_point`].
 pub fn add_point_group(doc: &mut CadDocument, name: &str, description: Option<&str>, numbers: &[u32]) -> Result<Handle, DxfError> {
     let s = support(doc)?;
     let list = entries(doc, s.group_node).ok_or_else(|| invalid("point group node cannot be read"))?;

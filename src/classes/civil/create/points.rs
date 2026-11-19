@@ -61,8 +61,8 @@ fn settings_node(doc: &CadDocument, name: &str) -> Option<(u64, Vec<u64>)> {
 /// the create-points settings node ("AeccCreatePoints") is what a group
 /// refers to, and the class node of COGO points is the class node named
 /// "AeccDbCogoPoint" (its first text; the parent class node lists every
-/// class name). `None` when the drawing has no settings tree (see
-/// docs/civil-write.md: the styles are not written by this crate yet).
+/// class name). `None` when the drawing has no settings tree; a label
+/// style of 0 (none) is accepted.
 fn defaults(doc: &CadDocument) -> Option<Defaults> {
     let (_, points) = settings_node(doc, "AeccPoints")?;
     let [.., label_style, point_style] = points[..] else { return None };
@@ -71,11 +71,15 @@ fn defaults(doc: &CadDocument) -> Option<Defaults> {
         crate::objects::ObjectType::Arch(a) if a.dxf_name == "AECC_CLASS_NODE" && a.decode().strings.first().map(String::as_str) == Some("AeccDbCogoPoint") => Some(h.value()),
         _ => None,
     })?;
-    (point_style != 0 && label_style != 0).then_some(Defaults { point_style, label_style, create_settings, class_node })
+    (point_style != 0).then_some(Defaults { point_style, label_style, create_settings, class_node })
 }
 
 pub(super) fn support(doc: &mut CadDocument) -> Result<Support, DxfError> {
-    let defaults = defaults(doc).ok_or_else(|| invalid("drawing has no civil point styles"))?;
+    let defaults = match defaults(doc) {
+        Some(d) => d,
+        None if super::tree::ensure_point_tree(doc)? => defaults(doc).ok_or_else(|| invalid("written point tree cannot be read"))?,
+        None => return Err(invalid("drawing has a civil tree without point styles")),
+    };
     ensure_civil(doc)?;
     if let (Some(database), Some(group_node)) = (root_node(doc, KEY_POINTS), root_node(doc, KEY_POINT_GROUPS)) {
         let groups = object(doc, group_node).map(|o| o.decode().handles).unwrap_or_default();
@@ -213,9 +217,10 @@ fn put_point(doc: &mut CadDocument, handle: Option<Handle>, number: u32, layer: 
 }
 
 /// Adds a COGO point. `number` `None` takes the next free number;
-/// `style` `None` gives it the drawing's default point style. The drawing
-/// must hold the civil settings and style tree (one the reference
-/// application has opened); a new drawing returns an error.
+/// `style` `None` gives it the drawing's default point style. A drawing
+/// without the civil settings and style tree gets the point style, class
+/// and settings nodes a point needs (`tree.rs`); a drawing with a tree
+/// that has no point styles returns an error.
 pub fn add_cogo_point(
     doc: &mut CadDocument,
     number: Option<u32>,
@@ -333,8 +338,34 @@ mod tests {
     }
 
     #[test]
-    fn a_new_drawing_without_styles_is_refused_unchanged() {
+    fn a_new_drawing_gets_its_point_style_and_settings() {
         let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        add_cogo_point(&mut doc, Some(1), Vector3::new(1.0, 2.0, 3.0), None, None, None).unwrap();
+        let back = round_trip(&doc);
+        let style = cogo_points(&back)[0].style;
+        assert_ne!(style, 0);
+        assert_eq!(cogo_points(&back)[0].label_style, 0);
+        for key in [31, 5, 45] {
+            assert!(root_node(&back, key).is_some(), "root key {key}");
+        }
+        // The written style reads back with its six components and marker.
+        let o = object(&back, Handle::new(style)).unwrap();
+        let (data, start, end) = o.main_stream().unwrap();
+        let handles = o.decode().handles;
+        let components = crate::classes::civil::style::components(data, start, end, &handles, |h| h == back.layers.get("0").unwrap().handle.value());
+        assert_eq!(components.len(), 6);
+        assert!(components[0].visible && !components[2].visible);
+        assert_eq!(crate::classes::civil::style::marker(data, start, end).map(|m| (m.kind, m.absolute)), Some((3, false)));
+    }
+
+    #[test]
+    fn a_tree_without_point_styles_is_refused_unchanged() {
+        let mut doc = CadDocument::new();
+        let root = ensure_civil(&mut doc).unwrap();
+        let styles = doc.allocate_handle();
+        put_object(&mut doc, "AECC_TREE_NODE", styles, root, Vec::new(), |_| {}, Body { refs: Vec::new(), strings: Vec::new() }).unwrap();
+        set_root_entry(&mut doc, 31, styles).unwrap();
         let before = doc.objects.len();
         assert!(add_cogo_point(&mut doc, None, Vector3::new(1.0, 2.0, 3.0), None, None, None).is_err());
         assert_eq!(doc.objects.len(), before);

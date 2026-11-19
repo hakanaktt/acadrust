@@ -29,13 +29,30 @@ Measured:
 | a point, the point database, the point group node, `_All Points` and its queries, every style, settings and class node reference null | opens without a message; the application builds its tree, but AUDIT reports the point database and `_All Points`, the point has no style and does not draw |
 | the same in a drawing the application has opened once (its tree present), defaults looked up as in §3 | opens without a message, AUDIT 0 errors, both points listed with the default styles, in `_All Points`, and drawn where the application draws them; an elevation edit through the API and a save read back by acadrust give the edited value |
 
-So the application builds its tree on open, but a written point must refer
-to styles that exist when the drawing is read. Until the style records
-(point style, label collector style and its components, the points
-settings nodes) are encoded by this crate, the point writer only works in
-drawings that already hold the tree — a drawing the reference application
-has opened once. In a drawing without it, `add_cogo_point` returns an
-error and leaves the drawing unchanged.
+A written point must refer to styles that exist when the drawing is read,
+but the application completes a partial tree: under every node it keeps
+the children written and adds the missing ones (missing root keys, style
+collections, settings nodes), so a writer only writes the part a point
+refers to. Measured on drawings that copy records of a sample one by one
+(kept outside the repository):
+
+| written besides the points | opened by the reference application |
+|---|---|
+| point and label styles owned by the root, not in a style tree | opens; the application adds its own style tree; AUDIT reports `_All Points` (its settings node is not the application's) |
+| style tree (root key 31) with only the point style collection (key 35) | the application lists the written style as the drawing's only point style and adds every other collection |
+| label styles under a label node (style tree key 3) | listed as the drawing's point label styles |
+| no label style at all (database, group node and points settings refer to none) | opens, AUDIT 0 errors; points have no label, the application adds its label styles |
+| root settings node (root key 45) with only the points settings, which list only the create-points settings | AUDIT 0 errors; the application adds the other 88 settings nodes and the 56 other points settings |
+| settings nodes written without settings (`BL 0, B 0, BL 0` after the child keys) | AUDIT 0 errors; the application fills in its defaults (it saves the full root settings record, 35648 bits) |
+| root settings ending in the tree nodes' 3 bits, or points settings ending `BL 0, B 0` without the item count | refused (`Errors Found`) |
+| the label node without its settings | opens with 64 AUDIT errors (its label styles take their properties from it) |
+
+So a point needs, in a drawing without the tree, the records of §2a:
+the style tree with the point style collection, the class node of COGO
+points, and the root settings node with the points and create-points
+settings. `add_cogo_point` writes them when the drawing has none of root
+keys 31, 5 and 45; a drawing that has one of them but no point styles is
+refused unchanged.
 
 The class table entries the writer adds give only the module name as the
 application name (`AeccLand130`, `AeccvBase130`); the application accepts
@@ -54,6 +71,66 @@ Keys used by the writer: 32 point group node, 34 point database, 75 outer
 query of `_All Points`. Other keys the application adds: 31 style tree,
 45 root settings node, 5 class nodes, 362 tag manager. New entries are
 appended; existing ones keep their order.
+
+## 2a. The style, class and settings nodes of a new drawing
+
+Every node (`AECC_TREE_NODE`, `AECC_CLASS_NODE`, `AECC_SETTINGS_NODE`,
+`AECC_ROOT_SETTINGS_NODE`, `AECC_USER_DEFINED_ATTRIBUTE_CLASSIFICATION`)
+has the root's layout:
+
+```text
+BS 0x04BE, BL key, BL n, n × BL child key, then
+  tree and class nodes:  BL 0, 3 bits 010
+  settings nodes:        BL 0, B has settings, [settings], BL items, items
+handles: n × child (soft owner), then the node's own references
+strings: own name, "" when the own key is a text id, the names of the
+         children whose keys are text ids, then the node's own texts
+```
+
+A key with the high bit set is a text id (`0x80000000 | n`, numbered per
+session; the writer uses `0x80020001` to `0x80020003`); its name is the
+text. Written (`B 0`: the application fills in the settings):
+
+| record | key | children | own references | texts |
+|---|---|---|---|---|
+| style tree (root 31) | 31 | 35 → point styles | — | `""` |
+| class nodes (root 5) | 5 | text id → `AeccDbCogoPoint` | hard owner 0 | `""`, `AeccDbCogoPoint` |
+| `AeccDbCogoPoint` | text id | `0xEA6` → classification | hard owner 0 | name, `""`, name |
+| classification | `0xEA6` | — | — | `""` |
+| root settings (root 45) | 45 | text id → `AeccPoints` | soft pointer 0 | `""`, `AeccPoints` |
+| `AeccPoints` | text id | text id → `AeccCreatePoints` | soft pointers: default label style (none), default point style | name, `""`, `AeccCreatePoints` |
+| `AeccCreatePoints` | text id | — | — | name, `""` |
+
+The root settings record of a drawing the application built holds 89
+settings children, a settings block and 715 style items of 34 bits each
+(`BL 715` before them, one soft pointer each); written without settings
+its body is 18 bits after the key.
+
+### Point styles (`AECC_POINT_STYLE`)
+
+```text
+BS 0x04BE, BL id, BL n, n × BL child id, BL 0,
+BL 0, B 1, RC 4, keys 0x04001008, 0x04001010 (no value),
+                 0x1600101F, 0x1600101E (FILETIME: created, modified)
+BL 32, 3 bits 001
+8 component lists: plan (marker, label), model (marker, label),
+  profile (1), section (1), four empty hatch lists. A component:
+  BL index, BS 80, BS 80, BS 0, BS 80, B visible, CMC color (BS 0,
+  BL 0xC1000000 ByBlock, RC 0), BS lineweight (-2 plan and model, -1
+  the others), BD linetype scale 1, BL 1, BL 0, BL 0x01000000, BL 0
+marker: BS 3 (cross), 2 bits 10, BD 0.1/12 (size), RC 0 (plotted units),
+  44 bits the same in every point style of the samples
+handles: n × child (soft owner), soft pointer 0, per component (layer
+  "0", linetype ByBlock (plan, model) or ByLayer, plot style 0) as hard
+  pointers, hard pointer 0
+strings: own name, "" when the id is a text id, the names of the children
+  with text ids, created by, modified by, two empty texts per component
+```
+
+The collection (style tree key 35) is a point style with id 35 that lists
+its styles; its default style has id 30 and no name. Written with the
+application's defaults, both records equal the samples' bit for bit apart
+from the dates.
 
 ## 3. COGO points
 
@@ -210,15 +287,24 @@ errors, the API lists `G` with numbers 2, 4, 6 and the query string
 acadrust removes point 3, adds point 7 and renames `G` to `H` listing 1, 5:
 AUDIT 0 errors, `H` holds 1, 5, `Q` 1, 7, `_All Points` 1, 2, 4, 5, 6, 7.
 
+A new drawing (`CadDocument::new()`, never opened by the application)
+with points 1 at (100, 200, 10) "TEST" and 2 at (150, 250, 12) and group
+`G` listing 2, written by acadrust with the §2a records: opens without a
+message, AUDIT 0 errors, the API lists the written point style as the
+drawing's only point style and both points with it (no label style),
+`_All Points` 1, 2 and `G` 2; both points draw a cross of the size the
+application gives its own points; after the API sets point 1's elevation
+to 11 and saves, acadrust reads point 1 at (100, 200, 11).
+
 A wrong bit count in a query statement makes the application refuse the
 whole drawing with a recovery prompt, so every constant run above was
 taken from the records and checked bit for bit against them.
 
 ## 5. What is left
 
-- Style records (point style, label collector style and its component
-  styles, settings nodes, class nodes): needed to write points, and every
-  other kind, into a drawing that has no tree.
+- Label styles (the label node and its collector and text styles): a
+  point written into a new drawing has no label until the user gives it
+  one.
 - Point groups with other queries (ranges, descriptions, elevations,
   names), override styles per group, more than seven groups (the bucket
   rule is checked up to seven).
@@ -230,9 +316,10 @@ taken from the records and checked bit for bit against them.
 | kind | read by fields | write | reference check passed | rebuild flag used | blocked by |
 |---|---|---|---|---|---|
 | root tree node | yes | yes | yes (empty root: AUDIT 0) | — | — |
-| COGO points, database, `_All Points` | yes | yes, in a drawing with the tree | yes (§4) | not needed (the application draws points from the database) | style, settings and class node records for drawings without the tree |
-| point groups (number lists) | yes | yes, in a drawing with the tree | yes (§4) | not needed (the application lists the written members) | other query kinds, override settings |
-| point / label styles | partly | no | — | — | style records not decoded |
+| COGO points, database, `_All Points` | yes | yes (a new drawing gets §2a) | yes (§4) | not needed (the application draws points from the database) | — |
+| point groups (number lists) | yes | yes | yes (§4) | not needed (the application lists the written members) | other query kinds, override settings |
+| point style, its collection, class and settings nodes | yes | yes, in a drawing without the tree (§2a) | yes (§4) | not needed | — |
+| label styles | partly | no | — | — | label node settings (1621 bits), collector and text style records |
 | alignments | yes | no | — | — | geometry stamp, constant runs, label sets, styles |
 | TIN surfaces | yes (with points) | no | — | — | empty-surface layout, point-group definition, styles |
 | profiles, views, sites, parcels, feature lines, gradings, sections, corridors, networks | partly | no | — | — | not started |
