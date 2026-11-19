@@ -80,7 +80,7 @@ fn default_style(doc: &CadDocument) -> Option<u64> {
 
 /// The identifier a profile record stores before its last 107 bits, a
 /// version-4 GUID (the alignment lists its profiles by it).
-fn identifier(doc: &CadDocument, profile: u64) -> Option<[u8; 16]> {
+pub(super) fn identifier(doc: &CadDocument, profile: u64) -> Option<[u8; 16]> {
     let EntityType::Extended(x) = doc.get_entity(Handle::new(profile))? else { return None };
     let ExtendedEntityData::Arch(a) = &x.data else { return None };
     (a.dxf_name == "AECC_PROFILE").then_some(())?;
