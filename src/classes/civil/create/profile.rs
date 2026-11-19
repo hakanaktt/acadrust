@@ -117,23 +117,60 @@ fn new_identifier(seed: u64) -> [u8; 16] {
     id
 }
 
-/// One entity of the profile: a tangent from PVI to PVI, or a parabola of
-/// `length` at an inner PVI (crest when the grade falls).
+/// The vertical curve at an inner PVI of a layout profile.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum VerticalCurve {
+    /// The tangents meet at the PVI.
+    None,
+    /// A free symmetric parabola of this length (crest where the grade
+    /// falls).
+    Parabola(f64),
+    /// A free asymmetric parabola of these lengths before and after the
+    /// PVI.
+    Asymmetric { before: f64, after: f64 },
+    /// A free circular curve of this radius.
+    Circular(f64),
+}
+
+impl VerticalCurve {
+    fn is_some(self) -> bool {
+        self != VerticalCurve::None
+    }
+
+    /// The stations it takes before and after its PVI between the grades
+    /// `g1` and `g2`, `None` when its values are not positive.
+    fn reach(self, g1: f64, g2: f64) -> Option<(f64, f64)> {
+        let positive = |v: f64| (v.is_finite() && v > 0.0).then_some(v);
+        match self {
+            VerticalCurve::None => Some((0.0, 0.0)),
+            VerticalCurve::Parabola(l) => positive(l).map(|l| (l / 2.0, l / 2.0)),
+            VerticalCurve::Asymmetric { before, after } => Some((positive(before)?, positive(after)?)),
+            VerticalCurve::Circular(r) => {
+                let (a1, a2) = (g1.atan(), g2.atan());
+                let t = positive(r)? * ((a2 - a1).abs() / 2.0).tan();
+                Some((t * a1.cos(), t * a2.cos()))
+            }
+        }
+    }
+}
+
+/// One entity of the profile: a tangent from PVI to PVI, or a vertical
+/// curve at an inner PVI.
 enum Part {
     Tangent(Vector2, Vector2),
-    Parabola { length: f64, crest: bool },
+    Curve { curve: VerticalCurve, crest: bool },
 }
 
 /// The entities through `pvis`: the tangents (ids 1..n in station order)
-/// then a parabola per inner PVI with a length (ids after the tangents),
-/// as `(id, previous, next, part)`, linked along the profile.
-fn parts(pvis: &[Vector2], curves: &[f64]) -> Vec<(i32, i32, i32, Part)> {
+/// then a curve per inner PVI that has one (ids after the tangents), as
+/// `(id, previous, next, part)`, linked along the profile.
+fn parts(pvis: &[Vector2], curves: &[VerticalCurve]) -> Vec<(i32, i32, i32, Part)> {
     let n = pvis.len() - 1;
     let mut next = n as i32;
     let ids: Vec<Option<i32>> = curves
         .iter()
         .map(|c| {
-            (*c > 0.0).then(|| {
+            c.is_some().then(|| {
                 next += 1;
                 next
             })
@@ -150,7 +187,7 @@ fn parts(pvis: &[Vector2], curves: &[f64]) -> Vec<(i32, i32, i32, Part)> {
     let grade = |i: usize| (pvis[i + 1].y - pvis[i].y) / (pvis[i + 1].x - pvis[i].x);
     for (j, c) in curves.iter().enumerate() {
         if let Some(id) = ids[j] {
-            out.push((id, j as i32 + 1, j as i32 + 2, Part::Parabola { length: *c, crest: grade(j + 1) < grade(j) }));
+            out.push((id, j as i32 + 1, j as i32 + 2, Part::Curve { curve: *c, crest: grade(j + 1) < grade(j) }));
         }
     }
     out
@@ -163,21 +200,24 @@ fn parts(pvis: &[Vector2], curves: &[f64]) -> Vec<(i32, i32, i32, Part)> {
 /// RC 24 keys (KEYS), BL 0 (one-byte form)
 /// 63 zero bits, BD 2, 9 bits 011011010
 /// BL 0, BD 0, BD 0, BD 30, 5 x BS 0, 10 bits 0000001000
-/// BL n, the tangents then the parabolas; each: 11 bits (2 tangent,
-///   6 parabola), 23 bits (0x08 << 13), BL 0 (constraint), BL id,
-///   BL previous id, BL next id, then
-///   tangent:  2RD start, 2RD end (station, elevation), 4 zero bits
-///   parabola: BL 1, BD length, BL 0x1001 crest / 0x1000 sag, BL 0,
-///             3 bits 010, 3 x BD -1 (no minimum K)
+/// BL n, the tangents then the curves; each: 11 bits (2 tangent,
+///   4 circular, 6 parabola, 8 asymmetric parabola), 23 bits
+///   (0x08 << 13), BL constraint, BL id, BL previous id, BL next id, then
+///   tangent (0):     2RD start, 2RD end (station, elevation), 4 zero bits
+///   parabola (0):    BL 1, BD length, BL 0x1001 crest / 0x1000 sag, BL 0,
+///                    3 bits 010, 3 x BD -1 (no minimum K)
+///   circular (9):    BD radius
+///   asymmetric (10): BD length before, BD length after the PVI
 /// 2 bits 10, the identifier (a version-4 GUID, 16 bytes), TAIL_BITS
 /// references: the seven helpers (hard ownership), soft 0, hard 0, hard 0,
 ///   soft 0, style (hard), alignment (hard), soft 0, hard 0, soft 0, soft 0
 /// texts: "AeccImpVAlignment", "", "", the type-4 keys' texts, name, four
-///   empty texts and one more per parabola
+///   empty texts and one more per symmetric parabola
 /// ```
 ///
-/// Written with WR01's and WR02's PVIs and curve, the records equal the
-/// samples' bit for bit apart from the geometry stamp and the identifier.
+/// Written with the PVIs and curves of WR01, WR02 and WR10 to WR13, the
+/// records equal the samples' bit for bit apart from the geometry stamp
+/// and the identifier.
 #[allow(clippy::too_many_arguments)]
 fn write_profile(doc: &mut CadDocument, common: EntityCommon, name: &str, parts: &[(i32, i32, i32, Part)], helpers: &[Handle; 7], style: u64, alignment: Handle, id: &[u8; 16]) -> Result<Handle, DxfError> {
     let byte = |w: &mut DwgMergedWriter, v: u8| bits(w, &format!("{v:08b}"));
@@ -189,7 +229,7 @@ fn write_profile(doc: &mut CadDocument, common: EntityCommon, name: &str, parts:
         _ => None,
     }));
     strings.push(name.to_string());
-    let parabolas = parts.iter().filter(|p| matches!(p.3, Part::Parabola { .. })).count();
+    let parabolas = parts.iter().filter(|p| matches!(p.3, Part::Curve { curve: VerticalCurve::Parabola(_), .. })).count();
     strings.extend((0..4 + parabolas).map(|_| String::new()));
     put_entity(
         doc,
@@ -227,9 +267,14 @@ fn write_profile(doc: &mut CadDocument, common: EntityCommon, name: &str, parts:
             bits(w, "0000001000");
             w.write_bit_long(parts.len() as i32);
             for (id, previous, next, part) in parts {
-                let prefix = if matches!(part, Part::Tangent(..)) { 2 } else { 6 };
+                let (prefix, constraint) = match part {
+                    Part::Tangent(..) => (2, 0),
+                    Part::Curve { curve: VerticalCurve::Circular(_), .. } => (4, 9),
+                    Part::Curve { curve: VerticalCurve::Asymmetric { .. }, .. } => (8, 10),
+                    Part::Curve { .. } => (6, 0),
+                };
                 bits(w, &format!("{prefix:011b}{:023b}", 0x08 << 13));
-                for v in [0, *id, *previous, *next] {
+                for v in [constraint, *id, *previous, *next] {
                     w.write_bit_long(v);
                 }
                 match part {
@@ -239,16 +284,24 @@ fn write_profile(doc: &mut CadDocument, common: EntityCommon, name: &str, parts:
                         }
                         bits(w, "0000");
                     }
-                    Part::Parabola { length, crest } => {
-                        w.write_bit_long(1);
-                        w.write_bit_double(*length);
-                        w.write_bit_long(if *crest { 0x1001 } else { 0x1000 });
-                        w.write_bit_long(0);
-                        bits(w, "010");
-                        for _ in 0..3 {
-                            w.write_bit_double(-1.0);
+                    Part::Curve { curve, crest } => match *curve {
+                        VerticalCurve::Parabola(length) => {
+                            w.write_bit_long(1);
+                            w.write_bit_double(length);
+                            w.write_bit_long(if *crest { 0x1001 } else { 0x1000 });
+                            w.write_bit_long(0);
+                            bits(w, "010");
+                            for _ in 0..3 {
+                                w.write_bit_double(-1.0);
+                            }
                         }
-                    }
+                        VerticalCurve::Circular(radius) => w.write_bit_double(radius),
+                        VerticalCurve::Asymmetric { before, after } => {
+                            w.write_bit_double(before);
+                            w.write_bit_double(after);
+                        }
+                        VerticalCurve::None => {}
+                    },
                 }
             }
             bits(w, "10");
@@ -285,24 +338,39 @@ fn write_helpers(doc: &mut CadDocument, profile: Handle) -> Result<[Handle; 7], 
 /// Adds a layout profile to `alignment` through `pvis` (station,
 /// elevation; stations increasing) on `layer` (layer "0" when `None`),
 /// with a free symmetric parabola of length `curves[j]` at inner PVI
-/// `j + 1` (0 for none). The parabolas must fit on the tangents. The
-/// alignment must be one this crate writes (it is written again with the
-/// profile in its list); a drawing without a profile style gets the
-/// default one.
+/// `j + 1` (0 for none). See [`add_profile_with_curves`].
 pub fn add_profile(doc: &mut CadDocument, alignment: Handle, name: &str, pvis: &[Vector2], curves: &[f64], layer: Option<&str>) -> Result<Handle, DxfError> {
+    let curves: Vec<VerticalCurve> = curves.iter().map(|c| if *c == 0.0 { VerticalCurve::None } else { VerticalCurve::Parabola(*c) }).collect();
+    add_profile_with_curves(doc, alignment, name, pvis, &curves, layer)
+}
+
+/// Adds a layout profile to `alignment` through `pvis` (station,
+/// elevation; stations increasing) on `layer` (layer "0" when `None`),
+/// with the vertical curve `curves[j]` at inner PVI `j + 1`. The curves
+/// must fit on the tangents. The alignment must be one this crate writes
+/// (it is written again with the profile in its list); a drawing without
+/// a profile style gets the default one.
+pub fn add_profile_with_curves(doc: &mut CadDocument, alignment: Handle, name: &str, pvis: &[Vector2], curves: &[VerticalCurve], layer: Option<&str>) -> Result<Handle, DxfError> {
     if pvis.len() < 2 || pvis.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) || pvis.windows(2).any(|w| w[1].x <= w[0].x) {
         return Err(invalid("a profile needs two or more finite PVIs with increasing stations"));
     }
-    if curves.len() + 2 != pvis.len() || curves.iter().any(|c| !c.is_finite() || *c < 0.0) {
-        return Err(invalid("a profile needs one curve length (0 for none) per inner PVI"));
+    if curves.len() + 2 != pvis.len() {
+        return Err(invalid("a profile needs one curve (or none) per inner PVI"));
     }
     let grade = |i: usize| (pvis[i + 1].y - pvis[i].y) / (pvis[i + 1].x - pvis[i].x);
+    let mut reach = Vec::with_capacity(curves.len());
     for (j, c) in curves.iter().enumerate() {
-        let before = if j == 0 { 0.0 } else { curves[j - 1] / 2.0 };
-        let after = curves.get(j + 1).copied().unwrap_or(0.0) / 2.0;
-        let fits = c / 2.0 + before <= pvis[j + 1].x - pvis[j].x && c / 2.0 + after <= pvis[j + 2].x - pvis[j + 1].x;
-        if *c > 0.0 && (!fits || grade(j) == grade(j + 1)) {
-            return Err(invalid("a curve does not fit on its tangents or its grades are equal"));
+        let r = c.reach(grade(j), grade(j + 1)).ok_or_else(|| invalid("a vertical curve needs positive values"))?;
+        if c.is_some() && grade(j) == grade(j + 1) {
+            return Err(invalid("a curve's grades are equal"));
+        }
+        reach.push(r);
+    }
+    for j in 0..curves.len() {
+        let before = if j == 0 { 0.0 } else { reach[j - 1].1 };
+        let after = reach.get(j + 1).map_or(0.0, |r| r.0);
+        if reach[j].0 + before > pvis[j + 1].x - pvis[j].x || reach[j].1 + after > pvis[j + 2].x - pvis[j + 1].x {
+            return Err(invalid("a curve does not fit on its tangents"));
         }
     }
     if name.is_empty() {
@@ -435,5 +503,30 @@ mod tests {
         assert_eq!(object(&back, Handle::new(extension)).unwrap().dxf_name, "AECC_VALIGNMENT_STYLE_EXTENSION");
         assert_eq!(arch(&back, p).typed_handles()[11].0, style);
         assert_eq!(arch(&back, p).profile_name(), Some("P1".into()));
+    }
+
+    #[test]
+    fn circular_and_asymmetric_curves_round_trip() {
+        use crate::classes::civil::ProfilePiece;
+        let mut doc = drawing();
+        let v = |x: f64, y: f64| Vector2::new(x, y);
+        let al = crate::classes::civil::add_alignment(&mut doc, "AL1", &[v(0.0, 0.0), v(300.0, 0.0)], None).unwrap();
+        let pvis = [v(0.0, 10.0), v(50.0, 20.0), v(100.0, 15.0), v(150.0, 25.0), v(250.0, 18.0)];
+        let curves = [VerticalCurve::Circular(50.0), VerticalCurve::Asymmetric { before: 8.0, after: 12.0 }, VerticalCurve::Parabola(20.0)];
+        assert!(add_profile_with_curves(&mut doc, al, "X", &pvis, &[VerticalCurve::Circular(2000.0), VerticalCurve::None, VerticalCurve::None], None).is_err());
+        assert!(add_profile_with_curves(&mut doc, al, "X", &pvis, &[VerticalCurve::Asymmetric { before: 0.0, after: 1.0 }, VerticalCurve::None, VerticalCurve::None], None).is_err());
+        let p = add_profile_with_curves(&mut doc, al, "P1", &pvis, &curves, None).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-profile-curves-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let pieces = arch(&back, p).profile_pieces();
+        let kinds: Vec<_> = pieces.iter().map(|p| p.0).collect();
+        use ProfilePiece::*;
+        assert_eq!(kinds, vec![Tangent, Circular, Tangent, AsymmetricParabola, Tangent, Parabola, Tangent]);
+        // The circle of radius 50 leaves the first grade where the
+        // reference application starts it (station 42.6636).
+        assert!((pieces[0].1.last().unwrap().x - 42.663_583_344).abs() < 1e-6);
+        assert!((pieces[3].1[0].x - 92.0).abs() < 1e-9 && (pieces[3].1.last().unwrap().x - 112.0).abs() < 1e-9);
     }
 }
