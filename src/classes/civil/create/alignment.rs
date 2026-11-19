@@ -23,7 +23,7 @@ const SPIRAL_CURVE_SPIRAL: i32 = 260;
 const SCS_BETWEEN_LINES: i32 = 0;
 const SPIRAL_DEFINITION: i32 = 256;
 /// Flags of an arc edge in the companion topology, besides the line flags.
-const ARC_EDGE: i32 = 0x010F_0000;
+pub(super) const ARC_EDGE: i32 = 0x010F_0000;
 
 /// What an alignment does at an inner vertex.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -57,7 +57,7 @@ impl VertexCurve {
 /// 1..n in station order, from vertex to vertex) then a curve element per
 /// curved inner vertex (ids after the lines, in station order), linked
 /// along the path.
-fn elements(vertices: &[Vector2], curves: &[VertexCurve]) -> Vec<AlignmentElement> {
+pub(super) fn elements(vertices: &[Vector2], curves: &[VertexCurve]) -> Vec<AlignmentElement> {
     let n = vertices.len() - 1;
     let mut next = n as i16;
     let ids: Vec<Option<i16>> = curves
@@ -96,7 +96,7 @@ const STAMP: i32 = 0x0B00_1081;
 
 /// The drawing's default alignment style: the first style of the style
 /// tree's alignment style collection.
-fn default_style(doc: &CadDocument) -> Option<u64> {
+pub(super) fn default_style(doc: &CadDocument) -> Option<u64> {
     let tree = root_node(doc, 31)?;
     let o = object(doc, tree)?;
     let (data, start, end) = fields_of(o)?;
@@ -134,14 +134,14 @@ fn new_name(seed: u64) -> String {
 /// A point of the solved alignment path and the segment that starts there:
 /// `None` a line, `Some(bulge)` an arc (`tan` of a quarter of its signed
 /// angle, positive to the left).
-type PathPoint = (Vector2, Option<f64>);
+pub(super) type PathPoint = (Vector2, Option<f64>);
 
 /// The solved path of `elements` (the crate's own solver): each line from
 /// its start, each arc from its start with its bulge, each spiral as
 /// chords between its solved points, then the end. `None` when a curved
 /// vertex has no turn or a curve is not positive, or the curves do not fit
 /// on the lines (a line would run backwards or a piece is missing).
-fn solve(vertices: &[Vector2], curves: &[VertexCurve], elements: &[AlignmentElement]) -> Option<Vec<PathPoint>> {
+pub(super) fn solve(vertices: &[Vector2], curves: &[VertexCurve], elements: &[AlignmentElement]) -> Option<Vec<PathPoint>> {
     for (j, c) in curves.iter().enumerate() {
         let (u, v) = (vertices[j + 1] - vertices[j], vertices[j + 2] - vertices[j + 1]);
         let turn = u.cross(&v).atan2(u.dot(&v));

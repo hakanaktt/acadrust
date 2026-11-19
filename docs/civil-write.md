@@ -549,6 +549,84 @@ with id 0, no children, the users and the dates, one profile component 12
 (ByLayer), no class data. The four records equal W001's bit for bit apart
 from the dates.
 
+## 3g. Sites and alignments on a site
+
+`add_site(doc, name, description)` writes an empty site;
+`add_alignment_on_site(doc, site, name, vertices, curves, layer)` writes an
+alignment like `add_alignment_with_curves` whose geometry joins the site's
+container instead of a companion. A site is an `AECC_PARCEL` entity named
+`AeccImpFace` that belongs to no other site; it owns its container (an
+`AECC_FEATURE_STYLE` record) and is listed by the node of the sites (root
+key 2, `AECC_PARCEL_NODE`).
+
+```text
+site:
+BL 80, BL 0, BL 80, BL 80, BL 0, BL 0x10025F04, B 0, BL site text id,
+3 bits 101
+RC 6 keys: 0x10008018, 0x10008017 (layers), 0x0D00800A BL 0,
+  0x10008016 (layer), 0x02008022 BD 0.1, 0x0200800B BD 5.0
+BL 0 (one-byte form), 121 zero bits
+6 x BD 0, BL 0, BL 99, BL 0, BL 0, BL 1, BL 1, BL 1, B 0, BS 0x04BE
+references: the three layers (hard), soft pointer 0, the node of the sites
+  (hard), the container (hard ownership), the parcel style (hard), hard
+  pointer 0, the parcel style twice (hard)
+texts: "AeccImpFace", "", name, description
+
+node of the sites:
+BS 0x04BE, BL 2, BL 0, BL n, n x BL site text id, BL 32, 3 bits 001
+references: n x site (soft pointer), soft pointer 0, the node's own (the
+  default parcel area and segment label styles, hard)
+texts: "", the site names
+
+container:
+BS 0x04BE, BL 0, BL 0, BL 0, BL 32, BL 210, 21 bits 000000110010000000110,
+BL 0x80000001,
+nodes: BL next free id, BL n, BL first id, n x {3BD, 3 bits 010,
+  BL next id} (ids per member: its ends, then its inner points; records in
+  hash order, seven buckets by (id - 1) mod 7, the newest first)
+edges: BL next free id, BL m, per member BL 0, BL id, BL 48, BL count,
+  BL 0, count x {BL kind (0 line, 1 arc, 2 last), BL flags, BL node,
+  BL 1, BL 1 (0, 0 on the last point), an arc: BD bulge, BL 0}, BL 0,
+  BL 0 x 3
+faces: BL 2, BL 1 (0 without members), the outside face {BL 1, BL 1,
+  BL 14, BL m, m x {BL 2 id - 1, BL 0}}, BL 1, 6 x {BL 1, BL 1},
+  6 x BL 0
+references: per member the alignment (soft) and soft pointer 0, then
+  (with members) the site (soft) and soft pointer 0, then the default
+  feature line style (hard)
+texts: ""
+```
+
+The points of a container run as one chain through its members in edge
+order: a point's flags are 2, plus 0x30 when another segment follows it
+in its edge or a later one, plus 0x80 on the first point of an edge after
+the first, plus 0x010F0000 for an arc; an edge's last point's are 10.
+
+The site takes the default parcel style and feature line style: the child
+with id 30 of the style tree's parcel style collection (key 2) and feature
+line style collection (key 128; that collection also holds named styles).
+The site text ids are written from `0x80040001`. Written for the samples'
+names, the site, its container and the node of sites equal WT01's bit for
+bit apart from the text id; the containers written for WT07's and WT10 to
+WT13's alignments (one to four members, one to three segments each, ten
+nodes) equal the samples'. The run after the site's keys is a cache the
+application rewrites: once an alignment joins a site it saves other values
+there (six BDs of the members' extents among them), but a site written
+with the empty-site values opens with any container (E-T1).
+
+An alignment on a site is the siteless record with the container in place
+of the companion (the samples' records are the same bit for bit, WA09 and
+WA01); no companion is written and the siteless node is not changed. A new
+member must not cross or touch the site's members: the application splits
+crossing members at their intersections and makes parcels of the closed
+faces (WT09), which is not written. A site is accepted only when writing
+its container from what is read gives back its record.
+
+A drawing without the node of sites gets it with no label styles, and a
+drawing without parcel or feature line styles gives the site and its
+container none: the application opens such a site (E-S12, E-S13), AUDIT 0
+errors, lists its alignments and keeps the site without a style.
+
 ## 4. Reference check
 
 For every written drawing the check opens it in its own reference instance
@@ -654,6 +732,18 @@ A new drawing with alignment `AL1` through (0, 0), (100, 0) and profile
 §3b, §3f): opens without a message, AUDIT 0 errors, the API lists `P1`
 under `AL1` with the written profile style and its two tangents and PVIs.
 
+Sites (WA00 and W001, drawings the application has opened, and new
+drawings): WA00 plus sites `Site 1` and `Second` written by acadrust, an
+alignment on `Site 1` through (0, 0), (100, 0), (200, 50) with an arc of
+radius 80 and one through (0, 50), (100, 80); W001 plus a site with four
+alignments of two lines each (twelve nodes); a new drawing with two sites,
+the same two alignments on the first and a profile with a parabola on the
+curved one; WT01 (the application's site) plus four alignments written on
+it: no message, AUDIT 0 errors; the API lists the sites with their names
+and their alignments in the written order, the alignments with their
+lines and arcs (the arc of radius 80 from station 81.115 to 118.206), and
+the profile under its alignment with its tangents and parabola.
+
 A new drawing with surface `S` from WS03's ten points, alignment `AL1`
 through (0, 0), (20, 20) and point 1 at (5, 15, 2), all written by
 acadrust (§2a, §3b, §3d): opens without a message, AUDIT 0 errors, the
@@ -679,7 +769,9 @@ taken from the records and checked bit for bit against them.
 - Profiles with other curve constraints (fixed or floating curves, curves
   by K or through a point), profiles of alignments the application has
   changed.
-- Sites, sections, corridors, pipe networks: not written.
+- Parcels, crossing alignments on a site (their splits and faces),
+  feature lines, parcel and feature line styles; sections, corridors, pipe
+  networks: not written.
 
 ## 6. Status
 
@@ -693,4 +785,6 @@ taken from the records and checked bit for bit against them.
 | alignments (fixed lines, free arcs and spiral-curve-spirals, siteless) | yes | yes (a new drawing gets §3b) | yes (§4) | not needed (the application solves the stored elements) | other constraints, sites, labels |
 | TIN surfaces (added points) | yes | yes (a new drawing gets §3d) | yes (§4) | not needed (the stored triangulation is drawn; the application rebuilds it after an edit) | other definitions |
 | layout profiles (fixed tangents; free symmetric and asymmetric parabolas, free circular curves) | yes | yes (a new drawing gets §3f) | yes (§4) | not needed (the application solves the stored entities) | fixed and floating curves |
-| profile views, sites, parcels, feature lines, gradings, sections, corridors, networks | partly | no | — | — | not started |
+| sites, alignments on a site | yes | yes (a new drawing gets the node of sites, no styles) | yes (§4) | not needed (the application rewrites the site's cache) | parcels, crossing members |
+| profile views | yes (frame) | no | — | — | the view record's 4800-bit graph settings, label groups, view style |
+| parcels, feature lines, gradings, sections, corridors, networks | partly | no | — | — | not started |

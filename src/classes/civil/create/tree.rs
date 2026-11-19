@@ -12,13 +12,13 @@ use crate::types::{Color, Handle};
 use crate::CadDocument;
 
 /// Root keys of the style tree, the class nodes and the settings.
-const KEY_STYLES: i32 = 31;
+pub(super) const KEY_STYLES: i32 = 31;
 const KEY_CLASSES: i32 = 5;
 const KEY_SETTINGS: i32 = 45;
 /// Style tree key of the point style collection.
 const KEY_POINT_STYLES: i32 = 35;
 /// Id of a collection's unnamed default style.
-const DEFAULT_STYLE_ID: i32 = 30;
+pub(super) const DEFAULT_STYLE_ID: i32 = 30;
 /// Key of the attribute classification under a class node.
 const KEY_CLASSIFICATION: i32 = 0xEA6;
 /// Text ids of the written class and settings nodes (their names are the
