@@ -23,7 +23,9 @@ pub(crate) const MAX_SYSTEM_PAGE_SIZE: usize = 16 * 1024 * 1024;
 /// sections at 0xF800; single-page sections such as previews reach about 1 MiB.
 pub(crate) const MAX_DATA_PAGE_SIZE: usize = 4 * 1024 * 1024;
 
-/// Largest decompressed size of one section; it also bounds the sum of the section's pages.
+/// Default largest decompressed size of one section; it also bounds the sum of the section's
+/// pages. [`DwgReadOptions::max_section_bytes`](crate::DwgReadOptions::max_section_bytes)
+/// replaces it.
 pub(crate) const MAX_SECTION_SIZE: usize = 1024 * 1024 * 1024;
 
 /// Allocates a zero-filled buffer, reporting an allocation failure as an error.
@@ -312,6 +314,51 @@ mod tests {
             .collect();
         let info = header_info(false, section(8, 0xF800, 300, pages), HashMap::new());
         rejected(&info, "page total 1258291200 is outside");
+    }
+
+    #[test]
+    fn the_section_size_limit_can_be_changed() {
+        // Raised: the 1.2 GB of pages pass the section limit and reach the budget.
+        let pages = (1..=300)
+            .map(|n| page(n, MAX_DATA_PAGE_SIZE as u64, 8))
+            .collect();
+        let info = header_info(false, section(8, 0xF800, 300, pages), HashMap::new());
+        for options in [DwgReadOptions::default(), DwgReadOptions::failsafe()] {
+            let failsafe = options.failsafe;
+            let mut reader = DwgReader::from_stream_with_options(
+                Cursor::new(Vec::new()),
+                options
+                    .with_max_section_bytes(2 << 30)
+                    .with_max_decompressed_bytes(1 << 20),
+            );
+            let message = match reader.get_section_buffer("AcDb:Header", &info) {
+                Err(error) => error.to_string(),
+                Ok(bytes) => panic!("failsafe={failsafe}: read {} bytes", bytes.len()),
+            };
+            assert!(message.contains("budget"), "failsafe={failsafe}: {message}");
+        }
+        // Lowered: an 8-byte section is too large for 4 bytes, in AC18 and AC21 files.
+        for ac18 in [true, false] {
+            let info = header_info(
+                ac18,
+                section(8, 8, 1, vec![page(7, 8, 0)]),
+                HashMap::from([(7, (0i64, 64i64))]),
+            );
+            for options in [DwgReadOptions::default(), DwgReadOptions::failsafe()] {
+                let mut reader = DwgReader::from_stream_with_options(
+                    Cursor::new(vec![0u8; 64]),
+                    options.with_max_section_bytes(4),
+                );
+                let message = reader
+                    .get_section_buffer("AcDb:Header", &info)
+                    .unwrap_err()
+                    .to_string();
+                assert!(
+                    message.contains("size 8 is outside the accepted range 0..=4"),
+                    "ac18={ac18}: {message}"
+                );
+            }
+        }
     }
 
     /// Reading the section under `budget` must fail with "budget" in strict and failsafe mode.
