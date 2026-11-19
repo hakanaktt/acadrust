@@ -173,21 +173,7 @@ fn read_view_rep_sketch_geometry(
     }
 }
 
-fn read_view_rep(reader: &mut DwgMergedReader) -> ViewRep {
-    let header_values = [
-        reader.read_bit_long(),
-        reader.read_bit_long(),
-        reader.read_bit_long(),
-        reader.read_bit_long(),
-        reader.read_bit_long(),
-    ];
-    let name = reader.read_variable_text();
-    let scale = reader.read_bit_long();
-    let header_status = reader.read_bit_long();
-    let description = reader.read_variable_text();
-    let source_id = reader.read_bit_long_long();
-    let source_enabled = reader.read_bit();
-    let source_version = reader.read_bit_long();
+fn read_view_rep_model(reader: &mut DwgMergedReader) -> ViewRepModelGeometry {
     let model_id = reader.read_bit_long_long();
     let guid = read_view_rep_guid(reader);
     let marker = reader.read_byte();
@@ -224,6 +210,41 @@ fn read_view_rep(reader: &mut DwgMergedReader) -> ViewRep {
             geometry,
             final_flag,
         });
+    }
+    ViewRepModelGeometry {
+        model_id,
+        guid,
+        marker,
+        transform,
+        transform_version,
+        database_id,
+        geometry_version,
+        geometry_marker,
+        sketches,
+    }
+}
+
+fn read_view_rep(reader: &mut DwgMergedReader) -> ViewRep {
+    let header_values = [
+        reader.read_bit_long(),
+        reader.read_bit_long(),
+        reader.read_bit_long(),
+        reader.read_bit_long(),
+        reader.read_bit_long(),
+    ];
+    let name = reader.read_variable_text();
+    let scale = reader.read_bit_long();
+    let header_status = reader.read_bit_long();
+    let description = reader.read_variable_text();
+    let source_id = reader.read_bit_long_long();
+    let source_enabled = reader.read_bit();
+    let source_version = reader.read_bit_long();
+    // `source_version` counts the model geometry blocks; the record always
+    // carries the first one.
+    let first = read_view_rep_model(reader);
+    let mut more_models = Vec::new();
+    for _ in 0..count(source_version.saturating_sub(1), reader) {
+        more_models.push(read_view_rep_model(reader));
     }
     let related_objects = [read_view_rep_handle(reader), read_view_rep_handle(reader)];
     let source_manager = read_view_rep_handle(reader);
@@ -292,15 +313,16 @@ fn read_view_rep(reader: &mut DwgMergedReader) -> ViewRep {
         source_id,
         source_enabled,
         source_version,
-        model_id,
-        guid,
-        marker,
-        transform,
-        transform_version,
-        database_id,
-        geometry_version,
-        geometry_marker,
-        sketches,
+        model_id: first.model_id,
+        guid: first.guid,
+        marker: first.marker,
+        transform: first.transform,
+        transform_version: first.transform_version,
+        database_id: first.database_id,
+        geometry_version: first.geometry_version,
+        geometry_marker: first.geometry_marker,
+        sketches: first.sketches,
+        more_models,
         related_objects,
         source_manager,
         owned_objects,
@@ -418,11 +440,20 @@ pub fn read_class_object_data(
             })
         }
         "ACDBVIEWREP" => ClassObjectData::ViewRep(read_view_rep(reader)),
-        "ACDBVIEWREPSOURCEMGR" => ClassObjectData::ViewRepSourceManager(ViewRepSourceManager {
-            has_source: reader.read_bit(),
-            source: Handle::from(reader.read_handle()),
-            status: reader.read_bit_long(),
-        }),
+        "ACDBVIEWREPSOURCEMGR" => {
+            let has_source = reader.read_bit();
+            // The handle stream carries the source only when there is one.
+            let source = if has_source {
+                Handle::from(reader.read_handle())
+            } else {
+                Handle::NULL
+            };
+            ClassObjectData::ViewRepSourceManager(ViewRepSourceManager {
+                has_source,
+                source,
+                status: reader.read_bit_long(),
+            })
+        }
         "ACDBVIEWREPSTANDARD" => ClassObjectData::ViewRepStandard(ViewRepStandard {
             values: [
                 reader.read_bit_long(),

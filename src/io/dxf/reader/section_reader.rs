@@ -6658,110 +6658,10 @@ impl<'a> SectionReader<'a> {
                 let source_id = fields.i64(section, 160);
                 let source_enabled = fields.bool(section, 290);
                 let source_version = fields.i32(section, 90);
-                let model_id = fields.i64(section, 160);
-                let data1 = fields.i32(section, 90);
-                let data2 = fields.i16(section, 70);
-                let data3 = fields.i16(section, 70);
-                let mut data4 = [0; 8];
-                for item in &mut data4 {
-                    *item = fields.i32(section, 280) as u8;
-                }
-                let marker = fields.i32(section, 280) as u8;
-                let mut transform = [0.0; 16];
-                for item in &mut transform {
-                    *item = fields.f64(section, 40);
-                }
-                let transform_version = fields.i32(section, 90);
-                let database_id = fields.i64(section, 160);
-                let geometry_version = fields.i32(section, 90);
-                let geometry_marker = fields.i32(section, 90);
-                let mut sketches = Vec::new();
-                for _ in 0..fields.i32(section, 90).max(0).min(100_000) {
-                    let id = fields.i32(section, 90);
-                    let sketch_version = fields.i32(section, 90);
-                    let mut references = Vec::new();
-                    for _ in 0..fields.i32(section, 90).max(0).min(100_000) {
-                        references.push(ViewRepSketchReference {
-                            object: fields.handle(section, 330),
-                            flag: fields.bool(section, 290),
-                        });
-                    }
-                    let reserved = fields.i32(section, 90);
-                    let enabled = fields.bool(section, 290);
-                    let type_code = fields.i32(section, 90);
-                    let geometry = match type_code {
-                        19 | 23 => ViewRepSketchGeometry::Line {
-                            type_code,
-                            first: fields.point3(section, 10),
-                            second: fields.point3(section, 10),
-                        },
-                        11 => ViewRepSketchGeometry::Circle {
-                            type_code,
-                            center: fields.point3(section, 10),
-                            normal: fields.point3(section, 10),
-                            direction: fields.point3(section, 10),
-                            radius: fields.f64(section, 40),
-                            start_parameter: fields.f64(section, 40),
-                            end_parameter: fields.f64(section, 40),
-                            reserved: fields.f64(section, 40),
-                        },
-                        42 => {
-                            let flags = [fields.bool(section, 70), fields.bool(section, 70)];
-                            let degree = fields.i32(section, 90);
-                            let tolerance = fields.f64(section, 40);
-                            let knot_header = [
-                                fields.i32(section, 90),
-                                fields.i32(section, 90),
-                                fields.i32(section, 90),
-                            ];
-                            let mut knots = Vec::new();
-                            for _ in 0..knot_header[0].max(0).min(100_000) {
-                                knots.push(fields.f64(section, 40));
-                            }
-                            let weight_header = [
-                                fields.i32(section, 90),
-                                fields.i32(section, 90),
-                                fields.i32(section, 90),
-                            ];
-                            let mut weights = Vec::new();
-                            for _ in 0..weight_header[0].max(0).min(100_000) {
-                                weights.push(fields.f64(section, 40));
-                            }
-                            let point_header = [
-                                fields.i32(section, 90),
-                                fields.i32(section, 90),
-                                fields.i32(section, 90),
-                            ];
-                            let mut control_points = Vec::new();
-                            for _ in 0..point_header[0].max(0).min(100_000) {
-                                control_points.push(fields.point3(section, 10));
-                            }
-                            ViewRepSketchGeometry::Nurb {
-                                type_code,
-                                flags,
-                                degree,
-                                tolerance,
-                                knot_header,
-                                knots,
-                                weight_header,
-                                weights,
-                                point_header,
-                                control_points,
-                            }
-                        }
-                        _ => ViewRepSketchGeometry::None,
-                    };
-                    let final_flag = fields.bool(section, 290);
-                    sketches.push(ViewRepSketch {
-                        id,
-                        version: sketch_version,
-                        references,
-                        reserved,
-                        enabled,
-                        geometry,
-                        final_flag,
-                    });
-                }
+                let first = read_view_rep_model_dxf(&mut fields, section);
+                let more_models = (1..source_version.min(100_000))
+                    .map(|_| read_view_rep_model_dxf(&mut fields, section))
+                    .collect();
                 let related_objects = [fields.handle(section, 330), fields.handle(section, 330)];
                 let source_manager = fields.handle(section, 340);
                 let owned_objects = [fields.handle(section, 360), fields.handle(section, 360)];
@@ -6829,20 +6729,16 @@ impl<'a> SectionReader<'a> {
                     source_id,
                     source_enabled,
                     source_version,
-                    model_id,
-                    guid: ViewRepGuid {
-                        data1,
-                        data2,
-                        data3,
-                        data4,
-                    },
-                    marker,
-                    transform,
-                    transform_version,
-                    database_id,
-                    geometry_version,
-                    geometry_marker,
-                    sketches,
+                    model_id: first.model_id,
+                    guid: first.guid,
+                    marker: first.marker,
+                    transform: first.transform,
+                    transform_version: first.transform_version,
+                    database_id: first.database_id,
+                    geometry_version: first.geometry_version,
+                    geometry_marker: first.geometry_marker,
+                    sketches: first.sketches,
+                    more_models,
                     related_objects,
                     source_manager,
                     owned_objects,
@@ -22575,6 +22471,130 @@ fn color_from_i32(v: i32) -> Color {
             g: ((v >> 8) & 0xFF) as u8,
             b: (v & 0xFF) as u8,
         },
+    }
+}
+
+/// One ACDBVIEWREP model geometry block, read from the per-code queues.
+fn read_view_rep_model_dxf(fields: &mut ClassDxfFields, section: &str) -> ViewRepModelGeometry {
+    let model_id = fields.i64(section, 160);
+    let data1 = fields.i32(section, 90);
+    let data2 = fields.i16(section, 70);
+    let data3 = fields.i16(section, 70);
+    let mut data4 = [0; 8];
+    for item in &mut data4 {
+        *item = fields.i32(section, 280) as u8;
+    }
+    let marker = fields.i32(section, 280) as u8;
+    let mut transform = [0.0; 16];
+    for item in &mut transform {
+        *item = fields.f64(section, 40);
+    }
+    let transform_version = fields.i32(section, 90);
+    let database_id = fields.i64(section, 160);
+    let geometry_version = fields.i32(section, 90);
+    let geometry_marker = fields.i32(section, 90);
+    let mut sketches = Vec::new();
+    for _ in 0..fields.i32(section, 90).max(0).min(100_000) {
+        let id = fields.i32(section, 90);
+        let sketch_version = fields.i32(section, 90);
+        let mut references = Vec::new();
+        for _ in 0..fields.i32(section, 90).max(0).min(100_000) {
+            references.push(ViewRepSketchReference {
+                object: fields.handle(section, 330),
+                flag: fields.bool(section, 290),
+            });
+        }
+        let reserved = fields.i32(section, 90);
+        let enabled = fields.bool(section, 290);
+        let type_code = fields.i32(section, 90);
+        let geometry = match type_code {
+            19 | 23 => ViewRepSketchGeometry::Line {
+                type_code,
+                first: fields.point3(section, 10),
+                second: fields.point3(section, 10),
+            },
+            11 => ViewRepSketchGeometry::Circle {
+                type_code,
+                center: fields.point3(section, 10),
+                normal: fields.point3(section, 10),
+                direction: fields.point3(section, 10),
+                radius: fields.f64(section, 40),
+                start_parameter: fields.f64(section, 40),
+                end_parameter: fields.f64(section, 40),
+                reserved: fields.f64(section, 40),
+            },
+            42 => {
+                let flags = [fields.bool(section, 70), fields.bool(section, 70)];
+                let degree = fields.i32(section, 90);
+                let tolerance = fields.f64(section, 40);
+                let knot_header = [
+                    fields.i32(section, 90),
+                    fields.i32(section, 90),
+                    fields.i32(section, 90),
+                ];
+                let mut knots = Vec::new();
+                for _ in 0..knot_header[0].max(0).min(100_000) {
+                    knots.push(fields.f64(section, 40));
+                }
+                let weight_header = [
+                    fields.i32(section, 90),
+                    fields.i32(section, 90),
+                    fields.i32(section, 90),
+                ];
+                let mut weights = Vec::new();
+                for _ in 0..weight_header[0].max(0).min(100_000) {
+                    weights.push(fields.f64(section, 40));
+                }
+                let point_header = [
+                    fields.i32(section, 90),
+                    fields.i32(section, 90),
+                    fields.i32(section, 90),
+                ];
+                let mut control_points = Vec::new();
+                for _ in 0..point_header[0].max(0).min(100_000) {
+                    control_points.push(fields.point3(section, 10));
+                }
+                ViewRepSketchGeometry::Nurb {
+                    type_code,
+                    flags,
+                    degree,
+                    tolerance,
+                    knot_header,
+                    knots,
+                    weight_header,
+                    weights,
+                    point_header,
+                    control_points,
+                }
+            }
+            _ => ViewRepSketchGeometry::None,
+        };
+        let final_flag = fields.bool(section, 290);
+        sketches.push(ViewRepSketch {
+            id,
+            version: sketch_version,
+            references,
+            reserved,
+            enabled,
+            geometry,
+            final_flag,
+        });
+    }
+    ViewRepModelGeometry {
+        model_id,
+        guid: ViewRepGuid {
+            data1,
+            data2,
+            data3,
+            data4,
+        },
+        marker,
+        transform,
+        transform_version,
+        database_id,
+        geometry_version,
+        geometry_marker,
+        sketches,
     }
 }
 

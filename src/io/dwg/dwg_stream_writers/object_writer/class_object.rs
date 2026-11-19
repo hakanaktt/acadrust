@@ -178,34 +178,28 @@ impl<'a> DwgObjectWriter<'a> {
         }
     }
 
-    fn write_view_rep(&mut self, value: &ViewRep) {
-        for item in value.header_values {
-            self.writer.write_bit_long(item);
-        }
-        self.writer.write_variable_text(&value.name);
-        self.writer.write_bit_long(value.scale);
-        self.writer.write_bit_long(value.header_status);
-        self.writer.write_variable_text(&value.description);
-        self.writer.write_bit_long_long(value.source_id);
-        self.writer.write_bit(value.source_enabled);
-        self.writer.write_bit_long(value.source_version);
-        self.writer.write_bit_long_long(value.model_id);
-        self.writer.write_bit_long(value.guid.data1);
-        self.writer.write_bit_short(value.guid.data2);
-        self.writer.write_bit_short(value.guid.data3);
-        for item in value.guid.data4 {
+    /// A model geometry block's header (its sketches follow separately).
+    fn write_view_rep_model(&mut self, model: &ViewRepModelGeometry) {
+        self.writer.write_bit_long_long(model.model_id);
+        self.writer.write_bit_long(model.guid.data1);
+        self.writer.write_bit_short(model.guid.data2);
+        self.writer.write_bit_short(model.guid.data3);
+        for item in model.guid.data4 {
             self.writer.write_byte(item);
         }
-        self.writer.write_byte(value.marker);
-        for item in value.transform {
+        self.writer.write_byte(model.marker);
+        for item in model.transform {
             self.writer.write_bit_double(item);
         }
-        self.writer.write_bit_long(value.transform_version);
-        self.writer.write_bit_long_long(value.database_id);
-        self.writer.write_bit_long(value.geometry_version);
-        self.writer.write_bit_long(value.geometry_marker);
-        self.writer.write_bit_long(value.sketches.len() as i32);
-        for sketch in &value.sketches {
+        self.writer.write_bit_long(model.transform_version);
+        self.writer.write_bit_long_long(model.database_id);
+        self.writer.write_bit_long(model.geometry_version);
+        self.writer.write_bit_long(model.geometry_marker);
+    }
+
+    fn write_view_rep_sketches(&mut self, sketches: &[ViewRepSketch]) {
+        self.writer.write_bit_long(sketches.len() as i32);
+        for sketch in sketches {
             self.writer.write_bit_long(sketch.id);
             self.writer.write_bit_long(sketch.version);
             self.writer.write_bit_long(sketch.references.len() as i32);
@@ -217,6 +211,35 @@ impl<'a> DwgObjectWriter<'a> {
             self.writer.write_bit(sketch.enabled);
             self.write_view_rep_geometry(&sketch.geometry);
             self.writer.write_bit(sketch.final_flag);
+        }
+    }
+
+    fn write_view_rep(&mut self, value: &ViewRep) {
+        for item in value.header_values {
+            self.writer.write_bit_long(item);
+        }
+        self.writer.write_variable_text(&value.name);
+        self.writer.write_bit_long(value.scale);
+        self.writer.write_bit_long(value.header_status);
+        self.writer.write_variable_text(&value.description);
+        self.writer.write_bit_long_long(value.source_id);
+        self.writer.write_bit(value.source_enabled);
+        self.writer.write_bit_long(value.model_count());
+        self.write_view_rep_model(&ViewRepModelGeometry {
+            model_id: value.model_id,
+            guid: value.guid.clone(),
+            marker: value.marker,
+            transform: value.transform,
+            transform_version: value.transform_version,
+            database_id: value.database_id,
+            geometry_version: value.geometry_version,
+            geometry_marker: value.geometry_marker,
+            sketches: Vec::new(),
+        });
+        self.write_view_rep_sketches(&value.sketches);
+        for model in &value.more_models {
+            self.write_view_rep_model(model);
+            self.write_view_rep_sketches(&model.sketches);
         }
         for handle in value.related_objects {
             self.write_view_rep_handle(DwgReferenceType::SoftPointer, handle);
@@ -333,8 +356,10 @@ impl<'a> DwgObjectWriter<'a> {
             ClassObjectData::ViewRep(value) => self.write_view_rep(value),
             ClassObjectData::ViewRepSourceManager(value) => {
                 self.writer.write_bit(value.has_source);
-                self.writer
-                    .write_handle(DwgReferenceType::SoftOwnership, value.source.value());
+                if value.has_source {
+                    self.writer
+                        .write_handle(DwgReferenceType::SoftOwnership, value.source.value());
+                }
                 self.writer.write_bit_long(value.status);
             }
             ClassObjectData::ViewRepStandard(value) => {
