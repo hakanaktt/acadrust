@@ -1381,6 +1381,73 @@ K02 to K05 (width 4, depth 0.25, slope -0.03) equal the points, links,
 shapes and codes the host application stored for them (W-K01, W-K01L,
 W-K01b, W-K02 to W-K05) and the editor's previews.
 
+## 3m. Gravity pipe networks
+
+`add_pipe_network`, `add_structure` and `add_pipe` write a network that
+uses the drawing's first parts list (`AECC_NETWORK_PART_LIST`; the
+application's templates have one, a drawing written by acadrust has
+none), its null structure and its 12 inch corrugated metal pipe.
+
+What the application adds with the first network, structure and pipe
+(samples N00-N03, the application's own, over WT01):
+
+| step | records |
+|---|---|
+| network | the `AECC_NETWORK` entity |
+| first structure | its part definition (`AECC_NETWORK_PART_DEF`) in the named-objects dictionary `AECC_NETWORK_PART_DEFS`, keyed by family id and size (`D45435F0...870FSBSH0SBSD0`); an anonymous block with the structure's body (a solid) the definition refers to twice; the name templates root (root key 0x8C) with the structures' node (id 0x125); eight field definitions in the part catalog node |
+| first pipe | its part definition (key: family id and size id), the pipes' name template node (id 0x126), ten field definitions in the catalog node |
+
+Records (all written with references and texts of the samples' layout):
+
+```text
+network:   NETWORK_EMPTY or NETWORK_WITH_PARTS, BL pipes, BL structures,
+           NETWORK_END
+           references: 5 x hard 0, parts list, soft 0, hard owner 0,
+             pipes, structures
+structure: class header, keys, 3 bits 010, 16-byte id (0), 3BD insertion,
+           3 x 3BD axes, 2 bits, part record (BL 80, BS 0x04BE, BL 80,
+           BL 80, BL 0, BL 0), 3 x BL 0, 16-byte id, cached outline and
+           extents, rule results
+pipe:      as a structure up to its id (identity frame), then lengths,
+           slopes and extents, 3BD start, 3BD end, rule results
+           references (both): hard 0, hard 0, soft 0, hard owner 0, part
+             definition, style, network, soft 0, soft 0, hard 0, rules
+part definition: no version word; fields BL 80, BS 0x04BE, BL 0, BS kind,
+           ... (75 bits for a number, 81 for a text, whose value is a
+           text)
+name templates root: BL 0x8C, BL n, n x BL id (four-byte form), BL 0,
+           BL 32, 3 bits 001; node: BL id, constant run; texts "",
+           template
+```
+
+The style and rules come from the family's size filter in the parts list
+(`AECC_PART_SIZE_FILTER`: references `0, style, rules, ...`). The fields
+between the named ones are the samples' constant runs.
+
+Measured (written drawings opened by the application in its own instance,
+API dump of the networks, AUDIT without fixing):
+
+| written | result |
+|---|---|
+| the application's network with the structure's insertion point changed in the record only (E-N2) | AUDIT 0; position, rim, sump and extents recomputed from the insertion point |
+| the pipe's ends changed in the record only (E-N3) | AUDIT 0; length, extents as the application's own pipe with those ends |
+| no part definitions (E-N4) | 4 AUDIT errors, families unknown |
+| structure definition without its body block (E-N5, E-N14, E-N16, E-N17) | AUDIT 0, family listed; the structure has no body (extents of the cached outline) |
+| parts list, style and rules references null (E-N6) | AUDIT 0, no parts list, no style |
+| network written by acadrust, pipe (E-N10) | AUDIT 0, network and pipe listed, length 90 and extents as the application's |
+| structure whose fields the catalog node does not list (E-N9, E-N11, E-N18, E-N20) | the application does not finish opening the drawing (busy) |
+| the same with the catalog node of a drawing that has a structure (E-N21) | AUDIT 0, structure listed at its position, rim and sump from it |
+
+The catalog node (`AECC_NETWORK_PART_CATALOG_DEF_NODE`, the parts list's
+owner) lists the union of the fields of the drawing's part definitions
+and caches data after them that grows with them (not decoded): appending
+the eight field records alone (E-N18, E-N20 written so) still leaves the
+drawing unopened. `add_structure` therefore refuses a drawing whose
+catalog node does not list the null structure's fields (a drawing that
+has never had one); pipes need no catalog fields. The written structure
+has no body block: the application lists it at its position, but its
+extents are the cached outline's.
+
 ## 4. Reference check
 
 For every written drawing the check opens it in its own reference instance
@@ -1530,7 +1597,10 @@ taken from the records and checked bit for bit against them.
 - Alignments and feature lines that meet other members on a site, lot
   lines meeting where one has an arc, parcel and feature line styles other than the
   defaults;
-  sections, corridors, pipe networks: not written.
+  sections, corridors: not written; pipe networks: other families and
+  sizes, connected pipes and structures, the structure's body block,
+  networks in a drawing without a parts list, structures in a drawing
+  whose part catalog does not list their fields.
 - Profile views with a vertical scale or style other than the default;
   the graph settings between the named values are constant runs.
 
@@ -1555,4 +1625,5 @@ taken from the records and checked bit for bit against them.
 | sections of a TIN surface (unsampled) | yes (geometry once sampled) | yes (§3j) | yes (§3j) | the application samples the source | corridor sources, lines added after sampling |
 | section views of a line (default style, unsampled section) | yes (frame) | yes, with the drawing's section view style or the default one (§3j, §2c) | yes (§3j, §2c) | not needed | sampled sections, several sections |
 | intersections of two crossing roads (the object only) | yes (stations, angles) | yes, with the drawing's intersection style or the default one (§3k, §2c) | yes (§3k, §2c) | not needed | offset alignments, curb returns, corridor regions and locking actions; tee junctions |
-| gradings, networks | partly | no | — | — | not started |
+| gravity pipe networks: null structures and 12 inch pipes, unconnected | partly (part positions, pipe ends, sizes of older part definitions) | yes, in a drawing with a parts list (§3m) | yes (§3m) | not needed (the application recomputes outlines, lengths and extents) | other families and sizes, connections, the structure's body block, the parts list of a new drawing |
+| pressure networks, gradings, mass haul | partly | no | — | — | not started |

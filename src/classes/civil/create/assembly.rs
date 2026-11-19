@@ -27,7 +27,7 @@ const GROUP: (usize, &str) = (122, "405505400000be045415000002f8128");
 /// The run after the group block, ending with the version word.
 const ASSEMBLY_TAIL: &str = "101010101000000010001011111000000100";
 
-fn run(w: &mut DwgMergedWriter, len: usize, hex: &str) {
+pub(super) fn run(w: &mut DwgMergedWriter, len: usize, hex: &str) {
     let mut left = len;
     for c in hex.chars() {
         let v = c.to_digit(16).unwrap_or(0);
@@ -162,7 +162,7 @@ fn read_assembly(doc: &mut CadDocument, handle: Handle) -> Result<(EntityCommon,
     Ok((common, name, asm))
 }
 
-fn entity_common(doc: &mut CadDocument, layer: Option<&str>) -> Result<EntityCommon, DxfError> {
+pub(super) fn entity_common(doc: &mut CadDocument, layer: Option<&str>) -> Result<EntityCommon, DxfError> {
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
     Ok(EntityCommon { handle: doc.allocate_handle(), owner_handle: doc.header.model_space_block_handle, layer: layer.into(), layer_handle: Some(layer_handle), ..EntityCommon::default() })
@@ -185,17 +185,81 @@ pub fn add_assembly(doc: &mut CadDocument, name: &str, location: Vector3, layer:
     write_assembly(doc, common, name, &Assembly { location, id, style, code_set, subassemblies: Vec::new() })
 }
 
-/// The name templates root (root key 0x8C) and its node, which names an
-/// assembly's groups, when the drawing lacks them.
-fn ensure_name_templates(doc: &mut CadDocument) -> Result<(), DxfError> {
-    if root_node(doc, KEY_NAME_TEMPLATES).is_some() {
-        return Ok(());
+/// Name template id of an assembly's groups.
+const GROUP_TEMPLATE: (i32, &str) = (0x0E80, "Group - (<[67112990(2449)]>)");
+
+/// Adds the name template `(id, text)` to the name templates root (root
+/// key 0x8C), writing the root when the drawing lacks it. A root lists its
+/// nodes (`AECC_NAME_TEMPLATES_NODE`), one per kind of named object:
+///
+/// ```text
+/// root: BL 0x8C, BL n, n x BL id (four-byte form), BL 0, BL 32, 3 bits 001
+///       references: n x node (soft owner), soft 0; texts: ""
+/// node: BL id (four-byte form), NODE_TAIL
+///       references: soft 0; texts: "", the template
+/// ```
+pub(super) fn ensure_name_template(doc: &mut CadDocument, template: (i32, &str)) -> Result<(), DxfError> {
+    let head = root_node(doc, KEY_NAME_TEMPLATES);
+    let mut nodes: Vec<(i32, Handle)> = Vec::new();
+    if let Some(head) = head {
+        for r in object(doc, head).map(|o| o.typed_handles()).unwrap_or_default() {
+            if r.0 == 0 {
+                continue;
+            }
+            let id = object(doc, Handle::new(r.0)).and_then(fields_of).and_then(|(d, s, e)| Bits::new(d, s, e).bit_long()).ok_or_else(|| invalid("a name template node is not one this crate reads"))?;
+            nodes.push((id, Handle::new(r.0)));
+        }
+        if nodes.iter().any(|n| n.0 == template.0) {
+            return Ok(());
+        }
     }
     let root = root(doc).ok_or_else(|| invalid("drawing has no civil root"))?;
-    let [head, node] = [(); 2].map(|_| doc.allocate_handle());
-    put_object(doc, "AECC_NAME_TEMPLATES_ROOT", head, root, Vec::new(), |w| run(w, 69, "631012003800024808"), Body { refs: vec![soft_owner(node.value()), soft_pointer(0)], strings: vec![String::new()] })?;
-    put_object(doc, "AECC_NAME_TEMPLATES_NODE", node, head, Vec::new(), |w| run(w, 91, "200380002920280a0480a02"), Body { refs: vec![soft_pointer(0)], strings: vec![String::new(), "Group - (<[67112990(2449)]>)".to_string()] })?;
-    set_root_entry(doc, KEY_NAME_TEMPLATES, head)
+    let head_handle = head.unwrap_or_else(|| doc.allocate_handle());
+    let node = doc.allocate_handle();
+    put_object(
+        doc,
+        "AECC_NAME_TEMPLATES_NODE",
+        node,
+        head_handle,
+        Vec::new(),
+        |w| {
+            raw_long(w, template.0);
+            bits(w, NODE_TAIL);
+        },
+        Body { refs: vec![soft_pointer(0)], strings: vec![String::new(), template.1.to_string()] },
+    )?;
+    nodes.push((template.0, node));
+    put_object(
+        doc,
+        "AECC_NAME_TEMPLATES_ROOT",
+        head_handle,
+        root,
+        Vec::new(),
+        |w| {
+            w.write_bit_long(KEY_NAME_TEMPLATES);
+            bl_byte(w, nodes.len() as u8);
+            for n in &nodes {
+                raw_long(w, n.0);
+            }
+            bits(w, "100100100000001");
+        },
+        Body { refs: nodes.iter().map(|n| soft_owner(n.1.value())).chain([soft_pointer(0)]).collect(), strings: vec![String::new()] },
+    )?;
+    if head.is_none() {
+        set_root_entry(doc, KEY_NAME_TEMPLATES, head_handle)?;
+    }
+    Ok(())
+}
+
+/// A name template node after its id (the same in every node).
+const NODE_TAIL: &str = "101001001000000010100000001010000001001000000010100000001";
+
+/// BL in its four-byte form.
+fn raw_long(w: &mut DwgMergedWriter, v: i32) {
+    w.write_2bits(0);
+    for b in v.to_le_bytes() {
+        w.write_byte(b);
+    }
 }
 
 /// Where a package subassembly's package lies, as the host stores it:
@@ -454,7 +518,7 @@ pub fn add_pkt_subassembly(doc: &mut CadDocument, assembly: Handle, name: &str, 
     let id: String = md5(&crate::classes::civil::pkt::write_pkt(pkt)?).iter().map(|b| format!("{b:02X}")).collect();
     let (asm_common, asm_name, mut asm) = read_assembly(doc, assembly)?;
     super::default_styles::ensure_subassembly_styles(doc)?;
-    ensure_name_templates(doc)?;
+    ensure_name_template(doc, GROUP_TEMPLATE)?;
     let style = default_style_of(doc, super::default_styles::KEY_SUBASSEMBLY_STYLES).ok_or_else(|| invalid("drawing has no subassembly styles"))?;
     let common = entity_common(doc, layer)?;
     let handle = common.handle;
