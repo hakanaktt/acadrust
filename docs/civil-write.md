@@ -1354,7 +1354,17 @@ Other activities (curves, intersections, surface links, ...) are refused
 by `read_pkt`. A package needs the 32-digit part name; the creator and the
 workflow's namespace declarations come from the caller (a package the
 editor saved has them), `PktPackage::new` gives the rest of a new
-package's settings.
+package's settings. `new_part_name(seed)` makes a part name from a seed
+(a version-4 GUID's digits, the same for the same seed, so a package
+written again has the same bytes and MD5). The workflow is built with
+`point_delta` (DeltaXAndDeltaY), `point_slope` (SlopeAndDeltaX, with the
+offset, elevation and superelevation target arguments), `link`, `shape`,
+the input parameters `parameter_double`, `parameter_grade`,
+`parameter_slope` and `parameter_side`, and `chain`, a flowchart of steps
+in order (`__ReferenceID<i>`) and its start node; every activity gets the
+editor's settings (shown errors, hint size 200,22.4, the point's display
+name `<point>&<link>` when it draws a link). A lane built with them equals
+the lane written by hand.
 
 ### Layout
 

@@ -28,12 +28,14 @@
 //!
 //! `<id>` is the package's part name, 32 hexadecimal digits.
 
+mod build;
 mod expr;
 mod layout;
 mod xaml;
 mod xml;
 mod zip;
 
+pub use build::{chain, link, new_part_name, parameter_double, parameter_grade, parameter_side, parameter_slope, point_delta, point_slope, shape, PointTargets};
 pub use layout::{layout, PktLayout, PktLayoutLink, PktLayoutPoint, PktLayoutShape, PktSide, PktValue};
 
 use crate::error::DxfError;
