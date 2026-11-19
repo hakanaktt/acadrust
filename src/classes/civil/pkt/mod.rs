@@ -28,9 +28,13 @@
 //!
 //! `<id>` is the package's part name, 32 hexadecimal digits.
 
+mod expr;
+mod layout;
 mod xaml;
 mod xml;
 mod zip;
+
+pub use layout::{layout, PktLayout, PktLayoutLink, PktLayoutPoint, PktLayoutShape, PktSide, PktValue};
 
 use crate::error::DxfError;
 use xml::Element;
