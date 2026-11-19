@@ -458,21 +458,14 @@ fn record_list_at(data: &[u8], pos: usize, end: usize) -> Option<Vec<Record>> {
         record.minimum_k = Some(k);
         Some(b.pos)
     };
-    for i in 0..n {
+    for _ in 0..n {
         let mut record = record_at(data, at + 11, end)?;
-        let last = i + 1 == n;
         let next = match record.code {
             (2, _) => record.end + 4,
             (6, c) => parabola_tail(&mut record, matches!(c, 0 | 2))?,
-            _ if last => record.end,
-            // debt: no sample has a circular or asymmetric curve before
-            // another record; its tail is found by trying both forms.
-            _ => [true, false]
-                .into_iter()
-                .find_map(|after| {
-                    let mut probe = record_at(data, at + 11, end)?;
-                    parabola_tail(&mut probe, after).filter(|e| record_at(data, e + 11, end).is_some())
-                })?,
+            // Circular and asymmetric curves end with their values
+            // (WR10 to WR13).
+            _ => record.end,
         };
         out.push(record);
         at = next;

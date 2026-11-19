@@ -454,12 +454,15 @@ whose texts miss the keys' texts is refused (`Errors Found`).
 `add_profile(doc, alignment, name, pvis, curves, layer)` writes a layout
 profile of fixed tangents through the PVIs (station, elevation) with a
 free symmetric parabola of the given length at inner PVIs (0 for none;
-crest where the grade falls), with the drawing's default profile style
+crest where the grade falls); `add_profile_with_curves` takes per inner
+PVI a `VerticalCurve`: none, a free symmetric parabola of a length, a free
+asymmetric parabola of two lengths (before and after the PVI) or a free
+circular curve of a radius. Both use the drawing's default profile style
 (the first style of the style tree's profile style collection, key 74).
 The alignment is written again with the profile in its list; only an
 alignment whose record this crate reproduces bit for bit is accepted (its
-class keys are kept as stored). A drawing without a profile style is
-refused (the style is not written yet).
+class keys are kept as stored). A drawing without the profile style
+collection gets it (§3f).
 
 A profile adds the `AECC_PROFILE` entity and seven helper records it owns
 (`AECC_DB_FLOAT_TANGENT_GRADELEN`, `AECC_DB_FIXED_PARABOLA_HLPT`,
@@ -476,24 +479,30 @@ RC 24 class keys: 14 of type 4 (texts "A", "HP", "Overall LP", "EVC",
   0x0300FB05 = 0 and 0x0300FF00 = 1, the geometry stamp 0x0B001081
 BL 0 (one-byte form), 63 zero bits, BD 2, 9 bits 011011010
 BL 0, BD 0, BD 0, BD 30, 5 x BS 0, 10 bits 0000001000
-BL n entity records, the tangents then the parabolas; each: 11 bits
-  (2 tangent, 6 parabola), 23 bits (0x08 << 13), BL 0 (constraint), BL id,
-  BL previous id, BL next id, then
-  tangent:  2RD start, 2RD end, 4 zero bits
-  parabola: BL 1, BD length, BL 0x1001 crest / 0x1000 sag, BL 0, 3 bits
-            010, 3 x BD -1 (no minimum K)
+BL n entity records, the tangents then the curves; each: 11 bits
+  (2 tangent, 4 circular, 6 parabola, 8 asymmetric parabola), 23 bits
+  (0x08 << 13), BL constraint, BL id, BL previous id, BL next id, then
+  tangent (0):     2RD start, 2RD end, 4 zero bits
+  parabola (0):    BL 1, BD length, BL 0x1001 crest / 0x1000 sag, BL 0,
+                   3 bits 010, 3 x BD -1 (no minimum K)
+  circular (9):    BD radius
+  asymmetric (10): BD length before, BD length after the PVI
 2 bits 10, the identifier (a version-4 GUID), 107 constant bits ending
   with the version word
 references: the seven helpers (hard ownership), soft 0, hard 0, hard 0,
   soft 0, style (hard), alignment (hard), soft 0, hard 0, soft 0, soft 0
 texts: "AeccImpVAlignment", "", "", the type-4 keys' texts, name, four
-  empty texts and one more per parabola
+  empty texts and one more per symmetric parabola
 ```
 
 The parabola's first `BL` is 1 in current records (WR02) where older
 records hold 0, read before as `BD 0`; the reader now accepts both. The
-records written with WR01's and WR02's PVIs and curve equal the samples'
-bit for bit apart from the stamp and the identifier.
+records written with the PVIs and curves of WR01, WR02 and WR10 to WR13
+(circular curves of radius 50 and 80, asymmetric parabolas of 8/12 and
+10/6 at PVI (50, 20) between (0, 10) and (100, 15)) equal the samples' bit
+for bit apart from the stamp and the identifier. A circular or asymmetric
+curve's record ends with its values; the reader, which looked for a
+parabola's tail after them, now takes the next record there.
 
 The alignment lists its profiles (the oldest first in its references, soft
 pointers; the newest first in its record) after its elements:
@@ -514,6 +523,31 @@ without the alignment's entry opens but is not listed under the
 alignment, and is left out when the drawing is saved (E-R1). The entry's
 last value is 2.8e-14 instead of 0 in the application's record for a
 curved alignment (WR06); the writer writes 0.
+
+## 3f. Profile style of a new drawing
+
+The profile style collection (style tree key 74, `AECC_PROFILE_STYLE` id
+74 listing the default style, its own reference the default style) and the
+default style (id 30) use the style layout of §2a with the application's
+30 settings in stored order (values 4097, byte 1, 5.0, 1.0, 1.0, 1.0, 0.2,
+5.0, 258, byte 1, 5.0, 1.0, 5.0, the dates; 16 keys of type 0x10, marker
+styles, written empty; key `0x12010131` of type 0x12, the style's
+extension record, a hard ownership). After the keys the style has the only
+pointer table of the samples' styles:
+
+```text
+BL 0, B 1, RC 1, BL 0x10010101, BL 1, B 1
+references: one hard pointer (empty) after the keys' references
+texts: "class AeccAttributeTable<int,class AcDbHardPointerId>" after the
+       keys' texts
+```
+
+Components: 9 in model, 0-6 and 11 in profile (ByLayer, linetype scale
+2), 10 in section (ByBlock); no class data. Each of the two styles owns an
+extension record (`AECC_VALIGNMENT_STYLE_EXTENSION`): the style layout
+with id 0, no children, the users and the dates, one profile component 12
+(ByLayer), no class data. The four records equal W001's bit for bit apart
+from the dates.
 
 ## 4. Reference check
 
@@ -605,7 +639,20 @@ curved alignment and two profiles, one through (0, 10), (50, 20),
 the profiles under the alignment with their tangents and parabolas at the
 stations the application gives them (tangents 0-40, 60-100 and the
 parabola 40-60 for the first pair; 0-40, 60-85, 115-150 and the curves
-40-60, 85-115 for the second) and the PVIs with their curve kinds.
+40-60, 85-115 for the second) and the PVIs with their curve kinds. A new
+drawing with alignment `AL1` (0, 0)-(300, 0), profile `P1` through (0,
+10), (50, 20), (100, 15), (150, 25), (250, 18) with a circular curve of
+radius 50, an asymmetric parabola of 8/12 and a symmetric parabola of 20,
+and `P2` through (0, 5), (120, 9), (300, 2) with a circular curve of
+radius 800: AUDIT 0 errors; the API lists the circular curve from station
+42.664 to 57.445, the asymmetric parabola from 92 to 112, the parabola
+from 140 to 160 and `P2`'s circular curve from 91.127 to 148.867, the PVIs
+with their curve kinds.
+
+A new drawing with alignment `AL1` through (0, 0), (100, 0) and profile
+`P1` through (0, 10), (50, 20), (100, 15), all written by acadrust (§2a,
+§3b, §3f): opens without a message, AUDIT 0 errors, the API lists `P1`
+under `AL1` with the written profile style and its two tangents and PVIs.
 
 A new drawing with surface `S` from WS03's ten points, alignment `AL1`
 through (0, 0), (20, 20) and point 1 at (5, 15, 2), all written by
@@ -629,9 +676,8 @@ taken from the records and checked bit for bit against them.
   offset alignments, labels, design speeds; the written alignment style draws no markers (no marker style
   is written).
 - Surfaces from point groups, breaklines, boundaries or edits.
-- Profiles in a drawing without a profile style (the profile style and its
-  extension record are not written), profiles with other curve kinds or
-  constraints, profile views, profiles of alignments the application has
+- Profiles with other curve constraints (fixed or floating curves, curves
+  by K or through a point), profiles of alignments the application has
   changed.
 - Sites, sections, corridors, pipe networks: not written.
 
@@ -646,5 +692,5 @@ taken from the records and checked bit for bit against them.
 | label styles | partly | no | — | — | label node settings (1621 bits), collector and text style records |
 | alignments (fixed lines, free arcs and spiral-curve-spirals, siteless) | yes | yes (a new drawing gets §3b) | yes (§4) | not needed (the application solves the stored elements) | other constraints, sites, labels |
 | TIN surfaces (added points) | yes | yes (a new drawing gets §3d) | yes (§4) | not needed (the stored triangulation is drawn; the application rebuilds it after an edit) | other definitions |
-| layout profiles (fixed tangents, free symmetric parabolas) | yes | yes, in a drawing with a profile style | yes (§4) | not needed (the application solves the stored entities) | profile style, other curves, profile views |
+| layout profiles (fixed tangents; free symmetric and asymmetric parabolas, free circular curves) | yes | yes (a new drawing gets §3f) | yes (§4) | not needed (the application solves the stored entities) | fixed and floating curves |
 | profile views, sites, parcels, feature lines, gradings, sections, corridors, networks | partly | no | — | — | not started |
