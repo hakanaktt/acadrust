@@ -124,7 +124,9 @@ handles: n × child (soft owner), soft pointer 0, per component (layer
   "0", linetype ByBlock (plan, model) or ByLayer, plot style 0) as hard
   pointers, hard pointer 0
 strings: own name, "" when the id is a text id, the names of the children
-  with text ids, created by, modified by, two empty texts per component
+  with text ids, the texts of the type-4 keys (0x04001008, 0x04001010:
+  the users who made and changed the style, written empty), two empty
+  texts per component
 ```
 
 The collection (style tree key 35) is a point style with id 35 that lists
@@ -339,6 +341,66 @@ text id. An alignment that refers to no companion stops the application
 while it opens the drawing (A1); a companion without its topology is
 refused (`Errors Found`, A6).
 
+## 3c. TIN surfaces
+
+`add_tin_surface(doc, name, points, layer)` writes an `AECC_TIN_SURFACE`
+whose one definition adds the points, with its triangulation, and the
+drawing's default surface style (the first style of the style tree's
+surface style collection, key 77). A drawing without that collection
+gets it (§3d); a drawing without any tree first gets the records of §2a.
+
+```text
+BL 80, 2 bits 11, BL 0x1554C738, BL 0x087C1120, BL 5 (version)
+BL 8 keys: 0x03011E29 RC 1, 0x0D011E25 BL 0, 0x02011E26 BD DBL_MAX,
+  0x0B001081 BL 2, BL 0, BL 0 (geometry stamp), 0x03001093 RC 0,
+  0x0201230C BD 0, 0x02011E27 BD DBL_MAX, 0x01011E28 BL 8
+BL 0 (byte form), 121 zero bits, 3BD origin 0, 9 BD identity, BD 1
+RC 1 item, 5 bits 01000
+definitions: 2 bits 00, RL 0x80020A28 (bits 11-15: one definition),
+  BL 0, BL 0, BL 0xE8A5800C, BL 40, BL 0, 3 bits 000, GUID, BL 0,
+  added vertices: BL n, n x 3BD
+  BL 0 (four-byte form), BL 0xAC150A00, 2 bits 00
+RL -1, RS 0x04A2, RC 2, RS 0, RS 0x2A3C, "MMS01"
+triangulation (tin.rs): BL vertex count, BL 0, 1, 2, 3 (the corners),
+  per vertex RL flags (corner 0x8440, point 0x80), RL a triangle that
+  uses it, 3 RD; BL triangle count, per triangle 3 RL vertices
+  (counter-clockwise), 3 RL neighbours (across the edge that starts at
+  the vertex, -1 outside), RL flags (1: uses a corner, not drawn), RL -1
+7 bits 1010100, BS 0x04BE
+handles: soft pointer 0, hard owner 0, hard pointer 0, style
+strings: "", "", name, "", ""
+```
+
+The four corners lie 100 units outside the points' extents (WS02, WS03),
+with the nearest point's elevation; the writer triangulates the points
+inside them (Delaunay). Written with WS03's ten points, the drawn
+triangles are the eleven of the application's own surface, and apart
+from the geometry stamp (written as 0) and the triangle order the record
+equals WS02's. The corners' flags of the samples carry 16 more bits
+(`0xBBCC`) that are no field; the writer leaves them out.
+
+## 3d. Surface style of a new drawing
+
+The surface style collection (style tree key 77, `AECC_SURFACE_STYLE` id
+77 listing the default style, its own reference the default style) and
+the default style (id 30) use the style layout of §2a with the
+application's 216 settings in stored order: 46 doubles, 44 bytes, 67
+longs, 17 colors (`BS 0, BL method and value, RC 0`), 23 references
+(type 0x0F, soft pointers: the eight legend table and label styles
+written empty, the others the linetype "Continuous" and the text style
+"Standard"), 17 texts (type 4; hatch descriptions such as
+`1;0;0;100.0;0.0;2.0;ANSI31`, " " and "+") and the dates. Components:
+twelve in plan (the border, index 2, drawn) and model (the triangles,
+index 1, drawn) with the default colors, one in section; class data
+`RC 0`. Both records equal WS02's bit for bit apart from the dates.
+
+A key of type 4 has its value in the text stream: a style's texts are
+its name, then the texts of its type-4 keys in key order (the point and
+alignment styles' two are the names of the users who made and changed
+the style, written empty), then two empty texts per component. A
+surface style written with only the dates opens but draws nothing; one
+whose texts miss the keys' texts is refused (`Errors Found`).
+
 ## 4. Reference check
 
 For every written drawing the check opens it in its own reference instance
@@ -387,6 +449,22 @@ or two line elements with the written points; after the API sets the
 reference station to 1000 and saves, acadrust reads the name, start
 station 1000 and both fixed lines.
 
+Surfaces (W001, a drawing the application has opened, plus surface `S`
+written by acadrust from WS02's three points and from WS03's ten): AUDIT
+0 errors; the API reports 3 points and one triangle (0, 0, 0), (10, 0,
+1), (0, 10, 2), and for the ten points the same general and triangle
+values as WS03 (mean elevation 2.7708, 11 triangles, edge lengths 7.07 to
+20, areas 25 to 100). After the API adds ten points to the three-point
+surface and saves, acadrust reads the rebuilt triangulation (14
+vertices, 11 drawn triangles).
+
+A new drawing with surface `S` from WS03's ten points, alignment `AL1`
+through (0, 0), (20, 20) and point 1 at (5, 15, 2), all written by
+acadrust (§2a, §3b, §3d): opens without a message, AUDIT 0 errors, the
+API lists the three written styles as the drawing's only point,
+alignment and surface styles, the surface with WS03's eleven triangles,
+and the drawing shows the surface border, the alignment and the point.
+
 A wrong bit count in a query statement makes the application refuse the
 whole drawing with a recovery prompt, so every constant run above was
 taken from the records and checked bit for bit against them.
@@ -402,8 +480,8 @@ taken from the records and checked bit for bit against them.
 - Alignments with curves or spirals, on a site, offset alignments,
   labels; the written alignment style draws no markers (no marker style
   is written).
-- Surfaces, profiles, sites, sections, corridors, pipe networks: not
-  written.
+- Surfaces from point groups, breaklines, boundaries or edits.
+- Profiles, sites, sections, corridors, pipe networks: not written.
 
 ## 6. Status
 
@@ -415,5 +493,5 @@ taken from the records and checked bit for bit against them.
 | point style, its collection, class and settings nodes | yes | yes, in a drawing without the tree (§2a) | yes (§4) | not needed | — |
 | label styles | partly | no | — | — | label node settings (1621 bits), collector and text style records |
 | alignments (fixed lines, siteless) | yes | yes (a new drawing gets §3b) | yes (§4) | not needed (the application solves the stored elements) | curves, spirals, sites, labels |
-| TIN surfaces | yes (with points) | no | — | — | empty-surface layout, point-group definition, styles |
+| TIN surfaces (added points) | yes | yes (a new drawing gets §3d) | yes (§4) | not needed (the stored triangulation is drawn; the application rebuilds it after an edit) | other definitions |
 | profiles, views, sites, parcels, feature lines, gradings, sections, corridors, networks | partly | no | — | — | not started |
