@@ -800,6 +800,21 @@ impl ArchEntityData {
         Some((number, b.bit_long()?))
     }
 
+    /// Where a parcel's area label sits (the label location after its
+    /// number; see [`Self::parcel_face`]).
+    pub fn parcel_label(&self) -> Option<Vector2> {
+        self.parcel_site()?;
+        let (data, start, end) = self.main_stream()?;
+        let mut b = bits::Bits::new(data, start, end);
+        alignment::class_keys(&mut b)?;
+        b.pos += 121;
+        for _ in 0..3 {
+            b.bit_long()?;
+        }
+        b.bit_double()?;
+        Some(Vector2::new(b.bit_double()?, b.bit_double()?))
+    }
+
     /// The site a parcel belongs to (its second reference); `None` for a
     /// site itself.
     pub fn parcel_site(&self) -> Option<u64> {

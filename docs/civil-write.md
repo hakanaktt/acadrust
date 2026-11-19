@@ -816,15 +816,24 @@ at a time.
   earlier member made carries 0x800000 (WP08, WP19); 0x80 (first point)
   only marks an edge that starts off every earlier line.
 
-A parcel is written for every face but the outside one, numbered in face
-order (number = face - 1); a parcel whose face a later lot line cuts keeps
-its record and moves its label into what is left of its face. The label
-goes in the middle of the face's extents; the application takes the
-parcel's face from that point, so where it falls on the boundary or on a
-line inside the face (a right triangle, WP10's loose line) the writer
-takes the middle of the widest run of the horizontal line through it
-inside the face (the application itself takes another inner point for the
-triangle). The node records follow the application's hash order: eight
+A parcel is written for every face but the outside one. A parcel keeps
+its record and number when a later lot line cuts its face: it takes the
+face its label lies in (on the boundary, the face it had); the faces left
+without a parcel get new ones, numbered on from the highest number, the
+new faces first and then the old faces that lost theirs (WP19, WP20). The
+container lists the parcels in face order. Every parcel's label is
+placed again: from the middle of its face's extents (arcs included) it
+slides along the horizontal or the vertical line through it, whichever
+gets farther from the face's boundary (loose lines inside the face
+included), to the nearest point as far from the boundary as that line
+gets, rightward or upward on a tie. The middle stays where one of the
+two lines gets no deeper there (rectangles, WP14's triangle); a loose
+line pushes it aside (WP10), a notch up (WP18), a diagonal side to where
+the side stops mattering (WP19). Where the middle is off the face the
+writer takes a triangle's centroid or the middle of the widest run of the
+horizontal line through it; the application takes another inner point
+there (WP17, WP19's second parcel), which gives the parcel the same face.
+The node records follow the application's hash order: eight
 buckets by id mod 8, each in id order (WP15, WP16: 30 and 50 nodes).
 
 Samples WP03 (one counterclockwise rectangle), WP06 (clockwise), WP12 to
