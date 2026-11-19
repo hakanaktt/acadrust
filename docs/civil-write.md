@@ -1118,6 +1118,33 @@ The host resolves the package from either text when it is absolute (an
 environment variable at its start expanded); a relative path is not
 resolved against the drawing's folder.
 
+### OpenCAD Studio's road package
+
+The package OpenCAD Studio builds in code (`OCSRoad`: lane, shoulder and
+side slope of one side, with the pavement under lane and shoulder; the
+test `tests/civil_ocs_road_package.rs` copies its builder) was written
+with `write_pkt` to `%USERPROFILE%\Documents\OpenCAD Studio\Subassemblies\OCSRoad.pkt`
+and used by a new drawing written by acadrust (E-OCS1): an alignment, a
+profile, an assembly with one `OCSRoad` subassembly per side, named by
+that path as OpenCAD Studio names it, and a corridor on them.
+
+| check | result |
+|---|---|
+| package in the package editor | opens; the preview shows the half section (points P1-P6, links L1-L6, shape S1) |
+| drawing | opens without recovery, AUDIT 0 errors |
+| subassemblies | listed up to date, generated from the package, with the eight parameters at their defaults (Side 0 right, 1 left); 6 points, 6 links, 1 shape each, at (0, 0), (3.5, -0.07), (4.5, -0.11), (7.5, -1.61), (4.5, -0.41), (0, -0.3) and mirrored |
+| `LaneWidth` set to 4 on the right one | the subassembly is rebuilt: (4, -0.08), (5, -0.12), (8, -1.62), (5, -0.42) |
+| corridor rebuild | built (stations 0-100 every 25); point codes Crown, ETW, EPS, Daylight, EPS_Datum, Crown_Datum; link codes Top, Pave, Daylight, Datum; shape code Pave; ETW at offset 4 right and -3.5 left |
+
+No codec change was needed. Note for OpenCAD Studio: it writes the
+package to the user's Documents known folder (`SHGetKnownFolderPath`)
+but names it in the drawing by `%USERPROFILE%\Documents\...`. Where
+Documents is redirected (here to a cloud-synced folder), the two differ
+and the host does not find the package (it lists the subassemblies with
+the status "file not found" and builds nothing, as E-PK2). Naming the
+path the package was written to, with `%USERPROFILE%` only when it is a
+prefix of that path, avoids this.
+
 ## 3j. Sample lines
 
 `add_sample_line_group(doc, alignment, name, layer)` writes an empty
