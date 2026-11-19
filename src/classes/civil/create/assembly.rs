@@ -1,0 +1,567 @@
+//! Assemblies and subassemblies built from subassembly packages.
+
+use super::profile::new_identifier;
+use super::site::default_style_of;
+use super::support::*;
+use crate::classes::civil::bits::Bits;
+use crate::entities::{EntityCommon, EntityType, ExtendedEntityData};
+use crate::error::DxfError;
+use crate::io::dwg::dwg_reference_type::DwgReferenceType;
+use crate::io::dwg::dwg_stream_writers::DwgMergedWriter;
+use crate::types::{Handle, Vector3};
+use crate::CadDocument;
+use crate::classes::civil::pkt::{enum_default, number_default, PktDirection, PktLayout, PktPackage, PktSide, PktValue};
+
+/// Style tree keys: assembly styles and code set styles.
+const KEY_ASSEMBLY_STYLES: i32 = 0x118;
+const KEY_CODE_SET_STYLES: i32 = 0xEA0;
+/// Root key of the name templates.
+const KEY_NAME_TEMPLATES: i32 = 0x8C;
+
+/// The run between an assembly's location and its identifier.
+const ASSEMBLY_LOCATION_TAIL: &str = "011010100110101001";
+/// A group of one subassembly in an assembly's group block: its index
+/// word and the heads of its nested objects (the same in every group of
+/// the samples).
+const GROUP: (usize, &str) = (122, "405505400000be045415000002f8128");
+/// The run after the group block, ending with the version word.
+const ASSEMBLY_TAIL: &str = "101010101000000010001011111000000100";
+
+fn run(w: &mut DwgMergedWriter, len: usize, hex: &str) {
+    let mut left = len;
+    for c in hex.chars() {
+        let v = c.to_digit(16).unwrap_or(0);
+        for i in (0..4).rev() {
+            if left == 0 {
+                return;
+            }
+            w.write_bit(v >> i & 1 == 1);
+            left -= 1;
+        }
+    }
+}
+
+fn point3(w: &mut DwgMergedWriter, p: Vector3) {
+    for v in [p.x, p.y, p.z] {
+        w.write_bit_double(v);
+    }
+}
+
+/// What a written assembly holds.
+struct Assembly {
+    location: Vector3,
+    id: [u8; 16],
+    style: u64,
+    code_set: u64,
+    subassemblies: Vec<u64>,
+}
+
+/// The assembly record (`AECC_ASSEMBLY`, an entity in model space):
+///
+/// ```text
+/// BL 80, 0, 80, 80, 0, BL 0x10025F04, BL 0x40000353, 4 bits 0010, RC 0
+/// (no keys), 120 zero bits, 3BD location, 18 bits, 16-byte identifier,
+/// BL 0, BL 0, BL n groups, n x {group run, BL 0}, BL 0, 36 bits ending
+/// with the version word
+/// references: soft 0, hard owner 0, the assembly style (hard), per
+///   subassembly {subassembly, soft 0} (soft), the code set style (hard)
+/// texts: "AeccImpAssembly", "", name, "", "", "", per group {"Group -
+///   (i)", "", "", ""}
+/// ```
+///
+/// Every subassembly written here is a group of its own.
+fn write_assembly(doc: &mut CadDocument, common: EntityCommon, name: &str, a: &Assembly) -> Result<Handle, DxfError> {
+    let mut refs = vec![soft_pointer(0), Ref(DwgReferenceType::HardOwnership, 0), hard_pointer(a.style)];
+    for s in &a.subassemblies {
+        refs.extend([soft_pointer(*s), soft_pointer(0)]);
+    }
+    refs.push(hard_pointer(a.code_set));
+    let mut strings: Vec<String> = ["AeccImpAssembly", "", name, "", "", ""].iter().map(|s| s.to_string()).collect();
+    for i in 0..a.subassemblies.len() {
+        strings.extend([format!("Group - ({})", i + 1), String::new(), String::new(), String::new()]);
+    }
+    put_entity(
+        doc,
+        "AECC_ASSEMBLY",
+        common,
+        |w| {
+            for v in [80, 0, 80, 80, 0, 0x1002_5F04, 0x4000_0353] {
+                w.write_bit_long(v);
+            }
+            bits(w, "0010");
+            w.write_byte(0);
+            bits(w, &"0".repeat(120));
+            point3(w, a.location);
+            bits(w, ASSEMBLY_LOCATION_TAIL);
+            w.write_bytes(&a.id);
+            w.write_bit_long(0);
+            w.write_bit_long(0);
+            w.write_bit_long(a.subassemblies.len() as i32);
+            for _ in &a.subassemblies {
+                run(w, GROUP.0, GROUP.1);
+                w.write_bit_long(0);
+            }
+            w.write_bit_long(0);
+            bits(w, ASSEMBLY_TAIL);
+        },
+        Body { refs, strings },
+    )
+}
+
+fn main_bits(doc: &CadDocument, handle: Handle) -> Option<Vec<u8>> {
+    match doc.get_entity(handle)? {
+        EntityType::Extended(x) => match &x.data {
+            ExtendedEntityData::Arch(a) => a.main_stream().map(|(d, s, e)| (s..e).map(|i| d[i / 8] >> (7 - i % 8) & 1).collect()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// An assembly this crate writes: what it holds, when writing it from
+/// that gives back its record.
+fn read_assembly(doc: &mut CadDocument, handle: Handle) -> Result<(EntityCommon, String, Assembly), DxfError> {
+    let refused = || invalid("the assembly is not one this crate writes");
+    let Some(EntityType::Extended(x)) = doc.get_entity(handle) else { return Err(invalid("assembly not found")) };
+    let ExtendedEntityData::Arch(a) = &x.data else { return Err(refused()) };
+    if a.dxf_name != "AECC_ASSEMBLY" {
+        return Err(refused());
+    }
+    let common = x.common.clone();
+    let (data, start, end) = a.main_stream().ok_or_else(refused)?;
+    let mut b = Bits::new(data, start, end);
+    b.skip(114 + 120).ok_or_else(refused)?;
+    let mut p = [0.0; 3];
+    for v in &mut p {
+        *v = b.bit_double().ok_or_else(refused)?;
+    }
+    b.skip(ASSEMBLY_LOCATION_TAIL.len()).ok_or_else(refused)?;
+    let mut id = [0u8; 16];
+    for v in &mut id {
+        *v = b.bits_value(8).ok_or_else(refused)?;
+    }
+    let refs = a.typed_handles();
+    let name = a.decode().strings.get(2).cloned().ok_or_else(refused)?;
+    (refs.len() >= 4 && refs.len() % 2 == 0).then_some(()).ok_or_else(refused)?;
+    let asm = Assembly {
+        location: Vector3::new(p[0], p[1], p[2]),
+        id,
+        style: refs[2].0,
+        code_set: refs[refs.len() - 1].0,
+        subassemblies: refs[3..refs.len() - 1].iter().step_by(2).map(|r| r.0).collect(),
+    };
+    let original = doc.get_entity(handle).cloned();
+    let before = main_bits(doc, handle);
+    write_assembly(doc, common.clone(), &name, &asm)?;
+    if main_bits(doc, handle) != before {
+        if let (Some(o), Some(slot)) = (original, doc.get_entity_mut(handle)) {
+            *slot = o;
+        }
+        return Err(refused());
+    }
+    Ok((common, name, asm))
+}
+
+fn entity_common(doc: &mut CadDocument, layer: Option<&str>) -> Result<EntityCommon, DxfError> {
+    let layer = layer.unwrap_or("0");
+    let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
+    Ok(EntityCommon { handle: doc.allocate_handle(), owner_handle: doc.header.model_space_block_handle, layer: layer.into(), layer_handle: Some(layer_handle), ..EntityCommon::default() })
+}
+
+/// Adds an empty assembly named `name` at `location` on `layer` (layer
+/// "0" when `None`), with the drawing's default assembly style and code
+/// set style (the drawing must have both).
+pub fn add_assembly(doc: &mut CadDocument, name: &str, location: Vector3, layer: Option<&str>) -> Result<Handle, DxfError> {
+    if name.is_empty() {
+        return Err(invalid("an assembly needs a name"));
+    }
+    if !(location.x.is_finite() && location.y.is_finite() && location.z.is_finite()) {
+        return Err(invalid("an assembly needs a finite location"));
+    }
+    let style = default_style_of(doc, KEY_ASSEMBLY_STYLES).ok_or_else(|| invalid("drawing has no assembly styles"))?;
+    let code_set = default_style_of(doc, KEY_CODE_SET_STYLES).ok_or_else(|| invalid("drawing has no code set styles"))?;
+    let common = entity_common(doc, layer)?;
+    let id = new_identifier(common.handle.value());
+    write_assembly(doc, common, name, &Assembly { location, id, style, code_set, subassemblies: Vec::new() })
+}
+
+/// The name templates root (root key 0x8C) and its node, which names an
+/// assembly's groups, when the drawing lacks them.
+fn ensure_name_templates(doc: &mut CadDocument) -> Result<(), DxfError> {
+    if root_node(doc, KEY_NAME_TEMPLATES).is_some() {
+        return Ok(());
+    }
+    let root = root(doc).ok_or_else(|| invalid("drawing has no civil root"))?;
+    let [head, node] = [(); 2].map(|_| doc.allocate_handle());
+    put_object(doc, "AECC_NAME_TEMPLATES_ROOT", head, root, Vec::new(), |w| run(w, 69, "631012003800024808"), Body { refs: vec![soft_owner(node.value()), soft_pointer(0)], strings: vec![String::new()] })?;
+    put_object(doc, "AECC_NAME_TEMPLATES_NODE", node, head, Vec::new(), |w| run(w, 91, "200380002920280a0480a02"), Body { refs: vec![soft_pointer(0)], strings: vec![String::new(), "Group - (<[67112990(2449)]>)".to_string()] })?;
+    set_root_entry(doc, KEY_NAME_TEMPLATES, head)
+}
+
+/// Where a package subassembly's package lies, as the host stores it:
+/// `library` the library list (a JSON array of paths, a leading folder
+/// typically written as an environment variable), `path` the package's
+/// resolved path. Both are stored as given.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PktSource {
+    pub library: String,
+    pub path: String,
+}
+
+/// The class keys of a package subassembly (type 4, no value): the four
+/// W-K01 to W-K05 carry; a stock subassembly (SA1) lacks 0x0404D01D.
+const SUBASSEMBLY_KEYS: [i32; 4] = [0x0404_D01E, 0x0404_D020, 0x0404_D01D, 0x0404_D01F];
+/// The run between the record's scale and its point list (the same in
+/// W-K01 to W-K05 and in the stock SA1).
+const SUBASSEMBLY_HEAD_TAIL: (usize, &str) = (62, "085415000002f810");
+/// The run after the parameter set, to the end of the body (the same in
+/// W-K01 to W-K05 and in the stock SA1).
+const SUBASSEMBLY_TAIL: (usize, &str) = (341, "aaaaaaaa0000012023fffffffea40c0000000000000000000000000000000000000000000012206a45f020");
+/// Parameter item types: integer, double.
+const ITEM_INTEGER: i32 = 0x1012;
+const ITEM_DOUBLE: i32 = 0x1013;
+
+/// MD5 (RFC 1321) of `data`: the host names a package subassembly's
+/// script by the MD5 of its package file.
+fn md5(data: &[u8]) -> [u8; 16] {
+    const S: [u32; 64] = [7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21];
+    let k: Vec<u32> = (0..64).map(|i| ((i as f64 + 1.0).sin().abs() * 4_294_967_296.0) as u32).collect();
+    let mut h = [0x6745_2301u32, 0xEFCD_AB89, 0x98BA_DCFE, 0x1032_5476];
+    let mut msg = data.to_vec();
+    msg.push(0x80);
+    while msg.len() % 64 != 56 {
+        msg.push(0);
+    }
+    msg.extend_from_slice(&((data.len() as u64).wrapping_mul(8)).to_le_bytes());
+    for chunk in msg.chunks(64) {
+        let m: Vec<u32> = chunk.chunks(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+        let [mut a, mut b, mut c, mut d] = h;
+        for i in 0..64 {
+            let (f, g) = match i / 16 {
+                0 => ((b & c) | (!b & d), i),
+                1 => ((d & b) | (!d & c), (5 * i + 1) % 16),
+                2 => (b ^ c ^ d, (3 * i + 5) % 16),
+                _ => (c ^ (b | !d), (7 * i) % 16),
+            };
+            let t = d;
+            d = c;
+            c = b;
+            b = b.wrapping_add(a.wrapping_add(f).wrapping_add(k[i]).wrapping_add(m[g]).rotate_left(S[i]));
+            a = t;
+        }
+        for (x, y) in h.iter_mut().zip([a, b, c, d]) {
+            *x = x.wrapping_add(y);
+        }
+    }
+    let mut out = [0u8; 16];
+    for (i, v) in h.iter().enumerate() {
+        out[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
+    }
+    out
+}
+
+/// One parameter of a subassembly record: its item type, the type's
+/// field, value, choices, declaration index and texts.
+struct Item {
+    name: String,
+    display: String,
+    kind: i32,
+    field: i32,
+    integer: i32,
+    double: f64,
+    choices: Vec<(String, String, i32)>,
+    index: i32,
+}
+
+/// The input parameters of `pkg` as the record lists them: integers, then
+/// doubles, each by name; indices count the inputs in declaration order
+/// (targets and a Side of None left out).
+fn items(pkg: &PktPackage, side: PktSide, values: &[(String, PktValue)]) -> Result<Vec<Item>, DxfError> {
+    let mut out = Vec::new();
+    let inputs = pkg.parameters.iter().filter(|p| p.direction == PktDirection::In && !p.is_target());
+    for (index, p) in inputs.enumerate() {
+        let given = values.iter().find(|v| v.0.eq_ignore_ascii_case(&p.name)).map(|v| &v.1);
+        let display = p.display_name().to_string();
+        let item = |kind, field, integer, double, choices| Item { name: p.name.clone(), display: display.clone(), kind, field, integer, double, choices, index: index as i32 };
+        match p.type_name.as_str() {
+            "asw:EnumType" => {
+                let d = p.default.as_deref().and_then(enum_default).ok_or_else(|| invalid("a package enumeration without its default"))?;
+                if p.name == "Side" && d.0 == -1 {
+                    continue;
+                }
+                let group = d.2.ok_or_else(|| invalid("a package enumeration without its group"))?;
+                let choices: Vec<(String, String, i32)> = if group == "Side" {
+                    vec![("Left".into(), "Left".into(), 1), ("Right".into(), "Right".into(), 0)]
+                } else {
+                    pkg.enum_groups.iter().find(|g| g.name == group).ok_or_else(|| invalid("a package enumeration names no group"))?.items.clone()
+                };
+                let key = if p.name == "Side" {
+                    if side == PktSide::Left {
+                        1
+                    } else {
+                        0
+                    }
+                } else {
+                    match given {
+                        Some(PktValue::Integer(k)) => *k,
+                        None => d.0,
+                        _ => return Err(invalid("an enumeration takes an integer key")),
+                    }
+                };
+                if !choices.iter().any(|c| c.2 == key) {
+                    return Err(invalid("the key is not one of the enumeration's"));
+                }
+                out.push(item(ITEM_INTEGER, 0, key, 0.0, choices));
+            }
+            t @ ("x:Double" | "asw:Grade" | "asw:Slope") => {
+                let field = match t {
+                    "asw:Grade" => 9,
+                    "asw:Slope" => 10,
+                    _ => 16,
+                };
+                let v = match given {
+                    Some(PktValue::Double(x)) => *x,
+                    None => number_default(p.default.as_deref().unwrap_or("")).parse().map_err(|_| invalid("a package number without its default"))?,
+                    _ => return Err(invalid("a number parameter takes a double")),
+                };
+                out.push(item(ITEM_DOUBLE, field, 0, v, Vec::new()));
+            }
+            _ => return Err(invalid("a package parameter type the record writer does not know")),
+        }
+    }
+    // ponytail: names compared by bytes; the samples' names sort alike
+    // case-blind; check a mixed-case pair against the host if one appears.
+    out.sort_by(|a, b| a.kind.cmp(&b.kind).then(a.name.cmp(&b.name)));
+    Ok(out)
+}
+
+/// The record of a package subassembly (`AECC_SUBASSEMBLY`, an entity in
+/// model space):
+///
+/// ```text
+/// BL 80, 0, 80, 80, 0, BL 0x10025F04, 010101, RC 4 keys (0x0404D01E,
+/// 0x0404D020, 0x0404D01D, 0x0404D01F), BL 0 (one-byte form), 121 zero bits,
+/// 3BD origin, 9 BD rotation (identity), BD 1, 62 bits,
+/// BL n points, n x {BL code count, B 1, B 0, BL 0, BD offset, BD elevation},
+/// BL n links, n x {BL code count, B 1, B 0, BL n, n x RL point},
+/// BL n shapes, n x {BL code count, B 1, B 0, BL n, n x RL link, BL 0},
+/// parameter set: BL 0, BL 0, 011010, BL n integers {BL 0x1012, BL 0,
+///   BL value, B 0, B 1, BL n, n x BL choice key, BL index}, BL n doubles
+///   {BL 0x1013, BL 16 | 9 grade | 10 slope, BD value, B 0, B 0, BL
+///   index}, BL 0 texts,
+/// 341 bits
+/// references: soft 0, hard owner 0, the assembly (soft), subassembly
+///   style (hard), the subassembly (soft), code set style (hard)
+/// texts: "AeccImpSubassembly", "", "", library list, "{"docs_permanent_id":
+///   ""}", version, the package file's MD5 (upper-case hex), name, "",
+///   path, "Subassembly.<package name>", 5 x "", the point, link and
+///   shape codes, per parameter {name, display name, "", ""} and its
+///   choices {name, display name}, ""
+/// ```
+fn subassembly_record(w: &mut DwgMergedWriter, origin: Vector3, layout: &PktLayout, items: &[Item]) {
+    for v in [80, 0, 80, 80, 0, 0x1002_5F04] {
+        w.write_bit_long(v);
+    }
+    bits(w, "010101");
+    w.write_byte(SUBASSEMBLY_KEYS.len() as u8);
+    for k in SUBASSEMBLY_KEYS {
+        w.write_bit_long(k);
+    }
+    // the closing BL 0 in its one-byte form, as the host writes it
+    bits(w, "0100000000");
+    bits(w, &"0".repeat(121));
+    point3(w, origin);
+    for v in [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0] {
+        w.write_bit_double(v);
+    }
+    run(w, SUBASSEMBLY_HEAD_TAIL.0, SUBASSEMBLY_HEAD_TAIL.1);
+    let head = |w: &mut DwgMergedWriter, codes: usize| {
+        w.write_bit_long(codes as i32);
+        w.write_bit(true);
+        w.write_bit(false);
+    };
+    w.write_bit_long(layout.points.len() as i32);
+    for p in &layout.points {
+        head(w, p.codes.len());
+        w.write_bit_long(0);
+        w.write_bit_double(p.offset);
+        w.write_bit_double(p.elevation);
+    }
+    w.write_bit_long(layout.links.len() as i32);
+    for l in &layout.links {
+        head(w, l.codes.len());
+        w.write_bit_long(l.points.len() as i32);
+        for i in &l.points {
+            w.write_raw_long(*i as i32);
+        }
+    }
+    w.write_bit_long(layout.shapes.len() as i32);
+    for s in &layout.shapes {
+        head(w, s.codes.len());
+        w.write_bit_long(s.links.len() as i32);
+        for i in &s.links {
+            w.write_raw_long(*i as i32);
+        }
+        w.write_bit_long(0);
+    }
+    w.write_bit_long(0);
+    w.write_bit_long(0);
+    bits(w, "011010");
+    for kind in [ITEM_INTEGER, ITEM_DOUBLE] {
+        let these: Vec<&Item> = items.iter().filter(|i| i.kind == kind).collect();
+        w.write_bit_long(these.len() as i32);
+        for i in these {
+            w.write_bit_long(i.kind);
+            w.write_bit_long(i.field);
+            if kind == ITEM_INTEGER {
+                w.write_bit_long(i.integer);
+            } else {
+                w.write_bit_double(i.double);
+            }
+            w.write_bit(false);
+            w.write_bit(!i.choices.is_empty());
+            if !i.choices.is_empty() {
+                w.write_bit_long(i.choices.len() as i32);
+                for c in &i.choices {
+                    w.write_bit_long(c.2);
+                }
+            }
+            w.write_bit_long(i.index);
+        }
+    }
+    w.write_bit_long(0);
+    run(w, SUBASSEMBLY_TAIL.0, SUBASSEMBLY_TAIL.1);
+}
+
+/// Adds a subassembly built from the package `pkt` to `assembly`, as a
+/// group of its own attached at the assembly's location, on `layer`
+/// (layer "0" when `None`). Its geometry is the package's layout on
+/// `side` with `values` (see `pkt::layout`); `source` says where the
+/// package lies, which must hold the bytes `pkt::write_pkt` writes for
+/// `pkt` (the record keeps their MD5). The subassembly takes the drawing's
+/// default subassembly style (written when the drawing has none) and the
+/// assembly's code set style. The assembly must be one this crate writes.
+#[allow(clippy::too_many_arguments)]
+pub fn add_pkt_subassembly(doc: &mut CadDocument, assembly: Handle, name: &str, source: &PktSource, pkt: &PktPackage, side: PktSide, values: &[(String, PktValue)], layer: Option<&str>) -> Result<Handle, DxfError> {
+    if name.is_empty() {
+        return Err(invalid("a subassembly needs a name"));
+    }
+    let layout = crate::classes::civil::pkt::layout(pkt, side, values)?;
+    if layout.points.is_empty() {
+        return Err(invalid("the package lays out no points"));
+    }
+    let items = items(pkt, side, values)?;
+    let id: String = md5(&crate::classes::civil::pkt::write_pkt(pkt)?).iter().map(|b| format!("{b:02X}")).collect();
+    let (asm_common, asm_name, mut asm) = read_assembly(doc, assembly)?;
+    super::default_styles::ensure_subassembly_styles(doc)?;
+    ensure_name_templates(doc)?;
+    let style = default_style_of(doc, super::default_styles::KEY_SUBASSEMBLY_STYLES).ok_or_else(|| invalid("drawing has no subassembly styles"))?;
+    let common = entity_common(doc, layer)?;
+    let handle = common.handle;
+    let refs = vec![soft_pointer(0), Ref(DwgReferenceType::HardOwnership, 0), soft_pointer(assembly.value()), hard_pointer(style), soft_pointer(handle.value()), hard_pointer(asm.code_set)];
+    let class = format!("Subassembly.{}", pkt.name);
+    let mut strings: Vec<String> = ["AeccImpSubassembly", "", "", &source.library, "{\"docs_permanent_id\": \"\"}", &pkt.version, &id, name, "", &source.path, &class, "", "", "", "", ""].iter().map(|s| s.to_string()).collect();
+    strings.extend(layout.codes.iter().cloned());
+    for i in &items {
+        strings.extend([i.name.clone(), i.display.clone(), String::new(), String::new()]);
+        for c in &i.choices {
+            strings.extend([c.0.clone(), c.1.clone()]);
+        }
+    }
+    strings.push(String::new());
+    let origin = asm.location;
+    put_entity(doc, "AECC_SUBASSEMBLY", common, |w| subassembly_record(w, origin, &layout, &items), Body { refs, strings })?;
+    asm.subassemblies.push(handle.value());
+    write_assembly(doc, asm_common, &asm_name, &asm)?;
+    Ok(handle)
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::io::dwg::{DwgReader, DwgWriter};
+    use crate::types::{DxfVersion, Vector2};
+    use super::super::tree::{DEFAULT_STYLE_ID, KEY_STYLES};
+
+    /// A drawing with a style tree and stand-in assembly and code set
+    /// style collections with a default style each.
+    fn drawing() -> CadDocument {
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        crate::classes::civil::add_alignment(&mut doc, "AL0", &[Vector2::new(0.0, -50.0), Vector2::new(100.0, -50.0)], None).unwrap();
+        let styles = root_node(&doc, KEY_STYLES).unwrap();
+        for key in [KEY_ASSEMBLY_STYLES, KEY_CODE_SET_STYLES] {
+            let [head, style] = [(); 2].map(|_| doc.allocate_handle());
+            for (h, owner, k, children) in [(head, styles, key, vec![(DEFAULT_STYLE_ID, style)]), (style, head, DEFAULT_STYLE_ID, vec![])] {
+                let refs = children.iter().map(|c| soft_owner(c.1.value())).collect();
+                put_object(&mut doc, "AECC_TREE_NODE", h, owner, Vec::new(), |w| {
+                    w.write_bit_long(k);
+                    w.write_bit_long(children.len() as i32);
+                    for c in &children {
+                        w.write_bit_long(c.0);
+                    }
+                    w.write_bit_long(0);
+                    bits(w, "010");
+                }, Body { refs, strings: vec![String::new()] })
+                .unwrap();
+            }
+            add_node_child(&mut doc, styles, key, head, "").unwrap();
+        }
+        doc
+    }
+
+    #[test]
+    fn md5_matches_rfc_1321() {
+        let hex = |d: &[u8]| md5(d).iter().map(|b| format!("{b:02x}")).collect::<String>();
+        assert_eq!(hex(b""), "d41d8cd98f00b204e9800998ecf8427e");
+        assert_eq!(hex(b"abc"), "900150983cd24fb0d6963f7d28e17f72");
+        assert_eq!(hex(&[b'a'; 1000]), "cabe45dcc9ae5b66ba86600cca6b8ba8");
+    }
+
+    #[test]
+    fn assemblies_take_package_subassemblies() {
+        let pkg = crate::classes::civil::pkt::tests::lane();
+        let source = PktSource { library: "[ \"lane.pkt\" ]".into(), path: "lane.pkt".into() };
+        let mut empty = CadDocument::new();
+        empty.version = DxfVersion::AC1032;
+        assert!(add_assembly(&mut empty, "A", Vector3::new(0.0, 0.0, 0.0), None).is_err());
+        let mut doc = drawing();
+        let a = add_assembly(&mut doc, "ASM1", Vector3::new(20.0, -60.0, 0.0), None).unwrap();
+        let wide = [("Width".to_string(), PktValue::Double(4.0)), ("Depth".to_string(), PktValue::Double(0.25)), ("Slope".to_string(), PktValue::Double(-0.03))];
+        assert!(add_pkt_subassembly(&mut doc, a, "X", &source, &pkg, PktSide::Right, &[("Width".into(), PktValue::Integer(1))], None).is_err());
+        let r = add_pkt_subassembly(&mut doc, a, "LaneR", &source, &pkg, PktSide::Right, &wide, None).unwrap();
+        let l = add_pkt_subassembly(&mut doc, a, "LaneL", &source, &pkg, PktSide::Left, &[], None).unwrap();
+        assert!(root_node(&doc, KEY_NAME_TEMPLATES).is_some());
+        let path = std::env::temp_dir().join(format!("civil-assembly-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let mut back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let (_, name, asm) = read_assembly(&mut back, a).unwrap();
+        assert_eq!((name.as_str(), asm.location, asm.subassemblies.clone()), ("ASM1", Vector3::new(20.0, -60.0, 0.0), vec![r.value(), l.value()]));
+        let record = |h: Handle| match back.get_entity(h) {
+            Some(EntityType::Extended(x)) => match &x.data {
+                ExtendedEntityData::Arch(a) => a.clone(),
+                _ => panic!(),
+            },
+            _ => panic!(),
+        };
+        let lane = record(r);
+        let strings = lane.decode().strings;
+        assert_eq!((strings[3].as_str(), strings[7].as_str(), strings[9].as_str(), strings[10].as_str()), ("[ \"lane.pkt\" ]", "LaneR", "lane.pkt", "Subassembly.Lane"));
+        assert_eq!(strings[6].len(), 32);
+        assert_eq!(&strings[16..24], ["Crown", "ETW", "ETW_Datum", "Crown_Datum", "Top", "Pave", "Datum", "Pave"]);
+        assert_eq!(&strings[24..32], ["Side", "Side", "", "", "Left", "Left", "Right", "Right"]);
+        assert_eq!(lane.typed_handles()[2].0, a.value());
+        // the stored shape and parameters read back
+        let (data, start, end) = lane.main_stream().unwrap();
+        let shape = crate::classes::civil::subassembly::find(data, start, end, &strings).unwrap();
+        assert_eq!(shape.points.iter().map(|p| (p.x, p.y)).collect::<Vec<_>>(), [(0.0, 0.0), (4.0, -0.12), (4.0, -0.37), (0.0, -0.49)]);
+        assert_eq!((shape.links.clone(), shape.areas.clone()), (vec![vec![0, 1], vec![1, 2], vec![2, 3], vec![3, 0]], vec![vec![0, 1, 2, 3]]));
+        assert_eq!(shape.link_codes[0], ["Top", "Pave"]);
+        let params = crate::classes::civil::subassembly::parameters(data, start, end, &strings).unwrap();
+        let v: Vec<(String, crate::classes::civil::ParameterValue, i32)> = params.into_iter().map(|p| (p.name, p.value, p.index)).collect();
+        use crate::classes::civil::ParameterValue::{Double, Integer};
+        assert_eq!(v, [("Side".into(), Integer(0), 0), ("Depth".into(), Double(0.25), 2), ("Slope".into(), Double(-0.03), 3), ("Width".into(), Double(4.0), 1)]);
+    }
+}
