@@ -1,4 +1,4 @@
-//! Corridor feature lines.
+//! Corridor feature lines and baseline references.
 //!
 //! A corridor body stores its feature lines as groups, one per point code
 //! in the order of the corridor's code list:
@@ -17,6 +17,82 @@ use super::bits::Bits;
 use crate::types::Vector3;
 
 type Groups = Vec<Vec<Vec<(f64, Vector3)>>>;
+
+/// A corridor baseline's alignment and profile, from the tagged reference
+/// records at the tail of the corridor body.
+///
+/// Layout verified on one sample (`DE_Busbucht_2023.dwg`, corridor
+/// `0x202BCAF`: records `(0x54, alignment), (0x54, profile), (0x44,
+/// alignment)` — one baseline on `0x202BBA5` with profile `0x202BBD8`,
+/// matching the application's own read of the same file); whether the tag
+/// bytes are stable across files is open.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct CorridorBaseline {
+    /// The alignment the baseline follows (`AECC_ALIGNMENT`).
+    pub alignment: u64,
+    /// The profile it follows (`AECC_PROFILE`), when the record names one.
+    pub profile: Option<u64>,
+}
+
+/// One tail reference record: `[8-bit tag][32-bit BE handle]`.
+fn tail_record(data: &[u8], at: usize, end: usize) -> Option<(u8, u64)> {
+    let mut bits = Bits::new(data, at, end);
+    let tag = bits.raw_short_byte()?;
+    let handle = u32::from_be_bytes([
+        bits.raw_short_byte()?,
+        bits.raw_short_byte()?,
+        bits.raw_short_byte()?,
+        bits.raw_short_byte()?,
+    ]);
+    Some((tag, u64::from(handle)))
+}
+
+/// The reference records at the tail of a corridor body: the last run of
+/// 40-bit records with tags `0x54` (a baseline's alignment, then its
+/// profile) or `0x44` (the alignment again) that reaches the end of the
+/// body. Tags outside the two seen, a zero handle, or a record that does
+/// not fit end the run.
+fn tail_refs(data: &[u8], start: usize, end: usize) -> Vec<(u8, u64)> {
+    for at in (start..=end.saturating_sub(40)).rev() {
+        let Some((tag, handle)) = tail_record(data, at, end) else { continue };
+        if handle == 0 || !matches!(tag, 0x44 | 0x54) {
+            continue;
+        }
+        let mut refs = vec![(tag, handle)];
+        let mut next = at + 40;
+        while let Some((tag, handle)) = tail_record(data, next, end) {
+            if handle == 0 || !matches!(tag, 0x44 | 0x54) {
+                break;
+            }
+            refs.push((tag, handle));
+            next += 40;
+        }
+        // The run is the body's tail only if fewer than 40 bits follow it.
+        if refs.len() >= 3 && end - next < 40 {
+            return refs;
+        }
+    }
+    Vec::new()
+}
+
+/// The baselines a corridor body's tail references name: one baseline per
+/// `0x54` alignment / `0x54` profile pair. A body whose tail carries no
+/// such records reports none.
+pub(super) fn tail_baselines(data: &[u8], start: usize, end: usize) -> Vec<CorridorBaseline> {
+    let refs = tail_refs(data, start, end);
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + 1 < refs.len() {
+        if refs[i].0 == 0x54 && refs[i + 1].0 == 0x54 {
+            out.push(CorridorBaseline { alignment: refs[i].1, profile: Some(refs[i + 1].1) });
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
 
 /// One `4BD` station record, `None` past the end or when implausible.
 fn record(bits: &mut Bits) -> Option<(f64, Vector3)> {

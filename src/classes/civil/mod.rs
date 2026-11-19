@@ -39,6 +39,7 @@ pub use network::{PartField, PressurePipe};
 pub use parameters::{Parameter, ParameterValue};
 pub use profile::{CurveMinimumK, ProfileCriteria, ProfileLocking, ProfilePiece, ProfileViewFrame, Pvi};
 pub use sample_lines::SampleLines;
+pub use corridor::CorridorBaseline;
 pub use section::{MassHaulViewFrame, SectionGeometry, SectionViewFrame};
 pub use style::{DisplayComponent, Marker, ViewAxes, ViewAxis};
 pub use subassembly::{AssemblyLayout, Attachment, SubassemblyShape};
@@ -997,6 +998,24 @@ impl ArchEntityData {
         }
         self.main_stream()
             .map(|(data, start, end)| corridor::baselines(data, start, end))
+            .unwrap_or_default()
+    }
+
+    /// The baselines of a Civil 3D corridor: the alignment and profile
+    /// records its body's tail references name (see
+    /// [`CorridorBaseline`]; the feature-line groups
+    /// [`Self::corridor_baselines`] reads are separate). The scan runs
+    /// over the whole raw record — on the sample the references sit in
+    /// its last bits, past the class body's main stream. Verified on one
+    /// corridor; a record whose tail carries no such references reports
+    /// none.
+    pub fn corridor_tail_baselines(&self) -> Vec<CorridorBaseline> {
+        if self.civil_kind() != Some(CivilKind::Corridor) {
+            return Vec::new();
+        }
+        self.raw_dwg_data
+            .as_deref()
+            .map(|data| corridor::tail_baselines(data, 0, data.len() * 8))
             .unwrap_or_default()
     }
 
