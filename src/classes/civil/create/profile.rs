@@ -100,7 +100,7 @@ pub(super) fn identifier(doc: &CadDocument, profile: u64) -> Option<[u8; 16]> {
 /// the version in the high nibble of byte 7, the variant in byte 8). The
 /// application stops while it opens a drawing whose profile identifiers
 /// are not of this form.
-fn new_identifier(seed: u64) -> [u8; 16] {
+pub(super) fn new_identifier(seed: u64) -> [u8; 16] {
     use std::hash::{BuildHasher, Hasher};
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let half = |salt: u64| {
