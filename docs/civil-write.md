@@ -720,6 +720,66 @@ application opens the drawing with AUDIT 0 errors and lists the view with
 the same API values as its own. A new drawing has no profile label set,
 so its views have no label groups.
 
+## 3i. Corridors
+
+`add_corridor(doc, name, baseline, region, alignment, profile, assembly,
+layer)` writes a corridor with one baseline along the alignment and its
+profile and one region over the alignment's stations that applies an
+assembly of the drawing every 25 units. It is written as the application
+writes a corridor before its first rebuild (WC13, WC24 to WC27: the
+corridor added through the API without a rebuild): out of date, without
+stations, applied sections, feature lines or surfaces. Adding it changes
+no other record (the alignment, the profile and the assembly stay as they
+are). The corridor style is the drawing's default (style tree key 0xEB2),
+the code set style the assembly's.
+
+```text
+BL 80, 0, 80, 80, 0, BL 0x10025F04, BL 0x40008353 (unbuilt), 4 bits 0101
+RC 1, key 0x0B001081 (BL 2, two values; written 0)
+2 bits 01, 128 zero bits, 2 bits 01, RC 82
+BL 0 (items), BL 0 (surfaces), BL 0, BL 0 (outlines), BL 0
+2 bits 01, RC 32, RC 0x48, RC (baselines << 3 | 2), 1 bit 0,
+6 bits region count, BL 0 (stations)
+region: identifier, the assembly's group block, BD start, BD end,
+  2 bits 00, BD frequency along tangents (25), BD along curves (25),
+  BL 0, BD 0, BD 25, BD 10, identifier, BL 0 x 3, BL 0 (targets),
+  BL 0 (stations), 3 bits 110, BL 0
+baseline: BL 0, B 1, 9 bits 000000101, identifier, 47 bits ending with
+  the version word
+references: soft 0, style, code set style, hard 0, alignment, profile,
+  assembly (hard), per subassembly {subassembly (soft), soft 0}
+texts: "AeccImpCorridor", "", name, "", "", per assembly group {its name,
+  "", "", ""}, the assembly's name, "", the region's name, the
+  baseline's name
+```
+
+The identifiers are version-4 GUIDs (new ones for every corridor). The
+group block is the assembly's own (`BL 0, BL 0, BL n groups, BL 1`, then
+per group its nested object heads and attachment nodes), copied from the
+assembly record:
+
+```text
+BL 80, 0, 80, 80, 0, BL 0x10025F04, BL, 4 bits, RC n keys, keys
+120 zero bits, 3BD location, 18 bits, identifier, group block, 36 bits
+references: soft 0, hard owner 0, style, per subassembly {subassembly
+  (soft), soft 0}, code set style
+texts: "AeccImpAssembly", "", name, "", "", "", per group {name, "", "",
+  ""}
+```
+
+Written with the samples' identifiers, stations, frequencies and
+assemblies (one and two groups), the record equals theirs bit for bit
+(the station range 10-90 and a tangent frequency of 10 included).
+
+Written into WC23 (an assembly of two lanes, E-C1) and WC20 (one lane,
+E-C2), the corridor opens with AUDIT 0 errors and the API lists its
+baseline (alignment, profile, stations 0-100) and region (assembly,
+stations 0-100) as for the application's own unbuilt corridor; the API
+reports it out of date. The API rebuild run after reopening a drawing in
+the check harness changes no corridor, the application's own included (a
+built corridor keeps its stations after a frequency edit and a rebuild),
+so the built result of a written corridor is not checked.
+
 ## 4. Reference check
 
 For every written drawing the check opens it in its own reference instance
@@ -887,4 +947,5 @@ taken from the records and checked bit for bit against them.
 | layout profiles (fixed tangents; free symmetric and asymmetric parabolas, free circular curves) | yes | yes (a new drawing gets §3f) | yes (§4) | not needed (the application solves the stored entities) | fixed and floating curves |
 | sites, alignments and feature lines on a site | yes | yes (a new drawing gets the node of sites, no styles) | yes (§4) | not needed (the application rewrites the site's cache) | parcels, crossing members, feature line arcs and elevation points |
 | profile views and their profile label groups | yes (frame) | yes (a new drawing gets the default view style, §3h) | yes (§3h) | not needed (the application recomputes the view from its style) | other ranges and styles, label groups in a new drawing (no label set) |
-| parcels, gradings, sections, corridors, networks | partly | no | — | — | not started |
+| corridors (one baseline, one region, unbuilt) | yes | yes, with an assembly of the drawing (§3i) | yes (§3i) | the corridor is written out of date and built by the application's rebuild | assemblies and subassemblies, built results, surfaces, several regions or baselines |
+| parcels, gradings, sections, networks | partly | no | — | — | not started |
