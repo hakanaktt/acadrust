@@ -1023,6 +1023,87 @@ the check harness changes no corridor, the application's own included (a
 built corridor keeps its stations after a frequency edit and a rebuild),
 so the built result of a written corridor is not checked.
 
+### Assemblies and package subassemblies
+
+`add_assembly(doc, name, location, layer)` writes an empty assembly with
+the drawing's default assembly style (style tree key 0x118) and code set
+style (0xEA0); the drawing must have both (a drawing the application has
+opened). `add_pkt_subassembly(doc, assembly, name, source, pkt, side,
+values, layer)` adds a subassembly built from a package (§3l) as a group
+of its own, attached at the assembly's location, with the package's
+layout on `side` with `values`, and writes the assembly again with the
+group. `source` gives the two texts that say where the package lies:
+the library list (a JSON array; the host writes a path under the user's
+folder as `%USERPROFILE%\\...`) and the resolved path. The package file
+must hold the bytes `write_pkt` writes for `pkt`: the record keeps their
+MD5 as the script's id.
+
+```text
+assembly: BL 80, 0, 80, 80, 0, BL 0x10025F04, BL 0x40000353, 4 bits 0010,
+  RC 0, 120 zero bits, 3BD location, 18 bits, 16-byte identifier (a
+  version-4 GUID), BL 0, BL 0, BL n groups, n x {122-bit group run, BL 0},
+  BL 0, 36 bits ending with the version word
+  references: soft 0, hard owner 0, assembly style (hard), per
+    subassembly {subassembly, soft 0} (soft), code set style (hard)
+  texts: "AeccImpAssembly", "", name, "", "", "", per group {"Group -
+    (i)", "", "", ""}
+package subassembly: BL 80, 0, 80, 80, 0, BL 0x10025F04, 010101, RC 4
+  keys of type 4 (0x0404D01E, 0x0404D020, 0x0404D01D, 0x0404D01F; a
+  stock subassembly lacks 0x0404D01D), BL 0 in its one-byte form, 121
+  zero bits, 3BD origin (the assembly's location), 9 BD rotation
+  (identity), BD 1, 62 bits,
+  BL n points, n x {BL code count, B 1, B 0, BL 0, BD offset, BD elevation},
+  BL n links, n x {BL code count, B 1, B 0, BL n, n x RL point},
+  BL n shapes, n x {BL code count, B 1, B 0, BL n, n x RL link, BL 0},
+  parameter set (§3i corridors): integers then doubles, each sorted by
+    name; integer {0x1012, 0, key, B 0, B 1, the choices' keys, index},
+    double {0x1013, 16 | 9 grade | 10 slope, BD value, B 0, B 0, index},
+    index = the input's place among the package's inputs; no texts
+  341 bits (the same in every package and stock subassembly seen)
+  references: soft 0, hard owner 0, the assembly (soft), subassembly
+    style (hard), the subassembly itself (soft), code set style (hard)
+  texts: "AeccImpSubassembly", "", "", library list, "{"docs_permanent_id":
+    ""}", the package version, the MD5 of the package file (upper-case
+    hex), name, "", resolved path, "Subassembly.<package name>", 5 x "",
+    the point, link and shape codes, per parameter {name, display name,
+    "", ""} and its choices {name, display name}, ""
+```
+
+The record stores the layout only: auxiliary points and links are not
+in it, targets and descriptions are not either (the parameter texts keep
+the display name), and the stock record's resource module and `Version`
+parameter have no counterpart. A drawing without the subassembly style
+collection (style tree key 0x11A) gets the application's default,
+written from templates as the styles of §2c, and one without the name
+templates (root key 0x8C, the root and its node naming the groups
+`Group - (<n>)`) gets them.
+
+Samples W-K01 to W-K05: WR01 with an assembly at (0, -50) and K01 to K05
+(§3l) imported and added by the application, K01 also on the left and
+with width 3, depth 0.5, slope -0.05 (W-K01L, W-K01b). Written by
+`add_pkt_subassembly` from the same packages, sides and values, every
+subassembly record equals the sample's bit for bit and in its texts
+apart from the MD5 (the samples point at the editor's file); the
+assembly equals apart from its identifier.
+
+Checks with packages written by `write_pkt` next to the drawing (a lane
+built in code, right lane width 4 / depth 0.25 / slope -0.03, left lane
+with the defaults, a corridor on the assembly), every drawing written by
+acadrust from WR01:
+
+| drawing | library list / path | opens | AUDIT | subassemblies | corridor rebuild |
+|---|---|---|---|---|---|
+| E-PK1 | `%USERPROFILE%\...` / absolute | without recovery | 0 errors | listed, up to date, parameters as written, 4 points, 4 links, 1 shape each | built from the package: stations 0-100 every 25, codes Crown, ETW, ETW_Datum, Crown_Datum, at station 0 ETW (4, -0.12) right and (-3.5, -0.07) left |
+| E-PK2 | as E-PK1, package moved away | without recovery | 0 errors | listed with status "file not found", stored geometry and parameters kept | runs, builds nothing (no codes, no points) |
+| E-PK3 | `E-PK3-K01W.pkt` / same (relative) | without recovery | 0 errors | "file not found" | builds nothing |
+| E-PK4 | `.\E-PK4-K01W.pkt` / same | without recovery | — | "file not found" | builds nothing |
+| E-PK5 | relative / absolute | without recovery | — | up to date | built as E-PK1 |
+| E-PK6 | absolute (no variable) / relative | without recovery | — | up to date | built as E-PK1 |
+
+The host resolves the package from either text when it is absolute (an
+environment variable at its start expanded); a relative path is not
+resolved against the drawing's folder.
+
 ## 3j. Sample lines
 
 `add_sample_line_group(doc, alignment, name, layer)` writes an empty
@@ -1201,6 +1282,114 @@ alignments and profiles and null offsets, the four quadrants with their
 in and out alignments and the written angles, and the location (175, 75)
 of E-I3 follows from the written station through the curve.
 
+## 3l. Subassembly packages (`pkt`)
+
+A package is a ZIP archive of deflated parts; `read_pkt` and `write_pkt`
+read and write it from named fields (`PktPackage`). The samples K00 (a new
+package) and K01 to K05 (a lane; with a decision and an auxiliary point;
+with an offset target and a variable; with a switch on the side, a
+sequence and an enumeration; with a preview image, a description and a
+help file) are packages the package editor saved; each reads and writes
+back to equal parts (XML parts equal as documents, other parts equal
+bytes).
+
+```text
+[Content_Types].xml  BOM, Types: Default Extension per part extension
+  (atc, cfg, xaml, image, help, pvd, emd, cdmd), ContentType ""
+<id>.atc   the tool catalog: catalog id, the tool (name, id, image
+  64 x 64 [src], [Description], ToolTip "<description>
+Version: <v>" or
+  "Version: <v>", Help file/command/data, StockToolRef, Data:
+  GeometryGenerateMode UseDotNet, DotNetClass Assembly="<id>.xaml"
+  Subassembly.<name>, Version, Params, Units m)
+  Params, per input argument that is not a target, in declaration order:
+  <name DataType TypeInfo DisplayName Description>value</name>
+  double 16, grade 9 ([new Grade(g)]), slope 10 ([new Slope(s)]), text
+  16, enumeration long 16 with <Enum><item DisplayName>key</item>...</Enum>
+  (Side: Left 1, Right 0; other groups from the emd part); a Side of None
+  (-1, a new package) is not listed; DisplayName and Description fall
+  back to the name and the display name
+<id>.cfg   CreatedWith: ProductName, Version, VersionNumber
+<id>.xaml  the workflow (below)
+<id>.pvd   preview cross slopes (segment, slope, defined) and cant values
+<id>.emd   enumeration groups (name; items name, display name, key from
+  301 up) and the names of the defined variables
+<id>.cdmd  CodeData with no items (every package seen)
+```
+
+The workflow:
+
+```text
+Activity mc:Ignorable x:Class="Subassembly", this:Subassembly.<arg>=
+  default per argument that has one, namespace declarations
+  x:Members: Geometry, SubassemblyErrorCenter, SubassemblyRunMode
+    (InOutArgument), then the package's arguments in order: x:Property
+    Name Type="InArgument|OutArgument(type)", x:Property.Attributes
+    (EnabledFlag2Attribute, DisplayName2Attribute, Description2Attribute)
+  defaults: numbers as text, [new Grade(g)], [new Slope(s)],
+    [new EnumType(key, "name", "group")], [new PreviewOffsetTarget("name",
+    valid, offset)]
+  Flowchart: Variables (the 17 built-in read-only enumeration values, the
+    enumeration items as values, the defined variables), view state,
+    StartNode (nested along the links, a node written before is an
+    x:Reference), x:Reference per node in the flowchart's order
+nodes: FlowStep (action, Next), FlowDecision Condition (True, False),
+  FlowSwitch x:TypeArguments="x:String" Expression (Default, cases with
+  x:Key)
+activities: CreatePoint / CreateAuxPoint (PointNumber, Positioning,
+  FromPoint, AutoLink, AutoLinkGeometryName, ApplyAOR, Arguments keyed
+  <name><positioning number> (DeltaX1, DeltaY1; Slope2, DeltaX2,
+  OffsetTarget2, ElevationTarget2, Superelevation2; ...), PointCodes,
+  AutoLinkCodes), CreateLink / CreateAuxLink (LinkNumber, StartPoint,
+  EndPoint, IsEnabled, LinkCodes), CreateShape (ShapeNumber, Links =
+  ComponentNames joined by commas, ShapeCodes), Sequence (activities),
+  InternalVariableDefine (VariableName, VariableType, DefaultValue,
+  Variable), SetVariableValue, SetOutputParameterValue
+every activity: ActivityId, DisplayName, ShowErrors, [HintSize], [view
+  state]; unset references are written as {x:Null} first
+code lists: scg:List InArgument(x:String) Capacity 4, doubled as needed
+```
+
+Other activities (curves, intersections, surface links, ...) are refused
+by `read_pkt`. A package needs the 32-digit part name; the creator and the
+workflow's namespace declarations come from the caller (a package the
+editor saved has them), `PktPackage::new` gives the rest of a new
+package's settings.
+
+### Layout
+
+`pkt::layout(pkg, side, values)` runs the flowchart in layout mode from
+its start node: a step runs its activity, a decision takes the branch of
+its condition, a switch the case named by its expression's text (else
+the default). Parameters not given take their defaults, a target its
+preview default; `Side` is the side given.
+
+```text
+DeltaXAndDeltaY  from + (s dx, dy)
+SlopeAndDeltaX   from + (s dx, slope |dx|)  (the slope falls over |dx|
+                 whichever way the point goes)
+from = the point's FromPoint, the attachment point when unset;
+s = +1 on the right, -1 on the left
+AutoLink         a link from the FromPoint to the point, with its codes
+```
+
+Auxiliary points and links are evaluated (later expressions may use
+them) but are not part of the geometry. Points, links and shapes come in
+the order created; the codes in the order points, links, shapes.
+Expressions are the editor's Visual Basic form in brackets; the subset
+read: numbers, text, `True`/`False`, `+ - * / ^ &`, comparisons,
+`And`/`AndAlso`/`Or`/`OrElse`/`Not`, `IF(c, a, b)`, `Math.Abs/Min/Max/
+Sqrt/Sin/Cos/Tan/Atan/Round/Floor/Ceiling`, names of parameters,
+variables, enumeration values and points, `.Value` of an enumeration,
+`.IsValid`/`.Offset`/`.Elevation` of a target, `.X`/`.Y` of a point,
+`SA.IsLayout`. Anything else (other positionings, `.ToString()`, curves)
+is refused with an error.
+
+The layouts of K01 (right; left; width 3, depth 0.5, slope -0.05) and of
+K02 to K05 (width 4, depth 0.25, slope -0.03) equal the points, links,
+shapes and codes the host application stored for them (W-K01, W-K01L,
+W-K01b, W-K02 to W-K05) and the editor's previews.
+
 ## 4. Reference check
 
 For every written drawing the check opens it in its own reference instance
@@ -1369,6 +1558,7 @@ taken from the records and checked bit for bit against them.
 | sites, alignments and feature lines (arcs, elevation points) on a site | yes | yes (a new drawing gets the node of sites and the default parcel and feature line styles, §2c) | yes (§4) | not needed (the application rewrites the site's cache) | alignments or feature lines meeting other members; containers the application edited after inserting elevation points |
 | parcels of closed and open, crossing and touching lot lines, with arcs | yes (number, face, boundary) | yes (§3g) | yes (§3g) | not needed | arcs where lines meet; lot lines meeting alignments or feature lines |
 | profile views (automatic or user ranges) and their profile label groups | yes (frame) | yes (a new drawing gets the default view style, §3h) | yes (§3h) | not needed (the application recomputes the view from its style) | other styles and vertical scales |
+| assemblies and package subassemblies | partly (corridor's group block) | yes, in a drawing with assembly and code set styles (§3i) | yes (§3i) | not needed | the code set and assembly styles of a new drawing |
 | corridors (one baseline, one region, unbuilt) | yes | yes, with an assembly of the drawing (§3i) | yes (§3i) | the corridor is written out of date and built by the application's rebuild | assemblies and subassemblies, built results, surfaces, several regions or baselines |
 | sample line groups and two-vertex sample lines | yes | yes, with the drawing's sample line label style (§3j) | yes (§3j) | not needed | lines with more vertices |
 | sections of a TIN surface (unsampled) | yes (geometry once sampled) | yes (§3j) | yes (§3j) | the application samples the source | corridor sources, lines added after sampling |

@@ -6859,17 +6859,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         Ok(())
     }
 
-    fn write_view_rep_dxf(&mut self, value: &crate::objects::ViewRep) -> Result<()> {
-        for item in value.header_values {
-            self.writer.write_i32(90, item)?;
-        }
-        self.writer.write_string(1, &value.name)?;
-        self.writer.write_i32(90, value.scale)?;
-        self.writer.write_i32(90, value.header_status)?;
-        self.writer.write_string(1, &value.description)?;
-        self.writer.write_i64(160, value.source_id)?;
-        self.writer.write_bool(290, value.source_enabled)?;
-        self.writer.write_i32(90, value.source_version)?;
+    fn write_view_rep_model_dxf(
+        &mut self,
+        value: &crate::objects::ViewRepModelGeometry,
+    ) -> Result<()> {
         self.writer.write_i64(160, value.model_id)?;
         self.writer.write_i32(90, value.guid.data1)?;
         self.writer.write_i16(70, value.guid.data2)?;
@@ -6885,8 +6878,15 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_i64(160, value.database_id)?;
         self.writer.write_i32(90, value.geometry_version)?;
         self.writer.write_i32(90, value.geometry_marker)?;
-        self.writer.write_i32(90, value.sketches.len() as i32)?;
-        for sketch in &value.sketches {
+        Ok(())
+    }
+
+    fn write_view_rep_sketches_dxf(
+        &mut self,
+        sketches: &[crate::objects::ViewRepSketch],
+    ) -> Result<()> {
+        self.writer.write_i32(90, sketches.len() as i32)?;
+        for sketch in sketches {
             self.writer.write_i32(90, sketch.id)?;
             self.writer.write_i32(90, sketch.version)?;
             self.writer.write_i32(90, sketch.references.len() as i32)?;
@@ -6966,6 +6966,36 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 }
             }
             self.writer.write_bool(290, sketch.final_flag)?;
+        }
+        Ok(())
+    }
+
+    fn write_view_rep_dxf(&mut self, value: &crate::objects::ViewRep) -> Result<()> {
+        for item in value.header_values {
+            self.writer.write_i32(90, item)?;
+        }
+        self.writer.write_string(1, &value.name)?;
+        self.writer.write_i32(90, value.scale)?;
+        self.writer.write_i32(90, value.header_status)?;
+        self.writer.write_string(1, &value.description)?;
+        self.writer.write_i64(160, value.source_id)?;
+        self.writer.write_bool(290, value.source_enabled)?;
+        self.writer.write_i32(90, value.model_count())?;
+        self.write_view_rep_model_dxf(&crate::objects::ViewRepModelGeometry {
+            model_id: value.model_id,
+            guid: value.guid.clone(),
+            marker: value.marker,
+            transform: value.transform,
+            transform_version: value.transform_version,
+            database_id: value.database_id,
+            geometry_version: value.geometry_version,
+            geometry_marker: value.geometry_marker,
+            sketches: Vec::new(),
+        })?;
+        self.write_view_rep_sketches_dxf(&value.sketches)?;
+        for model in &value.more_models {
+            self.write_view_rep_model_dxf(model)?;
+            self.write_view_rep_sketches_dxf(&model.sketches)?;
         }
         for handle in value.related_objects {
             self.writer.write_handle(330, handle)?;

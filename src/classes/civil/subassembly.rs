@@ -136,8 +136,17 @@ fn shape_at(data: &[u8], start: usize, end: usize) -> Option<usize> {
     Some(bits.pos + 62)
 }
 
+/// Where the codes start in a subassembly's texts: six texts after the
+/// script name `Subassembly.<name>` (a stock script: three empty texts, the
+/// resource module, an empty text; a package's: five empty texts).
+fn codes_start(strings: &[String]) -> Option<usize> {
+    // The first three texts are the class name and two empty texts; older
+    // records name the script as their eighth text.
+    strings.iter().enumerate().skip(3).find(|(_, s)| s.starts_with("Subassembly.")).map(|(i, _)| i + 6)
+}
+
 /// Shape from the point list, with codes from `strings`, the record's text
-/// stream, where they start two strings after the script assembly name.
+/// stream (see `codes_start`).
 pub(super) fn find(data: &[u8], start: usize, end: usize, strings: &[String]) -> Option<SubassemblyShape> {
     let (mut shape, points, links, areas, _) = match shape_at(data, start, end).and_then(|pos| read_at(data, pos, end)) {
         Some(found) => found,
@@ -145,7 +154,7 @@ pub(super) fn find(data: &[u8], start: usize, end: usize, strings: &[String]) ->
         // searched for its point list.
         None => (start..end).find_map(|pos| read_at(data, pos, end))?,
     };
-    let first = strings.iter().position(|s| s == "AeccStockSubassemblyScriptsRC.dll").map(|i| i + 2);
+    let first = codes_start(strings);
     let mut codes = first.map(|i| strings[i.min(strings.len())..].iter());
     let mut take = |counts: &[usize]| -> Vec<Vec<String>> {
         counts
@@ -166,7 +175,7 @@ pub(super) fn find(data: &[u8], start: usize, end: usize, strings: &[String]) ->
 /// the shape's codes.
 pub(super) fn parameters(data: &[u8], start: usize, end: usize, strings: &[String]) -> Option<Vec<super::parameters::Parameter>> {
     let (_, points, links, areas, after) = read_at(data, shape_at(data, start, end)?, end)?;
-    let first = strings.iter().position(|s| s == "AeccStockSubassemblyScriptsRC.dll")? + 2;
+    let first = codes_start(strings)?;
     let codes: usize = points.iter().chain(&links).chain(&areas).sum();
     let mut texts = strings.get(first + codes..)?.iter();
     super::parameters::read(&mut Bits::new(data, after?, end), &mut texts)

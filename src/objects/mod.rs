@@ -47,9 +47,9 @@ pub use class_object::{
     SectionGeometrySettings, SectionManager, SectionSettings, SectionTypeSettings,
     SectionViewStyle, SkyLightBackground, SolidBackground, SpatialIndex, Sun, SunStudy,
     SunStudyDate, TvDeviceProperties, VbaProject, ViewRep, ViewRepBlockPath, ViewRepBlockPathEntry,
-    ViewRepGuid, ViewRepModelSpaceSource, ViewRepModelSpaceViewSelectionSet, ViewRepObjectPath,
-    ViewRepOrientation, ViewRepSectionDefinition, ViewRepSketch, ViewRepSketchGeometry,
-    ViewRepSketchReference, ViewRepSourceManager, ViewRepStandard,
+    ViewRepGuid, ViewRepModelGeometry, ViewRepModelSpaceSource, ViewRepModelSpaceViewSelectionSet,
+    ViewRepObjectPath, ViewRepOrientation, ViewRepSectionDefinition, ViewRepSketch,
+    ViewRepSketchGeometry, ViewRepSketchReference, ViewRepSourceManager, ViewRepStandard,
 };
 pub use data_objects::{
     BreakData, BreakPointReference, CellStyleMap, DataObject, DataObjectData, IdBuffer, Index,
