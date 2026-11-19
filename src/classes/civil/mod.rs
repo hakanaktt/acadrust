@@ -30,7 +30,7 @@ pub use alignment::{
     StationEquation,
 };
 pub use cogo::CogoPoint;
-pub use create::{add_alignment, add_alignment_with_curves, VertexCurve, add_corridor, add_cogo_point, add_intersection, add_point_group, add_point_group_query, add_profile, add_profile_with_curves, VerticalCurve, add_profile_view, add_profile_view_with_range, add_sample_line, add_sample_line_group, add_sections, add_section_view, add_site, add_alignment_on_site, add_feature_line, add_feature_line_vertices, FeatureLineVertex, add_tin_surface, cogo_points, ensure_civil, remove_cogo_point, set_cogo_point, set_point_group, set_point_group_query, Comparison, PointQuery};
+pub use create::{add_alignment, add_alignment_with_curves, VertexCurve, add_corridor, add_cogo_point, add_intersection, add_point_group, add_point_group_query, add_profile, add_profile_with_curves, VerticalCurve, add_profile_view, add_profile_view_with_range, add_sample_line, add_sample_line_group, add_sections, add_section_view, add_site, add_alignment_on_site, add_feature_line, add_parcel, add_feature_line_vertices, FeatureLineVertex, add_tin_surface, cogo_points, ensure_civil, remove_cogo_point, set_cogo_point, set_point_group, set_point_group_query, Comparison, PointQuery};
 pub use grading::{CriteriaValue, GradingCriteria};
 pub use intersection::IntersectionLayout;
 pub use labels::{parse_format, property, LabelPart, LabelText};
@@ -769,6 +769,35 @@ impl ArchEntityData {
         let strings = self.decode().strings;
         (strings.first().map(String::as_str) == Some("AeccImpFace"))
             .then(|| (strings.get(2).cloned().unwrap_or_default(), strings.get(3).cloned().unwrap_or_default()))
+    }
+
+    /// A parcel's number and the face of its site's topology it covers
+    /// (see [`Topology::face_polylines`]); `None` for a site.
+    ///
+    /// ```text
+    /// class head with keys 0x0D00800A BL 0, 0x02008022 BD 0.1,
+    ///   0x0200800B BD 1/24, BL 0, 121 zero bits
+    /// BL number, BL 0, BL 0, BD 0, 3BD label location, BL 80, BL 1,
+    /// 3BD label location, BL 2, BL 1, BL face, BL 0, B 0, BS 0x04BE
+    /// ```
+    pub fn parcel_face(&self) -> Option<(i32, i32)> {
+        self.parcel_site()?;
+        let (data, start, end) = self.main_stream()?;
+        let mut b = bits::Bits::new(data, start, end);
+        alignment::class_keys(&mut b)?;
+        b.pos += 121;
+        let number = b.bit_long()?;
+        b.bit_long()?;
+        b.bit_long()?;
+        for _ in 0..4 {
+            b.bit_double()?;
+        }
+        (b.bit_long()? == 80 && b.bit_long()? == 1).then_some(())?;
+        for _ in 0..3 {
+            b.bit_double()?;
+        }
+        (b.bit_long()? == 2 && b.bit_long()? == 1).then_some(())?;
+        Some((number, b.bit_long()?))
     }
 
     /// The site a parcel belongs to (its second reference); `None` for a

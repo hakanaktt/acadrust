@@ -172,15 +172,52 @@ pub(super) struct Member {
     elevations: Vec<f64>,
     /// Which points are elevation points (never the ends).
     elevation_points: Vec<bool>,
-    feature_line: bool,
+    kind: MemberKind,
 }
+
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum MemberKind {
+    Alignment,
+    FeatureLine,
+    /// A closed parcel segment (lot line) and the parcel inside it.
+    LotLine { parcel: u64 },
+}
+
+impl Member {
+    fn parcel(&self) -> Option<u64> {
+        match self.kind {
+            MemberKind::LotLine { parcel } => Some(parcel),
+            _ => None,
+        }
+    }
+
+    /// The path the member takes, closed back to its first point for a
+    /// lot line.
+    fn outline(&self) -> Vec<PathPoint> {
+        let mut path = self.path.clone();
+        if self.parcel().is_some() {
+            path.extend(self.path.first().map(|p| (p.0, None)));
+        }
+        path
+    }
+
+    /// Whether a lot line runs counterclockwise (its parcel on the left).
+    fn counterclockwise(&self) -> bool {
+        let p = &self.path;
+        (0..p.len()).map(|i| p[i].0.cross(&p[(i + 1) % p.len()].0)).sum::<f64>() > 0.0
+    }
+}
+
 
 /// Edge flags of an alignment and of a feature line in a container.
 const ALIGNMENT_EDGE: i32 = 0x30;
 const FEATURE_LINE_EDGE: i32 = 0x1_0030;
+/// Edge flags of a parcel segment; bit 1 marks a closed one.
+const LOT_LINE_EDGE: i32 = 0x30;
 
 /// The site's container (`AECC_FEATURE_STYLE` owned by the site): the
-/// topology of its members, each an edge through its own nodes.
+/// topology of its members, each an edge through its own nodes, and the
+/// faces closed lot lines make.
 ///
 /// ```text
 /// BS 0x04BE, BL 0, BL 0 (no children), BL 0, BL 32, 7 bits 0111010,
@@ -191,38 +228,57 @@ const FEATURE_LINE_EDGE: i32 = 0x1_0030;
 /// BL 0x80000001,
 /// nodes: BL next free id, BL n, BL first id, n x {3BD (z the
 ///   elevation), 3 bits 010, BL next id} (ids per member: its ends, then
-///   its inner points; the records in hash order, seven buckets by
+///   its inner points, a closed one's in path order; the records in hash
+///   order: eight buckets by id mod 8, each in id order, WP15 and WP16
+///   with 30 and 50 nodes; formerly read as seven buckets by
 ///   (id - 1) mod 7, the newest first in a bucket)
 /// edges: BL next free id, BL m slots, per member BL 0, BL id (1..m),
-///   BL flags (0x30 alignment, 0x10030 feature line), BL count, BL 0,
+///   BL flags (0x30 alignment, 0x10030 feature line, 0x31 closed lot
+///   line), BL count, BL 0,
 ///   count x {BL kind (0 line, 1 arc, 2 last),
-///   BL flags, BL node, BL 1, BL 1 (the outside face on both sides; 0, 0
-///   on the last point), an arc: BD bulge, BL 0}, BL j, the keys of the
-///   edge's j elevation points in order, BL 0 x 3
-/// faces: BL 2, BL 1 (BL 0 without members), the outside face {BL 1,
-///   BL 1, BL 14 (6 once a member has an elevation point), BL m, per member {BL 1 +
-///   the points of the members before it, BL 0}}, BL 1, 6 x {BL 1, BL 1},
-///   6 x BL 0
+///   BL flags, BL node, BL left face, BL right face (0, 0 on the last
+///   point), an arc: BD bulge, BL 0}, BL j, the keys of the
+///   edge's j elevation points in order, BL 0 x 3 (a closed edge has no
+///   last point: its last one starts the segment back to the first)
+/// faces: BL next free id, BL count (0 without members), the outside face
+///   {BL 1, BL 1, BL flags, BL m, per member {BL its first node, BL 0}},
+///   per parcel {BL face, BL face, BL 14, BL 1, BL entry node, BL 1}
+/// BL 1, BL 1, BL p + 1 (p parcels), 10 x BL 1, BL p, BL 1 .. p,
+///   5 x BL 0
 /// references: hard pointer 0 per elevation point, per member its record
-///   (soft pointer) and soft pointer 0, then (with members) the site and soft pointer 0, then the default
-///   feature line style (hard)
+///   (soft pointer) and soft pointer 0, then (with members) the site and
+///   soft pointer 0, per parcel its record and soft pointer 0, then the
+///   default feature line style (hard)
 /// texts: ""
 /// ```
 ///
 /// The points run as one chain through the members in edge order: a
-/// point's flags are 2 (0x400400 for an elevation point), with 0x30 added when another segment follows it
-/// (in its edge or a later one), 0x80 on the first point of an edge after
-/// the first, 0x010F0000 for an arc; an edge's last point's are 10
-/// (WT07, WT10 to WT13, WF01 to WF06; written for their members, the
-/// containers equal the samples' bit for bit).
+/// point's flags are 2 (0x400400 for an elevation point), with 0x10 added
+/// when another segment follows it (in its edge or a later one) and 0x20
+/// when that is so or its edge is closed, 0x80 on the first point of an
+/// edge after the first, 0x010F0000 for an arc; an open edge's last
+/// point's are 10 (WT07, WT10 to WT13, WF01 to WF06; written for their
+/// members, the containers equal the samples' bit for bit).
+///
+/// Faces: the outside face is 1 and each closed lot line's parcel the
+/// next, in member order; a lot line's segments have its parcel's face on
+/// the inside and 1 outside. A parcel's entry node is its lot line's first
+/// node when the line runs counterclockwise, its last node otherwise. The
+/// outside face's flags are 6 with two or more lot lines or an elevation
+/// point, else 14 (WP03, WP06, WP12 to WP14, WP17: written for their
+/// segments the containers equal the samples' but for edge flag 0x800,
+/// which the application sets on an edge read from a file when another
+/// member joins).
 pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handle, members: &[Member], style: u64) -> Result<(), DxfError> {
     let nodes: usize = members.iter().map(|m| m.path.len()).sum();
     let elevation_points = members.iter().map(|m| m.elevation_points.iter().filter(|x| **x).count()).sum();
+    let parcels: Vec<u64> = members.iter().filter_map(Member::parcel).collect();
     let mut refs: Vec<Ref> = vec![hard_pointer(0); elevation_points];
     refs.extend(members.iter().flat_map(|m| [soft_pointer(m.handle), soft_pointer(0)]));
     if !members.is_empty() {
         refs.extend([soft_pointer(site.value()), soft_pointer(0)]);
     }
+    refs.extend(parcels.iter().flat_map(|p| [soft_pointer(*p), soft_pointer(0)]));
     refs.push(hard_pointer(style));
     put_object(
         doc,
@@ -268,13 +324,12 @@ pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handl
             for m in members {
                 first_id.push(points.len() as i32 + 1);
                 let n = m.path.len();
-                let mut order = vec![0, n - 1];
-                order.extend(1..n - 1);
+                let order: Vec<usize> = if m.parcel().is_some() { (0..n).collect() } else { [0, n - 1].into_iter().chain(1..n - 1).collect() };
                 for i in order {
                     points.push((points.len() as i32 + 1, m.path[i].0, m.elevations[i]));
                 }
             }
-            points.sort_by_key(|(id, ..)| ((id - 1) % 7, std::cmp::Reverse(*id)));
+            points.sort_by_key(|(id, ..)| (id % 8, *id));
             w.write_bit_long(nodes as i32 + 1);
             w.write_bit_long(nodes as i32);
             w.write_bit_long(points.first().map_or(0, |p| p.0));
@@ -288,9 +343,21 @@ pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handl
             w.write_bit_long(members.len() as i32 + 1);
             w.write_bit_long(members.len() as i32);
             let mut next_key = 1;
+            let mut face = 1;
             for (e, m) in members.iter().enumerate() {
                 let n = m.path.len();
-                let edge = if m.feature_line { FEATURE_LINE_EDGE } else { ALIGNMENT_EDGE };
+                let closed = m.parcel().is_some();
+                let sides = if closed {
+                    face += 1;
+                    if m.counterclockwise() { (face, 1) } else { (1, face) }
+                } else {
+                    (1, 1)
+                };
+                let edge = match m.kind {
+                    MemberKind::Alignment => ALIGNMENT_EDGE,
+                    MemberKind::FeatureLine => FEATURE_LINE_EDGE,
+                    MemberKind::LotLine { .. } => LOT_LINE_EDGE | 1,
+                };
                 for v in [0, e as i32 + 1, edge, n as i32, 0] {
                     w.write_bit_long(v);
                 }
@@ -299,17 +366,17 @@ pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handl
                 let keys: Vec<i32> = (next_key..next_key + count).collect();
                 next_key += count;
                 for (i, (_, arc)) in m.path.iter().enumerate() {
-                    let last = i + 1 == n;
+                    let last = i + 1 == n && !closed;
                     let arc = arc.filter(|_| !last);
-                    let follows = i + 2 < n || !last_member;
+                    let follows = i + 2 < n || (closed && i + 1 < n) || !last_member;
                     let flags = if last {
                         10
                     } else {
-                        (if m.elevation_points[i] { 0x40_0400 } else { 2 }) | if follows { 0x30 } else { 0 } | if i == 0 && e > 0 { 0x80 } else { 0 } | if arc.is_some() { ARC_EDGE } else { 0 }
+                        (if m.elevation_points[i] { 0x40_0400 } else { 2 }) | if follows { 0x30 } else if closed { 0x20 } else { 0 } | if i == 0 && e > 0 { 0x80 } else { 0 } | if arc.is_some() { ARC_EDGE } else { 0 }
                     };
-                    let node = first_id[e] + if i == 0 { 0 } else if last { 1 } else { i as i32 + 1 };
-                    let face = if last { 0 } else { 1 };
-                    for v in [if last { 2 } else if arc.is_some() { 1 } else { 0 }, flags, node, face, face] {
+                    let node = first_id[e] + if closed || i == 0 { i as i32 } else if i + 1 == n { 1 } else { i as i32 + 1 };
+                    let (left, right) = if last { (0, 0) } else { sides };
+                    for v in [if last { 2 } else if arc.is_some() { 1 } else { 0 }, flags, node, left, right] {
                         w.write_bit_long(v);
                     }
                     if let Some(bulge) = arc {
@@ -322,29 +389,33 @@ pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handl
                     w.write_bit_long(v);
                 }
             }
-            w.write_bit_long(2);
+            let p = parcels.len() as i32;
+            w.write_bit_long(p + 2);
             if members.is_empty() {
                 w.write_bit_long(0);
             } else {
                 // The outside face's flags lose 8 once a member has an
-                // elevation point.
-                let face_flags = if members.iter().any(|m| m.elevation_points.contains(&true)) { 6 } else { 14 };
-                for v in [1, 1, 1, face_flags, members.len() as i32] {
+                // elevation point or two lot lines close faces.
+                let face_flags = if p >= 2 || members.iter().any(|m| m.elevation_points.contains(&true)) { 6 } else { 14 };
+                for v in [p + 1, 1, 1, face_flags, members.len() as i32] {
                     w.write_bit_long(v);
                 }
-                let mut before = 0;
-                for m in members {
-                    w.write_bit_long(before + 1);
+                for &first in &first_id {
+                    w.write_bit_long(first);
                     w.write_bit_long(0);
-                    before += m.path.len() as i32;
+                }
+                let mut face = 1;
+                for (e, m) in members.iter().enumerate().filter(|(_, m)| m.parcel().is_some()) {
+                    face += 1;
+                    let entry = first_id[e] + if m.counterclockwise() { 0 } else { m.path.len() as i32 - 1 };
+                    for v in [face, face, 14, 1, entry, 1] {
+                        w.write_bit_long(v);
+                    }
                 }
             }
-            w.write_bit_long(1);
-            for _ in 0..12 {
-                w.write_bit_long(1);
-            }
-            for _ in 0..6 {
-                w.write_bit_long(0);
+            let tail = [1, 1, p + 1].into_iter().chain([1; 10]).chain([p]).chain(1..=p);
+            for v in tail.chain([0; 5]) {
+                w.write_bit_long(v);
             }
         },
         Body { refs, strings: vec![String::new()] },
@@ -367,9 +438,11 @@ fn members_of(doc: &mut CadDocument, site: Handle) -> Result<(Handle, Vec<Member
     let edges = if refs.len() == 1 { Vec::new() } else { o.topology().ok_or_else(refused)?.edges };
     let elevation_points = edges.iter().flatten().filter(|v| v.is_elevation_point()).count();
     let handles: Vec<u64> = refs.iter().skip(elevation_points).step_by(2).take(edges.len()).map(|r| r.0).collect();
-    let kind = |h: u64| match doc.get_entity(Handle::new(h)) {
+    // The parcels follow the members and the site, in member order.
+    let mut parcels = refs.iter().skip(elevation_points + 2 * edges.len() + 2).step_by(2).map(|r| r.0);
+    let dxf = |h: u64| match doc.get_entity(Handle::new(h)) {
         Some(EntityType::Extended(x)) => match &x.data {
-            ExtendedEntityData::Arch(a) => Some(a.dxf_name == "AECC_FEATURE_LINE"),
+            ExtendedEntityData::Arch(a) => Some(a.dxf_name.clone()),
             _ => None,
         },
         _ => None,
@@ -378,12 +451,20 @@ fn members_of(doc: &mut CadDocument, site: Handle) -> Result<(Handle, Vec<Member
         .iter()
         .zip(&handles)
         .map(|(run, h)| {
+            let kind = match dxf(*h)?.as_str() {
+                "AECC_ALIGNMENT" => MemberKind::Alignment,
+                "AECC_FEATURE_LINE" => MemberKind::FeatureLine,
+                "AECC_PARCEL_SEGMENT" => MemberKind::LotLine { parcel: parcels.next()? },
+                _ => return None,
+            };
+            // A closed edge is read with a copy of its first vertex last.
+            let run = if matches!(kind, MemberKind::LotLine { .. }) { &run[..run.len() - 1] } else { &run[..] };
             Some(Member {
                 handle: *h,
                 path: run.iter().map(|v| (v.point, (v.bulge != 0.0).then_some(v.bulge))).collect(),
                 elevations: run.iter().map(|v| v.z).collect(),
                 elevation_points: run.iter().map(|v| v.is_elevation_point()).collect(),
-                feature_line: kind(*h)?,
+                kind,
             })
         })
         .collect::<Option<_>>()
@@ -391,7 +472,8 @@ fn members_of(doc: &mut CadDocument, site: Handle) -> Result<(Handle, Vec<Member
     let bits_of = |doc: &CadDocument| object(doc, container).and_then(|o| o.main_stream().map(|(d, s, e)| (s..e).map(|i| d[i / 8] >> (7 - i % 8) & 1).collect::<Vec<u8>>()));
     let before = bits_of(doc);
     write_container(doc, container, site, &members, style)?;
-    if bits_of(doc) != before || members.len() != (refs.len().saturating_sub(3 + elevation_points)) / 2 {
+    let listed = members.len() + members.iter().filter(|m| m.parcel().is_some()).count();
+    if bits_of(doc) != before || listed != (refs.len().saturating_sub(3 + elevation_points)) / 2 {
         doc.objects.insert(container, crate::objects::ObjectType::Arch(o));
         return Err(refused());
     }
@@ -489,7 +571,7 @@ pub fn add_alignment_on_site(doc: &mut CadDocument, site: Handle, name: &str, ve
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
     let (container, mut members, line_style) = members_of(doc, site)?;
-    if members.iter().any(|m| paths_meet(&m.path, &path)) {
+    if members.iter().any(|m| paths_meet(&m.outline(), &path)) {
         return Err(invalid("the alignment crosses or touches another member of the site"));
     }
     if alignment_style(doc).is_none() {
@@ -503,7 +585,7 @@ pub fn add_alignment_on_site(doc: &mut CadDocument, site: Handle, name: &str, ve
         layer_handle: Some(layer_handle),
         ..EntityCommon::default()
     };
-    members.push(Member { handle: common.handle.value(), elevations: vec![0.0; path.len()], elevation_points: vec![false; path.len()], path, feature_line: false });
+    members.push(Member { handle: common.handle.value(), elevations: vec![0.0; path.len()], elevation_points: vec![false; path.len()], path, kind: MemberKind::Alignment });
     write_container(doc, container, site, &members, line_style)?;
     write_alignment(doc, common, name, &elements, style, container.value(), members.len() as i32, None, &[], &[], &[])
 }
@@ -581,7 +663,7 @@ pub fn add_feature_line_vertices(doc: &mut CadDocument, site: Handle, name: &str
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
     let (container, mut members, line_style) = members_of(doc, site)?;
-    if members.iter().any(|m| paths_meet(&m.path, &path)) {
+    if members.iter().any(|m| paths_meet(&m.outline(), &path)) {
         return Err(invalid("the feature line crosses or touches another member of the site"));
     }
     let common = EntityCommon {
@@ -596,10 +678,188 @@ pub fn add_feature_line_vertices(doc: &mut CadDocument, site: Handle, name: &str
         path,
         elevations: vertices.iter().map(|v| v.point.z).collect(),
         elevation_points: vertices.iter().map(|v| v.elevation_point).collect(),
-        feature_line: true,
+        kind: MemberKind::FeatureLine,
     });
     write_container(doc, container, site, &members, line_style)?;
     write_feature_line(doc, common, name, members.len() as i32, container, line_style)
+}
+
+/// Label style tree path (under the label node) of the default parcel
+/// area label style.
+const PARCEL_AREA_LABELS: [i32; 3] = [2, 0x0F00_C032, DEFAULT_STYLE_ID];
+
+/// The parcel segment record (`AECC_PARCEL_SEGMENT`, a lot line; its
+/// points are its edge in the site's container):
+///
+/// ```text
+/// BL 80, BL 0, BL 80, BL 80, BL 0, BL 0x10025F04, 6 bits 010010,
+/// 128 zero bits, BL 0, BL edge id, 10 bits 1101010100, BS 0x04BE
+/// references: soft pointer 0, the container twice (hard), soft pointer 0,
+///   hard pointer 0
+/// texts: "AeccImpLotLine", "", ""
+/// ```
+// ponytail: the 128 zero bits and the 7-bit run are the same in every
+// sample (WP03 to WP14); name them once a segment varies them.
+fn write_lot_line(doc: &mut CadDocument, common: EntityCommon, edge: i32, container: Handle) -> Result<Handle, DxfError> {
+    let refs = vec![soft_pointer(0), hard_pointer(container.value()), hard_pointer(container.value()), soft_pointer(0), hard_pointer(0)];
+    let strings = vec!["AeccImpLotLine".to_string(), String::new(), String::new()];
+    put_entity(
+        doc,
+        "AECC_PARCEL_SEGMENT",
+        common,
+        |w| {
+            for v in [80, 0, 80, 80, 0, 0x1002_5F04] {
+                w.write_bit_long(v);
+            }
+            bits(w, "010010");
+            bits(w, &"0".repeat(128));
+            w.write_bit_long(0);
+            w.write_bit_long(edge);
+            bits(w, "1101010100");
+            w.write_bit_short(VERSION);
+        },
+        Body { refs, strings },
+    )
+}
+
+/// The parcel record (`AECC_PARCEL` named `AeccImpFace` with a site):
+///
+/// ```text
+/// BL 80, BL 0, BL 80, BL 80, BL 0, BL 0x10025F04, B 0, BL 0, 3 bits 101
+/// RC 3 keys: 0x0D00800A BL 0, 0x02008022 BD 0.1, 0x0200800B BD 1/24
+/// BL 0 (one-byte form), 121 zero bits
+/// BL number, BL 0, BL 0, BD 0, 3BD label location, BL 80, BL 1,
+/// 3BD label location, BL 2, BL 1, BL face, BL 0, B 0, BS 0x04BE
+/// references: soft pointer 0, the site (hard), hard ownership 0, the
+///   parcel style (hard), the area label style (hard)
+/// texts: "AeccImpFace", "", "" (the application names the parcel from
+///   its style and number)
+/// ```
+///
+/// The label location is a point inside the parcel (see `label_point`);
+/// a parcel's area and
+/// boundary come from its face in the site's container (WP03 to WP14:
+/// parcels of other areas have the same record).
+fn write_parcel(doc: &mut CadDocument, common: EntityCommon, site: Handle, number: i32, face: i32, label: Vector2, style: u64, label_style: u64) -> Result<Handle, DxfError> {
+    let byte = |w: &mut crate::io::dwg::dwg_stream_writers::DwgMergedWriter, v: u8| bits(w, &format!("{v:08b}"));
+    let refs = vec![soft_pointer(0), hard_pointer(site.value()), Ref(DwgReferenceType::HardOwnership, 0), hard_pointer(style), hard_pointer(label_style)];
+    let strings = vec!["AeccImpFace".to_string(), String::new(), String::new()];
+    put_entity(
+        doc,
+        "AECC_PARCEL",
+        common,
+        |w| {
+            for v in [80, 0, 80, 80, 0, 0x1002_5F04] {
+                w.write_bit_long(v);
+            }
+            w.write_bit(false);
+            w.write_bit_long(0);
+            bits(w, "101");
+            byte(w, 3);
+            w.write_bit_long(0x0D00_800A);
+            w.write_bit_long(0);
+            w.write_bit_long(0x0200_8022);
+            w.write_bit_double(0.1);
+            w.write_bit_long(0x0200_800B);
+            w.write_bit_double(1.0 / 24.0);
+            bl_byte(w, 0);
+            bits(w, &"0".repeat(121));
+            for v in [number, 0, 0] {
+                w.write_bit_long(v);
+            }
+            w.write_bit_double(0.0);
+            for round in 0..2 {
+                for v in [label.x, label.y, 0.0] {
+                    w.write_bit_double(v);
+                }
+                for v in if round == 0 { [80, 1] } else { [2, 1] } {
+                    w.write_bit_long(v);
+                }
+            }
+            w.write_bit_long(face);
+            w.write_bit_long(0);
+            w.write_bit(false);
+            w.write_bit_short(VERSION);
+        },
+        Body { refs, strings },
+    )
+}
+
+/// Where a parcel's area label goes: the middle of its extents when that
+/// is inside the parcel (WP03 to WP16), else the middle of the widest run
+/// of the horizontal line through it inside the parcel. The application
+/// takes the parcel's face from this point: with it on the boundary it
+/// gives the parcel another face (E-P2).
+// ponytail: the application's own fallback (WP17's right triangle: the
+// centroid of one of its triangles) is not followed; any inner point gives
+// the parcel its face.
+fn label_point(v: &[Vector2]) -> Vector2 {
+    let (lo, hi) = v.iter().fold((v[0], v[0]), |(lo, hi), p| (Vector2::new(lo.x.min(p.x), lo.y.min(p.y)), Vector2::new(hi.x.max(p.x), hi.y.max(p.y))));
+    let c = (lo + hi) * 0.5;
+    let mut xs: Vec<f64> = (0..v.len())
+        .map(|i| (v[i], v[(i + 1) % v.len()]))
+        .filter(|(a, b)| (a.y <= c.y) != (b.y <= c.y))
+        .map(|(a, b)| a.x + (c.y - a.y) * (b.x - a.x) / (b.y - a.y))
+        .collect();
+    xs.sort_by(f64::total_cmp);
+    let eps = 1e-9 * (hi - lo).length().max(1.0);
+    let runs: Vec<(f64, f64)> = xs.chunks_exact(2).map(|r| (r[0], r[1])).collect();
+    if runs.iter().any(|r| r.0 + eps < c.x && c.x < r.1 - eps) {
+        return c;
+    }
+    runs.iter().max_by(|a, b| (a.1 - a.0).total_cmp(&(b.1 - b.0))).map_or(c, |r| Vector2::new((r.0 + r.1) / 2.0, c.y))
+}
+
+/// Adds a parcel on `site` bounded by a closed lot line (a parcel segment)
+/// through `vertices` (straight segments; the line closes back to the
+/// first vertex), and returns the parcel. The segment joins the site's
+/// container and its inside becomes a new face. Like the other members it
+/// must not cross or touch the site's members (the application's splits
+/// and the faces of crossing members are not written), and the site must
+/// be one this crate writes. The parcel takes the site's parcel style and
+/// the drawing's default parcel area label style (none without one); the
+/// application names it from the style and its number.
+pub fn add_parcel(doc: &mut CadDocument, site: Handle, vertices: &[Vector2], layer: Option<&str>) -> Result<Handle, DxfError> {
+    let n = vertices.len();
+    let area2: f64 = (0..n).map(|i| vertices[i].cross(&vertices[(i + 1) % n])).sum();
+    if n < 3 || vertices.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) || area2.abs() < 1e-9 {
+        return Err(invalid("a parcel needs three or more finite vertices enclosing an area"));
+    }
+    let outline: Vec<PathPoint> = vertices.iter().chain(vertices.first()).map(|p| (*p, None)).collect();
+    let edges: Vec<[Vector2; 2]> = outline.windows(2).map(|w| [w[0].0, w[1].0]).collect();
+    let crossing = edges.iter().enumerate().any(|(i, a)| {
+        edges.iter().enumerate().skip(i + 2).any(|(j, b)| !(i == 0 && j + 1 == edges.len()) && paths_meet(&[(a[0], None), (a[1], None)], &[(b[0], None), (b[1], None)]))
+    });
+    if crossing || edges.iter().any(|e| e[0] == e[1]) {
+        return Err(invalid("a parcel's lot line crosses or touches itself"));
+    }
+    let layer = layer.unwrap_or("0");
+    let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
+    let (container, mut members, line_style) = members_of(doc, site)?;
+    if members.iter().any(|m| paths_meet(&m.outline(), &outline)) {
+        return Err(invalid("the lot line crosses or touches another member of the site"));
+    }
+    let style = match doc.get_entity(site) {
+        Some(EntityType::Extended(x)) => match &x.data {
+            ExtendedEntityData::Arch(a) => a.typed_handles().get(6).map_or(0, |r| r.0),
+            _ => 0,
+        },
+        _ => 0,
+    };
+    let label_style = super::labels::default_label_style(doc, PARCEL_AREA_LABELS).unwrap_or(0);
+    let common = |doc: &mut CadDocument| EntityCommon {
+        handle: doc.allocate_handle(),
+        owner_handle: doc.header.model_space_block_handle,
+        layer: layer.into(),
+        layer_handle: Some(layer_handle),
+        ..EntityCommon::default()
+    };
+    let (line, parcel) = (common(doc), common(doc));
+    let number = members.iter().filter(|m| m.parcel().is_some()).count() as i32 + 1;
+    members.push(Member { handle: line.handle.value(), path: outline[..n].to_vec(), elevations: vec![0.0; n], elevation_points: vec![false; n], kind: MemberKind::LotLine { parcel: parcel.handle.value() } });
+    write_container(doc, container, site, &members, line_style)?;
+    write_lot_line(doc, line, members.len() as i32, container)?;
+    write_parcel(doc, parcel, site, number, number + 1, label_point(vertices), style, label_style)
 }
 
 #[cfg(test)]
@@ -757,4 +1017,40 @@ mod tests {
         }
     }
 
+
+    #[test]
+    fn parcels_take_their_faces() {
+        let v = Vector2::new;
+        let mut doc = drawing();
+        let s = add_site(&mut doc, "Site 1", "").unwrap();
+        let a = add_alignment_on_site(&mut doc, s, "AL1", &[v(0.0, -20.0), v(100.0, -20.0)], &[], None).unwrap();
+        let p1 = add_parcel(&mut doc, s, &[v(0.0, 0.0), v(100.0, 0.0), v(100.0, 50.0), v(0.0, 50.0)], None).unwrap();
+        // Clockwise, its extents' middle on the boundary.
+        let p2 = add_parcel(&mut doc, s, &[v(200.0, 0.0), v(200.0, 50.0), v(300.0, 50.0)], None).unwrap();
+        assert!(add_parcel(&mut doc, s, &[v(50.0, -40.0), v(60.0, -40.0), v(55.0, 10.0)], None).is_err());
+        assert!(add_parcel(&mut doc, s, &[v(0.0, 100.0), v(10.0, 110.0), v(10.0, 100.0), v(0.0, 110.0)], None).is_err());
+        assert!(add_parcel(&mut doc, s, &[v(0.0, 100.0), v(10.0, 100.0)], None).is_err());
+        let path = std::env::temp_dir().join(format!("civil-parcels-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let mut back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let container = arch(&back, s).typed_handles()[5].0;
+        let topology = object(&back, Handle::new(container)).unwrap().topology().unwrap();
+        let area = |run: &Vec<Vector2>| run.windows(2).map(|w| w[0].cross(&w[1])).sum::<f64>() / 2.0;
+        for (p, number, want) in [(p1, 1, 5000.0), (p2, 2, 2500.0)] {
+            let parcel = arch(&back, p);
+            assert_eq!(parcel.parcel_site(), Some(s.value()));
+            let (n, face) = parcel.parcel_face().unwrap();
+            assert_eq!(n, number);
+            let loops = topology.face_polylines(face);
+            assert_eq!(loops.len(), 1);
+            assert!((area(&loops[0]) - want).abs() < 1e-9);
+        }
+        // The site still takes members after its parcels.
+        let f = add_feature_line(&mut back, s, "FL1", &[crate::types::Vector3::new(0.0, 80.0, 5.0), crate::types::Vector3::new(100.0, 80.0, 6.0)], None).unwrap();
+        let refs: Vec<u64> = object(&back, Handle::new(container)).unwrap().typed_handles().iter().map(|r| r.0).collect();
+        let lines: Vec<u64> = refs.iter().step_by(2).take(4).copied().collect();
+        assert_eq!((lines[0], lines[3]), (a.value(), f.value()));
+        assert_eq!(&refs[10..14], &[p1.value(), 0, p2.value(), 0]);
+    }
 }
