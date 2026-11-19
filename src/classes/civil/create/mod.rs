@@ -6,6 +6,7 @@
 
 mod alignment;
 mod corridor;
+mod default_styles;
 mod groups;
 mod intersection;
 mod labels;
@@ -16,6 +17,7 @@ mod sample_lines;
 mod section_view;
 mod site;
 mod support;
+mod templates;
 mod tin;
 mod tree;
 

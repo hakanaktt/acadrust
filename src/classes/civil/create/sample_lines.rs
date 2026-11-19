@@ -1,6 +1,7 @@
 //! Sample line groups, sample lines and their sections.
 
 use super::alignment::{rewritable, rewrite_with};
+use super::default_styles::{ensure_section_styles, KEY_SECTION_STYLES};
 use super::profile::identifier;
 use super::site::default_style_of;
 use super::support::*;
@@ -346,8 +347,6 @@ pub fn add_sample_line(doc: &mut CadDocument, group: Handle, name: &str, station
     Ok(handle)
 }
 
-/// Style tree key of the section style collection.
-pub(super) const KEY_SECTION_STYLES: i32 = 0xC18;
 /// The class word of a section record.
 const WORD_SECTION: i32 = 0x4000_8354;
 /// The run that closes a section record after its counts (WX12).
@@ -403,6 +402,7 @@ pub fn add_sections(doc: &mut CadDocument, group: Handle, surface: Handle) -> Re
         return Err(invalid("the group samples the surface already"));
     }
     let surface_name = s.decode().strings.get(2).cloned().unwrap_or_default();
+    ensure_section_styles(doc)?;
     let style = default_style_of(doc, KEY_SECTION_STYLES).ok_or_else(|| invalid("drawing has no section styles"))?;
     let mut lines = g.lines.iter().map(|l| read_line(doc, Handle::new(*l))).collect::<Option<Vec<_>>>().ok_or_else(|| invalid("a line of the group cannot be read"))?;
     let mut out = Vec::new();
@@ -424,19 +424,6 @@ mod tests {
     use super::*;
     use crate::io::dwg::{DwgReader, DwgWriter};
     use crate::types::{DxfVersion, Vector2};
-
-    fn node(doc: &mut CadDocument, handle: Handle, owner: Handle, key: i32, children: &[(i32, Handle)]) {
-        put_object(doc, "AECC_TREE_NODE", handle, owner, Vec::new(), |w| {
-            w.write_bit_long(key);
-            w.write_bit_long(children.len() as i32);
-            for c in children {
-                w.write_bit_long(c.0);
-            }
-            w.write_bit_long(0);
-            bits(w, "010");
-        }, Body { refs: children.iter().map(|c| soft_owner(c.1.value())).collect(), strings: vec![String::new()] })
-        .unwrap();
-    }
 
     #[test]
     fn groups_keep_their_lines_by_station() {
@@ -474,18 +461,11 @@ mod tests {
         let mut doc = CadDocument::new();
         doc.version = DxfVersion::AC1032;
         let al = crate::classes::civil::add_alignment(&mut doc, "AL1", &[v(0.0, 0.0), v(100.0, 0.0)], None).unwrap();
-        let [sections, section_style] = [(); 2].map(|_| doc.allocate_handle());
         let g = add_sample_line_group(&mut doc, al, "SLG1", None).unwrap();
         let a = add_sample_line(&mut doc, g, "SL1", 50.0, 10.0, 10.0, None).unwrap();
         let b = add_sample_line(&mut doc, g, "SL2", 20.0, 5.0, 5.0, None).unwrap();
         let p = |x: f64, y: f64| crate::types::Vector3::new(x, y, 10.0 + x / 10.0);
         let surface = crate::classes::civil::add_tin_surface(&mut doc, "S1", &[p(-10.0, -40.0), p(110.0, -40.0), p(110.0, 40.0), p(-10.0, 40.0)], None).unwrap();
-        // No section style yet.
-        assert!(add_sections(&mut doc, g, surface).is_err());
-        let tree = root_node(&doc, KEY_STYLES).unwrap();
-        node(&mut doc, sections, tree, KEY_SECTION_STYLES, &[(DEFAULT_STYLE_ID, section_style)]);
-        node(&mut doc, section_style, sections, DEFAULT_STYLE_ID, &[]);
-        add_node_child(&mut doc, tree, KEY_SECTION_STYLES, sections, "").unwrap();
         assert!(add_sections(&mut doc, g, al).is_err());
         let made = add_sections(&mut doc, g, surface).unwrap();
         assert!(add_sections(&mut doc, g, surface).is_err());
@@ -495,6 +475,9 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let group = read_group(&back, g).unwrap();
         assert_eq!(group.lines, vec![b.value(), a.value()]);
+        // The drawing gets the default section style.
+        let section_style = Handle::new(default_style_of(&back, KEY_SECTION_STYLES).unwrap());
+        assert_eq!(object(&back, section_style).unwrap().dxf_name, "AECC_SECTION_STYLE");
         assert_eq!(group.sources, vec![(section_style.value(), surface.value())]);
         // Sections follow the group's line order: SL2 (station 20), SL1.
         assert_eq!(read_line(&back, b).unwrap().sections, vec![made[0].value()]);
