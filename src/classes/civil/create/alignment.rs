@@ -23,7 +23,7 @@ const SPIRAL_CURVE_SPIRAL: i32 = 260;
 const SCS_BETWEEN_LINES: i32 = 0;
 const SPIRAL_DEFINITION: i32 = 256;
 /// Flags of an arc edge in the companion topology, besides the line flags.
-const ARC_EDGE: i32 = 0x010F_0000;
+pub(super) const ARC_EDGE: i32 = 0x010F_0000;
 
 /// What an alignment does at an inner vertex.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -57,7 +57,7 @@ impl VertexCurve {
 /// 1..n in station order, from vertex to vertex) then a curve element per
 /// curved inner vertex (ids after the lines, in station order), linked
 /// along the path.
-fn elements(vertices: &[Vector2], curves: &[VertexCurve]) -> Vec<AlignmentElement> {
+pub(super) fn elements(vertices: &[Vector2], curves: &[VertexCurve]) -> Vec<AlignmentElement> {
     let n = vertices.len() - 1;
     let mut next = n as i16;
     let ids: Vec<Option<i16>> = curves
@@ -96,7 +96,7 @@ const STAMP: i32 = 0x0B00_1081;
 
 /// The drawing's default alignment style: the first style of the style
 /// tree's alignment style collection.
-fn default_style(doc: &CadDocument) -> Option<u64> {
+pub(super) fn default_style(doc: &CadDocument) -> Option<u64> {
     let tree = root_node(doc, 31)?;
     let o = object(doc, tree)?;
     let (data, start, end) = fields_of(o)?;
@@ -134,14 +134,14 @@ fn new_name(seed: u64) -> String {
 /// A point of the solved alignment path and the segment that starts there:
 /// `None` a line, `Some(bulge)` an arc (`tan` of a quarter of its signed
 /// angle, positive to the left).
-type PathPoint = (Vector2, Option<f64>);
+pub(super) type PathPoint = (Vector2, Option<f64>);
 
 /// The solved path of `elements` (the crate's own solver): each line from
 /// its start, each arc from its start with its bulge, each spiral as
 /// chords between its solved points, then the end. `None` when a curved
 /// vertex has no turn or a curve is not positive, or the curves do not fit
 /// on the lines (a line would run backwards or a piece is missing).
-fn solve(vertices: &[Vector2], curves: &[VertexCurve], elements: &[AlignmentElement]) -> Option<Vec<PathPoint>> {
+pub(super) fn solve(vertices: &[Vector2], curves: &[VertexCurve], elements: &[AlignmentElement]) -> Option<Vec<PathPoint>> {
     for (j, c) in curves.iter().enumerate() {
         let (u, v) = (vertices[j + 1] - vertices[j], vertices[j + 2] - vertices[j + 1]);
         let turn = u.cross(&v).atan2(u.dot(&v));
@@ -281,7 +281,10 @@ fn write_companion(doc: &mut CadDocument, handle: Handle, owner: Handle, tag: u3
 /// BL 80, BL 0, BL 80, BL 80, BL 0, BL 0x10025F04, 6 bits 010101
 /// RC 1, key 0x0B001081: BL 2, BL 0, BL 0 (the geometry stamp; the
 ///   application keeps a value derived from the geometry and accepts 0)
-/// BL 0 (byte form), 65 zero bits, BD 2.25, 7 bits 0111010
+/// BL 0 (byte form), 115 zero bits, 8 bits 00000010, RC 0x40 | edge id >>
+///   2, 2 bits edge id & 3, 5 bits 11010 (the edge id: the alignment's edge
+///   in its companion, 1, or its site's container, its member number; read
+///   before as BD 2.25 and 7 bits 0111010, edge 1)
 /// BL 1 (first element id), BD 0, BD 0 (start station)
 /// 7 bits 0000011, BD 0 (track gauge), B 0, BL 1
 /// BL n, the lines (ids 1.. in station order) then the arcs (ids after
@@ -310,7 +313,11 @@ fn write_companion(doc: &mut CadDocument, handle: Handle, owner: Handle, tag: u3
 ///
 /// Written for WA03's and WA04's polylines and curves, the record equals
 /// the samples' bit for bit apart from the geometry stamp.
-pub(super) fn write_alignment(doc: &mut CadDocument, common: EntityCommon, name: &str, elements: &[AlignmentElement], style: u64, feature: u64, keys: Option<&str>, profiles: &[ProfileRef]) -> Result<Handle, DxfError> {
+#[allow(clippy::too_many_arguments)]
+pub(super) fn write_alignment(doc: &mut CadDocument, common: EntityCommon, name: &str, elements: &[AlignmentElement], style: u64, feature: u64, edge: i32, keys: Option<&str>, profiles: &[ProfileRef]) -> Result<Handle, DxfError> {
+    if !(1..256).contains(&edge) {
+        return Err(invalid("the alignment's edge id is out of range"));
+    }
     let curves = elements.iter().filter(|e| !matches!(e.kind, AlignmentElementKind::FixedLine { .. })).count();
     // The profiles' entries hold the end station of the alignment's first
     // element and its element count (0 for one).
@@ -342,9 +349,10 @@ pub(super) fn write_alignment(doc: &mut CadDocument, common: EntityCommon, name:
                 }
             }
             bl_byte(w, 0);
-            bits(w, &"0".repeat(65));
-            w.write_bit_double(2.25);
-            bits(w, "0111010");
+            // The edge id ends two bits after the run's byte 0x40 (its low
+            // bits carry the id's high bits).
+            bits(w, &"0".repeat(115));
+            bits(w, &format!("00000010{:08b}{:02b}11010", 0x40 | (edge >> 2), edge & 3));
             w.write_bit_long(1);
             w.write_bit_double(0.0);
             w.write_bit_double(0.0);
@@ -474,7 +482,7 @@ pub fn add_alignment_with_curves(doc: &mut CadDocument, name: &str, vertices: &[
     let label = new_name(handle.value());
     write_companion(doc, companion, node, tag, handle, &path, &label)?;
     add_node_child(doc, node, tag as i32, companion, &label)?;
-    write_alignment(doc, common, name, &elements, style, companion.value(), None, &[])
+    write_alignment(doc, common, name, &elements, style, companion.value(), 1, None, &[])
 }
 
 /// A profile of an alignment: its record and its identifier.
@@ -493,6 +501,7 @@ pub(super) struct Written {
     pub style: u64,
     pub feature: u64,
     pub keys: String,
+    pub edge: i32,
 }
 
 /// An alignment this crate can write again: its elements are the ones the
@@ -521,7 +530,10 @@ pub(super) fn rewritable(doc: &CadDocument, alignment: Handle, profile_id: impl 
         crate::classes::civil::alignment::read_key(&mut b)?;
     }
     let keys: String = (from..b.pos).map(|i| if data[i / 8] >> (7 - i % 8) & 1 == 1 { '1' } else { '0' }).collect();
-    let w = Written { common: x.common.clone(), name, elements, style: refs[4].0, feature: refs[1].0, keys };
+    b.skip(10 + 115 + 8)?;
+    let high = b.bits_value(8)?;
+    let edge = (i32::from(high & 0x3F) << 2) | i32::from(b.bits_value(2)?);
+    let w = Written { common: x.common.clone(), name, elements, style: refs[4].0, feature: refs[1].0, keys, edge };
     Some((w, profiles))
 }
 
@@ -542,12 +554,12 @@ pub(super) fn rewrite(doc: &mut CadDocument, alignment: Handle, w: Written, befo
     };
     let original = doc.get_entity(alignment).cloned().ok_or_else(|| invalid("alignment not found"))?;
     let old = bits_of(doc);
-    write_alignment(doc, w.common.clone(), &w.name, &w.elements, w.style, w.feature, Some(&w.keys), before)?;
+    write_alignment(doc, w.common.clone(), &w.name, &w.elements, w.style, w.feature, w.edge, Some(&w.keys), before)?;
     if bits_of(doc) != old {
         *doc.get_entity_mut(alignment).ok_or_else(|| invalid("alignment not found"))? = original;
         return Err(invalid("the alignment holds data this crate does not write"));
     }
-    write_alignment(doc, w.common, &w.name, &w.elements, w.style, w.feature, Some(&w.keys), profiles)?;
+    write_alignment(doc, w.common, &w.name, &w.elements, w.style, w.feature, w.edge, Some(&w.keys), profiles)?;
     Ok(())
 }
 
