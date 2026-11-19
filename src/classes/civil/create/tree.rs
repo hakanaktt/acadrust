@@ -88,6 +88,8 @@ pub(super) struct Component {
     pub lineweight: i16,
     /// Linetype handle.
     pub linetype: u64,
+    /// Linetype scale.
+    pub scale: f64,
 }
 
 /// A table record a style setting refers to.
@@ -99,6 +101,8 @@ pub(super) enum Shared {
     Continuous,
     /// The text style "Standard".
     Standard,
+    /// A record of the drawing (a type 0x12 key: one the style owns).
+    Record(u64),
 }
 
 /// The value of a style setting, by its key's type (bits 24..29 of the key).
@@ -151,6 +155,11 @@ pub(super) struct Style<'a> {
     pub children: &'a [(i32, Handle)],
     pub keys: &'a [(u32, Value)],
     pub own: u64,
+    /// An `AeccAttributeTable<int, hard pointer>` after the keys: its
+    /// keys (`BL 0, B 1, RC n, n x BL key, BL 1, B 1`), each with an empty
+    /// hard pointer after the keys' references, and its class name after
+    /// the keys' texts. Empty: no table.
+    pub pointer_table: &'a [u32],
     pub lists: [Vec<Component>; 4],
     pub class_refs: Vec<Ref>,
 }
@@ -162,15 +171,21 @@ pub(super) fn style(doc: &mut CadDocument, handle: Handle, owner: Handle, st: St
             Shared::None => 0,
             Shared::Continuous => doc.line_types.get("Continuous").map_or(0, |l| l.handle.value()),
             Shared::Standard => doc.text_styles.get("Standard").map_or(0, |t| t.handle.value()),
+            Shared::Record(h) => h,
         }
     };
     let mut refs: Vec<Ref> = st.children.iter().map(|c| soft_owner(c.1.value())).collect();
     for (key, value) in st.keys {
         if let Value::Reference(s) = value {
             let h = table(*s);
-            refs.push(if key >> 24 & 0x3F == 0x0F { soft_pointer(h) } else { hard_pointer(h) });
+            refs.push(match key >> 24 & 0x3F {
+                0x0F => soft_pointer(h),
+                0x12 => Ref(DwgReferenceType::HardOwnership, h),
+                _ => hard_pointer(h),
+            });
         }
     }
+    refs.extend(st.pointer_table.iter().map(|_| hard_pointer(0)));
     refs.push(soft_pointer(st.own));
     for c in st.lists.iter().flatten() {
         refs.extend([hard_pointer(layer), hard_pointer(c.linetype), hard_pointer(0)]);
@@ -181,6 +196,9 @@ pub(super) fn style(doc: &mut CadDocument, handle: Handle, owner: Handle, st: St
         Value::Text(t) => Some(t.to_string()),
         _ => None,
     }));
+    if !st.pointer_table.is_empty() {
+        strings.push("class AeccAttributeTable<int,class AcDbHardPointerId>".into());
+    }
     strings.extend((0..2 * count).map(|_| String::new()));
     let now = file_time().to_le_bytes();
     let byte = |w: &mut DwgMergedWriter, v: u8| bits(w, &format!("{v:08b}"));
@@ -215,6 +233,18 @@ pub(super) fn style(doc: &mut CadDocument, handle: Handle, owner: Handle, st: St
                     Value::Time => w.write_bytes(&now),
                 }
             }
+            if !st.pointer_table.is_empty() {
+                w.write_bit_long(0);
+                w.write_bit(true);
+                byte(w, st.pointer_table.len() as u8);
+                for key in st.pointer_table {
+                    w.write_bit_long(*key as i32);
+                }
+                // ponytail: `BL 1, B 1` closes the table in the only style
+                // that has one (the profile style); not named.
+                w.write_bit_long(1);
+                w.write_bit(true);
+            }
             w.write_bit_long(32);
             bits(w, "001");
             for list in &st.lists {
@@ -229,7 +259,7 @@ pub(super) fn style(doc: &mut CadDocument, handle: Handle, owner: Handle, st: St
                     w.write_bit_long(color_word(c.color) as i32);
                     byte(w, 0);
                     w.write_bit_short(c.lineweight);
-                    w.write_bit_double(1.0);
+                    w.write_bit_double(c.scale);
                     for v in [1, 0, 0x0100_0000, 0] {
                         w.write_bit_long(v);
                     }
@@ -259,10 +289,10 @@ const POINT_STYLE_KEYS: [(u32, Value); 4] = [(0x0400_1008, Value::Text("")), (0x
 /// ```
 #[allow(clippy::too_many_arguments)]
 fn point_style(doc: &mut CadDocument, handle: Handle, owner: Handle, id: i32, children: &[(i32, Handle)], layer: u64, by_block: u64, by_layer: u64) -> Result<(), DxfError> {
-    let plan = |index, visible| Component { index, visible, color: Color::ByBlock, lineweight: -2, linetype: by_block };
-    let other = Component { index: 0, visible: true, color: Color::ByBlock, lineweight: -1, linetype: by_layer };
+    let plan = |index, visible| Component { index, visible, color: Color::ByBlock, lineweight: -2, linetype: by_block, scale: 1.0 };
+    let other = Component { index: 0, visible: true, color: Color::ByBlock, lineweight: -1, linetype: by_layer, scale: 1.0 };
     let lists = [vec![plan(0, true), plan(1, true)], vec![plan(0, false), plan(1, false)], vec![Component { ..other }], vec![other]];
-    let st = Style { dxf: "AECC_POINT_STYLE", id, children, keys: &POINT_STYLE_KEYS, own: 0, lists, class_refs: vec![hard_pointer(0)] };
+    let st = Style { dxf: "AECC_POINT_STYLE", id, children, keys: &POINT_STYLE_KEYS, own: 0, pointer_table: &[], lists, class_refs: vec![hard_pointer(0)] };
     let byte = |w: &mut DwgMergedWriter, v: u8| bits(w, &format!("{v:08b}"));
     style(doc, handle, owner, st, layer, |w| {
         w.write_bit_short(3);
@@ -366,9 +396,9 @@ const ALIGNMENT_STYLE_KEYS: [(u32, Value); 29] = [
 /// in model; index 9 in section), no class data.
 fn alignment_style(doc: &mut CadDocument, handle: Handle, owner: Handle, id: i32, children: &[(i32, Handle)], own: u64, layer: u64, by_block: u64) -> Result<(), DxfError> {
     let indices = [0, 1, 2, 3, 4, 5, 11, 20];
-    let view = |shown: bool| -> Vec<Component> { indices.iter().map(|i| Component { index: *i, visible: shown && *i != 11, color: Color::ByLayer, lineweight: -1, linetype: by_block }).collect() };
-    let lists = [view(true), view(false), Vec::new(), vec![Component { index: 9, visible: true, color: Color::ByBlock, lineweight: -1, linetype: by_block }]];
-    let st = Style { dxf: "AECC_ALIGNMENT_STYLE", id, children, keys: &ALIGNMENT_STYLE_KEYS, own, lists, class_refs: Vec::new() };
+    let view = |shown: bool| -> Vec<Component> { indices.iter().map(|i| Component { index: *i, visible: shown && *i != 11, color: Color::ByLayer, lineweight: -1, linetype: by_block, scale: 1.0 }).collect() };
+    let lists = [view(true), view(false), Vec::new(), vec![Component { index: 9, visible: true, color: Color::ByBlock, lineweight: -1, linetype: by_block, scale: 1.0 }]];
+    let st = Style { dxf: "AECC_ALIGNMENT_STYLE", id, children, keys: &ALIGNMENT_STYLE_KEYS, own, pointer_table: &[], lists, class_refs: Vec::new() };
     style(doc, handle, owner, st, layer, |_| {})
 }
 
@@ -653,10 +683,10 @@ const SURFACE_STYLE_KEYS: [(u32, Value); 216] = [
 fn surface_style(doc: &mut CadDocument, handle: Handle, owner: Handle, id: i32, children: &[(i32, Handle)], own: u64, layer: u64, by_block: u64) -> Result<(), DxfError> {
     let colors = [Some(1), Some(4), Some(2), Some(3), Some(42), None, Some(6), None, None, None, None, None];
     let view = |shown: i32| -> Vec<Component> {
-        (0..12).map(|i| Component { index: i, visible: i == shown, color: colors[i as usize].map_or(Color::ByLayer, Color::from_index), lineweight: -2, linetype: by_block }).collect()
+        (0..12).map(|i| Component { index: i, visible: i == shown, color: colors[i as usize].map_or(Color::ByLayer, Color::from_index), lineweight: -2, linetype: by_block, scale: 1.0 }).collect()
     };
-    let lists = [view(2), view(1), Vec::new(), vec![Component { index: 12, visible: false, color: Color::from_index(2), lineweight: -2, linetype: by_block }]];
-    let st = Style { dxf: "AECC_SURFACE_STYLE", id, children, keys: &SURFACE_STYLE_KEYS, own, lists, class_refs: Vec::new() };
+    let lists = [view(2), view(1), Vec::new(), vec![Component { index: 12, visible: false, color: Color::from_index(2), lineweight: -2, linetype: by_block, scale: 1.0 }]];
+    let st = Style { dxf: "AECC_SURFACE_STYLE", id, children, keys: &SURFACE_STYLE_KEYS, own, pointer_table: &[], lists, class_refs: Vec::new() };
     style(doc, handle, owner, st, layer, |w| bits(w, "00000000"))
 }
 
@@ -678,4 +708,89 @@ pub(super) fn ensure_surface_tree(doc: &mut CadDocument) -> Result<(), DxfError>
     surface_style(doc, head, styles, KEY_SURFACE_STYLES, &[(DEFAULT_STYLE_ID, default)], default.value(), layer, by_block)?;
     surface_style(doc, default, head, DEFAULT_STYLE_ID, &[], 0, layer, by_block)?;
     add_node_child(doc, styles, KEY_SURFACE_STYLES, head, "")
+}
+
+/// Style tree key of the profile style collection.
+pub(super) const KEY_PROFILE_STYLES: i32 = 74;
+
+/// The settings of the application's default profile style, in stored
+/// order; `extension` is the style's extension record (key 0x12010131).
+/// The 12 keys of type 0x10 refer to marker styles, written empty.
+fn profile_style_keys(extension: u64) -> [(u32, Value); 30] {
+    [
+        (0x1001_0130, Value::Reference(Shared::None)),
+        (0x0D00_E300, Value::Long(4097)),
+        (0x0301_0108, Value::Byte(1)),
+        (0x0201_0105, Value::Double(5.0)),
+        (0x0400_1008, Value::Text("")),
+        (0x0200_E122, Value::Double(1.0)),
+        (0x1001_0127, Value::Reference(Shared::None)),
+        (0x0201_0110, Value::Double(1.0)),
+        (0x1001_0124, Value::Reference(Shared::None)),
+        (0x0400_1010, Value::Text("")),
+        (0x0200_E124, Value::Double(1.0)),
+        (0x1001_0129, Value::Reference(Shared::None)),
+        (0x0200_E121, Value::Double(0.2)),
+        (0x1001_0126, Value::Reference(Shared::None)),
+        (0x0201_010F, Value::Double(5.0)),
+        (0x1001_0123, Value::Reference(Shared::None)),
+        (0x1000_B052, Value::Reference(Shared::None)),
+        (0x1600_101F, Value::Time),
+        (0x1201_0131, Value::Reference(Shared::Record(extension))),
+        (0x1001_0120, Value::Reference(Shared::None)),
+        (0x0D00_E301, Value::Long(258)),
+        (0x0301_0109, Value::Byte(1)),
+        (0x0201_0106, Value::Double(5.0)),
+        (0x0200_E123, Value::Double(1.0)),
+        (0x1001_0128, Value::Reference(Shared::None)),
+        (0x1000_E401, Value::Reference(Shared::None)),
+        (0x1001_0125, Value::Reference(Shared::None)),
+        (0x0201_010E, Value::Double(5.0)),
+        (0x1001_0122, Value::Reference(Shared::None)),
+        (0x1600_101E, Value::Time),
+    ]
+}
+
+/// A profile style (`AECC_PROFILE_STYLE`) and the extension record it owns
+/// (`AECC_VALIGNMENT_STYLE_EXTENSION`):
+///
+/// ```text
+/// style: the style layout with the keys above, a pointer table of one
+///   key (0x10010101), components 9 in model, 0-6 and 11 in profile
+///   (ByLayer, linetype scale 2), 10 in section (ByBlock); no class data
+/// extension: the style layout with id 0, the users and the dates, one
+///   profile component 12 (ByLayer), no class data
+/// ```
+#[allow(clippy::too_many_arguments)]
+fn profile_style(doc: &mut CadDocument, handle: Handle, owner: Handle, id: i32, children: &[(i32, Handle)], own: u64, layer: u64, by_block: u64) -> Result<(), DxfError> {
+    let extension = doc.allocate_handle();
+    let c = |index: i32, color: Color, scale: f64| Component { index, visible: true, color, lineweight: -1, linetype: by_block, scale };
+    let profile = [0, 1, 2, 3, 4, 5, 6, 11].iter().map(|i| c(*i, Color::ByLayer, 2.0)).collect();
+    let lists = [Vec::new(), vec![c(9, Color::ByLayer, 2.0)], profile, vec![c(10, Color::ByBlock, 1.0)]];
+    let keys = profile_style_keys(extension.value());
+    let st = Style { dxf: "AECC_PROFILE_STYLE", id, children, keys: &keys, own, pointer_table: &[0x1001_0101], lists, class_refs: Vec::new() };
+    style(doc, handle, owner, st, layer, |_| {})?;
+    let lists = [Vec::new(), Vec::new(), vec![c(12, Color::ByLayer, 1.0)], Vec::new()];
+    let st = Style { dxf: "AECC_VALIGNMENT_STYLE_EXTENSION", id: 0, children: &[], keys: &POINT_STYLE_KEYS, own: 0, pointer_table: &[], lists, class_refs: Vec::new() };
+    style(doc, extension, handle, st, layer, |_| {})
+}
+
+/// Writes the profile style collection and its default style when the
+/// drawing lacks them (and the point tree of a drawing without a style
+/// tree).
+pub(super) fn ensure_profile_tree(doc: &mut CadDocument) -> Result<(), DxfError> {
+    if root_node(doc, KEY_STYLES).is_none() && !ensure_point_tree(doc)? {
+        return Err(invalid("drawing has a civil tree without a style tree"));
+    }
+    let styles = root_node(doc, KEY_STYLES).ok_or_else(|| invalid("drawing has no style tree"))?;
+    let tree = read_node(doc, styles).ok_or_else(|| invalid("style tree cannot be read"))?;
+    if tree.children.iter().any(|c| c.0 == KEY_PROFILE_STYLES) {
+        return Ok(());
+    }
+    let layer = doc.layers.get("0").map(|l| l.handle.value()).ok_or_else(|| invalid("drawing has no layer 0"))?;
+    let by_block = doc.line_types.get("ByBlock").map(|l| l.handle.value()).ok_or_else(|| invalid("drawing lacks the ByBlock linetype"))?;
+    let [head, default] = [(); 2].map(|_| doc.allocate_handle());
+    profile_style(doc, head, styles, KEY_PROFILE_STYLES, &[(DEFAULT_STYLE_ID, default)], default.value(), layer, by_block)?;
+    profile_style(doc, default, head, DEFAULT_STYLE_ID, &[], 0, layer, by_block)?;
+    add_node_child(doc, styles, KEY_PROFILE_STYLES, head, "")
 }

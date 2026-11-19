@@ -10,8 +10,7 @@ use crate::io::dwg::dwg_stream_writers::DwgMergedWriter;
 use crate::types::{Handle, Vector2};
 use crate::CadDocument;
 
-/// Style tree key of the profile style collection.
-const KEY_PROFILE_STYLES: i32 = 74;
+use super::tree::{ensure_profile_tree, KEY_PROFILE_STYLES};
 /// Bits of a profile record after its identifier.
 const TAIL: usize = 107;
 /// The 107 bits after a profile's identifier, the same in every sample
@@ -288,7 +287,8 @@ fn write_helpers(doc: &mut CadDocument, profile: Handle) -> Result<[Handle; 7], 
 /// with a free symmetric parabola of length `curves[j]` at inner PVI
 /// `j + 1` (0 for none). The parabolas must fit on the tangents. The
 /// alignment must be one this crate writes (it is written again with the
-/// profile in its list); the drawing must have a profile style.
+/// profile in its list); a drawing without a profile style gets the
+/// default one.
 pub fn add_profile(doc: &mut CadDocument, alignment: Handle, name: &str, pvis: &[Vector2], curves: &[f64], layer: Option<&str>) -> Result<Handle, DxfError> {
     if pvis.len() < 2 || pvis.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) || pvis.windows(2).any(|w| w[1].x <= w[0].x) {
         return Err(invalid("a profile needs two or more finite PVIs with increasing stations"));
@@ -308,10 +308,11 @@ pub fn add_profile(doc: &mut CadDocument, alignment: Handle, name: &str, pvis: &
     if name.is_empty() {
         return Err(invalid("a profile needs a name"));
     }
-    let style = default_style(doc).ok_or_else(|| invalid("drawing has no profile styles"))?;
     let (written, before) = rewritable(doc, alignment, |h| identifier(doc, h)).ok_or_else(|| invalid("the alignment is not one this crate writes"))?;
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
+    ensure_profile_tree(doc)?;
+    let style = default_style(doc).ok_or_else(|| invalid("drawing has no profile styles"))?;
     let handle = doc.allocate_handle();
     let id = new_identifier(handle.value());
     let mut profiles: Vec<ProfileRef> = before.iter().map(|p| ProfileRef { handle: p.handle, id: p.id }).collect();
@@ -414,5 +415,25 @@ mod tests {
         // A record that is not an alignment is refused.
         let mut doc = back;
         assert!(add_profile(&mut doc, p1, "P3", &v, &[0.0], None).is_err());
+    }
+
+    #[test]
+    fn a_new_drawing_gets_its_profile_style() {
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let al = crate::classes::civil::add_alignment(&mut doc, "AL1", &[Vector2::new(0.0, 0.0), Vector2::new(100.0, 0.0)], None).unwrap();
+        let p = add_profile(&mut doc, al, "P1", &[Vector2::new(0.0, 10.0), Vector2::new(100.0, 15.0)], &[], None).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-profile-new-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let style = default_style(&back).unwrap();
+        let st = object(&back, Handle::new(style)).unwrap();
+        assert_eq!(st.dxf_name, "AECC_PROFILE_STYLE");
+        // The style owns its extension (the reference of key 0x12010131).
+        let extension = st.decode().handles[7];
+        assert_eq!(object(&back, Handle::new(extension)).unwrap().dxf_name, "AECC_VALIGNMENT_STYLE_EXTENSION");
+        assert_eq!(arch(&back, p).typed_handles()[11].0, style);
+        assert_eq!(arch(&back, p).profile_name(), Some("P1".into()));
     }
 }
