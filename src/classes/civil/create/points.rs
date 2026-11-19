@@ -209,6 +209,7 @@ fn put_point(doc: &mut CadDocument, handle: Option<Handle>, number: u32, layer: 
         "AECC_COGO_POINT",
         common,
         |w| {
+            w.write_bit_short(VERSION);
             w.write_bit_long(number as i32);
             bits(w, "001010");
         },

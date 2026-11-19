@@ -48,6 +48,8 @@ const CLASSES: &[Class] = &[
     Class { dxf: "AECC_ROOT_SETTINGS_NODE", cpp: "AeccDbRootSettingsNode", module: "AeccvBase130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_USER_DEFINED_ATTRIBUTE_CLASSIFICATION", cpp: "AeccDbUserDefinedAttributeClassification", module: "AeccvBase130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_POINT_STYLE", cpp: "AeccDbPointStyle", module: "AeccLand130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_FEATURE_STYLE", cpp: "AeccDbFeatureStyle", module: "AeccLand130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_ALIGNMENT", cpp: "AeccDbAlignment", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_COGO_POINT", cpp: "AeccDbCogoPoint", module: "AeccLand130", proxy_flags: 0x33c, entity: true },
 ];
 
@@ -150,7 +152,6 @@ pub(super) fn put_entity(
     let type_code = register(doc, dxf)?;
     let mut writer = DwgObjectWriter::new(doc)?;
     let (raw, handle_bits) = writer.encode_architecture_entity(type_code, &common, |w| {
-        w.write_bit_short(VERSION);
         fields(w);
         finish(w, &body);
     });
@@ -265,3 +266,88 @@ pub fn ensure_civil(doc: &mut CadDocument) -> Result<Handle, DxfError> {
     Ok(handle)
 }
 
+
+/// A node's fields after its child keys, its references after its
+/// children, and its texts after its children's names.
+pub(super) struct NodeTail {
+    pub key: i32,
+    pub children: Vec<(i32, u64)>,
+    /// `(text id, name)` of the children whose keys are text ids.
+    pub names: Vec<String>,
+    pub bits: String,
+    pub refs: Vec<Ref>,
+    pub own: Vec<String>,
+    pub texts: Vec<String>,
+}
+
+/// Reads a node record (root, tree, class, settings or feature style
+/// node): key, children and everything after them, kept as they are.
+pub(super) fn read_node(doc: &CadDocument, node: Handle) -> Option<NodeTail> {
+    let o = object(doc, node)?;
+    let (data, start, end) = fields_of(o)?;
+    let mut b = Bits::new(data, start, end);
+    let key = b.bit_long()?;
+    let n = usize::try_from(b.bit_long()?).ok()?;
+    let keys = (0..n).map(|_| b.bit_long()).collect::<Option<Vec<_>>>()?;
+    let bits: String = (b.pos..end).map(|i| if data[i / 8] >> (7 - i % 8) & 1 == 1 { '1' } else { '0' }).collect();
+    let typed = o.typed_handles();
+    (typed.len() >= n).then_some(())?;
+    let kind = |k: u8| match k {
+        2 => DwgReferenceType::SoftOwnership,
+        3 => DwgReferenceType::HardOwnership,
+        4 => DwgReferenceType::SoftPointer,
+        _ => DwgReferenceType::HardPointer,
+    };
+    let text = |k: i32| k as u32 & 0x8000_0000 != 0;
+    let strings = o.decode().strings;
+    let own_len = if text(key) { 2 } else { 1 };
+    let named = keys.iter().filter(|k| text(**k)).count();
+    (strings.len() >= own_len + named).then_some(())?;
+    Some(NodeTail {
+        key,
+        children: keys.into_iter().zip(typed.iter().map(|t| t.0)).collect(),
+        names: strings[own_len..own_len + named].to_vec(),
+        bits,
+        refs: typed[n..].iter().map(|(v, k)| Ref(kind(*k), *v)).collect(),
+        own: strings[..own_len].to_vec(),
+        texts: strings[own_len + named..].to_vec(),
+    })
+}
+
+/// Adds child `(key, record)` named `name` (when `key` is a text id) to
+/// a node, keeping everything else the node holds. Children are stored by
+/// hash bucket (key mod 8), a new one last in its bucket.
+pub(super) fn add_node_child(doc: &mut CadDocument, node: Handle, key: i32, child: Handle, name: &str) -> Result<(), DxfError> {
+    let mut n = read_node(doc, node).ok_or_else(|| invalid("node record cannot be read"))?;
+    let o = object(doc, node).ok_or_else(|| invalid("node record cannot be read"))?;
+    let (dxf, owner, reactors) = (o.dxf_name.clone(), o.owner, o.reactors.clone());
+    let text = |k: i32| k as u32 & 0x8000_0000 != 0;
+    // Pair each text-keyed child with its name to keep them together.
+    let mut names = n.names.clone().into_iter();
+    let mut list: Vec<(i32, u64, Option<String>)> = n.children.iter().map(|c| (c.0, c.1, text(c.0).then(|| names.next().unwrap_or_default()))).collect();
+    let bucket = |k: i32| k as u32 % 8;
+    let at = list.iter().position(|c| bucket(c.0) > bucket(key)).unwrap_or(list.len());
+    list.insert(at, (key, child.value(), text(key).then(|| name.to_string())));
+    n.children = list.iter().map(|c| (c.0, c.1)).collect();
+    let mut refs: Vec<Ref> = list.iter().map(|c| soft_owner(c.1)).collect();
+    refs.extend(n.refs);
+    let mut strings = n.own;
+    strings.extend(list.iter().filter_map(|c| c.2.clone()));
+    strings.extend(n.texts);
+    put_object(
+        doc,
+        &dxf,
+        node,
+        owner,
+        reactors,
+        |w| {
+            w.write_bit_long(n.key);
+            w.write_bit_long(n.children.len() as i32);
+            for c in &n.children {
+                w.write_bit_long(c.0);
+            }
+            bits(w, &n.bits);
+        },
+        Body { refs, strings },
+    )
+}
