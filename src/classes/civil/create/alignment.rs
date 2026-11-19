@@ -1,10 +1,12 @@
-//! Alignments of fixed lines with free arcs between them (`AECC_ALIGNMENT`).
+//! Alignments of fixed lines with free arcs and spiral-curve-spirals
+//! between them (`AECC_ALIGNMENT`).
 
 use super::support::*;
 use super::tree::{ensure_alignment_tree, KEY_ALIGNMENT_STYLES, KEY_DEFAULT_FEATURE, KEY_SITELESS};
 use crate::entities::EntityCommon;
 use crate::error::DxfError;
 use crate::io::dwg::dwg_stream_writers::DwgMergedWriter;
+use crate::classes::civil::alignment::{pieces_with_curvature, AlignmentElement, AlignmentElementKind, AlignmentPiece};
 use crate::types::{Handle, Vector2};
 use crate::CadDocument;
 
@@ -15,8 +17,80 @@ const FIXED: i16 = 0;
 /// two lines.
 const ARC: i32 = 258;
 const BETWEEN_LINES: i32 = 29;
+/// Element kind of a spiral-curve-spiral, its constraint between two
+/// lines, and the spiral definition of WA04's group.
+const SPIRAL_CURVE_SPIRAL: i32 = 260;
+const SCS_BETWEEN_LINES: i32 = 0;
+const SPIRAL_DEFINITION: i32 = 256;
 /// Flags of an arc edge in the companion topology, besides the line flags.
 const ARC_EDGE: i32 = 0x010F_0000;
+
+/// What an alignment does at an inner vertex.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum VertexCurve {
+    /// The lines meet at the vertex.
+    None,
+    /// A free arc of this radius, tangent to the lines before and after
+    /// the vertex.
+    Arc(f64),
+    /// A free spiral-curve-spiral between the lines: spirals of these
+    /// lengths and an arc of this radius.
+    SpiralCurveSpiral { spiral_in: f64, radius: f64, spiral_out: f64 },
+}
+
+impl VertexCurve {
+    fn is_some(self) -> bool {
+        self != VertexCurve::None
+    }
+
+    fn valid(self) -> bool {
+        let positive = |v: f64| v.is_finite() && v > 0.0;
+        match self {
+            VertexCurve::None => true,
+            VertexCurve::Arc(r) => positive(r),
+            VertexCurve::SpiralCurveSpiral { spiral_in, radius, spiral_out } => positive(spiral_in) && positive(radius) && positive(spiral_out),
+        }
+    }
+}
+
+/// The design elements of an alignment through `vertices`: the lines (ids
+/// 1..n in station order, from vertex to vertex) then a curve element per
+/// curved inner vertex (ids after the lines, in station order), linked
+/// along the path.
+fn elements(vertices: &[Vector2], curves: &[VertexCurve]) -> Vec<AlignmentElement> {
+    let n = vertices.len() - 1;
+    let mut next = n as i16;
+    let ids: Vec<Option<i16>> = curves
+        .iter()
+        .map(|c| {
+            c.is_some().then(|| {
+                next += 1;
+                next
+            })
+        })
+        .collect();
+    let mut out: Vec<AlignmentElement> = (0..n)
+        .map(|i| {
+            let id = i as i16 + 1;
+            AlignmentElement {
+                id,
+                previous: if i == 0 { 0 } else { ids[i - 1].unwrap_or(id - 1) },
+                next: if i + 1 == n { 0 } else { ids[i].unwrap_or(id + 1) },
+                kind: AlignmentElementKind::FixedLine { start: vertices[i], end: vertices[i + 1] },
+            }
+        })
+        .collect();
+    for (j, c) in curves.iter().enumerate() {
+        let Some(id) = ids[j] else { continue };
+        let kind = match *c {
+            VertexCurve::Arc(radius) => AlignmentElementKind::FreeArc { radius },
+            VertexCurve::SpiralCurveSpiral { spiral_in, radius, spiral_out } => AlignmentElementKind::FreeSpiralCurveSpiral { spiral_in, radius, spiral_out },
+            VertexCurve::None => continue,
+        };
+        out.push(AlignmentElement { id, previous: j as i16 + 1, next: j as i16 + 2, kind });
+    }
+    out
+}
 /// Key of the geometry stamp setting.
 const STAMP: i32 = 0x0B00_1081;
 
@@ -62,42 +136,49 @@ fn new_name(seed: u64) -> String {
 /// angle, positive to the left).
 type PathPoint = (Vector2, Option<f64>);
 
-/// The solved path through `vertices`: at a vertex with a radius the
-/// lines end at the arc's tangent points. `None` when a radius is not
-/// positive, a curved vertex has no turn, or the arcs do not fit on the
-/// lines between them.
-fn solve(vertices: &[Vector2], radii: &[f64]) -> Option<Vec<PathPoint>> {
-    let n = vertices.len();
-    let dir = |i: usize| (vertices[i + 1] - vertices[i]).normalize();
-    // Per interior vertex: (tangent length, signed turn).
-    let mut curves: Vec<Option<(f64, f64)>> = Vec::new();
-    for (j, r) in radii.iter().enumerate() {
-        if *r == 0.0 {
-            curves.push(None);
-            continue;
-        }
-        let (u, v) = (dir(j), dir(j + 1));
-        let turn = u.cross(&v).atan2(u.dot(&v));
-        (r.is_finite() && *r > 0.0 && turn.abs() > 1e-9 && turn.abs() < std::f64::consts::PI - 1e-9).then_some(())?;
-        curves.push(Some((r * (turn.abs() / 2.0).tan(), turn)));
-    }
-    let tangent = |j: usize| curves.get(j).copied().flatten().map_or(0.0, |c| c.0);
-    for i in 0..n - 1 {
-        let before = if i == 0 { 0.0 } else { tangent(i - 1) };
-        (before + tangent(i) <= vertices[i].distance(&vertices[i + 1]) * (1.0 + 1e-12)).then_some(())?;
-    }
-    let mut path = vec![(vertices[0], None)];
+/// The solved path of `elements` (the crate's own solver): each line from
+/// its start, each arc from its start with its bulge, each spiral as
+/// chords between its solved points, then the end. `None` when a curved
+/// vertex has no turn or a curve is not positive, or the curves do not fit
+/// on the lines (a line would run backwards or a piece is missing).
+fn solve(vertices: &[Vector2], curves: &[VertexCurve], elements: &[AlignmentElement]) -> Option<Vec<PathPoint>> {
     for (j, c) in curves.iter().enumerate() {
-        let p = vertices[j + 1];
-        match c {
-            None => path.push((p, None)),
-            Some((t, turn)) => {
-                path.push((p - dir(j) * *t, Some((turn / 4.0).tan())));
-                path.push((p + dir(j + 1) * *t, None));
+        let (u, v) = (vertices[j + 1] - vertices[j], vertices[j + 2] - vertices[j + 1]);
+        let turn = u.cross(&v).atan2(u.dot(&v));
+        (c.valid() && (!c.is_some() || (turn.abs() > 1e-9 && turn.abs() < std::f64::consts::PI - 1e-9))).then_some(())?;
+    }
+    let pieces = pieces_with_curvature(elements);
+    let curve_pieces: usize = curves
+        .iter()
+        .map(|c| match c {
+            VertexCurve::None => 0,
+            VertexCurve::Arc(_) => 1,
+            VertexCurve::SpiralCurveSpiral { .. } => 3,
+        })
+        .sum();
+    let scale = vertices.iter().map(|p| p.x.abs().max(p.y.abs())).fold(1.0, f64::max);
+    let mut path: Vec<PathPoint> = Vec::new();
+    let mut line = 0;
+    for (kind, k, points) in &pieces {
+        let (first, last) = (*points.first()?, *points.last()?);
+        match kind {
+            AlignmentPiece::Line => {
+                let along = *vertices.get(line + 1)? - vertices[line];
+                (along.dot(&(last - first)) >= -1e-9 * scale * along.length()).then_some(())?;
+                line += 1;
+                if first.distance(&last) > 1e-12 * scale {
+                    path.push((first, None));
+                }
             }
+            AlignmentPiece::Curve => {
+                let sweep = 2.0 * (first.distance(&last) * k.abs() / 2.0).min(1.0).asin() * k.signum();
+                path.push((first, Some((sweep / 4.0).tan())));
+            }
+            _ => path.extend(points[..points.len() - 1].iter().map(|p| (*p, None))),
         }
     }
-    path.push((vertices[n - 1], None));
+    (pieces.len() == vertices.len() - 1 + curve_pieces && line == vertices.len() - 1).then_some(())?;
+    path.push((*vertices.last()?, None));
     Some(path)
 }
 
@@ -210,28 +291,27 @@ fn write_companion(doc: &mut CadDocument, handle: Handle, owner: Handle, tag: u3
 ///   arc:  BL 258, BS 2, B 0, B 0, BD -1 (no design speed), BD -1, BS 1,
 ///         BD -1, BL 29 (fitted between two lines), B 0, BS id,
 ///         BS previous id, BS next id, BD radius
+///   spiral-curve-spiral: BL 260, the arc's head with BL 0 (fitted
+///         between two lines) and no B, BS id, BS previous id, BS next id,
+///         BL 256 (spiral definition), BD spiral in, BD radius, BD spiral
+///         out
 /// BL 0 x 4 (intervals), BL 0 (equations), BL 1, BL 0 (speeds)
 /// BD 100, BL 0 (no superelevation), BL 0, BL 1 (centerline),
 /// BL 2, 2, 2, 0, 3, B 0, BS 0x04BE
 /// references: soft pointer 0, companion, companion, soft pointer 0,
 ///   style, hard pointer 0
 /// texts: "AeccImpAlignment", "", "", name, five empty texts, three more
-///   per arc
+///   per curve element
 /// ```
 ///
-/// Written for WA03's polyline and radius, the record equals WA03's bit
-/// for bit apart from the geometry stamp.
-pub(super) fn write_alignment(doc: &mut CadDocument, common: EntityCommon, name: &str, vertices: &[Vector2], radii: &[f64], style: u64, feature: u64) -> Result<Handle, DxfError> {
-    let n = vertices.len() - 1;
-    // Arc ids follow the lines'; `arc[j]` is the id of the arc at inner
-    // vertex j.
-    let mut next_arc = n as i16;
-    let arc: Vec<Option<i16>> = radii.iter().map(|r| (*r > 0.0).then(|| { next_arc += 1; next_arc })).collect();
-    let arcs = next_arc as usize - n;
+/// Written for WA03's and WA04's polylines and curves, the record equals
+/// the samples' bit for bit apart from the geometry stamp.
+pub(super) fn write_alignment(doc: &mut CadDocument, common: EntityCommon, name: &str, elements: &[AlignmentElement], style: u64, feature: u64) -> Result<Handle, DxfError> {
+    let curves = elements.iter().filter(|e| !matches!(e.kind, AlignmentElementKind::FixedLine { .. })).count();
     let byte = |w: &mut DwgMergedWriter, v: u8| bits(w, &format!("{v:08b}"));
     let refs = vec![soft_pointer(0), hard_pointer(feature), hard_pointer(feature), soft_pointer(0), hard_pointer(style), hard_pointer(0)];
     let mut strings = vec!["AeccImpAlignment".to_string(), String::new(), String::new(), name.to_string()];
-    strings.extend((0..5 + 3 * arcs).map(|_| String::new()));
+    strings.extend((0..5 + 3 * curves).map(|_| String::new()));
     put_entity(
         doc,
         "AECC_ALIGNMENT",
@@ -257,37 +337,54 @@ pub(super) fn write_alignment(doc: &mut CadDocument, common: EntityCommon, name:
             w.write_bit_double(0.0);
             w.write_bit(false);
             w.write_bit_long(1);
-            w.write_bit_long((n + arcs) as i32);
-            for i in 0..n {
-                let id = i as i16 + 1;
-                w.write_bit_long(LINE);
-                w.write_bit_short(2);
-                w.write_bit(false);
-                w.write_bit_short(FIXED);
-                w.write_bit_short(id);
-                w.write_bit_short(if i == 0 { 0 } else { arc[i - 1].unwrap_or(id - 1) });
-                w.write_bit_short(if i + 1 == n { 0 } else { arc[i].unwrap_or(id + 1) });
-                for p in [vertices[i], vertices[i + 1]] {
-                    w.write_raw_double(p.x);
-                    w.write_raw_double(p.y);
+            w.write_bit_long(elements.len() as i32);
+            for e in elements {
+                let ids = |w: &mut DwgMergedWriter| {
+                    w.write_bit_short(e.id);
+                    w.write_bit_short(e.previous);
+                    w.write_bit_short(e.next);
+                };
+                // A curve element's head: no design speed (BD -1), the
+                // parameter block, the constraint.
+                let curve = |w: &mut DwgMergedWriter, kind: i32, constraint: i32| {
+                    w.write_bit_long(kind);
+                    w.write_bit_short(2);
+                    w.write_bit(false);
+                    w.write_bit(false);
+                    w.write_bit_double(-1.0);
+                    w.write_bit_double(-1.0);
+                    w.write_bit_short(1);
+                    w.write_bit_double(-1.0);
+                    w.write_bit_long(constraint);
+                };
+                match e.kind {
+                    AlignmentElementKind::FixedLine { start, end } => {
+                        w.write_bit_long(LINE);
+                        w.write_bit_short(2);
+                        w.write_bit(false);
+                        w.write_bit_short(FIXED);
+                        ids(w);
+                        for p in [start, end] {
+                            w.write_raw_double(p.x);
+                            w.write_raw_double(p.y);
+                        }
+                    }
+                    AlignmentElementKind::FreeArc { radius } => {
+                        curve(w, ARC, BETWEEN_LINES);
+                        w.write_bit(false);
+                        ids(w);
+                        w.write_bit_double(radius);
+                    }
+                    AlignmentElementKind::FreeSpiralCurveSpiral { spiral_in, radius, spiral_out } => {
+                        curve(w, SPIRAL_CURVE_SPIRAL, SCS_BETWEEN_LINES);
+                        ids(w);
+                        w.write_bit_long(SPIRAL_DEFINITION);
+                        for v in [spiral_in, radius, spiral_out] {
+                            w.write_bit_double(v);
+                        }
+                    }
+                    _ => {}
                 }
-            }
-            for (j, id) in arc.iter().enumerate() {
-                let Some(id) = id else { continue };
-                w.write_bit_long(ARC);
-                w.write_bit_short(2);
-                w.write_bit(false);
-                w.write_bit(false);
-                w.write_bit_double(-1.0);
-                w.write_bit_double(-1.0);
-                w.write_bit_short(1);
-                w.write_bit_double(-1.0);
-                w.write_bit_long(BETWEEN_LINES);
-                w.write_bit(false);
-                w.write_bit_short(*id);
-                w.write_bit_short(j as i16 + 1);
-                w.write_bit_short(j as i16 + 2);
-                w.write_bit_double(radii[j]);
             }
             for v in [0, 0, 0, 0, 0, 1, 0] {
                 w.write_bit_long(v);
@@ -307,21 +404,22 @@ pub(super) fn write_alignment(doc: &mut CadDocument, common: EntityCommon, name:
 /// `layer` (layer "0" when `None`). A drawing without an alignment style
 /// collection or a node for siteless alignments gets them (`tree.rs`).
 pub fn add_alignment(doc: &mut CadDocument, name: &str, vertices: &[Vector2], layer: Option<&str>) -> Result<Handle, DxfError> {
-    add_alignment_with_curves(doc, name, vertices, &vec![0.0; vertices.len().saturating_sub(2)], layer)
+    add_alignment_with_curves(doc, name, vertices, &vec![VertexCurve::None; vertices.len().saturating_sub(2)], layer)
 }
 
-/// Adds an alignment of fixed lines through `vertices` with a free arc of
-/// radius `radii[j]` at inner vertex `j + 1` (0 for none): the arc is
-/// tangent to the lines before and after the vertex, which end at its
-/// tangent points. The arcs must fit on the lines between them.
-pub fn add_alignment_with_curves(doc: &mut CadDocument, name: &str, vertices: &[Vector2], radii: &[f64], layer: Option<&str>) -> Result<Handle, DxfError> {
+/// Adds an alignment of fixed lines through `vertices` with `curves[j]` at
+/// inner vertex `j + 1`: a free arc or spiral-curve-spiral tangent to the
+/// lines before and after the vertex, which end where it meets them. The
+/// curves must fit on the lines between them.
+pub fn add_alignment_with_curves(doc: &mut CadDocument, name: &str, vertices: &[Vector2], curves: &[VertexCurve], layer: Option<&str>) -> Result<Handle, DxfError> {
     if vertices.len() < 2 || vertices.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) || vertices.windows(2).any(|w| w[0] == w[1]) {
         return Err(invalid("an alignment needs two or more distinct finite vertices"));
     }
-    if radii.len() + 2 != vertices.len() {
-        return Err(invalid("an alignment needs one radius per inner vertex"));
+    if curves.len() + 2 != vertices.len() {
+        return Err(invalid("an alignment needs one curve per inner vertex"));
     }
-    let path = solve(vertices, radii).ok_or_else(|| invalid("a curve has no turn, a radius is not positive, or the curves do not fit on the lines"))?;
+    let elements = elements(vertices, curves);
+    let path = solve(vertices, curves, &elements).ok_or_else(|| invalid("a curve has no turn or is not positive, or the curves do not fit on the lines"))?;
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
     if default_style(doc).is_none() || companion_node(doc).is_none() {
@@ -343,7 +441,7 @@ pub fn add_alignment_with_curves(doc: &mut CadDocument, name: &str, vertices: &[
     let label = new_name(handle.value());
     write_companion(doc, companion, node, tag, handle, &path, &label)?;
     add_node_child(doc, node, tag as i32, companion, &label)?;
-    write_alignment(doc, common, name, vertices, radii, style, companion.value())
+    write_alignment(doc, common, name, &elements, style, companion.value())
 }
 
 #[cfg(test)]
@@ -438,10 +536,14 @@ mod tests {
         use crate::classes::civil::{AlignmentElementKind, AlignmentPiece};
         let mut doc = drawing();
         let v = [Vector2::new(0.0, 0.0), Vector2::new(100.0, 0.0), Vector2::new(200.0, -50.0), Vector2::new(300.0, -50.0), Vector2::new(350.0, 50.0)];
-        assert!(add_alignment_with_curves(&mut doc, "X", &v, &[50.0], None).is_err());
-        assert!(add_alignment_with_curves(&mut doc, "X", &v, &[5000.0, 0.0, 0.0], None).is_err());
-        assert!(add_alignment_with_curves(&mut doc, "X", &[v[0], v[1], Vector2::new(200.0, 0.0)], &[10.0], None).is_err());
-        let h = add_alignment_with_curves(&mut doc, "AL1", &v, &[50.0, 0.0, 40.0], None).unwrap();
+        let (arc, none) = (VertexCurve::Arc, VertexCurve::None);
+        let scs = VertexCurve::SpiralCurveSpiral { spiral_in: 20.0, radius: 50.0, spiral_out: 20.0 };
+        assert!(add_alignment_with_curves(&mut doc, "X", &v, &[arc(50.0)], None).is_err());
+        assert!(add_alignment_with_curves(&mut doc, "X", &v, &[arc(5000.0), none, none], None).is_err());
+        assert!(add_alignment_with_curves(&mut doc, "X", &v, &[arc(-5.0), none, none], None).is_err());
+        assert!(add_alignment_with_curves(&mut doc, "X", &[v[0], v[1], Vector2::new(200.0, 0.0)], &[arc(10.0)], None).is_err());
+        let h = add_alignment_with_curves(&mut doc, "AL1", &v, &[arc(50.0), none, arc(40.0)], None).unwrap();
+        let s = add_alignment_with_curves(&mut doc, "AL2", &v[..3], &[scs], None).unwrap();
         let path = std::env::temp_dir().join(format!("civil-alignment-curves-{}.dwg", std::process::id()));
         DwgWriter::write_to_file(&path, &doc).unwrap();
         let back = DwgReader::from_file(&path).unwrap().read().unwrap();
@@ -469,5 +571,19 @@ mod tests {
         // and the uncurved vertex.
         let c = read_node(&back, companion_node(&back).unwrap()).unwrap().children[0].1;
         assert_eq!(object(&back, Handle::new(c)).unwrap().decode().handles[0], h.value());
+
+        // The spiral-curve-spiral round trips as one element between the
+        // lines and solves to spiral, curve, spiral.
+        let a = match back.get_entity(s) {
+            Some(crate::entities::EntityType::Extended(x)) => match &x.data {
+                crate::entities::ExtendedEntityData::Arch(a) => a.clone(),
+                _ => panic!(),
+            },
+            _ => panic!(),
+        };
+        let elements = a.alignment_elements().unwrap();
+        assert_eq!(elements[2].kind, AlignmentElementKind::FreeSpiralCurveSpiral { spiral_in: 20.0, radius: 50.0, spiral_out: 20.0 });
+        let kinds: Vec<AlignmentPiece> = a.alignment_pieces().iter().map(|p| p.0).collect();
+        assert_eq!(kinds, vec![AlignmentPiece::Line, AlignmentPiece::Spiral, AlignmentPiece::Curve, AlignmentPiece::Spiral, AlignmentPiece::Line]);
     }
 }

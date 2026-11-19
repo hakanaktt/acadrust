@@ -292,8 +292,9 @@ take a number list.
 
 `add_alignment(doc, name, vertices, layer)` writes an alignment of fixed
 lines through the vertices; `add_alignment_with_curves(doc, name,
-vertices, radii, layer)` adds a free arc of the given radius at inner
-vertices (0 for none), tangent to the lines before and after the vertex.
+vertices, curves, layer)` adds at inner vertices a free arc of a given
+radius or a free spiral-curve-spiral of given spiral lengths and radius
+(`VertexCurve`), tangent to the lines before and after the vertex.
 Both use the drawing's default
 alignment style (the first style of the style tree's alignment style
 collection, key 93). A drawing that lacks that collection or the node of
@@ -328,13 +329,16 @@ BL n, the lines then the arcs:
   arc:  BL 258, BS 2, B 0, B 0, BD -1 (no design speed), BD -1, BS 1,
         BD -1, BL 29 (fitted between two lines), B 0, BS id, BS previous
         id, BS next id, BD radius
+  spiral-curve-spiral: BL 260, the arc's head with BL 0 (fitted between
+        two lines) and no B, BS id, BS previous id, BS next id, BL 256
+        (spiral definition), BD spiral in, BD radius, BD spiral out
 BL 0 x 4 (intervals), BL 0 (equations), BL 1, BL 0 (design speeds)
 BD 100 (station increment), BL 0 (no superelevation), BL 0, BL 1
 (centerline), BL 2, 2, 2, 0, 3, B 0, BS 0x04BE
 handles: soft pointer 0, companion (hard pointer, twice), soft pointer 0,
          style (hard pointer), hard pointer 0
 strings: "AeccImpAlignment", "", "", name, five empty texts, three more
-         per arc
+         per curve element
 ```
 
 The key `0x0B001081` holds a value the application derives from the
@@ -343,8 +347,9 @@ lines); written as 0 it is accepted (A4). The lines are ids 1..n in
 station order, each running from vertex to vertex (the application solves
 where an arc cuts them); the arcs take the ids after the lines in station
 order, and the links follow the path (WA03: lines 1 and 2, arc 3 between
-them, 1 -> 3 -> 2). The rest equals WA01 and WA02, and with WA03's
-polyline and radius WA03, bit for bit.
+them, 1 -> 3 -> 2; WA04 the same with a spiral-curve-spiral). The rest
+equals WA01 and WA02, and with their polylines and curves WA03 and WA04,
+bit for bit.
 
 ### Companion (`AECC_FEATURE_STYLE`)
 
@@ -372,9 +377,11 @@ handles: the alignment (soft pointer), three empty soft pointers
 strings: name, ""
 ```
 
-The points are the solved path: the ends, then per inner vertex either
-the vertex or, with an arc, its two tangent points (`R tan(delta / 2)`
-before and after the vertex). The default feature style gains the
+The points are the solved path (the crate's own solver): the ends, then
+the start of every line, arc and spiral chord; an arc edge carries its
+bulge, a spiral is written as chords between its solved points (the
+application's WA04 companion splits each spiral into ten arcs, edge flags
+16; the written form opens and audits clean). The default feature style gains the
 companion as a child (its other fields are kept as the drawing has them).
 Written for a line and two lines, the companions equal WA01's and WA02's
 bit for bit apart from the text id; for WA03 the tangent points and the
@@ -516,7 +523,12 @@ Curves (new drawings with `AL1` written by acadrust through (0, 0),
 the arcs with the written radii, the tangent points the writer computes
 (to 1e-13), centers on the inside of the turn (clockwise for the right
 turn) and stations 0 to 210.365, 322.487 and 418.026; the first equals
-WA03's alignment (stations and arc length 78.562).
+WA03's alignment (stations and arc length 78.562). Spiral-curve-spirals
+(`AL1` through (0, 0), (100, 0), (200, 50) with 20/50/20, as WA04; and
+through (0, 0), (100, 0), (200, 50), (250, 150), (400, 150) with 20/50/20,
+an arc of 30 and 15/40/25): AUDIT 0 errors, the API lists each group as
+clothoid, arc, clothoid with the written lengths and radii, the first
+from station 78.131 to 121.314 and ending at 211.248 as WA04.
 
 A new drawing with surface `S` from WS03's ten points, alignment `AL1`
 through (0, 0), (20, 20) and point 1 at (5, 15, 2), all written by
@@ -536,8 +548,8 @@ taken from the records and checked bit for bit against them.
   one.
 - Point groups by name or full description, with exclusions, AND of
   several criteria, elevation ranges, override styles per group.
-- Alignments with spirals, on a site, offset alignments, labels, design
-  speeds; the written alignment style draws no markers (no marker style
+- Alignments with lone spirals or other curve constraints, on a site,
+  offset alignments, labels, design speeds; the written alignment style draws no markers (no marker style
   is written).
 - Surfaces from point groups, breaklines, boundaries or edits.
 - Profiles, sites, sections, corridors, pipe networks: not written.
@@ -551,6 +563,6 @@ taken from the records and checked bit for bit against them.
 | point groups (number lists, elevation comparisons, description patterns) | yes | yes | yes (§4) | not needed (the application lists the written members) | names, full descriptions, exclusions, override settings |
 | point style, its collection, class and settings nodes | yes | yes, in a drawing without the tree (§2a) | yes (§4) | not needed | — |
 | label styles | partly | no | — | — | label node settings (1621 bits), collector and text style records |
-| alignments (fixed lines and free arcs, siteless) | yes | yes (a new drawing gets §3b) | yes (§4) | not needed (the application solves the stored elements) | spirals, sites, labels |
+| alignments (fixed lines, free arcs and spiral-curve-spirals, siteless) | yes | yes (a new drawing gets §3b) | yes (§4) | not needed (the application solves the stored elements) | other constraints, sites, labels |
 | TIN surfaces (added points) | yes | yes (a new drawing gets §3d) | yes (§4) | not needed (the stored triangulation is drawn; the application rebuilds it after an edit) | other definitions |
 | profiles, views, sites, parcels, feature lines, gradings, sections, corridors, networks | partly | no | — | — | not started |

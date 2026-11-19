@@ -30,7 +30,7 @@ pub use alignment::{
     StationEquation,
 };
 pub use cogo::CogoPoint;
-pub use create::{add_alignment, add_alignment_with_curves, add_cogo_point, add_point_group, add_point_group_query, add_tin_surface, cogo_points, ensure_civil, remove_cogo_point, set_cogo_point, set_point_group, set_point_group_query, Comparison, PointQuery};
+pub use create::{add_alignment, add_alignment_with_curves, VertexCurve, add_cogo_point, add_point_group, add_point_group_query, add_tin_surface, cogo_points, ensure_civil, remove_cogo_point, set_cogo_point, set_point_group, set_point_group_query, Comparison, PointQuery};
 pub use grading::{CriteriaValue, GradingCriteria};
 pub use intersection::IntersectionLayout;
 pub use labels::{parse_format, property, LabelPart, LabelText};
