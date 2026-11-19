@@ -129,7 +129,7 @@ pub(super) enum Value {
 }
 
 /// Current time as a FILETIME (100 ns since 1601-01-01).
-fn file_time() -> u64 {
+pub(super) fn file_time() -> u64 {
     let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() / 100).unwrap_or(0);
     (unix + 116_444_736_000_000_000) as u64
 }
@@ -354,14 +354,19 @@ pub(super) fn ensure_point_tree(doc: &mut CadDocument) -> Result<bool, DxfError>
     node(doc, "AECC_USER_DEFINED_ATTRIBUTE_CLASSIFICATION", classification, class, KEY_CLASSIFICATION as u32, &[], Tail::Tree, Vec::new(), texts("", false, &[], &[]))?;
 
     node(doc, "AECC_ROOT_SETTINGS_NODE", settings, root, KEY_SETTINGS as u32, &[(TEXT_POINTS, points)], Tail::Settings, vec![soft_pointer(0)], texts("", false, &["AeccPoints"], &[]))?;
-    // The points settings end with the default label style (none: the
-    // application gives points its own label styles) and point style.
+    // The points settings end with the default label style (written
+    // below, with the label styles) and point style.
     node(doc, "AECC_SETTINGS_NODE", points, settings, TEXT_POINTS, &[(TEXT_CREATE_POINTS, create)], Tail::Settings, vec![soft_pointer(0), soft_pointer(style.value())], texts("AeccPoints", true, &["AeccCreatePoints"], &[]))?;
     node(doc, "AECC_SETTINGS_NODE", create, points, TEXT_CREATE_POINTS, &[], Tail::Settings, Vec::new(), texts("AeccCreatePoints", true, &[], &[]))?;
 
     set_root_entry(doc, KEY_STYLES, styles)?;
     set_root_entry(doc, KEY_CLASSES, classes)?;
     set_root_entry(doc, KEY_SETTINGS, settings)?;
+    // With the default label styles the points settings name the default
+    // point label style, which new points take.
+    super::labels::ensure_label_styles(doc)?;
+    let label = super::labels::default_label_style(doc, super::labels::POINT_LABELS).ok_or_else(|| invalid("the point label styles were not written"))?;
+    node(doc, "AECC_SETTINGS_NODE", points, settings, TEXT_POINTS, &[(TEXT_CREATE_POINTS, create)], Tail::Settings, vec![soft_pointer(label), soft_pointer(style.value())], texts("AeccPoints", true, &["AeccCreatePoints"], &[]))?;
     Ok(true)
 }
 

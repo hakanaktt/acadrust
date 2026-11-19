@@ -8,6 +8,7 @@ mod alignment;
 mod corridor;
 mod groups;
 mod intersection;
+mod labels;
 mod points;
 mod profile;
 mod profile_view;

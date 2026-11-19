@@ -15,9 +15,6 @@ use crate::CadDocument;
 
 /// Style tree key of the sample line style collection.
 const KEY_SAMPLE_LINE_STYLES: i32 = 0xCD5;
-/// Path from the style tree to the default sample line label style: the
-/// label node, the sample line labels, their collection, the default.
-pub(super) const LABEL_PATH: [i32; 4] = [3, 0x112, 0x1002_A00F, DEFAULT_STYLE_ID];
 /// The class word after the class head (both records).
 const WORD_GROUP: i32 = 0x4000_0353;
 const WORD_LINE: i32 = 0x4000_8353;
@@ -184,13 +181,10 @@ fn ensure_line_style_tree(doc: &mut CadDocument) -> Result<(), DxfError> {
 
 /// The default sample line label style. A group without one opens with
 /// AUDIT errors (E-L2: the application reports the group's null label
-/// style), so a drawing without label styles (a new drawing) is refused.
+/// style), so a drawing without the label node gets the default label
+/// styles.
 fn label_style(doc: &CadDocument) -> Option<u64> {
-    let mut node = root_node(doc, KEY_STYLES);
-    for key in LABEL_PATH {
-        node = node.and_then(|n| read_node(doc, n)).and_then(|n| n.children.iter().find(|c| c.0 == key).map(|c| Handle::new(c.1)));
-    }
-    node.map(|h| h.value()).filter(|h| *h != 0)
+    super::labels::default_label_style(doc, super::labels::SAMPLE_LINE_LABELS)
 }
 
 fn common(doc: &CadDocument, handle: Handle, layer: Option<&str>) -> Result<EntityCommon, DxfError> {
@@ -210,6 +204,7 @@ pub fn add_sample_line_group(doc: &mut CadDocument, alignment: Handle, name: &st
         return Err(invalid("a sample line group needs a name"));
     }
     let (written, profiles) = rewritable(doc, alignment, |h| identifier(doc, h)).ok_or_else(|| invalid("the alignment is not one this crate writes"))?;
+    super::labels::ensure_label_styles(doc)?;
     let label = label_style(doc).ok_or_else(|| invalid("drawing has no sample line label style"))?;
     ensure_line_style_tree(doc)?;
     let line_style = default_style_of(doc, KEY_SAMPLE_LINE_STYLES).ok_or_else(|| invalid("drawing has no sample line styles"))?;
@@ -449,15 +444,7 @@ mod tests {
         let mut doc = CadDocument::new();
         doc.version = DxfVersion::AC1032;
         let al = crate::classes::civil::add_alignment(&mut doc, "AL1", &[v(0.0, 0.0), v(100.0, 0.0)], None).unwrap();
-        // No label style in a new drawing.
-        assert!(add_sample_line_group(&mut doc, al, "SLG1", None).is_err());
-        let tree = root_node(&doc, KEY_STYLES).unwrap();
-        let [labels, kind, head, default] = [(); 4].map(|_| doc.allocate_handle());
-        node(&mut doc, labels, tree, LABEL_PATH[0], &[(LABEL_PATH[1], kind)]);
-        node(&mut doc, kind, labels, LABEL_PATH[1], &[(LABEL_PATH[2], head)]);
-        node(&mut doc, head, kind, LABEL_PATH[2], &[(LABEL_PATH[3], default)]);
-        node(&mut doc, default, head, LABEL_PATH[3], &[]);
-        add_node_child(&mut doc, tree, LABEL_PATH[0], labels, "").unwrap();
+        // A new drawing has the default label styles.
         let g = add_sample_line_group(&mut doc, al, "SLG1", None).unwrap();
         assert!(add_sample_line(&mut doc, g, "X", 150.0, 5.0, 5.0, None).is_err());
         assert!(add_sample_line(&mut doc, g, "X", 50.0, -5.0, 5.0, None).is_err());
@@ -470,7 +457,9 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let group = read_group(&back, g).unwrap();
         assert_eq!(group.lines, vec![c.value(), a.value(), b.value()]);
-        assert_eq!(group.label_style, default.value());
+        let label = super::super::labels::default_label_style(&back, super::super::labels::SAMPLE_LINE_LABELS).unwrap();
+        assert_eq!(group.label_style, label);
+        assert_eq!(object(&back, Handle::new(label)).unwrap().decode().strings.last().map(String::as_str), Some("AeccDbSampleLine"));
         assert_eq!(station(&back, b.value()), Some(80.0));
         assert_eq!(arch(&back, a).unwrap().decode().strings[2], "SL1");
         // The alignment lists the group after its own references.
@@ -485,13 +474,7 @@ mod tests {
         let mut doc = CadDocument::new();
         doc.version = DxfVersion::AC1032;
         let al = crate::classes::civil::add_alignment(&mut doc, "AL1", &[v(0.0, 0.0), v(100.0, 0.0)], None).unwrap();
-        let tree = root_node(&doc, KEY_STYLES).unwrap();
-        let [labels, kind, head, default, sections, section_style] = [(); 6].map(|_| doc.allocate_handle());
-        node(&mut doc, labels, tree, LABEL_PATH[0], &[(LABEL_PATH[1], kind)]);
-        node(&mut doc, kind, labels, LABEL_PATH[1], &[(LABEL_PATH[2], head)]);
-        node(&mut doc, head, kind, LABEL_PATH[2], &[(LABEL_PATH[3], default)]);
-        node(&mut doc, default, head, LABEL_PATH[3], &[]);
-        add_node_child(&mut doc, tree, LABEL_PATH[0], labels, "").unwrap();
+        let [sections, section_style] = [(); 2].map(|_| doc.allocate_handle());
         let g = add_sample_line_group(&mut doc, al, "SLG1", None).unwrap();
         let a = add_sample_line(&mut doc, g, "SL1", 50.0, 10.0, 10.0, None).unwrap();
         let b = add_sample_line(&mut doc, g, "SL2", 20.0, 5.0, 5.0, None).unwrap();

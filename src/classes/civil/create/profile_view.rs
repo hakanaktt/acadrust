@@ -723,6 +723,7 @@ pub fn add_profile_view(doc: &mut CadDocument, alignment: Handle, name: &str, or
     let list: Vec<Shown> = profiles.iter().zip(&shown).map(|(p, a)| Shown { handle: p.handle, style: a.typed_handles().get(11).map_or(0, |r| r.0) }).collect();
     let labels: Vec<[Vec<i32>; 4]> = shown.iter().map(|p| labelled(p)).collect();
     ensure_view_style_tree(doc)?;
+    super::labels::ensure_label_styles(doc)?;
     let style = default_style_of(doc, KEY_PROFILE_VIEW_STYLES).ok_or_else(|| invalid("drawing has no profile view styles"))?;
     let label_styles = default_style_of(doc, KEY_PROFILE_LABEL_SETS).and_then(|set| object(doc, Handle::new(set))).map(|o| o.decode().handles);
     let layer = layer.unwrap_or("0");
@@ -789,8 +790,10 @@ mod tests {
         let style = default_style_of(&back, KEY_PROFILE_VIEW_STYLES).unwrap();
         assert_eq!(object(&back, Handle::new(style)).unwrap().dxf_name, "AECC_PROFILE_VIEW_STYLE");
         assert_eq!(entity(&back, first).typed_handles()[2].0, style);
-        // No profile label set in a new drawing: no label groups.
-        assert!(!back.entities().any(|e| matches!(e, EntityType::Extended(x) if matches!(&x.data, ExtendedEntityData::Arch(a) if a.dxf_name.contains("LABEL_GROUP")))));
+        // A new drawing gets the default profile label set: four label
+        // groups per view.
+        let groups = back.entities().filter(|e| matches!(e, EntityType::Extended(x) if matches!(&x.data, ExtendedEntityData::Arch(a) if a.dxf_name.contains("LABEL_GROUP")))).count();
+        assert_eq!(groups, 8);
     }
 
     #[test]
@@ -801,30 +804,12 @@ mod tests {
         let al = crate::classes::civil::add_alignment(&mut doc, "AL1", &[v(0.0, 0.0), v(300.0, 0.0)], None).unwrap();
         let pvis = [v(0.0, 10.0), v(100.0, 20.0), v(200.0, 5.0), v(300.0, 15.0)];
         let p = crate::classes::civil::add_profile(&mut doc, al, "P1", &pvis, &[40.0, 30.0], None).unwrap();
-        // A stand-in label set collection: its default set refers to four
-        // label styles after a null reference.
-        let tree = root_node(&doc, KEY_STYLES).unwrap();
-        let [head, set] = [(); 2].map(|_| doc.allocate_handle());
-        let styles: Vec<Handle> = (0..4).map(|_| doc.allocate_handle()).collect();
-        let node = |doc: &mut CadDocument, handle: Handle, owner: Handle, key: i32, children: Vec<(i32, u64)>| {
-            put_object(doc, "AECC_TREE_NODE", handle, owner, Vec::new(), |w| {
-                w.write_bit_long(key);
-                w.write_bit_long(children.len() as i32);
-                for c in &children {
-                    w.write_bit_long(c.0);
-                }
-                w.write_bit_long(0);
-                bits(w, "010");
-            }, Body { refs: children.iter().map(|c| soft_owner(c.1)).collect(), strings: vec![String::new()] })
-            .unwrap();
-        };
-        node(&mut doc, head, tree, KEY_PROFILE_LABEL_SETS, vec![(DEFAULT_STYLE_ID, set.value())]);
-        let mut items = vec![(0, 0)];
-        items.extend(styles.iter().enumerate().map(|(i, s)| (i as i32 + 1, s.value())));
-        node(&mut doc, set, head, DEFAULT_STYLE_ID, items);
-        add_node_child(&mut doc, tree, KEY_PROFILE_LABEL_SETS, head, "").unwrap();
+        // The default label set a new drawing gets refers to the line, PVI,
+        // sag and crest curve label styles after a null reference.
         let view = add_profile_view(&mut doc, al, "PV", v(0.0, -100.0), None).unwrap();
         let back = round_trip(&doc, "labels");
+        let set = default_style_of(&back, KEY_PROFILE_LABEL_SETS).unwrap();
+        let styles: Vec<u64> = object(&back, Handle::new(set)).unwrap().decode().handles[1..5].to_vec();
         let ids = entity(&back, p).profile_entity_ids();
         let tangents: Vec<i32> = ids.iter().filter(|e| !e.1).map(|e| e.0).collect();
         let curves: Vec<i32> = ids.iter().filter(|e| e.1).map(|e| e.0).collect();
@@ -841,13 +826,13 @@ mod tests {
         };
         let line = group("AECC_VALIGNMENT_LINE_LABEL_GROUP");
         assert_eq!(line.label_entity_ids(), tangents);
-        assert_eq!(line.typed_handles()[2..5].iter().map(|r| r.0).collect::<Vec<_>>(), vec![p.value(), styles[0].value(), view.value()]);
+        assert_eq!(line.typed_handles()[2..5].iter().map(|r| r.0).collect::<Vec<_>>(), vec![p.value(), styles[0], view.value()]);
         // The PVI labels sit at the profile's ends; the first curve (grade
         // falling) is a crest, the second a sag.
         let pvi = group("AECC_VALIGNMENT_PVI_LABEL_GROUP");
         assert_eq!(pvi.typed_handles().len(), 5 + 2 * 2);
         assert_eq!(group("AECC_VALIGNMENT_CRESTCURVE_LABEL_GROUP").label_entity_ids(), vec![curves[0]]);
         assert_eq!(group("AECC_VALIGNMENT_SAGCURVE_LABEL_GROUP").label_entity_ids(), vec![curves[1]]);
-        assert_eq!(group("AECC_VALIGNMENT_SAGCURVE_LABEL_GROUP").typed_handles()[3].0, styles[2].value());
+        assert_eq!(group("AECC_VALIGNMENT_SAGCURVE_LABEL_GROUP").typed_handles()[3].0, styles[2]);
     }
 }
