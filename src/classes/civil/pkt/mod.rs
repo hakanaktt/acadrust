@@ -35,7 +35,7 @@ mod xaml;
 mod xml;
 mod zip;
 
-pub use build::{chain, link, new_part_name, parameter_double, parameter_grade, parameter_side, parameter_slope, point_delta, point_slope, shape, PointTargets};
+pub use build::{EDITOR_NAMESPACES, EDITOR_PRODUCT, EDITOR_VERSION, EDITOR_VERSION_NUMBER, chain, link, new_part_name, parameter_double, parameter_grade, parameter_side, parameter_slope, point_delta, point_slope, shape, PointTargets};
 pub use layout::{layout, PktLayout, PktLayoutLink, PktLayoutPoint, PktLayoutShape, PktSide, PktValue};
 
 use crate::error::DxfError;

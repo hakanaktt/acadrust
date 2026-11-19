@@ -166,3 +166,19 @@ fn builders_make_the_lane() {
     let back = read_pkt(&write_pkt(&t).unwrap()).unwrap();
     assert_eq!(back, t);
 }
+
+#[test]
+fn new_packages_carry_the_editors_settings() {
+    let p = PktPackage::new_package("Lane", &new_part_name("Lane"));
+    assert_eq!(p.creator.product, EDITOR_PRODUCT);
+    assert_eq!(p.namespaces.len(), 13);
+    assert_eq!(p.namespaces.iter().filter(|n| n.1.starts_with("clr-namespace:")).count(), 7);
+    let mut q = p.clone();
+    q.parameters = vec![parameter_side(PktSide::Right), parameter_double("Width", 3.5, "Lane width")];
+    let (f, s) = chain(vec![point_delta(1, "P1", None, None, "0", "0", &["Crown"]), point_delta(2, "P2", Some("P1"), Some(("L1", &["Top"])), "[Width]", "0", &["ETW"])]);
+    q.flowchart = f;
+    q.start = s;
+    let bytes = write_pkt(&q).unwrap();
+    assert_eq!(read_pkt(&bytes).unwrap(), q);
+    assert_eq!(bytes, write_pkt(&q).unwrap());
+}

@@ -1364,7 +1364,23 @@ the input parameters `parameter_double`, `parameter_grade`,
 in order (`__ReferenceID<i>`) and its start node; every activity gets the
 editor's settings (shown errors, hint size 200,22.4, the point's display
 name `<point>&<link>` when it draws a link). A lane built with them equals
-the lane written by hand.
+the lane written by hand. `PktPackage::new_package(name, part)` is
+`PktPackage::new` with the creator and the workflow's namespace
+declarations the package editor writes into its own packages (K01 to
+K05), so a package needs nothing from a saved one.
+
+Check (E-PK7): a lane built only with these (`new_package`, part name
+from `new_part_name`, the parameters Side, Width 3.5, Depth 0.3, Slope
+-0.02, points P1-P4 with links L1-L3, link L4, shape S1) and written by
+`write_pkt` opens in the package editor without errors; its preview draws
+the lane (P1-P4, L1-L4, S1). Imported by the host (the API's package
+import into WR01) it is listed up to date with its four points, links and
+one shape. An assembly of it (right lane width 4 / depth 0.25 / slope
+-0.03, left lane with the defaults) and a corridor on it, written by
+acadrust into WR01, open with AUDIT 0 errors; the corridor rebuild builds
+stations 0-100 every 25 with the codes Crown, ETW, ETW_Datum and
+Crown_Datum, at station 0 ETW (4, -0.12) right and (-3.5, -0.07) left, as
+E-PK1.
 
 ### Layout
 

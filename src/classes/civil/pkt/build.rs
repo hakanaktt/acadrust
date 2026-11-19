@@ -4,6 +4,43 @@
 
 use super::*;
 
+/// The program the package editor names as the creator of its own
+/// packages (samples K00 to K05): product, version, version number.
+pub const EDITOR_PRODUCT: &str = "Autodesk Subassembly Composer";
+pub const EDITOR_VERSION: &str = "ForVail";
+pub const EDITOR_VERSION_NUMBER: &str = "13.8.280.0";
+/// The workflow's namespace declarations the package editor writes into a
+/// package with activities (samples K01 to K05; K00, without activities,
+/// lacks `asa1`), in its order.
+pub const EDITOR_NAMESPACES: [(&str, &str); 13] = [
+    ("", "http://schemas.microsoft.com/netfx/2009/xaml/activities"),
+    ("asa", "clr-namespace:Autodesk.SubassemblyComposer.API;assembly=Subassembly.API"),
+    ("asa1", "clr-namespace:Autodesk.SubassemblyComposer.ActivityLibrary;assembly=Subassembly.ActivityLibrary"),
+    ("asw", "clr-namespace:Autodesk.SubassemblyComposer.WorkflowEngine;assembly=Subassembly.WorkflowEngine"),
+    ("av", "http://schemas.microsoft.com/winfx/2006/xaml/presentation"),
+    ("mc", "http://schemas.openxmlformats.org/markup-compatibility/2006"),
+    ("mva", "clr-namespace:Microsoft.VisualBasic.Activities;assembly=System.Activities"),
+    ("s", "clr-namespace:System;assembly=mscorlib"),
+    ("sads", "http://schemas.microsoft.com/netfx/2010/xaml/activities/debugger"),
+    ("sap", "http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"),
+    ("scg", "clr-namespace:System.Collections.Generic;assembly=mscorlib"),
+    ("this", "clr-namespace:"),
+    ("x", "http://schemas.microsoft.com/winfx/2006/xaml"),
+];
+
+impl PktPackage {
+    /// A new package as the package editor makes one: `PktPackage::new`
+    /// with the creator and the workflow's namespace declarations the
+    /// editor writes. The workflow, parameters and description are the
+    /// caller's.
+    pub fn new_package(name: &str, part: &str) -> Self {
+        let mut p = PktPackage::new(name, part);
+        p.creator = PktCreator { product: EDITOR_PRODUCT.into(), version: EDITOR_VERSION.into(), version_number: EDITOR_VERSION_NUMBER.into() };
+        p.namespaces = EDITOR_NAMESPACES.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+        p
+    }
+}
+
 /// A part name (32 hexadecimal digits, a version-4 GUID as the editor
 /// writes) that depends only on `seed`, so that a package written from the
 /// same seed has the same bytes (and the same MD5 in a drawing).
