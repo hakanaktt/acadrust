@@ -82,6 +82,7 @@ const CLASSES: &[Class] = &[
     Class { dxf: "AECC_SAMPLE_LINE", cpp: "AeccDbSampleLine", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_SECTION", cpp: "AeccDbSection", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_GRAPH_SECTION_VIEW", cpp: "AeccDbGraphCrossSection", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
+    Class { dxf: "AECC_INTERSECTION", cpp: "AeccDbIntersection", module: "AeccRoadway130", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_COGO_POINT", cpp: "AeccDbCogoPoint", module: "AeccLand130", proxy_flags: 0x33c, entity: true },
 ];
 

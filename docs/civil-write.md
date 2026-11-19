@@ -903,6 +903,62 @@ sections, and the section view style of a new drawing (a new drawing has
 no sample line label style, so it has no sample line groups) are not
 written.
 
+## 3k. Intersections
+
+`add_intersection(doc, name, main, main_profile, other, other_profile,
+assembly_sets, layer)` writes the intersection object of two alignments
+that cross once, on line elements and away from their ends, with the
+drawing's default intersection style (style tree key 0x1031). Only the
+intersection is written: the offset alignments, curb returns, corridor
+regions and the profile locking actions the application's command makes
+with it are not, and the record's references to them are null. The two
+assembly set files the record names (the file and its form under the
+content folder) are the caller's; empty texts are accepted.
+
+```text
+intersection (AECC_INTERSECTION, an entity in model space):
+  BL 80, 0, 80, 80, 0, BL 0x10025F04, BL 0x4000836B, 2 bits 00, 16-byte
+    id (0x80, 15 zero bytes), 2 bits 00, BL 1, BL 1, BL 2 roads, BL 1
+  per road (main first): BD station of the crossing, BL 1, 1, 1, 1,
+    BL arm (2, 4)
+  per region (NE, SE, SW, NW): BL index 1-4, BL arm (2, 4, 3, 1), BD
+    angle, B in arm forward, B out arm forward
+  a 236-bit run: the secondary road grade rules (applied, maximum grade
+    0.05, maximum change 0.04, distance rule 1, distance 50) and the
+    version word
+  references: soft 0, style (hard), per road {alignment (hard), profile,
+    left offset alignment and profile, right offset alignment and
+    profile (soft)}, soft 0, per region {soft 0, in alignment, out
+    alignment, soft 0}
+  texts: "AeccImpIntersection", "", name, "", "NE - Quadrant",
+    "SE - Quadrant", "SW - Quadrant", "NW - Quadrant", the two assembly
+    set files
+```
+
+The regions run counterclockwise from the main road's forward arm: NE
+from it to the other road's arm on its left, SE from the other road's
+arm on its right to it, SW and NW likewise from its backward arm. A
+region goes from its in arm to its out arm; its angle is the difference
+of their headings, each taken in [0, 2π) (`atan2` of the arm's direction:
+the line element's direction, reversed for an arm against the
+stationing), and its two bits say whether each arm runs along rising
+stations. The record keeps no location: the application places the
+intersection at the main road's station.
+
+Samples WI01 (roads (0, 0)-(200, 0) and (100, -100)-(100, 100)), WI11
+(the second road from (50, -100) to (150, 100)), WI21 ((60, -50)-(60,
+150)) and WI51 ((130, 100)-(70, -100), heading the other way), made with
+the application's command (corridors, curb return alignments and
+profiles turned off in its settings), are reproduced bit for bit apart
+from the class word. Written into those drawings without the command's
+other objects (E-I1, E-I2 with empty assembly set texts, E-I-WI51) and
+into W001 with two alignments, their profiles and the intersection all
+written by acadrust, the main road curved before the crossing (E-I3),
+the drawings open with AUDIT 0 errors; the API lists the roads with their
+alignments and profiles and null offsets, the four quadrants with their
+in and out alignments and the written angles, and the location (175, 75)
+of E-I3 follows from the written station through the curve.
+
 ## 4. Reference check
 
 For every written drawing the check opens it in its own reference instance
@@ -1074,4 +1130,5 @@ taken from the records and checked bit for bit against them.
 | sample line groups and two-vertex sample lines | yes | yes, with the drawing's sample line label style (§3j) | yes (§3j) | not needed | label styles in a new drawing, lines with more vertices |
 | sections of a TIN surface (unsampled) | yes (geometry once sampled) | yes (§3j) | yes (§3j) | the application samples the source | corridor sources, lines added after sampling |
 | section views of a line (default style, unsampled section) | yes (frame) | yes, with the drawing's section view style (§3j) | yes (§3j) | not needed | sampled sections, several sections, the style in a new drawing (label styles) |
+| intersections of two crossing roads (the object only) | yes (stations, angles) | yes, with the drawing's intersection style (§3k) | yes (§3k) | not needed | offset alignments, curb returns, corridor regions and locking actions; tee junctions; the style in a new drawing |
 | parcels, gradings, networks | partly | no | — | — | not started |
