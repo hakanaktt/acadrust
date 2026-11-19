@@ -826,6 +826,38 @@ the sample line style collection (style tree key 0xCD5) gets it and its
 default style (the users and dates, plan components 0 and 1, model
 components 0 and 1 hidden), which the application accepts (E-L2).
 
+### Sections
+
+`add_sections(doc, group, surface)` makes a TIN surface a sampled section
+source of a group and adds a section of it to each of the group's lines,
+named "<group> - <line> - <surface>(1)", with the default section style
+(style tree key 0xC18). The records are the application's before it
+samples the surface (WX12: the source made sampled through the API in the
+generator's session, which computes no section points); the section holds
+no points until the application updates it.
+
+```text
+group: after its line count, BL k sources, k x {BL 1, a 134-bit run},
+  then the rest; per source its section style and surface (soft) after
+  the lines, and texts "0", "", "" after the fourth text
+line: BL sections, BL section views before its closing run; the sections
+  and views (soft) after its own references; its class word is kept
+section (AECC_SECTION, an entity in model space):
+  BL 80, 0, 80, 80, 0, BL 0x10025F04, BL 0x40008354, 4 bits 0010, RC 0,
+  120 zero bits, 3BD 0, 9 BD identity, BL 0, BL 0, BL 1, BL 0, BL 0,
+  a 154-bit run ending with the version word
+  references: soft 0, hard owner 0, section style, sample line (hard),
+    source (soft)
+  texts: "AeccImpSection", "", name, ""
+```
+
+Written into WX11 (a TIN surface, a group with one line, E-X1) the
+section, the line and the group equal WX12's bit for bit apart from the
+group's stamp; the application opens the drawing with AUDIT 0 errors and
+its API values of the section equal those of its own. Lines are not added
+to a group that samples a source (the sections a new line would need are
+not written); section views are not written.
+
 ## 4. Reference check
 
 For every written drawing the check opens it in its own reference instance
@@ -995,4 +1027,5 @@ taken from the records and checked bit for bit against them.
 | profile views and their profile label groups | yes (frame) | yes (a new drawing gets the default view style, §3h) | yes (§3h) | not needed (the application recomputes the view from its style) | other ranges and styles, label groups in a new drawing (no label set) |
 | corridors (one baseline, one region, unbuilt) | yes | yes, with an assembly of the drawing (§3i) | yes (§3i) | the corridor is written out of date and built by the application's rebuild | assemblies and subassemblies, built results, surfaces, several regions or baselines |
 | sample line groups and two-vertex sample lines | yes | yes, with the drawing's sample line label style (§3j) | yes (§3j) | not needed | label styles in a new drawing, lines with more vertices |
+| sections of a TIN surface (unsampled) | yes (geometry once sampled) | yes (§3j) | yes (§3j) | the application samples the source | section views, corridor sources, lines added after sampling |
 | parcels, gradings, sections, networks | partly | no | — | — | not started |
