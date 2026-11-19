@@ -332,7 +332,19 @@ pub fn add_structure(doc: &mut CadDocument, network: Handle, position: Vector3, 
                 }
                 run(w, STRUCTURE_RECORD.0, STRUCTURE_RECORD.1);
                 id.iter().for_each(|b| w.write_byte(*b));
-                run(w, STRUCTURE_TAIL.0, STRUCTURE_TAIL.1);
+                run_range(w, STRUCTURE_TAIL.1, 0, OUTLINE.0);
+                // The cached plan outline: a circle of radius 0.5 about
+                // the insertion point, four quarter arcs from the top
+                // going counterclockwise (x, y, bulge, flag).
+                let bulge = (std::f64::consts::PI / 8.0).tan();
+                for (dx, dy) in [(0.0, 0.5), (-0.5, 0.0), (0.0, -0.5), (0.5, 0.0)] {
+                    for v in [position.x + dx, position.y + dy, bulge] {
+                        w.write_2bits(0);
+                        w.write_raw_double(v);
+                    }
+                    w.write_bit(false);
+                }
+                run_range(w, STRUCTURE_TAIL.1, OUTLINE.1, STRUCTURE_TAIL.0);
             },
             Body { refs, strings },
         )
@@ -372,6 +384,17 @@ pub fn add_pipe(doc: &mut CadDocument, network: Handle, start: Vector3, end: Vec
             Body { refs, strings },
         )
     })
+}
+
+/// Bit range of the cached plan outline in `STRUCTURE_TAIL`.
+const OUTLINE: (usize, usize) = (473, 1269);
+
+/// Bits `from..to` of the constant run `hex`.
+fn run_range(w: &mut crate::io::dwg::dwg_stream_writers::DwgMergedWriter, hex: &str, from: usize, to: usize) {
+    for i in from..to {
+        let v = hex.as_bytes().get(i / 4).and_then(|c| (*c as char).to_digit(16)).unwrap_or(0);
+        w.write_bit(v >> (3 - i % 4) & 1 == 1);
+    }
 }
 
 /// A record's reference as written, from its kind code.

@@ -267,7 +267,11 @@ fn pipe_record(data: &[u8], start: usize, end: usize) -> Option<(Vec<Option<f64>
         bits.bit_double()?;
     }
     bits.skip(2)?;
-    Some((numbers, point(&mut bits)?, point(&mut bits)?))
+    // A pipe without part fields lays out the block before its ends
+    // otherwise (not decoded): the doubles read here are then garbage.
+    let plausible = |p: &Vector3| [p.x, p.y, p.z].into_iter().all(|v| v == 0.0 || (1e-9..1e9).contains(&v.abs()));
+    let (a, b) = (point(&mut bits)?, point(&mut bits)?);
+    (plausible(&a) && plausible(&b) && a.distance(&b) > 1e-6).then_some((numbers, a, b))
 }
 
 /// Number fields of the part data a pipe keeps itself (flow coefficients,
