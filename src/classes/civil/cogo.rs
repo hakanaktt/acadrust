@@ -15,11 +15,14 @@
 //! BL count, count × { BL 1, 3BD position, BL number, BS 0x0420 }
 //! BL n, n × BL number           points with their own point style
 //! BL m, m × BL number           points with their own label style
-//! BL 0, BL 0, BL 0
+//! BL 0
+//! BL j, j × { BL number, BL name tag }          named points
+//! BL j, j × { BL name tag, BL number }          the same, keyed by name
 //! BL k, k × { BL number, BL description tag }
 //! 13 × BL 0
 //! handles: n × point style, m × label style, the AeccDbCogoPoint class node
-//! strings: "", then the raw description of each of the k points in order
+//! strings: "", the names of the j points, the same names again, then the
+//!          raw description of each of the k points in order
 //! ```
 //!
 //! Records are in the database's own order, not by number. A point without
@@ -63,6 +66,8 @@ pub struct CogoPoint {
     pub label_style: u64,
     /// Raw description, `None` when the point has none.
     pub description: Option<String>,
+    /// Point name, `None` when the point has none.
+    pub name: Option<String>,
 }
 
 /// Point number a COGO point entity refers to.
@@ -90,7 +95,22 @@ struct PointDatabase {
     records: Vec<(u32, Vector3)>,
     styled: Vec<u32>,
     labelled: Vec<u32>,
+    named: Vec<u32>,
+    /// Length of the list after the names (the same names keyed by text).
+    again: usize,
     described: Vec<u32>,
+}
+
+/// `BL k, k × { BL number, BL text tag }`: the numbers.
+fn tagged(bits: &mut Bits) -> Option<Vec<u32>> {
+    let k = usize::try_from(bits.bit_long()?).ok().filter(|n| *n <= bits.remaining() / 4)?;
+    (0..k)
+        .map(|_| {
+            let number = u32::try_from(bits.bit_long()?).ok()?;
+            bits.bit_long()?;
+            Some(number)
+        })
+        .collect()
 }
 
 fn database(bits: &mut Bits) -> Option<PointDatabase> {
@@ -101,18 +121,15 @@ fn database(bits: &mut Bits) -> Option<PointDatabase> {
     let records = (0..count).map(|_| record(bits)).collect::<Option<Vec<_>>>()?;
     let styled = numbers(bits)?;
     let labelled = numbers(bits)?;
-    for _ in 0..3 {
-        (bits.bit_long()? == 0).then_some(())?;
+    (bits.bit_long()? == 0).then_some(())?;
+    let named = tagged(bits)?;
+    // The same names keyed by text: { BL tag, BL number }.
+    let again = usize::try_from(bits.bit_long()?).ok().filter(|n| *n <= bits.remaining() / 4)?;
+    for _ in 0..2 * again {
+        bits.bit_long()?;
     }
-    let k = usize::try_from(bits.bit_long()?).ok().filter(|n| *n <= bits.remaining() / 4)?;
-    let described = (0..k)
-        .map(|_| {
-            let number = u32::try_from(bits.bit_long()?).ok()?;
-            bits.bit_long()?;
-            Some(number)
-        })
-        .collect::<Option<Vec<_>>>()?;
-    Some(PointDatabase { records, styled, labelled, described })
+    let described = tagged(bits)?;
+    Some(PointDatabase { records, styled, labelled, named, again, described })
 }
 
 /// Every point of a point database, in record order. `handles` and
@@ -135,8 +152,9 @@ pub(super) fn points(data: &[u8], start: usize, end: usize, handles: &[u64], str
                 .described
                 .iter()
                 .position(|n| *n == number)
-                .and_then(|i| strings.get(1 + i))
+                .and_then(|i| strings.get(1 + db.named.len() + db.again + i))
                 .cloned(),
+            name: db.named.iter().position(|n| *n == number).and_then(|i| strings.get(1 + i)).cloned(),
         })
         .collect()
 }
