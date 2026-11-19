@@ -1232,3 +1232,57 @@ pub fn read_class_object_data(
     };
     Some(data)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::read_class_object_data;
+    use crate::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
+    use crate::io::dwg::dwg_stream_writers::merged_writer::DwgMergedWriter;
+    use crate::io::dwg::dwg_version::DwgVersion;
+    use crate::objects::ClassObjectData;
+    use crate::types::DxfVersion;
+
+    /// Reads a record holding `values` as bit-longs; a sentinel follows, so
+    /// the read must stop exactly at the record's end.
+    fn view_rep_standard_values(dxf: DxfVersion, values: &[i32]) -> [i32; 6] {
+        let mut writer = DwgMergedWriter::new(DwgVersion::AC18, DxfVersion::AC1018);
+        for value in values {
+            writer.write_bit_long(*value);
+        }
+        writer.write_bit_long(0x77);
+        let mut reader = DwgMergedReader::new(writer.merge(), dxf, writer.handle_start_bits());
+        let data =
+            read_class_object_data(&mut reader, "ACDBVIEWREPSTANDARD", DwgVersion::AC24, dxf)
+                .expect("view rep standard");
+        assert_eq!(reader.read_bit_long(), 0x77, "record length");
+        reader.check_error().expect("view rep standard bits");
+        match data {
+            ClassObjectData::ViewRepStandard(value) => value.values,
+            other => panic!("expected a view rep standard, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn r2010_view_rep_standard_reads_five_values() {
+        assert_eq!(
+            view_rep_standard_values(DxfVersion::AC1024, &[100, 0, 1, 0, 1]),
+            [100, 0, 1, 0, 1, 0]
+        );
+    }
+
+    #[test]
+    fn r2013_view_rep_standard_reads_six_values() {
+        assert_eq!(
+            view_rep_standard_values(DxfVersion::AC1027, &[100, 0, 1, 0, 1, 1]),
+            [100, 0, 1, 0, 1, 1]
+        );
+    }
+
+    #[test]
+    fn r2018_view_rep_standard_reads_six_values() {
+        assert_eq!(
+            view_rep_standard_values(DxfVersion::AC1032, &[100, 0, 1, 0, 1, 1]),
+            [100, 0, 1, 0, 1, 1]
+        );
+    }
+}
