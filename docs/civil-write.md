@@ -859,9 +859,16 @@ drawing, open with AUDIT 0 errors and the API lists every parcel with its
 number, area and extents; the application adds a further crossing line
 to E-X1 and splits its parcels right.
 
-Not written: lot lines with arcs (crossing arcs would need their bulges
-split), lot lines meeting alignments or feature lines, members running
-along each other. A lot line alone (no closed loop) makes no parcel;
+Lot lines take a bulge per vertex (the segment that starts there; a
+closed line's last one closes it). Their arcs are stored as an alignment's
+(kind 1, flags 0x010F0000, the bulge and BL 0), and the parcel's label
+goes in the middle of the extents the arcs reach: WP21 (a rectangle with
+one arc side and an open line with an arc), written for the same lines,
+equals the sample bit for bit (container, both segments and the parcel).
+
+Not written: lot lines that meet another member where either has an arc
+(the arc would need its bulge split), lot lines meeting alignments or
+feature lines, members running along each other. A lot line alone (no closed loop) makes no parcel;
 alignments that close a loop make none either (WP01).
 
 ## 3h. Profile views
@@ -1332,7 +1339,7 @@ taken from the records and checked bit for bit against them.
   by K or through a point), profiles of alignments the application has
   changed.
 - Alignments and feature lines that meet other members on a site, lot
-  lines with arcs, parcel and feature line styles other than the
+  lines meeting where one has an arc, parcel and feature line styles other than the
   defaults;
   sections, corridors, pipe networks: not written.
 - Profile views with a vertical scale or style other than the default;
@@ -1351,7 +1358,7 @@ taken from the records and checked bit for bit against them.
 | TIN surfaces (added points) | yes | yes (a new drawing gets §3d) | yes (§4) | not needed (the stored triangulation is drawn; the application rebuilds it after an edit) | other definitions |
 | layout profiles (fixed tangents; free symmetric and asymmetric parabolas, free circular curves) | yes | yes (a new drawing gets §3f) | yes (§4) | not needed (the application solves the stored entities) | fixed and floating curves |
 | sites, alignments and feature lines (arcs, elevation points) on a site | yes | yes (a new drawing gets the node of sites and the default parcel and feature line styles, §2c) | yes (§4) | not needed (the application rewrites the site's cache) | alignments or feature lines meeting other members; containers the application edited after inserting elevation points |
-| parcels of closed and open, crossing and touching lot lines | yes (number, face, boundary) | yes (§3g) | yes (§3g) | not needed | arcs; lot lines meeting alignments or feature lines |
+| parcels of closed and open, crossing and touching lot lines, with arcs | yes (number, face, boundary) | yes (§3g) | yes (§3g) | not needed | arcs where lines meet; lot lines meeting alignments or feature lines |
 | profile views (automatic or user ranges) and their profile label groups | yes (frame) | yes (a new drawing gets the default view style, §3h) | yes (§3h) | not needed (the application recomputes the view from its style) | other styles and vertical scales |
 | corridors (one baseline, one region, unbuilt) | yes | yes, with an assembly of the drawing (§3i) | yes (§3i) | the corridor is written out of date and built by the application's rebuild | assemblies and subassemblies, built results, surfaces, several regions or baselines |
 | sample line groups and two-vertex sample lines | yes | yes, with the drawing's sample line label style (§3j) | yes (§3j) | not needed | lines with more vertices |

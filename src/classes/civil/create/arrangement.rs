@@ -505,26 +505,63 @@ fn finish(s: &State) -> Result<Arrangement, &'static str> {
                 })
                 .collect();
             let loops: Vec<Vec<Half>> = f.entries.iter().map(|e| s.cycle(&segments, e.half())).collect();
-            Face { flags: if f.dirty { 6 } else { 14 }, entries, label: label_point(&s.nodes, &loops) }
+            Face { flags: if f.dirty { 6 } else { 14 }, entries, label: label_point(s, &segments, &loops) }
         })
         .collect();
     Ok(Arrangement { nodes: s.nodes.clone(), edges, faces })
 }
 
-/// Where a parcel's area label goes: the middle of its extents when that
-/// is inside the face (WP03 to WP16), else the middle of the widest run of
-/// the horizontal line through it inside the face (a loose line inside
-/// the face bounds it on both sides, WP10). The application takes the
-/// parcel's face from this point: with it on the boundary it gives the
-/// parcel another face (E-P2).
+/// The points of a segment from `p` to `q` with `bulge` other than `q`:
+/// `p` and, along an arc, `n - 1` more points; with `extremes`, also where
+/// the arc reaches its extents.
+fn arc_points(p: Vector2, q: Vector2, bulge: f64, n: usize, extremes: bool) -> Vec<Vector2> {
+    if bulge == 0.0 {
+        return vec![p];
+    }
+    let sweep = 4.0 * bulge.atan();
+    let d = q - p;
+    let normal = Vector2::new(-d.y, d.x) * (1.0 / d.length());
+    let center = (p + q) * 0.5 + normal * (d.length() / 2.0 / (sweep / 2.0).tan());
+    let r = (p - center).length();
+    let a0 = (p.y - center.y).atan2(p.x - center.x);
+    let at = |a: f64| center + Vector2::new(a.cos(), a.sin()) * r;
+    let mut out: Vec<Vector2> = (0..n).map(|i| at(a0 + sweep * i as f64 / n as f64)).collect();
+    if extremes {
+        for k in 0..4 {
+            let quarter = k as f64 * std::f64::consts::FRAC_PI_2;
+            let t = if sweep > 0.0 { (quarter - a0).rem_euclid(TAU) } else { (a0 - quarter).rem_euclid(TAU) };
+            if t < sweep.abs() {
+                out.push(at(quarter));
+            }
+        }
+    }
+    out
+}
+
+/// Where a parcel's area label goes: the middle of its extents (arcs
+/// included, WP21) when that is inside the face (WP03 to WP16), else the
+/// middle of the widest run of the horizontal line through it inside the
+/// face (a loose line inside the face bounds it on both sides, WP10). The
+/// application takes the parcel's face from this point: with it on the
+/// boundary it gives the parcel another face (E-P2).
 // ponytail: the application's own fallback (WP17's right triangle: the
 // centroid of one of its triangles) is not followed; any inner point gives
 // the parcel its face.
-fn label_point(nodes: &[(Vector2, f64)], loops: &[Vec<Half>]) -> Vector2 {
-    let halves: Vec<(Vector2, Vector2)> = loops.iter().flatten().map(|h| (nodes[h.0].0, nodes[h.1].0)).collect();
-    let Some(first) = halves.first() else { return Vector2::new(0.0, 0.0) };
-    let (lo, hi) = halves.iter().fold((first.0, first.0), |(lo, hi), (p, _)| (Vector2::new(lo.x.min(p.x), lo.y.min(p.y)), Vector2::new(hi.x.max(p.x), hi.y.max(p.y))));
+fn label_point(s: &State, segments: &[(usize, usize, f64)], loops: &[Vec<Half>]) -> Vector2 {
+    let bulge = |h: &Half| segments.iter().find_map(|&(a, b, g)| if (a, b) == *h { Some(g) } else if (b, a) == *h { Some(-g) } else { None }).unwrap_or(0.0);
+    let ends: Vec<(Vector2, Vector2, f64)> = loops.iter().flatten().map(|h| (s.nodes[h.0].0, s.nodes[h.1].0, bulge(h))).collect();
+    let Some(first) = ends.first() else { return Vector2::new(0.0, 0.0) };
+    let extents: Vec<Vector2> = ends.iter().flat_map(|e| arc_points(e.0, e.1, e.2, 1, true)).collect();
+    let (lo, hi) = extents.iter().fold((first.0, first.0), |(lo, hi), p| (Vector2::new(lo.x.min(p.x), lo.y.min(p.y)), Vector2::new(hi.x.max(p.x), hi.y.max(p.y))));
     let c = (lo + hi) * 0.5;
+    let halves: Vec<(Vector2, Vector2)> = ends
+        .iter()
+        .flat_map(|e| {
+            let mut run = arc_points(e.0, e.1, e.2, 64, false);
+            run.push(e.1);
+            run.windows(2).map(|w| (w[0], w[1])).collect::<Vec<_>>()
+        })
+        .collect();
     let mut xs: Vec<f64> = halves.iter().filter(|(a, b)| (a.y <= c.y) != (b.y <= c.y)).map(|(a, b)| a.x + (c.y - a.y) * (b.x - a.x) / (b.y - a.y)).collect();
     xs.sort_by(f64::total_cmp);
     let eps = 1e-9 * (hi - lo).length().max(1.0);

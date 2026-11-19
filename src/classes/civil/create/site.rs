@@ -776,13 +776,18 @@ fn write_parcel(doc: &mut CadDocument, common: EntityCommon, site: Handle, numbe
 /// split and the parcels of the parts are written (every parcel's label
 /// moves into what is left of its face). Returns the segment and the new
 /// parcels.
-fn add_lot_line_on(doc: &mut CadDocument, site: Handle, vertices: &[Vector2], closed: bool, meet: bool, layer: Option<&str>) -> Result<(Handle, Vec<Handle>), DxfError> {
-    let n = vertices.len();
+fn add_lot_line_on(doc: &mut CadDocument, site: Handle, points: &[(Vector2, f64)], closed: bool, meet: bool, layer: Option<&str>) -> Result<(Handle, Vec<Handle>), DxfError> {
+    let n = points.len();
+    let vertices: Vec<Vector2> = points.iter().map(|p| p.0).collect();
+    let path: Vec<PathPoint> = points.iter().enumerate().map(|(i, p)| (p.0, Some(p.1).filter(|b| *b != 0.0 && (closed || i + 1 < n)))).collect();
+    if points.iter().any(|p| !p.1.is_finite()) {
+        return Err(invalid("a bulge is not finite"));
+    }
     let area2: f64 = (0..n).map(|i| vertices[i].cross(&vertices[(i + 1) % n])).sum();
     if vertices.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) || (closed && (n < 3 || area2.abs() < 1e-9)) || n < 2 {
         return Err(invalid(if closed { "a closed lot line needs three or more finite vertices enclosing an area" } else { "a lot line needs two or more finite vertices" }));
     }
-    let mut outline: Vec<PathPoint> = vertices.iter().map(|p| (*p, None)).collect();
+    let mut outline = path.clone();
     if closed {
         outline.push((vertices[0], None));
     }
@@ -797,8 +802,10 @@ fn add_lot_line_on(doc: &mut CadDocument, site: Handle, vertices: &[Vector2], cl
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
     let (container, mut members, mut parcels, line_style) = members_of(doc, site)?;
     let met = members.iter().filter(|m| paths_meet(&m.outline(), &outline)).map(|m| m.kind).collect::<Vec<_>>();
-    if met.iter().any(|k| !meet || !matches!(k, MemberKind::LotLine { .. })) {
-        return Err(invalid("the lot line crosses or touches a member it may not meet"));
+    let arcs = |p: &[PathPoint]| p.iter().any(|q| q.1.is_some());
+    let met_arcs = members.iter().any(|m| arcs(&m.path) && paths_meet(&m.outline(), &outline));
+    if met.iter().any(|k| !meet || !matches!(k, MemberKind::LotLine { .. })) || (!met.is_empty() && (arcs(&path) || met_arcs)) {
+        return Err(invalid("the lot line crosses or touches a member it may not meet (or meets with an arc)"));
     }
     let style = match doc.get_entity(site) {
         Some(EntityType::Extended(x)) => match &x.data {
@@ -816,7 +823,7 @@ fn add_lot_line_on(doc: &mut CadDocument, site: Handle, vertices: &[Vector2], cl
         ..EntityCommon::default()
     };
     let line = common(doc);
-    members.push(Member { handle: line.handle.value(), path: vertices.iter().map(|p| (*p, None)).collect(), elevations: vec![0.0; n], elevation_points: vec![false; n], kind: MemberKind::LotLine { closed } });
+    members.push(Member { handle: line.handle.value(), path, elevations: vec![0.0; n], elevation_points: vec![false; n], kind: MemberKind::LotLine { closed } });
     let inputs: Vec<Input> = members.iter().map(|m| Input { path: &m.path, elevations: &m.elevations, closed: m.closed() }).collect();
     let faces = build(&inputs).map_err(invalid)?.faces.len();
     let old = parcels.len();
@@ -856,20 +863,24 @@ fn add_lot_line_on(doc: &mut CadDocument, site: Handle, vertices: &[Vector2], cl
 /// parcel style and the drawing's default parcel area label style (none
 /// without one); the application names it from the style and its number.
 pub fn add_parcel(doc: &mut CadDocument, site: Handle, vertices: &[Vector2], layer: Option<&str>) -> Result<Handle, DxfError> {
-    let (_, parcels) = add_lot_line_on(doc, site, vertices, true, false, layer)?;
+    let points: Vec<(Vector2, f64)> = vertices.iter().map(|p| (*p, 0.0)).collect();
+    let (_, parcels) = add_lot_line_on(doc, site, &points, true, false, layer)?;
     parcels.into_iter().next().ok_or_else(|| invalid("the lot line closes no face"))
 }
 
-/// Adds a lot line (a parcel segment) through `vertices` (straight
-/// segments) on `site`, closed back to the first vertex when `closed`, and
-/// returns it with the parcels it makes. It may cross and touch the site's
-/// other lot lines (not its alignments or feature lines): the lines are
+/// Adds a lot line (a parcel segment) through `vertices` on `site`, each
+/// with the bulge of the segment that starts there (0 for a straight one;
+/// positive counterclockwise, the tangent of a quarter of the arc's angle;
+/// a closed line's last bulge is the closing segment's), closed back to
+/// the first vertex when `closed`, and returns it with the parcels it
+/// makes. It may cross and touch the site's other lot lines (not its
+/// alignments or feature lines, and not where either has an arc): the lines are
 /// split where they meet, as the application splits them, every face the
 /// line closes or cuts off becomes a parcel (numbered in the order the
 /// faces are made) and the parcel of a face it cuts keeps the part the
 /// application gives it. Parcels take the site's parcel style and the
 /// drawing's default parcel area label style.
-pub fn add_lot_line(doc: &mut CadDocument, site: Handle, vertices: &[Vector2], closed: bool, layer: Option<&str>) -> Result<(Handle, Vec<Handle>), DxfError> {
+pub fn add_lot_line(doc: &mut CadDocument, site: Handle, vertices: &[(Vector2, f64)], closed: bool, layer: Option<&str>) -> Result<(Handle, Vec<Handle>), DxfError> {
     add_lot_line_on(doc, site, vertices, closed, true, layer)
 }
 
@@ -1067,16 +1078,17 @@ mod tests {
     #[test]
     fn crossing_lot_lines_split_the_parcels() {
         let v = Vector2::new;
+        let w = |x: f64, y: f64| (Vector2::new(x, y), 0.0);
         let mut doc = drawing();
         let s = add_site(&mut doc, "Site 1", "").unwrap();
         let a = add_alignment_on_site(&mut doc, s, "AL1", &[v(0.0, -50.0), v(100.0, -50.0)], &[], None).unwrap();
-        let (_, first) = add_lot_line(&mut doc, s, &[v(0.0, 0.0), v(100.0, 0.0), v(100.0, 50.0), v(0.0, 50.0)], true, None).unwrap();
+        let (_, first) = add_lot_line(&mut doc, s, &[w(0.0, 0.0), w(100.0, 0.0), w(100.0, 50.0), w(0.0, 50.0)], true, None).unwrap();
         // A T junction, then a line crossing it: four parcels.
-        let (_, second) = add_lot_line(&mut doc, s, &[v(50.0, 0.0), v(50.0, 50.0)], false, None).unwrap();
-        let (_, third) = add_lot_line(&mut doc, s, &[v(0.0, 25.0), v(100.0, 25.0)], false, None).unwrap();
+        let (_, second) = add_lot_line(&mut doc, s, &[w(50.0, 0.0), w(50.0, 50.0)], false, None).unwrap();
+        let (_, third) = add_lot_line(&mut doc, s, &[w(0.0, 25.0), w(100.0, 25.0)], false, None).unwrap();
         assert_eq!((first.len(), second.len(), third.len()), (1, 1, 2));
         // Neither the alignment nor a plain parcel may be met.
-        assert!(add_lot_line(&mut doc, s, &[v(10.0, -60.0), v(10.0, -40.0)], false, None).is_err());
+        assert!(add_lot_line(&mut doc, s, &[w(10.0, -60.0), w(10.0, -40.0)], false, None).is_err());
         assert!(add_parcel(&mut doc, s, &[v(90.0, 40.0), v(110.0, 40.0), v(110.0, 60.0)], None).is_err());
         let path = std::env::temp_dir().join(format!("civil-lot-lines-{}.dwg", std::process::id()));
         DwgWriter::write_to_file(&path, &doc).unwrap();
@@ -1097,7 +1109,7 @@ mod tests {
             assert!((area(&loops[0]).abs() - 1250.0).abs() < 1e-9);
         }
         // The site still takes members; the alignment keeps its edge.
-        assert!(add_lot_line(&mut back, s, &[v(200.0, 0.0), v(300.0, 0.0), v(300.0, 50.0)], true, None).is_ok());
+        assert!(add_lot_line(&mut back, s, &[w(200.0, 0.0), w(300.0, 0.0), w(300.0, 50.0)], true, None).is_ok());
         assert_eq!(object(&back, Handle::new(container)).unwrap().site_members()[0], a.value());
     }
 }
