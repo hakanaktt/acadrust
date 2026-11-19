@@ -856,7 +856,52 @@ section, the line and the group equal WX12's bit for bit apart from the
 group's stamp; the application opens the drawing with AUDIT 0 errors and
 its API values of the section equal those of its own. Lines are not added
 to a group that samples a source (the sections a new line would need are
-not written); section views are not written.
+not written).
+
+### Section views
+
+`add_section_view(doc, line, name, origin, layer)` writes a section view
+of a sample line with the drawing's default section view style (style
+tree key 0x33), its point of offset 0 at the lowest elevation at
+`origin`. The range is the one the application gives a new view: the
+line's offsets and the section's elevations padded by 20 and rounded out
+to 10 (offsets -10..10 give -30..30, -15..25 give -40..50, -3..33 give
+-30..60). A section as written holds no points, so its elevations are 0
+and the view spans -20 to 20. The line is written again with the view: its
+view count and the view (soft) after its sections.
+
+```text
+view (AECC_GRAPH_SECTION_VIEW, an entity in model space):
+  BL 80, 2 bits 11, BL 357877593, BL 142348576, BL 5, BL 2 keys
+    (0x0301D029 byte 1, 0x0D01D024 BL 0), BL 0 (byte form), 121 zero bits
+  3BD origin, 9 BD identity, BL n sections, n x 5 bits 10000, BL 0, B 1,
+  3BD origin, BL 4, BL 0x80000440,
+  twice: 3BD (offset min, elevation min, 0), (0, elevation min, 0),
+    (offset max, elevation max, 0)
+  BL 528, the title (BL byte count, UTF-16: the field code
+    "<[33673217(2097|...|2817)]>"), BL 0,
+  7 BD (0, height, 0, 0, 1/48, 0, 1/120), BL 0, 0, 8, 1, 4, 0x80000440,
+  3BD origin, BD 0, 0, 0, 1, BD 1 (vertical scale),
+  graph settings: the title again, then constant runs around the offset
+    minimum (6 times), maximum (6), width (2) and center (2)
+  references: soft 0, hard owner 0, view style, sample line (hard), per
+    section {section (soft), hard 0, hard 0}, hard 0 x 4, soft 0, hard 0
+  texts: "", "", name, "", name, ""
+```
+
+The elevation values of the graph settings (-20, 20, 40) are part of the
+constant runs: the samples (views at (200, 0) and (300, 100), lines with
+and without a section, offsets -10..10, -15..25 and -3..33; WX13 to WX18)
+all show unsampled sections. Each sample's view is reproduced bit for bit.
+Written into WX12 and WX11 (E-SV-WX13, E-SV-WX17) and into WX10 with a
+group, two lines (3/33 and 10/10), their sections and three views written
+by acadrust (E-SV2), the drawings open with AUDIT 0 errors and the API
+lists the views with the written locations, the lines' offsets as their
+offset range and the extents of the computed range ((170, 0) to (260, 40)
+for -30..60 at (200, 0)). Views of sampled sections, of lines with several
+sections, and the section view style of a new drawing (a new drawing has
+no sample line label style, so it has no sample line groups) are not
+written.
 
 ## 4. Reference check
 
@@ -1027,5 +1072,6 @@ taken from the records and checked bit for bit against them.
 | profile views and their profile label groups | yes (frame) | yes (a new drawing gets the default view style, §3h) | yes (§3h) | not needed (the application recomputes the view from its style) | other ranges and styles, label groups in a new drawing (no label set) |
 | corridors (one baseline, one region, unbuilt) | yes | yes, with an assembly of the drawing (§3i) | yes (§3i) | the corridor is written out of date and built by the application's rebuild | assemblies and subassemblies, built results, surfaces, several regions or baselines |
 | sample line groups and two-vertex sample lines | yes | yes, with the drawing's sample line label style (§3j) | yes (§3j) | not needed | label styles in a new drawing, lines with more vertices |
-| sections of a TIN surface (unsampled) | yes (geometry once sampled) | yes (§3j) | yes (§3j) | the application samples the source | section views, corridor sources, lines added after sampling |
-| parcels, gradings, sections, networks | partly | no | — | — | not started |
+| sections of a TIN surface (unsampled) | yes (geometry once sampled) | yes (§3j) | yes (§3j) | the application samples the source | corridor sources, lines added after sampling |
+| section views of a line (default style, unsampled section) | yes (frame) | yes, with the drawing's section view style (§3j) | yes (§3j) | not needed | sampled sections, several sections, the style in a new drawing (label styles) |
+| parcels, gradings, networks | partly | no | — | — | not started |

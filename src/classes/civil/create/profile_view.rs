@@ -185,14 +185,14 @@ const GRAPH: &[Piece] = &[
     Piece::Bits("10101010101010010000000110010000001010010000001110010000010010100001011111000000100"),
 ];
 
-fn text(w: &mut DwgMergedWriter, s: &str) {
+pub(super) fn text(w: &mut DwgMergedWriter, s: &str) {
     let mut bytes: Vec<u8> = s.encode_utf16().flat_map(u16::to_le_bytes).collect();
     bytes.extend([0, 0]);
     w.write_bit_long(bytes.len() as i32);
     w.write_bytes(&bytes);
 }
 
-fn point(w: &mut DwgMergedWriter, p: Vector2) {
+pub(super) fn point(w: &mut DwgMergedWriter, p: Vector2) {
     w.write_bit_double(p.x);
     w.write_bit_double(p.y);
     w.write_bit_double(0.0);
