@@ -295,23 +295,32 @@ fn write_companion(doc: &mut CadDocument, handle: Handle, owner: Handle, tag: u3
 ///         between two lines) and no B, BS id, BS previous id, BS next id,
 ///         BL 256 (spiral definition), BD spiral in, BD radius, BD spiral
 ///         out
-/// BL 0 x 4 (intervals), BL 0 (equations), BL 1, BL 0 (speeds)
+/// BL n, BL 0, BL 0, BL n (the profiles), the newest first:
+///   the profile's identifier (a version-4 GUID, 16 bytes), B 1, BL 32763, BL 0 x 3, BD end station of the first element, BL 1, BL 0,
+///   BL element count (0 for one element), 6 RD (0, 0, that end station,
+///   0, 0, 0)
+/// BL 0 (equations), BL 1, BL 0 (speeds)
 /// BD 100, BL 0 (no superelevation), BL 0, BL 1 (centerline),
 /// BL 2, 2, 2, 0, 3, B 0, BS 0x04BE
 /// references: soft pointer 0, companion, companion, soft pointer 0,
-///   style, hard pointer 0
+///   style, hard pointer 0, the profiles (soft pointers, oldest first)
 /// texts: "AeccImpAlignment", "", "", name, five empty texts, three more
-///   per curve element
+///   per curve element, two more per profile
 /// ```
 ///
 /// Written for WA03's and WA04's polylines and curves, the record equals
 /// the samples' bit for bit apart from the geometry stamp.
-pub(super) fn write_alignment(doc: &mut CadDocument, common: EntityCommon, name: &str, elements: &[AlignmentElement], style: u64, feature: u64) -> Result<Handle, DxfError> {
+pub(super) fn write_alignment(doc: &mut CadDocument, common: EntityCommon, name: &str, elements: &[AlignmentElement], style: u64, feature: u64, keys: Option<&str>, profiles: &[ProfileRef]) -> Result<Handle, DxfError> {
     let curves = elements.iter().filter(|e| !matches!(e.kind, AlignmentElementKind::FixedLine { .. })).count();
+    // The profiles' entries hold the end station of the alignment's first
+    // element and its element count (0 for one).
+    let first_end = pieces_with_curvature(elements).first().map_or(0.0, |(_, _, p)| p.windows(2).map(|w| w[0].distance(&w[1])).sum());
+    let count = if elements.len() > 1 { elements.len() as i32 } else { 0 };
     let byte = |w: &mut DwgMergedWriter, v: u8| bits(w, &format!("{v:08b}"));
-    let refs = vec![soft_pointer(0), hard_pointer(feature), hard_pointer(feature), soft_pointer(0), hard_pointer(style), hard_pointer(0)];
+    let mut refs = vec![soft_pointer(0), hard_pointer(feature), hard_pointer(feature), soft_pointer(0), hard_pointer(style), hard_pointer(0)];
+    refs.extend(profiles.iter().map(|p| soft_pointer(p.handle)));
     let mut strings = vec!["AeccImpAlignment".to_string(), String::new(), String::new(), name.to_string()];
-    strings.extend((0..5 + 3 * curves).map(|_| String::new()));
+    strings.extend((0..5 + 3 * curves + 2 * profiles.len()).map(|_| String::new()));
     put_entity(
         doc,
         "AECC_ALIGNMENT",
@@ -321,11 +330,17 @@ pub(super) fn write_alignment(doc: &mut CadDocument, common: EntityCommon, name:
                 w.write_bit_long(v);
             }
             bits(w, "010101");
-            byte(w, 1);
-            w.write_bit_long(STAMP);
-            w.write_bit_long(2);
-            w.write_bit_long(0);
-            w.write_bit_long(0);
+            match keys {
+                // An alignment written again keeps its keys as stored.
+                Some(k) => bits(w, k),
+                None => {
+                    byte(w, 1);
+                    w.write_bit_long(STAMP);
+                    w.write_bit_long(2);
+                    w.write_bit_long(0);
+                    w.write_bit_long(0);
+                }
+            }
             bl_byte(w, 0);
             bits(w, &"0".repeat(65));
             w.write_bit_double(2.25);
@@ -386,7 +401,25 @@ pub(super) fn write_alignment(doc: &mut CadDocument, common: EntityCommon, name:
                     _ => {}
                 }
             }
-            for v in [0, 0, 0, 0, 0, 1, 0] {
+            let n = profiles.len() as i32;
+            for v in [n, 0, 0, n] {
+                w.write_bit_long(v);
+            }
+            for p in profiles.iter().rev() {
+                w.write_bytes(&p.id);
+                w.write_bit(true);
+                for v in [32763, 0, 0, 0] {
+                    w.write_bit_long(v);
+                }
+                w.write_bit_double(first_end);
+                for v in [1, 0, count] {
+                    w.write_bit_long(v);
+                }
+                for v in [0.0, 0.0, first_end, 0.0, 0.0, 0.0] {
+                    w.write_raw_double(v);
+                }
+            }
+            for v in [0, 1, 0] {
                 w.write_bit_long(v);
             }
             w.write_bit_double(100.0);
@@ -441,7 +474,81 @@ pub fn add_alignment_with_curves(doc: &mut CadDocument, name: &str, vertices: &[
     let label = new_name(handle.value());
     write_companion(doc, companion, node, tag, handle, &path, &label)?;
     add_node_child(doc, node, tag as i32, companion, &label)?;
-    write_alignment(doc, common, name, &elements, style, companion.value())
+    write_alignment(doc, common, name, &elements, style, companion.value(), None, &[])
+}
+
+/// A profile of an alignment: its record and its identifier.
+pub(super) struct ProfileRef {
+    pub handle: u64,
+    pub id: [u8; 16],
+}
+
+/// What the alignment writer needs to write an alignment again: its
+/// common data, name, elements, style, companion and class keys (their
+/// count byte and keys, as stored).
+pub(super) struct Written {
+    pub common: EntityCommon,
+    pub name: String,
+    pub elements: Vec<AlignmentElement>,
+    pub style: u64,
+    pub feature: u64,
+    pub keys: String,
+}
+
+/// An alignment this crate can write again: its elements are the ones the
+/// writer writes, its references are the writer's six and profiles, and
+/// writing it from what is read gives back its record bit for bit (so
+/// nothing the application stores is lost). Returns it with its profiles.
+pub(super) fn rewritable(doc: &CadDocument, alignment: Handle, profile_id: impl Fn(u64) -> Option<[u8; 16]>) -> Option<(Written, Vec<ProfileRef>)> {
+    let Some(crate::entities::EntityType::Extended(x)) = doc.get_entity(alignment) else { return None };
+    let crate::entities::ExtendedEntityData::Arch(a) = &x.data else { return None };
+    (a.dxf_name == "AECC_ALIGNMENT").then_some(())?;
+    let elements = a.alignment_elements()?;
+    elements.iter().all(|e| matches!(e.kind, AlignmentElementKind::FixedLine { .. } | AlignmentElementKind::FreeArc { .. } | AlignmentElementKind::FreeSpiralCurveSpiral { .. })).then_some(())?;
+    let refs = a.typed_handles();
+    (refs.len() >= 6).then_some(())?;
+    let profiles = refs[6..].iter().map(|(h, _)| Some(ProfileRef { handle: *h, id: profile_id(*h)? })).collect::<Option<Vec<_>>>()?;
+    let d = a.decode();
+    let name = d.strings.get(3)?.clone();
+    let (data, start, end) = a.main_stream()?;
+    let mut b = super::super::bits::Bits::new(data, start, end);
+    for _ in 0..6 {
+        b.bit_long()?;
+    }
+    b.skip(6)?;
+    let from = b.pos;
+    for _ in 0..b.bits_value(8)? {
+        crate::classes::civil::alignment::read_key(&mut b)?;
+    }
+    let keys: String = (from..b.pos).map(|i| if data[i / 8] >> (7 - i % 8) & 1 == 1 { '1' } else { '0' }).collect();
+    let w = Written { common: x.common.clone(), name, elements, style: refs[4].0, feature: refs[1].0, keys };
+    Some((w, profiles))
+}
+
+/// Writes an alignment again with `profiles`, after checking that writing
+/// it with the profiles it has reproduces its record.
+pub(super) fn rewrite(doc: &mut CadDocument, alignment: Handle, w: Written, before: &[ProfileRef], profiles: &[ProfileRef]) -> Result<(), DxfError> {
+    let bits_of = |doc: &CadDocument| -> Option<Vec<u8>> {
+        match doc.get_entity(alignment)? {
+            crate::entities::EntityType::Extended(x) => match &x.data {
+                crate::entities::ExtendedEntityData::Arch(a) => {
+                    let (data, start, end) = a.main_stream()?;
+                    Some((start..end).map(|i| data[i / 8] >> (7 - i % 8) & 1).collect())
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    };
+    let original = doc.get_entity(alignment).cloned().ok_or_else(|| invalid("alignment not found"))?;
+    let old = bits_of(doc);
+    write_alignment(doc, w.common.clone(), &w.name, &w.elements, w.style, w.feature, Some(&w.keys), before)?;
+    if bits_of(doc) != old {
+        *doc.get_entity_mut(alignment).ok_or_else(|| invalid("alignment not found"))? = original;
+        return Err(invalid("the alignment holds data this crate does not write"));
+    }
+    write_alignment(doc, w.common, &w.name, &w.elements, w.style, w.feature, Some(&w.keys), profiles)?;
+    Ok(())
 }
 
 #[cfg(test)]

@@ -120,7 +120,10 @@ fn record_at(data: &[u8], pos: usize, end: usize) -> Option<Record> {
         (p.x.is_finite() && p.y.is_finite() && p.x.abs() < 1e9 && p.y.abs() < 1e9).then_some(p)
     };
     let positive = |v: f64| (v.is_finite() && v > 0.0).then_some(v);
-    let zero = |bits: &mut Bits| (bits.bit_double()? == 0.0).then_some(());
+    // A curve's parameters open with a `BL` that is 0 in older records and
+    // 1 in current ones (WR02); 0 has the same bits as the `BD 0` it was
+    // read as.
+    let zero = |bits: &mut Bits| matches!(bits.bit_long()?, 0 | 1).then_some(());
     let mut crest = None;
     let entity = match (prefix, constraint) {
         (2, 0) => Entity::Tangent(point(&mut bits)?, point(&mut bits)?),
