@@ -53,15 +53,15 @@ const CORRUGATED_PIPE_12: Part = Part {
     body: None,
 };
 
-fn texts(t: &[&str]) -> Vec<String> {
+pub(super) fn texts(t: &[&str]) -> Vec<String> {
     t.iter().map(|s| s.to_string()).collect()
 }
 
-fn hard_owner(h: u64) -> Ref {
+pub(super) fn hard_owner(h: u64) -> Ref {
     Ref(DwgReferenceType::HardOwnership, h)
 }
 
-fn arch_entity(doc: &CadDocument, handle: Handle) -> Option<&ArchEntityData> {
+pub(super) fn arch_entity(doc: &CadDocument, handle: Handle) -> Option<&ArchEntityData> {
     match doc.get_entity(handle)? {
         EntityType::Extended(x) => match &x.data {
             ExtendedEntityData::Arch(a) => Some(a),
@@ -110,10 +110,28 @@ fn ensure_parts_list(doc: &mut CadDocument) -> Result<Handle, DxfError> {
     Ok(handles[1])
 }
 
-/// The part definition of `part`, written when the drawing lacks it, under
-/// the named-objects entry `AECC_NETWORK_PART_DEFS` (a dictionary keyed by
-/// size). The record does not open with the version word.
+/// The part definition of `part`, written when the drawing lacks it.
 fn ensure_definition(doc: &mut CadDocument, part: &Part) -> Result<Handle, DxfError> {
+    let body = part.body;
+    ensure_definition_with(doc, part.key, part.definition, part.strings, |doc| {
+        Ok(match body {
+            Some(radius) => vec![hard_pointer(body_block(doc, radius)?.value()); 2],
+            None => Vec::new(),
+        })
+    })
+}
+
+/// The part definition keyed `key`, written when the drawing lacks it, under
+/// the named-objects entry `AECC_NETWORK_PART_DEFS` (a dictionary keyed by
+/// size; gravity and pressure parts share it) with the references `refs`
+/// makes. The record does not open with the version word.
+pub(super) fn ensure_definition_with(
+    doc: &mut CadDocument,
+    key: &str,
+    definition: (usize, &str),
+    strings: &[&str],
+    refs: impl FnOnce(&mut CadDocument) -> Result<Vec<Ref>, DxfError>,
+) -> Result<Handle, DxfError> {
     let nod = doc.header.named_objects_dict_handle;
     let dict = match doc.named_objects_dictionary().and_then(|d| d.get(PART_DEFS)) {
         Some(h) => h,
@@ -132,28 +150,17 @@ fn ensure_definition(doc: &mut CadDocument, part: &Part) -> Result<Handle, DxfEr
     };
     match doc.objects.get(&dict) {
         Some(ObjectType::Dictionary(d)) => {
-            if let Some(h) = d.get(part.key) {
+            if let Some(h) = d.get(key) {
                 return Ok(h);
             }
         }
         _ => return Err(invalid("the part definitions entry is not a dictionary")),
     }
-    let refs = match part.body {
-        Some(radius) => vec![hard_pointer(body_block(doc, radius)?.value()); 2],
-        None => Vec::new(),
-    };
+    let refs = refs(doc)?;
     let handle = doc.allocate_handle();
-    put_plain_object(
-        doc,
-        "AECC_NETWORK_PART_DEF",
-        handle,
-        dict,
-        vec![dict],
-        |w| run(w, part.definition.0, part.definition.1),
-        Body { refs, strings: texts(part.strings) },
-    )?;
+    put_plain_object(doc, "AECC_NETWORK_PART_DEF", handle, dict, vec![dict], |w| run(w, definition.0, definition.1), Body { refs, strings: texts(strings) })?;
     if let Some(ObjectType::Dictionary(d)) = doc.objects.get_mut(&dict) {
-        d.add_entry(part.key, handle);
+        d.add_entry(key, handle);
     }
     Ok(handle)
 }
