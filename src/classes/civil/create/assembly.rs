@@ -599,6 +599,11 @@ mod tests {
         let code_set = object(&empty, Handle::new(default_style_of(&empty, KEY_CODE_SET_STYLES).unwrap())).unwrap();
         let link = default_style_of(&empty, 0x11C).unwrap();
         assert!(code_set.typed_handles().iter().any(|r| r.0 == link));
+        // The default code set lists no codes; uncoded and unlisted codes
+        // draw with the default marker, link and shape styles.
+        let [marker, shape] = [0x11B, 0x11D].map(|k| default_style_of(&empty, k).unwrap());
+        assert!(code_set.code_set().is_empty());
+        assert_eq!(code_set.code_set_defaults(), [marker, link, shape, marker, link, shape]);
         let mut doc = drawing();
         let a = add_assembly(&mut doc, "ASM1", Vector3::new(20.0, -60.0, 0.0), None).unwrap();
         let wide = [("Width".to_string(), PktValue::Double(4.0)), ("Depth".to_string(), PktValue::Double(0.25)), ("Slope".to_string(), PktValue::Double(-0.03))];

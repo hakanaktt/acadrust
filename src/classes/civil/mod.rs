@@ -1181,10 +1181,11 @@ impl ArchObject {
 
     /// Codes of a Civil 3D code set style (`AECC_ROADWAY_STYLE_SET`) with
     /// the style each one draws with: point codes map to marker styles, link
-    /// codes to link styles and area codes to shape styles. Each code is
-    /// four strings (code, name, description, blank) and five references
-    /// (material, style, label style, feature line style, blank); the
-    /// leading reference groups without strings are the defaults.
+    /// codes to link styles and area codes to shape styles. The record's
+    /// class data lists its default and code entries (see
+    /// `style::code_set_entries`); each has five references (material,
+    /// style, label style, feature line style, blank) and each code four
+    /// strings (code, name, description, blank).
     pub fn code_set(&self) -> Vec<(String, u64)> {
         self.code_set_parts().1
     }
@@ -1199,23 +1200,21 @@ impl ArchObject {
         if self.dxf_name != "AECC_ROADWAY_STYLE_SET" {
             return (Vec::new(), Vec::new());
         }
+        let Some((defaults, codes)) = self.main_stream().and_then(|(data, start, end)| style::code_set_entries(data, start, end)) else {
+            return (Vec::new(), Vec::new());
+        };
         let decoded = self.decode();
+        // The groups follow the owned children (a collection's styles).
+        let refs: Vec<u64> = self.typed_handles().into_iter().skip_while(|r| r.1 == 2).map(|r| r.0).collect();
+        let groups: Vec<&[u64]> = refs.chunks(5).filter(|g| g.len() == 5).collect();
         let strings = &decoded.strings;
-        let Some(first) = (4..strings.len().saturating_sub(1))
-            .find(|&i| !strings[i].is_empty() && strings[i] == strings[i + 1])
-        else {
+        let Some(first) = strings.len().checked_sub(4 * codes) else {
             return (Vec::new(), Vec::new());
         };
-        let codes: Vec<&String> = strings[first..].chunks(4).map(|c| &c[0]).collect();
-        let groups: Vec<&[u64]> = decoded.handles.chunks(5).filter(|g| g.len() == 5).collect();
-        let Some(defaults) = groups.len().checked_sub(codes.len()) else {
+        if groups.len() < defaults + codes {
             return (Vec::new(), Vec::new());
-        };
-        let entries = codes
-            .into_iter()
-            .zip(&groups[defaults..])
-            .map(|(code, group)| (code.clone(), group[1]))
-            .collect();
+        }
+        let entries = strings[first..].chunks(4).zip(&groups[defaults..]).map(|(c, group)| (c[0].clone(), group[1])).collect();
         (groups[..defaults].iter().map(|g| g[1]).collect(), entries)
     }
 
