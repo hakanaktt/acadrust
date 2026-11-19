@@ -58,6 +58,7 @@ const CLASSES: &[Class] = &[
     Class { dxf: "AECC_FEATURELINE_STYLE", cpp: "AeccDbFeatureLineStyle", module: "AeccLand130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_FEATURE_LINE", cpp: "AeccDbFeatureLine", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_PARCEL", cpp: "AeccDbFace", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
+    Class { dxf: "AECC_PARCEL_SEGMENT", cpp: "AeccDbLotLine", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_SURFACE_STYLE", cpp: "AeccDbSurfaceStyle", module: "AeccLand130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_TIN_SURFACE", cpp: "AeccDbSurfaceTin", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_ALIGNMENT", cpp: "AeccDbAlignment", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
