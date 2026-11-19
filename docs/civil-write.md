@@ -165,7 +165,7 @@ errors; the API lists the point with the point label style "Standard", the
 group's lines and the view's four
 label groups (E-L2 without label styles had AUDIT 2 errors).
 
-## 2c. Section, section view and intersection styles of a new drawing
+## 2c. Section, section view, intersection, site, assembly and corridor styles of a new drawing
 
 A drawing without them gets, when a writer needs them, the application's
 default styles, written from templates as the label styles of §2b
@@ -177,12 +177,15 @@ default styles, written from templates as the label styles of §2b
 | `add_section_view` | section view style collection and default (`AECC_SECTION_VIEW_STYLE`, 30896 bits each), section view band set collection and default (`AECC_SECTION_VIEW_BAND_STYLE_SET`) | 0x33, 0xC0E |
 | `add_intersection` | roadway marker style collection, its default and twelve marker styles named by GUID (`AECC_ROADWAYMARKER_STYLE`), intersection style collection and default (`AECC_INTERSECTION_STYLE`, each drawing one of the markers) | 0x11B, 0x1031 |
 | `add_site` | parcel style collection and default (`AECC_PARCEL_STYLE`), feature line style collection and default (`AECC_FEATURELINE_STYLE`, drawing the default roadway marker; the application's collection also lists three rail styles, which are not written), and the roadway markers | 2, 128, 0x11B |
+| `add_assembly` | assembly style collection and default (`AECC_ASSEMBLY_STYLE`, drawing five of the roadway markers), code set style collection and default (`AECC_ROADWAY_STYLE_SET`: no items, every point, link and shape code drawn with the default roadway marker, feature line, link and shape styles), link style collection and default (`AECC_ROADWAYLINK_STYLE`), shape style collection and default (`AECC_ROADWAYSHAPE_STYLE`), and the roadway markers and feature line styles | 0x118, 0xEA0, 0x11C, 0x11D, 0x11B, 128 |
+| `add_corridor` | corridor style collection and default (`AECC_CORRIDOR_STYLE`) | 0xEB2 |
 
 Each collection is written when the drawing lacks it; the intersection
 and feature line styles refer to the roadway marker styles by their ids
 in that collection. The other references are the written records and the
 drawing's layer "0" and ByBlock linetype. Written into a new drawing
-the records equal WX13's and WI01's bit for bit apart from the dates. A
+the records equal WX13's, WI01's and WR01's bit for bit apart from the
+dates. A
 new drawing with two crossing alignments, their profiles, the
 intersection, a TIN surface, a sample line group with two lines (10/10
 and 3/33), their sections and two section views, all written by acadrust
@@ -192,7 +195,17 @@ lines' offsets and the extents of their computed ranges. A new drawing
 with a site, a feature line and an alignment on it and an intersection of
 two siteless alignments (E-SS1) opens with AUDIT 0 errors; the API lists
 the feature line with the written feature line style and LIST shows the
-site's parcel style "Standard".
+site's parcel style "Standard". A new drawing with an alignment, its
+profile, an assembly with two package lanes (a package written by
+`write_pkt` next to the drawing; right lane width 4 / depth 0.25 / slope
+-0.03, left lane with the defaults) and a corridor on them, all written by
+acadrust (E-A1), opens without recovery and with AUDIT 0 errors; the API
+lists both subassemblies up to date, the assembly and the corridor with
+the written code set style ("Standard", no items, as the application's
+own default), and the corridor rebuild builds stations 0-100 every 25 with
+the codes Crown, ETW, ETW_Datum and Crown_Datum (at station 0 ETW (4,
+-0.12) right and (-3.5, -0.07) left), as in a drawing the application had
+opened (E-PK1).
 
 ## 3. COGO points
 
@@ -973,8 +986,9 @@ writes a corridor before its first rebuild (WC13, WC24 to WC27: the
 corridor added through the API without a rebuild): out of date, without
 stations, applied sections, feature lines or surfaces. Adding it changes
 no other record (the alignment, the profile and the assembly stay as they
-are). The corridor style is the drawing's default (style tree key 0xEB2),
-the code set style the assembly's.
+are). The corridor style is the drawing's default (style tree key 0xEB2;
+a drawing without it gets the application's default, §2c), the code set
+style the assembly's.
 
 ```text
 BL 80, 0, 80, 80, 0, BL 0x10025F04, BL 0x40008353 (unbuilt), 4 bits 0101
@@ -1027,8 +1041,8 @@ so the built result of a written corridor is not checked.
 
 `add_assembly(doc, name, location, layer)` writes an empty assembly with
 the drawing's default assembly style (style tree key 0x118) and code set
-style (0xEA0); the drawing must have both (a drawing the application has
-opened). `add_pkt_subassembly(doc, assembly, name, source, pkt, side,
+style (0xEA0); a drawing without them gets the application's defaults
+(§2c). `add_pkt_subassembly(doc, assembly, name, source, pkt, side,
 values, layer)` adds a subassembly built from a package (§3l) as a group
 of its own, attached at the assembly's location, with the package's
 layout on `side` with `values`, and writes the assembly again with the
@@ -1558,8 +1572,8 @@ taken from the records and checked bit for bit against them.
 | sites, alignments and feature lines (arcs, elevation points) on a site | yes | yes (a new drawing gets the node of sites and the default parcel and feature line styles, §2c) | yes (§4) | not needed (the application rewrites the site's cache) | alignments or feature lines meeting other members; containers the application edited after inserting elevation points |
 | parcels of closed and open, crossing and touching lot lines, with arcs | yes (number, face, boundary) | yes (§3g) | yes (§3g) | not needed | arcs where lines meet; lot lines meeting alignments or feature lines |
 | profile views (automatic or user ranges) and their profile label groups | yes (frame) | yes (a new drawing gets the default view style, §3h) | yes (§3h) | not needed (the application recomputes the view from its style) | other styles and vertical scales |
-| assemblies and package subassemblies | partly (corridor's group block) | yes, in a drawing with assembly and code set styles (§3i) | yes (§3i) | not needed | the code set and assembly styles of a new drawing |
-| corridors (one baseline, one region, unbuilt) | yes | yes, with an assembly of the drawing (§3i) | yes (§3i) | the corridor is written out of date and built by the application's rebuild | assemblies and subassemblies, built results, surfaces, several regions or baselines |
+| assemblies and package subassemblies | partly (corridor's group block) | yes (a new drawing gets the default assembly, code set, link and shape styles, §2c) | yes (§3i, §2c) | not needed | — |
+| corridors (one baseline, one region, unbuilt) | yes | yes, with an assembly of the drawing (a new drawing gets the default corridor style, §2c) | yes (§3i, §2c) | the corridor is written out of date and built by the application's rebuild | built results, surfaces, several regions or baselines |
 | sample line groups and two-vertex sample lines | yes | yes, with the drawing's sample line label style (§3j) | yes (§3j) | not needed | lines with more vertices |
 | sections of a TIN surface (unsampled) | yes (geometry once sampled) | yes (§3j) | yes (§3j) | the application samples the source | corridor sources, lines added after sampling |
 | section views of a line (default style, unsampled section) | yes (frame) | yes, with the drawing's section view style or the default one (§3j, §2c) | yes (§3j, §2c) | not needed | sampled sections, several sections |

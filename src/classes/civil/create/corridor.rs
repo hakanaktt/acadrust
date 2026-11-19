@@ -12,8 +12,7 @@ use crate::io::dwg::dwg_stream_writers::DwgMergedWriter;
 use crate::types::Handle;
 use crate::CadDocument;
 
-/// Style tree key of the corridor style collection.
-const KEY_CORRIDOR_STYLES: i32 = 0xEB2;
+use super::default_styles::{ensure_corridor_styles, KEY_CORRIDOR_STYLES};
 /// The class word after the class head of a corridor that has not been
 /// built (a built corridor's differs).
 const UNBUILT: i32 = 0x4000_8353;
@@ -195,8 +194,8 @@ fn write_corridor(doc: &mut CadDocument, common: EntityCommon, names: [&str; 3],
 /// when `None`). The corridor is written out of date, as the
 /// application's own corridor before its first rebuild: it holds no
 /// stations, applied sections or feature lines until it is rebuilt. The
-/// drawing must have a corridor style; the code set style is the
-/// assembly's.
+/// corridor style is the drawing's default (written when the drawing has
+/// none); the code set style is the assembly's.
 #[allow(clippy::too_many_arguments)]
 pub fn add_corridor(doc: &mut CadDocument, name: &str, baseline: &str, region: &str, alignment: Handle, profile: Handle, assembly: Handle, layer: Option<&str>) -> Result<Handle, DxfError> {
     if name.is_empty() || baseline.is_empty() || region.is_empty() {
@@ -210,6 +209,7 @@ pub fn add_corridor(doc: &mut CadDocument, name: &str, baseline: &str, region: &
     let start = al.alignment_start_station().ok_or_else(|| invalid("the alignment has no start station"))?;
     let length: f64 = al.alignment_pieces().iter().map(|(_, p)| p.windows(2).map(|w| w[0].distance(&w[1])).sum::<f64>()).sum();
     let asm = arch(doc, assembly).and_then(read_assembly).ok_or_else(|| invalid("the assembly is not one this crate reads"))?;
+    ensure_corridor_styles(doc)?;
     let style = default_style_of(doc, KEY_CORRIDOR_STYLES).ok_or_else(|| invalid("drawing has no corridor styles"))?;
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
@@ -270,29 +270,20 @@ mod tests {
         doc.version = DxfVersion::AC1032;
         let al = crate::classes::civil::add_alignment(&mut doc, "AL1", &[v(0.0, 0.0), v(100.0, 0.0)], None).unwrap();
         let p = crate::classes::civil::add_profile(&mut doc, al, "P1", &[v(0.0, 10.0), v(100.0, 15.0)], &[], None).unwrap();
-        let [sub, code_set, style] = [(); 3].map(|_| doc.allocate_handle());
+        let [sub, code_set] = [(); 2].map(|_| doc.allocate_handle());
         let asm = assembly(&mut doc, sub.value(), code_set.value());
-        // No corridor style yet.
-        assert!(add_corridor(&mut doc, "COR1", "BL1", "RG1", al, p, asm, None).is_err());
-        let tree = root_node(&doc, super::super::tree::KEY_STYLES).unwrap();
-        let head = doc.allocate_handle();
-        put_object(&mut doc, "AECC_TREE_NODE", head, tree, Vec::new(), |w| {
-            w.write_bit_long(KEY_CORRIDOR_STYLES);
-            w.write_bit_long(1);
-            w.write_bit_long(super::super::tree::DEFAULT_STYLE_ID);
-            w.write_bit_long(0);
-            bits(w, "010");
-        }, Body { refs: vec![soft_owner(style.value())], strings: vec![String::new()] }).unwrap();
-        add_node_child(&mut doc, tree, KEY_CORRIDOR_STYLES, head, "").unwrap();
         assert!(add_corridor(&mut doc, "COR1", "BL1", "RG1", al, al, asm, None).is_err());
         let c = add_corridor(&mut doc, "COR1", "BL1", "RG1", al, p, asm, None).unwrap();
+        // A drawing without corridor styles gets the default one.
+        let style = default_style_of(&doc, KEY_CORRIDOR_STYLES).unwrap();
+        assert_eq!(object(&doc, Handle::new(style)).unwrap().dxf_name, "AECC_CORRIDOR_STYLE");
         let path = std::env::temp_dir().join(format!("civil-corridor-{}.dwg", std::process::id()));
         DwgWriter::write_to_file(&path, &doc).unwrap();
         let back = DwgReader::from_file(&path).unwrap().read().unwrap();
         let _ = std::fs::remove_file(&path);
         let a = arch(&back, c).unwrap();
         let refs: Vec<u64> = a.typed_handles().iter().map(|r| r.0).collect();
-        assert_eq!(refs, vec![0, style.value(), code_set.value(), 0, al.value(), p.value(), asm.value(), sub.value(), 0]);
+        assert_eq!(refs, vec![0, style, code_set.value(), 0, al.value(), p.value(), asm.value(), sub.value(), 0]);
         let strings = a.decode().strings;
         assert_eq!(strings[2], "COR1");
         assert_eq!(&strings[strings.len() - 4..], &["ASM1", "", "RG1", "BL1"]);

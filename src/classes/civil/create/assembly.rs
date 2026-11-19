@@ -12,9 +12,7 @@ use crate::types::{Handle, Vector3};
 use crate::CadDocument;
 use crate::classes::civil::pkt::{enum_default, number_default, PktDirection, PktLayout, PktPackage, PktSide, PktValue};
 
-/// Style tree keys: assembly styles and code set styles.
-const KEY_ASSEMBLY_STYLES: i32 = 0x118;
-const KEY_CODE_SET_STYLES: i32 = 0xEA0;
+use super::default_styles::{ensure_assembly_styles, KEY_ASSEMBLY_STYLES, KEY_CODE_SET_STYLES};
 /// Root key of the name templates.
 const KEY_NAME_TEMPLATES: i32 = 0x8C;
 
@@ -170,7 +168,7 @@ fn entity_common(doc: &mut CadDocument, layer: Option<&str>) -> Result<EntityCom
 
 /// Adds an empty assembly named `name` at `location` on `layer` (layer
 /// "0" when `None`), with the drawing's default assembly style and code
-/// set style (the drawing must have both).
+/// set style; a drawing without them gets the application's defaults.
 pub fn add_assembly(doc: &mut CadDocument, name: &str, location: Vector3, layer: Option<&str>) -> Result<Handle, DxfError> {
     if name.is_empty() {
         return Err(invalid("an assembly needs a name"));
@@ -178,6 +176,7 @@ pub fn add_assembly(doc: &mut CadDocument, name: &str, location: Vector3, layer:
     if !(location.x.is_finite() && location.y.is_finite() && location.z.is_finite()) {
         return Err(invalid("an assembly needs a finite location"));
     }
+    ensure_assembly_styles(doc)?;
     let style = default_style_of(doc, KEY_ASSEMBLY_STYLES).ok_or_else(|| invalid("drawing has no assembly styles"))?;
     let code_set = default_style_of(doc, KEY_CODE_SET_STYLES).ok_or_else(|| invalid("drawing has no code set styles"))?;
     let common = entity_common(doc, layer)?;
@@ -525,7 +524,17 @@ mod tests {
         let source = PktSource { library: "[ \"lane.pkt\" ]".into(), path: "lane.pkt".into() };
         let mut empty = CadDocument::new();
         empty.version = DxfVersion::AC1032;
-        assert!(add_assembly(&mut empty, "A", Vector3::new(0.0, 0.0, 0.0), None).is_err());
+        // A drawing without the styles gets the defaults, with the link,
+        // shape, feature line and marker styles the code set draws with.
+        add_assembly(&mut empty, "A", Vector3::new(0.0, 0.0, 0.0), None).unwrap();
+        let tree = read_node(&empty, root_node(&empty, KEY_STYLES).unwrap()).unwrap();
+        for (key, dxf) in [(KEY_ASSEMBLY_STYLES, "AECC_ASSEMBLY_STYLE"), (KEY_CODE_SET_STYLES, "AECC_ROADWAY_STYLE_SET"), (0x11C, "AECC_ROADWAYLINK_STYLE"), (0x11D, "AECC_ROADWAYSHAPE_STYLE"), (0x11B, "AECC_ROADWAYMARKER_STYLE"), (0x80, "AECC_FEATURELINE_STYLE")] {
+            assert!(tree.children.iter().any(|c| c.0 == key), "{key:#x}");
+            assert_eq!(object(&empty, Handle::new(default_style_of(&empty, key).unwrap())).unwrap().dxf_name, dxf);
+        }
+        let code_set = object(&empty, Handle::new(default_style_of(&empty, KEY_CODE_SET_STYLES).unwrap())).unwrap();
+        let link = default_style_of(&empty, 0x11C).unwrap();
+        assert!(code_set.typed_handles().iter().any(|r| r.0 == link));
         let mut doc = drawing();
         let a = add_assembly(&mut doc, "ASM1", Vector3::new(20.0, -60.0, 0.0), None).unwrap();
         let wide = [("Width".to_string(), PktValue::Double(4.0)), ("Depth".to_string(), PktValue::Double(0.25)), ("Slope".to_string(), PktValue::Double(-0.03))];
