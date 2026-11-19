@@ -1478,6 +1478,32 @@ name templates root: BL 0x8C, BL n, n x BL id (four-byte form), BL 0,
            template
 ```
 
+Connections (`connect_pipe`; samples N04 unconnected, N05 both ends, N06
+end only and a chain of three structures and two pipes):
+
+```text
+connector (AECC_NETWORK_PART_CONNECTOR, a model space entity on the
+           network's layer): CONNECTOR (constant)
+           references: soft 0, hard owner 0, the paired connector (soft;
+             0 for an open pipe end), its part (hard)
+           texts: "AeccImpNetworkPartConnector", "", ""
+part record: ..., BL n, n x { BL 0, field, BL 1 }, BL connectors, ...
+part references: ..., part definition, style, the connectors (hard),
+           network, ...
+```
+
+A pipe has no connector until one of its ends is connected, then two
+(start, end); a structure has one per pipe it meets, in the order the
+pipes were connected. The writer keeps every other bit of the records it
+updates. When the application connects a pipe it lowers the structure to
+the pipe's end (invert minus half the outer diameter) and gives it a
+part definition of its new height; on opening it does neither:
+
+| written | result |
+|---|---|
+| N04's pipe connected to both structures (E-N50) | AUDIT 0; the pipe lists both structures, each structure one pipe, positions as written |
+| N04's pipe connected at its end only (E-N51) | AUDIT 0; start open, end at the second structure |
+
 The style and rules come from the family's size filter in the parts list
 (`AECC_PART_SIZE_FILTER`: references `0, style, rules, ...`). The fields
 between the named ones are the samples' constant runs.
