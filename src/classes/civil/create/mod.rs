@@ -7,6 +7,7 @@
 mod groups;
 mod points;
 mod support;
+mod tree;
 
 pub use groups::{add_point_group, set_point_group};
 pub use points::{add_cogo_point, cogo_points, remove_cogo_point, set_cogo_point};
