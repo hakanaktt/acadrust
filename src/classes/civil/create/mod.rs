@@ -5,6 +5,7 @@
 //! with a written drawing are in `docs/civil-write.md`.
 
 mod alignment;
+mod assembly;
 mod corridor;
 mod default_styles;
 mod groups;
@@ -21,6 +22,7 @@ mod templates;
 mod tin;
 mod tree;
 
+pub use assembly::{add_assembly, add_basic_lane, BasicLane, Side, SubassemblySource};
 pub use alignment::{add_alignment, add_alignment_with_curves, VertexCurve};
 pub use corridor::add_corridor;
 pub use intersection::add_intersection;

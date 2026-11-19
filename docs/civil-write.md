@@ -841,6 +841,59 @@ the check harness changes no corridor, the application's own included (a
 built corridor keeps its stations after a frequency edit and a rebuild),
 so the built result of a written corridor is not checked.
 
+### Assemblies and basic lanes
+
+`add_assembly(doc, name, location, layer)` writes an empty assembly with
+the drawing's default assembly style (style tree key 0x118) and code set
+style (0xEA0); the drawing must have both (a drawing the application has
+opened). `add_basic_lane(doc, assembly, name, lane, source, layer)` adds
+the stock basic lane (side, width, depth, slope) as a group of its own,
+attached at the assembly's location, and writes the assembly again with
+the group. `source` gives the three texts that name the stock library as
+the caller's installation has it (the library list, the resolved path
+and the resource module); nothing names an installation folder by
+itself.
+
+```text
+assembly: BL 80, 0, 80, 80, 0, BL 0x10025F04, BL 0x40000353, 4 bits 0010,
+  RC 0, 120 zero bits, 3BD location, 18 bits, 16-byte identifier (a
+  version-4 GUID), BL 0, BL 0, BL n groups, n x {122-bit group run, BL 0},
+  BL 0, 36 bits ending with the version word
+  references: soft 0, hard owner 0, assembly style (hard), per
+    subassembly {subassembly, soft 0} (soft), code set style (hard)
+  texts: "AeccImpAssembly", "", name, "", "", "", per group {"Group -
+    (i)", "", "", ""}
+basic lane: the stock script's record (2228 bits for a right lane) with
+  as fields the origin (3BD, the assembly's location), the layout values
+  (outer x = +/- width, top outer elevation = width x slope, bottom inner
+  = -depth, bottom outer = width x slope - depth), the side (BL 0 right,
+  1 left) and the depth, slope and width parameters; the runs between
+  them (point, link and shape codes, the script's parameter table) are
+  the same in every sample
+  references: soft 0, hard owner 0, the assembly (soft), subassembly
+    style (hard), the subassembly itself (soft), code set style (hard)
+  texts: "AeccImpSubassembly", "", "", library list, "{"docs_permanent_id":
+    ""}", the script's id, name, "", library path, "Subassembly.BasicLane",
+    "", "", "", resource module, "", the point, link and shape codes, the
+    parameters with their resource ids, "R2019", ""
+```
+
+A drawing without the subassembly style collection (style tree key
+0x11A) gets the application's default, written from templates as the
+styles of §2c, and one without the name templates (root key 0x8C, the
+root and its node naming the groups `Group - (<n>)`) gets them. Written
+for SA1 to SA6 (WR01 plus an assembly at (0, -50) or (100, -80) with one
+lane: width 12 or 10, depth 0.67 or 0.5, slope -0.02 or -0.03, right or
+left; two lanes), the assembly and lane records equal the samples' bit for
+bit apart from the assembly's identifier. WR01 with an assembly at (20,
+-60), a right lane 12 / 0.67 / -0.02, a left lane 10 / 0.5 / -0.03 and a
+corridor on it, all written by acadrust (E-SA7), opens with AUDIT 0
+errors; the API lists the assembly with its two groups, each lane with
+its side, parameters, four points, four links and one shape, its parent
+assembly, and the corridor's region applying the assembly. Without the
+assembly reference in the lane the application lists the lane without a
+parent assembly.
+
 ## 3j. Sample lines
 
 `add_sample_line_group(doc, alignment, name, layer)` writes an empty
@@ -1185,6 +1238,7 @@ taken from the records and checked bit for bit against them.
 | layout profiles (fixed tangents; free symmetric and asymmetric parabolas, free circular curves) | yes | yes (a new drawing gets §3f) | yes (§4) | not needed (the application solves the stored entities) | fixed and floating curves |
 | sites, alignments and feature lines on a site | yes | yes (a new drawing gets the node of sites and the default parcel and feature line styles, §2c) | yes (§4) | not needed (the application rewrites the site's cache) | parcels, crossing members, feature line arcs and elevation points |
 | profile views and their profile label groups | yes (frame) | yes (a new drawing gets the default view style, §3h) | yes (§3h) | not needed (the application recomputes the view from its style) | other ranges and styles |
+| assemblies and stock basic lanes | partly (corridor's group block) | yes, in a drawing with assembly and code set styles (§3i) | yes (§3i) | not needed | other subassemblies, the code set and assembly styles of a new drawing |
 | corridors (one baseline, one region, unbuilt) | yes | yes, with an assembly of the drawing (§3i) | yes (§3i) | the corridor is written out of date and built by the application's rebuild | assemblies and subassemblies, built results, surfaces, several regions or baselines |
 | sample line groups and two-vertex sample lines | yes | yes, with the drawing's sample line label style (§3j) | yes (§3j) | not needed | lines with more vertices |
 | sections of a TIN surface (unsampled) | yes (geometry once sampled) | yes (§3j) | yes (§3j) | the application samples the source | corridor sources, lines added after sampling |
