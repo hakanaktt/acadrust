@@ -1567,10 +1567,13 @@ network:   NETWORK_EMPTY or NETWORK_WITH_PARTS, BL pipes, BL structures,
              pipes, structures
 structure: class header, keys, 3 bits 010, 16-byte id (0), 3BD insertion,
            3 x 3BD axes, 2 bits, part record (BL 80, BS 0x04BE, BL 80,
-           BL 80, BL 0, BL 0), 3 x BL 0, 16-byte id, cached outline and
+           BL 80, BL 0, BL 0), 3 x BL 0, identifier, cached outline and
            extents, rule results
-pipe:      as a structure up to its id (identity frame), then lengths,
-           slopes and extents, 3BD start, 3BD end, rule results
+pipe:      as a structure up to its identifier (identity frame), then
+           lengths, slopes and extents, 3BD start, 3BD end, rule results
+identifier: 16 bytes, a version-4 GUID in the byte order Windows stores
+           one (the version in the high nibble of byte 7, the variant in
+           the high bits of byte 8), then the 2 bits 10
            references (both): hard 0, hard 0, soft 0, hard owner 0, part
              definition, style, network, soft 0, soft 0, hard 0, rules
 part definition: no version word; fields BL 80, BS 0x04BE, BL 0, BS kind,
@@ -1616,16 +1619,29 @@ id and in rounding noise of the outline's zero coordinates). A rotated
 structure's record is longer (N07, 0.3 rad); its layout is not decoded and
 the writer keeps the unrotated outline.
 
-Not resolved: in drawings where the application has placed parts, some
-added parts keep the application from finishing opening the drawing,
-with identical records otherwise accepted:
+The identifier starts 365 bits into a pipe record (and into a structure
+record at the origin; the structure's axes come before it). Nine
+identifiers of the application's parts share the bits a version-4 GUID
+fixes when read from there, and all are followed by `10`. Written two
+bits later, as earlier writers did, the identifier ends in two random
+bits where the `10` belongs; then the application regenerates the drawing
+endlessly on opening (one core busy in its model space iterator, samples
+N01 + a structure, N04 + a structure, N01 + a pipe) or, in a new drawing,
+discards the part (`Error 34 (eWrongObjectType)` reading the pipe, then
+the recovery prompt), in the quarter of the cases where they happened to
+be `10` the drawing opened. That was the cause of every "does not finish
+opening" and "Errors Found" result measured before; neither the format
+manager, the catalog node's fields nor the part's position matter:
 
 | written | result |
 |---|---|
-| N01 (one structure) with a structure at (100, 0, -6) (E-N55) or (10, 20, 3) (E-N21) | AUDIT 0 |
-| N01 with a structure at (150, 0, -6) (E-N63, E-N64; record as the application's at that point), (200, 50, -7) (E-N60, E-N61) | does not finish opening |
-| N01 with a pipe (E-N54); N04 with a structure (E-N58, E-N59) | does not finish opening |
-| N04 (two structures, a pipe) with a pipe (E-N57) | AUDIT 0 |
+| N02 with the root entries 0x150, 2, 0x80000012, 0x16A, 0x103, 0x4C, 0x16C (each, all), 0x2D or 5 dropped (E-D1 to E-D5) | AUDIT 0 |
+| E-D5 without the application's named-objects entries and with only the pipe and structure style collections in the style tree (E-D6, E-D7) | AUDIT 0 |
+| E-D7 with the application's network replaced by a written one and a pipe with a random identifier (E-D8, E-D9) | does not finish opening |
+| the same pipe with the application's identifier (E-D14) | AUDIT 0 |
+| N01 + a structure with identifiers ending `10` (E-X1, E-X3) or not (E-X2, E-X4), at (100, 0, -6) and (150, 0, -6) | AUDIT 0 / does not finish opening, at both places |
+| identifier written at 365 then `10`: N01 + structures at (150, 0, -6), (200, 50, -7) and a pipe (E-F1); N00 + a structure (E-F4); WT01 + a network, two structures and a connected pipe (E-F5) | AUDIT 0; the parts listed where written |
+| a new drawing with the default parts list, two structures, a pipe connected to both and a second pipe (E-F3) | opens without a message, AUDIT 0; the network lists two structures (one pipe each, extents from the body block) and two pipes, the first from (0, 0, -5) to (100, 0, -6) connected start and end, the second 111.803 long |
 
 The style and rules come from the family's size filter in the parts list
 (`AECC_PART_SIZE_FILTER`: references `0, style, rules, ...`). The fields
@@ -1647,32 +1663,17 @@ API dump of the networks, AUDIT without fixing):
 
 The catalog node (`AECC_NETWORK_PART_CATALOG_DEF_NODE`, the parts list's
 owner) lists the union of the fields of the drawing's part definitions
-and caches data after them that grows with them (not decoded): appending
-the eight field records alone (E-N18, E-N20 written so) still leaves the
-drawing unopened. `add_structure` therefore refuses a drawing whose
-catalog node does not list the null structure's fields (a drawing that
-has never had one); pipes need no catalog fields. The written structure
-has no body block: the application lists it at its position, but its
-extents are the cached outline's.
+and caches data after them (the application's memory addresses, 8-byte
+values that differ between two drawings of the same template, not
+decoded). The writer leaves it as it is; the application adds the fields
+of a new part definition itself.
 
-The catalog node's data after the fields holds the application's memory
-addresses (8-byte values that differ between WT01 and N00, two drawings
-of the same template), so it cannot be decoded. Measured:
-
-| written | result |
-|---|---|
-| a new drawing with the default parts list and styles (E-N32, E-N33) | AUDIT 0 |
-| the same with an empty network (E-N34) | AUDIT 0; the network lists the parts list "Standard" |
-| the same with the null structure's part definition and no part (E-N39) | AUDIT 0 |
-| a new drawing with a structure, a pipe or both (E-N30, E-N37, E-N38; with WT01's class table, E-N40) | "Errors Found" on opening |
-| N00 with N02's catalog node (copied, E-N36, or rewritten from the template, E-N35) and a structure | the application does not finish opening (as without the fields), while N01's node works (E-N21) |
-| WT01 with N02's catalog node, a structure and a pipe (E-N31) | does not finish opening |
-
-A new drawing's root lacks most of the application's root entries (the
-format manager, root key 0x4C, the storm sewer import defaults 0x16C,
-and all but two root settings); what the parts need from them is not
-known. `add_structure` and `add_pipe` therefore refuse a drawing without
-the format manager.
+A structure's part definition refers twice to the block of its body (an
+anonymous `*U` block with one solid). For the null structure the
+application's body is a sphere of radius 0.5 whose top is the insertion
+point; the writer adds the same block when it writes the definition, and
+the application takes the structure's extents from it (`(-0.5, -0.5, -1)`
+to `(0.5, 0.5, 0)` about the insertion point, as its own structures').
 
 ## 4. Reference check
 
@@ -1824,9 +1825,7 @@ taken from the records and checked bit for bit against them.
   lines meeting where one has an arc, parcel and feature line styles other than the
   defaults;
   sections, corridors: not written; pipe networks: other families and
-  sizes, the structure's body block,
-  networks in a drawing without a parts list, structures in a drawing
-  whose part catalog does not list their fields.
+  sizes.
 - Profile views with a vertical scale or style other than the default;
   the graph settings between the named values are constant runs.
 
@@ -1851,5 +1850,5 @@ taken from the records and checked bit for bit against them.
 | sections of a TIN surface (unsampled) | yes (geometry once sampled) | yes (§3j) | yes (§3j) | the application samples the source | corridor sources, lines added after sampling |
 | section views of a line (default style, unsampled section) | yes (frame) | yes, with the drawing's section view style or the default one (§3j, §2c) | yes (§3j, §2c) | not needed | sampled sections, several sections |
 | intersections of two crossing roads (the object only) | yes (stations, angles) | yes, with the drawing's intersection style or the default one (§3k, §2c) | yes (§3k, §2c) | not needed | offset alignments, curb returns, corridor regions and locking actions; tee junctions |
-| gravity pipe networks: null structures and 12 inch pipes, connections | partly (part positions, pipe ends, connector counts, sizes of older part definitions) | yes, in a drawing the application opened; a new drawing gets the default parts list and styles and an empty network (§3m) | yes (§3m) | not needed (the application recomputes outlines, lengths and extents) | other families and sizes, the structure's body block, parts in a new drawing, some parts added to drawings that hold application parts (§3m) |
+| gravity pipe networks: null structures (with their body block) and 12 inch pipes, connections | partly (part positions, pipe ends, connector counts, sizes of older part definitions) | yes (a new drawing gets the default parts list and styles, §3m) | yes (§3m) | not needed (the application recomputes outlines, lengths and extents) | other families and sizes |
 | pressure networks, gradings, mass haul | partly | no | — | — | not started |

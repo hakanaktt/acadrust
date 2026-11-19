@@ -20,8 +20,6 @@ use crate::CadDocument;
 
 /// Named-objects entry holding the part definitions, keyed by size.
 const PART_DEFS: &str = "AECC_NETWORK_PART_DEFS";
-/// Root key of the format manager.
-const KEY_FORMAT_MANAGER: i32 = 0x4C;
 /// Root key of the part catalog node, the parts lists' owner.
 const KEY_PART_CATALOG: i32 = 0x136;
 const STRUCTURE_TEMPLATE: (i32, &str) = (0x125, "Structure - (<[67112990(2449)]>)");
@@ -34,10 +32,10 @@ struct Part {
     key: &'static str,
     definition: (usize, &'static str),
     strings: &'static [&'static str],
-    /// References of the definition: a structure's refer twice to the
-    /// block of its body, written null (the application draws the part
-    /// without it).
-    references: usize,
+    /// The body of the part's size: a sphere of this radius whose top is
+    /// at the insertion point, kept in an anonymous block the definition
+    /// refers to twice. Pipes have none.
+    body: Option<f64>,
 }
 
 const NULL_STRUCTURE: Part = Part {
@@ -45,14 +43,14 @@ const NULL_STRUCTURE: Part = Part {
     key: "D45435F0874A4754BF5EFE9D18BE870FSBSH0SBSD0",
     definition: STRUCTURE_DEFINITION,
     strings: STRUCTURE_DEFINITION_STRINGS,
-    references: 2,
+    body: Some(0.5),
 };
 const CORRUGATED_PIPE_12: Part = Part {
     family: "481DD6EF-B926-428E-99B7-A5BE30A17E59",
     key: "481DD6EFB926428E99B7A5BE30A17E591815E08D5B6A42B087113F4839A38301",
     definition: PIPE_DEFINITION,
     strings: PIPE_DEFINITION_STRINGS,
-    references: 0,
+    body: None,
 };
 
 fn texts(t: &[&str]) -> Vec<String> {
@@ -140,6 +138,10 @@ fn ensure_definition(doc: &mut CadDocument, part: &Part) -> Result<Handle, DxfEr
         }
         _ => return Err(invalid("the part definitions entry is not a dictionary")),
     }
+    let refs = match part.body {
+        Some(radius) => vec![hard_pointer(body_block(doc, radius)?.value()); 2],
+        None => Vec::new(),
+    };
     let handle = doc.allocate_handle();
     put_plain_object(
         doc,
@@ -148,7 +150,7 @@ fn ensure_definition(doc: &mut CadDocument, part: &Part) -> Result<Handle, DxfEr
         dict,
         vec![dict],
         |w| run(w, part.definition.0, part.definition.1),
-        Body { refs: vec![hard_pointer(0); part.references], strings: texts(part.strings) },
+        Body { refs, strings: texts(part.strings) },
     )?;
     if let Some(ObjectType::Dictionary(d)) = doc.objects.get_mut(&dict) {
         d.add_entry(part.key, handle);
@@ -156,34 +158,34 @@ fn ensure_definition(doc: &mut CadDocument, part: &Part) -> Result<Handle, DxfEr
     Ok(handle)
 }
 
-/// `BL 80, BS 0x04BE`: opens a part record and each of its fields.
-#[cfg(test)]
-const FIELD_MARK: &str = "0101010000001011111000000100";
-
-/// Whether the part catalog node (`AECC_NETWORK_PART_CATALOG_DEF_NODE`,
-/// the parts list's owner) lists the fields of a null structure's part
-/// definition. The node holds a part record whose fields are the union of
-/// those of the drawing's part definitions:
-///
-/// ```text
-/// ..., BL 80, BS 0x04BE, BL 80, BL 80, BL n, BL 0, n x field, ...
-/// field: BL 80, BS 0x04BE, BL 0, BS kind, ... (75 bits for a number, 81
-///        for a text: kind > 255)
-/// texts: "", "AeccNetworkPartRecord", "", "", then per field
-///        "AeccNetworkPartDataField", "", code, description, context,
-///        unit[, default text]
-/// ```
-///
-/// The application does not finish opening a drawing with a structure
-/// whose fields the node lacks; the node also caches data after the
-/// fields that grows with them (not decoded), so the writer does not add
-/// them.
-fn catalog_lists_structure_fields(doc: &CadDocument, list: Handle) -> bool {
-    let Some(node) = object(doc, list).and_then(|l| object(doc, l.owner)).filter(|n| n.dxf_name == "AECC_NETWORK_PART_CATALOG_DEF_NODE") else {
-        return false;
-    };
-    let strings = node.decode().strings;
-    STRUCTURE_CATALOG_FIELDS.iter().all(|f| (0..strings.len()).any(|i| strings[i] == "AeccNetworkPartDataField" && strings.get(i + 2).map(String::as_str) == Some(f.0)))
+/// An anonymous block (`*U<n>`) holding a part's body: a solid sphere of
+/// `radius` touching the insertion point from below, on layer 0. The
+/// application places it at each part of the size and takes the part's
+/// extents from it.
+fn body_block(doc: &mut CadDocument, radius: f64) -> Result<Handle, DxfError> {
+    use crate::entities::{Block, BlockEnd, Solid3D};
+    use crate::tables::BlockRecord;
+    let name = (0..).map(|i| format!("*U{i}")).find(|n| !doc.block_records.contains(n)).unwrap_or_default();
+    let (record, start, end) = (doc.allocate_handle(), doc.allocate_handle(), doc.allocate_handle());
+    let mut br = BlockRecord::new(&name);
+    br.handle = record;
+    br.block_entity_handle = start;
+    br.block_end_handle = end;
+    br.flags.anonymous = true;
+    doc.block_records.add(br).map_err(|_| invalid("cannot add the part body's block"))?;
+    let mut marker = Block::new(&name, Vector3::ZERO);
+    marker.common.handle = start;
+    marker.common.owner_handle = record;
+    doc.add_entity(EntityType::Block(marker))?;
+    let mut solid = Solid3D::new();
+    solid.common.owner_handle = record;
+    solid.set_sat_document(&crate::entities::acis::primitives::build_sphere([0.0, 0.0, -radius], radius));
+    doc.add_entity(EntityType::Solid3D(solid))?;
+    let mut tail = BlockEnd::new();
+    tail.common.handle = end;
+    tail.common.owner_handle = record;
+    doc.add_entity(EntityType::BlockEnd(tail))?;
+    Ok(record)
 }
 
 /// The network record (`AECC_NETWORK`, an entity in model space):
@@ -260,17 +262,7 @@ pub fn add_pipe_network(doc: &mut CadDocument, name: &str, layer: Option<&str>) 
 /// number in the network) and adds it to the network's lists.
 fn place(doc: &mut CadDocument, network: Handle, part: &Part, structure: bool, write: impl FnOnce(&mut CadDocument, EntityCommon, Vec<Ref>, usize) -> Result<Handle, DxfError>) -> Result<Handle, DxfError> {
     let mut net = read_network(doc, network).ok_or_else(|| invalid("not a pipe network"))?;
-    // ponytail: a drawing written from scratch (no format manager, root
-    // key 0x4C, and few root settings) does not open once it holds a part;
-    // what the parts need from the application's tree is not known, so a
-    // drawing without the format manager is refused.
-    if root_node(doc, KEY_FORMAT_MANAGER).is_none() {
-        return Err(invalid("drawing lacks the application's settings that pipe network parts need"));
-    }
     let (style, rules) = family_style(doc, Handle::new(net.list), part.family).ok_or_else(|| invalid("the network's parts list lacks the part's family"))?;
-    if structure && !catalog_lists_structure_fields(doc, Handle::new(net.list)) {
-        return Err(invalid("the parts list's catalog does not list the structure's fields yet"));
-    }
     let definition = ensure_definition(doc, part)?;
     let common = entity_common(doc, Some(&net.common.layer))?;
     let refs = vec![
@@ -302,7 +294,7 @@ fn place(doc: &mut CadDocument, network: Handle, part: &Part, structure: bool, w
 ///
 /// ```text
 /// STRUCTURE_HEAD, 3BD insertion point, 3 x 3BD axes (X, Y, Z),
-/// STRUCTURE_RECORD, 16-byte id, STRUCTURE_TAIL
+/// STRUCTURE_RECORD, identifier (see [`write_id`]), STRUCTURE_TAIL
 /// references: hard 0, hard 0, soft 0, hard owner 0, part definition,
 ///   style, network, soft 0, soft 0, hard 0, rules (the style and rules of
 ///   the family's size in the parts list)
@@ -330,8 +322,8 @@ pub fn add_structure(doc: &mut CadDocument, network: Handle, position: Vector3, 
                 for v in [position.x, position.y, position.z, c, s, 0.0, -s, c, 0.0, 0.0, 0.0, 1.0] {
                     w.write_bit_double(v);
                 }
-                run(w, STRUCTURE_RECORD.0, STRUCTURE_RECORD.1);
-                id.iter().for_each(|b| w.write_byte(*b));
+                run_range(w, STRUCTURE_RECORD.1, 0, STRUCTURE_RECORD.0 - 2);
+                write_id(w, &id);
                 run_range(w, STRUCTURE_TAIL.1, 0, OUTLINE.0);
                 // The cached plan outline: a circle of radius 0.5 about
                 // the insertion point, four quarter arcs from the top
@@ -355,7 +347,8 @@ pub fn add_structure(doc: &mut CadDocument, network: Handle, position: Vector3, 
 /// `network`, not connected to structures. The pipe record (`AECC_PIPE`):
 ///
 /// ```text
-/// PIPE_HEAD, 16-byte id, PIPE_RECORD, 3BD start, 3BD end, PIPE_TAIL
+/// PIPE_HEAD, identifier (see [`write_id`]), PIPE_RECORD, 3BD start,
+/// 3BD end, PIPE_TAIL
 /// references and texts as a structure's (name "Pipe - (n)")
 /// ```
 ///
@@ -373,8 +366,8 @@ pub fn add_pipe(doc: &mut CadDocument, network: Handle, start: Vector3, end: Vec
             "AECC_PIPE",
             common,
             |w| {
-                run(w, PIPE_HEAD.0, PIPE_HEAD.1);
-                id.iter().for_each(|b| w.write_byte(*b));
+                run_range(w, PIPE_HEAD.1, 0, PIPE_HEAD.0 - 2);
+                write_id(w, &id);
                 run(w, PIPE_RECORD.0, PIPE_RECORD.1);
                 for v in [start.x, start.y, start.z, end.x, end.y, end.z] {
                     w.write_bit_double(v);
@@ -384,6 +377,17 @@ pub fn add_pipe(doc: &mut CadDocument, network: Handle, start: Vector3, end: Vec
             Body { refs, strings },
         )
     })
+}
+
+/// A part's identifier: a version-4 GUID (Windows byte order), then the
+/// two bits `10`. The constant run before it (`PIPE_HEAD`,
+/// `STRUCTURE_RECORD`) is written without its last two bits, the start of
+/// the sample's own identifier. Any other two bits after the GUID make the
+/// application regenerate the drawing endlessly or discard the part.
+fn write_id(w: &mut crate::io::dwg::dwg_stream_writers::DwgMergedWriter, id: &[u8; 16]) {
+    id.iter().for_each(|b| w.write_byte(*b));
+    w.write_bit(true);
+    w.write_bit(false);
 }
 
 /// Bit range of the cached plan outline in `STRUCTURE_TAIL`.
@@ -538,16 +542,8 @@ mod tests {
             doc.classes.add_or_update(DxfClass::new(name, name));
         }
         let [catalog, list] = [(); 2].map(|_| doc.allocate_handle());
-        // A part record with the null structure's fields.
-        let records: String = STRUCTURE_CATALOG_FIELDS.iter().map(|f| f.1).collect();
-        let mut strings = texts(&["", "AeccNetworkPartRecord", "", ""]);
-        strings.extend(STRUCTURE_CATALOG_FIELDS.iter().flat_map(|f| texts(f.2)));
-        put_object(doc, "AECC_NETWORK_PART_CATALOG_DEF_NODE", catalog, root, Vec::new(), |w| bits(w, &format!("{FIELD_MARK}01010100000101010000{:010b}10{records}", 0b01_0000_0000 | STRUCTURE_CATALOG_FIELDS.len())), Body { refs: vec![soft_owner(list.value())], strings }).unwrap();
+        put_object(doc, "AECC_NETWORK_PART_CATALOG_DEF_NODE", catalog, root, Vec::new(), |_| {}, Body { refs: vec![soft_owner(list.value())], strings: Vec::new() }).unwrap();
         put_object(doc, "AECC_NETWORK_PART_LIST", list, catalog, Vec::new(), |_| {}, Body { refs: Vec::new(), strings: vec![String::new()] }).unwrap();
-        // A stand-in format manager (the parts' guard looks for it).
-        let manager = doc.allocate_handle();
-        put_object(doc, "AECC_PIPE_STYLE", manager, root, Vec::new(), |_| {}, Body { refs: Vec::new(), strings: Vec::new() }).unwrap();
-        set_root_entry(doc, KEY_FORMAT_MANAGER, manager).unwrap();
         let mut styles = [0; 4];
         for (i, family) in [NULL_STRUCTURE.family, CORRUGATED_PIPE_12.family].into_iter().enumerate() {
             let [item, filter, style, rules] = [(); 4].map(|_| doc.allocate_handle());
@@ -566,7 +562,7 @@ mod tests {
     fn networks_list_their_parts_and_parts_keep_their_places() {
         let v = Vector3::new;
         // A drawing without a parts list gets the default one and its
-        // styles; parts are refused there.
+        // styles.
         let mut fresh = CadDocument::new();
         fresh.version = DxfVersion::AC1032;
         let n0 = add_pipe_network(&mut fresh, "N", None).unwrap();
@@ -574,7 +570,20 @@ mod tests {
         assert_eq!(read_network(&fresh, n0).unwrap().list, list.value());
         assert_eq!(fresh.objects.values().filter(|o| matches!(o, ObjectType::Arch(a) if a.dxf_name == "AECC_NETWORK_PART_FAMILY_ITEM" && a.owner == list)).count(), 33);
         assert!(family_style(&fresh, list, NULL_STRUCTURE.family).is_some());
-        assert!(add_structure(&mut fresh, n0, v(0.0, 0.0, 0.0), 0.0).is_err());
+        let s0 = add_structure(&mut fresh, n0, v(0.0, 0.0, 0.0), 0.0).unwrap();
+        // A part's identifier (365 bits in for a structure at the origin):
+        // a version-4 GUID, then `10`.
+        let a = arch_entity(&fresh, s0).unwrap();
+        let (d, start, end) = a.main_stream().unwrap();
+        let bits: String = (start..end).map(|i| if d[i / 8] >> (7 - i % 8) & 1 == 1 { '1' } else { '0' }).collect();
+        assert_eq!((&bits[365 + 56..365 + 60], &bits[365 + 64..365 + 66], &bits[365 + 128..365 + 130]), ("0100", "10", "10"));
+        // The size's body: an anonymous block the definition refers to twice.
+        let def = Handle::new(a.typed_handles()[4].0);
+        let body = object(&fresh, def).unwrap().typed_handles();
+        assert_eq!(body.len(), 2);
+        let block = fresh.block_records.iter().find(|b| b.handle.value() == body[0].0).unwrap();
+        assert!(block.name.starts_with("*U") && block.flags.anonymous);
+        assert!(block.entity_handles.iter().any(|h| matches!(fresh.get_entity(*h), Some(EntityType::Solid3D(_)))));
         let mut doc = CadDocument::new();
         doc.version = DxfVersion::AC1032;
         let styles = with_parts_list(&mut doc);
@@ -626,14 +635,6 @@ mod tests {
         assert_eq!(d.len(), 2);
         assert_eq!(d.get(CORRUGATED_PIPE_12.key), Some(Handle::new(refs[4])));
         assert_eq!(object(&back, Handle::new(refs[4])).unwrap().decode().strings[7], "Inner Pipe Diameter");
-        // A structure needs the catalog node to list its fields.
-        let mut bare = doc.clone();
-        let list = parts_list(&bare).unwrap();
-        let catalog = object(&bare, list).unwrap().owner;
-        let civil_root = root(&bare).unwrap();
-        put_object(&mut bare, "AECC_NETWORK_PART_CATALOG_DEF_NODE", catalog, civil_root, Vec::new(), |_| {}, Body { refs: vec![soft_owner(list.value())], strings: texts(&["", "AeccNetworkPartRecord", "", ""]) }).unwrap();
-        assert!(add_structure(&mut bare, n, v(0.0, 0.0, 0.0), 0.0).is_err());
-        assert!(add_pipe(&mut bare, n, v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0)).is_ok());
         // The name templates of structures and pipes, beside an assembly's.
         let mut with_group = doc.clone();
         ensure_name_template(&mut with_group, (0x0E80, "Group - (<[67112990(2449)]>)")).unwrap();
