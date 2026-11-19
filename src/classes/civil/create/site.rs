@@ -170,6 +170,8 @@ pub(super) struct Member {
     handle: u64,
     path: Vec<PathPoint>,
     elevations: Vec<f64>,
+    /// Which points are elevation points (never the ends).
+    elevation_points: Vec<bool>,
     feature_line: bool,
 }
 
@@ -181,8 +183,12 @@ const FEATURE_LINE_EDGE: i32 = 0x1_0030;
 /// topology of its members, each an edge through its own nodes.
 ///
 /// ```text
-/// BS 0x04BE, BL 0, BL 0 (no children), BL 0, BL 32, BL 210,
-/// 21 bits 000000110010000000110, BL 0x80000001,
+/// BS 0x04BE, BL 0, BL 0 (no children), BL 0, BL 32, 7 bits 0111010,
+/// elevation points: BL next free key, BL k, k x {BL key, BL 21, BD the
+///   point's index in its feature line, 17 bits 10000000000101010,
+///   BL key, BL 0, BL 0, BD elevation, B 0, BL 0} (keys 1..k in edge
+///   order), BL 1, BL 0,
+/// BL 0x80000001,
 /// nodes: BL next free id, BL n, BL first id, n x {3BD (z the
 ///   elevation), 3 bits 010, BL next id} (ids per member: its ends, then
 ///   its inner points; the records in hash order, seven buckets by
@@ -191,26 +197,29 @@ const FEATURE_LINE_EDGE: i32 = 0x1_0030;
 ///   BL flags (0x30 alignment, 0x10030 feature line), BL count, BL 0,
 ///   count x {BL kind (0 line, 1 arc, 2 last),
 ///   BL flags, BL node, BL 1, BL 1 (the outside face on both sides; 0, 0
-///   on the last point), an arc: BD bulge, BL 0}, BL 0, BL 0 x 3
+///   on the last point), an arc: BD bulge, BL 0}, BL j, the keys of the
+///   edge's j elevation points in order, BL 0 x 3
 /// faces: BL 2, BL 1 (BL 0 without members), the outside face {BL 1,
-///   BL 1, BL 14, BL m, per member {BL 1 +
+///   BL 1, BL 14 (6 once a member has an elevation point), BL m, per member {BL 1 +
 ///   the points of the members before it, BL 0}}, BL 1, 6 x {BL 1, BL 1},
 ///   6 x BL 0
-/// references: per member its record (soft pointer) and soft pointer
-///   0, then (with members) the site and soft pointer 0, then the default
+/// references: hard pointer 0 per elevation point, per member its record
+///   (soft pointer) and soft pointer 0, then (with members) the site and soft pointer 0, then the default
 ///   feature line style (hard)
 /// texts: ""
 /// ```
 ///
 /// The points run as one chain through the members in edge order: a
-/// point's flags are 2, with 0x30 added when another segment follows it
+/// point's flags are 2 (0x400400 for an elevation point), with 0x30 added when another segment follows it
 /// (in its edge or a later one), 0x80 on the first point of an edge after
 /// the first, 0x010F0000 for an arc; an edge's last point's are 10
 /// (WT07, WT10 to WT13, WF01 to WF06; written for their members, the
 /// containers equal the samples' bit for bit).
 pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handle, members: &[Member], style: u64) -> Result<(), DxfError> {
     let nodes: usize = members.iter().map(|m| m.path.len()).sum();
-    let mut refs: Vec<Ref> = members.iter().flat_map(|m| [soft_pointer(m.handle), soft_pointer(0)]).collect();
+    let elevation_points = members.iter().map(|m| m.elevation_points.iter().filter(|x| **x).count()).sum();
+    let mut refs: Vec<Ref> = vec![hard_pointer(0); elevation_points];
+    refs.extend(members.iter().flat_map(|m| [soft_pointer(m.handle), soft_pointer(0)]));
     if !members.is_empty() {
         refs.extend([soft_pointer(site.value()), soft_pointer(0)]);
     }
@@ -222,10 +231,34 @@ pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handl
         site,
         Vec::new(),
         |w| {
-            for v in [0, 0, 0, 32, 210] {
+            for v in [0, 0, 0, 32] {
                 w.write_bit_long(v);
             }
-            bits(w, "000000110010000000110");
+            bits(w, "0111010");
+            let mut key = 0;
+            let mut table = Vec::new();
+            for m in members {
+                for (i, _) in m.elevation_points.iter().enumerate().filter(|e| *e.1) {
+                    key += 1;
+                    table.push((key, i, m.elevations[i]));
+                }
+            }
+            w.write_bit_long(key + 1);
+            w.write_bit_long(key);
+            for &(key, index, z) in &table {
+                w.write_bit_long(key);
+                w.write_bit_long(21);
+                w.write_bit_double(index as f64);
+                bits(w, "10000000000101010");
+                for v in [key, 0, 0] {
+                    w.write_bit_long(v);
+                }
+                w.write_bit_double(z);
+                w.write_bit(false);
+                w.write_bit_long(0);
+            }
+            w.write_bit_long(1);
+            w.write_bit_long(0);
             w.write_bit_long(0x8000_0001_u32 as i32);
             // Node ids: per member its ends, then its inner points. The
             // records follow the application's hash order: seven buckets
@@ -254,6 +287,7 @@ pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handl
             }
             w.write_bit_long(members.len() as i32 + 1);
             w.write_bit_long(members.len() as i32);
+            let mut next_key = 1;
             for (e, m) in members.iter().enumerate() {
                 let n = m.path.len();
                 let edge = if m.feature_line { FEATURE_LINE_EDGE } else { ALIGNMENT_EDGE };
@@ -261,6 +295,9 @@ pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handl
                     w.write_bit_long(v);
                 }
                 let last_member = e + 1 == members.len();
+                let count = m.elevation_points.iter().filter(|x| **x).count() as i32;
+                let keys: Vec<i32> = (next_key..next_key + count).collect();
+                next_key += count;
                 for (i, (_, arc)) in m.path.iter().enumerate() {
                     let last = i + 1 == n;
                     let arc = arc.filter(|_| !last);
@@ -268,7 +305,7 @@ pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handl
                     let flags = if last {
                         10
                     } else {
-                        2 | if follows { 0x30 } else { 0 } | if i == 0 && e > 0 { 0x80 } else { 0 } | if arc.is_some() { ARC_EDGE } else { 0 }
+                        (if m.elevation_points[i] { 0x40_0400 } else { 2 }) | if follows { 0x30 } else { 0 } | if i == 0 && e > 0 { 0x80 } else { 0 } | if arc.is_some() { ARC_EDGE } else { 0 }
                     };
                     let node = first_id[e] + if i == 0 { 0 } else if last { 1 } else { i as i32 + 1 };
                     let face = if last { 0 } else { 1 };
@@ -280,15 +317,19 @@ pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handl
                         w.write_bit_long(0);
                     }
                 }
-                for _ in 0..4 {
-                    w.write_bit_long(0);
+                w.write_bit_long(keys.len() as i32);
+                for v in keys.iter().copied().chain([0, 0, 0]) {
+                    w.write_bit_long(v);
                 }
             }
             w.write_bit_long(2);
             if members.is_empty() {
                 w.write_bit_long(0);
             } else {
-                for v in [1, 1, 1, 14, members.len() as i32] {
+                // The outside face's flags lose 8 once a member has an
+                // elevation point.
+                let face_flags = if members.iter().any(|m| m.elevation_points.contains(&true)) { 6 } else { 14 };
+                for v in [1, 1, 1, face_flags, members.len() as i32] {
                     w.write_bit_long(v);
                 }
                 let mut before = 0;
@@ -324,7 +365,8 @@ fn members_of(doc: &mut CadDocument, site: Handle) -> Result<(Handle, Vec<Member
     let refs = o.typed_handles();
     let style = refs.last().map(|r| r.0).ok_or_else(refused)?;
     let edges = if refs.len() == 1 { Vec::new() } else { o.topology().ok_or_else(refused)?.edges };
-    let handles: Vec<u64> = refs.iter().step_by(2).take(edges.len()).map(|r| r.0).collect();
+    let elevation_points = edges.iter().flatten().filter(|v| v.is_elevation_point()).count();
+    let handles: Vec<u64> = refs.iter().skip(elevation_points).step_by(2).take(edges.len()).map(|r| r.0).collect();
     let kind = |h: u64| match doc.get_entity(Handle::new(h)) {
         Some(EntityType::Extended(x)) => match &x.data {
             ExtendedEntityData::Arch(a) => Some(a.dxf_name == "AECC_FEATURE_LINE"),
@@ -340,6 +382,7 @@ fn members_of(doc: &mut CadDocument, site: Handle) -> Result<(Handle, Vec<Member
                 handle: *h,
                 path: run.iter().map(|v| (v.point, (v.bulge != 0.0).then_some(v.bulge))).collect(),
                 elevations: run.iter().map(|v| v.z).collect(),
+                elevation_points: run.iter().map(|v| v.is_elevation_point()).collect(),
                 feature_line: kind(*h)?,
             })
         })
@@ -348,7 +391,7 @@ fn members_of(doc: &mut CadDocument, site: Handle) -> Result<(Handle, Vec<Member
     let bits_of = |doc: &CadDocument| object(doc, container).and_then(|o| o.main_stream().map(|(d, s, e)| (s..e).map(|i| d[i / 8] >> (7 - i % 8) & 1).collect::<Vec<u8>>()));
     let before = bits_of(doc);
     write_container(doc, container, site, &members, style)?;
-    if bits_of(doc) != before || members.len() != (refs.len().saturating_sub(3)) / 2 {
+    if bits_of(doc) != before || members.len() != (refs.len().saturating_sub(3 + elevation_points)) / 2 {
         doc.objects.insert(container, crate::objects::ObjectType::Arch(o));
         return Err(refused());
     }
@@ -460,7 +503,7 @@ pub fn add_alignment_on_site(doc: &mut CadDocument, site: Handle, name: &str, ve
         layer_handle: Some(layer_handle),
         ..EntityCommon::default()
     };
-    members.push(Member { handle: common.handle.value(), elevations: vec![0.0; path.len()], path, feature_line: false });
+    members.push(Member { handle: common.handle.value(), elevations: vec![0.0; path.len()], elevation_points: vec![false; path.len()], path, feature_line: false });
     write_container(doc, container, site, &members, line_style)?;
     write_alignment(doc, common, name, &elements, style, container.value(), members.len() as i32, None, &[], &[], &[])
 }
@@ -499,19 +542,42 @@ fn write_feature_line(doc: &mut CadDocument, common: EntityCommon, name: &str, e
     )
 }
 
+/// A point of a feature line: a PI or an elevation point (a point that
+/// only sets an elevation between two PIs), with the bulge of the segment
+/// that starts there (0 for a straight segment; positive counterclockwise,
+/// the tangent of a quarter of the arc's angle, as a polyline stores it).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FeatureLineVertex {
+    pub point: crate::types::Vector3,
+    pub bulge: f64,
+    pub elevation_point: bool,
+}
+
 /// Adds a feature line through `points` (x, y, elevation; straight
-/// segments) on `site`: its edge joins the site's container. Like an
-/// alignment on a site it must not cross or touch the site's other
-/// members, and the site must be one this crate writes. It takes the
-/// feature line style the site's container uses.
+/// segments, every point a PI) on `site`; see [`add_feature_line_vertices`].
 pub fn add_feature_line(doc: &mut CadDocument, site: Handle, name: &str, points: &[crate::types::Vector3], layer: Option<&str>) -> Result<Handle, DxfError> {
-    if points.len() < 2 || points.iter().any(|p| !p.x.is_finite() || !p.y.is_finite() || !p.z.is_finite()) || points.windows(2).any(|w| w[0].x == w[1].x && w[0].y == w[1].y) {
+    let vertices: Vec<FeatureLineVertex> = points.iter().map(|&point| FeatureLineVertex { point, bulge: 0.0, elevation_point: false }).collect();
+    add_feature_line_vertices(doc, site, name, &vertices, layer)
+}
+
+/// Adds a feature line through `vertices` on `site`: its edge joins the
+/// site's container. Like an alignment on a site it must not cross or
+/// touch the site's other members, and the site must be one this crate
+/// writes. The ends are PIs; an elevation point on an arc splits it, so
+/// the bulges on its two sides are those of the two parts. It takes the
+/// feature line style the site's container uses.
+pub fn add_feature_line_vertices(doc: &mut CadDocument, site: Handle, name: &str, vertices: &[FeatureLineVertex], layer: Option<&str>) -> Result<Handle, DxfError> {
+    let n = vertices.len();
+    if n < 2 || vertices.iter().any(|v| !v.point.x.is_finite() || !v.point.y.is_finite() || !v.point.z.is_finite() || !v.bulge.is_finite()) || vertices.windows(2).any(|w| w[0].point.x == w[1].point.x && w[0].point.y == w[1].point.y) {
         return Err(invalid("a feature line needs two or more finite points, apart in plan"));
+    }
+    if vertices[0].elevation_point || vertices[n - 1].elevation_point {
+        return Err(invalid("the ends of a feature line are PIs"));
     }
     if name.is_empty() {
         return Err(invalid("a feature line needs a name"));
     }
-    let path: Vec<PathPoint> = points.iter().map(|p| (Vector2::new(p.x, p.y), None)).collect();
+    let path: Vec<PathPoint> = vertices.iter().enumerate().map(|(i, v)| (Vector2::new(v.point.x, v.point.y), Some(v.bulge).filter(|b| *b != 0.0 && i + 1 < n))).collect();
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
     let (container, mut members, line_style) = members_of(doc, site)?;
@@ -525,7 +591,13 @@ pub fn add_feature_line(doc: &mut CadDocument, site: Handle, name: &str, points:
         layer_handle: Some(layer_handle),
         ..EntityCommon::default()
     };
-    members.push(Member { handle: common.handle.value(), path, elevations: points.iter().map(|p| p.z).collect(), feature_line: true });
+    members.push(Member {
+        handle: common.handle.value(),
+        path,
+        elevations: vertices.iter().map(|v| v.point.z).collect(),
+        elevation_points: vertices.iter().map(|v| v.elevation_point).collect(),
+        feature_line: true,
+    });
     write_container(doc, container, site, &members, line_style)?;
     write_feature_line(doc, common, name, members.len() as i32, container, line_style)
 }
@@ -660,4 +732,29 @@ mod tests {
         let (w, _) = super::super::alignment::rewritable(&back, a, |_| None).unwrap();
         assert_eq!(w.edge, 2);
     }
+
+    #[test]
+    fn feature_lines_keep_their_arcs_and_elevation_points() {
+        let v = |x: f64, y: f64, z: f64, bulge: f64, elevation_point: bool| FeatureLineVertex { point: crate::types::Vector3::new(x, y, z), bulge, elevation_point };
+        let mut doc = drawing();
+        let s = add_site(&mut doc, "Site 1", "").unwrap();
+        let bad = [v(0.0, 0.0, 10.0, 0.0, true), v(50.0, 0.0, 10.0, 0.0, false)];
+        assert!(add_feature_line_vertices(&mut doc, s, "X", &bad, None).is_err());
+        let a = [v(0.0, 0.0, 10.0, 0.0, false), v(25.0, 0.0, 11.0, 0.0, true), v(50.0, 0.0, 10.0, 0.5, false), v(100.0, 0.0, 14.0, -0.3, false), v(150.0, 20.0, 12.0, 0.0, false)];
+        let fa = add_feature_line_vertices(&mut doc, s, "FLA", &a, None).unwrap();
+        let b = [v(0.0, 50.0, 5.0, 0.0, false), v(30.0, 50.0, 6.0, 0.0, true), v(60.0, 50.0, 7.0, 0.0, true), v(100.0, 50.0, 6.0, 0.0, false)];
+        let fb = add_feature_line_vertices(&mut doc, s, "FLB", &b, None).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-fl-arcs-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let mut back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let (_, members, _) = members_of(&mut back, s).unwrap();
+        for (h, want) in [(fa, &a[..]), (fb, &b[..])] {
+            let m = members.iter().find(|m| m.handle == h.value()).unwrap();
+            assert_eq!(m.path.iter().map(|p| p.1.unwrap_or(0.0)).collect::<Vec<_>>(), want.iter().map(|v| v.bulge).collect::<Vec<_>>());
+            assert_eq!(m.elevations, want.iter().map(|v| v.point.z).collect::<Vec<_>>());
+            assert_eq!(m.elevation_points, want.iter().map(|v| v.elevation_point).collect::<Vec<_>>());
+        }
+    }
+
 }

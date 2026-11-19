@@ -619,7 +619,9 @@ from the dates.
 alignment like `add_alignment_with_curves` whose geometry joins the site's
 container instead of a companion; `add_feature_line(doc, site, name,
 points, layer)` writes a feature line of straight segments through 3D
-points on a site. A site is an `AECC_PARCEL` entity named
+points on a site, and `add_feature_line_vertices(doc, site, name,
+vertices, layer)` one whose vertices may start arcs (a bulge each) and
+be elevation points. A site is an `AECC_PARCEL` entity named
 `AeccImpFace` that belongs to no other site; it owns its container (an
 `AECC_FEATURE_STYLE` record) and is listed by the node of the sites (root
 key 2, `AECC_PARCEL_NODE`).
@@ -644,7 +646,11 @@ references: n x site (soft pointer), soft pointer 0, the node's own (the
 texts: "", the site names
 
 container:
-BS 0x04BE, BL 0, BL 0, BL 0, BL 32, BL 210, 21 bits 000000110010000000110,
+BS 0x04BE, BL 0, BL 0, BL 0, BL 32, 7 bits 0111010,
+elevation points: BL next free key, BL k, k x {BL key, BL 21, BD the
+  point's index among its feature line's points, 17 bits
+  10000000000101010, BL key, BL 0, BL 0, BD elevation, B 0, BL 0},
+  BL 1, BL 0
 BL 0x80000001,
 nodes: BL next free id, BL n, BL first id, n x {3BD (z the elevation),
   3 bits 010, BL next id} (ids per member: its ends, then its inner points;
@@ -652,20 +658,22 @@ nodes: BL next free id, BL n, BL first id, n x {3BD (z the elevation),
 edges: BL next free id, BL m, per member BL 0, BL id, BL flags (0x30 an
   alignment, 0x10030 a feature line), BL count,
   BL 0, count x {BL kind (0 line, 1 arc, 2 last), BL flags, BL node,
-  BL 1, BL 1 (0, 0 on the last point), an arc: BD bulge, BL 0}, BL 0,
-  BL 0 x 3
+  BL 1, BL 1 (0, 0 on the last point), an arc: BD bulge, BL 0}, BL j,
+  the keys of the edge's j elevation points in edge order, BL 0 x 3
 faces: BL 2, BL 1 (0 without members), the outside face {BL 1, BL 1,
-  BL 14, BL m, per member {BL 1 + the points of the members before it,
+  BL 14 (6 once a member has an elevation point), BL m, per member {BL 1 + the points of the members before it,
   BL 0}}, BL 1, 6 x {BL 1, BL 1},
   6 x BL 0
-references: per member its record (soft) and soft pointer 0, then
+references: hard pointer 0 per elevation point, per member its record
+  (soft) and soft pointer 0, then
   (with members) the site (soft) and soft pointer 0, then the default
   feature line style (hard)
 texts: ""
 ```
 
 The points of a container run as one chain through its members in edge
-order: a point's flags are 2, plus 0x30 when another segment follows it
+order: a point's flags are 2 (0x400400 for an elevation point), plus 0x30
+when another segment follows it
 in its edge or a later one, plus 0x80 on the first point of an edge after
 the first, plus 0x010F0000 for an arc; an edge's last point's are 10.
 
@@ -701,7 +709,27 @@ texts: "AeccImpFeatureLine", "", "", name
 ```
 
 Written for WF01 and WF02's points, the records equal the samples' bit for
-bit. A new
+bit.
+
+An elevation point is a node of its feature line's edge like a PI, with
+its own flags and an entry in the container's table of elevation points
+(the empty table is the run earlier read as constant). The writer keys
+the elevation points 1..k through the members in edge order; the
+application keeps its keys and node ids when points are inserted later,
+so a container it edited (WF22, WF25, WF26) is read but not rewritten. An
+elevation point on an arc splits it: both parts are arc segments with
+their own bulge. Written for WF20, WF21, WF24 (straight, one elevation
+point at 25 with elevation 11 and 13) and WF29 (an elevation point at the
+middle of an arc of bulge 0.5), the containers and feature lines equal
+the samples' bit for bit. WT01 plus that feature line (E-FE1) and a new
+drawing with a site and two feature lines, one with an arc of bulge 0.5,
+one of -0.3 and an elevation point, the other with two elevation points
+(E-FE2), open with AUDIT 0 errors; the API lists the points, the
+elevation points and the bulges as written and the 2D length 164.983 of
+the first. Without the hard pointers of the table the drawing is refused
+(`Errors Found`).
+
+A new
 member must not cross or touch the site's members: the application splits
 crossing members at their intersections and makes parcels of the closed
 faces (WT09), which is not written. A site is accepted only when writing
@@ -1165,8 +1193,8 @@ taken from the records and checked bit for bit against them.
 - Profiles with other curve constraints (fixed or floating curves, curves
   by K or through a point), profiles of alignments the application has
   changed.
-- Parcels, crossing members on a site (their splits and faces), feature
-  lines with arcs or elevation points, parcel and feature line styles;
+- Parcels, crossing members on a site (their splits and faces), parcel
+  and feature line styles other than the defaults;
   sections, corridors, pipe networks: not written.
 - Profile views with a range, vertical scale or style other than the
   default; the graph settings between the named values are constant runs.
@@ -1183,7 +1211,7 @@ taken from the records and checked bit for bit against them.
 | alignments (fixed lines, free arcs and spiral-curve-spirals, siteless) | yes | yes (a new drawing gets §3b) | yes (§4) | not needed (the application solves the stored elements) | other constraints, sites, labels |
 | TIN surfaces (added points) | yes | yes (a new drawing gets §3d) | yes (§4) | not needed (the stored triangulation is drawn; the application rebuilds it after an edit) | other definitions |
 | layout profiles (fixed tangents; free symmetric and asymmetric parabolas, free circular curves) | yes | yes (a new drawing gets §3f) | yes (§4) | not needed (the application solves the stored entities) | fixed and floating curves |
-| sites, alignments and feature lines on a site | yes | yes (a new drawing gets the node of sites and the default parcel and feature line styles, §2c) | yes (§4) | not needed (the application rewrites the site's cache) | parcels, crossing members, feature line arcs and elevation points |
+| sites, alignments and feature lines (arcs, elevation points) on a site | yes | yes (a new drawing gets the node of sites and the default parcel and feature line styles, §2c) | yes (§4) | not needed (the application rewrites the site's cache) | parcels, crossing members; containers the application edited after inserting elevation points |
 | profile views and their profile label groups | yes (frame) | yes (a new drawing gets the default view style, §3h) | yes (§3h) | not needed (the application recomputes the view from its style) | other ranges and styles |
 | corridors (one baseline, one region, unbuilt) | yes | yes, with an assembly of the drawing (§3i) | yes (§3i) | the corridor is written out of date and built by the application's rebuild | assemblies and subassemblies, built results, surfaces, several regions or baselines |
 | sample line groups and two-vertex sample lines | yes | yes, with the drawing's sample line label style (§3j) | yes (§3j) | not needed | lines with more vertices |
