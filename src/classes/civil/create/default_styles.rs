@@ -18,6 +18,8 @@ const KEY_MARKER_STYLES: i32 = 0x11B;
 /// Style tree keys of the parcel style and feature line style collections.
 pub(super) const KEY_PARCEL_STYLES: i32 = 2;
 pub(super) const KEY_FEATURE_LINE_STYLES: i32 = 128;
+/// Style tree key of the subassembly style collection.
+pub(super) const KEY_SUBASSEMBLY_STYLES: i32 = 0x11A;
 
 /// Writes `templates` into the style tree when it lacks all of `keys`,
 /// listing the templates at `roots` under those keys. A tree that has some
@@ -78,6 +80,12 @@ pub(super) fn ensure_site_styles(doc: &mut CadDocument) -> Result<(), DxfError> 
     ensure(doc, PARCEL_STYLES, &[(KEY_PARCEL_STYLES, 0)])?;
     ensure_marker_styles(doc)?;
     ensure(doc, FEATURE_LINE_STYLES, &[(KEY_FEATURE_LINE_STYLES, 0)])
+}
+
+/// The subassembly style collection (style tree key 0x11A) and its
+/// default style, when the drawing lacks them.
+pub(super) fn ensure_subassembly_styles(doc: &mut CadDocument) -> Result<(), DxfError> {
+    ensure(doc, SUBASSEMBLY_STYLES, &[(KEY_SUBASSEMBLY_STYLES, 0)])
 }
 
 // The tables: the application's default records with the users empty and
@@ -314,5 +322,24 @@ const FEATURE_LINE_STYLES: &[Template] = &[
         fields: &[Run(10, "478"), Children, Run(183, "a840102000080140018782020000800c0018783e20002c"), Time, Run(102, "00e000c3c0080030f078400058"), Time, Run(1122, "480a032a0a84a8600000030000ffff501800000001901950542543000000180007fffa80c00000000c824a82a12a18000000c0003fffd40600000000640950542543000000180007fffa80c00000000c81aa0a84a8600000030000ffff50180000000190454150950c00000060001fffea0300000000320280aa0a84a8600000030400ffff501800000001aa8")],
         refs: &[(SoftPointer, Target::Style(0x11B, 30)), (SoftPointer, Target::Style(0x11B, 30)), (SoftPointer, Target::Style(0x11B, 30)), (SoftPointer, Target::Style(0x11B, 30)), (SoftPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
         strings: &["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
+    },
+];
+
+const SUBASSEMBLY_STYLES: &[Template] = &[
+    Template {
+        dxf: "AECC_SUBASSEMBLY_STYLE",
+        owner: Target::Null,
+        children: &[(0x1e, 1)],
+        fields: &[Run(34, "068040000"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(1889, "480a0d2a0a84a8601800030c00ffff50180000000190154150950c01800061801fffea03000000003204a82a12a18060000c3003fffd40600000000640d50542543006000186007fffa80c00000000c822a0a84a8601800030c00ffff50180000000190554150950c01800061801fffea0300000000320d2a0a84a8601800030c00ffff50180000000190154150950c01800061801fffea03000000003204a82a12a18060000c3003fffd40600000000640d50542543006000186007fffa80c00000000c822a0a84a8601800030c00ffff50180000000190554150950c01800061801fffea030000000035550")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
+        strings: &["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
+    },
+    Template {
+        dxf: "AECC_SUBASSEMBLY_STYLE",
+        owner: Target::Record(0),
+        children: &[],
+        fields: &[Run(10, "478"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(1889, "480a0d2a0a84a8601800030c00ffff50180000000190154150950c01800061801fffea03000000003204a82a12a18060000c3003fffd40600000000640d50542543006000186007fffa80c00000000c822a0a84a8601800030c00ffff50180000000190554150950c01800061801fffea0300000000320d2a0a84a8601800030c00ffff50180000000190154150950c01800061801fffea03000000003204a82a12a18060000c3003fffd40600000000640d50542543006000186007fffa80c00000000c822a0a84a8601800030c00ffff50180000000190554150950c01800061801fffea030000000035550")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
+        strings: &["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
     },
 ];

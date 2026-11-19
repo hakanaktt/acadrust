@@ -471,7 +471,7 @@ fn leaf(name: &str, t: &str) -> Element {
 }
 
 /// `[new EnumType(key, "name", "group")]` → (key, name, group).
-fn enum_default(d: &str) -> Option<(i32, String, Option<String>)> {
+pub(crate) fn enum_default(d: &str) -> Option<(i32, String, Option<String>)> {
     let inner = d.strip_prefix("[new EnumType(")?.strip_suffix(")]")?;
     let mut parts = inner.splitn(2, ',');
     let key = parts.next()?.trim().parse().ok()?;
@@ -480,7 +480,7 @@ fn enum_default(d: &str) -> Option<(i32, String, Option<String>)> {
 }
 
 /// The number inside `[new Grade(x)]` / `[new Slope(x)]`, or the text.
-fn number_default(d: &str) -> &str {
+pub(crate) fn number_default(d: &str) -> &str {
     d.strip_prefix('[').and_then(|s| s.find('(').map(|i| &s[i + 1..])).and_then(|s| s.strip_suffix(")]")).unwrap_or(d)
 }
 
@@ -783,4 +783,4 @@ pub fn same_parts(a: &[u8], b: &[u8]) -> Result<bool, DxfError> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
