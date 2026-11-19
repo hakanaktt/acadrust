@@ -41,9 +41,11 @@ struct Assembly {
     /// The group block: `BL 0, BL 0, BL group count, BL 1`, then the
     /// groups (nested object heads and nodes), as the assembly stores it.
     groups: Vec<u8>,
-    group_names: Vec<String>,
+    /// Name and node count of each group.
+    group_names: Vec<(String, usize)>,
     name: String,
-    subassemblies: Vec<u64>,
+    /// `(subassembly, the subassembly it hangs from or 0)` per node.
+    subassemblies: Vec<(u64, u64)>,
     code_set: u64,
 }
 
@@ -52,11 +54,12 @@ struct Assembly {
 /// ```text
 /// BL 80, 0, 80, 80, 0, BL 0x10025F04, BL, 4 bits, RC n keys, keys
 /// 120 zero bits, 3BD location, 18 bits, identifier (GUID)
-/// group block (BL 0, BL 0, BL n groups, BL 1, the groups), 36 bits
-/// references: soft 0, hard owner 0, style (hard), per subassembly
-///   {subassembly (soft), soft 0}, code set style (hard)
+/// group block (BL 0, BL 0, BL n groups, per group BL k and k nodes of
+/// 108 bits, BL point, BL, BL), 36 bits
+/// references: soft 0, hard owner 0, style (hard), per node {subassembly,
+///   the subassembly it hangs from or 0} (soft), code set style (hard)
 /// texts: "AeccImpAssembly", "", name, "", "", "", per group {name, "",
-///   "", ""}
+///   then "", "" per node}
 /// ```
 fn read_assembly(a: &ArchEntityData) -> Option<Assembly> {
     (a.dxf_name == "AECC_ASSEMBLY").then_some(())?;
@@ -80,13 +83,29 @@ fn read_assembly(a: &ArchEntityData) -> Option<Assembly> {
     b.bit_long()?;
     b.bit_long()?;
     let group_count = b.bit_long()?;
+    let mut sizes = Vec::new();
+    for _ in 0..group_count {
+        let k = usize::try_from(b.bit_long()?).ok()?;
+        for _ in 0..k {
+            b.skip(108)?;
+            for _ in 0..3 {
+                b.bit_long()?;
+            }
+        }
+        sizes.push(k);
+    }
     let to = end.checked_sub(36).filter(|t| *t > from)?;
     let groups = (from..to).map(|i| data[i / 8] >> (7 - i % 8) & 1).collect();
     let strings = a.decode().strings;
-    let group_names = (0..group_count as usize).map(|i| strings.get(6 + 4 * i).cloned()).collect::<Option<Vec<_>>>()?;
+    let mut at = 6;
+    let mut group_names = Vec::new();
+    for k in sizes {
+        group_names.push((strings.get(at)?.clone(), k));
+        at += 2 + 2 * k;
+    }
     let refs = a.typed_handles();
-    (refs.len() >= 4).then_some(())?;
-    let subassemblies = refs[3..refs.len() - 1].iter().step_by(2).map(|r| r.0).collect();
+    (refs.len() >= 4 && refs.len() % 2 == 0).then_some(())?;
+    let subassemblies = refs[3..refs.len() - 1].chunks(2).map(|p| (p[0].0, p[1].0)).collect();
     Some(Assembly { groups, group_names, name: strings.get(2)?.clone(), subassemblies, code_set: refs[refs.len() - 1].0 })
 }
 
@@ -113,11 +132,11 @@ fn raw(w: &mut DwgMergedWriter, bits: &[u8]) {
 ///   target), BL 0 (no station), 3 bits 110, BL 0
 /// baseline: BL 0, B 1, 9 bits 000000101, identifier, then [`TAIL`]
 /// references: soft 0, style (hard), code set style (hard), hard 0,
-///   alignment, profile, assembly (hard), per subassembly
-///   {subassembly (soft), soft 0}
+///   alignment, profile, assembly (hard), the assembly's node pairs
+///   {subassembly, the subassembly it hangs from or 0} (soft)
 /// texts: "AeccImpCorridor", "", name, "", "", per assembly group {name,
-///   "", "", ""}, the assembly's name, "", the region's name, the
-///   baseline's name
+///   "", then "", "" per node}, the assembly's name, "", the region's
+///   name, the baseline's name
 /// ```
 ///
 /// The identifiers are version-4 GUIDs. Written with the samples'
@@ -127,12 +146,13 @@ fn raw(w: &mut DwgMergedWriter, bits: &[u8]) {
 fn write_corridor(doc: &mut CadDocument, common: EntityCommon, names: [&str; 3], style: u64, alignment: Handle, profile: Handle, assembly: Handle, asm: &Assembly, stations: (f64, f64), ids: [[u8; 16]; 3]) -> Result<Handle, DxfError> {
     let [name, baseline, region] = names;
     let mut refs = vec![soft_pointer(0), hard_pointer(style), hard_pointer(asm.code_set), hard_pointer(0), hard_pointer(alignment.value()), hard_pointer(profile.value()), hard_pointer(assembly.value())];
-    for s in &asm.subassemblies {
-        refs.extend([soft_pointer(*s), soft_pointer(0)]);
+    for (s, parent) in &asm.subassemblies {
+        refs.extend([soft_pointer(*s), soft_pointer(*parent)]);
     }
     let mut strings: Vec<String> = ["AeccImpCorridor", "", name, "", ""].iter().map(|s| s.to_string()).collect();
-    for g in &asm.group_names {
-        strings.extend([g.clone(), String::new(), String::new(), String::new()]);
+    for (g, k) in &asm.group_names {
+        strings.extend([g.clone(), String::new()]);
+        strings.extend(std::iter::repeat(String::new()).take(2 * k));
     }
     strings.extend([asm.name.clone(), String::new(), region.to_string(), baseline.to_string()]);
     let byte = |w: &mut DwgMergedWriter, v: u8| bits(w, &format!("{v:08b}"));

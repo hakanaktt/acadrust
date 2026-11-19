@@ -1095,6 +1095,22 @@ were not read) now read.
 
 ### Assemblies and package subassemblies
 
+`add_pkt_subassembly_on(doc, parent, point, ...)` adds a package
+subassembly hanging from the point `point` of the subassembly `parent`:
+it joins the parent's group as its last node. Its record is that of a
+subassembly at the baseline (the host keeps the origin where the
+subassembly was inserted, the assembly's location in the samples, and
+places it at the parent's point from the group block). Samples CH1-CH5
+(a package lane at the baseline; a shoulder on its outer point; a side
+slope on the shoulder's outer point; the same on both sides; a shoulder
+on the lane's inner point; each made from the same base) are equal bit
+for bit to the records written for them, the assembly's identifier
+aside. The corridor copies the assembly's node pairs and group texts.
+
+| written | result |
+|---|---|
+| a new drawing with lane, shoulder and side slope on both sides (three packages written by `write_pkt`) and a corridor (E-CH1) | opens without recovery, AUDIT 0 errors; two groups of three subassemblies (lane at the baseline, shoulder at (23.5, -60.07) and (16.5, -60.07), side slope at (24.5, -60.11) and (15.5, -60.11)), all up to date; the corridor rebuilds with ETW at offset ±3.5, EPS (the shoulder's outer point) at ±4.5 and Daylight at ±7.5 |
+
 `add_assembly(doc, name, location, layer)` writes an empty assembly with
 the drawing's default assembly style (style tree key 0x118) and code set
 style (0xEA0); a drawing without them gets the application's defaults
@@ -1111,12 +1127,16 @@ MD5 as the script's id.
 ```text
 assembly: BL 80, 0, 80, 80, 0, BL 0x10025F04, BL 0x40000353, 4 bits 0010,
   RC 0, 120 zero bits, 3BD location, 18 bits, 16-byte identifier (a
-  version-4 GUID), BL 0, BL 0, BL n groups, n x {122-bit group run, BL 0},
+  version-4 GUID), BL 0, BL 0, BL n groups, n x {BL k, k x node},
   BL 0, 36 bits ending with the version word
-  references: soft 0, hard owner 0, assembly style (hard), per
-    subassembly {subassembly, soft 0} (soft), code set style (hard)
+  node: two attachment records (BS 80, BS 80, BS 0, B 1, BL 240, 5 bits
+    00100 each), BL index of the parent's point it hangs from (0 for the
+    group's first, at the baseline), BL 0, BL 0
+  references: soft 0, hard owner 0, assembly style (hard), per node in
+    group order {subassembly, the subassembly it hangs from or 0}
+    (soft), code set style (hard)
   texts: "AeccImpAssembly", "", name, "", "", "", per group {"Group -
-    (i)", "", "", ""}
+    (i)", "", then "", "" per node}
 package subassembly: BL 80, 0, 80, 80, 0, BL 0x10025F04, 010101, RC 4
   keys of type 4 (0x0404D01E, 0x0404D020, 0x0404D01D, 0x0404D01F; a
   stock subassembly lacks 0x0404D01D), BL 0 in its one-byte form, 121

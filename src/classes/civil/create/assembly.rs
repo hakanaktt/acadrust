@@ -18,10 +18,10 @@ const KEY_NAME_TEMPLATES: i32 = 0x8C;
 
 /// The run between an assembly's location and its identifier.
 const ASSEMBLY_LOCATION_TAIL: &str = "011010100110101001";
-/// A group of one subassembly in an assembly's group block: its index
-/// word and the heads of its nested objects (the same in every group of
-/// the samples).
-const GROUP: (usize, &str) = (122, "405505400000be045415000002f8128");
+/// The two attachment records that open every node of an assembly's
+/// group block (`BS 80, BS 80, BS 0, B 1, BL 240, 5 bits 00100` each; the
+/// same in every node of the samples).
+const NODE_HEAD: &str = "010101000001010100000000000000000000001011111000000100010101000001010100000000000000000000001011111000000100";
 /// The run after the group block, ending with the version word.
 const ASSEMBLY_TAIL: &str = "101010101000000010001011111000000100";
 
@@ -45,13 +45,25 @@ fn point3(w: &mut DwgMergedWriter, p: Vector3) {
     }
 }
 
+/// A subassembly in an assembly's group: itself, the subassembly it is
+/// attached to (0 for the baseline) and the index of that subassembly's
+/// point it hangs from.
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct Node {
+    subassembly: u64,
+    parent: u64,
+    point: u32,
+}
+
 /// What a written assembly holds.
 struct Assembly {
     location: Vector3,
     id: [u8; 16],
     style: u64,
     code_set: u64,
-    subassemblies: Vec<u64>,
+    /// Each group starts with a subassembly at the baseline; the others
+    /// hang from earlier subassemblies of the group, in the order added.
+    groups: Vec<Vec<Node>>,
 }
 
 /// The assembly record (`AECC_ASSEMBLY`, an entity in model space):
@@ -59,24 +71,26 @@ struct Assembly {
 /// ```text
 /// BL 80, 0, 80, 80, 0, BL 0x10025F04, BL 0x40000353, 4 bits 0010, RC 0
 /// (no keys), 120 zero bits, 3BD location, 18 bits, 16-byte identifier,
-/// BL 0, BL 0, BL n groups, n x {group run, BL 0}, BL 0, 36 bits ending
-/// with the version word
-/// references: soft 0, hard owner 0, the assembly style (hard), per
-///   subassembly {subassembly, soft 0} (soft), the code set style (hard)
+/// BL 0, BL 0, BL n groups, n x {BL k nodes, k x node}, BL 0, 36 bits
+/// ending with the version word
+/// node: NODE_HEAD, BL index of the parent's point it hangs from (0 at the
+///   baseline), BL 0, BL 0
+/// references: soft 0, hard owner 0, the assembly style (hard), per node
+///   in group order {subassembly, the subassembly it hangs from or 0}
+///   (soft), the code set style (hard)
 /// texts: "AeccImpAssembly", "", name, "", "", "", per group {"Group -
-///   (i)", "", "", ""}
+///   (i)", "", then "", "" per node}
 /// ```
-///
-/// Every subassembly written here is a group of its own.
 fn write_assembly(doc: &mut CadDocument, common: EntityCommon, name: &str, a: &Assembly) -> Result<Handle, DxfError> {
     let mut refs = vec![soft_pointer(0), Ref(DwgReferenceType::HardOwnership, 0), hard_pointer(a.style)];
-    for s in &a.subassemblies {
-        refs.extend([soft_pointer(*s), soft_pointer(0)]);
+    for n in a.groups.iter().flatten() {
+        refs.extend([soft_pointer(n.subassembly), soft_pointer(n.parent)]);
     }
     refs.push(hard_pointer(a.code_set));
     let mut strings: Vec<String> = ["AeccImpAssembly", "", name, "", "", ""].iter().map(|s| s.to_string()).collect();
-    for i in 0..a.subassemblies.len() {
-        strings.extend([format!("Group - ({})", i + 1), String::new(), String::new(), String::new()]);
+    for (i, g) in a.groups.iter().enumerate() {
+        strings.extend([format!("Group - ({})", i + 1), String::new()]);
+        strings.extend(std::iter::repeat(String::new()).take(2 * g.len()));
     }
     put_entity(
         doc,
@@ -94,10 +108,15 @@ fn write_assembly(doc: &mut CadDocument, common: EntityCommon, name: &str, a: &A
             w.write_bytes(&a.id);
             w.write_bit_long(0);
             w.write_bit_long(0);
-            w.write_bit_long(a.subassemblies.len() as i32);
-            for _ in &a.subassemblies {
-                run(w, GROUP.0, GROUP.1);
-                w.write_bit_long(0);
+            w.write_bit_long(a.groups.len() as i32);
+            for g in &a.groups {
+                w.write_bit_long(g.len() as i32);
+                for n in g {
+                    bits(w, NODE_HEAD);
+                    w.write_bit_long(n.point as i32);
+                    w.write_bit_long(0);
+                    w.write_bit_long(0);
+                }
             }
             w.write_bit_long(0);
             bits(w, ASSEMBLY_TAIL);
@@ -141,13 +160,23 @@ fn read_assembly(doc: &mut CadDocument, handle: Handle) -> Result<(EntityCommon,
     let refs = a.typed_handles();
     let name = a.decode().strings.get(2).cloned().ok_or_else(refused)?;
     (refs.len() >= 4 && refs.len() % 2 == 0).then_some(()).ok_or_else(refused)?;
-    let asm = Assembly {
-        location: Vector3::new(p[0], p[1], p[2]),
-        id,
-        style: refs[2].0,
-        code_set: refs[refs.len() - 1].0,
-        subassemblies: refs[3..refs.len() - 1].iter().step_by(2).map(|r| r.0).collect(),
+    // Group block: BL 0, BL 0, BL groups, per group BL k and k nodes.
+    let mut pairs = refs[3..refs.len() - 1].chunks(2);
+    let mut groups = Vec::new();
+    let mut node = |b: &mut Bits| -> Option<Node> {
+        b.skip(NODE_HEAD.len())?;
+        let point = u32::try_from(b.bit_long()?).ok()?;
+        b.bit_long()?;
+        b.bit_long()?;
+        let pair = pairs.next()?;
+        Some(Node { subassembly: pair[0].0, parent: pair[1].0, point })
     };
+    (b.bit_long() == Some(0) && b.bit_long() == Some(0)).then_some(()).ok_or_else(refused)?;
+    for _ in 0..b.bit_long().ok_or_else(refused)? {
+        let k = b.bit_long().ok_or_else(refused)?;
+        groups.push((0..k).map(|_| node(&mut b)).collect::<Option<Vec<_>>>().ok_or_else(refused)?);
+    }
+    let asm = Assembly { location: Vector3::new(p[0], p[1], p[2]), id, style: refs[2].0, code_set: refs[refs.len() - 1].0, groups };
     let original = doc.get_entity(handle).cloned();
     let before = main_bits(doc, handle);
     write_assembly(doc, common.clone(), &name, &asm)?;
@@ -181,7 +210,7 @@ pub fn add_assembly(doc: &mut CadDocument, name: &str, location: Vector3, layer:
     let code_set = default_style_of(doc, KEY_CODE_SET_STYLES).ok_or_else(|| invalid("drawing has no code set styles"))?;
     let common = entity_common(doc, layer)?;
     let id = new_identifier(common.handle.value());
-    write_assembly(doc, common, name, &Assembly { location, id, style, code_set, subassemblies: Vec::new() })
+    write_assembly(doc, common, name, &Assembly { location, id, style, code_set, groups: Vec::new() })
 }
 
 /// Name template id of an assembly's groups.
@@ -506,6 +535,26 @@ fn subassembly_record(w: &mut DwgMergedWriter, origin: Vector3, layout: &PktLayo
 /// assembly's code set style. The assembly must be one this crate writes.
 #[allow(clippy::too_many_arguments)]
 pub fn add_pkt_subassembly(doc: &mut CadDocument, assembly: Handle, name: &str, source: &PktSource, pkt: &PktPackage, side: PktSide, values: &[(String, PktValue)], layer: Option<&str>) -> Result<Handle, DxfError> {
+    place_subassembly(doc, assembly, None, name, source, pkt, side, values, layer)
+}
+
+/// Adds a package subassembly attached to `point` (an index into the
+/// parent's layout points) of the subassembly `parent` of the same
+/// assembly; it joins the parent's group, after its last member, and the
+/// host places its layout (on `side`) at that point. Otherwise as
+/// [`add_pkt_subassembly`].
+#[allow(clippy::too_many_arguments)]
+pub fn add_pkt_subassembly_on(doc: &mut CadDocument, parent: Handle, point: usize, name: &str, source: &PktSource, pkt: &PktPackage, side: PktSide, values: &[(String, PktValue)], layer: Option<&str>) -> Result<Handle, DxfError> {
+    let Some(EntityType::Extended(x)) = doc.get_entity(parent) else { return Err(invalid("parent subassembly not found")) };
+    let ExtendedEntityData::Arch(a) = &x.data else { return Err(invalid("not a subassembly")) };
+    let assembly = a.subassembly_assembly().filter(|_| a.dxf_name == "AECC_SUBASSEMBLY").ok_or_else(|| invalid("not a subassembly of an assembly"))?;
+    a.subassembly_shape().and_then(|s| s.points.get(point).copied()).ok_or_else(|| invalid("the parent has no such point"))?;
+    let point = u32::try_from(point).map_err(|_| invalid("the parent has no such point"))?;
+    place_subassembly(doc, Handle::new(assembly), Some((parent, point)), name, source, pkt, side, values, layer)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn place_subassembly(doc: &mut CadDocument, assembly: Handle, attach: Option<(Handle, u32)>, name: &str, source: &PktSource, pkt: &PktPackage, side: PktSide, values: &[(String, PktValue)], layer: Option<&str>) -> Result<Handle, DxfError> {
     if name.is_empty() {
         return Err(invalid("a subassembly needs a name"));
     }
@@ -516,6 +565,10 @@ pub fn add_pkt_subassembly(doc: &mut CadDocument, assembly: Handle, name: &str, 
     let items = items(pkt, side, values)?;
     let id: String = md5(&crate::classes::civil::pkt::write_pkt(pkt)?).iter().map(|b| format!("{b:02X}")).collect();
     let (asm_common, asm_name, mut asm) = read_assembly(doc, assembly)?;
+    let group = match attach {
+        Some((parent, ..)) => Some(asm.groups.iter().position(|g| g.iter().any(|n| n.subassembly == parent.value())).ok_or_else(|| invalid("the parent is not in the assembly"))?),
+        None => None,
+    };
     super::default_styles::ensure_subassembly_styles(doc)?;
     ensure_name_template(doc, GROUP_TEMPLATE)?;
     let style = default_style_of(doc, super::default_styles::KEY_SUBASSEMBLY_STYLES).ok_or_else(|| invalid("drawing has no subassembly styles"))?;
@@ -532,9 +585,15 @@ pub fn add_pkt_subassembly(doc: &mut CadDocument, assembly: Handle, name: &str, 
         }
     }
     strings.push(String::new());
+    // An attached subassembly keeps the assembly's location as its origin
+    // too (the host stores where it was inserted; the group block places
+    // it at its parent's point).
     let origin = asm.location;
     put_entity(doc, "AECC_SUBASSEMBLY", common, |w| subassembly_record(w, origin, &layout, &items), Body { refs, strings })?;
-    asm.subassemblies.push(handle.value());
+    match (attach, group) {
+        (Some((parent, point)), Some(g)) => asm.groups[g].push(Node { subassembly: handle.value(), parent: parent.value(), point }),
+        _ => asm.groups.push(vec![Node { subassembly: handle.value(), parent: 0, point: 0 }]),
+    }
     write_assembly(doc, asm_common, &asm_name, &asm)?;
     Ok(handle)
 }
@@ -616,7 +675,8 @@ mod tests {
         let mut back = DwgReader::from_file(&path).unwrap().read().unwrap();
         let _ = std::fs::remove_file(&path);
         let (_, name, asm) = read_assembly(&mut back, a).unwrap();
-        assert_eq!((name.as_str(), asm.location, asm.subassemblies.clone()), ("ASM1", Vector3::new(20.0, -60.0, 0.0), vec![r.value(), l.value()]));
+        let subs: Vec<u64> = asm.groups.iter().flatten().map(|n| n.subassembly).collect();
+        assert_eq!((name.as_str(), asm.location, subs), ("ASM1", Vector3::new(20.0, -60.0, 0.0), vec![r.value(), l.value()]));
         let record = |h: Handle| match back.get_entity(h) {
             Some(EntityType::Extended(x)) => match &x.data {
                 ExtendedEntityData::Arch(a) => a.clone(),
@@ -642,4 +702,44 @@ mod tests {
         use crate::classes::civil::ParameterValue::{Double, Integer};
         assert_eq!(v, [("Side".into(), Integer(0), 0), ("Depth".into(), Double(0.25), 2), ("Slope".into(), Double(-0.03), 3), ("Width".into(), Double(4.0), 1)]);
     }
+
+    #[test]
+    fn subassemblies_hang_from_points_of_their_group() {
+        let pkg = crate::classes::civil::pkt::tests::lane();
+        let source = PktSource { library: "[ \"lane.pkt\" ]".into(), path: "lane.pkt".into() };
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let a = add_assembly(&mut doc, "A", Vector3::new(20.0, -60.0, 0.0), None).unwrap();
+        let mut chain = Vec::new();
+        for side in [PktSide::Right, PktSide::Left] {
+            let lane = add_pkt_subassembly(&mut doc, a, "Lane", &source, &pkg, side, &[], None).unwrap();
+            let edge = add_pkt_subassembly_on(&mut doc, lane, 1, "Edge", &source, &pkg, side, &[], None).unwrap();
+            let outer = add_pkt_subassembly_on(&mut doc, edge, 1, "Outer", &source, &pkg, side, &[], None).unwrap();
+            chain.push([lane, edge, outer]);
+        }
+        let inner = add_pkt_subassembly_on(&mut doc, chain[0][0], 2, "Inner", &source, &pkg, PktSide::Right, &[], None).unwrap();
+        assert!(add_pkt_subassembly_on(&mut doc, chain[0][0], 99, "X", &source, &pkg, PktSide::Right, &[], None).is_err(), "no such point");
+        assert!(add_pkt_subassembly_on(&mut doc, a, 0, "X", &source, &pkg, PktSide::Right, &[], None).is_err(), "not a subassembly");
+        let path = std::env::temp_dir().join(format!("civil-chain-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let mut back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        // Two groups: each starts at the baseline, the others hang from
+        // earlier members in the order added.
+        let (_, _, asm) = read_assembly(&mut back, a).unwrap();
+        let node = |s: Handle, p: u64, point: u32| Node { subassembly: s.value(), parent: p, point };
+        let [r, l] = [chain[0], chain[1]];
+        assert_eq!(asm.groups, vec![
+            vec![node(r[0], 0, 0), node(r[1], r[0].value(), 1), node(r[2], r[1].value(), 1), node(inner, r[0].value(), 2)],
+            vec![node(l[0], 0, 0), node(l[1], l[0].value(), 1), node(l[2], l[1].value(), 1)],
+        ]);
+        let Some(EntityType::Extended(x)) = back.get_entity(a) else { panic!() };
+        let ExtendedEntityData::Arch(record) = &x.data else { panic!() };
+        let layout = record.assembly_layout().unwrap();
+        let read: Vec<(u64, u64, u32)> = layout.attachments.iter().map(|t| (t.subassembly, t.parent, t.point)).collect();
+        let want: Vec<(u64, u64, u32)> = asm.groups.iter().flatten().map(|n| (n.subassembly, n.parent, n.point)).collect();
+        assert_eq!(read, want);
+        assert_eq!(record.decode().strings.iter().filter(|t| t.starts_with("Group - (")).count(), 2);
+    }
+
 }
