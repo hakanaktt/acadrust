@@ -26,9 +26,12 @@ const GRAPH_WORDS: [i32; 2] = [357_877_592, 142_348_576];
 /// The graph keys: empty lists (types 0x0C, 0x0B and 0x19, `BL 0`) and
 /// the byte key 0x0301BA08 = 1.
 const GRAPH_KEYS: [u32; 6] = [0x0C01_BA06, 0x0C01_BA05, 0x0B01_BA07, 0x0301_BA08, 0x1901_BA0A, 0x0C01_BA04];
-/// A text id every view of the samples stores twice (the same in every
-/// session).
-const VIEW_TEXT_ID: i32 = 0x8000_0420_u32 as i32;
+/// The view's range word, stored twice: the same in every view with an
+/// automatic range, plus [`USER_STATIONS`] and [`USER_ELEVATIONS`] for a
+/// user-specified station or elevation range.
+const VIEW_RANGE_WORD: u32 = 0x8000_0420;
+const USER_STATIONS: u32 = 0x1000;
+const USER_ELEVATIONS: u32 = 0x2000;
 /// The title the default view style gives a view: the parent alignment's
 /// name through a format code.
 const TITLE: &str = "Profile View of  <[67194883(2449)]>";
@@ -225,7 +228,8 @@ struct Shown {
 ///
 /// Written with the samples' origins, ranges and profiles the record
 /// equals theirs bit for bit.
-fn write_view(doc: &mut CadDocument, common: EntityCommon, name: &str, frame: &ProfileViewFrame, style: u64, alignment: Handle, profiles: &[Shown]) -> Result<Handle, DxfError> {
+fn write_view(doc: &mut CadDocument, common: EntityCommon, name: &str, frame: &ProfileViewFrame, user: (bool, bool), style: u64, alignment: Handle, profiles: &[Shown]) -> Result<Handle, DxfError> {
+    let word = (VIEW_RANGE_WORD | if user.0 { USER_STATIONS } else { 0 } | if user.1 { USER_ELEVATIONS } else { 0 }) as i32;
     let mut refs = vec![soft_pointer(0), Ref(DwgReferenceType::HardOwnership, 0), hard_pointer(style), hard_pointer(alignment.value())];
     for p in profiles {
         refs.extend([soft_pointer(p.handle), hard_pointer(p.style), hard_pointer(0)]);
@@ -269,7 +273,7 @@ fn write_view(doc: &mut CadDocument, common: EntityCommon, name: &str, frame: &P
             w.write_bit(true);
             point(w, origin);
             w.write_bit_long(2);
-            w.write_bit_long(VIEW_TEXT_ID);
+            w.write_bit_long(word);
             for p in [lo, lo, hi, lo, lo, hi] {
                 point(w, p);
             }
@@ -279,7 +283,7 @@ fn write_view(doc: &mut CadDocument, common: EntityCommon, name: &str, frame: &P
             for v in [(hi.x - lo.x) / 2.0, hi.y - lo.y, 0.0, 0.0, 1.0 / 6.0, 0.0, 1.0 / 12.0] {
                 w.write_bit_double(v);
             }
-            for v in [0, 0, 8, 1, 2, VIEW_TEXT_ID] {
+            for v in [0, 0, 8, 1, 2, word] {
                 w.write_bit_long(v);
             }
             point(w, origin);
@@ -677,19 +681,32 @@ fn labelled(profile: &ArchEntityData) -> [Vec<i32>; 4] {
 /// The range a new view gives the alignment and its profiles (see
 /// [`STATION_MARGIN`]); WV01 (alignment 0-100, profile 10-20: -200-300,
 /// -10-40) and WV03 (0-300, 2-24.5: -200-500, -20-50).
-fn default_range(alignment: &ArchEntityData, profiles: &[&ArchEntityData], origin: Vector2) -> Option<ProfileViewFrame> {
+fn default_range(alignment: &ArchEntityData, profiles: &[&ArchEntityData], origin: Vector2, stations: Option<(f64, f64)>) -> Option<ProfileViewFrame> {
     let start = alignment.alignment_start_station()?;
     let length: f64 = alignment.alignment_pieces().iter().map(|(_, p)| p.windows(2).map(|w| w[0].distance(&w[1])).sum::<f64>()).sum();
+    let (s0, s1) = stations.unwrap_or((start - STATION_MARGIN, start + length + STATION_MARGIN));
+    // The elevations of the profiles within the shown stations: their
+    // segments clipped to the station range.
     let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
-    for p in profiles.iter().flat_map(|p| p.profile_polylines()).flatten() {
-        lo = lo.min(p.y);
-        hi = hi.max(p.y);
+    for line in profiles.iter().flat_map(|p| p.profile_polylines()) {
+        for w in line.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            let (x0, x1) = (a.x.max(s0), b.x.min(s1));
+            if x0 > x1 {
+                continue;
+            }
+            for x in [x0, x1] {
+                let y = if b.x == a.x { a.y } else { a.y + (b.y - a.y) * (x - a.x) / (b.x - a.x) };
+                lo = lo.min(y);
+                hi = hi.max(y);
+            }
+        }
     }
     (lo.is_finite() && hi.is_finite()).then_some(())?;
     Some(ProfileViewFrame {
         origin,
-        station_min: start - STATION_MARGIN,
-        station_max: start + length + STATION_MARGIN,
+        station_min: s0,
+        station_max: s1,
         elevation_min: (lo / ELEVATION_STEP).floor() * ELEVATION_STEP - ELEVATION_MARGIN,
         elevation_max: (hi / ELEVATION_STEP).ceil() * ELEVATION_STEP + ELEVATION_MARGIN,
         vertical_scale: VERTICAL_SCALE,
@@ -707,6 +724,15 @@ fn default_range(alignment: &ArchEntityData, profiles: &[&ArchEntityData], origi
 /// view in its list) and have a profile. A drawing without a profile
 /// view style gets the default one.
 pub fn add_profile_view(doc: &mut CadDocument, alignment: Handle, name: &str, origin: Vector2, layer: Option<&str>) -> Result<Handle, DxfError> {
+    add_profile_view_with_range(doc, alignment, name, origin, None, None, layer)
+}
+
+/// [`add_profile_view`] with user-specified ranges: `stations` (start,
+/// end) and `elevations` (minimum, maximum) replace the automatic ones
+/// when given; the automatic elevations then come from the profiles
+/// within the given stations. The view's range word records which range
+/// the user gave.
+pub fn add_profile_view_with_range(doc: &mut CadDocument, alignment: Handle, name: &str, origin: Vector2, stations: Option<(f64, f64)>, elevations: Option<(f64, f64)>, layer: Option<&str>) -> Result<Handle, DxfError> {
     if name.is_empty() {
         return Err(invalid("a profile view needs a name"));
     }
@@ -719,7 +745,16 @@ pub fn add_profile_view(doc: &mut CadDocument, alignment: Handle, name: &str, or
     }
     let a = arch(doc, alignment.value()).ok_or_else(|| invalid("alignment not found"))?;
     let shown: Vec<&ArchEntityData> = profiles.iter().filter_map(|p| arch(doc, p.handle)).collect();
-    let frame = default_range(a, &shown, origin).ok_or_else(|| invalid("the profiles have no elevations"))?;
+    if stations.is_some_and(|(lo, hi)| !(lo.is_finite() && hi.is_finite() && lo < hi)) {
+        return Err(invalid("a station range runs from a lower to a higher finite station"));
+    }
+    let mut frame = default_range(a, &shown, origin, stations).ok_or_else(|| invalid("the profiles have no elevations within the stations"))?;
+    if let Some((lo, hi)) = elevations {
+        if !(lo.is_finite() && hi.is_finite() && lo < hi) {
+            return Err(invalid("an elevation range runs from a lower to a higher finite elevation"));
+        }
+        (frame.elevation_min, frame.elevation_max) = (lo, hi);
+    }
     let list: Vec<Shown> = profiles.iter().zip(&shown).map(|(p, a)| Shown { handle: p.handle, style: a.typed_handles().get(11).map_or(0, |r| r.0) }).collect();
     let labels: Vec<[Vec<i32>; 4]> = shown.iter().map(|p| labelled(p)).collect();
     ensure_view_style_tree(doc)?;
@@ -744,7 +779,7 @@ pub fn add_profile_view(doc: &mut CadDocument, alignment: Handle, name: &str, or
     let mut views = written.views.clone();
     views.push(handle.value());
     rewrite_with_views(doc, alignment, written, &profiles, &profiles, Some(&views))?;
-    write_view(doc, common(handle), name, &frame, style, alignment, &list)?;
+    write_view(doc, common(handle), name, &frame, (stations.is_some(), elevations.is_some()), style, alignment, &list)?;
     for (h, kind, ids, profile, s) in groups {
         write_group(doc, common(h), kind, &ids, profile, s, handle.value())?;
     }
@@ -834,5 +869,24 @@ mod tests {
         assert_eq!(group("AECC_VALIGNMENT_CRESTCURVE_LABEL_GROUP").label_entity_ids(), vec![curves[0]]);
         assert_eq!(group("AECC_VALIGNMENT_SAGCURVE_LABEL_GROUP").label_entity_ids(), vec![curves[1]]);
         assert_eq!(group("AECC_VALIGNMENT_SAGCURVE_LABEL_GROUP").typed_handles()[3].0, styles[2]);
+    }
+
+    #[test]
+    fn views_keep_a_user_range() {
+        let v = Vector2::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let al = crate::classes::civil::add_alignment(&mut doc, "AL1", &[v(0.0, 0.0), v(300.0, 0.0)], None).unwrap();
+        crate::classes::civil::add_profile(&mut doc, al, "P1", &[v(0.0, 10.0), v(150.0, 45.0), v(300.0, 12.0)], &[0.0], None).unwrap();
+        assert!(add_profile_view_with_range(&mut doc, al, "X", v(0.0, 0.0), Some((50.0, 50.0)), None, None).is_err());
+        assert!(add_profile_view_with_range(&mut doc, al, "X", v(0.0, 0.0), None, Some((5.0, f64::NAN)), None).is_err());
+        let a = add_profile_view_with_range(&mut doc, al, "A", v(0.0, -200.0), Some((0.0, 60.0)), None, None).unwrap();
+        let b = add_profile_view_with_range(&mut doc, al, "B", v(400.0, -200.0), Some((-20.0, 320.0)), Some((-5.5, 30.25)), None).unwrap();
+        let back = round_trip(&doc, "range");
+        let fa = entity(&back, a).profile_view_frame().unwrap();
+        // Elevations 10 to 24 within stations 0 to 60: 10..30, 20 more each side.
+        assert_eq!((fa.station_min, fa.station_max, fa.elevation_min, fa.elevation_max), (0.0, 60.0, -10.0, 50.0));
+        let fb = entity(&back, b).profile_view_frame().unwrap();
+        assert_eq!((fb.origin, fb.station_min, fb.station_max, fb.elevation_min, fb.elevation_max), (v(400.0, -200.0), -20.0, 320.0, -5.5, 30.25));
     }
 }

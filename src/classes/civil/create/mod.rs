@@ -26,7 +26,7 @@ pub use corridor::add_corridor;
 pub use intersection::add_intersection;
 pub use groups::{add_point_group, add_point_group_query, set_point_group, set_point_group_query, Comparison, PointQuery};
 pub use profile::{add_profile, add_profile_with_curves, VerticalCurve};
-pub use profile_view::add_profile_view;
+pub use profile_view::{add_profile_view, add_profile_view_with_range};
 pub use sample_lines::{add_sample_line, add_sample_line_group, add_sections};
 pub use section_view::add_section_view;
 pub use site::{add_alignment_on_site, add_feature_line, add_feature_line_vertices, FeatureLineVertex, add_site};

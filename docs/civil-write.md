@@ -749,7 +749,13 @@ view of an alignment and all its profiles, its lower left corner at
 alignment's start to 200 past its end, elevations from the profiles'
 lowest to their highest rounded out to 10, with 20 more below and above
 (WV01: alignment 0-100, profile 10-20, view -200-300 and -10-40; WV03:
-0-300 and 2-24.5, view -200-500 and -20-50). The alignment is written
+0-300 and 2-24.5, view -200-500 and -20-50).
+`add_profile_view_with_range(doc, alignment, name, origin, stations,
+elevations, layer)` writes a view with a user-specified station range,
+elevation range or both; with only the stations given, the automatic
+elevations come from the profiles within them. The view stores a range
+word twice (`0x80000420`, plus 0x1000 for user stations and 0x2000 for
+user elevations); everything else follows from the range. The alignment is written
 again with the view: its record's second count after the elements (`BL
 n, BL v, BL 0, BL n`) is the number of views, and the views follow the
 profiles in its references (soft pointers, oldest first).
@@ -766,7 +772,15 @@ to WV04, so it is written as constant runs between the named values. The
 references: soft 0, hard owner 0, the style, the alignment (hard), per
 profile its record (soft), its style (hard) and a hard 0, then hard 0 x
 4, soft 0, hard 0; texts "", "", name, "", name, "". The records written
-for WV01 to WV04's origins, ranges and profiles equal theirs bit for bit.
+for WV01 to WV04's origins, ranges and profiles equal theirs bit for bit,
+and so do WV10 to WV13's (WR01 with a view whose stations are 10-90,
+elevations 0-30, both -50-150 and 5-45, both 0-100 and -7.5-33.25, set
+through the API). WR01 with the third of them written by acadrust
+(E-WV12) and a new drawing with three views of one alignment (stations
+50-250; elevations 0-40; stations -20-320 and elevations -5.5-30.25,
+E-PR1) open with AUDIT 0 errors; the API lists the written ranges (and,
+for the first, the automatic elevations of the profile between stations
+50 and 250).
 
 The application recomputes the view from its style when it opens the
 drawing: a view written with an empty style (E-V2: no settings, no
@@ -1196,8 +1210,8 @@ taken from the records and checked bit for bit against them.
 - Parcels, crossing members on a site (their splits and faces), parcel
   and feature line styles other than the defaults;
   sections, corridors, pipe networks: not written.
-- Profile views with a range, vertical scale or style other than the
-  default; the graph settings between the named values are constant runs.
+- Profile views with a vertical scale or style other than the default;
+  the graph settings between the named values are constant runs.
 
 ## 6. Status
 
@@ -1212,7 +1226,7 @@ taken from the records and checked bit for bit against them.
 | TIN surfaces (added points) | yes | yes (a new drawing gets §3d) | yes (§4) | not needed (the stored triangulation is drawn; the application rebuilds it after an edit) | other definitions |
 | layout profiles (fixed tangents; free symmetric and asymmetric parabolas, free circular curves) | yes | yes (a new drawing gets §3f) | yes (§4) | not needed (the application solves the stored entities) | fixed and floating curves |
 | sites, alignments and feature lines (arcs, elevation points) on a site | yes | yes (a new drawing gets the node of sites and the default parcel and feature line styles, §2c) | yes (§4) | not needed (the application rewrites the site's cache) | parcels, crossing members; containers the application edited after inserting elevation points |
-| profile views and their profile label groups | yes (frame) | yes (a new drawing gets the default view style, §3h) | yes (§3h) | not needed (the application recomputes the view from its style) | other ranges and styles |
+| profile views (automatic or user ranges) and their profile label groups | yes (frame) | yes (a new drawing gets the default view style, §3h) | yes (§3h) | not needed (the application recomputes the view from its style) | other styles and vertical scales |
 | corridors (one baseline, one region, unbuilt) | yes | yes, with an assembly of the drawing (§3i) | yes (§3i) | the corridor is written out of date and built by the application's rebuild | assemblies and subassemblies, built results, surfaces, several regions or baselines |
 | sample line groups and two-vertex sample lines | yes | yes, with the drawing's sample line label style (§3j) | yes (§3j) | not needed | lines with more vertices |
 | sections of a TIN surface (unsampled) | yes (geometry once sampled) | yes (§3j) | yes (§3j) | the application samples the source | corridor sources, lines added after sampling |
