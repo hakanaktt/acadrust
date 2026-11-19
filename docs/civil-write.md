@@ -176,17 +176,23 @@ default styles, written from templates as the label styles of §2b
 | `add_sections` | section style collection and default (`AECC_SECTION_STYLE`) | 0xC18 |
 | `add_section_view` | section view style collection and default (`AECC_SECTION_VIEW_STYLE`, 30896 bits each), section view band set collection and default (`AECC_SECTION_VIEW_BAND_STYLE_SET`) | 0x33, 0xC0E |
 | `add_intersection` | roadway marker style collection, its default and twelve marker styles named by GUID (`AECC_ROADWAYMARKER_STYLE`), intersection style collection and default (`AECC_INTERSECTION_STYLE`, each drawing one of the markers) | 0x11B, 0x1031 |
+| `add_site` | parcel style collection and default (`AECC_PARCEL_STYLE`), feature line style collection and default (`AECC_FEATURELINE_STYLE`, drawing the default roadway marker; the application's collection also lists three rail styles, which are not written), and the roadway markers | 2, 128, 0x11B |
 
-A drawing with some but not all of a writer's collections is refused (the
-records refer to each other). Their references are the other records and
-the drawing's layer "0" and ByBlock linetype. Written into a new drawing
+Each collection is written when the drawing lacks it; the intersection
+and feature line styles refer to the roadway marker styles by their ids
+in that collection. The other references are the written records and the
+drawing's layer "0" and ByBlock linetype. Written into a new drawing
 the records equal WX13's and WI01's bit for bit apart from the dates. A
 new drawing with two crossing alignments, their profiles, the
 intersection, a TIN surface, a sample line group with two lines (10/10
 and 3/33), their sections and two section views, all written by acadrust
 (E-DS1), opens with AUDIT 0 errors; the API lists the intersection at
 (50, 0) with its quadrants and the views with the style "Standard", the
-lines' offsets and the extents of their computed ranges.
+lines' offsets and the extents of their computed ranges. A new drawing
+with a site, a feature line and an alignment on it and an intersection of
+two siteless alignments (E-SS1) opens with AUDIT 0 errors; the API lists
+the feature line with the written feature line style and LIST shows the
+site's parcel style "Standard".
 
 ## 3. COGO points
 
@@ -1177,7 +1183,7 @@ taken from the records and checked bit for bit against them.
 | alignments (fixed lines, free arcs and spiral-curve-spirals, siteless) | yes | yes (a new drawing gets §3b) | yes (§4) | not needed (the application solves the stored elements) | other constraints, sites, labels |
 | TIN surfaces (added points) | yes | yes (a new drawing gets §3d) | yes (§4) | not needed (the stored triangulation is drawn; the application rebuilds it after an edit) | other definitions |
 | layout profiles (fixed tangents; free symmetric and asymmetric parabolas, free circular curves) | yes | yes (a new drawing gets §3f) | yes (§4) | not needed (the application solves the stored entities) | fixed and floating curves |
-| sites, alignments and feature lines on a site | yes | yes (a new drawing gets the node of sites, no styles) | yes (§4) | not needed (the application rewrites the site's cache) | parcels, crossing members, feature line arcs and elevation points |
+| sites, alignments and feature lines on a site | yes | yes (a new drawing gets the node of sites and the default parcel and feature line styles, §2c) | yes (§4) | not needed (the application rewrites the site's cache) | parcels, crossing members, feature line arcs and elevation points |
 | profile views and their profile label groups | yes (frame) | yes (a new drawing gets the default view style, §3h) | yes (§3h) | not needed (the application recomputes the view from its style) | other ranges and styles |
 | corridors (one baseline, one region, unbuilt) | yes | yes, with an assembly of the drawing (§3i) | yes (§3i) | the corridor is written out of date and built by the application's rebuild | assemblies and subassemblies, built results, surfaces, several regions or baselines |
 | sample line groups and two-vertex sample lines | yes | yes, with the drawing's sample line label style (§3j) | yes (§3j) | not needed | lines with more vertices |

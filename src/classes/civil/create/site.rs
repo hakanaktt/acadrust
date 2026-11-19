@@ -4,6 +4,7 @@
 use super::alignment::{default_style as alignment_style, elements, solve, write_alignment, PathPoint, VertexCurve, ARC_EDGE};
 use super::groups::bucket_insert;
 use super::support::*;
+use super::default_styles::{ensure_site_styles, KEY_FEATURE_LINE_STYLES, KEY_PARCEL_STYLES};
 use super::tree::{ensure_alignment_tree, DEFAULT_STYLE_ID, KEY_STYLES};
 use crate::entities::{EntityCommon, EntityType, ExtendedEntityData};
 use crate::error::DxfError;
@@ -13,9 +14,6 @@ use crate::CadDocument;
 
 /// Root key of the node that lists the sites.
 const KEY_SITES: i32 = 2;
-/// Style tree keys of the parcel style and feature line style collections.
-const KEY_PARCEL_STYLES: i32 = 2;
-const KEY_FEATURE_LINE_STYLES: i32 = 128;
 /// First text id given to a written site (kept apart from the other
 /// writers' ids).
 const FIRST_SITE_TAG: u32 = 0x8004_0001;
@@ -360,7 +358,7 @@ fn members_of(doc: &mut CadDocument, site: Handle) -> Result<(Handle, Vec<Member
 /// Adds an empty site named `name` with `description`. It takes the
 /// drawing's default parcel style and default feature line style (the
 /// default styles of the style tree's parcel and feature line style
-/// collections, id 30; none when the drawing has no such collection) and
+/// collections, id 30; a drawing without them gets the default ones) and
 /// joins the node of the sites, which a drawing without one gets (with no
 /// label styles).
 pub fn add_site(doc: &mut CadDocument, name: &str, description: &str) -> Result<Handle, DxfError> {
@@ -375,6 +373,7 @@ pub fn add_site(doc: &mut CadDocument, name: &str, description: &str) -> Result<
     if list.sites.iter().any(|s| s.2.eq_ignore_ascii_case(name)) {
         return Err(invalid("a site of that name exists"));
     }
+    ensure_site_styles(doc)?;
     let style = default_style_of(doc, KEY_PARCEL_STYLES).unwrap_or(0);
     let line_style = default_style_of(doc, KEY_FEATURE_LINE_STYLES).unwrap_or(0);
     let root = ensure_civil(doc)?;
@@ -627,8 +626,12 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let node = read_site_node(&back, root_node(&back, KEY_SITES).unwrap()).unwrap();
         assert_eq!(node.sites.len(), 1);
-        // No parcel style and no feature line style in a new drawing.
-        assert_eq!(arch(&back, s).typed_handles()[6].0, 0);
+        // A new drawing gets the default parcel and feature line styles.
+        let parcel = default_style_of(&back, KEY_PARCEL_STYLES).unwrap();
+        assert_eq!(object(&back, Handle::new(parcel)).unwrap().dxf_name, "AECC_PARCEL_STYLE");
+        assert_eq!(arch(&back, s).typed_handles()[6].0, parcel);
+        let line = default_style_of(&back, KEY_FEATURE_LINE_STYLES).unwrap();
+        assert_eq!(object(&back, Handle::new(line)).unwrap().dxf_name, "AECC_FEATURELINE_STYLE");
         assert_eq!(arch(&back, a).alignment_container(), Some(arch(&back, s).typed_handles()[5].0));
     }
 
