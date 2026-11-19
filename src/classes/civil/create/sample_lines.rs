@@ -17,7 +17,7 @@ use crate::CadDocument;
 const KEY_SAMPLE_LINE_STYLES: i32 = 0xCD5;
 /// Path from the style tree to the default sample line label style: the
 /// label node, the sample line labels, their collection, the default.
-const LABEL_PATH: [i32; 4] = [3, 0x112, 0x1002_A00F, DEFAULT_STYLE_ID];
+pub(super) const LABEL_PATH: [i32; 4] = [3, 0x112, 0x1002_A00F, DEFAULT_STYLE_ID];
 /// The class word after the class head (both records).
 const WORD_GROUP: i32 = 0x4000_0353;
 const WORD_LINE: i32 = 0x4000_8353;
@@ -37,7 +37,7 @@ const LINE_TAIL: &str = "1101010001111111111111111111111111111111100111111111111
 /// The group's texts after its name (the same in every sample).
 const GROUP_TEXTS: [&str; 7] = ["", "", "0", "0", "", "", ""];
 
-fn arch(doc: &CadDocument, h: Handle) -> Option<&ArchEntityData> {
+pub(super) fn arch(doc: &CadDocument, h: Handle) -> Option<&ArchEntityData> {
     match doc.get_entity(h)? {
         EntityType::Extended(x) => match &x.data {
             ExtendedEntityData::Arch(a) => Some(a),
@@ -120,7 +120,7 @@ fn write_group(doc: &mut CadDocument, common: EntityCommon, name: &str, alignmen
 ///
 /// The lines of WL11 to WL13 (stations 50, 80 and 20) equal the samples'
 /// records bit for bit.
-fn write_line(doc: &mut CadDocument, l: &Line) -> Result<Handle, DxfError> {
+pub(super) fn write_line(doc: &mut CadDocument, l: &Line) -> Result<Handle, DxfError> {
     let (name, station, offsets) = (l.name.as_str(), l.station, l.offsets);
     let mut refs = vec![soft_pointer(0), Ref(DwgReferenceType::HardOwnership, 0), hard_pointer(0), soft_pointer(0), soft_pointer(0), hard_pointer(l.style), hard_pointer(l.group)];
     refs.extend(l.sections.iter().chain(&l.views).map(|h| soft_pointer(*h)));
@@ -222,17 +222,17 @@ pub fn add_sample_line_group(doc: &mut CadDocument, alignment: Handle, name: &st
 }
 
 /// A sample line as written.
-struct Line {
-    common: EntityCommon,
+pub(super) struct Line {
+    pub(super) common: EntityCommon,
     /// The class word (kept when the line is written again).
-    word: i32,
-    name: String,
-    station: f64,
-    offsets: [f64; 2],
-    style: u64,
-    group: u64,
-    sections: Vec<u64>,
-    views: Vec<u64>,
+    pub(super) word: i32,
+    pub(super) name: String,
+    pub(super) station: f64,
+    pub(super) offsets: [f64; 2],
+    pub(super) style: u64,
+    pub(super) group: u64,
+    pub(super) sections: Vec<u64>,
+    pub(super) views: Vec<u64>,
 }
 
 /// A group as written: its record's alignment, lines, section sources
@@ -279,7 +279,7 @@ fn read_group(doc: &CadDocument, group: Handle) -> Option<Group> {
 
 /// A sample line record read back (see [`write_line`]), `None` for
 /// another record.
-fn read_line(doc: &CadDocument, line: Handle) -> Option<Line> {
+pub(super) fn read_line(doc: &CadDocument, line: Handle) -> Option<Line> {
     let Some(EntityType::Extended(x)) = doc.get_entity(line) else { return None };
     let ExtendedEntityData::Arch(a) = &x.data else { return None };
     (a.dxf_name == "AECC_SAMPLE_LINE").then_some(())?;
@@ -352,7 +352,7 @@ pub fn add_sample_line(doc: &mut CadDocument, group: Handle, name: &str, station
 }
 
 /// Style tree key of the section style collection.
-const KEY_SECTION_STYLES: i32 = 0xC18;
+pub(super) const KEY_SECTION_STYLES: i32 = 0xC18;
 /// The class word of a section record.
 const WORD_SECTION: i32 = 0x4000_8354;
 /// The run that closes a section record after its counts (WX12).
