@@ -292,7 +292,7 @@ pub(super) fn build(members: &[Input]) -> Result<Arrangement, &'static str> {
             }
         }
         // Crossing nodes take the next ids in the member's order.
-        crossings.sort_by(|a, b| (a.0, a.1).partial_cmp(&(b.0, b.1)).unwrap());
+        crossings.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
         let mut placed: Vec<(Vector2, usize)> = Vec::new();
         for &(i, t, x) in &crossings {
             let node = match placed.iter().find(|p| near(p.0, x)) {
@@ -308,7 +308,7 @@ pub(super) fn build(members: &[Input]) -> Result<Arrangement, &'static str> {
             }
         }
         for &(_, _, x) in &crossings {
-            let node = placed.iter().find(|p| near(p.0, x)).map(|p| p.1).unwrap();
+            let node = placed.iter().find(|p| near(p.0, x)).map(|p| p.1).ok_or("a crossing has no node")?;
             for &(a, b, g) in &old_segments {
                 if g == 0.0 && a != node && b != node {
                     let (pa, pb) = (s.nodes[a].0, s.nodes[b].0);
