@@ -1,5 +1,6 @@
 //! Intersections of two crossing alignments.
 
+use super::default_styles::{ensure_intersection_styles, KEY_INTERSECTION_STYLES};
 use super::sample_lines::arch;
 use super::site::default_style_of;
 use super::support::*;
@@ -10,8 +11,6 @@ use crate::io::dwg::dwg_stream_writers::DwgMergedWriter;
 use crate::types::{Handle, Vector2};
 use crate::CadDocument;
 
-/// Style tree key of the intersection style collection.
-const KEY_INTERSECTION_STYLES: i32 = 0x1031;
 /// The class word after the class head (0x4000836B or 0x4000836C in the
 /// samples, by session).
 const WORD: i32 = 0x4000_836B;
@@ -230,6 +229,7 @@ pub fn add_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_pr
         direction: Vector2::new(q.x - p.x, q.y - p.y),
     };
     let roads = [road(main, main_profile, a), road(other, other_profile, b)];
+    ensure_intersection_styles(doc)?;
     let style = default_style_of(doc, KEY_INTERSECTION_STYLES).ok_or_else(|| invalid("drawing has no intersection styles"))?;
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
@@ -241,23 +241,9 @@ pub fn add_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_pr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::classes::civil::create::tree::{DEFAULT_STYLE_ID, KEY_STYLES};
     use crate::classes::civil::{add_alignment, add_alignment_with_curves, add_profile, VertexCurve};
     use crate::io::dwg::{DwgReader, DwgWriter};
     use crate::types::DxfVersion;
-
-    fn node(doc: &mut CadDocument, handle: Handle, owner: Handle, key: i32, children: &[(i32, Handle)]) {
-        put_object(doc, "AECC_TREE_NODE", handle, owner, Vec::new(), |w| {
-            w.write_bit_long(key);
-            w.write_bit_long(children.len() as i32);
-            for c in children {
-                w.write_bit_long(c.0);
-            }
-            w.write_bit_long(0);
-            bits(w, "010");
-        }, Body { refs: children.iter().map(|c| soft_owner(c.1.value())).collect(), strings: vec![String::new()] })
-        .unwrap();
-    }
 
     #[test]
     fn crossings_get_their_stations_and_regions() {
@@ -272,13 +258,6 @@ mod tests {
         let pb = add_profile(&mut doc, b, "PB", &[v(0.0, 11.0), v(141.0, 11.0)], &[], None).unwrap();
         let pc = add_profile(&mut doc, c, "PC", &[v(0.0, 11.0), v(220.0, 11.0)], &[], None).unwrap();
         let pd = add_profile(&mut doc, d, "PD", &[v(0.0, 11.0), v(300.0, 11.0)], &[], None).unwrap();
-        // No intersection style yet.
-        assert!(add_intersection(&mut doc, "INT1", a, pa, b, pb, ["", ""], None).is_err());
-        let tree = root_node(&doc, KEY_STYLES).unwrap();
-        let [head, style] = [(); 2].map(|_| doc.allocate_handle());
-        node(&mut doc, head, tree, KEY_INTERSECTION_STYLES, &[(DEFAULT_STYLE_ID, style)]);
-        node(&mut doc, style, head, DEFAULT_STYLE_ID, &[]);
-        add_node_child(&mut doc, tree, KEY_INTERSECTION_STYLES, head, "").unwrap();
         assert!(add_intersection(&mut doc, "", a, pa, b, pb, ["", ""], None).is_err());
         assert!(add_intersection(&mut doc, "X", a, pb, b, pa, ["", ""], None).is_err());
         // AL2 and AL4 do not meet; AL1 and AL3 cross on the curve.
@@ -300,7 +279,12 @@ mod tests {
         assert_eq!(layout.region_angles.len(), 4);
         assert!(layout.region_angles.iter().all(|a| (a - std::f64::consts::FRAC_PI_2).abs() < 1e-12));
         let refs: Vec<u64> = x.typed_handles().iter().map(|r| r.0).collect();
-        assert_eq!(&refs[1..4], &[style.value(), a.value(), pa.value()]);
+        // The drawing gets the default intersection style, which draws one
+        // of the marker styles it gets with it.
+        let style = default_style_of(&back, KEY_INTERSECTION_STYLES).unwrap();
+        let marker = object(&back, Handle::new(style)).unwrap().decode().handles[0];
+        assert_eq!(object(&back, Handle::new(marker)).unwrap().dxf_name, "AECC_ROADWAYMARKER_STYLE");
+        assert_eq!(&refs[1..4], &[style, a.value(), pa.value()]);
         assert_eq!(x.decode().strings[2], "INT1");
         assert_eq!(x.decode().strings[9], "<dir>/sets.xml");
     }

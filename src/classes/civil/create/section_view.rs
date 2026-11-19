@@ -1,5 +1,6 @@
 //! Section views of sample lines.
 
+use super::default_styles::{ensure_section_view_styles, KEY_SECTION_VIEW_STYLES};
 use super::profile_view::{point, text};
 use super::sample_lines::{arch, read_line, write_line};
 use super::site::default_style_of;
@@ -11,8 +12,6 @@ use crate::io::dwg::dwg_stream_writers::DwgMergedWriter;
 use crate::types::{Handle, Vector2};
 use crate::CadDocument;
 
-/// Style tree key of the section view style collection.
-const KEY_SECTION_VIEW_STYLES: i32 = 0x33;
 /// The class words of a section view record.
 const GRAPH_WORDS: [i32; 2] = [357_877_593, 142_348_576];
 /// The graph keys and their values.
@@ -223,6 +222,7 @@ pub fn add_section_view(doc: &mut CadDocument, line: Handle, name: &str, origin:
     if l.sections.iter().any(|s| arch(doc, Handle::new(*s)).and_then(|a| a.section_geometry()).is_some_and(|g| !g.points.is_empty())) {
         return Err(invalid("views of a sampled section are not written"));
     }
+    ensure_section_view_styles(doc)?;
     let style = default_style_of(doc, KEY_SECTION_VIEW_STYLES).ok_or_else(|| invalid("drawing has no section view styles"))?;
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
@@ -238,39 +238,9 @@ pub fn add_section_view(doc: &mut CadDocument, line: Handle, name: &str, origin:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::classes::civil::create::sample_lines::KEY_SECTION_STYLES;
-    use crate::classes::civil::create::tree::{DEFAULT_STYLE_ID, KEY_STYLES};
     use crate::classes::civil::SectionViewFrame;
     use crate::io::dwg::{DwgReader, DwgWriter};
     use crate::types::DxfVersion;
-
-    /// A stand-in style collection: a tree node `key` under `owner` with
-    /// the given children.
-    fn node(doc: &mut CadDocument, handle: Handle, owner: Handle, key: i32, children: &[(i32, Handle)]) {
-        put_object(doc, "AECC_TREE_NODE", handle, owner, Vec::new(), |w| {
-            w.write_bit_long(key);
-            w.write_bit_long(children.len() as i32);
-            for c in children {
-                w.write_bit_long(c.0);
-            }
-            w.write_bit_long(0);
-            bits(w, "010");
-        }, Body { refs: children.iter().map(|c| soft_owner(c.1.value())).collect(), strings: vec![String::new()] })
-        .unwrap();
-    }
-
-    /// A collection `key` of the style tree holding one default style.
-    fn collection(doc: &mut CadDocument, path: &[i32]) -> Handle {
-        let tree = root_node(doc, KEY_STYLES).unwrap();
-        let nodes: Vec<Handle> = path.iter().map(|_| doc.allocate_handle()).collect();
-        for (i, key) in path.iter().enumerate() {
-            let owner = if i == 0 { tree } else { nodes[i - 1] };
-            let children: Vec<(i32, Handle)> = nodes.get(i + 1).map(|n| vec![(path[i + 1], *n)]).unwrap_or_default();
-            node(doc, nodes[i], owner, *key, &children);
-        }
-        add_node_child(doc, tree, path[0], nodes[0], "").unwrap();
-        *nodes.last().unwrap()
-    }
 
     #[test]
     fn views_take_the_line_offsets_and_join_the_line() {
@@ -278,16 +248,12 @@ mod tests {
         let mut doc = CadDocument::new();
         doc.version = DxfVersion::AC1032;
         let al = crate::classes::civil::add_alignment(&mut doc, "AL1", &[v(0.0, 0.0), v(100.0, 0.0)], None).unwrap();
-        collection(&mut doc, &[KEY_SECTION_STYLES, DEFAULT_STYLE_ID]);
         let g = crate::classes::civil::add_sample_line_group(&mut doc, al, "SLG1", None).unwrap();
         let a = crate::classes::civil::add_sample_line(&mut doc, g, "SL1", 50.0, 3.0, 33.0, None).unwrap();
         let b = crate::classes::civil::add_sample_line(&mut doc, g, "SL2", 80.0, 10.0, 10.0, None).unwrap();
         let p = |x: f64, y: f64| crate::types::Vector3::new(x, y, 10.0);
         let surface = crate::classes::civil::add_tin_surface(&mut doc, "S1", &[p(-10.0, -40.0), p(110.0, -40.0), p(110.0, 40.0)], None).unwrap();
         crate::classes::civil::add_sections(&mut doc, g, surface).unwrap();
-        // No section view style yet.
-        assert!(add_section_view(&mut doc, a, "SV1", v(200.0, 0.0), None).is_err());
-        let style = collection(&mut doc, &[KEY_SECTION_VIEW_STYLES, DEFAULT_STYLE_ID]);
         assert!(add_section_view(&mut doc, a, "", v(200.0, 0.0), None).is_err());
         assert!(add_section_view(&mut doc, g, "SV1", v(200.0, 0.0), None).is_err());
         let first = add_section_view(&mut doc, a, "SV1", v(200.0, 0.0), None).unwrap();
@@ -305,7 +271,10 @@ mod tests {
         assert_eq!(line.views, vec![first.value(), second.value()]);
         let view = arch(&back, first).unwrap();
         let refs: Vec<u64> = view.typed_handles().iter().map(|r| r.0).collect();
-        assert_eq!(&refs[2..5], &[style.value(), a.value(), line.sections[0]]);
+        // The drawing gets the default section view style.
+        let style = default_style_of(&back, KEY_SECTION_VIEW_STYLES).unwrap();
+        assert_eq!(object(&back, Handle::new(style)).unwrap().dxf_name, "AECC_SECTION_VIEW_STYLE");
+        assert_eq!(&refs[2..5], &[style, a.value(), line.sections[0]]);
         assert_eq!(view.decode().strings[2], "SV1");
     }
 }

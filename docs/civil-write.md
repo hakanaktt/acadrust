@@ -165,6 +165,29 @@ errors; the API lists the point with the point label style "Standard", the
 group's lines and the view's four
 label groups (E-L2 without label styles had AUDIT 2 errors).
 
+## 2c. Section, section view and intersection styles of a new drawing
+
+A drawing without them gets, when a writer needs them, the application's
+default styles, written from templates as the label styles of §2b
+(children and dates as fields, the rest constant runs, users empty):
+
+| writer | records | style tree keys |
+|---|---|---|
+| `add_sections` | section style collection and default (`AECC_SECTION_STYLE`) | 0xC18 |
+| `add_section_view` | section view style collection and default (`AECC_SECTION_VIEW_STYLE`, 30896 bits each), section view band set collection and default (`AECC_SECTION_VIEW_BAND_STYLE_SET`) | 0x33, 0xC0E |
+| `add_intersection` | roadway marker style collection, its default and twelve marker styles named by GUID (`AECC_ROADWAYMARKER_STYLE`), intersection style collection and default (`AECC_INTERSECTION_STYLE`, each drawing one of the markers) | 0x11B, 0x1031 |
+
+A drawing with some but not all of a writer's collections is refused (the
+records refer to each other). Their references are the other records and
+the drawing's layer "0" and ByBlock linetype. Written into a new drawing
+the records equal WX13's and WI01's bit for bit apart from the dates. A
+new drawing with two crossing alignments, their profiles, the
+intersection, a TIN surface, a sample line group with two lines (10/10
+and 3/33), their sections and two section views, all written by acadrust
+(E-DS1), opens with AUDIT 0 errors; the API lists the intersection at
+(50, 0) with its quadrants and the views with the style "Standard", the
+lines' offsets and the extents of their computed ranges.
+
 ## 3. COGO points
 
 ### Defaults looked up in the tree
@@ -931,9 +954,8 @@ by acadrust (E-SV2), the drawings open with AUDIT 0 errors and the API
 lists the views with the written locations, the lines' offsets as their
 offset range and the extents of the computed range ((170, 0) to (260, 40)
 for -30..60 at (200, 0)). Views of sampled sections, of lines with several
-sections, and the section view style of a new drawing (a new drawing has
-no sample line label style, so it has no sample line groups) are not
-written.
+sections are not written. A drawing without the section or section view
+styles gets the defaults (§2c).
 
 ## 3k. Intersections
 
@@ -1160,6 +1182,6 @@ taken from the records and checked bit for bit against them.
 | corridors (one baseline, one region, unbuilt) | yes | yes, with an assembly of the drawing (§3i) | yes (§3i) | the corridor is written out of date and built by the application's rebuild | assemblies and subassemblies, built results, surfaces, several regions or baselines |
 | sample line groups and two-vertex sample lines | yes | yes, with the drawing's sample line label style (§3j) | yes (§3j) | not needed | lines with more vertices |
 | sections of a TIN surface (unsampled) | yes (geometry once sampled) | yes (§3j) | yes (§3j) | the application samples the source | corridor sources, lines added after sampling |
-| section views of a line (default style, unsampled section) | yes (frame) | yes, with the drawing's section view style (§3j) | yes (§3j) | not needed | sampled sections, several sections, the style in a new drawing (label styles) |
-| intersections of two crossing roads (the object only) | yes (stations, angles) | yes, with the drawing's intersection style (§3k) | yes (§3k) | not needed | offset alignments, curb returns, corridor regions and locking actions; tee junctions; the style in a new drawing |
+| section views of a line (default style, unsampled section) | yes (frame) | yes, with the drawing's section view style or the default one (§3j, §2c) | yes (§3j, §2c) | not needed | sampled sections, several sections |
+| intersections of two crossing roads (the object only) | yes (stations, angles) | yes, with the drawing's intersection style or the default one (§3k, §2c) | yes (§3k, §2c) | not needed | offset alignments, curb returns, corridor regions and locking actions; tee junctions |
 | parcels, gradings, networks | partly | no | — | — | not started |

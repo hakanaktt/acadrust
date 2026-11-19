@@ -1,10 +1,10 @@
 //! The default label styles of a new drawing.
 
 use super::support::*;
-use super::tree::{ensure_point_tree, file_time, KEY_STYLES};
+use super::templates::{write_templates, Piece::{Children, Run, Time}, Target, Template};
+use super::tree::{ensure_point_tree, KEY_STYLES};
 use crate::error::DxfError;
 use crate::io::dwg::dwg_reference_type::DwgReferenceType::{HardOwnership, HardPointer, SoftPointer};
-use crate::io::dwg::dwg_stream_writers::DwgMergedWriter;
 use crate::types::Handle;
 use crate::CadDocument;
 
@@ -12,59 +12,6 @@ use crate::CadDocument;
 pub(super) const KEY_LABELS: i32 = 3;
 /// Style tree key of the profile label set collection.
 const KEY_PROFILE_LABEL_SETS: i32 = 96;
-
-/// What a reference of a template points to.
-#[derive(Clone, Copy)]
-enum Target {
-    Null,
-    /// Another template, by index.
-    Record(usize),
-    Layer0,
-    ByBlock,
-    /// The text style "Standard".
-    Standard,
-}
-
-/// A piece of a template's fields after its id.
-enum Piece {
-    /// A constant run: its length in bits and the bits as hex digits
-    /// (the last digit padded with zero bits).
-    Run(usize, &'static str),
-    /// A date key's value: the time the record is written.
-    Time,
-    /// The record's children: `BL n`, n x `BL key`.
-    Children,
-}
-use Piece::{Children, Run, Time};
-
-/// A record of the default label style tree: the style layout of the
-/// style tree (id, children, keys, component lists, class data) with
-/// everything but the children and the dates as constant runs.
-struct Template {
-    dxf: &'static str,
-    /// The record that owns it; `Null` for the style tree.
-    owner: Target,
-    /// `(key, template)` children.
-    children: &'static [(u32, usize)],
-    fields: &'static [Piece],
-    /// The references after the children's soft owner references.
-    refs: &'static [(crate::io::dwg::dwg_reference_type::DwgReferenceType, Target)],
-    strings: &'static [&'static str],
-}
-
-fn run(w: &mut DwgMergedWriter, len: usize, hex: &str) {
-    let mut left = len;
-    for c in hex.chars() {
-        let v = c.to_digit(16).unwrap_or(0);
-        for i in (0..4).rev() {
-            if left == 0 {
-                return;
-            }
-            w.write_bit(v >> i & 1 == 1);
-            left -= 1;
-        }
-    }
-}
 
 /// Writes the default label styles a new drawing lacks: the label node
 /// (style tree key 3) with the point (key 0x113), sample line (0x112)
@@ -83,46 +30,7 @@ pub(super) fn ensure_label_styles(doc: &mut CadDocument) -> Result<(), DxfError>
     if tree.children.iter().any(|c| c.0 == KEY_LABELS) {
         return Ok(());
     }
-    let table = |doc: &CadDocument, t: Target| -> Option<u64> {
-        Some(match t {
-            Target::Layer0 => doc.layers.get("0")?.handle.value(),
-            Target::ByBlock => doc.line_types.get("ByBlock")?.handle.value(),
-            Target::Standard => doc.text_styles.get("Standard")?.handle.value(),
-            _ => 0,
-        })
-    };
-    for t in [Target::Layer0, Target::ByBlock, Target::Standard] {
-        table(doc, t).ok_or_else(|| invalid("drawing lacks layer 0, the ByBlock linetype or the Standard text style"))?;
-    }
-    let handles: Vec<Handle> = TEMPLATES.iter().map(|_| doc.allocate_handle()).collect();
-    let now = file_time().to_le_bytes();
-    for (i, t) in TEMPLATES.iter().enumerate() {
-        let target = |doc: &CadDocument, x: Target| match x {
-            Target::Record(j) => handles[j].value(),
-            other => table(doc, other).unwrap_or(0),
-        };
-        let owner = match t.owner {
-            Target::Record(j) => handles[j],
-            _ => styles,
-        };
-        let mut refs: Vec<Ref> = t.children.iter().map(|c| soft_owner(handles[c.1].value())).collect();
-        refs.extend(t.refs.iter().map(|(kind, x)| Ref(*kind, target(doc, *x))));
-        let strings = t.strings.iter().map(|s| s.to_string()).collect();
-        put_object(doc, t.dxf, handles[i], owner, Vec::new(), |w| {
-            for p in t.fields {
-                match p {
-                    Run(len, hex) => run(w, *len, hex),
-                    Time => w.write_bytes(&now),
-                    Children => {
-                        w.write_bit_long(t.children.len() as i32);
-                        for c in t.children {
-                            w.write_bit_long(c.0 as i32);
-                        }
-                    }
-                }
-            }
-        }, Body { refs, strings })?;
-    }
+    let handles = write_templates(doc, styles, TEMPLATES)?;
     add_node_child(doc, styles, KEY_LABELS, handles[0], "")?;
     add_node_child(doc, styles, KEY_PROFILE_LABEL_SETS, handles[PROFILE_LABEL_SETS], "")
 }
