@@ -320,7 +320,10 @@ The two styles equal the samples' bit for bit apart from the dates.
 ```text
 BL 80, BL 0, BL 80, BL 80, BL 0, BL 0x10025F04, 6 bits 010101
 RC 1, key 0x0B001081: BL 2, BL 0, BL 0
-BL 0 (byte form), 65 zero bits, BD 2.25, 7 bits 0111010
+BL 0 (byte form), 115 zero bits, 8 bits 00000010, RC 0x40 | edge >> 2,
+2 bits edge & 3, 5 bits 11010 (edge: the alignment's edge in its
+companion, 1, or in its site's container, its member number; read before
+as BD 2.25 and 7 bits 0111010 for edge 1)
 BL 1 (first element id), BD 0, BD start station (0)
 7 bits 0000011, BD 0 (track gauge), B 0, BL 1
 BL n, the lines then the arcs:
@@ -554,7 +557,9 @@ from the dates.
 `add_site(doc, name, description)` writes an empty site;
 `add_alignment_on_site(doc, site, name, vertices, curves, layer)` writes an
 alignment like `add_alignment_with_curves` whose geometry joins the site's
-container instead of a companion. A site is an `AECC_PARCEL` entity named
+container instead of a companion; `add_feature_line(doc, site, name,
+points, layer)` writes a feature line of straight segments through 3D
+points on a site. A site is an `AECC_PARCEL` entity named
 `AeccImpFace` that belongs to no other site; it owns its container (an
 `AECC_FEATURE_STYLE` record) and is listed by the node of the sites (root
 key 2, `AECC_PARCEL_NODE`).
@@ -581,17 +586,19 @@ texts: "", the site names
 container:
 BS 0x04BE, BL 0, BL 0, BL 0, BL 32, BL 210, 21 bits 000000110010000000110,
 BL 0x80000001,
-nodes: BL next free id, BL n, BL first id, n x {3BD, 3 bits 010,
-  BL next id} (ids per member: its ends, then its inner points; records in
-  hash order, seven buckets by (id - 1) mod 7, the newest first)
-edges: BL next free id, BL m, per member BL 0, BL id, BL 48, BL count,
+nodes: BL next free id, BL n, BL first id, n x {3BD (z the elevation),
+  3 bits 010, BL next id} (ids per member: its ends, then its inner points;
+  records in hash order, seven buckets by (id - 1) mod 7, the newest first)
+edges: BL next free id, BL m, per member BL 0, BL id, BL flags (0x30 an
+  alignment, 0x10030 a feature line), BL count,
   BL 0, count x {BL kind (0 line, 1 arc, 2 last), BL flags, BL node,
   BL 1, BL 1 (0, 0 on the last point), an arc: BD bulge, BL 0}, BL 0,
   BL 0 x 3
 faces: BL 2, BL 1 (0 without members), the outside face {BL 1, BL 1,
-  BL 14, BL m, m x {BL 2 id - 1, BL 0}}, BL 1, 6 x {BL 1, BL 1},
+  BL 14, BL m, per member {BL 1 + the points of the members before it,
+  BL 0}}, BL 1, 6 x {BL 1, BL 1},
   6 x BL 0
-references: per member the alignment (soft) and soft pointer 0, then
+references: per member its record (soft) and soft pointer 0, then
   (with members) the site (soft) and soft pointer 0, then the default
   feature line style (hard)
 texts: ""
@@ -609,14 +616,32 @@ The site text ids are written from `0x80040001`. Written for the samples'
 names, the site, its container and the node of sites equal WT01's bit for
 bit apart from the text id; the containers written for WT07's and WT10 to
 WT13's alignments (one to four members, one to three segments each, ten
-nodes) equal the samples'. The run after the site's keys is a cache the
+nodes) and WF01 to WF07's feature lines and alignments (in every order)
+equal the samples'. The run after the site's keys is a cache the
 application rewrites: once an alignment joins a site it saves other values
 there (six BDs of the members' extents among them), but a site written
 with the empty-site values opens with any container (E-T1).
 
 An alignment on a site is the siteless record with the container in place
-of the companion (the samples' records are the same bit for bit, WA09 and
-WA01); no companion is written and the siteless node is not changed. A new
+of the companion and its member number as its edge id (the samples'
+records are the same bit for bit, WA09 and WA01, WT13); no companion is
+written and the siteless node is not changed. With the edge id left at 1
+the drawing opens, but the application no longer lists a feature line that
+comes before the alignment in the container (E-F6).
+
+A feature line is a short record; its points are its edge in the
+container:
+
+```text
+BL 80, BL 0, BL 80, BL 80, BL 0, BL 0x10025F04, 6 bits 010010,
+128 zero bits, BL 0, BL edge id, 7 bits 1101000, BS 0x04BE
+references: soft pointer 0, the container twice (hard), soft pointer 0,
+  the feature line style (hard; the one the container refers to)
+texts: "AeccImpFeatureLine", "", "", name
+```
+
+Written for WF01 and WF02's points, the records equal the samples' bit for
+bit. A new
 member must not cross or touch the site's members: the application splits
 crossing members at their intersections and makes parcels of the closed
 faces (WT09), which is not written. A site is accepted only when writing
@@ -742,7 +767,12 @@ curved one; WT01 (the application's site) plus four alignments written on
 it: no message, AUDIT 0 errors; the API lists the sites with their names
 and their alignments in the written order, the alignments with their
 lines and arcs (the arc of radius 80 from station 81.115 to 118.206), and
-the profile under its alignment with its tangents and parabola.
+the profile under its alignment with its tangents and parabola. Feature
+lines (WT01 plus FL1 through (0, 0, 10), (50, 0, 12), (100, 30, 11) and FL2
+through (0, 50, 5), (100, 50, 6); the same with an alignment of three lines
+between them; a new drawing with a site, FL1, an alignment of two lines and
+FL2): AUDIT 0 errors; the API lists both feature lines on the site with
+their points and elevations and their 2D lengths 108.310 and 100.
 
 A new drawing with surface `S` from WS03's ten points, alignment `AL1`
 through (0, 0), (20, 20) and point 1 at (5, 15, 2), all written by
@@ -769,9 +799,9 @@ taken from the records and checked bit for bit against them.
 - Profiles with other curve constraints (fixed or floating curves, curves
   by K or through a point), profiles of alignments the application has
   changed.
-- Parcels, crossing alignments on a site (their splits and faces),
-  feature lines, parcel and feature line styles; sections, corridors, pipe
-  networks: not written.
+- Parcels, crossing members on a site (their splits and faces), feature
+  lines with arcs or elevation points, parcel and feature line styles;
+  sections, corridors, pipe networks: not written.
 
 ## 6. Status
 
@@ -785,6 +815,6 @@ taken from the records and checked bit for bit against them.
 | alignments (fixed lines, free arcs and spiral-curve-spirals, siteless) | yes | yes (a new drawing gets §3b) | yes (§4) | not needed (the application solves the stored elements) | other constraints, sites, labels |
 | TIN surfaces (added points) | yes | yes (a new drawing gets §3d) | yes (§4) | not needed (the stored triangulation is drawn; the application rebuilds it after an edit) | other definitions |
 | layout profiles (fixed tangents; free symmetric and asymmetric parabolas, free circular curves) | yes | yes (a new drawing gets §3f) | yes (§4) | not needed (the application solves the stored entities) | fixed and floating curves |
-| sites, alignments on a site | yes | yes (a new drawing gets the node of sites, no styles) | yes (§4) | not needed (the application rewrites the site's cache) | parcels, crossing members |
+| sites, alignments and feature lines on a site | yes | yes (a new drawing gets the node of sites, no styles) | yes (§4) | not needed (the application rewrites the site's cache) | parcels, crossing members, feature line arcs and elevation points |
 | profile views | yes (frame) | no | — | — | the view record's 4800-bit graph settings, label groups, view style |
-| parcels, feature lines, gradings, sections, corridors, networks | partly | no | — | — | not started |
+| parcels, gradings, sections, corridors, networks | partly | no | — | — | not started |

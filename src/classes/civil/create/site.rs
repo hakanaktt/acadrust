@@ -166,11 +166,18 @@ pub(super) fn write_site(doc: &mut CadDocument, common: EntityCommon, tag: u32, 
     )
 }
 
-/// A member of a site: an alignment and its solved path.
+/// A member of a site: an alignment (its solved path, elevations 0) or a
+/// feature line (its points with their elevations).
 pub(super) struct Member {
     handle: u64,
     path: Vec<PathPoint>,
+    elevations: Vec<f64>,
+    feature_line: bool,
 }
+
+/// Edge flags of an alignment and of a feature line in a container.
+const ALIGNMENT_EDGE: i32 = 0x30;
+const FEATURE_LINE_EDGE: i32 = 0x1_0030;
 
 /// The site's container (`AECC_FEATURE_STYLE` owned by the site): the
 /// topology of its members, each an edge through its own nodes.
@@ -178,18 +185,20 @@ pub(super) struct Member {
 /// ```text
 /// BS 0x04BE, BL 0, BL 0 (no children), BL 0, BL 32, BL 210,
 /// 21 bits 000000110010000000110, BL 0x80000001,
-/// nodes: BL next free id, BL n, BL first id, n x {3BD, 3 bits 010,
-///   BL next id} (ids per member: its ends, then its inner points; the
-///   records in hash order, seven buckets by (id - 1) mod 7, the newest
-///   first in a bucket)
+/// nodes: BL next free id, BL n, BL first id, n x {3BD (z the
+///   elevation), 3 bits 010, BL next id} (ids per member: its ends, then
+///   its inner points; the records in hash order, seven buckets by
+///   (id - 1) mod 7, the newest first in a bucket)
 /// edges: BL next free id, BL m slots, per member BL 0, BL id (1..m),
-///   BL 48, BL count, BL 0, count x {BL kind (0 line, 1 arc, 2 last),
+///   BL flags (0x30 alignment, 0x10030 feature line), BL count, BL 0,
+///   count x {BL kind (0 line, 1 arc, 2 last),
 ///   BL flags, BL node, BL 1, BL 1 (the outside face on both sides; 0, 0
 ///   on the last point), an arc: BD bulge, BL 0}, BL 0, BL 0 x 3
 /// faces: BL 2, BL 1 (BL 0 without members), the outside face {BL 1,
-///   BL 1, BL 14, BL m, m x {BL 2 id - 1, BL 0}}, BL 1, 6 x {BL 1, BL 1},
+///   BL 1, BL 14, BL m, per member {BL 1 +
+///   the points of the members before it, BL 0}}, BL 1, 6 x {BL 1, BL 1},
 ///   6 x BL 0
-/// references: per member the alignment (soft pointer) and soft pointer
+/// references: per member its record (soft pointer) and soft pointer
 ///   0, then (with members) the site and soft pointer 0, then the default
 ///   feature line style (hard)
 /// texts: ""
@@ -199,8 +208,8 @@ pub(super) struct Member {
 /// point's flags are 2, with 0x30 added when another segment follows it
 /// (in its edge or a later one), 0x80 on the first point of an edge after
 /// the first, 0x010F0000 for an arc; an edge's last point's are 10
-/// (WT07, WT10 to WT13; written for their alignments, the containers
-/// equal the samples' bit for bit).
+/// (WT07, WT10 to WT13, WF01 to WF06; written for their members, the
+/// containers equal the samples' bit for bit).
 pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handle, members: &[Member], style: u64) -> Result<(), DxfError> {
     let nodes: usize = members.iter().map(|m| m.path.len()).sum();
     let mut refs: Vec<Ref> = members.iter().flat_map(|m| [soft_pointer(m.handle), soft_pointer(0)]).collect();
@@ -224,22 +233,22 @@ pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handl
             // records follow the application's hash order: seven buckets
             // by (id - 1) mod 7, the newest first in a bucket.
             let mut first_id = Vec::with_capacity(members.len());
-            let mut points: Vec<(i32, Vector2)> = Vec::with_capacity(nodes);
+            let mut points: Vec<(i32, Vector2, f64)> = Vec::with_capacity(nodes);
             for m in members {
                 first_id.push(points.len() as i32 + 1);
                 let n = m.path.len();
                 let mut order = vec![0, n - 1];
                 order.extend(1..n - 1);
                 for i in order {
-                    points.push((points.len() as i32 + 1, m.path[i].0));
+                    points.push((points.len() as i32 + 1, m.path[i].0, m.elevations[i]));
                 }
             }
-            points.sort_by_key(|(id, _)| ((id - 1) % 7, std::cmp::Reverse(*id)));
+            points.sort_by_key(|(id, ..)| ((id - 1) % 7, std::cmp::Reverse(*id)));
             w.write_bit_long(nodes as i32 + 1);
             w.write_bit_long(nodes as i32);
             w.write_bit_long(points.first().map_or(0, |p| p.0));
-            for (k, (_, p)) in points.iter().enumerate() {
-                for v in [p.x, p.y, 0.0] {
+            for (k, (_, p, z)) in points.iter().enumerate() {
+                for v in [p.x, p.y, *z] {
                     w.write_bit_double(v);
                 }
                 bits(w, "010");
@@ -249,7 +258,8 @@ pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handl
             w.write_bit_long(members.len() as i32);
             for (e, m) in members.iter().enumerate() {
                 let n = m.path.len();
-                for v in [0, e as i32 + 1, 48, n as i32, 0] {
+                let edge = if m.feature_line { FEATURE_LINE_EDGE } else { ALIGNMENT_EDGE };
+                for v in [0, e as i32 + 1, edge, n as i32, 0] {
                     w.write_bit_long(v);
                 }
                 let last_member = e + 1 == members.len();
@@ -283,9 +293,11 @@ pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handl
                 for v in [1, 1, 1, 14, members.len() as i32] {
                     w.write_bit_long(v);
                 }
-                for e in 0..members.len() {
-                    w.write_bit_long(2 * e as i32 + 1);
+                let mut before = 0;
+                for m in members {
+                    w.write_bit_long(before + 1);
                     w.write_bit_long(0);
+                    before += m.path.len() as i32;
                 }
             }
             w.write_bit_long(1);
@@ -315,11 +327,26 @@ fn members_of(doc: &mut CadDocument, site: Handle) -> Result<(Handle, Vec<Member
     let style = refs.last().map(|r| r.0).ok_or_else(refused)?;
     let edges = if refs.len() == 1 { Vec::new() } else { o.topology().ok_or_else(refused)?.edges };
     let handles: Vec<u64> = refs.iter().step_by(2).take(edges.len()).map(|r| r.0).collect();
+    let kind = |h: u64| match doc.get_entity(Handle::new(h)) {
+        Some(EntityType::Extended(x)) => match &x.data {
+            ExtendedEntityData::Arch(a) => Some(a.dxf_name == "AECC_FEATURE_LINE"),
+            _ => None,
+        },
+        _ => None,
+    };
     let members: Vec<Member> = edges
         .iter()
         .zip(&handles)
-        .map(|(run, h)| Member { handle: *h, path: run.iter().map(|v| (v.point, (v.bulge != 0.0).then_some(v.bulge))).collect() })
-        .collect();
+        .map(|(run, h)| {
+            Some(Member {
+                handle: *h,
+                path: run.iter().map(|v| (v.point, (v.bulge != 0.0).then_some(v.bulge))).collect(),
+                elevations: run.iter().map(|v| v.z).collect(),
+                feature_line: kind(*h)?,
+            })
+        })
+        .collect::<Option<_>>()
+        .ok_or_else(refused)?;
     let bits_of = |doc: &CadDocument| object(doc, container).and_then(|o| o.main_stream().map(|(d, s, e)| (s..e).map(|i| d[i / 8] >> (7 - i % 8) & 1).collect::<Vec<u8>>()));
     let before = bits_of(doc);
     write_container(doc, container, site, &members, style)?;
@@ -434,9 +461,74 @@ pub fn add_alignment_on_site(doc: &mut CadDocument, site: Handle, name: &str, ve
         layer_handle: Some(layer_handle),
         ..EntityCommon::default()
     };
-    members.push(Member { handle: common.handle.value(), path });
+    members.push(Member { handle: common.handle.value(), elevations: vec![0.0; path.len()], path, feature_line: false });
     write_container(doc, container, site, &members, line_style)?;
-    write_alignment(doc, common, name, &elements, style, container.value(), None, &[])
+    write_alignment(doc, common, name, &elements, style, container.value(), members.len() as i32, None, &[])
+}
+
+/// The feature line record (`AECC_FEATURE_LINE`; its points are its edge
+/// in the site's container):
+///
+/// ```text
+/// BL 80, BL 0, BL 80, BL 80, BL 0, BL 0x10025F04, 6 bits 010010,
+/// 128 zero bits, BL 0, BL edge id, 7 bits 1101000, BS 0x04BE
+/// references: soft pointer 0, the container twice (hard), soft pointer 0,
+///   the feature line style (hard)
+/// texts: "AeccImpFeatureLine", "", "", name
+/// ```
+// ponytail: the 128 zero bits and the 7-bit run are the same in every
+// sample (WF01 to WF06); name them once a feature line varies them.
+fn write_feature_line(doc: &mut CadDocument, common: EntityCommon, name: &str, edge: i32, container: Handle, style: u64) -> Result<Handle, DxfError> {
+    let refs = vec![soft_pointer(0), hard_pointer(container.value()), hard_pointer(container.value()), soft_pointer(0), hard_pointer(style)];
+    let strings = vec!["AeccImpFeatureLine".to_string(), String::new(), String::new(), name.to_string()];
+    put_entity(
+        doc,
+        "AECC_FEATURE_LINE",
+        common,
+        |w| {
+            for v in [80, 0, 80, 80, 0, 0x1002_5F04] {
+                w.write_bit_long(v);
+            }
+            bits(w, "010010");
+            bits(w, &"0".repeat(128));
+            w.write_bit_long(0);
+            w.write_bit_long(edge);
+            bits(w, "1101000");
+            w.write_bit_short(VERSION);
+        },
+        Body { refs, strings },
+    )
+}
+
+/// Adds a feature line through `points` (x, y, elevation; straight
+/// segments) on `site`: its edge joins the site's container. Like an
+/// alignment on a site it must not cross or touch the site's other
+/// members, and the site must be one this crate writes. It takes the
+/// feature line style the site's container uses.
+pub fn add_feature_line(doc: &mut CadDocument, site: Handle, name: &str, points: &[crate::types::Vector3], layer: Option<&str>) -> Result<Handle, DxfError> {
+    if points.len() < 2 || points.iter().any(|p| !p.x.is_finite() || !p.y.is_finite() || !p.z.is_finite()) || points.windows(2).any(|w| w[0].x == w[1].x && w[0].y == w[1].y) {
+        return Err(invalid("a feature line needs two or more finite points, apart in plan"));
+    }
+    if name.is_empty() {
+        return Err(invalid("a feature line needs a name"));
+    }
+    let path: Vec<PathPoint> = points.iter().map(|p| (Vector2::new(p.x, p.y), None)).collect();
+    let layer = layer.unwrap_or("0");
+    let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
+    let (container, mut members, line_style) = members_of(doc, site)?;
+    if members.iter().any(|m| paths_meet(&m.path, &path)) {
+        return Err(invalid("the feature line crosses or touches another member of the site"));
+    }
+    let common = EntityCommon {
+        handle: doc.allocate_handle(),
+        owner_handle: doc.header.model_space_block_handle,
+        layer: layer.into(),
+        layer_handle: Some(layer_handle),
+        ..EntityCommon::default()
+    };
+    members.push(Member { handle: common.handle.value(), path, elevations: points.iter().map(|p| p.z).collect(), feature_line: true });
+    write_container(doc, container, site, &members, line_style)?;
+    write_feature_line(doc, common, name, members.len() as i32, container, line_style)
 }
 
 #[cfg(test)]
@@ -538,5 +630,31 @@ mod tests {
         // No parcel style and no feature line style in a new drawing.
         assert_eq!(arch(&back, s).typed_handles()[6].0, 0);
         assert_eq!(arch(&back, a).alignment_container(), Some(arch(&back, s).typed_handles()[5].0));
+    }
+
+    #[test]
+    fn feature_lines_join_their_site() {
+        let v = Vector2::new;
+        let p = crate::types::Vector3::new;
+        let mut doc = drawing();
+        let s = add_site(&mut doc, "Site 1", "").unwrap();
+        let f1 = add_feature_line(&mut doc, s, "FL1", &[p(0.0, 0.0, 10.0), p(50.0, 0.0, 12.0), p(100.0, 30.0, 11.0)], None).unwrap();
+        let a = add_alignment_on_site(&mut doc, s, "AL1", &[v(0.0, 100.0), v(100.0, 100.0), v(150.0, 120.0)], &[VertexCurve::None], None).unwrap();
+        let f2 = add_feature_line(&mut doc, s, "FL2", &[p(0.0, 50.0, 5.0), p(100.0, 50.0, 6.0)], None).unwrap();
+        assert!(add_feature_line(&mut doc, s, "FL3", &[p(50.0, -10.0, 0.0), p(50.0, 10.0, 0.0)], None).is_err());
+        let path = std::env::temp_dir().join(format!("civil-feature-line-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let container = arch(&back, s).typed_handles()[5].0;
+        let c = object(&back, Handle::new(container)).unwrap();
+        assert_eq!(c.site_members(), vec![f1.value(), a.value(), f2.value()]);
+        let edges = c.topology().unwrap().edges;
+        assert_eq!(edges[0].iter().map(|v| v.z).collect::<Vec<_>>(), vec![10.0, 12.0, 11.0]);
+        assert_eq!(edges[2].iter().map(|v| (v.point, v.z)).collect::<Vec<_>>(), vec![(v(0.0, 50.0), 5.0), (v(100.0, 50.0), 6.0)]);
+        assert_eq!(arch(&back, f2).decode().strings.last().map(String::as_str), Some("FL2"));
+        // The alignment keeps its member number (2) as its edge id.
+        let (w, _) = super::super::alignment::rewritable(&back, a, |_| None).unwrap();
+        assert_eq!(w.edge, 2);
     }
 }
