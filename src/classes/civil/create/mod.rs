@@ -7,6 +7,7 @@
 mod alignment;
 mod corridor;
 mod groups;
+mod intersection;
 mod points;
 mod profile;
 mod profile_view;
@@ -19,6 +20,7 @@ mod tree;
 
 pub use alignment::{add_alignment, add_alignment_with_curves, VertexCurve};
 pub use corridor::add_corridor;
+pub use intersection::add_intersection;
 pub use groups::{add_point_group, add_point_group_query, set_point_group, set_point_group_query, Comparison, PointQuery};
 pub use profile::{add_profile, add_profile_with_curves, VerticalCurve};
 pub use profile_view::add_profile_view;
