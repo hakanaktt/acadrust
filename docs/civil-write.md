@@ -740,6 +740,81 @@ drawing without parcel or feature line styles gives the site and its
 container none: the application opens such a site (E-S12, E-S13), AUDIT 0
 errors, lists its alignments and keeps the site without a style.
 
+### Parcels
+
+`add_parcel(doc, site, vertices, layer)` writes a closed lot line (a parcel
+segment) through `vertices` on a site and the parcel inside it. The lot
+line is a member of the site's container like an alignment or a feature
+line; its inside becomes a new face of the container's topology, and the
+parcel (an `AECC_PARCEL` named `AeccImpFace` with the site as its second
+reference) points at that face.
+
+```text
+lot line (AECC_PARCEL_SEGMENT):
+BL 80, BL 0, BL 80, BL 80, BL 0, BL 0x10025F04, 6 bits 010010,
+128 zero bits, BL 0, BL edge id, 10 bits 1101010100, BS 0x04BE
+references: soft pointer 0, the container twice (hard), soft pointer 0,
+  hard pointer 0
+texts: "AeccImpLotLine", "", ""
+
+parcel:
+BL 80, BL 0, BL 80, BL 80, BL 0, BL 0x10025F04, B 0, BL 0, 3 bits 101,
+RC 3 keys: 0x0D00800A BL 0, 0x02008022 BD 0.1, 0x0200800B BD 1/24,
+BL 0, 121 zero bits,
+BL number, BL 0, BL 0, BD 0, 3BD label location, BL 80, BL 1,
+3BD label location, BL 2, BL 1, BL face, BL 0, B 0, BS 0x04BE
+references: soft pointer 0, the site (hard), hard ownership 0, the
+  parcel style (hard; the site's), the area label style (hard; the label
+  node's key 2 → 0x0F00C032 → 30)
+texts: "AeccImpFace", "", "" (the application names the parcel from its
+  style and number, "Standard : 1")
+```
+
+In the container a closed edge has flags 0x31 and no last point: its last
+point starts the segment back to the first (flags 0x22 on the last
+member, 0x32 otherwise); its nodes take ids in path order. The face section
+lists the outside face and one face per parcel:
+
+```text
+BL next free face id, BL count (0 without members),
+outside face: BL 1, BL 1, BL flags (6 with two or more lot lines, else
+  14), BL m, per member {BL its first node, BL 0}
+per parcel: BL face, BL face, BL 14, BL 1, BL entry node, BL 1
+BL 1, BL 1, BL p + 1, 10 x BL 1, BL p, BL 1 .. p, 5 x BL 0
+references after the site's pair: per parcel {parcel (soft), soft 0}
+```
+
+The faces are numbered from 2 in member order; a lot line's segments have
+its face on the inside and 1 outside (left/right as the line runs). A
+counterclockwise line's entry node is its first, a clockwise one's its last.
+The node records follow the application's hash order: eight buckets by id
+mod 8, each in id order (WP15, WP16: 30 and 50 nodes; the earlier rule,
+seven buckets newest first, gives the same order up to 14 nodes and is
+replaced). The area label goes in the middle of the parcel's extents; the
+application takes the parcel's face from that point, so where it falls on
+the boundary (a right triangle) the writer takes the middle of the widest
+run of the horizontal line through it inside the parcel (the application
+itself takes another inner point there).
+
+Samples WP03 (one counterclockwise rectangle), WP06 (clockwise), WP12 to
+WP14 (two to four disjoint lot lines, one clockwise, one a triangle) and
+WP17 (a clockwise right triangle) have lot lines added through the COM
+interface; written for the same lines, the segments,
+parcels and containers equal the samples' bit for bit, apart from the
+container's edge flag 0x800, which the application sets on an edge read
+from a file when another member joins. Checks: WT01 plus the four parcels
+of WP14 (E-P1), a new drawing with a site and two parcels (E-P2), and WT01
+with an alignment, a parcel, a feature line and a second parcel (E-P3)
+open with AUDIT 0 errors; the API lists every parcel with its number, area
+and extents, and LIST its boundary.
+
+Not written: lot lines that cross or touch other members (the application
+splits both at the intersection, inserting nodes flagged 0x400, and
+re-faces the site: WP04, WP05, WP09 to WP11), open lot lines, lot lines
+with arcs, and the order of the remaining faces after a split. A lot line
+alone (no closed loop) makes no parcel; alignments that close a loop make
+none either (WP01).
+
 ## 3h. Profile views
 
 `add_profile_view(doc, alignment, name, origin, layer)` writes a profile
@@ -1207,8 +1282,9 @@ taken from the records and checked bit for bit against them.
 - Profiles with other curve constraints (fixed or floating curves, curves
   by K or through a point), profiles of alignments the application has
   changed.
-- Parcels, crossing members on a site (their splits and faces), parcel
-  and feature line styles other than the defaults;
+- Crossing members on a site (their splits and faces), open lot lines and
+  lot lines with arcs, parcel and feature line styles other than the
+  defaults;
   sections, corridors, pipe networks: not written.
 - Profile views with a vertical scale or style other than the default;
   the graph settings between the named values are constant runs.
@@ -1225,11 +1301,12 @@ taken from the records and checked bit for bit against them.
 | alignments (fixed lines, free arcs and spiral-curve-spirals, siteless) | yes | yes (a new drawing gets §3b) | yes (§4) | not needed (the application solves the stored elements) | other constraints, sites, labels |
 | TIN surfaces (added points) | yes | yes (a new drawing gets §3d) | yes (§4) | not needed (the stored triangulation is drawn; the application rebuilds it after an edit) | other definitions |
 | layout profiles (fixed tangents; free symmetric and asymmetric parabolas, free circular curves) | yes | yes (a new drawing gets §3f) | yes (§4) | not needed (the application solves the stored entities) | fixed and floating curves |
-| sites, alignments and feature lines (arcs, elevation points) on a site | yes | yes (a new drawing gets the node of sites and the default parcel and feature line styles, §2c) | yes (§4) | not needed (the application rewrites the site's cache) | parcels, crossing members; containers the application edited after inserting elevation points |
+| sites, alignments and feature lines (arcs, elevation points) on a site | yes | yes (a new drawing gets the node of sites and the default parcel and feature line styles, §2c) | yes (§4) | not needed (the application rewrites the site's cache) | crossing members; containers the application edited after inserting elevation points |
+| parcels inside closed lot lines | yes (number, face, boundary) | yes (§3g) | yes (§3g) | not needed | crossing or touching members, open lot lines, arcs |
 | profile views (automatic or user ranges) and their profile label groups | yes (frame) | yes (a new drawing gets the default view style, §3h) | yes (§3h) | not needed (the application recomputes the view from its style) | other styles and vertical scales |
 | corridors (one baseline, one region, unbuilt) | yes | yes, with an assembly of the drawing (§3i) | yes (§3i) | the corridor is written out of date and built by the application's rebuild | assemblies and subassemblies, built results, surfaces, several regions or baselines |
 | sample line groups and two-vertex sample lines | yes | yes, with the drawing's sample line label style (§3j) | yes (§3j) | not needed | lines with more vertices |
 | sections of a TIN surface (unsampled) | yes (geometry once sampled) | yes (§3j) | yes (§3j) | the application samples the source | corridor sources, lines added after sampling |
 | section views of a line (default style, unsampled section) | yes (frame) | yes, with the drawing's section view style or the default one (§3j, §2c) | yes (§3j, §2c) | not needed | sampled sections, several sections |
 | intersections of two crossing roads (the object only) | yes (stations, angles) | yes, with the drawing's intersection style or the default one (§3k, §2c) | yes (§3k, §2c) | not needed | offset alignments, curb returns, corridor regions and locking actions; tee junctions |
-| parcels, gradings, networks | partly | no | — | — | not started |
+| gradings, networks | partly | no | — | — | not started |
