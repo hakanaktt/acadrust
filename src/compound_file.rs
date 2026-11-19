@@ -712,7 +712,7 @@ fn decode_property(data: &[u8]) -> CompoundPropertyValue {
             let (value, consumed) =
                 decode_scalar(element_type as u32, data.get(offset..).unwrap_or_default());
             values.push(value);
-            offset = align4(offset.saturating_add(consumed));
+            offset = next_element(data, element_type, offset.saturating_add(consumed));
         }
         return CompoundPropertyValue::Vector {
             element_type,
@@ -720,6 +720,24 @@ fn decode_property(data: &[u8]) -> CompoundPropertyValue {
         };
     }
     decode_scalar(variant_type, data.get(4..).unwrap_or_default()).0
+}
+
+/// Where the vector element after one that ends at `end` starts. Elements are padded to 4 bytes,
+/// except that Office writes the strings of a `VT_VECTOR | VT_LPSTR` (or `VT_LPWSTR`) back to
+/// back: the sheet names of an Excel 97-2003 workbook's `\x05DocumentSummaryInformation`, for
+/// one. So after a string the padding is skipped only when it is padding (zero bytes); bytes that
+/// aren't are the next element's length.
+fn next_element(data: &[u8], element_type: u16, end: usize) -> usize {
+    let padded = align4(end);
+    let string = matches!(element_type, 30 | 31);
+    let gap_is_padding = data
+        .get(end..padded)
+        .is_none_or(|gap| gap.iter().all(|byte| *byte == 0));
+    if string && !gap_is_padding {
+        end
+    } else {
+        padded
+    }
 }
 
 fn property_code_page(value: &CompoundPropertyValue) -> Option<u16> {
