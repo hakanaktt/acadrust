@@ -238,7 +238,7 @@ pub fn add_section_view(doc: &mut CadDocument, line: Handle, name: &str, origin:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::classes::civil::create::sample_lines::{KEY_SECTION_STYLES, LABEL_PATH};
+    use crate::classes::civil::create::sample_lines::KEY_SECTION_STYLES;
     use crate::classes::civil::create::tree::{DEFAULT_STYLE_ID, KEY_STYLES};
     use crate::classes::civil::SectionViewFrame;
     use crate::io::dwg::{DwgReader, DwgWriter};
@@ -278,7 +278,6 @@ mod tests {
         let mut doc = CadDocument::new();
         doc.version = DxfVersion::AC1032;
         let al = crate::classes::civil::add_alignment(&mut doc, "AL1", &[v(0.0, 0.0), v(100.0, 0.0)], None).unwrap();
-        collection(&mut doc, &LABEL_PATH);
         collection(&mut doc, &[KEY_SECTION_STYLES, DEFAULT_STYLE_ID]);
         let g = crate::classes::civil::add_sample_line_group(&mut doc, al, "SLG1", None).unwrap();
         let a = crate::classes::civil::add_sample_line(&mut doc, g, "SL1", 50.0, 3.0, 33.0, None).unwrap();

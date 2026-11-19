@@ -346,7 +346,9 @@ mod tests {
         let back = round_trip(&doc);
         let style = cogo_points(&back)[0].style;
         assert_ne!(style, 0);
-        assert_eq!(cogo_points(&back)[0].label_style, 0);
+        // The default point label style of the label styles a new drawing
+        // gets.
+        assert_eq!(cogo_points(&back)[0].label_style, super::super::labels::default_label_style(&back, super::super::labels::POINT_LABELS).unwrap());
         for key in [31, 5, 45] {
             assert!(root_node(&back, key).is_some(), "root key {key}");
         }

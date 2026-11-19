@@ -134,6 +134,37 @@ its styles; its default style has id 30 and no name. Written with the
 application's defaults, both records equal the samples' bit for bit apart
 from the dates.
 
+## 2b. Label styles of a new drawing
+
+A new drawing gets the default label styles with its style tree: the
+label node (`AECC_LABEL_NODE`, style tree key 3) with three label roots
+(`AECC_LABEL_COLLECTOR_STYLE`): points (key 0x113 → collection 0x1000B40C
+→ default 30 "Standard", class name `AeccDbCogoPoint`, three text
+components: point number, elevation, description), sample lines (0x112 →
+0x1002A00F → 30, `AeccDbSampleLine`, one text component "Sample Name")
+and profiles (0x49 with its six collections, their default styles and
+their text and radial line components), and the profile label set
+collection (`AECC_PROFILE_LABEL_SET`, style tree key 96) with its default
+set, which refers to the line, PVI, sag curve and crest curve label
+styles. The points settings name the default point label style, so the
+points written into the drawing take it, and sample line groups and
+profile views find their label styles.
+
+The 38 records follow the style layout of §2a (id, children, keys,
+component lists, class data). They are the application's records with
+the users empty and the dates the time of writing; the children and
+dates are written as fields, everything between them as constant runs
+(the styles' settings, not split into fields). Their references are the
+other records of the tree and the drawing's layer "0", the ByBlock
+linetype and the text style "Standard". Written into a new drawing the
+records equal WL13's bit for bit apart from the dates (36 records walked
+in parallel from the label node). A new drawing with a point, an
+alignment, a profile with a parabola, a profile view and a sample line
+group with two lines, all written by acadrust (E-LB2), opens with AUDIT 0
+errors; the API lists the point with the point label style "Standard", the
+group's lines and the view's four
+label groups (E-L2 without label styles had AUDIT 2 errors).
+
 ## 3. COGO points
 
 ### Defaults looked up in the tree
@@ -717,8 +748,9 @@ The groups of WV01, WV02 and WV03 (two and four line labels, none to two
 curve labels) are reproduced bit for bit. With the view written into WR01
 (E-V1: view, groups and the alignment equal WV01's bit for bit) the
 application opens the drawing with AUDIT 0 errors and lists the view with
-the same API values as its own. A new drawing has no profile label set,
-so its views have no label groups.
+the same API values as its own. A new drawing gets the default label
+styles with the profile label set (§2b), so its views get the four label
+groups.
 
 ## 3i. Corridors
 
@@ -821,8 +853,8 @@ each.
 The group's label style is the default sample line label style (style
 tree key 3, then 0x112, 0x1002A00F, id 30). Written with no label style
 (E-L2, a new drawing) the group opens but AUDIT reports its null label
-style, so a drawing without label styles is refused; a drawing without
-the sample line style collection (style tree key 0xCD5) gets it and its
+style, so a drawing without the label node gets the default label
+styles (§2b); a drawing without the sample line style collection (style tree key 0xCD5) gets it and its
 default style (the users and dates, plan components 0 and 1, model
 components 0 and 1 hidden), which the application accepts (E-L2).
 
@@ -1094,9 +1126,8 @@ taken from the records and checked bit for bit against them.
 
 ## 5. What is left
 
-- Label styles (the label node and its collector and text styles): a
-  point written into a new drawing has no label until the user gives it
-  one.
+- Label styles other than the defaults of §2b, and label roots other
+  than points, sample lines and profiles in a new drawing.
 - Point groups by name or full description, with exclusions, AND of
   several criteria, elevation ranges, override styles per group.
 - Alignments with lone spirals or other curve constraints, on a site,
@@ -1120,14 +1151,14 @@ taken from the records and checked bit for bit against them.
 | COGO points, database, `_All Points` | yes | yes (a new drawing gets §2a) | yes (§4) | not needed (the application draws points from the database) | — |
 | point groups (number lists, elevation comparisons, description patterns) | yes | yes | yes (§4) | not needed (the application lists the written members) | names, full descriptions, exclusions, override settings |
 | point style, its collection, class and settings nodes | yes | yes, in a drawing without the tree (§2a) | yes (§4) | not needed | — |
-| label styles | partly | no | — | — | label node settings (1621 bits), collector and text style records |
+| label styles: label node, point, sample line and profile label roots and default styles, profile label set | partly | yes, the defaults in a new drawing (§2b) | yes (§2b) | not needed | other label roots, styles other than the defaults (the settings are constant runs) |
 | alignments (fixed lines, free arcs and spiral-curve-spirals, siteless) | yes | yes (a new drawing gets §3b) | yes (§4) | not needed (the application solves the stored elements) | other constraints, sites, labels |
 | TIN surfaces (added points) | yes | yes (a new drawing gets §3d) | yes (§4) | not needed (the stored triangulation is drawn; the application rebuilds it after an edit) | other definitions |
 | layout profiles (fixed tangents; free symmetric and asymmetric parabolas, free circular curves) | yes | yes (a new drawing gets §3f) | yes (§4) | not needed (the application solves the stored entities) | fixed and floating curves |
 | sites, alignments and feature lines on a site | yes | yes (a new drawing gets the node of sites, no styles) | yes (§4) | not needed (the application rewrites the site's cache) | parcels, crossing members, feature line arcs and elevation points |
-| profile views and their profile label groups | yes (frame) | yes (a new drawing gets the default view style, §3h) | yes (§3h) | not needed (the application recomputes the view from its style) | other ranges and styles, label groups in a new drawing (no label set) |
+| profile views and their profile label groups | yes (frame) | yes (a new drawing gets the default view style, §3h) | yes (§3h) | not needed (the application recomputes the view from its style) | other ranges and styles |
 | corridors (one baseline, one region, unbuilt) | yes | yes, with an assembly of the drawing (§3i) | yes (§3i) | the corridor is written out of date and built by the application's rebuild | assemblies and subassemblies, built results, surfaces, several regions or baselines |
-| sample line groups and two-vertex sample lines | yes | yes, with the drawing's sample line label style (§3j) | yes (§3j) | not needed | label styles in a new drawing, lines with more vertices |
+| sample line groups and two-vertex sample lines | yes | yes, with the drawing's sample line label style (§3j) | yes (§3j) | not needed | lines with more vertices |
 | sections of a TIN surface (unsampled) | yes (geometry once sampled) | yes (§3j) | yes (§3j) | the application samples the source | corridor sources, lines added after sampling |
 | section views of a line (default style, unsampled section) | yes (frame) | yes, with the drawing's section view style (§3j) | yes (§3j) | not needed | sampled sections, several sections, the style in a new drawing (label styles) |
 | intersections of two crossing roads (the object only) | yes (stations, angles) | yes, with the drawing's intersection style (§3k) | yes (§3k) | not needed | offset alignments, curb returns, corridor regions and locking actions; tee junctions; the style in a new drawing |
