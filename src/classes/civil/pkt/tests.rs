@@ -121,3 +121,64 @@ fn foreign_parts_are_refused() {
     q.part = "short".into();
     assert!(write_pkt(&q).is_err());
 }
+
+#[test]
+fn part_names_are_stable_version_4_guids() {
+    let a = new_part_name("Lane");
+    assert_eq!(a, new_part_name("Lane"));
+    assert_ne!(a, new_part_name("Lane2"));
+    assert!(a.len() == 32 && a.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()));
+    assert_eq!(&a[12..13], "4");
+    assert!("89ab".contains(&a[16..17]));
+    let p = PktPackage::new("Lane", &a);
+    assert_eq!(p.tool_id.len(), 38);
+}
+
+/// The lane of `lane()`, built with the builders.
+#[test]
+fn builders_make_the_lane() {
+    let mut p = PktPackage::new("Lane", "0123456789abcdef0123456789abcdef");
+    let q = lane();
+    p.creator = q.creator.clone();
+    p.namespaces = q.namespaces.clone();
+    p.parameters = vec![parameter_side(PktSide::Right), parameter_double("Width", 3.5, "Lane width"), parameter_double("Depth", 0.3, "Pavement depth"), parameter_grade("Slope", -0.02, "Lane cross slope")];
+    let none = PointTargets::default();
+    let (flowchart, start) = chain(vec![
+        point_delta(1, "P1", None, None, "0", "0", &["Crown"]),
+        point_slope(2, "P2", "P1", Some(("L1", &["Top", "Pave"])), "[Slope]", "[Width]", none, &["ETW"]),
+        point_delta(3, "P3", Some("P2"), Some(("L2", &[])), "0", "[-Depth]", &["ETW_Datum"]),
+        point_slope(4, "P4", "P3", Some(("L3", &["Datum"])), "[Slope]", "[-Width]", none, &["Crown_Datum"]),
+        link(5, "L4", "P4", "P1", &[]),
+        shape(6, "S1", &["L1", "L2", "L3", "L4"], &["Pave"]),
+    ]);
+    p.flowchart = flowchart;
+    p.start = start;
+    assert_eq!(p, q);
+    let back = read_pkt(&write_pkt(&p).unwrap()).unwrap();
+    assert_eq!(back, p);
+    // a target and a slope parameter survive the round trip
+    let mut t = p.clone();
+    t.parameters.push(parameter_slope("Fill", 4.0, "Fill slope"));
+    t.parameters.push(PktParameter { name: "WidthTarget".into(), direction: PktDirection::In, type_name: "asw:OffsetTarget".into(), default: None, attributes: vec![PktAttribute::Enabled(true)] });
+    if let PktNode::Step(s) = &mut t.flowchart[1] {
+        s.action = point_slope(2, "P2", "P1", Some(("L1", &["Top", "Pave"])), "[Slope]", "[Width]", PointTargets { offset: Some("[WidthTarget]"), ..none }, &["ETW"]);
+    }
+    let back = read_pkt(&write_pkt(&t).unwrap()).unwrap();
+    assert_eq!(back, t);
+}
+
+#[test]
+fn new_packages_carry_the_editors_settings() {
+    let p = PktPackage::new_package("Lane", &new_part_name("Lane"));
+    assert_eq!(p.creator.product, EDITOR_PRODUCT);
+    assert_eq!(p.namespaces.len(), 13);
+    assert_eq!(p.namespaces.iter().filter(|n| n.1.starts_with("clr-namespace:")).count(), 7);
+    let mut q = p.clone();
+    q.parameters = vec![parameter_side(PktSide::Right), parameter_double("Width", 3.5, "Lane width")];
+    let (f, s) = chain(vec![point_delta(1, "P1", None, None, "0", "0", &["Crown"]), point_delta(2, "P2", Some("P1"), Some(("L1", &["Top"])), "[Width]", "0", &["ETW"])]);
+    q.flowchart = f;
+    q.start = s;
+    let bytes = write_pkt(&q).unwrap();
+    assert_eq!(read_pkt(&bytes).unwrap(), q);
+    assert_eq!(bytes, write_pkt(&q).unwrap());
+}
