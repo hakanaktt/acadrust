@@ -332,7 +332,19 @@ pub fn add_structure(doc: &mut CadDocument, network: Handle, position: Vector3, 
                 }
                 run(w, STRUCTURE_RECORD.0, STRUCTURE_RECORD.1);
                 id.iter().for_each(|b| w.write_byte(*b));
-                run(w, STRUCTURE_TAIL.0, STRUCTURE_TAIL.1);
+                run_range(w, STRUCTURE_TAIL.1, 0, OUTLINE.0);
+                // The cached plan outline: a circle of radius 0.5 about
+                // the insertion point, four quarter arcs from the top
+                // going counterclockwise (x, y, bulge, flag).
+                let bulge = (std::f64::consts::PI / 8.0).tan();
+                for (dx, dy) in [(0.0, 0.5), (-0.5, 0.0), (0.0, -0.5), (0.5, 0.0)] {
+                    for v in [position.x + dx, position.y + dy, bulge] {
+                        w.write_2bits(0);
+                        w.write_raw_double(v);
+                    }
+                    w.write_bit(false);
+                }
+                run_range(w, STRUCTURE_TAIL.1, OUTLINE.1, STRUCTURE_TAIL.0);
             },
             Body { refs, strings },
         )
@@ -372,6 +384,142 @@ pub fn add_pipe(doc: &mut CadDocument, network: Handle, start: Vector3, end: Vec
             Body { refs, strings },
         )
     })
+}
+
+/// Bit range of the cached plan outline in `STRUCTURE_TAIL`.
+const OUTLINE: (usize, usize) = (473, 1269);
+
+/// Bits `from..to` of the constant run `hex`.
+fn run_range(w: &mut crate::io::dwg::dwg_stream_writers::DwgMergedWriter, hex: &str, from: usize, to: usize) {
+    for i in from..to {
+        let v = hex.as_bytes().get(i / 4).and_then(|c| (*c as char).to_digit(16)).unwrap_or(0);
+        w.write_bit(v >> (3 - i % 4) & 1 == 1);
+    }
+}
+
+/// A record's reference as written, from its kind code.
+fn typed(r: (u64, u8)) -> Ref {
+    let kind = match r.1 {
+        2 => DwgReferenceType::SoftOwnership,
+        3 => DwgReferenceType::HardOwnership,
+        4 => DwgReferenceType::SoftPointer,
+        5 => DwgReferenceType::HardPointer,
+        _ => DwgReferenceType::Undefined,
+    };
+    Ref(kind, r.0)
+}
+
+/// Index of a part's first connector reference: after hard 0, hard 0,
+/// soft 0, hard owner 0, part definition and style.
+const FIRST_CONNECTOR: usize = 6;
+
+/// A pipe or structure with its connector count raised to `connectors.len()`
+/// and `connectors` as its connector references (after the style),
+/// rewriting the record's count field and keeping every other bit.
+fn set_connectors(doc: &mut CadDocument, part: Handle, structure: bool, connectors: &[u64]) -> Result<(), DxfError> {
+    let refused = || invalid("the part's record is not laid out as a pipe or structure");
+    let a = arch_entity(doc, part).ok_or_else(refused)?;
+    let (data, start, end) = a.main_stream().ok_or_else(refused)?;
+    let (at, after, count) = crate::classes::civil::network_connector_count(data, start, end, structure).ok_or_else(refused)?;
+    let count = usize::try_from(count).map_err(|_| refused())?;
+    let mut refs: Vec<Ref> = a.typed_handles().into_iter().map(typed).collect();
+    (refs.len() >= FIRST_CONNECTOR + count).then_some(()).ok_or_else(refused)?;
+    refs.splice(FIRST_CONNECTOR..FIRST_CONNECTOR + count, connectors.iter().map(|h| hard_pointer(*h)));
+    let bit = |p: usize| data[p / 8] >> (7 - p % 8) & 1 == 1;
+    let (head, tail): (Vec<bool>, Vec<bool>) = ((start..at).map(bit).collect(), (after..end).map(bit).collect());
+    let strings = a.decode().strings;
+    let dxf = a.dxf_name.clone();
+    let common = doc.get_entity(part).ok_or_else(refused)?.common().clone();
+    put_entity(
+        doc,
+        &dxf,
+        common,
+        |w| {
+            head.iter().for_each(|b| w.write_bit(*b));
+            w.write_bit_long(connectors.len() as i32);
+            tail.iter().for_each(|b| w.write_bit(*b));
+        },
+        Body { refs, strings },
+    )?;
+    Ok(())
+}
+
+/// The connector references of a part (see [`set_connectors`]).
+fn connectors_of(doc: &CadDocument, part: Handle, structure: bool) -> Option<Vec<u64>> {
+    let a = arch_entity(doc, part)?;
+    let (data, start, end) = a.main_stream()?;
+    let (.., count) = crate::classes::civil::network_connector_count(data, start, end, structure)?;
+    let refs = a.typed_handles();
+    Some(refs.get(FIRST_CONNECTOR..FIRST_CONNECTOR + usize::try_from(count).ok()?)?.iter().map(|r| r.0).collect())
+}
+
+/// A connector (`AECC_NETWORK_PART_CONNECTOR`, an entity on the network's
+/// layer) of `part`, paired with the connector `pair` of the part it meets
+/// (0 for an open pipe end):
+///
+/// ```text
+/// CONNECTOR (constant)
+/// references: soft 0, hard owner 0, pair (soft), part (hard)
+/// texts: "AeccImpNetworkPartConnector", "", ""
+/// ```
+fn write_connector(doc: &mut CadDocument, handle: Handle, layer: &str, pair: u64, part: Handle) -> Result<Handle, DxfError> {
+    let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
+    let common = EntityCommon { handle, owner_handle: doc.header.model_space_block_handle, layer: layer.into(), layer_handle: Some(layer_handle), ..EntityCommon::default() };
+    put_entity(
+        doc,
+        "AECC_NETWORK_PART_CONNECTOR",
+        common,
+        |w| run(w, CONNECTOR.0, CONNECTOR.1),
+        Body { refs: vec![soft_pointer(0), hard_owner(0), soft_pointer(pair), hard_pointer(part.value())], strings: texts(CONNECTOR_STRINGS) },
+    )
+}
+
+/// Connects the ends of `pipe` to the structures `start` and `end` (an end
+/// given `None` stays open). The pipe must have no connections yet and the
+/// structures must be in its network.
+///
+/// A connected pipe has two connectors, start then end; a structure has
+/// one per pipe it meets, in the order the pipes were connected. Each
+/// connector is paired with the one of the part it meets; an open end's
+/// connector is paired with none. The structures keep the positions they
+/// have: the application places a connected structure on the lowest pipe
+/// end it meets when the network is edited.
+pub fn connect_pipe(doc: &mut CadDocument, pipe: Handle, start: Option<Handle>, end: Option<Handle>) -> Result<(), DxfError> {
+    let p = arch_entity(doc, pipe).filter(|a| a.dxf_name == "AECC_PIPE").ok_or_else(|| invalid("not a pipe"))?;
+    let network = p.typed_handles().get(6).map(|r| r.0);
+    if start.is_none() && end.is_none() {
+        return Err(invalid("a connection needs a structure"));
+    }
+    if start.is_some() && start == end {
+        return Err(invalid("a pipe cannot meet one structure at both ends"));
+    }
+    if connectors_of(doc, pipe, false).ok_or_else(|| invalid("the pipe's record is not laid out as a pipe"))?.len() != 0 {
+        return Err(invalid("the pipe is connected already"));
+    }
+    for s in [start, end].into_iter().flatten() {
+        let st = arch_entity(doc, s).filter(|a| a.dxf_name == "AECC_STRUCTURE").ok_or_else(|| invalid("not a structure"))?;
+        let at = connectors_of(doc, s, true).ok_or_else(|| invalid("the structure's record is not laid out as a structure"))?.len();
+        if st.typed_handles().get(FIRST_CONNECTOR + at).map(|r| r.0) != network {
+            return Err(invalid("the structure is not in the pipe's network"));
+        }
+    }
+    let layer = doc.get_entity(pipe).map(|e| e.common().layer.clone()).unwrap_or_default();
+    let ends = [doc.allocate_handle(), doc.allocate_handle()];
+    for (own, structure) in ends.into_iter().zip([start, end]) {
+        let pair = match structure {
+            Some(s) => {
+                let other = doc.allocate_handle();
+                write_connector(doc, other, &layer, own.value(), s)?;
+                let mut list = connectors_of(doc, s, true).unwrap_or_default();
+                list.push(other.value());
+                set_connectors(doc, s, true, &list)?;
+                other.value()
+            }
+            None => 0,
+        };
+        write_connector(doc, own, &layer, pair, pipe)?;
+    }
+    set_connectors(doc, pipe, false, &[ends[0].value(), ends[1].value()])
 }
 
 #[cfg(test)]
@@ -437,6 +585,15 @@ mod tests {
         let p1 = add_pipe(&mut doc, n, v(10.0, 20.0, -2.0), v(100.0, 20.0, -3.0)).unwrap();
         assert!(add_pipe(&mut doc, n, v(1.0, 1.0, 1.0), v(1.0, 1.0, 1.0)).is_err());
         assert!(add_pipe(&mut doc, s1, v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0)).is_err(), "not a network");
+        // Connections: two connectors on the pipe (start, end), one per
+        // pipe on a structure, each paired with the other part's.
+        let p2 = add_pipe(&mut doc, n, v(100.0, 20.0, -3.0), v(150.0, 20.0, -4.0)).unwrap();
+        assert!(connect_pipe(&mut doc, p1, None, None).is_err());
+        assert!(connect_pipe(&mut doc, p1, Some(s1), Some(s1)).is_err());
+        assert!(connect_pipe(&mut doc, p1, Some(p2), None).is_err(), "not a structure");
+        connect_pipe(&mut doc, p1, Some(s1), Some(s2)).unwrap();
+        connect_pipe(&mut doc, p2, Some(s2), None).unwrap();
+        assert!(connect_pipe(&mut doc, p1, Some(s1), None).is_err(), "connected already");
         let path = std::env::temp_dir().join(format!("civil-networks-{}.dwg", std::process::id()));
         DwgWriter::write_to_file(&path, &doc).unwrap();
         let back = DwgReader::from_file(&path).unwrap().read().unwrap();
@@ -444,7 +601,7 @@ mod tests {
         let net = read_network(&back, n).unwrap();
         assert_eq!(net.name, "NW1");
         assert_eq!(net.structures, vec![s1.value(), s2.value()]);
-        assert_eq!(net.pipes, vec![p1.value()]);
+        assert_eq!(net.pipes, vec![p1.value(), p2.value()]);
         let s = arch_entity(&back, s1).unwrap();
         assert_eq!(s.structure_position(), Some(v(10.0, 20.0, 3.0)));
         assert!((s.network_part_rotation().unwrap() - 0.5).abs() < 1e-12);
@@ -453,7 +610,16 @@ mod tests {
         let p = arch_entity(&back, p1).unwrap();
         assert_eq!(p.pipe_ends(), Some((v(10.0, 20.0, -2.0), v(100.0, 20.0, -3.0))));
         let refs: Vec<u64> = p.typed_handles().iter().map(|r| r.0).collect();
-        assert_eq!((refs[5], refs[6], refs[10]), (styles[2], n.value(), styles[3]));
+        assert_eq!((refs[5], refs[8], refs[12]), (styles[2], n.value(), styles[3]));
+        let pair = |c: u64| arch_entity(&back, Handle::new(c)).unwrap().typed_handles().iter().map(|r| r.0).collect::<Vec<u64>>();
+        let ends = connectors_of(&back, p1, false).unwrap();
+        assert_eq!(ends.len(), 2);
+        assert_eq!(connectors_of(&back, s1, true).unwrap(), vec![pair(ends[0])[2]]);
+        assert_eq!(pair(pair(ends[0])[2])[3], s1.value());
+        let at_s2 = connectors_of(&back, s2, true).unwrap();
+        assert_eq!(at_s2, vec![pair(ends[1])[2], pair(connectors_of(&back, p2, false).unwrap()[0])[2]]);
+        assert_eq!(pair(connectors_of(&back, p2, false).unwrap()[1])[2], 0, "open end");
+        assert_eq!(arch_entity(&back, s2).unwrap().structure_position(), Some(v(100.0, 20.0, 2.0)));
         // One part definition per size, keyed by it.
         let defs = back.named_objects_dictionary().and_then(|d| d.get(PART_DEFS)).unwrap();
         let ObjectType::Dictionary(d) = back.objects.get(&defs).unwrap() else { panic!() };

@@ -65,6 +65,7 @@ const CLASSES: &[Class] = &[
     Class { dxf: "AECC_NETWORK", cpp: "AeccDbNetwork", module: "AeccNetwork130", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_STRUCTURE", cpp: "AeccDbStructure", module: "AeccNetwork130", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_PIPE", cpp: "AeccDbPipe", module: "AeccNetwork130", proxy_flags: 0x37d, entity: true },
+    Class { dxf: "AECC_NETWORK_PART_CONNECTOR", cpp: "AeccDbNetworkPartConnector", module: "AeccNetwork130", proxy_flags: 0x81, entity: true },
     Class { dxf: "AECC_NETWORK_PART_DEF", cpp: "AeccDbNetworkPartDef", module: "AeccNetwork130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_PIPE_STYLE", cpp: "AeccDbPipeStyle", module: "AeccNetwork130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_STUCTURE_STYLE", cpp: "AeccDbStructureStyle", module: "AeccNetwork130", proxy_flags: 0x81, entity: false },

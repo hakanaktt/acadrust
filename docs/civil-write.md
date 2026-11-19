@@ -1500,6 +1500,52 @@ name templates root: BL 0x8C, BL n, n x BL id (four-byte form), BL 0,
            template
 ```
 
+Connections (`connect_pipe`; samples N04 unconnected, N05 both ends, N06
+end only and a chain of three structures and two pipes):
+
+```text
+connector (AECC_NETWORK_PART_CONNECTOR, a model space entity on the
+           network's layer): CONNECTOR (constant)
+           references: soft 0, hard owner 0, the paired connector (soft;
+             0 for an open pipe end), its part (hard)
+           texts: "AeccImpNetworkPartConnector", "", ""
+part record: ..., BL n, n x { BL 0, field, BL 1 }, BL connectors, ...
+part references: ..., part definition, style, the connectors (hard),
+           network, ...
+```
+
+A pipe has no connector until one of its ends is connected, then two
+(start, end); a structure has one per pipe it meets, in the order the
+pipes were connected. The writer keeps every other bit of the records it
+updates. When the application connects a pipe it lowers the structure to
+the pipe's end (invert minus half the outer diameter) and gives it a
+part definition of its new height; on opening it does neither:
+
+| written | result |
+|---|---|
+| N04's pipe connected to both structures (E-N50) | AUDIT 0; the pipe lists both structures, each structure one pipe, positions as written |
+| N04's pipe connected at its end only (E-N51) | AUDIT 0; start open, end at the second structure |
+
+The structure record caches its plan outline, a circle of radius 0.5
+about the insertion point (four quarter arcs from the top, counter
+clockwise: full `BD` x, y, bulge `tan(22.5°)` and one zero bit each);
+the writer places it at the insertion point (the application's own
+structure at (150, 0, -6), N07, differs from the written one only in its
+id and in rounding noise of the outline's zero coordinates). A rotated
+structure's record is longer (N07, 0.3 rad); its layout is not decoded and
+the writer keeps the unrotated outline.
+
+Not resolved: in drawings where the application has placed parts, some
+added parts keep the application from finishing opening the drawing,
+with identical records otherwise accepted:
+
+| written | result |
+|---|---|
+| N01 (one structure) with a structure at (100, 0, -6) (E-N55) or (10, 20, 3) (E-N21) | AUDIT 0 |
+| N01 with a structure at (150, 0, -6) (E-N63, E-N64; record as the application's at that point), (200, 50, -7) (E-N60, E-N61) | does not finish opening |
+| N01 with a pipe (E-N54); N04 with a structure (E-N58, E-N59) | does not finish opening |
+| N04 (two structures, a pipe) with a pipe (E-N57) | AUDIT 0 |
+
 The style and rules come from the family's size filter in the parts list
 (`AECC_PART_SIZE_FILTER`: references `0, style, rules, ...`). The fields
 between the named ones are the samples' constant runs.
@@ -1697,7 +1743,7 @@ taken from the records and checked bit for bit against them.
   lines meeting where one has an arc, parcel and feature line styles other than the
   defaults;
   sections, corridors: not written; pipe networks: other families and
-  sizes, connected pipes and structures, the structure's body block,
+  sizes, the structure's body block,
   networks in a drawing without a parts list, structures in a drawing
   whose part catalog does not list their fields.
 - Profile views with a vertical scale or style other than the default;
@@ -1724,5 +1770,5 @@ taken from the records and checked bit for bit against them.
 | sections of a TIN surface (unsampled) | yes (geometry once sampled) | yes (§3j) | yes (§3j) | the application samples the source | corridor sources, lines added after sampling |
 | section views of a line (default style, unsampled section) | yes (frame) | yes, with the drawing's section view style or the default one (§3j, §2c) | yes (§3j, §2c) | not needed | sampled sections, several sections |
 | intersections of two crossing roads (the object only) | yes (stations, angles) | yes, with the drawing's intersection style or the default one (§3k, §2c) | yes (§3k, §2c) | not needed | offset alignments, curb returns, corridor regions and locking actions; tee junctions |
-| gravity pipe networks: null structures and 12 inch pipes, unconnected | partly (part positions, pipe ends, sizes of older part definitions) | yes, in a drawing the application opened; a new drawing gets the default parts list and styles and an empty network (§3m) | yes (§3m) | not needed (the application recomputes outlines, lengths and extents) | other families and sizes, connections, the structure's body block, parts in a new drawing, a structure in a drawing whose catalog lacks its fields |
+| gravity pipe networks: null structures and 12 inch pipes, connections | partly (part positions, pipe ends, connector counts, sizes of older part definitions) | yes, in a drawing the application opened; a new drawing gets the default parts list and styles and an empty network (§3m) | yes (§3m) | not needed (the application recomputes outlines, lengths and extents) | other families and sizes, the structure's body block, parts in a new drawing, some parts added to drawings that hold application parts (§3m) |
 | pressure networks, gradings, mass haul | partly | no | — | — | not started |

@@ -20,8 +20,8 @@
 //! class header and keys (super::alignment), 3 bits (010), GUID
 //! structure, pressure fitting, appurtenance: 3BD insertion point,
 //!            3 x 3BD axes (X, Y, Z; the rotation is the X axis's angle)
-//! pipe:      26 bits, BL 80, BS 0x04BE, BL 80, BL 80, BL n, BL 0,
-//!            n x { field, BL separator (0, then 1 or 2 after the last) },
+//! pipe:      26 bits, BL 80, BS 0x04BE, BL 80, BL 80, BL n,
+//!            n x { BL 0, field, BL 1 }, BL connectors,
 //!            3 x BL, GUID, 1 bit, 17 x BD, 2 bits, 3BD start, 3BD end
 //! field:     BL 80, BS 0x04BE, BL 0, BS kind, BL, BL, 16 bits,
 //!            B has number, [BD number], BL 1
@@ -198,21 +198,25 @@ pub(super) fn pressure_pipe(data: &[u8], start: usize, end: usize, handles: &[u6
     })
 }
 
-/// A pipe read by its fields: the numbers of its part data fields in record
-/// order (`None` for a text field), then its start and end.
-fn pipe_record(data: &[u8], start: usize, end: usize) -> Option<(Vec<Option<f64>>, Vector3, Vector3)> {
-    let mut bits = Bits::new(data, start, end);
-    part_head(&mut bits)?;
-    // ponytail: 26 bits, the same in every sample.
-    bits.skip(26)?;
+/// The part record a pipe or structure keeps: its fields' numbers in record
+/// order (`None` for a text field) and its connector count, with `bits`
+/// left after the count. `count_at` receives the count's bit range.
+///
+/// ```text
+/// BL 80, BS 0x04BE, BL 80, BL 80, BL n, n x { BL 0, field, BL 1 },
+/// BL connectors (a pipe has none or two, one per end; a structure one per
+/// connected pipe)
+/// ```
+fn part_record(bits: &mut Bits, count_at: &mut (usize, usize)) -> Option<(Vec<Option<f64>>, i32)> {
     let nested = |bits: &mut Bits| Some(bits.bit_long()? == 80 && bits.bit_short()? == 0x04BE);
-    nested(&mut bits)?.then_some(())?;
+    nested(bits)?.then_some(())?;
     (bits.bit_long()? == 80 && bits.bit_long()? == 80).then_some(())?;
     let n = usize::try_from(bits.bit_long()?).ok().filter(|n| n * 60 <= bits.remaining())?;
+    let mut at = bits.pos;
     let mut separator = bits.bit_long()?;
     let mut numbers = Vec::with_capacity(n);
     for _ in 0..n {
-        (separator == 0 && nested(&mut bits)?).then_some(())?;
+        (separator == 0 && nested(bits)?).then_some(())?;
         bits.bit_long()?;
         bits.bit_short()?;
         bits.bit_long()?;
@@ -220,9 +224,41 @@ fn pipe_record(data: &[u8], start: usize, end: usize) -> Option<(Vec<Option<f64>
         bits.skip(16)?;
         numbers.push(if bits.bit()? { Some(bits.bit_double()?) } else { None });
         (bits.bit_long()? == 1).then_some(())?;
+        at = bits.pos;
         separator = bits.bit_long()?;
     }
-    matches!(separator, 1 | 2).then_some(())?;
+    (0..10_000).contains(&separator).then_some(())?;
+    *count_at = (at, bits.pos);
+    Some((numbers, separator))
+}
+
+/// Bit range and value of a pipe's or structure's connector count (see
+/// [`part_record`]).
+pub(crate) fn connector_count(data: &[u8], start: usize, end: usize, structure: bool) -> Option<(usize, usize, i32)> {
+    let mut bits = Bits::new(data, start, end);
+    part_head(&mut bits)?;
+    if structure {
+        for _ in 0..4 {
+            point(&mut bits)?;
+        }
+        bits.skip(2)?;
+    } else {
+        bits.skip(26)?;
+    }
+    let mut at = (0, 0);
+    let (_, count) = part_record(&mut bits, &mut at)?;
+    Some((at.0, at.1, count))
+}
+
+/// A pipe read by its fields: the numbers of its part data fields in record
+/// order (`None` for a text field), then its start and end.
+fn pipe_record(data: &[u8], start: usize, end: usize) -> Option<(Vec<Option<f64>>, Vector3, Vector3)> {
+    let mut bits = Bits::new(data, start, end);
+    part_head(&mut bits)?;
+    // ponytail: 26 bits, the same in every sample.
+    bits.skip(26)?;
+    let (numbers, connectors) = part_record(&mut bits, &mut (0, 0))?;
+    (0..=2).contains(&connectors).then_some(())?;
     for _ in 0..3 {
         bits.bit_long()?;
     }
@@ -231,7 +267,11 @@ fn pipe_record(data: &[u8], start: usize, end: usize) -> Option<(Vec<Option<f64>
         bits.bit_double()?;
     }
     bits.skip(2)?;
-    Some((numbers, point(&mut bits)?, point(&mut bits)?))
+    // A pipe without part fields lays out the block before its ends
+    // otherwise (not decoded): the doubles read here are then garbage.
+    let plausible = |p: &Vector3| [p.x, p.y, p.z].into_iter().all(|v| v == 0.0 || (1e-9..1e9).contains(&v.abs()));
+    let (a, b) = (point(&mut bits)?, point(&mut bits)?);
+    (plausible(&a) && plausible(&b) && a.distance(&b) > 1e-6).then_some((numbers, a, b))
 }
 
 /// Number fields of the part data a pipe keeps itself (flow coefficients,
