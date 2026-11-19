@@ -291,7 +291,7 @@ pub(super) fn style(doc: &mut CadDocument, handle: Handle, owner: Handle, st: St
 
 /// The settings every style of the samples starts its keys with or ends
 /// them with: two keys without value and the dates.
-const POINT_STYLE_KEYS: [(u32, Value); 4] = [(0x0400_1008, Value::Text("")), (0x0400_1010, Value::Text("")), (0x1600_101F, Value::Time), (0x1600_101E, Value::Time)];
+pub(super) const POINT_STYLE_KEYS: [(u32, Value); 4] = [(0x0400_1008, Value::Text("")), (0x0400_1010, Value::Text("")), (0x1600_101F, Value::Time), (0x1600_101E, Value::Time)];
 
 /// A point style (`AECC_POINT_STYLE`): the components of the
 /// application's default style (marker and label in plan and model,

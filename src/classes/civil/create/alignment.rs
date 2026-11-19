@@ -298,7 +298,8 @@ fn write_companion(doc: &mut CadDocument, handle: Handle, owner: Handle, tag: u3
 ///         between two lines) and no B, BS id, BS previous id, BS next id,
 ///         BL 256 (spiral definition), BD spiral in, BD radius, BD spiral
 ///         out
-/// BL n, BL v (the profile views), BL 0, BL n (the profiles), the newest first:
+/// BL n, BL v (the profile views), BL g (the sample line groups), BL n (the
+///   profiles), the newest first:
 ///   the profile's identifier (a version-4 GUID, 16 bytes), B 1, BL 32763, BL 0 x 3, BD end station of the first element, BL 1, BL 0,
 ///   BL element count (0 for one element), 6 RD (0, 0, that end station,
 ///   0, 0, 0)
@@ -307,7 +308,8 @@ fn write_companion(doc: &mut CadDocument, handle: Handle, owner: Handle, tag: u3
 /// BL 2, 2, 2, 0, 3, B 0, BS 0x04BE
 /// references: soft pointer 0, companion, companion, soft pointer 0,
 ///   style, hard pointer 0, the profiles (soft pointers, oldest first),
-///   the profile views (soft pointers, oldest first)
+///   the profile views, the sample line groups (soft pointers, oldest
+///   first)
 /// texts: "AeccImpAlignment", "", "", name, five empty texts, three more
 ///   per curve element, two more per profile
 /// ```
@@ -315,7 +317,7 @@ fn write_companion(doc: &mut CadDocument, handle: Handle, owner: Handle, tag: u3
 /// Written for WA03's and WA04's polylines and curves, the record equals
 /// the samples' bit for bit apart from the geometry stamp.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn write_alignment(doc: &mut CadDocument, common: EntityCommon, name: &str, elements: &[AlignmentElement], style: u64, feature: u64, edge: i32, keys: Option<&str>, profiles: &[ProfileRef], views: &[u64]) -> Result<Handle, DxfError> {
+pub(super) fn write_alignment(doc: &mut CadDocument, common: EntityCommon, name: &str, elements: &[AlignmentElement], style: u64, feature: u64, edge: i32, keys: Option<&str>, profiles: &[ProfileRef], views: &[u64], groups: &[u64]) -> Result<Handle, DxfError> {
     if !(1..256).contains(&edge) {
         return Err(invalid("the alignment's edge id is out of range"));
     }
@@ -327,7 +329,7 @@ pub(super) fn write_alignment(doc: &mut CadDocument, common: EntityCommon, name:
     let byte = |w: &mut DwgMergedWriter, v: u8| bits(w, &format!("{v:08b}"));
     let mut refs = vec![soft_pointer(0), hard_pointer(feature), hard_pointer(feature), soft_pointer(0), hard_pointer(style), hard_pointer(0)];
     refs.extend(profiles.iter().map(|p| soft_pointer(p.handle)));
-    refs.extend(views.iter().map(|v| soft_pointer(*v)));
+    refs.extend(views.iter().chain(groups).map(|v| soft_pointer(*v)));
     let mut strings = vec!["AeccImpAlignment".to_string(), String::new(), String::new(), name.to_string()];
     strings.extend((0..5 + 3 * curves + 2 * profiles.len()).map(|_| String::new()));
     put_entity(
@@ -412,7 +414,7 @@ pub(super) fn write_alignment(doc: &mut CadDocument, common: EntityCommon, name:
                 }
             }
             let n = profiles.len() as i32;
-            for v in [n, views.len() as i32, 0, n] {
+            for v in [n, views.len() as i32, groups.len() as i32, n] {
                 w.write_bit_long(v);
             }
             for p in profiles.iter().rev() {
@@ -484,7 +486,7 @@ pub fn add_alignment_with_curves(doc: &mut CadDocument, name: &str, vertices: &[
     let label = new_name(handle.value());
     write_companion(doc, companion, node, tag, handle, &path, &label)?;
     add_node_child(doc, node, tag as i32, companion, &label)?;
-    write_alignment(doc, common, name, &elements, style, companion.value(), 1, None, &[], &[])
+    write_alignment(doc, common, name, &elements, style, companion.value(), 1, None, &[], &[], &[])
 }
 
 /// A profile of an alignment: its record and its identifier.
@@ -506,6 +508,8 @@ pub(super) struct Written {
     pub edge: i32,
     /// The profile views of the alignment, oldest first.
     pub views: Vec<u64>,
+    /// Its sample line groups, oldest first.
+    pub groups: Vec<u64>,
 }
 
 /// An alignment this crate can write again: its elements are the ones the
@@ -521,11 +525,14 @@ pub(super) fn rewritable(doc: &CadDocument, alignment: Handle, profile_id: impl 
     elements.iter().all(|e| matches!(e.kind, AlignmentElementKind::FixedLine { .. } | AlignmentElementKind::FreeArc { .. } | AlignmentElementKind::FreeSpiralCurveSpiral { .. })).then_some(())?;
     let refs = a.typed_handles();
     (refs.len() >= 6).then_some(())?;
-    let is_view = |h: u64| matches!(doc.get_entity(Handle::new(h)), Some(crate::entities::EntityType::Extended(x)) if matches!(&x.data, crate::entities::ExtendedEntityData::Arch(v) if v.dxf_name == "AECC_PROFILE_VIEW"));
-    let split = refs[6..].iter().position(|(h, _)| is_view(*h)).map_or(refs.len(), |i| i + 6);
-    let profiles = refs[6..split].iter().map(|(h, _)| Some(ProfileRef { handle: *h, id: profile_id(*h)? })).collect::<Option<Vec<_>>>()?;
-    let views: Vec<u64> = refs[split..].iter().map(|(h, _)| *h).collect();
-    views.iter().all(|h| is_view(*h)).then_some(())?;
+    let is = |h: u64, dxf: &str| matches!(doc.get_entity(Handle::new(h)), Some(crate::entities::EntityType::Extended(x)) if matches!(&x.data, crate::entities::ExtendedEntityData::Arch(v) if v.dxf_name == dxf));
+    let tail: Vec<u64> = refs[6..].iter().map(|(h, _)| *h).collect();
+    let views_at = tail.iter().position(|h| is(*h, "AECC_PROFILE_VIEW") || is(*h, "AECC_SAMPLE_LINE_GROUP")).unwrap_or(tail.len());
+    let groups_at = tail.iter().position(|h| is(*h, "AECC_SAMPLE_LINE_GROUP")).unwrap_or(tail.len()).max(views_at);
+    let profiles = tail[..views_at].iter().map(|h| Some(ProfileRef { handle: *h, id: profile_id(*h)? })).collect::<Option<Vec<_>>>()?;
+    let views = tail[views_at..groups_at].to_vec();
+    let groups = tail[groups_at..].to_vec();
+    (views.iter().all(|h| is(*h, "AECC_PROFILE_VIEW")) && groups.iter().all(|h| is(*h, "AECC_SAMPLE_LINE_GROUP"))).then_some(())?;
     let d = a.decode();
     let name = d.strings.get(3)?.clone();
     let (data, start, end) = a.main_stream()?;
@@ -542,7 +549,7 @@ pub(super) fn rewritable(doc: &CadDocument, alignment: Handle, profile_id: impl 
     b.skip(10 + 115 + 8)?;
     let high = b.bits_value(8)?;
     let edge = (i32::from(high & 0x3F) << 2) | i32::from(b.bits_value(2)?);
-    let w = Written { common: x.common.clone(), name, elements, style: refs[4].0, feature: refs[1].0, keys, edge, views };
+    let w = Written { common: x.common.clone(), name, elements, style: refs[4].0, feature: refs[1].0, keys, edge, views, groups };
     Some((w, profiles))
 }
 
@@ -555,6 +562,12 @@ pub(super) fn rewrite(doc: &mut CadDocument, alignment: Handle, w: Written, befo
 
 /// [`rewrite`], with `views` in place of the views it has when given.
 pub(super) fn rewrite_with_views(doc: &mut CadDocument, alignment: Handle, w: Written, before: &[ProfileRef], profiles: &[ProfileRef], views: Option<&[u64]>) -> Result<(), DxfError> {
+    let groups = w.groups.clone();
+    rewrite_with(doc, alignment, w, before, profiles, views, &groups)
+}
+
+/// [`rewrite_with_views`], with the sample line groups `groups`.
+pub(super) fn rewrite_with(doc: &mut CadDocument, alignment: Handle, w: Written, before: &[ProfileRef], profiles: &[ProfileRef], views: Option<&[u64]>, groups: &[u64]) -> Result<(), DxfError> {
     let bits_of = |doc: &CadDocument| -> Option<Vec<u8>> {
         match doc.get_entity(alignment)? {
             crate::entities::EntityType::Extended(x) => match &x.data {
@@ -569,12 +582,12 @@ pub(super) fn rewrite_with_views(doc: &mut CadDocument, alignment: Handle, w: Wr
     };
     let original = doc.get_entity(alignment).cloned().ok_or_else(|| invalid("alignment not found"))?;
     let old = bits_of(doc);
-    write_alignment(doc, w.common.clone(), &w.name, &w.elements, w.style, w.feature, w.edge, Some(&w.keys), before, &w.views)?;
+    write_alignment(doc, w.common.clone(), &w.name, &w.elements, w.style, w.feature, w.edge, Some(&w.keys), before, &w.views, &w.groups)?;
     if bits_of(doc) != old {
         *doc.get_entity_mut(alignment).ok_or_else(|| invalid("alignment not found"))? = original;
         return Err(invalid("the alignment holds data this crate does not write"));
     }
-    write_alignment(doc, w.common, &w.name, &w.elements, w.style, w.feature, w.edge, Some(&w.keys), profiles, views.unwrap_or(&w.views))?;
+    write_alignment(doc, w.common, &w.name, &w.elements, w.style, w.feature, w.edge, Some(&w.keys), profiles, views.unwrap_or(&w.views), groups)?;
     Ok(())
 }
 
