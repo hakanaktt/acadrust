@@ -1135,6 +1135,40 @@ workflow's namespace declarations come from the caller (a package the
 editor saved has them), `PktPackage::new` gives the rest of a new
 package's settings.
 
+### Layout
+
+`pkt::layout(pkg, side, values)` runs the flowchart in layout mode from
+its start node: a step runs its activity, a decision takes the branch of
+its condition, a switch the case named by its expression's text (else
+the default). Parameters not given take their defaults, a target its
+preview default; `Side` is the side given.
+
+```text
+DeltaXAndDeltaY  from + (s dx, dy)
+SlopeAndDeltaX   from + (s dx, slope |dx|)  (the slope falls over |dx|
+                 whichever way the point goes)
+from = the point's FromPoint, the attachment point when unset;
+s = +1 on the right, -1 on the left
+AutoLink         a link from the FromPoint to the point, with its codes
+```
+
+Auxiliary points and links are evaluated (later expressions may use
+them) but are not part of the geometry. Points, links and shapes come in
+the order created; the codes in the order points, links, shapes.
+Expressions are the editor's Visual Basic form in brackets; the subset
+read: numbers, text, `True`/`False`, `+ - * / ^ &`, comparisons,
+`And`/`AndAlso`/`Or`/`OrElse`/`Not`, `IF(c, a, b)`, `Math.Abs/Min/Max/
+Sqrt/Sin/Cos/Tan/Atan/Round/Floor/Ceiling`, names of parameters,
+variables, enumeration values and points, `.Value` of an enumeration,
+`.IsValid`/`.Offset`/`.Elevation` of a target, `.X`/`.Y` of a point,
+`SA.IsLayout`. Anything else (other positionings, `.ToString()`, curves)
+is refused with an error.
+
+The layouts of K01 (right; left; width 3, depth 0.5, slope -0.05) and of
+K02 to K05 (width 4, depth 0.25, slope -0.03) equal the points, links,
+shapes and codes the host application stored for them (W-K01, W-K01L,
+W-K01b, W-K02 to W-K05) and the editor's previews.
+
 ## 4. Reference check
 
 For every written drawing the check opens it in its own reference instance
