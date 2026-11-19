@@ -36,18 +36,6 @@ pub(super) const PIPE_DEFINITION_STRINGS: &[&str] = &["AeccImpNetworkPartDef", "
 pub(super) const NETWORK_STRINGS: &[&str] = &["AeccImpNetwork", "", "N1", "", "Structure - (<[67112990(2449)]>)", "", "", "0", "0", "0", "0", "0", "0", "Pipe - (<[67112990(2449)]>)", "0", "", "", "", "", ""];
 pub(super) const STRUCTURE_STRINGS: &[&str] = &["AeccImpStructure", "", "Null Structure", "AeccNetworkPartRecord", "", "", "Structure - (1)", "PipeNetworkRule.StructureDrop.133", "PipeNetworkRule.StructureDrop.133", "", "", "Rule applies to junction structures only", "PipeNetworkRule.MaximumPipeSize.140", "PipeNetworkRule.MaximumPipeSize.140", "", "", "", "", "", "", "", "", "", "", "", ""];
 pub(super) const PIPE_STRINGS: &[&str] = &["AeccImpPipe", "", "Corrugated Metal Pipe", "AeccNetworkPartRecord", "", "", "Pipe - (1)", "PipeNetworkRule.CoverAndSlope.111", "PipeNetworkRule.CoverAndSlope.111", "", "", "Minimum cover is violated", "PipeNetworkRule.CoverAndSlope.106", "PipeNetworkRule.CoverAndSlope.106", "", "", "PipeNetworkRule.CoverAndSlope.107", "PipeNetworkRule.CoverAndSlope.107", "", "", "PipeNetworkRule.CoverAndSlope.111", "PipeNetworkRule.CoverAndSlope.111", "", "", "PipeNetworkRule.CoverAndSlope.112", "PipeNetworkRule.CoverAndSlope.112", "", "", "PipeNetworkRule.PipeLength.120", "PipeNetworkRule.PipeLength.120", "", "", "PipeNetworkRule.PipeLength.121", "PipeNetworkRule.PipeLength.121", "", "", "", "", "Catalog Item"];
-/// Field definitions the part catalog node (`AECC_NETWORK_PART_CATALOG_DEF_NODE`)
-/// must list before a null structure is placed: code, record, texts.
-pub(super) const STRUCTURE_CATALOG_FIELDS: &[(&str, &str, &[&str])] = &[
-    ("SBS", "010101000000101111100000010010000011000000000001101000001000100000100010000000110", &["AeccNetworkPartDataField", "", "SBS", "Structure Shape", "StructBoundingShape", "", "BoundingShape_Undefined"]),
-    ("SBSH", "010101000000101111100000010010010110100010100000100010000000110010000000110", &["AeccNetworkPartDataField", "", "SBSH", "Structure Height", "StructHeight", "in"]),
-    ("SBSD", "010101000000101111100000010010010110100110100000100010000000110010000000110", &["AeccNetworkPartDataField", "", "SBSD", "Structure Diameter", "StructDiameter", "in"]),
-    ("PDom", "010101000000101111100000010010000011000000000001001000001000100000100010000000110", &["AeccNetworkPartDataField", "", "PDom", "Part Domain", "Catalog_Domain", "", "Undefined_Domain"]),
-    ("PTyp", "010101000000101111100000010010000011000000000001101000001000100000100010000000110", &["AeccNetworkPartDataField", "", "PTyp", "Part Type", "Catalog_PartType", "", "Undefined_PartType"]),
-    ("PSTyp", "010101000000101111100000010010000010110100000001101000001000100000100010000000110", &["AeccNetworkPartDataField", "", "PSTyp", "Part Subtype", "Catalog_SubType", "", "Undefined"]),
-    ("PrtNm", "010101000000101111100000010010000010111000000001001000001000100000100010000000110", &["AeccNetworkPartDataField", "", "PrtNm", "Part Name", "Catalog_PartName", "", "Undefined"]),
-    ("PrtD", "010101000000101111100000010010000010111000000001101000001000100000100010000000110", &["AeccNetworkPartDataField", "", "PrtD", "Part Description", "Catalog_PartDesc", "", "Undefined"]),
-];
 
 /// The application's default parts list: the part catalog node (listing
 /// the fields of every part definition the writer adds, and the data it
