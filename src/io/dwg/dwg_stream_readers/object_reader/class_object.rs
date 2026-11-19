@@ -454,16 +454,11 @@ pub fn read_class_object_data(
                 status: reader.read_bit_long(),
             })
         }
-        "ACDBVIEWREPSTANDARD" => ClassObjectData::ViewRepStandard(ViewRepStandard {
-            values: [
-                reader.read_bit_long(),
-                reader.read_bit_long(),
-                reader.read_bit_long(),
-                reader.read_bit_long(),
-                reader.read_bit_long(),
-                reader.read_bit_long(),
-            ],
-        }),
+        "ACDBVIEWREPSTANDARD" => {
+            let mut values = [0; 6];
+            values[..ViewRepStandard::stored_len(dxf_version)].fill_with(|| reader.read_bit_long());
+            ClassObjectData::ViewRepStandard(ViewRepStandard { values })
+        }
         "ACDBVIEWREPORIENTATIONDEF" => ClassObjectData::ViewRepOrientationDefinition,
         "ACDBVIEWREPORIENTATION" => ClassObjectData::ViewRepOrientation(ViewRepOrientation {
             camera: reader.read_3bit_double(),

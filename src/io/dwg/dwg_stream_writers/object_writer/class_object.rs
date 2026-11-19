@@ -363,7 +363,7 @@ impl<'a> DwgObjectWriter<'a> {
                 self.writer.write_bit_long(value.status);
             }
             ClassObjectData::ViewRepStandard(value) => {
-                for item in value.values {
+                for &item in &value.values[..ViewRepStandard::stored_len(self.dxf_version)] {
                     self.writer.write_bit_long(item);
                 }
             }

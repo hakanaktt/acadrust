@@ -2,6 +2,10 @@
 
 ### Unreleased
 
+- **AutoCAD 2010 view-rep standard** - `ACDBVIEWREPSTANDARD` stores five
+  values before R2013 and six from R2013; the DWG reader and writer now
+  use the count the drawing's version stores.
+
 - **Section size limit as a read option** -
   `DwgReadOptions::max_section_bytes` (`with_max_section_bytes`) replaces
   the fixed 1 GiB bound on one decompressed section. Large drawings can
