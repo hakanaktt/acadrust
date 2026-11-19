@@ -190,11 +190,9 @@ strings: one text (empty in every sample), then the names of the groups
 ```
 
 The ids are stored by hash bucket (id mod 8), a new id last in its bucket;
-`_All Points` is 33. A group whose id falls in bucket 0 is stored before
-`_All Points`, and the application's audit then reports the group node as
-not repaired (R16 with ids `0x80000100` and `0x80010000`); the application
-gives no group such an id in the samples, so the writer skips those ids.
-Written groups take ids from `0x80010001` up, their query the next id.
+`_All Points` is 33. A group in bucket 0 is stored before `_All Points`
+(WQ03: 13 groups, two of them in bucket 0). Written groups take ids from
+`0x80010001` up, their query the next id.
 
 ### Point groups (`AECC_POINT_PG`, owner the group node)
 
@@ -213,8 +211,12 @@ strings: `_All Points`: "", "AeccImpAllPointsPG"
 
 `_All Points` has id 33, serial 0, no label style, and always the extents
 pair (1e20, 1e20, 1e20) / (-1e20, -1e20, -1e20); a named group stores the
-extents of its points (that pair when it has none). The serial is twice
-the group's position in the group node. Numbers are ascending.
+extents of its points (that pair when it has none). The serial counts
+groups in creation order: `_All Points` 0, the first named group 2, the
+next ones 3, 4, ... (WQ03); a rewritten group keeps its serial. Two
+groups with the same serial make the application's audit report the group
+node as not repaired (a group in bucket 0 written with serial 0, or ten
+groups numbered by their position). Numbers are ascending.
 
 ### Query statements (`AECC_QUERY_STATEMENT`)
 
@@ -228,42 +230,63 @@ strings: "", the n query titles, ""
 
 The text ids are stored by hash bucket like the group ids.
 
-Inner (owner the outer), the query `(number = v1 OR number = v2 OR ...)`
-(`_All Points`: `(number > 0)`):
+Inner (owner the outer), the query `(attribute <comparison> c1 OR
+attribute <comparison> c2 OR ...)` (`_All Points`: `(number > 0)`):
 
 ```text
 BS 0x04BE, BL text id, BL 0, BL 0, 5 bits 01000,
-BL k (number of values, byte form), 8 zero bits,
-then one record per node in pre-order; each opens with BL 80 (byte form)
-and 15 zero bits:
-  parentheses: 3 bits (111 when its child is a leaf, 110 when it is an OR),
-               byte comparison of a leaf child (1 equal, 3 greater) or 1,
-               two zero bytes
-  OR (k - 1, left-deep): 3 bits (100, the last 101), bytes 1, 3, 0
-  leaf (one per value): 1 bit 1, BL 19 (the point number attribute),
-               BL value, a zero byte except after the last leaf
-strings: "Point Group Query - <name>", "", the values,
-         "AeccQueryNodePARENS", "", (k - 1) × "AeccQueryNodeOR",
-         per value "AeccQueryNodeEQ" (or "...GT"), "AeccQueryNodeATTRID",
-         "", "", "AeccQueryNodeCONST", "", ""
+BL k (number of constants, byte form), 7 zero bits,
+then one record per node in pre-order, each opening with the attribute's
+header: 3 bits value type, flags byte, 12 zero bits, 3 bits class
+  parentheses: 3 bits (number attribute, 1, child is a leaf), byte
+               comparison of a leaf child (1 under an OR), 15 zero bits
+  OR (k - 1, left-deep): 3 bits (number attribute, 0, last), bytes 1, 3,
+               7 zero bits
+  leaf (one per constant): 1 bit number attribute, BL attribute id, the
+               constant (point number: BL; elevation: BD; description:
+               none), 7 zero bits except after the last leaf
+strings: "Point Group Query - <name>", "", the constants as texts,
+         "AeccQueryNodePARENS", "", (k - 1) x "AeccQueryNodeOR",
+         per constant the comparison node ("AeccQueryNodeEQ", "...GT",
+         "...LT", "...GTE", "...LTE"), "AeccQueryNodeATTRID", "", "",
+         "AeccQueryNodeCONST", "", "", and for a description its pattern
 ```
 
-This reproduces the `_All Points` query and the number-list queries of
-WP08 (2, 4, 6) and WG01 (5; 7; 2, 4) bit for bit. Range values (`2-6`)
-are stored with generated parentheses and an AND of two comparisons and are
-not written.
+| attribute | value type | flags | class | attribute id |
+|---|---|---|---|---|
+| point number | 1 | 0x50 | 000 | 19 |
+| elevation | 2 | 0x50 | 001 | 5 |
+| raw description | 3 | 0x50 | 101 | 8 |
+| name | 3 | 0x10 | 101 | 8 |
+| full description | 4 | 0x50 | 010 | 8 |
+
+Comparison codes: 1 equal, 3 greater, 4 less, 5 greater or equal, 6 less
+or equal. A list of description patterns (`TEST,ABC`) is an OR of equal
+leaves. This reproduces the `_All Points` query, the number-list queries of
+WP08 (2, 4, 6) and WG01 (5; 7; 2, 4) and the elevation (`>25`, `<12`,
+`>=26`, `<=11`, `20`) and description (`TEST`, `te*`, `T?ST`, `TEST,ABC`)
+queries of WQ03 bit for bit. The application matches descriptions over
+the whole text, case ignored, `*` any run and `?` one character (WQ03:
+`TEST` selects TEST and test, not TESTS); it stores a name query in lower
+case. Number ranges (`2-6`) are stored with generated parentheses, an AND
+of two comparisons and an equal leaf holding the range text; the writer
+lists the numbers instead (the same members). Names and full descriptions
+(which depend on point names and description keys) and exclusions are not
+written.
 
 ### Edits
 
 `set_cogo_point` and `remove_cogo_point` rewrite the database and
 `_All Points` from the points read back; the group keeps its styles and
 settings node. Removing a point erases its entity. Every named group whose
-record has no overrides and whose query is a number list is rewritten with
-its members among the new points (`add_cogo_point` too).
+record has no overrides and whose query is one the writer writes is
+rewritten with its members among the new points (`add_cogo_point` too).
 
-`add_point_group(doc, name, description, numbers)` writes a group with a
-number-list query; `set_point_group` renames such a group and gives it a
-new list.
+`add_point_group_query(doc, name, description, query)` writes a group
+whose query is a number list, an elevation comparison or a list of raw
+description patterns (`PointQuery`); `set_point_group_query` renames such
+a group and gives it a new query. `add_point_group` and `set_point_group`
+take a number list.
 
 ## 3a. Alignments
 
@@ -425,6 +448,15 @@ errors, the API lists `G` with numbers 2, 4, 6 and the query string
 acadrust removes point 3, adds point 7 and renames `G` to `H` listing 1, 5:
 AUDIT 0 errors, `H` holds 1, 5, `Q` 1, 7, `_All Points` 1, 2, 4, 5, 6, 7.
 
+Query kinds (a new drawing with points 1 to 6 at elevations 10, 11, 20,
+26, 30, 12 described TEST, test, TEXT, ABC, TE, TESTS, and ten groups
+written by acadrust: descriptions `TEST`, `te*`, `T?ST`, `TEST,ABC`,
+elevations `>25`, `<12`, `>=26`, `<=11`, `=20` and the numbers 2, 3, 4):
+opens without a message, AUDIT 0 errors, the API gives each group the
+written query string (`(RawDescription='te*')`, `(PointElevation>=26)`,
+...) and the members the application gives the same queries (1, 2; 1, 2,
+3, 5, 6; 1, 2; 1, 2, 4; 4, 5; 1, 2; 4, 5; 1, 2; 3; 2, 3, 4).
+
 A new drawing (`CadDocument::new()`, never opened by the application)
 with points 1 at (100, 200, 10) "TEST" and 2 at (150, 250, 12) and group
 `G` listing 2, written by acadrust with the §2a records: opens without a
@@ -474,9 +506,8 @@ taken from the records and checked bit for bit against them.
 - Label styles (the label node and its collector and text styles): a
   point written into a new drawing has no label until the user gives it
   one.
-- Point groups with other queries (ranges, descriptions, elevations,
-  names), override styles per group, more than seven groups (the bucket
-  rule is checked up to seven).
+- Point groups by name or full description, with exclusions, AND of
+  several criteria, elevation ranges, override styles per group.
 - Alignments with curves or spirals, on a site, offset alignments,
   labels; the written alignment style draws no markers (no marker style
   is written).
@@ -489,7 +520,7 @@ taken from the records and checked bit for bit against them.
 |---|---|---|---|---|---|
 | root tree node | yes | yes | yes (empty root: AUDIT 0) | — | — |
 | COGO points, database, `_All Points` | yes | yes (a new drawing gets §2a) | yes (§4) | not needed (the application draws points from the database) | — |
-| point groups (number lists) | yes | yes | yes (§4) | not needed (the application lists the written members) | other query kinds, override settings |
+| point groups (number lists, elevation comparisons, description patterns) | yes | yes | yes (§4) | not needed (the application lists the written members) | names, full descriptions, exclusions, override settings |
 | point style, its collection, class and settings nodes | yes | yes, in a drawing without the tree (§2a) | yes (§4) | not needed | — |
 | label styles | partly | no | — | — | label node settings (1621 bits), collector and text style records |
 | alignments (fixed lines, siteless) | yes | yes (a new drawing gets §3b) | yes (§4) | not needed (the application solves the stored elements) | curves, spirals, sites, labels |

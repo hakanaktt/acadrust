@@ -12,7 +12,7 @@ mod tin;
 mod tree;
 
 pub use alignment::add_alignment;
-pub use groups::{add_point_group, set_point_group};
+pub use groups::{add_point_group, add_point_group_query, set_point_group, set_point_group_query, Comparison, PointQuery};
 pub use points::{add_cogo_point, cogo_points, remove_cogo_point, set_cogo_point};
 pub use support::ensure_civil;
 pub use tin::add_tin_surface;

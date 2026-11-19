@@ -1,6 +1,6 @@
 //! COGO points, the point database and the `_All Points` group.
 
-use super::groups::{refresh_groups, ALL_POINTS_ID, set_query, write_group, write_group_node, Entry, Group, GREATER};
+use super::groups::{all_points_query, refresh_groups, set_query, write_group, write_group_node, Entry, Group, ALL_POINTS_ID};
 use super::support::*;
 use crate::classes::civil::CogoPoint;
 use crate::entities::{EntityCommon, EntityType, ExtendedEntityData};
@@ -95,7 +95,7 @@ pub(super) fn support(doc: &mut CadDocument) -> Result<Support, DxfError> {
     write_database(doc, database, root, &[], defaults.class_node)?;
     let all = Entry { id: ALL_POINTS_ID, handle: all_points, name: String::new() };
     write_group_node(doc, group_node, root, &[all], defaults.label_style, defaults.point_style)?;
-    let inner = set_query(doc, "Point Group Query - _All Points", QUERY_TAG, GREATER, &[0])?;
+    let inner = set_query(doc, "Point Group Query - _All Points", QUERY_TAG, all_points_query())?;
     let s = Support { database, group_node, all_points, class_node: defaults.class_node, defaults };
     write_all_points(doc, &s, inner, &[])?;
     set_root_entry(doc, KEY_POINTS, database)?;
@@ -432,5 +432,48 @@ mod tests {
         assert_eq!(object(&back, g).unwrap().point_group_numbers(), vec![1, 8]);
         let all = object(&back, group_node).unwrap().decode().handles[0];
         assert_eq!(object(&back, Handle::new(all)).unwrap().point_group_numbers(), vec![1, 2, 3, 5, 6, 8]);
+    }
+
+    #[test]
+    fn elevation_and_description_groups_select_their_points() {
+        use crate::classes::civil::{add_point_group_query, set_point_group_query, Comparison, PointQuery};
+        let mut doc = drawing();
+        for (n, (z, d)) in [(10.0, "TEST"), (11.0, "test"), (20.0, "TEXT"), (26.0, "ABC"), (30.0, "TE"), (12.0, "TESTS")].iter().enumerate() {
+            add_cogo_point(&mut doc, Some(n as u32 + 1), Vector3::new(10.0 * n as f64, 0.0, *z), Some(d), None, None).unwrap();
+        }
+        let text = |v: &[&str]| PointQuery::RawDescription(v.iter().map(|t| t.to_string()).collect());
+        let cases = [
+            ("GA", text(&["TEST"]), vec![1, 2]),
+            ("GB", text(&["te*"]), vec![1, 2, 3, 5, 6]),
+            ("GJ", text(&["T?ST"]), vec![1, 2]),
+            ("GK", text(&["TEST", "ABC"]), vec![1, 2, 4]),
+            ("GE", PointQuery::Elevation(Comparison::Greater, 25.0), vec![4, 5]),
+            ("GF", PointQuery::Elevation(Comparison::Less, 12.0), vec![1, 2]),
+            ("GG", PointQuery::Elevation(Comparison::GreaterOrEqual, 26.0), vec![4, 5]),
+            ("GH", PointQuery::Elevation(Comparison::LessOrEqual, 11.0), vec![1, 2]),
+            ("GI", PointQuery::Elevation(Comparison::Equal, 20.0), vec![3]),
+        ];
+        let groups: Vec<_> = cases.iter().map(|(n, q, _)| add_point_group_query(&mut doc, n, None, q).unwrap()).collect();
+        assert!(add_point_group_query(&mut doc, "X", None, &text(&["A,B"])).is_err());
+        assert!(add_point_group_query(&mut doc, "X", None, &text(&["A#"])).is_err());
+        let back = round_trip(&doc);
+        for (g, (_, _, want)) in groups.iter().zip(&cases) {
+            assert_eq!(&object(&back, *g).unwrap().point_group_numbers(), want);
+        }
+        // Serials count up in creation order from 2 (`_All Points` has 0).
+        let serials: Vec<i32> = groups.iter().map(|g| super::super::groups::serial(&back, *g).unwrap()).collect();
+        assert_eq!(serials, (2..2 + groups.len() as i32).collect::<Vec<_>>());
+
+        // Members follow edits: point 4 drops to 5 and leaves GE, point 7
+        // with "abc" joins GK; GA becomes an elevation group.
+        let mut doc = back;
+        let p4 = handle_of(&doc, 4);
+        set_cogo_point(&mut doc, p4, 4, Vector3::new(30.0, 0.0, 5.0), Some("ABC")).unwrap();
+        add_cogo_point(&mut doc, Some(7), Vector3::new(70.0, 0.0, 40.0), Some("abc"), None, None).unwrap();
+        set_point_group_query(&mut doc, groups[0], "GA", None, &PointQuery::Elevation(Comparison::Less, 10.5)).unwrap();
+        let back = round_trip(&doc);
+        assert_eq!(object(&back, groups[4]).unwrap().point_group_numbers(), vec![5, 7]);
+        assert_eq!(object(&back, groups[3]).unwrap().point_group_numbers(), vec![1, 2, 4, 7]);
+        assert_eq!(object(&back, groups[0]).unwrap().point_group_numbers(), vec![1, 4]);
     }
 }
