@@ -263,6 +263,82 @@ its members among the new points (`add_cogo_point` too).
 number-list query; `set_point_group` renames such a group and gives it a
 new list.
 
+## 3a. Alignments
+
+`add_alignment(doc, name, vertices, layer)` writes an alignment of fixed
+lines through the vertices (no curves), with the drawing's default
+alignment style (the first style of the style tree's alignment style
+collection, key 93). A drawing that lacks that collection or the node of
+siteless alignments (root key 336) gets them (§3b); a drawing without any
+tree first gets the records of §2a.
+
+### 3b. Alignment style and siteless node of a new drawing
+
+Written only when missing (the reference application completes the rest
+of the tree as for points):
+
+| record | layout |
+|---|---|
+| alignment style collection (style tree key 93) | `AECC_ALIGNMENT_STYLE` id 93 listing the default style (id 30); its own reference is the default style |
+| default alignment style | `AECC_ALIGNMENT_STYLE` id 30, the style layout of §2a with 29 settings in the application's order (values 4096, 1.0, byte 0, 1.0, 0.18, 256, 1.0, 0.001, the dates; 17 keys of type 0x10 whose references, marker styles, are written empty), components 0–5, 11 (hidden) and 20 in plan with ByLayer color, the same hidden in model, 9 in section with ByBlock color; linetype ByBlock throughout (the application's style has its own dashed linetype on the hidden component 11), no class data |
+| siteless node (root key 336) | `AECC_ALIGNMENT_PARCEL_NODE`, tree node layout, child key 30 → the default feature style |
+| default feature style | `AECC_FEATURE_STYLE` key 30, no children, `BL 0, BL 32, BL 210`, 21 bits `000000110010000000110`, `BL 0x80000001`, an empty topology: nodes `BL 1, BL 0, BL 0`, edges `BL 1, BL 0`, faces `BL 2, BL 0, BL 0, 3 × {BL 1, BL 100}, 3 × {BL 1, BL 1}, 6 × BL 0` |
+
+The two styles equal the samples' bit for bit apart from the dates.
+
+### Alignment entity (`AECC_ALIGNMENT`)
+
+```text
+BL 80, BL 0, BL 80, BL 80, BL 0, BL 0x10025F04, 6 bits 010101
+RC 1, key 0x0B001081: BL 2, BL 0, BL 0
+BL 0 (byte form), 65 zero bits, BD 2.25, 7 bits 0111010
+BL 1 (first element id), BD 0, BD start station (0)
+7 bits 0000011, BD 0 (track gauge), B 0, BL 1
+BL n, n x {BL 257, BS 2, B 0, BS 0 (fixed), BS id, BS previous id,
+           BS next id, 2RD start, 2RD end}
+BL 0 x 4 (intervals), BL 0 (equations), BL 1, BL 0 (design speeds)
+BD 100 (station increment), BL 0 (no superelevation), BL 0, BL 1
+(centerline), BL 2, 2, 2, 0, 3, B 0, BS 0x04BE
+handles: soft pointer 0, companion (hard pointer, twice), soft pointer 0,
+         style (hard pointer), hard pointer 0
+strings: "AeccImpAlignment", "", "", name, five empty texts
+```
+
+The key `0x0B001081` holds a value the application derives from the
+geometry (the same in two samples with the same line, different for other
+lines); written as 0 it is accepted (A4). The rest equals WA01 and WA02
+bit for bit (elements are ids 1..n in station order, linked in a chain).
+
+### Companion (`AECC_FEATURE_STYLE`)
+
+Every siteless alignment has a companion under the default feature style
+of the siteless node: the alignment's site topology. It is a node record
+keyed by a text id (written from `0x80030001`) whose name is 32
+hexadecimal digits:
+
+```text
+BS 0x04BE, BL text id, BL 0 (no children), BL 0, BL 32, BL 210,
+21 bits 000000110010000000110, BL 0x80000001,
+nodes: BL n + 1 (next free id), BL n, BL 1 (first id),
+       n x {3BD point (z 0), 3 bits 010, BL next id (0 last)}
+       (the ends are nodes 1 and 2, the inner vertices 3...)
+edges: BL 2, BL 1 (slots), BL 0, BL 1 (id), BL 48 (flags), BL n, BL 0,
+       n x {BL kind (0 line, 2 last), BL flags, BL node, BL face, BL face}
+       (flags 2, plus 0x30 when another segment follows; last 10; faces
+       1 = outside, 0 on the last vertex), BL 0, BL 0 x 3
+faces: BL 2, BL 1, {BL 1, BL 1, BL 7, BL 1, BL 1, BL 0}, BL 0,
+       6 x {BL 1, BL 100}, 6 x BL 0
+handles: the alignment (soft pointer), three empty soft pointers
+strings: name, ""
+```
+
+The default feature style gains the companion as a child (its other
+fields are kept as the drawing has them). Written for a line and two
+lines, the companions equal WA01's and WA02's bit for bit apart from the
+text id. An alignment that refers to no companion stops the application
+while it opens the drawing (A1); a companion without its topology is
+refused (`Errors Found`, A6).
+
 ## 4. Reference check
 
 For every written drawing the check opens it in its own reference instance
@@ -296,6 +372,21 @@ drawing's only point style and both points with it (no label style),
 application gives its own points; after the API sets point 1's elevation
 to 11 and saves, acadrust reads point 1 at (100, 200, 11).
 
+A new drawing with alignment `AL1` through (0, 0), (100, 0), (200, 50)
+and point 1 written by acadrust (§2a, §3b): opens without a message, AUDIT
+0 errors, the API lists the written alignment style as the drawing's only
+alignment style and `AL1` with it (stations 0 to 211.803, two lines);
+after the API sets the reference station to 1000 and saves, acadrust
+reads the name, start station 1000 and both lines.
+
+Alignments (WA00a and WA00b, drawings the application has opened, plus
+`AL1` written by acadrust through (0, 0), (100, 0) and through (0, 0),
+(100, 0), (200, 50)): AUDIT 0 errors, the API lists `AL1` as a centerline
+alignment with the default style, stations 0 to 100 (0 to 211.803), one
+or two line elements with the written points; after the API sets the
+reference station to 1000 and saves, acadrust reads the name, start
+station 1000 and both fixed lines.
+
 A wrong bit count in a query statement makes the application refuse the
 whole drawing with a recovery prompt, so every constant run above was
 taken from the records and checked bit for bit against them.
@@ -308,8 +399,11 @@ taken from the records and checked bit for bit against them.
 - Point groups with other queries (ranges, descriptions, elevations,
   names), override styles per group, more than seven groups (the bucket
   rule is checked up to seven).
-- Alignments, surfaces, profiles, sites, sections, corridors, pipe
-  networks: not written.
+- Alignments with curves or spirals, on a site, offset alignments,
+  labels; the written alignment style draws no markers (no marker style
+  is written).
+- Surfaces, profiles, sites, sections, corridors, pipe networks: not
+  written.
 
 ## 6. Status
 
@@ -320,6 +414,6 @@ taken from the records and checked bit for bit against them.
 | point groups (number lists) | yes | yes | yes (§4) | not needed (the application lists the written members) | other query kinds, override settings |
 | point style, its collection, class and settings nodes | yes | yes, in a drawing without the tree (§2a) | yes (§4) | not needed | — |
 | label styles | partly | no | — | — | label node settings (1621 bits), collector and text style records |
-| alignments | yes | no | — | — | geometry stamp, constant runs, label sets, styles |
+| alignments (fixed lines, siteless) | yes | yes (a new drawing gets §3b) | yes (§4) | not needed (the application solves the stored elements) | curves, spirals, sites, labels |
 | TIN surfaces | yes (with points) | no | — | — | empty-surface layout, point-group definition, styles |
 | profiles, views, sites, parcels, feature lines, gradings, sections, corridors, networks | partly | no | — | — | not started |
