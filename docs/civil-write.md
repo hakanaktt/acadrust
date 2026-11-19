@@ -1136,6 +1136,80 @@ alignments and profiles and null offsets, the four quadrants with their
 in and out alignments and the written angles, and the location (175, 75)
 of E-I3 follows from the written station through the curve.
 
+## 3l. Subassembly packages (`pkt`)
+
+A package is a ZIP archive of deflated parts; `read_pkt` and `write_pkt`
+read and write it from named fields (`PktPackage`). The samples K00 (a new
+package) and K01 to K05 (a lane; with a decision and an auxiliary point;
+with an offset target and a variable; with a switch on the side, a
+sequence and an enumeration; with a preview image, a description and a
+help file) are packages the package editor saved; each reads and writes
+back to equal parts (XML parts equal as documents, other parts equal
+bytes).
+
+```text
+[Content_Types].xml  BOM, Types: Default Extension per part extension
+  (atc, cfg, xaml, image, help, pvd, emd, cdmd), ContentType ""
+<id>.atc   the tool catalog: catalog id, the tool (name, id, image
+  64 x 64 [src], [Description], ToolTip "<description>
+Version: <v>" or
+  "Version: <v>", Help file/command/data, StockToolRef, Data:
+  GeometryGenerateMode UseDotNet, DotNetClass Assembly="<id>.xaml"
+  Subassembly.<name>, Version, Params, Units m)
+  Params, per input argument that is not a target, in declaration order:
+  <name DataType TypeInfo DisplayName Description>value</name>
+  double 16, grade 9 ([new Grade(g)]), slope 10 ([new Slope(s)]), text
+  16, enumeration long 16 with <Enum><item DisplayName>key</item>...</Enum>
+  (Side: Left 1, Right 0; other groups from the emd part); a Side of None
+  (-1, a new package) is not listed; DisplayName and Description fall
+  back to the name and the display name
+<id>.cfg   CreatedWith: ProductName, Version, VersionNumber
+<id>.xaml  the workflow (below)
+<id>.pvd   preview cross slopes (segment, slope, defined) and cant values
+<id>.emd   enumeration groups (name; items name, display name, key from
+  301 up) and the names of the defined variables
+<id>.cdmd  CodeData with no items (every package seen)
+```
+
+The workflow:
+
+```text
+Activity mc:Ignorable x:Class="Subassembly", this:Subassembly.<arg>=
+  default per argument that has one, namespace declarations
+  x:Members: Geometry, SubassemblyErrorCenter, SubassemblyRunMode
+    (InOutArgument), then the package's arguments in order: x:Property
+    Name Type="InArgument|OutArgument(type)", x:Property.Attributes
+    (EnabledFlag2Attribute, DisplayName2Attribute, Description2Attribute)
+  defaults: numbers as text, [new Grade(g)], [new Slope(s)],
+    [new EnumType(key, "name", "group")], [new PreviewOffsetTarget("name",
+    valid, offset)]
+  Flowchart: Variables (the 17 built-in read-only enumeration values, the
+    enumeration items as values, the defined variables), view state,
+    StartNode (nested along the links, a node written before is an
+    x:Reference), x:Reference per node in the flowchart's order
+nodes: FlowStep (action, Next), FlowDecision Condition (True, False),
+  FlowSwitch x:TypeArguments="x:String" Expression (Default, cases with
+  x:Key)
+activities: CreatePoint / CreateAuxPoint (PointNumber, Positioning,
+  FromPoint, AutoLink, AutoLinkGeometryName, ApplyAOR, Arguments keyed
+  <name><positioning number> (DeltaX1, DeltaY1; Slope2, DeltaX2,
+  OffsetTarget2, ElevationTarget2, Superelevation2; ...), PointCodes,
+  AutoLinkCodes), CreateLink / CreateAuxLink (LinkNumber, StartPoint,
+  EndPoint, IsEnabled, LinkCodes), CreateShape (ShapeNumber, Links =
+  ComponentNames joined by commas, ShapeCodes), Sequence (activities),
+  InternalVariableDefine (VariableName, VariableType, DefaultValue,
+  Variable), SetVariableValue, SetOutputParameterValue
+every activity: ActivityId, DisplayName, ShowErrors, [HintSize], [view
+  state]; unset references are written as {x:Null} first
+code lists: scg:List InArgument(x:String) Capacity 4, doubled as needed
+```
+
+Other activities (curves, intersections, surface links, ...) are refused
+by `read_pkt`. A package needs the 32-digit part name; the creator and the
+workflow's namespace declarations come from the caller (a package the
+editor saved has them), `PktPackage::new` gives the rest of a new
+package's settings.
+
 ## 4. Reference check
 
 For every written drawing the check opens it in its own reference instance
