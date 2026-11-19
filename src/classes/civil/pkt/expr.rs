@@ -112,7 +112,13 @@ struct P<'a> {
     t: Vec<Tok>,
     i: usize,
     scope: &'a dyn Scope,
+    /// Nesting of the recursive rules (`not` and `unary`, which every
+    /// nesting goes through), bounded so a package cannot overflow the stack.
+    depth: usize,
 }
+
+/// The deepest nesting an expression may have.
+const MAX_DEPTH: usize = 128;
 
 fn kw(t: Option<&Tok>, k: &str) -> bool {
     matches!(t, Some(Tok::Name(n)) if n.eq_ignore_ascii_case(k))
@@ -171,7 +177,20 @@ impl P<'_> {
         Ok(v)
     }
 
+    /// Enters a recursive rule; refuses an expression nested too deep.
+    fn enter(&mut self) -> Result<(), DxfError> {
+        self.depth += 1;
+        (self.depth <= MAX_DEPTH).then_some(()).ok_or_else(|| fail("expression nested too deep"))
+    }
+
     fn not(&mut self) -> Result<Value, DxfError> {
+        self.enter()?;
+        let v = self.not_inner();
+        self.depth -= 1;
+        v
+    }
+
+    fn not_inner(&mut self) -> Result<Value, DxfError> {
         if kw(self.peek(), "Not") {
             self.i += 1;
             return Ok(Value::Bool(!truth(&self.not()?)?));
@@ -239,6 +258,13 @@ impl P<'_> {
     }
 
     fn unary(&mut self) -> Result<Value, DxfError> {
+        self.enter()?;
+        let v = self.unary_inner();
+        self.depth -= 1;
+        v
+    }
+
+    fn unary_inner(&mut self) -> Result<Value, DxfError> {
         if self.op("-") {
             return Ok(Value::Number(-num(&self.unary()?)?));
         }
@@ -374,7 +400,7 @@ pub fn eval(s: &str, scope: &dyn Scope) -> Result<Value, DxfError> {
     let Some(inner) = t.strip_prefix('[').and_then(|x| x.strip_suffix(']')) else {
         return Ok(t.parse().map(Value::Number).unwrap_or_else(|_| Value::Text(t.to_string())));
     };
-    let mut p = P { t: tokens(inner)?, i: 0, scope };
+    let mut p = P { t: tokens(inner)?, i: 0, scope, depth: 0 };
     let v = p.or()?;
     if p.i != p.t.len() {
         return Err(fail(format!("unexpected text after {inner}")));
@@ -401,6 +427,15 @@ mod tests {
                 _ => None,
             }
         }
+    }
+
+    #[test]
+    fn refuses_expressions_nested_too_deep() {
+        let deep = format!("[{}1{}]", "(".repeat(10_000), ")".repeat(10_000));
+        assert!(eval(&deep, &S).is_err());
+        assert!(eval(&format!("[{}1]", "-".repeat(10_000)), &S).is_err());
+        assert!(eval(&format!("[{}True]", "Not ".repeat(10_000)), &S).is_err());
+        assert_eq!(number(&format!("[{}2{}]", "(".repeat(50), ")".repeat(50)), &S).unwrap(), 2.0);
     }
 
     #[test]

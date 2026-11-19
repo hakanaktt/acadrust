@@ -140,7 +140,9 @@ fn shape_at(data: &[u8], start: usize, end: usize) -> Option<usize> {
 /// script name `Subassembly.<name>` (a stock script: three empty texts, the
 /// resource module, an empty text; a package's: five empty texts).
 fn codes_start(strings: &[String]) -> Option<usize> {
-    strings.iter().enumerate().skip(8).find(|(_, s)| s.starts_with("Subassembly.")).map(|(i, _)| i + 6)
+    // The first three texts are the class name and two empty texts; older
+    // records name the script as their eighth text.
+    strings.iter().enumerate().skip(3).find(|(_, s)| s.starts_with("Subassembly.")).map(|(i, _)| i + 6)
 }
 
 /// Shape from the point list, with codes from `strings`, the record's text

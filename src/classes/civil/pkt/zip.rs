@@ -24,6 +24,10 @@ fn u32_at(b: &[u8], i: usize) -> Result<u32, DxfError> {
     b.get(i..i + 4).map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]])).ok_or_else(|| bad("truncated"))
 }
 
+/// The largest part read: a package's parts are small, and a header must
+/// not make the reader reserve or inflate more than this.
+const MAX_PART: usize = 64 << 20;
+
 /// The parts of an archive, in directory order: (name, bytes).
 pub fn read(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, DxfError> {
     let end = (0..bytes.len().saturating_sub(21)).rev().find(|&i| bytes[i..].starts_with(&[0x50, 0x4B, 0x05, 0x06])).ok_or_else(|| bad("no end record"))?;
@@ -47,12 +51,20 @@ pub fn read(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, DxfError> {
             return Err(bad("bad local header"));
         }
         let start = local + 30 + u16_at(bytes, local + 26)? as usize + u16_at(bytes, local + 28)? as usize;
+        if size > MAX_PART {
+            return Err(bad("part too large"));
+        }
         let data = bytes.get(start..start + packed).ok_or_else(|| bad("truncated part"))?;
         let plain = match method {
             0 => data.to_vec(),
             8 => {
+                // Inflated no further than the size the header gives, so a
+                // part that expands past it is caught by the size check.
                 let mut v = Vec::with_capacity(size);
-                flate2::read::DeflateDecoder::new(data).read_to_end(&mut v).map_err(|e| DxfError::Compression(e.to_string()))?;
+                flate2::read::DeflateDecoder::new(data)
+                    .take(size as u64 + 1)
+                    .read_to_end(&mut v)
+                    .map_err(|e| DxfError::Compression(e.to_string()))?;
                 v
             }
             _ => return Err(bad("unsupported compression method")),
@@ -122,6 +134,25 @@ pub fn write(parts: &[(String, Vec<u8>)]) -> Result<Vec<u8>, DxfError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn refuses_parts_larger_than_their_header() {
+        // A part of 10 MB of zeros deflates to a few kB; with its header
+        // claiming 10 bytes the reader stops after 11.
+        let parts = vec![("a.bin".to_string(), vec![0u8; 10 << 20])];
+        let mut z = super::write(&parts).unwrap();
+        let central = z.windows(4).rposition(|w| w == [0x50, 0x4B, 0x01, 0x02]).unwrap();
+        for at in [22, central + 24] {
+            z[at..at + 4].copy_from_slice(&10u32.to_le_bytes());
+        }
+        assert!(super::read(&z).is_err());
+        // A header claiming more than a part may hold is refused before
+        // anything is reserved.
+        let mut z = super::write(&[("b".to_string(), b"x".to_vec())]).unwrap();
+        let central = z.windows(4).rposition(|w| w == [0x50, 0x4B, 0x01, 0x02]).unwrap();
+        z[central + 24..central + 28].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(super::read(&z).is_err());
+    }
+
     #[test]
     fn archives_round_trip() {
         let parts = vec![("a.txt".to_string(), b"hello hello hello".to_vec()), ("[b].xml".to_string(), Vec::new())];

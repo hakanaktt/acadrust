@@ -105,6 +105,10 @@ fn unescape(s: &str) -> Result<String, String> {
     Ok(out)
 }
 
+/// The deepest element nesting a document may have, so a package cannot
+/// overflow the stack of the code that walks its elements.
+const MAX_DEPTH: usize = 4096;
+
 /// Parses a document; returns its root element.
 pub fn parse(text: &str) -> Result<Element, String> {
     let text = text.trim_start_matches('\u{feff}');
@@ -150,21 +154,30 @@ pub fn parse(text: &str) -> Result<Element, String> {
                     let eq = text[j..].find('=').ok_or("attribute without value")? + j;
                     let name = text[j..eq].trim().to_string();
                     let mut q = eq + 1;
-                    while b[q].is_ascii_whitespace() {
+                    while q < b.len() && b[q].is_ascii_whitespace() {
                         q += 1;
                     }
-                    let quote = b[q];
+                    let quote = *b.get(q).ok_or("unterminated attribute")?;
+                    if quote != b'"' && quote != b'\'' {
+                        return Err("attribute value without quotes".into());
+                    }
                     let close = text[q + 1..].find(quote as char).ok_or("unterminated attribute")? + q + 1;
                     e.attrs.push((name, unescape(&text[q + 1..close])?));
                     j = close + 1;
                 }
                 if b[j] == b'/' {
+                    if b.get(j + 1) != Some(&b'>') {
+                        return Err("malformed empty element".into());
+                    }
                     match stack.last_mut() {
                         Some(p) => p.children.push(Node::Element(e)),
                         None => root = Some(e),
                     }
                     i = j + 2;
                 } else {
+                    if stack.len() >= MAX_DEPTH {
+                        return Err("elements nested too deep".into());
+                    }
                     stack.push(e);
                     i = j + 1;
                 }
@@ -291,6 +304,17 @@ pub fn document(e: &Element) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refuses_malformed_documents_without_panicking() {
+        for bad in ["<a b=", "<a b= ", "<a b=x>", "<a b=\u{e9}x>", "<a/\u{e9}", "<a/x>", "<a b=\"1\""] {
+            assert!(parse(bad).is_err(), "{bad}");
+        }
+        let deep = format!("{}{}", "<a>".repeat(MAX_DEPTH + 1), "</a>".repeat(MAX_DEPTH + 1));
+        assert!(parse(&deep).is_err());
+        let fine = format!("{}{}", "<a>".repeat(100), "</a>".repeat(100));
+        assert!(parse(&fine).is_ok());
+    }
 
     #[test]
     fn parses_and_writes_back() {
