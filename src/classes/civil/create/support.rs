@@ -54,6 +54,14 @@ const CLASSES: &[Class] = &[
     Class { dxf: "AECC_SURFACE_STYLE", cpp: "AeccDbSurfaceStyle", module: "AeccLand130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_TIN_SURFACE", cpp: "AeccDbSurfaceTin", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_ALIGNMENT", cpp: "AeccDbAlignment", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
+    Class { dxf: "AECC_PROFILE", cpp: "AeccDbVAlignment", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
+    Class { dxf: "AECC_NOTIFICATIONINFOS", cpp: "AeccDbVAlignNotificationInfos", module: "AeccLand130", proxy_flags: 0x77c, entity: false },
+    Class { dxf: "AECC_ENTITYEXTENDPARAM", cpp: "AeccDbVAlignFreeParabolaPassPtInfos", module: "AeccLand130", proxy_flags: 0x77c, entity: false },
+    Class { dxf: "AECC_ENTITYCIRCLEINFOS", cpp: "AeccDbVAlignFreeCircleInfos", module: "AeccLand130", proxy_flags: 0x77c, entity: false },
+    Class { dxf: "AECC_DB_FIXED_PARABOLA_HLPT", cpp: "AeccDbVAlignFixedParabolaHLPtInfos", module: "AeccLand130", proxy_flags: 0x77c, entity: false },
+    Class { dxf: "AECC_DB_FIXED_PARABOLA_HLPTPATSPEAK", cpp: "AeccDbVAlignFixedParabolaHLPtPatsPeakInfos", module: "AeccLand130", proxy_flags: 0x77c, entity: false },
+    Class { dxf: "AECC_DB_FIXED_ARC_HLPT", cpp: "AeccDbVAlignFixedArcHLPtInfos", module: "AeccLand130", proxy_flags: 0x77c, entity: false },
+    Class { dxf: "AECC_DB_FLOAT_TANGENT_GRADELEN", cpp: "AeccDbVAlignFloatTangentGradeLenInfos", module: "AeccLand130", proxy_flags: 0x77c, entity: false },
     Class { dxf: "AECC_COGO_POINT", cpp: "AeccDbCogoPoint", module: "AeccLand130", proxy_flags: 0x33c, entity: true },
 ];
 

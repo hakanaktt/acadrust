@@ -7,12 +7,14 @@
 mod alignment;
 mod groups;
 mod points;
+mod profile;
 mod support;
 mod tin;
 mod tree;
 
 pub use alignment::{add_alignment, add_alignment_with_curves, VertexCurve};
 pub use groups::{add_point_group, add_point_group_query, set_point_group, set_point_group_query, Comparison, PointQuery};
+pub use profile::add_profile;
 pub use points::{add_cogo_point, cogo_points, remove_cogo_point, set_cogo_point};
 pub use support::ensure_civil;
 pub use tin::add_tin_surface;
