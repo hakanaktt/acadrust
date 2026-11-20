@@ -159,6 +159,12 @@ fn node_list(data: &[u8], pos: usize, end: usize) -> Option<(Vec<(i32, Vector2, 
     let next_free = bits.bit_long()?;
     let n = bits.bit_long()?;
     let mut id = bits.bit_long()?;
+    // A container whose members were moved onto the site holds no nodes
+    // (first id 0) until the application builds it again (WT04 to WT06,
+    // WP01, WP02).
+    if n == 0 && id == 0 && (1..=1_000_000).contains(&next_free) {
+        return Some((Vec::new(), bits.pos, next_free));
+    }
     if !(1..=100_000).contains(&n) || next_free > 1_000_000 || n >= next_free || id < 1 || id >= next_free {
         return None;
     }
