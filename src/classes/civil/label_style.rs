@@ -620,6 +620,48 @@ impl LabelFields {
         })
     }
 
+    /// Sets a collector's per component entry list to `n` entries: the
+    /// entries are the same for every component apart from their number
+    /// (1, 2, ...; LC00 to LC05: a component added or removed changes only
+    /// their count), so the first one is repeated (a constant one when there
+    /// is none).
+    pub(super) fn set_entries(&mut self, n: usize) {
+        let Some(at) = self.0.iter().position(|f| f.name == "entries") else { return };
+        let old = self.0[at + 1..].iter().take_while(|f| f.name == "entry").count();
+        let first: Vec<Field> = self.0[at + 1..at + 1 + old.min(ENTRY.len())].to_vec();
+        let proto: Vec<Field> = if first.len() == ENTRY.len() {
+            first
+        } else {
+            let values = [V::Bl(4), V::Bd(0.0), V::Bl(0), V::Bits(0), V::Bl(0xFF_FFFF), V::Bl(0), V::Bl(0), V::Bl(0), V::B(false), V::Bl(1)];
+            values.into_iter().map(|value| Field { name: "entry", value, raw: String::new() }).collect()
+        };
+        let entries = (0..n).flat_map(|i| {
+            let mut e = proto.clone();
+            let last = e.len() - 1;
+            e[last] = Field { name: "entry", value: V::Bl(i as i32 + 1), raw: String::new() };
+            e
+        });
+        self.0.splice(at + 1..at + 1 + old, entries);
+        self.set("entries", V::Bl(n as i32));
+        self.set("d_end", V::Bl(n as i32));
+    }
+
+    /// The number of a collector's per component entries.
+    #[cfg(test)]
+    pub(super) fn entry_count(&self) -> i32 {
+        self.long("entries").unwrap_or(-1)
+    }
+
+    /// Makes a text component's fields those of a component the label
+    /// style editor adds (LC01): field `t5` 5 and the anchor word's kind
+    /// byte 0xB2 for the labelled object's location (`anchor_point` -4),
+    /// 0xB1 for an anchor point.
+    pub(super) fn set_new_text_component(&mut self, c: &LabelTextComponent) {
+        self.set("t5", V::Bl(5));
+        let kind = if c.anchor_point < 0 { 0x0800_B200 } else { 0x0800_B100 };
+        self.set("anchor", V::Bl(kind));
+    }
+
     /// Writes a text component's values (its id and name are the record's
     /// head and texts) into its fields and references.
     pub(super) fn set_text_component(&mut self, c: &LabelTextComponent, refs: &mut [u64]) {
