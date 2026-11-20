@@ -920,6 +920,7 @@ pub fn read_proxy_entity(
         payload,
         text_payload,
         object_ids,
+        dxf_data: Vec::new(),
     })
 }
 

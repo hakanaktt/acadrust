@@ -2,6 +2,14 @@
 
 ### Unreleased
 
+- **DXF-format proxy entities** - An `ACAD_PROXY_ENTITY` whose original
+  data format is DXF (`70 1`) carries the entity's own DXF groups after
+  the header. The reader kept only binary data and let those groups' own
+  `70`/`90` overwrite the header; the writer then emitted `70 0` with
+  binary `93`/`161`/`310` data, so a DXF round trip lost the data. The
+  groups are now kept verbatim (`ProxyEntityData::dxf_data`) and written
+  back as they are, as `ACAD_PROXY_OBJECT` already does.
+
 - **AutoCAD 2010 view-rep standard** - `ACDBVIEWREPSTANDARD` stores five
   values before R2013 and six from R2013; the DWG reader and writer now
   use the count the drawing's version stores.

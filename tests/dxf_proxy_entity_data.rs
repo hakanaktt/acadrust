@@ -116,10 +116,7 @@ fn dxf_format_proxy_entities_round_trip_group_for_group() {
     .unwrap();
     for (handle, subclass) in [("400", "McDbEntity2"), ("401", "AcDbMyOther")] {
         let before = proxy_groups(&source, handle);
-        assert!(
-            before.contains(&(100, subclass.into())),
-            "fixture {handle}"
-        );
+        assert!(before.contains(&(100, subclass.into())), "fixture {handle}");
         // The data groups come back group for group; the class number
         // names the same class (here none: the fixture's CLASSES section
         // has no class 516/517).
@@ -158,6 +155,7 @@ fn binary_proxy_entities_are_written_with_dwg_data_format() {
             payload: ProxyPayload::from_bits(&[0xAB, 0xC0], 10),
             text_payload: ProxyPayload::default(),
             object_ids: Vec::new(),
+            dxf_data: Vec::new(),
         }),
     };
     let handle = doc
