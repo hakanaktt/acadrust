@@ -1131,7 +1131,7 @@ mod tests {
         }
         fn raw(&mut self, count: usize, value: u64) -> &mut Self {
             for i in (0..count).rev() {
-                self.bits.push((value >> i) & 1 == 1);
+                self.bits.push(i < 64 && (value >> i) & 1 == 1);
             }
             self
         }
