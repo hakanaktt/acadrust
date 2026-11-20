@@ -130,6 +130,16 @@ pub enum VerticalCurve {
     Asymmetric { before: f64, after: f64 },
     /// A free circular curve of this radius.
     Circular(f64),
+    /// A free symmetric parabola of this K value (length per percent of
+    /// grade change), of this radius, or through this point (station,
+    /// elevation).
+    ParabolaK(f64),
+    ParabolaRadius(f64),
+    ParabolaThrough(Vector2),
+    /// A free circular curve of this horizontal length, or through this
+    /// point.
+    CircularLength(f64),
+    CircularThrough(Vector2),
 }
 
 impl VerticalCurve {
@@ -137,20 +147,36 @@ impl VerticalCurve {
         self != VerticalCurve::None
     }
 
-    /// The stations it takes before and after its PVI between the grades
-    /// `g1` and `g2`, `None` when its values are not positive.
-    fn reach(self, g1: f64, g2: f64) -> Option<(f64, f64)> {
+    /// The stations it takes before and after its PVI `pvi` between the
+    /// grades `g1` and `g2`, `None` when its values are not positive or no
+    /// such curve passes its point.
+    fn reach(self, pvi: Vector2, g1: f64, g2: f64) -> Option<(f64, f64)> {
         let positive = |v: f64| (v.is_finite() && v > 0.0).then_some(v);
+        let parabola = |l: f64| positive(l).map(|l| (l / 2.0, l / 2.0));
+        let circular = |r: f64| {
+            let (a1, a2) = (g1.atan(), g2.atan());
+            let t = positive(r)? * ((a2 - a1).abs() / 2.0).tan();
+            Some((t * a1.cos(), t * a2.cos()))
+        };
+        // The unit grades' vertical parts: a circular curve's horizontal
+        // length is its radius times their difference.
+        let rise = |g: f64| g / (1.0 + g * g).sqrt();
         match self {
             VerticalCurve::None => Some((0.0, 0.0)),
-            VerticalCurve::Parabola(l) => positive(l).map(|l| (l / 2.0, l / 2.0)),
+            VerticalCurve::Parabola(l) => parabola(l),
+            VerticalCurve::ParabolaK(k) => parabola(positive(k)? * 100.0 * (g2 - g1).abs()),
+            VerticalCurve::ParabolaRadius(r) => parabola(positive(r)? * (g2 - g1).abs()),
+            VerticalCurve::ParabolaThrough(p) => parabola(super::super::profile::parabola_length_through(pvi, g1, g2, p)?),
             VerticalCurve::Asymmetric { before, after } => Some((positive(before)?, positive(after)?)),
-            VerticalCurve::Circular(r) => {
-                let (a1, a2) = (g1.atan(), g2.atan());
-                let t = positive(r)? * ((a2 - a1).abs() / 2.0).tan();
-                Some((t * a1.cos(), t * a2.cos()))
-            }
+            VerticalCurve::Circular(r) => circular(r),
+            VerticalCurve::CircularLength(l) => circular(positive(l)? / (rise(g1) - rise(g2)).abs()),
+            VerticalCurve::CircularThrough(p) => circular(super::super::profile::circle_through(pvi, g1, g2, p)?),
         }
+    }
+
+    /// Whether the record names it a parabola (one more text each).
+    fn parabola(self) -> bool {
+        matches!(self, VerticalCurve::Parabola(_) | VerticalCurve::ParabolaK(_) | VerticalCurve::ParabolaRadius(_) | VerticalCurve::ParabolaThrough(_))
     }
 }
 
@@ -229,7 +255,7 @@ fn write_profile(doc: &mut CadDocument, common: EntityCommon, name: &str, parts:
         _ => None,
     }));
     strings.push(name.to_string());
-    let parabolas = parts.iter().filter(|p| matches!(p.3, Part::Curve { curve: VerticalCurve::Parabola(_), .. })).count();
+    let parabolas = parts.iter().filter(|p| matches!(p.3, Part::Curve { curve, .. } if curve.parabola())).count();
     strings.extend((0..4 + parabolas).map(|_| String::new()));
     put_entity(
         doc,
@@ -270,7 +296,12 @@ fn write_profile(doc: &mut CadDocument, common: EntityCommon, name: &str, parts:
                 let (prefix, constraint) = match part {
                     Part::Tangent(..) => (2, 0),
                     Part::Curve { curve: VerticalCurve::Circular(_), .. } => (4, 9),
+                    Part::Curve { curve: VerticalCurve::CircularLength(_), .. } => (4, 0),
+                    Part::Curve { curve: VerticalCurve::CircularThrough(_), .. } => (4, 7),
                     Part::Curve { curve: VerticalCurve::Asymmetric { .. }, .. } => (8, 10),
+                    Part::Curve { curve: VerticalCurve::ParabolaK(_), .. } => (6, 2),
+                    Part::Curve { curve: VerticalCurve::ParabolaRadius(_), .. } => (6, 9),
+                    Part::Curve { curve: VerticalCurve::ParabolaThrough(_), .. } => (6, 7),
                     Part::Curve { .. } => (6, 0),
                 };
                 bits(w, &format!("{prefix:011b}{:023b}", 0x08 << 13));
@@ -285,17 +316,39 @@ fn write_profile(doc: &mut CadDocument, common: EntityCommon, name: &str, parts:
                         bits(w, "0000");
                     }
                     Part::Curve { curve, crest } => match *curve {
-                        VerticalCurve::Parabola(length) => {
-                            w.write_bit_long(1);
-                            w.write_bit_double(length);
-                            w.write_bit_long(if *crest { 0x1001 } else { 0x1000 });
+                        VerticalCurve::Parabola(_) | VerticalCurve::ParabolaK(_) | VerticalCurve::ParabolaRadius(_) | VerticalCurve::ParabolaThrough(_) => {
+                            // A length opens with BL 1, a K value or radius
+                            // with BL 0; a point has no crest flag.
+                            match *curve {
+                                VerticalCurve::Parabola(v) => {
+                                    w.write_bit_long(1);
+                                    w.write_bit_double(v);
+                                }
+                                VerticalCurve::ParabolaK(v) | VerticalCurve::ParabolaRadius(v) => {
+                                    w.write_bit_long(0);
+                                    w.write_bit_double(v);
+                                }
+                                VerticalCurve::ParabolaThrough(p) => {
+                                    w.write_bit_long(0);
+                                    w.write_raw_double(p.x);
+                                    w.write_raw_double(p.y);
+                                }
+                                _ => {}
+                            }
+                            if !matches!(curve, VerticalCurve::ParabolaThrough(_)) {
+                                w.write_bit_long(if *crest { 0x1001 } else { 0x1000 });
+                            }
                             w.write_bit_long(0);
                             bits(w, "010");
                             for _ in 0..3 {
                                 w.write_bit_double(-1.0);
                             }
                         }
-                        VerticalCurve::Circular(radius) => w.write_bit_double(radius),
+                        VerticalCurve::Circular(v) | VerticalCurve::CircularLength(v) => w.write_bit_double(v),
+                        VerticalCurve::CircularThrough(p) => {
+                            w.write_raw_double(p.x);
+                            w.write_raw_double(p.y);
+                        }
                         VerticalCurve::Asymmetric { before, after } => {
                             w.write_bit_double(before);
                             w.write_bit_double(after);
@@ -360,7 +413,7 @@ pub fn add_profile_with_curves(doc: &mut CadDocument, alignment: Handle, name: &
     let grade = |i: usize| (pvis[i + 1].y - pvis[i].y) / (pvis[i + 1].x - pvis[i].x);
     let mut reach = Vec::with_capacity(curves.len());
     for (j, c) in curves.iter().enumerate() {
-        let r = c.reach(grade(j), grade(j + 1)).ok_or_else(|| invalid("a vertical curve needs positive values"))?;
+        let r = c.reach(pvis[j + 1], grade(j), grade(j + 1)).ok_or_else(|| invalid("a vertical curve needs positive values (or a point it can pass)"))?;
         if c.is_some() && grade(j) == grade(j + 1) {
             return Err(invalid("a curve's grades are equal"));
         }
@@ -528,5 +581,39 @@ mod tests {
         // reference application starts it (station 42.6636).
         assert!((pieces[0].1.last().unwrap().x - 42.663_583_344).abs() < 1e-6);
         assert!((pieces[3].1[0].x - 92.0).abs() < 1e-9 && (pieces[3].1.last().unwrap().x - 112.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn curves_by_k_radius_length_and_point_read_back() {
+        let v = Vector2::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let al = crate::classes::civil::add_alignment(&mut doc, "AL1", &[v(0.0, 0.0), v(100.0, 0.0)], None).unwrap();
+        let pvis = [v(0.0, 10.0), v(50.0, 20.0), v(100.0, 15.0)];
+        // A point no parabola at the PVI passes is refused.
+        assert!(add_profile_with_curves(&mut doc, al, "X", &pvis, &[VerticalCurve::ParabolaThrough(v(50.0, 30.0))], None).is_err());
+        let curves = [
+            (VerticalCurve::ParabolaK(0.5), (42.5, 57.5)),
+            (VerticalCurve::ParabolaRadius(50.0), (42.5, 57.5)),
+            (VerticalCurve::ParabolaThrough(v(50.0, 18.0)), (70.0 / 3.0, 230.0 / 3.0)),
+            (VerticalCurve::CircularLength(15.0), (42.554880987, 57.554880987)),
+            (VerticalCurve::CircularThrough(v(50.0, 18.0)), (23.673140622, 76.714991262)),
+        ];
+        let handles: Vec<Handle> = curves.iter().map(|(c, _)| add_profile_with_curves(&mut doc, al, "P", &pvis, &[*c], None).unwrap()).collect();
+        let path = std::env::temp_dir().join(format!("civil-profile-curve-kinds-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        for (h, (_, (from, to))) in handles.iter().zip(&curves) {
+            let pieces = match back.get_entity(*h) {
+                Some(crate::entities::EntityType::Extended(x)) => match &x.data {
+                    crate::entities::ExtendedEntityData::Arch(a) => a.profile_pieces(),
+                    _ => panic!(),
+                },
+                _ => panic!(),
+            };
+            let curve = &pieces[1].1;
+            assert!((curve[0].x - from).abs() < 1e-6 && (curve[curve.len() - 1].x - to).abs() < 1e-6);
+        }
     }
 }

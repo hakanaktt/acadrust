@@ -666,9 +666,10 @@ whose texts miss the keys' texts is refused (`Errors Found`).
 profile of fixed tangents through the PVIs (station, elevation) with a
 free symmetric parabola of the given length at inner PVIs (0 for none;
 crest where the grade falls); `add_profile_with_curves` takes per inner
-PVI a `VerticalCurve`: none, a free symmetric parabola of a length, a free
-asymmetric parabola of two lengths (before and after the PVI) or a free
-circular curve of a radius. Both use the drawing's default profile style
+PVI a `VerticalCurve`: none, a free symmetric parabola of a length, a K
+value, a radius or through a point, a free asymmetric parabola of two
+lengths (before and after the PVI) or a free circular curve of a radius, a
+horizontal length or through a point. Both use the drawing's default profile style
 (the first style of the style tree's profile style collection, key 74).
 The alignment is written again with the profile in its list; only an
 alignment whose record this crate reproduces bit for bit is accepted (its
@@ -696,14 +697,19 @@ BL n entity records, the tangents then the curves; each: 11 bits
   tangent (0):     2RD start, 2RD end, 4 zero bits
   parabola (0):    BL 1, BD length, BL 0x1001 crest / 0x1000 sag, BL 0,
                    3 bits 010, 3 x BD -1 (no minimum K)
+  parabola by K (2), by radius (9): BL 0, BD K or radius, then as by length
+  parabola through a point (7): BL 0, 2RD point, BL 0, 3 bits 010,
+                   3 x BD -1 (no crest flag)
   circular (9):    BD radius
+  circular by horizontal length (0): BD length
+  circular through a point (7): 2RD point
   asymmetric (10): BD length before, BD length after the PVI
 2 bits 10, the identifier (a version-4 GUID), 107 constant bits ending
   with the version word
 references: the seven helpers (hard ownership), soft 0, hard 0, hard 0,
   soft 0, style (hard), alignment (hard), soft 0, hard 0, soft 0, soft 0
 texts: "AeccImpVAlignment", "", "", the type-4 keys' texts, name, four
-  empty texts and one more per symmetric parabola
+  empty texts and one more per symmetric parabola (by any of its values)
 ```
 
 The parabola's first `BL` is 1 in current records (WR02) where older
@@ -715,25 +721,26 @@ for bit apart from the stamp and the identifier. A circular or asymmetric
 curve's record ends with its values; the reader, which looked for a
 parabola's tail after them, now takes the next record there.
 
+The curves by K, radius, horizontal length and through a point (WV01 to
+WV05: K 0.5, radius 50, length 15, point (50, 18)) read back with the
+samples' stations, and written (E-PV1) open, audit clean and list the
+same stations, elevations and lengths as the samples.
+
 The alignment lists its profiles (the oldest first in its references, soft
-pointers; the newest first in its record) after its elements:
+pointers) and holds an anchor (kind 32763) at its start by the profile's
+identifier (§3a "Station anchors"):
 
 ```text
-BL n, BL 0, BL 0, BL n
-n x {the profile's identifier, B 1, BL 32763, BL 0 x 3, BD end station
-     of the alignment's first element, BL 1, BL 0, BL element count (0 for
-     one element), 6 RD (0, 0, that end station, 0, 0, 0)}
+BL n profiles, BL views, BL groups, BL k anchors, k x anchor
 then BL 0 (equations), BL 1, BL 0 (speeds) as before
-texts: two more empty texts per profile
+texts: two more empty texts per anchor
 ```
 
 The identifier must be a version-4 GUID: with random bytes in its place
 the application stops while it opens the drawing (E-P1, E-P3), with the
 application's identifier the same records open (E-P9). A profile written
-without the alignment's entry opens but is not listed under the
-alignment, and is left out when the drawing is saved (E-R1). The entry's
-last value is 2.8e-14 instead of 0 in the application's record for a
-curved alignment (WR06); the writer writes 0.
+without the alignment's anchor opens but is not listed under the
+alignment, and is left out when the drawing is saved (E-R1).
 
 ## 3f. Profile style of a new drawing
 
@@ -2319,7 +2326,8 @@ Corridors are listed in §3i-a.
 | alignments | lone spirals, other constraints (fixed/floating curves, curves through points), design speeds, station equations | yes (elements, speeds, equations) | no | other element kinds not written |
 | alignments | superelevation | yes (critical stations, lanes-only blocks) | no | the superelevation block is read only |
 | profiles | layout: fixed tangents, free parabolas (symmetric, asymmetric), free circular curves | yes | yes | §3e |
-| profiles | layout: fixed and floating curves, curves by K or through a point | yes | no | other entity kinds (each its own record) |
+| profiles | layout: free curves by K, radius, horizontal length or through a point (parabolas and circular curves) | yes | yes | §3e |
+| profiles | layout: fixed and floating curves (by three points, two points and a grade or K, floating through a point), floating and free tangents | yes | no | not written yet |
 | profiles | from a surface (existing ground), superimposed, offset profiles, profiles of corridor feature lines | partly | no | sampled profiles are rebuilt from their source by the application; not sampled for writing |
 | profile views | automatic and user ranges, default style, profile label groups | yes (frame) | yes | §3h |
 | profile views | other styles, vertical scales, stacked views, bands other than the defaults | partly | no | the graph settings between the named values are constant runs |
