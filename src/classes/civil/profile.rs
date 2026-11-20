@@ -286,8 +286,6 @@ impl Placed {
     }
 }
 
-/// The circle tangent to both grades at the PVI that `def` gives; the
-/// length given is the horizontal one.
 /// The radius of the circular curve at `pvi` between the grades `g1` and
 /// `g2` that passes through `p`.
 pub(super) fn circle_through(pvi: Vector2, g1: f64, g2: f64, p: Vector2) -> Option<f64> {
@@ -309,6 +307,8 @@ pub(super) fn parabola_length_through(pvi: Vector2, g1: f64, g2: f64, p: Vector2
         .fold(None, |best: Option<f64>, l| Some(best.map_or(l, |b| b.min(l))))
 }
 
+/// The circle tangent to both grades at the PVI that `def` gives; the
+/// length given is the horizontal one.
 fn placed_circle(pvi: Vector2, g1: f64, g2: f64, def: CurveDef) -> Option<(Vector2, f64)> {
     let s = if g2 >= g1 { 1.0 } else { -1.0 };
     let (u1, u2) = (unit_grade(g1), unit_grade(g2));

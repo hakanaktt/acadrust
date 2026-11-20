@@ -167,6 +167,7 @@ impl<'a> SemanticInventoryV1<'a> {
             version,
             maintenance_version: _,
             header,
+            file_dependencies: _,
             layers,
             line_types,
             text_styles,

@@ -624,10 +624,13 @@ side, nominal offset and region, and follow edits made in the application
 ## 3c. TIN surfaces
 
 `add_tin_surface(doc, name, points, layer)` writes an `AECC_TIN_SURFACE`
-whose one definition adds the points, with its triangulation, and the
-drawing's default surface style (the first style of the style tree's
-surface style collection, key 77). A drawing without that collection
-gets it (§3d); a drawing without any tree first gets the records of §2a.
+whose one definition adds the points; `add_tin_surface_with(doc, name,
+definitions, auto_rebuild, layer)` writes any list of definitions (the
+reader's `TinDefinition`, as `tin_definitions()` returns them) and the
+triangulation they build. Both use the drawing's default surface style
+(the first style of the style tree's surface style collection, key 77).
+A drawing without that collection gets it (§3d); a drawing without any
+tree first gets the records of §2a.
 
 ```text
 BL 80, 2 bits 11, BL 0x1554C738, BL 0x087C1120, BL 5 (version)
@@ -636,28 +639,111 @@ BL 8 keys: 0x03011E29 RC 1, 0x0D011E25 BL 0, 0x02011E26 BD DBL_MAX,
   0x0201230C BD 0, 0x02011E27 BD DBL_MAX, 0x01011E28 BL 8
 BL 0 (byte form), 121 zero bits, 3BD origin 0, 9 BD identity, BD 1
 RC 1 item, 5 bits 01000
-definitions: 2 bits 00, RL 0x80020A28 (bits 11-15: one definition),
-  BL 0, BL 0, BL 0xE8A5800C, BL 40, BL 0, 3 bits 000, GUID, BL 0,
-  added vertices: BL n, n x 3BD
-  BL 0 (four-byte form), BL 0xAC150A00, 2 bits 00
+definitions (below)
 RL -1, RS 0x04A2, RC 2, RS 0, RS 0x2A3C, "MMS01"
 triangulation (tin.rs): BL vertex count, BL 0, 1, 2, 3 (the corners),
-  per vertex RL flags (corner 0x8440, point 0x80), RL a triangle that
-  uses it, 3 RD; BL triangle count, per triangle 3 RL vertices
-  (counter-clockwise), 3 RL neighbours (across the edge that starts at
-  the vertex, -1 outside), RL flags (1: uses a corner, not drawn), RL -1
+  per vertex RL flags (corner 0x8440, point 0x80; the application keeps a
+  deleted vertex with bit 0), RL a triangle that uses it, 3 RD; BL
+  triangle count, per triangle 3 RL vertices (counter-clockwise), 3 RL
+  neighbours (across the edge that starts at the vertex, -1 outside), RL
+  flags (1 hidden: uses a corner or a boundary hides it; 4 deleted, with
+  vertices -1), RL -1
 7 bits 1010100, BS 0x04BE
-handles: soft pointer 0, hard owner 0, hard pointer 0, style
-strings: "", "", name, "", ""
+handles: soft pointer 0, hard owner 0, the definitions' sources, hard
+  pointer 0, style
+strings: "", "", the definitions' texts, name, "", ""
 ```
 
-The four corners lie 100 units outside the points' extents (WS02, WS03),
-with the nearest point's elevation; the writer triangulates the points
-inside them (Delaunay). Written with WS03's ten points, the drawn
-triangles are the eleven of the application's own surface, and apart
-from the geometry stamp (written as 0) and the triangle order the record
-equals WS02's. The corners' flags of the samples carry 16 more bits
-(`0xBBCC`) that are no field; the writer leaves them out.
+### Definitions
+
+```text
+head: 10 bits 8 + 32 n, RC 2 + 8 n (n definitions), RC 4 when one is a
+  boundary (else 2), RC 0x81 when one is a contour (else 0x80)
+2 bits (00 with a contour, else 10), BL 0
+BS 0x800C and B: the number of breakline definitions + 1, its low bit in
+  the B, the rest in bits 8 and up of the BS
+n x { BL kind, BL flags (9; 4: from drawing objects; 2: proximity),
+      BL 16, GUID, BL k (lines: one per object or held line; else 0),
+      data by kind }
+BL 0 (four-byte form), BL options (0xAC150A00; 0x01000000: rebuild
+  automatically), 2 bits 00
+```
+
+| kind | definition | data | texts | sources |
+|---|---|---|---|---|
+| 47 | points | BL n, n x 3BD | — | — |
+| 0 | point group | — | the group's name | the group |
+| 14, 15, 24 | standard, proximity, non-destructive breaklines | lines | name | the objects |
+| 27 | contours | lines, BL 0 | name | the objects |
+| 13 | boundary | lines, BL type (1 show, 2 hide, 4 outer, 8 data clip), BL non-destructive | name | the objects |
+| 1, 20 | add vertex, vertex elevation | 3BD | — | — |
+| 2, 9, 23 | delete vertex, swap edge, delete line (by plan position) | 2BD | — | — |
+| 8, 22 | move vertex, add line | 4BD | — | — |
+| 17 | raise / lower | BD | — | — |
+| 12 | paste surface | — | name | the pasted surface |
+| 31 | drawing objects | BL object type (0 points, 1 lines), BL maintain edges, BL n, n x 3BD (copied) | description | — |
+| 30 | point file | BL, BL (the file's FILETIME, high half first), 3 option bits | the file | the point file format |
+| 33 | imported file | BL, BL (FILETIME), BL | name, the file | — |
+| 41 | corridor surface | GUID (the corridor's surface) | name | the corridor |
+| 34, 35, 40 | transform, polygon, kind 40 (older drawings) | 16 RD + BL; BL n, n x 2 RD; BL | — | — |
+
+`lines`: `BL objects, BD mid-ordinate distance, BL m, m x { BL n, n x 3BD }
+(lines held by the definition, made from points), BL k, k x BL (1 to k),
+BD maximum distance (supplementing), BD weeding distance, BD weeding
+angle`. A definition made from drawing objects holds no lines (its
+objects are the sources, in order after the hard owner); the application
+marks such a surface out of date on open (it compares with the objects).
+
+### The written triangulation
+
+Without a flag that makes the application rebuild a surface on open
+(none found: `auto_rebuild` only marks the surface to follow its
+sources), the writer builds the triangulation the definitions give, in
+order (`tin_build.rs`):
+
+- the four corners lie 100 units outside the extents of every position
+  the definitions bring in, the lower two at the lowest elevation, the
+  upper two at the highest;
+- points are inserted Delaunay (Bowyer-Watson, the cavity stopping at
+  fixed edges); a point at a vertex's plan position replaces its
+  elevation;
+- standard breaklines and contours insert their vertices (and
+  supplementing points, which leave a vertex they fall on as it is) and
+  force each segment in by flipping crossing edges; a segment through
+  another vertex is left as the triangulation has it (as the application
+  does); proximity breaklines force segments between the vertices
+  nearest their points;
+- non-destructive breaklines and boundaries split the triangles they
+  cross without flipping: from each point to the next, the point and each
+  crossing with the edges as they are when the line gets there, at the
+  surface's elevation;
+- outer boundaries hide triangles outside (non-destructive: by centre;
+  destructive: any vertex outside), hide boundaries the ones inside, show
+  boundaries show them again, a data clip boundary leaves later data
+  outside it out (edits are not data);
+- deleting a vertex fills its hole ear by ear, the ear with the highest
+  power of the removed point to its circle first, then restores Delaunay
+  edges; moving a vertex deletes and inserts it; swapped and added edges
+  are fixed; a deleted line hides its triangles; a raise moves every
+  vertex present.
+
+Sources are read from the drawing: a point group's points (its numbers
+and the COGO points), the vertices of lines, 2D and 3D polylines. Pasted
+surfaces, point files, imported files and corridor surfaces bring no
+geometry (the application adds it when it rebuilds the surface).
+
+Checked against 67 sample surfaces (each sample's `tin_definitions()`
+written again and both triangulations compared triangle by triangle): 62
+are identical. The others: a
+non-destructive breakline that runs exactly through existing vertices
+(the application drops its end point there, TT07, TT34; or the whole
+line, TT61), and points far from the rest (TG02, TG03: hull triangles
+between the clusters). A written drawing with ten definitions (E-T5:
+points, point group, two breaklines, an outer boundary from a polyline,
+a hide boundary, add, delete and elevation edits, a raise) opens without
+recovery, AUDIT 0 errors, every definition listed in order; the
+application's rebuild of it differs in five triangles of the deleted
+vertex's hole (not convex there).
 
 ## 3d. Surface style of a new drawing
 
@@ -2322,7 +2408,10 @@ taken from the records and checked bit for bit against them.
 - Alignments with lone spirals or other curve constraints, on a site,
   offset alignments, labels, design speeds; the written alignment style draws no markers (no marker style
   is written).
-- Surfaces from point groups, breaklines, boundaries or edits.
+- Surfaces: the geometry of pasted surfaces, point files, imported files
+  and corridor surfaces (the application adds it on rebuild); the exact
+  fill of a deleted vertex's hole that is not convex; non-destructive
+  lines through existing vertices (§3c).
 - Profiles with other curve constraints (fixed or floating curves, curves
   by K or through a point), profiles of alignments the application has
   changed.
@@ -2344,7 +2433,7 @@ taken from the records and checked bit for bit against them.
 | point style, its collection, class and settings nodes | yes | yes, in a drawing without the tree (§2a) | yes (§4) | not needed | — |
 | label styles: label node, point, sample line and profile label roots and default styles, profile label set | partly | yes, the defaults in a new drawing (§2b) | yes (§2b) | not needed | other label roots, styles other than the defaults (the settings are constant runs) |
 | alignments (fixed lines, free arcs and spiral-curve-spirals, siteless) | yes | yes (a new drawing gets §3b) | yes (§4) | not needed (the application solves the stored elements) | other constraints, sites, labels |
-| TIN surfaces (added points) | yes | yes (a new drawing gets §3d) | yes (§4) | not needed (the stored triangulation is drawn; the application rebuilds it after an edit) | other definitions |
+| TIN surfaces: points, point groups, breaklines (standard, proximity, non-destructive), contours, boundaries, vertex and edge edits, raise, drawing objects, pasted surfaces, point and imported files, corridor surfaces | yes (every definition kind of the samples) | yes, with the triangulation the definitions build (a new drawing gets §3d) | yes (§3c) | not found; the written triangulation is built by the writer (§3c) | geometry of pasted, file and corridor sources; the cases of §3c |
 | layout profiles (fixed tangents; free symmetric and asymmetric parabolas, free circular curves) | yes | yes (a new drawing gets §3f) | yes (§4) | not needed (the application solves the stored entities) | fixed and floating curves |
 | sites, alignments and feature lines (arcs, elevation points) on a site | yes | yes (a new drawing gets the node of sites and the default parcel and feature line styles, §2c) | yes (§4) | not needed (the application rewrites the site's cache) | alignments or feature lines meeting other members; containers the application edited after inserting elevation points |
 | parcels of closed and open, crossing and touching lot lines, with arcs | yes (number, face, boundary) | yes (§3g) | yes (§3g) | not needed | arcs where lines meet; lot lines meeting alignments or feature lines; the label of a nearly isosceles right triangle; the newest member's point marks 0x10, 0x20 where it meets another |
@@ -2374,7 +2463,9 @@ Corridors are listed in §3i-a.
 | point groups | number ranges (`2-6`) | yes | as a number list | the application stores the range as its numbers |
 | point groups | override styles and descriptions per group, AND of several criteria (advanced query) | partly | no | override settings are not mapped field by field (WP10, WG01) |
 | TIN surfaces | points added to the surface | yes | yes | §3c |
-| TIN surfaces | imported points (file), point groups, breaklines, boundaries, contours, edits (add/delete vertex and line, raise, paste, transform) | yes (the definitions are walked; their fields are read for the triangulation) | no | each operation is a definition record and the stored triangulation must honour it; a breakline adds 1744 bits to a 25-point surface (TS00, TS01): the writer would need constrained triangulation and the definition records |
+| TIN surfaces | point groups, breaklines (standard, proximity, non-destructive; from objects or held points, mid-ordinate, supplementing, weeding), contours, boundaries (outer, hide, show, data clip; destructive or not), add/delete/move vertex, vertex elevation, swap edge, add/delete line, raise, drawing objects, automatic rebuild | yes (every field by kind, §3c) | yes, with the triangulation the definitions build (§3c) | 62 of 67 sample surfaces built identically; non-destructive lines through vertices, far point clusters and a non-convex deleted vertex's hole differ (§3c) |
+| TIN surfaces | pasted surfaces, point files, imported files, corridor surfaces | yes | the definition (no geometry from the source) | the application adds the source's geometry when it rebuilds |
+| TIN surfaces | transform, polygon and kind 40 definitions of older drawings, DEM files, snapshots, surfaces referenced from other drawings | partly (older kinds walked) | no | not sampled; referenced surfaces have no definitions list |
 | alignments | fixed lines, free arcs, spiral-curve-spirals, start station, siteless and on a site | yes | yes | §3a, §3g |
 | alignments | offset alignments of lines and arcs, on either side, over the whole parent or a station range | yes | yes | §3a (station anchors, offset alignments) |
 | alignments | station anchors (profiles, offset ranges, own design speed, corridor geometry locks, design speeds, station equations) | yes | yes | §3a |
