@@ -23,11 +23,27 @@
 //! The station range, increments and swath close the record; the sample
 //! lines follow from those along the parent alignment.
 //!
-//! Records written by the generators of the AutoCAD 2027 tutorial corpus
-//! carry the schema word `0x10020004` and keys that are bare 34-bit
-//! values (observed types 0x00, 0x03 and 0x98 at an exact 34-bit stride,
-//! where the shared reader expects a value after the key word). No sample
-//! maps their layout past the keys, so nothing after them is read.
+//! The AutoCAD 2027 tutorial corpus's group records (Sections-Project-
+//! Objects.dwg, Mass Haul-2.dwg: four groups of 0, 19, 32 and 132 lines)
+//! carry the schema word `0x10025F04` — the mapped records' word — but
+//! their class keys are not the shared reader's keys: bare 34-bit values
+//! (a `00` prefix and a 32-bit word whose top byte takes 0x00, 0x04,
+//! 0x07, 0x0B or 0x20 there), so the mapped branch stops at the keys and
+//! the record returns None. Measured layout:
+//!
+//! ```text
+//! BL 80, 0, 80, 80, 0, BL 0x10025F04, BL group id, 4 bits,
+//! RC n (0..4), n x 34 bits, then a per-record tail
+//! ```
+//!
+//! The tail has no field grammar common to the four records (the 0-line
+//! group's tail is as long as the 19-line group's; the 132-line group's
+//! is about 130 times the 32-line group's), and nothing on record states
+//! what it holds. The member lines are not in the body: the record's
+//! handle stream lists them after its fourth reference, in station
+//! order, and each line names itself and gives its station (see
+//! [`sample_line_station`]); the group's name is its text stream's third
+//! string.
 
 use super::bits::Bits;
 

@@ -1062,7 +1062,20 @@ floating, end and K (6, 32):         BL 0, 2RD end, crest flag, BL 0x2000,
                                      BD K (hangs from the entity before)
 floating, end and grade (6, 34):     BL 0, 2RD end, BL 1, BD grade (percent)
 each then:                           BL 0, 3 bits 010, 3 x BD -1
+floating tangent (2, 4):             2RD point, 4 bits 0000 (leaves the
+                                     parabola before it towards the point)
+free tangent (2, 9):                 4 bits 0000 (touches the parabolas
+                                     before and after it)
 ```
+
+The programming interface refuses a floating tangent after a tangent and
+a free tangent between tangents; after and between parabolas it makes
+them (PF02: a floating tangent through (150, 14) after a parabola through
+(0, 10), (25, 12), (50, 11), leaving it at 25.836; a free tangent between
+that parabola and one through (120, 15), (150, 16), (180, 15), from
+22.102 to 134.741). Written with the same entities (E-PF1) they open with
+AUDIT 0 errors and the API lists the same entities and stations; the
+reader solves them the same way.
 
 The application's floating parabola by K holds an arbitrary word in place
 of the crest flag (WE07); the writer writes the flag. Written (E-PE1) they
@@ -1651,8 +1664,11 @@ A view lists its bands after the profile flags: `BL n`, then per band
 `BD gap` and a constant item of its kind (profile data 1056 bits,
 vertical and horizontal geometry 572): item bits 4 and 5 are the labels
 at the end and start stations, a profile data item has bit 9 set below
-the view and bits 921/923 = 1/0 above it, a geometry item holds its kind
-word (2 vertical, 3 horizontal) in bits 436-439. The bands below the view
+the view and bits 921/923 = 1/0 above it, a geometry item holds the band's
+number in the view (from 1, the bands below first) in bits 436-439 (a
+lone horizontal geometry band holds 1; with the number of another band
+the application lists the band without labels and drops its label group
+at the next band change). The bands below the view
 come first. Each band adds one value to five graph keys (0x0C01BA06 3.0,
 0x0C01BA05 10.0 or -1.0 for horizontal geometry, 0x0B01BA07 0,
 0x1901BA0A 0x1001BA09, 0x0C01BA04 5.0), one hard null reference at the
@@ -1674,9 +1690,23 @@ end (0x0100D068 point code 0x0200D004, 0x0200D005, 0x0400D053, 0x0400D08E,
 0x0400D054; 0x0100D61E 1, 2, 3; 0x0200D61D fraction along the element);
 a point takes the place of a station label at its station. A vertical
 geometry band labels the profile's entities in identifier order
-(0x01017807 + index = index, 0x0100FC31 entity id). Horizontal geometry
-labels (per alignment element, 14 keys) are not written: the group is
-written empty and the application fills it as soon as the view or one of
+(0x01017807 + index = index, 0x0100FC31 entity id). A horizontal
+geometry band labels each alignment element at its middle station
+(0x0200D020) with 14 keys: its start and end point codes (0x01017829,
+0x0101782A: 257 alignment start, 258 end, 260 tangent to curve, 261
+curve to tangent) and the previous element's start code (0x0101782B,
+the first element's own), the signed radii (right of travel positive, 0
+on lines and at the alignment's ends) at its start (0x0201782D), its end
+(0x0201782E) and the previous element's start (0x02017830), whether the
+start radius (the end's at the alignment's start) turns left (byte
+0x0301782C), 0x0101782F 0, 0x0100D621 -1, the curves up to it
+(0x0100D731), line or curve (0x0101780B = 0 or 0x0101780C = 1) and its
+number (0x0100D61E: lines first, then curves); each curve has one more
+five-key label at its middle numbered by curve. The 44-bit run of the
+two label kinds differs (bits 17-19). The application's groups (HG1-HG3,
+HG3P, PB04) list the same values; their key order varies. Alignments of
+other pieces (spirals) or with two lines or two curves meeting get an
+empty group, which the application fills as soon as the view or one of
 its bands changes (it rebuilds every band label group then; an empty
 group stays empty through open and regeneration).
 
@@ -1695,7 +1725,11 @@ lists three bands below and one above with the alignment and profile, and
 after a band change the application's rebuilt profile data and vertical
 geometry groups equal the written ones. E-BD14 (a new drawing: alignment
 with an arc, profile, view with the same four bands, band styles from
-the templates) the same.
+the templates) the same. E-HG1 to E-HG3 (a new drawing: one line, a line
+and an arc, line-arc-line-arc-line; a profile; a view with one horizontal
+geometry band) open with AUDIT 0, the API lists the band with labels and
+after a band change the application's rebuilt group holds the written
+labels value for value.
 
 ## 3i. Corridors
 
@@ -3015,7 +3049,8 @@ Corridors are listed in §3i-a.
 | profiles | layout: fixed tangents, free parabolas (symmetric, asymmetric), free circular curves | yes | yes | §3e |
 | profiles | layout: free curves by K, radius, horizontal length or through a point (parabolas and circular curves) | yes | yes | §3e |
 | profiles | layout entity by entity: fixed tangents, fixed parabolas (three points, two points and a grade or K), floating parabolas (end and K or grade) | yes | yes | §3e (entity by entity) |
-| profiles | floating and free tangents, fixed and floating circular curves, asymmetric fixed curves | yes (tangents) | no | the floating and free tangent samples were refused by the programming interface (WE05, WE06) |
+| profiles | floating tangents after a parabola, free tangents between parabolas | yes | yes | §3e (entity by entity) |
+| profiles | fixed and floating circular curves, asymmetric fixed curves | yes (tangents) | no | not sampled entity by entity |
 | profiles | from a TIN surface (existing ground), at an offset, over the whole alignment or a station range | yes (definition) | yes | §3e (profiles from a surface) |
 | profiles | offset profiles by slope, of tangents and symmetric parabolas, on an offset alignment of one region | yes | yes | §3e (offset profiles) |
 | profiles | offset profiles of other source curves or over widenings; superimposed profiles, profiles of corridor feature lines, static copies | partly | no | not sampled for writing |
@@ -3023,7 +3058,7 @@ Corridors are listed in §3i-a.
 | profile views | styles that copy the default with another vertical exaggeration, views with them | yes (frame, style exaggeration) | yes | §3h |
 | profile views | stacked views (separate views at stacked origins) | yes | yes | §3h |
 | profile views | every style setting the API exposes (graph title, direction, exaggeration, grid, the four axes' titles and ticks, text styles) | yes | yes | §3h |
-| profile views | profile data, vertical and horizontal geometry bands below the view and profile data bands above it, with their gaps, end station labels, profiles and label groups; the default band styles of a new drawing | yes | yes (horizontal geometry labels left to the application) | §3h (Bands) |
+| profile views | profile data, vertical and horizontal geometry bands below the view and profile data bands above it, with their gaps, end station labels, profiles and label groups; the default band styles of a new drawing | yes | yes (horizontal geometry labels of alignments with spirals left to the application) | §3h (Bands) |
 | profile views | other band kinds (superelevation, sectional data, pipe network, ...), geometry bands above the view, band styles other than the defaults, weeding and intervals | partly | no | not sampled; the API ignores the interval setters |
 | sites | name, description, members | yes | yes | §3g |
 | parcels | closed and open, crossing and touching lot lines, arcs, labels | yes | yes | §3g |

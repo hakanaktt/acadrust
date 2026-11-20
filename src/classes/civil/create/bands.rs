@@ -83,16 +83,6 @@ impl BandKind {
             BandKind::HorizontalGeometry => "AeccImpHorizontalGeometryBandLabeling",
         }
     }
-
-    /// The word of the kind's geometry band items (2 vertical, 3
-    /// horizontal).
-    fn word(self) -> i32 {
-        match self {
-            BandKind::ProfileData => 1,
-            BandKind::VerticalGeometry => 2,
-            BandKind::HorizontalGeometry => 3,
-        }
-    }
 }
 
 /// A profile data band item after its gap (`BD`): bit 4 label at end, bit
@@ -100,8 +90,9 @@ impl BandKind {
 /// 923 are 1 and 0.
 const DATA_ITEM: (usize, &str) = (1056, "0c404000000000000000059408111111111111913f0000000000000000000000000000000000000000000000000000000000000000243801010000008040000030100000100400000501000001804000007010000020040000090100000280400000b0100000300400000d01000007404000101000000000000165000000000000003940");
 /// A vertical or horizontal geometry band item after its gap: bits 4 and
-/// 5 as above, the band kind word in bits 436 to 439 (2 vertical, 3
-/// horizontal).
+/// 5 as above, the band's number in the view (bottom bands first, from 1)
+/// in bits 436 to 439 (a lone horizontal geometry band: 1, HG3P; PB04: 2
+/// and 3).
 const GEOMETRY_ITEM: (usize, &str) = (572, "0c404000000000000000059408111111111111913f00000000000000000000000000000000000000000000000000000000000000002903000000000000165000000000000003940");
 
 fn hex_bits((len, hex): (usize, &str)) -> Vec<bool> {
@@ -113,7 +104,7 @@ fn hex_bits((len, hex): (usize, &str)) -> Vec<bool> {
 
 /// Writes the view's band items: each `BD gap` and its kind's template.
 pub(super) fn write_items(w: &mut DwgMergedWriter, bands: &[Resolved]) {
-    for b in bands {
+    for (n, b) in bands.iter().enumerate() {
         w.write_bit_double(b.band.gap);
         let mut bits = hex_bits(if b.band.kind == BandKind::ProfileData { DATA_ITEM } else { GEOMETRY_ITEM });
         bits[4] = b.band.label_at_end;
@@ -124,10 +115,10 @@ pub(super) fn write_items(w: &mut DwgMergedWriter, bands: &[Resolved]) {
                 bits[921] = b.band.top;
                 bits[923] = !b.band.top;
             }
-            kind => {
-                let word = kind.word() as u8;
+            _ => {
+                let number = n as u8 + 1;
                 for i in 0..4 {
-                    bits[436 + i] = word >> (3 - i) & 1 == 1;
+                    bits[436 + i] = number >> (3 - i) & 1 == 1;
                 }
             }
         }
@@ -174,6 +165,17 @@ const LIST_ENDS: &[u32] = &[0x0101_5013, 0x0200_D020, 0x0300_D622, 0x0300_D623];
 const LIST_MINOR: &[u32] = &[0x0101_5013, 0x0200_D020, 0x0200_D620];
 const LIST_POINT: &[u32] = &[0x0100_D068, 0x0100_D61E, 0x0100_D621, 0x0101_5013, 0x0200_D61D];
 const LIST_VERTICAL: &[u32] = &[0x0100_FC31, 0x0101_5013];
+const RUN_ELEMENT: &str = "00000000010000001000100100000000000000000000";
+const RUN_CURVE_MIDDLE: &str = "00000000010000001111100100000000000000000000";
+const LIST_ELEMENT: &[u32] = &[0x0100_D61E, 0x0100_D621, 0x0100_D731, 0x0101_5013, 0x0200_D020, 0x0200_D61D];
+const LIST_CURVE_MIDDLE: &[u32] = &[0x0100_D61E, 0x0100_D621, 0x0100_D731, 0x0101_5013, 0x0200_D020];
+
+/// The codes of a horizontal geometry point: the alignment's start and
+/// end, a tangent-to-curve point and a curve-to-tangent point.
+const POINT_START: i32 = 257;
+const POINT_END: i32 = 258;
+const POINT_CURVE_IN: i32 = 260;
+const POINT_CURVE_OUT: i32 = 261;
 
 /// Station spacing of the default profile data band style's labels.
 const MAJOR: f64 = 100.0;
@@ -281,6 +283,86 @@ fn vertical_labels(profile: &ArchEntityData, number: i32) -> Vec<Label> {
         .collect()
 }
 
+/// The labels of a horizontal geometry band (HG1 to HG3, PB04): per
+/// element, at its middle station, its start and end point codes, the
+/// previous element's start code, the signed radii (right of travel
+/// positive, 0 at the alignment's ends and on lines) at its start, its end
+/// and the previous element's start, whether that radius (the end's at the
+/// alignment's start) turns left, how many curves lie up to it and its
+/// number (the lines numbered first, then the curves); and one more label
+/// at each curve's middle, numbered by curve. `None` for an alignment of
+/// other pieces or where two lines or two curves meet.
+fn horizontal_labels(alignment: &ArchEntityData, number: i32) -> Option<Vec<(f64, Label)>> {
+    let mut at = alignment.alignment_start_station()?;
+    // (start station, length, signed radius: 0 for a line)
+    let mut elements = Vec::new();
+    for (kind, curvature, pts) in alignment.alignment_pieces_with_curvature() {
+        let (a, b) = (*pts.first()?, *pts.last()?);
+        let chord = a.distance(&b);
+        let (length, radius) = match kind {
+            AlignmentPiece::Line => (chord, 0.0),
+            AlignmentPiece::Curve if curvature != 0.0 => {
+                let r = 1.0 / curvature.abs();
+                let half = (chord / (2.0 * r)).clamp(-1.0, 1.0).asin();
+                let mid = pts[pts.len() / 2];
+                let past_half = mid.distance(&crate::types::Vector2::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0)) > r;
+                (2.0 * r * if past_half { std::f64::consts::PI - half } else { half }, -1.0 / curvature)
+            }
+            _ => return None,
+        };
+        elements.push((at, length, radius));
+        at += length;
+    }
+    let curve = |i: usize| elements[i].2 != 0.0;
+    if elements.windows(2).any(|w| (w[0].2 != 0.0) == (w[1].2 != 0.0)) {
+        return None;
+    }
+    let n = elements.len();
+    let start_code = |i: usize| if i == 0 { POINT_START } else if curve(i) { POINT_CURVE_IN } else { POINT_CURVE_OUT };
+    let end_code = |i: usize| if i + 1 == n { POINT_END } else { start_code(i + 1) };
+    // The radius at an element's start and end: the curve's that the
+    // point belongs to.
+    let start_radius = |i: usize| if i == 0 { 0.0 } else if curve(i) { elements[i].2 } else { elements[i - 1].2 };
+    let end_radius = |i: usize| if i + 1 == n { 0.0 } else if curve(i) { elements[i].2 } else { elements[i + 1].2 };
+    let lines = (0..n).filter(|i| !curve(*i)).count() as i32;
+    let mut out = Vec::new();
+    let (mut line_no, mut curve_no) = (0, 0);
+    for (i, &(start, length, _)) in elements.iter().enumerate() {
+        let middle = start + length / 2.0;
+        let numbered = if curve(i) {
+            curve_no += 1;
+            lines + curve_no
+        } else {
+            line_no += 1;
+            line_no
+        };
+        let previous = i.checked_sub(1).unwrap_or(0);
+        let turn = if start_radius(i) != 0.0 { start_radius(i) } else { end_radius(i) };
+        if curve(i) {
+            let keys = vec![(0x0101_5013, KeyValue::Long(number)), (0x0100_D731, KeyValue::Long(curve_no)), (0x0200_D020, KeyValue::Double(middle)), (0x0100_D621, KeyValue::Long(-1)), (0x0100_D61E, KeyValue::Long(curve_no))];
+            out.push((middle, Label { keys, run: RUN_CURVE_MIDDLE, list: LIST_CURVE_MIDDLE }));
+        }
+        let keys = vec![
+            (0x0101_782A, KeyValue::Long(end_code(i))),
+            (0x0101_782F, KeyValue::Long(0)),
+            (0x0301_782C, KeyValue::Byte(u8::from(turn < 0.0))),
+            (0x0101_7829, KeyValue::Long(start_code(i))),
+            (0x0201_782E, KeyValue::Double(end_radius(i))),
+            (0x0101_782B, KeyValue::Long(start_code(previous))),
+            (0x0101_5013, KeyValue::Long(number)),
+            (0x0100_D731, KeyValue::Long(curve_no)),
+            (0x0200_D020, KeyValue::Double(middle)),
+            (0x0100_D621, KeyValue::Long(-1)),
+            (0x0201_7830, KeyValue::Double(if i == 0 { 0.0 } else { start_radius(previous) })),
+            (0x0100_D61E, KeyValue::Long(numbered)),
+            if curve(i) { (0x0101_780C, KeyValue::Long(1)) } else { (0x0101_780B, KeyValue::Long(0)) },
+            (0x0201_782D, KeyValue::Double(start_radius(i))),
+        ];
+        out.push((middle, Label { keys, run: RUN_ELEMENT, list: LIST_ELEMENT }));
+    }
+    Some(out)
+}
+
 fn write_label(w: &mut DwgMergedWriter, l: &Label) {
     w.write_bit_long(l.keys.len() as i32);
     for (key, value) in &l.keys {
@@ -311,8 +393,9 @@ fn write_label(w: &mut DwgMergedWriter, l: &Label) {
 ///
 /// Profile data bands label the view's stations and the alignment's
 /// horizontal geometry points, vertical geometry bands the profile's
-/// entities; horizontal geometry bands are written without labels (the
-/// application fills them once the view or its bands change).
+/// entities, horizontal geometry bands the alignment's elements (written
+/// without labels for alignments [`horizontal_labels`] does not label:
+/// the application fills them once the view or its bands change).
 pub(super) fn write_group(doc: &mut CadDocument, common: EntityCommon, b: &Resolved, number: i32, view: u64, frame: &ProfileViewFrame, alignment: Handle) -> Result<Handle, DxfError> {
     let a = super::network::arch_entity(doc, alignment).ok_or_else(|| invalid("alignment not found"))?;
     let labels: Vec<Label> = match b.band.kind {
@@ -321,7 +404,7 @@ pub(super) fn write_group(doc: &mut CadDocument, common: EntityCommon, b: &Resol
             data_labels(frame, &b.band, number, &points).into_iter().map(|l| l.1).collect()
         }
         BandKind::VerticalGeometry => super::network::arch_entity(doc, Handle::new(b.profile1)).map(|p| vertical_labels(p, number)).unwrap_or_default(),
-        BandKind::HorizontalGeometry => Vec::new(),
+        BandKind::HorizontalGeometry => horizontal_labels(a, number).unwrap_or_default().into_iter().map(|l| l.1).collect(),
     };
     let mut refs = vec![soft_pointer(0), soft_pointer(0), soft_pointer(view), hard_pointer(0)];
     refs.extend(labels.iter().map(|_| hard_pointer(view)));
@@ -365,5 +448,30 @@ mod tests {
         let mut b = ProfileViewBand::new(BandKind::ProfileData);
         b.label_at_start = false;
         assert_eq!(data_labels(&frame, &b, 1, &points).len(), 32);
+    }
+
+    /// The horizontal geometry labels of HG3P's alignment (line, left arc,
+    /// line, right arc, line): an element label each and a middle label
+    /// per arc, lines numbered first.
+    #[test]
+    fn horizontal_geometry_labels_of_an_alignment() {
+        use super::super::alignment::{add_alignment_with_curves, VertexCurve};
+        let v = crate::types::Vector2::new;
+        let mut doc = CadDocument::new();
+        let pts = [v(0.0, 0.0), v(100.0, 0.0), v(200.0, 60.0), v(300.0, 0.0)];
+        let a = add_alignment_with_curves(&mut doc, "AL1", &pts, &[VertexCurve::Arc(144.4126919312708), VertexCurve::Arc(51.07935859793733)], None).unwrap();
+        let labels = horizontal_labels(super::super::network::arch_entity(&doc, a).unwrap(), 1).unwrap();
+        let key = |l: &Label, k: u32| l.keys.iter().find(|x| x.0 == k).map(|x| match x.1 {
+            KeyValue::Long(i) => f64::from(i),
+            KeyValue::Double(d) => d,
+            KeyValue::Byte(b) => f64::from(b),
+        });
+        assert_eq!(labels.len(), 7);
+        assert_eq!((labels[1].1.list, key(&labels[1].1, 0x0100_D61E)), (LIST_CURVE_MIDDLE, Some(1.0)));
+        let arc = &labels[2].1;
+        assert_eq!((key(arc, 0x0101_7829), key(arc, 0x0101_782A), key(arc, 0x0100_D61E)), (Some(260.0), Some(261.0), Some(4.0)));
+        assert!((key(arc, 0x0201_782D).unwrap() + 144.4126919312708).abs() < 1e-9);
+        assert!((labels[2].0 - 99.0217174).abs() < 1e-6);
+        assert_eq!((key(&labels[6].1, 0x0101_782A), key(&labels[6].1, 0x0301_782C)), (Some(258.0), Some(0.0)));
     }
 }
