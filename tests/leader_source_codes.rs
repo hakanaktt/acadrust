@@ -1,7 +1,7 @@
 use std::io::Cursor;
 
 use acadrust::entities::leader::LeaderPathType;
-use acadrust::entities::{EntityType, Leader, MultiLeader, RawRecord};
+use acadrust::entities::{EntityType, Leader, MultiLeader, RawRecord, TextAttachmentPointType};
 use acadrust::io::dwg::dwg_stream_readers::object_reader::DwgObjectReader;
 use acadrust::io::dwg::dwg_stream_writers::bit_writer::DwgBitWriter;
 use acadrust::io::dwg::dwg_stream_writers::object_writer::DwgObjectWriter;
@@ -219,4 +219,109 @@ fn dwg_unknown_leader_enum_warns_and_preserves_later_fields() {
         .to_string();
     assert!(error.contains("Invalid record at handle"), "{error}");
     assert!(!error.contains("Unknown read_leader.path_type"), "{error}");
+}
+
+fn text_multileader() -> MultiLeader {
+    MultiLeader::with_text(
+        "Leader",
+        Vector3::new(3.0, 3.0, 0.0),
+        vec![Vector3::ZERO, Vector3::new(2.0, 2.0, 0.0)],
+    )
+}
+
+fn multileader_at(document: &CadDocument, handle: acadrust::Handle) -> &MultiLeader {
+    match document.get_entity(handle) {
+        Some(EntityType::MultiLeader(leader)) => leader,
+        _ => panic!("MULTILEADER {handle:X?} was not read back"),
+    }
+}
+
+// AutoCAD stores the MTEXT attachment point (1-9) in group 179 of the entity
+// and in group 171 of the context data; a DXF that carries e.g. 5 must not be
+// coerced or warned about.
+#[test]
+fn dxf_mleader_text_attachment_point_reads_the_full_mtext_range() {
+    let mut document = CadDocument::with_version(DxfVersion::AC1032);
+    let handle = document
+        .add_entity(EntityType::MultiLeader(Box::new(text_multileader())))
+        .unwrap();
+    let bytes = replace_dxf_values(&document, "MULTILEADER", &[(179, "5")]);
+    let outcome = DxfReader::from_reader(Cursor::new(bytes))
+        .unwrap()
+        .read_with_stats()
+        .unwrap();
+    assert!(
+        !outcome.stats.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "unknown-leader-enum" && diagnostic.message.contains("value 5")
+        }),
+        "legitimate value 5 warned: {:?}",
+        outcome.stats.diagnostics
+    );
+    assert_eq!(
+        multileader_at(&outcome.document, handle).text_attachment_point as i16,
+        5
+    );
+}
+
+// The same values survive a write and read back in both formats, at the
+// entity field and at the context-data field.
+#[test]
+fn mleader_text_attachment_point_round_trips_the_full_mtext_range() {
+    for code in [1_i16, 2, 3, 5, 9] {
+        let mut document = CadDocument::with_version(DxfVersion::AC1032);
+        let mut leader = text_multileader();
+        leader.text_attachment_point = TextAttachmentPointType::from(code);
+        leader.context.text_attachment_point = TextAttachmentPointType::from(code);
+        let handle = document
+            .add_entity(EntityType::MultiLeader(Box::new(leader)))
+            .unwrap();
+
+        let dxf = DxfWriter::new(&document).write_to_vec().unwrap();
+        let back = DxfReader::from_reader(Cursor::new(dxf))
+            .unwrap()
+            .read()
+            .unwrap();
+        let leader = multileader_at(&back, handle);
+        assert_eq!(leader.text_attachment_point as i16, code, "dxf entity");
+        assert_eq!(
+            leader.context.text_attachment_point as i16, code,
+            "dxf context"
+        );
+
+        let dwg = DwgWriter::write_to_vec(&document).unwrap();
+        let outcome = DwgReader::from_stream(Cursor::new(dwg))
+            .read_with_stats()
+            .unwrap();
+        assert!(
+            !outcome.stats.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == "unknown-leader-enum"
+                    && diagnostic.message.contains(&format!("value {code}"))
+            }),
+            "legitimate value {code} warned: {:?}",
+            outcome.stats.diagnostics
+        );
+        let leader = multileader_at(&outcome.document, handle);
+        assert_eq!(leader.text_attachment_point as i16, code, "dwg entity");
+        assert_eq!(
+            leader.context.text_attachment_point as i16, code,
+            "dwg context"
+        );
+    }
+}
+
+// Values outside the MTEXT attachment-point range still warn.
+#[test]
+fn dxf_mleader_text_attachment_point_outside_the_mtext_range_warns() {
+    let mut document = CadDocument::with_version(DxfVersion::AC1032);
+    let handle = document
+        .add_entity(EntityType::MultiLeader(Box::new(text_multileader())))
+        .unwrap();
+    for bad in ["0", "10", "99"] {
+        let bytes = replace_dxf_values(&document, "MULTILEADER", &[(179, bad)]);
+        let outcome = DxfReader::from_reader(Cursor::new(bytes))
+            .unwrap()
+            .read_with_stats()
+            .unwrap();
+        assert_warned(&outcome.stats, handle.value(), &[bad]);
+    }
 }
