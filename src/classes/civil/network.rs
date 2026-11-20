@@ -328,6 +328,20 @@ fn pipe_record(data: &[u8], start: usize, end: usize) -> Option<(Vec<Option<f64>
     (plausible(&a) && plausible(&b) && a.distance(&b) > 1e-6).then_some((numbers, a, b))
 }
 
+/// The part definition a pipe or structure record names: its handle
+/// stream opens with four references (its layer's and style's hard
+/// pointers, then soft and hard owner) and then names the
+/// `AECC_NETWORK_PART_DEF` it applies, hard-pointer kind 5. The sizes a
+/// record does not keep itself live in that definition (a pipe's
+/// `PipeInnerDiameter`, a structure's `StructInnerDiameter`), so a pipe's
+/// inverts are its ends lowered by half of its inner diameter.
+pub(super) fn part_definition(refs: &[(u64, u8)]) -> Option<u64> {
+    match refs {
+        [(.., 5), (.., 5), (.., 4), (.., 3), (definition, 5), ..] => Some(*definition),
+        _ => None,
+    }
+}
+
 /// Number fields of the part data a pipe keeps itself (flow coefficients,
 /// minimum curve radius and the like).
 pub(super) fn pipe_fields(data: &[u8], start: usize, end: usize, strings: &[String]) -> Vec<PartField> {
@@ -451,6 +465,15 @@ mod tests {
             let got: Vec<(&str, f64)> = fields.iter().map(|f| (f.context.as_str(), f.value)).collect();
             assert_eq!(got, [("PipeInnerDiameter", 100.0), ("WallThickness", 25.0)], "{marker}");
         }
+    }
+
+    #[test]
+    fn a_pipe_names_its_part_definition_after_its_four_head_references() {
+        let refs = [(4589u64, 5u8), (4843, 5), (0, 4), (0, 3), (5738, 5), (1243, 5), (4256, 4)];
+        assert_eq!(part_definition(&refs), Some(5738));
+        // Fewer references, or another shape, name nothing.
+        assert_eq!(part_definition(&refs[..4]), None);
+        assert_eq!(part_definition(&[(1, 5), (2, 5), (3, 5), (4, 3), (5, 5)]), None);
     }
 
     #[test]
