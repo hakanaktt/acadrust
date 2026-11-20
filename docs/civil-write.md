@@ -1977,6 +1977,31 @@ alignments and profiles and null offsets, the four quadrants with their
 in and out alignments and the written angles, and the location (175, 75)
 of E-I3 follows from the written station through the curve.
 
+### Tee junctions
+
+A tee junction (one road starting or ending on the other) has the same
+record with `BL 2` in place of the first `BL 1`, the road words `2, 2`,
+the second road's station where it starts or ends, and two regions: from
+the arm before the second road's arm (counterclockwise) to it and from it
+to the next. The application makes the through road the main road. Every
+region of a crossing or a tee junction is named by the compass quadrant
+its bisector points into (NE between east and north, then NW, SW, SE;
+word NE 2, SE 4, SW 3, NW 1), the regions listed in NE, SE, SW, NW order:
+WI48 (a crossing whose main road heads north-north-east) names its
+regions by the compass, not from the main road's heading. Only the
+region texts present are written (`"NE - Quadrant", "NW - Quadrant"`).
+
+The application's command makes a tee junction only without profiles:
+with profiles it stops after its profile locking question (WI40); with
+none (WI42, WI44 to WI47: the second road starting or ending on the
+first, north or south of it, at 45 degrees, the first road ending on the
+second) the records are reproduced by `add_intersection` with null
+profiles bit for bit apart from the class word (E-T42 to E-T47); they
+open with AUDIT 0 errors and the API lists the two quadrants with the
+written in and out alignments and angles. A crossing without profiles is
+written the same way (E-X48 equals WI48 apart from the class word and the
+offset alignments the command adds).
+
 ## 3l. Subassembly packages (`pkt`)
 
 A package is a ZIP archive of deflated parts; `read_pkt` and `write_pkt`
@@ -2663,7 +2688,8 @@ Corridors are listed in §3i-a.
 | subassemblies | stock subassemblies of the application's library | yes (parameters) | no | their texts carry the library path of the product |
 | corridors | see §3i-a | | | |
 | intersections | two crossing roads (the object) | yes | yes | §3k |
-| intersections | tee junctions, the offset alignments, curb returns, corridor regions and locking actions the command makes | yes | no | the tee sample hangs in the wizard (WI40); the other records are not written |
+| intersections | tee junctions without profiles (either side, starting or ending, skewed, the first road ending) | yes | yes | §3k (tee junctions) |
+| intersections | tee junctions with profiles; the offset alignments, curb returns, corridor regions and locking actions the command makes | yes | no | with profiles the command stops after its profile locking question (WI40); the other records are not written |
 | gravity pipe networks | every family of the default parts list (one size each), connections | partly | yes | §3m |
 | gravity pipe networks | sizes the parts list does not hold, the catalog's body solids | partly | no | §3m |
 | pressure networks | every size of the default catalog (straight and curved pipes, elbows, tees, crosses, gate valves), connections | yes | yes | §3n |
