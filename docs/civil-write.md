@@ -1062,7 +1062,20 @@ floating, end and K (6, 32):         BL 0, 2RD end, crest flag, BL 0x2000,
                                      BD K (hangs from the entity before)
 floating, end and grade (6, 34):     BL 0, 2RD end, BL 1, BD grade (percent)
 each then:                           BL 0, 3 bits 010, 3 x BD -1
+floating tangent (2, 4):             2RD point, 4 bits 0000 (leaves the
+                                     parabola before it towards the point)
+free tangent (2, 9):                 4 bits 0000 (touches the parabolas
+                                     before and after it)
 ```
+
+The programming interface refuses a floating tangent after a tangent and
+a free tangent between tangents; after and between parabolas it makes
+them (PF02: a floating tangent through (150, 14) after a parabola through
+(0, 10), (25, 12), (50, 11), leaving it at 25.836; a free tangent between
+that parabola and one through (120, 15), (150, 16), (180, 15), from
+22.102 to 134.741). Written with the same entities (E-PF1) they open with
+AUDIT 0 errors and the API lists the same entities and stations; the
+reader solves them the same way.
 
 The application's floating parabola by K holds an arbitrary word in place
 of the crest flag (WE07); the writer writes the flag. Written (E-PE1) they
@@ -3015,7 +3028,8 @@ Corridors are listed in §3i-a.
 | profiles | layout: fixed tangents, free parabolas (symmetric, asymmetric), free circular curves | yes | yes | §3e |
 | profiles | layout: free curves by K, radius, horizontal length or through a point (parabolas and circular curves) | yes | yes | §3e |
 | profiles | layout entity by entity: fixed tangents, fixed parabolas (three points, two points and a grade or K), floating parabolas (end and K or grade) | yes | yes | §3e (entity by entity) |
-| profiles | floating and free tangents, fixed and floating circular curves, asymmetric fixed curves | yes (tangents) | no | the floating and free tangent samples were refused by the programming interface (WE05, WE06) |
+| profiles | floating tangents after a parabola, free tangents between parabolas | yes | yes | §3e (entity by entity) |
+| profiles | fixed and floating circular curves, asymmetric fixed curves | yes (tangents) | no | not sampled entity by entity |
 | profiles | from a TIN surface (existing ground), at an offset, over the whole alignment or a station range | yes (definition) | yes | §3e (profiles from a surface) |
 | profiles | offset profiles by slope, of tangents and symmetric parabolas, on an offset alignment of one region | yes | yes | §3e (offset profiles) |
 | profiles | offset profiles of other source curves or over widenings; superimposed profiles, profiles of corridor feature lines, static copies | partly | no | not sampled for writing |
