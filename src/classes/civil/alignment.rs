@@ -4076,7 +4076,6 @@ mod tests {
         };
         let node = format!("{}{}{}{}", bl(2), bl(-1), bl(2), bl(-1));
         let bd50 = format!("00{}", 50.0f64.to_le_bytes().iter().map(|b| format!("{b:08b}")).collect::<String>());
-        let rd = 3.26f64.to_le_bytes().iter().map(|b| format!("{b:08b}")).collect::<String>();
         let s = [
             // B, one curve, B; its entry: node, BL 0, B, BL 1, B.
             format!("0{}0", bl(1)),
@@ -4087,8 +4086,9 @@ mod tests {
             format!("{}{bd50}10 0", bl(10)),
             format!("{node}{}10 {}{}{} {}{}{bd50}10 0", bl(0), bl(1), bl(0), bl(1), bl(3), bl(10)),
             format!("{node}{}10 {}", bl(0), bl(0)),
-            // The lane table: 4 empty groups, BL 0, BL 0, BL 0, RD.
-            format!("{}{}{}{} {}{}{} {rd}", bl(0), bl(0), bl(0), bl(0), bl(0), bl(0), bl(0)),
+            // The lane table: 4 empty groups, BL 0, BL 0, BL 0 (no cross
+            // segments).
+            format!("{}{}{}{} {}{}{}", bl(0), bl(0), bl(0), bl(0), bl(0), bl(0), bl(0)),
         ]
         .concat();
         let s: Vec<u8> = s.bytes().filter(|b| *b == b'0' || *b == b'1').collect();
@@ -4118,13 +4118,13 @@ mod tests {
             }
             format!("{e}{}{}{}{} 0{}10{}", bl(0), bl(0), bd(0.5), "01", bl(-1), bl(-1))
         };
-        let rd = 3.26f64.to_le_bytes().iter().map(|b| format!("{b:08b}")).collect::<String>();
         let s = [
             format!("0{}1 0", bl(0)),
             format!("{}{}{}{} {}{}{}", bl(1), bl(1), bl(0), bl(1), bl(0), bl(0), bl(0)),
             entry(8, &[1, 0, 1, 1]),
             entry(0, &[2]),
-            format!("{}{}{}{}{} {rd}", bl(0), bl(0), bl(1), bl(1), bl(1)),
+            // BL 0, BL 0, one cross segment (side 1, inside 0, lane 1).
+            format!("{}{}{}{}{}{}", bl(0), bl(0), bl(1), bl(1), bl(0), bl(1)),
         ]
         .concat();
         let s: Vec<u8> = s.bytes().filter(|b| *b == b'0' || *b == b'1').collect();

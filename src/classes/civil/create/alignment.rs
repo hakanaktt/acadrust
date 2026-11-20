@@ -1342,6 +1342,9 @@ pub(super) fn length_of(elements: &[AlignmentElement]) -> Option<f64> {
 /// region). The alignment must be one this crate writes.
 pub fn add_superelevation(doc: &mut CadDocument, alignment: Handle, curves: &[SuperelevationCurve]) -> Result<(), DxfError> {
     let (written, profiles) = rewritable(doc, alignment, |h| super::profile::identifier(doc, h)).ok_or_else(|| invalid("the alignment is not one this crate writes"))?;
+    if written.offset.is_some() {
+        return Err(invalid("an offset alignment takes no superelevation"));
+    }
     let spans = spans(&written.elements).ok_or_else(|| invalid("the alignment cannot be solved"))?;
     let mut data = Vec::new();
     for c in curves {
