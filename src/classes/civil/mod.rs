@@ -1041,8 +1041,6 @@ impl ArchEntityData {
         network::pipe_ends(data, start, end)
     }
 
-    /// Number fields of the part data a Civil 3D pipe (`AECC_PIPE`) keeps
-    /// itself: flow coefficients, minimum curve radius and the like.
     /// The part definition (`AECC_NETWORK_PART_DEF`) a Civil 3D pipe or
     /// structure applies. Sizes the record does not keep itself live
     /// there: a pipe's `PipeInnerDiameter` (inches), a structure's
@@ -1054,6 +1052,9 @@ impl ArchEntityData {
         }
         network::part_definition(&self.typed_handles())
     }
+
+    /// Number fields of the part data a Civil 3D pipe (`AECC_PIPE`) keeps
+    /// itself: flow coefficients, minimum curve radius and the like.
     pub fn pipe_part_fields(&self) -> Vec<PartField> {
         if self.dxf_name != "AECC_PIPE" {
             return Vec::new();
