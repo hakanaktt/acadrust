@@ -5,7 +5,9 @@ use super::tree::{ensure_surface_tree, KEY_SURFACE_STYLES};
 use crate::entities::EntityCommon;
 use crate::error::DxfError;
 use crate::io::dwg::dwg_stream_writers::DwgMergedWriter;
-use crate::types::{Handle, Vector3};
+use crate::classes::civil::tin::AUTO_REBUILD;
+use crate::classes::civil::{TinBreaklineType, TinDefinition, TinOperation};
+use crate::types::{Handle, Vector2, Vector3};
 use crate::CadDocument;
 
 /// How far the four bounding corners lie outside the points' extents.
@@ -112,6 +114,155 @@ fn new_guid(seed: u64) -> [u8; 16] {
     g
 }
 
+/// The definitions block (see `tin::read_definitions`): head (10 bits
+/// 8 + 32 x count, RC 2 + 8 x count, RC 4 with a boundary else 2, RC 0x81
+/// with contours else 0x80), 2 bits (00 with contours), BL 0, BS 0x800C
+/// and B holding the breakline count + 1, the definitions, BL 0 (four-byte
+/// form), BL options, 2 bits.
+fn write_definitions(w: &mut DwgMergedWriter, definitions: &[TinDefinition], auto_rebuild: bool, seed: u64) {
+    let n = definitions.len() as u32;
+    let contours = definitions.iter().any(|d| matches!(d.operation, TinOperation::Contours(_)));
+    let boundary = definitions.iter().any(|d| matches!(d.operation, TinOperation::Boundary { .. }));
+    let breaklines = definitions.iter().filter(|d| matches!(d.operation, TinOperation::Breaklines(..))).count() as u16 + 1;
+    bits(w, &format!("{:010b}", 8 + 32 * n));
+    w.write_bytes(&[(2 + 8 * n) as u8, if boundary { 4 } else { 2 }, if contours { 0x81 } else { 0x80 }]);
+    bits(w, if contours { "00" } else { "10" });
+    w.write_bit_long(0);
+    // The BS in its 16-bit form.
+    w.write_2bits(0);
+    w.write_bytes(&(0x800C_u16 | ((breaklines >> 1) << 8)).to_le_bytes());
+    w.write_bit(breaklines & 1 == 1);
+    for (k, d) in definitions.iter().enumerate() {
+        write_operation(w, &d.operation, new_guid(seed ^ ((k as u64 + 1) << 32)));
+    }
+    w.write_2bits(0);
+    w.write_raw_long(0);
+    w.write_bit_long(0xAC15_0A00_u32 as i32 | if auto_rebuild { AUTO_REBUILD } else { 0 });
+    bits(w, "00");
+}
+
+fn write_points(w: &mut DwgMergedWriter, points: &[Vector3]) {
+    w.write_bit_long(points.len() as i32);
+    for p in points {
+        w.write_bit_double(p.x);
+        w.write_bit_double(p.y);
+        w.write_bit_double(p.z);
+    }
+}
+
+/// `BL kind, BL flags (9; 4 from objects, 2 proximity), BL 16, GUID, BL k`
+/// and the kind's data (see `tin::read_operation`).
+fn write_operation(w: &mut DwgMergedWriter, operation: &TinOperation, guid: [u8; 16]) {
+    let lines = match operation {
+        TinOperation::Breaklines(_, l) | TinOperation::Contours(l) | TinOperation::Boundary { lines: l, .. } => Some(l),
+        _ => None,
+    };
+    let kind = match operation {
+        TinOperation::AddPoints(_) => 47,
+        TinOperation::PointGroup => 0,
+        TinOperation::Breaklines(t, _) => *t as i32,
+        TinOperation::Contours(_) => 27,
+        TinOperation::Boundary { .. } => 13,
+        TinOperation::AddVertex(_) => 1,
+        TinOperation::DeleteVertex(_) => 2,
+        TinOperation::MoveVertex { .. } => 8,
+        TinOperation::SwapEdge(_) => 9,
+        TinOperation::Raise(_) => 17,
+        TinOperation::VertexElevation(_) => 20,
+        TinOperation::AddLine(..) => 22,
+        TinOperation::DeleteLine(_) => 23,
+        TinOperation::Import { .. } => 33,
+        TinOperation::Transform(_) => 34,
+        TinOperation::Polygon(_) => 35,
+        TinOperation::Kind40(_) => 40,
+        TinOperation::PasteSurface => 12,
+        TinOperation::DrawingObjects { .. } => 31,
+        TinOperation::PointFile { .. } => 30,
+        TinOperation::CorridorSurface(_) => 41,
+    };
+    let k = lines.map_or(0, |l| l.objects as i32 + l.polylines.len() as i32);
+    let from_objects = lines.is_some_and(|l| l.objects > 0);
+    let proximity = matches!(operation, TinOperation::Breaklines(TinBreaklineType::Proximity, _));
+    w.write_bit_long(kind);
+    w.write_bit_long(9 | if from_objects { 4 } else { 0 } | if proximity { 2 } else { 0 });
+    w.write_bit_long(16);
+    w.write_bytes(&guid);
+    w.write_bit_long(k);
+    if let Some(l) = lines {
+        w.write_bit_long(l.objects as i32);
+        w.write_bit_double(l.mid_ordinate);
+        w.write_bit_long(l.polylines.len() as i32);
+        for p in &l.polylines {
+            write_points(w, p);
+        }
+        w.write_bit_long(k);
+        for e in 1..=k {
+            w.write_bit_long(e);
+        }
+        w.write_bit_double(l.maximum_distance);
+        w.write_bit_double(l.weeding_distance);
+        w.write_bit_double(l.weeding_angle);
+    }
+    let v2 = |w: &mut DwgMergedWriter, v: &Vector2| {
+        w.write_bit_double(v.x);
+        w.write_bit_double(v.y);
+    };
+    match operation {
+        TinOperation::AddPoints(p) => write_points(w, p),
+        TinOperation::Contours(_) => w.write_bit_long(0),
+        TinOperation::Boundary { boundary_type, non_destructive, .. } => {
+            w.write_bit_long(*boundary_type as i32);
+            w.write_bit_long(i32::from(*non_destructive));
+        }
+        TinOperation::AddVertex(p) | TinOperation::VertexElevation(p) => {
+            w.write_bit_double(p.x);
+            w.write_bit_double(p.y);
+            w.write_bit_double(p.z);
+        }
+        TinOperation::DeleteVertex(p) | TinOperation::SwapEdge(p) | TinOperation::DeleteLine(p) => v2(w, p),
+        TinOperation::MoveVertex { from, to } => {
+            v2(w, from);
+            v2(w, to);
+        }
+        TinOperation::AddLine(a, b) => {
+            v2(w, a);
+            v2(w, b);
+        }
+        TinOperation::Raise(d) => w.write_bit_double(*d),
+        TinOperation::Import { file_time, value } => {
+            w.write_bit_long((file_time >> 32) as i32);
+            w.write_bit_long(*file_time as i32);
+            w.write_bit_long(*value);
+        }
+        TinOperation::PointFile { file_time, options } => {
+            w.write_bit_long((file_time >> 32) as i32);
+            w.write_bit_long(*file_time as i32);
+            bits(w, &format!("{:03b}", options & 7));
+        }
+        TinOperation::Polygon(p) => {
+            w.write_bit_long(p.len() as i32);
+            for v in p {
+                w.write_raw_double(v.x);
+                w.write_raw_double(v.y);
+            }
+        }
+        TinOperation::Transform(m) => {
+            for v in m {
+                w.write_raw_double(*v);
+            }
+            w.write_bit_long(0);
+        }
+        TinOperation::Kind40(v) => w.write_bit_long(*v),
+        TinOperation::DrawingObjects { object_type, maintain_edges, points } => {
+            w.write_bit_long(*object_type);
+            w.write_bit_long(i32::from(*maintain_edges));
+            write_points(w, points);
+        }
+        TinOperation::CorridorSurface(id) => w.write_bytes(id),
+        TinOperation::PointGroup | TinOperation::PasteSurface | TinOperation::Breaklines(..) => {}
+    }
+}
+
 /// The surface record:
 ///
 /// ```text
@@ -121,22 +272,20 @@ fn new_guid(seed: u64) -> [u8; 16] {
 ///   0x0201230C BD 0, 0x02011E27 BD DBL_MAX, 0x01011E28 BL 8
 /// BL 0 (byte form), 121 zero bits, 3BD origin 0, 9 BD identity, BD 1
 /// RC 1 item, 5 bits 01000
-/// definitions: 2 bits 00, RL 0x80020A28 (one definition), BL 0, BL 0,
-///   BL 0xE8A5800C, BL 40, BL 0, 3 bits 000, GUID, BL 0,
-///   added vertices: BL n, n x 3BD
-///   BL 0 (four-byte form), BL 0xAC150A00, 2 bits 00
+/// the definitions (`write_definitions`)
 /// RL -1, RS 0x04A2, RC 2, RS 0, RS 0x2A3C, "MMS01"
 /// triangulation: BL vertex count, BL 0, 1, 2, 3 (the corners),
 ///   per vertex RL flags (corner 0x8440, point 0x80), RL a triangle using
 ///   it, 3 RD; BL triangle count, per triangle 3 RL vertices, 3 RL
 ///   neighbours, RL flags (1 hidden), RL -1
 /// 7 bits 1010100, BS 0x04BE
-/// references: soft pointer 0, hard owner 0, hard pointer 0, style
-/// texts: "", "", name, "", ""
+/// references: soft pointer 0, hard owner 0, the definitions' sources,
+///   hard pointer 0, style
+/// texts: "", "", the definitions' names, name, "", ""
 /// ```
-pub(super) fn write_surface(doc: &mut CadDocument, common: EntityCommon, name: &str, points: &[Vector3], tin: &Triangulation, style: u64) -> Result<Handle, DxfError> {
+pub(super) fn write_surface(doc: &mut CadDocument, common: EntityCommon, name: &str, definitions: &[TinDefinition], auto_rebuild: bool, tin: &Triangulation, hidden: &[bool], style: u64) -> Result<Handle, DxfError> {
     let byte = |w: &mut DwgMergedWriter, v: u8| bits(w, &format!("{v:08b}"));
-    let guid = new_guid(common.handle.value() ^ points.len() as u64);
+    let seed = common.handle.value() ^ tin.vertices.len() as u64;
     let neighbors = tin.neighbors();
     let mut incident = vec![0i32; tin.vertices.len()];
     for (t, tri) in tin.triangles.iter().enumerate() {
@@ -144,8 +293,12 @@ pub(super) fn write_surface(doc: &mut CadDocument, common: EntityCommon, name: &
             incident[*v] = t as i32;
         }
     }
-    let refs = vec![soft_pointer(0), Ref(crate::io::dwg::dwg_reference_type::DwgReferenceType::HardOwnership, 0), hard_pointer(0), hard_pointer(style)];
-    let strings = ["", "", name, "", ""].map(String::from).to_vec();
+    let mut refs = vec![soft_pointer(0), Ref(crate::io::dwg::dwg_reference_type::DwgReferenceType::HardOwnership, 0)];
+    refs.extend(definitions.iter().flat_map(|d| d.sources.iter().map(|h| hard_pointer(*h))));
+    refs.extend([hard_pointer(0), hard_pointer(style)]);
+    let mut strings = vec![String::new(), String::new()];
+    strings.extend(definitions.iter().flat_map(|d| d.texts.iter().cloned()));
+    strings.extend([name.to_string(), String::new(), String::new()]);
     put_entity(
         doc,
         "AECC_TIN_SURFACE",
@@ -179,25 +332,7 @@ pub(super) fn write_surface(doc: &mut CadDocument, common: EntityCommon, name: &
             }
             byte(w, 1);
             bits(w, "01000");
-            bits(w, "00");
-            w.write_raw_long(0x8002_0A28_u32 as i32);
-            for v in [0, 0, 0xE8A5_800C_u32 as i32, 40, 0] {
-                w.write_bit_long(v);
-            }
-            bits(w, "000");
-            w.write_bytes(&guid);
-            w.write_bit_long(0);
-            w.write_bit_long(points.len() as i32);
-            for p in points {
-                w.write_bit_double(p.x);
-                w.write_bit_double(p.y);
-                w.write_bit_double(p.z);
-            }
-            // BL 0 in its four-byte form.
-            w.write_2bits(0);
-            w.write_raw_long(0);
-            w.write_bit_long(0xAC15_0A00_u32 as i32);
-            bits(w, "00");
+            write_definitions(w, definitions, auto_rebuild, seed);
             w.write_raw_long(-1);
             w.write_bytes(&[0xA2, 0x04, 2, 0, 0, 0x3C, 0x2A]);
             w.write_bytes(b"MMS01");
@@ -213,14 +348,14 @@ pub(super) fn write_surface(doc: &mut CadDocument, common: EntityCommon, name: &
                 w.write_raw_double(v.z);
             }
             w.write_bit_long(tin.triangles.len() as i32);
-            for (tri, n) in tin.triangles.iter().zip(&neighbors) {
+            for ((tri, n), h) in tin.triangles.iter().zip(&neighbors).zip(hidden) {
                 for v in tri {
                     w.write_raw_long(*v as i32);
                 }
                 for t in n {
                     w.write_raw_long(*t);
                 }
-                w.write_raw_long(i32::from(tri.iter().any(|v| *v < 4)));
+                w.write_raw_long(i32::from(*h));
                 w.write_raw_long(-1);
             }
             bits(w, "1010100");
@@ -230,23 +365,93 @@ pub(super) fn write_surface(doc: &mut CadDocument, common: EntityCommon, name: &
     )
 }
 
+/// The geometry a definition's sources bring in, for the triangulation:
+/// a point group's points (from the drawing's COGO points), the vertices of
+/// the lines, 2D and 3D polylines lines come from. Pasted surfaces,
+/// point files and corridor surfaces bring none (the application adds
+/// them when it rebuilds the surface).
+fn with_source_geometry(doc: &CadDocument, definitions: &[TinDefinition]) -> Result<Vec<TinDefinition>, DxfError> {
+    use crate::entities::EntityType;
+    let shape = |h: u64| -> Result<Vec<Vector3>, DxfError> {
+        match doc.get_entity(Handle::new(h)) {
+            Some(EntityType::Line(l)) => Ok(vec![l.start, l.end]),
+            Some(EntityType::LwPolyline(p)) => {
+                let mut v: Vec<Vector3> = p.vertices.iter().map(|v| Vector3::new(v.location.x, v.location.y, p.elevation)).collect();
+                if p.is_closed {
+                    v.extend(v.first().copied());
+                }
+                Ok(v)
+            }
+            Some(EntityType::Polyline3D(p)) => {
+                let mut v: Vec<Vector3> = p.vertices.iter().map(|v| v.position).collect();
+                if p.is_closed() {
+                    v.extend(v.first().copied());
+                }
+                Ok(v)
+            }
+            _ => Err(invalid("a line source is not a line, a polyline or a 3D polyline")),
+        }
+    };
+    let points = super::points::cogo_points(doc);
+    definitions
+        .iter()
+        .map(|d| {
+            let mut d = d.clone();
+            match &mut d.operation {
+                TinOperation::PointGroup => {
+                    let numbers = object(doc, Handle::new(d.sources[0])).map(|g| g.point_group_numbers()).ok_or_else(|| invalid("a point group source is not a point group"))?;
+                    d.operation = TinOperation::AddPoints(numbers.iter().filter_map(|n| points.iter().find(|p| p.number == *n)).map(|p| p.position).collect());
+                }
+                TinOperation::Breaklines(_, l) | TinOperation::Contours(l) | TinOperation::Boundary { lines: l, .. } => {
+                    for h in &d.sources {
+                        l.polylines.push(shape(*h)?);
+                    }
+                }
+                _ => {}
+            }
+            Ok(d)
+        })
+        .collect()
+}
+
 /// Adds a TIN surface triangulated from `points` (three or more, distinct
 /// in plan) with the drawing's default surface style, on `layer` (layer
 /// "0" when `None`). A drawing without a surface style collection gets
 /// one (`tree.rs`).
 pub fn add_tin_surface(doc: &mut CadDocument, name: &str, points: &[Vector3], layer: Option<&str>) -> Result<Handle, DxfError> {
-    let finite = points.iter().all(|p| p.x.is_finite() && p.y.is_finite() && p.z.is_finite());
-    let distinct = points.iter().enumerate().all(|(i, p)| points[..i].iter().all(|q| q.x != p.x || q.y != p.y));
-    if points.len() < 3 || !finite || !distinct {
-        return Err(invalid("a surface needs three or more finite points, distinct in plan"));
+    let points = TinDefinition { operation: TinOperation::AddPoints(points.to_vec()), id: [0; 16], texts: Vec::new(), sources: Vec::new() };
+    add_tin_surface_with(doc, name, &[points], false, layer)
+}
+
+/// Adds a TIN surface built from `definitions` in order (each one's `id`
+/// is replaced by a new one; texts and sources are written as given),
+/// rebuilding itself on a source change when `auto_rebuild`. The stored
+/// triangulation applies the definitions in order (`tin_build`), with the
+/// geometry of their sources read from the drawing.
+pub fn add_tin_surface_with(doc: &mut CadDocument, name: &str, definitions: &[TinDefinition], auto_rebuild: bool, layer: Option<&str>) -> Result<Handle, DxfError> {
+    if definitions.len() > 31 {
+        return Err(invalid("a surface holds at most 31 definitions"));
     }
+    for d in definitions {
+        if d.sources.len() != d.source_count() || d.texts.len() != d.text_count() {
+            return Err(invalid("a definition's texts or sources do not match its kind"));
+        }
+    }
+    let resolved = with_source_geometry(doc, definitions)?;
+    let finite = |p: &Vector3| p.x.is_finite() && p.y.is_finite() && p.z.is_finite();
+    let all_finite = resolved.iter().all(|d| match &d.operation {
+        TinOperation::AddPoints(p) | TinOperation::DrawingObjects { points: p, .. } => p.iter().all(finite),
+        TinOperation::Breaklines(_, l) | TinOperation::Contours(l) | TinOperation::Boundary { lines: l, .. } => l.polylines.iter().flatten().all(finite),
+        TinOperation::AddVertex(p) | TinOperation::VertexElevation(p) => finite(p),
+        _ => true,
+    });
+    let (tin, hidden) = all_finite.then(|| super::tin_build::build(&resolved)).flatten().ok_or_else(|| invalid("a surface needs three or more finite points, distinct in plan"))?;
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
     if default_style(doc).is_none() {
         ensure_surface_tree(doc)?;
     }
     let style = default_style(doc).ok_or_else(|| invalid("drawing has no surface styles"))?;
-    let tin = triangulate(points);
     let common = EntityCommon {
         handle: doc.allocate_handle(),
         owner_handle: doc.header.model_space_block_handle,
@@ -254,7 +459,7 @@ pub fn add_tin_surface(doc: &mut CadDocument, name: &str, points: &[Vector3], la
         layer_handle: Some(layer_handle),
         ..EntityCommon::default()
     };
-    write_surface(doc, common, name, points, &tin, style)
+    write_surface(doc, common, name, definitions, auto_rebuild, &tin, &hidden, style)
 }
 
 #[cfg(test)]
@@ -347,5 +552,43 @@ mod tests {
         let d = o.decode();
         assert_eq!(d.strings.len(), 1 + 17 + 2 * 25);
         assert!(d.strings.iter().any(|t| t.ends_with(";ANSI31")));
+    }
+
+    #[test]
+    fn definitions_round_trip_and_shape_the_triangulation() {
+        use crate::classes::civil::{TinBoundaryType, TinLines};
+        let mut doc = drawing();
+        let grid: Vec<Vector3> = (0..5).flat_map(|i| (0..5).map(move |j| Vector3::new(i as f64 * 25.0, j as f64 * 25.0, 10.0 + i as f64 + j as f64))).collect();
+        let lines = |pl: Vec<Vector3>| TinLines { objects: 0, polylines: vec![pl], mid_ordinate: 1.0, maximum_distance: 0.0, weeding_distance: 0.0, weeding_angle: 0.0 };
+        let def = |operation, texts: &[&str]| TinDefinition { operation, id: [0; 16], texts: texts.iter().map(|t| t.to_string()).collect(), sources: Vec::new() };
+        let (a, b) = (Vector3::new(10.0, 40.0, 30.0), Vector3::new(90.0, 55.0, 30.0));
+        let defs = vec![
+            def(TinOperation::AddPoints(grid), &[]),
+            def(TinOperation::Breaklines(TinBreaklineType::Standard, lines(vec![a, b])), &["B1"]),
+            def(TinOperation::Boundary { boundary_type: TinBoundaryType::Hide, non_destructive: false, lines: lines(vec![Vector3::new(70.0, -5.0, 0.0), Vector3::new(105.0, -5.0, 0.0), Vector3::new(105.0, 30.0, 0.0), Vector3::new(70.0, 30.0, 0.0), Vector3::new(70.0, -5.0, 0.0)]) }, &["H1"]),
+            def(TinOperation::DeleteVertex(Vector2::new(25.0, 75.0)), &[]),
+            def(TinOperation::Raise(2.0), &[]),
+        ];
+        // Texts must match the kinds.
+        assert!(add_tin_surface_with(&mut doc, "S", &defs[1..2].iter().map(|d| TinDefinition { texts: Vec::new(), ..d.clone() }).collect::<Vec<_>>(), false, None).is_err());
+        let h = add_tin_surface_with(&mut doc, "S", &defs, true, None).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-tin-defs-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let Some(crate::entities::EntityType::Extended(x)) = back.get_entity(h) else { panic!() };
+        let crate::entities::ExtendedEntityData::Arch(r) = &x.data else { panic!() };
+        let (read, auto) = r.tin_definitions().unwrap();
+        assert!(auto);
+        assert_eq!(read.iter().map(|d| (&d.operation, &d.texts)).collect::<Vec<_>>(), defs.iter().map(|d| (&d.operation, &d.texts)).collect::<Vec<_>>());
+        let tin = r.tin_surface().unwrap();
+        // The breakline is an edge, raised with everything; the deleted
+        // vertex is gone; the hide boundary hides the cell it holds.
+        let at = |p: Vector3| tin.vertices.iter().position(|v| v.position.x == p.x && v.position.y == p.y).unwrap() as u32;
+        let (ia, ib) = (at(a), at(b));
+        assert_eq!(tin.vertices[ia as usize].position.z, 32.0);
+        assert!(tin.triangles.iter().any(|t| t.is_visible() && t.vertices.contains(&ia) && t.vertices.contains(&ib)));
+        assert!(!tin.vertices.iter().any(|v| v.position.x == 25.0 && v.position.y == 75.0));
+        assert!(!tin.visible_triangles().any(|t| t.iter().all(|p| p.x >= 75.0 && p.y <= 25.0)));
     }
 }
