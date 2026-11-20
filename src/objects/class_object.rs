@@ -7,7 +7,7 @@
 //! tests; individual class coverage is not a claim of a complete published spec.
 
 use crate::objects::object_data::{ObjectDataDescriptor, ObjectDataDictionary, ObjectDataRecord};
-use crate::types::{Color, Handle, Vector2, Vector3};
+use crate::types::{Color, DxfVersion, Handle, Vector2, Vector3};
 
 #[derive(Debug, Clone, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -364,6 +364,17 @@ pub struct ViewRepSourceManager {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ViewRepStandard {
     pub values: [i32; 6],
+}
+
+impl ViewRepStandard {
+    /// Values stored on disk: AutoCAD 2010 (AC1024) has five, R2013 adds a sixth.
+    pub(crate) fn stored_len(dxf: DxfVersion) -> usize {
+        if dxf >= DxfVersion::AC1027 {
+            6
+        } else {
+            5
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]

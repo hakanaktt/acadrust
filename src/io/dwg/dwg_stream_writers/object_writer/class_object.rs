@@ -363,7 +363,7 @@ impl<'a> DwgObjectWriter<'a> {
                 self.writer.write_bit_long(value.status);
             }
             ClassObjectData::ViewRepStandard(value) => {
-                for item in value.values {
+                for &item in &value.values[..ViewRepStandard::stored_len(self.dxf_version)] {
                     self.writer.write_bit_long(item);
                 }
             }
@@ -1032,6 +1032,8 @@ mod object_data_tests {
     use super::*;
     use crate::classes::DxfClass;
     use crate::document::CadDocument;
+    use crate::io::dwg::dwg_stream_writers::merged_writer::DwgMergedWriter;
+    use crate::io::dwg::dwg_version::DwgVersion;
     use crate::objects::object_data::built_in_descriptors;
     use crate::types::{DxfVersion, Handle};
 
@@ -1207,5 +1209,51 @@ mod object_data_tests {
             writer.writer.main().to_bytes_snapshot()
         };
         assert_eq!(write(DxfVersion::AC1024), write(DxfVersion::AC1032));
+    }
+
+    /// The data bits a ViewRepStandard's values occupy at `version`.
+    fn view_rep_standard_bits(version: DxfVersion) -> i64 {
+        let object = ClassObject {
+            handle: Handle::new(0x80),
+            owner: Handle::new(0x7F),
+            reactors: vec![Handle::new(0x7F)],
+            xdictionary_handle: None,
+            data: ClassObjectData::ViewRepStandard(ViewRepStandard {
+                values: [100, 0, 1, 0, 1, 1],
+            }),
+        };
+        let mut document = CadDocument::with_version(version);
+        document
+            .objects
+            .insert(object.handle, ObjectType::ClassObject(object.clone()));
+        let mut writer = DwgObjectWriter::new(&document).unwrap();
+        writer.writer.reset();
+        writer.write_class_object_data(&object.data);
+        writer.writer.main().position_in_bits()
+    }
+
+    /// The bits `values` occupy as bit-longs.
+    fn bit_longs_bits(values: &[i32]) -> i64 {
+        let mut writer = DwgMergedWriter::new(DwgVersion::AC24, DxfVersion::AC1027);
+        for value in values {
+            writer.write_bit_long(*value);
+        }
+        writer.main().position_in_bits()
+    }
+
+    #[test]
+    fn r2010_view_rep_standard_writes_five_values() {
+        assert_eq!(
+            view_rep_standard_bits(DxfVersion::AC1024),
+            bit_longs_bits(&[100, 0, 1, 0, 1])
+        );
+    }
+
+    #[test]
+    fn r2013_view_rep_standard_writes_six_values() {
+        assert_eq!(
+            view_rep_standard_bits(DxfVersion::AC1027),
+            bit_longs_bits(&[100, 0, 1, 0, 1, 1])
+        );
     }
 }
