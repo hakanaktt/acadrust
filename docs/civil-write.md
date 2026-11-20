@@ -442,7 +442,8 @@ BL n, the lines then the arcs:
   spiral-curve-spiral: BL 260, the arc's head with BL 0 (fitted between
         two lines) and no B, BS id, BS previous id, BS next id, BL 256
         (spiral definition), BD spiral in, BD radius, BD spiral out
-BL 0 x 4 (intervals), BL 0 (equations), BL 1, BL 0 (design speeds)
+BL 0 x 4 (no anchors, see below), BL 0 (equations), BL 1, BL 0 (design
+speeds)
 BD 100 (station increment), BL 0 (no superelevation), BL 0, BL 1
 (centerline), BL 2, 2, 2, 0, 3, B 0, BS 0x04BE
 handles: soft pointer 0, companion (hard pointer, twice), soft pointer 0,
@@ -498,6 +499,72 @@ bit for bit apart from the text id; for WA03 the tangent points and the
 bulge differ from the application's in the last bits. An alignment that refers to no companion stops the application
 while it opens the drawing (A1); a companion without its topology is
 refused (`Errors Found`, A6).
+
+### Station anchors
+
+Objects that tie to a station of an alignment do so through an anchor in
+the alignment's record, kept by its identifier (a version-4 GUID); the
+block after the elements lists them:
+
+```text
+BL profiles, BL profile views, BL sample line groups, BL k,
+k x { GUID, B 1, BL kind, BD 0, BD station, BD along, BD remaining,
+      BL element, BL previous element, BL next element,
+      2RD element start, 2RD element end, 2RD point at the station }
+```
+
+The anchors are stored in identifier order (byte by byte: AO12, AO16,
+KH01). The element is the one the station lies on (the one that starts
+there at a join, the last one at the alignment's end; AO16's anchor at 60
+is on the arc that starts there), `along` and `remaining` the distances
+to its ends. Kinds seen: 32763 (and 32765) a profile's start, 6 the ends
+of an offset alignment's range on its parent, 2 an offset alignment's own
+start (its design speed refers to it), 582 a corridor region locked to
+the geometry (KH01, §3i-a). Two more texts follow per anchor. The reader
+returns them (`alignment_anchors`); the writer keeps an alignment's
+anchors when it writes it again and adds one per new profile (the profile
+keeps its identifier) and two per offset alignment.
+
+### Offset alignments
+
+`add_offset_alignment(doc, parent, name, offset, range, layer)` writes an
+offset alignment of a siteless parent of lines and arcs this crate
+writes, at `offset` (negative to the left) between the parent's stations
+`range` (all of it by default). The record (AO14, AO17, AO21, AO22) is an
+alignment record with:
+
+- `BL 0x00025F04` in place of `0x10025F04`;
+- elements numbered from 2n + 1 (n: the parent's elements) in station
+  order, one per parent element in the range, clipped at the range's ends:
+  a fixed line (`BL 257, BS 0, B 0, BS 0, ids, 2RD, 2RD`) parallel to a
+  parent line, a fixed arc (`BL 258, BS 0, B 0, B 0, BD -1, BD -1, BS 1,
+  BD -1, BL 2, B 0, ids, 2RD start, 2RD middle, 2RD end`) concentric with a
+  parent arc; the first id also in the two fields before the start station
+  and after the 7 criteria bits; the start station is the range's start;
+- one anchor (kind 2) at its start, and one design speed `{BL 1, BD start,
+  BD 0, the anchor's GUID}`;
+- the type `BL 2`, then the offset block (the reader's
+  `offset_parameters`): `BL 1 (dynamic), BL 2, BL 1, BD offset, BL side
+  (1 left, 2 right), B 0, B 0, BL 1 (geometry locking), BL 1, {BD offset,
+  BD parent start, BD parent end, BD start, BD end, BL 2, BL first element,
+  BL last element, BL 0 x 5, BL 3}, BL 0 (transitions), BL k, k x {BL
+  parent element, BL -1, BL 1, BL element} (by parent id), BL 2, 2 x {BD
+  parent station, the parent anchor's GUID}`, then `BL 0, BL 0, BL 3,
+  B 0, BS 0x04BE`;
+- the parent as a seventh reference (soft pointer); one more text per
+  design speed.
+
+The parent is written again with an anchor (kind 6) at each end of the
+range. The companion is the siteless one with nodes numbered from 2n + 1
+(n nodes), every segment flags 10 and no faces (`BL 16` in place of
+`BL 48`, faces `BL 2, BL 0, BL 0`), referring to the alignment and one
+empty soft pointer. Written for AO14's and AO17's parents and ranges the
+records equal the samples' apart from the geometry stamp, the
+identifiers and the last bits of the solved points. E-O1 to E-O4 (written:
+both sides, ranges, an alignment with two profiles and two offsets) open
+without a recovery prompt, audit clean, list each offset with its parent,
+side, nominal offset and region, and follow edits made in the application
+(a new nominal offset and a widening are solved from the parent).
 
 ## 3c. TIN surfaces
 
@@ -2209,7 +2276,9 @@ Corridors are listed in §3i-a.
 | TIN surfaces | points added to the surface | yes | yes | §3c |
 | TIN surfaces | imported points (file), point groups, breaklines, boundaries, contours, edits (add/delete vertex and line, raise, paste, transform) | yes (the definitions are walked; their fields are read for the triangulation) | no | each operation is a definition record and the stored triangulation must honour it; a breakline adds 1744 bits to a 25-point surface (TS00, TS01): the writer would need constrained triangulation and the definition records |
 | alignments | fixed lines, free arcs, spiral-curve-spirals, start station, siteless and on a site | yes | yes | §3a, §3g |
-| alignments | offset alignments (with widenings), curb returns, other types (rail, miscellaneous) | yes (offset parameters and regions, connected alignments, type) | no | an offset alignment is a solved child of its parent with an offset action; not sampled for writing |
+| alignments | offset alignments of lines and arcs, on either side, over the whole parent or a station range | yes | yes | §3a (station anchors, offset alignments) |
+| alignments | station anchors (profiles, offset ranges, own design speed, corridor geometry locks) | yes | yes, for profiles and offset alignments | §3a |
+| alignments | widenings, offsets of spirals, curb returns, other types (rail, miscellaneous) | yes (offset parameters and regions, connected alignments, type) | no | not written yet |
 | alignments | lone spirals, other constraints (fixed/floating curves, curves through points), design speeds, station equations | yes (elements, speeds, equations) | no | other element kinds not written |
 | alignments | superelevation | yes (critical stations, lanes-only blocks) | no | the superelevation block is read only |
 | profiles | layout: fixed tangents, free parabolas (symmetric, asymmetric), free circular curves | yes | yes | §3e |
