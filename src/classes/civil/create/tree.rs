@@ -124,6 +124,8 @@ pub(super) enum Value {
     Point([f64; 3]),
     /// Type 0x18: `BL` byte count, UTF-16 with its terminator.
     Wide(&'static str),
+    /// [`Value::Wide`] with a text of the caller's.
+    WideString(String),
     /// Type 0x16: a FILETIME, written as the time of writing.
     Time,
 }
@@ -244,7 +246,12 @@ pub(super) fn style(doc: &mut CadDocument, handle: Handle, owner: Handle, st: St
                             w.write_bit_double(*v);
                         }
                     }
-                    Value::Wide(t) => {
+                    Value::Wide(_) | Value::WideString(_) => {
+                        let t = match value {
+                            Value::WideString(t) => t.as_str(),
+                            Value::Wide(t) => t,
+                            _ => unreachable!(),
+                        };
                         let mut bytes: Vec<u8> = t.encode_utf16().flat_map(u16::to_le_bytes).collect();
                         bytes.extend([0, 0]);
                         w.write_bit_long(bytes.len() as i32);

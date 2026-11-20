@@ -1370,6 +1370,42 @@ exaggerating 5 and 20, a view of each and one of the default): AUDIT 0,
 the API lists both styles with their exaggerations and the views with
 them, and makes a view of its own with the written style.
 
+Every other setting of a profile view style is one key, found by
+setting each of the API's 135 writable style settings in turn and saving
+after each (PS001 to PS134, PT001 to PT010): `type << 24 | 0x01_6000 | g
+<< 8 | item`, g 0 for the graph and the grid, 1 to 4 for the left, right,
+top and bottom axes, 5 for the grid lines and the axes' tick switches.
+An axis's items are the same on every axis: title text 02 (type 0x18),
+text style 01 (0x10), location 03 (0x0D: 0 bottom or right, 1 center, 2
+top or left), offset 04 (0x09, X and Y), text height 07, rotation 13;
+major ticks interval 0C, size 0D, text height 08, label 0A, text style
+14, offset 16, rotation 15, justification 27 (0 top or left, 1 bottom or
+right, 2 center); minor ticks 0E, 0F, 09, 0B, 19, 1B, 1A, 28; the top and
+bottom axes' horizontal geometry ticks size 24, text height 23, label 25,
+text style 1E, offset 20, rotation 1F, justification 29. The graph: title
+text 0x1801_600A, text style 0x1001_6002, offset 0x0901_6003, location
+0x0D01_6006 (0 top, 1 bottom, 2 left, 3 right), justification
+0x0D01_6007 (0 top or left, 1 middle, 2 bottom or right), border
+0x0301_6008, border gap 0x0201_6009, text height 0x0201_600B; the
+exaggeration 0x0201_6001 and the direction 0x0301_9001 (1 right to
+left). The grid: padding left, right, bottom, top 0x0201_60 19, 0A, 18,
+17, axis offsets 15, 16, 14, 13; horizontal grid lines omit in padding,
+clip to the highest profile, clip 0x0301_65 09, 08, 01, vertical 0B, 0A,
+03. The left, right and bottom axes have one tick switch each
+(0x0301_65 07, 0C, 06) that the API's "show ticks and labels" and the
+ticks' "ticks and labels at the start elevation" all read and write; the
+top axis has none (the API refuses its start elevation). A text style is
+the style's reference for its key, the references of the keys following
+the header's in key order. The labels are label format strings in the
+stored form (`<[33607712(2097|...)]>`), any text otherwise.
+
+`profile_view_style_settings()` reads them all
+(`ProfileViewStyleSettings`), `add_profile_view_style_with(doc, name,
+settings)` writes a style with them (`ProfileViewStyleSettings::default()`
+is the default style). E-PVS1 (a style changing settings of the graph,
+the grid and every axis, two text styles, and a view with it) opens with
+AUDIT 0 errors and the API lists every written value.
+
 Stacked views (ST01: the API's `StackedProfileViewsCreationOptions`, three
 views of the default style, gap 20) are ordinary views with nothing
 linking them: the three records differ only in their origin (the three
@@ -2671,7 +2707,8 @@ Corridors are listed in §3i-a.
 | profile views | automatic and user ranges, default style, profile label groups | yes (frame) | yes | §3h |
 | profile views | styles that copy the default with another vertical exaggeration, views with them | yes (frame, style exaggeration) | yes | §3h |
 | profile views | stacked views (separate views at stacked origins) | yes | yes | §3h |
-| profile views | other style settings, bands other than the defaults | partly | no | the graph settings between the named values are constant runs |
+| profile views | every style setting the API exposes (graph title, direction, exaggeration, grid, the four axes' titles and ticks, text styles) | yes | yes | §3h |
+| profile views | bands other than the defaults | partly | no | the graph settings between the named values are constant runs; band items and their label groups are not written (hand-off notes) |
 | sites | name, description, members | yes | yes | §3g |
 | parcels | closed and open, crossing and touching lot lines, arcs, labels | yes | yes | §3g |
 | parcels | lot lines meeting alignments or feature lines; arcs where lines meet; the newest member's point marks 0x10/0x20 | yes | no | §3g (rule not found) |

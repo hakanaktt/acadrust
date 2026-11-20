@@ -6,6 +6,9 @@ use super::profile::identifier;
 use super::site::default_style_of;
 use super::support::*;
 use super::tree::{ensure_point_tree, style, Component, Shared, Style, Value as StyleValue, DEFAULT_STYLE_ID, KEY_STYLES};
+use crate::classes::civil::alignment::KeyValue;
+use crate::classes::civil::style::{view_key, view_settings_from};
+use crate::classes::civil::{ProfileViewStyleSettings, ProfileViewTicks};
 use crate::classes::arch::ArchEntityData;
 use crate::classes::civil::ProfilePiece;
 use crate::entities::{EntityCommon, EntityType, ExtendedEntityData};
@@ -38,7 +41,7 @@ const TITLE: &str = "Profile View of  <[67194883(2449)]>";
 /// Vertical exaggeration of the default view style.
 const VERTICAL_SCALE: f64 = 10.0;
 /// The view style key holding the vertical exaggeration (VS11 to VS13).
-const KEY_EXAGGERATION: u32 = 0x0201_6001;
+const KEY_EXAGGERATION: u32 = view_key::EXAGGERATION;
 /// Text ids this crate gives the view styles it adds (the first one, then
 /// one more than the highest in the collection).
 const FIRST_STYLE_TEXT_ID: u32 = 0x8003_0001;
@@ -605,13 +608,88 @@ const VIEW_STYLE_COMPONENTS: [(i32, bool, u16); 36] = [(0, true, 4), (1, true, 3
 /// (id 30) equal WV01's records apart from the dates and the users.
 #[allow(clippy::too_many_arguments)]
 fn view_style(doc: &mut CadDocument, handle: Handle, owner: Handle, id: i32, children: &[(i32, Handle)], own: u64, layer: u64, by_block: u64) -> Result<(), DxfError> {
-    view_style_named(doc, handle, owner, id, "", VERTICAL_SCALE, children, own, layer, by_block)
+    view_style_named(doc, handle, owner, id, "", &ProfileViewStyleSettings::default(), children, own, layer, by_block)
 }
 
-/// [`view_style`] named `name` (with a text id) with vertical
-/// exaggeration `exaggeration` (its key [`KEY_EXAGGERATION`]).
+/// The application's default profile view style settings (the values of
+/// [`view_style_keys`]; text styles 0, the drawing's "Standard").
+impl Default for ProfileViewStyleSettings {
+    fn default() -> Self {
+        let keys = view_style_keys();
+        let get = |key: u32| match keys.iter().find(|(k, _)| *k == key)?.1 {
+            StyleValue::Double(v) => Some(KeyValue::Double(v)),
+            StyleValue::Long(v) => Some(KeyValue::Long(v)),
+            StyleValue::Byte(v) => Some(KeyValue::Byte(v)),
+            StyleValue::Point(p) => Some(KeyValue::Vector(p)),
+            StyleValue::Wide(t) => Some(KeyValue::Text(t.to_string())),
+            _ => None,
+        };
+        view_settings_from(&get, &|_| Some(0)).expect("the default profile view style holds every setting")
+    }
+}
+
+/// The keys of `settings` (see [`view_key`]): a text style 0 is the
+/// drawing's "Standard".
+fn view_settings_values(s: &ProfileViewStyleSettings) -> Vec<(u32, StyleValue)> {
+    use view_key::*;
+    let style_of = |h: u64| StyleValue::Reference(if h == 0 { Shared::Standard } else { Shared::Record(h) });
+    let point = |p: [f64; 2]| StyleValue::Point([p[0], p[1], 0.0]);
+    let flag = |b: bool| StyleValue::Byte(u8::from(b));
+    let t = &s.title;
+    let mut out = vec![
+        (EXAGGERATION, StyleValue::Double(s.vertical_exaggeration)),
+        (RIGHT_TO_LEFT, flag(s.right_to_left)),
+        (TITLE_TEXT, StyleValue::WideString(t.text.clone())),
+        (TITLE_STYLE, style_of(t.text_style)),
+        (TITLE_OFFSET, point(t.offset)),
+        (TITLE_LOCATION, StyleValue::Long(t.location)),
+        (TITLE_JUSTIFICATION, StyleValue::Long(t.justification)),
+        (TITLE_BORDER, flag(t.border)),
+        (TITLE_BORDER_GAP, StyleValue::Double(t.border_gap)),
+        (TITLE_HEIGHT, StyleValue::Double(t.text_height)),
+    ];
+    for (keys, values) in [(PADDING, s.grid.padding), (AXIS_OFFSET, s.grid.axis_offset)] {
+        out.extend(keys.into_iter().zip(values).map(|(k, v)| (k, StyleValue::Double(v))));
+    }
+    for (keys, l) in GRID_LINES.into_iter().zip([s.grid.horizontal, s.grid.vertical]) {
+        out.extend(keys.into_iter().zip([l.omit_in_padding, l.clip_to_highest_profile, l.clip]).map(|(k, v)| (k, flag(v))));
+    }
+    for (g, a) in (1..).zip([&s.left, &s.right, &s.top, &s.bottom]) {
+        if let Some(k) = SHOW[g as usize - 1] {
+            out.push((k, flag(a.show_ticks_and_labels)));
+        }
+        let at = |ty: u32, item: u32| axis(ty, g, item);
+        let tt = &a.title;
+        out.extend([
+            (at(0x18, TITLE[0]), StyleValue::WideString(tt.text.clone())),
+            (at(0x10, TITLE[1]), style_of(tt.text_style)),
+            (at(0x0D, TITLE[2]), StyleValue::Long(tt.location)),
+            (at(0x09, TITLE[3]), point(tt.offset)),
+            (at(0x02, TITLE[4]), StyleValue::Double(tt.text_height)),
+            (at(0x02, TITLE[5]), StyleValue::Double(tt.rotation)),
+        ]);
+        let ticks: [(Option<&ProfileViewTicks>, [u32; 8]); 3] = [(Some(&a.major), TICKS[0]), (Some(&a.minor), TICKS[1]), (a.geometry.as_ref().filter(|_| g >= 3), TICKS[2])];
+        for (k, items) in ticks.into_iter().filter_map(|(k, items)| Some((k?, items))) {
+            if items[0] != 0 {
+                out.push((at(0x02, items[0]), StyleValue::Double(k.interval)));
+            }
+            out.extend([
+                (at(0x02, items[1]), StyleValue::Double(k.size)),
+                (at(0x02, items[2]), StyleValue::Double(k.text_height)),
+                (at(0x18, items[3]), StyleValue::WideString(k.label.clone())),
+                (at(0x10, items[4]), style_of(k.text_style)),
+                (at(0x09, items[5]), point(k.offset)),
+                (at(0x02, items[6]), StyleValue::Double(k.rotation)),
+                (at(0x0D, items[7]), StyleValue::Long(k.justification)),
+            ]);
+        }
+    }
+    out
+}
+
+/// [`view_style`] named `name` (with a text id) with `settings`.
 #[allow(clippy::too_many_arguments)]
-fn view_style_named(doc: &mut CadDocument, handle: Handle, owner: Handle, id: i32, name: &str, exaggeration: f64, children: &[(i32, Handle)], own: u64, layer: u64, by_block: u64) -> Result<(), DxfError> {
+fn view_style_named(doc: &mut CadDocument, handle: Handle, owner: Handle, id: i32, name: &str, settings: &ProfileViewStyleSettings, children: &[(i32, Handle)], own: u64, layer: u64, by_block: u64) -> Result<(), DxfError> {
     let plan = VIEW_STYLE_COMPONENTS
         .iter()
         .map(|&(index, visible, color)| Component {
@@ -623,12 +701,14 @@ fn view_style_named(doc: &mut CadDocument, handle: Handle, owner: Handle, id: i3
             scale: 1.0,
         })
         .collect();
-    let mut keys = view_style_keys();
-    for (key, value) in &mut keys {
-        if *key == KEY_EXAGGERATION {
-            *value = StyleValue::Double(exaggeration);
-        }
-    }
+    let mut values = view_settings_values(settings);
+    let keys: Vec<(u32, StyleValue)> = view_style_keys()
+        .into_iter()
+        .map(|(key, value)| match values.iter().position(|(k, _)| *k == key) {
+            Some(i) => values.swap_remove(i),
+            None => (key, value),
+        })
+        .collect();
     let st = Style { name, dxf: "AECC_PROFILE_VIEW_STYLE", id, children, keys: &keys, own, pointer_table: &[], lists: [plan, Vec::new(), Vec::new(), Vec::new()], class_refs: Vec::new() };
     style(doc, handle, owner, st, layer, |_| {})
 }
@@ -754,8 +834,28 @@ fn exaggeration_of(doc: &CadDocument, style: u64) -> Option<f64> {
 /// the profile view style collection (written with the default style when
 /// the drawing lacks it).
 pub fn add_profile_view_style(doc: &mut CadDocument, name: &str, exaggeration: f64) -> Result<Handle, DxfError> {
-    if name.is_empty() || !(exaggeration.is_finite() && exaggeration > 0.0) {
+    add_profile_view_style_with(doc, name, &ProfileViewStyleSettings { vertical_exaggeration: exaggeration, ..Default::default() })
+}
+
+/// [`add_profile_view_style`] with every setting given (start from
+/// `ProfileViewStyleSettings::default()`, the application's default
+/// style). Text styles are handles of the drawing's text styles, 0 for
+/// "Standard"; the top and left/right axes' geometry ticks are not
+/// written (the top axis has no tick switch, the side axes no geometry
+/// ticks).
+pub fn add_profile_view_style_with(doc: &mut CadDocument, name: &str, settings: &ProfileViewStyleSettings) -> Result<Handle, DxfError> {
+    let axes = [&settings.left, &settings.right, &settings.top, &settings.bottom];
+    if name.is_empty() || !(settings.vertical_exaggeration.is_finite() && settings.vertical_exaggeration > 0.0) {
         return Err(invalid("a profile view style needs a name and a positive vertical exaggeration"));
+    }
+    if axes.iter().any(|a| !(a.major.interval > 0.0 && a.minor.interval > 0.0)) {
+        return Err(invalid("profile view style tick intervals must be positive"));
+    }
+    let styles = [settings.title.text_style].into_iter().chain(axes.iter().flat_map(|a| [a.title.text_style, a.major.text_style, a.minor.text_style].into_iter().chain(a.geometry.as_ref().map(|g| g.text_style))));
+    for h in styles.collect::<Vec<_>>() {
+        if h != 0 && !doc.text_styles.iter().any(|t| t.handle.value() == h) {
+            return Err(invalid("a profile view style text style is not a text style of the drawing"));
+        }
     }
     ensure_view_style_tree(doc)?;
     let styles = root_node(doc, KEY_STYLES).ok_or_else(|| invalid("drawing has no style tree"))?;
@@ -768,7 +868,7 @@ pub fn add_profile_view_style(doc: &mut CadDocument, name: &str, exaggeration: f
     let layer = doc.layers.get("0").map(|l| l.handle.value()).ok_or_else(|| invalid("drawing has no layer 0"))?;
     let by_block = doc.line_types.get("ByBlock").map(|l| l.handle.value()).ok_or_else(|| invalid("drawing lacks the ByBlock linetype"))?;
     let handle = doc.allocate_handle();
-    view_style_named(doc, handle, head, id as i32, name, exaggeration, &[], 0, layer, by_block)?;
+    view_style_named(doc, handle, head, id as i32, name, settings, &[], 0, layer, by_block)?;
     add_node_child(doc, head, id as i32, handle, name)?;
     Ok(handle)
 }
@@ -929,6 +1029,65 @@ mod tests {
         let collection = read_node(&back, Handle::new(head)).unwrap();
         assert_eq!(collection.names, ["VS5", "VS20"]);
         assert_eq!(object(&back, s5).unwrap().decode().strings[..2], ["VS5".to_string(), String::new()]);
+    }
+
+    #[test]
+    fn styles_take_every_setting() {
+        let defaults = ProfileViewStyleSettings::default();
+        // The default settings write the default style's keys unchanged.
+        let keys = view_style_keys();
+        for (k, v) in view_settings_values(&defaults) {
+            let (_, d) = keys.iter().find(|(key, _)| *key == k).unwrap();
+            assert_eq!(format!("{:?}", style_value(&v)), format!("{:?}", style_value(d)), "{k:08X}");
+        }
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let mut s = defaults.clone();
+        s.right_to_left = true;
+        s.title.text = "Long view".into();
+        s.title.border = true;
+        s.grid.padding = [1.0, 2.0, 3.0, 4.0];
+        s.grid.vertical.clip = false;
+        s.left.show_ticks_and_labels = false;
+        s.bottom.major.interval = 50.0;
+        s.bottom.minor.label = "<[33607712(2097)]>".into();
+        s.right.title.location = 2;
+        s.top.geometry.as_mut().unwrap().justification = 0;
+        s.top.title.text_style = doc.text_styles.get("Standard").unwrap().handle.value() + 1_000_000;
+        assert!(add_profile_view_style_with(&mut doc, "S", &s).is_err());
+        s.top.title.text_style = 0;
+        s.left.minor.interval = 0.0;
+        assert!(add_profile_view_style_with(&mut doc, "S", &s).is_err());
+        s.left.minor.interval = 2.5;
+        let h = add_profile_view_style_with(&mut doc, "S", &s).unwrap();
+        let back = round_trip(&doc, "settings");
+        let read = object(&back, h).unwrap().profile_view_style_settings().unwrap();
+        let standard = back.text_styles.get("Standard").unwrap().handle.value();
+        assert_eq!(read.top.title.text_style, standard);
+        s.title.text_style = standard;
+        for a in [&mut s.left, &mut s.right, &mut s.top, &mut s.bottom] {
+            a.title.text_style = standard;
+            for t in [Some(&mut a.major), Some(&mut a.minor), a.geometry.as_mut()].into_iter().flatten() {
+                t.text_style = standard;
+            }
+        }
+        assert_eq!(read, s);
+    }
+
+    fn style_value(v: &StyleValue) -> Option<KeyValue> {
+        match v {
+            StyleValue::Double(v) => Some(KeyValue::Double(*v)),
+            StyleValue::Long(v) => Some(KeyValue::Long(*v)),
+            StyleValue::Byte(v) => Some(KeyValue::Byte(*v)),
+            StyleValue::Point(p) => Some(KeyValue::Vector(*p)),
+            StyleValue::Wide(t) => Some(KeyValue::Text(t.to_string())),
+            StyleValue::WideString(t) => Some(KeyValue::Text(t.clone())),
+            StyleValue::Reference(r) => Some(KeyValue::Long(match r {
+                Shared::Standard => 0,
+                _ => -1,
+            })),
+            _ => None,
+        }
     }
 
     #[test]
