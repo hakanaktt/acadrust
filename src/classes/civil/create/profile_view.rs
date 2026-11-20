@@ -934,9 +934,6 @@ pub fn add_profile_view_with_bands(doc: &mut CadDocument, alignment: Handle, nam
 
 #[allow(clippy::too_many_arguments)]
 fn add_view(doc: &mut CadDocument, alignment: Handle, name: &str, origin: Vector2, style: Option<Handle>, stations: Option<(f64, f64)>, elevations: Option<(f64, f64)>, bands: &[ProfileViewBand], layer: Option<&str>) -> Result<Handle, DxfError> {
-    if bands.iter().any(|b| b.top && b.kind != super::bands::BandKind::ProfileData) {
-        return Err(invalid("only profile data bands are written above a profile view"));
-    }
     // A geometry band item holds the band's number in four bits.
     if bands.len() > 15 {
         return Err(invalid("a profile view holds at most 15 bands"));
@@ -1077,6 +1074,34 @@ mod tests {
         // Each band item opens with its gap (a BD, not 0 here).
         let frame = entity(&back, view).profile_view_frame().unwrap();
         assert_eq!((frame.origin, frame.station_min, frame.station_max), (v(0.0, -100.0), -200.0, 300.0));
+    }
+
+    /// Superelevation, sectional data and pipe network bands below the
+    /// view and geometry bands above it get their style collections and an
+    /// empty label group each (labels for the geometry bands).
+    #[test]
+    fn views_take_every_band_kind_above_and_below() {
+        use super::super::bands::{BandKind, ProfileViewBand};
+        let v = Vector2::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let al = crate::classes::civil::add_alignment(&mut doc, "AL1", &[v(0.0, 0.0), v(100.0, 0.0)], None).unwrap();
+        crate::classes::civil::add_profile(&mut doc, al, "P1", &[v(0.0, 10.0), v(100.0, 15.0)], &[], None).unwrap();
+        let mut bands: Vec<ProfileViewBand> = [BandKind::Superelevation, BandKind::SectionalData, BandKind::PipeNetwork, BandKind::VerticalGeometry, BandKind::HorizontalGeometry].into_iter().map(ProfileViewBand::new).collect();
+        bands[3].top = true;
+        bands[4].top = true;
+        let view = add_profile_view_with_bands(&mut doc, al, "PV", v(0.0, -100.0), None, &bands, None).unwrap();
+        let back = round_trip(&doc, "kinds");
+        assert!(entity(&back, view).profile_view_frame().is_some());
+        let groups: Vec<String> = back.entities().filter_map(|e| match e {
+            crate::entities::EntityType::Extended(x) => match &x.data {
+                crate::entities::ExtendedEntityData::Arch(a) if a.dxf_name.ends_with("BAND_LABELGROUP") => Some(a.dxf_name.clone()),
+                _ => None,
+            },
+            _ => None,
+        }).collect();
+        assert_eq!(groups.len(), 5);
+        assert!(groups.iter().any(|g| g == "AECC_SECTIONALDTABAND_LABELGROUP"));
     }
 
     #[test]

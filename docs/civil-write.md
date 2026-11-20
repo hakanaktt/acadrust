@@ -1661,23 +1661,28 @@ groups.
 ### Bands
 
 A view lists its bands after the profile flags: `BL n`, then per band
-`BD gap` and a constant item of its kind (profile data 1056 bits,
-vertical and horizontal geometry 572): item bits 4 and 5 are the labels
-at the end and start stations, a profile data item has bit 9 set below
-the view and bits 921/923 = 1/0 above it, a geometry item holds the band's
+`BD gap` and a constant item of its kind (profile data 1056 bits, every
+other kind 572: vertical and horizontal geometry, superelevation,
+sectional data and pipe network items are the same, BV-SE, BV-SD, BV-PN,
+BV-VGT): item bits 4 and 5 are the labels at the end and start stations,
+bit 9 is set below the view (a profile data item also has bits 921/923 =
+1/0 above it), the 572-bit item holds the band's
 number in the view (from 1, the bands below first) in bits 436-439 (a
 lone horizontal geometry band holds 1; with the number of another band
 the application lists the band without labels and drops its label group
 at the next band change). The bands below the view
-come first. Each band adds one value to five graph keys (0x0C01BA06 3.0,
+come first (the application reads either order; when it rewrites the
+list it puts the bands above first, keeping their numbers: E-BD14-edit,
+E-BV1-edit). Each band adds one value to five graph keys (0x0C01BA06 3.0,
 0x0C01BA05 10.0 or -1.0 for horizontal geometry, 0x0B01BA07 0,
 0x1901BA0A 0x1001BA09, 0x0C01BA04 5.0), one hard null reference at the
 head of the view's references and `(style, soft 0, alignment, profile 1,
 profile 2)` after the profiles' triples.
 
 Each band has a label group (`AECC_PROFILEDATABAND_LABELGROUP`,
-`..._VERTICALGEOMETRYBAND_...`, `..._HORIZONTALGEOMETRYBAND_...`) in model
-space: the profile label groups' header, `BL n` labels (key block, a
+`..._VERTICALGEOMETRYBAND_...`, `..._HORIZONTALGEOMETRYBAND_...`,
+`AECC_SUPERELEVATIONBAND_LABELGROUP`, `AECC_SECTIONALDTABAND_LABELGROUP`,
+`AECC_PIPENETWORKBAND_LABELGROUP`) in model space: the profile label groups' header, `BL n` labels (key block, a
 44-bit run of the label's kind, a key list, `BL 0`, `BL 0`), then a tail
 holding the band's number (`BL`, 1-based over all bands); references
 soft 0, soft 0, the view (soft), hard 0 and the view (hard) per label;
@@ -1710,11 +1715,23 @@ empty group, which the application fills as soon as the view or one of
 its bands changes (it rebuilds every band label group then; an empty
 group stays empty through open and regeneration).
 
+Superelevation, sectional data and pipe network bands are written
+without a data source and without labels (the application's own groups
+for such bands are empty: no superelevation, sample line group or pipe
+network chosen); the group's texts are its class text and three empty
+ones as for the others.
+
 The default band styles of a new drawing (style tree keys 0x42, 0x43,
 0x44, each with its default style, 6 records) refer to label styles of 17
 collections under the label node (0x1001B200-0x1001B802, 99 records);
 both are written from the application's records (PB00) when the drawing
-has no profile data band styles. The automatic station range of a view
+has no profile data band styles. The superelevation (0x45), sectional
+data (0x148) and pipe network (0x140) band styles (6 records) and their
+14 label style collections (0x1001B500-0x1001B660, 0x1001B803-0x1001B805,
+74 records) are written the same way when the drawing has no
+superelevation band styles. Pressure network, cant, distance, COGO and
+speed band styles (keys 0x192-0x196) exist in the drawing but the API
+adds no such band to a profile view (not sampled, not written). The automatic station range of a view
 is rounded out to 100 (an alignment ending at 211.12 gives a view to 500).
 
 Checks: E-BD13 (OP00 with a view and four bands: profile data, vertical
@@ -1729,7 +1746,12 @@ the templates) the same. E-HG1 to E-HG3 (a new drawing: one line, a line
 and an arc, line-arc-line-arc-line; a profile; a view with one horizontal
 geometry band) open with AUDIT 0, the API lists the band with labels and
 after a band change the application's rebuilt group holds the written
-labels value for value.
+labels value for value. E-BV1 (a new drawing: superelevation, sectional
+data and pipe network bands below, vertical and horizontal geometry above)
+and E-BV4 (the application's HB0 with such a second view, reusing its
+styles) open with AUDIT 0; the API lists the five bands with their types
+and locations and the profile; after a band change all five groups stay
+and the horizontal geometry labels are rebuilt equal.
 
 ## 3i. Corridors
 
@@ -3058,8 +3080,8 @@ Corridors are listed in §3i-a.
 | profile views | styles that copy the default with another vertical exaggeration, views with them | yes (frame, style exaggeration) | yes | §3h |
 | profile views | stacked views (separate views at stacked origins) | yes | yes | §3h |
 | profile views | every style setting the API exposes (graph title, direction, exaggeration, grid, the four axes' titles and ticks, text styles) | yes | yes | §3h |
-| profile views | profile data, vertical and horizontal geometry bands below the view and profile data bands above it, with their gaps, end station labels, profiles and label groups; the default band styles of a new drawing | yes | yes (horizontal geometry labels of alignments with spirals left to the application) | §3h (Bands) |
-| profile views | other band kinds (superelevation, sectional data, pipe network, ...), geometry bands above the view, band styles other than the defaults, weeding and intervals | partly | no | not sampled; the API ignores the interval setters |
+| profile views | profile data, vertical and horizontal geometry, superelevation, sectional data and pipe network bands below or above the view, with their gaps, end station labels, profiles and label groups; the default band styles of a new drawing | yes | yes (horizontal geometry labels of alignments with spirals left to the application; superelevation, sectional data and pipe network bands without data source and labels) | §3h (Bands) |
+| profile views | band data sources (superelevation, sample line group, pipe network) and their labels, pressure network/cant/distance/COGO/speed bands, band styles other than the defaults, weeding and intervals | partly | no | the API adds no band of the last five kinds; the API ignores the interval setters |
 | sites | name, description, members | yes | yes | §3g |
 | parcels | closed and open, crossing and touching lot lines, arcs, labels | yes | yes | §3g |
 | parcels | members added to containers the application wrote with crossings (its point marks and edge flags kept) | yes | yes | §3g |

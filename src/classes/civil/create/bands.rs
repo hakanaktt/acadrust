@@ -21,6 +21,12 @@ pub enum BandKind {
     VerticalGeometry,
     /// The alignment's lines and curves.
     HorizontalGeometry,
+    /// The alignment's superelevation.
+    Superelevation,
+    /// The sample lines of a sample line group.
+    SectionalData,
+    /// The parts of a pipe network.
+    PipeNetwork,
 }
 
 /// A band of a profile view, drawn with the drawing's default band style
@@ -29,7 +35,7 @@ pub enum BandKind {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ProfileViewBand {
     pub kind: BandKind,
-    /// Above the view; only profile data bands are written above.
+    /// Above the view.
     pub top: bool,
     /// The profiles the band reads; the view's first profile when `None`.
     pub profile1: Option<Handle>,
@@ -65,6 +71,9 @@ impl BandKind {
             BandKind::ProfileData => super::band_styles::KEY_DATA_BANDS,
             BandKind::VerticalGeometry => super::band_styles::KEY_VERTICAL_GEOMETRY_BANDS,
             BandKind::HorizontalGeometry => super::band_styles::KEY_HORIZONTAL_GEOMETRY_BANDS,
+            BandKind::Superelevation => super::band_styles::KEY_SUPERELEVATION_BANDS,
+            BandKind::SectionalData => super::band_styles::KEY_SECTIONAL_DATA_BANDS,
+            BandKind::PipeNetwork => super::band_styles::KEY_PIPE_NETWORK_BANDS,
         }
     }
 
@@ -73,6 +82,9 @@ impl BandKind {
             BandKind::ProfileData => "AECC_PROFILEDATABAND_LABELGROUP",
             BandKind::VerticalGeometry => "AECC_VERTICALGEOMETRYBAND_LABELGROUP",
             BandKind::HorizontalGeometry => "AECC_HORIZONTALGEOMETRYBAND_LABELGROUP",
+            BandKind::Superelevation => "AECC_SUPERELEVATIONBAND_LABELGROUP",
+            BandKind::SectionalData => "AECC_SECTIONALDTABAND_LABELGROUP",
+            BandKind::PipeNetwork => "AECC_PIPENETWORKBAND_LABELGROUP",
         }
     }
 
@@ -81,6 +93,9 @@ impl BandKind {
             BandKind::ProfileData => "AeccImpProfileDataBandLabeling",
             BandKind::VerticalGeometry => "AeccImpVerticalGeometryBandLabeling",
             BandKind::HorizontalGeometry => "AeccImpHorizontalGeometryBandLabeling",
+            BandKind::Superelevation => "AeccImpSuperElevationBandLabeling",
+            BandKind::SectionalData => "AeccImpSectionalDataBandLabeling",
+            BandKind::PipeNetwork => "AeccImpPipeNetworkBandLabeling",
         }
     }
 }
@@ -89,8 +104,10 @@ impl BandKind {
 /// 5 label at start, bit 9 below the view; above the view bits 921 and
 /// 923 are 1 and 0.
 const DATA_ITEM: (usize, &str) = (1056, "0c404000000000000000059408111111111111913f0000000000000000000000000000000000000000000000000000000000000000243801010000008040000030100000100400000501000001804000007010000020040000090100000280400000b0100000300400000d01000007404000101000000000000165000000000000003940");
-/// A vertical or horizontal geometry band item after its gap: bits 4 and
-/// 5 as above, the band's number in the view (bottom bands first, from 1)
+/// The item of every other band after its gap (vertical and horizontal
+/// geometry, superelevation, sectional data, pipe network: BV-SE, BV-SD,
+/// BV-PN equal a vertical geometry item): bits 4 and 5 as above, bit 9
+/// below the view (BV-VGT, BV-HGT), the band's number in the view (bottom bands first, from 1)
 /// in bits 436 to 439 (a lone horizontal geometry band: 1, HG3P; PB04: 2
 /// and 3).
 const GEOMETRY_ITEM: (usize, &str) = (572, "0c404000000000000000059408111111111111913f00000000000000000000000000000000000000000000000000000000000000002903000000000000165000000000000003940");
@@ -116,6 +133,7 @@ pub(super) fn write_items(w: &mut DwgMergedWriter, bands: &[Resolved]) {
                 bits[923] = !b.band.top;
             }
             _ => {
+                bits[9] = !b.band.top;
                 let number = n as u8 + 1;
                 for i in 0..4 {
                     bits[436 + i] = number >> (3 - i) & 1 == 1;
@@ -405,6 +423,9 @@ pub(super) fn write_group(doc: &mut CadDocument, common: EntityCommon, b: &Resol
         }
         BandKind::VerticalGeometry => super::network::arch_entity(doc, Handle::new(b.profile1)).map(|p| vertical_labels(p, number)).unwrap_or_default(),
         BandKind::HorizontalGeometry => horizontal_labels(a, number).unwrap_or_default().into_iter().map(|l| l.1).collect(),
+        // Without a data source (superelevation, sample line group, pipe
+        // network: not written) these bands have no labels.
+        BandKind::Superelevation | BandKind::SectionalData | BandKind::PipeNetwork => Vec::new(),
     };
     let mut refs = vec![soft_pointer(0), soft_pointer(0), soft_pointer(view), hard_pointer(0)];
     refs.extend(labels.iter().map(|_| hard_pointer(view)));
