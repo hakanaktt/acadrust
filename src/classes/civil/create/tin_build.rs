@@ -3,7 +3,7 @@
 //! non-destructive lines and boundaries split the triangles they cross,
 //! boundaries hide triangles, edits change vertices and edges.
 
-use super::tin::{triangulate, Triangulation};
+use super::tin::{triangulate_in, Triangulation};
 use crate::classes::civil::{TinBoundaryType, TinBreaklineType, TinDefinition, TinLines, TinOperation};
 use crate::types::{Vector2, Vector3};
 use std::collections::{HashMap, HashSet};
@@ -523,15 +523,25 @@ pub(super) fn build(definitions: &[TinDefinition]) -> Option<(Triangulation, Vec
     if all.is_empty() {
         return None;
     }
+    // A first list of points distinct in plan is triangulated in one pass
+    // (the same Delaunay triangulation the insertions below make, without
+    // their per-point scans of the whole mesh).
+    let mut seen = HashSet::new();
+    let seed: &[Vector3] = match definitions.first().map(|d| &d.operation) {
+        Some(TinOperation::AddPoints(p)) if p.iter().all(|q| seen.insert((q.x.to_bits(), q.y.to_bits()))) => p,
+        _ => &[],
+    };
     // The corners 100 outside the extents; the lower two at the lowest
     // elevation, the upper two at the highest.
-    let mut corners = triangulate(&all).vertices;
+    let start = triangulate_in(&all, seed);
     let (low, high) = all.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), p| (l.min(p.z), h.max(p.z)));
-    for (k, c) in corners[..4].iter_mut().enumerate() {
+    let mut vertices = start.vertices;
+    for (k, c) in vertices[..4].iter_mut().enumerate() {
         c.z = if k < 2 { low } else { high };
     }
-    let mut mesh = Mesh { vertices: corners[..4].to_vec(), triangles: vec![[0, 1, 2], [0, 2, 3]], hidden: vec![false, false], fixed: HashSet::new(), clip: None };
-    for d in definitions {
+    let hidden = vec![false; start.triangles.len()];
+    let mut mesh = Mesh { vertices, triangles: start.triangles, hidden, fixed: HashSet::new(), clip: None };
+    for d in &definitions[usize::from(!seed.is_empty())..] {
         mesh.apply(&d.operation);
     }
     // Keep the corners and the vertices in use, in order.

@@ -35,18 +35,25 @@ fn in_circle(a: Vector3, b: Vector3, c: Vector3, p: Vector3) -> bool {
 
 /// Delaunay triangulation of `points` inside a rectangle of four corners
 /// `CORNER_MARGIN` outside their extents (Bowyer-Watson).
+pub(super) fn triangulate(points: &[Vector3]) -> Triangulation {
+    triangulate_in(points, points)
+}
+
+/// Delaunay triangulation of `points` (distinct in plan) inside a rectangle
+/// of four corners `CORNER_MARGIN` outside the extents of `extent`, which
+/// holds `points` (Bowyer-Watson).
 // ponytail: quadratic insertion (every triangle is tested per point); a
 // spatial index when surfaces of many thousand points are written.
-pub(super) fn triangulate(points: &[Vector3]) -> Triangulation {
-    let (mut lo, mut hi) = (points[0], points[0]);
-    for p in points {
+pub(super) fn triangulate_in(extent: &[Vector3], points: &[Vector3]) -> Triangulation {
+    let (mut lo, mut hi) = (extent[0], extent[0]);
+    for p in extent {
         lo = Vector3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z));
         hi = Vector3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
     }
     let m = CORNER_MARGIN;
     let corner = |x: f64, y: f64| {
         // A corner's elevation is the nearest point's.
-        let near = points.iter().min_by(|a, b| ((a.x - x).powi(2) + (a.y - y).powi(2)).total_cmp(&((b.x - x).powi(2) + (b.y - y).powi(2)))).unwrap();
+        let near = extent.iter().min_by(|a, b| ((a.x - x).powi(2) + (a.y - y).powi(2)).total_cmp(&((b.x - x).powi(2) + (b.y - y).powi(2)))).unwrap();
         Vector3::new(x, y, near.z)
     };
     let mut vertices = vec![corner(lo.x - m, lo.y - m), corner(hi.x + m, lo.y - m), corner(hi.x + m, hi.y + m), corner(lo.x - m, hi.y + m)];
