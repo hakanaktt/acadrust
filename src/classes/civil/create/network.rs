@@ -8,6 +8,7 @@
 
 use super::assembly::{ensure_name_template, entity_common, run};
 use super::network_content::*;
+use super::network_families::{PIPES, STRUCTURES};
 use super::profile::new_identifier;
 use super::support::*;
 use crate::classes::arch::ArchEntityData;
@@ -25,32 +26,55 @@ const KEY_PART_CATALOG: i32 = 0x136;
 const STRUCTURE_TEMPLATE: (i32, &str) = (0x125, "Structure - (<[67112990(2449)]>)");
 const PIPE_TEMPLATE: (i32, &str) = (0x126, "Pipe - (<[67112990(2449)]>)");
 
-/// A part the writer places: its family (by catalog id), the key of its
-/// size's part definition and that definition's record.
-struct Part {
-    family: &'static str,
-    key: &'static str,
-    definition: (usize, &'static str),
-    strings: &'static [&'static str],
-    /// The body of the part's size: a sphere of this radius whose top is
-    /// at the insertion point, kept in an anonymous block the definition
-    /// refers to twice. Pipes have none.
-    body: Option<f64>,
+/// A part family the writer places (one size of it): its name, its id in
+/// the catalog, the key of its size's part definition and that
+/// definition's record and texts, a structure's texts and record runs
+/// (the runs after its axes up to its identifier and after it), and the
+/// body its definition's blocks hold.
+pub(super) struct Family {
+    pub(super) name: &'static str,
+    pub(super) family: &'static str,
+    pub(super) key: &'static str,
+    pub(super) definition: (usize, &'static str),
+    pub(super) definition_strings: &'static [&'static str],
+    pub(super) strings: &'static [&'static str],
+    pub(super) record: Option<((usize, &'static str), (usize, &'static str))>,
+    pub(super) body: FamilyBody,
 }
 
-const NULL_STRUCTURE: Part = Part {
+/// The body of a structure size, about the insertion point (its top).
+// ponytail: the application's bodies are the catalog's generated solids;
+// the writer writes a cylinder or box of the size's extents instead.
+pub(super) enum FamilyBody {
+    /// Pipes: none.
+    None,
+    /// A sphere of this radius, in one block the definition refers to twice.
+    Sphere(f64),
+    /// A cylinder down from the insertion point, in two blocks.
+    Cylinder { radius: f64, depth: f64 },
+    /// A box, in two blocks.
+    Box { min: [f64; 3], max: [f64; 3] },
+}
+
+const NULL_STRUCTURE: Family = Family {
+    name: "Null Structure",
     family: "D45435F0-874A-4754-BF5E-FE9D18BE870F",
     key: "D45435F0874A4754BF5EFE9D18BE870FSBSH0SBSD0",
     definition: STRUCTURE_DEFINITION,
-    strings: STRUCTURE_DEFINITION_STRINGS,
-    body: Some(0.5),
+    definition_strings: STRUCTURE_DEFINITION_STRINGS,
+    strings: STRUCTURE_STRINGS,
+    record: None,
+    body: FamilyBody::Sphere(0.5),
 };
-const CORRUGATED_PIPE_12: Part = Part {
+const CORRUGATED_PIPE_12: Family = Family {
+    name: "Corrugated Metal Pipe",
     family: "481DD6EF-B926-428E-99B7-A5BE30A17E59",
     key: "481DD6EFB926428E99B7A5BE30A17E591815E08D5B6A42B087113F4839A38301",
     definition: PIPE_DEFINITION,
-    strings: PIPE_DEFINITION_STRINGS,
-    body: None,
+    definition_strings: PIPE_DEFINITION_STRINGS,
+    strings: PIPE_STRINGS,
+    record: None,
+    body: FamilyBody::None,
 };
 
 pub(super) fn texts(t: &[&str]) -> Vec<String> {
@@ -111,12 +135,19 @@ fn ensure_parts_list(doc: &mut CadDocument) -> Result<Handle, DxfError> {
 }
 
 /// The part definition of `part`, written when the drawing lacks it.
-fn ensure_definition(doc: &mut CadDocument, part: &Part) -> Result<Handle, DxfError> {
-    let body = part.body;
-    ensure_definition_with(doc, part.key, part.definition, part.strings, |doc| {
-        Ok(match body {
-            Some(radius) => vec![hard_pointer(body_block(doc, radius)?.value()); 2],
-            None => Vec::new(),
+fn ensure_definition(doc: &mut CadDocument, part: &Family) -> Result<Handle, DxfError> {
+    use crate::entities::acis::primitives::{build_box, build_cylinder, build_sphere};
+    ensure_definition_with(doc, part.key, part.definition, part.definition_strings, |doc| {
+        let solid = || match part.body {
+            FamilyBody::None => None,
+            FamilyBody::Sphere(r) => Some(build_sphere([0.0, 0.0, -r], r)),
+            FamilyBody::Cylinder { radius, depth } => Some(build_cylinder([0.0, 0.0, -depth], radius, depth)),
+            FamilyBody::Box { min, max } => Some(build_box([(min[0] + max[0]) / 2.0, (min[1] + max[1]) / 2.0, (min[2] + max[2]) / 2.0], max[0] - min[0], max[1] - min[1], max[2] - min[2])),
+        };
+        Ok(match part.body {
+            FamilyBody::None => Vec::new(),
+            FamilyBody::Sphere(_) => vec![hard_pointer(body_block(doc, solid())?.value()); 2],
+            _ => vec![hard_pointer(body_block(doc, solid())?.value()), hard_pointer(body_block(doc, solid())?.value())],
         })
     })
 }
@@ -169,7 +200,7 @@ pub(super) fn ensure_definition_with(
 /// `radius` touching the insertion point from below, on layer 0. The
 /// application places it at each part of the size and takes the part's
 /// extents from it.
-fn body_block(doc: &mut CadDocument, radius: f64) -> Result<Handle, DxfError> {
+fn body_block(doc: &mut CadDocument, body: Option<crate::entities::acis::SatDocument>) -> Result<Handle, DxfError> {
     use crate::entities::{Block, BlockEnd, Solid3D};
     use crate::tables::BlockRecord;
     let name = (0..).map(|i| format!("*U{i}")).find(|n| !doc.block_records.contains(n)).unwrap_or_default();
@@ -186,7 +217,9 @@ fn body_block(doc: &mut CadDocument, radius: f64) -> Result<Handle, DxfError> {
     doc.add_entity(EntityType::Block(marker))?;
     let mut solid = Solid3D::new();
     solid.common.owner_handle = record;
-    solid.set_sat_document(&crate::entities::acis::primitives::build_sphere([0.0, 0.0, -radius], radius));
+    if let Some(body) = body {
+        solid.set_sat_document(&body);
+    }
     doc.add_entity(EntityType::Solid3D(solid))?;
     let mut tail = BlockEnd::new();
     tail.common.handle = end;
@@ -267,7 +300,7 @@ pub fn add_pipe_network(doc: &mut CadDocument, name: &str, layer: Option<&str>) 
 
 /// Writes a part with `write` (given its entity data, references and
 /// number in the network) and adds it to the network's lists.
-fn place(doc: &mut CadDocument, network: Handle, part: &Part, structure: bool, write: impl FnOnce(&mut CadDocument, EntityCommon, Vec<Ref>, usize) -> Result<Handle, DxfError>) -> Result<Handle, DxfError> {
+fn place(doc: &mut CadDocument, network: Handle, part: &Family, structure: bool, write: impl FnOnce(&mut CadDocument, EntityCommon, Vec<Ref>, usize) -> Result<Handle, DxfError>) -> Result<Handle, DxfError> {
     let mut net = read_network(doc, network).ok_or_else(|| invalid("not a pipe network"))?;
     let (style, rules) = family_style(doc, Handle::new(net.list), part.family).ok_or_else(|| invalid("the network's parts list lacks the part's family"))?;
     let definition = ensure_definition(doc, part)?;
@@ -350,6 +383,66 @@ pub fn add_structure(doc: &mut CadDocument, network: Handle, position: Vector3, 
     })
 }
 
+/// Names of the structure and pipe families the writer places (one size
+/// each, the size the application's default parts list gives a new part).
+pub fn network_part_families() -> Vec<&'static str> {
+    std::iter::once(NULL_STRUCTURE.name).chain(STRUCTURES.iter().map(|f| f.name)).chain(PIPES.iter().map(|f| f.name)).collect()
+}
+
+/// Adds a structure of the family `name` (one of
+/// [`network_part_families`]) to `network` at `position`, turned by
+/// `rotation` (radians) about Z. A family other than the null structure
+/// is written as the application writes it at the origin:
+///
+/// ```text
+/// STRUCTURE_HEAD, 3BD insertion point, 3 x 3BD axes, the family's run up
+/// to the identifier, identifier, the family's run after it (part record
+/// and the outline and extents the application caches for the origin)
+/// texts: the family's, with the name "Structure - (n)"
+/// ```
+///
+/// The application recomputes the cached outline, extents, rim and sump
+/// from the insertion point when it opens the drawing.
+pub fn add_structure_of_family(doc: &mut CadDocument, network: Handle, name: &str, position: Vector3, rotation: f64) -> Result<Handle, DxfError> {
+    if name == NULL_STRUCTURE.name {
+        return add_structure(doc, network, position, rotation);
+    }
+    let family = STRUCTURES.iter().find(|f| f.name == name).ok_or_else(|| invalid("no structure family of that name"))?;
+    let (before, after) = family.record.ok_or_else(|| invalid("the family has no structure record"))?;
+    if ![position.x, position.y, position.z, rotation].iter().all(|v| v.is_finite()) {
+        return Err(invalid("a structure needs a finite position and rotation"));
+    }
+    place(doc, network, family, true, |doc, common, refs, n| {
+        let id = new_identifier(common.handle.value());
+        let mut strings = texts(family.strings);
+        strings[6] = format!("Structure - ({n})");
+        let (c, s) = (rotation.cos(), rotation.sin());
+        put_entity(
+            doc,
+            "AECC_STRUCTURE",
+            common,
+            |w| {
+                run(w, STRUCTURE_HEAD.0, STRUCTURE_HEAD.1);
+                for v in [position.x, position.y, position.z, c, s, 0.0, -s, c, 0.0, 0.0, 0.0, 1.0] {
+                    w.write_bit_double(v);
+                }
+                run(w, before.0, before.1);
+                write_id(w, &id);
+                run(w, after.0, after.1);
+            },
+            Body { refs, strings },
+        )
+    })
+}
+
+/// Adds a pipe of the family `name` (one of [`network_part_families`]) from
+/// `start` to `end` to `network`, not connected to structures; its record
+/// is a corrugated metal pipe's (see [`add_pipe`]) with the family's name.
+pub fn add_pipe_of_family(doc: &mut CadDocument, network: Handle, name: &str, start: Vector3, end: Vector3) -> Result<Handle, DxfError> {
+    let family = PIPES.iter().find(|f| f.name == name).ok_or_else(|| invalid("no pipe family of that name"))?;
+    write_pipe(doc, network, family, start, end)
+}
+
 /// Adds a 12 inch corrugated metal pipe from `start` to `end` to
 /// `network`, not connected to structures. The pipe record (`AECC_PIPE`):
 ///
@@ -361,12 +454,17 @@ pub fn add_structure(doc: &mut CadDocument, network: Handle, position: Vector3, 
 ///
 /// The application recomputes the length, slope and extents from the ends.
 pub fn add_pipe(doc: &mut CadDocument, network: Handle, start: Vector3, end: Vector3) -> Result<Handle, DxfError> {
+    write_pipe(doc, network, &CORRUGATED_PIPE_12, start, end)
+}
+
+fn write_pipe(doc: &mut CadDocument, network: Handle, family: &Family, start: Vector3, end: Vector3) -> Result<Handle, DxfError> {
     if ![start.x, start.y, start.z, end.x, end.y, end.z].iter().all(|v| v.is_finite()) || start.distance(&end) < 1e-9 {
         return Err(invalid("a pipe needs two distinct finite ends"));
     }
-    place(doc, network, &CORRUGATED_PIPE_12, false, |doc, common, refs, n| {
+    place(doc, network, family, false, |doc, common, refs, n| {
         let id = new_identifier(common.handle.value());
         let mut strings = texts(PIPE_STRINGS);
+        strings[2] = family.name.to_string();
         strings[6] = format!("Pipe - ({n})");
         put_entity(
             doc,
@@ -647,5 +745,34 @@ mod tests {
         ensure_name_template(&mut with_group, (0x0E80, "Group - (<[67112990(2449)]>)")).unwrap();
         let head = root_node(&with_group, 0x8C).unwrap();
         assert_eq!(object(&with_group, head).unwrap().typed_handles().len(), 4);
+    }
+
+    #[test]
+    fn structures_and_pipes_of_other_families() {
+        let v = Vector3::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let n = add_pipe_network(&mut doc, "NF", None).unwrap();
+        assert!(network_part_families().contains(&"Concentric Cylindrical Structure"));
+        let s = add_structure_of_family(&mut doc, n, "Concentric Cylindrical Structure", v(50.0, 0.0, 0.0), 0.0).unwrap();
+        let t = add_structure_of_family(&mut doc, n, "Rectangular Junction Structure NF", v(100.0, 0.0, 0.0), 0.0).unwrap();
+        let p = add_pipe_of_family(&mut doc, n, "PVC Pipe", v(50.0, 0.0, -4.0), v(100.0, 0.0, -4.5)).unwrap();
+        assert!(add_structure_of_family(&mut doc, n, "PVC Pipe", v(0.0, 0.0, 0.0), 0.0).is_err());
+        assert!(add_pipe_of_family(&mut doc, n, "Null Structure", v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0)).is_err());
+        connect_pipe(&mut doc, p, Some(s), Some(t)).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-families-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(arch_entity(&back, s).unwrap().structure_position(), Some(v(50.0, 0.0, 0.0)));
+        assert_eq!(arch_entity(&back, t).unwrap().structure_position(), Some(v(100.0, 0.0, 0.0)));
+        let pipe = arch_entity(&back, p).unwrap();
+        assert_eq!(pipe.pipe_ends(), Some((v(50.0, 0.0, -4.0), v(100.0, 0.0, -4.5))));
+        assert_eq!(pipe.decode().strings[2], "PVC Pipe");
+        // Each family's size has its own definition, a structure's with two body blocks.
+        let def = object(&back, Handle::new(arch_entity(&back, s).unwrap().typed_handles()[4].0)).unwrap();
+        let blocks: Vec<u64> = def.typed_handles().iter().map(|r| r.0).filter(|h| back.block_records.iter().any(|b| b.handle.value() == *h)).collect();
+        assert_eq!(blocks.len(), 2);
+        assert_ne!(blocks[0], blocks[1]);
     }
 }
