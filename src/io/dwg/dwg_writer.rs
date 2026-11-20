@@ -306,6 +306,11 @@ pub(crate) fn prepare_active_viewport_elevation(document: &mut std::borrow::Cow<
 }
 
 fn validate_unknown_records(document: &CadDocument) -> Result<()> {
+    if document.version < DxfVersion::AC1018 && !document.file_dependencies.is_empty() {
+        return Err(DxfError::NotImplemented(
+            "FileDepList identity requires DWG R2004 or later".into(),
+        ));
+    }
     for entity in document.entities() {
         if document.version < DxfVersion::AC1018 {
             if let crate::entities::EntityType::Insert(insert) = entity {
@@ -1654,10 +1659,9 @@ fn prepare_header(
     {
         let is_default_name = h.current_text_style_name.eq_ignore_ascii_case("Standard");
         let handle_is_valid_custom = !h.current_text_style_handle.is_null()
-            && document
-                .text_styles
-                .iter()
-                .any(|t| t.handle == h.current_text_style_handle && !t.name.eq_ignore_ascii_case("Standard"));
+            && document.text_styles.iter().any(|t| {
+                t.handle == h.current_text_style_handle && !t.name.eq_ignore_ascii_case("Standard")
+            });
         if !is_default_name || !handle_is_valid_custom {
             h.current_text_style_handle = s.handle;
         }
@@ -1669,10 +1673,9 @@ fn prepare_header(
     {
         let is_default_name = h.current_dimstyle_name.eq_ignore_ascii_case("Standard");
         let handle_is_valid_custom = !h.current_dimstyle_handle.is_null()
-            && document
-                .dim_styles
-                .iter()
-                .any(|d| d.handle == h.current_dimstyle_handle && !d.name.eq_ignore_ascii_case("Standard"));
+            && document.dim_styles.iter().any(|d| {
+                d.handle == h.current_dimstyle_handle && !d.name.eq_ignore_ascii_case("Standard")
+            });
         if !is_default_name || !handle_is_valid_custom {
             h.current_dimstyle_handle = s.handle;
         }
@@ -2122,7 +2125,7 @@ fn write_ac18<W: Write + Seek>(
     )?;
 
     // ── Section: FileDepList ──
-    let file_dep_data = build_file_dep_list();
+    let file_dep_data = build_file_dep_list(document)?;
     fhw.add_section(
         output,
         section_names::FILE_DEP_LIST,
@@ -2275,7 +2278,7 @@ fn write_ac21_impl<W: Write + Seek>(
     fhw.add_section(output, section_names::APP_INFO, &app_info_data)?;
 
     // FileDepList
-    let file_dep_data = build_file_dep_list();
+    let file_dep_data = build_file_dep_list(document)?;
     fhw.add_section(output, section_names::FILE_DEP_LIST, &file_dep_data)?;
 
     // RevHistory
@@ -2492,16 +2495,13 @@ fn build_summary_info(
     data
 }
 
-/// Build FileDepList section data (AC18+ only).
-///
-/// Empty dependency list (0 features, 0 files).
-fn build_file_dep_list() -> Vec<u8> {
-    let mut data = Vec::with_capacity(8);
-    // Int32: feature count (0)
-    data.extend_from_slice(&0u32.to_le_bytes());
-    // Int32: file count (0)
-    data.extend_from_slice(&0u32.to_le_bytes());
-    data
+/// Build typed FileDepList section data (AC18+ only).
+fn build_file_dep_list(document: &CadDocument) -> Result<Vec<u8>> {
+    super::file_dependencies::write(
+        &document.file_dependencies,
+        document.version,
+        summary_encoding(document),
+    )
 }
 
 /// Build RevHistory section data (AC18+ only).
@@ -3477,7 +3477,7 @@ mod tests {
 
     #[test]
     fn test_build_file_dep_list() {
-        let d = build_file_dep_list();
+        let d = build_file_dep_list(&CadDocument::new()).unwrap();
         assert_eq!(d.len(), 8);
     }
 

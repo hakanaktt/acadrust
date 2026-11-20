@@ -75,6 +75,7 @@ pub mod dwg_version;
 pub mod dwg_writer;
 pub mod eed_codec;
 pub(crate) mod embedded_entity;
+pub(crate) mod file_dependencies;
 pub mod file_headers;
 pub(crate) mod legacy_viewport;
 mod mesh_budget;

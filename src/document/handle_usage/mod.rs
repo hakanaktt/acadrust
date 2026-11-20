@@ -73,6 +73,7 @@ pub(super) fn census(d: &CadDocument) -> Result<u64> {
         version: _,
         maintenance_version: _,
         header: _,
+        file_dependencies: _,
         layers: _,
         line_types: _,
         text_styles: _,
