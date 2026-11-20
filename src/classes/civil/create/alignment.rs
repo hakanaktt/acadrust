@@ -6,7 +6,7 @@ use super::tree::{ensure_alignment_tree, KEY_ALIGNMENT_STYLES, KEY_DEFAULT_FEATU
 use crate::entities::EntityCommon;
 use crate::error::DxfError;
 use crate::io::dwg::dwg_stream_writers::DwgMergedWriter;
-use crate::classes::civil::alignment::{CriticalStationData, SuperelevationCurveData, SUPERELEVATION_SEGMENTS, pieces_with_curvature, AlignmentAnchor, AlignmentElement, AlignmentElementKind, AlignmentPiece};
+use crate::classes::civil::alignment::{CriticalStationData, SuperelevationCurveData, MANUAL_SETTINGS, MANUAL_STATION, SUPERELEVATION_SEGMENTS, pieces_with_curvature, AlignmentAnchor, AlignmentElement, AlignmentElementKind, AlignmentPiece};
 use crate::types::{Handle, Vector2};
 use crate::CadDocument;
 
@@ -448,6 +448,10 @@ pub enum CriticalStationKind {
     LevelCrown,
     LowShoulderMatch,
     ReverseCrown,
+    /// A manual station: its curve gets the application's settings block
+    /// and each of its units the description "Manual station" (numbered
+    /// "Manual station(2)" on within its curve).
+    Manual,
 }
 
 impl CriticalStationKind {
@@ -458,6 +462,7 @@ impl CriticalStationKind {
             CriticalStationKind::LevelCrown => 7,
             CriticalStationKind::LowShoulderMatch => 8,
             CriticalStationKind::ReverseCrown => 9,
+            CriticalStationKind::Manual => MANUAL_STATION,
         }
     }
 }
@@ -489,7 +494,8 @@ pub struct SuperelevationCurve {
 /// ```text
 /// B 0, BL n curves, B 0,
 /// n x { node, BL 0, B 0, [last: BL n], B 0 }
-/// n x { node, B 0, node, B 0, B 0 (no settings), 10 bits 0001010000,
+/// n x { node, B 0, node, B 0, B settings (with a manual station: then
+///       the 582-bit settings block), 10 bits 0001010000,
 ///       BL 0, BL k, k x station, BL 0, [not last: B 0] }
 ///   node: BL element, BL -1, BL element, BL -1
 ///   station: BL 3, fields, node, BL 8 (no slope), then per cross segment
@@ -526,7 +532,11 @@ fn write_superelevation(w: &mut DwgMergedWriter, curves: &[SuperelevationCurveDa
         w.write_bit(false);
         node(w, c.element);
         w.write_bit(false);
-        w.write_bit(false);
+        let manual = c.stations.iter().any(|s| s.kind == MANUAL_STATION);
+        w.write_bit(manual);
+        if manual {
+            super::templates::run(w, MANUAL_SETTINGS.0, MANUAL_SETTINGS.1);
+        }
         bits(w, "0001010000");
         w.write_bit_long(0);
         w.write_bit_long(c.stations.len() as i32);
@@ -613,15 +623,27 @@ fn by_name() -> Vec<usize> {
 }
 
 /// The texts of a superelevation block (after every other text): the
-/// curve names, one empty text per unit (nine per critical station), the
-/// lane table's names with two empty texts each, the names in name order.
+/// curve names, one description per unit (nine per critical station:
+/// empty, or "Manual station", "Manual station(2)", ... for the manual
+/// stations of a curve in order: SM2, SM6), the lane table's names with
+/// two empty texts each, the names in name order.
 fn superelevation_strings(curves: &[SuperelevationCurveData]) -> Vec<String> {
     if curves.is_empty() {
         return Vec::new();
     }
-    let units: usize = curves.iter().map(|c| 9 * c.stations.len()).sum();
     let mut out: Vec<String> = (1..=curves.len()).map(|i| format!("Curve.{i}")).collect();
-    out.extend((0..units).map(|_| String::new()));
+    for c in curves {
+        let mut manual = 0;
+        for s in &c.stations {
+            let text = if s.kind == MANUAL_STATION {
+                manual += 1;
+                if manual == 1 { "Manual station".to_string() } else { format!("Manual station({manual})") }
+            } else {
+                String::new()
+            };
+            out.extend((0..9).map(|_| text.clone()));
+        }
+    }
     for name in SEGMENT_NAMES {
         out.extend([name.to_string(), String::new(), String::new()]);
     }
@@ -1995,5 +2017,27 @@ mod tests {
         assert_eq!((s.kind, s.ending, s.slopes[3]), (4, true, -0.06));
         assert!(s.offset < 0.0 && curves[1].stations[0].offset > 0.0);
         assert_eq!(r.alignment_design_speeds().len(), 1);
+    }
+
+    #[test]
+    fn manual_stations_bring_the_curve_settings() {
+        let mut doc = drawing();
+        let v = [Vector2::new(0.0, 0.0), Vector2::new(100.0, 0.0), Vector2::new(200.0, 50.0)];
+        let a = add_alignment_with_curves(&mut doc, "A", &v, &[VertexCurve::Arc(169.4427190999918)], None).unwrap();
+        let station = |kind, station| CriticalStation { kind, station, ending: false, slopes: [0.0; 8] };
+        add_superelevation(&mut doc, a, &[SuperelevationCurve { element: 3, stations: vec![station(CriticalStationKind::BeginFullSuper, 70.0), station(CriticalStationKind::Manual, 75.0), station(CriticalStationKind::Manual, 80.0)] }]).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-manual-stations-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let Some(crate::entities::EntityType::Extended(x)) = back.get_entity(a) else { panic!() };
+        let crate::entities::ExtendedEntityData::Arch(r) = &x.data else { panic!() };
+        let kinds: Vec<i32> = r.alignment_superelevation().unwrap()[0].stations.iter().map(|s| s.kind).collect();
+        assert_eq!(kinds, [3, MANUAL_STATION, MANUAL_STATION]);
+        // Each unit of a manual station is described, numbered within the
+        // curve.
+        let texts = r.decode().strings;
+        assert_eq!(texts.iter().filter(|t| *t == "Manual station").count(), 9);
+        assert_eq!(texts.iter().filter(|t| *t == "Manual station(2)").count(), 9);
     }
 }

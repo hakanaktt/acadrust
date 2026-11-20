@@ -3051,7 +3051,7 @@ pub(super) fn equations_and_speeds_with_ids(data: &[u8], start: usize, end: usiz
 
 /// A critical station of a superelevation curve as stored: its kind (3
 /// begin full super, 4 end full super, 7 level crown, 8 low shoulder
-/// match, 9 reverse crown, ...), its station from the curve's start (from
+/// match, 9 reverse crown, 10 manual, ...), its station from the curve's start (from
 /// its end in the ending attainment region), the region and the cross
 /// slopes of the left outside lane, left inside lane, right outside lane,
 /// right inside lane, then the same four shoulders.
@@ -3081,6 +3081,24 @@ pub(super) const SUPERELEVATION_SEGMENTS: [(i32, i32, i32); 8] = [(1, 0, 1), (1,
 /// writes (see the writer's `write_superelevation`): no curve settings,
 /// one unit per critical station and per cross segment with a slope each,
 /// the standard lane table. `None` for any other block.
+/// Kind of a manual critical station.
+pub(super) const MANUAL_STATION: i32 = 10;
+
+/// The settings block a superelevation curve with a manual critical
+/// station holds (582 bits, the same in every sample: SE08, SM1 to SM3,
+/// SM5, SM6).
+pub(super) const MANUAL_SETTINGS: (usize, &str) = (582, "00418000002070000004300000010c0000004300000060c00000083000028408cb5781daf15c4a8408cb5781daf15c48070c000001c30000000000000000000c000000000000005300");
+
+/// Whether the next bits are `run` (`(length, hex digits)`), read past it.
+pub(super) fn bits_are(bits: &mut Bits, run: (usize, &str)) -> Option<bool> {
+    let mut same = true;
+    for i in 0..run.0 {
+        let digit = run.1.as_bytes().get(i / 4).and_then(|c| (*c as char).to_digit(16))?;
+        same &= bits.bit()? == (digit >> (3 - i % 4) & 1 == 1);
+    }
+    Some(same)
+}
+
 fn plain_superelevation(bits: &mut Bits) -> Option<Vec<SuperelevationCurveData>> {
     let node = |bits: &mut Bits| -> Option<i16> {
         let v = [bits.bit_long()?, bits.bit_long()?, bits.bit_long()?, bits.bit_long()?];
@@ -3103,7 +3121,13 @@ fn plain_superelevation(bits: &mut Bits) -> Option<Vec<SuperelevationCurveData>>
     let mut curves = Vec::new();
     for (i, element) in elements.into_iter().enumerate() {
         (node(bits)? == element && !bits.bit()? && node(bits)? == element).then_some(())?;
-        (!bits.bit()? && !bits.bit()? && bits.bits_value(5)? == 0b00010 && bits.bits_value(5)? == 0b10000).then_some(())?;
+        // A curve with a manual station holds the settings block.
+        (!bits.bit()?).then_some(())?;
+        let settings = bits.bit()?;
+        if settings {
+            bits_are(bits, MANUAL_SETTINGS)?.then_some(())?;
+        }
+        (bits.bits_value(5)? == 0b00010 && bits.bits_value(5)? == 0b10000).then_some(())?;
         (bits.bit_long()? == 0).then_some(())?;
         let k = bits.bit_long()?;
         (0..=1000).contains(&k).then_some(())?;
@@ -3130,6 +3154,7 @@ fn plain_superelevation(bits: &mut Bits) -> Option<Vec<SuperelevationCurveData>>
         if i + 1 < n as usize {
             (!bits.bit()?).then_some(())?;
         }
+        (settings == stations.iter().any(|s| s.kind == MANUAL_STATION)).then_some(())?;
         curves.push(SuperelevationCurveData { element, stations });
     }
     for pair in SUPERELEVATION_SEGMENTS.chunks(2) {
