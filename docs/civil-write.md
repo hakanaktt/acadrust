@@ -500,6 +500,17 @@ bulge differ from the application's in the last bits. An alignment that refers t
 while it opens the drawing (A1); a companion without its topology is
 refused (`Errors Found`, A6).
 
+### Alignment types
+
+`add_alignment_of_kind(doc, name, vertices, curves, kind, layer)` writes a
+centerline, utility or rail alignment (`AlignmentKind`); the record
+differs only in its type word (1 centerline, 4 utility, 5 rail) and, for
+a rail alignment, the track gauge in the BD after the 7 criteria bits and
+one more `BL 0` after the mask count (`BL 5, BL 2, 2, 2, 0, 0, 3`; AT11 to
+AT13). The reader returns the gauge (`alignment_track_gauge`) and reads
+type 5 as `AlignmentType::Rail`. Written (E-AT1), the three open, audit
+clean and list as Centerline, Utility and Rail with the given track width.
+
 ### Station anchors
 
 Objects that tie to a station of an alignment do so through an anchor in
@@ -2303,7 +2314,8 @@ Corridors are listed in §3i-a.
 | alignments | offset alignments of lines and arcs, on either side, over the whole parent or a station range | yes | yes | §3a (station anchors, offset alignments) |
 | alignments | station anchors (profiles, offset ranges, own design speed, corridor geometry locks) | yes | yes, for profiles and offset alignments | §3a |
 | alignments | widenings with linear transitions (on lines; of length 0 anywhere) | yes | yes | §3a (offset alignments) |
-| alignments | widening transitions on arcs or curved (kinds 2, 4, 5), offsets of spirals, curb returns, other types (rail, miscellaneous) | yes (offset parameters and regions, connected alignments, type) | no | not written yet |
+| alignments | types: centerline, utility, rail (track gauge) | yes | yes | §3a (alignment types) |
+| alignments | widening transitions on arcs or curved (kinds 2, 4, 5), offsets of spirals, curb returns (connected alignments), rail cant | yes (offset parameters and regions, connected alignments, type) | no | not written yet |
 | alignments | lone spirals, other constraints (fixed/floating curves, curves through points), design speeds, station equations | yes (elements, speeds, equations) | no | other element kinds not written |
 | alignments | superelevation | yes (critical stations, lanes-only blocks) | no | the superelevation block is read only |
 | profiles | layout: fixed tangents, free parabolas (symmetric, asymmetric), free circular curves | yes | yes | §3e |

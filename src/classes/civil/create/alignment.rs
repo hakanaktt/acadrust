@@ -31,6 +31,15 @@ const SPIRAL_DEFINITION: i32 = 256;
 /// Flags of an arc edge in the companion topology, besides the line flags.
 pub(super) const ARC_EDGE: i32 = 0x010F_0000;
 
+/// The type of a written alignment: a centerline, a utility alignment or a
+/// rail alignment with its track gauge.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum AlignmentKind {
+    Centerline,
+    Utility,
+    Rail { gauge: f64 },
+}
+
 /// What an alignment does at an inner vertex.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum VertexCurve {
@@ -355,7 +364,9 @@ pub(super) struct OffsetRecord {
 /// BL 0 (equations), BL 1, BL s, s x { BL 1, BD station, BD speed, the
 ///   identifier of the anchor at the station } (design speeds)
 /// BD 100, BL 0 (no superelevation), BL 0,
-///   centerline: BL 1, BL 2, 2, 2, 0, 3
+///   centerline: BL 1 (4 utility), BL 2, 2, 2, 0, 3
+///   rail:       BL 5, BL 2, 2, 2, 0, 0, 3 (its track gauge in the BD after
+///               the criteria bits)
 ///   offset:     BL 2, the offset block, BL 0, BL 0, BL 3
 /// B 0, BS 0x04BE
 /// references: soft pointer 0, companion, companion, soft pointer 0,
@@ -372,6 +383,12 @@ pub(super) struct OffsetRecord {
 /// stamp and the identifiers.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn write_alignment(doc: &mut CadDocument, common: EntityCommon, name: &str, elements: &[AlignmentElement], style: u64, feature: u64, edge: i32, keys: Option<&str>, profiles: &[u64], anchors: &[AlignmentAnchor], views: &[u64], groups: &[u64], offset: Option<&OffsetRecord>) -> Result<Handle, DxfError> {
+    write_alignment_of(doc, common, name, elements, style, feature, edge, keys, profiles, anchors, views, groups, offset, AlignmentKind::Centerline)
+}
+
+/// [`write_alignment`] of type `kind` (offset alignments take `offset`).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn write_alignment_of(doc: &mut CadDocument, common: EntityCommon, name: &str, elements: &[AlignmentElement], style: u64, feature: u64, edge: i32, keys: Option<&str>, profiles: &[u64], anchors: &[AlignmentAnchor], views: &[u64], groups: &[u64], offset: Option<&OffsetRecord>, kind: AlignmentKind) -> Result<Handle, DxfError> {
     if !(1..256).contains(&edge) {
         return Err(invalid("the alignment's edge id is out of range"));
     }
@@ -416,7 +433,10 @@ pub(super) fn write_alignment(doc: &mut CadDocument, common: EntityCommon, name:
             w.write_bit_double(0.0);
             w.write_bit_double(start);
             bits(w, "0000011");
-            w.write_bit_double(0.0);
+            w.write_bit_double(match kind {
+                AlignmentKind::Rail { gauge } => gauge,
+                _ => 0.0,
+            });
             w.write_bit(false);
             w.write_bit_long(first_id);
             w.write_bit_long(elements.len() as i32);
@@ -519,8 +539,13 @@ pub(super) fn write_alignment(doc: &mut CadDocument, common: EntityCommon, name:
             w.write_bit_long(0);
             match offset {
                 None => {
-                    for v in [1, 2, 2, 2, 0, 3] {
-                        w.write_bit_long(v);
+                    let (code, extra): (i32, &[i32]) = match kind {
+                        AlignmentKind::Centerline => (1, &[]),
+                        AlignmentKind::Utility => (4, &[]),
+                        AlignmentKind::Rail { .. } => (5, &[0]),
+                    };
+                    for v in [code, 2, 2, 2, 0].iter().chain(extra).chain(&[3]) {
+                        w.write_bit_long(*v);
                     }
                 }
                 Some(o) => {
@@ -725,6 +750,15 @@ pub fn add_alignment(doc: &mut CadDocument, name: &str, vertices: &[Vector2], la
 /// lines before and after the vertex, which end where it meets them. The
 /// curves must fit on the lines between them.
 pub fn add_alignment_with_curves(doc: &mut CadDocument, name: &str, vertices: &[Vector2], curves: &[VertexCurve], layer: Option<&str>) -> Result<Handle, DxfError> {
+    add_alignment_of_kind(doc, name, vertices, curves, AlignmentKind::Centerline, layer)
+}
+
+/// [`add_alignment_with_curves`] of type `kind`: a utility alignment, or a
+/// rail alignment with a positive track gauge.
+pub fn add_alignment_of_kind(doc: &mut CadDocument, name: &str, vertices: &[Vector2], curves: &[VertexCurve], kind: AlignmentKind, layer: Option<&str>) -> Result<Handle, DxfError> {
+    if matches!(kind, AlignmentKind::Rail { gauge } if !(gauge.is_finite() && gauge > 0.0)) {
+        return Err(invalid("a rail alignment needs a positive track gauge"));
+    }
     if vertices.len() < 2 || vertices.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) || vertices.windows(2).any(|w| w[0] == w[1]) {
         return Err(invalid("an alignment needs two or more distinct finite vertices"));
     }
@@ -754,7 +788,7 @@ pub fn add_alignment_with_curves(doc: &mut CadDocument, name: &str, vertices: &[
     let label = new_name(handle.value());
     write_companion(doc, companion, node, tag, handle, &path, &label, false)?;
     add_node_child(doc, node, tag as i32, companion, &label)?;
-    write_alignment(doc, common, name, &elements, style, companion.value(), 1, None, &[], &[], &[], &[], None)
+    write_alignment_of(doc, common, name, &elements, style, companion.value(), 1, None, &[], &[], &[], &[], None, kind)
 }
 
 /// A widening of an offset alignment: from the parent's station `start` it
@@ -1381,5 +1415,28 @@ mod tests {
             }
             _ => panic!(),
         }
+    }
+
+    #[test]
+    fn utility_and_rail_alignments_keep_their_type() {
+        use crate::classes::civil::AlignmentType;
+        let mut doc = drawing();
+        let v = [Vector2::new(0.0, 0.0), Vector2::new(100.0, 0.0)];
+        assert!(add_alignment_of_kind(&mut doc, "X", &v, &[], AlignmentKind::Rail { gauge: 0.0 }, None).is_err());
+        let u = add_alignment_of_kind(&mut doc, "U", &v, &[], AlignmentKind::Utility, None).unwrap();
+        let r = add_alignment_of_kind(&mut doc, "R", &v, &[], AlignmentKind::Rail { gauge: 1.435 }, None).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-alignment-types-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let read = |h: Handle| match back.get_entity(h) {
+            Some(crate::entities::EntityType::Extended(x)) => match &x.data {
+                crate::entities::ExtendedEntityData::Arch(a) => (a.alignment_type(), a.alignment_track_gauge()),
+                _ => panic!(),
+            },
+            _ => panic!(),
+        };
+        assert_eq!(read(u), (Some(AlignmentType::Miscellaneous), Some(0.0)));
+        assert_eq!(read(r), (Some(AlignmentType::Rail), Some(1.435)));
     }
 }

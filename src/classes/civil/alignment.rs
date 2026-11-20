@@ -405,6 +405,8 @@ pub(super) fn class_header(bits: &mut Bits) -> Option<u8> {
 /// element count.
 struct Section2 {
     start_station: f64,
+    /// The track gauge (rail alignments).
+    gauge: f64,
     /// The 7 criteria bits after the start station.
     criteria_at: usize,
     count_at: usize,
@@ -430,7 +432,7 @@ fn section2_with(data: &[u8], start: usize, end: usize, run: usize) -> Option<Se
     let criteria_at = bits.pos;
     bits.pos += 7;
     // The track gauge (0 unless the superelevation type is cant), one bit.
-    bits.bit_double()?;
+    let gauge = bits.bit_double()?;
     bits.bit()?;
     bits.bit_long()?;
     // The element list must follow: the RECOVER/AUDIT layout reads through
@@ -444,7 +446,7 @@ fn section2_with(data: &[u8], start: usize, end: usize, run: usize) -> Option<Se
         _ => element_list_at(data, bits.pos, end).is_some(),
     };
     listed.then_some(())?;
-    Some(Section2 { start_station, criteria_at, count_at: bits.pos })
+    Some(Section2 { start_station, gauge, criteria_at, count_at: bits.pos })
 }
 
 /// Design elements found in a main stream, keyed by their own ids.
@@ -2743,6 +2745,11 @@ pub(super) fn start_station(data: &[u8], start: usize, end: usize) -> f64 {
     0.0
 }
 
+/// The track gauge of a rail alignment (0 for the other types).
+pub(super) fn track_gauge(data: &[u8], start: usize, end: usize) -> Option<f64> {
+    section2(data, start, end).map(|s| s.gauge)
+}
+
 /// Design Criteria and Constraint Editing check boxes of Alignment
 /// Properties.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3023,8 +3030,10 @@ pub enum AlignmentType {
     Offset,
     /// A connected (curb return) alignment between two others.
     CurbReturn,
+    /// Utility (the type the application's interfaces name Utility).
     Miscellaneous,
-    /// A value not seen in a sample (5 is most likely Rail).
+    Rail,
+    /// A value not seen in a sample.
     Other(i32),
 }
 
@@ -3035,6 +3044,7 @@ impl AlignmentType {
             2 => Self::Offset,
             3 => Self::CurbReturn,
             4 => Self::Miscellaneous,
+            5 => Self::Rail,
             other => Self::Other(other),
         }
     }
