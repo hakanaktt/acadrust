@@ -1230,6 +1230,14 @@ exaggerating 5 and 20, a view of each and one of the default): AUDIT 0,
 the API lists both styles with their exaggerations and the views with
 them, and makes a view of its own with the written style.
 
+Stacked views (ST01: the API's `StackedProfileViewsCreationOptions`, three
+views of the default style, gap 20) are ordinary views with nothing
+linking them: the three records differ only in their origin (the three
+3BD origins), stacked upwards by the view height plus the gap (-300, 220,
+740 for a height of 500), each with its four label groups. They are
+written as separate views (`add_profile_view_with_style` at those
+origins).
+
 When the drawing has a default profile label set (style tree key 96, id
 30), each profile gets four label groups in the view, entities in model
 space: lines (a label per tangent), PVIs (two labels: the first and the
@@ -2451,7 +2459,8 @@ Corridors are listed in §3i-a.
 | profiles | superimposed, offset profiles, profiles of corridor feature lines, static copies | partly | no | not sampled for writing |
 | profile views | automatic and user ranges, default style, profile label groups | yes (frame) | yes | §3h |
 | profile views | styles that copy the default with another vertical exaggeration, views with them | yes (frame, style exaggeration) | yes | §3h |
-| profile views | other style settings, stacked views, bands other than the defaults | partly | no | the graph settings between the named values are constant runs; stacked views not sampled |
+| profile views | stacked views (separate views at stacked origins) | yes | yes | §3h |
+| profile views | other style settings, bands other than the defaults | partly | no | the graph settings between the named values are constant runs |
 | sites | name, description, members | yes | yes | §3g |
 | parcels | closed and open, crossing and touching lot lines, arcs, labels | yes | yes | §3g |
 | parcels | lot lines meeting alignments or feature lines; arcs where lines meet; the newest member's point marks 0x10/0x20 | yes | no | §3g (rule not found) |
