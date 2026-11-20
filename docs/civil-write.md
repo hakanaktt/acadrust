@@ -530,11 +530,32 @@ there at a join, the last one at the alignment's end; AO16's anchor at 60
 is on the arc that starts there), `along` and `remaining` the distances
 to its ends. Kinds seen: 32763 (and 32765) a profile's start, 6 the ends
 of an offset alignment's range on its parent, 2 an offset alignment's own
-start (its design speed refers to it), 582 a corridor region locked to
-the geometry (KH01, §3i-a). Two more texts follow per anchor. The reader
+start (its design speed refers to it), 3 a station equation, 582 a
+corridor region locked to the geometry (KH01, §3i-a). Two more texts follow per anchor. The reader
 returns them (`alignment_anchors`); the writer keeps an alignment's
 anchors when it writes it again and adds one per new profile (the profile
 keeps its identifier) and two per offset alignment.
+
+### Design speeds and station equations
+
+Each design speed and each station equation ties to an anchor at its
+(raw) station: kind 2 a speed, kind 3 an equation (AS01 to AS04). After
+the anchors and the interval block's other lists:
+
+```text
+BL e, e x { 2 bits 00, RS 0x04BE, BD raw station, the anchor's GUID,
+            BD station back, BD station ahead, B increasing }
+BL 1, BL s, s x { BL 1, BD station, BD speed, the anchor's GUID }
+```
+
+Speeds are in station order, equations in raw station order; the station
+back is the station the equations before give at the raw station (80 then
+1070 for 1000 ahead from 80, AS04). One more text per speed, two per
+equation. `add_design_speeds(doc, alignment, &[(station, speed)])` and
+`add_station_equations(doc, alignment, &[(raw, ahead, increasing)])`
+write the alignment again with them (equations after its last one); the
+application lists and edits them (E-SE1: AUDIT 0, both lists as written,
+a speed and an equation added on top).
 
 ### Offset alignments
 
@@ -2447,11 +2468,12 @@ Corridors are listed in §3i-a.
 | TIN surfaces | transform, polygon and kind 40 definitions of older drawings, DEM files, snapshots, surfaces referenced from other drawings | partly (older kinds walked) | no | not sampled; referenced surfaces have no definitions list |
 | alignments | fixed lines, free arcs, spiral-curve-spirals, start station, siteless and on a site | yes | yes | §3a, §3g |
 | alignments | offset alignments of lines and arcs, on either side, over the whole parent or a station range | yes | yes | §3a (station anchors, offset alignments) |
-| alignments | station anchors (profiles, offset ranges, own design speed, corridor geometry locks) | yes | yes, for profiles and offset alignments | §3a |
+| alignments | station anchors (profiles, offset ranges, own design speed, corridor geometry locks, design speeds, station equations) | yes | yes | §3a |
+| alignments | design speeds, station equations (increasing, decreasing) | yes | yes | §3a (design speeds and station equations) |
 | alignments | widenings with linear transitions (on lines; of length 0 anywhere) | yes | yes | §3a (offset alignments) |
 | alignments | types: centerline, utility, rail (track gauge) | yes | yes | §3a (alignment types) |
 | alignments | widening transitions on arcs or curved (kinds 2, 4, 5), offsets of spirals, curb returns (connected alignments), rail cant | yes (offset parameters and regions, connected alignments, type) | no | not written yet |
-| alignments | lone spirals, other constraints (fixed/floating curves, curves through points), design speeds, station equations | yes (elements, speeds, equations) | no | other element kinds not written |
+| alignments | lone spirals, other constraints (fixed/floating curves, curves through points) | yes (elements) | no | other element kinds not written |
 | alignments | superelevation | yes (critical stations, lanes-only blocks) | no | the superelevation block is read only |
 | profiles | layout: fixed tangents, free parabolas (symmetric, asymmetric), free circular curves | yes | yes | §3e |
 | profiles | layout: free curves by K, radius, horizontal length or through a point (parabolas and circular curves) | yes | yes | §3e |
