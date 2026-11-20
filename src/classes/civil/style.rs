@@ -51,6 +51,8 @@ struct Layout {
     keys: Vec<(u32, KeyValue)>,
     /// References before the components' triples.
     refs: usize,
+    /// The header's references (n + m), before the keys' references.
+    header: usize,
     components: Vec<(bool, Color, i16, f64)>,
     /// The bit after the component lists.
     end: usize,
@@ -67,12 +69,14 @@ fn layout(data: &[u8], start: usize, end: usize) -> Option<Layout> {
     (bits.bit_short()? == 0x04BE).then_some(())?;
     bits.bit_long()?;
     let mut refs = 1;
+    let mut header = 0;
     for _ in 0..2 {
         let n = usize::try_from(bits.bit_long()?).ok().filter(|n| *n <= bits.remaining() / 2)?;
         for _ in 0..n {
             bits.bit_long()?;
         }
         refs += n;
+        header += n;
     }
     // A style without settings (feature styles) goes on with the BL below.
     let mut keys = Vec::new();
@@ -103,6 +107,7 @@ fn layout(data: &[u8], start: usize, end: usize) -> Option<Layout> {
     Some(Layout {
         keys,
         refs,
+        header,
         components,
         end,
         skipped,
@@ -346,6 +351,236 @@ pub(super) fn view_axes(data: &[u8], start: usize, end: usize) -> Option<ViewAxe
         right: axis(2)?,
         top: axis(3)?,
         bottom: axis(4)?,
+    })
+}
+
+/// The title of a profile view style's graph.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ProfileViewTitle {
+    /// The title (a label format string).
+    pub text: String,
+    /// Text style handle (written: 0 for the drawing's "Standard").
+    pub text_style: u64,
+    pub text_height: f64,
+    /// X and Y offset.
+    pub offset: [f64; 2],
+    /// 0 top, 1 bottom, 2 left, 3 right.
+    pub location: i32,
+    /// 0 top or left, 1 middle or center, 2 bottom or right.
+    pub justification: i32,
+    pub border: bool,
+    pub border_gap: f64,
+}
+
+/// One axis's title of a profile view style.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ProfileViewAxisTitle {
+    pub text: String,
+    /// Text style handle (written: 0 for the drawing's "Standard").
+    pub text_style: u64,
+    pub text_height: f64,
+    /// X and Y offset.
+    pub offset: [f64; 2],
+    /// Radians.
+    pub rotation: f64,
+    /// 0 bottom or right, 1 center, 2 top or left.
+    pub location: i32,
+}
+
+/// One kind of ticks of a profile view style's axis: major, minor, or the
+/// horizontal geometry ticks of the top and bottom axes (which have no
+/// interval: 0).
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ProfileViewTicks {
+    pub interval: f64,
+    pub size: f64,
+    pub text_height: f64,
+    /// The label (a label format string).
+    pub label: String,
+    /// Text style handle (written: 0 for the drawing's "Standard").
+    pub text_style: u64,
+    /// X and Y offset.
+    pub offset: [f64; 2],
+    /// Radians.
+    pub rotation: f64,
+    /// 0 top or left, 1 bottom or right, 2 center.
+    pub justification: i32,
+}
+
+/// One axis of a profile view style.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ProfileViewAxisStyle {
+    /// Whether the axis shows its ticks and labels (the one setting the
+    /// API's "show ticks and labels" and "ticks and labels at the start
+    /// elevation" both write); the top axis has none and reads `true`.
+    pub show_ticks_and_labels: bool,
+    pub title: ProfileViewAxisTitle,
+    pub major: ProfileViewTicks,
+    pub minor: ProfileViewTicks,
+    /// Top and bottom axes only.
+    pub geometry: Option<ProfileViewTicks>,
+}
+
+/// Grid lines of one direction of a profile view style.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ProfileViewGridLines {
+    pub omit_in_padding: bool,
+    pub clip_to_highest_profile: bool,
+    pub clip: bool,
+}
+
+/// The grid of a profile view style; sides are left, right, bottom, top.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ProfileViewGrid {
+    pub padding: [f64; 4],
+    pub axis_offset: [f64; 4],
+    pub horizontal: ProfileViewGridLines,
+    pub vertical: ProfileViewGridLines,
+}
+
+/// The settings of a profile view style (`AECC_PROFILE_VIEW_STYLE`).
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ProfileViewStyleSettings {
+    pub vertical_exaggeration: f64,
+    /// Stations run right to left.
+    pub right_to_left: bool,
+    pub title: ProfileViewTitle,
+    pub grid: ProfileViewGrid,
+    pub left: ProfileViewAxisStyle,
+    pub right: ProfileViewAxisStyle,
+    pub top: ProfileViewAxisStyle,
+    pub bottom: ProfileViewAxisStyle,
+}
+
+/// Profile view style setting keys: `type << 24 | 0x01_6000 | g << 8 |
+/// item`, g 0 for the graph and the grid, 1 to 4 for the left, right, top
+/// and bottom axes, 5 for the grid lines and the axes' tick switches.
+pub(super) mod view_key {
+    pub const EXAGGERATION: u32 = 0x0201_6001;
+    pub const RIGHT_TO_LEFT: u32 = 0x0301_9001;
+    pub const TITLE_TEXT: u32 = 0x1801_600A;
+    pub const TITLE_STYLE: u32 = 0x1001_6002;
+    pub const TITLE_OFFSET: u32 = 0x0901_6003;
+    pub const TITLE_LOCATION: u32 = 0x0D01_6006;
+    pub const TITLE_JUSTIFICATION: u32 = 0x0D01_6007;
+    pub const TITLE_BORDER: u32 = 0x0301_6008;
+    pub const TITLE_BORDER_GAP: u32 = 0x0201_6009;
+    pub const TITLE_HEIGHT: u32 = 0x0201_600B;
+    /// Left, right, bottom, top.
+    pub const PADDING: [u32; 4] = [0x0201_6019, 0x0201_600A, 0x0201_6018, 0x0201_6017];
+    pub const AXIS_OFFSET: [u32; 4] = [0x0201_6015, 0x0201_6016, 0x0201_6014, 0x0201_6013];
+    /// Horizontal then vertical: omit in padding, clip to the highest
+    /// profile, clip.
+    pub const GRID_LINES: [[u32; 3]; 2] = [[0x0301_6509, 0x0301_6508, 0x0301_6501], [0x0301_650B, 0x0301_650A, 0x0301_6503]];
+    /// The axes' tick switches: left, right, top (none), bottom.
+    pub const SHOW: [Option<u32>; 4] = [Some(0x0301_6507), Some(0x0301_650C), None, Some(0x0301_6506)];
+    /// An axis setting: `ty` the key type, `axis` 1 to 4, `item` the
+    /// setting.
+    pub const fn axis(ty: u32, axis: u32, item: u32) -> u32 {
+        ty << 24 | 0x01_6000 | axis << 8 | item
+    }
+    /// Axis title items: text, style, location, offset, height, rotation.
+    pub const TITLE: [u32; 6] = [0x02, 0x01, 0x03, 0x04, 0x07, 0x13];
+    /// Tick items (major, minor, geometry): interval, size, height, label,
+    /// style, offset, rotation, justification; 0 for none.
+    pub const TICKS: [[u32; 8]; 3] = [[0x0C, 0x0D, 0x08, 0x0A, 0x14, 0x16, 0x15, 0x27], [0x0E, 0x0F, 0x09, 0x0B, 0x19, 0x1B, 0x1A, 0x28], [0, 0x24, 0x23, 0x25, 0x1E, 0x20, 0x1F, 0x29]];
+}
+
+/// The settings of a profile view style record; `refs` are its
+/// references (the keys' references follow the header's, in key order).
+pub(super) fn view_style_settings(data: &[u8], start: usize, end: usize, refs: &[u64]) -> Option<ProfileViewStyleSettings> {
+    let layout = layout(data, start, end)?;
+    let keys = &layout.keys;
+    view_settings_from(&|key| keys.iter().find(|(k, _)| *k == key).map(|(_, v)| v.clone()), &|key| {
+        let k = keys.iter().filter(|(k, _)| KeyValue::has_reference(*k)).position(|(k, _)| *k == key)?;
+        refs.get(layout.header + k).copied()
+    })
+}
+
+/// [`ProfileViewStyleSettings`] from a style's settings: `get` a key's
+/// value, `reference` the record a reference key points to.
+pub(super) fn view_settings_from(get: &dyn Fn(u32) -> Option<KeyValue>, reference: &dyn Fn(u32) -> Option<u64>) -> Option<ProfileViewStyleSettings> {
+    use view_key::*;
+    let double = |key: u32| match get(key)? {
+        KeyValue::Double(v) => Some(v),
+        _ => None,
+    };
+    let long = |key: u32| match get(key)? {
+        KeyValue::Long(v) => Some(v),
+        _ => None,
+    };
+    let flag = |key: u32| match get(key)? {
+        KeyValue::Byte(v) => Some(v != 0),
+        _ => None,
+    };
+    let point = |key: u32| match get(key)? {
+        KeyValue::Vector(v) => Some([v[0], v[1]]),
+        _ => None,
+    };
+    let text = |key: u32| match get(key)? {
+        KeyValue::Text(t) => Some(t.trim_end_matches('\0').to_string()),
+        _ => None,
+    };
+    let ticks = |g: u32, items: [u32; 8]| -> Option<ProfileViewTicks> {
+        let at = |ty: u32, i: usize| axis(ty, g, items[i]);
+        Some(ProfileViewTicks {
+            interval: if items[0] == 0 { 0.0 } else { double(at(0x02, 0))? },
+            size: double(at(0x02, 1))?,
+            text_height: double(at(0x02, 2))?,
+            label: text(at(0x18, 3))?,
+            text_style: reference(at(0x10, 4))?,
+            offset: point(at(0x09, 5))?,
+            rotation: double(at(0x02, 6))?,
+            justification: long(at(0x0D, 7))?,
+        })
+    };
+    let side = |g: u32| -> Option<ProfileViewAxisStyle> {
+        let at = |ty: u32, i: usize| axis(ty, g, TITLE[i]);
+        Some(ProfileViewAxisStyle {
+            show_ticks_and_labels: match SHOW[g as usize - 1] {
+                Some(k) => flag(k)?,
+                None => true,
+            },
+            title: ProfileViewAxisTitle {
+                text: text(at(0x18, 0))?,
+                text_style: reference(at(0x10, 1))?,
+                location: long(at(0x0D, 2))?,
+                offset: point(at(0x09, 3))?,
+                text_height: double(at(0x02, 4))?,
+                rotation: double(at(0x02, 5))?,
+            },
+            major: ticks(g, TICKS[0])?,
+            minor: ticks(g, TICKS[1])?,
+            geometry: if g >= 3 { Some(ticks(g, TICKS[2])?) } else { None },
+        })
+    };
+    let lines = |k: [u32; 3]| Some(ProfileViewGridLines { omit_in_padding: flag(k[0])?, clip_to_highest_profile: flag(k[1])?, clip: flag(k[2])? });
+    let sides = |k: [u32; 4]| -> Option<[f64; 4]> { Some([double(k[0])?, double(k[1])?, double(k[2])?, double(k[3])?]) };
+    Some(ProfileViewStyleSettings {
+        vertical_exaggeration: double(EXAGGERATION)?,
+        right_to_left: flag(RIGHT_TO_LEFT)?,
+        title: ProfileViewTitle {
+            text: text(TITLE_TEXT)?,
+            text_style: reference(TITLE_STYLE)?,
+            text_height: double(TITLE_HEIGHT)?,
+            offset: point(TITLE_OFFSET)?,
+            location: long(TITLE_LOCATION)?,
+            justification: long(TITLE_JUSTIFICATION)?,
+            border: flag(TITLE_BORDER)?,
+            border_gap: double(TITLE_BORDER_GAP)?,
+        },
+        grid: ProfileViewGrid { padding: sides(PADDING)?, axis_offset: sides(AXIS_OFFSET)?, horizontal: lines(GRID_LINES[0])?, vertical: lines(GRID_LINES[1])? },
+        left: side(1)?,
+        right: side(2)?,
+        top: side(3)?,
+        bottom: side(4)?,
     })
 }
 
