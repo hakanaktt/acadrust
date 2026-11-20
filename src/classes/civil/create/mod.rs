@@ -28,6 +28,7 @@ mod site;
 mod support;
 mod templates;
 mod tin;
+mod tin_build;
 mod tree;
 
 pub use assembly::{add_assembly, add_pkt_subassembly, add_pkt_subassembly_on, PktSource};
@@ -44,4 +45,4 @@ pub use section_view::add_section_view;
 pub use site::{add_alignment_on_site, add_feature_line, add_lot_line, add_parcel, add_feature_line_vertices, FeatureLineVertex, add_site};
 pub use points::{add_cogo_point, cogo_points, remove_cogo_point, set_cogo_point, set_cogo_point_name};
 pub use support::ensure_civil;
-pub use tin::add_tin_surface;
+pub use tin::{add_tin_surface, add_tin_surface_with};

@@ -115,9 +115,9 @@ mod dim_header;
 mod handle_reservation;
 pub(crate) mod handle_usage;
 pub use handle_reservation::{HandleReservation, HandleReservationError, HandleReservationIter};
+mod app_id_usage;
 mod legacy_header;
 mod semantic_inventory;
-mod app_id_usage;
 pub(crate) use dim_header::{
     apply_dimension_arrow_header, dimension_arrow_dxf_name, sync_dimension_arrow_header,
 };
@@ -1279,6 +1279,22 @@ pub struct SummaryInfo {
     pub custom_properties: Vec<(String, String)>,
 }
 
+/// One physical DWG FileDepList record. Stored and found paths are independent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct FileDependency {
+    pub feature: String,
+    pub file_name: String,
+    pub found_path: String,
+    pub fingerprint_guid: Option<String>,
+    pub version_guid: Option<String>,
+    /// Seconds since 1980-01-01.
+    pub timestamp: u32,
+    pub file_size: u32,
+    pub affects_graphics: bool,
+    pub reference_count: u32,
+}
+
 /// A CAD document containing all drawing data
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -1295,6 +1311,10 @@ pub struct CadDocument {
 
     /// Header variables containing drawing settings
     pub header: HeaderVariables,
+
+    /// Typed external file identities, independent of the drawing header GUID.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub file_dependencies: Vec<FileDependency>,
 
     /// Layer table
     pub layers: Table<Layer>,
@@ -1627,6 +1647,7 @@ impl CadDocument {
             version: DxfVersion::AC1032, // DXF 2018
             maintenance_version: 0,
             header: HeaderVariables::default(),
+            file_dependencies: Vec::new(),
             layers: Table::new(),
             line_types: Table::new(),
             text_styles: Table::new(),
@@ -4683,7 +4704,10 @@ impl CadDocument {
 
     /// Mutable counterpart of [`CadDocument::named_objects_dictionary`].
     pub fn named_objects_dictionary_mut(&mut self) -> Option<&mut crate::objects::Dictionary> {
-        match self.objects.get_mut(&self.header.named_objects_dict_handle)? {
+        match self
+            .objects
+            .get_mut(&self.header.named_objects_dict_handle)?
+        {
             ObjectType::Dictionary(dict) => Some(dict),
             _ => None,
         }
@@ -4693,7 +4717,10 @@ impl CadDocument {
     pub fn ensure_named_objects_dictionary(&mut self) -> Handle {
         let mut root_handle = self.header.named_objects_dict_handle;
         if root_handle.is_null()
-            || !matches!(self.objects.get(&root_handle), Some(ObjectType::Dictionary(_)))
+            || !matches!(
+                self.objects.get(&root_handle),
+                Some(ObjectType::Dictionary(_))
+            )
         {
             root_handle = self.allocate_handle();
             let mut root = crate::objects::Dictionary::new();
@@ -4840,8 +4867,7 @@ impl CadDocument {
             }
         }
 
-        self.objects
-            .insert(group_handle, ObjectType::Group(group));
+        self.objects.insert(group_handle, ObjectType::Group(group));
 
         if let Some(ObjectType::Dictionary(dict)) = self.objects.get_mut(&group_dict_handle) {
             dict.insert(name, group_handle);
@@ -4867,11 +4893,7 @@ impl CadDocument {
         let name = {
             let dict = match self.objects.get(&group_dict_handle) {
                 Some(ObjectType::Dictionary(d)) => d,
-                _ => {
-                    return Err(crate::error::DxfError::Custom(
-                        "ACAD_GROUP missing".into(),
-                    ))
-                }
+                _ => return Err(crate::error::DxfError::Custom("ACAD_GROUP missing".into())),
             };
             let mut i = 1;
             loop {
@@ -4898,8 +4920,7 @@ impl CadDocument {
             }
         }
 
-        self.objects
-            .insert(group_handle, ObjectType::Group(group));
+        self.objects.insert(group_handle, ObjectType::Group(group));
 
         if let Some(ObjectType::Dictionary(dict)) = self.objects.get_mut(&group_dict_handle) {
             dict.insert(&name, group_handle);
@@ -6972,32 +6993,36 @@ impl CadDocument {
         self.resolve_table_style_names();
         self.resolve_group_names();
         self.resolve_xrecord_backed_properties();
-        if let Some(s) = self
-            .text_styles
-            .iter()
-            .find(|s| s.name.eq_ignore_ascii_case(&self.header.current_text_style_name))
-        {
-            let is_default_name = self.header.current_text_style_name.eq_ignore_ascii_case("Standard");
+        if let Some(s) = self.text_styles.iter().find(|s| {
+            s.name
+                .eq_ignore_ascii_case(&self.header.current_text_style_name)
+        }) {
+            let is_default_name = self
+                .header
+                .current_text_style_name
+                .eq_ignore_ascii_case("Standard");
             let handle_is_valid_custom = !self.header.current_text_style_handle.is_null()
-                && self
-                    .text_styles
-                    .iter()
-                    .any(|t| t.handle == self.header.current_text_style_handle && !t.name.eq_ignore_ascii_case("Standard"));
+                && self.text_styles.iter().any(|t| {
+                    t.handle == self.header.current_text_style_handle
+                        && !t.name.eq_ignore_ascii_case("Standard")
+                });
             if !is_default_name || !handle_is_valid_custom {
                 self.header.current_text_style_handle = s.handle;
             }
         }
-        if let Some(s) = self
-            .dim_styles
-            .iter()
-            .find(|s| s.name.eq_ignore_ascii_case(&self.header.current_dimstyle_name))
-        {
-            let is_default_name = self.header.current_dimstyle_name.eq_ignore_ascii_case("Standard");
+        if let Some(s) = self.dim_styles.iter().find(|s| {
+            s.name
+                .eq_ignore_ascii_case(&self.header.current_dimstyle_name)
+        }) {
+            let is_default_name = self
+                .header
+                .current_dimstyle_name
+                .eq_ignore_ascii_case("Standard");
             let handle_is_valid_custom = !self.header.current_dimstyle_handle.is_null()
-                && self
-                    .dim_styles
-                    .iter()
-                    .any(|d| d.handle == self.header.current_dimstyle_handle && !d.name.eq_ignore_ascii_case("Standard"));
+                && self.dim_styles.iter().any(|d| {
+                    d.handle == self.header.current_dimstyle_handle
+                        && !d.name.eq_ignore_ascii_case("Standard")
+                });
             if !is_default_name || !handle_is_valid_custom {
                 self.header.current_dimstyle_handle = s.handle;
             }

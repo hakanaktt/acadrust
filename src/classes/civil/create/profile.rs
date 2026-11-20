@@ -267,6 +267,16 @@ fn parts(pvis: &[Vector2], curves: &[VerticalCurve]) -> Vec<(i32, i32, i32, Part
     out
 }
 
+/// The source of a profile sampled from a surface: the surface, the
+/// offset from the alignment and the stations it samples between, and
+/// whether they are the alignment's own (`whole`).
+struct Sampled {
+    surface: u64,
+    offset: f64,
+    range: (f64, f64),
+    whole: bool,
+}
+
 /// The profile record.
 ///
 /// ```text
@@ -293,16 +303,6 @@ fn parts(pvis: &[Vector2], curves: &[VerticalCurve]) -> Vec<(i32, i32, i32, Part
 /// records equal the samples' bit for bit apart from the geometry stamp
 /// and the identifier.
 #[allow(clippy::too_many_arguments)]
-/// The source of a profile sampled from a surface: the surface, the
-/// offset from the alignment and the stations it samples between, and
-/// whether they are the alignment's own (`whole`).
-struct Sampled {
-    surface: u64,
-    offset: f64,
-    range: (f64, f64),
-    whole: bool,
-}
-
 fn write_profile(doc: &mut CadDocument, common: EntityCommon, name: &str, parts: &[(i32, i32, i32, Part)], helpers: &[Handle; 7], style: u64, alignment: Handle, id: &[u8; 16]) -> Result<Handle, DxfError> {
     write_profile_of(doc, common, name, parts, helpers, style, alignment, id, None)
 }
@@ -738,8 +738,8 @@ mod tests {
             let want: Vec<u8> = id.iter().flat_map(|b| (0..8).rev().map(move |k| b >> k & 1)).collect();
             bits.windows(128).position(|w| w == want.as_slice())
         };
-        // Newest first.
-        assert!(find(&ids[1]).unwrap() < find(&ids[0]).unwrap());
+        // The anchors are stored in identifier order.
+        assert_eq!(find(&ids[0]).unwrap() < find(&ids[1]).unwrap(), ids[0] < ids[1]);
         // A record that is not an alignment is refused.
         let mut doc = back;
         assert!(add_profile(&mut doc, p1, "P3", &v, &[0.0], None).is_err());

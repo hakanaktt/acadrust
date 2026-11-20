@@ -31,7 +31,7 @@ pub use alignment::{
     StationEquation,
 };
 pub use cogo::CogoPoint;
-pub use create::{add_assembly, add_pkt_subassembly, add_pkt_subassembly_on, PktSource, add_alignment, add_alignment_with_curves, add_offset_alignment, add_offset_alignment_with_widenings, Widening, add_alignment_of_kind, AlignmentKind, VertexCurve, add_corridor, add_corridor_with, add_cogo_point, add_intersection, add_point_group, add_point_group_query, add_profile, add_profile_entities, add_profile_with_curves, add_surface_profile, ProfileEntity, VerticalCurve, add_profile_view, add_profile_view_with_range, add_sample_line, add_sample_line_through, add_sample_line_group, add_sections, add_section_view, add_site, add_alignment_on_site, add_feature_line, add_parcel, add_feature_line_vertices, FeatureLineVertex, add_tin_surface, cogo_points, ensure_civil, remove_cogo_point, set_cogo_point, set_cogo_point_name, set_point_group, set_point_group_query, Comparison, PointQuery, add_lot_line, add_pipe, add_pipe_network, add_pipe_of_family, add_structure, add_structure_of_family, connect_pipe, network_part_families, add_pressure_appurtenance, add_pressure_arc_pipe, add_pressure_cross, add_pressure_fitting, add_pressure_network, add_pressure_part, add_pressure_pipe, add_pressure_pipe_of_size, add_pressure_tee, connect_pressure_parts, pressure_part_descriptions};
+pub use create::{add_tin_surface_with, add_assembly, add_pkt_subassembly, add_pkt_subassembly_on, PktSource, add_alignment, add_alignment_with_curves, add_offset_alignment, add_offset_alignment_with_widenings, Widening, add_alignment_of_kind, AlignmentKind, VertexCurve, add_corridor, add_corridor_with, add_cogo_point, add_intersection, add_point_group, add_point_group_query, add_profile, add_profile_entities, add_profile_with_curves, add_surface_profile, ProfileEntity, VerticalCurve, add_profile_view, add_profile_view_with_range, add_sample_line, add_sample_line_through, add_sample_line_group, add_sections, add_section_view, add_site, add_alignment_on_site, add_feature_line, add_parcel, add_feature_line_vertices, FeatureLineVertex, add_tin_surface, cogo_points, ensure_civil, remove_cogo_point, set_cogo_point, set_cogo_point_name, set_point_group, set_point_group_query, Comparison, PointQuery, add_lot_line, add_pipe, add_pipe_network, add_pipe_of_family, add_structure, add_structure_of_family, connect_pipe, network_part_families, add_pressure_appurtenance, add_pressure_arc_pipe, add_pressure_cross, add_pressure_fitting, add_pressure_network, add_pressure_part, add_pressure_pipe, add_pressure_pipe_of_size, add_pressure_tee, connect_pressure_parts, pressure_part_descriptions};
 pub use corridor::{CorridorBaseline, CorridorBoundary, CorridorDefinition, CorridorRegion, CorridorSurfaceDefinition, CurveStations, RegionFrequency, RegionTarget, TargetCurveStations, TargetKind};
 pub use grading::{CriteriaValue, GradingCriteria};
 pub use intersection::IntersectionLayout;
@@ -44,7 +44,7 @@ pub use section::{MassHaulViewFrame, SectionGeometry, SectionViewFrame};
 pub use style::{DisplayComponent, Marker, ViewAxes, ViewAxis};
 pub use subassembly::{AssemblyLayout, Attachment, SubassemblyShape};
 pub use topology::{Topology, TopologyVertex};
-pub use tin::{TinSurface, TinTriangle, TinVertex};
+pub use tin::{TinBoundaryType, TinBreaklineType, TinDefinition, TinLines, TinOperation, TinSurface, TinTriangle, TinVertex};
 
 use super::arch::{ArchEntityData, ArchObject};
 pub(crate) use network::connector_count as network_connector_count;
@@ -234,6 +234,32 @@ impl ArchEntityData {
         }
         let (data, start, end) = self.main_stream()?;
         tin::find(data, start, end)
+    }
+
+    /// Definitions of a TIN surface in build order, with their
+    /// texts (before the surface name) and source objects (the references
+    /// after the hard owner), and whether the surface
+    /// rebuilds itself when a source changes.
+    pub fn tin_definitions(&self) -> Option<(Vec<TinDefinition>, bool)> {
+        if self.civil_kind() != Some(CivilKind::TinSurface) {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        let found = tin::definitions(data, start, end)?;
+        let strings = self.decode().strings;
+        let refs = self.typed_handles();
+        let mut text = 2;
+        let mut source = refs.iter().position(|r| r.1 == 3)? + 1;
+        let mut list = found.list;
+        for d in &mut list {
+            let n = d.text_count();
+            d.texts = strings.get(text..text + n)?.to_vec();
+            text += n;
+            let n = d.source_count();
+            d.sources = refs.get(source..source + n)?.iter().map(|r| r.0).collect();
+            source += n;
+        }
+        Some((list, found.auto_rebuild))
     }
 
     /// Design elements of a Civil 3D alignment.
