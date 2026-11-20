@@ -2192,6 +2192,56 @@ taken from the records and checked bit for bit against them.
 | pressure networks: every pipe, elbow, tee, cross and gate valve size of the default catalog (straight and curved pipes), connections | yes (ports: positions, directions, joint sizes, connections; pipe ends and bulge, part positions and rotations) | yes (a new drawing gets the default pressure part list and styles, §3n) | yes (§3n) | not needed | part kinds of other catalogs, the catalog's body solids |
 | gradings, mass haul | partly (grading criteria, mass haul line and view frame) | no | — | — | no controlled samples (§6a) |
 
+### 6b. Options per kind
+
+What each kind offers in the application and whether acadrust reads and
+writes it. "read" means read field by field; "write" means written from
+named fields and checked in the application (§4 and the sections named).
+Corridors are listed in §3i-a.
+
+| kind | option | read | write | evidence / what blocks it |
+|---|---|---|---|---|
+| COGO points | position, number, raw description, name, styles | yes | yes | §3 |
+| COGO points | point label styles other than the default, user-defined properties | partly (label references) | no | label styles other than §2b are constant runs |
+| point groups | number lists, elevation comparisons and ranges, description, name and full description patterns, exclusions | yes | yes | §3, §4 |
+| point groups | number ranges (`2-6`) | yes | as a number list | the application stores the range as its numbers |
+| point groups | override styles and descriptions per group, AND of several criteria (advanced query) | partly | no | override settings are not mapped field by field (WP10, WG01) |
+| TIN surfaces | points added to the surface | yes | yes | §3c |
+| TIN surfaces | imported points (file), point groups, breaklines, boundaries, contours, edits (add/delete vertex and line, raise, paste, transform) | yes (the definitions are walked; their fields are read for the triangulation) | no | each operation is a definition record and the stored triangulation must honour it; a breakline adds 1744 bits to a 25-point surface (TS00, TS01): the writer would need constrained triangulation and the definition records |
+| alignments | fixed lines, free arcs, spiral-curve-spirals, start station, siteless and on a site | yes | yes | §3a, §3g |
+| alignments | offset alignments (with widenings), curb returns, other types (rail, miscellaneous) | yes (offset parameters and regions, connected alignments, type) | no | an offset alignment is a solved child of its parent with an offset action; not sampled for writing |
+| alignments | lone spirals, other constraints (fixed/floating curves, curves through points), design speeds, station equations | yes (elements, speeds, equations) | no | other element kinds not written |
+| alignments | superelevation | yes (critical stations, lanes-only blocks) | no | the superelevation block is read only |
+| profiles | layout: fixed tangents, free parabolas (symmetric, asymmetric), free circular curves | yes | yes | §3e |
+| profiles | layout: fixed and floating curves, curves by K or through a point | yes | no | other entity kinds (each its own record) |
+| profiles | from a surface (existing ground), superimposed, offset profiles, profiles of corridor feature lines | partly | no | sampled profiles are rebuilt from their source by the application; not sampled for writing |
+| profile views | automatic and user ranges, default style, profile label groups | yes (frame) | yes | §3h |
+| profile views | other styles, vertical scales, stacked views, bands other than the defaults | partly | no | the graph settings between the named values are constant runs |
+| sites | name, description, members | yes | yes | §3g |
+| parcels | closed and open, crossing and touching lot lines, arcs, labels | yes | yes | §3g |
+| parcels | lot lines meeting alignments or feature lines; arcs where lines meet; the newest member's point marks 0x10/0x20 | yes | no | §3g (rule not found) |
+| feature lines | points, elevation points, arcs, on a site | yes | yes | §3g |
+| feature lines | members meeting other members on a site, styles other than the default | yes | no | §3g |
+| sample line groups | lines by station or through vertices on both sides | yes | yes | §3j |
+| sample line groups | lines with all vertices on one side; section sources other than a TIN surface (corridors, corridor surfaces, pipe networks) | yes | no | one-sided lines close with another run (LV03); other sources not sampled |
+| sections | of a TIN surface (unsampled) | yes (geometry once sampled) | yes | §3j |
+| section views | one view of a line, default style | yes (frame) | yes | §3j |
+| section views | group plots (several views at once), several sections in a view, other styles | partly | no | not sampled |
+| assemblies | groups of package subassemblies (offsets, attachments) | partly | yes | §3l, §3i |
+| subassemblies | packages (`pkt`) written by acadrust | yes | yes | §3l |
+| subassemblies | stock subassemblies of the application's library | yes (parameters) | no | their texts carry the library path of the product |
+| corridors | see §3i-a | | | |
+| intersections | two crossing roads (the object) | yes | yes | §3k |
+| intersections | tee junctions, the offset alignments, curb returns, corridor regions and locking actions the command makes | yes | no | the tee sample hangs in the wizard (WI40); the other records are not written |
+| gravity pipe networks | every family of the default parts list (one size each), connections | partly | yes | §3m |
+| gravity pipe networks | sizes the parts list does not hold, the catalog's body solids | partly | no | §3m |
+| pressure networks | every size of the default catalog (straight and curved pipes, elbows, tees, crosses, gate valves), connections | yes | yes | §3n |
+| pressure networks | parts of other catalogs | partly | no | §3n |
+| gradings | criteria, groups, gradings | partly (criteria) | no | §6a |
+| mass haul | line and view | partly | no | §6a |
+| label styles | the defaults of a new drawing (§2b) | partly | yes | §2b |
+| label styles | other styles and roots | partly | no | constant runs |
+
 ### 6a. Gradings and mass haul
 
 No sample of the application's own making could be produced for either:
