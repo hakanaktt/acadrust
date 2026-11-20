@@ -662,3 +662,58 @@ const PRESSURE_PART_LISTS: &[Template] = &[
         strings: &["", "", "", "611746E2-B19E-4F8E-ACF7-F12491879819", "7ea43c7c-83bb-48f4-9b18-8b9c1a5f250e", "7ea43c7c-83bb-48f4-9b18-8b9c1a5f250e", "pipe-4 in-push on-ductile iron-350 psi-AWWA C149", "", "AeccNetworkPartDataField", "", "ID_MATERIAL", "Id Material", "ID_MATERIAL", "", "AeccNetworkPartDataField", "", "CUT_LENGTH", "Cut Length", "CUT_LENGTH", "ft", "AeccNetworkPartDataField", "", "MIN_FLEX_RADIUS", "Minimum Flex Radius", "MIN_FLEX_RADIUS", "ft", "AeccNetworkPartDataField", "", "DEFLECTION", "Deflection", "DEFLECTION", "deg", "AeccNetworkPartDataField", "", "", "", "PRESSURE_PART_CACHED_NDS", "", "4.000000,4.000000", "4ec98468-cb87-435a-89bc-cebf9c6392bb", "05a4ab2d-c9d0-428a-a506-0f8a58ee8da1", "elbow-4 in-11.25 degree-push on-ductile iron-350 psi-AWWA C111/C152", "", "AeccNetworkPartDataField", "", "ID_MATERIAL", "Id Material", "ID_MATERIAL", "", "AeccNetworkPartDataField", "", "ANGLE", "Angle", "ANGLE", "deg", "AeccNetworkPartDataField", "", "DEFLECTION", "Deflection", "DEFLECTION", "deg", "AeccNetworkPartDataField", "", "", "", "PRESSURE_PART_CACHED_NDS", "", "4.000000,4.000000", "2821bd9a-296d-4bc4-8fef-e0b93833dd38", "c0cbab87-d7f1-458f-b4df-d1052bb936eb", "gate valve-6 inch-push on-ductile iron-200 psi-AWWA C111/C500", "", "AeccNetworkPartDataField", "", "PART_FAMILY_NAME", "Part Family Name", "PART_FAMILY_NAME", "", "gate valve-push on-ductile iron-200 psi", "AeccNetworkPartDataField", "", "DEFLECTION", "Deflection", "DEFLECTION", "deg", "AeccNetworkPartDataField", "", "", "", "PRESSURE_PART_CACHED_NDS", "", "6.000000,6.000000", "AeccNetworkPartDataField", "", "ID_MATERIAL", "Id Material", "ID_MATERIAL", "", "ID_MATERIAL", "Id Material", "ID_MATERIAL", "", "ductile iron", "ID_MATERIAL", "Id Material", "ID_MATERIAL", "", "ductile iron", "ID_MATERIAL", "Id Material", "ID_MATERIAL", "", "ductile iron", "ID_MATERIAL", "Id Material", "ID_MATERIAL", "", "ductile iron", "PART_FAMILY_NAME", "Part Family Name", "PART_FAMILY_NAME", "", "gate valve-push on-ductile iron-200 psi", "", "PART_FAMILY_NAME", "Part Family Name", "PART_FAMILY_NAME", "", "gate valve-push on-ductile iron-150 psi", ""],
     },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::io::dwg::{DwgReader, DwgWriter};
+    use crate::objects::ObjectType;
+    use crate::types::{DxfVersion, Handle};
+
+    /// Handles and owners of a family's records, in object order.
+    fn family(doc: &CadDocument, dxf: &str) -> Vec<(Handle, Handle)> {
+        doc.objects
+            .iter()
+            .filter_map(|(h, o)| match o {
+                ObjectType::Arch(a) if a.dxf_name == dxf => Some((*h, a.owner)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Every style family's first record is its collection root and
+    /// carries the family's own DXF class, so a class-instance census
+    /// counts the root plus the styles, while Civil 3D's style
+    /// collections enumerate only a root's children (see
+    /// `write_templates`). Pins that shape on the round-trip of the
+    /// parcel, feature line, marker and corridor defaults.
+    #[test]
+    fn style_collection_roots_share_their_family_s_style_class() {
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        ensure_site_styles(&mut doc).unwrap();
+        ensure_corridor_styles(&mut doc).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-style-roots-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        let styles_node = root_node(&back, KEY_STYLES).unwrap();
+        for (dxf, table) in [
+            ("AECC_PARCEL_STYLE", PARCEL_STYLES),
+            ("AECC_FEATURELINE_STYLE", FEATURE_LINE_STYLES),
+            ("AECC_ROADWAYMARKER_STYLE", MARKER_STYLES),
+            ("AECC_CORRIDOR_STYLE", CORRIDOR_STYLES),
+        ] {
+            let records = family(&back, dxf);
+            assert_eq!(records.len(), table.len(), "{dxf}: census");
+            let roots: Vec<Handle> = records.iter().filter(|(_, owner)| *owner == styles_node).map(|(h, _)| *h).collect();
+            assert_eq!(roots.len(), 1, "{dxf}: one collection root");
+            for (h, owner) in &records {
+                if *h != roots[0] {
+                    assert_eq!(owner, &roots[0], "{dxf}: {h:?} is owned by the root");
+                }
+            }
+        }
+    }
+}
