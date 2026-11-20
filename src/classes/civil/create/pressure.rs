@@ -3,14 +3,16 @@
 //!
 //! A pressure network uses a pressure part list
 //! (`AECC_PRESSURE_PART_LIST`) bound to a part catalog; the writer places
-//! three of the parts of the application's default list: a 4 inch ductile
-//! iron pipe, a 4 inch 11.25° elbow and a 6 inch gate valve. Each part
+//! parts of the application's default list: 4 inch ductile iron pipes
+//! (straight or curved), a 4 inch 11.25° elbow, a 4 inch tee, a 14 x 6 inch
+//! cross and a 6 inch gate valve, and connects their ports. Each part
 //! refers to the part definition of its size (`AECC_NETWORK_PART_DEF`,
 //! shared with gravity parts) and to the style the part list gives it.
 
 use super::assembly::{ensure_name_template, entity_common, run};
-use super::network::{arch_entity, ensure_definition_with, hard_owner, texts};
+use super::network::{arch_entity, ensure_definition_with, hard_owner, run_range, texts, typed};
 use super::pressure_content::*;
+use super::pressure_sizes::{PARTS, PIPES};
 use super::support::*;
 use crate::entities::{EntityCommon, EntityType};
 use crate::error::DxfError;
@@ -26,13 +28,9 @@ const APPURTENANCE_TEMPLATE: (i32, &str) = (0x17D, "Appurtenance - (<[67112990(2
 /// The catalog the default pressure part list is bound to.
 const CATALOG: &str = "611746E2-B19E-4F8E-ACF7-F12491879819";
 
-const PIPE_KEY: &str = "184.8standard200.44_in_x_4_in22350AWWA_C1492pipe_4_in_push_on_ductile_iron_350_psi_AWWA_C1497ea43c7c_83bb_48f4_9b18_8b9c1a5f250epipe_push_on_ductile_iron_350_psi7ea43c7c_83bb_48f4_9b18_8b9c1a5f250e611746E2_B19E_4F8E_ACF7_F12491879819Pipe_DomainPressurePipe";
-const FITTING_KEY: &str = "11.25elbow24_in_x_4_in22350AWWA_C111_C1522elbow_4_in_11.25_degree_push_on_ductile_iron_350_psi_AWWA_C111_C1524ec98468_cb87_435a_89bc_cebf9c6392bbelbow_11.25_degree_push_on_ductile_iron_350_psi05a4ab2d_c9d0_428a_a506_0f8a58ee8da1611746E2_B19E_4F8E_ACF7_F12491879819Fitting_DomainElbow";
-const APPURTENANCE_KEY: &str = "gate76_in_x_6_in22200AWWA_C111_C5002gate_valve_6_inch_push_on_ductile_iron_200_psi_AWWA_C111_C5002821bd9a_296d_4bc4_8fef_e0b93833dd38gate_valve_push_on_ductile_iron_200_psic0cbab87_d7f1_458f_b4df_d1052bb936eb611746E2_B19E_4F8E_ACF7_F12491879819Appurtenance_DomainValve";
-
 /// The kinds of pressure parts, in the order the network lists them.
 #[derive(Clone, Copy, PartialEq)]
-enum Kind {
+pub(super) enum Kind {
     Pipe,
     Fitting,
     Appurtenance,
@@ -149,6 +147,7 @@ fn place(
     kind: Kind,
     definition: (&str, (usize, &str), &[&str]),
     body: Option<&Body3>,
+    ports: usize,
     write: impl FnOnce(&mut CadDocument, EntityCommon, Vec<Ref>, usize) -> Result<Handle, DxfError>,
 ) -> Result<Handle, DxfError> {
     let mut net = read_network(doc, network).ok_or_else(|| invalid("not a pressure network"))?;
@@ -167,10 +166,9 @@ fn place(
         hard_owner(0),
         hard_pointer(definition.value()),
         hard_pointer(style),
-        soft_pointer(0),
-        soft_pointer(0),
-        soft_pointer(0),
     ];
+    // One per port (the part it connects to), then one more.
+    let refs = [refs, vec![soft_pointer(0); ports + 1]].concat();
     let index = kind as usize;
     let handle = write(doc, common, refs, net.parts[index].len() + 1)?;
     net.parts[index].push(handle.value());
@@ -191,29 +189,74 @@ fn direction(a: Vector3, b: Vector3) -> Vector3 {
     Vector3::new(d.x / n, d.y / n, d.z / n)
 }
 
-/// Adds a 4 inch ductile iron pressure pipe from `start` to `end` to
-/// `network`, not connected to other parts. The pipe record
+/// Adds a straight 4 inch ductile iron pressure pipe from `start` to `end`
+/// to `network`, not connected to other parts (see
+/// [`add_pressure_arc_pipe`]).
+pub fn add_pressure_pipe(doc: &mut CadDocument, network: Handle, start: Vector3, end: Vector3) -> Result<Handle, DxfError> {
+    add_pressure_arc_pipe(doc, network, start, end, 0.0)
+}
+
+/// Adds a 4 inch ductile iron pressure pipe (see
+/// [`add_pressure_pipe_of_size`]).
+pub fn add_pressure_arc_pipe(doc: &mut CadDocument, network: Handle, start: Vector3, end: Vector3, bulge: f64) -> Result<Handle, DxfError> {
+    add_pressure_pipe_of_size(doc, network, PIPES[0].description, start, end, bulge)
+}
+
+/// `v` turned by `angle` (radians) about Z.
+fn turned(v: Vector3, angle: f64) -> Vector3 {
+    let (c, s) = (angle.cos(), angle.sin());
+    Vector3::new(c * v.x - s * v.y, s * v.x + c * v.y, v.z)
+}
+
+/// Adds the pressure pipe `description` (a pipe of
+/// [`pressure_part_descriptions`], 4 to 36 inch ductile iron) from `start`
+/// to `end` to `network`, curved in plan by `bulge` (the tangent of a quarter of the
+/// arc's angle, positive counterclockwise, at most 1 in size; 0 for a
+/// straight pipe), not connected to other parts. The pipe record
 /// (`AECC_PRESSUREPIPE`):
 ///
 /// ```text
 /// PIPE_HEAD (its 16-byte id zero), PIPE_PRE (an identity frame, 2 ports),
-/// port 1: 3BD start, 3BD direction away from the pipe, PIPE_PORT0 (joint
-///   sizes, open),
-/// port 2: 3BD end, 3BD direction, PIPE_PORT1,
-/// 3BD start, 3BD end, BD bulge (0), PIPE_TAIL, BD start elevation,
-/// BD plan length, BD end elevation, PIPE_END
+/// port 1: 3BD start, 3BD direction away from the pipe, the size's port
+///   run (joint sizes, open),
+/// port 2: 3BD end, 3BD direction, the size's port run,
+/// 3BD start, 3BD end, BD bulge, BS 0x101 (straight) or 0x102 (curved),
+/// PIPE_TAIL, BD start elevation, BD plan chord, BD end elevation, PIPE_END
 /// references: network, hard 0, hard 0, part list, soft 0, hard owner 0,
-///   part definition, style, 3 x soft 0
-/// texts: PIPE_STRINGS with the name "Pressure Pipe - (n)"
+///   part definition, style, the parts its start and end connect to
+///   (soft), soft 0
+/// texts: PIPE_STRINGS with the description and the name
+///   "Pressure Pipe - (n)"
 /// ```
-pub fn add_pressure_pipe(doc: &mut CadDocument, network: Handle, start: Vector3, end: Vector3) -> Result<Handle, DxfError> {
-    if ![start.x, start.y, start.z, end.x, end.y, end.z].iter().all(|v| v.is_finite()) || start.distance(&end) < 1e-9 {
+///
+/// A curved pipe's port directions are its tangents: the chord turned by
+/// twice the bulge's angle, sloped by the fall over the arc.
+pub fn add_pressure_pipe_of_size(doc: &mut CadDocument, network: Handle, description: &str, start: Vector3, end: Vector3, bulge: f64) -> Result<Handle, DxfError> {
+    let size = PIPES.iter().find(|p| p.description == description).ok_or_else(|| invalid("no pressure pipe of that description"))?;
+    if ![start.x, start.y, start.z, end.x, end.y, end.z, bulge].iter().all(|v| v.is_finite()) || start.distance(&end) < 1e-9 {
         return Err(invalid("a pressure pipe needs two distinct finite ends"));
     }
-    place(doc, network, Kind::Pipe, (PIPE_KEY, PIPE_DEFINITION, PIPE_DEFINITION_STRINGS), None, |doc, common, refs, n| {
+    let plan = ((end.x - start.x).powi(2) + (end.y - start.y).powi(2)).sqrt();
+    if bulge != 0.0 && (plan < 1e-9 || bulge.abs() > 1.0) {
+        return Err(invalid("a curved pressure pipe needs ends apart in plan and a bulge of at most 1"));
+    }
+    let (away_start, away_end) = if bulge == 0.0 {
+        (direction(end, start), direction(start, end))
+    } else {
+        let chord = Vector3::new((end.x - start.x) / plan, (end.y - start.y) / plan, 0.0);
+        let half = 2.0 * bulge.atan();
+        let (length, rise) = (plan * half / half.sin(), end.z - start.z);
+        let (level, fall) = (length / length.hypot(rise), rise / length.hypot(rise));
+        let sloped = |t: Vector3, sign: f64| Vector3::new(sign * t.x * level, sign * t.y * level, sign * fall);
+        // Heading into the pipe at its start, and on at its end.
+        (sloped(turned(chord, -half), -1.0), sloped(turned(chord, half), 1.0))
+    };
+    let definition_strings = with_texts(PIPE_DEFINITION_STRINGS, size.definition_strings);
+    let definition_strings: Vec<&str> = definition_strings.iter().map(String::as_str).collect();
+    place(doc, network, Kind::Pipe, (size.key, size.definition, &definition_strings), None, 2, |doc, common, refs, n| {
         let mut strings = texts(PIPE_STRINGS);
+        strings[2] = size.description.to_string();
         strings[3] = format!("Pressure Pipe - ({n})");
-        let plan = ((end.x - start.x).powi(2) + (end.y - start.y).powi(2)).sqrt();
         put_entity(
             doc,
             Kind::Pipe.dxf(),
@@ -222,15 +265,16 @@ pub fn add_pressure_pipe(doc: &mut CadDocument, network: Handle, start: Vector3,
                 run(w, PIPE_HEAD.0, PIPE_HEAD.1);
                 run(w, PIPE_PRE.0, PIPE_PRE.1);
                 point(w, start);
-                point(w, direction(end, start));
-                run(w, PIPE_PORT0.0, PIPE_PORT0.1);
+                point(w, away_start);
+                run(w, size.ports[0].0, size.ports[0].1);
                 point(w, end);
-                point(w, direction(start, end));
-                run(w, PIPE_PORT1.0, PIPE_PORT1.1);
+                point(w, away_end);
+                run(w, size.ports[1].0, size.ports[1].1);
                 point(w, start);
                 point(w, end);
-                w.write_bit_double(0.0);
-                run(w, PIPE_TAIL.0, PIPE_TAIL.1);
+                w.write_bit_double(bulge);
+                w.write_bit_short(if bulge == 0.0 { 0x101 } else { 0x102 });
+                run_range(w, PIPE_TAIL.1, 18, PIPE_TAIL.0);
                 for v in [start.z, plan, end.z] {
                     w.write_bit_double(v);
                 }
@@ -241,21 +285,44 @@ pub fn add_pressure_pipe(doc: &mut CadDocument, network: Handle, start: Vector3,
     })
 }
 
+/// A pipe size of the catalog: its part description, its definition's
+/// key, record and texts (a base list with the size's own texts) and the
+/// runs of its ports after their directions (joint sizes, open).
+pub(super) struct PipeSize {
+    pub(super) description: &'static str,
+    pub(super) key: &'static str,
+    pub(super) ports: [(usize, &'static str); 2],
+    pub(super) definition: (usize, &'static str),
+    pub(super) definition_strings: &'static [(usize, &'static str)],
+}
+
 /// The constant runs and geometry of a fitting or appurtenance size.
-struct Placed {
-    kind: Kind,
-    key: &'static str,
-    definition: (usize, &'static str),
-    definition_strings: &'static [&'static str],
-    head: (usize, &'static str),
-    pre: (usize, &'static str),
-    ports: [([f64; 3], [f64; 3]); 2],
-    port_runs: [(usize, &'static str); 2],
-    anchor: [f64; 3],
-    end: (usize, &'static str),
-    strings: &'static [&'static str],
-    name: &'static str,
-    body: Body3,
+pub(super) struct Placed {
+    pub(super) kind: Kind,
+    pub(super) description: &'static str,
+    pub(super) key: &'static str,
+    pub(super) definition: (usize, &'static str),
+    /// The kind's base texts and the size's own (index, text).
+    pub(super) definition_strings: (&'static [&'static str], &'static [(usize, &'static str)]),
+    pub(super) head: (usize, &'static str),
+    pub(super) pre: (usize, &'static str),
+    pub(super) ports: &'static [([f64; 3], [f64; 3])],
+    /// Per port, the run after its direction (joint sizes, open).
+    pub(super) port_runs: &'static [(usize, &'static str)],
+    pub(super) anchor: [f64; 3],
+    pub(super) end: (usize, &'static str),
+    pub(super) strings: &'static [&'static str],
+    pub(super) name: &'static str,
+    pub(super) body: Body3,
+}
+
+/// `base` with the texts of `own` in place.
+fn with_texts(base: &[&str], own: &[(usize, &str)]) -> Vec<String> {
+    let mut t = texts(base);
+    for (i, v) in own {
+        t[*i] = v.to_string();
+    }
+    t
 }
 
 /// The two blocks a fitting's or appurtenance's definition refers to,
@@ -264,18 +331,18 @@ struct Placed {
 /// (the application places them there).
 // ponytail: the application's bodies are the catalog's solids (13 and
 // 44 KB); the writer writes a box of the same extents instead.
-struct Body3 {
-    family: &'static str,
+pub(super) struct Body3 {
+    pub(super) family: &'static str,
     /// Corners of the box.
-    min: [f64; 3],
-    max: [f64; 3],
-    symbol: Symbol,
+    pub(super) min: [f64; 3],
+    pub(super) max: [f64; 3],
+    pub(super) symbol: Symbol,
 }
 
-enum Symbol {
+pub(super) enum Symbol {
     /// Center, radius, start and end angles, drawn about -Z.
     Arc([f64; 3], f64, f64, f64),
-    Line([f64; 3], [f64; 3]),
+    Lines(&'static [([f64; 3], [f64; 3])]),
 }
 
 /// The body and symbol blocks of `body` (reused when the drawing has
@@ -291,23 +358,23 @@ fn body_blocks(doc: &mut CadDocument, body: &Body3) -> Result<[Handle; 2], DxfEr
         Symbol::Arc(c, r, a, b) => {
             let mut arc = Arc::new();
             (arc.center, arc.radius, arc.start_angle, arc.end_angle, arc.normal) = (v(c), r, a, b, Vector3::new(0.0, 0.0, -1.0));
-            EntityType::Arc(arc)
+            vec![EntityType::Arc(arc)]
         }
-        Symbol::Line(a, b) => EntityType::Line(Line::from_points(v(a), v(b))),
+        Symbol::Lines(lines) => lines.iter().map(|(a, b)| EntityType::Line(Line::from_points(v(*a), v(*b)))).collect(),
     };
     let mut handles = [Handle::NULL; 2];
-    for (i, (name, entity)) in [(body.family.to_string(), EntityType::Solid3D(solid)), (format!("{}_3", body.family), symbol)].into_iter().enumerate() {
+    for (i, (name, entities)) in [(body.family.to_string(), vec![EntityType::Solid3D(solid)]), (format!("{}_3", body.family), symbol)].into_iter().enumerate() {
         let existing = doc.block_records.iter().find(|b| b.name == name).map(|b| b.handle);
         handles[i] = match existing {
             Some(h) => h,
-            None => block_with(doc, &name, entity)?,
+            None => block_with(doc, &name, entities)?,
         };
     }
     Ok(handles)
 }
 
-/// A block named `name` holding `entity` on layer 0, ByBlock.
-fn block_with(doc: &mut CadDocument, name: &str, mut entity: EntityType) -> Result<Handle, DxfError> {
+/// A block named `name` holding `entities` on layer 0, ByBlock.
+fn block_with(doc: &mut CadDocument, name: &str, entities: Vec<EntityType>) -> Result<Handle, DxfError> {
     use crate::entities::{Block, BlockEnd};
     use crate::tables::BlockRecord;
     let (record, start, end) = (doc.allocate_handle(), doc.allocate_handle(), doc.allocate_handle());
@@ -317,70 +384,31 @@ fn block_with(doc: &mut CadDocument, name: &str, mut entity: EntityType) -> Resu
     let mut marker = Block::new(name, Vector3::ZERO);
     (marker.common.handle, marker.common.owner_handle) = (start, record);
     doc.add_entity(EntityType::Block(marker))?;
-    let c = entity.common_mut();
-    c.owner_handle = record;
-    c.color = crate::types::Color::ByBlock;
-    c.line_weight = crate::types::LineWeight::ByBlock;
-    doc.add_entity(entity)?;
+    for mut entity in entities {
+        let c = entity.common_mut();
+        c.owner_handle = record;
+        c.color = crate::types::Color::ByBlock;
+        c.line_weight = crate::types::LineWeight::ByBlock;
+        doc.add_entity(entity)?;
+    }
     let mut tail = BlockEnd::new();
     (tail.common.handle, tail.common.owner_handle) = (end, record);
     doc.add_entity(EntityType::BlockEnd(tail))?;
     Ok(record)
 }
 
-const ELBOW: Placed = Placed {
-    kind: Kind::Fitting,
-    key: FITTING_KEY,
-    definition: FITTING_DEFINITION,
-    definition_strings: FITTING_DEFINITION_STRINGS,
-    head: FITTING_HEAD,
-    pre: FITTING_PRE,
-    ports: FITTING_PORTS,
-    port_runs: [FITTING_PORT0, FITTING_PORT1],
-    anchor: FITTING_ANCHOR,
-    end: FITTING_END,
-    strings: FITTING_STRINGS,
-    name: "Fitting",
-    body: Body3 {
-        family: "05a4ab2d-c9d0-428a-a506-0f8a58ee8da1",
-        min: [-0.28916666666666, 0.0, -0.28916666666667],
-        max: [0.3683121250586, 0.916404560691395, 0.28916666666667],
-        symbol: Symbol::Arc([-1.692195064601477, 0.26749999999999996, 0.0], 1.692195064601477, 0.0, 0.19634954084936204),
-    },
-};
-
-const GATE_VALVE: Placed = Placed {
-    kind: Kind::Appurtenance,
-    key: APPURTENANCE_KEY,
-    definition: APPURTENANCE_DEFINITION,
-    definition_strings: APPURTENANCE_DEFINITION_STRINGS,
-    head: APPURTENANCE_HEAD,
-    pre: APPURTENANCE_PRE,
-    ports: APPURTENANCE_PORTS,
-    port_runs: [APPURTENANCE_PORT0, APPURTENANCE_PORT1],
-    anchor: APPURTENANCE_ANCHOR,
-    end: APPURTENANCE_END,
-    strings: APPURTENANCE_STRINGS,
-    name: "Appurtenance",
-    body: Body3 {
-        family: "c0cbab87-d7f1-458f-b4df-d1052bb936eb",
-        min: [-0.62833333333333, -0.355, 0.2802421927990584],
-        max: [0.62833333333333, 0.355, 2.1352421927990584],
-        symbol: Symbol::Line([-0.2708333333333333, 0.0, 0.6352416666666666], [0.2708333333333333, 0.0, 0.6352416666666666]),
-    },
-};
-
 /// Writes a fitting or appurtenance at `position` turned by `rotation`
 /// (radians) about Z:
 ///
 /// ```text
-/// HEAD, 3BD insertion point, 3 x 3BD axes (X, Y, Z), PRE (2 ports),
+/// HEAD, 3BD insertion point, 3 x 3BD axes (X, Y, Z), PRE (BL ports),
 /// per port: 3BD position, 3BD direction, the port's constant run (joint
 ///   sizes, open),
 /// 3BD reference point (a point of the part's size: the body and symbol
 ///   blocks are placed there; the application keeps the part's extents
 ///   until it moves), 3 x 3BD axes again, END
-/// references and texts as a pressure pipe's (name "<Kind> - (n)")
+/// references and texts as a pressure pipe's (name "<Kind> - (n)"), one
+///   connection reference per port
 /// ```
 fn add_placed(doc: &mut CadDocument, network: Handle, part: &Placed, position: Vector3, rotation: f64) -> Result<Handle, DxfError> {
     if ![position.x, position.y, position.z, rotation].iter().all(|v| v.is_finite()) {
@@ -392,8 +420,11 @@ fn add_placed(doc: &mut CadDocument, network: Handle, part: &Placed, position: V
         let t = turn(v);
         Vector3::new(position.x + t.x, position.y + t.y, position.z + t.z)
     };
-    place(doc, network, part.kind, (part.key, part.definition, part.definition_strings), Some(&part.body), |doc, common, refs, n| {
+    let definition_strings = with_texts(part.definition_strings.0, part.definition_strings.1);
+    let definition_strings: Vec<&str> = definition_strings.iter().map(String::as_str).collect();
+    place(doc, network, part.kind, (part.key, part.definition, &definition_strings), Some(&part.body), part.ports.len(), |doc, common, refs, n| {
         let mut strings = texts(part.strings);
+        strings[2] = part.description.to_string();
         strings[3] = format!("{} - ({n})", part.name);
         put_entity(
             doc,
@@ -409,7 +440,7 @@ fn add_placed(doc: &mut CadDocument, network: Handle, part: &Placed, position: V
                 point(w, position);
                 axes(w);
                 run(w, part.pre.0, part.pre.1);
-                for ((offset, dir), runs) in part.ports.iter().zip(part.port_runs) {
+                for ((offset, dir), runs) in part.ports.iter().zip(part.port_runs.iter()) {
                     point(w, at(*offset));
                     point(w, turn(*dir));
                     run(w, runs.0, runs.1);
@@ -423,16 +454,112 @@ fn add_placed(doc: &mut CadDocument, network: Handle, part: &Placed, position: V
     })
 }
 
-/// Adds a 4 inch 11.25° elbow to `network` at `position`, turned by
-/// `rotation` (radians) about Z, not connected to other parts.
-pub fn add_pressure_fitting(doc: &mut CadDocument, network: Handle, position: Vector3, rotation: f64) -> Result<Handle, DxfError> {
-    add_placed(doc, network, &ELBOW, position, rotation)
+/// The part descriptions of the catalog's sizes the writer places, as
+/// the application names them ("gate valve-8 inch-push on-ductile
+/// iron-200 psi-AWWA C111/C500"): pipes, then fittings and appurtenances.
+pub fn pressure_part_descriptions() -> Vec<&'static str> {
+    PIPES.iter().map(|p| p.description).chain(PARTS.iter().map(|p| p.description)).collect()
 }
 
-/// Adds a 6 inch gate valve to `network` at `position`, turned by
-/// `rotation` (radians) about Z, not connected to other parts.
+fn placed(description: &str) -> Result<&'static Placed, DxfError> {
+    PARTS.iter().find(|p| p.description == description).ok_or_else(|| invalid("no fitting or appurtenance of that description"))
+}
+
+/// Adds the fitting or appurtenance `description` (one of
+/// [`pressure_part_descriptions`]) to `network` at `position`, turned by
+/// `rotation` (radians) about Z, not connected to other parts. Elbows have
+/// two ports (-Y, then the turned leg), tees three (the run's ends along
+/// -Y and +Y, then the branch, +X), crosses four (the run, then +X and
+/// -X), valves two (-X, +X).
+pub fn add_pressure_part(doc: &mut CadDocument, network: Handle, description: &str, position: Vector3, rotation: f64) -> Result<Handle, DxfError> {
+    add_placed(doc, network, placed(description)?, position, rotation)
+}
+
+const ELBOW_4: &str = "elbow-4 in-11.25 degree-push on-ductile iron-350 psi-AWWA C111/C152";
+const TEE_4: &str = "tee-4 in x 4 in- push on-ductile iron-350 psi-AWWA C111/C153";
+const CROSS_14: &str = "cross-14 in x 6 in- push on-ductile iron-350 psi-AWWA C110/C111/C153";
+const VALVE_6: &str = "gate valve-6 inch-push on-ductile iron-200 psi-AWWA C111/C500";
+
+/// Adds a 4 inch 11.25° elbow (see [`add_pressure_part`]).
+pub fn add_pressure_fitting(doc: &mut CadDocument, network: Handle, position: Vector3, rotation: f64) -> Result<Handle, DxfError> {
+    add_pressure_part(doc, network, ELBOW_4, position, rotation)
+}
+
+/// Adds a 6 inch gate valve (see [`add_pressure_part`]).
 pub fn add_pressure_appurtenance(doc: &mut CadDocument, network: Handle, position: Vector3, rotation: f64) -> Result<Handle, DxfError> {
-    add_placed(doc, network, &GATE_VALVE, position, rotation)
+    add_pressure_part(doc, network, VALVE_6, position, rotation)
+}
+
+/// Adds a 4 inch tee (see [`add_pressure_part`]).
+pub fn add_pressure_tee(doc: &mut CadDocument, network: Handle, position: Vector3, rotation: f64) -> Result<Handle, DxfError> {
+    add_pressure_part(doc, network, TEE_4, position, rotation)
+}
+
+/// Adds a 14 x 6 inch cross (see [`add_pressure_part`]).
+pub fn add_pressure_cross(doc: &mut CadDocument, network: Handle, position: Vector3, rotation: f64) -> Result<Handle, DxfError> {
+    add_pressure_part(doc, network, CROSS_14, position, rotation)
+}
+
+/// The first reference of a pressure part naming a connected part (port
+/// `k` at `CONNECTED + k`).
+const CONNECTED: usize = 8;
+
+/// Connects port `port_a` of the pressure part `a` to port `port_b` of
+/// `b` (pipes, fittings or appurtenances of one network; a pipe's ports
+/// are its start, 0, and end, 1). Both ports must be open and at the same
+/// place (within 1e-6); the parts are not moved or turned. Each port
+/// records the index of the port it meets (`BL`, -1 when open) and the
+/// part it meets is the reference `8 + port`; every other bit of the two
+/// records is kept.
+pub fn connect_pressure_parts(doc: &mut CadDocument, a: Handle, port_a: usize, b: Handle, port_b: usize) -> Result<(), DxfError> {
+    if a == b {
+        return Err(invalid("a pressure part cannot connect to itself"));
+    }
+    let mut at = Vec::new();
+    for (part, port) in [(a, port_a), (b, port_b)] {
+        let e = arch_entity(doc, part).ok_or_else(|| invalid("not a pressure part"))?;
+        let ports = e.pressure_ports().ok_or_else(|| invalid("not a pressure part"))?;
+        let p = *ports.get(port).ok_or_else(|| invalid("the part has no such port"))?;
+        if p.connected_port >= 0 || e.typed_handles().get(CONNECTED + port).is_none_or(|r| r.0 != 0) {
+            return Err(invalid("the port is connected already"));
+        }
+        at.push((e.typed_handles()[0].0, p.position));
+    }
+    if at[0].0 != at[1].0 {
+        return Err(invalid("the parts are not in one network"));
+    }
+    if at[0].1.distance(&at[1].1) > 1e-6 {
+        return Err(invalid("the ports are not at the same place"));
+    }
+    set_port(doc, a, port_a, b, port_b)?;
+    set_port(doc, b, port_b, a, port_a)
+}
+
+/// Rewrites `part` with its port `port` connected to port `other_port` of
+/// `other`.
+fn set_port(doc: &mut CadDocument, part: Handle, port: usize, other: Handle, other_port: usize) -> Result<(), DxfError> {
+    let refused = || invalid("the part's record is not laid out as a pressure part");
+    let a = arch_entity(doc, part).ok_or_else(refused)?;
+    let (from, to) = a.pressure_ports().and_then(|p| p.get(port).map(|p| p.connected_at)).ok_or_else(refused)?;
+    let (data, start, end) = a.main_stream().ok_or_else(refused)?;
+    let bit = |p: usize| data[p / 8] >> (7 - p % 8) & 1 == 1;
+    let (head, tail): (Vec<bool>, Vec<bool>) = ((start..from).map(bit).collect(), (to..end).map(bit).collect());
+    let mut refs: Vec<Ref> = a.typed_handles().into_iter().map(typed).collect();
+    *refs.get_mut(CONNECTED + port).ok_or_else(refused)? = soft_pointer(other.value());
+    let (dxf, strings) = (a.dxf_name.clone(), a.decode().strings);
+    let common = doc.get_entity(part).ok_or_else(refused)?.common().clone();
+    put_entity(
+        doc,
+        &dxf,
+        common,
+        |w| {
+            head.iter().for_each(|b| w.write_bit(*b));
+            w.write_bit_long(other_port as i32);
+            tail.iter().for_each(|b| w.write_bit(*b));
+        },
+        Body { refs, strings },
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -503,6 +630,37 @@ mod tests {
         // The elbow's definition refers to its body and symbol blocks.
         let def = object(&back, Handle::new(arch_entity(&back, f).unwrap().typed_handles()[6].0)).unwrap();
         let blocks: Vec<String> = def.typed_handles().iter().filter_map(|r| back.block_records.iter().find(|b| b.handle.value() == r.0).map(|b| b.name.clone())).collect();
-        assert_eq!(blocks, vec![ELBOW.body.family.to_string(), format!("{}_3", ELBOW.body.family)]);
+        assert_eq!(blocks, vec![placed(ELBOW_4).unwrap().body.family.to_string(), format!("{}_3", placed(ELBOW_4).unwrap().body.family)]);
+    }
+
+    #[test]
+    fn pressure_parts_connect_port_to_port() {
+        let v = Vector3::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let n = add_pressure_network(&mut doc, "PRC", None).unwrap();
+        let tee = add_pressure_tee(&mut doc, n, v(200.0, 0.0, 8.0), 0.0).unwrap();
+        let at = |doc: &CadDocument, h: Handle, k: usize| arch_entity(doc, h).unwrap().pressure_ports().unwrap()[k].position;
+        let branch = at(&doc, tee, 2);
+        assert_eq!(branch, v(200.375, 0.0, 8.0));
+        let pipe = add_pressure_pipe(&mut doc, n, branch, v(300.0, 0.0, 7.0)).unwrap();
+        let arc = add_pressure_arc_pipe(&mut doc, n, v(0.0, 0.0, 10.0), v(100.0, 0.0, 10.0), -0.4).unwrap();
+        assert!(connect_pressure_parts(&mut doc, pipe, 1, tee, 2).is_err(), "ports apart");
+        connect_pressure_parts(&mut doc, tee, 2, pipe, 0).unwrap();
+        assert!(connect_pressure_parts(&mut doc, tee, 2, arc, 0).is_err(), "port taken");
+        let path = std::env::temp_dir().join(format!("civil-pressure-connect-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let p = arch_entity(&back, pipe).unwrap().pressure_pipe().unwrap();
+        assert_eq!((p.start_connection, p.end_connection), (Some((tee.value(), 2)), None));
+        let ports = arch_entity(&back, tee).unwrap().pressure_ports().unwrap();
+        assert_eq!(ports.iter().map(|p| p.connected_port).collect::<Vec<_>>(), vec![-1, -1, 0]);
+        assert_eq!(arch_entity(&back, tee).unwrap().typed_handles()[CONNECTED + 2].0, pipe.value());
+        let a = arch_entity(&back, arc).unwrap();
+        assert_eq!(a.pressure_pipe().unwrap().bulge, -0.4);
+        // The start tangent of the sample's curve, (50, 20) its middle.
+        let d = a.pressure_ports().unwrap()[0].direction;
+        assert!((d.x + 0.7241379310344828).abs() < 1e-12 && (d.y + 0.6896551724137931).abs() < 1e-12);
     }
 }

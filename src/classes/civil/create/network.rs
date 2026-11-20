@@ -401,7 +401,7 @@ fn write_id(w: &mut crate::io::dwg::dwg_stream_writers::DwgMergedWriter, id: &[u
 const OUTLINE: (usize, usize) = (473, 1269);
 
 /// Bits `from..to` of the constant run `hex`.
-fn run_range(w: &mut crate::io::dwg::dwg_stream_writers::DwgMergedWriter, hex: &str, from: usize, to: usize) {
+pub(super) fn run_range(w: &mut crate::io::dwg::dwg_stream_writers::DwgMergedWriter, hex: &str, from: usize, to: usize) {
     for i in from..to {
         let v = hex.as_bytes().get(i / 4).and_then(|c| (*c as char).to_digit(16)).unwrap_or(0);
         w.write_bit(v >> (3 - i % 4) & 1 == 1);
@@ -409,7 +409,7 @@ fn run_range(w: &mut crate::io::dwg::dwg_stream_writers::DwgMergedWriter, hex: &
 }
 
 /// A record's reference as written, from its kind code.
-fn typed(r: (u64, u8)) -> Ref {
+pub(super) fn typed(r: (u64, u8)) -> Ref {
     let kind = match r.1 {
         2 => DwgReferenceType::SoftOwnership,
         3 => DwgReferenceType::HardOwnership,
