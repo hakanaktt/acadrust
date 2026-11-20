@@ -152,6 +152,32 @@ pub(super) fn sample_lines(data: &[u8], start: usize, end: usize) -> Option<Samp
     }
 }
 
+/// One sample line's (`AECC_SAMPLE_LINE`) station:
+///
+/// ```text
+/// BL 80, 0, 80, 80, 0, BL 0x10025F04, 6 bits (they vary per record),
+/// 275 bits (constants of the record kind, a per-record GUID among
+/// them), BD station
+/// ```
+///
+/// The 275 bits are the same length in every one of the 183 records of
+/// `Sections-Project-Objects.dwg` (19 lines, stations 0 to
+/// 1729.048573328025) and `Mass Haul-2.dwg` (164 lines, 50 to 8050)
+/// whose stations the application lists the same way; within them only a
+/// record GUID and the 6 tag bits vary. The line's name is its text
+/// stream's third string, and its group lists its lines in station order
+/// among its references.
+pub(super) fn sample_line_station(data: &[u8], start: usize, end: usize) -> Option<f64> {
+    let mut bits = Bits::new(data, start, end);
+    for want in [80, 0, 80, 80, 0] {
+        (bits.bit_long()? == want).then_some(())?;
+    }
+    (bits.bit_long()? as u32 == MAPPED).then_some(())?;
+    bits.skip(6 + 275)?;
+    let station = bits.bit_double()?;
+    (station.is_finite() && (0.0..1e7).contains(&station)).then_some(station)
+}
+
 /// The sources and placements after the class keys of a mapped record,
 /// then its station range (`bits` left after the keys).
 fn placements(bits: &mut Bits) -> Option<SampleLines> {
@@ -247,6 +273,40 @@ mod tests {
         let lines = sample_lines(&data, 0, len).expect("mapped record decodes");
         assert_eq!(lines.stations, vec![100.0, 102.5, 105.0, 107.5, 110.0]);
         assert_eq!((lines.left, lines.right), (-4.5, 4.5));
+    }
+
+    #[test]
+    fn reads_a_sample_lines_station() {
+        let s = [
+            "0101010000 10 0101010000 0101010000 10".to_string(), // head
+            bl(MAPPED),
+            "000100".to_string(), // 6 bits, vary per record
+            "1".repeat(120),      // the fixed run (a record GUID among the constants)
+            "0".repeat(155),
+            bd(1729.048573328025),
+        ]
+        .concat();
+        let data: Vec<u8> = s
+            .bytes()
+            .filter(|b| *b == b'0' || *b == b'1')
+            .map(|b| b - b'0')
+            .collect::<Vec<u8>>()
+            .chunks(8)
+            .map(|c| c.iter().enumerate().fold(0u8, |a, (i, b)| a | (b << (7 - i))))
+            .collect();
+        let len = s.bytes().filter(|b| *b == b'0' || *b == b'1').count();
+        assert_eq!(sample_line_station(&data, 0, len), Some(1729.048573328025));
+        // Another schema word is not a sample line record.
+        let other = s.replace(&bl(MAPPED), &bl(TUTORIAL));
+        let data: Vec<u8> = other
+            .bytes()
+            .filter(|b| *b == b'0' || *b == b'1')
+            .map(|b| b - b'0')
+            .collect::<Vec<u8>>()
+            .chunks(8)
+            .map(|c| c.iter().enumerate().fold(0u8, |a, (i, b)| a | (b << (7 - i))))
+            .collect();
+        assert_eq!(sample_line_station(&data, 0, len), None);
     }
 
     #[test]
