@@ -264,8 +264,7 @@ pub fn add_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_pr
 /// (`AECC_ASSOC_PVILOCKING_MULTIALIGNINTER_ACTION_BODY`: the intersection,
 /// the roads and the main road's profile read, the other road's profile
 /// written; without profiles the intersection and the other road read);
-/// the
-/// intersection action (`AECC_ASSOC_INTERSECTION_ACTION_BODY`: the roads
+/// the intersection action (`AECC_ASSOC_INTERSECTION_ACTION_BODY`: the roads
 /// read, the intersection written); and the location label
 /// (`AECC_INTERSECTION_LOCATION_LABEL`) with the drawing's default
 /// intersection label style. The roads must be siteless alignments of

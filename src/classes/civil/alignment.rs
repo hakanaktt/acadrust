@@ -3051,10 +3051,10 @@ pub(super) fn equations_and_speeds_with_ids(data: &[u8], start: usize, end: usiz
 
 /// A critical station of a superelevation curve as stored: its kind (3
 /// begin full super, 4 end full super, 7 level crown, 8 low shoulder
-/// match, 9 reverse crown, 10 manual, ...), its station from the curve's start (from
-/// its end in the ending attainment region), the region and the cross
-/// slopes of the left outside lane, left inside lane, right outside lane,
-/// right inside lane, then the same four shoulders.
+/// match, 9 reverse crown, 10 manual, ...), its station from the curve's
+/// start (from its end in the ending attainment region), the region and
+/// the cross slopes of the left outside lane, left inside lane, right
+/// outside lane, right inside lane, then the same four shoulders.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CriticalStationData {
@@ -3077,10 +3077,6 @@ pub struct SuperelevationCurveData {
 /// left 2 right, 0 outside 1 inside, 1 lane 2 shoulder).
 pub(super) const SUPERELEVATION_SEGMENTS: [(i32, i32, i32); 8] = [(1, 0, 1), (1, 1, 1), (2, 0, 1), (2, 1, 1), (1, 0, 2), (1, 1, 2), (2, 0, 2), (2, 1, 2)];
 
-/// The superelevation curves of a block of the plain form this crate
-/// writes (see the writer's `write_superelevation`): no curve settings,
-/// one unit per critical station and per cross segment with a slope each,
-/// the standard lane table. `None` for any other block.
 /// Kind of a manual critical station.
 pub(super) const MANUAL_STATION: i32 = 10;
 
@@ -3099,6 +3095,11 @@ pub(super) fn bits_are(bits: &mut Bits, run: (usize, &str)) -> Option<bool> {
     Some(same)
 }
 
+/// The superelevation curves of a block of the plain form this crate
+/// writes (see the writer's `write_superelevation`): no curve settings
+/// but a manual station's, one unit per critical station and per cross
+/// segment with a slope each, the standard lane table. `None` for any
+/// other block.
 fn plain_superelevation(bits: &mut Bits) -> Option<Vec<SuperelevationCurveData>> {
     let node = |bits: &mut Bits| -> Option<i16> {
         let v = [bits.bit_long()?, bits.bit_long()?, bits.bit_long()?, bits.bit_long()?];

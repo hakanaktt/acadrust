@@ -47,6 +47,8 @@ pub use sample_lines::{SampleLines, SectionViewGroupPlot};
 pub use section::{MassHaulViewFrame, SectionGeometry, SectionViewFrame};
 pub use style::{DisplayComponent, Marker, ProfileViewAxisStyle, ProfileViewAxisTitle, ProfileViewGrid, ProfileViewGridLines, ProfileViewStyleSettings, ProfileViewTicks, ProfileViewTitle, ViewAxes, ViewAxis};
 pub use subassembly::{AssemblyLayout, Attachment, SubassemblyShape};
+pub use survey::SurveyFigure;
+pub use view_frames::{MatchLine, ViewFrame};
 pub use topology::{Topology, TopologyVertex};
 pub use tin::{TinBoundaryType, TinBreaklineType, TinDefinition, TinLines, TinOperation, TinSurface, TinTriangle, TinVertex};
 

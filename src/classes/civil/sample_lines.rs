@@ -162,7 +162,7 @@ pub(super) fn sample_lines(data: &[u8], start: usize, end: usize) -> Option<Samp
 ///
 /// The 275 bits are the same length in every one of the 183 records of
 /// `Sections-Project-Objects.dwg` (19 lines, stations 0 to
-/// 1729.048573328025) and `Mass Haul-2.dwg` (164 lines, 50 to 8050)
+/// 1729.048573328025) and `Mass Haul-2.dwg` (164 lines, 50 to 1658.63)
 /// whose stations the application lists the same way; within them only a
 /// record GUID and the 6 tag bits vary. The line's name is its text
 /// stream's third string, and its group lists its lines in station order
