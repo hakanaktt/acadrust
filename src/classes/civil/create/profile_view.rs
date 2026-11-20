@@ -5,6 +5,7 @@ use super::alignment::{rewritable, rewrite_with_views};
 use super::profile::identifier;
 use super::site::default_style_of;
 use super::support::*;
+use super::bands::{ProfileViewBand, Resolved};
 use super::tree::{ensure_point_tree, style, Component, Shared, Style, Value as StyleValue, DEFAULT_STYLE_ID, KEY_STYLES};
 use crate::classes::civil::alignment::KeyValue;
 use crate::classes::civil::style::{view_key, view_settings_from};
@@ -49,6 +50,9 @@ const FIRST_STYLE_TEXT_ID: u32 = 0x8003_0001;
 /// alignment's start and past its end; the elevations, rounded out to
 /// [`ELEVATION_STEP`], this far below and above the profiles.
 const STATION_MARGIN: f64 = 200.0;
+/// The automatic stations are rounded out to this step (an alignment
+/// ending at 211.12 gives a view to 500, PB04).
+const STATION_STEP: f64 = 100.0;
 const ELEVATION_STEP: f64 = 10.0;
 const ELEVATION_MARGIN: f64 = 20.0;
 
@@ -236,11 +240,16 @@ struct Shown {
 ///
 /// Written with the samples' origins, ranges and profiles the record
 /// equals theirs bit for bit.
-fn write_view(doc: &mut CadDocument, common: EntityCommon, name: &str, frame: &ProfileViewFrame, user: (bool, bool), style: u64, alignment: Handle, profiles: &[Shown]) -> Result<Handle, DxfError> {
+#[allow(clippy::too_many_arguments)]
+fn write_view(doc: &mut CadDocument, common: EntityCommon, name: &str, frame: &ProfileViewFrame, user: (bool, bool), style: u64, alignment: Handle, profiles: &[Shown], bands: &[Resolved]) -> Result<Handle, DxfError> {
     let word = (VIEW_RANGE_WORD | if user.0 { USER_STATIONS } else { 0 } | if user.1 { USER_ELEVATIONS } else { 0 }) as i32;
-    let mut refs = vec![soft_pointer(0), Ref(DwgReferenceType::HardOwnership, 0), hard_pointer(style), hard_pointer(alignment.value())];
+    let mut refs: Vec<Ref> = bands.iter().map(|_| hard_pointer(0)).collect();
+    refs.extend([soft_pointer(0), Ref(DwgReferenceType::HardOwnership, 0), hard_pointer(style), hard_pointer(alignment.value())]);
     for p in profiles {
         refs.extend([soft_pointer(p.handle), hard_pointer(p.style), hard_pointer(0)]);
+    }
+    for b in bands {
+        refs.extend([hard_pointer(b.style), soft_pointer(0), hard_pointer(alignment.value()), hard_pointer(b.profile1), hard_pointer(b.profile2)]);
     }
     refs.extend([hard_pointer(0), hard_pointer(0), hard_pointer(0), hard_pointer(0), soft_pointer(0), hard_pointer(0)]);
     let strings = ["", "", name, "", name, ""].iter().map(|s| s.to_string()).collect();
@@ -261,10 +270,17 @@ fn write_view(doc: &mut CadDocument, common: EntityCommon, name: &str, frame: &P
             w.write_bit_long(GRAPH_KEYS.len() as i32);
             for k in GRAPH_KEYS {
                 w.write_bit_long(k as i32);
-                if k >> 24 == 3 {
-                    bits(w, "00000001");
-                } else {
-                    w.write_bit_long(0);
+                let values = super::bands::key_values(k, bands);
+                match k >> 24 {
+                    3 => bits(w, "00000001"),
+                    0x0C => {
+                        w.write_bit_long(values.len() as i32);
+                        values.iter().for_each(|v| w.write_bit_double(*v));
+                    }
+                    _ => {
+                        w.write_bit_long(values.len() as i32);
+                        values.iter().for_each(|v| w.write_bit_long(*v as i32));
+                    }
                 }
             }
             bl_byte(w, 0);
@@ -277,7 +293,8 @@ fn write_view(doc: &mut CadDocument, common: EntityCommon, name: &str, frame: &P
             for i in 0..profiles.len() {
                 bits(w, if i == 0 { "11001" } else { "10000" });
             }
-            w.write_bit_long(0);
+            w.write_bit_long(bands.len() as i32);
+            super::bands::write_items(w, bands);
             w.write_bit(true);
             point(w, origin);
             w.write_bit_long(2);
@@ -312,6 +329,8 @@ fn write_view(doc: &mut CadDocument, common: EntityCommon, name: &str, frame: &P
 }
 
 /// The run every profile label group opens with (the four kinds share it).
+/// The run band label groups open with too.
+pub(super) const GROUP_HEADER: &str = HEADER;
 const HEADER: &str = "01010100001001010100000101010000100000000100010111110000001000010000010010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000101010000010101000000000000000000000010111110000001000011111111111111111111111100000000010";
 /// A label of a line label group, before and after its tangent's entity
 /// id (`BL`).
@@ -781,7 +800,7 @@ fn labelled(profile: &ArchEntityData) -> [Vec<i32>; 4] {
 fn default_range(alignment: &ArchEntityData, profiles: &[&ArchEntityData], origin: Vector2, stations: Option<(f64, f64)>, vertical_scale: f64) -> Option<ProfileViewFrame> {
     let start = alignment.alignment_start_station()?;
     let length: f64 = alignment.alignment_pieces().iter().map(|(_, p)| p.windows(2).map(|w| w[0].distance(&w[1])).sum::<f64>()).sum();
-    let (s0, s1) = stations.unwrap_or((start - STATION_MARGIN, start + length + STATION_MARGIN));
+    let (s0, s1) = stations.unwrap_or((((start - STATION_MARGIN) / STATION_STEP).floor() * STATION_STEP, ((start + length + STATION_MARGIN) / STATION_STEP).ceil() * STATION_STEP));
     // The elevations of the profiles within the shown stations: their
     // segments clipped to the station range.
     let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
@@ -901,6 +920,26 @@ pub fn add_profile_view_with_range(doc: &mut CadDocument, alignment: Handle, nam
 /// exaggeration.
 #[allow(clippy::too_many_arguments)]
 pub fn add_profile_view_with_style(doc: &mut CadDocument, alignment: Handle, name: &str, origin: Vector2, style: Option<Handle>, stations: Option<(f64, f64)>, elevations: Option<(f64, f64)>, layer: Option<&str>) -> Result<Handle, DxfError> {
+    add_view(doc, alignment, name, origin, style, stations, elevations, &[], layer)
+}
+
+/// [`add_profile_view_with_style`] with `bands` (below the view first, in
+/// the given order, then those above), each drawn with the drawing's
+/// default band style of its kind (a drawing without band styles gets the
+/// default ones) and given its label group. Only profile data bands are
+/// written above the view.
+pub fn add_profile_view_with_bands(doc: &mut CadDocument, alignment: Handle, name: &str, origin: Vector2, style: Option<Handle>, bands: &[ProfileViewBand], layer: Option<&str>) -> Result<Handle, DxfError> {
+    add_view(doc, alignment, name, origin, style, None, None, bands, layer)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_view(doc: &mut CadDocument, alignment: Handle, name: &str, origin: Vector2, style: Option<Handle>, stations: Option<(f64, f64)>, elevations: Option<(f64, f64)>, bands: &[ProfileViewBand], layer: Option<&str>) -> Result<Handle, DxfError> {
+    if bands.iter().any(|b| b.top && b.kind != super::bands::BandKind::ProfileData) {
+        return Err(invalid("only profile data bands are written above a profile view"));
+    }
+    if bands.iter().any(|b| !(b.gap.is_finite() && b.gap >= 0.0)) {
+        return Err(invalid("a band gap is a finite length, zero or more"));
+    }
     if name.is_empty() {
         return Err(invalid("a profile view needs a name"));
     }
@@ -935,6 +974,16 @@ pub fn add_profile_view_with_style(doc: &mut CadDocument, alignment: Handle, nam
         Some(s) => s.0,
         None => default_style_of(doc, KEY_PROFILE_VIEW_STYLES).ok_or_else(|| invalid("drawing has no profile view styles"))?,
     };
+    if !bands.is_empty() {
+        super::band_styles::ensure_band_styles(doc)?;
+    }
+    let first = list[0].handle;
+    let mut resolved = Vec::new();
+    for b in bands.iter().filter(|b| !b.top).chain(bands.iter().filter(|b| b.top)) {
+        let profile = |p: Option<Handle>| p.map_or(Ok(first), |p| if list.iter().any(|s| s.handle == p.value()) { Ok(p.value()) } else { Err(invalid("a band's profile is not a profile of the alignment")) });
+        let style = default_style_of(doc, b.kind.style_key()).ok_or_else(|| invalid("drawing has no band style of that kind"))?;
+        resolved.push(Resolved { band: b.clone(), style, profile1: profile(b.profile1)?, profile2: profile(b.profile2.or(b.profile1))? });
+    }
     let label_styles = default_style_of(doc, KEY_PROFILE_LABEL_SETS).and_then(|set| object(doc, Handle::new(set))).map(|o| o.decode().handles);
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
@@ -954,9 +1003,13 @@ pub fn add_profile_view_with_style(doc: &mut CadDocument, alignment: Handle, nam
     let mut views = written.views.clone();
     views.push(handle.value());
     rewrite_with_views(doc, alignment, written, &profiles, &profiles, Some(&views))?;
-    write_view(doc, common(handle), name, &frame, (stations.is_some(), elevations.is_some()), style, alignment, &list)?;
+    write_view(doc, common(handle), name, &frame, (stations.is_some(), elevations.is_some()), style, alignment, &list, &resolved)?;
     for (h, kind, ids, profile, s) in groups {
         write_group(doc, common(h), kind, &ids, profile, s, handle.value())?;
+    }
+    for (i, b) in resolved.iter().enumerate() {
+        let h = doc.allocate_handle();
+        super::bands::write_group(doc, common(h), b, i as i32 + 1, handle.value(), &frame, alignment)?;
     }
     Ok(handle)
 }

@@ -1567,6 +1567,58 @@ the same API values as its own. A new drawing gets the default label
 styles with the profile label set (§2b), so its views get the four label
 groups.
 
+### Bands
+
+A view lists its bands after the profile flags: `BL n`, then per band
+`BD gap` and a constant item of its kind (profile data 1056 bits,
+vertical and horizontal geometry 572): item bits 4 and 5 are the labels
+at the end and start stations, a profile data item has bit 9 set below
+the view and bits 921/923 = 1/0 above it, a geometry item holds its kind
+word (2 vertical, 3 horizontal) in bits 436-439. The bands below the view
+come first. Each band adds one value to five graph keys (0x0C01BA06 3.0,
+0x0C01BA05 10.0 or -1.0 for horizontal geometry, 0x0B01BA07 0,
+0x1901BA0A 0x1001BA09, 0x0C01BA04 5.0), one hard null reference at the
+head of the view's references and `(style, soft 0, alignment, profile 1,
+profile 2)` after the profiles' triples.
+
+Each band has a label group (`AECC_PROFILEDATABAND_LABELGROUP`,
+`..._VERTICALGEOMETRYBAND_...`, `..._HORIZONTALGEOMETRYBAND_...`) in model
+space: the profile label groups' header, `BL n` labels (key block, a
+44-bit run of the label's kind, a key list, `BL 0`, `BL 0`), then a tail
+holding the band's number (`BL`, 1-based over all bands); references
+soft 0, soft 0, the view (soft), hard 0 and the view (hard) per label;
+texts the class text and three empty texts. Every label stores the band
+number (key 0x01015013). A profile data band labels the view's stations
+every 25 (0x0200D020 station, 0x0200D61F major interval 100, minor ones
+0x0200D620 25; the first and last stations 0x0300D622/0x0300D623 when
+labelled) and the alignment's start, end and each arc's start, middle and
+end (0x0100D068 point code 0x0200D004, 0x0200D005, 0x0400D053, 0x0400D08E,
+0x0400D054; 0x0100D61E 1, 2, 3; 0x0200D61D fraction along the element);
+a point takes the place of a station label at its station. A vertical
+geometry band labels the profile's entities in identifier order
+(0x01017807 + index = index, 0x0100FC31 entity id). Horizontal geometry
+labels (per alignment element, 14 keys) are not written: the group is
+written empty and the application fills it as soon as the view or one of
+its bands changes (it rebuilds every band label group then; an empty
+group stays empty through open and regeneration).
+
+The default band styles of a new drawing (style tree keys 0x42, 0x43,
+0x44, each with its default style, 6 records) refer to label styles of 17
+collections under the label node (0x1001B200-0x1001B802, 99 records);
+both are written from the application's records (PB00) when the drawing
+has no profile data band styles. The automatic station range of a view
+is rounded out to 100 (an alignment ending at 211.12 gives a view to 500).
+
+Checks: E-BD13 (OP00 with a view and four bands: profile data, vertical
+and horizontal geometry below, profile data above) equals the
+application's PB04 view record bit for bit and its profile data and
+vertical geometry labels value for value; it opens with AUDIT 0, the API
+lists three bands below and one above with the alignment and profile, and
+after a band change the application's rebuilt profile data and vertical
+geometry groups equal the written ones. E-BD14 (a new drawing: alignment
+with an arc, profile, view with the same four bands, band styles from
+the templates) the same.
+
 ## 3i. Corridors
 
 `add_corridor_with(doc, &CorridorDefinition, layer)` writes a corridor
@@ -2835,7 +2887,8 @@ Corridors are listed in §3i-a.
 | profile views | styles that copy the default with another vertical exaggeration, views with them | yes (frame, style exaggeration) | yes | §3h |
 | profile views | stacked views (separate views at stacked origins) | yes | yes | §3h |
 | profile views | every style setting the API exposes (graph title, direction, exaggeration, grid, the four axes' titles and ticks, text styles) | yes | yes | §3h |
-| profile views | bands other than the defaults | partly | no | the graph settings between the named values are constant runs; band items and their label groups are not written (hand-off notes) |
+| profile views | profile data, vertical and horizontal geometry bands below the view and profile data bands above it, with their gaps, end station labels, profiles and label groups; the default band styles of a new drawing | yes | yes (horizontal geometry labels left to the application) | §3h (Bands) |
+| profile views | other band kinds (superelevation, sectional data, pipe network, ...), geometry bands above the view, band styles other than the defaults, weeding and intervals | partly | no | not sampled; the API ignores the interval setters |
 | sites | name, description, members | yes | yes | §3g |
 | parcels | closed and open, crossing and touching lot lines, arcs, labels | yes | yes | §3g |
 | parcels | members added to containers the application wrote with crossings (its point marks and edge flags kept) | yes | yes | §3g |
