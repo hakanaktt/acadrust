@@ -25,6 +25,8 @@ pub(super) enum Target {
     /// The style `id` of the style tree's collection `key` (written
     /// before this table).
     Style(i32, i32),
+    /// The label style `id` of the label node's collection `key`.
+    Label(u32, u32),
 }
 
 /// A piece of a template's fields after the version word.
@@ -80,6 +82,12 @@ pub(super) fn write_templates(doc: &mut CadDocument, styles: Handle, templates: 
                 let collection = tree.children.iter().find(|c| c.0 == key)?.1;
                 read_node(doc, Handle::new(collection))?.children.iter().find(|c| c.0 == id)?.1
             }
+            Target::Label(key, id) => {
+                let tree = read_node(doc, root_node(doc, super::tree::KEY_STYLES)?)?;
+                let labels = tree.children.iter().find(|c| c.0 == super::labels::KEY_LABELS)?.1;
+                let collection = read_node(doc, Handle::new(labels))?.children.iter().find(|c| c.0 as u32 == key)?.1;
+                read_node(doc, Handle::new(collection))?.children.iter().find(|c| c.0 as u32 == id)?.1
+            }
             _ => 0,
         })
     };
@@ -87,7 +95,7 @@ pub(super) fn write_templates(doc: &mut CadDocument, styles: Handle, templates: 
         table(doc, t).ok_or_else(|| invalid("drawing lacks layer 0, the ByBlock linetype or the Standard text style"))?;
     }
     for t in templates.iter().flat_map(|t| t.refs.iter().map(|r| r.1)) {
-        if matches!(t, Target::Style(..)) && table(doc, t).is_none() {
+        if matches!(t, Target::Style(..) | Target::Label(..)) && table(doc, t).is_none() {
             return Err(invalid("a style these styles refer to is missing"));
         }
     }
