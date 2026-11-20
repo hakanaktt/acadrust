@@ -70,6 +70,17 @@ pub(super) fn run(w: &mut DwgMergedWriter, len: usize, hex: &str) {
 
 /// Writes `templates` under the style tree `styles` and returns their
 /// handles; the caller lists the top-level ones in the style tree.
+///
+/// Every table's first template is its family's collection root, and it
+/// carries the same DXF class as the styles it owns. A class-instance
+/// census of an `AECC_*_STYLE` family therefore counts one record more
+/// than the family has styles, while Civil 3D's own style collections
+/// enumerate only a root's children and so report the style count
+/// without the root. `DE_Busbucht_2023.dwg` (Civil 3D 2027) shows both
+/// sides of that: its alignment family holds 18 `AeccDbAlignmentStyle`
+/// records — the collection root `0x1D3` owned by the `AeccDbTreeNode`
+/// `0xF3`, plus the 17 named styles the root owns — while the .NET
+/// `Styles.AlignmentStyles` collection reports 17.
 pub(super) fn write_templates(doc: &mut CadDocument, styles: Handle, templates: &[Template]) -> Result<Vec<Handle>, DxfError> {
     let table = |doc: &CadDocument, t: Target| -> Option<u64> {
         Some(match t {
