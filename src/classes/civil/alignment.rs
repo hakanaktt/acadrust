@@ -4085,6 +4085,29 @@ fn reverse_from_circle(
         .map(|(_, from, q, end)| (from, q, end))
 }
 
+/// A superelevation diagram view (`AECC_SUPERELEVATION_DIAGRAM_VIEW`) of
+/// an alignment: its name and the alignment whose superelevation it shows.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SuperelevationView {
+    /// The view's name (`Superelevation View - (1)`, ...).
+    pub name: String,
+    /// The alignment the view shows.
+    pub alignment: u64,
+}
+
+/// A superelevation diagram view's record: its name in the text stream
+/// (third string), then its alignment among its references (a hard
+/// pointer after the record's owner).
+pub(super) fn superelevation_view(strings: &[String], refs: &[(u64, u8)]) -> Option<SuperelevationView> {
+    let alignment = match refs {
+        [(.., 4), (alignment, 5), ..] => *alignment,
+        _ => return None,
+    };
+    (alignment != 0).then_some(())?;
+    Some(SuperelevationView { name: strings.get(2)?.clone(), alignment })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

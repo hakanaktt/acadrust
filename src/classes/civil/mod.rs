@@ -31,8 +31,7 @@ mod view_frames;
 
 pub use alignment::{
     display_station, AlignmentAnchor, AlignmentCriteria, AlignmentElement, AlignmentType, OffsetParameters, OffsetRegion, WideningTransition, AlignmentElementKind, AlignmentPiece, DesignSpeed, GeometryPoint, SpiralShape,
-    StationEquation, CriticalStationData, SuperelevationCurveData,
-};
+    StationEquation, CriticalStationData, SuperelevationCurveData, SuperelevationView};
 pub use cogo::CogoPoint;
 pub use create::{add_tin_surface_with, add_assembly, add_pkt_subassembly, add_pkt_subassembly_on, PktSource, add_alignment, add_alignment_with_curves, add_offset_alignment, add_offset_alignment_with_widenings, Widening, add_alignment_of_kind, add_design_speeds, add_station_equations, add_superelevation, CriticalStation, CriticalStationKind, SuperelevationCurve, AlignmentKind, VertexCurve, add_corridor, add_corridor_with, add_cogo_point, add_intersection, add_point_group, add_point_group_query, add_profile, add_profile_entities, add_profile_with_curves, add_surface_profile, ProfileEntity, VerticalCurve, add_profile_view, add_profile_view_with_bands, add_profile_view_with_range, BandKind, ProfileViewBand, add_sample_line, add_sample_line_through, add_sample_line_group, add_sections, add_section_view, add_site, add_alignment_on_site, add_feature_line, add_parcel, add_feature_line_vertices, FeatureLineVertex, add_tin_surface, cogo_points, ensure_civil, remove_cogo_point, set_cogo_point, set_cogo_point_name, set_point_group, set_point_group_query, Comparison, PointQuery, add_lot_line, add_pipe, add_pipe_network, add_pipe_of_family, add_structure, add_structure_of_family, connect_pipe, network_part_families, add_pressure_appurtenance, add_pressure_arc_pipe, add_pressure_cross, add_pressure_fitting, add_pressure_network, add_pressure_part, add_pressure_pipe, add_pressure_pipe_of_size, add_pressure_tee, connect_pressure_parts, pressure_part_descriptions, add_profile_view_style, add_profile_view_with_style, add_offset_profile, add_section_view_group, add_profile_view_style_with, set_feature_line_vertices, set_cogo_point_label_style, add_label_style, add_point_label_style, label_style, LabelStyle, add_intersection_with, IntersectionOffsets, add_curb_return};
 pub use corridor::{CorridorBaseline, CorridorBoundary, CorridorDefinition, CorridorRegion, CorridorSurfaceDefinition, CurveStations, RegionFrequency, RegionTarget, TargetCurveStations, TargetKind};
@@ -1074,8 +1073,16 @@ impl ArchEntityData {
         survey::network_name(&self.decode().strings)
     }
 
-    /// Number fields of the part data a Civil 3D pipe (`AECC_PIPE`) keeps
-    /// itself: flow coefficients, minimum curve radius and the like.
+    /// A superelevation diagram view (`AECC_SUPERELEVATION_DIAGRAM_VIEW`)
+    /// of an alignment: its name and the alignment it shows.
+    pub fn superelevation_view(&self) -> Option<alignment::SuperelevationView> {
+        if self.dxf_name != "AECC_SUPERELEVATION_DIAGRAM_VIEW" {
+            return None;
+        }
+        let strings = self.decode().strings;
+        alignment::superelevation_view(&strings, &self.typed_handles())
+    }
+
     /// Station of a Civil 3D sample line (`AECC_SAMPLE_LINE`).
     pub fn sample_line_station(&self) -> Option<f64> {
         if self.dxf_name != "AECC_SAMPLE_LINE" {
@@ -1104,6 +1111,9 @@ impl ArchEntityData {
         let strings = self.decode().strings;
         view_frames::match_line(&strings, &self.typed_handles())
     }
+
+    /// Number fields of the part data a Civil 3D pipe (`AECC_PIPE`) keeps
+    /// itself: flow coefficients, minimum curve radius and the like.
     pub fn pipe_part_fields(&self) -> Vec<PartField> {
         if self.dxf_name != "AECC_PIPE" {
             return Vec::new();
