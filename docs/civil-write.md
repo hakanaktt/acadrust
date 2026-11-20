@@ -1717,9 +1717,8 @@ below the insertion point in each block.
 that uses the drawing's pressure part list bound to the default catalog
 (`611746E2-B19E-4F8E-ACF7-F12491879819`), and parts of that catalog named
 by their part description (`pressure_part_descriptions`): the twelve
-ductile iron pipes (4 to 36 inch), the seven gate valves (6 to 30 inch),
-4 inch 11.25°, 22.5° and 45° elbows, 4 x 4, 6 x 4 and 6 x 6 inch tees and
-a 14 x 6 inch cross (`add_pressure_pipe`, `add_pressure_arc_pipe`,
+ductile iron pipes (4 to 36 inch), and every elbow (48), tee (71), cross
+(56) and gate valve (7) size of the default part catalog (`add_pressure_pipe`, `add_pressure_arc_pipe`,
 `add_pressure_fitting`, `add_pressure_tee`, `add_pressure_cross` and
 `add_pressure_appurtenance` place the 4 inch pipe, elbow and tee, the
 cross and the 6 inch valve). A drawing without pressure part lists gets
@@ -1817,9 +1816,36 @@ valves). Measured:
 | WT01 with a tee whose run meets a pipe and whose branch meets a pipe that meets a valve, two pipes connected end to start, an elbow between two pipes, two curved pipes (bulge -0.4 flat, 0.3 falling 2) and a cross (E-P30); the same in a new drawing (E-P31) | AUDIT 0; every connection listed by the API on both sides with the written port indices (pipe start/end parts, fitting and valve connections), the curved pipes' bulges and extents as the application's (P08) |
 | every size of `pressure_part_descriptions` at P09's places, in WT01 (E-P32) and in a new drawing (E-P33) | AUDIT 0; the 26 parts listed with their descriptions, ends and positions as P09's, the records equal P09's but for the session counter; extents as P09's (where the application's 12, 16 and 20 inch valves reach to +1 in plan, the written box is symmetric) |
 
-Not written: the other elbow, tee and cross sizes of the catalog (48, 71
-and 56 sizes; each needs its sample record), other part kinds (reducers,
-caps, plugs, other valves of other catalogs), the catalog's body solids.
+Sizes (sample P10: every elbow, tee and cross size of WT01's part list
+placed by the API, P09 the valves). Within a kind (elbows, tees, crosses,
+valves) every size shares the record's head and end and the definition's
+record but for a few bits; what is the size's own is written from a
+table of numbers and texts:
+
+- the definition's six texts (size, standard, description, size id,
+  family, family id) at fixed places in its text list (elbows 29, 76, 89,
+  103, 110, 117; the others 23, 70, 83, 97, 104, 111) and its own bits in
+  one or two windows of the record (elbows 196-212 and 655-680, the others
+  515-540);
+- the definition's key: a prefix of the size (angle or none, kind, a
+  digit, size, a digit, pressure class), then the standard, the number of
+  ports, the description, size id, family and family id and the catalog's
+  id, each with spaces, dashes and slashes as underscores, and the kind's
+  domain (`Fitting_DomainElbow`, `Fitting_DomainTee`,
+  `Fitting_DomainCross`, `Appurtenance_DomainValve`);
+- the ports (offset, direction, engagement length, outside and nominal
+  diameter, wall thickness, deflection), the reference point, the body's
+  extents and the plan symbol (an arc for elbows, lines for the others).
+
+Written with the table, the 182 records and definitions equal P10's and
+P09's but for the session counter.
+
+| written | result |
+|---|---|
+| WT01 with every fitting and valve size at P10's and P09's places (E-P40); the same in a new drawing (E-P41) | AUDIT 0; the 182 parts listed with their descriptions, positions and extents as the application's own (to the last bit but two rounding) |
+
+Not written: other part kinds of other catalogs (reducers, caps, plugs,
+other valves), the catalog's body solids.
 
 ## 4. Reference check
 
@@ -1997,7 +2023,7 @@ taken from the records and checked bit for bit against them.
 | section views of a line (default style, unsampled section) | yes (frame) | yes, with the drawing's section view style or the default one (§3j, §2c) | yes (§3j, §2c) | not needed | sampled sections, several sections |
 | intersections of two crossing roads (the object only) | yes (stations, angles) | yes, with the drawing's intersection style or the default one (§3k, §2c) | yes (§3k, §2c) | not needed | offset alignments, curb returns, corridor regions and locking actions; tee junctions |
 | gravity pipe networks: every structure and pipe family of the default parts list (its one size each), connections | partly (part positions, pipe ends, connector counts, sizes of older part definitions) | yes (a new drawing gets the default parts list and styles, §3m) | yes (§3m) | not needed (the application recomputes outlines, lengths and extents) | sizes the default parts list does not hold, the catalog's body solids |
-| pressure networks: all pipe and gate valve sizes of the default catalog (straight and curved pipes), three elbow, three tee and one cross size, connections | yes (ports: positions, directions, joint sizes, connections; pipe ends and bulge, part positions and rotations) | yes (a new drawing gets the default pressure part list and styles, §3n) | yes (§3n) | not needed | other fitting sizes and kinds, the catalog's body solids |
+| pressure networks: every pipe, elbow, tee, cross and gate valve size of the default catalog (straight and curved pipes), connections | yes (ports: positions, directions, joint sizes, connections; pipe ends and bulge, part positions and rotations) | yes (a new drawing gets the default pressure part list and styles, §3n) | yes (§3n) | not needed | part kinds of other catalogs, the catalog's body solids |
 | gradings, mass haul | partly (grading criteria, mass haul line and view frame) | no | — | — | no controlled samples (§6a) |
 
 ### 6a. Gradings and mass haul

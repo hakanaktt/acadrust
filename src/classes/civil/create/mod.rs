@@ -18,6 +18,7 @@ mod network_families;
 mod points;
 mod pressure;
 mod pressure_content;
+mod pressure_fittings;
 mod pressure_sizes;
 mod profile;
 mod profile_view;
