@@ -6414,6 +6414,11 @@ impl CadDocument {
                                     {
                                         reference.subentity_object = *new_handle;
                                     }
+                                    if let Some(new_handle) =
+                                        remap_map.get(&reference.reserved_reference.value())
+                                    {
+                                        reference.reserved_reference = *new_handle;
+                                    }
                                 }
                             }
                             DataObjectData::IdBuffer(value) => {
