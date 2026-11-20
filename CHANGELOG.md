@@ -2,6 +2,12 @@
 
 ### Unreleased
 
+- **TABLE break-data presence flag** - The R2010+ TABLE reader gated the
+  break block on a bit-long equal to `1`; the flag marks presence, so any
+  non-zero value (AutoCAD stores `3` in the sibling `has_linked_data`
+  slot) now reads the block instead of skipping it and desyncing the rest
+  of the record.
+
 - **AutoCAD 2010 view-rep standard** - `ACDBVIEWREPSTANDARD` stores five
   values before R2013 and six from R2013; the DWG reader and writer now
   use the count the drawing's version stores.

@@ -4185,7 +4185,11 @@ pub fn read_table(
         unknown_short = reader.read_bit_short();
         horizontal_direction = reader.read_3bit_double();
 
-        if reader.read_bit_long() == 1 {
+        // Presence flag: AutoCAD stores non-0/1 values in the
+        // AcDb*TableData flag slots (the cell has_linked_data gate reads
+        // `& 1` because files carry 3), so any nonzero means the block
+        // follows — like every sibling check here.
+        if reader.read_bit_long() != 0 {
             break_options = reader.read_bit_long();
             break_flow_direction = reader.read_bit_long();
             break_spacing = reader.read_bit_double();
