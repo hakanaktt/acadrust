@@ -1675,6 +1675,117 @@ point; the writer adds the same block when it writes the definition, and
 the application takes the structure's extents from it (`(-0.5, -0.5, -1)`
 to `(0.5, 0.5, 0)` about the insertion point, as its own structures').
 
+## 3n. Pressure pipe networks
+
+`add_pressure_network`, `add_pressure_pipe_of_size` (straight or curved),
+`add_pressure_part` and `connect_pressure_parts` write a pressure network
+that uses the drawing's pressure part list bound to the default catalog
+(`611746E2-B19E-4F8E-ACF7-F12491879819`), and parts of that catalog named
+by their part description (`pressure_part_descriptions`): the twelve
+ductile iron pipes (4 to 36 inch), the seven gate valves (6 to 30 inch),
+4 inch 11.25°, 22.5° and 45° elbows, 4 x 4, 6 x 4 and 6 x 6 inch tees and
+a 14 x 6 inch cross (`add_pressure_pipe`, `add_pressure_arc_pipe`,
+`add_pressure_fitting`, `add_pressure_tee`, `add_pressure_cross` and
+`add_pressure_appurtenance` place the 4 inch pipe, elbow and tee, the
+cross and the 6 inch valve). A drawing without pressure part lists gets
+the default one (listing the 4 inch pipe and elbow and the 6 inch valve)
+with the default pressure pipe, fitting and appurtenance styles (style
+tree keys 0x17E, 0x17F, 0x180; part lists 0x188), written from templates
+as in §2c. A part need not be in the part list: its definition carries
+the catalog data (E-P31's tee and cross are listed with their sizes).
+
+Samples (the application's own, over WT01): P00 empty network, P01 + a
+pipe, P02 + a second pipe, P03 + an elbow, P04 + a gate valve, P05 + a
+second elbow, valve and pipe elsewhere, P06 + an elbow and a valve turned
+by 0.5 rad, P07 parts connected through the API (pipe to elbow, pipe to
+valve, pipe to pipe), P08 a curved pipe, a tee and a cross, P09 every pipe
+and valve size and the first elbow and tee sizes; PM01 is WT01 with every
+part but the 4 inch pipe, elbow and 6 inch valve removed from its part
+list.
+
+| step | records the application adds |
+|---|---|
+| network | `AECC_PRESSUREPIPES_NETWORK` |
+| first pipe | its part definition (`AECC_NETWORK_PART_DEF` in `AECC_NETWORK_PART_DEFS`, keyed by the size's catalog data), the name templates root and the pipes' node (0x17B) |
+| first fitting | its definition, which refers to two blocks named after the part family: the 3D body (`<family>`, a solid) and the plan symbol (`<family>_3`, an arc); the fittings' name template node (0x17C) |
+| first appurtenance | as a fitting (its symbol is a line); node 0x17D |
+
+```text
+network:   NETWORK_EMPTY or NETWORK_WITH_PARTS, BL pipes, BL fittings,
+           BL appurtenances, NETWORK_END
+           references: 6 x hard 0, soft 0, hard owner 0, pipes,
+             fittings, appurtenances, part list (soft)
+           texts: "AeccImpPressurePipeNetwork", "", name, ..., name
+             templates of appurtenances, fittings, pipes, pipe runs
+pipe:      PIPE_HEAD (class header, keys, 3 bits, 16 zero bytes), PIPE_PRE
+           (identity frame, BL 2 ports), port 1 (its start), port 2 (its
+           end), 18 bits, 3BD start, 3BD end, BD bulge, BS 0x101
+           (straight) or 0x102 (curved), 30 bits, BD start elevation, BD
+           plan chord, BD end elevation, PIPE_END
+fitting,
+appurtenance: HEAD (16 zero bytes), 3BD insertion point, 3 x 3BD axes,
+           BL ports, 2 bits, the ports (2 for elbows and valves, 3 for
+           tees, 4 for crosses), 3BD reference point, the 3 axes again,
+           END
+port:      3BD position, 3BD direction away from the part, BD engagement
+           length, BL connected port (-1 open), BD outside diameter, BD
+           nominal diameter, BD wall thickness, BD deflection, BD, 8 bits
+           (a part's last port: 2 bits)
+references (all parts): network, hard 0, hard 0, part list, soft 0,
+           hard owner 0, part definition, style, per port the part it
+           connects to (soft, 0 when open), soft 0
+```
+
+A connection is recorded on both sides: each port holds the index of the
+port it meets and the part it meets is its reference (`8 + port`). The
+application moves and turns the parts so the ports meet when it connects
+them (P07: the pipe's end trimmed to the elbow's port, the elbow turned
+along the pipe); `connect_pressure_parts` connects ports that are at the
+same place already and changes nothing else (the record is the
+application's but for the connected index, 32 bits shorter than -1).
+A curved pipe's port directions are its tangents (P08: bulge -0.4 from
+(0, 0) to (100, 0), start direction (-0.7241, -0.6897)); its plan length
+field is the chord.
+
+A port's position is the insertion point plus the size's offset turned
+by the rotation, its direction the size's direction turned (P06 equals
+the formula to the last bit). The reference point is a point of the size
+(the elbow's (0, -0.434, 0), the valve's (0, 0, -0.635)) turned and moved
+the same way; the body and symbol blocks are drawn there. The
+application keeps a part's extents while its reference point is where
+it was (a record moved without it keeps its old extents; moved with it,
+the extents follow).
+
+The part's style is the style the part list gives parts of its kind
+(the list refers to one style per part). The pipe and part records of
+the samples hold a key whose value counts the session's new objects;
+the writer keeps the sample's value (the application accepts it in every
+part). Unlike gravity parts, pressure parts keep no identifier.
+
+The application's body blocks hold the catalog's solids (13 to 44 KB of
+binary solid data per size: an elbow is a swept bend with its sockets, a
+valve a body with bonnet and wheel); the catalog itself stores sizes as
+parameters of a generator the application runs, and the drawing keeps
+only the generated solid, so the writer cannot rebuild it from the
+dimensions it has. It writes a box of the size's extents (as the
+application reports them, about the reference point) and the
+application's plan symbols (arcs for elbows, lines for tees, crosses and
+valves). Measured:
+
+| written | result |
+|---|---|
+| P00 + two pipes, two elbows and two valves at P05's places (E-P10) | AUDIT 0; the parts listed with P05's names, ends, positions and extents |
+| P00 + a pipe, an elbow and a valve turned by 0.5 rad (E-P12, as P06) | AUDIT 0; positions and extents equal P06's |
+| the same without body blocks (definitions refer to none, E-P11) | AUDIT 0; the parts take extents of ±3 about the position |
+| a new drawing: default part list and styles, two pipes, a turned elbow and a valve (E-P20) | AUDIT 0; listed with the default part list |
+| WT01 with a network, a pipe, an elbow and a valve (E-P21) | AUDIT 0 |
+| WT01 with a tee whose run meets a pipe and whose branch meets a pipe that meets a valve, two pipes connected end to start, an elbow between two pipes, two curved pipes (bulge -0.4 flat, 0.3 falling 2) and a cross (E-P30); the same in a new drawing (E-P31) | AUDIT 0; every connection listed by the API on both sides with the written port indices (pipe start/end parts, fitting and valve connections), the curved pipes' bulges and extents as the application's (P08) |
+| every size of `pressure_part_descriptions` at P09's places, in WT01 (E-P32) and in a new drawing (E-P33) | AUDIT 0; the 26 parts listed with their descriptions, ends and positions as P09's, the records equal P09's but for the session counter; extents as P09's (where the application's 12, 16 and 20 inch valves reach to +1 in plan, the written box is symmetric) |
+
+Not written: the other elbow, tee and cross sizes of the catalog (48, 71
+and 56 sizes; each needs its sample record), other part kinds (reducers,
+caps, plugs, other valves of other catalogs), the catalog's body solids.
+
 ## 4. Reference check
 
 For every written drawing the check opens it in its own reference instance
@@ -1851,4 +1962,5 @@ taken from the records and checked bit for bit against them.
 | section views of a line (default style, unsampled section) | yes (frame) | yes, with the drawing's section view style or the default one (§3j, §2c) | yes (§3j, §2c) | not needed | sampled sections, several sections |
 | intersections of two crossing roads (the object only) | yes (stations, angles) | yes, with the drawing's intersection style or the default one (§3k, §2c) | yes (§3k, §2c) | not needed | offset alignments, curb returns, corridor regions and locking actions; tee junctions |
 | gravity pipe networks: null structures (with their body block) and 12 inch pipes, connections | partly (part positions, pipe ends, connector counts, sizes of older part definitions) | yes (a new drawing gets the default parts list and styles, §3m) | yes (§3m) | not needed (the application recomputes outlines, lengths and extents) | other families and sizes |
-| pressure networks, gradings, mass haul | partly | no | — | — | not started |
+| pressure networks: all pipe and gate valve sizes of the default catalog (straight and curved pipes), three elbow, three tee and one cross size, connections | yes (ports: positions, directions, joint sizes, connections; pipe ends and bulge, part positions and rotations) | yes (a new drawing gets the default pressure part list and styles, §3n) | yes (§3n) | not needed | other fitting sizes and kinds, the catalog's body solids |
+| gradings, mass haul | partly (grading criteria, mass haul line and view frame) | no | — | — | no controlled samples: the application's programming interfaces create neither, and its grading group command ends the application when run from a script |
