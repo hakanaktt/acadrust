@@ -18,6 +18,7 @@
 //!              the tangent before)
 //!          34: BD 0, 2RD end, BL 1, BD grade % there
 //! circular 0 / 9: BD length / radius     7: 2RD through point
+//!         11: 3 × 2RD (start, on it, end)
 //! asymmetric 10: BD length before, BD length after the PVI
 //! ```
 //!
@@ -40,6 +41,8 @@ enum CurveDef {
     CircularLength(f64),
     CircularRadius(f64),
     CircularThrough(Vector2),
+    /// Start, on it, end: the circle through three points.
+    CircularThreePoints([Vector2; 3]),
     Asymmetric(f64, f64),
     ParabolaThreePoints([Vector2; 3]),
     /// Start, end, sag, `a` of the parabola.
@@ -187,6 +190,11 @@ fn record_at(data: &[u8], pos: usize, end: usize) -> Option<Record> {
             Entity::Curve(if constraint == 0 { CurveDef::CircularLength(v) } else { CurveDef::CircularRadius(v) })
         }
         (4, 7) => Entity::Curve(CurveDef::CircularThrough(point(&mut bits)?)),
+        (4, 11) => Entity::Curve(CurveDef::CircularThreePoints([
+            point(&mut bits)?,
+            point(&mut bits)?,
+            point(&mut bits)?,
+        ])),
         (8, 10) => Entity::Curve(CurveDef::Asymmetric(positive(bits.bit_double()?)?, positive(bits.bit_double()?)?)),
         _ => return None,
     };
@@ -337,6 +345,44 @@ fn placed_circle(pvi: Vector2, g1: f64, g2: f64, def: CurveDef) -> Option<(Vecto
         _ => return None,
     };
     (radius.is_finite() && radius > 0.0).then(|| (pvi + w * radius, radius))
+}
+
+/// The circular curve through three points of its arc, placed at the PVI
+/// of the grades it meets the tangents with.
+fn circle_on_three_points(p: [Vector2; 3]) -> Option<Placed> {
+    let [a, b, c] = p;
+    // The arc's center: the circumcenter of the three points.
+    let det = 2.0 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
+    let (aa, bb, cc) = (a.length_squared(), b.length_squared(), c.length_squared());
+    let center = Vector2::new(
+        (aa * (b.y - c.y) + bb * (c.y - a.y) + cc * (a.y - b.y)) / det,
+        (aa * (c.x - b.x) + bb * (a.x - c.x) + cc * (b.x - a.x)) / det,
+    );
+    let radius = a.distance(&center);
+    (det.abs() > 1e-12 && radius.is_finite() && radius > 1e-9).then_some(())?;
+    // The curve is the arc on the side away from the center (a sag's
+    // center is above it).
+    let s = if center.y > b.y { 1.0 } else { -1.0 };
+    let grade = |q: Vector2| -> Option<f64> {
+        let dx = q.x - center.x;
+        let h = (radius * radius - dx * dx).max(0.0).sqrt();
+        (h > 1e-9).then_some(s * dx / h)
+    };
+    let (g1, g2) = (grade(a)?, grade(c)?);
+    // The PVI where the end grades meet.
+    let dv = g1 - g2;
+    let x = if dv.abs() > 1e-12 {
+        (c.y - a.y + g1 * a.x - g2 * c.x) / dv
+    } else {
+        (a.x + c.x) / 2.0
+    };
+    x.is_finite().then_some(())?;
+    Some(Placed {
+        pvi: Vector2::new(x, a.y + g1 * (x - a.x)),
+        g1,
+        g2,
+        form: Form::Circle { center, radius },
+    })
 }
 
 /// A resolved profile entity's shape.
@@ -511,11 +557,13 @@ fn record_list_at(data: &[u8], pos: usize, end: usize) -> Option<Vec<Record>> {
 
 /// Where a profile's criteria bits and entity list sit: after the class
 /// keys (see [`super::alignment::read_keys`]), `BL, BD, BD, BD, 5 x BS`,
-/// 10 bits (criteria in the last three), then the entity list.
+/// 10 bits (criteria in the last three), then the entity list. Kind 0x102
+/// records carry three more `BL` fields (0 in the samples) and a second
+/// 10-bit run before the list.
 fn section(data: &[u8], start: usize, end: usize) -> Option<(usize, usize)> {
     let mut bits = Bits::new(data, start, end);
     super::alignment::read_keys(&mut bits)?;
-    bits.bit_long()?;
+    let kind = bits.bit_long()?;
     for _ in 0..3 {
         bits.bit_double()?;
     }
@@ -524,6 +572,12 @@ fn section(data: &[u8], start: usize, end: usize) -> Option<(usize, usize)> {
     }
     let criteria_at = bits.pos;
     bits.pos += 10;
+    if kind == 0x102 {
+        for _ in 0..3 {
+            bits.bit_long()?;
+        }
+        bits.pos += 10;
+    }
     (bits.pos < end).then_some((criteria_at, bits.pos))
 }
 
@@ -607,6 +661,10 @@ fn solve(owned: &[Record]) -> Option<Vec<Segment>> {
             Entity::Dependent(through) => to[i] = through,
             Entity::Curve(CurveDef::ParabolaThreePoints(p)) => {
                 shape[i] = Some(parabola_through(p)?);
+                (from[i], to[i]) = (Some(p[0]), Some(p[2]));
+            }
+            Entity::Curve(CurveDef::CircularThreePoints(p)) => {
+                shape[i] = Some(Shape::Placed(circle_on_three_points(p)?));
                 (from[i], to[i]) = (Some(p[0]), Some(p[2]));
             }
             Entity::Curve(CurveDef::ParabolaTwoPoints(p, q, a)) => {
@@ -1056,4 +1114,173 @@ pub(super) fn curve_minimum_k(data: &[u8], start: usize, end: usize) -> Vec<Curv
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A bit writer matching the reads of [`Bits`].
+    struct W {
+        bits: Vec<bool>,
+    }
+
+    impl W {
+        fn new() -> Self {
+            Self { bits: Vec::new() }
+        }
+        fn raw(&mut self, count: usize, value: u64) -> &mut Self {
+            for i in (0..count).rev() {
+                self.bits.push((value >> i) & 1 == 1);
+            }
+            self
+        }
+        /// BL.
+        fn bl(&mut self, value: i32) -> &mut Self {
+            match value {
+                0 => self.raw(2, 0b10),
+                -1..=255 => self.raw(2, 0b01).raw(8, value as u64),
+                other => {
+                    let le = u32::from_be_bytes(other.to_le_bytes());
+                    self.raw(2, 0b00).raw(32, le as u64)
+                }
+            }
+        }
+        /// BD.
+        fn bd(&mut self, value: f64) -> &mut Self {
+            match value {
+                0.0 => self.raw(2, 0b10),
+                1.0 => self.raw(2, 0b01),
+                other => {
+                    for byte in other.to_le_bytes() {
+                        self.raw(8, byte as u64);
+                    }
+                    self
+                }
+            }
+        }
+        /// RD.
+        fn rd(&mut self, value: f64) -> &mut Self {
+            for byte in value.to_le_bytes() {
+                self.raw(8, byte as u64);
+            }
+            self
+        }
+        fn point(&mut self, x: f64, y: f64) -> &mut Self {
+            self.rd(x).rd(y)
+        }
+        /// The class head and keys prologue every design profile opens with.
+        fn keyed_head(&mut self) -> &mut Self {
+            for value in [80, 0, 80, 80, 0] {
+                self.bl(value);
+            }
+            self.bl(1); // schema word
+            self.raw(6, 0b010101); // KEYED
+            self.raw(8, 0); // no keys
+            self.bl(0); // keys close
+            self.raw(65, 0);
+            self.bd(0.0);
+            self.raw(7, 0)
+        }
+        /// One tangent record.
+        fn tangent(&mut self, id: i32, previous: i32, next: i32, a: (f64, f64), b: (f64, f64)) -> &mut Self {
+            self.raw(11, 2).raw(23, 0x08 << 13);
+            self.bl(0).bl(id).bl(previous).bl(next);
+            self.point(a.0, a.1).point(b.0, b.1);
+            self.raw(4, 0)
+        }
+        /// One circular curve record through three points (constraint 11).
+        fn circle(&mut self, id: i32, previous: i32, next: i32, p: [(f64, f64); 3]) -> &mut Self {
+            self.raw(11, 4).raw(23, 0x08 << 13);
+            self.bl(11).bl(id).bl(previous).bl(next);
+            for (x, y) in p {
+                self.point(x, y);
+            }
+            self
+        }
+        fn pack(self) -> (Vec<u8>, usize) {
+            let len = self.bits.len();
+            let mut data = Vec::with_capacity(len.div_ceil(8));
+            for chunk in self.bits.chunks(8) {
+                let mut byte = 0u8;
+                for (i, bit) in chunk.iter().enumerate() {
+                    byte |= (*bit as u8) << (7 - i);
+                }
+                data.push(byte);
+            }
+            (data, len)
+        }
+    }
+
+    /// Kind 0x102 sections carry three more `BL` fields and a second
+    /// 10-bit run before the entity list.
+    #[test]
+    fn reads_a_kind_0x102_section() {
+        let mut w = W::new();
+        w.keyed_head();
+        w.bl(0x102);
+        for _ in 0..3 {
+            w.bd(0.0);
+        }
+        for _ in 0..4 {
+            w.bl(0); // five BS 0 read as two bits each
+        }
+        w.raw(2, 0b11); // BS 256
+        w.raw(10, 0); // criteria
+        w.bl(0).bl(0).bl(0); // the extra fields
+        w.raw(10, 0); // second run
+        w.bl(1); // entity count
+        w.tangent(1, 0, 0, (0.0, 0.0), (10.0, 0.0));
+        let (data, len) = w.pack();
+        let (_, list) = section(&data, 0, len).unwrap();
+        let records = record_list_at(&data, list, len).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].code, (2, 0));
+    }
+
+    /// The 2027 generator's circular curves stand on three points.
+    #[test]
+    fn places_circles_through_three_points_and_joins_them() {
+        let mut w = W::new();
+        w.keyed_head();
+        w.bl(0);
+        for _ in 0..3 {
+            w.bd(0.0);
+        }
+        for _ in 0..5 {
+            w.bl(0);
+        }
+        w.raw(10, 0);
+        w.bl(4);
+        w.tangent(1, 0, 2, (0.0, 10.0), (100.0, 10.0));
+        w.circle(2, 1, 3, [(100.0, 10.0), (150.0, 0.0), (200.0, 10.0)]);
+        w.circle(3, 2, 4, [(200.0, 10.0), (250.0, 0.0), (300.0, 10.0)]);
+        w.tangent(4, 3, 0, (300.0, 10.0), (400.0, 10.0));
+        let (data, len) = w.pack();
+        let pvis = pvis(&data, 0, len);
+        assert_eq!(pvis.len(), 4);
+        // Each circle's PVI where the grades of the tangents beside it meet.
+        assert!((pvis[1].point.x - 150.0).abs() < 1e-9);
+        assert!((pvis[1].point.y + 130.0 / 12.0).abs() < 1e-9);
+        assert_eq!(pvis[1].curve_length, 100.0);
+        assert!((pvis[2].point.x - 250.0).abs() < 1e-9);
+        assert!((pvis[2].point.y + 130.0 / 12.0).abs() < 1e-9);
+        assert_eq!(pvis[2].curve_length, 100.0);
+        // Both circles sit on their three points.
+        let pieces = pieces(&data, 0, len);
+        assert_eq!(
+            pieces.iter().map(|(piece, _)| *piece).collect::<Vec<_>>(),
+            [ProfilePiece::Tangent, ProfilePiece::Circular, ProfilePiece::Circular, ProfilePiece::Tangent]
+        );
+        let on = |piece: &(ProfilePiece, Vec<Vector2>), x: f64, y: f64| {
+            piece.1.iter().any(|p| (p.x - x).abs() < 1e-9 && (p.y - y).abs() < 1e-9)
+        };
+        assert!(pieces[1].1.iter().all(|p| match p.x {
+            x if (x - 100.0).abs() < 1e-9 => (p.y - 10.0).abs() < 1e-9,
+            x if (x - 150.0).abs() < 1e-9 => p.y.abs() < 1e-9,
+            x if (x - 200.0).abs() < 1e-9 => (p.y - 10.0).abs() < 1e-9,
+            _ => true,
+        }));
+        assert!(on(&pieces[1], 150.0, 0.0) && on(&pieces[2], 250.0, 0.0));
+    }
 }
