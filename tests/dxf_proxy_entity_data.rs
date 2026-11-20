@@ -29,6 +29,9 @@ const PROXIES: &str = concat!(
     "0\nACAD_PROXY_ENTITY\n5\n401\n330\n70\n100\nAcDbEntity\n8\n0\n",
     "100\nAcDbProxyEntity\n90\n498\n91\n517\n71\n31\n97\n105\n70\n1\n",
     "100\nAcDbMyOther\n40\n3.25\n290\n1\n310\n0A0B0C0D\n1001\nMYAPP\n1000\nxdata value\n",
+    "0\nACAD_PROXY_ENTITY\n5\n402\n330\n70\n100\nAcDbEntity\n8\n0\n",
+    "100\nAcDbProxyEntity\n90\n498\n91\n516\n92\n4\n310\n01020304\n71\n31\n97\n105\n70\n1\n",
+    "100\nMcDbEntity2\n10\n1.5\n",
 );
 
 fn pairs(text: &str) -> Vec<(i32, String)> {
@@ -126,6 +129,15 @@ fn dxf_format_proxy_entities_round_trip_group_for_group() {
             "proxy {handle}"
         );
     }
+    // Proxy graphics stay, before `70 1`, so they are not read back as data.
+    let groups = proxy_groups(&written, "402");
+    let graphics = groups
+        .iter()
+        .position(|g| *g == (310, "01020304".into()))
+        .unwrap_or_else(|| panic!("graphics lost: {groups:?}"));
+    let flag = groups.iter().position(|g| *g == (70, "1".into())).expect("70 1");
+    assert!(graphics < flag, "{groups:?}");
+    assert_eq!(groups[flag + 1..], [(100, "McDbEntity2".into()), (10, "1.5".into())]);
 }
 
 #[test]
