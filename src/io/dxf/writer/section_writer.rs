@@ -2589,6 +2589,23 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             let preamble_graphics = common.graphic_data.take().unwrap_or_default();
             self.write_common_entity_data(&common, owner)?;
             self.writer.write_subclass("AcDbProxyEntity")?;
+            if data.from_dxf && !data.dxf_data.is_empty() {
+                // Original data format DXF: the header, then the entity's
+                // own DXF groups as read, with no binary size, data or 94
+                // terminator (AutoCAD's form; it refuses binary data after
+                // 70 1).
+                self.write_proxy_header_dxf(
+                    498,
+                    data.class_id,
+                    data.dwg_version,
+                    data.maintenance_version,
+                    true,
+                )?;
+                for (code, value) in &data.dxf_data {
+                    self.writer.write_string(*code, value)?;
+                }
+                return Ok(());
+            }
             let graphics = data.graphics.data();
             let graphics = if graphics.is_empty() {
                 preamble_graphics
@@ -4120,6 +4137,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 payload: Default::default(),
                 text_payload: Default::default(),
                 object_ids: Vec::new(),
+                dxf_data: Vec::new(),
             };
             if entity.raw_dwg_data.is_some() {
                 if let Err(error) = self.decode_unknown_proxy_data(entity, &mut data) {

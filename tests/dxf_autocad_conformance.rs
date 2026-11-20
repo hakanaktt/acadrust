@@ -166,6 +166,7 @@ fn proxy_entity_graphics_are_written_once_inside_the_proxy_subclass() {
             payload: ProxyPayload::from_bits(&[0x40], 2),
             text_payload: ProxyPayload::default(),
             object_ids: Vec::new(),
+            dxf_data: Vec::new(),
         }),
     };
     let handle = doc

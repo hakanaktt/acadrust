@@ -248,6 +248,11 @@ pub struct ProxyEntityData {
     #[cfg_attr(feature = "serde", serde(default))]
     pub text_payload: crate::objects::ProxyPayload,
     pub object_ids: Vec<crate::objects::ProxyObjectReference>,
+    /// The entity's own DXF groups, as a DXF file stores them after `70 1`
+    /// (original data format DXF): `100 McDbEntity2`, `10 ...`, ... up to
+    /// the next record. Written back as they are. Empty for binary data.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub dxf_data: Vec<(i32, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
