@@ -219,6 +219,16 @@ fn parts(pvis: &[Vector2], curves: &[VerticalCurve]) -> Vec<(i32, i32, i32, Part
     out
 }
 
+/// The source of a profile sampled from a surface: the surface, the
+/// offset from the alignment and the stations it samples between, and
+/// whether they are the alignment's own (`whole`).
+struct Sampled {
+    surface: u64,
+    offset: f64,
+    range: (f64, f64),
+    whole: bool,
+}
+
 /// The profile record.
 ///
 /// ```text
@@ -245,16 +255,6 @@ fn parts(pvis: &[Vector2], curves: &[VerticalCurve]) -> Vec<(i32, i32, i32, Part
 /// records equal the samples' bit for bit apart from the geometry stamp
 /// and the identifier.
 #[allow(clippy::too_many_arguments)]
-/// The source of a profile sampled from a surface: the surface, the
-/// offset from the alignment and the stations it samples between, and
-/// whether they are the alignment's own (`whole`).
-struct Sampled {
-    surface: u64,
-    offset: f64,
-    range: (f64, f64),
-    whole: bool,
-}
-
 fn write_profile(doc: &mut CadDocument, common: EntityCommon, name: &str, parts: &[(i32, i32, i32, Part)], helpers: &[Handle; 7], style: u64, alignment: Handle, id: &[u8; 16]) -> Result<Handle, DxfError> {
     write_profile_of(doc, common, name, parts, helpers, style, alignment, id, None)
 }
