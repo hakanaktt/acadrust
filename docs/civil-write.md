@@ -742,6 +742,29 @@ application's identifier the same records open (E-P9). A profile written
 without the alignment's anchor opens but is not listed under the
 alignment, and is left out when the drawing is saved (E-R1).
 
+### Profiles laid out entity by entity
+
+`add_profile_entities(doc, alignment, name, entities, layer)` writes a
+layout profile of `ProfileEntity` values in station order (ids in that
+order, each linked to its neighbours): fixed tangents and fixed or
+floating symmetric parabolas (WE01 to WE08):
+
+```text
+fixed by three points (6, 11):       BL 0, 3 x 2RD
+fixed by two points and a grade (6, 12): BL 0, 2 x 2RD, BL 0 start / 1 end,
+                                     BD grade (percent)
+fixed by two points and K (6, 13):   BL 0, 2 x 2RD, BL 0x1001 crest /
+                                     0x1000 sag, BL 0x2000, BD K
+floating, end and K (6, 32):         BL 0, 2RD end, crest flag, BL 0x2000,
+                                     BD K (hangs from the entity before)
+floating, end and grade (6, 34):     BL 0, 2RD end, BL 1, BD grade (percent)
+each then:                           BL 0, 3 bits 010, 3 x BD -1
+```
+
+The application's floating parabola by K holds an arbitrary word in place
+of the crest flag (WE07); the writer writes the flag. Written (E-PE1) they
+open, audit clean and list the samples' stations and elevations.
+
 ### Profiles from a surface
 
 `add_surface_profile(doc, alignment, surface, name, offset, range, layer)`
@@ -2341,7 +2364,8 @@ Corridors are listed in §3i-a.
 | alignments | superelevation | yes (critical stations, lanes-only blocks) | no | the superelevation block is read only |
 | profiles | layout: fixed tangents, free parabolas (symmetric, asymmetric), free circular curves | yes | yes | §3e |
 | profiles | layout: free curves by K, radius, horizontal length or through a point (parabolas and circular curves) | yes | yes | §3e |
-| profiles | layout: fixed and floating curves (by three points, two points and a grade or K, floating through a point), floating and free tangents | yes | no | not written yet |
+| profiles | layout entity by entity: fixed tangents, fixed parabolas (three points, two points and a grade or K), floating parabolas (end and K or grade) | yes | yes | §3e (entity by entity) |
+| profiles | floating and free tangents, fixed and floating circular curves, asymmetric fixed curves | yes (tangents) | no | the floating and free tangent samples were refused by the programming interface (WE05, WE06) |
 | profiles | from a TIN surface (existing ground), at an offset, over the whole alignment or a station range | yes (definition) | yes | §3e (profiles from a surface) |
 | profiles | superimposed, offset profiles, profiles of corridor feature lines, static copies | partly | no | not sampled for writing |
 | profile views | automatic and user ranges, default style, profile label groups | yes (frame) | yes | §3h |
