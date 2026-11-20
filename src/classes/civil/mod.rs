@@ -31,14 +31,14 @@ pub use alignment::{
     StationEquation,
 };
 pub use cogo::CogoPoint;
-pub use create::{add_tin_surface_with, add_assembly, add_pkt_subassembly, add_pkt_subassembly_on, PktSource, add_alignment, add_alignment_with_curves, add_offset_alignment, add_offset_alignment_with_widenings, Widening, add_alignment_of_kind, AlignmentKind, VertexCurve, add_corridor, add_corridor_with, add_cogo_point, add_intersection, add_point_group, add_point_group_query, add_profile, add_profile_entities, add_profile_with_curves, add_surface_profile, ProfileEntity, VerticalCurve, add_profile_view, add_profile_view_with_range, add_sample_line, add_sample_line_through, add_sample_line_group, add_sections, add_section_view, add_site, add_alignment_on_site, add_feature_line, add_parcel, add_feature_line_vertices, FeatureLineVertex, add_tin_surface, cogo_points, ensure_civil, remove_cogo_point, set_cogo_point, set_cogo_point_name, set_point_group, set_point_group_query, Comparison, PointQuery, add_lot_line, add_pipe, add_pipe_network, add_pipe_of_family, add_structure, add_structure_of_family, connect_pipe, network_part_families, add_pressure_appurtenance, add_pressure_arc_pipe, add_pressure_cross, add_pressure_fitting, add_pressure_network, add_pressure_part, add_pressure_pipe, add_pressure_pipe_of_size, add_pressure_tee, connect_pressure_parts, pressure_part_descriptions};
+pub use create::{add_tin_surface_with, add_assembly, add_pkt_subassembly, add_pkt_subassembly_on, PktSource, add_alignment, add_alignment_with_curves, add_offset_alignment, add_offset_alignment_with_widenings, Widening, add_alignment_of_kind, AlignmentKind, VertexCurve, add_corridor, add_corridor_with, add_cogo_point, add_intersection, add_point_group, add_point_group_query, add_offset_profile, add_profile, add_profile_entities, add_profile_with_curves, add_surface_profile, ProfileEntity, VerticalCurve, add_profile_view, add_profile_view_with_range, add_sample_line, add_sample_line_through, add_sample_line_group, add_sections, add_section_view, add_site, add_alignment_on_site, add_feature_line, add_parcel, add_feature_line_vertices, FeatureLineVertex, add_tin_surface, cogo_points, ensure_civil, remove_cogo_point, set_cogo_point, set_cogo_point_name, set_point_group, set_point_group_query, Comparison, PointQuery, add_lot_line, add_pipe, add_pipe_network, add_pipe_of_family, add_structure, add_structure_of_family, connect_pipe, network_part_families, add_pressure_appurtenance, add_pressure_arc_pipe, add_pressure_cross, add_pressure_fitting, add_pressure_network, add_pressure_part, add_pressure_pipe, add_pressure_pipe_of_size, add_pressure_tee, connect_pressure_parts, pressure_part_descriptions};
 pub use corridor::{CorridorBaseline, CorridorBoundary, CorridorDefinition, CorridorRegion, CorridorSurfaceDefinition, CurveStations, RegionFrequency, RegionTarget, TargetCurveStations, TargetKind};
 pub use grading::{CriteriaValue, GradingCriteria};
 pub use intersection::IntersectionLayout;
 pub use labels::{parse_format, property, LabelPart, LabelText};
 pub use network::{PartField, PressurePipe, PressurePort};
 pub use parameters::{Parameter, ParameterValue};
-pub use profile::{CurveMinimumK, ProfileCriteria, ProfileLocking, ProfilePiece, ProfileViewFrame, Pvi};
+pub use profile::{CurveMinimumK, OffsetProfile, ProfileCriteria, ProfileLocking, ProfilePiece, ProfileViewFrame, Pvi};
 pub use sample_lines::SampleLines;
 pub use section::{MassHaulViewFrame, SectionGeometry, SectionViewFrame};
 pub use style::{DisplayComponent, Marker, ViewAxes, ViewAxis};
@@ -684,6 +684,18 @@ impl ArchEntityData {
         self.main_stream()
             .map(|(data, start, end)| profile::curve_minimum_k(data, start, end))
             .unwrap_or_default()
+    }
+
+    /// An offset profile's source, slope, offset and entity map (`None` for
+    /// other profiles).
+    pub fn profile_offset(&self) -> Option<OffsetProfile> {
+        if self.civil_kind() != Some(CivilKind::Profile) {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        let mut o = profile::offset_profile(data, start, end)?;
+        o.source = self.typed_handles().get(15)?.0;
+        Some(o)
     }
 
     /// The alignment's name: its fourth string, or for a data shortcut (the

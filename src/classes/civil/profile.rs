@@ -465,7 +465,7 @@ struct Segment {
 /// 11-bit kind prefix, the record, and the fields after it: 4 bits after a
 /// tangent, the parabola tail below after a parabola), IDs distinct and
 /// links inside the list.
-fn record_list_at(data: &[u8], pos: usize, end: usize) -> Option<Vec<Record>> {
+fn record_list_at(data: &[u8], pos: usize, end: usize) -> Option<(Vec<Record>, usize)> {
     let mut bits = Bits::new(data, pos, end);
     let n = usize::try_from(bits.bit_long()?).ok().filter(|n| (1..100_000).contains(n))?;
     let mut at = bits.pos;
@@ -506,20 +506,21 @@ fn record_list_at(data: &[u8], pos: usize, end: usize) -> Option<Vec<Record>> {
     let ids: Vec<i32> = out.iter().map(|r| r.id).collect();
     let known = |id: i32| id == 0 || ids.contains(&id);
     let distinct = ids.iter().enumerate().all(|(i, id)| !ids[..i].contains(id));
-    (distinct && out.iter().all(|r| known(r.previous) && known(r.next))).then_some(out)
+    (distinct && out.iter().all(|r| known(r.previous) && known(r.next))).then_some((out, at))
 }
 
 /// Where a profile's criteria bits and entity list sit: after the class
-/// keys (see [`super::alignment::read_keys`]), `BL, BD, BD, BD, 5 x BS`,
-/// 10 bits (criteria in the last three), then the entity list.
+/// keys (see [`super::alignment::read_keys`]), `BL, 5 x BD, 3 x BS`, 10
+/// bits (criteria in the last three), then the entity list. The fifth BD
+/// is an offset profile's offset (0 otherwise, written like `BS 0`).
 fn section(data: &[u8], start: usize, end: usize) -> Option<(usize, usize)> {
     let mut bits = Bits::new(data, start, end);
     super::alignment::read_keys(&mut bits)?;
     bits.bit_long()?;
-    for _ in 0..3 {
+    for _ in 0..5 {
         bits.bit_double()?;
     }
-    for _ in 0..5 {
+    for _ in 0..3 {
         bits.bit_short()?;
     }
     let criteria_at = bits.pos;
@@ -534,7 +535,7 @@ fn runs(data: &[u8], start: usize, end: usize) -> Vec<Vec<Record>> {
     let records: Vec<Record> = section(data, start, end)
         .and_then(|(_, list)| match Bits::new(data, list, end).bit_long()? {
             0 => Some(Vec::new()),
-            _ => record_list_at(data, list, end),
+            _ => record_list_at(data, list, end).map(|(records, _)| records),
         })
         .unwrap_or_default();
     let mut runs: Vec<Vec<usize>> = Vec::new();
@@ -551,6 +552,130 @@ fn runs(data: &[u8], start: usize, end: usize) -> Vec<Vec<Record>> {
     }
     let mut records: Vec<Option<Record>> = records.into_iter().map(Some).collect();
     runs.into_iter().map(|run| run.into_iter().filter_map(|i| records[i].take()).collect()).collect()
+}
+
+/// An offset profile: the profile it copies, the vertical slope it adds
+/// across the offset and the offset, with how its entities follow the
+/// source's.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OffsetProfile {
+    /// The source profile (on the offset alignment's parent).
+    pub source: u64,
+    /// Rise per unit of offset; the profile is the source raised by
+    /// `slope * |offset|`.
+    pub slope: f64,
+    /// The offset alignment's offset (negative to the left).
+    pub offset: f64,
+    /// The parent's length (the slope's station range ends there).
+    pub parent_length: f64,
+    /// For each source entity (by id) the entities copied from it.
+    pub entity_map: Vec<(i32, Vec<i32>)>,
+    /// The parent's stations where the source starts and ends, each with
+    /// the GUID of the parent's anchor there.
+    pub anchors: Vec<(f64, [u8; 16])>,
+}
+
+/// After a design profile's entity list: `2 bits 10`, its identifier (16
+/// bytes), then (`OFFSET_PRE`, `BD slope`, `OFFSET_MID`)
+///
+/// ```text
+/// BL regions, each: BD slope, BD 0, BD parent length, BD 0, BD 0, BL 2,
+///   BL 0, BL 0
+/// BL 0
+/// BL n, each: BL source entity id, BL -1, BL m, m x BL entity id
+/// BL n, each: BD parent station, the parent anchor's GUID (16 bytes)
+/// OFFSET_END
+/// ```
+///
+/// (a layout profile: slope 0 and every list empty). Returns the
+/// identifier and the offset data (`None` without regions).
+pub(super) fn after_entities(data: &[u8], start: usize, end: usize) -> Option<([u8; 16], Option<(f64, Vec<(i32, Vec<i32>)>, Vec<(f64, [u8; 16])>)>)> {
+    let (_, list) = section(data, start, end)?;
+    let (_, at) = record_list_at(data, list, end)?;
+    let mut bits = Bits::new(data, at, end);
+    (bits.bits_value(2)? == 0b10).then_some(())?;
+    let mut id = [0u8; 16];
+    for b in &mut id {
+        *b = bits.bits_value(8)?;
+    }
+    bits.pos += OFFSET_PRE;
+    bits.bit_double()?;
+    bits.pos += OFFSET_MID;
+    let count = |bits: &mut Bits| usize::try_from(bits.bit_long()?).ok().filter(|n| *n <= bits.remaining() / 2);
+    let regions = count(&mut bits)?;
+    let mut length = None;
+    for _ in 0..regions {
+        let v = [bits.bit_double()?, bits.bit_double()?, bits.bit_double()?, bits.bit_double()?, bits.bit_double()?];
+        let tail = [bits.bit_long()?, bits.bit_long()?, bits.bit_long()?];
+        (tail == [2, 0, 0]).then_some(())?;
+        length.get_or_insert(v[2]);
+    }
+    (bits.bit_long()? == 0).then_some(())?;
+    let map = (0..count(&mut bits)?)
+        .map(|_| {
+            let source = bits.bit_long()?;
+            (bits.bit_long()? == -1).then_some(())?;
+            let n = count(&mut bits)?;
+            Some((source, (0..n).map(|_| bits.bit_long()).collect::<Option<Vec<_>>>()?))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let anchors = (0..count(&mut bits)?)
+        .map(|_| {
+            let station = bits.bit_double()?;
+            let mut g = [0u8; 16];
+            for b in &mut g {
+                *b = bits.bits_value(8)?;
+            }
+            Some((station, g))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    (bits.pos + OFFSET_END == end).then_some(())?;
+    Some((id, length.map(|l| (l, map, anchors))))
+}
+
+/// The constant runs of [`after_entities`] (the same in every sample:
+/// OP01, OP02, OB01, and in every layout profile).
+pub(super) const OFFSET_PRE: usize = 38;
+pub(super) const OFFSET_MID: usize = 22;
+pub(super) const OFFSET_END: usize = 37;
+
+/// An offset profile's data (see [`OffsetProfile`]; `source` is the
+/// record's 16th reference, filled in by the caller).
+pub(super) fn offset_profile(data: &[u8], start: usize, end: usize) -> Option<OffsetProfile> {
+    let (_, offset) = after_entities(data, start, end)?;
+    let (parent_length, entity_map, anchors) = offset?;
+    let mut bits = Bits::new(data, start, end);
+    let mut slope = None;
+    super::alignment::class_header(&mut bits)?;
+    for _ in 0..bits.bits_value(8)? {
+        if let (0x0200_FF40, super::alignment::KeyValue::Double(v)) = super::alignment::read_key(&mut bits)? {
+            slope = Some(v);
+        }
+    }
+    (bits.bit_long()? == 0).then_some(())?;
+    bits.pos += 65;
+    bits.bit_double()?;
+    bits.pos += 7;
+    bits.bit_long()?;
+    let mut own = [0.0; 5];
+    for v in &mut own {
+        *v = bits.bit_double()?;
+    }
+    Some(OffsetProfile { source: 0, slope: slope?, offset: own[4], parent_length, entity_map, anchors })
+}
+
+/// A design profile's entities in link order, run after run: id, kind and
+/// the points at its start, middle station and end.
+pub(super) fn entity_points(data: &[u8], start: usize, end: usize) -> Option<Vec<(i32, ProfilePiece, [Vector2; 3])>> {
+    let mut out = Vec::new();
+    for run in runs(data, start, end) {
+        let segments = solve(&run)?;
+        (segments.len() == run.len()).then_some(())?;
+        for (r, s) in run.iter().zip(&segments) {
+            out.push((r.id, s.shape.piece(), [s.start, s.shape.at((s.start.x + s.end.x) / 2.0), s.end]));
+        }
+    }
+    Some(out)
 }
 
 /// Every entity record in link order, run after run.
