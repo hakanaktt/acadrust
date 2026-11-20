@@ -91,7 +91,7 @@ impl Triangulation {
 
 /// The drawing's default surface style: the first style of the style
 /// tree's surface style collection.
-fn default_style(doc: &CadDocument) -> Option<u64> {
+pub(super) fn default_style(doc: &CadDocument) -> Option<u64> {
     let tree = read_node(doc, root_node(doc, 31)?)?;
     let head = tree.children.iter().find(|c| c.0 == KEY_SURFACE_STYLES)?.1;
     object(doc, Handle::new(head))?.decode().handles.first().copied().filter(|h| *h != 0)

@@ -1160,6 +1160,20 @@ and the codes of both assemblies (the ditch's included, its target
 resolved); the rebuilt drawing reads back with its feature lines (seven
 codes on `BL1`, four on `BL2`).
 
+Surfaces are written in the corridor record only (their own TIN surface
+reference is written 0): a built surface (`build`) gets its TIN surface
+from the application when the drawing is opened, before any rebuild. The
+link and feature line codes are written in name order (the order the
+application keeps), boundaries and masks drawn from polygons are closed
+when open. A corridor with two surfaces (`CS1` built, link code `Top` as a
+breakline, overhang correction on top links, the corridor extents and a
+polygon as outside boundaries and a triangle as mask; `CS2` not built) and
+a maximum triangle side length of 50, written into the same drawing, opens
+without recovery, AUDIT 0 errors; the API lists both surfaces with their
+build flags, overhang correction, the boundary names, descriptions and
+kinds and the mask, `CS1` with its TIN surface; after the rebuild `CS1`
+holds 26 points with `Top` as a breakline.
+
 `corridor_definition()` reads the definition of any corridor record
 (fields of built corridors too; names and references of corridors without
 built stations, whose texts and references are not interleaved with the
@@ -1189,7 +1203,8 @@ per boundary.
 | offset, elevation and surface targets (any objects; nearest or farthest) | yes | yes | §3i |
 | rebuild automatically, description | yes | yes | §3i |
 | region lock to the alignment geometry | yes (flag) | no | the region holds alignment element identifiers that the alignment gains when the lock is set |
-| corridor surfaces, link and feature line codes, overhang correction, build flag; boundaries (extents, polygon, feature lines) and masks; maximum triangle side length | yes | no | each surface has its own TIN surface record and changes the settings tree |
+| corridor surfaces, link and feature line codes, overhang correction, build flag; boundaries and masks from polygons and the corridor extents; maximum triangle side length | yes | yes | §3i (the application makes each built surface's TIN surface) |
+| boundaries along feature lines | yes (component count) | no | they refer to built feature lines |
 | feature line code settings (connect, draw, pay items) | count only | no | codes exist only once built |
 | built results (stations, applied assemblies, feature lines) | yes (feature lines) | no | written out of date; the application builds them |
 | corridor without baselines | no | no | its record ends in another run after the 32 (one sample) |

@@ -4,7 +4,7 @@
 
 use super::super::bits::Bits;
 use super::super::corridor::{
-    CorridorBaseline, CorridorDefinition, CorridorRegion, CurveStations, RegionFrequency, TargetCurveStations, TargetKind, KEY_ALONG_TARGET_CURVES, KEY_CURVE_MID_ORDINATE,
+    CorridorBoundary, CorridorBaseline, CorridorDefinition, CorridorRegion, CurveStations, RegionFrequency, TargetCurveStations, TargetKind, KEY_ALONG_TARGET_CURVES, KEY_CURVE_MID_ORDINATE,
     KEY_TARGET_CURVE_MID_ORDINATE,
 };
 use super::profile::new_identifier;
@@ -18,6 +18,13 @@ use crate::types::Handle;
 use crate::CadDocument;
 
 use super::default_styles::{ensure_corridor_styles, KEY_CORRIDOR_STYLES};
+use super::tree::ensure_surface_tree;
+/// Boundary kinds: a polygon inside or outside boundary, a mask, the
+/// corridor extents.
+pub const POLYGON_INSIDE: u32 = 0x4000_0000;
+pub const POLYGON_OUTSIDE: u32 = 0x4000_0002;
+pub const MASK: u32 = 0x4000_0004;
+pub const EXTENTS: u32 = 0x8000_0002;
 /// The class word after the class head of a corridor that has not been
 /// built (a built corridor's differs).
 const UNBUILT: i32 = 0x4000_8353;
@@ -284,14 +291,31 @@ fn write_keys(w: &mut DwgMergedWriter, regions: &[&CorridorRegion], targets: boo
     }
 }
 
+/// The styles a corridor record refers to.
+#[derive(Clone, Copy)]
+struct Styles {
+    corridor: u64,
+    surface: u64,
+    material: u64,
+}
+
+/// The boundaries grouped per surface, in surface order (a list per
+/// surface that has any).
+fn boundary_lists(def: &CorridorDefinition) -> Vec<Vec<&CorridorBoundary>> {
+    def.surfaces.iter().map(|s| def.boundaries.iter().filter(|b| b.surface == s.name).collect::<Vec<_>>()).filter(|l| !l.is_empty()).collect()
+}
+
 /// The corridor record of an unbuilt corridor:
 ///
 /// ```text
 /// BL 80, 0, 80, 80, 0, BL 0x10025F04, BL 0x40008353, 4 bits 0101
 /// RC n keys, keys (see [`write_keys`])
 /// 2 bits 01, 128 zero bits, 2 bits 01, RC 82
-/// BL 0 (no code settings), BL 0 (no surface), BD 0 (maximum triangle
-/// side), BL 0 (no outline), BL 0
+/// BL 0 (no code settings), BL n surfaces, n x {identifier, B 0, B build,
+/// B 1, BL n link codes, n x B breakline, BL 0, BL m feature line codes,
+/// m x B, BL overhang correction}, BD maximum triangle side, BL n
+/// boundary lists (one per surface with boundaries, in surface order),
+/// n x {BL k, k x {BL kind, BL m, m x 3BD corner}}, BL 0
 /// B rebuild automatically, B 1, RC 32, RC 0x48 (locked to stations),
 /// RC (baselines << 3 | 2), 1 bit 0, 6 bits the first baseline's region
 /// count, BL 0 (no station)
@@ -299,13 +323,17 @@ fn write_keys(w: &mut DwgMergedWriter, regions: &[&CorridorRegion], targets: boo
 ///   [`write_region`]), BL 0, B 1, 9 bits 000000101, identifier, BL n,
 ///   n x BD added station
 /// [`END`]
-/// references: soft 0, style (hard), code set style (hard), per baseline
+/// references: soft 0, style (hard), code set style (hard), per surface
+///   {soft 0 (its surface is made by the rebuild), surface style, 0,
+///   render material (hard)}, hard 0 per boundary, per baseline
 ///   {hard 0, alignment, profile (hard), per region {assembly (hard), the
 ///   assembly's node pairs {subassembly, the subassembly it hangs from or
 ///   0} (soft), per target entry {subassembly (hard), its target objects
 ///   (soft)}}}
 /// texts: "AeccImpCorridor", "", name, description, ["[]" with targets],
-///   per baseline {per region {"", per assembly group {name, "", then "",
+///   per surface {its name, its link and feature line codes}, per boundary
+///   list {the surface's name, per boundary {name, description}}, per
+///   baseline {per region {"", per assembly group {name, "", then "",
 ///   "" per node}, the assembly's name, "", per target {its name twice, "",
 ///   "", "" per object}, the region's name}, the baseline's name, one
 ///   description per added station}
@@ -316,7 +344,7 @@ fn write_keys(w: &mut DwgMergedWriter, regions: &[&CorridorRegion], targets: boo
 /// frequencies and assemblies, the record equals theirs bit for bit (WC13,
 /// WC24 to WC27 with a region flag word of 0, the form of a corridor never
 /// saved after an edit).
-fn write_corridor(doc: &mut CadDocument, common: EntityCommon, def: &CorridorDefinition, style: u64, asms: &[Vec<Assembly>]) -> Result<Handle, DxfError> {
+fn write_corridor(doc: &mut CadDocument, common: EntityCommon, def: &CorridorDefinition, styles: Styles, asms: &[Vec<Assembly>]) -> Result<Handle, DxfError> {
     let seed = common.handle.value();
     let regions: Vec<&CorridorRegion> = def.baselines.iter().flat_map(|b| &b.regions).collect();
     let mut entries = Vec::new();
@@ -327,10 +355,23 @@ fn write_corridor(doc: &mut CadDocument, common: EntityCommon, def: &CorridorDef
     }
     let targets = entries.iter().any(|e| !e.is_empty());
     let code_set = asms.first().and_then(|a| a.first()).map_or(0, |a| a.code_set);
-    let mut refs = vec![soft_pointer(0), hard_pointer(style), hard_pointer(code_set)];
+    let mut refs = vec![soft_pointer(0), hard_pointer(styles.corridor), hard_pointer(code_set)];
     let mut strings: Vec<String> = ["AeccImpCorridor", "", &def.name, &def.description].iter().map(|s| s.to_string()).collect();
     if targets {
         strings.push("[]".into());
+    }
+    for surface in &def.surfaces {
+        refs.extend([soft_pointer(0), hard_pointer(styles.surface), hard_pointer(0), hard_pointer(styles.material)]);
+        strings.push(surface.name.clone());
+        strings.extend(surface.link_codes.iter().chain(&surface.feature_line_codes).map(|c| c.0.clone()));
+    }
+    let lists = boundary_lists(def);
+    for list in &lists {
+        strings.push(list[0].surface.clone());
+        for b in list {
+            refs.push(hard_pointer(0));
+            strings.extend([b.name.clone(), b.description.clone()]);
+        }
     }
     let mut index = 0;
     for (b, line) in def.baselines.iter().enumerate() {
@@ -375,9 +416,37 @@ fn write_corridor(doc: &mut CadDocument, common: EntityCommon, def: &CorridorDef
             bits(w, &"0".repeat(128));
             bits(w, "01");
             byte(w, 82);
-            for _ in 0..5 {
+            w.write_bit_long(0);
+            w.write_bit_long(def.surfaces.len() as i32);
+            for (i, surface) in def.surfaces.iter().enumerate() {
+                w.write_bytes(&new_identifier(seed ^ (0x200 + i as u64)));
+                w.write_bit(false);
+                w.write_bit(surface.build);
+                w.write_bit(true);
+                let flags = |w: &mut DwgMergedWriter, codes: &[(String, bool)]| {
+                    w.write_bit_long(codes.len() as i32);
+                    codes.iter().for_each(|c| w.write_bit(c.1));
+                };
+                flags(w, &surface.link_codes);
                 w.write_bit_long(0);
+                flags(w, &surface.feature_line_codes);
+                w.write_bit_long(surface.overhang_correction);
             }
+            w.write_bit_double(def.maximum_triangle_side);
+            w.write_bit_long(lists.len() as i32);
+            for list in &lists {
+                w.write_bit_long(list.len() as i32);
+                for b in list {
+                    w.write_bit_long(b.kind as i32);
+                    w.write_bit_long(b.corners.len() as i32);
+                    for c in &b.corners {
+                        w.write_bit_double(c.x);
+                        w.write_bit_double(c.y);
+                        w.write_bit_double(c.z);
+                    }
+                }
+            }
+            w.write_bit_long(0);
             w.write_bit(def.rebuild_automatic);
             w.write_bit(true);
             byte(w, 32);
@@ -426,16 +495,28 @@ fn alignment_length(al: &ArchEntityData) -> f64 {
 /// stations, applied sections or feature lines until it is rebuilt. The
 /// corridor style is the drawing's default (written when the drawing has
 /// none); the code set style is the first region's assembly's. Region and
-/// target names and handles come from `def`; `built`, the feature line
-/// fields, surfaces, boundaries and the geometry lock are not written (a
-/// baseline along a feature line, a surface or a geometry-locked region is
-/// refused).
+/// target names and handles come from `def`; its surfaces are written with
+/// their codes (sorted by name), build flag and overhang correction, their
+/// boundaries and masks drawn from polygons (closed when open) or along the
+/// corridor extents, and the maximum triangle side length; the rebuild
+/// makes each built surface. `built`, the feature line fields and the
+/// geometry lock are not written (a baseline along a feature line, a
+/// boundary along feature lines or a geometry-locked region is refused).
 pub fn add_corridor_with(doc: &mut CadDocument, def: &CorridorDefinition, layer: Option<&str>) -> Result<Handle, DxfError> {
     if def.name.is_empty() || def.baselines.is_empty() || def.baselines.len() > 31 {
         return Err(invalid("a corridor needs a name and 1 to 31 baselines"));
     }
-    if !def.surfaces.is_empty() || !def.boundaries.is_empty() || def.geometry_lock {
-        return Err(invalid("corridor surfaces, boundaries and geometry locks are not written"));
+    if def.geometry_lock {
+        return Err(invalid("a geometry lock is not written"));
+    }
+    for b in &def.boundaries {
+        let polygon = matches!(b.kind, POLYGON_INSIDE | POLYGON_OUTSIDE | MASK) && b.corners.len() >= 3;
+        if !(polygon || (b.kind == EXTENTS && b.corners.is_empty())) || !def.surfaces.iter().any(|s| s.name == b.surface) {
+            return Err(invalid("a boundary needs its surface and a polygon (or none for the corridor extents)"));
+        }
+    }
+    if def.surfaces.iter().any(|s| s.name.is_empty()) || def.surfaces.iter().enumerate().any(|(i, s)| def.surfaces[..i].iter().any(|t| t.name == s.name)) {
+        return Err(invalid("corridor surfaces need distinct names"));
     }
     let mut asms = Vec::new();
     for line in &def.baselines {
@@ -461,16 +542,36 @@ pub fn add_corridor_with(doc: &mut CadDocument, def: &CorridorDefinition, layer:
         asms.push(list);
     }
     ensure_corridor_styles(doc)?;
-    let style = default_style_of(doc, KEY_CORRIDOR_STYLES).ok_or_else(|| invalid("drawing has no corridor styles"))?;
+    let corridor = default_style_of(doc, KEY_CORRIDOR_STYLES).ok_or_else(|| invalid("drawing has no corridor styles"))?;
+    let mut surface = 0;
+    if !def.surfaces.is_empty() {
+        if super::tin::default_style(doc).is_none() {
+            ensure_surface_tree(doc)?;
+        }
+        surface = super::tin::default_style(doc).ok_or_else(|| invalid("drawing has no surface styles"))?;
+    }
+    let material = match doc.objects.get(&doc.header.acad_material_dict_handle) {
+        Some(crate::objects::ObjectType::Dictionary(d)) => d.entries.iter().find(|e| e.0.eq_ignore_ascii_case("ByLayer")).map_or(0, |e| e.1.value()),
+        _ => 0,
+    };
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
     let mut def = def.clone();
     for line in &mut def.baselines {
         line.stations.sort_by(|a, b| a.0.total_cmp(&b.0));
     }
+    for s in &mut def.surfaces {
+        s.link_codes.sort_by(|a, b| a.0.cmp(&b.0));
+        s.feature_line_codes.sort_by(|a, b| a.0.cmp(&b.0));
+    }
+    for b in &mut def.boundaries {
+        if b.corners.first() != b.corners.last() {
+            b.corners.push(b.corners[0]);
+        }
+    }
     let handle = doc.allocate_handle();
     let common = EntityCommon { handle, owner_handle: doc.header.model_space_block_handle, layer: layer.into(), layer_handle: Some(layer_handle), ..EntityCommon::default() };
-    write_corridor(doc, common, &def, style, &asms)
+    write_corridor(doc, common, &def, Styles { corridor, surface, material }, &asms)
 }
 
 /// Adds a corridor `name` along `alignment` and its `profile` with one
@@ -490,7 +591,7 @@ pub fn add_corridor(doc: &mut CadDocument, name: &str, baseline: &str, region: &
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::classes::civil::{RegionTarget, TargetKind};
+    use crate::classes::civil::{CorridorBoundary, CorridorSurfaceDefinition, RegionTarget, TargetKind};
     use crate::io::dwg::{DwgReader, DwgWriter};
     use crate::types::{DxfVersion, Vector2};
 
@@ -591,6 +692,34 @@ mod tests {
         DwgWriter::write_to_file(&path, &doc).unwrap();
         let back = DwgReader::from_file(&path).unwrap().read().unwrap();
         let _ = std::fs::remove_file(&path);
+        assert_eq!(arch(&back, c).unwrap().corridor_definition(), Some(def));
+    }
+
+    #[test]
+    fn corridor_surfaces_read_back() {
+        let v = Vector2::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let al = crate::classes::civil::add_alignment(&mut doc, "AL1", &[v(0.0, 0.0), v(100.0, 0.0)], None).unwrap();
+        let p = crate::classes::civil::add_profile(&mut doc, al, "P1", &[v(0.0, 10.0), v(100.0, 15.0)], &[], None).unwrap();
+        let [sub, code_set] = [(); 2].map(|_| doc.allocate_handle());
+        let asm = assembly(&mut doc, sub.value(), code_set.value());
+        let mut def = CorridorDefinition { name: "COR1".into(), maximum_triangle_side: 50.0, ..CorridorDefinition::default() };
+        let region = CorridorRegion { name: "RG1".into(), assembly: asm.value(), start: 0.0, end: 100.0, frequency: RegionFrequency::default(), targets: vec![] };
+        def.baselines.push(CorridorBaseline { name: "BL1".into(), feature_line: 0, alignment: al.value(), profile: p.value(), regions: vec![region], stations: vec![], built: false });
+        let surface = |name: &str, build| CorridorSurfaceDefinition { name: name.into(), build, link_codes: vec![("Top".into(), true), ("Datum".into(), false)], feature_line_codes: vec![], overhang_correction: 1 };
+        def.surfaces = vec![surface("CS1", true), surface("CS2", false)];
+        let corner = |x, y| crate::types::Vector3::new(x, y, 0.0);
+        let boundary = |surface: &str, name: &str, kind, corners| CorridorBoundary { surface: surface.into(), name: name.into(), description: String::new(), kind, corners, components: 0 };
+        def.boundaries = vec![boundary("CS2", "B1", EXTENTS, vec![]), boundary("CS2", "M1", MASK, vec![corner(10.0, 0.0), corner(20.0, 0.0), corner(20.0, 5.0)])];
+        let c = add_corridor_with(&mut doc, &def, None).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-corridor-surfaces-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        // Codes come back in name order, polygons closed.
+        def.surfaces.iter_mut().for_each(|s| s.link_codes.reverse());
+        def.boundaries[1].corners.push(corner(10.0, 0.0));
         assert_eq!(arch(&back, c).unwrap().corridor_definition(), Some(def));
     }
 
