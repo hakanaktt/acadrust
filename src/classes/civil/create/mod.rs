@@ -14,6 +14,7 @@ mod intersection;
 mod labels;
 mod network;
 mod network_content;
+mod network_families;
 mod points;
 mod profile;
 mod profile_view;
@@ -29,7 +30,7 @@ pub use assembly::{add_assembly, add_pkt_subassembly, add_pkt_subassembly_on, Pk
 pub use alignment::{add_alignment, add_alignment_with_curves, VertexCurve};
 pub use corridor::add_corridor;
 pub use intersection::add_intersection;
-pub use network::{add_pipe, add_pipe_network, add_structure, connect_pipe};
+pub use network::{add_pipe, add_pipe_network, add_pipe_of_family, add_structure, add_structure_of_family, connect_pipe, network_part_families};
 pub use groups::{add_point_group, add_point_group_query, set_point_group, set_point_group_query, Comparison, PointQuery};
 pub use profile::{add_profile, add_profile_with_curves, VerticalCurve};
 pub use profile_view::{add_profile_view, add_profile_view_with_range};

@@ -1675,6 +1675,40 @@ point; the writer adds the same block when it writes the definition, and
 the application takes the structure's extents from it (`(-0.5, -0.5, -1)`
 to `(0.5, 0.5, 0)` about the insertion point, as its own structures').
 
+### Other families
+
+`add_structure_of_family` and `add_pipe_of_family` place one size of
+other families of the default parts list (`network_part_families`): the
+concentric and eccentric cylindrical structures (48 inch), the cylindrical
+(48 inch) and rectangular (24 x 24 inch) junction structures, the
+concrete rectangular headwall, and the eleven pipe families (the size the
+application gives a new part: 12 inch corrugated metal and concrete pipe,
+4 inch corrugated HDPE, 2 inch ductile iron, 3 inch HDPE, 3.6 inch PVC,
+the egg-shaped, elliptical and arch culverts and the 24 x 24 inch box
+culvert). Sample N11: every family of WT01's parts list placed by the
+API, structures at the origin, pipes from (0, 0, -5) to (100, 0, -6).
+
+A pipe record is the same for every family (N11's eleven pipes differ only
+in their identifiers); the family is in the part definition, the pipe's
+second text (the family name) and its style and rules. A structure
+record differs per family after the axes: its part record and the
+outline and extents the application caches. The writer writes the
+family's runs as the application wrote them at the origin; the
+application recomputes the cached data from the insertion point. The
+null structure's record does not stand for another family: N11 with the
+cylindrical and rectangular structures' records replaced by the null
+structure's (E-N60) does not finish opening.
+
+Structure definitions other than the null structure's refer to two
+blocks, each with the body (an anonymous `*U` block with one solid). The
+application's bodies are the catalog's generated solids; the writer
+writes a cylinder (cylindrical families) or a box of the size's extents
+below the insertion point in each block.
+
+| written | result |
+|---|---|
+| WT01 with a network, a structure of each of the six families (the eccentric one turned by 0.5 rad), a pipe of each of the eleven families and a concrete pipe connected to the two cylindrical structures (E-N70); the same in a new drawing (E-N71) | AUDIT 0; every part listed with its family and size, positions as written, extents as the application's own (the turned structure's turned), the connected pipe listing both structures and each structure one pipe |
+
 ## 4. Reference check
 
 For every written drawing the check opens it in its own reference instance
@@ -1850,5 +1884,5 @@ taken from the records and checked bit for bit against them.
 | sections of a TIN surface (unsampled) | yes (geometry once sampled) | yes (§3j) | yes (§3j) | the application samples the source | corridor sources, lines added after sampling |
 | section views of a line (default style, unsampled section) | yes (frame) | yes, with the drawing's section view style or the default one (§3j, §2c) | yes (§3j, §2c) | not needed | sampled sections, several sections |
 | intersections of two crossing roads (the object only) | yes (stations, angles) | yes, with the drawing's intersection style or the default one (§3k, §2c) | yes (§3k, §2c) | not needed | offset alignments, curb returns, corridor regions and locking actions; tee junctions |
-| gravity pipe networks: null structures (with their body block) and 12 inch pipes, connections | partly (part positions, pipe ends, connector counts, sizes of older part definitions) | yes (a new drawing gets the default parts list and styles, §3m) | yes (§3m) | not needed (the application recomputes outlines, lengths and extents) | other families and sizes |
+| gravity pipe networks: null structures, six structure and eleven pipe families (one size each), connections | partly (part positions, pipe ends, connector counts, sizes of older part definitions) | yes (a new drawing gets the default parts list and styles, §3m) | yes (§3m) | not needed (the application recomputes outlines, lengths and extents) | other sizes, the other structure families (headwall variants, end sections, slab top and two-tier structures), the catalog's body solids |
 | pressure networks, gradings, mass haul | partly | no | — | — | not started |
