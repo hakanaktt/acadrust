@@ -156,30 +156,84 @@ pub struct PressurePipe {
     pub end_connection: Option<(u64, i32)>,
 }
 
+/// A port of a pressure pipe, fitting or appurtenance: where it is, the
+/// direction it faces (away from the part) and the port of the part it
+/// connects to (`-1` for an open port).
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct PressurePort {
+    pub position: Vector3,
+    pub direction: Vector3,
+    pub connected_port: i32,
+    /// Joint sizes, in the units the record's text stream names (inch and
+    /// degrees in the samples).
+    pub outside_diameter: f64,
+    pub nominal_diameter: f64,
+    pub wall_thickness: f64,
+    pub deflection: f64,
+    /// Bit range of `connected_port` in the record.
+    pub(crate) connected_at: (usize, usize),
+}
+
+/// The ports of a pressure part, with the bits left after the last.
+///
+/// ```text
+/// pipe:   head, 36 bits, 2 ports (each followed by 8 bits)
+/// others: head, 3BD insertion point, 3 x 3BD axes, BL ports, 2 bits,
+///         ports (each followed by 8 bits, the last by 2)
+/// port:   3BD position, 3BD direction, BD engagement length,
+///         BL connected port, 4 x BD sizes, BD
+/// ```
+fn ports_of<'a>(data: &'a [u8], start: usize, end: usize, pipe: bool) -> Option<(Vec<PressurePort>, Bits<'a>)> {
+    let mut bits = Bits::new(data, start, end);
+    part_head(&mut bits)?;
+    let n = if pipe {
+        bits.skip(36)?;
+        2
+    } else {
+        for _ in 0..4 {
+            point(&mut bits)?;
+        }
+        let n = usize::try_from(bits.bit_long()?).ok().filter(|n| (1..=16).contains(n))?;
+        bits.skip(2)?;
+        n
+    };
+    let mut ports = Vec::with_capacity(n);
+    for k in 0..n {
+        let (position, direction) = (point(&mut bits)?, point(&mut bits)?);
+        bits.bit_double()?;
+        let at = bits.pos;
+        let connected_port = bits.bit_long()?;
+        let connected_at = (at, bits.pos);
+        let [outside_diameter, nominal_diameter, wall_thickness, deflection] = [(); 4].map(|_| bits.bit_double());
+        bits.bit_double()?;
+        bits.skip(if pipe || k + 1 < n { 8 } else { 2 })?;
+        ports.push(PressurePort {
+            position,
+            direction,
+            connected_port,
+            outside_diameter: outside_diameter?,
+            nominal_diameter: nominal_diameter?,
+            wall_thickness: wall_thickness?,
+            deflection: deflection?,
+            connected_at,
+        });
+    }
+    Some((ports, bits))
+}
+
+pub(crate) fn pressure_ports(data: &[u8], start: usize, end: usize, pipe: bool) -> Option<Vec<PressurePort>> {
+    ports_of(data, start, end, pipe).map(|(p, _)| p)
+}
+
 // ponytail: the 36, 18 and 8-bit runs and the ports' fifth number (1 in
 // every sample) are read past; both ports carry the same sizes.
 pub(super) fn pressure_pipe(data: &[u8], start: usize, end: usize, handles: &[u64]) -> Option<PressurePipe> {
-    let mut bits = Bits::new(data, start, end);
-    part_head(&mut bits)?;
-    bits.skip(36)?;
-    let mut sizes = [0.0; 4];
-    let mut ports = [-1; 2];
-    for port in &mut ports {
-        // Port: position, direction, engagement length, connected index.
-        point(&mut bits)?;
-        point(&mut bits)?;
-        bits.bit_double()?;
-        *port = bits.bit_long()?;
-        for size in &mut sizes {
-            *size = bits.bit_double()?;
-        }
-        bits.bit_double()?;
-        bits.skip(8)?;
-    }
+    let (ports, mut bits) = ports_of(data, start, end, true)?;
     bits.skip(18)?;
     let (a, b) = (point(&mut bits)?, point(&mut bits)?);
     let bulge = bits.bit_double().filter(|v| v.is_finite())?;
-    let [outside_diameter, nominal_diameter, wall_thickness, deflection] = sizes;
+    let p = ports[0];
     // The connected parts are the third and second last references.
     let connected = |port: i32, from_end: usize| {
         let handle = *handles.len().checked_sub(from_end).and_then(|i| handles.get(i))?;
@@ -189,12 +243,12 @@ pub(super) fn pressure_pipe(data: &[u8], start: usize, end: usize, handles: &[u6
         start: a,
         end: b,
         bulge,
-        outside_diameter,
-        nominal_diameter,
-        wall_thickness,
-        deflection,
-        start_connection: connected(ports[0], 3),
-        end_connection: connected(ports[1], 2),
+        outside_diameter: p.outside_diameter,
+        nominal_diameter: p.nominal_diameter,
+        wall_thickness: p.wall_thickness,
+        deflection: p.deflection,
+        start_connection: connected(ports[0].connected_port, 3),
+        end_connection: connected(ports[1].connected_port, 2),
     })
 }
 
