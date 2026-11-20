@@ -54,7 +54,7 @@ pub(super) struct Template {
     pub strings: &'static [&'static str],
 }
 
-fn run(w: &mut DwgMergedWriter, len: usize, hex: &str) {
+pub(super) fn run(w: &mut DwgMergedWriter, len: usize, hex: &str) {
     let mut left = len;
     for c in hex.chars() {
         let v = c.to_digit(16).unwrap_or(0);

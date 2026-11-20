@@ -342,16 +342,22 @@ pub(super) struct OffsetRecord {
     pub map: Vec<(i32, Vec<i32>)>,
     /// The parent's anchors at the ends of the regions and transitions.
     pub anchors: Vec<(f64, [u8; 16])>,
-    /// Its own anchor at its start, which its design speed (0) refers to.
+    /// Its own anchor at its start, which its design speed refers to.
     pub own: [u8; 16],
+    /// Its own design speed (0 for none).
+    pub speed: f64,
+    /// Kept by an associative action (an intersection's offset
+    /// alignments): the record's word `0x10025F04` in place of
+    /// `0x00025F04`.
+    pub associative: bool,
 }
 
 /// Writes the alignment record. `feature` is the companion the alignment
 /// refers to (twice).
 ///
 /// ```text
-/// BL 80, BL 0, BL 80, BL 80, BL 0, BL 0x10025F04 (an offset alignment:
-///   0x00025F04), 6 bits 010101
+/// BL 80, BL 0, BL 80, BL 80, BL 0, BL 0x10025F04 (an offset alignment
+///   no action keeps: 0x00025F04), 6 bits 010101
 /// RC 1, key 0x0B001081: BL 2, BL 0, BL 0 (the geometry stamp; the
 ///   application keeps a value derived from the geometry and accepts 0)
 /// BL 0 (byte form), 115 zero bits, 8 bits 00000010, RC 0x40 | edge id >>
@@ -648,7 +654,7 @@ pub(super) fn write_alignment_of(doc: &mut CadDocument, common: EntityCommon, na
     let curves = elements.iter().filter(|e| !matches!(e.kind, AlignmentElementKind::FixedLine { .. })).count();
     let first_id = elements.iter().map(|e| i32::from(e.id)).min().unwrap_or(1);
     let start = offset.map_or(0.0, |o| o.range.0);
-    let mut speeds: Vec<(f64, f64, [u8; 16])> = offset.iter().map(|o| (o.range.0, 0.0, o.own)).collect();
+    let mut speeds: Vec<(f64, f64, [u8; 16])> = offset.iter().map(|o| (o.range.0, o.speed, o.own)).collect();
     speeds.extend(timing.speeds.iter().copied());
     let equations = &timing.equations;
     let byte = |w: &mut DwgMergedWriter, v: u8| bits(w, &format!("{v:08b}"));
@@ -669,7 +675,7 @@ pub(super) fn write_alignment_of(doc: &mut CadDocument, common: EntityCommon, na
         "AECC_ALIGNMENT",
         common,
         |w| {
-            for v in [80, 0, 80, 80, 0, if offset.is_some() { 0x0002_5F04 } else { 0x1002_5F04 }] {
+            for v in [80, 0, 80, 80, 0, if offset.is_some_and(|o| !o.associative) { 0x0002_5F04 } else { 0x1002_5F04 }] {
                 w.write_bit_long(v);
             }
             bits(w, "010101");
@@ -1107,6 +1113,20 @@ struct Stretch {
 /// element per parent element it covers; each transition is one element
 /// from where it starts to where it ends.
 pub fn add_offset_alignment_with_widenings(doc: &mut CadDocument, parent: Handle, name: &str, offset: f64, range: Option<(f64, f64)>, widenings: &[Widening], layer: Option<&str>) -> Result<Handle, DxfError> {
+    write_offset_alignment(doc, parent, name, offset, range, widenings, layer, (0.0, false))
+}
+
+/// [`add_offset_alignment`] over the parent's whole length with its own
+/// design speed `speed`, kept by an associative action (an intersection's
+/// offset alignments; the caller adds the action).
+pub(super) fn add_kept_offset_alignment(doc: &mut CadDocument, parent: Handle, name: &str, offset: f64, speed: f64, layer: Option<&str>) -> Result<Handle, DxfError> {
+    write_offset_alignment(doc, parent, name, offset, None, &[], layer, (speed, true))
+}
+
+/// [`add_offset_alignment_with_widenings`]; `kept` is the own design speed
+/// and whether an action keeps it.
+#[allow(clippy::too_many_arguments)]
+fn write_offset_alignment(doc: &mut CadDocument, parent: Handle, name: &str, offset: f64, range: Option<(f64, f64)>, widenings: &[Widening], layer: Option<&str>, kept: (f64, bool)) -> Result<Handle, DxfError> {
     if name.is_empty() {
         return Err(invalid("an offset alignment needs a name"));
     }
@@ -1319,7 +1339,7 @@ pub fn add_offset_alignment_with_widenings(doc: &mut CadDocument, parent: Handle
         element_end: first_end,
         point: first_start,
     };
-    let record = OffsetRecord { parent: parent.value(), offset, range: (s0, own[count]), regions, transitions, map, anchors, own: own_id };
+    let record = OffsetRecord { parent: parent.value(), offset, range: (s0, own[count]), regions, transitions, map, anchors, own: own_id, speed: kept.0, associative: kept.1 };
     let groups = written.groups.clone();
     rewrite_adding(doc, parent, written, &profiles, &profiles, None, &groups, &extra, &Timing::default())?;
     let style = default_style(doc).ok_or_else(|| invalid("drawing has no alignment styles"))?;
@@ -1551,6 +1571,13 @@ pub(super) fn rewritable(doc: &CadDocument, alignment: Handle, profile_id: impl 
 fn offset_record(a: &crate::classes::arch::ArchEntityData, o: crate::classes::civil::OffsetParameters) -> Option<OffsetRecord> {
     o.transitions.iter().all(|t| t.kind == 1 && t.radii.is_empty()).then_some(())?;
     let own = a.alignment_anchors()?.into_iter().find(|x| x.kind == OWN_START_ANCHOR)?.id;
+    let speed = a.alignment_timing_with_ids()?.1.iter().find(|(_, id)| *id == own).map_or(0.0, |(s, _)| s.speed);
+    let (data, start_bit, end_bit) = a.main_stream()?;
+    let mut b = super::super::bits::Bits::new(data, start_bit, end_bit);
+    for _ in 0..5 {
+        b.bit_long()?;
+    }
+    let associative = b.bit_long()? == 0x1002_5F04;
     let start = a.alignment_start_station()?;
     let end = o.regions.iter().map(|r| r.end).fold(start, f64::max);
     Some(OffsetRecord {
@@ -1562,6 +1589,8 @@ fn offset_record(a: &crate::classes::arch::ArchEntityData, o: crate::classes::ci
         map: o.element_map,
         anchors: o.anchors,
         own,
+        speed,
+        associative,
     })
 }
 
