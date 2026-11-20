@@ -46,6 +46,9 @@ enum Piece {
     Value(Value),
     /// The view title (`BL` byte count, UTF-16 with its terminator).
     Title,
+    /// `BL` the index of the group plot that made the view (0 for a single
+    /// view; WG01, WX23).
+    Group,
 }
 
 /// The graph record after the vertical scale: the title again, then the
@@ -91,8 +94,15 @@ const GRAPH: &[Piece] = &[
     Piece::Value(Value::OffsetMin),
     Piece::Bits("000000000000000000000000000000000000000000000000000011010011000000101000000000000000000000000000000000000000000000000000001101001100000010"),
     Piece::Value(Value::OffsetMax),
-    Piece::Bits("000000000000000000000000000000000000000000000000000011010001000000100101010100000101010101010101010101010101010101010101010101011010010100111111000101010101010101010101010101010101010101010101011010010100111111000101010101010101010101010101010101010101010101011010010100111111000101010101010101010101010101010101010101010101011010010100111111101010101010100100000001100100000010100100000011100100000100100001011111000000100"),
+    Piece::Bits("00000000000000000000000000000000000000000000000000001101000100000010010101010000010101010101010101010101010101010101010101010101101001010011111100010101010101010101010101010101010101010101010101101001010011111100010101010101010101010101010101010101010101010101101001010011111100010101010101010101010101010101010101010101010101101001010011111110"),
+    Piece::Group,
+    Piece::Bits("10101010100100000001100100000010100100000011100100000100100001011111000000100"),
 ];
+
+/// The range of a view of `l`.
+fn line_range(l: &super::sample_lines::Line) -> (f64, f64) {
+    range(l.sides[0].iter().map(|v| -v.0).fold(0.0, f64::max), l.sides[1].iter().map(|v| v.0).fold(0.0, f64::max))
+}
 
 /// The range of a view of a line reaching `left` and `right`.
 fn range(left: f64, right: f64) -> (f64, f64) {
@@ -123,7 +133,7 @@ fn range(left: f64, right: f64) -> (f64, f64) {
 /// Written with the samples' origins, lines and sections the record
 /// equals theirs bit for bit.
 #[allow(clippy::too_many_arguments)]
-fn write_view(doc: &mut CadDocument, common: EntityCommon, name: &str, origin: Vector2, (lo, hi): (f64, f64), style: u64, line: u64, sections: &[u64]) -> Result<Handle, DxfError> {
+fn write_view(doc: &mut CadDocument, common: EntityCommon, name: &str, origin: Vector2, (lo, hi): (f64, f64), style: u64, line: u64, sections: &[u64], group: i32) -> Result<Handle, DxfError> {
     let mut refs = vec![soft_pointer(0), Ref(DwgReferenceType::HardOwnership, 0), hard_pointer(style), hard_pointer(line)];
     for s in sections {
         refs.extend([soft_pointer(*s), hard_pointer(0), hard_pointer(0)]);
@@ -193,6 +203,7 @@ fn write_view(doc: &mut CadDocument, common: EntityCommon, name: &str, origin: V
                     Piece::Bits(b) => bits(w, b),
                     Piece::Value(v) => w.write_bit_double(value(*v)),
                     Piece::Title => text(w, TITLE),
+                    Piece::Group => w.write_bit_long(group),
                 }
             }
         },
@@ -229,10 +240,98 @@ pub fn add_section_view(doc: &mut CadDocument, line: Handle, name: &str, origin:
     let handle = doc.allocate_handle();
     let common = EntityCommon { handle, owner_handle: doc.header.model_space_block_handle, layer: layer.into(), layer_handle: Some(layer_handle), ..EntityCommon::default() };
     let sections = l.sections.clone();
-    write_view(doc, common, name, origin, range(l.sides[0].iter().map(|v| -v.0).fold(0.0, f64::max), l.sides[1].iter().map(|v| v.0).fold(0.0, f64::max)), style, line.value(), &sections)?;
+    write_view(doc, common, name, origin, line_range(&l), style, line.value(), &sections, 0)?;
     l.views.push(handle.value());
     write_line(doc, &l)?;
     Ok(handle)
+}
+
+/// Where the default group plot style puts a group plot's views (WG01 to
+/// WG12): from the plot's point in by `PLOT_MARGIN`, filled by rows from
+/// the lower left, `ceil(sqrt(n))` views a row; each column as wide as its
+/// widest reach left and right of the views' centerlines (aligned), each
+/// row as high as its highest view; `COLUMN_GAP` and `ROW_GAP` between
+/// them.
+const PLOT_MARGIN: f64 = 0.5;
+const COLUMN_GAP: f64 = 2.0;
+const ROW_GAP: f64 = 2.5;
+/// The name template of a group plot's views (template id 0x8F).
+const VIEW_NAMES: (i32, &str) = (0x8F, "<[Section View Station]> (<[Next Counter(CP)]>)");
+
+/// The origins of `n` views of the ranges `ranges` placed by a group plot
+/// at `at` (see `PLOT_MARGIN`).
+fn plot_origins(at: Vector2, ranges: &[(f64, f64)]) -> Vec<Vector2> {
+    let n = ranges.len();
+    let columns = (1..=n).find(|c| c * c >= n).unwrap_or(1);
+    let height = ELEVATION_MAX - ELEVATION_MIN;
+    let column = |c: usize| ranges.iter().skip(c).step_by(columns);
+    let left: Vec<f64> = (0..columns).map(|c| column(c).map(|r| -r.0).fold(0.0, f64::max)).collect();
+    let right: Vec<f64> = (0..columns).map(|c| column(c).map(|r| r.1).fold(0.0, f64::max)).collect();
+    (0..n)
+        .map(|i| {
+            let (row, c) = (i / columns, i % columns);
+            let x = (0..c).map(|k| left[k] + right[k] + COLUMN_GAP).sum::<f64>() + left[c];
+            Vector2::new(at.x + PLOT_MARGIN + x, at.y + PLOT_MARGIN + row as f64 * (height + ROW_GAP))
+        })
+        .collect()
+}
+
+/// A station as the view names show it: hundreds, `+`, the rest with two
+/// decimals (`0+25.00`).
+fn station_text(station: f64) -> String {
+    let cents = (station * 100.0).round() as i64;
+    let (sign, cents) = if cents < 0 { ("-", -cents) } else { ("", cents) };
+    format!("{sign}{}+{:02}.{:02}", cents / 10_000, cents / 100 % 100, cents % 100)
+}
+
+/// Adds a group plot of `group`'s section views at `at` (the lower left
+/// of the plot), as the application's default group plot makes it: one
+/// view per line in station order, named by station and a drawing-wide
+/// counter (`0+25.00 (1)`), placed by the default group plot style (see
+/// `PLOT_MARGIN`), with the default section view style, on `layer` (layer
+/// "0" when `None`). The group lists the plot (its group plot style, the
+/// point, the view count) and each line its view. The lines must be ones
+/// this crate writes, each with at most one section, not yet sampled.
+/// Returns the views.
+pub fn add_section_view_group(doc: &mut CadDocument, group: Handle, at: Vector2, layer: Option<&str>) -> Result<Vec<Handle>, DxfError> {
+    use super::sample_lines::{read_group, write_group, Plot};
+    if !at.x.is_finite() || !at.y.is_finite() {
+        return Err(invalid("a group plot needs a finite point"));
+    }
+    let mut g = read_group(doc, group).ok_or_else(|| invalid("the group is not one this crate writes"))?;
+    let mut lines = g.lines.iter().map(|l| read_line(doc, Handle::new(*l))).collect::<Option<Vec<_>>>().ok_or_else(|| invalid("a line of the group cannot be read"))?;
+    if lines.is_empty() {
+        return Err(invalid("the group has no lines"));
+    }
+    for l in &lines {
+        if l.sections.len() > 1 || l.sections.iter().any(|s| arch(doc, Handle::new(*s)).and_then(|a| a.section_geometry()).is_some_and(|g| !g.points.is_empty())) {
+            return Err(invalid("views of lines with several or sampled sections are not written"));
+        }
+    }
+    ensure_section_view_styles(doc)?;
+    super::default_styles::ensure_group_plot_styles(doc)?;
+    let style = default_style_of(doc, KEY_SECTION_VIEW_STYLES).ok_or_else(|| invalid("drawing has no section view styles"))?;
+    let plot_style = default_style_of(doc, super::default_styles::KEY_GROUP_PLOT_STYLES).ok_or_else(|| invalid("drawing has no group plot styles"))?;
+    let layer = layer.unwrap_or("0");
+    let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
+    let first = super::assembly::take_names(doc, VIEW_NAMES, lines.len() as i32)?;
+    let index = g.plots.iter().map(|p| p.index).max().unwrap_or(0) + 1;
+    let ranges: Vec<(f64, f64)> = lines.iter().map(line_range).collect();
+    let origins = plot_origins(at, &ranges);
+    let mut views = Vec::with_capacity(lines.len());
+    for (i, l) in lines.iter_mut().enumerate() {
+        let handle = doc.allocate_handle();
+        let common = EntityCommon { handle, owner_handle: doc.header.model_space_block_handle, layer: layer.into(), layer_handle: Some(layer_handle), ..EntityCommon::default() };
+        let name = format!("{} ({})", station_text(l.station), first + i as i32);
+        let sections = l.sections.clone();
+        write_view(doc, common, &name, origins[i], ranges[i], style, l.common.handle.value(), &sections, index)?;
+        l.views.push(handle.value());
+        write_line(doc, l)?;
+        views.push(handle);
+    }
+    g.plots.push(Plot { index, style: plot_style, origin: crate::types::Vector3::new(at.x, at.y, 0.0), views: views.len() as i32 });
+    write_group(doc, &g)?;
+    Ok(views)
 }
 
 #[cfg(test)]
@@ -241,6 +340,7 @@ mod tests {
     use crate::classes::civil::SectionViewFrame;
     use crate::io::dwg::{DwgReader, DwgWriter};
     use crate::types::DxfVersion;
+    use super::super::sample_lines::read_group;
 
     #[test]
     fn views_take_the_line_offsets_and_join_the_line() {
@@ -276,5 +376,31 @@ mod tests {
         assert_eq!(object(&back, Handle::new(style)).unwrap().dxf_name, "AECC_SECTION_VIEW_STYLE");
         assert_eq!(&refs[2..5], &[style, a.value(), line.sections[0]]);
         assert_eq!(view.decode().strings[2], "SV1");
+    }
+
+    #[test]
+    fn group_plots_place_one_view_per_line_by_rows() {
+        let v = Vector2::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let al = crate::classes::civil::add_alignment(&mut doc, "AL1", &[v(0.0, 0.0), v(100.0, 0.0)], None).unwrap();
+        let g = crate::classes::civil::add_sample_line_group(&mut doc, al, "SLG", None).unwrap();
+        for (n, st) in [("SL1", 25.0), ("SL2", 50.0), ("SL3", 75.0)] {
+            crate::classes::civil::add_sample_line(&mut doc, g, n, st, 25.0, 15.0, None).unwrap();
+        }
+        let first = add_section_view_group(&mut doc, g, v(200.0, 0.0), None).unwrap();
+        let second = add_section_view_group(&mut doc, g, v(300.0, -200.0), None).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-section-view-groups-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        // WG01: two views a row, 92 apart, rows 42.5 apart.
+        let origins: Vec<Vector2> = first.iter().map(|h| arch(&back, *h).unwrap().section_view_frame().unwrap().origin).collect();
+        assert_eq!(origins, vec![v(250.5, 0.5), v(342.5, 0.5), v(250.5, 43.0)]);
+        assert_eq!(arch(&back, second[0]).unwrap().decode().strings[2], "0+25.00 (4)");
+        let plots = arch(&back, g).unwrap().section_view_group_plots().unwrap();
+        assert_eq!(plots.iter().map(|p| (p.index, p.origin.y, p.views)).collect::<Vec<_>>(), vec![(1, 0.0, 3), (2, -200.0, 3)]);
+        assert_eq!(read_line(&back, Handle::new(read_group(&back, g).unwrap().lines[0])).unwrap().views.len(), 2);
+        assert_eq!(station_text(125.5), "1+25.50");
     }
 }

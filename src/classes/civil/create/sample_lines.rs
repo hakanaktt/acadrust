@@ -34,6 +34,21 @@ const SOURCE_RUN: &str = "100000000000000000000000000000000000000000000000000000
 const LINE_TAIL: &str = "110101000111111111111111111111111111111110011111111111111111111111111111111100001011111000000100";
 /// The group's texts after its name (the same in every sample).
 const GROUP_TEXTS: [&str; 7] = ["", "", "0", "0", "", "", ""];
+/// A group plot's constant values (the same in every sample, WX21 to
+/// WX23 and WG01 to WG12): eight `BD 0`, `B 0`, `BD -30`, `BD 30`, `B 0`,
+/// `BD 40`; then after its view count 16 zero bytes and `PLOT_TAIL`.
+const PLOT_VALUES: [f64; 3] = [-30.0, 30.0, 40.0];
+const PLOT_TAIL: &str = "0100001001010101010100100000001011010101010101010101";
+
+/// A group plot of a group's section views: its index (1 up), the group
+/// plot style, the point it was placed at and the number of its views.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Plot {
+    pub index: i32,
+    pub style: u64,
+    pub origin: crate::types::Vector3,
+    pub views: i32,
+}
 
 pub(super) fn arch(doc: &CadDocument, h: Handle) -> Option<&ArchEntityData> {
     match doc.get_entity(h)? {
@@ -57,33 +72,41 @@ fn head(w: &mut DwgMergedWriter, word: i32) {
 /// ```text
 /// BL 80, 0, 80, 80, 0, BL 0x10025F04, BL 0x40000353, 4 bits 0101,
 /// RC 1, the geometry stamp (BL 2, BL 0, BL 0), GROUP_HEAD, BL n lines,
-/// BL k section sources, k x {BL 1, SOURCE_RUN}, GROUP_TAIL
+/// BL k section sources, k x {BL 1, SOURCE_RUN}, 2 bits 10, BL p group
+/// plots, p x {BL index, 3BD origin, PLOT_VALUES, BL views, 16 zero bytes,
+/// PLOT_TAIL}, GROUP_TAIL after its first four bits
 /// references: soft 0, hard owner 0, alignment (hard), hard 0, the lines
-///   (soft, by station), per source {section style, surface} (soft),
-///   soft 0 x 3, sample line style, label style (hard)
+///   (soft, by station), per source {section style, surface} (soft), per
+///   plot {group plot style (hard), soft 0, hard 0}, soft 0 x 3, sample
+///   line style, label style (hard)
 /// texts: "AeccImpSampleLineGroup", "", name, "", per source {"0", "",
-///   ""}, "", "0", "0", "", "", ""
+///   ""}, per plot {"", "", ""}, "", "0", "0", "", "", ""
 /// ```
 ///
 /// The groups of WL10 to WL13 are reproduced bit for bit apart from the
-/// stamp.
-#[allow(clippy::too_many_arguments)]
-fn write_group(doc: &mut CadDocument, common: EntityCommon, name: &str, alignment: u64, lines: &[u64], sources: &[(u64, u64)], line_style: u64, label_style: u64) -> Result<Handle, DxfError> {
-    let mut refs = vec![soft_pointer(0), Ref(DwgReferenceType::HardOwnership, 0), hard_pointer(alignment), hard_pointer(0)];
-    refs.extend(lines.iter().map(|l| soft_pointer(*l)));
-    for (style, surface) in sources {
+/// stamp, and so are the groups with plots of WX21 to WX23 and WG01.
+pub(super) fn write_group(doc: &mut CadDocument, g: &Group) -> Result<Handle, DxfError> {
+    let mut refs = vec![soft_pointer(0), Ref(DwgReferenceType::HardOwnership, 0), hard_pointer(g.alignment), hard_pointer(0)];
+    refs.extend(g.lines.iter().map(|l| soft_pointer(*l)));
+    for (style, surface) in &g.sources {
         refs.extend([soft_pointer(*style), soft_pointer(*surface)]);
     }
-    refs.extend([soft_pointer(0), soft_pointer(0), soft_pointer(0), hard_pointer(line_style), hard_pointer(label_style)]);
-    let mut strings = vec!["AeccImpSampleLineGroup".to_string(), String::new(), name.to_string(), String::new()];
-    for _ in sources {
+    for p in &g.plots {
+        refs.extend([hard_pointer(p.style), soft_pointer(0), hard_pointer(0)]);
+    }
+    refs.extend([soft_pointer(0), soft_pointer(0), soft_pointer(0), hard_pointer(g.line_style), hard_pointer(g.label_style)]);
+    let mut strings = vec!["AeccImpSampleLineGroup".to_string(), String::new(), g.name.clone(), String::new()];
+    for _ in &g.sources {
         strings.extend(["0".to_string(), String::new(), String::new()]);
+    }
+    for _ in &g.plots {
+        strings.extend([String::new(), String::new(), String::new()]);
     }
     strings.extend(GROUP_TEXTS[1..].iter().map(|s| s.to_string()));
     put_entity(
         doc,
         "AECC_SAMPLE_LINE_GROUP",
-        common,
+        g.common.clone(),
         |w| {
             head(w, WORD_GROUP);
             bits(w, "0101");
@@ -92,13 +115,32 @@ fn write_group(doc: &mut CadDocument, common: EntityCommon, name: &str, alignmen
                 w.write_bit_long(v);
             }
             bits(w, GROUP_HEAD);
-            w.write_bit_long(lines.len() as i32);
-            w.write_bit_long(sources.len() as i32);
-            for _ in sources {
+            w.write_bit_long(g.lines.len() as i32);
+            w.write_bit_long(g.sources.len() as i32);
+            for _ in &g.sources {
                 w.write_bit_long(1);
                 bits(w, SOURCE_RUN);
             }
-            bits(w, GROUP_TAIL);
+            bits(w, &GROUP_TAIL[..2]);
+            w.write_bit_long(g.plots.len() as i32);
+            for p in &g.plots {
+                w.write_bit_long(p.index);
+                for v in [p.origin.x, p.origin.y, p.origin.z] {
+                    w.write_bit_double(v);
+                }
+                for _ in 0..8 {
+                    w.write_bit_double(0.0);
+                }
+                w.write_bit(false);
+                w.write_bit_double(PLOT_VALUES[0]);
+                w.write_bit_double(PLOT_VALUES[1]);
+                w.write_bit(false);
+                w.write_bit_double(PLOT_VALUES[2]);
+                w.write_bit_long(p.views);
+                w.write_bytes(&[0; 16]);
+                bits(w, PLOT_TAIL);
+            }
+            bits(w, &GROUP_TAIL[4..]);
         },
         Body { refs, strings },
     )
@@ -223,7 +265,7 @@ pub fn add_sample_line_group(doc: &mut CadDocument, alignment: Handle, name: &st
     let mut groups = written.groups.clone();
     groups.push(handle.value());
     rewrite_with(doc, alignment, written, &profiles, &profiles, None, &groups)?;
-    write_group(doc, c, name, alignment.value(), &[], &[], line_style, label)
+    write_group(doc, &Group { common: c, name: name.to_string(), alignment: alignment.value(), lines: Vec::new(), sources: Vec::new(), plots: Vec::new(), line_style, label_style: label })
 }
 
 /// A sample line as written.
@@ -243,24 +285,37 @@ pub(super) struct Line {
 }
 
 /// A group as written: its record's alignment, lines, section sources
-/// `(section style, surface)`, styles and name.
-struct Group {
-    common: EntityCommon,
-    name: String,
-    alignment: u64,
-    lines: Vec<u64>,
-    sources: Vec<(u64, u64)>,
-    line_style: u64,
-    label_style: u64,
+/// `(section style, surface)`, group plots, styles and name.
+pub(super) struct Group {
+    pub common: EntityCommon,
+    pub name: String,
+    pub alignment: u64,
+    pub lines: Vec<u64>,
+    pub sources: Vec<(u64, u64)>,
+    pub plots: Vec<Plot>,
+    pub line_style: u64,
+    pub label_style: u64,
 }
 
-fn read_group(doc: &CadDocument, group: Handle) -> Option<Group> {
+/// The group plots of a group record in the layout [`write_group`]
+/// writes (its constant values as in every sample), `None` otherwise.
+fn plots_of(a: &ArchEntityData) -> Option<Vec<(i32, crate::types::Vector3, i32)>> {
+    let tail = u64::from_str_radix(PLOT_TAIL, 2).ok()?;
+    a.section_view_group_plots()?
+        .into_iter()
+        .map(|p| (p.extra == [0.0; 8] && p.values == PLOT_VALUES && p.flags == [false; 2] && p.id == [0; 16] && p.tail == tail).then_some((p.index, p.origin, p.views)))
+        .collect()
+}
+
+pub(super) fn read_group(doc: &CadDocument, group: Handle) -> Option<Group> {
     let Some(EntityType::Extended(x)) = doc.get_entity(group) else { return None };
     let ExtendedEntityData::Arch(a) = &x.data else { return None };
     (a.dxf_name == "AECC_SAMPLE_LINE_GROUP").then_some(())?;
+    let plots = plots_of(a)?;
     let refs = a.typed_handles();
-    (refs.len() >= 9).then_some(())?;
-    let middle: Vec<u64> = refs[4..refs.len() - 5].iter().map(|r| r.0).collect();
+    (refs.len() >= 9 + 3 * plots.len()).then_some(())?;
+    let middle: Vec<u64> = refs[4..refs.len() - 5 - 3 * plots.len()].iter().map(|r| r.0).collect();
+    let plot_refs: Vec<u64> = refs[refs.len() - 5 - 3 * plots.len()..refs.len() - 5].iter().map(|r| r.0).collect();
     let is_line = |h: u64| arch(doc, Handle::new(h)).is_some_and(|l| l.dxf_name == "AECC_SAMPLE_LINE");
     let n = middle.iter().take_while(|h| is_line(**h)).count();
     let rest = &middle[n..];
@@ -271,6 +326,9 @@ fn read_group(doc: &CadDocument, group: Handle) -> Option<Group> {
     for _ in &sources {
         want.extend(["0".to_string(), String::new(), String::new()]);
     }
+    for _ in &plots {
+        want.extend([String::new(), String::new(), String::new()]);
+    }
     want.extend(GROUP_TEXTS[1..].iter().map(|s| s.to_string()));
     (strings.len() == 3 + want.len() && strings[3..] == want[..]).then_some(())?;
     Some(Group {
@@ -279,6 +337,7 @@ fn read_group(doc: &CadDocument, group: Handle) -> Option<Group> {
         alignment: refs[2].0,
         lines: middle[..n].to_vec(),
         sources,
+        plots: plots.iter().zip(plot_refs.chunks(3)).map(|((index, origin, views), r)| Plot { index: *index, style: r[0], origin: *origin, views: *views }).collect(),
         line_style: refs[refs.len() - 2].0,
         label_style: refs[refs.len() - 1].0,
     })
@@ -377,7 +436,7 @@ pub fn add_sample_line_through(doc: &mut CadDocument, group: Handle, name: &str,
     let at = lines.partition_point(|l| l.0 <= station_value);
     lines.insert(at, (station_value, handle.value()));
     let ordered: Vec<u64> = lines.iter().map(|l| l.1).collect();
-    write_group(doc, g.common, &g.name, g.alignment, &ordered, &g.sources, g.line_style, g.label_style)?;
+    write_group(doc, &Group { lines: ordered, ..g })?;
     Ok(handle)
 }
 
@@ -449,7 +508,7 @@ pub fn add_sections(doc: &mut CadDocument, group: Handle, surface: Handle) -> Re
         out.push(handle);
     }
     g.sources.push((style, surface.value()));
-    write_group(doc, g.common.clone(), &g.name, g.alignment, &g.lines, &g.sources, g.line_style, g.label_style)?;
+    write_group(doc, &g)?;
     Ok(out)
 }
 

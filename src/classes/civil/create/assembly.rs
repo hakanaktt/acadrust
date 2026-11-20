@@ -221,12 +221,66 @@ const GROUP_TEMPLATE: (i32, &str) = (0x0E80, "Group - (<[67112990(2449)]>)");
 /// nodes (`AECC_NAME_TEMPLATES_NODE`), one per kind of named object:
 ///
 /// ```text
-/// root: BL 0x8C, BL n, n x BL id (four-byte form), BL 0, BL 32, 3 bits 001
+/// root: BL 0x8C, BL n, n x BL id, BL 0, BL 32, 3 bits 001
 ///       references: n x node (soft owner), soft 0; texts: ""
-/// node: BL id (four-byte form), NODE_TAIL
+/// node: BL id, BL 0, BL 0, BL 32, 3 bits 001, BL 1, BL next counter,
+///       BL 1, BL 1
 ///       references: soft 0; texts: "", the template
 /// ```
+///
+/// A new node's counter is 2 (the first name is made with it).
 pub(super) fn ensure_name_template(doc: &mut CadDocument, template: (i32, &str)) -> Result<(), DxfError> {
+    ensure_name_template_from(doc, template, 2).map(|_| ())
+}
+
+/// The node of name template `id` and its next counter.
+fn name_node(doc: &CadDocument, id: i32) -> Option<(Handle, i32)> {
+    let head = root_node(doc, KEY_NAME_TEMPLATES)?;
+    object(doc, head)?.typed_handles().iter().filter(|r| r.0 != 0).find_map(|r| {
+        let (d, s, e) = object(doc, Handle::new(r.0)).and_then(fields_of)?;
+        let mut b = Bits::new(d, s, e);
+        (b.bit_long()? == id).then_some(())?;
+        for want in [0, 0, 32] {
+            (b.bit_long()? == want).then_some(())?;
+        }
+        (b.bits_value(3)? == 0b001 && b.bit_long()? == 1).then_some(())?;
+        Some((Handle::new(r.0), b.bit_long()?))
+    })
+}
+
+/// Takes `count` names of template `(id, text)` (adding the template with
+/// counter 1 when the drawing lacks it): returns the first counter value
+/// and writes the node with the counter after the last.
+pub(super) fn take_names(doc: &mut CadDocument, template: (i32, &str), count: i32) -> Result<i32, DxfError> {
+    ensure_name_template_from(doc, template, 1)?;
+    let (node, next) = name_node(doc, template.0).ok_or_else(|| invalid("a name template node is not one this crate reads"))?;
+    let owner = object(doc, node).map(|o| o.owner).ok_or_else(|| invalid("name template node not found"))?;
+    write_name_node(doc, node, owner, template, next + count)?;
+    Ok(next)
+}
+
+fn write_name_node(doc: &mut CadDocument, node: Handle, owner: Handle, template: (i32, &str), next: i32) -> Result<(), DxfError> {
+    put_object(
+        doc,
+        "AECC_NAME_TEMPLATES_NODE",
+        node,
+        owner,
+        Vec::new(),
+        |w| {
+            for v in [template.0, 0, 0, 32] {
+                w.write_bit_long(v);
+            }
+            bits(w, "001");
+            for v in [1, next, 1, 1] {
+                w.write_bit_long(v);
+            }
+        },
+        Body { refs: vec![soft_pointer(0)], strings: vec![String::new(), template.1.to_string()] },
+    )
+}
+
+/// [`ensure_name_template`] with the counter `next` for a new node.
+fn ensure_name_template_from(doc: &mut CadDocument, template: (i32, &str), next: i32) -> Result<(), DxfError> {
     let head = root_node(doc, KEY_NAME_TEMPLATES);
     let mut nodes: Vec<(i32, Handle)> = Vec::new();
     if let Some(head) = head {
@@ -244,18 +298,7 @@ pub(super) fn ensure_name_template(doc: &mut CadDocument, template: (i32, &str))
     let root = root(doc).ok_or_else(|| invalid("drawing has no civil root"))?;
     let head_handle = head.unwrap_or_else(|| doc.allocate_handle());
     let node = doc.allocate_handle();
-    put_object(
-        doc,
-        "AECC_NAME_TEMPLATES_NODE",
-        node,
-        head_handle,
-        Vec::new(),
-        |w| {
-            raw_long(w, template.0);
-            bits(w, NODE_TAIL);
-        },
-        Body { refs: vec![soft_pointer(0)], strings: vec![String::new(), template.1.to_string()] },
-    )?;
+    write_name_node(doc, node, head_handle, template, next)?;
     nodes.push((template.0, node));
     put_object(
         doc,
@@ -267,7 +310,7 @@ pub(super) fn ensure_name_template(doc: &mut CadDocument, template: (i32, &str))
             w.write_bit_long(KEY_NAME_TEMPLATES);
             bl_byte(w, nodes.len() as u8);
             for n in &nodes {
-                raw_long(w, n.0);
+                w.write_bit_long(n.0);
             }
             bits(w, "100100100000001");
         },
@@ -277,17 +320,6 @@ pub(super) fn ensure_name_template(doc: &mut CadDocument, template: (i32, &str))
         set_root_entry(doc, KEY_NAME_TEMPLATES, head_handle)?;
     }
     Ok(())
-}
-
-/// A name template node after its id (the same in every node).
-const NODE_TAIL: &str = "101001001000000010100000001010000001001000000010100000001";
-
-/// BL in its four-byte form.
-fn raw_long(w: &mut DwgMergedWriter, v: i32) {
-    w.write_2bits(0);
-    for b in v.to_le_bytes() {
-        w.write_byte(b);
-    }
 }
 
 /// Where a package subassembly's package lies, as the host stores it:

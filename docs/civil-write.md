@@ -1718,6 +1718,48 @@ for -30..60 at (200, 0)). Views of sampled sections, of lines with several
 sections are not written. A drawing without the section or section view
 styles gets the defaults (§2c).
 
+### Section view group plots
+
+`add_section_view_group(doc, group, at, layer)` writes what the
+application's default group plot makes from a sample line group (WG01:
+three lines; WG02, WG03, WG10 to WG12: two to ten lines, mixed reaches,
+WX21 to WX23: two plots of one group):
+
+- One view per line in station order, the view record of a single view
+  with `BL plot index` (1 up; 0 for a single view) before its last 77
+  bits, named by station and a counter that runs across the drawing
+  (`0+25.00 (1)`, the second plot of three lines `(4)` to `(6)`): name
+  template 0x8F `<[Section View Station]> (<[Next Counter(CP)]>)`, whose
+  node keeps the next counter (`BL id, BL 0, BL 0, BL 32, 3 bits 001,
+  BL 1, BL next, BL 1, BL 1`; a node the writer makes for another
+  template starts at 2 as before).
+- Placement by the default group plot style: in from the plot's point by
+  0.5, filled by rows from the lower left with `ceil(sqrt(n))` views a
+  row, each column as wide as its views' widest reach left and right of
+  their centerlines (which it aligns), each row as high as its highest
+  view (40 for unsampled sections), 2 between columns and 2.5 between
+  rows.
+- The group record: after the section sources, `2 bits 10`, `BL p`
+  plots, each `BL index, 3BD point, 8 x BD 0, B 0, BD -30, BD 30, B 0,
+  BD 40, BL views, 16 zero bytes` and a constant 52-bit run (the values
+  -30, 30 and 40 are the same in every sample); per plot the references
+  `group plot style (hard), soft 0, hard 0` after the sources' and three
+  empty texts after theirs. Each line lists its view.
+- A drawing without a group plot style gets the default (style tree key
+  0x96, `AECC_SAMPLE_LINE_GROUP_STYLE`, its collection and the default
+  "Standard": rows, lower left start, uniform cells per row and column,
+  centerline alignment).
+
+The root settings node's lists of the drawing's objects are not written
+(as for single views). The group records of WX21 to WX23 and the views
+of WG01 are reproduced bit for bit from the plot count on. E-WG3 (three
+lines, two plots) and E-WG7 (seven lines of seven reaches) open with
+AUDIT 0 errors; the API lists the views in "Section View Group - 1" and
+"- 2" with the written locations, the same as the application's WG11a.
+The reader gives a group's plots (`section_view_group_plots()`) and
+reads a view's section count as a `BL` (a view of a line without a
+section, `BL 0`, gave no frame before).
+
 ## 3k. Intersections
 
 `add_intersection(doc, name, main, main_profile, other, other_profile,
@@ -2446,7 +2488,8 @@ Corridors are listed in §3i-a.
 | sample line groups | lines with all vertices on one side; section sources other than a TIN surface (corridors, corridor surfaces, pipe networks) | yes | no | one-sided lines close with another run (LV03); other sources not sampled |
 | sections | of a TIN surface (unsampled) | yes (geometry once sampled) | yes | §3j |
 | section views | one view of a line, default style | yes (frame) | yes | §3j |
-| section views | group plots (several views at once), several sections in a view, other styles | partly | no | not sampled |
+| section views | group plots with the default group plot style, one or more per group | yes | yes | §3j (section view group plots) |
+| section views | group plots with other group plot styles or plot settings (pages, sheets), several sections in a view, views of sampled sections, other styles | partly | no | not sampled |
 | assemblies | groups of package subassemblies (offsets, attachments) | partly | yes | §3l, §3i |
 | subassemblies | packages (`pkt`) written by acadrust | yes | yes | §3l |
 | subassemblies | stock subassemblies of the application's library | yes (parameters) | no | their texts carry the library path of the product |

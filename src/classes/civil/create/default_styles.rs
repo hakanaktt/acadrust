@@ -15,6 +15,9 @@ pub(super) const KEY_SECTION_VIEW_STYLES: i32 = 0x33;
 const KEY_SECTION_VIEW_BAND_SETS: i32 = 0xC0E;
 pub(super) const KEY_INTERSECTION_STYLES: i32 = 0x1031;
 const KEY_MARKER_STYLES: i32 = 0x11B;
+/// Style tree key of the group plot style collection (section view group
+/// plots; class `AECC_SAMPLE_LINE_GROUP_STYLE`).
+pub(super) const KEY_GROUP_PLOT_STYLES: i32 = 0x96;
 /// Style tree keys of the parcel style and feature line style collections.
 pub(super) const KEY_PARCEL_STYLES: i32 = 2;
 pub(super) const KEY_FEATURE_LINE_STYLES: i32 = 128;
@@ -72,6 +75,12 @@ pub(super) fn ensure_section_styles(doc: &mut CadDocument) -> Result<(), DxfErro
 /// drawing lacks them.
 pub(super) fn ensure_section_view_styles(doc: &mut CadDocument) -> Result<(), DxfError> {
     ensure(doc, SECTION_VIEW_STYLES, &[(KEY_SECTION_VIEW_STYLES, 0), (KEY_SECTION_VIEW_BAND_SETS, 2)])
+}
+
+/// The group plot style collection (style tree key 0x96) and its default
+/// style, when the drawing lacks them (WG00a).
+pub(super) fn ensure_group_plot_styles(doc: &mut CadDocument) -> Result<(), DxfError> {
+    ensure(doc, GROUP_PLOT_STYLES, &[(KEY_GROUP_PLOT_STYLES, 0)])
 }
 
 /// The roadway marker style collection (style tree key 0x11B), its
@@ -180,6 +189,26 @@ const SECTION_STYLES: &[Template] = &[
         fields: &[Run(10, "478"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(339, "480d4814a82a12a18000000c0003fffd40600000000640550542543000000180007fffa80c00000000d54")],
         refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
         strings: &["", "", "", "", "", "", ""],
+    },
+];
+
+#[rustfmt::skip]
+const GROUP_PLOT_STYLES: &[Template] = &[
+    Template {
+        dxf: "AECC_SAMPLE_LINE_GROUP_STYLE",
+        owner: Target::Null,
+        children: &[(0x1e, 1)],
+        fields: &[Run(10, "658"), Children, Run(781, "a8800d2006042aaaaaaaaaaada9f80520061b01020000808c801818081d200604088888888888c09f82020000803c80186a0205c801810aaaaaaaaaaab6a7e02480186a02084801810222222222223027e06c801810aaaaaaaaaaab4a7e0f88000b0"), Time, Run(270, "00e400c3603e400c08555555555555a53f032400c08555555555555b53f078400058"), Time, Run(959, "480a0d2a0a84a8202400030c00feff50180000000190154150950404000061801fdfea03000000003204a82a12a08090000c3003fbfd40600000000640d50542541010000186007f7fa80c00000000c822a0a84a8600800030c00feff50180000000190554150950c01800061801fdfea030000000035554")],
+        refs: &[(SoftPointer, Target::Record(1)), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
+        strings: &["", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
+    },
+    Template {
+        dxf: "AECC_SAMPLE_LINE_GROUP_STYLE",
+        owner: Target::Record(0),
+        children: &[],
+        fields: &[Run(10, "478"), Children, Run(781, "a8800d2006042aaaaaaaaaaada9f80520061b01020000808c801818081d200604088888888888c09f82020000803c80186a0205c801810aaaaaaaaaaab6a7e02480186a02084801810222222222223027e06c801810aaaaaaaaaaab4a7e0f88000b0"), Time, Run(270, "00e400c3603e400c08555555555555a53f032400c08555555555555b53f078400058"), Time, Run(959, "480a0d2a0a84a8202400030c00feff50180000000190154150950404000061801fdfea03000000003204a82a12a08090000c3003fbfd40600000000640d50542541010000186007f7fa80c00000000c822a0a84a8600800030c00feff50180000000190554150950c01800061801fdfea030000000035554")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
+        strings: &["", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
     },
 ];
 

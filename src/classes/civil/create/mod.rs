@@ -41,7 +41,7 @@ pub use groups::{add_point_group, add_point_group_query, set_point_group, set_po
 pub use profile::{add_profile, add_profile_with_curves, add_surface_profile, VerticalCurve};
 pub use profile_view::{add_profile_view, add_profile_view_with_range};
 pub use sample_lines::{add_sample_line, add_sample_line_through, add_sample_line_group, add_sections};
-pub use section_view::add_section_view;
+pub use section_view::{add_section_view, add_section_view_group};
 pub use site::{add_alignment_on_site, add_feature_line, add_lot_line, add_parcel, add_feature_line_vertices, FeatureLineVertex, add_site};
 pub use points::{add_cogo_point, cogo_points, remove_cogo_point, set_cogo_point, set_cogo_point_name};
 pub use support::ensure_civil;
