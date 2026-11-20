@@ -554,6 +554,29 @@ alignment record with:
 - the parent as a seventh reference (soft pointer); one more text per
   design speed.
 
+`add_offset_alignment_with_widenings(..., widenings, layer)` adds widenings
+(`Widening`: start, end, offset, entry and exit transition lengths along
+the parent, linear transitions; AO16, AO30 to AO33): the stretches in
+station order are nominal, entry transition, widening, exit transition,
+nominal, ...; each nominal or widening stretch is a region (`BL 2` nominal,
+`BL 1` widening) with one element per parent element it covers, each
+transition one element `BL 267, BS 0, B 0, B 0, BD -1, BD -1, BS 1, BD -1,
+BL 3, ids, BL 1, BL 4096, BL 2, 2 x 2RD` from the point where it starts
+(previous offset) to where it ends (new offset; a transition of length 0
+is a jump at one station). The block lists the transitions `{BL 1
+(linear), BD length, BL element, BD 0, BD 0, BL 2, BD 0}` (entry then
+exit per widening), the element map gives each parent element its
+elements in station order (transitions excluded), and the parent gets an
+anchor at every distinct region or transition end. The ids follow the
+application's: the parent elements' first nominal pieces from 2n + 1, then
+per widening its pieces, the nominal pieces after it, its transitions
+(an exit that reaches the next element leaves the application one id
+short of the samples' numbering; AO32). A transition longer than 0 must
+lie on one parent line (an arc's transition was not sampled). E-O5 to
+E-O8 (one or three widenings, with and without transitions, one on the
+arc) open and audit clean, list their regions and transitions, and are
+solved again after a nominal offset change.
+
 The parent is written again with an anchor (kind 6) at each end of the
 range. The companion is the siteless one with nodes numbered from 2n + 1
 (n nodes), every segment flags 10 and no faces (`BL 16` in place of
@@ -2278,7 +2301,8 @@ Corridors are listed in §3i-a.
 | alignments | fixed lines, free arcs, spiral-curve-spirals, start station, siteless and on a site | yes | yes | §3a, §3g |
 | alignments | offset alignments of lines and arcs, on either side, over the whole parent or a station range | yes | yes | §3a (station anchors, offset alignments) |
 | alignments | station anchors (profiles, offset ranges, own design speed, corridor geometry locks) | yes | yes, for profiles and offset alignments | §3a |
-| alignments | widenings, offsets of spirals, curb returns, other types (rail, miscellaneous) | yes (offset parameters and regions, connected alignments, type) | no | not written yet |
+| alignments | widenings with linear transitions (on lines; of length 0 anywhere) | yes | yes | §3a (offset alignments) |
+| alignments | widening transitions on arcs or curved (kinds 2, 4, 5), offsets of spirals, curb returns, other types (rail, miscellaneous) | yes (offset parameters and regions, connected alignments, type) | no | not written yet |
 | alignments | lone spirals, other constraints (fixed/floating curves, curves through points), design speeds, station equations | yes (elements, speeds, equations) | no | other element kinds not written |
 | alignments | superelevation | yes (critical stations, lanes-only blocks) | no | the superelevation block is read only |
 | profiles | layout: fixed tangents, free parabolas (symmetric, asymmetric), free circular curves | yes | yes | §3e |
