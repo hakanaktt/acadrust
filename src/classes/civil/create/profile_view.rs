@@ -938,6 +938,9 @@ fn add_view(doc: &mut CadDocument, alignment: Handle, name: &str, origin: Vector
     if bands.len() > 15 {
         return Err(invalid("a profile view holds at most 15 bands"));
     }
+    if bands.iter().any(|b| !(b.weeding.is_finite() && b.weeding >= 0.0)) {
+        return Err(invalid("a band's weeding is a finite length, zero or more"));
+    }
     if bands.iter().any(|b| !(b.gap.is_finite() && b.gap >= 0.0)) {
         return Err(invalid("a band gap is a finite length, zero or more"));
     }
@@ -1008,7 +1011,8 @@ fn add_view(doc: &mut CadDocument, alignment: Handle, name: &str, origin: Vector
     for (h, kind, ids, profile, s) in groups {
         write_group(doc, common(h), kind, &ids, profile, s, handle.value())?;
     }
-    for (i, b) in resolved.iter().enumerate() {
+    // A band that hides its labels has no label group (BVPD-SL, BVHG-SL).
+    for (i, b) in resolved.iter().enumerate().filter(|(_, b)| b.band.show_labels) {
         let h = doc.allocate_handle();
         super::bands::write_group(doc, common(h), b, i as i32 + 1, handle.value(), &frame, alignment)?;
     }
@@ -1102,6 +1106,31 @@ mod tests {
         }).collect();
         assert_eq!(groups.len(), 5);
         assert!(groups.iter().any(|g| g == "AECC_SECTIONALDTABAND_LABELGROUP"));
+    }
+
+    /// A band that hides its labels gets no label group; weeding and
+    /// stagger are written into the item and the group.
+    #[test]
+    fn bands_hiding_their_labels_have_no_group() {
+        use super::super::bands::{BandKind, BandStagger, ProfileViewBand};
+        let v = Vector2::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let al = crate::classes::civil::add_alignment(&mut doc, "AL1", &[v(0.0, 0.0), v(100.0, 0.0)], None).unwrap();
+        crate::classes::civil::add_profile(&mut doc, al, "P1", &[v(0.0, 10.0), v(100.0, 15.0)], &[], None).unwrap();
+        let mut shown = ProfileViewBand::new(BandKind::ProfileData);
+        shown.weeding = 50.0;
+        shown.stagger = BandStagger::Left;
+        let mut hidden = ProfileViewBand::new(BandKind::HorizontalGeometry);
+        hidden.show_labels = false;
+        let view = add_profile_view_with_bands(&mut doc, al, "PV", v(0.0, -100.0), None, &[shown, hidden], None).unwrap();
+        let back = round_trip(&doc, "hidden");
+        assert!(entity(&back, view).profile_view_frame().is_some());
+        let groups = back.entities().filter(|e| matches!(e, crate::entities::EntityType::Extended(x) if matches!(&x.data, crate::entities::ExtendedEntityData::Arch(a) if a.dxf_name.ends_with("BAND_LABELGROUP")))).count();
+        assert_eq!(groups, 1);
+        let mut bad = ProfileViewBand::new(BandKind::ProfileData);
+        bad.weeding = -1.0;
+        assert!(add_profile_view_with_bands(&mut doc, al, "PV2", v(0.0, -300.0), None, &[bad], None).is_err());
     }
 
     #[test]

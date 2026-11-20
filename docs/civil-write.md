@@ -1664,9 +1664,14 @@ A view lists its bands after the profile flags: `BL n`, then per band
 `BD gap` and a constant item of its kind (profile data 1056 bits, every
 other kind 572: vertical and horizontal geometry, superelevation,
 sectional data and pipe network items are the same, BV-SE, BV-SD, BV-PN,
-BV-VGT): item bits 4 and 5 are the labels at the end and start stations,
-bit 9 is set below the view (a profile data item also has bits 921/923 =
-1/0 above it), the 572-bit item holds the band's
+BV-VGT). An item opens with `BL` flags (0x01 below the view, 0x10 label
+at the start station, 0x20 at the end station, 0x100 labels shown: 0x131
+is written as a raw `BL`, 0x31 as a byte, so hiding the labels shortens
+the item by 24 bits: BVPD-SL, BVHG-SL), `BD` weeding (100; BVPD-W 50),
+`BL` stagger (0 none, 1 both, 2 right, 3 left: BVPD-ST, -SR, -SLF) and
+`BD` stagger line height (1/60, the API refuses to set it); a profile
+data item has bits 921/923 = 1/0 above the view, the 572-bit item holds
+the band's
 number in the view (from 1, the bands below first) in bits 436-439 (a
 lone horizontal geometry band holds 1; with the number of another band
 the application lists the band without labels and drops its label group
@@ -1715,6 +1720,11 @@ empty group, which the application fills as soon as the view or one of
 its bands changes (it rebuilds every band label group then; an empty
 group stays empty through open and regeneration).
 
+A band that hides its labels has no label group (the application
+deletes it: BVPD-SL, BVHG-SL, E-BW1-edit). A group's tail repeats the
+band's stagger (`BL`, after its first 26 bits). The major and minor
+intervals (100, 25) stay constant: the API's setters change nothing.
+
 Superelevation, sectional data and pipe network bands are written
 without a data source and without labels (the application's own groups
 for such bands are empty: no superelevation, sample line group or pipe
@@ -1751,7 +1761,10 @@ data and pipe network bands below, vertical and horizontal geometry above)
 and E-BV4 (the application's HB0 with such a second view, reusing its
 styles) open with AUDIT 0; the API lists the five bands with their types
 and locations and the profile; after a band change all five groups stay
-and the horizontal geometry labels are rebuilt equal.
+and the horizontal geometry labels are rebuilt equal. E-BW1 to E-BW4
+(weeding 50, stagger left/right/both, labels hidden below and above the
+view) open with AUDIT 0 and the API lists the written weeding, stagger
+and label visibility.
 
 ## 3i. Corridors
 
@@ -3080,8 +3093,8 @@ Corridors are listed in §3i-a.
 | profile views | styles that copy the default with another vertical exaggeration, views with them | yes (frame, style exaggeration) | yes | §3h |
 | profile views | stacked views (separate views at stacked origins) | yes | yes | §3h |
 | profile views | every style setting the API exposes (graph title, direction, exaggeration, grid, the four axes' titles and ticks, text styles) | yes | yes | §3h |
-| profile views | profile data, vertical and horizontal geometry, superelevation, sectional data and pipe network bands below or above the view, with their gaps, end station labels, profiles and label groups; the default band styles of a new drawing | yes | yes (horizontal geometry labels of alignments with spirals left to the application; superelevation, sectional data and pipe network bands without data source and labels) | §3h (Bands) |
-| profile views | band data sources (superelevation, sample line group, pipe network) and their labels, pressure network/cant/distance/COGO/speed bands, band styles other than the defaults, weeding and intervals | partly | no | the API adds no band of the last five kinds; the API ignores the interval setters |
+| profile views | profile data, vertical and horizontal geometry, superelevation, sectional data and pipe network bands below or above the view, with their gaps, end station labels, label visibility, weeding, stagger, profiles and label groups; the default band styles of a new drawing | yes | yes (horizontal geometry labels of alignments with spirals left to the application; superelevation, sectional data and pipe network bands without data source and labels) | §3h (Bands) |
+| profile views | band data sources (superelevation, sample line group, pipe network) and their labels, pressure network/cant/distance/COGO/speed bands, band styles other than the defaults, intervals, stagger line height | partly | no | the API adds no band of the last five kinds; the API ignores the interval setters and refuses the stagger line height |
 | sites | name, description, members | yes | yes | §3g |
 | parcels | closed and open, crossing and touching lot lines, arcs, labels | yes | yes | §3g |
 | parcels | members added to containers the application wrote with crossings (its point marks and edge flags kept) | yes | yes | §3g |
