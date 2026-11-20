@@ -245,10 +245,31 @@ fn parts(pvis: &[Vector2], curves: &[VerticalCurve]) -> Vec<(i32, i32, i32, Part
 /// records equal the samples' bit for bit apart from the geometry stamp
 /// and the identifier.
 #[allow(clippy::too_many_arguments)]
+/// The source of a profile sampled from a surface: the surface, the
+/// offset from the alignment and the stations it samples between, and
+/// whether they are the alignment's own (`whole`).
+struct Sampled {
+    surface: u64,
+    offset: f64,
+    range: (f64, f64),
+    whole: bool,
+}
+
 fn write_profile(doc: &mut CadDocument, common: EntityCommon, name: &str, parts: &[(i32, i32, i32, Part)], helpers: &[Handle; 7], style: u64, alignment: Handle, id: &[u8; 16]) -> Result<Handle, DxfError> {
+    write_profile_of(doc, common, name, parts, helpers, style, alignment, id, None)
+}
+
+/// [`write_profile`]; with `sampled` a profile sampled from a surface (no
+/// entities): after the 9 bits, `BL 7` (0x47 for stations other than the
+/// alignment's), `BD start, BD end, BD 30, BD offset`, 12 bits
+/// `101011000010`, then `2 bits 10`, a zero identifier and the tail; the
+/// surface is the reference after the alignment (soft pointer; WS11 to
+/// WS15).
+#[allow(clippy::too_many_arguments)]
+fn write_profile_of(doc: &mut CadDocument, common: EntityCommon, name: &str, parts: &[(i32, i32, i32, Part)], helpers: &[Handle; 7], style: u64, alignment: Handle, id: &[u8; 16], sampled: Option<&Sampled>) -> Result<Handle, DxfError> {
     let byte = |w: &mut DwgMergedWriter, v: u8| bits(w, &format!("{v:08b}"));
     let mut refs: Vec<Ref> = helpers.iter().map(|h| Ref(DwgReferenceType::HardOwnership, h.value())).collect();
-    refs.extend([soft_pointer(0), hard_pointer(0), hard_pointer(0), soft_pointer(0), hard_pointer(style), hard_pointer(alignment.value()), soft_pointer(0), hard_pointer(0), soft_pointer(0), soft_pointer(0)]);
+    refs.extend([soft_pointer(0), hard_pointer(0), hard_pointer(0), soft_pointer(0), hard_pointer(style), hard_pointer(alignment.value()), soft_pointer(sampled.map_or(0, |s| s.surface)), hard_pointer(0), soft_pointer(0), soft_pointer(0)]);
     let mut strings = vec!["AeccImpVAlignment".to_string(), String::new(), String::new()];
     strings.extend(KEYS.iter().filter_map(|(_, k)| match k {
         Key::Text(t) => Some(t.to_string()),
@@ -283,6 +304,17 @@ fn write_profile(doc: &mut CadDocument, common: EntityCommon, name: &str, parts:
             bits(w, &"0".repeat(63));
             w.write_bit_double(2.0);
             bits(w, "011011010");
+            if let Some(s) = sampled {
+                w.write_bit_long(if s.whole { 7 } else { 0x47 });
+                for v in [s.range.0, s.range.1, 30.0, s.offset] {
+                    w.write_bit_double(v);
+                }
+                bits(w, "101011000010");
+                bits(w, "10");
+                w.write_bytes(&[0; 16]);
+                bits(w, TAIL_BITS);
+                return;
+            }
             w.write_bit_long(0);
             for v in [0.0, 0.0, 30.0] {
                 w.write_bit_double(v);
@@ -450,6 +482,47 @@ pub fn add_profile_with_curves(doc: &mut CadDocument, alignment: Handle, name: &
     write_profile(doc, common, name, &parts(pvis, curves), &helpers, style, alignment, &id)
 }
 
+/// Adds a profile `name` of `alignment` sampled from the TIN surface
+/// `surface` at `offset` from the alignment (negative to the left), between
+/// the stations `range` (the alignment's whole length when `None`), on
+/// `layer` (layer "0" when `None`). The record holds no elevations: the
+/// application samples the surface when it opens the drawing. The alignment
+/// is written again with the profile in its list (no anchor).
+pub fn add_surface_profile(doc: &mut CadDocument, alignment: Handle, surface: Handle, name: &str, offset: f64, range: Option<(f64, f64)>, layer: Option<&str>) -> Result<Handle, DxfError> {
+    if name.is_empty() || !offset.is_finite() {
+        return Err(invalid("a surface profile needs a name and a finite offset"));
+    }
+    if !matches!(doc.get_entity(surface), Some(EntityType::Extended(x)) if matches!(&x.data, ExtendedEntityData::Arch(a) if a.dxf_name == "AECC_TIN_SURFACE")) {
+        return Err(invalid("surface not found"));
+    }
+    let (written, before) = rewritable(doc, alignment, |h| identifier(doc, h)).ok_or_else(|| invalid("the alignment is not one this crate writes"))?;
+    let length = super::alignment::length_of(&written.elements).ok_or_else(|| invalid("the alignment cannot be solved"))?;
+    let whole = range.is_none();
+    let range = range.unwrap_or((0.0, length));
+    if !(range.0.is_finite() && range.1.is_finite() && range.0 >= 0.0 && range.0 < range.1 && range.1 <= length + 1e-9 * length.max(1.0)) {
+        return Err(invalid("the stations must run forward within the alignment"));
+    }
+    let layer = layer.unwrap_or("0");
+    let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
+    ensure_profile_tree(doc)?;
+    let style = default_style(doc).ok_or_else(|| invalid("drawing has no profile styles"))?;
+    let handle = doc.allocate_handle();
+    // The profile is listed without an anchor: its identifier is zero.
+    let mut profiles: Vec<ProfileRef> = before.iter().map(|p| ProfileRef { handle: p.handle, id: p.id }).collect();
+    profiles.push(ProfileRef { handle: handle.value(), id: [0; 16] });
+    rewrite(doc, alignment, written, &before, &profiles)?;
+    let helpers = write_helpers(doc, handle)?;
+    let common = EntityCommon {
+        handle,
+        owner_handle: doc.header.model_space_block_handle,
+        layer: layer.into(),
+        layer_handle: Some(layer_handle),
+        ..EntityCommon::default()
+    };
+    let sampled = Sampled { surface: surface.value(), offset, range, whole };
+    write_profile_of(doc, common, name, &[], &helpers, style, alignment, &[0; 16], Some(&sampled))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -615,5 +688,37 @@ mod tests {
             let curve = &pieces[1].1;
             assert!((curve[0].x - from).abs() < 1e-6 && (curve[curve.len() - 1].x - to).abs() < 1e-6);
         }
+    }
+
+    #[test]
+    fn surface_profiles_name_their_surface() {
+        let v = Vector2::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let al = crate::classes::civil::add_alignment(&mut doc, "AL1", &[v(0.0, 0.0), v(100.0, 0.0)], None).unwrap();
+        let pts = [(0.0, -10.0), (100.0, -10.0), (0.0, 10.0), (100.0, 10.0)].map(|(x, y)| crate::types::Vector3::new(x, y, 5.0));
+        let s = crate::classes::civil::add_tin_surface(&mut doc, "S1", &pts, None).unwrap();
+        assert!(add_surface_profile(&mut doc, al, al, "X", 0.0, None, None).is_err());
+        assert!(add_surface_profile(&mut doc, al, s, "X", 0.0, Some((50.0, 150.0)), None).is_err());
+        let eg = add_surface_profile(&mut doc, al, s, "EG", 5.0, Some((10.0, 90.0)), None).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-surface-profile-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let arch = |h: Handle| match back.get_entity(h) {
+            Some(EntityType::Extended(x)) => match &x.data {
+                ExtendedEntityData::Arch(a) => a.clone(),
+                _ => panic!(),
+            },
+            _ => panic!(),
+        };
+        let p = arch(eg);
+        assert_eq!(p.profile_name().as_deref(), Some("EG"));
+        let refs = p.typed_handles();
+        assert_eq!((refs[12].0, refs[13].0), (al.value(), s.value()));
+        // Listed by the alignment without an anchor.
+        let a = arch(al);
+        assert!(a.typed_handles().iter().any(|r| r.0 == eg.value()));
+        assert!(a.alignment_anchors().unwrap().is_empty());
     }
 }

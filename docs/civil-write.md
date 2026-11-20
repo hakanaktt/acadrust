@@ -828,6 +828,20 @@ application's identifier the same records open (E-P9). A profile written
 without the alignment's anchor opens but is not listed under the
 alignment, and is left out when the drawing is saved (E-R1).
 
+### Profiles from a surface
+
+`add_surface_profile(doc, alignment, surface, name, offset, range, layer)`
+writes a profile sampled from a TIN surface at an offset from the
+alignment, over its whole length or a station range (WS11 to WS15). The
+record is a layout profile's with no entities: after the 9 bits `BL 7`
+(0x47 for a range other than the alignment's), `BD start, BD end, BD 30,
+BD offset`, 12 bits `101011000010`, `2 bits 10`, a zero identifier and the
+same 107-bit tail; the surface is the reference after the alignment (soft
+pointer). It holds no elevations: the application samples the surface
+(E-SP1, written: the elevations at the offset and within the range
+appear once the surface is rebuilt, as for the application's own record
+in that session). The alignment lists the profile without an anchor.
+
 ## 3f. Profile style of a new drawing
 
 The profile style collection (style tree key 74, `AECC_PROFILE_STYLE` id
@@ -2419,7 +2433,8 @@ Corridors are listed in §3i-a.
 | profiles | layout: fixed tangents, free parabolas (symmetric, asymmetric), free circular curves | yes | yes | §3e |
 | profiles | layout: free curves by K, radius, horizontal length or through a point (parabolas and circular curves) | yes | yes | §3e |
 | profiles | layout: fixed and floating curves (by three points, two points and a grade or K, floating through a point), floating and free tangents | yes | no | not written yet |
-| profiles | from a surface (existing ground), superimposed, offset profiles, profiles of corridor feature lines | partly | no | sampled profiles are rebuilt from their source by the application; not sampled for writing |
+| profiles | from a TIN surface (existing ground), at an offset, over the whole alignment or a station range | yes (definition) | yes | §3e (profiles from a surface) |
+| profiles | superimposed, offset profiles, profiles of corridor feature lines, static copies | partly | no | not sampled for writing |
 | profile views | automatic and user ranges, default style, profile label groups | yes (frame) | yes | §3h |
 | profile views | other styles, vertical scales, stacked views, bands other than the defaults | partly | no | the graph settings between the named values are constant runs |
 | sites | name, description, members | yes | yes | §3g |
