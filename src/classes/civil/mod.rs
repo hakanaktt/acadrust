@@ -25,6 +25,7 @@ mod section;
 mod style;
 mod subassembly;
 mod tin;
+mod survey;
 mod topology;
 mod view_frames;
 
@@ -1052,6 +1053,23 @@ impl ArchEntityData {
             return None;
         }
         network::part_definition(&self.typed_handles())
+    }
+
+    /// A survey figure (`AECC_SVFIGURE`): its name and the name of the
+    /// survey site it belongs to.
+    pub fn survey_figure(&self) -> Option<survey::SurveyFigure> {
+        if self.dxf_name != "AECC_SVFIGURE" {
+            return None;
+        }
+        survey::figure(&self.decode().strings)
+    }
+
+    /// Name of a survey network (`AECC_SVNETWORK`).
+    pub fn survey_network_name(&self) -> Option<String> {
+        if self.dxf_name != "AECC_SVNETWORK" {
+            return None;
+        }
+        survey::network_name(&self.decode().strings)
     }
 
     /// Number fields of the part data a Civil 3D pipe (`AECC_PIPE`) keeps
