@@ -162,9 +162,10 @@ pub struct CorridorBaseline {
 pub struct CorridorSurfaceDefinition {
     pub name: String,
     pub build: bool,
-    /// Per link code: whether it is added as a breakline.
-    pub link_breaklines: Vec<bool>,
-    pub feature_line_codes: Vec<bool>,
+    /// Link codes (in name order) and whether each is added as a breakline.
+    pub link_codes: Vec<(String, bool)>,
+    /// Feature line codes (in name order) and the flag each carries.
+    pub feature_line_codes: Vec<(String, bool)>,
     /// 0 none, 1 top links, 2 bottom links.
     pub overhang_correction: i32,
 }
@@ -296,14 +297,14 @@ fn surface(bits: &mut Bits) -> Option<CorridorSurfaceDefinition> {
     let build = bits.bit()?;
     bits.bit()?;
     let codes = usize::try_from(bits.bit_long()?).ok().filter(|n| *n <= bits.remaining())?;
-    let link_breaklines = (0..codes).map(|_| bits.bit()).collect::<Option<_>>()?;
+    let link_codes = (0..codes).map(|_| Some((String::new(), bits.bit()?))).collect::<Option<_>>()?;
     // debt: this BL has no other value in the samples; what follows a
     // different one is not mapped.
     (bits.bit_long()? == 0).then_some(())?;
     let feature_codes = usize::try_from(bits.bit_long()?).ok().filter(|n| *n <= bits.remaining())?;
-    let feature_line_codes = (0..feature_codes).map(|_| bits.bit()).collect::<Option<_>>()?;
+    let feature_line_codes = (0..feature_codes).map(|_| Some((String::new(), bits.bit()?))).collect::<Option<_>>()?;
     let overhang_correction = bits.bit_long()?;
-    Some(CorridorSurfaceDefinition { name: String::new(), build, link_breaklines, feature_line_codes, overhang_correction })
+    Some(CorridorSurfaceDefinition { name: String::new(), build, link_codes, feature_line_codes, overhang_correction })
 }
 
 /// The surfaces' boundaries and masks: `BL n` (one per surface that has
@@ -735,7 +736,8 @@ fn target(bits: &mut Bits) -> Option<Option<(usize, bool)>> {
 ///
 /// ```text
 /// texts:      "AeccImpCorridor", "", name, description, one per text key,
-///             one per feature line code, per surface its name, per
+///             one per feature line code, per surface its name and its
+///             link and feature line codes, per
 ///             boundary list its surface's name and per boundary its name
 ///             and description, per baseline {per region {"", per assembly
 ///             group its name, "" and "", "" per node, the assembly's name,
@@ -760,6 +762,9 @@ fn name(w: &mut Walked, strings: &[String], refs: &[u64]) -> Option<()> {
     }
     for s in &mut w.definition.surfaces {
         s.name = text()?;
+        for code in s.link_codes.iter_mut().chain(&mut s.feature_line_codes) {
+            code.0 = text()?;
+        }
     }
     for list in &mut w.outline_lists {
         let surface = text()?;
@@ -995,7 +1000,8 @@ mod tests {
         let len = s.bytes().filter(|c| *c == b'0' || *c == b'1').count();
         let mut bits = Bits::new(&b, 0, len);
         let surface = surface(&mut bits).unwrap();
-        assert_eq!((surface.build, surface.link_breaklines, surface.feature_line_codes), (true, vec![true, true], vec![true]));
+        let flags = |c: &[(String, bool)]| c.iter().map(|c| c.1).collect::<Vec<_>>();
+        assert_eq!((surface.build, flags(&surface.link_codes), flags(&surface.feature_line_codes)), (true, vec![true, true], vec![true]));
         assert_eq!(bits.bit_double(), Some(0.0));
         assert_eq!(outlines(&mut bits).unwrap()[0][0].kind, 0x8000_0002);
         assert_eq!(bits.pos, len);

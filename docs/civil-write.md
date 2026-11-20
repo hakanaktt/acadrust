@@ -1246,6 +1246,32 @@ and the codes of both assemblies (the ditch's included, its target
 resolved); the rebuilt drawing reads back with its feature lines (seven
 codes on `BL1`, four on `BL2`).
 
+Surfaces are written in the corridor record only (their own TIN surface
+reference is written 0): a built surface (`build`) gets its TIN surface
+from the application when the drawing is opened, before any rebuild. The
+link and feature line codes are written in name order (the order the
+application keeps), boundaries and masks drawn from polygons are closed
+when open. A corridor with two surfaces (`CS1` built, link code `Top` as a
+breakline, overhang correction on top links, the corridor extents and a
+polygon as outside boundaries and a triangle as mask; `CS2` not built) and
+a maximum triangle side length of 50, written into the same drawing, opens
+without recovery, AUDIT 0 errors; the API lists both surfaces with their
+build flags, overhang correction, the boundary names, descriptions and
+kinds and the mask, `CS1` with its TIN surface; after the rebuild `CS1`
+holds 26 points with `Top` as a breakline.
+
+A baseline along a feature line is written with the feature line as its
+first reference and an alignment and one of its profiles (written by
+`add_alignment` and `add_profile` through the feature line's points) as
+the next two: the application's own baseline refers to a hidden
+alignment and profile it makes from the feature line. Written so into
+the drawing above (feature line `FLT`), the corridor opens with AUDIT 0
+errors, the API lists the baseline as along `FLT` (stations 0 to 300),
+and the rebuild places the assembly along the given alignment and
+profile. Written with no alignment and profile, it opens with AUDIT 0
+errors but the API cannot read the baseline (null object) and the
+rebuild skips it.
+
 `corridor_definition()` reads the definition of any corridor record
 (fields of built corridors too; names and references of corridors without
 built stations, whose texts and references are not interleaved with the
@@ -1267,15 +1293,16 @@ per boundary.
 | option | read | write | evidence / blocked by |
 |---|---|---|---|
 | several baselines along alignments and profiles, their order | yes | yes | §3i |
-| baseline along a feature line | yes (feature line, the alignment and profile made for it) | no | the application makes a hidden alignment and profile for it (two more records) |
-| offset baselines | no | no | the programming interface lists them but cannot make one; their command is a dialog |
+| baseline along a feature line | yes (feature line, the alignment and profile made for it) | yes, with an alignment and profile the caller gives | the application makes a hidden alignment and profile for its own; written without them the baseline cannot be read through the API (null object); written with a given alignment and profile it reads as a feature line baseline (stations of the feature line) and the rebuild follows that alignment and profile |
+| offset baselines | no | no | neither programming interface can make one (the .NET and COM offset baseline collections have no add); their command is a dialog |
 | several regions, gaps, an assembly per region, region names | yes | yes | §3i |
 | frequencies along tangents, curves, spirals, profile curves, target curves; mid-ordinates; curve placement; at geometry, superelevation, profile, high/low, offset target points | yes | yes | §3i |
 | added stations with descriptions | yes | yes | §3i |
 | offset, elevation and surface targets (any objects; nearest or farthest) | yes | yes | §3i |
 | rebuild automatically, description | yes | yes | §3i |
-| region lock to the alignment geometry | yes (flag) | no | the region holds alignment element identifiers that the alignment gains when the lock is set |
-| corridor surfaces, link and feature line codes, overhang correction, build flag; boundaries (extents, polygon, feature lines) and masks; maximum triangle side length | yes | no | each surface has its own TIN surface record and changes the settings tree |
+| region lock to the alignment geometry | yes (flag) | no | the region holds two alignment element identifiers; setting the lock adds an identifier block (640 and 777 bits in the sample) to each locked element of the alignment record, which the alignment writer does not write |
+| corridor surfaces, link and feature line codes, overhang correction, build flag; boundaries and masks from polygons and the corridor extents; maximum triangle side length | yes | yes | §3i (the application makes each built surface's TIN surface) |
+| boundaries along feature lines | yes (component count) | no | they refer to built feature lines |
 | feature line code settings (connect, draw, pay items) | count only | no | codes exist only once built |
 | built results (stations, applied assemblies, feature lines) | yes (feature lines) | no | written out of date; the application builds them |
 | corridor without baselines | no | no | its record ends in another run after the 32 (one sample) |
@@ -1435,7 +1462,10 @@ prefix of that path, avoids this.
 `add_sample_line_group(doc, alignment, name, layer)` writes an empty
 sample line group of an alignment; `add_sample_line(doc, group, name,
 station, left, right, layer)` adds a two-vertex sample line at a station,
-reaching `left` to the left and `right` to the right of the alignment. The
+reaching `left` to the left and `right` to the right of the alignment;
+`add_sample_line_through(doc, group, name, station, vertices, layer)` adds
+a line through vertices given as (station, offset; negative to the left)
+that crosses the alignment at `station`, with vertices on both sides. The
 alignment is written again with the group: the third count after its
 elements (`BL n, BL v, BL g, BL n`) is the number of groups, and the
 groups follow the profiles and views in its references. Adding a line
@@ -1452,10 +1482,12 @@ group (AECC_SAMPLE_LINE_GROUP, an entity in model space):
 line (AECC_SAMPLE_LINE):
   BL 80, 0, 80, 80, 0, BL 0x10025F04, BL 0x40008353, 4 bits 0010, RC 0,
   120 zero bits, 3BD 0, 9 BD identity, BD station,
-  two vertices {BL 1, BD 0, BD offset (right positive), BD 0},
+  the vertices left, then right of the alignment, each side {BL n,
+    n x {BD 0, BD offset (left negative), BD station less the line's}},
+    from the alignment outwards (the crossing is not stored),
   a 100-bit run ending with the version word
-  references: soft 0, hard owner 0, hard 0, soft 0, soft 0, style, group
-    (hard)
+  references: soft 0, hard owner 0, hard 0, soft 0 per vertex, style,
+    group (hard)
   texts: "AeccImpSampleLine", "", name, ""
 ```
 
@@ -1467,6 +1499,17 @@ With the group and three lines written into WR00 (E-L1) the application
 opens the drawing with AUDIT 0 errors and lists the group, its lines in
 station order, their stations and the left, center and right vertices of
 each.
+
+Lines through more vertices (LV00 to LV02 and LV10, LV11: three, four,
+five and seven vertices, some away from the crossing station, made with
+`SampleLine.Create` from points) are reproduced bit for bit; their
+vertices are stored per side from the alignment outwards. A line with all
+its vertices on one side of the alignment (LV03) closes its record with
+another run, and is not written. Written into WL10 (E-L5: a line at 40
+through (38, -12), (40, -4), (42, 6), (41, 14) and a two-vertex line at
+70), the drawing opens with AUDIT 0 errors and the API lists each line's
+station and vertices (left, center at the crossing, right) where they were
+written.
 
 The group's label style is the default sample line label style (style
 tree key 3, then 0x112, 0x1002A00F, id 30). Written with no label style
@@ -2208,7 +2251,7 @@ taken from the records and checked bit for bit against them.
 - Alignments and feature lines that meet other members on a site, lot
   lines meeting where one has an arc, parcel and feature line styles other than the
   defaults;
-  sections; corridor surfaces, feature line and offset baselines (§3i-a); pipe networks: other families and
+  sections; corridor offset baselines and geometry locks (§3i-a); pipe networks: other families and
   sizes.
 - Profile views with a vertical scale or style other than the default;
   the graph settings between the named values are constant runs.
@@ -2230,13 +2273,65 @@ taken from the records and checked bit for bit against them.
 | profile views (automatic or user ranges) and their profile label groups | yes (frame) | yes (a new drawing gets the default view style, §3h) | yes (§3h) | not needed (the application recomputes the view from its style) | other styles and vertical scales |
 | assemblies and package subassemblies | partly (corridor's group block) | yes (a new drawing gets the default assembly, code set, link and shape styles, §2c) | yes (§3i, §2c) | not needed | — |
 | corridors: baselines along alignments, regions, frequencies, placement flags, added stations, targets (unbuilt) | yes (fields of built ones; names and references of unbuilt ones) | yes, with assemblies of the drawing (a new drawing gets the default corridor style, §2c) | yes (§3i, §2c) | the corridor is written out of date and built by the application's rebuild | see §3i-a |
-| sample line groups and two-vertex sample lines | yes | yes, with the drawing's sample line label style (§3j) | yes (§3j) | not needed | lines with more vertices |
+| sample line groups and sample lines through two or more vertices | yes | yes, with the drawing's sample line label style (§3j) | yes (§3j) | not needed | lines with all vertices on one side |
 | sections of a TIN surface (unsampled) | yes (geometry once sampled) | yes (§3j) | yes (§3j) | the application samples the source | corridor sources, lines added after sampling |
 | section views of a line (default style, unsampled section) | yes (frame) | yes, with the drawing's section view style or the default one (§3j, §2c) | yes (§3j, §2c) | not needed | sampled sections, several sections |
 | intersections of two crossing roads (the object only) | yes (stations, angles) | yes, with the drawing's intersection style or the default one (§3k, §2c) | yes (§3k, §2c) | not needed | offset alignments, curb returns, corridor regions and locking actions; tee junctions |
 | gravity pipe networks: every structure and pipe family of the default parts list (its one size each), connections | partly (part positions, pipe ends, connector counts, sizes of older part definitions) | yes (a new drawing gets the default parts list and styles, §3m) | yes (§3m) | not needed (the application recomputes outlines, lengths and extents) | sizes the default parts list does not hold, the catalog's body solids |
 | pressure networks: every pipe, elbow, tee, cross and gate valve size of the default catalog (straight and curved pipes), connections | yes (ports: positions, directions, joint sizes, connections; pipe ends and bulge, part positions and rotations) | yes (a new drawing gets the default pressure part list and styles, §3n) | yes (§3n) | not needed | part kinds of other catalogs, the catalog's body solids |
 | gradings, mass haul | partly (grading criteria, mass haul line and view frame) | no | — | — | no controlled samples (§6a) |
+
+### 6b. Options per kind
+
+What each kind offers in the application and whether acadrust reads and
+writes it. "read" means read field by field; "write" means written from
+named fields and checked in the application (§4 and the sections named).
+Corridors are listed in §3i-a.
+
+| kind | option | read | write | evidence / what blocks it |
+|---|---|---|---|---|
+| COGO points | position, number, raw description, name, styles | yes | yes | §3 |
+| COGO points | point label styles other than the default, user-defined properties | partly (label references) | no | label styles other than §2b are constant runs |
+| point groups | number lists, elevation comparisons and ranges, description, name and full description patterns, exclusions | yes | yes | §3, §4 |
+| point groups | number ranges (`2-6`) | yes | as a number list | the application stores the range as its numbers |
+| point groups | override styles and descriptions per group, AND of several criteria (advanced query) | partly | no | override settings are not mapped field by field (WP10, WG01) |
+| TIN surfaces | points added to the surface | yes | yes | §3c |
+| TIN surfaces | point groups, breaklines (standard, proximity, non-destructive; from objects or held points, mid-ordinate, supplementing, weeding), contours, boundaries (outer, hide, show, data clip; destructive or not), add/delete/move vertex, vertex elevation, swap edge, add/delete line, raise, drawing objects, automatic rebuild | yes (every field by kind, §3c) | yes, with the triangulation the definitions build (§3c) | 62 of 67 sample surfaces built identically; non-destructive lines through vertices, far point clusters and a non-convex deleted vertex's hole differ (§3c) |
+| TIN surfaces | pasted surfaces, point files, imported files, corridor surfaces | yes | the definition (no geometry from the source) | the application adds the source's geometry when it rebuilds |
+| TIN surfaces | transform, polygon and kind 40 definitions of older drawings, DEM files, snapshots, surfaces referenced from other drawings | partly (older kinds walked) | no | not sampled; referenced surfaces have no definitions list |
+| alignments | fixed lines, free arcs, spiral-curve-spirals, start station, siteless and on a site | yes | yes | §3a, §3g |
+| alignments | offset alignments (with widenings), curb returns, other types (rail, miscellaneous) | yes (offset parameters and regions, connected alignments, type) | no | an offset alignment is a solved child of its parent with an offset action; not sampled for writing |
+| alignments | lone spirals, other constraints (fixed/floating curves, curves through points), design speeds, station equations | yes (elements, speeds, equations) | no | other element kinds not written |
+| alignments | superelevation | yes (critical stations, lanes-only blocks) | no | the superelevation block is read only |
+| profiles | layout: fixed tangents, free parabolas (symmetric, asymmetric), free circular curves | yes | yes | §3e |
+| profiles | layout: fixed and floating curves, curves by K or through a point | yes | no | other entity kinds (each its own record) |
+| profiles | from a surface (existing ground), superimposed, offset profiles, profiles of corridor feature lines | partly | no | sampled profiles are rebuilt from their source by the application; not sampled for writing |
+| profile views | automatic and user ranges, default style, profile label groups | yes (frame) | yes | §3h |
+| profile views | other styles, vertical scales, stacked views, bands other than the defaults | partly | no | the graph settings between the named values are constant runs |
+| sites | name, description, members | yes | yes | §3g |
+| parcels | closed and open, crossing and touching lot lines, arcs, labels | yes | yes | §3g |
+| parcels | lot lines meeting alignments or feature lines; arcs where lines meet; the newest member's point marks 0x10/0x20 | yes | no | §3g (rule not found) |
+| feature lines | points, elevation points, arcs, on a site | yes | yes | §3g |
+| feature lines | members meeting other members on a site, styles other than the default | yes | no | §3g |
+| sample line groups | lines by station or through vertices on both sides | yes | yes | §3j |
+| sample line groups | lines with all vertices on one side; section sources other than a TIN surface (corridors, corridor surfaces, pipe networks) | yes | no | one-sided lines close with another run (LV03); other sources not sampled |
+| sections | of a TIN surface (unsampled) | yes (geometry once sampled) | yes | §3j |
+| section views | one view of a line, default style | yes (frame) | yes | §3j |
+| section views | group plots (several views at once), several sections in a view, other styles | partly | no | not sampled |
+| assemblies | groups of package subassemblies (offsets, attachments) | partly | yes | §3l, §3i |
+| subassemblies | packages (`pkt`) written by acadrust | yes | yes | §3l |
+| subassemblies | stock subassemblies of the application's library | yes (parameters) | no | their texts carry the library path of the product |
+| corridors | see §3i-a | | | |
+| intersections | two crossing roads (the object) | yes | yes | §3k |
+| intersections | tee junctions, the offset alignments, curb returns, corridor regions and locking actions the command makes | yes | no | the tee sample hangs in the wizard (WI40); the other records are not written |
+| gravity pipe networks | every family of the default parts list (one size each), connections | partly | yes | §3m |
+| gravity pipe networks | sizes the parts list does not hold, the catalog's body solids | partly | no | §3m |
+| pressure networks | every size of the default catalog (straight and curved pipes, elbows, tees, crosses, gate valves), connections | yes | yes | §3n |
+| pressure networks | parts of other catalogs | partly | no | §3n |
+| gradings | criteria, groups, gradings | partly (criteria) | no | §6a |
+| mass haul | line and view | partly | no | §6a |
+| label styles | the defaults of a new drawing (§2b) | partly | yes | §2b |
+| label styles | other styles and roots | partly | no | constant runs |
 
 ### 6a. Gradings and mass haul
 

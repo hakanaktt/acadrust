@@ -303,3 +303,50 @@ fn serde_input_without_subentity_path_reads_empty_path() {
         }
     );
 }
+
+/// Both references' sub-entity paths go through a DWG save and read: the
+/// main stream carries each path's type and index after the trailing version,
+/// the handle stream each path's object after the dimension (#373).
+#[test]
+fn subentity_paths_round_trip_through_dwg() {
+    use acadrust::{DwgReader, DwgWriter};
+
+    let mut fixture = fixture();
+    let objects = fixture.objects;
+    let references = fixture
+        .document
+        .objects
+        .values_mut()
+        .find_map(|object| match object {
+            ObjectType::DataObject(DataObject {
+                data: DataObjectData::BreakData(value),
+                ..
+            }) => Some(&mut value.point_references),
+            _ => None,
+        })
+        .unwrap();
+    for (reference, (object, subentity_type, subentity_index)) in references.iter_mut().zip(PATHS) {
+        reference.subentity_object = objects[object];
+        reference.subentity_type = subentity_type;
+        reference.subentity_index = subentity_index;
+    }
+
+    let bytes = DwgWriter::write_to_vec(&fixture.document).unwrap();
+    let document = DwgReader::from_stream(Cursor::new(bytes)).read().unwrap();
+    let data = break_data(&document);
+    assert_eq!(data.dimension_reference, fixture.dimension);
+    assert_eq!(data.point_references.len(), 2);
+    for (reference, (object, subentity_type, subentity_index)) in
+        data.point_references.iter().zip(PATHS)
+    {
+        assert_eq!(reference.subentity_object, objects[object]);
+        assert_eq!(reference.subentity_type, subentity_type);
+        assert_eq!(reference.subentity_index, subentity_index);
+        assert_eq!(reference.reserved_reference, Handle::NULL);
+    }
+    assert_eq!(data.point_references[1].identifier, 5);
+    assert_eq!(
+        data.point_references[1].second_point,
+        Vector3::new(3.5, 4.5, 0.0)
+    );
+}
