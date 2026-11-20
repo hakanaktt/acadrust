@@ -62,6 +62,25 @@ const CLASSES: &[Class] = &[
     Class { dxf: "AECC_SURFACE_STYLE", cpp: "AeccDbSurfaceStyle", module: "AeccLand130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_TIN_SURFACE", cpp: "AeccDbSurfaceTin", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_ALIGNMENT", cpp: "AeccDbAlignment", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
+    Class { dxf: "AECC_NETWORK", cpp: "AeccDbNetwork", module: "AeccNetwork130", proxy_flags: 0x37d, entity: true },
+    Class { dxf: "AECC_STRUCTURE", cpp: "AeccDbStructure", module: "AeccNetwork130", proxy_flags: 0x37d, entity: true },
+    Class { dxf: "AECC_PIPE", cpp: "AeccDbPipe", module: "AeccNetwork130", proxy_flags: 0x37d, entity: true },
+    Class { dxf: "AECC_NETWORK_PART_CONNECTOR", cpp: "AeccDbNetworkPartConnector", module: "AeccNetwork130", proxy_flags: 0x81, entity: true },
+    Class { dxf: "AECC_NETWORK_PART_DEF", cpp: "AeccDbNetworkPartDef", module: "AeccNetwork130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_PIPE_STYLE", cpp: "AeccDbPipeStyle", module: "AeccNetwork130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_STUCTURE_STYLE", cpp: "AeccDbStructureStyle", module: "AeccNetwork130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_NETWORK_PART_CATALOG_DEF_NODE", cpp: "AeccDbNetworkCatalogDef", module: "AeccNetwork130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_NETWORK_PART_LIST", cpp: "AeccDbPartList", module: "AeccNetwork130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_NETWORK_PART_FAMILY_ITEM", cpp: "AeccDbPartFamilyItem", module: "AeccNetwork130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_PART_SIZE_FILTER", cpp: "AeccDbPartSizeFilter", module: "AeccNetwork130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_PRESSUREPIPES_NETWORK", cpp: "AeccDbPressurePipeNetwork", module: "AeccPressurePipes130", proxy_flags: 0x37d, entity: true },
+    Class { dxf: "AECC_PRESSUREPIPE", cpp: "AeccDbPressurePipe", module: "AeccPressurePipes130", proxy_flags: 0x37d, entity: true },
+    Class { dxf: "AECC_FITTING", cpp: "AeccDbFitting", module: "AeccPressurePipes130", proxy_flags: 0x37d, entity: true },
+    Class { dxf: "AECC_APPURTENANCE", cpp: "AeccDbAppurtenance", module: "AeccPressurePipes130", proxy_flags: 0x37d, entity: true },
+    Class { dxf: "AECC_PRESSURE_PART_LIST", cpp: "AeccDbPressurePartList", module: "AeccPressurePipes130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_PRESSURE_PIPE_STYLE", cpp: "AeccDbPressurePipeStyle", module: "AeccPressurePipes130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_FITTING_STYLE", cpp: "AeccDbFittingStyle", module: "AeccPressurePipes130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_APPURTENANCE_STYLE", cpp: "AeccDbAppurtenanceStyle", module: "AeccPressurePipes130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_PROFILE", cpp: "AeccDbVAlignment", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_NOTIFICATIONINFOS", cpp: "AeccDbVAlignNotificationInfos", module: "AeccLand130", proxy_flags: 0x77c, entity: false },
     Class { dxf: "AECC_ENTITYEXTENDPARAM", cpp: "AeccDbVAlignFreeParabolaPassPtInfos", module: "AeccLand130", proxy_flags: 0x77c, entity: false },
@@ -77,6 +96,15 @@ const CLASSES: &[Class] = &[
     Class { dxf: "AECC_VALIGNMENT_SAGCURVE_LABEL_GROUP", cpp: "AeccDbVAlignmentSagCurveLabeling", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_VALIGNMENT_CRESTCURVE_LABEL_GROUP", cpp: "AeccDbVAlignmentCrestCurveLabeling", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_ASSEMBLY", cpp: "AeccDbAssembly", module: "AeccRoadway130", proxy_flags: 0x37d, entity: true },
+    Class { dxf: "AECC_SUBASSEMBLY", cpp: "AeccDbSubassembly", module: "AeccRoadway130", proxy_flags: 0x37d, entity: true },
+    Class { dxf: "AECC_SUBASSEMBLY_STYLE", cpp: "AeccDbSubAssemblyStyle", module: "AeccRoadway130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_ASSEMBLY_STYLE", cpp: "AeccDbAssemblyStyle", module: "AeccRoadway130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_ROADWAY_STYLE_SET", cpp: "AeccDbRoadwayStyleSet", module: "AeccRoadway130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_ROADWAYLINK_STYLE", cpp: "AeccDbRoadwayLinkStyle", module: "AeccRoadway130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_ROADWAYSHAPE_STYLE", cpp: "AeccDbRoadwayShapeStyle", module: "AeccRoadway130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_CORRIDOR_STYLE", cpp: "AeccDbCorridorStyle", module: "AeccRoadway130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_NAME_TEMPLATES_ROOT", cpp: "AeccDbNameTemplatesRoot", module: "AeccvBase130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_NAME_TEMPLATES_NODE", cpp: "AeccDbNameTemplatesNode", module: "AeccvBase130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_CORRIDOR", cpp: "AeccDbCorridor", module: "AeccRoadway130", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_SAMPLE_LINE_STYLE", cpp: "AeccDbSampleLineStyle", module: "AeccLand130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_SAMPLE_LINE_GROUP", cpp: "AeccDbSampleLineGroup", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
@@ -168,10 +196,40 @@ pub(super) fn put_object(
     fields: impl FnOnce(&mut DwgMergedWriter),
     body: Body,
 ) -> Result<(), DxfError> {
+    put_record(doc, dxf, handle, owner, reactors, true, fields, body)
+}
+
+/// [`put_object`] for a record that does not open with the version word
+/// (part definitions).
+pub(super) fn put_plain_object(
+    doc: &mut CadDocument,
+    dxf: &str,
+    handle: Handle,
+    owner: Handle,
+    reactors: Vec<Handle>,
+    fields: impl FnOnce(&mut DwgMergedWriter),
+    body: Body,
+) -> Result<(), DxfError> {
+    put_record(doc, dxf, handle, owner, reactors, false, fields, body)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn put_record(
+    doc: &mut CadDocument,
+    dxf: &str,
+    handle: Handle,
+    owner: Handle,
+    reactors: Vec<Handle>,
+    versioned: bool,
+    fields: impl FnOnce(&mut DwgMergedWriter),
+    body: Body,
+) -> Result<(), DxfError> {
     let type_code = register(doc, dxf)?;
     let mut writer = DwgObjectWriter::new(doc)?;
     let (raw, handle_bits) = writer.encode_civil_object(type_code, handle, owner, &reactors, |w| {
-        w.write_bit_short(VERSION);
+        if versioned {
+            w.write_bit_short(VERSION);
+        }
         fields(w);
         finish(w, &body);
     });

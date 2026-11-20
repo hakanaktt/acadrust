@@ -79,15 +79,24 @@ impl<'a> DwgObjectWriter<'a> {
                     self.writer.write_3bit_double(reference.first_point);
                     self.writer.write_3bit_double(reference.second_point);
                     self.writer.write_bit_short(reference.trailing_version);
+                    self.writer.write_bit_long(reference.subentity_type);
+                    self.writer.write_bit_long(reference.subentity_index);
+                    self.writer.write_bit_long(reference.subentity_reserved);
                 }
                 self.writer.write_handle(
                     DwgReferenceType::SoftPointer,
                     value.dimension_reference.value(),
                 );
-                self.writer.write_handle(
-                    DwgReferenceType::SoftPointer,
-                    value.reserved_reference.value(),
-                );
+                for reference in &value.point_references {
+                    self.writer.write_handle(
+                        DwgReferenceType::SoftPointer,
+                        reference.reserved_reference.value(),
+                    );
+                    self.writer.write_handle(
+                        DwgReferenceType::SoftPointer,
+                        reference.subentity_object.value(),
+                    );
+                }
             }
             DataObjectData::BreakPointRef => {}
             DataObjectData::CellStyleMap(value) => {

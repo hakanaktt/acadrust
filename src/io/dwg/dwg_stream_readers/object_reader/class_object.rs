@@ -173,21 +173,7 @@ fn read_view_rep_sketch_geometry(
     }
 }
 
-fn read_view_rep(reader: &mut DwgMergedReader) -> ViewRep {
-    let header_values = [
-        reader.read_bit_long(),
-        reader.read_bit_long(),
-        reader.read_bit_long(),
-        reader.read_bit_long(),
-        reader.read_bit_long(),
-    ];
-    let name = reader.read_variable_text();
-    let scale = reader.read_bit_long();
-    let header_status = reader.read_bit_long();
-    let description = reader.read_variable_text();
-    let source_id = reader.read_bit_long_long();
-    let source_enabled = reader.read_bit();
-    let source_version = reader.read_bit_long();
+fn read_view_rep_model(reader: &mut DwgMergedReader) -> ViewRepModelGeometry {
     let model_id = reader.read_bit_long_long();
     let guid = read_view_rep_guid(reader);
     let marker = reader.read_byte();
@@ -224,6 +210,41 @@ fn read_view_rep(reader: &mut DwgMergedReader) -> ViewRep {
             geometry,
             final_flag,
         });
+    }
+    ViewRepModelGeometry {
+        model_id,
+        guid,
+        marker,
+        transform,
+        transform_version,
+        database_id,
+        geometry_version,
+        geometry_marker,
+        sketches,
+    }
+}
+
+fn read_view_rep(reader: &mut DwgMergedReader) -> ViewRep {
+    let header_values = [
+        reader.read_bit_long(),
+        reader.read_bit_long(),
+        reader.read_bit_long(),
+        reader.read_bit_long(),
+        reader.read_bit_long(),
+    ];
+    let name = reader.read_variable_text();
+    let scale = reader.read_bit_long();
+    let header_status = reader.read_bit_long();
+    let description = reader.read_variable_text();
+    let source_id = reader.read_bit_long_long();
+    let source_enabled = reader.read_bit();
+    let source_version = reader.read_bit_long();
+    // `source_version` counts the model geometry blocks; the record always
+    // carries the first one.
+    let first = read_view_rep_model(reader);
+    let mut more_models = Vec::new();
+    for _ in 0..count(source_version.saturating_sub(1), reader) {
+        more_models.push(read_view_rep_model(reader));
     }
     let related_objects = [read_view_rep_handle(reader), read_view_rep_handle(reader)];
     let source_manager = read_view_rep_handle(reader);
@@ -292,15 +313,16 @@ fn read_view_rep(reader: &mut DwgMergedReader) -> ViewRep {
         source_id,
         source_enabled,
         source_version,
-        model_id,
-        guid,
-        marker,
-        transform,
-        transform_version,
-        database_id,
-        geometry_version,
-        geometry_marker,
-        sketches,
+        model_id: first.model_id,
+        guid: first.guid,
+        marker: first.marker,
+        transform: first.transform,
+        transform_version: first.transform_version,
+        database_id: first.database_id,
+        geometry_version: first.geometry_version,
+        geometry_marker: first.geometry_marker,
+        sketches: first.sketches,
+        more_models,
         related_objects,
         source_manager,
         owned_objects,
@@ -418,21 +440,25 @@ pub fn read_class_object_data(
             })
         }
         "ACDBVIEWREP" => ClassObjectData::ViewRep(read_view_rep(reader)),
-        "ACDBVIEWREPSOURCEMGR" => ClassObjectData::ViewRepSourceManager(ViewRepSourceManager {
-            has_source: reader.read_bit(),
-            source: Handle::from(reader.read_handle()),
-            status: reader.read_bit_long(),
-        }),
-        "ACDBVIEWREPSTANDARD" => ClassObjectData::ViewRepStandard(ViewRepStandard {
-            values: [
-                reader.read_bit_long(),
-                reader.read_bit_long(),
-                reader.read_bit_long(),
-                reader.read_bit_long(),
-                reader.read_bit_long(),
-                reader.read_bit_long(),
-            ],
-        }),
+        "ACDBVIEWREPSOURCEMGR" => {
+            let has_source = reader.read_bit();
+            // The handle stream carries the source only when there is one.
+            let source = if has_source {
+                Handle::from(reader.read_handle())
+            } else {
+                Handle::NULL
+            };
+            ClassObjectData::ViewRepSourceManager(ViewRepSourceManager {
+                has_source,
+                source,
+                status: reader.read_bit_long(),
+            })
+        }
+        "ACDBVIEWREPSTANDARD" => {
+            let mut values = [0; 6];
+            values[..ViewRepStandard::stored_len(dxf_version)].fill_with(|| reader.read_bit_long());
+            ClassObjectData::ViewRepStandard(ViewRepStandard { values })
+        }
         "ACDBVIEWREPORIENTATIONDEF" => ClassObjectData::ViewRepOrientationDefinition,
         "ACDBVIEWREPORIENTATION" => ClassObjectData::ViewRepOrientation(ViewRepOrientation {
             camera: reader.read_3bit_double(),
@@ -1200,4 +1226,58 @@ pub fn read_class_object_data(
         _ => return None,
     };
     Some(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_class_object_data;
+    use crate::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
+    use crate::io::dwg::dwg_stream_writers::merged_writer::DwgMergedWriter;
+    use crate::io::dwg::dwg_version::DwgVersion;
+    use crate::objects::ClassObjectData;
+    use crate::types::DxfVersion;
+
+    /// Reads a record holding `values` as bit-longs; a sentinel follows, so
+    /// the read must stop exactly at the record's end.
+    fn view_rep_standard_values(dxf: DxfVersion, values: &[i32]) -> [i32; 6] {
+        let mut writer = DwgMergedWriter::new(DwgVersion::AC18, DxfVersion::AC1018);
+        for value in values {
+            writer.write_bit_long(*value);
+        }
+        writer.write_bit_long(0x77);
+        let mut reader = DwgMergedReader::new(writer.merge(), dxf, writer.handle_start_bits());
+        let data =
+            read_class_object_data(&mut reader, "ACDBVIEWREPSTANDARD", DwgVersion::AC24, dxf)
+                .expect("view rep standard");
+        assert_eq!(reader.read_bit_long(), 0x77, "record length");
+        reader.check_error().expect("view rep standard bits");
+        match data {
+            ClassObjectData::ViewRepStandard(value) => value.values,
+            other => panic!("expected a view rep standard, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn r2010_view_rep_standard_reads_five_values() {
+        assert_eq!(
+            view_rep_standard_values(DxfVersion::AC1024, &[100, 0, 1, 0, 1]),
+            [100, 0, 1, 0, 1, 0]
+        );
+    }
+
+    #[test]
+    fn r2013_view_rep_standard_reads_six_values() {
+        assert_eq!(
+            view_rep_standard_values(DxfVersion::AC1027, &[100, 0, 1, 0, 1, 1]),
+            [100, 0, 1, 0, 1, 1]
+        );
+    }
+
+    #[test]
+    fn r2018_view_rep_standard_reads_six_values() {
+        assert_eq!(
+            view_rep_standard_values(DxfVersion::AC1032, &[100, 0, 1, 0, 1, 1]),
+            [100, 0, 1, 0, 1, 1]
+        );
+    }
 }

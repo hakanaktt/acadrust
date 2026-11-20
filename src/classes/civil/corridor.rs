@@ -18,6 +18,190 @@ use crate::types::Vector3;
 
 type Groups = Vec<Vec<Vec<(f64, Vector3)>>>;
 
+/// How a region places stations along horizontal curves (region flags
+/// 0x1000 and 0x400; a region written before its corridor was ever saved
+/// with a setting holds neither and is read as at increment).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum CurveStations {
+    #[default]
+    AtIncrement,
+    ByCurvature,
+    Both,
+}
+
+/// How a region places stations along offset target curves (target flags
+/// 8 and 16).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum TargetCurveStations {
+    #[default]
+    None,
+    AtIncrement,
+    ByCurvature,
+}
+
+/// Where a region applies its assembly.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct RegionFrequency {
+    pub along_tangents: f64,
+    pub along_curves: f64,
+    pub along_spirals: f64,
+    pub along_profile_curves: f64,
+    pub curves: CurveStations,
+    /// Mid-ordinate distance along curves (by curvature).
+    pub curve_mid_ordinate: f64,
+    pub at_horizontal_geometry_points: bool,
+    pub at_superelevation_critical_points: bool,
+    pub at_profile_geometry_points: bool,
+    pub at_profile_high_low_points: bool,
+    pub at_offset_target_geometry_points: bool,
+    pub adjacent_to_offset_target_start_end: bool,
+    pub along_target_curves: f64,
+    pub target_curves: TargetCurveStations,
+    pub target_curve_mid_ordinate: f64,
+}
+
+impl Default for RegionFrequency {
+    /// The application's values for a new region.
+    fn default() -> Self {
+        Self {
+            along_tangents: 25.0,
+            along_curves: 25.0,
+            along_spirals: 25.0,
+            along_profile_curves: 10.0,
+            curves: CurveStations::AtIncrement,
+            curve_mid_ordinate: 0.1,
+            at_horizontal_geometry_points: false,
+            at_superelevation_critical_points: false,
+            at_profile_geometry_points: false,
+            at_profile_high_low_points: false,
+            at_offset_target_geometry_points: false,
+            adjacent_to_offset_target_start_end: false,
+            along_target_curves: 25.0,
+            target_curves: TargetCurveStations::None,
+            target_curve_mid_ordinate: 0.1,
+        }
+    }
+}
+
+/// What a subassembly target parameter takes: its list in the region's
+/// target entry (5, 8 and 9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum TargetKind {
+    /// A surface (one object).
+    Surface,
+    /// Width or offset: alignments, polylines, feature lines.
+    Offset,
+    /// Elevation or slope: profiles, feature lines, 3D polylines.
+    Elevation,
+}
+
+impl TargetKind {
+    pub(super) fn list(self) -> usize {
+        match self {
+            TargetKind::Surface => 5,
+            TargetKind::Offset => 8,
+            TargetKind::Elevation => 9,
+        }
+    }
+    fn of_list(list: usize) -> Option<Self> {
+        [TargetKind::Surface, TargetKind::Offset, TargetKind::Elevation].into_iter().find(|k| k.list() == list)
+    }
+}
+
+/// The objects a region gives one target parameter of one subassembly.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct RegionTarget {
+    pub subassembly: u64,
+    /// The parameter's logical name (`TargetHA`, `TargetVA`, `TargetDTM`
+    /// for stock subassemblies).
+    pub name: String,
+    pub kind: TargetKind,
+    pub objects: Vec<u64>,
+    /// Use the farthest of several offset or elevation targets (the
+    /// nearest otherwise).
+    pub farthest: bool,
+}
+
+/// One region of a baseline.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct CorridorRegion {
+    pub name: String,
+    pub assembly: u64,
+    pub start: f64,
+    pub end: f64,
+    pub frequency: RegionFrequency,
+    pub targets: Vec<RegionTarget>,
+}
+
+/// One baseline of a corridor.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct CorridorBaseline {
+    pub name: String,
+    /// The feature line of a baseline drawn along one (0 otherwise); the
+    /// alignment and profile are then the ones made for it.
+    pub feature_line: u64,
+    pub alignment: u64,
+    pub profile: u64,
+    pub regions: Vec<CorridorRegion>,
+    /// Stations added by hand, with their descriptions, in station order.
+    pub stations: Vec<(f64, String)>,
+    /// Whether the record holds the baseline's built stations.
+    pub built: bool,
+}
+
+/// A corridor surface as its corridor record defines it.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct CorridorSurfaceDefinition {
+    pub name: String,
+    pub build: bool,
+    /// Link codes (in name order) and whether each is added as a breakline.
+    pub link_codes: Vec<(String, bool)>,
+    /// Feature line codes (in name order) and the flag each carries.
+    pub feature_line_codes: Vec<(String, bool)>,
+    /// 0 none, 1 top links, 2 bottom links.
+    pub overhang_correction: i32,
+}
+
+/// A surface boundary or mask (kinds with the 0x40000000 flag hold a
+/// polygon: 0x40000002 outside, 0x40000000 or 0x40000001 inside,
+/// 0x40000004 mask; 0x80000002 the corridor extents).
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct CorridorBoundary {
+    pub surface: String,
+    pub name: String,
+    pub description: String,
+    pub kind: u32,
+    pub corners: Vec<Vector3>,
+    /// Feature line components of a boundary drawn along feature lines.
+    pub components: usize,
+}
+
+/// What a corridor record defines: its settings, surfaces and baselines.
+/// Names and references are read for a corridor that holds no built
+/// stations (their texts and references follow the built ones otherwise).
+#[derive(Debug, Clone, PartialEq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct CorridorDefinition {
+    pub name: String,
+    pub description: String,
+    pub rebuild_automatic: bool,
+    /// Regions locked to the alignment's geometry (to stations otherwise).
+    pub geometry_lock: bool,
+    pub maximum_triangle_side: f64,
+    pub surfaces: Vec<CorridorSurfaceDefinition>,
+    pub boundaries: Vec<CorridorBoundary>,
+    pub baselines: Vec<CorridorBaseline>,
+}
+
 /// One `4BD` station record, `None` past the end or when implausible.
 fn record(bits: &mut Bits) -> Option<(f64, Vector3)> {
     let station = bits.bit_double()?;
@@ -71,7 +255,7 @@ fn group(bits: &mut Bits, first: bool) -> Option<Vec<Vec<(f64, Vector3)>>> {
 /// holding that code's segments.
 pub(super) fn baselines(data: &[u8], start: usize, end: usize) -> Vec<Groups> {
     if let Some(found) = walk(&mut Bits::new(data, start, end)) {
-        return found;
+        return found.groups;
     }
     // debt: records [`walk`] does not read (none in the samples) are found
     // by probing bit offsets for the first group of each baseline.
@@ -102,44 +286,50 @@ fn probe(data: &[u8], start: usize, end: usize) -> Vec<Groups> {
 /// A corridor surface's head after its GUID:
 ///
 /// ```text
-/// B, B built, RC 0x20 or 0xA0
-/// 3 bits n (link codes), n x B (the code is added as a breakline)
+/// B, B built, B, BL n (link codes), n x B (the code is added as a breakline)
 /// BL 0, BL m (feature line codes), m x B
-/// BL overhang correction (0 none, 1 top links)
+/// BL overhang correction (0 none, 1 top links, 2 bottom links)
 /// ```
-// ponytail: the RC is read as 0x20 or 0xA0 (a file rebuilt by the program
-// turns 0x20 into 0xA0 and leaves the rest alike); its bits are not named.
-fn surface(bits: &mut Bits) -> Option<()> {
+///
+/// Older files write the link count in its one-byte form (`01 00000nnn`).
+fn surface(bits: &mut Bits) -> Option<CorridorSurfaceDefinition> {
     bits.bit()?;
+    let build = bits.bit()?;
     bits.bit()?;
-    matches!(bits.raw_short_byte()?, 0x20 | 0xA0).then_some(())?;
-    let codes = usize::from(bits.bits_value(3)?);
-    bits.skip(codes)?;
+    let codes = usize::try_from(bits.bit_long()?).ok().filter(|n| *n <= bits.remaining())?;
+    let link_codes = (0..codes).map(|_| Some((String::new(), bits.bit()?))).collect::<Option<_>>()?;
     // debt: this BL has no other value in the samples; what follows a
     // different one is not mapped.
     (bits.bit_long()? == 0).then_some(())?;
     let feature_codes = usize::try_from(bits.bit_long()?).ok().filter(|n| *n <= bits.remaining())?;
-    bits.skip(feature_codes)?;
-    bits.bit_long().map(|_| ())
+    let feature_line_codes = (0..feature_codes).map(|_| Some((String::new(), bits.bit()?))).collect::<Option<_>>()?;
+    let overhang_correction = bits.bit_long()?;
+    Some(CorridorSurfaceDefinition { name: String::new(), build, link_codes, feature_line_codes, overhang_correction })
 }
 
 /// The surfaces' boundaries and masks: `BL n` (one per surface that has
-/// any), `n x { BL k, k x { BL kind, BL m, items } }`. Kinds with a flag
-/// above the low 16 bits hold `m x 3BD` corners: 0x80000002 the corridor
-/// extents (its outline in some files, none in others), 0x40000002 an
-/// outside and 0x40000001 an inside boundary from a polygon, 0x40000004 a
-/// mask. Kinds without flags, 2 outside and 1 inside, are drawn along
-/// feature lines and hold `m` components:
+/// any, in surface order), `n x { BL k, k x { BL kind, BL m, items } }`.
+/// Kinds with a flag above the low 16 bits hold `m x 3BD` corners:
+/// 0x80000002 the corridor extents (its outline in some files, none in
+/// others), 0x40000002 an outside and 0x40000000 (0x40000001 in older
+/// files) an inside boundary from a polygon, 0x40000004 a mask. Kinds
+/// without flags, 2 outside and 1 inside, are drawn along feature lines and
+/// hold `m` components:
 ///
 /// ```text
 /// BL, BL feature line, B reversed, BD start station, BD end station,
 /// B start at the line's start, B end at its end, B, GUID
 /// ```
-fn outlines(bits: &mut Bits) -> Option<()> {
+///
+/// Returns the boundaries of each list.
+fn outlines(bits: &mut Bits) -> Option<Vec<Vec<CorridorBoundary>>> {
+    let mut lists = Vec::new();
     for _ in 0..bits.bit_long()? {
+        let mut list = Vec::new();
         for _ in 0..bits.bit_long()? {
             let kind = bits.bit_long()? as u32;
             let m = usize::try_from(bits.bit_long()?).ok().filter(|m| m * 6 <= bits.remaining())?;
+            let mut boundary = CorridorBoundary { surface: String::new(), name: String::new(), description: String::new(), kind, corners: Vec::new(), components: 0 };
             if kind < 0x1_0000 {
                 for _ in 0..m {
                     bits.bit_long()?;
@@ -150,14 +340,42 @@ fn outlines(bits: &mut Bits) -> Option<()> {
                     bits.skip(3)?;
                     bits.skip(128)?;
                 }
+                boundary.components = m;
             } else {
-                for _ in 0..3 * m {
-                    bits.bit_double()?;
+                for _ in 0..m {
+                    boundary.corners.push(Vector3::new(bits.bit_double()?, bits.bit_double()?, bits.bit_double()?));
                 }
             }
+            list.push(boundary);
         }
+        lists.push(list);
     }
-    Some(())
+    Some(lists)
+}
+
+/// Corridor keys holding one value per region, in region order.
+pub(super) const KEY_ALONG_TARGET_CURVES: u32 = 0x0C04_A621;
+pub(super) const KEY_CURVE_MID_ORDINATE: u32 = 0x0C04_A61E;
+pub(super) const KEY_TARGET_CURVE_MID_ORDINATE: u32 = 0x0C04_A620;
+
+/// What [`walk`] reads: the feature line groups of each baseline, the
+/// definition, and the counts naming it needs.
+#[derive(Default)]
+struct Walked {
+    groups: Vec<Groups>,
+    definition: CorridorDefinition,
+    /// No baseline holds built stations.
+    unbuilt: bool,
+    /// Keys whose value is a text (type 0x04).
+    text_keys: usize,
+    /// Feature line code settings (`BL n` after the 82).
+    codes: usize,
+    outline_lists: Vec<Vec<CorridorBoundary>>,
+    /// Per region in corridor order: nodes of each assembly group.
+    region_groups: Vec<Vec<usize>>,
+    /// Per region: its target entries, each a list of (list, object count)
+    /// per target item, `None` for an item that holds no object.
+    region_items: Vec<Vec<Vec<Option<(usize, usize, bool)>>>>,
 }
 
 /// The record read field by field:
@@ -165,41 +383,67 @@ fn outlines(bits: &mut Bits) -> Option<()> {
 /// ```text
 /// head:     BL 80, 0, 80, 80, 0, BL, BL, 4 bits, RC n, n x key,
 ///           2 bits, GUID (zero in newer files), 2 bits, RC 82, BL n,
-///           n x { 2 bits, BL }, BL surfaces,
-///           surfaces x { GUID, head (see [`surface`]) }, BL 0, outlines
-///           (see [`outlines`]),
-///           BL 0, 2 bits, RC 32, RC layout (older form: RC 32, RC layout,
-///           2 bits, RC layout), RC baselines (top 5 bits), 1 bit,
-///           6 bits region count, BL record count (both of the first
-///           baseline's first region)
-/// layout:   0x28: each region block holds a GUID before its start and its
-///           end station; 0x48: it does not
-/// baseline: [after the first: 2 bits, BL n, n x BD (none in newer files),
-///           BL region count, BL record count], regions, then B, GUID,
-///           BL n, n x feature line group, B, B, GUID
+///           n x { 2 bits, BL } (feature line code settings), BL surfaces,
+///           surfaces x { GUID, head (see [`surface`]) }, BD maximum
+///           triangle side length, outlines (see [`outlines`]),
+///           BL 0, B rebuild automatically, B, RC 32, RC layout (older
+///           form: RC 32, RC layout, 2 bits, RC layout), RC baselines (top
+///           5 bits), 1 bit, 6 bits region count, BL record count (both of
+///           the first baseline's first region)
+/// layout:   0x28: regions are locked to the alignment geometry, each region
+///           block holds the identifier of an alignment element before its
+///           start and its end station; 0x48: locked to stations, it does
+///           not
+/// baseline: [after the first: 2 bits, BL n, n x BD (the previous
+///           baseline's added stations), BL region count, BL record count],
+///           regions, then B, GUID, BL n, n x feature line group, B, B, GUID
 /// region:   records (see [`station`]), then its block (see [`region`]),
 ///           which gives the next region's record count, 1 after the last;
 ///           the block's target entries hold as many lists as the region's
 ///           last applied subassembly has words, less 8 (10
 ///           of 18 in the samples)
 /// ```
+///
+/// A corridor that holds no built station (its first record count is 0:
+/// not rebuilt since its definition was made) has no records and no
+/// feature line groups:
+///
+/// ```text
+/// baseline: [after the first: BL region count, BL 0], region blocks
+///           (without their leading B), then BL 0, B 1, 9 bits 000000101,
+///           GUID, BL n, n x BD added stations
+/// end:      45 bits after the last baseline
+/// ```
+///
+/// Keys 0x0C04A621, 0x0C04A61E and 0x0C04A620 hold one double per region
+/// in corridor order: the frequency along offset target curves and the mid
+/// ordinates along curves and along target curves (written once a region
+/// changes one of them; 25, 0.1 and 0.1 without them).
 // ponytail: the 4-bit run, the 2-bit runs around the head's GUID (01 before
-// it, 01 or 11 after it), before the 32 (01 or 11) and opening each later
-// baseline (00, 01, 10 or 11), the low 3 bits of the second RC and the bit
-// after it are skipped by length.
-fn walk(bits: &mut Bits) -> Option<Vec<Groups>> {
+// it, 01 or 11 after it), the bit after the rebuild flag, the 2 bits
+// opening each later built baseline (00, 01, 10 or 11), the low 3 bits of
+// the second RC and the bit after it are skipped by length.
+fn walk(bits: &mut Bits) -> Option<Walked> {
+    let mut w = Walked::default();
     for want in [80, 0, 80, 80, 0] {
         (bits.bit_long()? == want).then_some(())?;
     }
     bits.bit_long()?;
     bits.bit_long()?;
     bits.skip(4)?;
+    let mut per_region: Vec<(u32, Vec<f64>)> = Vec::new();
     for _ in 0..bits.bits_value(8)? {
-        super::alignment::key(bits)?;
+        let (key, value) = super::alignment::read_key(bits)?;
+        match value {
+            super::alignment::KeyValue::Doubles(v) if matches!(key, KEY_ALONG_TARGET_CURVES | KEY_CURVE_MID_ORDINATE | KEY_TARGET_CURVE_MID_ORDINATE) => per_region.push((key, v)),
+            _ if key >> 24 == 0x04 => w.text_keys += 1,
+            _ => {}
+        }
     }
     bits.skip(2 + 128 + 2)?;
     (bits.raw_short_byte()? == 82).then_some(())?;
-    for _ in 0..bits.bit_long()? {
+    w.codes = usize::try_from(bits.bit_long()?).ok()?;
+    for _ in 0..w.codes {
         bits.skip(2)?;
         bits.bit_long()?;
     }
@@ -207,11 +451,10 @@ fn walk(bits: &mut Bits) -> Option<Vec<Groups>> {
     (0..=64).contains(&surfaces).then_some(())?;
     for _ in 0..surfaces {
         bits.skip(128)?;
-        surface(bits)?;
+        w.definition.surfaces.push(surface(bits)?);
     }
-    // debt: this BL has no other value in the samples.
-    (bits.bit_long()? == 0).then_some(())?;
-    outlines(bits)?;
+    w.definition.maximum_triangle_side = bits.bit_double()?;
+    w.outline_lists = outlines(bits)?;
     (bits.bit_long()? == 0).then_some(())?;
     // The bits before the 32 are 01 or 11. Bits 00 are the top of the 32 in
     // the form one record of the samples has, written by an older program
@@ -219,13 +462,15 @@ fn walk(bits: &mut Bits) -> Option<Vec<Groups>> {
     // RC layout, 2 bits, RC layout`.
     let at = bits.pos;
     let older = bits.bits_value(2)? == 0;
+    bits.pos = at;
     let mut layout = None;
     if older {
-        bits.pos = at;
         (bits.raw_short_byte()? == 32).then_some(())?;
         layout = Some(bits.raw_short_byte()?);
         bits.skip(2)?;
     } else {
+        w.definition.rebuild_automatic = bits.bit()?;
+        bits.bit()?;
         (bits.raw_short_byte()? == 32).then_some(())?;
     }
     let byte = bits.raw_short_byte()?;
@@ -235,43 +480,82 @@ fn walk(bits: &mut Bits) -> Option<Vec<Groups>> {
         0x48 => false,
         _ => return None,
     };
+    w.definition.geometry_lock = guids;
     let baselines = bits.raw_short_byte()? >> 3;
     bits.skip(1)?;
     let mut regions = u32::from(bits.bits_value(6)?);
     let mut records = u32::try_from(bits.bit_long()?).ok()?;
-    let mut out = Vec::new();
+    w.unbuilt = records == 0;
     for baseline in 0..baselines {
         if baseline > 0 {
-            bits.skip(2)?;
-            for _ in 0..bits.bit_long()? {
-                bits.bit_double()?;
+            if !w.unbuilt {
+                bits.skip(2)?;
+                let stations = added_stations(bits)?;
+                if let Some(last) = w.definition.baselines.last_mut() {
+                    last.stations = stations;
+                }
             }
             regions = u32::try_from(bits.bit_long()?).ok()?;
             records = u32::try_from(bits.bit_long()?).ok()?;
         }
+        let mut line = CorridorBaseline { name: String::new(), feature_line: 0, alignment: 0, profile: 0, regions: Vec::new(), stations: Vec::new(), built: !w.unbuilt };
         for _ in 0..regions {
             let mut words = None;
             for index in 0..records {
                 words = station(bits, index > 0)?.or(words);
             }
-            records = region(bits, guids, words)?;
+            let (next, found) = region(bits, guids, words, !w.unbuilt, &mut w)?;
+            line.regions.push(found);
+            records = next;
+        }
+        if w.unbuilt {
+            (records == 0 && bits.bit_long()? == 0).then_some(())?;
+            bits.bit()?;
+            bits.skip(9 + 128)?;
+            line.stations = added_stations(bits)?;
+            w.definition.baselines.push(line);
+            w.groups.push(Vec::new());
+            continue;
         }
         // A last baseline whose regions give no record count has nothing
         // built: no feature line groups follow.
         if records == 0 && baseline + 1 == baselines {
-            out.push(Vec::new());
+            line.built = false;
+            w.definition.baselines.push(line);
+            w.groups.push(Vec::new());
             break;
         }
         (records == 1).then_some(())?;
         bits.bit()?;
         bits.skip(128)?;
         let n = bits.bit_long()?;
-        out.push((0..n).map(|_| fields_group(bits)).collect::<Option<Groups>>()?);
+        w.groups.push((0..n).map(|_| fields_group(bits)).collect::<Option<Groups>>()?);
         bits.bit()?;
         bits.bit()?;
         bits.skip(128)?;
+        w.definition.baselines.push(line);
     }
-    Some(out)
+    // The settings kept in keys, one value per region.
+    let all = w.definition.baselines.iter_mut().flat_map(|b| b.regions.iter_mut());
+    for (index, region) in all.enumerate() {
+        for (key, values) in &per_region {
+            if let Some(v) = values.get(index) {
+                let f = &mut region.frequency;
+                match *key {
+                    KEY_ALONG_TARGET_CURVES => f.along_target_curves = *v,
+                    KEY_CURVE_MID_ORDINATE => f.curve_mid_ordinate = *v,
+                    _ => f.target_curve_mid_ordinate = *v,
+                }
+            }
+        }
+    }
+    Some(w)
+}
+
+/// `BL n, n x BD`: a baseline's added stations (descriptions are texts).
+fn added_stations(bits: &mut Bits) -> Option<Vec<(f64, String)>> {
+    let n = usize::try_from(bits.bit_long()?).ok().filter(|n| n * 2 <= bits.remaining())?;
+    (0..n).map(|_| Some((bits.bit_double()?, String::new()))).collect()
 }
 
 /// `BL 80, BL 80, BL 0x04BE0000`, the head of each nested object.
@@ -308,21 +592,28 @@ fn station(bits: &mut Bits, after_first: bool) -> Option<Option<u32>> {
 /// `BL 80` opens the group's next node (the rest of its first object head
 /// follows), `BL 0` ends, any other value up to 79 opens the next group (1,
 /// 2 and 3 in the samples).
-fn assembly(bits: &mut Bits) -> Option<()> {
+fn assembly(bits: &mut Bits) -> Option<Vec<usize>> {
+    let mut groups = Vec::new();
     loop {
         object(bits)?;
+        let mut nodes = 0;
         loop {
             object(bits)?;
             bits.bit_long()?;
             bits.bit_double()?;
             bits.bit_double()?;
+            nodes += 1;
             match bits.bit_long()? {
                 80 => object_rest(bits)?,
-                0 => return Some(()),
+                0 => {
+                    groups.push(nodes);
+                    return Some(groups);
+                }
                 1..=79 => break,
                 _ => return None,
             }
         }
+        groups.push(nodes);
     }
 }
 
@@ -396,14 +687,19 @@ fn body(bits: &mut Bits) -> Option<u32> {
 /// 0x13: BD value
 /// 0x14: nothing (a text in the text stream)
 /// 0x15: object
-/// 0x17: BL k, k x object, BL
+/// 0x17: BL k, k x object, BL option (1 the farthest, 0 the nearest; the
+///       type then carries 0x100)
 /// ```
 ///
 /// then `B, B choices, [BL n, n x BL], BL index`. Types carry flags above
 /// the low byte (0x1015, 0x1017, 0x1117, 0x20001117, 0x1033 in the samples).
-fn target(bits: &mut Bits) -> Option<()> {
+/// Returns, for an item holding objects, their count and whether the
+/// farthest is used. Its texts: the parameter's name twice, two empty
+/// texts and one per object.
+fn target(bits: &mut Bits) -> Option<Option<(usize, bool)>> {
     let kind = bits.bit_long()? & 0xDF;
     (bits.bit_long()? == 0).then_some(())?;
+    let mut objects = None;
     match kind {
         0x12 => {
             bits.bit_long()?;
@@ -412,12 +708,16 @@ fn target(bits: &mut Bits) -> Option<()> {
             bits.bit_double()?;
         }
         0x14 => {}
-        0x15 => object(bits)?,
+        0x15 => {
+            object(bits)?;
+            objects = Some((1, false));
+        }
         0x17 => {
-            for _ in 0..bits.bit_long()? {
+            let n = usize::try_from(bits.bit_long()?).ok()?;
+            for _ in 0..n {
                 object(bits)?;
             }
-            bits.bit_long()?;
+            objects = Some((n, bits.bit_long()? == 1));
         }
         _ => return None,
     }
@@ -427,60 +727,212 @@ fn target(bits: &mut Bits) -> Option<()> {
             bits.bit_long()?;
         }
     }
-    bits.bit_long().map(|_| ())
+    bits.bit_long()?;
+    Some(objects)
+}
+
+/// Names and references of an unbuilt corridor's definition from its texts
+/// and references (see [`walk`] for their order):
+///
+/// ```text
+/// texts:      "AeccImpCorridor", "", name, description, one per text key,
+///             one per feature line code, per surface its name and its
+///             link and feature line codes, per
+///             boundary list its surface's name and per boundary its name
+///             and description, per baseline {per region {"", per assembly
+///             group its name, "" and "", "" per node, the assembly's name,
+///             "", per target item its texts, the region's name}, the
+///             baseline's name, one description per added station}
+/// references: soft 0, style, code set style, one per feature line code,
+///             per surface {the surface (soft), style, 0, render material},
+///             one per boundary, per baseline {feature line or 0,
+///             alignment, profile, per region {assembly, per node
+///             {subassembly, the one it hangs from or 0}, per target entry
+///             {subassembly (hard), per target item its objects (soft)}}}
+/// ```
+fn name(w: &mut Walked, strings: &[String], refs: &[u64]) -> Option<()> {
+    let mut texts = strings.iter();
+    let mut text = || texts.next().cloned();
+    text()?;
+    text()?;
+    w.definition.name = text()?;
+    w.definition.description = text()?;
+    for _ in 0..w.text_keys + w.codes {
+        text()?;
+    }
+    for s in &mut w.definition.surfaces {
+        s.name = text()?;
+        for code in s.link_codes.iter_mut().chain(&mut s.feature_line_codes) {
+            code.0 = text()?;
+        }
+    }
+    for list in &mut w.outline_lists {
+        let surface = text()?;
+        for b in list.iter_mut() {
+            b.surface = surface.clone();
+            b.name = text()?;
+            b.description = text()?;
+        }
+    }
+    let mut refs = refs.iter().copied();
+    let mut next = || refs.next();
+    for _ in 0..3 + w.codes + 4 * w.definition.surfaces.len() + w.outline_lists.iter().map(Vec::len).sum::<usize>() {
+        next()?;
+    }
+    let mut index = 0;
+    for line in &mut w.definition.baselines {
+        line.feature_line = next()?;
+        line.alignment = next()?;
+        line.profile = next()?;
+        for region in &mut line.regions {
+            text()?;
+            for nodes in w.region_groups.get(index)? {
+                text()?;
+                text()?;
+                for _ in 0..2 * nodes {
+                    text()?;
+                }
+            }
+            region.assembly = next()?;
+            for _ in 0..2 * w.region_groups[index].iter().sum::<usize>() {
+                next()?;
+            }
+            text()?;
+            text()?;
+            let mut found = region.targets.iter_mut();
+            for entry in w.region_items.get(index)? {
+                let subassembly = next()?;
+                for item in entry {
+                    let (list, objects, _) = (*item)?;
+                    let name = text()?;
+                    for _ in 0..3 + objects {
+                        text()?;
+                    }
+                    let objects = (0..objects).map(|_| next()).collect::<Option<Vec<_>>>()?;
+                    if TargetKind::of_list(list).is_some() {
+                        let t = found.next()?;
+                        (t.subassembly, t.name, t.objects) = (subassembly, name, objects);
+                    }
+                }
+            }
+            region.name = text()?;
+            index += 1;
+        }
+        line.name = text()?;
+        for station in &mut line.stations {
+            station.1 = text()?;
+        }
+    }
+    let outlines = std::mem::take(&mut w.outline_lists);
+    w.definition.boundaries = outlines.into_iter().flatten().collect();
+    Some(())
+}
+
+/// The definition of a corridor. Names and references are filled for a
+/// corridor that holds no built station.
+pub(super) fn definition(data: &[u8], start: usize, end: usize, strings: &[String], refs: &[u64]) -> Option<CorridorDefinition> {
+    let mut w = walk(&mut Bits::new(data, start, end))?;
+    if w.unbuilt {
+        name(&mut w, strings, refs)?;
+    } else {
+        let outlines = std::mem::take(&mut w.outline_lists);
+        w.definition.boundaries = outlines.into_iter().flatten().collect();
+    }
+    Some(w.definition)
 }
 
 /// A region's block after its stations, returning the record count it gives
-/// for what follows:
+/// for what follows and the region:
 ///
 /// ```text
-/// B, GUID, BL, BL, BL, BL, assembly groups, [GUID], BD start station,
-/// [GUID], BD end station, 2 bits, BD, BD, BL, BD, BD, BD, GUID, BL, BL,
-/// BL, BL n, n x `lists` target lists, BL m, m x BD station, B, B, B,
-/// BL count
+/// B, GUID (the assembly's identifier), BL, BL, BL, BL, assembly groups,
+/// [GUID], BD start station, [GUID], BD end station, 2 bits,
+/// BD frequency along tangents, BD along curves, BL flags, BD,
+/// BD along spirals, BD along profile curves, GUID (the region's),
+/// BL target flags, BL, BL, BL n, n x `lists` target lists (one entry per
+/// subassembly with targets, in assembly order), BL m, m x BD station,
+/// B, B, B, BL count
 /// ```
+///
+/// Flags: 0x8 at horizontal geometry points, 0x80 at superelevation
+/// critical points, 0x400 by curvature and 0x1000 at increment along
+/// curves, 0x20000 at profile geometry points, 0x40000 at profile high and
+/// low points. Target flags: 1 at offset target geometry points, 4 adjacent
+/// to offset target start and end, 8 at increment and 16 by curvature
+/// along target curves. A target entry's list 5 holds its surface targets,
+/// 8 its offset and 9 its elevation targets.
 // ponytail: the 2-bit run is skipped by length (00 in every sample).
-fn region(bits: &mut Bits, guids: bool, words: Option<u32>) -> Option<u32> {
-    bits.bit()?;
+fn region(bits: &mut Bits, guids: bool, words: Option<u32>, lead: bool, w: &mut Walked) -> Option<(u32, CorridorRegion)> {
+    if lead {
+        bits.bit()?;
+    }
     bits.skip(128)?;
     for _ in 0..4 {
         bits.bit_long()?;
     }
-    assembly(bits)?;
-    for _ in 0..2 {
+    w.region_groups.push(assembly(bits)?);
+    let mut ends = [0.0; 2];
+    for end in &mut ends {
         if guids {
             bits.skip(128)?;
         }
-        bits.bit_double()?;
+        *end = bits.bit_double()?;
     }
     bits.skip(2)?;
+    let mut f = RegionFrequency { along_tangents: bits.bit_double()?, along_curves: bits.bit_double()?, ..RegionFrequency::default() };
+    let flags = bits.bit_long()?;
+    f.curves = match flags & 0x1400 {
+        0x400 => CurveStations::ByCurvature,
+        0x1400 => CurveStations::Both,
+        _ => CurveStations::AtIncrement,
+    };
+    f.at_horizontal_geometry_points = flags & 0x8 != 0;
+    f.at_superelevation_critical_points = flags & 0x80 != 0;
+    f.at_profile_geometry_points = flags & 0x2_0000 != 0;
+    f.at_profile_high_low_points = flags & 0x4_0000 != 0;
     bits.bit_double()?;
-    bits.bit_double()?;
-    bits.bit_long()?;
-    for _ in 0..3 {
-        bits.bit_double()?;
-    }
+    f.along_spirals = bits.bit_double()?;
+    f.along_profile_curves = bits.bit_double()?;
     bits.skip(128)?;
-    for _ in 0..3 {
+    let target_flags = bits.bit_long()?;
+    f.at_offset_target_geometry_points = target_flags & 1 != 0;
+    f.adjacent_to_offset_target_start_end = target_flags & 4 != 0;
+    f.target_curves = match target_flags & 0x18 {
+        8 => TargetCurveStations::AtIncrement,
+        16 => TargetCurveStations::ByCurvature,
+        _ => TargetCurveStations::None,
+    };
+    for _ in 0..2 {
         bits.bit_long()?;
     }
     let entries = bits.bit_long()?;
+    // An unbuilt region gives no word count: 18 words, 10 lists.
     let lists = match entries {
         0 => 0,
-        _ => words?.checked_sub(8)?,
+        _ => words.unwrap_or(WORDS).checked_sub(8)?,
     };
+    let mut found = Vec::new();
+    let mut items = Vec::new();
     for _ in 0..entries {
-        for _ in 0..lists {
+        let mut entry = Vec::new();
+        for list in 0..lists {
             for _ in 0..bits.bit_long()? {
-                target(bits)?;
+                let item = target(bits)?;
+                entry.push(item.map(|(objects, farthest)| (list as usize, objects, farthest)));
+                if let (Some(kind), Some((objects, farthest))) = (TargetKind::of_list(list as usize), item) {
+                    found.push(RegionTarget { subassembly: 0, name: String::new(), kind, objects: vec![0; objects], farthest });
+                }
             }
         }
+        items.push(entry);
     }
+    w.region_items.push(items);
     for _ in 0..bits.bit_long()? {
         bits.bit_double()?;
     }
     bits.skip(3)?;
-    u32::try_from(bits.bit_long()?).ok()
+    let next = u32::try_from(bits.bit_long()?).ok()?;
+    Some((next, CorridorRegion { name: String::new(), assembly: 0, start: ends[0], end: ends[1], frequency: f, targets: found }))
 }
 
 /// A feature line group read by its counts, without the probe's checks.
@@ -532,7 +984,8 @@ mod tests {
         let b = bits_of(&s);
         let len = s.bytes().filter(|c| *c == b'0' || *c == b'1').count();
         let mut bits = Bits::new(&b, 0, len);
-        assert_eq!(outlines(&mut bits), Some(()));
+        let lists = outlines(&mut bits).unwrap();
+        assert_eq!((lists.len(), lists[0][0].kind, lists[0][0].components), (1, 2, 2));
         assert_eq!(bits.pos, len);
     }
 
@@ -546,9 +999,11 @@ mod tests {
         let b = bits_of(s);
         let len = s.bytes().filter(|c| *c == b'0' || *c == b'1').count();
         let mut bits = Bits::new(&b, 0, len);
-        assert_eq!(surface(&mut bits), Some(()));
-        assert_eq!(bits.bit_long(), Some(0));
-        assert_eq!(outlines(&mut bits), Some(()));
+        let surface = surface(&mut bits).unwrap();
+        let flags = |c: &[(String, bool)]| c.iter().map(|c| c.1).collect::<Vec<_>>();
+        assert_eq!((surface.build, flags(&surface.link_codes), flags(&surface.feature_line_codes)), (true, vec![true, true], vec![true]));
+        assert_eq!(bits.bit_double(), Some(0.0));
+        assert_eq!(outlines(&mut bits).unwrap()[0][0].kind, 0x8000_0002);
         assert_eq!(bits.pos, len);
     }
 
@@ -569,8 +1024,8 @@ mod tests {
         let b = bits_of(&s);
         let len = s.bytes().filter(|b| *b == b'0' || *b == b'1').count();
         let mut bits = Bits::new(&b, 0, len);
-        assert_eq!(assembly(&mut bits), Some(()));
-        assert_eq!(target(&mut bits), Some(()));
+        assert_eq!(assembly(&mut bits), Some(vec![2, 1]));
+        assert_eq!(target(&mut bits), Some(Some((1, false))));
         assert_eq!(bits.pos, len);
     }
 }

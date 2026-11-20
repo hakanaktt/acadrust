@@ -18,6 +18,24 @@ const KEY_MARKER_STYLES: i32 = 0x11B;
 /// Style tree keys of the parcel style and feature line style collections.
 pub(super) const KEY_PARCEL_STYLES: i32 = 2;
 pub(super) const KEY_FEATURE_LINE_STYLES: i32 = 128;
+/// Style tree key of the subassembly style collection.
+pub(super) const KEY_SUBASSEMBLY_STYLES: i32 = 0x11A;
+/// Style tree keys of the pipe and structure style collections.
+pub(super) const KEY_PIPE_STYLES: i32 = 0x116;
+pub(super) const KEY_STRUCTURE_STYLES: i32 = 0x117;
+/// Style tree keys of the assembly, code set, link, shape and corridor
+/// style collections.
+pub(super) const KEY_ASSEMBLY_STYLES: i32 = 0x118;
+pub(super) const KEY_CODE_SET_STYLES: i32 = 0xEA0;
+const KEY_LINK_STYLES: i32 = 0x11C;
+const KEY_SHAPE_STYLES: i32 = 0x11D;
+pub(super) const KEY_CORRIDOR_STYLES: i32 = 0xEB2;
+/// Style tree keys of the pressure pipe, fitting and appurtenance style
+/// collections and of the pressure part lists.
+const KEY_PRESSURE_PIPE_STYLES: i32 = 0x17E;
+const KEY_FITTING_STYLES: i32 = 0x17F;
+const KEY_APPURTENANCE_STYLES: i32 = 0x180;
+pub(super) const KEY_PRESSURE_PART_LISTS: i32 = 0x188;
 
 /// Writes `templates` into the style tree when it lacks all of `keys`,
 /// listing the templates at `roots` under those keys. A tree that has some
@@ -78,6 +96,66 @@ pub(super) fn ensure_site_styles(doc: &mut CadDocument) -> Result<(), DxfError> 
     ensure(doc, PARCEL_STYLES, &[(KEY_PARCEL_STYLES, 0)])?;
     ensure_marker_styles(doc)?;
     ensure(doc, FEATURE_LINE_STYLES, &[(KEY_FEATURE_LINE_STYLES, 0)])
+}
+
+/// The subassembly style collection (style tree key 0x11A) and its
+/// default style, when the drawing lacks them.
+pub(super) fn ensure_subassembly_styles(doc: &mut CadDocument) -> Result<(), DxfError> {
+    ensure(doc, SUBASSEMBLY_STYLES, &[(KEY_SUBASSEMBLY_STYLES, 0)])
+}
+
+/// The pipe style collection (style tree key 0x116) and the structure
+/// style collection (0x117), each with its default style, when the drawing
+/// lacks them.
+pub(super) fn ensure_pipe_network_styles(doc: &mut CadDocument) -> Result<(), DxfError> {
+    ensure(doc, PIPE_STYLES, &[(KEY_PIPE_STYLES, 0)])?;
+    ensure(doc, STRUCTURE_STYLES, &[(KEY_STRUCTURE_STYLES, 0)])
+}
+
+/// The pressure pipe (style tree key 0x17E), fitting (0x17F) and
+/// appurtenance (0x180) style collections with their default styles (the
+/// fitting and appurtenance styles draw the default roadway marker), and
+/// the pressure part list collection (0x188) with the default part list:
+/// bound to the default catalog, listing a 4 inch ductile iron pipe, a 4
+/// inch 11.25° elbow and a 6 inch gate valve, each with the default style
+/// of its kind; when the drawing lacks them.
+pub(super) fn ensure_pressure_network_styles(doc: &mut CadDocument) -> Result<(), DxfError> {
+    ensure_marker_styles(doc)?;
+    ensure(doc, PRESSURE_PIPE_STYLES, &[(KEY_PRESSURE_PIPE_STYLES, 0)])?;
+    ensure(doc, FITTING_STYLES, &[(KEY_FITTING_STYLES, 0)])?;
+    ensure(doc, APPURTENANCE_STYLES, &[(KEY_APPURTENANCE_STYLES, 0)])?;
+    ensure(doc, PRESSURE_PART_LISTS, &[(KEY_PRESSURE_PART_LISTS, 0)])
+}
+
+fn has_styles(doc: &CadDocument, key: i32) -> bool {
+    root_node(doc, KEY_STYLES).and_then(|s| read_node(doc, s)).is_some_and(|t| t.children.iter().any(|c| c.0 == key))
+}
+
+/// The assembly style collection (style tree key 0x118) and the code set
+/// style collection (0xEA0), each with its default style, when the drawing
+/// lacks them. The default code set draws every point, link and shape
+/// code with the default roadway marker, feature line, link and shape
+/// styles; the link (0x11C) and shape (0x11D) style collections come with
+/// it.
+pub(super) fn ensure_assembly_styles(doc: &mut CadDocument) -> Result<(), DxfError> {
+    if !has_styles(doc, KEY_ASSEMBLY_STYLES) {
+        ensure_marker_styles(doc)?;
+        ensure(doc, ASSEMBLY_STYLES, &[(KEY_ASSEMBLY_STYLES, 0)])?;
+    }
+    if !has_styles(doc, KEY_CODE_SET_STYLES) {
+        ensure_marker_styles(doc)?;
+        ensure(doc, FEATURE_LINE_STYLES, &[(KEY_FEATURE_LINE_STYLES, 0)])?;
+        ensure(doc, LINK_STYLES, &[(KEY_LINK_STYLES, 0)])?;
+        ensure(doc, SHAPE_STYLES, &[(KEY_SHAPE_STYLES, 0)])?;
+        ensure(doc, CODE_SET_STYLES, &[(KEY_CODE_SET_STYLES, 0)])?;
+    }
+    Ok(())
+}
+
+/// The corridor style collection (style tree key 0xEB2) and its default
+/// style, when the drawing lacks them.
+pub(super) fn ensure_corridor_styles(doc: &mut CadDocument) -> Result<(), DxfError> {
+    ensure(doc, CORRIDOR_STYLES, &[(KEY_CORRIDOR_STYLES, 0)])
 }
 
 // The tables: the application's default records with the users empty and
@@ -314,5 +392,244 @@ const FEATURE_LINE_STYLES: &[Template] = &[
         fields: &[Run(10, "478"), Children, Run(183, "a840102000080140018782020000800c0018783e20002c"), Time, Run(102, "00e000c3c0080030f078400058"), Time, Run(1122, "480a032a0a84a8600000030000ffff501800000001901950542543000000180007fffa80c00000000c824a82a12a18000000c0003fffd40600000000640950542543000000180007fffa80c00000000c81aa0a84a8600000030000ffff50180000000190454150950c00000060001fffea0300000000320280aa0a84a8600000030400ffff501800000001aa8")],
         refs: &[(SoftPointer, Target::Style(0x11B, 30)), (SoftPointer, Target::Style(0x11B, 30)), (SoftPointer, Target::Style(0x11B, 30)), (SoftPointer, Target::Style(0x11B, 30)), (SoftPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
         strings: &["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
+    },
+];
+
+const SUBASSEMBLY_STYLES: &[Template] = &[
+    Template {
+        dxf: "AECC_SUBASSEMBLY_STYLE",
+        owner: Target::Null,
+        children: &[(0x1e, 1)],
+        fields: &[Run(34, "068040000"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(1889, "480a0d2a0a84a8601800030c00ffff50180000000190154150950c01800061801fffea03000000003204a82a12a18060000c3003fffd40600000000640d50542543006000186007fffa80c00000000c822a0a84a8601800030c00ffff50180000000190554150950c01800061801fffea0300000000320d2a0a84a8601800030c00ffff50180000000190154150950c01800061801fffea03000000003204a82a12a18060000c3003fffd40600000000640d50542543006000186007fffa80c00000000c822a0a84a8601800030c00ffff50180000000190554150950c01800061801fffea030000000035550")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
+        strings: &["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
+    },
+    Template {
+        dxf: "AECC_SUBASSEMBLY_STYLE",
+        owner: Target::Record(0),
+        children: &[],
+        fields: &[Run(10, "478"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(1889, "480a0d2a0a84a8601800030c00ffff50180000000190154150950c01800061801fffea03000000003204a82a12a18060000c3003fffd40600000000640d50542543006000186007fffa80c00000000c822a0a84a8601800030c00ffff50180000000190554150950c01800061801fffea0300000000320d2a0a84a8601800030c00ffff50180000000190154150950c01800061801fffea03000000003204a82a12a18060000c3003fffd40600000000640d50542543006000186007fffa80c00000000c822a0a84a8601800030c00ffff50180000000190554150950c01800061801fffea030000000035550")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
+        strings: &["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
+    },
+];
+
+#[rustfmt::skip]
+const PIPE_STYLES: &[Template] = &[
+    Template {
+        dxf: "AECC_PIPE_STYLE",
+        owner: Target::Null,
+        children: &[(0x1e, 1)],
+        fields: &[Run(34, "058040000"), Children, Run(1237, "a92834a2081a80806a208044d4cccccccccd49f8102000080ba88206c002882011353333333333527e14288206c162882018003ea20804828a2081a81038a2080484ca208060011288206a0208080002054a2080480aa208044d4cccccccccd49f832a2081b004a208044d4cccccccccd49f82ca2081a81026a2081a8103ca20804848a2081a80836a2080484aa208060010a88206a020f88000b0"), Time, Run(666, "0114410089a9999999999a93f061441035010054410089a9999999999a93f0a5441035030b544100c001551040d4082051040241d5104024495104030008d441035010ad4410089a9999999999a93f078400058"), Time, Run(4703, "480a0d2a0a84a8200000030000ffff50180000000190154150950c00000060001fffea03000000003204a82a12a18000000c0003fffd40600000000640d50542543000000180007fffa80c00000000c822a0a84a8200000030000ffff50180000000190554150950400000060001fffea0300000000320282aa0a84a8600000030000ffff50180000000190a950542541000000180007fffa80c00000000c80aa0a84a8600000030000ffff50180000000190254150950c00000060001fffea03000000003206a82a12a18000000c0003fffd40600000000641150542541000000180007fffa80c00000000c832a0a84a8200000030000ffff50180000000190754150950400000060001fffea03000000003210a82a12a08000000c0003fffd40600000000642550542541000000180007fffa80c00000000c852a0a84a8200000030000ffff50180000000190541950542543000000180007fffa80c00000000c83aa0a84a8600000030000ffff50180000000190854150950400000060001fffea03000000003218a82a12a18000000c0003fffd40600000000643550542541000000180007fffa80c00000000c80ca82a12a18000000c1003fbfd4060000000065424182d4454fb21e93f2a2c814a82a12a18000000c1003fbfd4060000000065424182d4454fb21e93f2a2a02a82a12a18000000c1003fbfd4060000000065424182d4454fb21e93f2a2a0480aa0a84a8600000030400feff5018000000019509060b51153ec87a4fca8a812a0a84a8600000030400feff5018000000019509060b51153ec87a4fca8a")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
+        strings: &["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "ANSI31", "", "", "ANSI31", "", "", "ANSI31", "", "", "ANSI31", "", "", "ANSI31"],
+    },
+    Template {
+        dxf: "AECC_PIPE_STYLE",
+        owner: Target::Record(0),
+        children: &[],
+        fields: &[Run(10, "478"), Children, Run(1237, "a92834a2081a80806a208044d4cccccccccd49f8102000080ba88206c002882011353333333333527e14288206c162882018003ea20804828a2081a81038a2080484ca208060011288206a0208080002054a2080480aa208044d4cccccccccd49f832a2081b004a208044d4cccccccccd49f82ca2081a81026a2081a8103ca20804848a2081a80836a2080484aa208060010a88206a020f88000b0"), Time, Run(666, "0114410089a9999999999a93f061441035010054410089a9999999999a93f0a5441035030b544100c001551040d4082051040241d5104024495104030008d441035010ad4410089a9999999999a93f078400058"), Time, Run(4703, "480a0d2a0a84a8200000030000ffff50180000000190154150950c00000060001fffea03000000003204a82a12a18000000c0003fffd40600000000640d50542543000000180007fffa80c00000000c822a0a84a8200000030000ffff50180000000190554150950400000060001fffea0300000000320282aa0a84a8600000030000ffff50180000000190a950542541000000180007fffa80c00000000c80aa0a84a8600000030000ffff50180000000190254150950c00000060001fffea03000000003206a82a12a18000000c0003fffd40600000000641150542541000000180007fffa80c00000000c832a0a84a8200000030000ffff50180000000190754150950400000060001fffea03000000003210a82a12a08000000c0003fffd40600000000642550542541000000180007fffa80c00000000c852a0a84a8200000030000ffff50180000000190541950542543000000180007fffa80c00000000c83aa0a84a8600000030000ffff50180000000190854150950400000060001fffea03000000003218a82a12a18000000c0003fffd40600000000643550542541000000180007fffa80c00000000c80ca82a12a18000000c1003fbfd4060000000065424182d4454fb21e93f2a2c814a82a12a18000000c1003fbfd4060000000065424182d4454fb21e93f2a2a02a82a12a18000000c1003fbfd4060000000065424182d4454fb21e93f2a2a0480aa0a84a8600000030400feff5018000000019509060b51153ec87a4fca8a812a0a84a8600000030400feff5018000000019509060b51153ec87a4fca8a")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
+        strings: &["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "ANSI31", "", "", "ANSI31", "", "", "ANSI31", "", "", "ANSI31", "", "", "ANSI31"],
+    },
+];
+
+#[rustfmt::skip]
+const STRUCTURE_STYLES: &[Template] = &[
+    Template {
+        dxf: "AECC_STUCTURE_STYLE",
+        owner: Target::Null,
+        children: &[(0x1e, 1)],
+        fields: &[Run(34, "05c040000"), Children, Run(1187, "a9586ec208044d4cccccccccd49f81020000803b08206c05b0820180874c2081b060c2082018b08201209308206a040eb08201208080002012c2080481ec2081b034c208044d4cccccccccd49f82ec20804872c208044d4cccccccccd49f828c208044d4cccccccccd49f86cc2080483cc208060019b0820120030820740100006180016c20804822c2081b038c2080483e20002c"), Time, Run(616, "0398410360658410090d184100c04156104100e18410090218410350503184100c041361040243b61040d40c1661040d4083261040243561040d4080a61040241b61040241061040d81e100016"), Time, Run(2501, "0198410400d61040d81861040226a6666666666a4fd20281ca82a12a18000000c0003fbfd40600000000640550542541000000180007f7fa80c00000000c812a0a84a8200000030000feff50180000000190140950542543000000180007f7fa80c00000000c81ca82a12a18000000c0003fbfd40600000000640550542541000000180007f7fa80c00000000c81aa0a84a8200000030000feff501800000001903950542543000000180007f7fa80c00000000c80aa0a84a8200000030000feff50180000000190354150950400000060001fdfea030000000032032a0a84a8600000030400feff5018000000019509060b51153ec87a4fca8b2032a0a84a8600000030400feff5018000000019509060b51153ec87a4fca8a80ca82a12a18000000c1003fbfd4060000000065424182d4454fb21e93f2a28")],
+        refs: &[(HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (SoftPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
+        strings: &["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "ANSI31", "", "", "ANSI31", "", "", "ANSI31"],
+    },
+    Template {
+        dxf: "AECC_STUCTURE_STYLE",
+        owner: Target::Record(0),
+        children: &[],
+        fields: &[Run(10, "478"), Children, Run(1187, "a9586ec208044d4cccccccccd49f81020000803b08206c05b0820180874c2081b060c2082018b08201209308206a040eb08201208080002012c2080481ec2081b034c208044d4cccccccccd49f82ec20804872c208044d4cccccccccd49f828c208044d4cccccccccd49f86cc2080483cc208060019b0820120030820740100006180016c20804822c2081b038c2080483e20002c"), Time, Run(616, "0398410360658410090d184100c04156104100e18410090218410350503184100c041361040243b61040d40c1661040d4083261040243561040d4080a61040241b61040241061040d81e100016"), Time, Run(2501, "0198410400d61040d81861040226a6666666666a4fd20281ca82a12a18000000c0003fbfd40600000000640550542541000000180007f7fa80c00000000c812a0a84a8200000030000feff50180000000190140950542543000000180007f7fa80c00000000c81ca82a12a18000000c0003fbfd40600000000640550542541000000180007f7fa80c00000000c81aa0a84a8200000030000feff501800000001903950542543000000180007f7fa80c00000000c80aa0a84a8200000030000feff50180000000190354150950400000060001fdfea030000000032032a0a84a8600000030400feff5018000000019509060b51153ec87a4fca8b2032a0a84a8600000030400feff5018000000019509060b51153ec87a4fca8a80ca82a12a18000000c1003fbfd4060000000065424182d4454fb21e93f2a28")],
+        refs: &[(HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (SoftPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
+        strings: &["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "ANSI31", "", "", "ANSI31", "", "", "ANSI31"],
+    },
+];
+
+#[rustfmt::skip]
+const ASSEMBLY_STYLES: &[Template] = &[
+    Template {
+        dxf: "AECC_ASSEMBLY_STYLE",
+        owner: Target::Null,
+        children: &[(0x1e, 1)],
+        fields: &[Run(34, "060040000"), Children, Run(217, "a8501020000801c0020802020000802c002080050008200f88000b0"), Time, Run(138, "00200103601200104001800410078400058"), Time, Run(29, "480d5550")],
+        refs: &[(HardPointer, Target::Style(0x11B, -2147483161)), (HardPointer, Target::Style(0x11B, -2147483154)), (HardPointer, Target::Style(0x11B, -2147483162)), (HardPointer, Target::Style(0x11B, -2147483157)), (HardPointer, Target::Style(0x11B, -2147483155)), (SoftPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_ASSEMBLY_STYLE",
+        owner: Target::Record(0),
+        children: &[],
+        fields: &[Run(10, "478"), Children, Run(217, "a8501020000801c0020802020000802c002080050008200f88000b0"), Time, Run(138, "00200103601200104001800410078400058"), Time, Run(29, "480d5550")],
+        refs: &[(HardPointer, Target::Style(0x11B, -2147483156)), (HardPointer, Target::Style(0x11B, -2147483158)), (HardPointer, Target::Style(0x11B, -2147483160)), (HardPointer, Target::Style(0x11B, -2147483165)), (HardPointer, Target::Style(0x11B, -2147483164)), (SoftPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+];
+
+#[rustfmt::skip]
+const LINK_STYLES: &[Template] = &[
+    Template {
+        dxf: "AECC_ROADWAYLINK_STYLE",
+        owner: Target::Null,
+        children: &[(0x1e, 1)],
+        fields: &[Run(34, "070040000"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(494, "480a032a0a84a8626400030c00ffff501800000001901950542543132000186007fffa80c00000000d2032a0a84a8626400030c00ffff501800000001aa8")],
+        refs: &[(SoftPointer, Target::Record(1)), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
+        strings: &["", "", "", "", "", "", "", "", ""],
+    },
+    Template {
+        dxf: "AECC_ROADWAYLINK_STYLE",
+        owner: Target::Record(0),
+        children: &[],
+        fields: &[Run(10, "478"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(494, "480a032a0a84a8626400030c00ffff501800000001901950542543132000186007fffa80c00000000d2032a0a84a8626400030c00ffff501800000001aa8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
+        strings: &["", "", "", "", "", "", "", "", ""],
+    },
+];
+
+#[rustfmt::skip]
+const SHAPE_STYLES: &[Template] = &[
+    Template {
+        dxf: "AECC_ROADWAYSHAPE_STYLE",
+        owner: Target::Null,
+        children: &[(0x1e, 1)],
+        fields: &[Run(34, "074040000"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(2037, "480a052a0a84a860d400030c00ffff50180000000190154150950c7e000061801fffea030000000032052a0a84a860d400030c00ffff50180000000190154150950c7e000061801fffea030000000032052a0a84a820d400030c00ffff50180000000190154150950c7e000061801fffea030000000032052a0a84a860d400030c00ffff50180000000190154150950c7e000061801fffea030000000032032a0a84a8600000030400feff50180000000195040d8a8a80ca82a12a18000000c1003fbfd4060000000065410362a2a032a0a84a8600000030400feff50180000000195040d8a8a80ca82a12a18000000c1003fbfd4060000000065410362a28")],
+        refs: &[(SoftPointer, Target::Record(1)), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
+        strings: &["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "ANSI31", "", "", "ANSI31", "", "", "ANSI31", "", "", "ANSI31"],
+    },
+    Template {
+        dxf: "AECC_ROADWAYSHAPE_STYLE",
+        owner: Target::Record(0),
+        children: &[],
+        fields: &[Run(10, "478"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(2037, "480a052a0a84a860d400030c00ffff50180000000190154150950c7e000061801fffea030000000032052a0a84a860d400030c00ffff50180000000190154150950c7e000061801fffea030000000032052a0a84a820d400030c00ffff50180000000190154150950c7e000061801fffea030000000032052a0a84a860d400030c00ffff50180000000190154150950c7e000061801fffea030000000032032a0a84a8600000030400feff50180000000195040d8a8a80ca82a12a18000000c1003fbfd4060000000065410362a2a032a0a84a8600000030400feff50180000000195040d8a8a80ca82a12a18000000c1003fbfd4060000000065410362a28")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
+        strings: &["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "ANSI31", "", "", "ANSI31", "", "", "ANSI31", "", "", "ANSI31"],
+    },
+];
+
+#[rustfmt::skip]
+const CODE_SET_STYLES: &[Template] = &[
+    Template {
+        dxf: "AECC_ROADWAY_STYLE_SET",
+        owner: Target::Null,
+        children: &[(0x1e, 1)],
+        fields: &[Run(34, "280380000"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(119, "480d5552034815207480d205481d54")],
+        refs: &[(SoftPointer, Target::Record(1)), (HardPointer, Target::Style(0x11B, 30)), (HardPointer, Target::Null), (HardPointer, Target::Style(0x80, 30)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Style(0x11C, 30)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Style(0x11D, 30)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Style(0x11B, 30)), (HardPointer, Target::Null), (HardPointer, Target::Style(0x80, 30)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Style(0x11C, 30)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Style(0x11D, 30)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
+    },
+    Template {
+        dxf: "AECC_ROADWAY_STYLE_SET",
+        owner: Target::Record(0),
+        children: &[],
+        fields: &[Run(10, "478"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(119, "480d5552034815207480d205481d54")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Style(0x11B, 30)), (HardPointer, Target::Null), (HardPointer, Target::Style(0x80, 30)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Style(0x11C, 30)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Style(0x11D, 30)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Style(0x11B, 30)), (HardPointer, Target::Null), (HardPointer, Target::Style(0x80, 30)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Style(0x11C, 30)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Style(0x11D, 30)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
+    },
+];
+
+#[rustfmt::skip]
+const CORRIDOR_STYLES: &[Template] = &[
+    Template {
+        dxf: "AECC_CORRIDOR_STYLE",
+        owner: Target::Null,
+        children: &[(0x1e, 1)],
+        fields: &[Run(34, "2c8380000"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(1269, "480a092a0a84a8200000030000ffff50180000000190154150950400000060001fffea03000000003204a82a12a08000000c0003fffd40600000000640d50542541000000180007fffa80c00000000c824a82a12a08000000c0003fffd40600000000640550542541000000180007fffa80c00000000c812a0a84a8200000030000ffff50180000000190354150950400000060001fffea030000000035550")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
+        strings: &["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
+    },
+    Template {
+        dxf: "AECC_CORRIDOR_STYLE",
+        owner: Target::Record(0),
+        children: &[],
+        fields: &[Run(10, "478"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(1269, "480a092a0a84a8200000030000ffff50180000000190154150950400000060001fffea03000000003204a82a12a08000000c0003fffd40600000000640d50542541000000180007fffa80c00000000c824a82a12a08000000c0003fffd40600000000640550542541000000180007fffa80c00000000c812a0a84a8200000030000ffff50180000000190354150950400000060001fffea030000000035550")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
+        strings: &["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
+    },
+];
+
+#[rustfmt::skip]
+const PRESSURE_PIPE_STYLES: &[Template] = &[
+    Template {
+        dxf: "AECC_PRESSURE_PIPE_STYLE",
+        owner: Target::Null,
+        children: &[(0x1e, 1)],
+        fields: &[Run(34, "1f8040000"), Children, Run(547, "a89834a2081a808102000080ba88206c0fa8820120a288206a040e288201213288201800202000080ca88206c09a88206a040f28820120da88201212a882018003e20002c"), Time, Run(194, "0614410350105544103502081441009075441009078400058"), Time, Run(3672, "480a0d2a0a84a8200000030000ffff50180000000190154150950c00000060001fffea03000000003204a82a12a18000000c0003fffd40600000000640d50542543000000180007fffa80c00000000c822a0a84a8200000030000ffff50180000000190554150950400000060001fffea0300000000320282aa0a84a8600000030000ffff501800000001908950542541000000180007fffa80c00000000c80aa0a84a8600000030000ffff50180000000190254150950c00000060001fffea03000000003206a82a12a18000000c0003fffd40600000000641150542541000000180007fffa80c00000000c832a0a84a8200000030000ffff50180000000190754150950400000060001fffea03000000003210a82a12a08000000c0003fffd4060000000064090454150950400000060001fffea03000000003216a82a12a18000000c0003fffd40600000000640654150950c00000060801fdfea030000000032a120c16a22a7d90f49f951640a54150950c00000060801fdfea030000000032a120c16a22a7d90f49f95150154150950c00000060801fdfea030000000032a120c16a22a7d90f49f951501950542543000000182007f7fa80c00000000ca848305a88a9f643d27e545")],
+        refs: &[(SoftPointer, Target::Record(1)), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
+        strings: &["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "ANSI31", "", "", "ANSI31", "", "", "ANSI31", "", "", "ANSI31"],
+    },
+    Template {
+        dxf: "AECC_PRESSURE_PIPE_STYLE",
+        owner: Target::Record(0),
+        children: &[],
+        fields: &[Run(10, "478"), Children, Run(547, "a89834a2081a808102000080ba88206c0fa8820120a288206a040e288201213288201800202000080ca88206c09a88206a040f28820120da88201212a882018003e20002c"), Time, Run(194, "0614410350105544103502081441009075441009078400058"), Time, Run(3672, "480a0d2a0a84a8200000030000ffff50180000000190154150950c00000060001fffea03000000003204a82a12a18000000c0003fffd40600000000640d50542543000000180007fffa80c00000000c822a0a84a8200000030000ffff50180000000190554150950400000060001fffea0300000000320282aa0a84a8600000030000ffff501800000001908950542541000000180007fffa80c00000000c80aa0a84a8600000030000ffff50180000000190254150950c00000060001fffea03000000003206a82a12a18000000c0003fffd40600000000641150542541000000180007fffa80c00000000c832a0a84a8200000030000ffff50180000000190754150950400000060001fffea03000000003210a82a12a08000000c0003fffd4060000000064090454150950400000060001fffea03000000003216a82a12a18000000c0003fffd40600000000640654150950c00000060801fdfea030000000032a120c16a22a7d90f49f951640a54150950c00000060801fdfea030000000032a120c16a22a7d90f49f95150154150950c00000060801fdfea030000000032a120c16a22a7d90f49f951501950542543000000182007f7fa80c00000000ca848305a88a9f643d27e545")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
+        strings: &["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "ANSI31", "", "", "ANSI31", "", "", "ANSI31", "", "", "ANSI31"],
+    },
+];
+
+#[rustfmt::skip]
+const FITTING_STYLES: &[Template] = &[
+    Template {
+        dxf: "AECC_FITTING_STYLE",
+        owner: Target::Null,
+        children: &[(0x1e, 1)],
+        fields: &[Run(34, "1fc040000"), Children, Run(705, "a8e01f22120481020000800c8848801922120480b22121b02722121a810202000080a488481201c8848120bc8848800d22122008c884818081d22120480f22121a818172212044d4cccccccccd49f82d221206000f88000b0"), Time, Run(500, "00a4424090224424401091090240991090d4080d91090226a6666666666a4fc0a91090241591090226a6666666666a4fc0491090240091090d4041e100016"), Time, Run(1780, "04a44240c01202814a82a12a18000000c0003fbfd40600000000640950542541000000180007f7fa80c00000000c80ca82a12a18000000c0003fbfd40600000000640a54150950c00000060001fdfea03000000003204a82a12a08000000c0003fbfd4060000000064090154150950c00000060001fffea03000000003204a82a12a08000000c0003fffd40600000000640654150950c00000060801fdfea030000000032a13151640654150950c00000060801fdfea030000000032a13151501950542543000000182007f7fa80c00000000ca848305a88a9f643d27e545")],
+        refs: &[(HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Style(0x11B, 30)), (HardPointer, Target::Null), (SoftPointer, Target::Record(1)), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
+        strings: &["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "ANSI31", "", "", "ANSI31", "", "", "ANSI31"],
+    },
+    Template {
+        dxf: "AECC_FITTING_STYLE",
+        owner: Target::Record(0),
+        children: &[],
+        fields: &[Run(10, "478"), Children, Run(705, "a8e01f22120481020000800c8848801922120480b22121b02722121a810202000080a488481201c8848120bc8848800d22122008c884818081d22120480f22121a818172212044d4cccccccccd49f82d221206000f88000b0"), Time, Run(500, "00a4424090224424401091090240991090d4080d91090226a6666666666a4fc0a91090241591090226a6666666666a4fc0491090240091090d4041e100016"), Time, Run(1780, "04a44240c01202814a82a12a18000000c0003fbfd40600000000640950542541000000180007f7fa80c00000000c80ca82a12a18000000c0003fbfd40600000000640a54150950c00000060001fdfea03000000003204a82a12a08000000c0003fbfd4060000000064090154150950c00000060001fffea03000000003204a82a12a08000000c0003fffd40600000000640654150950c00000060801fdfea030000000032a13151640654150950c00000060801fdfea030000000032a13151501950542543000000182007f7fa80c00000000ca848305a88a9f643d27e545")],
+        refs: &[(HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Style(0x11B, 30)), (HardPointer, Target::Null), (SoftPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
+        strings: &["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "ANSI31", "", "", "ANSI31", "", "", "ANSI31"],
+    },
+];
+
+#[rustfmt::skip]
+const APPURTENANCE_STYLES: &[Template] = &[
+    Template {
+        dxf: "AECC_APPURTENANCE_STYLE",
+        owner: Target::Null,
+        children: &[(0x1e, 1)],
+        fields: &[Run(34, "200040000"), Children, Run(657, "a8d00d62122008d884818081020000807588481203d88486a0605d884811353333333333527e0808000200562120481162122008588481204d88486a0406d884811353333333333527e0558848120f88000b0"), Time, Run(442, "056c424089a9999999999a93f012c42409002c424350104ac4240c000fb10902401b10910032c42409016c4243604ec4243502078400058"), Time, Run(1810, "052c4240900ec42409480a052a0a84a8600000030000feff50180000000190254150950400000060001fdfea030000000032032a0a84a8600000030000feff501800000001902950542543000000180007f7fa80c00000000c812a0a84a8200000030000feff50180000000190240550542543000000180007fffa80c00000000c812a0a84a8200000030000ffff501800000001901950542543000000182007f7fa80c00000000ca84c545901950542543000000182007f7fa80c00000000ca84c54540654150950c00000060801fdfea030000000032a120c16a22a7d90f49f9514")],
+        refs: &[(HardPointer, Target::Style(0x11B, 30)), (HardPointer, Target::Null), (HardPointer, Target::Null), (SoftPointer, Target::Record(1)), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
+        strings: &["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "ANSI31", "", "", "ANSI31", "", "", "ANSI31"],
+    },
+    Template {
+        dxf: "AECC_APPURTENANCE_STYLE",
+        owner: Target::Record(0),
+        children: &[],
+        fields: &[Run(10, "478"), Children, Run(657, "a8d00d62122008d884818081020000807588481203d88486a0605d884811353333333333527e0808000200562120481162122008588481204d88486a0406d884811353333333333527e0558848120f88000b0"), Time, Run(442, "056c424089a9999999999a93f012c42409002c424350104ac4240c000fb10902401b10910032c42409016c4243604ec4243502078400058"), Time, Run(1810, "052c4240900ec42409480a052a0a84a8600000030000feff50180000000190254150950400000060001fdfea030000000032032a0a84a8600000030000feff501800000001902950542543000000180007f7fa80c00000000c812a0a84a8200000030000feff50180000000190240550542543000000180007fffa80c00000000c812a0a84a8200000030000ffff501800000001901950542543000000182007f7fa80c00000000ca84c545901950542543000000182007f7fa80c00000000ca84c54540654150950c00000060801fdfea030000000032a120c16a22a7d90f49f9514")],
+        refs: &[(HardPointer, Target::Style(0x11B, 30)), (HardPointer, Target::Null), (HardPointer, Target::Null), (SoftPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
+        strings: &["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "ANSI31", "", "", "ANSI31", "", "", "ANSI31"],
+    },
+];
+
+#[rustfmt::skip]
+const PRESSURE_PART_LISTS: &[Template] = &[
+    Template {
+        dxf: "AECC_PRESSURE_PART_LIST",
+        owner: Target::Null,
+        children: &[(0x1e, 1)],
+        fields: &[Run(34, "220040000"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(37, "480d555550")],
+        refs: &[(SoftPointer, Target::Null)],
+        strings: &["", "", "", ""],
+    },
+    Template {
+        dxf: "AECC_PRESSURE_PART_LIST",
+        owner: Target::Record(0),
+        children: &[],
+        fields: &[Run(2649, "47aa8303884123281836841233036841233036841233010200008080800020308412328302e84123302e84123302e84123302e84123302e84123302e84123303e20002ca1c84890e2efba020f08000b2872122438bbee80a406aaa9014390154150416540be049cca088122c814a817c092d1411010000000000000c901029502f8125a2822032052a05f024b5504404000000000000144040a540be04ac8220281b2c80aa0a82092a05f024e65044091640a540be0496aa088080000000001004c80814a817c092d54110100000000000005101029502f812b20880b2f333202e4202a82a0824a817c0905a034110440a540be0496aa088080000000000002880814a817c095904406540be049cca088122c8120c872033994110245902659049cca088122c8132e824e65044091640999412732822048b204e420b05a0341104409c84160b40682208810")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Style(0x17E, 30)), (HardPointer, Target::ByLayerMaterial), (HardPointer, Target::Style(0x17F, 30)), (HardPointer, Target::ByLayerMaterial), (HardPointer, Target::Style(0x180, 30)), (HardPointer, Target::ByLayerMaterial)],
+        strings: &["", "", "", "611746E2-B19E-4F8E-ACF7-F12491879819", "7ea43c7c-83bb-48f4-9b18-8b9c1a5f250e", "7ea43c7c-83bb-48f4-9b18-8b9c1a5f250e", "pipe-4 in-push on-ductile iron-350 psi-AWWA C149", "", "AeccNetworkPartDataField", "", "ID_MATERIAL", "Id Material", "ID_MATERIAL", "", "AeccNetworkPartDataField", "", "CUT_LENGTH", "Cut Length", "CUT_LENGTH", "ft", "AeccNetworkPartDataField", "", "MIN_FLEX_RADIUS", "Minimum Flex Radius", "MIN_FLEX_RADIUS", "ft", "AeccNetworkPartDataField", "", "DEFLECTION", "Deflection", "DEFLECTION", "deg", "AeccNetworkPartDataField", "", "", "", "PRESSURE_PART_CACHED_NDS", "", "4.000000,4.000000", "4ec98468-cb87-435a-89bc-cebf9c6392bb", "05a4ab2d-c9d0-428a-a506-0f8a58ee8da1", "elbow-4 in-11.25 degree-push on-ductile iron-350 psi-AWWA C111/C152", "", "AeccNetworkPartDataField", "", "ID_MATERIAL", "Id Material", "ID_MATERIAL", "", "AeccNetworkPartDataField", "", "ANGLE", "Angle", "ANGLE", "deg", "AeccNetworkPartDataField", "", "DEFLECTION", "Deflection", "DEFLECTION", "deg", "AeccNetworkPartDataField", "", "", "", "PRESSURE_PART_CACHED_NDS", "", "4.000000,4.000000", "2821bd9a-296d-4bc4-8fef-e0b93833dd38", "c0cbab87-d7f1-458f-b4df-d1052bb936eb", "gate valve-6 inch-push on-ductile iron-200 psi-AWWA C111/C500", "", "AeccNetworkPartDataField", "", "PART_FAMILY_NAME", "Part Family Name", "PART_FAMILY_NAME", "", "gate valve-push on-ductile iron-200 psi", "AeccNetworkPartDataField", "", "DEFLECTION", "Deflection", "DEFLECTION", "deg", "AeccNetworkPartDataField", "", "", "", "PRESSURE_PART_CACHED_NDS", "", "6.000000,6.000000", "AeccNetworkPartDataField", "", "ID_MATERIAL", "Id Material", "ID_MATERIAL", "", "ID_MATERIAL", "Id Material", "ID_MATERIAL", "", "ductile iron", "ID_MATERIAL", "Id Material", "ID_MATERIAL", "", "ductile iron", "ID_MATERIAL", "Id Material", "ID_MATERIAL", "", "ductile iron", "ID_MATERIAL", "Id Material", "ID_MATERIAL", "", "ductile iron", "PART_FAMILY_NAME", "Part Family Name", "PART_FAMILY_NAME", "", "gate valve-push on-ductile iron-200 psi", "", "PART_FAMILY_NAME", "Part Family Name", "PART_FAMILY_NAME", "", "gate valve-push on-ductile iron-150 psi", ""],
     },
 ];

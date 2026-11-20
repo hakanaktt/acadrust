@@ -57,6 +57,7 @@ fn proxy_entity(class_id: i32) -> EntityType {
             payload: ProxyPayload::default(),
             text_payload: ProxyPayload::default(),
             object_ids: Vec::new(),
+            dxf_data: Vec::new(),
         }),
     }))
 }

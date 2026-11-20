@@ -229,7 +229,7 @@ pub fn add_section_view(doc: &mut CadDocument, line: Handle, name: &str, origin:
     let handle = doc.allocate_handle();
     let common = EntityCommon { handle, owner_handle: doc.header.model_space_block_handle, layer: layer.into(), layer_handle: Some(layer_handle), ..EntityCommon::default() };
     let sections = l.sections.clone();
-    write_view(doc, common, name, origin, range(-l.offsets[0], l.offsets[1]), style, line.value(), &sections)?;
+    write_view(doc, common, name, origin, range(l.sides[0].iter().map(|v| -v.0).fold(0.0, f64::max), l.sides[1].iter().map(|v| v.0).fold(0.0, f64::max)), style, line.value(), &sections)?;
     l.views.push(handle.value());
     write_line(doc, &l)?;
     Ok(handle)

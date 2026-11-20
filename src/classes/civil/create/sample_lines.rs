@@ -109,18 +109,25 @@ fn write_group(doc: &mut CadDocument, common: EntityCommon, name: &str, alignmen
 /// ```text
 /// BL 80, 0, 80, 80, 0, BL 0x10025F04, BL 0x40008353, 4 bits 0010, RC 0,
 /// 120 zero bits, 3BD 0 (origin), 9 BD (identity), BD station,
-/// two vertices {BL 1, BD 0, BD offset (right positive), BD 0},
+/// the vertices left of the alignment, then those right of it, each side
+/// `BL n, n x {BD 0, BD offset (left negative), BD station less the
+/// line's}` from the alignment outwards,
 /// BL sections, BL section views, LINE_TAIL
-/// references: soft 0, hard owner 0, hard 0, soft 0, soft 0, style, group
-///   (hard), the sections, the section views (soft)
+/// references: soft 0, hard owner 0, hard 0, soft 0 per vertex, style,
+///   group (hard), the sections, the section views (soft)
 /// texts: "AeccImpSampleLine", "", name, ""
 /// ```
 ///
-/// The lines of WL11 to WL13 (stations 50, 80 and 20) equal the samples'
-/// records bit for bit.
+/// The line's station is where it crosses the alignment. The lines of WL11
+/// to WL13 (stations 50, 80 and 20) and of LV00 to LV02 (three and four
+/// vertices, stations away from the line's) equal the samples' records bit
+/// for bit. A line with all its vertices on one side closes with another
+/// run (one sample) and is not written.
 pub(super) fn write_line(doc: &mut CadDocument, l: &Line) -> Result<Handle, DxfError> {
-    let (name, station, offsets) = (l.name.as_str(), l.station, l.offsets);
-    let mut refs = vec![soft_pointer(0), Ref(DwgReferenceType::HardOwnership, 0), hard_pointer(0), soft_pointer(0), soft_pointer(0), hard_pointer(l.style), hard_pointer(l.group)];
+    let (name, station) = (l.name.as_str(), l.station);
+    let mut refs = vec![soft_pointer(0), Ref(DwgReferenceType::HardOwnership, 0), hard_pointer(0)];
+    refs.extend(l.sides.iter().flatten().map(|_| soft_pointer(0)));
+    refs.extend([hard_pointer(l.style), hard_pointer(l.group)]);
     refs.extend(l.sections.iter().chain(&l.views).map(|h| soft_pointer(*h)));
     let strings = ["AeccImpSampleLine", "", name, ""].iter().map(|s| s.to_string()).collect();
     put_entity(
@@ -135,11 +142,13 @@ pub(super) fn write_line(doc: &mut CadDocument, l: &Line) -> Result<Handle, DxfE
             for v in [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, station] {
                 w.write_bit_double(v);
             }
-            for o in offsets {
-                w.write_bit_long(1);
-                w.write_bit_double(0.0);
-                w.write_bit_double(o);
-                w.write_bit_double(0.0);
+            for side in &l.sides {
+                w.write_bit_long(side.len() as i32);
+                for (offset, delta) in side {
+                    w.write_bit_double(0.0);
+                    w.write_bit_double(*offset);
+                    w.write_bit_double(*delta);
+                }
             }
             w.write_bit_long(l.sections.len() as i32);
             w.write_bit_long(l.views.len() as i32);
@@ -224,7 +233,9 @@ pub(super) struct Line {
     pub(super) word: i32,
     pub(super) name: String,
     pub(super) station: f64,
-    pub(super) offsets: [f64; 2],
+    /// The vertices left and right of the alignment as (offset, left
+    /// negative; station less the line's), from the alignment outwards.
+    pub(super) sides: [Vec<(f64, f64)>; 2],
     pub(super) style: u64,
     pub(super) group: u64,
     pub(super) sections: Vec<u64>,
@@ -290,26 +301,28 @@ pub(super) fn read_line(doc: &CadDocument, line: Handle) -> Option<Line> {
         b.bit_double()?;
     }
     let station = b.bit_double()?;
-    let mut offsets = [0.0; 2];
-    for o in &mut offsets {
-        (b.bit_long()? == 1 && b.bit_double()? == 0.0).then_some(())?;
-        *o = b.bit_double()?;
-        (b.bit_double()? == 0.0).then_some(())?;
+    let mut sides = [Vec::new(), Vec::new()];
+    for side in &mut sides {
+        for _ in 0..b.bit_long()? {
+            (b.bit_double()? == 0.0).then_some(())?;
+            side.push((b.bit_double()?, b.bit_double()?));
+        }
     }
     let (n, m) = (usize::try_from(b.bit_long()?).ok()?, usize::try_from(b.bit_long()?).ok()?);
     let refs = a.typed_handles();
-    (refs.len() == 7 + n + m).then_some(())?;
+    let at = 3 + sides.iter().map(Vec::len).sum::<usize>();
+    (refs.len() == at + 2 + n + m).then_some(())?;
     let name = a.decode().strings.get(2)?.clone();
     Some(Line {
         common: x.common.clone(),
         word,
         name,
         station,
-        offsets,
-        style: refs[5].0,
-        group: refs[6].0,
-        sections: refs[7..7 + n].iter().map(|r| r.0).collect(),
-        views: refs[7 + n..].iter().map(|r| r.0).collect(),
+        sides,
+        style: refs[at].0,
+        group: refs[at + 1].0,
+        sections: refs[at + 2..at + 2 + n].iter().map(|r| r.0).collect(),
+        views: refs[at + 2 + n..].iter().map(|r| r.0).collect(),
     })
 }
 
@@ -322,9 +335,30 @@ fn station(doc: &CadDocument, line: u64) -> Option<f64> {
 /// least one positive), on `layer` (layer "0" when `None`). The group is
 /// written again with the line among its lines (kept in station order).
 pub fn add_sample_line(doc: &mut CadDocument, group: Handle, name: &str, station_value: f64, left: f64, right: f64, layer: Option<&str>) -> Result<Handle, DxfError> {
-    if name.is_empty() || !station_value.is_finite() || !(left >= 0.0 && right >= 0.0 && left + right > 0.0) || !left.is_finite() || !right.is_finite() {
-        return Err(invalid("a sample line needs a name, a station and non-negative offsets"));
+    if !(left >= 0.0 && right >= 0.0 && left + right > 0.0) {
+        return Err(invalid("a sample line needs non-negative offsets"));
     }
+    add_sample_line_through(doc, group, name, station_value, &[(station_value, -left), (station_value, right)], layer)
+}
+
+/// Adds a sample line `name` to `group` through `vertices` (station,
+/// offset; the offset negative left of the alignment), crossing the
+/// alignment at `station`, with at least one vertex on each side, on
+/// `layer` (layer "0" when `None`). The group is written again with the
+/// line among its lines (kept in station order).
+pub fn add_sample_line_through(doc: &mut CadDocument, group: Handle, name: &str, station_value: f64, vertices: &[(f64, f64)], layer: Option<&str>) -> Result<Handle, DxfError> {
+    let finite = vertices.iter().all(|v| v.0.is_finite() && v.1.is_finite());
+    // The side is the offset's sign (-0 is left).
+    let left = |v: &&(f64, f64)| v.1.is_sign_negative();
+    if name.is_empty() || !station_value.is_finite() || !finite || !vertices.iter().any(|v| left(&v)) || vertices.iter().all(|v| left(&v)) {
+        return Err(invalid("a sample line needs a name, a station and vertices off the alignment on both sides"));
+    }
+    let side = |left_side: bool| {
+        let mut v: Vec<(f64, f64)> = vertices.iter().filter(|v| v.1.is_sign_negative() == left_side).map(|v| (v.1, v.0 - station_value)).collect();
+        v.sort_by(|a, b| a.0.abs().total_cmp(&b.0.abs()));
+        v
+    };
+    let sides = [side(true), side(false)];
     let g = read_group(doc, group).ok_or_else(|| invalid("the group is not one this crate writes"))?;
     let al = arch(doc, Handle::new(g.alignment)).ok_or_else(|| invalid("the group's alignment is missing"))?;
     let start = al.alignment_start_station().ok_or_else(|| invalid("the alignment has no start station"))?;
@@ -338,7 +372,7 @@ pub fn add_sample_line(doc: &mut CadDocument, group: Handle, name: &str, station
     let mut lines: Vec<(f64, u64)> = g.lines.iter().map(|l| Some((station(doc, *l)?, *l))).collect::<Option<Vec<_>>>().ok_or_else(|| invalid("a line of the group cannot be read"))?;
     let handle = doc.allocate_handle();
     let c = common(doc, handle, layer)?;
-    let line = Line { common: c, word: WORD_LINE, name: name.to_string(), station: station_value, offsets: [-left, right], style: g.line_style, group: group.value(), sections: Vec::new(), views: Vec::new() };
+    let line = Line { common: c, word: WORD_LINE, name: name.to_string(), station: station_value, sides, style: g.line_style, group: group.value(), sections: Vec::new(), views: Vec::new() };
     write_line(doc, &line)?;
     let at = lines.partition_point(|l| l.0 <= station_value);
     lines.insert(at, (station_value, handle.value()));
@@ -453,6 +487,22 @@ mod tests {
         assert_eq!(arch(&back, al).unwrap().typed_handles().last().map(|r| r.0), Some(g.value()));
         let style = default_style_of(&back, KEY_SAMPLE_LINE_STYLES).unwrap();
         assert_eq!(group.line_style, style);
+    }
+
+    #[test]
+    fn lines_run_through_their_vertices() {
+        let v = Vector2::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let al = crate::classes::civil::add_alignment(&mut doc, "AL1", &[v(0.0, 0.0), v(100.0, 0.0)], None).unwrap();
+        let g = add_sample_line_group(&mut doc, al, "SLG1", None).unwrap();
+        // Both vertices on one side: refused.
+        assert!(add_sample_line_through(&mut doc, g, "X", 40.0, &[(40.0, 5.0), (40.0, 15.0)], None).is_err());
+        let line = add_sample_line_through(&mut doc, g, "SL1", 40.0, &[(38.0, -12.0), (40.0, -4.0), (42.0, 6.0), (41.0, 14.0)], None).unwrap();
+        let l = read_line(&doc, line).unwrap();
+        assert_eq!(l.sides, [vec![(-4.0, 0.0), (-12.0, -2.0)], vec![(6.0, 2.0), (14.0, 1.0)]]);
+        // One soft 0 per vertex before the style.
+        assert_eq!(arch(&doc, line).unwrap().typed_handles().len(), 3 + 4 + 2);
     }
 
     #[test]

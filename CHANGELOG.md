@@ -2,6 +2,26 @@
 
 ### Unreleased
 
+- **DXF-format proxy entities** - An `ACAD_PROXY_ENTITY` whose original
+  data format is DXF (`70 1`) carries the entity's own DXF groups after
+  the header. The reader kept only binary data and let those groups' own
+  `70`/`90` overwrite the header; the writer then emitted `70 0` with
+  binary `93`/`161`/`310` data, so a DXF round trip lost the data. The
+  groups are now kept verbatim (`ProxyEntityData::dxf_data`) and written
+  back as they are, as `ACAD_PROXY_OBJECT` already does.
+
+- **AutoCAD 2010 view-rep standard** - `ACDBVIEWREPSTANDARD` stores five
+  values before R2013 and six from R2013; the DWG reader and writer now
+  use the count the drawing's version stores.
+
+- **Section size limit as a read option** -
+  `DwgReadOptions::max_section_bytes` (`with_max_section_bytes`) replaces
+  the fixed 1 GiB bound on one decompressed section. Large drawings can
+  exceed it: a 424 MB AC1032 file with 10,000 proxy entities has an
+  `AcDb:AcDbObjects` section of about 1.25 GB and read as an empty
+  document (diagnostic `objects-extract-failed`). The default stays
+  1 GiB; `max_decompressed_bytes` still caps the whole read.
+
 - **3DSOLID wire transform scale** - The scale in a wire's transform is
   one BD (uniform scale), not a 3BD. Wireframes whose wires carry a
   transform now decode in step with the stream, where reading the scale

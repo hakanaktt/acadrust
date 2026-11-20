@@ -9,6 +9,7 @@
 
 mod alignment;
 pub mod create;
+pub mod pkt;
 mod bits;
 mod cogo;
 mod corridor;
@@ -30,11 +31,12 @@ pub use alignment::{
     StationEquation,
 };
 pub use cogo::CogoPoint;
-pub use create::{add_alignment, add_alignment_with_curves, VertexCurve, add_corridor, add_cogo_point, add_intersection, add_point_group, add_point_group_query, add_profile, add_profile_with_curves, VerticalCurve, add_profile_view, add_profile_view_with_range, add_sample_line, add_sample_line_group, add_sections, add_section_view, add_site, add_alignment_on_site, add_feature_line, add_parcel, add_feature_line_vertices, FeatureLineVertex, add_tin_surface, cogo_points, ensure_civil, remove_cogo_point, set_cogo_point, set_point_group, set_point_group_query, Comparison, PointQuery};
+pub use create::{add_assembly, add_pkt_subassembly, add_pkt_subassembly_on, PktSource, add_alignment, add_alignment_with_curves, VertexCurve, add_corridor, add_corridor_with, add_cogo_point, add_intersection, add_point_group, add_point_group_query, add_profile, add_profile_with_curves, VerticalCurve, add_profile_view, add_profile_view_with_range, add_sample_line, add_sample_line_through, add_sample_line_group, add_sections, add_section_view, add_site, add_alignment_on_site, add_feature_line, add_parcel, add_feature_line_vertices, FeatureLineVertex, add_tin_surface, cogo_points, ensure_civil, remove_cogo_point, set_cogo_point, set_cogo_point_name, set_point_group, set_point_group_query, Comparison, PointQuery, add_lot_line, add_pipe, add_pipe_network, add_pipe_of_family, add_structure, add_structure_of_family, connect_pipe, network_part_families, add_pressure_appurtenance, add_pressure_arc_pipe, add_pressure_cross, add_pressure_fitting, add_pressure_network, add_pressure_part, add_pressure_pipe, add_pressure_pipe_of_size, add_pressure_tee, connect_pressure_parts, pressure_part_descriptions};
+pub use corridor::{CorridorBaseline, CorridorBoundary, CorridorDefinition, CorridorRegion, CorridorSurfaceDefinition, CurveStations, RegionFrequency, RegionTarget, TargetCurveStations, TargetKind};
 pub use grading::{CriteriaValue, GradingCriteria};
 pub use intersection::IntersectionLayout;
 pub use labels::{parse_format, property, LabelPart, LabelText};
-pub use network::{PartField, PressurePipe};
+pub use network::{PartField, PressurePipe, PressurePort};
 pub use parameters::{Parameter, ParameterValue};
 pub use profile::{CurveMinimumK, ProfileCriteria, ProfileLocking, ProfilePiece, ProfileViewFrame, Pvi};
 pub use sample_lines::SampleLines;
@@ -45,6 +47,7 @@ pub use topology::{Topology, TopologyVertex};
 pub use tin::{TinSurface, TinTriangle, TinVertex};
 
 use super::arch::{ArchEntityData, ArchObject};
+pub(crate) use network::connector_count as network_connector_count;
 use crate::types::Vector2;
 
 /// What a Civil 3D entity is.
@@ -800,6 +803,21 @@ impl ArchEntityData {
         Some((number, b.bit_long()?))
     }
 
+    /// Where a parcel's area label sits (the label location after its
+    /// number; see [`Self::parcel_face`]).
+    pub fn parcel_label(&self) -> Option<Vector2> {
+        self.parcel_site()?;
+        let (data, start, end) = self.main_stream()?;
+        let mut b = bits::Bits::new(data, start, end);
+        alignment::class_keys(&mut b)?;
+        b.pos += 121;
+        for _ in 0..3 {
+            b.bit_long()?;
+        }
+        b.bit_double()?;
+        Some(Vector2::new(b.bit_double()?, b.bit_double()?))
+    }
+
     /// The site a parcel belongs to (its second reference); `None` for a
     /// site itself.
     pub fn parcel_site(&self) -> Option<u64> {
@@ -896,6 +914,20 @@ impl ArchEntityData {
         network::part_rotation(data, start, end)
     }
 
+    /// Ports of a pressure pipe, fitting or appurtenance
+    /// (`AECC_PRESSUREPIPE`, `AECC_FITTING`, `AECC_APPURTENANCE`), in record
+    /// order (a pipe's start, then its end). Port `k` connects to the part
+    /// of reference `8 + k`.
+    pub fn pressure_ports(&self) -> Option<Vec<PressurePort>> {
+        let pipe = match self.dxf_name.as_str() {
+            "AECC_PRESSUREPIPE" => true,
+            "AECC_FITTING" | "AECC_APPURTENANCE" => false,
+            _ => return None,
+        };
+        let (data, start, end) = self.main_stream()?;
+        network::pressure_ports(data, start, end, pipe)
+    }
+
     /// Ends, bulge and joint sizes of a Civil 3D pressure pipe
     /// (`AECC_PRESSUREPIPE`).
     pub fn pressure_pipe(&self) -> Option<PressurePipe> {
@@ -981,6 +1013,19 @@ impl ArchEntityData {
         self.main_stream()
             .map(|(data, start, end)| corridor::baselines(data, start, end))
             .unwrap_or_default()
+    }
+
+    /// What a corridor defines: settings, surfaces, baselines with
+    /// their regions, frequencies, targets and added stations. Names and
+    /// references are filled for a corridor that holds no built station.
+    pub fn corridor_definition(&self) -> Option<CorridorDefinition> {
+        if self.civil_kind() != Some(CivilKind::Corridor) {
+            return None;
+        }
+        let refs: Vec<u64> = self.typed_handles().iter().map(|r| r.0).collect();
+        let strings = self.decode().strings;
+        let (data, start, end) = self.main_stream()?;
+        corridor::definition(data, start, end, &strings, &refs)
     }
 
     /// Feature lines of a Civil 3D corridor grouped by point code, in the
@@ -1165,10 +1210,11 @@ impl ArchObject {
 
     /// Codes of a Civil 3D code set style (`AECC_ROADWAY_STYLE_SET`) with
     /// the style each one draws with: point codes map to marker styles, link
-    /// codes to link styles and area codes to shape styles. Each code is
-    /// four strings (code, name, description, blank) and five references
-    /// (material, style, label style, feature line style, blank); the
-    /// leading reference groups without strings are the defaults.
+    /// codes to link styles and area codes to shape styles. The record's
+    /// class data lists its default and code entries (see
+    /// `style::code_set_entries`); each has five references (material,
+    /// style, label style, feature line style, blank) and each code four
+    /// strings (code, name, description, blank).
     pub fn code_set(&self) -> Vec<(String, u64)> {
         self.code_set_parts().1
     }
@@ -1183,23 +1229,21 @@ impl ArchObject {
         if self.dxf_name != "AECC_ROADWAY_STYLE_SET" {
             return (Vec::new(), Vec::new());
         }
+        let Some((defaults, codes)) = self.main_stream().and_then(|(data, start, end)| style::code_set_entries(data, start, end)) else {
+            return (Vec::new(), Vec::new());
+        };
         let decoded = self.decode();
+        // The groups follow the owned children (a collection's styles).
+        let refs: Vec<u64> = self.typed_handles().into_iter().skip_while(|r| r.1 == 2).map(|r| r.0).collect();
+        let groups: Vec<&[u64]> = refs.chunks(5).filter(|g| g.len() == 5).collect();
         let strings = &decoded.strings;
-        let Some(first) = (4..strings.len().saturating_sub(1))
-            .find(|&i| !strings[i].is_empty() && strings[i] == strings[i + 1])
-        else {
+        let Some(first) = strings.len().checked_sub(4 * codes) else {
             return (Vec::new(), Vec::new());
         };
-        let codes: Vec<&String> = strings[first..].chunks(4).map(|c| &c[0]).collect();
-        let groups: Vec<&[u64]> = decoded.handles.chunks(5).filter(|g| g.len() == 5).collect();
-        let Some(defaults) = groups.len().checked_sub(codes.len()) else {
+        if groups.len() < defaults + codes {
             return (Vec::new(), Vec::new());
-        };
-        let entries = codes
-            .into_iter()
-            .zip(&groups[defaults..])
-            .map(|(code, group)| (code.clone(), group[1]))
-            .collect();
+        }
+        let entries = strings[first..].chunks(4).zip(&groups[defaults..]).map(|(c, group)| (c[0].clone(), group[1])).collect();
         (groups[..defaults].iter().map(|g| g[1]).collect(), entries)
     }
 

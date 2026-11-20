@@ -920,6 +920,7 @@ pub fn read_proxy_entity(
         payload,
         text_payload,
         object_ids,
+        dxf_data: Vec::new(),
     })
 }
 
@@ -4185,7 +4186,7 @@ pub fn read_table(
         unknown_short = reader.read_bit_short();
         horizontal_direction = reader.read_3bit_double();
 
-        if reader.read_bit_long() == 1 {
+        if reader.read_bit_long() != 0 {
             break_options = reader.read_bit_long();
             break_flow_direction = reader.read_bit_long();
             break_spacing = reader.read_bit_double();

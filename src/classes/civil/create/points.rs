@@ -116,26 +116,29 @@ fn write_all_points(doc: &mut CadDocument, s: &Support, query: Handle, numbers: 
     write_group(doc, s.all_points, s.group_node, &g)
 }
 
-fn write_database(doc: &mut CadDocument, handle: Handle, root: Handle, points: &[CogoPoint], class_node: u64) -> Result<(), DxfError> {
+fn write_database<'a>(doc: &mut CadDocument, handle: Handle, root: Handle, points: &'a [CogoPoint], class_node: u64) -> Result<(), DxfError> {
     let styled: Vec<&CogoPoint> = points.iter().filter(|p| p.style != 0).collect();
     let labelled: Vec<&CogoPoint> = points.iter().filter(|p| p.label_style != 0).collect();
+    let named: Vec<&CogoPoint> = points.iter().filter(|p| p.name.is_some()).collect();
     let described: Vec<&CogoPoint> = points.iter().filter(|p| p.description.is_some()).collect();
+    // Names and descriptions share the text ids; equal texts share one.
     let mut texts: Vec<&str> = Vec::new();
-    let tags: Vec<i32> = described
-        .iter()
-        .map(|p| {
-            let text = p.description.as_deref().unwrap_or("");
-            let i = texts.iter().position(|t| *t == text).unwrap_or_else(|| {
-                texts.push(text);
-                texts.len() - 1
-            });
-            (FIRST_DESCRIPTION_TAG + i as u32) as i32
-        })
-        .collect();
+    let mut tag = |text: &'a str| {
+        let i = texts.iter().position(|t| *t == text).unwrap_or_else(|| {
+            texts.push(text);
+            texts.len() - 1
+        });
+        (FIRST_DESCRIPTION_TAG + i as u32) as i32
+    };
+    let name_tags: Vec<i32> = named.iter().map(|p| tag(p.name.as_deref().unwrap_or(""))).collect();
+    let tags: Vec<i32> = described.iter().map(|p| tag(p.description.as_deref().unwrap_or(""))).collect();
     let mut refs: Vec<Ref> = styled.iter().map(|p| hard_pointer(p.style)).collect();
     refs.extend(labelled.iter().map(|p| hard_pointer(p.label_style)));
     refs.push(soft_pointer(class_node));
     let mut strings = vec![String::new()];
+    for _ in 0..2 {
+        strings.extend(named.iter().map(|p| p.name.clone().unwrap_or_default()));
+    }
     strings.extend(described.iter().map(|p| p.description.clone().unwrap_or_default()));
     let list = |w: &mut DwgMergedWriter, v: &[&CogoPoint]| {
         w.write_bit_long(v.len() as i32);
@@ -165,8 +168,15 @@ fn write_database(doc: &mut CadDocument, handle: Handle, root: Handle, points: &
             }
             list(w, &styled);
             list(w, &labelled);
-            for _ in 0..3 {
-                w.write_bit_long(0);
+            w.write_bit_long(0);
+            // Names by number, then the same keyed by name.
+            for by_name in [false, true] {
+                w.write_bit_long(named.len() as i32);
+                for (p, tag) in named.iter().zip(&name_tags) {
+                    let pair = [p.number as i32, *tag];
+                    w.write_bit_long(pair[by_name as usize]);
+                    w.write_bit_long(pair[!by_name as usize]);
+                }
             }
             w.write_bit_long(described.len() as i32);
             for (p, tag) in described.iter().zip(&tags) {
@@ -248,6 +258,7 @@ pub fn add_cogo_point(
         style: style.map_or(s.defaults.point_style, |h| h.value()),
         label_style: s.defaults.label_style,
         description: description.map(str::to_string),
+        name: None,
     });
     store(doc, &s, &points)?;
     put_point(doc, None, number, layer)
@@ -270,6 +281,25 @@ pub fn set_cogo_point(doc: &mut CadDocument, point: Handle, number: u32, positio
     let s = support(doc)?;
     store(doc, &s, &points)?;
     put_point(doc, Some(point), number, None).map(|_| ())
+}
+
+/// Names a point (`None` removes its name). Names are unique in the
+/// drawing, case ignored.
+pub fn set_cogo_point_name(doc: &mut CadDocument, point: Handle, name: Option<&str>) -> Result<(), DxfError> {
+    if name.is_some_and(|n| n.trim().is_empty()) {
+        return Err(invalid("a point name needs text"));
+    }
+    let number = point_number(doc, point)?;
+    let mut points = cogo_points(doc);
+    if let Some(n) = name {
+        if points.iter().any(|p| p.number != number && p.name.as_deref().is_some_and(|o| o.eq_ignore_ascii_case(n))) {
+            return Err(invalid("point name already used"));
+        }
+    }
+    let p = points.iter_mut().find(|p| p.number == number).ok_or_else(|| invalid("point is not in the database"))?;
+    p.name = name.map(str::to_string);
+    let s = support(doc)?;
+    store(doc, &s, &points)
 }
 
 /// Removes a point from the drawing and from the database.
@@ -478,4 +508,49 @@ mod tests {
         assert_eq!(object(&back, groups[3]).unwrap().point_group_numbers(), vec![1, 2, 4, 7]);
         assert_eq!(object(&back, groups[0]).unwrap().point_group_numbers(), vec![1, 4]);
     }
+
+    #[test]
+    fn names_ranges_and_exclusions_select_their_points() {
+        use crate::classes::civil::{add_point_group_query, set_cogo_point_name, Comparison, PointQuery};
+        let mut doc = drawing();
+        let mut points = Vec::new();
+        for (n, (z, d)) in [(10.0, "TEST"), (11.0, "test"), (20.0, "TEXT"), (26.0, "ABC"), (30.0, "TE"), (12.0, "TESTS")].iter().enumerate() {
+            points.push(add_cogo_point(&mut doc, Some(n as u32 + 1), Vector3::new(10.0 * n as f64, 0.0, *z), Some(d), None, None).unwrap());
+        }
+        set_cogo_point_name(&mut doc, points[4], Some("N1")).unwrap();
+        set_cogo_point_name(&mut doc, points[5], Some("n2")).unwrap();
+        assert!(set_cogo_point_name(&mut doc, points[0], Some("n1")).is_err(), "names are unique, case ignored");
+        let b = |q: PointQuery| Box::new(q);
+        let text = |v: &[&str]| v.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+        let cases = [
+            ("GC", PointQuery::FullDescription(text(&["TEST"])), vec![1, 2]),
+            ("GD", PointQuery::Names(text(&["N1"])), vec![5]),
+            ("XA", PointQuery::Excluding(Some(b(PointQuery::Numbers(vec![3]))), b(PointQuery::Numbers(vec![5]))), vec![3]),
+            ("XB", PointQuery::Excluding(Some(b(PointQuery::Elevation(Comparison::Greater, 20.0))), b(PointQuery::Elevation(Comparison::Less, 27.0))), vec![5]),
+            ("XC", PointQuery::Excluding(Some(b(PointQuery::RawDescription(text(&["TEST", "ABC"])))), b(PointQuery::Numbers(vec![1]))), vec![2, 4]),
+            ("XE", PointQuery::ElevationRange(10.5, 20.25), vec![2, 3, 6]),
+            ("XF", PointQuery::Excluding(Some(b(PointQuery::Names(text(&["n*"])))), b(PointQuery::FullDescription(text(&["TE"])))), vec![6]),
+            ("XG", PointQuery::Excluding(None, b(PointQuery::Numbers(vec![2]))), vec![1, 3, 4, 5, 6]),
+            ("XJ", PointQuery::Excluding(Some(b(PointQuery::Numbers(vec![1]))), b(PointQuery::ElevationRange(10.0, 11.0))), vec![]),
+        ];
+        let groups: Vec<_> = cases.iter().map(|(n, q, _)| add_point_group_query(&mut doc, n, None, q).unwrap()).collect();
+        let nested = PointQuery::Excluding(None, b(PointQuery::Excluding(None, b(PointQuery::Numbers(vec![1])))));
+        assert!(add_point_group_query(&mut doc, "X", None, &nested).is_err());
+        assert!(add_point_group_query(&mut doc, "X", None, &PointQuery::ElevationRange(5.0, 1.0)).is_err());
+        let back = round_trip(&doc);
+        let names: Vec<_> = cogo_points(&back).iter().map(|p| p.name.clone()).collect();
+        assert_eq!(names, [None, None, None, None, Some("N1".into()), Some("n2".into())]);
+        for (g, (_, _, want)) in groups.iter().zip(&cases) {
+            assert_eq!(&object(&back, *g).unwrap().point_group_numbers(), want);
+        }
+        // The queries read back: a point added later joins the groups that
+        // select it.
+        let mut doc = back;
+        add_cogo_point(&mut doc, Some(7), Vector3::new(70.0, 0.0, 15.0), Some("TEST"), None, None).unwrap();
+        let back = round_trip(&doc);
+        assert_eq!(object(&back, groups[5]).unwrap().point_group_numbers(), vec![2, 3, 6, 7]);
+        assert_eq!(object(&back, groups[4]).unwrap().point_group_numbers(), vec![2, 4, 7]);
+        assert_eq!(object(&back, groups[0]).unwrap().point_group_numbers(), vec![1, 2, 7]);
+    }
+
 }

@@ -319,6 +319,15 @@ pub struct DwgReadOptions {
     /// starts. `None` keeps the previous per-section behaviour.
     #[cfg_attr(feature = "serde", serde(default))]
     pub max_decompressed_bytes: Option<usize>,
+    /// Upper bound on the decompressed size of one section, and on the sum
+    /// of its pages.
+    ///
+    /// `None` uses the default of 1 GiB. A large drawing can exceed it: a
+    /// 424 MB AC1032 file with 10,000 proxy entities carries an
+    /// `AcDb:AcDbObjects` section of about 1.25 GB. Raise it to read such
+    /// files; [`Self::max_decompressed_bytes`] still caps the whole read.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub max_section_bytes: Option<usize>,
     /// Optional password for decrypting password-protected DWG files.
     #[cfg_attr(feature = "serde", serde(default))]
     pub password: Option<String>,
@@ -357,6 +366,7 @@ impl Default for DwgReadOptions {
             max_mesh_faces: None,
             max_mesh_face_indices: None,
             max_decompressed_bytes: None,
+            max_section_bytes: None,
             password: None,
             defer_solid_reference_point: false,
             skip_roundtrip_data: false,
@@ -392,6 +402,18 @@ impl DwgReadOptions {
     pub fn with_max_decompressed_bytes(mut self, max_bytes: usize) -> Self {
         self.max_decompressed_bytes = Some(max_bytes);
         self
+    }
+
+    /// Limit the decompressed size of one section (see
+    /// [`Self::max_section_bytes`]).
+    pub fn with_max_section_bytes(mut self, max_bytes: usize) -> Self {
+        self.max_section_bytes = Some(max_bytes);
+        self
+    }
+
+    /// The largest decompressed section size this read accepts.
+    pub(crate) fn section_size_limit(&self) -> usize {
+        self.max_section_bytes.unwrap_or(MAX_SECTION_SIZE)
     }
 
     /// Set a password for decrypting password-protected DWG files.
@@ -3180,6 +3202,7 @@ impl<R: Read + Seek> DwgReader<R> {
         info: &DwgFileHeaderInfo,
     ) -> Result<Vec<u8>, DxfError> {
         let failsafe = self.options.failsafe;
+        let max_section = self.options.section_size_limit();
         let perf = std::env::var_os("PERF").is_some();
         let started = web_time::Instant::now();
 
@@ -3317,7 +3340,7 @@ impl<R: Read + Seek> DwgReader<R> {
         let total_size = size_from_file(
             format_args!("AC21 section '{}' size", section_name),
             section.compressed_size,
-            0..=MAX_SECTION_SIZE,
+            0..=max_section,
         )?;
         let mut page_total = 0u64;
         for page in &section.pages {
@@ -3342,7 +3365,7 @@ impl<R: Read + Seek> DwgReader<R> {
         let page_total = size_from_file(
             format_args!("AC21 section '{}' page total", section_name),
             page_total,
-            0..=MAX_SECTION_SIZE,
+            0..=max_section,
         )?;
         // Charge the larger of the declared section size and the sum of its
         // pages, so a section that declares padding is still budgeted.
@@ -3556,6 +3579,7 @@ impl<R: Read + Seek> DwgReader<R> {
         info: &DwgFileHeaderInfo,
     ) -> Result<Vec<u8>, DxfError> {
         let failsafe = self.options.failsafe;
+        let max_section = self.options.section_size_limit();
         let section = info
             .section_descriptors
             .iter()
@@ -3572,7 +3596,7 @@ impl<R: Read + Seek> DwgReader<R> {
         let total_size = size_from_file(
             format_args!("AC18 section '{}' size", section_name),
             section.compressed_size,
-            0..=MAX_SECTION_SIZE,
+            0..=max_section,
         )?;
         let is_compressed = section.encoding == 2;
         let max_page_size = size_from_file(
@@ -3586,7 +3610,7 @@ impl<R: Read + Seek> DwgReader<R> {
         // data, and -1 reads as u64::MAX, which would lift this bound entirely.
         // Pages of zeros are not stored, and each page is placed at its own
         // offset with the gaps zero-filled, so a sparse section reaches as far
-        // as its furthest page. MAX_SECTION_SIZE and the decompressed budget
+        // as its furthest page. The section size limit and the decompressed budget
         // still bound the allocation.
         let page_count = section.pages.len();
         let furthest_page_end = section

@@ -20,8 +20,8 @@
 //! class header and keys (super::alignment), 3 bits (010), GUID
 //! structure, pressure fitting, appurtenance: 3BD insertion point,
 //!            3 x 3BD axes (X, Y, Z; the rotation is the X axis's angle)
-//! pipe:      26 bits, BL 80, BS 0x04BE, BL 80, BL 80, BL n, BL 0,
-//!            n x { field, BL separator (0, then 1 or 2 after the last) },
+//! pipe:      26 bits, BL 80, BS 0x04BE, BL 80, BL 80, BL n,
+//!            n x { BL 0, field, BL 1 }, BL connectors,
 //!            3 x BL, GUID, 1 bit, 17 x BD, 2 bits, 3BD start, 3BD end
 //! field:     BL 80, BS 0x04BE, BL 0, BS kind, BL, BL, 16 bits,
 //!            B has number, [BD number], BL 1
@@ -156,30 +156,84 @@ pub struct PressurePipe {
     pub end_connection: Option<(u64, i32)>,
 }
 
+/// A port of a pressure pipe, fitting or appurtenance: where it is, the
+/// direction it faces (away from the part) and the port of the part it
+/// connects to (`-1` for an open port).
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct PressurePort {
+    pub position: Vector3,
+    pub direction: Vector3,
+    pub connected_port: i32,
+    /// Joint sizes, in the units the record's text stream names (inch and
+    /// degrees in the samples).
+    pub outside_diameter: f64,
+    pub nominal_diameter: f64,
+    pub wall_thickness: f64,
+    pub deflection: f64,
+    /// Bit range of `connected_port` in the record.
+    pub(crate) connected_at: (usize, usize),
+}
+
+/// The ports of a pressure part, with the bits left after the last.
+///
+/// ```text
+/// pipe:   head, 36 bits, 2 ports (each followed by 8 bits)
+/// others: head, 3BD insertion point, 3 x 3BD axes, BL ports, 2 bits,
+///         ports (each followed by 8 bits, the last by 2)
+/// port:   3BD position, 3BD direction, BD engagement length,
+///         BL connected port, 4 x BD sizes, BD
+/// ```
+fn ports_of<'a>(data: &'a [u8], start: usize, end: usize, pipe: bool) -> Option<(Vec<PressurePort>, Bits<'a>)> {
+    let mut bits = Bits::new(data, start, end);
+    part_head(&mut bits)?;
+    let n = if pipe {
+        bits.skip(36)?;
+        2
+    } else {
+        for _ in 0..4 {
+            point(&mut bits)?;
+        }
+        let n = usize::try_from(bits.bit_long()?).ok().filter(|n| (1..=16).contains(n))?;
+        bits.skip(2)?;
+        n
+    };
+    let mut ports = Vec::with_capacity(n);
+    for k in 0..n {
+        let (position, direction) = (point(&mut bits)?, point(&mut bits)?);
+        bits.bit_double()?;
+        let at = bits.pos;
+        let connected_port = bits.bit_long()?;
+        let connected_at = (at, bits.pos);
+        let [outside_diameter, nominal_diameter, wall_thickness, deflection] = [(); 4].map(|_| bits.bit_double());
+        bits.bit_double()?;
+        bits.skip(if pipe || k + 1 < n { 8 } else { 2 })?;
+        ports.push(PressurePort {
+            position,
+            direction,
+            connected_port,
+            outside_diameter: outside_diameter?,
+            nominal_diameter: nominal_diameter?,
+            wall_thickness: wall_thickness?,
+            deflection: deflection?,
+            connected_at,
+        });
+    }
+    Some((ports, bits))
+}
+
+pub(crate) fn pressure_ports(data: &[u8], start: usize, end: usize, pipe: bool) -> Option<Vec<PressurePort>> {
+    ports_of(data, start, end, pipe).map(|(p, _)| p)
+}
+
 // ponytail: the 36, 18 and 8-bit runs and the ports' fifth number (1 in
 // every sample) are read past; both ports carry the same sizes.
 pub(super) fn pressure_pipe(data: &[u8], start: usize, end: usize, handles: &[u64]) -> Option<PressurePipe> {
-    let mut bits = Bits::new(data, start, end);
-    part_head(&mut bits)?;
-    bits.skip(36)?;
-    let mut sizes = [0.0; 4];
-    let mut ports = [-1; 2];
-    for port in &mut ports {
-        // Port: position, direction, engagement length, connected index.
-        point(&mut bits)?;
-        point(&mut bits)?;
-        bits.bit_double()?;
-        *port = bits.bit_long()?;
-        for size in &mut sizes {
-            *size = bits.bit_double()?;
-        }
-        bits.bit_double()?;
-        bits.skip(8)?;
-    }
+    let (ports, mut bits) = ports_of(data, start, end, true)?;
     bits.skip(18)?;
     let (a, b) = (point(&mut bits)?, point(&mut bits)?);
     let bulge = bits.bit_double().filter(|v| v.is_finite())?;
-    let [outside_diameter, nominal_diameter, wall_thickness, deflection] = sizes;
+    let p = ports[0];
     // The connected parts are the third and second last references.
     let connected = |port: i32, from_end: usize| {
         let handle = *handles.len().checked_sub(from_end).and_then(|i| handles.get(i))?;
@@ -189,13 +243,65 @@ pub(super) fn pressure_pipe(data: &[u8], start: usize, end: usize, handles: &[u6
         start: a,
         end: b,
         bulge,
-        outside_diameter,
-        nominal_diameter,
-        wall_thickness,
-        deflection,
-        start_connection: connected(ports[0], 3),
-        end_connection: connected(ports[1], 2),
+        outside_diameter: p.outside_diameter,
+        nominal_diameter: p.nominal_diameter,
+        wall_thickness: p.wall_thickness,
+        deflection: p.deflection,
+        start_connection: connected(ports[0].connected_port, 3),
+        end_connection: connected(ports[1].connected_port, 2),
     })
+}
+
+/// The part record a pipe or structure keeps: its fields' numbers in record
+/// order (`None` for a text field) and its connector count, with `bits`
+/// left after the count. `count_at` receives the count's bit range.
+///
+/// ```text
+/// BL 80, BS 0x04BE, BL 80, BL 80, BL n, n x { BL 0, field, BL 1 },
+/// BL connectors (a pipe has none or two, one per end; a structure one per
+/// connected pipe)
+/// ```
+fn part_record(bits: &mut Bits, count_at: &mut (usize, usize)) -> Option<(Vec<Option<f64>>, i32)> {
+    let nested = |bits: &mut Bits| Some(bits.bit_long()? == 80 && bits.bit_short()? == 0x04BE);
+    nested(bits)?.then_some(())?;
+    (bits.bit_long()? == 80 && bits.bit_long()? == 80).then_some(())?;
+    let n = usize::try_from(bits.bit_long()?).ok().filter(|n| n * 60 <= bits.remaining())?;
+    let mut at = bits.pos;
+    let mut separator = bits.bit_long()?;
+    let mut numbers = Vec::with_capacity(n);
+    for _ in 0..n {
+        (separator == 0 && nested(bits)?).then_some(())?;
+        bits.bit_long()?;
+        bits.bit_short()?;
+        bits.bit_long()?;
+        bits.bit_long()?;
+        bits.skip(16)?;
+        numbers.push(if bits.bit()? { Some(bits.bit_double()?) } else { None });
+        (bits.bit_long()? == 1).then_some(())?;
+        at = bits.pos;
+        separator = bits.bit_long()?;
+    }
+    (0..10_000).contains(&separator).then_some(())?;
+    *count_at = (at, bits.pos);
+    Some((numbers, separator))
+}
+
+/// Bit range and value of a pipe's or structure's connector count (see
+/// [`part_record`]).
+pub(crate) fn connector_count(data: &[u8], start: usize, end: usize, structure: bool) -> Option<(usize, usize, i32)> {
+    let mut bits = Bits::new(data, start, end);
+    part_head(&mut bits)?;
+    if structure {
+        for _ in 0..4 {
+            point(&mut bits)?;
+        }
+        bits.skip(2)?;
+    } else {
+        bits.skip(26)?;
+    }
+    let mut at = (0, 0);
+    let (_, count) = part_record(&mut bits, &mut at)?;
+    Some((at.0, at.1, count))
 }
 
 /// A pipe read by its fields: the numbers of its part data fields in record
@@ -205,24 +311,8 @@ fn pipe_record(data: &[u8], start: usize, end: usize) -> Option<(Vec<Option<f64>
     part_head(&mut bits)?;
     // ponytail: 26 bits, the same in every sample.
     bits.skip(26)?;
-    let nested = |bits: &mut Bits| Some(bits.bit_long()? == 80 && bits.bit_short()? == 0x04BE);
-    nested(&mut bits)?.then_some(())?;
-    (bits.bit_long()? == 80 && bits.bit_long()? == 80).then_some(())?;
-    let n = usize::try_from(bits.bit_long()?).ok().filter(|n| n * 60 <= bits.remaining())?;
-    let mut separator = bits.bit_long()?;
-    let mut numbers = Vec::with_capacity(n);
-    for _ in 0..n {
-        (separator == 0 && nested(&mut bits)?).then_some(())?;
-        bits.bit_long()?;
-        bits.bit_short()?;
-        bits.bit_long()?;
-        bits.bit_long()?;
-        bits.skip(16)?;
-        numbers.push(if bits.bit()? { Some(bits.bit_double()?) } else { None });
-        (bits.bit_long()? == 1).then_some(())?;
-        separator = bits.bit_long()?;
-    }
-    matches!(separator, 1 | 2).then_some(())?;
+    let (numbers, connectors) = part_record(&mut bits, &mut (0, 0))?;
+    (0..=2).contains(&connectors).then_some(())?;
     for _ in 0..3 {
         bits.bit_long()?;
     }
@@ -231,7 +321,11 @@ fn pipe_record(data: &[u8], start: usize, end: usize) -> Option<(Vec<Option<f64>
         bits.bit_double()?;
     }
     bits.skip(2)?;
-    Some((numbers, point(&mut bits)?, point(&mut bits)?))
+    // A pipe without part fields lays out the block before its ends
+    // otherwise (not decoded): the doubles read here are then garbage.
+    let plausible = |p: &Vector3| [p.x, p.y, p.z].into_iter().all(|v| v == 0.0 || (1e-9..1e9).contains(&v.abs()));
+    let (a, b) = (point(&mut bits)?, point(&mut bits)?);
+    (plausible(&a) && plausible(&b) && a.distance(&b) > 1e-6).then_some((numbers, a, b))
 }
 
 /// Number fields of the part data a pipe keeps itself (flow coefficients,

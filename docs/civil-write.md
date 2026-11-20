@@ -165,7 +165,7 @@ errors; the API lists the point with the point label style "Standard", the
 group's lines and the view's four
 label groups (E-L2 without label styles had AUDIT 2 errors).
 
-## 2c. Section, section view and intersection styles of a new drawing
+## 2c. Section, section view, intersection, site, assembly and corridor styles of a new drawing
 
 A drawing without them gets, when a writer needs them, the application's
 default styles, written from templates as the label styles of §2b
@@ -177,12 +177,15 @@ default styles, written from templates as the label styles of §2b
 | `add_section_view` | section view style collection and default (`AECC_SECTION_VIEW_STYLE`, 30896 bits each), section view band set collection and default (`AECC_SECTION_VIEW_BAND_STYLE_SET`) | 0x33, 0xC0E |
 | `add_intersection` | roadway marker style collection, its default and twelve marker styles named by GUID (`AECC_ROADWAYMARKER_STYLE`), intersection style collection and default (`AECC_INTERSECTION_STYLE`, each drawing one of the markers) | 0x11B, 0x1031 |
 | `add_site` | parcel style collection and default (`AECC_PARCEL_STYLE`), feature line style collection and default (`AECC_FEATURELINE_STYLE`, drawing the default roadway marker; the application's collection also lists three rail styles, which are not written), and the roadway markers | 2, 128, 0x11B |
+| `add_assembly` | assembly style collection and default (`AECC_ASSEMBLY_STYLE`, drawing five of the roadway markers), code set style collection and default (`AECC_ROADWAY_STYLE_SET`: no items, every point, link and shape code drawn with the default roadway marker, feature line, link and shape styles), link style collection and default (`AECC_ROADWAYLINK_STYLE`), shape style collection and default (`AECC_ROADWAYSHAPE_STYLE`), and the roadway markers and feature line styles | 0x118, 0xEA0, 0x11C, 0x11D, 0x11B, 128 |
+| `add_corridor` | corridor style collection and default (`AECC_CORRIDOR_STYLE`) | 0xEB2 |
 
 Each collection is written when the drawing lacks it; the intersection
 and feature line styles refer to the roadway marker styles by their ids
 in that collection. The other references are the written records and the
 drawing's layer "0" and ByBlock linetype. Written into a new drawing
-the records equal WX13's and WI01's bit for bit apart from the dates. A
+the records equal WX13's, WI01's and WR01's bit for bit apart from the
+dates. A
 new drawing with two crossing alignments, their profiles, the
 intersection, a TIN surface, a sample line group with two lines (10/10
 and 3/33), their sections and two section views, all written by acadrust
@@ -192,7 +195,17 @@ lines' offsets and the extents of their computed ranges. A new drawing
 with a site, a feature line and an alignment on it and an intersection of
 two siteless alignments (E-SS1) opens with AUDIT 0 errors; the API lists
 the feature line with the written feature line style and LIST shows the
-site's parcel style "Standard".
+site's parcel style "Standard". A new drawing with an alignment, its
+profile, an assembly with two package lanes (a package written by
+`write_pkt` next to the drawing; right lane width 4 / depth 0.25 / slope
+-0.03, left lane with the defaults) and a corridor on them, all written by
+acadrust (E-A1), opens without recovery and with AUDIT 0 errors; the API
+lists both subassemblies up to date, the assembly and the corridor with
+the written code set style ("Standard", no items, as the application's
+own default), and the corridor rebuild builds stations 0-100 every 25 with
+the codes Crown, ETW, ETW_Datum and Crown_Datum (at station 0 ETW (4,
+-0.12) right and (-3.5, -0.07) left), as in a drawing the application had
+opened (E-PK1).
 
 ## 3. COGO points
 
@@ -226,7 +239,9 @@ BS 0x04BE, BL 34, BL 0, BL 0, 3 bits 010
 BL count, count × { BL 1, 3BD position, BL number, BS 0x0420 }
 BL n, n × BL number          points with their own point style
 BL m, m × BL number          points with their own label style
-BL 0, BL 0, BL 0
+BL 0
+BL j, j × { BL number, BL text id }   named points
+BL j, j × { BL text id, BL number }   the same keyed by name
 BL k, k × { BL number, BL text id }
 13 × BL 0
 handles: n × point style (hard pointer), m × label style (hard pointer),
@@ -330,9 +345,41 @@ the whole text, case ignored, `*` any run and `?` one character (WQ03:
 `TEST` selects TEST and test, not TESTS); it stores a name query in lower
 case. Number ranges (`2-6`) are stored with generated parentheses, an AND
 of two comparisons and an equal leaf holding the range text; the writer
-lists the numbers instead (the same members). Names and full descriptions
-(which depend on point names and description keys) and exclusions are not
-written.
+lists the numbers instead (the same members).
+
+Names (`PointQuery::Names`, kept in lower case) and full descriptions
+(`PointQuery::FullDescription`; the writer adds no description keys, so a
+point's full description is its raw description) take the rows of the
+table above. Elevation ranges (`PointQuery::ElevationRange`) and
+exclusions (`PointQuery::Excluding`) are written as the application
+stores them (WQ04, every query equal bit for bit and in its texts):
+
+```text
+statement: (include) AND NOT (exclude), either part optional
+constants: the included part's texts, "" when both parts are present,
+           the excluded part's texts; a range's text is "low-high"
+records:   the included part's parentheses and ORs, the excluded part's,
+           then the included part's leaves, the excluded part's
+           (AND, NOT and a range's generated parentheses have no record)
+parentheses: number bit, 1, single constant, comparison byte (equal for
+           a range), byte 0 (2 under the NOT), seven zero bits
+range:     three leaves: low (BD), high (BD), and an equal leaf of id 8
+           without a constant
+the last node record of the included part ends with a constant 52-bit
+mark before its seven zero bits when an excluded part follows
+texts:     ["AND"], part: ["NOT", ""], "PARENS", "", ORs, leaves; a range
+           leaf is "GENERATED_PARENS", "", "AND", then GTE, LTE and EQ
+           leaves and the range text
+```
+
+Point names live in the point database: after the label style list,
+`BL 0`, the names by number `BL j, j x {BL number, BL text id}`, the same
+keyed by text `BL j, j x {BL text id, BL number}`, then the descriptions;
+the texts list the names twice, then the descriptions; names and
+descriptions share the text ids. `set_cogo_point_name` names a point
+(names are unique, case ignored). A drawing written with named points and
+groups of every kind above (E-Q5) opens with AUDIT 0; the application
+lists the queries as its own and the same members.
 
 ### Edits
 
@@ -773,28 +820,77 @@ texts: "AeccImpFace", "", "" (the application names the parcel from its
 In the container a closed edge has flags 0x31 and no last point: its last
 point starts the segment back to the first (flags 0x22 on the last
 member, 0x32 otherwise); its nodes take ids in path order. The face section
-lists the outside face and one face per parcel:
+lists every face:
 
 ```text
-BL next free face id, BL count (0 without members),
-outside face: BL 1, BL 1, BL flags (6 with two or more lot lines, else
-  14), BL m, per member {BL its first node, BL 0}
-per parcel: BL face, BL face, BL 14, BL 1, BL entry node, BL 1
+BL next free face id (faces + 1), BL count (0 without members),
+per face: BL id, BL id, BL flags, BL loops, per loop {BL node, BL k}
 BL 1, BL 1, BL p + 1, 10 x BL 1, BL p, BL 1 .. p, 5 x BL 0
-references after the site's pair: per parcel {parcel (soft), soft 0}
+references after the site's pair: per parcel {parcel (soft), soft 0},
+  in face order (face 2 on)
 ```
 
-The faces are numbered from 2 in member order; a lot line's segments have
-its face on the inside and 1 outside (left/right as the line runs). A
-counterclockwise line's entry node is its first, a clockwise one's its last.
-The node records follow the application's hash order: eight buckets by id
-mod 8, each in id order (WP15, WP16: 30 and 50 nodes; the earlier rule,
-seven buckets newest first, gives the same order up to 14 nodes and is
-replaced). The area label goes in the middle of the parcel's extents; the
-application takes the parcel's face from that point, so where it falls on
-the boundary (a right triangle) the writer takes the middle of the widest
-run of the horizontal line through it inside the parcel (the application
-itself takes another inner point there).
+A loop entry is a half-edge with the face on its right: its start node
+and its index among the node's half-edges sorted by angle
+(counterclockwise from +x). Faces and their entries follow how the
+application adds a member: the member is split where it meets the
+earlier lines (and they where it meets them), then its segments go in one
+at a time.
+
+- Node ids: the member's own points first (an open one's ends, then its
+  inner points; a closed one's in path order; a point on an earlier node
+  takes that node), then the new crossing points in the member's order.
+  A point of the member that lies on an earlier segment is inserted into
+  that segment; an earlier node on the member is inserted into the member.
+- The first segment of a site makes the outside face 1, its entry the
+  segment. A segment off every line opens a new loop of the face around
+  it (entry: the segment).
+- A segment that splits a face: the part holding the face's entry keeps
+  the face and the other part becomes the next face, its entry the
+  segment's half-edge on that side. An entry the member's crossings split
+  is void: a split face then keeps the part on the segment's right (entry
+  the segment) and the new face takes the left; a face the member does
+  not split takes the half-edge that followed its old entry.
+- A segment that closes a loop bounding its own face: the bounded part
+  is the new face (entry: the segment's half-edge inside); the outer part
+  stays with the old face, whose entry on the loop, if inside, moves to
+  the half-edge leaving the same node outside.
+- Face flags: 14, or 6 once a later member split the face, closed a loop
+  in it, ran a line into it from an earlier line, or added an elevation
+  point (outside face).
+- Edge flag 0x80 marks an edge another member's crossing added nodes to;
+  those points have flags 0x400 (instead of 2). A point on a node an
+  earlier member made carries 0x800000 (WP08, WP19); 0x80 (first point)
+  only marks an edge that starts off every earlier line.
+
+A parcel is written for every face but the outside one. A parcel keeps
+its record and number when a later lot line cuts its face: it takes the
+face its label lies in (on the boundary, the face it had); the faces left
+without a parcel get new ones, numbered on from the highest number, the
+new faces first and then the old faces that lost theirs (WP19, WP20). The
+container lists the parcels in face order. Every parcel's label is
+placed again: from the middle of its face's extents (arcs included) it
+slides along the horizontal or the vertical line through it, whichever
+gets farther from the face's boundary (loose lines inside the face
+included), to the nearest point as far from the boundary as that line
+gets, rightward or upward on a tie. The middle stays where one of the
+two lines gets no deeper there (rectangles, WP14's triangle); a loose
+line pushes it aside (WP10), a notch up (WP18), a diagonal side to where
+the side stops mattering (WP19). A triangle's label is the middle of its
+largest angle's bisector, from the vertex to the opposite side, whatever
+the triangle's place, turn, vertex order or size (samples WPLA, WPLB,
+WPLC: 39 triangles made from one, changing one property at a time),
+except where the slide gets nearly as deep without passing it (its
+depth at least 0.94 of the bisector middle's: thin triangles, WP14's)
+and for a right isosceles triangle with legs along the axes (a square
+cut corner to corner: the middle of the vertical run through the
+bisector's middle, halfway to the extents' middle). Right triangles near
+isosceles (legs 60 and 50 to 65) take a point neither rule gives (x a
+quarter of the leg, y between 16 and 25.6): not written. Where another
+face's middle is off it the writer takes the middle of the widest run of
+the horizontal line through it.
+The node records follow the application's hash order: eight
+buckets by id mod 8, each in id order (WP15, WP16: 30 and 50 nodes).
 
 Samples WP03 (one counterclockwise rectangle), WP06 (clockwise), WP12 to
 WP14 (two to four disjoint lot lines, one clockwise, one a triangle) and
@@ -808,12 +904,54 @@ with an alignment, a parcel, a feature line and a second parcel (E-P3)
 open with AUDIT 0 errors; the API lists every parcel with its number, area
 and extents, and LIST its boundary.
 
-Not written: lot lines that cross or touch other members (the application
-splits both at the intersection, inserting nodes flagged 0x400, and
-re-faces the site: WP04, WP05, WP09 to WP11), open lot lines, lot lines
-with arcs, and the order of the remaining faces after a split. A lot line
-alone (no closed loop) makes no parcel; alignments that close a loop make
-none either (WP01).
+`add_lot_line(doc, site, vertices, closed, layer)` writes an open or
+closed lot line that may cross or touch the site's other lot lines (not
+its alignments or feature lines) and returns it with the parcels of the
+faces it makes. Samples WP04 (a line across a rectangle), WP05 (and a
+disjoint rectangle), WP08 (two open lines closing a loop), WP09 (a T
+junction), WP10 (a loose line crossing one side), WP11 (a T and a cross),
+WP18 (one line crossing the same side twice), WP19 (a line through a
+corner and across a side) and WP20 (one line crossing two sides twice
+each): written for the same lines, node ids, coordinates, faces of every
+segment, face entries, face flags and the tail equal the samples'; only
+the newest member's point flags 0x10 and 0x20 differ (the application's
+marks from walking the faces; the writer keeps the rule of members that
+meet nothing). The application's marks on the newest member's points
+(each point's mark is its segment's; faces left, right):
+
+| sample | segments: faces, marks |
+|---|---|
+| WP04 | (1,1) 0x30, (2,3) 0x10, (1,1) 0x30 |
+| WP09 | (2,3) 0x10 |
+| WP10 | (1,1) none, (2,2) 0x30 |
+| WP08 | (2,1) 0x30, (2,1) 0x20 |
+| WP18 | (1,1) 0x30, (2,3) 0x30, (2,3) 0x30, (2,3) 0x10, (1,1) 0x30 |
+| WP19 | (1,1) 0x30, (2,3) 0x10, (1,1) 0x30 |
+| WP20 | (1,1) 0x30, (2,3) 0x30, (1,4) 0x30 three times, (5,3) 0x20, (1,1) 0x30 |
+| WP11 (third member) | (4,2) 0x10, (5,3) 0x10 |
+
+The segment that closes a face mostly keeps one mark, the others both,
+but WP10's first segment has none and WP20's second (which joins two
+sides of the rectangle) both; no rule over faces, order or new faces fits
+every sample. The application opens the written drawings either way. Checks E-X1 (WP20's lines), E-X2 (WP11's and a disjoint
+rectangle), E-X3 (a diagonal through a corner, then a line crossing the
+same side twice whose corner lies on the diagonal) and E-X4 (two open
+lines closing a loop and a loose line into it), written into a new
+drawing, open with AUDIT 0 errors and the API lists every parcel with its
+number, area and extents; the application adds a further crossing line
+to E-X1 and splits its parcels right.
+
+Lot lines take a bulge per vertex (the segment that starts there; a
+closed line's last one closes it). Their arcs are stored as an alignment's
+(kind 1, flags 0x010F0000, the bulge and BL 0), and the parcel's label
+goes in the middle of the extents the arcs reach: WP21 (a rectangle with
+one arc side and an open line with an arc), written for the same lines,
+equals the sample bit for bit (container, both segments and the parcel).
+
+Not written: lot lines that meet another member where either has an arc
+(the arc would need its bulge split), lot lines meeting alignments or
+feature lines, members running along each other. A lot line alone (no closed loop) makes no parcel;
+alignments that close a loop make none either (WP01).
 
 ## 3h. Profile views
 
@@ -900,41 +1038,82 @@ groups.
 
 ## 3i. Corridors
 
-`add_corridor(doc, name, baseline, region, alignment, profile, assembly,
-layer)` writes a corridor with one baseline along the alignment and its
-profile and one region over the alignment's stations that applies an
-assembly of the drawing every 25 units. It is written as the application
-writes a corridor before its first rebuild (WC13, WC24 to WC27: the
-corridor added through the API without a rebuild): out of date, without
-stations, applied sections, feature lines or surfaces. Adding it changes
-no other record (the alignment, the profile and the assembly stay as they
-are). The corridor style is the drawing's default (style tree key 0xEB2),
-the code set style the assembly's.
+`add_corridor_with(doc, &CorridorDefinition, layer)` writes a corridor
+from the definition the reader returns (`corridor_definition()`): its name
+and description, whether it rebuilds automatically, and its baselines,
+each along an alignment and one of its profiles, with regions applying an
+assembly of the drawing over a station range, each region's frequencies,
+station placement flags and targets, and the stations added by hand per
+baseline (with their descriptions). `add_corridor(doc, name, baseline,
+region, alignment, profile, assembly, layer)` is the one baseline, one
+region form over the alignment's stations with the default frequencies.
+The corridor is written as the application writes a corridor before its
+first rebuild (the samples below: corridors made and changed through the
+API without a rebuild): out of date, without stations, applied sections,
+feature lines or surfaces. Adding it changes no other record. The
+corridor style is the drawing's default (style tree key 0xEB2; a drawing
+without it gets the application's default, §2c), the code set style the
+first region's assembly's.
 
 ```text
 BL 80, 0, 80, 80, 0, BL 0x10025F04, BL 0x40008353 (unbuilt), 4 bits 0101
-RC 1, key 0x0B001081 (BL 2, two values; written 0)
+RC n keys, keys: [0x0C04A61C (BL 0) with targets], 0x0B001081 (BL 2,
+  two values; written 0), [0x0C04A621, 0x0C04A61E: BL regions, one BD
+  per region], [0x0404A627 with targets: its value is the text "[]"],
+  [0x0C04A620: one BD per region]
 2 bits 01, 128 zero bits, 2 bits 01, RC 82
-BL 0 (items), BL 0 (surfaces), BL 0, BL 0 (outlines), BL 0
-2 bits 01, RC 32, RC 0x48, RC (baselines << 3 | 2), 1 bit 0,
-6 bits region count, BL 0 (stations)
-region: identifier, the assembly's group block, BD start, BD end,
-  2 bits 00, BD frequency along tangents (25), BD along curves (25),
-  BL 0, BD 0, BD 25, BD 10, identifier, BL 0 x 3, BL 0 (targets),
-  BL 0 (stations), 3 bits 110, BL 0
-baseline: BL 0, B 1, 9 bits 000000101, identifier, 47 bits ending with
-  the version word
-references: soft 0, style, code set style, hard 0, alignment, profile,
-  assembly (hard), per subassembly {subassembly (soft), soft 0}
-texts: "AeccImpCorridor", "", name, "", "", per assembly group {its name,
-  "", "", ""}, the assembly's name, "", the region's name, the
-  baseline's name
+BL n feature line code settings (0 before a rebuild), BL n surfaces, BD
+  maximum triangle side length, BL n boundary lists, BL 0
+B rebuild automatically, B 1, RC 32, RC layout (0x48 locked to stations,
+  0x28 to the alignment's geometry), RC (baselines << 3 | 2), 1 bit 0,
+  6 bits the first baseline's region count, BL 0 (no station)
+baseline: [after the first: BL region count, BL 0], regions, BL 0, B 1,
+  9 bits 000000101, identifier, BL n, n x BD added station
+region: the assembly's identifier, the assembly's group block, BD start,
+  BD end, 2 bits 00, BD frequency along tangents, BD along curves, BL
+  flags, BD 0, BD along spirals, BD along profile curves, identifier, BL
+  target flags, BL 0, BL 0, BL n target entries, n x 10 lists {BL k, k x
+  item}, BL 0, 3 bits 110, BL 0
+item: BL 0x1015, BL 0, object head, B 0, B 0, BL 0 (a surface), or BL
+  0x1017 (0x1117 for the farthest), BL 0, BL k, k x object head, BL 1
+  farthest / 0 nearest, B 0, B 0, BL 0
+end: 45 bits 101010101010010000001010100001011111000000100
+references: soft 0, style, code set style, per baseline {hard 0,
+  alignment, profile (hard), per region {assembly (hard), per node
+  {subassembly, the subassembly it hangs from or 0} (soft), per target
+  entry {subassembly (hard), its target objects (soft)}}}
+texts: "AeccImpCorridor", "", name, description, ["[]"], per baseline
+  {per region {"", per assembly group {its name, "", "", "" per node},
+  the assembly's name, "", per target {its name twice, "", "", "" per
+  object}, the region's name}, the baseline's name, one description per
+  added station}
 ```
 
-The identifiers are version-4 GUIDs (new ones for every corridor). The
-group block is the assembly's own (`BL 0, BL 0, BL n groups, BL 1`, then
-per group its nested object heads and attachment nodes), copied from the
-assembly record:
+Region flags: 0x1000 at increment and 0x400 by curvature along curves
+(0x1400 both; a region the application never saved after an edit holds
+0, read as at increment), 0x8 at horizontal geometry points, 0x80 at
+superelevation critical points, 0x20000 at profile geometry points,
+0x40000 at profile high and low points. Target flags: 1 at offset target
+geometry points, 4 adjacent to offset target start and end, 8 at
+increment and 16 by curvature along offset target curves. The keys hold,
+per region in corridor order, the frequency along target curves (25
+without the key) and the mid-ordinate distances along curves and along
+target curves (0.1 without them); the application writes all three once a
+region changes one of them. Keys are written in the order above.
+
+A target entry is written for each subassembly of the region's assembly
+that has a target, in node order; its list 5 holds surface targets, 8
+offset (width) targets and 9 elevation (slope) targets, the same lists
+for every stock subassembly tried (nine kinds with targets, list by the target's
+type and not by the parameter's position). An offset or elevation target
+holds any number of objects (alignments, polylines, feature lines,
+profiles, 3D polylines are all object references); a surface target one.
+
+The identifiers are version-4 GUIDs (new ones for every corridor); a
+region starts with its assembly's identifier. The group block is the
+assembly's own (`BL 0, BL 0, BL n groups, BL 1`, then per group its
+nested object heads and attachment nodes), copied from the assembly
+record:
 
 ```text
 BL 80, 0, 80, 80, 0, BL 0x10025F04, BL, 4 bits, RC n keys, keys
@@ -945,25 +1124,262 @@ texts: "AeccImpAssembly", "", name, "", "", "", per group {name, "", "",
   ""}
 ```
 
-Written with the samples' identifiers, stations, frequencies and
-assemblies (one and two groups), the record equals theirs bit for bit
-(the station range 10-90 and a tangent frequency of 10 included).
+Samples (each one change at a time from a drawing with three alignments
+and profiles, a polyline, a 3D polyline, a feature line, a surface and two
+assemblies, one with a lane, one with a transition lane and a side slope
+ditch): structure (one region, station range, second and third region
+with a gap, a region on another assembly, region name, second baseline
+without and with a region, a baseline along a feature line, removing a
+baseline, renaming, an empty corridor), every frequency and flag, added
+stations with and without a description, targets of each kind (an
+alignment, a polyline and a feature line as offset target, a profile, a
+3D polyline and a feature line as elevation target, a surface, two
+objects, the farthest), targets in several regions and baselines, and
+the targets of nine stock subassembly kinds. Rewriting each sample's
+definition with `add_corridor_with` gives the sample's record field for
+field (the references and texts equal; the identifiers, the geometry
+stamp and the class word differ by design).
 
-Written into WC23 (an assembly of two lanes, E-C1) and WC20 (one lane,
-E-C2), the corridor opens with AUDIT 0 errors and the API lists its
-baseline (alignment, profile, stations 0-100) and region (assembly,
-stations 0-100) as for the application's own unbuilt corridor; the API
-reports it out of date. The API rebuild run after reopening a drawing in
-the check harness changes no corridor, the application's own included (a
-built corridor keeps its stations after a frequency edit and a rebuild),
-so the built result of a written corridor is not checked.
+Written into a drawing with two baselines (`BL1` along a curved
+alignment: a region on the lane assembly from 0 to 100, every 10 along
+tangents, by curvature with a mid-ordinate of 2 along curves, at
+horizontal geometry points; a region on the transition lane and ditch
+assembly from 150 to 300 every 12 along curves and 5 along profile
+curves, at profile high and low points, with the offset alignment and a
+polyline as offset target (farthest), a profile as elevation target and
+the surface as the ditch's target; added stations 33.3 and 175; `BL2` with
+one region at increment and by curvature along curves, by curvature along
+target curves every 7, at offset target geometry points), the corridor
+opens without recovery, AUDIT 0 errors; the API lists both baselines,
+the regions with their assemblies, ranges, every written frequency and
+flag, the added stations (33.3 in the first region, 175 in the second),
+and the targets with their objects. `CorridorCollection.RebuildAll()`
+builds it: stations 0, 10, 20, ..., 33.3, ..., 99.022, 100 in the first
+region, 150, 175, 192, 204, ..., 300 in the second, every 25 along `BL2`,
+and the codes of both assemblies (the ditch's included, its target
+resolved); the rebuilt drawing reads back with its feature lines (seven
+codes on `BL1`, four on `BL2`).
+
+Surfaces are written in the corridor record only (their own TIN surface
+reference is written 0): a built surface (`build`) gets its TIN surface
+from the application when the drawing is opened, before any rebuild. The
+link and feature line codes are written in name order (the order the
+application keeps), boundaries and masks drawn from polygons are closed
+when open. A corridor with two surfaces (`CS1` built, link code `Top` as a
+breakline, overhang correction on top links, the corridor extents and a
+polygon as outside boundaries and a triangle as mask; `CS2` not built) and
+a maximum triangle side length of 50, written into the same drawing, opens
+without recovery, AUDIT 0 errors; the API lists both surfaces with their
+build flags, overhang correction, the boundary names, descriptions and
+kinds and the mask, `CS1` with its TIN surface; after the rebuild `CS1`
+holds 26 points with `Top` as a breakline.
+
+A baseline along a feature line is written with the feature line as its
+first reference and an alignment and one of its profiles (written by
+`add_alignment` and `add_profile` through the feature line's points) as
+the next two: the application's own baseline refers to a hidden
+alignment and profile it makes from the feature line. Written so into
+the drawing above (feature line `FLT`), the corridor opens with AUDIT 0
+errors, the API lists the baseline as along `FLT` (stations 0 to 300),
+and the rebuild places the assembly along the given alignment and
+profile. Written with no alignment and profile, it opens with AUDIT 0
+errors but the API cannot read the baseline (null object) and the
+rebuild skips it.
+
+`corridor_definition()` reads the definition of any corridor record
+(fields of built corridors too; names and references of corridors without
+built stations, whose texts and references are not interleaved with the
+built ones). It also reads corridor surfaces (build flag, link and feature
+line code flags, overhang correction) and their boundaries and masks
+(kind, polygon corners, feature line components): the surface head is
+`B, B build, B, BL n link codes, n x B breakline, BL 0, BL m feature line
+codes, m x B, BL overhang` (older files write the link count in its
+one-byte form `01 00000nnn`, read before as an RC 0x20 or 0xA0 and three
+bits), and the field after the surfaces is the maximum triangle side
+length (a BD). Boundary lists are written per surface that has any, each
+introduced by its surface's name in the texts, then each boundary's name
+and description; references: per surface {the corridor surface's own TIN
+surface (soft, 0 when it is not built), style, 0, render material}, one
+per boundary.
+
+### 3i-a. Corridor options
+
+| option | read | write | evidence / blocked by |
+|---|---|---|---|
+| several baselines along alignments and profiles, their order | yes | yes | §3i |
+| baseline along a feature line | yes (feature line, the alignment and profile made for it) | yes, with an alignment and profile the caller gives | the application makes a hidden alignment and profile for its own; written without them the baseline cannot be read through the API (null object); written with a given alignment and profile it reads as a feature line baseline (stations of the feature line) and the rebuild follows that alignment and profile |
+| offset baselines | no | no | neither programming interface can make one (the .NET and COM offset baseline collections have no add); their command is a dialog |
+| several regions, gaps, an assembly per region, region names | yes | yes | §3i |
+| frequencies along tangents, curves, spirals, profile curves, target curves; mid-ordinates; curve placement; at geometry, superelevation, profile, high/low, offset target points | yes | yes | §3i |
+| added stations with descriptions | yes | yes | §3i |
+| offset, elevation and surface targets (any objects; nearest or farthest) | yes | yes | §3i |
+| rebuild automatically, description | yes | yes | §3i |
+| region lock to the alignment geometry | yes (flag) | no | the region holds two alignment element identifiers; setting the lock adds an identifier block (640 and 777 bits in the sample) to each locked element of the alignment record, which the alignment writer does not write |
+| corridor surfaces, link and feature line codes, overhang correction, build flag; boundaries and masks from polygons and the corridor extents; maximum triangle side length | yes | yes | §3i (the application makes each built surface's TIN surface) |
+| boundaries along feature lines | yes (component count) | no | they refer to built feature lines |
+| feature line code settings (connect, draw, pay items) | count only | no | codes exist only once built |
+| built results (stations, applied assemblies, feature lines) | yes (feature lines) | no | written out of date; the application builds them |
+| corridor without baselines | no | no | its record ends in another run after the 32 (one sample) |
+
+### Code set styles read back
+
+A code set style (`AECC_ROADWAY_STYLE_SET`) lists its entries in its class
+data (after the component lists):
+
+```text
+6 x { BL kind, BL 0, BL 0 }                 defaults: uncoded markers, links,
+                                            shapes, then markers, links,
+                                            shapes of unlisted codes
+3 x { BL n, n x { BL kind, BL 0, BL 0 } }   listed point, link, area codes
+```
+
+`kind` is 1 point, 2 link, 3 area. Each entry has five references
+(material, style, label style, feature line style, blank) after the
+record's owned children, and each listed code four texts (code, name,
+description, blank) at the end of the text stream. `code_set()` and
+`code_set_defaults()` read the record so: the default code set a new
+drawing gets (no codes) returns its default marker, link and shape
+styles; the code sets of the sample drawings with codes return the same
+codes and defaults as before, and those whose codes have no name (which
+were not read) now read.
+
+### Assemblies and package subassemblies
+
+`add_pkt_subassembly_on(doc, parent, point, ...)` adds a package
+subassembly hanging from the point `point` of the subassembly `parent`:
+it joins the parent's group as its last node. Its record is that of a
+subassembly at the baseline (the host keeps the origin where the
+subassembly was inserted, the assembly's location in the samples, and
+places it at the parent's point from the group block). Samples CH1-CH5
+(a package lane at the baseline; a shoulder on its outer point; a side
+slope on the shoulder's outer point; the same on both sides; a shoulder
+on the lane's inner point; each made from the same base) are equal bit
+for bit to the records written for them, the assembly's identifier
+aside. The corridor copies the assembly's node pairs and group texts.
+
+| written | result |
+|---|---|
+| a new drawing with lane, shoulder and side slope on both sides (three packages written by `write_pkt`) and a corridor (E-CH1) | opens without recovery, AUDIT 0 errors; two groups of three subassemblies (lane at the baseline, shoulder at (23.5, -60.07) and (16.5, -60.07), side slope at (24.5, -60.11) and (15.5, -60.11)), all up to date; the corridor rebuilds with ETW at offset ±3.5, EPS (the shoulder's outer point) at ±4.5 and Daylight at ±7.5 |
+
+`add_assembly(doc, name, location, layer)` writes an empty assembly with
+the drawing's default assembly style (style tree key 0x118) and code set
+style (0xEA0); a drawing without them gets the application's defaults
+(§2c). `add_pkt_subassembly(doc, assembly, name, source, pkt, side,
+values, layer)` adds a subassembly built from a package (§3l) as a group
+of its own, attached at the assembly's location, with the package's
+layout on `side` with `values`, and writes the assembly again with the
+group. `source` gives the two texts that say where the package lies:
+the library list (a JSON array; the host writes a path under the user's
+folder as `%USERPROFILE%\\...`) and the resolved path. The package file
+must hold the bytes `write_pkt` writes for `pkt`: the record keeps their
+MD5 as the script's id.
+
+```text
+assembly: BL 80, 0, 80, 80, 0, BL 0x10025F04, BL 0x40000353, 4 bits 0010,
+  RC 0, 120 zero bits, 3BD location, 18 bits, 16-byte identifier (a
+  version-4 GUID), BL 0, BL 0, BL n groups, n x {BL k, k x node},
+  BL 0, 36 bits ending with the version word
+  node: two attachment records (BS 80, BS 80, BS 0, B 1, BL 240, 5 bits
+    00100 each), BL index of the parent's point it hangs from (0 for the
+    group's first, at the baseline), BL 0, BL 0
+  references: soft 0, hard owner 0, assembly style (hard), per node in
+    group order {subassembly, the subassembly it hangs from or 0}
+    (soft), code set style (hard)
+  texts: "AeccImpAssembly", "", name, "", "", "", per group {"Group -
+    (i)", "", then "", "" per node}
+package subassembly: BL 80, 0, 80, 80, 0, BL 0x10025F04, 010101, RC 4
+  keys of type 4 (0x0404D01E, 0x0404D020, 0x0404D01D, 0x0404D01F; a
+  stock subassembly lacks 0x0404D01D), BL 0 in its one-byte form, 121
+  zero bits, 3BD origin (the assembly's location), 9 BD rotation
+  (identity), BD 1, 62 bits,
+  BL n points, n x {BL code count, B 1, B 0, BL 0, BD offset, BD elevation},
+  BL n links, n x {BL code count, B 1, B 0, BL n, n x RL point},
+  BL n shapes, n x {BL code count, B 1, B 0, BL n, n x RL link, BL 0},
+  parameter set (§3i corridors): integers then doubles, each sorted by
+    name; integer {0x1012, 0, key, B 0, B 1, the choices' keys, index},
+    double {0x1013, 16 | 9 grade | 10 slope, BD value, B 0, B 0, index},
+    index = the input's place among the package's inputs; no texts
+  341 bits (the same in every package and stock subassembly seen)
+  references: soft 0, hard owner 0, the assembly (soft), subassembly
+    style (hard), the subassembly itself (soft), code set style (hard)
+  texts: "AeccImpSubassembly", "", "", library list, "{"docs_permanent_id":
+    ""}", the package version, the MD5 of the package file (upper-case
+    hex), name, "", resolved path, "Subassembly.<package name>", 5 x "",
+    the point, link and shape codes, per parameter {name, display name,
+    "", ""} and its choices {name, display name}, ""
+```
+
+The record stores the layout only: auxiliary points and links are not
+in it, targets and descriptions are not either (the parameter texts keep
+the display name), and the stock record's resource module and `Version`
+parameter have no counterpart. A drawing without the subassembly style
+collection (style tree key 0x11A) gets the application's default,
+written from templates as the styles of §2c, and one without the name
+templates (root key 0x8C, the root and its node naming the groups
+`Group - (<n>)`) gets them.
+
+Samples W-K01 to W-K05: WR01 with an assembly at (0, -50) and K01 to K05
+(§3l) imported and added by the application, K01 also on the left and
+with width 3, depth 0.5, slope -0.05 (W-K01L, W-K01b). Written by
+`add_pkt_subassembly` from the same packages, sides and values, every
+subassembly record equals the sample's bit for bit and in its texts
+apart from the MD5 (the samples point at the editor's file); the
+assembly equals apart from its identifier.
+
+Checks with packages written by `write_pkt` next to the drawing (a lane
+built in code, right lane width 4 / depth 0.25 / slope -0.03, left lane
+with the defaults, a corridor on the assembly), every drawing written by
+acadrust from WR01:
+
+| drawing | library list / path | opens | AUDIT | subassemblies | corridor rebuild |
+|---|---|---|---|---|---|
+| E-PK1 | `%USERPROFILE%\...` / absolute | without recovery | 0 errors | listed, up to date, parameters as written, 4 points, 4 links, 1 shape each | built from the package: stations 0-100 every 25, codes Crown, ETW, ETW_Datum, Crown_Datum, at station 0 ETW (4, -0.12) right and (-3.5, -0.07) left |
+| E-PK2 | as E-PK1, package moved away | without recovery | 0 errors | listed with status "file not found", stored geometry and parameters kept | runs, builds nothing (no codes, no points) |
+| E-PK3 | `E-PK3-K01W.pkt` / same (relative) | without recovery | 0 errors | "file not found" | builds nothing |
+| E-PK4 | `.\E-PK4-K01W.pkt` / same | without recovery | — | "file not found" | builds nothing |
+| E-PK5 | relative / absolute | without recovery | — | up to date | built as E-PK1 |
+| E-PK6 | absolute (no variable) / relative | without recovery | — | up to date | built as E-PK1 |
+
+The host resolves the package from either text when it is absolute (an
+environment variable at its start expanded); a relative path is not
+resolved against the drawing's folder.
+
+### OpenCAD Studio's road package
+
+The package OpenCAD Studio builds in code (`OCSRoad`: lane, shoulder and
+side slope of one side, with the pavement under lane and shoulder; the
+test `tests/civil_ocs_road_package.rs` copies its builder) was written
+with `write_pkt` to `%USERPROFILE%\Documents\OpenCAD Studio\Subassemblies\OCSRoad.pkt`
+and used by a new drawing written by acadrust (E-OCS1): an alignment, a
+profile, an assembly with one `OCSRoad` subassembly per side, named by
+that path as OpenCAD Studio names it, and a corridor on them.
+
+| check | result |
+|---|---|
+| package in the package editor | opens; the preview shows the half section (points P1-P6, links L1-L6, shape S1) |
+| drawing | opens without recovery, AUDIT 0 errors |
+| subassemblies | listed up to date, generated from the package, with the eight parameters at their defaults (Side 0 right, 1 left); 6 points, 6 links, 1 shape each, at (0, 0), (3.5, -0.07), (4.5, -0.11), (7.5, -1.61), (4.5, -0.41), (0, -0.3) and mirrored |
+| `LaneWidth` set to 4 on the right one | the subassembly is rebuilt: (4, -0.08), (5, -0.12), (8, -1.62), (5, -0.42) |
+| corridor rebuild | built (stations 0-100 every 25); point codes Crown, ETW, EPS, Daylight, EPS_Datum, Crown_Datum; link codes Top, Pave, Daylight, Datum; shape code Pave; ETW at offset 4 right and -3.5 left |
+
+No codec change was needed. Note for OpenCAD Studio: it writes the
+package to the user's Documents known folder (`SHGetKnownFolderPath`)
+but names it in the drawing by `%USERPROFILE%\Documents\...`. Where
+Documents is redirected (here to a cloud-synced folder), the two differ
+and the host does not find the package (it lists the subassemblies with
+the status "file not found" and builds nothing, as E-PK2). Naming the
+path the package was written to, with `%USERPROFILE%` only when it is a
+prefix of that path, avoids this.
 
 ## 3j. Sample lines
 
 `add_sample_line_group(doc, alignment, name, layer)` writes an empty
 sample line group of an alignment; `add_sample_line(doc, group, name,
 station, left, right, layer)` adds a two-vertex sample line at a station,
-reaching `left` to the left and `right` to the right of the alignment. The
+reaching `left` to the left and `right` to the right of the alignment;
+`add_sample_line_through(doc, group, name, station, vertices, layer)` adds
+a line through vertices given as (station, offset; negative to the left)
+that crosses the alignment at `station`, with vertices on both sides. The
 alignment is written again with the group: the third count after its
 elements (`BL n, BL v, BL g, BL n`) is the number of groups, and the
 groups follow the profiles and views in its references. Adding a line
@@ -980,10 +1396,12 @@ group (AECC_SAMPLE_LINE_GROUP, an entity in model space):
 line (AECC_SAMPLE_LINE):
   BL 80, 0, 80, 80, 0, BL 0x10025F04, BL 0x40008353, 4 bits 0010, RC 0,
   120 zero bits, 3BD 0, 9 BD identity, BD station,
-  two vertices {BL 1, BD 0, BD offset (right positive), BD 0},
+  the vertices left, then right of the alignment, each side {BL n,
+    n x {BD 0, BD offset (left negative), BD station less the line's}},
+    from the alignment outwards (the crossing is not stored),
   a 100-bit run ending with the version word
-  references: soft 0, hard owner 0, hard 0, soft 0, soft 0, style, group
-    (hard)
+  references: soft 0, hard owner 0, hard 0, soft 0 per vertex, style,
+    group (hard)
   texts: "AeccImpSampleLine", "", name, ""
 ```
 
@@ -995,6 +1413,17 @@ With the group and three lines written into WR00 (E-L1) the application
 opens the drawing with AUDIT 0 errors and lists the group, its lines in
 station order, their stations and the left, center and right vertices of
 each.
+
+Lines through more vertices (LV00 to LV02 and LV10, LV11: three, four,
+five and seven vertices, some away from the crossing station, made with
+`SampleLine.Create` from points) are reproduced bit for bit; their
+vertices are stored per side from the alignment outwards. A line with all
+its vertices on one side of the alignment (LV03) closes its record with
+another run, and is not written. Written into WL10 (E-L5: a line at 40
+through (38, -12), (40, -4), (42, 6), (41, 14) and a two-vertex line at
+70), the drawing opens with AUDIT 0 errors and the API lists each line's
+station and vertices (left, center at the crossing, right) where they were
+written.
 
 The group's label style is the default sample line label style (style
 tree key 3, then 0x112, 0x1002A00F, id 30). Written with no label style
@@ -1135,6 +1564,454 @@ the drawings open with AUDIT 0 errors; the API lists the roads with their
 alignments and profiles and null offsets, the four quadrants with their
 in and out alignments and the written angles, and the location (175, 75)
 of E-I3 follows from the written station through the curve.
+
+## 3l. Subassembly packages (`pkt`)
+
+A package is a ZIP archive of deflated parts; `read_pkt` and `write_pkt`
+read and write it from named fields (`PktPackage`). The samples K00 (a new
+package) and K01 to K05 (a lane; with a decision and an auxiliary point;
+with an offset target and a variable; with a switch on the side, a
+sequence and an enumeration; with a preview image, a description and a
+help file) are packages the package editor saved; each reads and writes
+back to equal parts (XML parts equal as documents, other parts equal
+bytes).
+
+```text
+[Content_Types].xml  BOM, Types: Default Extension per part extension
+  (atc, cfg, xaml, image, help, pvd, emd, cdmd), ContentType ""
+<id>.atc   the tool catalog: catalog id, the tool (name, id, image
+  64 x 64 [src], [Description], ToolTip "<description>
+Version: <v>" or
+  "Version: <v>", Help file/command/data, StockToolRef, Data:
+  GeometryGenerateMode UseDotNet, DotNetClass Assembly="<id>.xaml"
+  Subassembly.<name>, Version, Params, Units m)
+  Params, per input argument that is not a target, in declaration order:
+  <name DataType TypeInfo DisplayName Description>value</name>
+  double 16, grade 9 ([new Grade(g)]), slope 10 ([new Slope(s)]), text
+  16, enumeration long 16 with <Enum><item DisplayName>key</item>...</Enum>
+  (Side: Left 1, Right 0; other groups from the emd part); a Side of None
+  (-1, a new package) is not listed; DisplayName and Description fall
+  back to the name and the display name
+<id>.cfg   CreatedWith: ProductName, Version, VersionNumber
+<id>.xaml  the workflow (below)
+<id>.pvd   preview cross slopes (segment, slope, defined) and cant values
+<id>.emd   enumeration groups (name; items name, display name, key from
+  301 up) and the names of the defined variables
+<id>.cdmd  CodeData with no items (every package seen)
+```
+
+The workflow:
+
+```text
+Activity mc:Ignorable x:Class="Subassembly", this:Subassembly.<arg>=
+  default per argument that has one, namespace declarations
+  x:Members: Geometry, SubassemblyErrorCenter, SubassemblyRunMode
+    (InOutArgument), then the package's arguments in order: x:Property
+    Name Type="InArgument|OutArgument(type)", x:Property.Attributes
+    (EnabledFlag2Attribute, DisplayName2Attribute, Description2Attribute)
+  defaults: numbers as text, [new Grade(g)], [new Slope(s)],
+    [new EnumType(key, "name", "group")], [new PreviewOffsetTarget("name",
+    valid, offset)]
+  Flowchart: Variables (the 17 built-in read-only enumeration values, the
+    enumeration items as values, the defined variables), view state,
+    StartNode (nested along the links, a node written before is an
+    x:Reference), x:Reference per node in the flowchart's order
+nodes: FlowStep (action, Next), FlowDecision Condition (True, False),
+  FlowSwitch x:TypeArguments="x:String" Expression (Default, cases with
+  x:Key)
+activities: CreatePoint / CreateAuxPoint (PointNumber, Positioning,
+  FromPoint, AutoLink, AutoLinkGeometryName, ApplyAOR, Arguments keyed
+  <name><positioning number> (DeltaX1, DeltaY1; Slope2, DeltaX2,
+  OffsetTarget2, ElevationTarget2, Superelevation2; ...), PointCodes,
+  AutoLinkCodes), CreateLink / CreateAuxLink (LinkNumber, StartPoint,
+  EndPoint, IsEnabled, LinkCodes), CreateShape (ShapeNumber, Links =
+  ComponentNames joined by commas, ShapeCodes), Sequence (activities),
+  InternalVariableDefine (VariableName, VariableType, DefaultValue,
+  Variable), SetVariableValue, SetOutputParameterValue
+every activity: ActivityId, DisplayName, ShowErrors, [HintSize], [view
+  state]; unset references are written as {x:Null} first
+code lists: scg:List InArgument(x:String) Capacity 4, doubled as needed
+```
+
+Other activities (curves, intersections, surface links, ...) are refused
+by `read_pkt`. A package needs the 32-digit part name; the creator and the
+workflow's namespace declarations come from the caller (a package the
+editor saved has them), `PktPackage::new` gives the rest of a new
+package's settings. `new_part_name(seed)` makes a part name from a seed
+(a version-4 GUID's digits, the same for the same seed, so a package
+written again has the same bytes and MD5). The workflow is built with
+`point_delta` (DeltaXAndDeltaY), `point_slope` (SlopeAndDeltaX, with the
+offset, elevation and superelevation target arguments), `link`, `shape`,
+the input parameters `parameter_double`, `parameter_grade`,
+`parameter_slope` and `parameter_side`, and `chain`, a flowchart of steps
+in order (`__ReferenceID<i>`) and its start node; every activity gets the
+editor's settings (shown errors, hint size 200,22.4, the point's display
+name `<point>&<link>` when it draws a link). A lane built with them equals
+the lane written by hand. `PktPackage::new_package(name, part)` is
+`PktPackage::new` with the creator and the workflow's namespace
+declarations the package editor writes into its own packages (K01 to
+K05), so a package needs nothing from a saved one.
+
+Check (E-PK7): a lane built only with these (`new_package`, part name
+from `new_part_name`, the parameters Side, Width 3.5, Depth 0.3, Slope
+-0.02, points P1-P4 with links L1-L3, link L4, shape S1) and written by
+`write_pkt` opens in the package editor without errors; its preview draws
+the lane (P1-P4, L1-L4, S1). Imported by the host (the API's package
+import into WR01) it is listed up to date with its four points, links and
+one shape. An assembly of it (right lane width 4 / depth 0.25 / slope
+-0.03, left lane with the defaults) and a corridor on it, written by
+acadrust into WR01, open with AUDIT 0 errors; the corridor rebuild builds
+stations 0-100 every 25 with the codes Crown, ETW, ETW_Datum and
+Crown_Datum, at station 0 ETW (4, -0.12) right and (-3.5, -0.07) left, as
+E-PK1.
+
+### Layout
+
+`pkt::layout(pkg, side, values)` runs the flowchart in layout mode from
+its start node: a step runs its activity, a decision takes the branch of
+its condition, a switch the case named by its expression's text (else
+the default). Parameters not given take their defaults, a target its
+preview default; `Side` is the side given.
+
+```text
+DeltaXAndDeltaY  from + (s dx, dy)
+SlopeAndDeltaX   from + (s dx, slope |dx|)  (the slope falls over |dx|
+                 whichever way the point goes)
+from = the point's FromPoint, the attachment point when unset;
+s = +1 on the right, -1 on the left
+AutoLink         a link from the FromPoint to the point, with its codes
+```
+
+Auxiliary points and links are evaluated (later expressions may use
+them) but are not part of the geometry. Points, links and shapes come in
+the order created; the codes in the order points, links, shapes.
+Expressions are the editor's Visual Basic form in brackets; the subset
+read: numbers, text, `True`/`False`, `+ - * / ^ &`, comparisons,
+`And`/`AndAlso`/`Or`/`OrElse`/`Not`, `IF(c, a, b)`, `Math.Abs/Min/Max/
+Sqrt/Sin/Cos/Tan/Atan/Round/Floor/Ceiling`, names of parameters,
+variables, enumeration values and points, `.Value` of an enumeration,
+`.IsValid`/`.Offset`/`.Elevation` of a target, `.X`/`.Y` of a point,
+`SA.IsLayout`. Anything else (other positionings, `.ToString()`, curves)
+is refused with an error.
+
+The layouts of K01 (right; left; width 3, depth 0.5, slope -0.05) and of
+K02 to K05 (width 4, depth 0.25, slope -0.03) equal the points, links,
+shapes and codes the host application stored for them (W-K01, W-K01L,
+W-K01b, W-K02 to W-K05) and the editor's previews.
+
+## 3m. Gravity pipe networks
+
+`add_pipe_network`, `add_structure` and `add_pipe` write a network that
+uses the drawing's first parts list (`AECC_NETWORK_PART_LIST`; the
+application's templates have one), its null structure and its 12 inch
+corrugated metal pipe. A drawing without a parts list gets the
+application's default one: the part catalog node (root key 0x136, as N02
+holds it: listing the fields of the null structure's and the pipe's part
+definitions), the parts list "Standard" and its 33 families with their
+size filters, written as N02's records with their references mapped (each
+filter's style is the default pipe or structure style; no rules; the
+material "ByLayer" or null), and the default pipe style (style tree key
+0x116) and structure style (0x117) written from templates as in §2c. The
+network rules are not written (the application's records name a rules
+module by its installed path).
+
+What the application adds with the first network, structure and pipe
+(samples N00-N03, the application's own, over WT01):
+
+| step | records |
+|---|---|
+| network | the `AECC_NETWORK` entity |
+| first structure | its part definition (`AECC_NETWORK_PART_DEF`) in the named-objects dictionary `AECC_NETWORK_PART_DEFS`, keyed by family id and size (`D45435F0...870FSBSH0SBSD0`); an anonymous block with the structure's body (a solid) the definition refers to twice; the name templates root (root key 0x8C) with the structures' node (id 0x125); eight field definitions in the part catalog node |
+| first pipe | its part definition (key: family id and size id), the pipes' name template node (id 0x126), ten field definitions in the catalog node |
+
+Records (all written with references and texts of the samples' layout):
+
+```text
+network:   NETWORK_EMPTY or NETWORK_WITH_PARTS, BL pipes, BL structures,
+           NETWORK_END
+           references: 5 x hard 0, parts list, soft 0, hard owner 0,
+             pipes, structures
+structure: class header, keys, 3 bits 010, 16-byte id (0), 3BD insertion,
+           3 x 3BD axes, 2 bits, part record (BL 80, BS 0x04BE, BL 80,
+           BL 80, BL 0, BL 0), 3 x BL 0, identifier, cached outline and
+           extents, rule results
+pipe:      as a structure up to its identifier (identity frame), then
+           lengths, slopes and extents, 3BD start, 3BD end, rule results
+identifier: 16 bytes, a version-4 GUID in the byte order Windows stores
+           one (the version in the high nibble of byte 7, the variant in
+           the high bits of byte 8), then the 2 bits 10
+           references (both): hard 0, hard 0, soft 0, hard owner 0, part
+             definition, style, network, soft 0, soft 0, hard 0, rules
+part definition: no version word; fields BL 80, BS 0x04BE, BL 0, BS kind,
+           ... (75 bits for a number, 81 for a text, whose value is a
+           text)
+name templates root: BL 0x8C, BL n, n x BL id (four-byte form), BL 0,
+           BL 32, 3 bits 001; node: BL id, constant run; texts "",
+           template
+```
+
+Connections (`connect_pipe`; samples N04 unconnected, N05 both ends, N06
+end only and a chain of three structures and two pipes):
+
+```text
+connector (AECC_NETWORK_PART_CONNECTOR, a model space entity on the
+           network's layer): CONNECTOR (constant)
+           references: soft 0, hard owner 0, the paired connector (soft;
+             0 for an open pipe end), its part (hard)
+           texts: "AeccImpNetworkPartConnector", "", ""
+part record: ..., BL n, n x { BL 0, field, BL 1 }, BL connectors, ...
+part references: ..., part definition, style, the connectors (hard),
+           network, ...
+```
+
+A pipe has no connector until one of its ends is connected, then two
+(start, end); a structure has one per pipe it meets, in the order the
+pipes were connected. The writer keeps every other bit of the records it
+updates. When the application connects a pipe it lowers the structure to
+the pipe's end (invert minus half the outer diameter) and gives it a
+part definition of its new height; on opening it does neither:
+
+| written | result |
+|---|---|
+| N04's pipe connected to both structures (E-N50) | AUDIT 0; the pipe lists both structures, each structure one pipe, positions as written |
+| N04's pipe connected at its end only (E-N51) | AUDIT 0; start open, end at the second structure |
+
+The structure record caches its plan outline, a circle of radius 0.5
+about the insertion point (four quarter arcs from the top, counter
+clockwise: full `BD` x, y, bulge `tan(22.5°)` and one zero bit each);
+the writer places it at the insertion point (the application's own
+structure at (150, 0, -6), N07, differs from the written one only in its
+id and in rounding noise of the outline's zero coordinates). A rotated
+structure's record is longer (N07, 0.3 rad); its layout is not decoded and
+the writer keeps the unrotated outline.
+
+The identifier starts 365 bits into a pipe record (and into a structure
+record at the origin; the structure's axes come before it). Nine
+identifiers of the application's parts share the bits a version-4 GUID
+fixes when read from there, and all are followed by `10`. Written two
+bits later, as earlier writers did, the identifier ends in two random
+bits where the `10` belongs; then the application regenerates the drawing
+endlessly on opening (one core busy in its model space iterator, samples
+N01 + a structure, N04 + a structure, N01 + a pipe) or, in a new drawing,
+discards the part (`Error 34 (eWrongObjectType)` reading the pipe, then
+the recovery prompt), in the quarter of the cases where they happened to
+be `10` the drawing opened. That was the cause of every "does not finish
+opening" and "Errors Found" result measured before; neither the format
+manager, the catalog node's fields nor the part's position matter:
+
+| written | result |
+|---|---|
+| N02 with the root entries 0x150, 2, 0x80000012, 0x16A, 0x103, 0x4C, 0x16C (each, all), 0x2D or 5 dropped (E-D1 to E-D5) | AUDIT 0 |
+| E-D5 without the application's named-objects entries and with only the pipe and structure style collections in the style tree (E-D6, E-D7) | AUDIT 0 |
+| E-D7 with the application's network replaced by a written one and a pipe with a random identifier (E-D8, E-D9) | does not finish opening |
+| the same pipe with the application's identifier (E-D14) | AUDIT 0 |
+| N01 + a structure with identifiers ending `10` (E-X1, E-X3) or not (E-X2, E-X4), at (100, 0, -6) and (150, 0, -6) | AUDIT 0 / does not finish opening, at both places |
+| identifier written at 365 then `10`: N01 + structures at (150, 0, -6), (200, 50, -7) and a pipe (E-F1); N00 + a structure (E-F4); WT01 + a network, two structures and a connected pipe (E-F5) | AUDIT 0; the parts listed where written |
+| a new drawing with the default parts list, two structures, a pipe connected to both and a second pipe (E-F3) | opens without a message, AUDIT 0; the network lists two structures (one pipe each, extents from the body block) and two pipes, the first from (0, 0, -5) to (100, 0, -6) connected start and end, the second 111.803 long |
+
+The style and rules come from the family's size filter in the parts list
+(`AECC_PART_SIZE_FILTER`: references `0, style, rules, ...`). The fields
+between the named ones are the samples' constant runs.
+
+Measured (written drawings opened by the application in its own instance,
+API dump of the networks, AUDIT without fixing):
+
+| written | result |
+|---|---|
+| the application's network with the structure's insertion point changed in the record only (E-N2) | AUDIT 0; position, rim, sump and extents recomputed from the insertion point |
+| the pipe's ends changed in the record only (E-N3) | AUDIT 0; length, extents as the application's own pipe with those ends |
+| no part definitions (E-N4) | 4 AUDIT errors, families unknown |
+| structure definition without its body block (E-N5, E-N14, E-N16, E-N17) | AUDIT 0, family listed; the structure has no body (extents of the cached outline) |
+| parts list, style and rules references null (E-N6) | AUDIT 0, no parts list, no style |
+| network written by acadrust, pipe (E-N10) | AUDIT 0, network and pipe listed, length 90 and extents as the application's |
+| structure whose fields the catalog node does not list (E-N9, E-N11, E-N18, E-N20) | the application does not finish opening the drawing (busy) |
+| the same with the catalog node of a drawing that has a structure (E-N21) | AUDIT 0, structure listed at its position, rim and sump from it |
+
+The catalog node (`AECC_NETWORK_PART_CATALOG_DEF_NODE`, the parts list's
+owner) lists the union of the fields of the drawing's part definitions
+and caches data after them (the application's memory addresses, 8-byte
+values that differ between two drawings of the same template, not
+decoded). The writer leaves it as it is; the application adds the fields
+of a new part definition itself.
+
+A structure's part definition refers twice to the block of its body (an
+anonymous `*U` block with one solid). For the null structure the
+application's body is a sphere of radius 0.5 whose top is the insertion
+point; the writer adds the same block when it writes the definition, and
+the application takes the structure's extents from it (`(-0.5, -0.5, -1)`
+to `(0.5, 0.5, 0)` about the insertion point, as its own structures').
+
+### Other families
+
+`add_structure_of_family` and `add_pipe_of_family` place one size of
+every other family of the default parts list (`network_part_families`):
+the 21 structure families (cylindrical, eccentric, slab top and two-tier
+structures, junction structures, headwalls and end sections) and the
+eleven pipe families (the size the
+application gives a new part: 12 inch corrugated metal and concrete pipe,
+4 inch corrugated HDPE, 2 inch ductile iron, 3 inch HDPE, 3.6 inch PVC,
+the egg-shaped, elliptical and arch culverts and the 24 x 24 inch box
+culvert). The default parts list holds one size of each family. Sample N11: every family of WT01's parts list placed by the
+API, structures at the origin, pipes from (0, 0, -5) to (100, 0, -6).
+
+A pipe record is the same for every family (N11's eleven pipes differ only
+in their identifiers); the family is in the part definition, the pipe's
+second text (the family name) and its style and rules. A structure
+record differs per family after the axes: its part record and the
+outline and extents the application caches. The writer writes the
+family's runs as the application wrote them at the origin; the
+application recomputes the cached data from the insertion point. The
+null structure's record does not stand for another family: N11 with the
+cylindrical and rectangular structures' records replaced by the null
+structure's (E-N60) does not finish opening.
+
+Structure definitions other than the null structure's refer to two
+blocks, each with the body (an anonymous `*U` block with one solid). The
+application's bodies are the catalog's generated solids; the writer
+writes a cylinder (cylindrical families) or a box of the size's extents
+below the insertion point in each block.
+
+| written | result |
+|---|---|
+| WT01 with a network, a structure of each of the six families (the eccentric one turned by 0.5 rad), a pipe of each of the eleven families and a concrete pipe connected to the two cylindrical structures (E-N70); the same in a new drawing (E-N71) | AUDIT 0; every part listed with its family and size, positions as written, extents as the application's own (the turned structure's turned), the connected pipe listing both structures and each structure one pipe |
+| the same with every structure family (E-N72, E-N73) | AUDIT 0; the 22 structures and 12 pipes listed with their families and sizes, extents as N11's about the insertion point (the two-tier eccentric structures' box 5e-6 wider on one side, the application's own extents are not centred) |
+
+## 3n. Pressure pipe networks
+
+`add_pressure_network`, `add_pressure_pipe_of_size` (straight or curved),
+`add_pressure_part` and `connect_pressure_parts` write a pressure network
+that uses the drawing's pressure part list bound to the default catalog
+(`611746E2-B19E-4F8E-ACF7-F12491879819`), and parts of that catalog named
+by their part description (`pressure_part_descriptions`): the twelve
+ductile iron pipes (4 to 36 inch), and every elbow (48), tee (71), cross
+(56) and gate valve (7) size of the default part catalog (`add_pressure_pipe`, `add_pressure_arc_pipe`,
+`add_pressure_fitting`, `add_pressure_tee`, `add_pressure_cross` and
+`add_pressure_appurtenance` place the 4 inch pipe, elbow and tee, the
+cross and the 6 inch valve). A drawing without pressure part lists gets
+the default one (listing the 4 inch pipe and elbow and the 6 inch valve)
+with the default pressure pipe, fitting and appurtenance styles (style
+tree keys 0x17E, 0x17F, 0x180; part lists 0x188), written from templates
+as in §2c. A part need not be in the part list: its definition carries
+the catalog data (E-P31's tee and cross are listed with their sizes).
+
+Samples (the application's own, over WT01): P00 empty network, P01 + a
+pipe, P02 + a second pipe, P03 + an elbow, P04 + a gate valve, P05 + a
+second elbow, valve and pipe elsewhere, P06 + an elbow and a valve turned
+by 0.5 rad, P07 parts connected through the API (pipe to elbow, pipe to
+valve, pipe to pipe), P08 a curved pipe, a tee and a cross, P09 every pipe
+and valve size and the first elbow and tee sizes; PM01 is WT01 with every
+part but the 4 inch pipe, elbow and 6 inch valve removed from its part
+list.
+
+| step | records the application adds |
+|---|---|
+| network | `AECC_PRESSUREPIPES_NETWORK` |
+| first pipe | its part definition (`AECC_NETWORK_PART_DEF` in `AECC_NETWORK_PART_DEFS`, keyed by the size's catalog data), the name templates root and the pipes' node (0x17B) |
+| first fitting | its definition, which refers to two blocks named after the part family: the 3D body (`<family>`, a solid) and the plan symbol (`<family>_3`, an arc); the fittings' name template node (0x17C) |
+| first appurtenance | as a fitting (its symbol is a line); node 0x17D |
+
+```text
+network:   NETWORK_EMPTY or NETWORK_WITH_PARTS, BL pipes, BL fittings,
+           BL appurtenances, NETWORK_END
+           references: 6 x hard 0, soft 0, hard owner 0, pipes,
+             fittings, appurtenances, part list (soft)
+           texts: "AeccImpPressurePipeNetwork", "", name, ..., name
+             templates of appurtenances, fittings, pipes, pipe runs
+pipe:      PIPE_HEAD (class header, keys, 3 bits, 16 zero bytes), PIPE_PRE
+           (identity frame, BL 2 ports), port 1 (its start), port 2 (its
+           end), 18 bits, 3BD start, 3BD end, BD bulge, BS 0x101
+           (straight) or 0x102 (curved), 30 bits, BD start elevation, BD
+           plan chord, BD end elevation, PIPE_END
+fitting,
+appurtenance: HEAD (16 zero bytes), 3BD insertion point, 3 x 3BD axes,
+           BL ports, 2 bits, the ports (2 for elbows and valves, 3 for
+           tees, 4 for crosses), 3BD reference point, the 3 axes again,
+           END
+port:      3BD position, 3BD direction away from the part, BD engagement
+           length, BL connected port (-1 open), BD outside diameter, BD
+           nominal diameter, BD wall thickness, BD deflection, BD, 8 bits
+           (a part's last port: 2 bits)
+references (all parts): network, hard 0, hard 0, part list, soft 0,
+           hard owner 0, part definition, style, per port the part it
+           connects to (soft, 0 when open), soft 0
+```
+
+A connection is recorded on both sides: each port holds the index of the
+port it meets and the part it meets is its reference (`8 + port`). The
+application moves and turns the parts so the ports meet when it connects
+them (P07: the pipe's end trimmed to the elbow's port, the elbow turned
+along the pipe); `connect_pressure_parts` connects ports that are at the
+same place already and changes nothing else (the record is the
+application's but for the connected index, 32 bits shorter than -1).
+A curved pipe's port directions are its tangents (P08: bulge -0.4 from
+(0, 0) to (100, 0), start direction (-0.7241, -0.6897)); its plan length
+field is the chord.
+
+A port's position is the insertion point plus the size's offset turned
+by the rotation, its direction the size's direction turned (P06 equals
+the formula to the last bit). The reference point is a point of the size
+(the elbow's (0, -0.434, 0), the valve's (0, 0, -0.635)) turned and moved
+the same way; the body and symbol blocks are drawn there. The
+application keeps a part's extents while its reference point is where
+it was (a record moved without it keeps its old extents; moved with it,
+the extents follow).
+
+The part's style is the style the part list gives parts of its kind
+(the list refers to one style per part). The pipe and part records of
+the samples hold a key whose value counts the session's new objects;
+the writer keeps the sample's value (the application accepts it in every
+part). Unlike gravity parts, pressure parts keep no identifier.
+
+The application's body blocks hold the catalog's solids (13 to 44 KB of
+binary solid data per size: an elbow is a swept bend with its sockets, a
+valve a body with bonnet and wheel); the catalog itself stores sizes as
+parameters of a generator the application runs, and the drawing keeps
+only the generated solid, so the writer cannot rebuild it from the
+dimensions it has. It writes a box of the size's extents (as the
+application reports them, about the reference point) and the
+application's plan symbols (arcs for elbows, lines for tees, crosses and
+valves). Measured:
+
+| written | result |
+|---|---|
+| P00 + two pipes, two elbows and two valves at P05's places (E-P10) | AUDIT 0; the parts listed with P05's names, ends, positions and extents |
+| P00 + a pipe, an elbow and a valve turned by 0.5 rad (E-P12, as P06) | AUDIT 0; positions and extents equal P06's |
+| the same without body blocks (definitions refer to none, E-P11) | AUDIT 0; the parts take extents of ±3 about the position |
+| a new drawing: default part list and styles, two pipes, a turned elbow and a valve (E-P20) | AUDIT 0; listed with the default part list |
+| WT01 with a network, a pipe, an elbow and a valve (E-P21) | AUDIT 0 |
+| WT01 with a tee whose run meets a pipe and whose branch meets a pipe that meets a valve, two pipes connected end to start, an elbow between two pipes, two curved pipes (bulge -0.4 flat, 0.3 falling 2) and a cross (E-P30); the same in a new drawing (E-P31) | AUDIT 0; every connection listed by the API on both sides with the written port indices (pipe start/end parts, fitting and valve connections), the curved pipes' bulges and extents as the application's (P08) |
+| every size of `pressure_part_descriptions` at P09's places, in WT01 (E-P32) and in a new drawing (E-P33) | AUDIT 0; the 26 parts listed with their descriptions, ends and positions as P09's, the records equal P09's but for the session counter; extents as P09's (where the application's 12, 16 and 20 inch valves reach to +1 in plan, the written box is symmetric) |
+
+Sizes (sample P10: every elbow, tee and cross size of WT01's part list
+placed by the API, P09 the valves). Within a kind (elbows, tees, crosses,
+valves) every size shares the record's head and end and the definition's
+record but for a few bits; what is the size's own is written from a
+table of numbers and texts:
+
+- the definition's six texts (size, standard, description, size id,
+  family, family id) at fixed places in its text list (elbows 29, 76, 89,
+  103, 110, 117; the others 23, 70, 83, 97, 104, 111) and its own bits in
+  one or two windows of the record (elbows 196-212 and 655-680, the others
+  515-540);
+- the definition's key: a prefix of the size (angle or none, kind, a
+  digit, size, a digit, pressure class), then the standard, the number of
+  ports, the description, size id, family and family id and the catalog's
+  id, each with spaces, dashes and slashes as underscores, and the kind's
+  domain (`Fitting_DomainElbow`, `Fitting_DomainTee`,
+  `Fitting_DomainCross`, `Appurtenance_DomainValve`);
+- the ports (offset, direction, engagement length, outside and nominal
+  diameter, wall thickness, deflection), the reference point, the body's
+  extents and the plan symbol (an arc for elbows, lines for the others).
+
+Written with the table, the 182 records and definitions equal P10's and
+P09's but for the session counter.
+
+| written | result |
+|---|---|
+| WT01 with every fitting and valve size at P10's and P09's places (E-P40); the same in a new drawing (E-P41) | AUDIT 0; the 182 parts listed with their descriptions, positions and extents as the application's own (to the last bit but two rounding) |
+
+Not written: other part kinds of other catalogs (reducers, caps, plugs,
+other valves), the catalog's body solids.
 
 ## 4. Reference check
 
@@ -1282,10 +2159,11 @@ taken from the records and checked bit for bit against them.
 - Profiles with other curve constraints (fixed or floating curves, curves
   by K or through a point), profiles of alignments the application has
   changed.
-- Crossing members on a site (their splits and faces), open lot lines and
-  lot lines with arcs, parcel and feature line styles other than the
+- Alignments and feature lines that meet other members on a site, lot
+  lines meeting where one has an arc, parcel and feature line styles other than the
   defaults;
-  sections, corridors, pipe networks: not written.
+  sections; corridor offset baselines and geometry locks (§3i-a); pipe networks: other families and
+  sizes.
 - Profile views with a vertical scale or style other than the default;
   the graph settings between the named values are constant runs.
 
@@ -1294,19 +2172,92 @@ taken from the records and checked bit for bit against them.
 | kind | read by fields | write | reference check passed | rebuild flag used | blocked by |
 |---|---|---|---|---|---|
 | root tree node | yes | yes | yes (empty root: AUDIT 0) | — | — |
-| COGO points, database, `_All Points` | yes | yes (a new drawing gets §2a) | yes (§4) | not needed (the application draws points from the database) | — |
-| point groups (number lists, elevation comparisons, description patterns) | yes | yes | yes (§4) | not needed (the application lists the written members) | names, full descriptions, exclusions, override settings |
+| COGO points (with names), database, `_All Points` | yes | yes (a new drawing gets §2a) | yes (§4) | not needed (the application draws points from the database) | — |
+| point groups (number lists, elevation comparisons and ranges, description, name and full description patterns, exclusions) | yes | yes | yes (§4) | not needed (the application lists the written members) | number ranges (listed as numbers), override settings |
 | point style, its collection, class and settings nodes | yes | yes, in a drawing without the tree (§2a) | yes (§4) | not needed | — |
 | label styles: label node, point, sample line and profile label roots and default styles, profile label set | partly | yes, the defaults in a new drawing (§2b) | yes (§2b) | not needed | other label roots, styles other than the defaults (the settings are constant runs) |
 | alignments (fixed lines, free arcs and spiral-curve-spirals, siteless) | yes | yes (a new drawing gets §3b) | yes (§4) | not needed (the application solves the stored elements) | other constraints, sites, labels |
 | TIN surfaces (added points) | yes | yes (a new drawing gets §3d) | yes (§4) | not needed (the stored triangulation is drawn; the application rebuilds it after an edit) | other definitions |
 | layout profiles (fixed tangents; free symmetric and asymmetric parabolas, free circular curves) | yes | yes (a new drawing gets §3f) | yes (§4) | not needed (the application solves the stored entities) | fixed and floating curves |
-| sites, alignments and feature lines (arcs, elevation points) on a site | yes | yes (a new drawing gets the node of sites and the default parcel and feature line styles, §2c) | yes (§4) | not needed (the application rewrites the site's cache) | crossing members; containers the application edited after inserting elevation points |
-| parcels inside closed lot lines | yes (number, face, boundary) | yes (§3g) | yes (§3g) | not needed | crossing or touching members, open lot lines, arcs |
+| sites, alignments and feature lines (arcs, elevation points) on a site | yes | yes (a new drawing gets the node of sites and the default parcel and feature line styles, §2c) | yes (§4) | not needed (the application rewrites the site's cache) | alignments or feature lines meeting other members; containers the application edited after inserting elevation points |
+| parcels of closed and open, crossing and touching lot lines, with arcs | yes (number, face, boundary) | yes (§3g) | yes (§3g) | not needed | arcs where lines meet; lot lines meeting alignments or feature lines; the label of a nearly isosceles right triangle; the newest member's point marks 0x10, 0x20 where it meets another |
 | profile views (automatic or user ranges) and their profile label groups | yes (frame) | yes (a new drawing gets the default view style, §3h) | yes (§3h) | not needed (the application recomputes the view from its style) | other styles and vertical scales |
-| corridors (one baseline, one region, unbuilt) | yes | yes, with an assembly of the drawing (§3i) | yes (§3i) | the corridor is written out of date and built by the application's rebuild | assemblies and subassemblies, built results, surfaces, several regions or baselines |
-| sample line groups and two-vertex sample lines | yes | yes, with the drawing's sample line label style (§3j) | yes (§3j) | not needed | lines with more vertices |
+| assemblies and package subassemblies | partly (corridor's group block) | yes (a new drawing gets the default assembly, code set, link and shape styles, §2c) | yes (§3i, §2c) | not needed | — |
+| corridors: baselines along alignments, regions, frequencies, placement flags, added stations, targets (unbuilt) | yes (fields of built ones; names and references of unbuilt ones) | yes, with assemblies of the drawing (a new drawing gets the default corridor style, §2c) | yes (§3i, §2c) | the corridor is written out of date and built by the application's rebuild | see §3i-a |
+| sample line groups and sample lines through two or more vertices | yes | yes, with the drawing's sample line label style (§3j) | yes (§3j) | not needed | lines with all vertices on one side |
 | sections of a TIN surface (unsampled) | yes (geometry once sampled) | yes (§3j) | yes (§3j) | the application samples the source | corridor sources, lines added after sampling |
 | section views of a line (default style, unsampled section) | yes (frame) | yes, with the drawing's section view style or the default one (§3j, §2c) | yes (§3j, §2c) | not needed | sampled sections, several sections |
 | intersections of two crossing roads (the object only) | yes (stations, angles) | yes, with the drawing's intersection style or the default one (§3k, §2c) | yes (§3k, §2c) | not needed | offset alignments, curb returns, corridor regions and locking actions; tee junctions |
-| gradings, networks | partly | no | — | — | not started |
+| gravity pipe networks: every structure and pipe family of the default parts list (its one size each), connections | partly (part positions, pipe ends, connector counts, sizes of older part definitions) | yes (a new drawing gets the default parts list and styles, §3m) | yes (§3m) | not needed (the application recomputes outlines, lengths and extents) | sizes the default parts list does not hold, the catalog's body solids |
+| pressure networks: every pipe, elbow, tee, cross and gate valve size of the default catalog (straight and curved pipes), connections | yes (ports: positions, directions, joint sizes, connections; pipe ends and bulge, part positions and rotations) | yes (a new drawing gets the default pressure part list and styles, §3n) | yes (§3n) | not needed | part kinds of other catalogs, the catalog's body solids |
+| gradings, mass haul | partly (grading criteria, mass haul line and view frame) | no | — | — | no controlled samples (§6a) |
+
+### 6b. Options per kind
+
+What each kind offers in the application and whether acadrust reads and
+writes it. "read" means read field by field; "write" means written from
+named fields and checked in the application (§4 and the sections named).
+Corridors are listed in §3i-a.
+
+| kind | option | read | write | evidence / what blocks it |
+|---|---|---|---|---|
+| COGO points | position, number, raw description, name, styles | yes | yes | §3 |
+| COGO points | point label styles other than the default, user-defined properties | partly (label references) | no | label styles other than §2b are constant runs |
+| point groups | number lists, elevation comparisons and ranges, description, name and full description patterns, exclusions | yes | yes | §3, §4 |
+| point groups | number ranges (`2-6`) | yes | as a number list | the application stores the range as its numbers |
+| point groups | override styles and descriptions per group, AND of several criteria (advanced query) | partly | no | override settings are not mapped field by field (WP10, WG01) |
+| TIN surfaces | points added to the surface | yes | yes | §3c |
+| TIN surfaces | imported points (file), point groups, breaklines, boundaries, contours, edits (add/delete vertex and line, raise, paste, transform) | yes (the definitions are walked; their fields are read for the triangulation) | no | each operation is a definition record and the stored triangulation must honour it; a breakline adds 1744 bits to a 25-point surface (TS00, TS01): the writer would need constrained triangulation and the definition records |
+| alignments | fixed lines, free arcs, spiral-curve-spirals, start station, siteless and on a site | yes | yes | §3a, §3g |
+| alignments | offset alignments (with widenings), curb returns, other types (rail, miscellaneous) | yes (offset parameters and regions, connected alignments, type) | no | an offset alignment is a solved child of its parent with an offset action; not sampled for writing |
+| alignments | lone spirals, other constraints (fixed/floating curves, curves through points), design speeds, station equations | yes (elements, speeds, equations) | no | other element kinds not written |
+| alignments | superelevation | yes (critical stations, lanes-only blocks) | no | the superelevation block is read only |
+| profiles | layout: fixed tangents, free parabolas (symmetric, asymmetric), free circular curves | yes | yes | §3e |
+| profiles | layout: fixed and floating curves, curves by K or through a point | yes | no | other entity kinds (each its own record) |
+| profiles | from a surface (existing ground), superimposed, offset profiles, profiles of corridor feature lines | partly | no | sampled profiles are rebuilt from their source by the application; not sampled for writing |
+| profile views | automatic and user ranges, default style, profile label groups | yes (frame) | yes | §3h |
+| profile views | other styles, vertical scales, stacked views, bands other than the defaults | partly | no | the graph settings between the named values are constant runs |
+| sites | name, description, members | yes | yes | §3g |
+| parcels | closed and open, crossing and touching lot lines, arcs, labels | yes | yes | §3g |
+| parcels | lot lines meeting alignments or feature lines; arcs where lines meet; the newest member's point marks 0x10/0x20 | yes | no | §3g (rule not found) |
+| feature lines | points, elevation points, arcs, on a site | yes | yes | §3g |
+| feature lines | members meeting other members on a site, styles other than the default | yes | no | §3g |
+| sample line groups | lines by station or through vertices on both sides | yes | yes | §3j |
+| sample line groups | lines with all vertices on one side; section sources other than a TIN surface (corridors, corridor surfaces, pipe networks) | yes | no | one-sided lines close with another run (LV03); other sources not sampled |
+| sections | of a TIN surface (unsampled) | yes (geometry once sampled) | yes | §3j |
+| section views | one view of a line, default style | yes (frame) | yes | §3j |
+| section views | group plots (several views at once), several sections in a view, other styles | partly | no | not sampled |
+| assemblies | groups of package subassemblies (offsets, attachments) | partly | yes | §3l, §3i |
+| subassemblies | packages (`pkt`) written by acadrust | yes | yes | §3l |
+| subassemblies | stock subassemblies of the application's library | yes (parameters) | no | their texts carry the library path of the product |
+| corridors | see §3i-a | | | |
+| intersections | two crossing roads (the object) | yes | yes | §3k |
+| intersections | tee junctions, the offset alignments, curb returns, corridor regions and locking actions the command makes | yes | no | the tee sample hangs in the wizard (WI40); the other records are not written |
+| gravity pipe networks | every family of the default parts list (one size each), connections | partly | yes | §3m |
+| gravity pipe networks | sizes the parts list does not hold, the catalog's body solids | partly | no | §3m |
+| pressure networks | every size of the default catalog (straight and curved pipes, elbows, tees, crosses, gate valves), connections | yes | yes | §3n |
+| pressure networks | parts of other catalogs | partly | no | §3n |
+| gradings | criteria, groups, gradings | partly (criteria) | no | §6a |
+| mass haul | line and view | partly | no | §6a |
+| label styles | the defaults of a new drawing (§2b) | partly | yes | §2b |
+| label styles | other styles and roots | partly | no | constant runs |
+
+### 6a. Gradings and mass haul
+
+No sample of the application's own making could be produced for either:
+
+- The programming interfaces create neither: the .NET classes for gradings
+  and grading groups have no create methods, the COM interfaces only read
+  styles and settings, and the mass haul diagram is made by a wizard.
+- Creating a grading group (its command and dialog, with or without a
+  name) ends the application when it runs from a script. Creating a
+  grading on a feature line from a command call with every prompt
+  answered, in a drawing that has a grading group already (a sample from
+  the application's tutorials), opens "Select Grading Group" first; its
+  OK ends the application the same way.
+- A grading record (770 to 998 bits in that tutorial drawing) holds no
+  geometry: it refers to its site and label style and to the site's
+  topology by identifiers. Its faces, daylight and target lines are in the
+  site's topology, computed by the application from the target surface and
+  the criteria, so a grading cannot be written by changing values in a
+  copied record; the writer would have to build that geometry itself.

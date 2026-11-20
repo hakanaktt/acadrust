@@ -57,6 +57,18 @@ pub enum PointQuery {
     /// Points whose raw description matches any of the patterns: `*` any
     /// run, `?` one character, case ignored, over the whole description.
     RawDescription(Vec<String>),
+    /// Points whose full description matches any of the patterns (as for
+    /// raw descriptions). The writer adds no description keys, so a point's
+    /// full description is its raw description.
+    FullDescription(Vec<String>),
+    /// Points whose name matches any of the patterns (as for raw
+    /// descriptions); the query keeps the patterns in lower case.
+    Names(Vec<String>),
+    /// Points whose elevation lies in `[low, high]`.
+    ElevationRange(f64, f64),
+    /// Points the first query selects (every point when `None`) that the
+    /// second does not; neither may be an exclusion itself.
+    Excluding(Option<Box<PointQuery>>, Box<PointQuery>),
 }
 
 /// The point attribute a query compares, as its records store it: a node
@@ -75,12 +87,16 @@ struct Attribute {
 const POINT_NUMBER: Attribute = Attribute { value_type: 1, flags: 0x50, class: 0b000, number: true, id: 19 };
 const ELEVATION: Attribute = Attribute { value_type: 2, flags: 0x50, class: 0b001, number: false, id: 5 };
 const RAW_DESCRIPTION: Attribute = Attribute { value_type: 3, flags: 0x50, class: 0b101, number: false, id: 8 };
+const FULL_DESCRIPTION: Attribute = Attribute { value_type: 4, flags: 0x50, class: 0b010, number: false, id: 8 };
+const NAME: Attribute = Attribute { value_type: 3, flags: 0x10, class: 0b101, number: false, id: 8 };
 
 /// A query's constant.
 enum Constant {
     Number(u32),
     Double(f64),
     Text(String),
+    /// `low-high`, both ends included.
+    Range(f64, f64),
 }
 
 impl Constant {
@@ -89,8 +105,16 @@ impl Constant {
             Constant::Number(n) => n.to_string(),
             Constant::Double(v) => v.to_string(),
             Constant::Text(t) => t.clone(),
+            Constant::Range(a, b) => format!("{a}-{b}"),
         }
     }
+}
+
+/// A query statement: what it includes (every point when `None`) and what
+/// it excludes.
+pub(super) struct Statement {
+    include: Option<Criteria>,
+    exclude: Option<Criteria>,
 }
 
 /// The records of a query: the attribute, the comparison every leaf
@@ -106,8 +130,25 @@ pub(super) struct Criteria {
 const UNSUPPORTED_PATTERN: &[char] = &['#', '@', '.', '~', '[', ']', '`', ','];
 
 impl PointQuery {
+    fn statement(&self) -> Result<Statement, DxfError> {
+        Ok(match self {
+            PointQuery::Excluding(include, exclude) => {
+                let plain = |q: &PointQuery| if matches!(q, PointQuery::Excluding(..)) { Err(invalid("an exclusion cannot hold another")) } else { q.criteria() };
+                Statement { include: include.as_deref().map(plain).transpose()?, exclude: Some(plain(exclude)?) }
+            }
+            q => Statement { include: Some(q.criteria()?), exclude: None },
+        })
+    }
+
     fn criteria(&self) -> Result<Criteria, DxfError> {
         Ok(match self {
+            PointQuery::Excluding(..) => return Err(invalid("an exclusion is a statement")),
+            PointQuery::ElevationRange(a, b) => {
+                if !(a.is_finite() && b.is_finite() && a <= b) {
+                    return Err(invalid("elevation range needs finite ends, low first"));
+                }
+                Criteria { attribute: &ELEVATION, comparison: Comparison::Equal, constants: vec![Constant::Range(*a, *b)] }
+            }
             PointQuery::Numbers(list) => {
                 let mut values = list.clone();
                 values.dedup();
@@ -122,11 +163,17 @@ impl PointQuery {
                 }
                 Criteria { attribute: &ELEVATION, comparison: *c, constants: vec![Constant::Double(*v)] }
             }
-            PointQuery::RawDescription(patterns) => {
+            PointQuery::RawDescription(patterns) | PointQuery::FullDescription(patterns) | PointQuery::Names(patterns) => {
                 if patterns.is_empty() || patterns.iter().any(|p| p.is_empty() || p.contains(UNSUPPORTED_PATTERN)) {
-                    return Err(invalid("description query needs patterns of text, '*' and '?'"));
+                    return Err(invalid("description and name queries need patterns of text, '*' and '?'"));
                 }
-                Criteria { attribute: &RAW_DESCRIPTION, comparison: Comparison::Equal, constants: patterns.iter().map(|p| Constant::Text(p.clone())).collect() }
+                let (attribute, lower) = match self {
+                    PointQuery::RawDescription(_) => (&RAW_DESCRIPTION, false),
+                    PointQuery::FullDescription(_) => (&FULL_DESCRIPTION, false),
+                    _ => (&NAME, true),
+                };
+                let text = |p: &String| Constant::Text(if lower { p.to_lowercase() } else { p.clone() });
+                Criteria { attribute, comparison: Comparison::Equal, constants: patterns.iter().map(text).collect() }
             }
         })
     }
@@ -136,10 +183,13 @@ impl PointQuery {
         match self {
             PointQuery::Numbers(list) => list.contains(&p.number),
             PointQuery::Elevation(c, v) => c.holds(p.position.z, *v),
-            PointQuery::RawDescription(patterns) => {
+            PointQuery::RawDescription(patterns) | PointQuery::FullDescription(patterns) => {
                 let d = p.description.as_deref().unwrap_or("");
                 patterns.iter().any(|q| wildcard(q, d))
             }
+            PointQuery::Names(patterns) => p.name.as_deref().is_some_and(|n| patterns.iter().any(|q| wildcard(q, n))),
+            PointQuery::ElevationRange(a, b) => (*a..=*b).contains(&p.position.z),
+            PointQuery::Excluding(include, exclude) => include.as_ref().map_or(true, |q| q.selects(p)) && !exclude.selects(p),
         }
     }
 }
@@ -276,7 +326,7 @@ fn write_outer_query(doc: &mut CadDocument, handle: Handle, root: Handle, list: 
 
 /// Adds (or replaces) a query statement in the outer query, creating the
 /// outer query when the drawing has none.
-pub(super) fn set_query(doc: &mut CadDocument, title: &str, tag: i32, criteria: Criteria) -> Result<Handle, DxfError> {
+pub(super) fn set_query(doc: &mut CadDocument, title: &str, tag: i32, statement: Statement) -> Result<Handle, DxfError> {
     let root = ensure_civil(doc)?;
     let outer = match root_node(doc, KEY_ALL_POINTS_QUERY) {
         Some(h) => h,
@@ -299,51 +349,93 @@ pub(super) fn set_query(doc: &mut CadDocument, title: &str, tag: i32, criteria: 
             h
         }
     };
-    write_query(doc, handle, outer, tag, title, &criteria)?;
+    write_query(doc, handle, outer, tag, title, &statement)?;
     write_outer_query(doc, outer, root, &list)?;
     Ok(handle)
 }
 
 /// The query of `_All Points`, `(number > 0)`.
-pub(super) fn all_points_query() -> Criteria {
-    Criteria { attribute: &POINT_NUMBER, comparison: Comparison::Greater, constants: vec![Constant::Number(0)] }
+pub(super) fn all_points_query() -> Statement {
+    Statement { include: Some(Criteria { attribute: &POINT_NUMBER, comparison: Comparison::Greater, constants: vec![Constant::Number(0)] }), exclude: None }
 }
 
-/// Query statement `(attribute <comparison> c1 OR attribute <comparison>
-/// c2 OR ...)`.
+/// The bits that close the last node record of the included part when an
+/// excluded part follows (constant in every sample: WQ01, WQ02, WQ04).
+const AND_MARK: &str = "0011111111111111111111111100000000000000000000000001";
+
+/// Attribute id of a range's equal leaf, whose constant is the range text.
+const RANGE_TEXT_ID: i32 = 8;
+
+/// Query statement `(include) AND NOT (exclude)`, either part optional,
+/// each part `(attribute <comparison> c1 OR attribute <comparison> c2 OR
+/// ...)`.
 ///
 /// After the tag: `BL 0, BL 0`, five constant bits, `BL` count of
-/// constants (byte form), seven zero bits; then one record per node in
-/// pre-order: the parentheses, the OR nodes (left-deep), one leaf per
-/// constant. Every record opens with the attribute's header (value type,
-/// flags, 12 zero bits, class). The parentheses add three bits (number
-/// attribute, 1, child is a leaf), the comparison of a leaf child (equal
-/// under an OR) and 15 zero bits; an OR three bits (number attribute, 0,
-/// last), bytes 1 and 3 and seven zero bits; a leaf the number bit, the
+/// constant texts (byte form: the included part's, an empty text when
+/// both parts are present, the excluded part's), seven zero bits; then
+/// the node records: the parentheses and OR nodes (left-deep) of the
+/// included part, those of the excluded part, the leaves of the included
+/// part, those of the excluded part. AND, NOT and the generated
+/// parentheses of a range have no record. Every record opens with the
+/// attribute's header (value type, flags, 12 zero bits, class). The
+/// parentheses add three bits (number attribute, 1, the part has one
+/// constant), the comparison of a single constant (equal for a range or
+/// under an OR) and a byte (0, or 2 under a NOT); an OR three bits
+/// (number attribute, 0, last), bytes 1 and 3. The last node record of
+/// the included part ends with `AND_MARK` when an excluded part follows.
+/// Node records end with seven zero bits. A leaf is the number bit, the
 /// attribute id and, for numbers and elevations, the constant, then seven
-/// zero bits unless it is the last. The node kinds and the constants are
-/// in the texts; a description leaf repeats its pattern there. This
-/// reproduces the `_All Points` query, the number-list queries of WP08 and
-/// WG01 and the elevation and description queries of WQ03 bit for bit.
-fn write_query(doc: &mut CadDocument, handle: Handle, outer: Handle, tag: i32, title: &str, c: &Criteria) -> Result<(), DxfError> {
-    let a = c.attribute;
-    let k = c.constants.len();
-    let (code, op) = c.comparison.code();
+/// zero bits unless it is the last record; a range is three leaves: low
+/// (greater or equal), high (less or equal) and an equal leaf of id 8
+/// whose constant is the range text. The node kinds and the constants are
+/// in the texts; a description leaf and a range repeat their text there.
+/// This reproduces the `_All Points` query, the number-list queries of
+/// WP08 and WG01, the elevation, description, name and full description
+/// queries of WQ03 and the exclusion and range queries of WQ04 bit for bit.
+fn write_query(doc: &mut CadDocument, handle: Handle, outer: Handle, tag: i32, title: &str, st: &Statement) -> Result<(), DxfError> {
+    let parts: Vec<(&Criteria, bool)> = st.include.iter().map(|c| (c, false)).chain(st.exclude.iter().map(|c| (c, true))).collect();
+    let both = parts.len() == 2;
     let byte = |w: &mut DwgMergedWriter, v: u8| bits(w, &format!("{v:08b}"));
     let zeros = |w: &mut DwgMergedWriter, n: usize| bits(w, &"0".repeat(n));
-    let head = |w: &mut DwgMergedWriter| {
-        bits(w, &format!("{:03b}{:08b}{}{:03b}", a.value_type, a.flags, "0".repeat(12), a.class));
-    };
+    let head = |w: &mut DwgMergedWriter, a: &Attribute| bits(w, &format!("{:03b}{:08b}{}{:03b}", a.value_type, a.flags, "0".repeat(12), a.class));
+    let mut texts: Vec<String> = Vec::new();
+    for (c, excluded) in &parts {
+        if *excluded && both {
+            texts.push(String::new());
+        }
+        texts.extend(c.constants.iter().map(Constant::text));
+    }
     let mut strings = vec![title.to_string(), String::new()];
-    strings.extend(c.constants.iter().map(Constant::text));
-    strings.extend(["AeccQueryNodePARENS".into(), String::new()]);
-    strings.extend((1..k).map(|_| "AeccQueryNodeOR".to_string()));
-    for v in &c.constants {
-        strings.extend([op, "AeccQueryNodeATTRID", "", "", "AeccQueryNodeCONST", "", ""].map(String::from));
-        if let Constant::Text(t) = v {
-            strings.push(t.clone());
+    strings.extend(texts.iter().cloned());
+    if both {
+        strings.push("AeccQueryNodeAND".into());
+    }
+    let leaf_texts = |strings: &mut Vec<String>, op: &str| strings.extend([op, "AeccQueryNodeATTRID", "", "", "AeccQueryNodeCONST", "", ""].map(String::from));
+    for (c, excluded) in &parts {
+        if *excluded {
+            strings.extend(["AeccQueryNodeNOT".into(), String::new()]);
+        }
+        let op = c.comparison.code().1;
+        strings.extend(["AeccQueryNodePARENS".into(), String::new()]);
+        strings.extend((1..c.constants.len()).map(|_| "AeccQueryNodeOR".to_string()));
+        for v in &c.constants {
+            match v {
+                Constant::Range(..) => {
+                    strings.extend(["AeccQueryNodeGENERATED_PARENS".into(), String::new(), "AeccQueryNodeAND".into()]);
+                    leaf_texts(&mut strings, "AeccQueryNodeGTE");
+                    leaf_texts(&mut strings, "AeccQueryNodeLTE");
+                    leaf_texts(&mut strings, "AeccQueryNodeEQ");
+                    strings.push(v.text());
+                }
+                Constant::Text(t) => {
+                    leaf_texts(&mut strings, op);
+                    strings.push(t.clone());
+                }
+                _ => leaf_texts(&mut strings, op),
+            }
         }
     }
+    let leaves: usize = parts.iter().flat_map(|(c, _)| c.constants.iter()).map(|v| if matches!(v, Constant::Range(..)) { 3 } else { 1 }).sum();
     put_object(
         doc,
         "AECC_QUERY_STATEMENT",
@@ -355,34 +447,64 @@ fn write_query(doc: &mut CadDocument, handle: Handle, outer: Handle, tag: i32, t
             w.write_bit_long(0);
             w.write_bit_long(0);
             bits(w, "01000");
-            bl_byte(w, k as u8);
+            bl_byte(w, texts.len() as u8);
             zeros(w, 7);
-            head(w);
-            w.write_bit(a.number);
-            w.write_bit(true);
-            w.write_bit(k == 1);
-            byte(w, if k == 1 { code } else { Comparison::Equal.code().0 });
-            zeros(w, 15);
-            for j in 1..k {
-                head(w);
-                w.write_bit(a.number);
-                w.write_bit(false);
-                w.write_bit(j == k - 1);
-                byte(w, 1);
-                byte(w, 3);
-                zeros(w, 7);
-            }
-            for (i, v) in c.constants.iter().enumerate() {
-                head(w);
-                w.write_bit(a.number);
-                w.write_bit_long(a.id);
-                match v {
-                    Constant::Number(n) => w.write_bit_long(*n as i32),
-                    Constant::Double(d) => w.write_bit_double(*d),
-                    Constant::Text(_) => {}
-                }
-                if i + 1 < k {
+            for (c, excluded) in &parts {
+                let a = c.attribute;
+                let k = c.constants.len();
+                let close = |w: &mut DwgMergedWriter, last: bool| {
+                    if last && both && !excluded {
+                        bits(w, AND_MARK);
+                    }
                     zeros(w, 7);
+                };
+                head(w, a);
+                w.write_bit(a.number);
+                w.write_bit(true);
+                w.write_bit(k == 1);
+                let single = match c.constants.first() {
+                    Some(Constant::Range(..)) | None => Comparison::Equal,
+                    _ => c.comparison,
+                };
+                byte(w, if k == 1 { single.code().0 } else { Comparison::Equal.code().0 });
+                byte(w, if *excluded { 2 } else { 0 });
+                close(w, k == 1);
+                for j in 1..k {
+                    head(w, a);
+                    w.write_bit(a.number);
+                    w.write_bit(false);
+                    w.write_bit(j == k - 1);
+                    byte(w, 1);
+                    byte(w, 3);
+                    close(w, j == k - 1);
+                }
+            }
+            let mut left = leaves;
+            for (c, _) in &parts {
+                let a = c.attribute;
+                let mut leaf = |w: &mut DwgMergedWriter, id: i32, value: Option<&Constant>| {
+                    head(w, a);
+                    w.write_bit(a.number);
+                    w.write_bit_long(id);
+                    match value {
+                        Some(Constant::Number(n)) => w.write_bit_long(*n as i32),
+                        Some(Constant::Double(d)) => w.write_bit_double(*d),
+                        _ => {}
+                    }
+                    left -= 1;
+                    if left > 0 {
+                        zeros(w, 7);
+                    }
+                };
+                for v in &c.constants {
+                    match v {
+                        Constant::Range(lo, hi) => {
+                            leaf(w, a.id, Some(&Constant::Double(*lo)));
+                            leaf(w, a.id, Some(&Constant::Double(*hi)));
+                            leaf(w, RANGE_TEXT_ID, None);
+                        }
+                        v => leaf(w, a.id, Some(v)),
+                    }
                 }
             }
         },
@@ -401,23 +523,93 @@ fn read_query(doc: &CadDocument, query: Handle) -> Option<PointQuery> {
     b.skip(5)?;
     let k = usize::try_from(b.bit_long()?).ok().filter(|k| *k > 0)?;
     b.skip(7)?;
-    let value_type = b.bits_value(3)?;
-    let flags = b.bits_value(8)?;
     let s = o.decode().strings;
-    let values = s.get(2..2 + k)?;
-    let nodes: Vec<&String> = s.get(2 + k..)?.iter().filter(|t| t.starts_with("AeccQueryNode")).collect();
-    let comparison = Comparison::ALL.into_iter().find(|c| nodes.iter().any(|t| *t == c.code().1))?;
-    // PARENS, k - 1 ORs, then per leaf the comparison, ATTRID and CONST.
-    let mut expected = vec!["AeccQueryNodePARENS"];
-    expected.extend((1..k).map(|_| "AeccQueryNodeOR"));
-    for _ in 0..k {
-        expected.extend([comparison.code().1, "AeccQueryNodeATTRID", "AeccQueryNodeCONST"]);
+    let texts = s.get(2..2 + k)?;
+    let nodes: Vec<&str> = s.get(2 + k..)?.iter().map(String::as_str).filter(|t| t.starts_with("AeccQueryNode")).collect();
+    let (both, mut rest) = match nodes.first()? {
+        &"AeccQueryNodeAND" => (true, &nodes[1..]),
+        _ => (false, &nodes[..]),
+    };
+    // A part: PARENS, its ORs, then per constant the comparison, ATTRID and
+    // CONST, or for a range GENERATED_PARENS, AND and three such leaves.
+    // Returns the comparison, which constants are ranges and the nodes left.
+    let part = |nodes: &[&str]| -> Option<(Comparison, Vec<bool>, usize)> {
+        (nodes.first()? == &"AeccQueryNodePARENS").then_some(())?;
+        let ors = nodes[1..].iter().take_while(|t| **t == "AeccQueryNodeOR").count();
+        let mut at = 1 + ors;
+        let mut comparison = None;
+        let mut ranges = Vec::new();
+        for _ in 0..=ors {
+            if nodes.get(at) == Some(&"AeccQueryNodeGENERATED_PARENS") {
+                let want = ["AeccQueryNodeAND", "AeccQueryNodeGTE", "AeccQueryNodeATTRID", "AeccQueryNodeCONST", "AeccQueryNodeLTE", "AeccQueryNodeATTRID", "AeccQueryNodeCONST", "AeccQueryNodeEQ", "AeccQueryNodeATTRID", "AeccQueryNodeCONST"];
+                (nodes.get(at + 1..at + 11)? == want).then_some(())?;
+                at += 11;
+                ranges.push(true);
+            } else {
+                let c = Comparison::ALL.into_iter().find(|c| nodes.get(at) == Some(&c.code().1))?;
+                (comparison.map_or(true, |p| p == c) && nodes.get(at + 1..at + 3)? == ["AeccQueryNodeATTRID", "AeccQueryNodeCONST"]).then_some(())?;
+                comparison = Some(c);
+                at += 3;
+                ranges.push(false);
+            }
+        }
+        Some((comparison.unwrap_or(Comparison::Equal), ranges, at))
+    };
+    let mut parts = Vec::new();
+    if rest.first() != Some(&"AeccQueryNodeNOT") {
+        let (c, r, used) = part(rest)?;
+        parts.push((false, c, r));
+        rest = &rest[used..];
     }
-    (nodes.len() == expected.len() && nodes.iter().zip(&expected).all(|(a, b)| a == b)).then_some(())?;
-    match (value_type, flags, comparison) {
-        (1, 0x50, Comparison::Equal) => Some(PointQuery::Numbers(values.iter().map(|t| t.parse().ok()).collect::<Option<_>>()?)),
-        (2, 0x50, c) if k == 1 => Some(PointQuery::Elevation(c, values[0].parse().ok()?)),
-        (3, 0x50, Comparison::Equal) => Some(PointQuery::RawDescription(values.to_vec())),
+    if rest.first() == Some(&"AeccQueryNodeNOT") {
+        let (c, r, used) = part(&rest[1..])?;
+        parts.push((true, c, r));
+        rest = &rest[1 + used..];
+    }
+    (rest.is_empty() && both == (parts.len() == 2)).then_some(())?;
+    // The attribute of each part, from the header of its parentheses
+    // record (the included part's node records come first).
+    let mut texts = texts.iter();
+    let mut built = Vec::new();
+    for (i, (excluded, comparison, ranges)) in parts.iter().enumerate() {
+        let head = b.pos;
+        let value_type = b.bits_value(3)?;
+        let flags = b.bits_value(8)?;
+        if i == 0 && parts.len() == 2 {
+            // Skip the included part's node records to the next part's.
+            b.pos = head;
+            for j in 0..ranges.len() {
+                b.skip(26 + 3 + 16)?;
+                if j + 1 == ranges.len() {
+                    b.skip(AND_MARK.len())?;
+                }
+                b.skip(7)?;
+            }
+        }
+        if *excluded && parts.len() == 2 {
+            (texts.next()?.is_empty()).then_some(())?;
+        }
+        let values: Vec<String> = texts.by_ref().take(ranges.len()).cloned().collect();
+        let q = match (value_type, flags, comparison, ranges.as_slice()) {
+            (2, 0x50, _, [true]) => {
+                let t = &values[0];
+                let cut = t.char_indices().skip(1).find(|(_, c)| *c == '-')?.0;
+                PointQuery::ElevationRange(t[..cut].parse().ok()?, t[cut + 1..].parse().ok()?)
+            }
+            _ if ranges.iter().any(|r| *r) => return None,
+            (1, 0x50, Comparison::Equal, _) => PointQuery::Numbers(values.iter().map(|t| t.parse().ok()).collect::<Option<_>>()?),
+            (2, 0x50, c, [false]) => PointQuery::Elevation(*c, values[0].parse().ok()?),
+            (3, 0x50, Comparison::Equal, _) => PointQuery::RawDescription(values),
+            (3, 0x10, Comparison::Equal, _) => PointQuery::Names(values),
+            (4, 0x50, Comparison::Equal, _) => PointQuery::FullDescription(values),
+            _ => return None,
+        };
+        built.push((*excluded, q));
+    }
+    match built.as_slice() {
+        [(false, q)] => Some(q.clone()),
+        [(true, q)] => Some(PointQuery::Excluding(None, Box::new(q.clone()))),
+        [(false, a), (true, x)] => Some(PointQuery::Excluding(Some(Box::new(a.clone())), Box::new(x.clone()))),
         _ => None,
     }
 }
@@ -557,7 +749,7 @@ pub fn add_point_group(doc: &mut CadDocument, name: &str, description: Option<&s
 /// the query selects now (points added or changed later join or leave it
 /// as the query says).
 pub fn add_point_group_query(doc: &mut CadDocument, name: &str, description: Option<&str>, query: &PointQuery) -> Result<Handle, DxfError> {
-    let criteria = query.criteria()?;
+    let criteria = query.statement()?;
     let s = support(doc)?;
     let list = entries(doc, s.group_node).ok_or_else(|| invalid("point group node cannot be read"))?;
     if name.is_empty() || list.iter().any(|e| e.name.eq_ignore_ascii_case(name)) {
@@ -585,7 +777,7 @@ pub fn set_point_group(doc: &mut CadDocument, group: Handle, name: &str, descrip
 /// Renames a point group written by [`add_point_group_query`] and gives it
 /// a new query.
 pub fn set_point_group_query(doc: &mut CadDocument, group: Handle, name: &str, description: Option<&str>, query: &PointQuery) -> Result<(), DxfError> {
-    let criteria = query.criteria()?;
+    let criteria = query.statement()?;
     let s = support(doc)?;
     let mut list = entries(doc, s.group_node).ok_or_else(|| invalid("point group node cannot be read"))?;
     let at = list.iter().position(|e| e.handle == group).filter(|_| group != s.all_points).ok_or_else(|| invalid("handle is not a named point group"))?;
@@ -601,7 +793,7 @@ pub fn set_point_group_query(doc: &mut CadDocument, group: Handle, name: &str, d
 }
 
 #[allow(clippy::too_many_arguments)]
-fn write_point_group(doc: &mut CadDocument, s: &Support, handle: Handle, id: i32, serial: i32, name: &str, description: &str, query: &PointQuery, criteria: Criteria) -> Result<(), DxfError> {
+fn write_point_group(doc: &mut CadDocument, s: &Support, handle: Handle, id: i32, serial: i32, name: &str, description: &str, query: &PointQuery, criteria: Statement) -> Result<(), DxfError> {
     let (numbers, extents) = members(&super::points::cogo_points(doc), query);
     let query = set_query(doc, &format!("Point Group Query - {name}"), id.wrapping_add(1), criteria)?;
     let d = s.defaults;

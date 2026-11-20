@@ -134,6 +134,45 @@ pub(super) fn class_data(data: &[u8], start: usize, end: usize) -> Option<usize>
     Some(layout(data, start, end)?.end)
 }
 
+/// Default and code entries of a code set style
+/// (`AECC_ROADWAY_STYLE_SET`), from its class data:
+///
+/// ```text
+/// 6 x { BL kind, BL 0, BL 0 }                 defaults: uncoded markers,
+///                                             links, shapes, then markers,
+///                                             links, shapes of codes the
+///                                             set does not list
+/// 3 x { BL n, n x { BL kind, BL 0, BL 0 } }   the listed point, link and
+///                                             area codes
+/// ```
+///
+/// `kind` is 1 for a point, 2 for a link and 3 for an area. Every entry
+/// has a group of five references (material, style, label style, feature
+/// line style, blank) after the record's owned children, in entry order,
+/// and every listed code four texts (code, name, description, blank) at
+/// the end of the text stream.
+pub(super) fn code_set_entries(data: &[u8], start: usize, end: usize) -> Option<(usize, usize)> {
+    let mut bits = Bits::new(data, class_data(data, start, end)?, end);
+    let mut entry = |bits: &mut Bits| -> Option<()> {
+        (1..=3).contains(&bits.bit_long()?).then_some(())?;
+        bits.bit_long()?;
+        bits.bit_long()?;
+        Some(())
+    };
+    for _ in 0..6 {
+        entry(&mut bits)?;
+    }
+    let mut codes = 0;
+    for _ in 0..3 {
+        let n = usize::try_from(bits.bit_long()?).ok().filter(|n| n * 6 <= bits.remaining())?;
+        for _ in 0..n {
+            entry(&mut bits)?;
+        }
+        codes += n;
+    }
+    Some((6, codes))
+}
+
 /// `BL 32`, 3 bits, then the component lists; the components and the bit
 /// after them.
 fn component_lists(data: &[u8], pos: usize, end: usize) -> Option<(Vec<(bool, Color, i16, f64)>, usize)> {

@@ -6637,6 +6637,7 @@ mod proxy_entity_layout_tests {
                 payload: ProxyPayload::from_bytes(&DATA),
                 text_payload: ProxyPayload::default(),
                 object_ids: Vec::new(),
+                dxf_data: Vec::new(),
             }),
         }
     }
