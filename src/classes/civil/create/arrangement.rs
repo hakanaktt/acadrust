@@ -637,10 +637,8 @@ fn label_point(s: &State, segments: &[(usize, usize, f64)], loops: &[Vec<Half>])
     let c = (lo + hi) * 0.5;
     let pieces = face_loops(s, segments, loops);
     let scale = (hi - lo).length().max(1.0);
-    if !face_holds(&pieces, c) {
-        if ends.len() == 3 && ends.iter().all(|e| e.2 == 0.0) {
-            return (ends[0].0 + ends[1].0 + ends[2].0) * (1.0 / 3.0);
-        }
+    let triangle = ends.len() == 3 && ends.iter().all(|e| e.2 == 0.0);
+    if !face_holds(&pieces, c) && !triangle {
         let halves: Vec<(Vector2, Vector2)> = pieces.iter().flatten().copied().collect();
         let mut xs: Vec<f64> = halves.iter().filter(|(a, b)| (a.y <= c.y) != (b.y <= c.y)).map(|(a, b)| a.x + (c.y - a.y) * (b.x - a.x) / (b.y - a.y)).collect();
         xs.sort_by(f64::total_cmp);
@@ -649,6 +647,7 @@ fn label_point(s: &State, segments: &[(usize, usize, f64)], loops: &[Vec<Half>])
     }
     let depth = |p: Vector2| if face_holds(&pieces, p) { distance(&pieces, p) } else { -1.0 };
     let tol = 1e-12 * scale;
+    let slide = || -> (f64, Vector2) {
     let mut best: Option<(f64, Vector2)> = None;
     for axis in [Vector2::new(1.0, 0.0), Vector2::new(0.0, 1.0)] {
         let (from, to) = if axis.x != 0.0 { (lo.x - c.x, hi.x - c.x) } else { (lo.y - c.y, hi.y - c.y) };
@@ -673,7 +672,7 @@ fn label_point(s: &State, segments: &[(usize, usize, f64)], loops: &[Vec<Half>])
         // The nearest point reaching it, rightward or upward first.
         if reaches(0.0) {
             // The middle is as deep as its line gets: it stays (WP14).
-            return c;
+            return (depth(c), c);
         }
         let t = {
             let near = samples
@@ -700,5 +699,64 @@ fn label_point(s: &State, segments: &[(usize, usize, f64)], loops: &[Vec<Half>])
             best = Some((top, at(t)));
         }
     }
-    best.map_or(c, |b| b.1)
+    best.unwrap_or((depth(c), c))
+    };
+    let (slid_depth, slid) = slide();
+    if !triangle {
+        return slid;
+    }
+    // A triangle's label: the middle of its largest angle's bisector, up
+    // to the opposite side, unless the slide gets nearly as deep without
+    // passing it (thin triangles; WPLA, WPLB, WPLC).
+    // ponytail: the 0.94 is fitted to the samples; nearly isosceles right
+    // triangles (WPLC leg50 to leg65 but leg60) take another point the
+    // rule misses.
+    let p = [ends[0].0, ends[1].0, ends[2].0];
+    let angle = |i: usize| {
+        let (a, b, c) = (p[i], p[(i + 1) % 3], p[(i + 2) % 3]);
+        let (u, v) = (b - a, c - a);
+        (u.dot(&v) / (u.length() * v.length())).clamp(-1.0, 1.0).acos()
+    };
+    let i = (0..3).max_by(|x, y| angle(*x).total_cmp(&angle(*y))).unwrap_or(0);
+    let (a, b, cc) = (p[i], p[(i + 1) % 3], p[(i + 2) % 3]);
+    let (ab, ac) = ((b - a).length(), (cc - a).length());
+    let foot = (b * ac + cc * ab) * (1.0 / (ab + ac));
+    let bisector = (a + foot) * 0.5;
+    // A right isosceles triangle with legs along the axes (a square cut
+    // corner to corner) goes to the middle of the vertical run through the
+    // bisector's middle, halfway to the extents' middle (WPLA, WPLB, WP19,
+    // WPLC leg60).
+    let (u, v) = (b - a, cc - a);
+    let along = |w: Vector2| w.x.abs() <= 1e-9 * scale || w.y.abs() <= 1e-9 * scale;
+    if (ab - ac).abs() <= 1e-9 * scale && u.dot(&v).abs() <= 1e-9 * scale * scale && along(u) && along(v) {
+        return Vector2::new(bisector.x, (bisector.y + c.y) / 2.0);
+    }
+    let bisector_depth = depth(bisector);
+    if slid_depth >= 0.94 * bisector_depth && slid_depth <= bisector_depth { slid } else { bisector }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn label(points: &[(f64, f64)]) -> Vector2 {
+        let path: Vec<(Vector2, Option<f64>)> = points.iter().map(|p| (Vector2::new(p.0, p.1), None)).collect();
+        let z = vec![0.0; path.len()];
+        build(&[Input { path: &path, elevations: &z, closed: true }]).unwrap().faces[1].label
+    }
+
+    #[test]
+    fn triangle_labels() {
+        let near = |p: Vector2, x: f64, y: f64| (p.x - x).abs() < 1e-9 && (p.y - y).abs() < 1e-9;
+        // The middle of the right angle's bisector (WPLC base, any order).
+        assert!(near(label(&[(0.0, 0.0), (60.0, 0.0), (0.0, 40.0)]), 12.0, 12.0));
+        assert!(near(label(&[(0.0, 40.0), (60.0, 0.0), (0.0, 0.0)]), 12.0, 12.0));
+        // A thin one slides (WPLC leg20).
+        let p = label(&[(0.0, 0.0), (60.0, 0.0), (0.0, 20.0)]);
+        assert!((p.y - 10.0).abs() < 1e-9 && (p.x - 7.2076).abs() < 1e-4);
+        // A square cut corner to corner (WPLA, WP19).
+        assert!(near(label(&[(0.0, 0.0), (0.0, 50.0), (50.0, 50.0)]), 12.5, 31.25));
+        // WP14's triangle keeps its middle.
+        assert!(near(label(&[(0.0, 100.0), (60.0, 100.0), (30.0, 160.0)]), 30.0, 130.0));
+    }
 }

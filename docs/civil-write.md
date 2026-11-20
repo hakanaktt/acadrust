@@ -876,10 +876,19 @@ included), to the nearest point as far from the boundary as that line
 gets, rightward or upward on a tie. The middle stays where one of the
 two lines gets no deeper there (rectangles, WP14's triangle); a loose
 line pushes it aside (WP10), a notch up (WP18), a diagonal side to where
-the side stops mattering (WP19). Where the middle is off the face the
-writer takes a triangle's centroid or the middle of the widest run of the
-horizontal line through it; the application takes another inner point
-there (WP17, WP19's second parcel), which gives the parcel the same face.
+the side stops mattering (WP19). A triangle's label is the middle of its
+largest angle's bisector, from the vertex to the opposite side, whatever
+the triangle's place, turn, vertex order or size (samples WPLA, WPLB,
+WPLC: 39 triangles made from one, changing one property at a time),
+except where the slide gets nearly as deep without passing it (its
+depth at least 0.94 of the bisector middle's: thin triangles, WP14's)
+and for a right isosceles triangle with legs along the axes (a square
+cut corner to corner: the middle of the vertical run through the
+bisector's middle, halfway to the extents' middle). Right triangles near
+isosceles (legs 60 and 50 to 65) take a point neither rule gives (x a
+quarter of the leg, y between 16 and 25.6): not written. Where another
+face's middle is off it the writer takes the middle of the widest run of
+the horizontal line through it.
 The node records follow the application's hash order: eight
 buckets by id mod 8, each in id order (WP15, WP16: 30 and 50 nodes).
 
@@ -907,7 +916,24 @@ each): written for the same lines, node ids, coordinates, faces of every
 segment, face entries, face flags and the tail equal the samples'; only
 the newest member's point flags 0x10 and 0x20 differ (the application's
 marks from walking the faces; the writer keeps the rule of members that
-meet nothing). Checks E-X1 (WP20's lines), E-X2 (WP11's and a disjoint
+meet nothing). The application's marks on the newest member's points
+(each point's mark is its segment's; faces left, right):
+
+| sample | segments: faces, marks |
+|---|---|
+| WP04 | (1,1) 0x30, (2,3) 0x10, (1,1) 0x30 |
+| WP09 | (2,3) 0x10 |
+| WP10 | (1,1) none, (2,2) 0x30 |
+| WP08 | (2,1) 0x30, (2,1) 0x20 |
+| WP18 | (1,1) 0x30, (2,3) 0x30, (2,3) 0x30, (2,3) 0x10, (1,1) 0x30 |
+| WP19 | (1,1) 0x30, (2,3) 0x10, (1,1) 0x30 |
+| WP20 | (1,1) 0x30, (2,3) 0x30, (1,4) 0x30 three times, (5,3) 0x20, (1,1) 0x30 |
+| WP11 (third member) | (4,2) 0x10, (5,3) 0x10 |
+
+The segment that closes a face mostly keeps one mark, the others both,
+but WP10's first segment has none and WP20's second (which joins two
+sides of the rectangle) both; no rule over faces, order or new faces fits
+every sample. The application opens the written drawings either way. Checks E-X1 (WP20's lines), E-X2 (WP11's and a disjoint
 rectangle), E-X3 (a diagonal through a corner, then a line crossing the
 same side twice whose corner lies on the diagonal) and E-X4 (two open
 lines closing a loop and a loose line into it), written into a new
@@ -1953,7 +1979,7 @@ taken from the records and checked bit for bit against them.
 | TIN surfaces (added points) | yes | yes (a new drawing gets §3d) | yes (§4) | not needed (the stored triangulation is drawn; the application rebuilds it after an edit) | other definitions |
 | layout profiles (fixed tangents; free symmetric and asymmetric parabolas, free circular curves) | yes | yes (a new drawing gets §3f) | yes (§4) | not needed (the application solves the stored entities) | fixed and floating curves |
 | sites, alignments and feature lines (arcs, elevation points) on a site | yes | yes (a new drawing gets the node of sites and the default parcel and feature line styles, §2c) | yes (§4) | not needed (the application rewrites the site's cache) | alignments or feature lines meeting other members; containers the application edited after inserting elevation points |
-| parcels of closed and open, crossing and touching lot lines, with arcs | yes (number, face, boundary) | yes (§3g) | yes (§3g) | not needed | arcs where lines meet; lot lines meeting alignments or feature lines |
+| parcels of closed and open, crossing and touching lot lines, with arcs | yes (number, face, boundary) | yes (§3g) | yes (§3g) | not needed | arcs where lines meet; lot lines meeting alignments or feature lines; the label of a nearly isosceles right triangle; the newest member's point marks 0x10, 0x20 where it meets another |
 | profile views (automatic or user ranges) and their profile label groups | yes (frame) | yes (a new drawing gets the default view style, §3h) | yes (§3h) | not needed (the application recomputes the view from its style) | other styles and vertical scales |
 | assemblies and package subassemblies | partly (corridor's group block) | yes (a new drawing gets the default assembly, code set, link and shape styles, §2c) | yes (§3i, §2c) | not needed | — |
 | corridors (one baseline, one region, unbuilt) | yes | yes, with an assembly of the drawing (a new drawing gets the default corridor style, §2c) | yes (§3i, §2c) | the corridor is written out of date and built by the application's rebuild | built results, surfaces, several regions or baselines |
