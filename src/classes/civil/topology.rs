@@ -85,6 +85,8 @@ pub struct Topology {
     pub next_key: i32,
     /// The flags of the container's first (outside) face, 0 without faces.
     pub outside_face_flags: i32,
+    /// Each edge's flags (bit 0 a closed edge).
+    pub edge_flags: Vec<i32>,
 }
 
 impl Topology {
@@ -177,7 +179,7 @@ fn node_list(data: &[u8], pos: usize, end: usize) -> Option<(Vec<(i32, Vector2, 
     Some((nodes, bits.pos, next_free))
 }
 
-fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> Option<(Vec<Vec<TopologyVertex>>, usize)> {
+fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> Option<(Vec<Vec<TopologyVertex>>, Vec<i32>, usize)> {
     let mut bits = Bits::new(data, pos, end);
     let next_free = bits.bit_long()?;
     let slots = bits.bit_long()?;
@@ -185,6 +187,7 @@ fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> 
         return None;
     }
     let mut out = Vec::new();
+    let mut all_flags = Vec::new();
     for _ in 0..slots {
         // A member that left keeps its slot as a lone 2.
         match bits.bit_long()? {
@@ -198,7 +201,8 @@ fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> 
         (1..next_free).contains(&id).then_some(())?;
         // Edge flags: bit 1 marks a closed edge (a lot line around a
         // parcel), whose last vertex starts the segment back to the first.
-        let closed = bits.bit_long()? & 1 != 0;
+        let edge_flags = bits.bit_long()?;
+        let closed = edge_flags & 1 != 0;
         // An edge can be left with no vertices; it keeps its place.
         let n = bits.bit_long()?;
         if !(0..=100_000).contains(&n) || bits.bit_long()? != 0 {
@@ -248,8 +252,9 @@ fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> 
             (bits.bit_long()? == 0).then_some(())?;
         }
         out.push(run);
+        all_flags.push(edge_flags);
     }
-    (!out.is_empty()).then_some((out, bits.pos))
+    (!out.is_empty()).then_some((out, all_flags, bits.pos))
 }
 
 /// The flags of the first face of the face list at `pos`: `BL next free
@@ -278,9 +283,10 @@ fn outside_face_flags(data: &[u8], pos: usize, end: usize) -> Option<i32> {
 pub(super) fn topology(data: &[u8], start: usize, end: usize) -> Option<Topology> {
     let read = |pos: usize, next_key: i32| -> Option<Topology> {
         let (nodes, after, next_node) = node_list(data, pos, end)?;
-        let (edges, faces) = edges(data, after, end, &nodes)?;
+        let (edges, edge_flags, faces) = edges(data, after, end, &nodes)?;
         Some(Topology {
             edges,
+            edge_flags,
             next_node,
             next_key,
             outside_face_flags: outside_face_flags(data, faces, end).unwrap_or(0),

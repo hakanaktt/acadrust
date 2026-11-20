@@ -178,6 +178,20 @@ pub(super) struct Member {
     /// Node ids and elevation point keys the container gave the points
     /// (0, or none listed, for a point that gets the next free one).
     ids: Vec<(i32, i32)>,
+    /// What a container read gave the member's edge besides.
+    read: Option<ReadEdge>,
+}
+
+/// What a container read gave a member's edge: its flags, each of the
+/// member's points' flags and the nodes other members' crossings added to
+/// it (point, id, flags). The application's marks no rule here reproduces
+/// are kept: edge flag 0x800 and the last point's flag 8 with it (WF04),
+/// the newest member's point flags 0x10 and 0x20 while it is the newest
+/// (WP08, WP09) and those of the nodes crossings added (WP04, WP05).
+pub(super) struct ReadEdge {
+    flags: i32,
+    points: Vec<i32>,
+    inserted: Vec<(Vector2, i32, i32)>,
 }
 
 /// What a container read keeps when written again: its next free node id
@@ -247,6 +261,10 @@ const LOT_LINE_EDGE: i32 = 0x30;
 const CROSSED_EDGE: i32 = 0x80;
 /// Point flag of a point on a node an earlier member made (WP08).
 const SHARED_NODE: i32 = 0x80_0000;
+/// The edge flag and point flags a container read keeps (see
+/// [`ReadEdge`]).
+const READ_EDGE: i32 = 0x800;
+const READ_POINT: i32 = 0x30;
 
 /// The site's container (`AECC_FEATURE_STYLE` owned by the site): the
 /// topology of its members, each an edge through its own nodes, and the
@@ -318,6 +336,13 @@ pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handl
         for (i, v) in own.enumerate() {
             let id = m.ids.get(i).map_or(0, |x| x.0);
             if id > 0 {
+                node_ids[v.node as usize - 1] = id;
+            }
+        }
+        // Nodes other members' crossings added keep the ids read.
+        for v in edge.vertices.iter().filter(|v| v.inserted) {
+            let p = arrangement.nodes[v.node as usize - 1].0;
+            if let Some(&(_, id, _)) = m.read.iter().flat_map(|r| &r.inserted).find(|(q, _, _)| q.distance(&p) <= 1e-9) {
                 node_ids[v.node as usize - 1] = id;
             }
         }
@@ -408,7 +433,8 @@ pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handl
                     MemberKind::Alignment => ALIGNMENT_EDGE,
                     MemberKind::FeatureLine => FEATURE_LINE_EDGE,
                     MemberKind::LotLine { closed } => LOT_LINE_EDGE | closed as i32,
-                } | if edge.crossed { CROSSED_EDGE } else { 0 };
+                } | if edge.crossed { CROSSED_EDGE } else { 0 }
+                    | m.read.as_ref().map_or(0, |r| r.flags & READ_EDGE);
                 for v in [0, e as i32 + 1, flags, n as i32, 0] {
                     w.write_bit_long(v);
                 }
@@ -416,6 +442,18 @@ pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handl
                 let keys: Vec<i32> = member_keys.iter().copied().filter(|k| *k != 0).collect();
                 let mut own = 0;
                 for (i, v) in edge.vertices.iter().enumerate() {
+                    let read = m.read.as_ref().and_then(|r| {
+                        if v.inserted {
+                            let p = a.nodes[v.node as usize - 1].0;
+                            r.inserted.iter().find(|(q, _, _)| q.distance(&p) <= 1e-9).map(|x| x.2)
+                        } else {
+                            r.points.get(own).copied()
+                        }
+                    });
+                    // The newest member's points and the nodes crossings
+                    // added keep the marks read (WP05: an inserted node of
+                    // the member before the newest keeps 0x10).
+                    let marks = read.filter(|_| last_member || v.inserted).map(|f| f & READ_POINT);
                     let elevation_point = !v.inserted && m.elevation_points[own];
                     own += !v.inserted as usize;
                     let last = i + 1 == n && !closed;
@@ -423,7 +461,9 @@ pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handl
                     let follows = i + 2 < n || (closed && i + 1 < n) || !last_member;
                     let shared = if v.shared { SHARED_NODE } else { 0 };
                     let flags = if last {
-                        10 | shared
+                        (if m.read.as_ref().is_some_and(|r| r.flags & READ_EDGE != 0) { 2 | read.unwrap_or(10) & 8 } else { 10 }) | shared
+                    } else if let Some(marks) = marks {
+                        (if elevation_point { 0x40_0400 } else if v.inserted { 0x400 } else { 2 }) | marks | if i == 0 && edge.loose_start { 0x80 } else { 0 } | if arc.is_some() { ARC_EDGE } else { 0 } | shared
                     } else {
                         (if elevation_point { 0x40_0400 } else if v.inserted { 0x400 } else { 2 }) | if follows { 0x30 } else if closed { 0x20 } else { 0 } | if i == 0 && edge.loose_start { 0x80 } else { 0 } | if arc.is_some() { ARC_EDGE } else { 0 } | shared
                     };
@@ -480,12 +520,12 @@ fn members_of(doc: &mut CadDocument, site: Handle) -> Result<(Handle, Vec<Member
     let o = object(doc, container).ok_or_else(refused)?.clone();
     let refs = o.typed_handles();
     let style = refs.last().map(|r| r.0).ok_or_else(refused)?;
-    let (edges, next) = if refs.len() == 1 {
-        (Vec::new(), NextIds::default())
+    let (edges, edge_flags, next) = if refs.len() == 1 {
+        (Vec::new(), Vec::new(), NextIds::default())
     } else {
         let t = o.topology().ok_or_else(refused)?;
         let edited = t.outside_face_flags != 0 && t.outside_face_flags & 8 == 0;
-        (t.edges, NextIds { node: t.next_node, key: t.next_key, edited })
+        (t.edges, t.edge_flags, NextIds { node: t.next_node, key: t.next_key, edited })
     };
     let elevation_points = edges.iter().flatten().filter(|v| v.is_elevation_point()).count();
     let handles: Vec<u64> = refs.iter().skip(elevation_points).step_by(2).take(edges.len()).map(|r| r.0).collect();
@@ -502,10 +542,11 @@ fn members_of(doc: &mut CadDocument, site: Handle) -> Result<(Handle, Vec<Member
     let members: Vec<Member> = edges
         .iter()
         .zip(&handles)
-        .map(|(run, h)| {
-            // A closed edge is read with a copy of its first vertex last;
-            // an open edge's last vertex carries flag 8.
-            let closed = run.last().is_some_and(|v| v.flags & 8 == 0);
+        .zip(&edge_flags)
+        .map(|((run, h), &flags)| {
+            // A closed edge (flag 1) is read with a copy of its first
+            // vertex last.
+            let closed = flags & 1 != 0;
             let kind = match dxf(*h)?.as_str() {
                 "AECC_ALIGNMENT" => MemberKind::Alignment,
                 "AECC_FEATURE_LINE" => MemberKind::FeatureLine,
@@ -514,7 +555,9 @@ fn members_of(doc: &mut CadDocument, site: Handle) -> Result<(Handle, Vec<Member
             };
             let run = if closed { &run[..run.len() - 1] } else { &run[..] };
             // Nodes other members' crossings added are not the member's.
-            let own: Vec<_> = run.iter().filter(|v| v.flags & (0x400 | 2) != 0x400 || v.is_elevation_point()).collect();
+            let is_own = |v: &&crate::classes::civil::TopologyVertex| v.flags & (0x400 | 2) != 0x400 || v.is_elevation_point();
+            let own: Vec<_> = run.iter().filter(is_own).collect();
+            let read = ReadEdge { flags, points: own.iter().map(|v| v.flags).collect(), inserted: run.iter().filter(|v| !is_own(v)).map(|v| (v.point, v.node, v.flags)).collect() };
             Some(Member {
                 handle: *h,
                 path: own.iter().map(|v| (v.point, (v.bulge != 0.0).then_some(v.bulge))).collect(),
@@ -522,6 +565,7 @@ fn members_of(doc: &mut CadDocument, site: Handle) -> Result<(Handle, Vec<Member
                 elevation_points: own.iter().map(|v| v.is_elevation_point()).collect(),
                 kind,
                 ids: own.iter().map(|v| (v.node, v.key)).collect(),
+                read: Some(read),
             })
         })
         .collect::<Option<_>>()
@@ -642,7 +686,7 @@ pub fn add_alignment_on_site(doc: &mut CadDocument, site: Handle, name: &str, ve
         layer_handle: Some(layer_handle),
         ..EntityCommon::default()
     };
-    members.push(Member { handle: common.handle.value(), elevations: vec![0.0; path.len()], elevation_points: vec![false; path.len()], path, kind: MemberKind::Alignment, ids: Vec::new() });
+    members.push(Member { handle: common.handle.value(), elevations: vec![0.0; path.len()], elevation_points: vec![false; path.len()], path, kind: MemberKind::Alignment, ids: Vec::new(), read: None });
     write_container(doc, container, site, &members, &parcels, line_style, next)?;
     write_alignment(doc, common, name, &elements, style, container.value(), members.len() as i32, None, &[], &[], &[], &[], None)
 }
@@ -737,6 +781,7 @@ pub fn add_feature_line_vertices(doc: &mut CadDocument, site: Handle, name: &str
         elevation_points: vertices.iter().map(|v| v.elevation_point).collect(),
         kind: MemberKind::FeatureLine,
         ids: Vec::new(),
+        read: None,
     });
     write_container(doc, container, site, &members, &parcels, line_style, next)?;
     write_feature_line(doc, common, name, members.len() as i32, container, line_style)
@@ -779,7 +824,9 @@ pub fn set_feature_line_vertices(doc: &mut CadDocument, feature_line: Handle, ve
             None => (0, 0),
         })
         .collect();
+    let read = old.read.as_ref().map(|r| ReadEdge { flags: r.flags, points: Vec::new(), inserted: r.inserted.clone() });
     members[i] = Member {
+        read,
         handle: old.handle,
         path,
         elevations: vertices.iter().map(|v| v.point.z).collect(),
@@ -946,7 +993,7 @@ fn add_lot_line_on(doc: &mut CadDocument, site: Handle, points: &[(Vector2, f64)
         ..EntityCommon::default()
     };
     let line = common(doc);
-    members.push(Member { handle: line.handle.value(), path, elevations: vec![0.0; n], elevation_points: vec![false; n], kind: MemberKind::LotLine { closed }, ids: Vec::new() });
+    members.push(Member { handle: line.handle.value(), path, elevations: vec![0.0; n], elevation_points: vec![false; n], kind: MemberKind::LotLine { closed }, ids: Vec::new(), read: None });
     let inputs: Vec<Input> = members.iter().map(|m| Input { path: &m.path, elevations: &m.elevations, closed: m.closed() }).collect();
     let arrangement = build(&inputs).map_err(invalid)?;
     let faces = arrangement.faces.len();
@@ -1213,6 +1260,15 @@ mod tests {
         assert_eq!((t.next_node, t.next_key, t.outside_face_flags), (5, 3, 6));
         assert_eq!(members[0].elevation_points, vec![false, true, false]);
         assert!(set_feature_line_vertices(&mut back, fl, &[v(0.0, 10.0, true), v(100.0, 10.0, false)]).is_err());
+        // The newest member keeps the point marks and edge flag 0x800 a
+        // container read gave it.
+        let (container, mut members, parcels, style, next) = members_of(&mut back, s).unwrap();
+        let read = members[0].read.as_mut().unwrap();
+        read.flags |= 0x800;
+        read.points[1] |= 0x20;
+        write_container(&mut back, container, s, &members, &parcels, style, next).unwrap();
+        let t = object(&back, container).unwrap().topology().unwrap();
+        assert_eq!((t.edge_flags[0] & 0x800, t.edges[0][1].flags & 0x30, t.edges[0][2].flags & 8), (0x800, 0x20, 8));
     }
 
     #[test]
