@@ -166,7 +166,7 @@ pub(super) fn write_line(doc: &mut CadDocument, l: &Line) -> Result<Handle, DxfE
 fn line_style(doc: &mut CadDocument, handle: Handle, owner: Handle, id: i32, children: &[(i32, Handle)], own: u64, layer: u64, by_block: u64) -> Result<(), DxfError> {
     let c = |index: i32, visible: bool| Component { index, visible, color: Color::ByLayer, lineweight: -1, linetype: by_block, scale: 1.0 };
     let lists = [vec![c(0, true), c(1, false)], vec![c(0, false), c(1, false)], Vec::new(), Vec::new()];
-    let st = Style { dxf: "AECC_SAMPLE_LINE_STYLE", id, children, keys: &POINT_STYLE_KEYS, own, pointer_table: &[], lists, class_refs: Vec::new() };
+    let st = Style { name: "", dxf: "AECC_SAMPLE_LINE_STYLE", id, children, keys: &POINT_STYLE_KEYS, own, pointer_table: &[], lists, class_refs: Vec::new() };
     style(doc, handle, owner, st, layer, |_| {})
 }
 

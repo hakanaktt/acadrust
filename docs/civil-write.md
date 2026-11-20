@@ -1217,6 +1217,19 @@ from the dates. A view written into a new drawing with them (E-V3) opens
 with AUDIT 0 errors and the API values of the application's own view:
 station -200 to 300, elevations 10-20, extents (0, -100) to (500, 400).
 
+A copy of the default style with another vertical exaggeration (VS11 to
+VS13: the API's `GraphStyle.VerticalScale` 0.2 and 0.05) differs only in
+key `0x02016001` (BD 10 -> 5, 20); the copy gets a text id (high bit set:
+0x800006A9 in the samples) with its name as its first text and an empty
+one after it, and the collection lists it with its name (children by hash
+bucket, key mod 8). `add_profile_view_style(doc, name, exaggeration)`
+writes such a style under a text id from 0x80030001;
+`add_profile_view_with_style(..., style, ...)` writes a view with it, the
+view's vertical scale being the style's exaggeration. E-VS1 (styles
+exaggerating 5 and 20, a view of each and one of the default): AUDIT 0,
+the API lists both styles with their exaggerations and the views with
+them, and makes a view of its own with the written style.
+
 When the drawing has a default profile label set (style tree key 96, id
 30), each profile gets four label groups in the view, entities in model
 space: lines (a label per tangent), PVIs (two labels: the first and the
@@ -2376,7 +2389,8 @@ taken from the records and checked bit for bit against them.
   defaults;
   sections; corridor offset baselines and geometry locks (§3i-a); pipe networks: other families and
   sizes.
-- Profile views with a vertical scale or style other than the default;
+- Profile views with a style other than the default beyond its vertical
+  exaggeration;
   the graph settings between the named values are constant runs.
 
 ## 6. Status
@@ -2436,7 +2450,8 @@ Corridors are listed in §3i-a.
 | profiles | from a TIN surface (existing ground), at an offset, over the whole alignment or a station range | yes (definition) | yes | §3e (profiles from a surface) |
 | profiles | superimposed, offset profiles, profiles of corridor feature lines, static copies | partly | no | not sampled for writing |
 | profile views | automatic and user ranges, default style, profile label groups | yes (frame) | yes | §3h |
-| profile views | other styles, vertical scales, stacked views, bands other than the defaults | partly | no | the graph settings between the named values are constant runs |
+| profile views | styles that copy the default with another vertical exaggeration, views with them | yes (frame, style exaggeration) | yes | §3h |
+| profile views | other style settings, stacked views, bands other than the defaults | partly | no | the graph settings between the named values are constant runs; stacked views not sampled |
 | sites | name, description, members | yes | yes | §3g |
 | parcels | closed and open, crossing and touching lot lines, arcs, labels | yes | yes | §3g |
 | parcels | lot lines meeting alignments or feature lines; arcs where lines meet; the newest member's point marks 0x10/0x20 | yes | no | §3g (rule not found) |

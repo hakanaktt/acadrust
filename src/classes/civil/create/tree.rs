@@ -154,6 +154,8 @@ pub(super) fn file_time() -> u64 {
 ///   style; written empty), two empty texts per component
 /// ```
 pub(super) struct Style<'a> {
+    /// Its name (with a text id, followed by an empty text).
+    pub name: &'a str,
     pub dxf: &'a str,
     pub id: i32,
     pub children: &'a [(i32, Handle)],
@@ -195,7 +197,10 @@ pub(super) fn style(doc: &mut CadDocument, handle: Handle, owner: Handle, st: St
         refs.extend([hard_pointer(layer), hard_pointer(c.linetype), hard_pointer(0)]);
     }
     refs.extend(st.class_refs);
-    let mut strings = vec![String::new()];
+    let mut strings = vec![st.name.to_string()];
+    if st.id as u32 & 0x8000_0000 != 0 {
+        strings.push(String::new());
+    }
     strings.extend(st.keys.iter().filter_map(|(_, v)| match v {
         Value::Text(t) => Some(t.to_string()),
         _ => None,
@@ -307,7 +312,7 @@ fn point_style(doc: &mut CadDocument, handle: Handle, owner: Handle, id: i32, ch
     let plan = |index, visible| Component { index, visible, color: Color::ByBlock, lineweight: -2, linetype: by_block, scale: 1.0 };
     let other = Component { index: 0, visible: true, color: Color::ByBlock, lineweight: -1, linetype: by_layer, scale: 1.0 };
     let lists = [vec![plan(0, true), plan(1, true)], vec![plan(0, false), plan(1, false)], vec![Component { ..other }], vec![other]];
-    let st = Style { dxf: "AECC_POINT_STYLE", id, children, keys: &POINT_STYLE_KEYS, own: 0, pointer_table: &[], lists, class_refs: vec![hard_pointer(0)] };
+    let st = Style { name: "", dxf: "AECC_POINT_STYLE", id, children, keys: &POINT_STYLE_KEYS, own: 0, pointer_table: &[], lists, class_refs: vec![hard_pointer(0)] };
     let byte = |w: &mut DwgMergedWriter, v: u8| bits(w, &format!("{v:08b}"));
     style(doc, handle, owner, st, layer, |w| {
         w.write_bit_short(3);
@@ -418,7 +423,7 @@ fn alignment_style(doc: &mut CadDocument, handle: Handle, owner: Handle, id: i32
     let indices = [0, 1, 2, 3, 4, 5, 11, 20];
     let view = |shown: bool| -> Vec<Component> { indices.iter().map(|i| Component { index: *i, visible: shown && *i != 11, color: Color::ByLayer, lineweight: -1, linetype: by_block, scale: 1.0 }).collect() };
     let lists = [view(true), view(false), Vec::new(), vec![Component { index: 9, visible: true, color: Color::ByBlock, lineweight: -1, linetype: by_block, scale: 1.0 }]];
-    let st = Style { dxf: "AECC_ALIGNMENT_STYLE", id, children, keys: &ALIGNMENT_STYLE_KEYS, own, pointer_table: &[], lists, class_refs: Vec::new() };
+    let st = Style { name: "", dxf: "AECC_ALIGNMENT_STYLE", id, children, keys: &ALIGNMENT_STYLE_KEYS, own, pointer_table: &[], lists, class_refs: Vec::new() };
     style(doc, handle, owner, st, layer, |_| {})
 }
 
@@ -706,7 +711,7 @@ fn surface_style(doc: &mut CadDocument, handle: Handle, owner: Handle, id: i32, 
         (0..12).map(|i| Component { index: i, visible: i == shown, color: colors[i as usize].map_or(Color::ByLayer, Color::from_index), lineweight: -2, linetype: by_block, scale: 1.0 }).collect()
     };
     let lists = [view(2), view(1), Vec::new(), vec![Component { index: 12, visible: false, color: Color::from_index(2), lineweight: -2, linetype: by_block, scale: 1.0 }]];
-    let st = Style { dxf: "AECC_SURFACE_STYLE", id, children, keys: &SURFACE_STYLE_KEYS, own, pointer_table: &[], lists, class_refs: Vec::new() };
+    let st = Style { name: "", dxf: "AECC_SURFACE_STYLE", id, children, keys: &SURFACE_STYLE_KEYS, own, pointer_table: &[], lists, class_refs: Vec::new() };
     style(doc, handle, owner, st, layer, |w| bits(w, "00000000"))
 }
 
@@ -788,10 +793,10 @@ fn profile_style(doc: &mut CadDocument, handle: Handle, owner: Handle, id: i32, 
     let profile = [0, 1, 2, 3, 4, 5, 6, 11].iter().map(|i| c(*i, Color::ByLayer, 2.0)).collect();
     let lists = [Vec::new(), vec![c(9, Color::ByLayer, 2.0)], profile, vec![c(10, Color::ByBlock, 1.0)]];
     let keys = profile_style_keys(extension.value());
-    let st = Style { dxf: "AECC_PROFILE_STYLE", id, children, keys: &keys, own, pointer_table: &[0x1001_0101], lists, class_refs: Vec::new() };
+    let st = Style { name: "", dxf: "AECC_PROFILE_STYLE", id, children, keys: &keys, own, pointer_table: &[0x1001_0101], lists, class_refs: Vec::new() };
     style(doc, handle, owner, st, layer, |_| {})?;
     let lists = [Vec::new(), Vec::new(), vec![c(12, Color::ByLayer, 1.0)], Vec::new()];
-    let st = Style { dxf: "AECC_VALIGNMENT_STYLE_EXTENSION", id: 0, children: &[], keys: &POINT_STYLE_KEYS, own: 0, pointer_table: &[], lists, class_refs: Vec::new() };
+    let st = Style { name: "", dxf: "AECC_VALIGNMENT_STYLE_EXTENSION", id: 0, children: &[], keys: &POINT_STYLE_KEYS, own: 0, pointer_table: &[], lists, class_refs: Vec::new() };
     style(doc, extension, handle, st, layer, |_| {})
 }
 

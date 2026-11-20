@@ -37,6 +37,11 @@ const USER_ELEVATIONS: u32 = 0x2000;
 const TITLE: &str = "Profile View of  <[67194883(2449)]>";
 /// Vertical exaggeration of the default view style.
 const VERTICAL_SCALE: f64 = 10.0;
+/// The view style key holding the vertical exaggeration (VS11 to VS13).
+const KEY_EXAGGERATION: u32 = 0x0201_6001;
+/// Text ids this crate gives the view styles it adds (the first one, then
+/// one more than the highest in the collection).
+const FIRST_STYLE_TEXT_ID: u32 = 0x8003_0001;
 /// The default range: the stations extend this far before the
 /// alignment's start and past its end; the elevations, rounded out to
 /// [`ELEVATION_STEP`], this far below and above the profiles.
@@ -600,6 +605,13 @@ const VIEW_STYLE_COMPONENTS: [(i32, bool, u16); 36] = [(0, true, 4), (1, true, 3
 /// (id 30) equal WV01's records apart from the dates and the users.
 #[allow(clippy::too_many_arguments)]
 fn view_style(doc: &mut CadDocument, handle: Handle, owner: Handle, id: i32, children: &[(i32, Handle)], own: u64, layer: u64, by_block: u64) -> Result<(), DxfError> {
+    view_style_named(doc, handle, owner, id, "", VERTICAL_SCALE, children, own, layer, by_block)
+}
+
+/// [`view_style`] named `name` (with a text id) with vertical
+/// exaggeration `exaggeration` (its key [`KEY_EXAGGERATION`]).
+#[allow(clippy::too_many_arguments)]
+fn view_style_named(doc: &mut CadDocument, handle: Handle, owner: Handle, id: i32, name: &str, exaggeration: f64, children: &[(i32, Handle)], own: u64, layer: u64, by_block: u64) -> Result<(), DxfError> {
     let plan = VIEW_STYLE_COMPONENTS
         .iter()
         .map(|&(index, visible, color)| Component {
@@ -611,8 +623,13 @@ fn view_style(doc: &mut CadDocument, handle: Handle, owner: Handle, id: i32, chi
             scale: 1.0,
         })
         .collect();
-    let keys = view_style_keys();
-    let st = Style { dxf: "AECC_PROFILE_VIEW_STYLE", id, children, keys: &keys, own, pointer_table: &[], lists: [plan, Vec::new(), Vec::new(), Vec::new()], class_refs: Vec::new() };
+    let mut keys = view_style_keys();
+    for (key, value) in &mut keys {
+        if *key == KEY_EXAGGERATION {
+            *value = StyleValue::Double(exaggeration);
+        }
+    }
+    let st = Style { name, dxf: "AECC_PROFILE_VIEW_STYLE", id, children, keys: &keys, own, pointer_table: &[], lists: [plan, Vec::new(), Vec::new(), Vec::new()], class_refs: Vec::new() };
     style(doc, handle, owner, st, layer, |_| {})
 }
 
@@ -681,7 +698,7 @@ fn labelled(profile: &ArchEntityData) -> [Vec<i32>; 4] {
 /// The range a new view gives the alignment and its profiles (see
 /// [`STATION_MARGIN`]); WV01 (alignment 0-100, profile 10-20: -200-300,
 /// -10-40) and WV03 (0-300, 2-24.5: -200-500, -20-50).
-fn default_range(alignment: &ArchEntityData, profiles: &[&ArchEntityData], origin: Vector2, stations: Option<(f64, f64)>) -> Option<ProfileViewFrame> {
+fn default_range(alignment: &ArchEntityData, profiles: &[&ArchEntityData], origin: Vector2, stations: Option<(f64, f64)>, vertical_scale: f64) -> Option<ProfileViewFrame> {
     let start = alignment.alignment_start_station()?;
     let length: f64 = alignment.alignment_pieces().iter().map(|(_, p)| p.windows(2).map(|w| w[0].distance(&w[1])).sum::<f64>()).sum();
     let (s0, s1) = stations.unwrap_or((start - STATION_MARGIN, start + length + STATION_MARGIN));
@@ -709,8 +726,51 @@ fn default_range(alignment: &ArchEntityData, profiles: &[&ArchEntityData], origi
         station_max: s1,
         elevation_min: (lo / ELEVATION_STEP).floor() * ELEVATION_STEP - ELEVATION_MARGIN,
         elevation_max: (hi / ELEVATION_STEP).ceil() * ELEVATION_STEP + ELEVATION_MARGIN,
-        vertical_scale: VERTICAL_SCALE,
+        vertical_scale,
     })
+}
+
+/// The vertical exaggeration a profile view style holds.
+fn exaggeration_of(doc: &CadDocument, style: u64) -> Option<f64> {
+    let o = object(doc, Handle::new(style)).filter(|o| o.dxf_name == "AECC_PROFILE_VIEW_STYLE")?;
+    let (data, start, end) = fields_of(o)?;
+    let mut b = super::super::bits::Bits::new(data, start, end);
+    b.bit_long()?;
+    let n = b.bit_long()?;
+    for _ in 0..n {
+        b.bit_long()?;
+    }
+    (b.bit_long()? == 0 && b.bit_long()? == 0 && b.bit()?).then_some(())?;
+    for _ in 0..b.bits_value(8)? {
+        if let (KEY_EXAGGERATION, crate::classes::civil::alignment::KeyValue::Double(v)) = crate::classes::civil::alignment::read_key(&mut b)? {
+            return (v.is_finite() && v > 0.0).then_some(v);
+        }
+    }
+    None
+}
+
+/// Adds a profile view style `name` to the drawing: the default style's
+/// settings with vertical exaggeration `exaggeration`, under a text id in
+/// the profile view style collection (written with the default style when
+/// the drawing lacks it).
+pub fn add_profile_view_style(doc: &mut CadDocument, name: &str, exaggeration: f64) -> Result<Handle, DxfError> {
+    if name.is_empty() || !(exaggeration.is_finite() && exaggeration > 0.0) {
+        return Err(invalid("a profile view style needs a name and a positive vertical exaggeration"));
+    }
+    ensure_view_style_tree(doc)?;
+    let styles = root_node(doc, KEY_STYLES).ok_or_else(|| invalid("drawing has no style tree"))?;
+    let head = read_node(doc, styles).and_then(|t| t.children.iter().find(|c| c.0 == KEY_PROFILE_VIEW_STYLES).map(|c| Handle::new(c.1))).ok_or_else(|| invalid("drawing has no profile view styles"))?;
+    let collection = read_node(doc, head).ok_or_else(|| invalid("profile view style collection cannot be read"))?;
+    if collection.names.iter().any(|n| n.eq_ignore_ascii_case(name)) {
+        return Err(invalid("a profile view style of that name exists"));
+    }
+    let id = collection.children.iter().map(|c| c.0 as u32).filter(|k| *k & 0xFFFF_0000 == FIRST_STYLE_TEXT_ID & 0xFFFF_0000).max().map_or(FIRST_STYLE_TEXT_ID, |k| k + 1);
+    let layer = doc.layers.get("0").map(|l| l.handle.value()).ok_or_else(|| invalid("drawing has no layer 0"))?;
+    let by_block = doc.line_types.get("ByBlock").map(|l| l.handle.value()).ok_or_else(|| invalid("drawing lacks the ByBlock linetype"))?;
+    let handle = doc.allocate_handle();
+    view_style_named(doc, handle, head, id as i32, name, exaggeration, &[], 0, layer, by_block)?;
+    add_node_child(doc, head, id as i32, handle, name)?;
+    Ok(handle)
 }
 
 /// Adds a profile view of `alignment` showing all its profiles, its lower
@@ -733,6 +793,14 @@ pub fn add_profile_view(doc: &mut CadDocument, alignment: Handle, name: &str, or
 /// within the given stations. The view's range word records which range
 /// the user gave.
 pub fn add_profile_view_with_range(doc: &mut CadDocument, alignment: Handle, name: &str, origin: Vector2, stations: Option<(f64, f64)>, elevations: Option<(f64, f64)>, layer: Option<&str>) -> Result<Handle, DxfError> {
+    add_profile_view_with_style(doc, alignment, name, origin, None, stations, elevations, layer)
+}
+
+/// [`add_profile_view_with_range`] with the profile view style `style`
+/// (the drawing's default when `None`); the view takes its vertical
+/// exaggeration.
+#[allow(clippy::too_many_arguments)]
+pub fn add_profile_view_with_style(doc: &mut CadDocument, alignment: Handle, name: &str, origin: Vector2, style: Option<Handle>, stations: Option<(f64, f64)>, elevations: Option<(f64, f64)>, layer: Option<&str>) -> Result<Handle, DxfError> {
     if name.is_empty() {
         return Err(invalid("a profile view needs a name"));
     }
@@ -748,7 +816,11 @@ pub fn add_profile_view_with_range(doc: &mut CadDocument, alignment: Handle, nam
     if stations.is_some_and(|(lo, hi)| !(lo.is_finite() && hi.is_finite() && lo < hi)) {
         return Err(invalid("a station range runs from a lower to a higher finite station"));
     }
-    let mut frame = default_range(a, &shown, origin, stations).ok_or_else(|| invalid("the profiles have no elevations within the stations"))?;
+    let style = match style {
+        Some(s) => Some((s.value(), exaggeration_of(doc, s.value()).ok_or_else(|| invalid("not a profile view style"))?)),
+        None => None,
+    };
+    let mut frame = default_range(a, &shown, origin, stations, style.map_or(VERTICAL_SCALE, |s| s.1)).ok_or_else(|| invalid("the profiles have no elevations within the stations"))?;
     if let Some((lo, hi)) = elevations {
         if !(lo.is_finite() && hi.is_finite() && lo < hi) {
             return Err(invalid("an elevation range runs from a lower to a higher finite elevation"));
@@ -759,7 +831,10 @@ pub fn add_profile_view_with_range(doc: &mut CadDocument, alignment: Handle, nam
     let labels: Vec<[Vec<i32>; 4]> = shown.iter().map(|p| labelled(p)).collect();
     ensure_view_style_tree(doc)?;
     super::labels::ensure_label_styles(doc)?;
-    let style = default_style_of(doc, KEY_PROFILE_VIEW_STYLES).ok_or_else(|| invalid("drawing has no profile view styles"))?;
+    let style = match style {
+        Some(s) => s.0,
+        None => default_style_of(doc, KEY_PROFILE_VIEW_STYLES).ok_or_else(|| invalid("drawing has no profile view styles"))?,
+    };
     let label_styles = default_style_of(doc, KEY_PROFILE_LABEL_SETS).and_then(|set| object(doc, Handle::new(set))).map(|o| o.decode().handles);
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
@@ -829,6 +904,31 @@ mod tests {
         // groups per view.
         let groups = back.entities().filter(|e| matches!(e, EntityType::Extended(x) if matches!(&x.data, ExtendedEntityData::Arch(a) if a.dxf_name.contains("LABEL_GROUP")))).count();
         assert_eq!(groups, 8);
+    }
+
+    #[test]
+    fn views_take_a_style_with_its_vertical_exaggeration() {
+        let v = Vector2::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let al = crate::classes::civil::add_alignment(&mut doc, "AL1", &[v(0.0, 0.0), v(100.0, 0.0)], None).unwrap();
+        crate::classes::civil::add_profile(&mut doc, al, "P1", &[v(0.0, 10.0), v(50.0, 20.0), v(100.0, 15.0)], &[0.0], None).unwrap();
+        assert!(add_profile_view_style(&mut doc, "VS5", 0.0).is_err());
+        let s5 = add_profile_view_style(&mut doc, "VS5", 5.0).unwrap();
+        let s20 = add_profile_view_style(&mut doc, "VS20", 20.0).unwrap();
+        assert!(add_profile_view_style(&mut doc, "vs5", 3.0).is_err());
+        assert!(add_profile_view_with_style(&mut doc, al, "PV", v(0.0, 0.0), Some(al), None, None, None).is_err());
+        let view = add_profile_view_with_style(&mut doc, al, "PV5", v(0.0, -100.0), Some(s5), None, None, None).unwrap();
+        let back = round_trip(&doc, "styles");
+        assert_eq!((exaggeration_of(&back, s5.value()), exaggeration_of(&back, s20.value())), (Some(5.0), Some(20.0)));
+        assert_eq!(entity(&back, view).typed_handles()[2].0, s5.value());
+        assert_eq!(entity(&back, view).profile_view_frame().unwrap().vertical_scale, 5.0);
+        // The collection lists both under text ids, after the default.
+        let styles = read_node(&back, root_node(&back, KEY_STYLES).unwrap()).unwrap();
+        let head = styles.children.iter().find(|c| c.0 == KEY_PROFILE_VIEW_STYLES).unwrap().1;
+        let collection = read_node(&back, Handle::new(head)).unwrap();
+        assert_eq!(collection.names, ["VS5", "VS20"]);
+        assert_eq!(object(&back, s5).unwrap().decode().strings[..2], ["VS5".to_string(), String::new()]);
     }
 
     #[test]
