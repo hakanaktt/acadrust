@@ -932,6 +932,56 @@ pointer). It holds no elevations: the application samples the surface
 appear once the surface is rebuilt, as for the application's own record
 in that session). The alignment lists the profile without an anchor.
 
+### Offset profiles
+
+`add_offset_profile(doc, source, offset_alignment, name, slope, layer)`
+writes the profile the application makes "by slope" on an offset
+alignment from a profile of its parent (OP01, OP02, OB01: left and right
+offsets, the whole parent and a station range, a parabola crossing an
+element boundary):
+
+- The record is an entity-by-entity profile of fixed tangents and fixed
+  parabolas through three points (start, middle station, end): each
+  source entity moved to the offset alignment's stations (lines keep
+  their length, arcs scale with the concentric radius) and raised by
+  `slope * |offset|`, cut where the offset alignment's elements change.
+  Ids run 1 up in station order. It differs from a layout profile in
+  `BL 0x00025F04`, three more class keys (`0x0100FF46 BL 0` after
+  `0x0300FB05`, `0x0D00FF48 BL 4095` after `0x0400FE09`, `0x0200FF40 BD
+  slope` last), 65 zero bits, `BD 2.25`, 7 bits `0111010` (a layout
+  profile: 63 bits, `BD 2`, 9 bits), `BL 0x102` and the offset as the
+  fifth BD before the three `BS 0`, and the tail after its identifier:
+  `PRE`, `BD slope`, `MID`, one region (`BD slope, BD 0, BD parent
+  length, BD 0, BD 0, BL 2, BL 0, BL 0`), `BL 0`, the entity map (`BL n`,
+  each `BL source id, BL -1, BL m, m x BL id`), the source's start and end
+  on the parent (`BL 2`, each `BD station`, the parent anchor's GUID),
+  `END` (a layout profile: `BD 0` and four `BL 0`). References 8 and 9
+  are its companion, 15 the source (soft).
+- Its companion is an `AECC_FEATURE_STYLE` with no path (nodes `BL 1, BL
+  0, BL 0`, faces `BL 2, BL 0, BL 0`) in the node of the siteless
+  companions, referring to the profile.
+- The parent gets two anchors (kind 9 at the source's start, 0 at its
+  end; the application also wrote 221 for the start); the offset
+  alignment lists the profile, anchored at its own start station (an
+  offset alignment's parent stays its last reference).
+- An `AECC_ASSOC_ACTION` in the model space's associative network (the
+  network in the model space's extension dictionary, listed by the
+  drawing's network in the named objects dictionary) with an
+  `AECC_ASSOC_OFFSET_VALIGNMENT_ACTION_BODY` (hard pointer to the
+  profile) and three `AECC_ASSOC_DEPENDENCY` records (each owning an
+  `AECC_ASSOC_DEPENDENCY_BODY`): the source and the offset alignment
+  read, the profile written; each object lists its dependency as a
+  reactor. The action records equal the samples' bit for bit.
+
+E-OF1 (both OB01 cases written): no recovery prompt, AUDIT 0 errors, the
+API lists both as offset profiles with the application's entities,
+stations and elevations; after the source's PVI at 85 is raised to 17 the
+application recomputes the offset profile.
+
+The reader gives `profile_offset()` (source, slope, offset, entity map,
+parent anchors); a profile's entity list is found after five BDs (the
+fifth is the offset) and three BS.
+
 ## 3f. Profile style of a new drawing
 
 The profile style collection (style tree key 74, `AECC_PROFILE_STYLE` id
@@ -2549,7 +2599,8 @@ Corridors are listed in §3i-a.
 | profiles | layout entity by entity: fixed tangents, fixed parabolas (three points, two points and a grade or K), floating parabolas (end and K or grade) | yes | yes | §3e (entity by entity) |
 | profiles | floating and free tangents, fixed and floating circular curves, asymmetric fixed curves | yes (tangents) | no | the floating and free tangent samples were refused by the programming interface (WE05, WE06) |
 | profiles | from a TIN surface (existing ground), at an offset, over the whole alignment or a station range | yes (definition) | yes | §3e (profiles from a surface) |
-| profiles | superimposed, offset profiles, profiles of corridor feature lines, static copies | partly | no | not sampled for writing |
+| profiles | offset profiles by slope, of tangents and symmetric parabolas, on an offset alignment of one region | yes | yes | §3e (offset profiles) |
+| profiles | offset profiles of other source curves or over widenings; superimposed profiles, profiles of corridor feature lines, static copies | partly | no | not sampled for writing |
 | profile views | automatic and user ranges, default style, profile label groups | yes (frame) | yes | §3h |
 | profile views | styles that copy the default with another vertical exaggeration, views with them | yes (frame, style exaggeration) | yes | §3h |
 | profile views | stacked views (separate views at stacked origins) | yes | yes | §3h |

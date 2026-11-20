@@ -224,9 +224,13 @@ pub(super) fn solve(vertices: &[Vector2], curves: &[VertexCurve], elements: &[Al
 /// (n nodes), gives every segment flags 10 and no faces (`BL 16` in place of
 /// `BL 48`, faces `BL 2, BL 0, BL 0`), and refers to the alignment and one
 /// empty soft pointer (AO14, AO21, AO22).
+///
+/// An offset profile's companion has no path (`BL 1, BL 0, BL 0` for the
+/// nodes, segment flags 48, faces `BL 2, BL 0, BL 0`) and refers to the
+/// profile and one empty soft pointer (OP01, OB01).
 fn write_companion(doc: &mut CadDocument, handle: Handle, owner: Handle, tag: u32, alignment: Handle, path: &[PathPoint], name: &str, offset: bool) -> Result<(), DxfError> {
     let n = path.len();
-    let first = if offset { 2 * n as i32 + 1 } else { 1 };
+    let first = if n == 0 { 0 } else if offset { 2 * n as i32 + 1 } else { 1 };
     let node_of = |i: usize| -> i32 {
         if i == 0 {
             first
@@ -236,8 +240,8 @@ fn write_companion(doc: &mut CadDocument, handle: Handle, owner: Handle, tag: u3
             first + 1 + i as i32
         }
     };
-    let mut order: Vec<usize> = vec![0, n - 1];
-    order.extend(1..n - 1);
+    let mut order: Vec<usize> = if n == 0 { Vec::new() } else { vec![0, n - 1] };
+    order.extend(1..n.saturating_sub(1));
     put_object(
         doc,
         "AECC_FEATURE_STYLE",
@@ -250,7 +254,7 @@ fn write_companion(doc: &mut CadDocument, handle: Handle, owner: Handle, tag: u3
             }
             bits(w, "000000110010000000110");
             w.write_bit_long(0x8000_0001_u32 as i32);
-            w.write_bit_long(first + n as i32);
+            w.write_bit_long(if n == 0 { 1 } else { first + n as i32 });
             w.write_bit_long(n as i32);
             w.write_bit_long(first);
             for (k, i) in order.iter().enumerate() {
@@ -280,7 +284,7 @@ fn write_companion(doc: &mut CadDocument, handle: Handle, owner: Handle, tag: u3
             for _ in 0..4 {
                 w.write_bit_long(0);
             }
-            let faces: &[i32] = if offset { &[2, 0, 0] } else { &[2, 1, 1, 1, 7, 1, 1, 0, 0] };
+            let faces: &[i32] = if offset || n == 0 { &[2, 0, 0] } else { &[2, 1, 1, 1, 7, 1, 1, 0, 0] };
             for v in faces {
                 w.write_bit_long(*v);
             }
@@ -292,8 +296,21 @@ fn write_companion(doc: &mut CadDocument, handle: Handle, owner: Handle, tag: u3
                 w.write_bit_long(0);
             }
         },
-        Body { refs: [alignment.value(), 0, 0, 0][..if offset { 2 } else { 4 }].iter().map(|h| soft_pointer(*h)).collect(), strings: vec![name.to_string(), String::new()] },
+        Body { refs: [alignment.value(), 0, 0, 0][..if offset || n == 0 { 2 } else { 4 }].iter().map(|h| soft_pointer(*h)).collect(), strings: vec![name.to_string(), String::new()] },
     )
+}
+
+/// Adds the companion feature style an offset profile refers to (no path)
+/// to the node of the siteless companions and returns it.
+pub(super) fn add_profile_companion(doc: &mut CadDocument, profile: Handle) -> Result<Handle, DxfError> {
+    let node = companion_node(doc).ok_or_else(|| invalid("drawing has no node for siteless alignments"))?;
+    let used = read_node(doc, node).ok_or_else(|| invalid("feature style node cannot be read"))?;
+    let tag = (FIRST_COMPANION_TAG..).find(|t| used.children.iter().all(|c| c.0 as u32 != *t)).unwrap_or(FIRST_COMPANION_TAG);
+    let companion = doc.allocate_handle();
+    let label = new_name(companion.value());
+    write_companion(doc, companion, node, tag, profile, &[], &label, false)?;
+    add_node_child(doc, node, tag as i32, companion, &label)?;
+    Ok(companion)
 }
 
 /// A region of an offset alignment: a stretch at one offset (the nominal
@@ -636,10 +653,13 @@ pub(super) fn write_alignment_of(doc: &mut CadDocument, common: EntityCommon, na
     let equations = &timing.equations;
     let byte = |w: &mut DwgMergedWriter, v: u8| bits(w, &format!("{v:08b}"));
     let mut refs = vec![soft_pointer(0), hard_pointer(feature), hard_pointer(feature), soft_pointer(0), hard_pointer(style), hard_pointer(0)];
-    refs.extend(offset.map(|o| soft_pointer(o.parent)));
     refs.extend(profiles.iter().map(|p| soft_pointer(*p)));
     refs.extend(views.iter().chain(groups).map(|v| soft_pointer(*v)));
+    // An offset alignment's parent is its last reference (after its
+    // profiles; OP01, OB01); an offset alignment has no superelevation
+    // (see `add_superelevation`).
     refs.extend(superelevation_refs(&timing.superelevation, common.handle.value()));
+    refs.extend(offset.map(|o| soft_pointer(o.parent)));
     let mut strings = vec!["AeccImpAlignment".to_string(), String::new(), String::new(), name.to_string()];
     strings.extend((0..5 + 3 * curves + 2 * anchors.len() + speeds.len() + 2 * equations.len()).map(|_| String::new()));
     strings.extend(superelevation_strings(&timing.superelevation));
@@ -1442,6 +1462,8 @@ pub(super) struct Written {
     pub views: Vec<u64>,
     /// Its sample line groups, oldest first.
     pub groups: Vec<u64>,
+    /// An offset alignment's offset block.
+    pub offset: Option<OffsetRecord>,
 }
 
 /// An alignment this crate can write again: its elements are the ones the
@@ -1454,12 +1476,24 @@ pub(super) fn rewritable(doc: &CadDocument, alignment: Handle, profile_id: impl 
     let crate::entities::ExtendedEntityData::Arch(a) = &x.data else { return None };
     (a.dxf_name == "AECC_ALIGNMENT").then_some(())?;
     let elements = a.alignment_elements()?;
-    elements.iter().all(|e| matches!(e.kind, AlignmentElementKind::FixedLine { .. } | AlignmentElementKind::FreeArc { .. } | AlignmentElementKind::FreeSpiralCurveSpiral { .. })).then_some(())?;
+    let offset = match a.alignment_offset_parameters() {
+        Some(o) => Some(offset_record(a, o)?),
+        None => None,
+    };
+    let fits = |e: &AlignmentElement| match e.kind {
+        AlignmentElementKind::FixedLine { .. } | AlignmentElementKind::FreeArc { .. } | AlignmentElementKind::FreeSpiralCurveSpiral { .. } => true,
+        AlignmentElementKind::FixedArc { .. } | AlignmentElementKind::Points { .. } => offset.is_some(),
+        _ => false,
+    };
+    elements.iter().all(fits).then_some(())?;
     let refs = a.typed_handles();
-    (refs.len() >= 6).then_some(())?;
+    let parent_refs = usize::from(offset.is_some());
+    (refs.len() >= 6 + parent_refs).then_some(())?;
     let is = |h: u64, dxf: &str| matches!(doc.get_entity(Handle::new(h)), Some(crate::entities::EntityType::Extended(x)) if matches!(&x.data, crate::entities::ExtendedEntityData::Arch(v) if v.dxf_name == dxf));
     let superelevation = a.alignment_superelevation()?;
-    let tail: Vec<u64> = refs[6..refs.len().checked_sub(superelevation_refs(&superelevation, 0).len())?.max(6)].iter().map(|(h, _)| *h).collect();
+    (offset.is_none() || superelevation.is_empty()).then_some(())?;
+    let tail_end = refs.len().checked_sub(parent_refs + superelevation_refs(&superelevation, 0).len())?.max(6);
+    let tail: Vec<u64> = refs[6..tail_end].iter().map(|(h, _)| *h).collect();
     let views_at = tail.iter().position(|h| is(*h, "AECC_PROFILE_VIEW") || is(*h, "AECC_SAMPLE_LINE_GROUP")).unwrap_or(tail.len());
     let groups_at = tail.iter().position(|h| is(*h, "AECC_SAMPLE_LINE_GROUP")).unwrap_or(tail.len()).max(views_at);
     let profiles = tail[..views_at].iter().map(|h| Some(ProfileRef { handle: *h, id: profile_id(*h)? })).collect::<Option<Vec<_>>>()?;
@@ -1494,16 +1528,73 @@ pub(super) fn rewritable(doc: &CadDocument, alignment: Handle, profile_id: impl 
         crate::classes::civil::AlignmentType::Centerline => AlignmentKind::Centerline,
         crate::classes::civil::AlignmentType::Miscellaneous => AlignmentKind::Utility,
         crate::classes::civil::AlignmentType::Rail => AlignmentKind::Rail { gauge: a.alignment_track_gauge()? },
+        // The writer writes an offset alignment's block in place of a type.
+        crate::classes::civil::AlignmentType::Offset if offset.is_some() => AlignmentKind::Centerline,
         _ => return None,
     };
     let (equations, speeds) = a.alignment_timing_with_ids()?;
     let timing = Timing {
         equations: equations.iter().map(|(e, id)| (e.raw, *id, e.back, e.ahead, e.increasing)).collect(),
-        speeds: speeds.iter().map(|(s, id)| (s.station, s.speed, *id)).collect(),
+        // An offset alignment's own speed is written from its block.
+        speeds: speeds.iter().filter(|(_, id)| offset.as_ref().is_none_or(|o| *id != o.own)).map(|(s, id)| (s.station, s.speed, *id)).collect(),
         superelevation,
     };
-    let w = Written { common: x.common.clone(), name, elements, style: refs[4].0, feature: refs[1].0, keys, keys_superelevation, edge, anchors, kind, timing, views, groups };
+    let w = Written { common: x.common.clone(), name, elements, style: refs[4].0, feature: refs[1].0, keys, keys_superelevation, edge, anchors, kind, timing, views, groups, offset };
     Some((w, profiles))
+}
+
+/// An offset alignment's block as the writer takes it (linear transitions
+/// only; the own anchor is the alignment's start anchor).
+fn offset_record(a: &crate::classes::arch::ArchEntityData, o: crate::classes::civil::OffsetParameters) -> Option<OffsetRecord> {
+    o.transitions.iter().all(|t| t.kind == 1 && t.radii.is_empty()).then_some(())?;
+    let own = a.alignment_anchors()?.into_iter().find(|x| x.kind == OWN_START_ANCHOR)?.id;
+    let start = a.alignment_start_station()?;
+    let end = o.regions.iter().map(|r| r.end).fold(start, f64::max);
+    Some(OffsetRecord {
+        parent: a.alignment_offset_parent()?,
+        offset: o.offset,
+        range: (start, end),
+        regions: o.regions.iter().map(|r| OffsetRegionRecord { offset: r.offset, parent: (r.parent_start, r.parent_end), own: (r.start, r.end), widening: r.kind == 1, first: r.first_element, last: r.last_element }).collect(),
+        transitions: o.transitions.iter().map(|t| (t.length, t.element)).collect(),
+        map: o.element_map,
+        anchors: o.anchors,
+        own,
+    })
+}
+
+/// How an offset alignment's stations follow its parent's: for each parent
+/// element it follows (single region, no transitions), the parent's
+/// station range in the region and its own stations there, in station
+/// order (each maps linearly: a line to its parallel, an arc to the
+/// concentric arc). Returns the parent too.
+pub(super) fn offset_station_map(doc: &CadDocument, alignment: Handle) -> Option<(u64, Vec<[f64; 4]>)> {
+    let arch = |h: Handle| match doc.get_entity(h)? {
+        crate::entities::EntityType::Extended(x) => match &x.data {
+            crate::entities::ExtendedEntityData::Arch(a) if a.dxf_name == "AECC_ALIGNMENT" => Some(a),
+            _ => None,
+        },
+        _ => None,
+    };
+    let a = arch(alignment)?;
+    let o = a.alignment_offset_parameters()?;
+    let [region] = o.regions.as_slice() else { return None };
+    o.transitions.is_empty().then_some(())?;
+    let parent = a.alignment_offset_parent()?;
+    let (parent_elements, own_elements) = (arch(Handle::new(parent))?.alignment_elements()?, a.alignment_elements()?);
+    let (parent_spans, own_spans) = (spans(&parent_elements)?, spans(&own_elements)?);
+    let length = |pieces: &[Piece]| pieces.iter().map(piece_length).sum::<f64>();
+    let start = a.alignment_start_station()?;
+    let mut out = Vec::new();
+    for (pid, ids) in &o.element_map {
+        let (_, from, pieces) = parent_spans.iter().find(|(e, ..)| i32::from(e.id) == *pid)?;
+        let own: Vec<_> = ids.iter().map(|id| own_spans.iter().find(|(e, ..)| i32::from(e.id) == *id)).collect::<Option<_>>()?;
+        let (first, last) = (own.first()?, own.last()?);
+        let (s0, s1) = (from.max(region.parent_start), (from + length(pieces)).min(region.parent_end));
+        (s1 > s0).then_some(())?;
+        out.push([s0, s1, start + first.1, start + last.1 + length(&last.2)]);
+    }
+    out.sort_by(|a, b| a[0].total_cmp(&b[0]));
+    Some((parent, out))
 }
 
 /// Writes an alignment again with `profiles` and the profile views
@@ -1542,7 +1633,7 @@ fn rewrite_adding(doc: &mut CadDocument, alignment: Handle, w: Written, before: 
     let original = doc.get_entity(alignment).cloned().ok_or_else(|| invalid("alignment not found"))?;
     let old = bits_of(doc);
     let handles = |list: &[ProfileRef]| list.iter().map(|p| p.handle).collect::<Vec<_>>();
-    write_alignment_of(doc, w.common.clone(), &w.name, &w.elements, w.style, w.feature, w.edge, Some(&w.keys), &handles(before), &w.anchors, &w.views, &w.groups, None, w.kind, &w.timing)?;
+    write_alignment_of(doc, w.common.clone(), &w.name, &w.elements, w.style, w.feature, w.edge, Some(&w.keys), &handles(before), &w.anchors, &w.views, &w.groups, w.offset.as_ref(), w.kind, &w.timing)?;
     if bits_of(doc) != old {
         *doc.get_entity_mut(alignment).ok_or_else(|| invalid("alignment not found"))? = original;
         return Err(invalid("the alignment holds data this crate does not write"));
@@ -1551,8 +1642,9 @@ fn rewrite_adding(doc: &mut CadDocument, alignment: Handle, w: Written, before: 
     // profile sampled from a surface has none: a zero identifier).
     let mut anchors = w.anchors.clone();
     anchors.extend_from_slice(extra);
+    let start = w.offset.as_ref().map_or(0.0, |o| o.range.0);
     for p in profiles.iter().filter(|p| p.id != [0; 16] && w.anchors.iter().all(|a| a.id != p.id)) {
-        anchors.push(anchor_at(&w.elements, 0.0, PROFILE_ANCHOR, p.id, 0.0).ok_or_else(|| invalid("the alignment's start cannot be placed"))?);
+        anchors.push(anchor_at(&w.elements, start, PROFILE_ANCHOR, p.id, start).ok_or_else(|| invalid("the alignment's start cannot be placed"))?);
     }
     anchors.sort_by(|a, b| a.id.cmp(&b.id));
     // The speeds stay in station order.
@@ -1562,7 +1654,7 @@ fn rewrite_adding(doc: &mut CadDocument, alignment: Handle, w: Written, before: 
     let superelevation = if extra_timing.superelevation.is_empty() { w.timing.superelevation.clone() } else { extra_timing.superelevation.clone() };
     let keys = if superelevation.is_empty() { &w.keys } else { &w.keys_superelevation };
     let timing = Timing { equations: [&w.timing.equations[..], &extra_timing.equations[..]].concat(), speeds, superelevation };
-    write_alignment_of(doc, w.common.clone(), &w.name, &w.elements, w.style, w.feature, w.edge, Some(keys), &handles(profiles), &anchors, views.unwrap_or(&w.views), groups, None, w.kind, &timing)?;
+    write_alignment_of(doc, w.common.clone(), &w.name, &w.elements, w.style, w.feature, w.edge, Some(keys), &handles(profiles), &anchors, views.unwrap_or(&w.views), groups, w.offset.as_ref(), w.kind, &timing)?;
     Ok(())
 }
 

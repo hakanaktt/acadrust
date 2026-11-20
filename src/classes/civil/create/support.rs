@@ -122,6 +122,10 @@ const CLASSES: &[Class] = &[
     Class { dxf: "AECC_LABEL_TEXT_STYLE", cpp: "AeccDbLabelStyleText", module: "AeccLand130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_LABEL_RADIAL_LINE_STYLE", cpp: "AeccDbLabelStyleRadialLine", module: "AeccLand130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_PROFILE_LABEL_SET", cpp: "AeccDbVAlignStnLabelsDlgTemplate", module: "AeccLand130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_ASSOC_ACTION", cpp: "AeccDbAssocAction", module: "AeccvBase130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_ASSOC_OFFSET_VALIGNMENT_ACTION_BODY", cpp: "AeccDbAssocOffsetVAlignment", module: "AeccLand130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_ASSOC_DEPENDENCY", cpp: "AeccDbAssocDependency", module: "AeccvBase130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_ASSOC_DEPENDENCY_BODY", cpp: "AeccDbAssocDependencyBody", module: "AeccvBase130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_COGO_POINT", cpp: "AeccDbCogoPoint", module: "AeccLand130", proxy_flags: 0x33c, entity: true },
 ];
 

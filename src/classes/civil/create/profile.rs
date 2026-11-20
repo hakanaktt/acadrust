@@ -14,9 +14,15 @@ use super::tree::{ensure_profile_tree, KEY_PROFILE_STYLES};
 /// Bits of a profile record after its identifier.
 const TAIL: usize = 107;
 /// The 107 bits after a profile's identifier, the same in every sample
-/// (WR01 to WR09), ending with the version word.
-// ponytail: not split into fields; name them once a profile varies them.
+/// (WR01 to WR09), ending with the version word: `PRE`, `BD 0`, `MID`,
+/// four empty lists (`BL 0`), `END` (an offset profile fills them, see
+/// [`OffsetTail`]).
 const TAIL_BITS: &str = "10001111111100001111000000000000000010100001000000010100000001101010100000000110001010100001011111000000100";
+// ponytail: the constant runs are not split into fields; name them once a
+// profile varies them.
+const PRE: &str = "10001111111100001111000000000000000010";
+const MID: &str = "0001000000010100000001";
+const END: &str = "0000000110001010100001011111000000100";
 
 /// The helper records a profile owns, in the order of its references (and
 /// of the class keys that refer to them).
@@ -78,13 +84,20 @@ fn default_style(doc: &CadDocument) -> Option<u64> {
     read_node(doc, Handle::new(head))?.children.first().map(|c| c.1).filter(|h| *h != 0)
 }
 
-/// The identifier a profile record stores before its last 107 bits, a
-/// version-4 GUID (the alignment lists its profiles by it).
+/// The identifier a profile record stores after its entities, a
+/// version-4 GUID (the alignment lists its profiles by it): before its
+/// last 107 bits (`TAIL_BITS`), or, after a longer tail (an offset
+/// profile's), where the reader finds it.
 pub(super) fn identifier(doc: &CadDocument, profile: u64) -> Option<[u8; 16]> {
     let EntityType::Extended(x) = doc.get_entity(Handle::new(profile))? else { return None };
     let ExtendedEntityData::Arch(a) = &x.data else { return None };
     (a.dxf_name == "AECC_PROFILE").then_some(())?;
     let (data, start, end) = a.main_stream()?;
+    let bit = |p: usize| data[p / 8] >> (7 - p % 8) & 1;
+    let fixed = end >= start + TAIL && TAIL_BITS.bytes().enumerate().all(|(i, c)| bit(end - TAIL + i) == c - b'0');
+    if !fixed {
+        return super::super::profile::after_entities(data, start, end).map(|(id, _)| id);
+    }
     let at = end.checked_sub(TAIL + 128).filter(|at| *at >= start)?;
     let mut id = [0u8; 16];
     for (i, byte) in id.iter_mut().enumerate() {
@@ -277,6 +290,21 @@ struct Sampled {
     whole: bool,
 }
 
+/// What an offset profile's record holds besides its entities (see
+/// [`add_offset_profile`]).
+struct OffsetTail {
+    slope: f64,
+    offset: f64,
+    parent_length: f64,
+    /// For each source entity (by id) the entities copied from it.
+    map: Vec<(i32, Vec<i32>)>,
+    /// The parent's anchors at the source's start and end.
+    anchors: [(f64, [u8; 16]); 2],
+    /// Its companion and its source.
+    feature: u64,
+    source: u64,
+}
+
 /// The profile record.
 ///
 /// ```text
@@ -302,9 +330,18 @@ struct Sampled {
 /// Written with the PVIs and curves of WR01, WR02 and WR10 to WR13, the
 /// records equal the samples' bit for bit apart from the geometry stamp
 /// and the identifier.
+///
+/// An offset profile (OP01, OP02, OB01): `BL 0x00025F04`; three more keys
+/// (`0x0100FF46` BL 0 after `0x0300FB05`, `0x0D00FF48` BL 4095 after
+/// `0x0400FE09`, `0x0200FF40` BD slope last); 65 zero bits, `BD 2.25`, 7
+/// bits `0111010` in place of the 63 bits, BD and 9 bits; `BL 0x102`,
+/// `BD 0, BD 0, BD 30, BD 0, BD offset, 3 x BS 0` in place of `BL 0,
+/// BD 0, BD 0, BD 30, 5 x BS 0`; the tail's lists filled (see
+/// `profile::after_entities`); references 8 and 9 its companion, 15 the
+/// source profile (soft).
 #[allow(clippy::too_many_arguments)]
 fn write_profile(doc: &mut CadDocument, common: EntityCommon, name: &str, parts: &[(i32, i32, i32, Part)], helpers: &[Handle; 7], style: u64, alignment: Handle, id: &[u8; 16]) -> Result<Handle, DxfError> {
-    write_profile_of(doc, common, name, parts, helpers, style, alignment, id, None)
+    write_profile_of(doc, common, name, parts, helpers, style, alignment, id, None, None)
 }
 
 /// [`write_profile`]; with `sampled` a profile sampled from a surface (no
@@ -314,10 +351,11 @@ fn write_profile(doc: &mut CadDocument, common: EntityCommon, name: &str, parts:
 /// surface is the reference after the alignment (soft pointer; WS11 to
 /// WS15).
 #[allow(clippy::too_many_arguments)]
-fn write_profile_of(doc: &mut CadDocument, common: EntityCommon, name: &str, parts: &[(i32, i32, i32, Part)], helpers: &[Handle; 7], style: u64, alignment: Handle, id: &[u8; 16], sampled: Option<&Sampled>) -> Result<Handle, DxfError> {
+fn write_profile_of(doc: &mut CadDocument, common: EntityCommon, name: &str, parts: &[(i32, i32, i32, Part)], helpers: &[Handle; 7], style: u64, alignment: Handle, id: &[u8; 16], sampled: Option<&Sampled>, offset: Option<&OffsetTail>) -> Result<Handle, DxfError> {
     let byte = |w: &mut DwgMergedWriter, v: u8| bits(w, &format!("{v:08b}"));
+    let feature = offset.map_or(0, |o| o.feature);
     let mut refs: Vec<Ref> = helpers.iter().map(|h| Ref(DwgReferenceType::HardOwnership, h.value())).collect();
-    refs.extend([soft_pointer(0), hard_pointer(0), hard_pointer(0), soft_pointer(0), hard_pointer(style), hard_pointer(alignment.value()), soft_pointer(sampled.map_or(0, |s| s.surface)), hard_pointer(0), soft_pointer(0), soft_pointer(0)]);
+    refs.extend([soft_pointer(0), hard_pointer(feature), hard_pointer(feature), soft_pointer(0), hard_pointer(style), hard_pointer(alignment.value()), soft_pointer(sampled.map_or(0, |s| s.surface)), hard_pointer(0), soft_pointer(offset.map_or(0, |o| o.source)), soft_pointer(0)]);
     let mut strings = vec!["AeccImpVAlignment".to_string(), String::new(), String::new()];
     strings.extend(KEYS.iter().filter_map(|(_, k)| match k {
         Key::Text(t) => Some(t.to_string()),
@@ -331,11 +369,11 @@ fn write_profile_of(doc: &mut CadDocument, common: EntityCommon, name: &str, par
         "AECC_PROFILE",
         common,
         |w| {
-            for v in [80, 0, 80, 80, 0, 0x1002_5F04] {
+            for v in [80, 0, 80, 80, 0, if offset.is_some() { 0x0002_5F04 } else { 0x1002_5F04 }] {
                 w.write_bit_long(v);
             }
             bits(w, "010101");
-            byte(w, KEYS.len() as u8);
+            byte(w, KEYS.len() as u8 + if offset.is_some() { 3 } else { 0 });
             for (key, value) in &KEYS {
                 w.write_bit_long(*key as i32);
                 match value {
@@ -347,11 +385,34 @@ fn write_profile_of(doc: &mut CadDocument, common: EntityCommon, name: &str, par
                         }
                     }
                 }
+                if offset.is_some() {
+                    match key {
+                        0x0300_FB05 => {
+                            w.write_bit_long(0x0100_FF46);
+                            w.write_bit_long(0);
+                        }
+                        0x0400_FE09 => {
+                            w.write_bit_long(0x0D00_FF48);
+                            w.write_bit_long(0xFFF);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            if let Some(o) = offset {
+                w.write_bit_long(0x0200_FF40);
+                w.write_bit_double(o.slope);
             }
             bl_byte(w, 0);
-            bits(w, &"0".repeat(63));
-            w.write_bit_double(2.0);
-            bits(w, "011011010");
+            if offset.is_some() {
+                bits(w, &"0".repeat(65));
+                w.write_bit_double(2.25);
+                bits(w, "0111010");
+            } else {
+                bits(w, &"0".repeat(63));
+                w.write_bit_double(2.0);
+                bits(w, "011011010");
+            }
             if let Some(s) = sampled {
                 w.write_bit_long(if s.whole { 7 } else { 0x47 });
                 for v in [s.range.0, s.range.1, 30.0, s.offset] {
@@ -363,11 +424,12 @@ fn write_profile_of(doc: &mut CadDocument, common: EntityCommon, name: &str, par
                 bits(w, TAIL_BITS);
                 return;
             }
-            w.write_bit_long(0);
-            for v in [0.0, 0.0, 30.0] {
+            // `BD 0` and `BS 0` share their bits.
+            w.write_bit_long(if offset.is_some() { 0x102 } else { 0 });
+            for v in [0.0, 0.0, 30.0, 0.0, offset.map_or(0.0, |o| o.offset)] {
                 w.write_bit_double(v);
             }
-            for _ in 0..5 {
+            for _ in 0..3 {
                 w.write_bit_short(0);
             }
             bits(w, "0000001000");
@@ -486,10 +548,46 @@ fn write_profile_of(doc: &mut CadDocument, common: EntityCommon, name: &str, par
             }
             bits(w, "10");
             w.write_bytes(id);
-            bits(w, TAIL_BITS);
+            write_tail(w, offset);
         },
         Body { refs, strings },
     )
+}
+
+/// The profile's tail after its identifier (see [`OffsetTail`]): equal to
+/// `TAIL_BITS` without an offset.
+fn write_tail(w: &mut DwgMergedWriter, offset: Option<&OffsetTail>) {
+    bits(w, PRE);
+    w.write_bit_double(offset.map_or(0.0, |o| o.slope));
+    bits(w, MID);
+    let Some(o) = offset else {
+        for _ in 0..4 {
+            w.write_bit_long(0);
+        }
+        bits(w, END);
+        return;
+    };
+    w.write_bit_long(1);
+    for v in [o.slope, 0.0, o.parent_length, 0.0, 0.0] {
+        w.write_bit_double(v);
+    }
+    for v in [2, 0, 0, 0, o.map.len() as i32] {
+        w.write_bit_long(v);
+    }
+    for (source, ids) in &o.map {
+        for v in [*source, -1, ids.len() as i32] {
+            w.write_bit_long(v);
+        }
+        for id in ids {
+            w.write_bit_long(*id);
+        }
+    }
+    w.write_bit_long(2);
+    for (station, id) in &o.anchors {
+        w.write_bit_double(*station);
+        w.write_bytes(id);
+    }
+    bits(w, END);
 }
 
 /// The helper records a profile owns: each the version word and `BL 0`
@@ -654,7 +752,139 @@ pub fn add_surface_profile(doc: &mut CadDocument, alignment: Handle, surface: Ha
         ..EntityCommon::default()
     };
     let sampled = Sampled { surface: surface.value(), offset, range, whole };
-    write_profile_of(doc, common, name, &[], &helpers, style, alignment, &[0; 16], Some(&sampled))
+    write_profile_of(doc, common, name, &[], &helpers, style, alignment, &[0; 16], Some(&sampled), None)
+}
+
+/// Anchor kinds of an offset profile's start and end on the parent (the
+/// application wrote 221 and 9 for the start in two samples; it accepts
+/// either).
+const OFFSET_START_ANCHOR: i32 = 9;
+const OFFSET_END_ANCHOR: i32 = 0;
+
+/// The entities of an offset profile copied from `source` (link order: id,
+/// kind, points at the start, middle station and end; tangents and
+/// symmetric parabolas only), each cut where `map` (parent stations to the
+/// offset alignment's, see `offset_station_map`) changes and moved to the
+/// offset alignment's stations, raised by `rise`. Returns the entities in
+/// station order and, by source id, the ids (1 up, in station order) made
+/// from each.
+fn offset_entities(source: &[(i32, crate::classes::civil::ProfilePiece, [Vector2; 3])], map: &[[f64; 4]], rise: f64) -> Option<(Vec<ProfileEntity>, Vec<(i32, Vec<i32>)>)> {
+    use crate::classes::civil::ProfilePiece;
+    let tol = 1e-9 * map.last()?[1].abs().max(1.0);
+    let at = |s: f64| -> Option<f64> {
+        let m = map.iter().find(|m| s >= m[0] - tol && s <= m[1] + tol)?;
+        Some(m[2] + (s - m[0]) * (m[3] - m[2]) / (m[1] - m[0]))
+    };
+    let mut entities = Vec::new();
+    let mut ids: Vec<(i32, Vec<i32>)> = Vec::new();
+    for (id, piece, [a, m, b]) in source {
+        // Elevation along the entity: its line, or the parabola through its
+        // three points.
+        let z = |x: f64| match piece {
+            ProfilePiece::Tangent => a.y + (b.y - a.y) * (x - a.x) / (b.x - a.x),
+            _ => {
+                let l = |p: Vector2, q: Vector2, r: Vector2| (x - q.x) * (x - r.x) / ((p.x - q.x) * (p.x - r.x)) * p.y;
+                l(*a, *m, *b) + l(*m, *a, *b) + l(*b, *a, *m)
+            }
+        };
+        if !matches!(piece, ProfilePiece::Tangent | ProfilePiece::Parabola) {
+            return None;
+        }
+        let mut cuts = vec![a.x];
+        cuts.extend(map.iter().map(|m| m[0]).filter(|s| *s > a.x + tol && *s < b.x - tol));
+        cuts.push(b.x);
+        let mut made = Vec::new();
+        for w in cuts.windows(2) {
+            let p = |x: f64| -> Option<Vector2> { Some(Vector2::new(at(x)?, z(x) + rise)) };
+            entities.push(match piece {
+                ProfilePiece::Tangent => ProfileEntity::Tangent { start: p(w[0])?, end: p(w[1])? },
+                _ => ProfileEntity::ParabolaThreePoints { start: p(w[0])?, middle: p((w[0] + w[1]) / 2.0)?, end: p(w[1])? },
+            });
+            made.push(entities.len() as i32);
+        }
+        ids.push((*id, made));
+    }
+    ids.sort_by_key(|e| e.0);
+    Some((entities, ids))
+}
+
+/// Adds an offset profile `name` on `offset_alignment` copied from
+/// `source`, a profile of the offset alignment's parent, raised by `slope`
+/// times the offset (the application's "by slope" offset profile), on
+/// `layer` (layer "0" when `None`). Like the application it copies the
+/// source's entities as fixed tangents and fixed parabolas by three
+/// points, cut where the offset alignment's elements change, and ties it
+/// to the source and the offset alignment by an action in the drawing's
+/// associative network; the parent gets anchors at the source's start and
+/// end.
+///
+/// The offset alignment must be one this crate writes with one region and
+/// no widenings, the source a profile of tangents and symmetric parabolas
+/// within the stations the offset alignment follows.
+pub fn add_offset_profile(doc: &mut CadDocument, source: Handle, offset_alignment: Handle, name: &str, slope: f64, layer: Option<&str>) -> Result<Handle, DxfError> {
+    if name.is_empty() || !slope.is_finite() {
+        return Err(invalid("an offset profile needs a name and a finite slope"));
+    }
+    let (parent, map) = super::alignment::offset_station_map(doc, offset_alignment).ok_or_else(|| invalid("the offset alignment needs one region without widenings"))?;
+    let arch = |h: Handle| match doc.get_entity(h) {
+        Some(EntityType::Extended(x)) => match &x.data {
+            ExtendedEntityData::Arch(a) => Some(a),
+            _ => None,
+        },
+        _ => None,
+    };
+    let src = arch(source).filter(|a| a.dxf_name == "AECC_PROFILE").ok_or_else(|| invalid("source profile not found"))?;
+    if src.typed_handles().get(12).map(|r| r.0) != Some(parent) {
+        return Err(invalid("the source is not a profile of the offset alignment's parent"));
+    }
+    let (data, start, end) = src.main_stream().ok_or_else(|| invalid("source profile cannot be read"))?;
+    let points = super::super::profile::entity_points(data, start, end).filter(|p| !p.is_empty()).ok_or_else(|| invalid("source profile cannot be solved"))?;
+    let offset = arch(offset_alignment).and_then(|a| a.alignment_offset_parameters()).map(|o| o.offset).ok_or_else(|| invalid("offset alignment not found"))?;
+    let parent_length = arch(Handle::new(parent)).and_then(|a| super::alignment::length_of(&a.alignment_elements()?)).ok_or_else(|| invalid("the parent cannot be solved"))?;
+    let (first, last) = (points[0].2[0].x, points[points.len() - 1].2[2].x);
+    let (entities, ids) = offset_entities(&points, &map, slope * offset.abs()).ok_or_else(|| invalid("the source must have tangents and symmetric parabolas within the offset alignment's stations"))?;
+    let (written, before) = rewritable(doc, offset_alignment, |h| identifier(doc, h)).ok_or_else(|| invalid("the offset alignment is not one this crate writes"))?;
+    let layer = layer.unwrap_or("0");
+    let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
+    ensure_profile_tree(doc)?;
+    let style = default_style(doc).ok_or_else(|| invalid("drawing has no profile styles"))?;
+    let handle = doc.allocate_handle();
+    let id = new_identifier(handle.value());
+    let anchors = [(first, new_identifier(handle.value() ^ 1)), (last, new_identifier(handle.value() ^ 2))];
+    super::alignment::add_anchors(doc, Handle::new(parent), OFFSET_START_ANCHOR, &[(anchors[0].1, anchors[0].0)])?;
+    super::alignment::add_anchors(doc, Handle::new(parent), OFFSET_END_ANCHOR, &[(anchors[1].1, anchors[1].0)])?;
+    let mut profiles: Vec<ProfileRef> = before.iter().map(|p| ProfileRef { handle: p.handle, id: p.id }).collect();
+    profiles.push(ProfileRef { handle: handle.value(), id });
+    rewrite(doc, offset_alignment, written, &before, &profiles)?;
+    let helpers = write_helpers(doc, handle)?;
+    let feature = super::alignment::add_profile_companion(doc, handle)?;
+    let n = entities.len() as i32;
+    let parts: Vec<(i32, i32, i32, Part)> = entities.iter().enumerate().map(|(i, e)| {
+        let id = i as i32 + 1;
+        (id, id - 1, if id == n { 0 } else { id + 1 }, Part::Fixed(*e))
+    }).collect();
+    let common = EntityCommon {
+        handle,
+        owner_handle: doc.header.model_space_block_handle,
+        layer: layer.into(),
+        layer_handle: Some(layer_handle),
+        ..EntityCommon::default()
+    };
+    let tail = OffsetTail { slope, offset, parent_length, map: ids, anchors, feature: feature.value(), source: source.value() };
+    write_profile_of(doc, common, name, &parts, &helpers, style, offset_alignment, &id, None, Some(&tail))?;
+    use super::assoc::{add_action, Dependency};
+    let deps = add_action(
+        doc,
+        "AECC_ASSOC_OFFSET_VALIGNMENT_ACTION_BODY",
+        handle,
+        &[Dependency { object: source, writes: false }, Dependency { object: offset_alignment, writes: false }, Dependency { object: handle, writes: true }],
+    )?;
+    for (object, dep) in [source, offset_alignment, handle].into_iter().zip(deps) {
+        if let Some(e) = doc.get_entity_mut(object) {
+            e.common_mut().reactors.push(dep);
+        }
+    }
+    Ok(handle)
 }
 
 #[cfg(test)]
@@ -884,5 +1114,32 @@ mod tests {
         // L = K * 100 * |g2 - g1| with the grade at its end.
         let p = pieces(floating);
         assert!((p[1].1[0].x - 42.679491924).abs() < 1e-6);
+    }
+
+    #[test]
+    fn offset_profiles_copy_their_source_cut_at_the_offset_elements() {
+        use crate::classes::civil::{add_alignment_with_curves, add_offset_alignment, VertexCurve};
+        let v = Vector2::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let al = add_alignment_with_curves(&mut doc, "AL1", &[v(0.0, 0.0), v(100.0, 0.0), v(200.0, 50.0)], &[VertexCurve::Arc(80.0)], None).unwrap();
+        let fg = add_profile(&mut doc, al, "FG", &[v(0.0, 10.0), v(85.0, 15.0), v(200.0, 13.0)], &[30.0], None).unwrap();
+        let off = add_offset_alignment(&mut doc, al, "OFF", -10.0, None, None).unwrap();
+        let op = add_offset_profile(&mut doc, fg, off, "OP", 0.02, None).unwrap();
+        let path = std::env::temp_dir().join(format!("acadrust_offset_profile_{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let EntityType::Extended(x) = back.get_entity(op).unwrap() else { panic!() };
+        let ExtendedEntityData::Arch(a) = &x.data else { panic!() };
+        // The parabola crossing the arc's start is cut in two (OB01).
+        let o = a.profile_offset().unwrap();
+        assert_eq!((o.source, o.slope, o.offset), (fg.value(), 0.02, -10.0));
+        assert_eq!(o.entity_map, vec![(1, vec![1]), (2, vec![4, 5]), (3, vec![2, 3])]);
+        let pvis = a.profile_pvis();
+        assert!((pvis[0].point.y - 10.2).abs() < 1e-12);
+        assert!((pvis.last().unwrap().point.x - 195.3635239099919).abs() < 1e-9);
+        assert_eq!(x.common.reactors.len(), 1);
+        assert!(identifier(&back, op.value()).is_some());
     }
 }
