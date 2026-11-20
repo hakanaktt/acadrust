@@ -1064,6 +1064,22 @@ mod tests {
     }
 
     #[test]
+    fn views_with_bands_read_their_frame_back() {
+        use super::super::bands::{BandKind, ProfileViewBand};
+        let v = Vector2::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let al = crate::classes::civil::add_alignment(&mut doc, "AL1", &[v(0.0, 0.0), v(100.0, 0.0)], None).unwrap();
+        crate::classes::civil::add_profile(&mut doc, al, "P1", &[v(0.0, 10.0), v(50.0, 20.0), v(100.0, 15.0)], &[0.0], None).unwrap();
+        let bands: Vec<ProfileViewBand> = [BandKind::ProfileData, BandKind::VerticalGeometry, BandKind::HorizontalGeometry].into_iter().map(ProfileViewBand::new).collect();
+        let view = add_profile_view_with_bands(&mut doc, al, "PV", v(0.0, -100.0), None, &bands, None).unwrap();
+        let back = round_trip(&doc, "bands");
+        // Each band item opens with its gap (a BD, not 0 here).
+        let frame = entity(&back, view).profile_view_frame().unwrap();
+        assert_eq!((frame.origin, frame.station_min, frame.station_max), (v(0.0, -100.0), -200.0, 300.0));
+    }
+
+    #[test]
     fn views_take_a_style_with_its_vertical_exaggeration() {
         let v = Vector2::new;
         let mut doc = CadDocument::new();
