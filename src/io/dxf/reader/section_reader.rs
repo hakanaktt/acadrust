@@ -18496,7 +18496,7 @@ impl<'a> SectionReader<'a> {
                         ml.text_attachment_point =
                             mlt::TextAttachmentPointType::from(self.leader_code(
                                 v,
-                                &[1, 2, 3],
+                                &[1, 2, 3, 4, 5, 6, 7, 8, 9],
                                 "read_multileader.TextAttachmentPointType",
                             ));
                     }
@@ -18709,7 +18709,7 @@ impl<'a> SectionReader<'a> {
                         ctx.text_attachment_point =
                             mlt::TextAttachmentPointType::from(self.leader_code(
                                 v,
-                                &[1, 2, 3],
+                                &[1, 2, 3, 4, 5, 6, 7, 8, 9],
                                 "read_mleader_context.TextAttachmentPointType",
                             ));
                     }

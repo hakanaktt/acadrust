@@ -4848,7 +4848,7 @@ pub fn read_multileader(
     crate::io::leader_codes::dwg(
         reader,
         text_attachment_point,
-        &[1, 2, 3],
+        &[1, 2, 3, 4, 5, 6, 7, 8, 9],
         "read_multileader.text_attachment_point",
     );
     let scale_factor = reader.read_bit_double();
@@ -5062,7 +5062,7 @@ pub(crate) fn read_multileader_annotation_context(
             crate::io::leader_codes::dwg(
                 reader,
                 code,
-                &[1, 2, 3],
+                &[1, 2, 3, 4, 5, 6, 7, 8, 9],
                 "read_multileader_annotation_context.TextAttachmentPointType",
             )
         });
