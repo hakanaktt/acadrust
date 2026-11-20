@@ -306,11 +306,6 @@ pub(crate) fn prepare_active_viewport_elevation(document: &mut std::borrow::Cow<
 }
 
 fn validate_unknown_records(document: &CadDocument) -> Result<()> {
-    if document.version < DxfVersion::AC1018 && !document.file_dependencies.is_empty() {
-        return Err(DxfError::NotImplemented(
-            "FileDepList identity requires DWG R2004 or later".into(),
-        ));
-    }
     for entity in document.entities() {
         if document.version < DxfVersion::AC1018 {
             if let crate::entities::EntityType::Insert(insert) = entity {

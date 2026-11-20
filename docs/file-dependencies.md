@@ -15,8 +15,8 @@ The all-zero eight-byte AC18 dependency list can be stored as a sparse section
 with no pages and is recognized as an empty list. Malformed present records
 fail strict reading; failsafe reading records a decode diagnostic.
 
-The DWG writer emits the list in AC1018 and newer. An older DWG destination
-rejects a nonempty list instead of silently dropping its identity. DXF has no
+The DWG writer emits the list in AC1018 and newer. Older DWG versions have
+no FileDepList section, so a drawing saved to one is written without it. DXF has no
 new private dependency-list extension in this contribution. The current
 semantic inventory V1 does not enumerate the physical dependency list;
 regression tests compare these typed records separately.

@@ -1627,7 +1627,7 @@ impl<R: Read + Seek> DwgReader<R> {
 
         // 1. Read the DWG file header and section map
         let stage_started = web_time::Instant::now();
-        let info = match self.read_file_header() {
+        let mut info = match self.read_file_header() {
             Ok(info) => info,
             Err(e) if failsafe => {
                 report_read_error(
@@ -1797,6 +1797,15 @@ impl<R: Read + Seek> DwgReader<R> {
                 .iter()
                 .any(|s| s.name == "AcDb:FileDepList")
         {
+            // The section map marks this section 2 ("unknown") where other
+            // sections hold 0; without a password its pages are plain.
+            if self.decryption_key.is_none() {
+                for s in &mut info.section_descriptors {
+                    if s.name == "AcDb:FileDepList" && s.encrypted == 2 {
+                        s.encrypted = 0;
+                    }
+                }
+            }
             let dependencies =
                 self.get_section_buffer("AcDb:FileDepList", &info)
                     .and_then(|bytes| {

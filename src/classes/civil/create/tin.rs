@@ -33,12 +33,6 @@ fn in_circle(a: Vector3, b: Vector3, c: Vector3, p: Vector3) -> bool {
     det > 0.0
 }
 
-/// Delaunay triangulation of `points` inside a rectangle of four corners
-/// `CORNER_MARGIN` outside their extents (Bowyer-Watson).
-pub(super) fn triangulate(points: &[Vector3]) -> Triangulation {
-    triangulate_in(points, points)
-}
-
 /// Delaunay triangulation of `points` (distinct in plan) inside a rectangle
 /// of four corners `CORNER_MARGIN` outside the extents of `extent`, which
 /// holds `points` (Bowyer-Watson).
@@ -506,7 +500,7 @@ mod tests {
     #[test]
     fn the_triangulation_is_delaunay_with_hidden_corner_triangles() {
         let pts: Vec<Vector3> = [(0.0, 0.0, 0.0), (10.0, 0.0, 1.0), (0.0, 10.0, 2.0), (10.0, 10.0, 3.0), (20.0, 0.0, 1.5), (20.0, 10.0, 2.5), (5.0, 5.0, 4.0), (15.0, 5.0, 3.5), (0.0, 20.0, 2.0), (20.0, 20.0, 5.0)].iter().map(|p| Vector3::new(p.0, p.1, p.2)).collect();
-        let t = triangulate(&pts);
+        let t = triangulate_in(&pts, &pts);
         assert_eq!(t.vertices.len(), 14);
         // Euler: 2n - 2 - (hull vertices: the four corners).
         assert_eq!(t.triangles.len(), 2 * 14 - 2 - 4);

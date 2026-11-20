@@ -27,17 +27,17 @@ impl<'a> Reader<'a> {
     fn u32(&mut self) -> Result<u32> {
         Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap()))
     }
-    fn text(&mut self, feature: bool) -> Result<String> {
+    fn text(&mut self) -> Result<String> {
         let n = self.u32()? as usize;
         let data = self.take(n)?;
         let value = if self.unicode {
-            // Feature names in independent writers occur as UCS-4 or UTF-16.
-            // Files use UTF-16. Lengths count bytes, not characters.
-            let wide_feature = feature
-                && !data.is_empty()
+            // Texts occur as UTF-16 or, from writers with a 4-byte wchar_t
+            // (the macOS application's file names and paths), as UCS-4.
+            // Lengths count bytes, not characters.
+            let wide = !data.is_empty()
                 && data.len() % 4 == 0
                 && data.chunks_exact(4).all(|b| b[2] == 0 && b[3] == 0);
-            let units = if wide_feature {
+            let units = if wide {
                 data.chunks_exact(4)
                     .map(|b| u16::from_le_bytes([b[0], b[1]]))
                     .collect::<Vec<_>>()
@@ -81,7 +81,7 @@ pub(crate) fn read(
         .try_reserve(count)
         .map_err(|_| invalid("feature allocation failed"))?;
     for _ in 0..count {
-        features.push(r.text(true)?);
+        features.push(r.text()?);
     }
     let count = r.u32()? as usize;
     if count > r.bytes.len() / 34 {
@@ -92,10 +92,10 @@ pub(crate) fn read(
         .try_reserve(count)
         .map_err(|_| invalid("file allocation failed"))?;
     for _ in 0..count {
-        let file_name = r.text(false)?;
-        let found_path = r.text(false)?;
-        let fingerprint = r.text(false)?;
-        let version_guid = r.text(false)?;
+        let file_name = r.text()?;
+        let found_path = r.text()?;
+        let fingerprint = r.text()?;
+        let version_guid = r.text()?;
         let feature_index = r.u32()? as usize;
         let feature = features
             .get(feature_index)
@@ -103,7 +103,9 @@ pub(crate) fn read(
             .clone();
         let timestamp = r.u32()?;
         let file_size = r.u32()?;
-        let affects_graphics = match u16::from_le_bytes(r.take(2)?.try_into().unwrap()) {
+        // A one-byte flag in a two-byte slot: some writers leave the upper
+        // byte as uninitialized padding (0x50 seen).
+        let affects_graphics = match r.take(2)?[0] {
             0 => false,
             1 => true,
             _ => return Err(invalid("invalid graphics flag")),

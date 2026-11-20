@@ -57,10 +57,13 @@ fn empty_sparse_dependency_section_is_a_valid_empty_list() {
 }
 
 #[test]
-fn older_dwg_cannot_silently_discard_dependency_identity() {
+fn older_dwg_has_no_dependency_list_and_still_saves() {
     let mut doc = CadDocument::with_version(DxfVersion::AC1015);
     doc.file_dependencies.push(dependency());
-    assert!(DwgWriter::write_to_vec(&doc).is_err());
+    let read = DwgReader::from_stream(Cursor::new(DwgWriter::write_to_vec(&doc).unwrap()))
+        .read()
+        .unwrap();
+    assert!(read.file_dependencies.is_empty());
 }
 
 #[cfg(feature = "serde")]
