@@ -37,7 +37,7 @@ pub use intersection::add_intersection;
 pub use network::{add_pipe, add_pipe_network, add_pipe_of_family, add_structure, add_structure_of_family, connect_pipe, network_part_families};
 pub use pressure::{add_pressure_appurtenance, add_pressure_arc_pipe, add_pressure_cross, add_pressure_fitting, add_pressure_network, add_pressure_part, add_pressure_pipe, add_pressure_pipe_of_size, add_pressure_tee, connect_pressure_parts, pressure_part_descriptions};
 pub use groups::{add_point_group, add_point_group_query, set_point_group, set_point_group_query, Comparison, PointQuery};
-pub use profile::{add_profile, add_profile_with_curves, VerticalCurve};
+pub use profile::{add_profile, add_profile_with_curves, add_surface_profile, VerticalCurve};
 pub use profile_view::{add_profile_view, add_profile_view_with_range};
 pub use sample_lines::{add_sample_line, add_sample_line_through, add_sample_line_group, add_sections};
 pub use section_view::add_section_view;

@@ -1055,6 +1055,11 @@ pub fn add_offset_alignment_with_widenings(doc: &mut CadDocument, parent: Handle
     write_alignment(doc, common, name, &elements, style, companion.value(), 1, None, &[], &[own_anchor], &[], &[], Some(&record))
 }
 
+/// The solved length of an alignment's elements.
+pub(super) fn length_of(elements: &[AlignmentElement]) -> Option<f64> {
+    Some(spans(elements)?.iter().map(|(_, _, p)| p.iter().map(piece_length).sum::<f64>()).sum())
+}
+
 /// Anchor kind of a corridor region's end locked to the alignment's
 /// geometry.
 pub(super) const LOCK_ANCHOR: i32 = 582;
@@ -1179,10 +1184,11 @@ fn rewrite_adding(doc: &mut CadDocument, alignment: Handle, w: Written, before: 
         *doc.get_entity_mut(alignment).ok_or_else(|| invalid("alignment not found"))? = original;
         return Err(invalid("the alignment holds data this crate does not write"));
     }
-    // A new profile ties to the alignment's start by its identifier.
+    // A new profile ties to the alignment's start by its identifier (a
+    // profile sampled from a surface has none: a zero identifier).
     let mut anchors = w.anchors.clone();
     anchors.extend_from_slice(extra);
-    for p in profiles.iter().filter(|p| w.anchors.iter().all(|a| a.id != p.id)) {
+    for p in profiles.iter().filter(|p| p.id != [0; 16] && w.anchors.iter().all(|a| a.id != p.id)) {
         anchors.push(anchor_at(&w.elements, 0.0, PROFILE_ANCHOR, p.id, 0.0).ok_or_else(|| invalid("the alignment's start cannot be placed"))?);
     }
     anchors.sort_by(|a, b| a.id.cmp(&b.id));
