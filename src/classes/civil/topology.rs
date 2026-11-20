@@ -59,6 +59,11 @@ pub struct TopologyVertex {
     pub faces: (i32, i32),
     /// `tan(sweep / 4)` of an arc starting here, positive to the left.
     pub bulge: f64,
+    /// The node's id in the container.
+    pub node: i32,
+    /// An elevation point's key in the container's table of elevation
+    /// points (0 for other vertices).
+    pub key: i32,
 }
 
 impl TopologyVertex {
@@ -74,6 +79,14 @@ impl TopologyVertex {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Topology {
     pub edges: Vec<Vec<TopologyVertex>>,
+    /// The next free node id and elevation point key the container
+    /// records (the application does not reuse ids of removed nodes).
+    pub next_node: i32,
+    pub next_key: i32,
+    /// The flags of the container's first (outside) face, 0 without faces.
+    pub outside_face_flags: i32,
+    /// Each edge's flags (bit 0 a closed edge).
+    pub edge_flags: Vec<i32>,
 }
 
 impl Topology {
@@ -141,7 +154,7 @@ impl Topology {
     }
 }
 
-fn node_list(data: &[u8], pos: usize, end: usize) -> Option<(Vec<(i32, Vector2, f64)>, usize)> {
+fn node_list(data: &[u8], pos: usize, end: usize) -> Option<(Vec<(i32, Vector2, f64)>, usize, i32)> {
     let mut bits = Bits::new(data, pos, end);
     let next_free = bits.bit_long()?;
     let n = bits.bit_long()?;
@@ -163,10 +176,10 @@ fn node_list(data: &[u8], pos: usize, end: usize) -> Option<(Vec<(i32, Vector2, 
         nodes.push((id, Vector2::new(x, y), z));
         id = next;
     }
-    Some((nodes, bits.pos))
+    Some((nodes, bits.pos, next_free))
 }
 
-fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> Option<Vec<Vec<TopologyVertex>>> {
+fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> Option<(Vec<Vec<TopologyVertex>>, Vec<i32>, usize)> {
     let mut bits = Bits::new(data, pos, end);
     let next_free = bits.bit_long()?;
     let slots = bits.bit_long()?;
@@ -174,6 +187,7 @@ fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> 
         return None;
     }
     let mut out = Vec::new();
+    let mut all_flags = Vec::new();
     for _ in 0..slots {
         // A member that left keeps its slot as a lone 2.
         match bits.bit_long()? {
@@ -187,7 +201,8 @@ fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> 
         (1..next_free).contains(&id).then_some(())?;
         // Edge flags: bit 1 marks a closed edge (a lot line around a
         // parcel), whose last vertex starts the segment back to the first.
-        let closed = bits.bit_long()? & 1 != 0;
+        let edge_flags = bits.bit_long()?;
+        let closed = edge_flags & 1 != 0;
         // An edge can be left with no vertices; it keeps its place.
         let n = bits.bit_long()?;
         if !(0..=100_000).contains(&n) || bits.bit_long()? != 0 {
@@ -212,7 +227,7 @@ fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> 
                 0.0
             };
             let &(_, point, z) = nodes.iter().find(|m| m.0 == node)?;
-            run.push(TopologyVertex { point, z, flags, faces, bulge });
+            run.push(TopologyVertex { point, z, flags, faces, bulge, node, key: 0 });
         }
         // A closed edge ends with a copy of its first vertex.
         if run.last().is_some_and(|v| v.bulge != 0.0 || v.faces != (0, 0)) {
@@ -225,15 +240,34 @@ fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> 
         if !(0..=100_000).contains(&listed) {
             return None;
         }
+        // The keys of the edge's elevation points, in edge order.
+        let mut points = run.iter_mut().filter(|v| v.is_elevation_point());
         for _ in 0..listed {
-            bits.bit_long()?;
+            let key = bits.bit_long()?;
+            if let Some(v) = points.next() {
+                v.key = key;
+            }
         }
         for _ in 0..3 {
             (bits.bit_long()? == 0).then_some(())?;
         }
         out.push(run);
+        all_flags.push(edge_flags);
     }
-    (!out.is_empty()).then_some(out)
+    (!out.is_empty()).then_some((out, all_flags, bits.pos))
+}
+
+/// The flags of the first face of the face list at `pos`: `BL next free
+/// id, BL count, per face {BL id, BL id, BL flags, ...}`.
+fn outside_face_flags(data: &[u8], pos: usize, end: usize) -> Option<i32> {
+    let mut bits = Bits::new(data, pos, end);
+    bits.bit_long()?;
+    if bits.bit_long()? == 0 {
+        return Some(0);
+    }
+    bits.bit_long()?;
+    bits.bit_long()?;
+    bits.bit_long()
 }
 
 /// The topology in a site container or alignment companion body:
@@ -247,10 +281,15 @@ fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> 
 /// BL 0x80000001, node list, edge list
 /// ```
 pub(super) fn topology(data: &[u8], start: usize, end: usize) -> Option<Topology> {
-    let read = |pos: usize| -> Option<Topology> {
-        let (nodes, after) = node_list(data, pos, end)?;
+    let read = |pos: usize, next_key: i32| -> Option<Topology> {
+        let (nodes, after, next_node) = node_list(data, pos, end)?;
+        let (edges, edge_flags, faces) = edges(data, after, end, &nodes)?;
         Some(Topology {
-            edges: edges(data, after, end, &nodes)?,
+            edges,
+            edge_flags,
+            next_node,
+            next_key,
+            outside_face_flags: outside_face_flags(data, faces, end).unwrap_or(0),
         })
     };
     let mut bits = Bits::new(data, start, end);
@@ -260,8 +299,9 @@ pub(super) fn topology(data: &[u8], start: usize, end: usize) -> Option<Topology
         (bits.bit_long()? == want).then_some(())?;
     }
     bits.skip(7)?;
+    let mut next_key = 0;
     let head = (|| {
-        bits.bit_long()?;
+        next_key = bits.bit_long()?;
         let count = bits.bit_long()?;
         (0..=100_000).contains(&count).then_some(())?;
         for _ in 0..count {
@@ -281,9 +321,9 @@ pub(super) fn topology(data: &[u8], start: usize, end: usize) -> Option<Topology
         (bits.bit_long()? as u32 == 0x8000_0001).then_some(())
     })();
     if head.is_some() {
-        return read(bits.pos);
+        return read(bits.pos, next_key);
     }
     // debt: a container whose head does not follow the layout above is
     // read by trying positions for its node list.
-    (start..end.saturating_sub(40)).find_map(read)
+    (start..end.saturating_sub(40)).find_map(|pos| read(pos, 0))
 }

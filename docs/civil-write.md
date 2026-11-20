@@ -1124,6 +1124,42 @@ elevation points and the bulges as written and the 2D length 164.983 of
 the first. Without the hard pointers of the table the drawing is refused
 (`Errors Found`).
 
+`set_feature_line_vertices(doc, feature_line, vertices)` replaces a
+feature line's points (inserting or removing PIs and elevation points,
+arcs, elevations) and writes its container again. A container read keeps
+its node ids, elevation point keys and their next free values: the
+application does not reuse the ids of removed points (WF22: ids 1, 2, 4,
+5 with next free 6; WF25: 1, 2, 6, 7, 8 with next free 9; WF26: the keys
+2, 1 in edge order), and new points take the next free ones. The
+container's node records and elevation points are in the application's
+hash order: linear hashing from eight buckets, one more bucket split off
+while the table holds more than eight entries a bucket, a key going to
+`key mod level`, or `key mod 2 level` below the split buckets (WF27: 9
+elevation points; WF28: 130 elevation points and 132 nodes in 17 buckets,
+32, 64, 96, 128 first and 16, 48, 80, 112 last). The outside face loses
+flag 8 once a member has an elevation point or a line's elevations were
+edited (WF11, an elevation set through the API), and a container read
+keeps that. A container read also keeps the application's marks no rule
+here reproduces: an edge's flag 0x800 and with it its last point's flag 8
+(WF04: an alignment edge read from the file when a feature line joined,
+its last point 2), the newest member's point flags 0x10 and 0x20 while it
+is the newest (WP08, WP09), and those of the nodes other members'
+crossings added, which keep their ids too (WP04, WP05: an inserted node
+of the member before the newest keeps 0x10). A closed edge is told by its
+flag 1, no longer by its last point's flag 8. Written so, the containers
+of WF04, WF11, WF12, WF22, WF25 to WF28, WP04, WP05, WP08 to WP14, WP18
+to WP20 and WT09 equal the application's bit for bit (every sample of
+the series but WP01, WP02 and WT04 to WT06, whose containers hold
+members without points or nodes and are not read); WP05 and WP08 with a
+parcel added by the crate (E-PX5, E-PX8) and WF04 with a feature line
+added (E-FX4) open with AUDIT 0 errors and the API lists the new parcel
+(area 2000) and line; a new drawing whose feature line was
+edited three times (an elevation point added, a second one, the first
+removed and an end lowered) and whose other line got an elevation point
+in the middle of its arc (E-FL1), and WF21 with an elevation point added
+by the crate (E-FL2) open with AUDIT 0 errors and the API lists the
+written points, elevation points and bulges.
+
 A new
 member must not cross or touch the site's members: the application splits
 crossing members at their intersections and makes parcels of the closed
@@ -2711,8 +2747,11 @@ Corridors are listed in §3i-a.
 | profile views | bands other than the defaults | partly | no | the graph settings between the named values are constant runs; band items and their label groups are not written (hand-off notes) |
 | sites | name, description, members | yes | yes | §3g |
 | parcels | closed and open, crossing and touching lot lines, arcs, labels | yes | yes | §3g |
-| parcels | lot lines meeting alignments or feature lines; arcs where lines meet; the newest member's point marks 0x10/0x20 | yes | no | §3g (rule not found) |
+| parcels | members added to containers the application wrote with crossings (its point marks and edge flags kept) | yes | yes | §3g |
+| parcels | lot lines meeting alignments or feature lines; arcs where lines meet; the rule of the newest member's point marks 0x10/0x20 for members the crate adds | yes | no | §3g (rule not found; marks read are kept) |
+| sites | containers with members without points or nodes (WP01, WP02, WT04 to WT06: alignments moved to a site) | no | no | the node list holds no nodes and the edges no vertices; not read |
 | feature lines | points, elevation points, arcs, on a site | yes | yes | §3g |
+| feature lines | edits: points, arcs, elevations and elevation points replaced, in containers this crate or the application wrote (ids and keys kept) | yes | yes | §3g |
 | feature lines | members meeting other members on a site, styles other than the default | yes | no | §3g |
 | sample line groups | lines by station or through vertices on both sides | yes | yes | §3j |
 | sample line groups | lines with all vertices on one side; section sources other than a TIN surface (corridors, corridor surfaces, pipe networks) | yes | no | one-sided lines close with another run (LV03); other sources not sampled |
