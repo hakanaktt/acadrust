@@ -442,7 +442,8 @@ BL n, the lines then the arcs:
   spiral-curve-spiral: BL 260, the arc's head with BL 0 (fitted between
         two lines) and no B, BS id, BS previous id, BS next id, BL 256
         (spiral definition), BD spiral in, BD radius, BD spiral out
-BL 0 x 4 (intervals), BL 0 (equations), BL 1, BL 0 (design speeds)
+BL 0 x 4 (no anchors, see below), BL 0 (equations), BL 1, BL 0 (design
+speeds)
 BD 100 (station increment), BL 0 (no superelevation), BL 0, BL 1
 (centerline), BL 2, 2, 2, 0, 3, B 0, BS 0x04BE
 handles: soft pointer 0, companion (hard pointer, twice), soft pointer 0,
@@ -498,6 +499,106 @@ bit for bit apart from the text id; for WA03 the tangent points and the
 bulge differ from the application's in the last bits. An alignment that refers to no companion stops the application
 while it opens the drawing (A1); a companion without its topology is
 refused (`Errors Found`, A6).
+
+### Alignment types
+
+`add_alignment_of_kind(doc, name, vertices, curves, kind, layer)` writes a
+centerline, utility or rail alignment (`AlignmentKind`); the record
+differs only in its type word (1 centerline, 4 utility, 5 rail) and, for
+a rail alignment, the track gauge in the BD after the 7 criteria bits and
+one more `BL 0` after the mask count (`BL 5, BL 2, 2, 2, 0, 0, 3`; AT11 to
+AT13). The reader returns the gauge (`alignment_track_gauge`) and reads
+type 5 as `AlignmentType::Rail`. Written (E-AT1), the three open, audit
+clean and list as Centerline, Utility and Rail with the given track width.
+
+### Station anchors
+
+Objects that tie to a station of an alignment do so through an anchor in
+the alignment's record, kept by its identifier (a version-4 GUID); the
+block after the elements lists them:
+
+```text
+BL profiles, BL profile views, BL sample line groups, BL k,
+k x { GUID, B 1, BL kind, BD 0, BD station, BD along, BD remaining,
+      BL element, BL previous element, BL next element,
+      2RD element start, 2RD element end, 2RD point at the station }
+```
+
+The anchors are stored in identifier order (byte by byte: AO12, AO16,
+KH01). The element is the one the station lies on (the one that starts
+there at a join, the last one at the alignment's end; AO16's anchor at 60
+is on the arc that starts there), `along` and `remaining` the distances
+to its ends. Kinds seen: 32763 (and 32765) a profile's start, 6 the ends
+of an offset alignment's range on its parent, 2 an offset alignment's own
+start (its design speed refers to it), 582 a corridor region locked to
+the geometry (KH01, §3i-a). Two more texts follow per anchor. The reader
+returns them (`alignment_anchors`); the writer keeps an alignment's
+anchors when it writes it again and adds one per new profile (the profile
+keeps its identifier) and two per offset alignment.
+
+### Offset alignments
+
+`add_offset_alignment(doc, parent, name, offset, range, layer)` writes an
+offset alignment of a siteless parent of lines and arcs this crate
+writes, at `offset` (negative to the left) between the parent's stations
+`range` (all of it by default). The record (AO14, AO17, AO21, AO22) is an
+alignment record with:
+
+- `BL 0x00025F04` in place of `0x10025F04`;
+- elements numbered from 2n + 1 (n: the parent's elements) in station
+  order, one per parent element in the range, clipped at the range's ends:
+  a fixed line (`BL 257, BS 0, B 0, BS 0, ids, 2RD, 2RD`) parallel to a
+  parent line, a fixed arc (`BL 258, BS 0, B 0, B 0, BD -1, BD -1, BS 1,
+  BD -1, BL 2, B 0, ids, 2RD start, 2RD middle, 2RD end`) concentric with a
+  parent arc; the first id also in the two fields before the start station
+  and after the 7 criteria bits; the start station is the range's start;
+- one anchor (kind 2) at its start, and one design speed `{BL 1, BD start,
+  BD 0, the anchor's GUID}`;
+- the type `BL 2`, then the offset block (the reader's
+  `offset_parameters`): `BL 1 (dynamic), BL 2, BL 1, BD offset, BL side
+  (1 left, 2 right), B 0, B 0, BL 1 (geometry locking), BL 1, {BD offset,
+  BD parent start, BD parent end, BD start, BD end, BL 2, BL first element,
+  BL last element, BL 0 x 5, BL 3}, BL 0 (transitions), BL k, k x {BL
+  parent element, BL -1, BL 1, BL element} (by parent id), BL 2, 2 x {BD
+  parent station, the parent anchor's GUID}`, then `BL 0, BL 0, BL 3,
+  B 0, BS 0x04BE`;
+- the parent as a seventh reference (soft pointer); one more text per
+  design speed.
+
+`add_offset_alignment_with_widenings(..., widenings, layer)` adds widenings
+(`Widening`: start, end, offset, entry and exit transition lengths along
+the parent, linear transitions; AO16, AO30 to AO33): the stretches in
+station order are nominal, entry transition, widening, exit transition,
+nominal, ...; each nominal or widening stretch is a region (`BL 2` nominal,
+`BL 1` widening) with one element per parent element it covers, each
+transition one element `BL 267, BS 0, B 0, B 0, BD -1, BD -1, BS 1, BD -1,
+BL 3, ids, BL 1, BL 4096, BL 2, 2 x 2RD` from the point where it starts
+(previous offset) to where it ends (new offset; a transition of length 0
+is a jump at one station). The block lists the transitions `{BL 1
+(linear), BD length, BL element, BD 0, BD 0, BL 2, BD 0}` (entry then
+exit per widening), the element map gives each parent element its
+elements in station order (transitions excluded), and the parent gets an
+anchor at every distinct region or transition end. The ids follow the
+application's: the parent elements' first nominal pieces from 2n + 1, then
+per widening its pieces, the nominal pieces after it, its transitions
+(an exit that reaches the next element leaves the application one id
+short of the samples' numbering; AO32). A transition longer than 0 must
+lie on one parent line (an arc's transition was not sampled). E-O5 to
+E-O8 (one or three widenings, with and without transitions, one on the
+arc) open and audit clean, list their regions and transitions, and are
+solved again after a nominal offset change.
+
+The parent is written again with an anchor (kind 6) at each end of the
+range. The companion is the siteless one with nodes numbered from 2n + 1
+(n nodes), every segment flags 10 and no faces (`BL 16` in place of
+`BL 48`, faces `BL 2, BL 0, BL 0`), referring to the alignment and one
+empty soft pointer. Written for AO14's and AO17's parents and ranges the
+records equal the samples' apart from the geometry stamp, the
+identifiers and the last bits of the solved points. E-O1 to E-O4 (written:
+both sides, ranges, an alignment with two profiles and two offsets) open
+without a recovery prompt, audit clean, list each offset with its parent,
+side, nominal offset and region, and follow edits made in the application
+(a new nominal offset and a widening are solved from the parent).
 
 ## 3c. TIN surfaces
 
@@ -651,9 +752,10 @@ whose texts miss the keys' texts is refused (`Errors Found`).
 profile of fixed tangents through the PVIs (station, elevation) with a
 free symmetric parabola of the given length at inner PVIs (0 for none;
 crest where the grade falls); `add_profile_with_curves` takes per inner
-PVI a `VerticalCurve`: none, a free symmetric parabola of a length, a free
-asymmetric parabola of two lengths (before and after the PVI) or a free
-circular curve of a radius. Both use the drawing's default profile style
+PVI a `VerticalCurve`: none, a free symmetric parabola of a length, a K
+value, a radius or through a point, a free asymmetric parabola of two
+lengths (before and after the PVI) or a free circular curve of a radius, a
+horizontal length or through a point. Both use the drawing's default profile style
 (the first style of the style tree's profile style collection, key 74).
 The alignment is written again with the profile in its list; only an
 alignment whose record this crate reproduces bit for bit is accepted (its
@@ -681,14 +783,19 @@ BL n entity records, the tangents then the curves; each: 11 bits
   tangent (0):     2RD start, 2RD end, 4 zero bits
   parabola (0):    BL 1, BD length, BL 0x1001 crest / 0x1000 sag, BL 0,
                    3 bits 010, 3 x BD -1 (no minimum K)
+  parabola by K (2), by radius (9): BL 0, BD K or radius, then as by length
+  parabola through a point (7): BL 0, 2RD point, BL 0, 3 bits 010,
+                   3 x BD -1 (no crest flag)
   circular (9):    BD radius
+  circular by horizontal length (0): BD length
+  circular through a point (7): 2RD point
   asymmetric (10): BD length before, BD length after the PVI
 2 bits 10, the identifier (a version-4 GUID), 107 constant bits ending
   with the version word
 references: the seven helpers (hard ownership), soft 0, hard 0, hard 0,
   soft 0, style (hard), alignment (hard), soft 0, hard 0, soft 0, soft 0
 texts: "AeccImpVAlignment", "", "", the type-4 keys' texts, name, four
-  empty texts and one more per symmetric parabola
+  empty texts and one more per symmetric parabola (by any of its values)
 ```
 
 The parabola's first `BL` is 1 in current records (WR02) where older
@@ -700,25 +807,26 @@ for bit apart from the stamp and the identifier. A circular or asymmetric
 curve's record ends with its values; the reader, which looked for a
 parabola's tail after them, now takes the next record there.
 
+The curves by K, radius, horizontal length and through a point (WV01 to
+WV05: K 0.5, radius 50, length 15, point (50, 18)) read back with the
+samples' stations, and written (E-PV1) open, audit clean and list the
+same stations, elevations and lengths as the samples.
+
 The alignment lists its profiles (the oldest first in its references, soft
-pointers; the newest first in its record) after its elements:
+pointers) and holds an anchor (kind 32763) at its start by the profile's
+identifier (§3a "Station anchors"):
 
 ```text
-BL n, BL 0, BL 0, BL n
-n x {the profile's identifier, B 1, BL 32763, BL 0 x 3, BD end station
-     of the alignment's first element, BL 1, BL 0, BL element count (0 for
-     one element), 6 RD (0, 0, that end station, 0, 0, 0)}
+BL n profiles, BL views, BL groups, BL k anchors, k x anchor
 then BL 0 (equations), BL 1, BL 0 (speeds) as before
-texts: two more empty texts per profile
+texts: two more empty texts per anchor
 ```
 
 The identifier must be a version-4 GUID: with random bytes in its place
 the application stops while it opens the drawing (E-P1, E-P3), with the
 application's identifier the same records open (E-P9). A profile written
-without the alignment's entry opens but is not listed under the
-alignment, and is left out when the drawing is saved (E-R1). The entry's
-last value is 2.8e-14 instead of 0 in the application's record for a
-curved alignment (WR06); the writer writes 0.
+without the alignment's anchor opens but is not listed under the
+alignment, and is left out when the drawing is saved (E-R1).
 
 ## 3f. Profile style of a new drawing
 
@@ -1156,7 +1264,8 @@ B rebuild automatically, B 1, RC 32, RC layout (0x48 locked to stations,
 baseline: [after the first: BL region count, BL 0], regions, BL 0, B 1,
   9 bits 000000101, identifier, BL n, n x BD added station
 region: the assembly's identifier, the assembly's group block, BD start,
-  BD end, 2 bits 00, BD frequency along tangents, BD along curves, BL
+  BD end (locked to the geometry: the identifier of the alignment's anchor
+  at each end before each of them, KH01), 2 bits 00, BD frequency along tangents, BD along curves, BL
   flags, BD 0, BD along spirals, BD along profile curves, identifier, BL
   target flags, BL 0, BL 0, BL n target entries, n x 10 lists {BL k, k x
   item}, BL 0, 3 bits 110, BL 0
@@ -1300,7 +1409,7 @@ per boundary.
 | added stations with descriptions | yes | yes | §3i |
 | offset, elevation and surface targets (any objects; nearest or farthest) | yes | yes | §3i |
 | rebuild automatically, description | yes | yes | §3i |
-| region lock to the alignment geometry | yes (flag) | no | the region holds two alignment element identifiers; setting the lock adds an identifier block (640 and 777 bits in the sample) to each locked element of the alignment record, which the alignment writer does not write |
+| region lock to the alignment geometry | yes (flag) | yes | the region keeps the identifiers of two anchors (kind 582, §3a) the alignment holds at its start and end; written for alignments this crate writes, the regions follow the alignment when its geometry changes (E-K9: an arc's radius changed moves the locked region ends) |
 | corridor surfaces, link and feature line codes, overhang correction, build flag; boundaries and masks from polygons and the corridor extents; maximum triangle side length | yes | yes | §3i (the application makes each built surface's TIN surface) |
 | boundaries along feature lines | yes (component count) | no | they refer to built feature lines |
 | feature line code settings (connect, draw, pay items) | count only | no | codes exist only once built |
@@ -2300,11 +2409,16 @@ Corridors are listed in §3i-a.
 | TIN surfaces | pasted surfaces, point files, imported files, corridor surfaces | yes | the definition (no geometry from the source) | the application adds the source's geometry when it rebuilds |
 | TIN surfaces | transform, polygon and kind 40 definitions of older drawings, DEM files, snapshots, surfaces referenced from other drawings | partly (older kinds walked) | no | not sampled; referenced surfaces have no definitions list |
 | alignments | fixed lines, free arcs, spiral-curve-spirals, start station, siteless and on a site | yes | yes | §3a, §3g |
-| alignments | offset alignments (with widenings), curb returns, other types (rail, miscellaneous) | yes (offset parameters and regions, connected alignments, type) | no | an offset alignment is a solved child of its parent with an offset action; not sampled for writing |
+| alignments | offset alignments of lines and arcs, on either side, over the whole parent or a station range | yes | yes | §3a (station anchors, offset alignments) |
+| alignments | station anchors (profiles, offset ranges, own design speed, corridor geometry locks) | yes | yes, for profiles and offset alignments | §3a |
+| alignments | widenings with linear transitions (on lines; of length 0 anywhere) | yes | yes | §3a (offset alignments) |
+| alignments | types: centerline, utility, rail (track gauge) | yes | yes | §3a (alignment types) |
+| alignments | widening transitions on arcs or curved (kinds 2, 4, 5), offsets of spirals, curb returns (connected alignments), rail cant | yes (offset parameters and regions, connected alignments, type) | no | not written yet |
 | alignments | lone spirals, other constraints (fixed/floating curves, curves through points), design speeds, station equations | yes (elements, speeds, equations) | no | other element kinds not written |
 | alignments | superelevation | yes (critical stations, lanes-only blocks) | no | the superelevation block is read only |
 | profiles | layout: fixed tangents, free parabolas (symmetric, asymmetric), free circular curves | yes | yes | §3e |
-| profiles | layout: fixed and floating curves, curves by K or through a point | yes | no | other entity kinds (each its own record) |
+| profiles | layout: free curves by K, radius, horizontal length or through a point (parabolas and circular curves) | yes | yes | §3e |
+| profiles | layout: fixed and floating curves (by three points, two points and a grade or K, floating through a point), floating and free tangents | yes | no | not written yet |
 | profiles | from a surface (existing ground), superimposed, offset profiles, profiles of corridor feature lines | partly | no | sampled profiles are rebuilt from their source by the application; not sampled for writing |
 | profile views | automatic and user ranges, default style, profile label groups | yes (frame) | yes | §3h |
 | profile views | other styles, vertical scales, stacked views, bands other than the defaults | partly | no | the graph settings between the named values are constant runs |

@@ -6,7 +6,7 @@ use super::tree::{ensure_alignment_tree, KEY_ALIGNMENT_STYLES, KEY_DEFAULT_FEATU
 use crate::entities::EntityCommon;
 use crate::error::DxfError;
 use crate::io::dwg::dwg_stream_writers::DwgMergedWriter;
-use crate::classes::civil::alignment::{pieces_with_curvature, AlignmentElement, AlignmentElementKind, AlignmentPiece};
+use crate::classes::civil::alignment::{pieces_with_curvature, AlignmentAnchor, AlignmentElement, AlignmentElementKind, AlignmentPiece};
 use crate::types::{Handle, Vector2};
 use crate::CadDocument;
 
@@ -17,6 +17,12 @@ const FIXED: i16 = 0;
 /// two lines.
 const ARC: i32 = 258;
 const BETWEEN_LINES: i32 = 29;
+/// Constraint of a fixed arc (an offset alignment's arcs).
+const FIXED_ARC: i32 = 2;
+/// Element kind and constraint of a widening transition of an offset
+/// alignment (its points).
+const TRANSITION: i32 = 267;
+const POINT_SETS: i32 = 3;
 /// Element kind of a spiral-curve-spiral, its constraint between two
 /// lines, and the spiral definition of WA04's group.
 const SPIRAL_CURVE_SPIRAL: i32 = 260;
@@ -24,6 +30,15 @@ const SCS_BETWEEN_LINES: i32 = 0;
 const SPIRAL_DEFINITION: i32 = 256;
 /// Flags of an arc edge in the companion topology, besides the line flags.
 pub(super) const ARC_EDGE: i32 = 0x010F_0000;
+
+/// The type of a written alignment: a centerline, a utility alignment or a
+/// rail alignment with its track gauge.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum AlignmentKind {
+    Centerline,
+    Utility,
+    Rail { gauge: f64 },
+}
 
 /// What an alignment does at an inner vertex.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -204,15 +219,21 @@ pub(super) fn solve(vertices: &[Vector2], curves: &[VertexCurve], elements: &[Al
 ///
 /// A segment's flags are 2, with 0x30 added when another segment follows
 /// it and 0x010F0000 for an arc; the last point's are 10 (WA02, WA03).
-fn write_companion(doc: &mut CadDocument, handle: Handle, owner: Handle, tag: u32, alignment: Handle, path: &[PathPoint], name: &str) -> Result<(), DxfError> {
+///
+/// An offset alignment's companion (`offset`) numbers its nodes from 2n + 1
+/// (n nodes), gives every segment flags 10 and no faces (`BL 16` in place of
+/// `BL 48`, faces `BL 2, BL 0, BL 0`), and refers to the alignment and one
+/// empty soft pointer (AO14, AO21, AO22).
+fn write_companion(doc: &mut CadDocument, handle: Handle, owner: Handle, tag: u32, alignment: Handle, path: &[PathPoint], name: &str, offset: bool) -> Result<(), DxfError> {
     let n = path.len();
+    let first = if offset { 2 * n as i32 + 1 } else { 1 };
     let node_of = |i: usize| -> i32 {
         if i == 0 {
-            1
+            first
         } else if i + 1 == n {
-            2
+            first + 1
         } else {
-            i as i32 + 2
+            first + 1 + i as i32
         }
     };
     let mut order: Vec<usize> = vec![0, n - 1];
@@ -229,26 +250,26 @@ fn write_companion(doc: &mut CadDocument, handle: Handle, owner: Handle, tag: u3
             }
             bits(w, "000000110010000000110");
             w.write_bit_long(0x8000_0001_u32 as i32);
-            w.write_bit_long(n as i32 + 1);
+            w.write_bit_long(first + n as i32);
             w.write_bit_long(n as i32);
-            w.write_bit_long(1);
+            w.write_bit_long(first);
             for (k, i) in order.iter().enumerate() {
                 for v in [path[*i].0.x, path[*i].0.y, 0.0] {
                     w.write_bit_double(v);
                 }
                 bits(w, "010");
-                w.write_bit_long(if k + 1 == n { 0 } else { k as i32 + 2 });
+                w.write_bit_long(if k + 1 == n { 0 } else { first + k as i32 + 1 });
             }
-            for v in [2, 1, 0, 1, 48, n as i32, 0] {
+            for v in [2, 1, 0, 1, if offset { 16 } else { 48 }, n as i32, 0] {
                 w.write_bit_long(v);
             }
             for (i, (_, arc)) in path.iter().enumerate() {
                 let last = i + 1 == n;
                 let arc = arc.filter(|_| !last);
-                let flags = if last { 10 } else if i + 2 < n { 0x32 } else { 2 };
-                let face = if last { 0 } else { 1 };
+                let flags = if last || offset { 10 } else if i + 2 < n { 0x32 } else { 2 };
+                let face = if last || offset { 0 } else { 1 };
                 let kind = if last { 2 } else if arc.is_some() { 1 } else { 0 };
-                for v in [kind, flags | if arc.is_some() { ARC_EDGE } else { 0 }, node_of(i), face, face] {
+                for v in [kind, flags | if arc.is_some() && !offset { ARC_EDGE } else { 0 }, node_of(i), face, face] {
                     w.write_bit_long(v);
                 }
                 if let Some(bulge) = arc {
@@ -259,8 +280,9 @@ fn write_companion(doc: &mut CadDocument, handle: Handle, owner: Handle, tag: u3
             for _ in 0..4 {
                 w.write_bit_long(0);
             }
-            for v in [2, 1, 1, 1, 7, 1, 1, 0, 0] {
-                w.write_bit_long(v);
+            let faces: &[i32] = if offset { &[2, 0, 0] } else { &[2, 1, 1, 1, 7, 1, 1, 0, 0] };
+            for v in faces {
+                w.write_bit_long(*v);
             }
             for _ in 0..6 {
                 w.write_bit_long(1);
@@ -270,74 +292,124 @@ fn write_companion(doc: &mut CadDocument, handle: Handle, owner: Handle, tag: u3
                 w.write_bit_long(0);
             }
         },
-        Body { refs: vec![soft_pointer(alignment.value()), soft_pointer(0), soft_pointer(0), soft_pointer(0)], strings: vec![name.to_string(), String::new()] },
+        Body { refs: [alignment.value(), 0, 0, 0][..if offset { 2 } else { 4 }].iter().map(|h| soft_pointer(*h)).collect(), strings: vec![name.to_string(), String::new()] },
     )
+}
+
+/// A region of an offset alignment: a stretch at one offset (the nominal
+/// one or a widening's) between two of the parent's stations.
+pub(super) struct OffsetRegionRecord {
+    pub offset: f64,
+    /// The parent's stations, and its own.
+    pub parent: (f64, f64),
+    pub own: (f64, f64),
+    pub widening: bool,
+    /// Its first and last elements.
+    pub first: i32,
+    pub last: i32,
+}
+
+/// What an offset alignment's record holds besides its elements: its
+/// parent, its design speed's anchor and its offset block (see
+/// [`write_offset_block`]).
+pub(super) struct OffsetRecord {
+    pub parent: u64,
+    /// Nominal offset, negative to the left of the parent.
+    pub offset: f64,
+    /// Its own stations.
+    pub range: (f64, f64),
+    pub regions: Vec<OffsetRegionRecord>,
+    /// The transitions (linear): length along the parent and element.
+    pub transitions: Vec<(f64, i32)>,
+    /// For each parent element (by id) the elements that follow it.
+    pub map: Vec<(i32, Vec<i32>)>,
+    /// The parent's anchors at the ends of the regions and transitions.
+    pub anchors: Vec<(f64, [u8; 16])>,
+    /// Its own anchor at its start, which its design speed (0) refers to.
+    pub own: [u8; 16],
 }
 
 /// Writes the alignment record. `feature` is the companion the alignment
 /// refers to (twice).
 ///
 /// ```text
-/// BL 80, BL 0, BL 80, BL 80, BL 0, BL 0x10025F04, 6 bits 010101
+/// BL 80, BL 0, BL 80, BL 80, BL 0, BL 0x10025F04 (an offset alignment:
+///   0x00025F04), 6 bits 010101
 /// RC 1, key 0x0B001081: BL 2, BL 0, BL 0 (the geometry stamp; the
 ///   application keeps a value derived from the geometry and accepts 0)
 /// BL 0 (byte form), 115 zero bits, 8 bits 00000010, RC 0x40 | edge id >>
 ///   2, 2 bits edge id & 3, 5 bits 11010 (the edge id: the alignment's edge
 ///   in its companion, 1, or its site's container, its member number; read
 ///   before as BD 2.25 and 7 bits 0111010, edge 1)
-/// BL 1 (first element id), BD 0, BD 0 (start station)
-/// 7 bits 0000011, BD 0 (track gauge), B 0, BL 1
-/// BL n, the lines (ids 1.. in station order) then the arcs (ids after
-///   them, in station order):
-///   line: BL 257, BS 2, B 0, BS 0 (fixed), BS id, BS previous id,
-///         BS next id, 2RD start, 2RD end (the vertices before and after)
+/// BL first element id, BD 0, BD start station
+/// 7 bits 0000011, BD 0 (track gauge), B 0, BL first element id
+/// BL n, the elements in id order:
+///   line: BL 257, BS 2 (0 in an offset alignment), B 0, BS 0 (fixed),
+///         BS id, BS previous id, BS next id, 2RD start, 2RD end
 ///   arc:  BL 258, BS 2, B 0, B 0, BD -1 (no design speed), BD -1, BS 1,
 ///         BD -1, BL 29 (fitted between two lines), B 0, BS id,
 ///         BS previous id, BS next id, BD radius
+///   fixed arc (offset alignments): BL 258, BS 0, B 0, B 0, BD -1, BD -1,
+///         BS 1, BD -1, BL 2, B 0, BS id, BS previous id, BS next id,
+///         2RD start, 2RD middle, 2RD end
 ///   spiral-curve-spiral: BL 260, the arc's head with BL 0 (fitted
 ///         between two lines) and no B, BS id, BS previous id, BS next id,
 ///         BL 256 (spiral definition), BD spiral in, BD radius, BD spiral
 ///         out
-/// BL n, BL v (the profile views), BL g (the sample line groups), BL n (the
-///   profiles), the newest first:
-///   the profile's identifier (a version-4 GUID, 16 bytes), B 1, BL 32763, BL 0 x 3, BD end station of the first element, BL 1, BL 0,
-///   BL element count (0 for one element), 6 RD (0, 0, that end station,
-///   0, 0, 0)
-/// BL 0 (equations), BL 1, BL 0 (speeds)
-/// BD 100, BL 0 (no superelevation), BL 0, BL 1 (centerline),
-/// BL 2, 2, 2, 0, 3, B 0, BS 0x04BE
+///   widening transition (offset alignments): BL 267, the fixed arc's head
+///         with BL 3 and no B, BS id, BS previous id, BS next id, BL 1
+///         (point sets), BL 4096, BL n, n x 2RD
+/// BL profiles, BL profile views, BL sample line groups, BL k, the k
+///   station anchors in identifier order (see `AlignmentAnchor`)
+/// BL 0 (equations), BL 1, BL s, s x { BL 1, BD station, BD speed, the
+///   identifier of the anchor at the station } (design speeds)
+/// BD 100, BL 0 (no superelevation), BL 0,
+///   centerline: BL 1 (4 utility), BL 2, 2, 2, 0, 3
+///   rail:       BL 5, BL 2, 2, 2, 0, 0, 3 (its track gauge in the BD after
+///               the criteria bits)
+///   offset:     BL 2, the offset block, BL 0, BL 0, BL 3
+/// B 0, BS 0x04BE
 /// references: soft pointer 0, companion, companion, soft pointer 0,
-///   style, hard pointer 0, the profiles (soft pointers, oldest first),
-///   the profile views, the sample line groups (soft pointers, oldest
-///   first)
+///   style, hard pointer 0, the parent (an offset alignment, soft
+///   pointer), the profiles (soft pointers, oldest first), the profile
+///   views, the sample line groups (soft pointers, oldest first)
 /// texts: "AeccImpAlignment", "", "", name, five empty texts, three more
-///   per curve element, two more per profile
+///   per curve element, two more per anchor, one more per design speed
 /// ```
 ///
 /// Written for WA03's and WA04's polylines and curves, the record equals
-/// the samples' bit for bit apart from the geometry stamp.
+/// the samples' bit for bit apart from the geometry stamp; written for
+/// AO14's and AO21's offset alignments it equals theirs apart from the
+/// stamp and the identifiers.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn write_alignment(doc: &mut CadDocument, common: EntityCommon, name: &str, elements: &[AlignmentElement], style: u64, feature: u64, edge: i32, keys: Option<&str>, profiles: &[ProfileRef], views: &[u64], groups: &[u64]) -> Result<Handle, DxfError> {
+pub(super) fn write_alignment(doc: &mut CadDocument, common: EntityCommon, name: &str, elements: &[AlignmentElement], style: u64, feature: u64, edge: i32, keys: Option<&str>, profiles: &[u64], anchors: &[AlignmentAnchor], views: &[u64], groups: &[u64], offset: Option<&OffsetRecord>) -> Result<Handle, DxfError> {
+    write_alignment_of(doc, common, name, elements, style, feature, edge, keys, profiles, anchors, views, groups, offset, AlignmentKind::Centerline)
+}
+
+/// [`write_alignment`] of type `kind` (offset alignments take `offset`).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn write_alignment_of(doc: &mut CadDocument, common: EntityCommon, name: &str, elements: &[AlignmentElement], style: u64, feature: u64, edge: i32, keys: Option<&str>, profiles: &[u64], anchors: &[AlignmentAnchor], views: &[u64], groups: &[u64], offset: Option<&OffsetRecord>, kind: AlignmentKind) -> Result<Handle, DxfError> {
     if !(1..256).contains(&edge) {
         return Err(invalid("the alignment's edge id is out of range"));
     }
     let curves = elements.iter().filter(|e| !matches!(e.kind, AlignmentElementKind::FixedLine { .. })).count();
-    // The profiles' entries hold the end station of the alignment's first
-    // element and its element count (0 for one).
-    let first_end = pieces_with_curvature(elements).first().map_or(0.0, |(_, _, p)| p.windows(2).map(|w| w[0].distance(&w[1])).sum());
-    let count = if elements.len() > 1 { elements.len() as i32 } else { 0 };
+    let first_id = elements.iter().map(|e| i32::from(e.id)).min().unwrap_or(1);
+    let start = offset.map_or(0.0, |o| o.range.0);
+    let speeds: Vec<(f64, [u8; 16])> = offset.iter().map(|o| (o.range.0, o.own)).collect();
     let byte = |w: &mut DwgMergedWriter, v: u8| bits(w, &format!("{v:08b}"));
     let mut refs = vec![soft_pointer(0), hard_pointer(feature), hard_pointer(feature), soft_pointer(0), hard_pointer(style), hard_pointer(0)];
-    refs.extend(profiles.iter().map(|p| soft_pointer(p.handle)));
+    refs.extend(offset.map(|o| soft_pointer(o.parent)));
+    refs.extend(profiles.iter().map(|p| soft_pointer(*p)));
     refs.extend(views.iter().chain(groups).map(|v| soft_pointer(*v)));
     let mut strings = vec!["AeccImpAlignment".to_string(), String::new(), String::new(), name.to_string()];
-    strings.extend((0..5 + 3 * curves + 2 * profiles.len()).map(|_| String::new()));
+    strings.extend((0..5 + 3 * curves + 2 * anchors.len() + speeds.len()).map(|_| String::new()));
+    let line_flags = if offset.is_some() { 0 } else { 2 };
     put_entity(
         doc,
         "AECC_ALIGNMENT",
         common,
         |w| {
-            for v in [80, 0, 80, 80, 0, 0x1002_5F04] {
+            for v in [80, 0, 80, 80, 0, if offset.is_some() { 0x0002_5F04 } else { 0x1002_5F04 }] {
                 w.write_bit_long(v);
             }
             bits(w, "010101");
@@ -357,14 +429,21 @@ pub(super) fn write_alignment(doc: &mut CadDocument, common: EntityCommon, name:
             // bits carry the id's high bits).
             bits(w, &"0".repeat(115));
             bits(w, &format!("00000010{:08b}{:02b}11010", 0x40 | (edge >> 2), edge & 3));
-            w.write_bit_long(1);
+            w.write_bit_long(first_id);
             w.write_bit_double(0.0);
-            w.write_bit_double(0.0);
+            w.write_bit_double(start);
             bits(w, "0000011");
-            w.write_bit_double(0.0);
+            w.write_bit_double(match kind {
+                AlignmentKind::Rail { gauge } => gauge,
+                _ => 0.0,
+            });
             w.write_bit(false);
-            w.write_bit_long(1);
+            w.write_bit_long(first_id);
             w.write_bit_long(elements.len() as i32);
+            let point = |w: &mut DwgMergedWriter, p: Vector2| {
+                w.write_raw_double(p.x);
+                w.write_raw_double(p.y);
+            };
             for e in elements {
                 let ids = |w: &mut DwgMergedWriter| {
                     w.write_bit_short(e.id);
@@ -373,9 +452,9 @@ pub(super) fn write_alignment(doc: &mut CadDocument, common: EntityCommon, name:
                 };
                 // A curve element's head: no design speed (BD -1), the
                 // parameter block, the constraint.
-                let curve = |w: &mut DwgMergedWriter, kind: i32, constraint: i32| {
+                let curve = |w: &mut DwgMergedWriter, kind: i32, flags: i16, constraint: i32| {
                     w.write_bit_long(kind);
-                    w.write_bit_short(2);
+                    w.write_bit_short(flags);
                     w.write_bit(false);
                     w.write_bit(false);
                     w.write_bit_double(-1.0);
@@ -387,23 +466,39 @@ pub(super) fn write_alignment(doc: &mut CadDocument, common: EntityCommon, name:
                 match e.kind {
                     AlignmentElementKind::FixedLine { start, end } => {
                         w.write_bit_long(LINE);
-                        w.write_bit_short(2);
+                        w.write_bit_short(line_flags);
                         w.write_bit(false);
                         w.write_bit_short(FIXED);
                         ids(w);
-                        for p in [start, end] {
-                            w.write_raw_double(p.x);
-                            w.write_raw_double(p.y);
-                        }
+                        point(w, start);
+                        point(w, end);
                     }
                     AlignmentElementKind::FreeArc { radius } => {
-                        curve(w, ARC, BETWEEN_LINES);
+                        curve(w, ARC, 2, BETWEEN_LINES);
                         w.write_bit(false);
                         ids(w);
                         w.write_bit_double(radius);
                     }
+                    AlignmentElementKind::FixedArc { start, mid, end } => {
+                        curve(w, ARC, 0, FIXED_ARC);
+                        w.write_bit(false);
+                        ids(w);
+                        for p in [start, mid, end] {
+                            point(w, p);
+                        }
+                    }
+                    AlignmentElementKind::Points { ref points } => {
+                        curve(w, TRANSITION, 0, POINT_SETS);
+                        ids(w);
+                        w.write_bit_long(1);
+                        w.write_bit_long(4096);
+                        w.write_bit_long(points.len() as i32);
+                        for p in points {
+                            point(w, *p);
+                        }
+                    }
                     AlignmentElementKind::FreeSpiralCurveSpiral { spiral_in, radius, spiral_out } => {
-                        curve(w, SPIRAL_CURVE_SPIRAL, SCS_BETWEEN_LINES);
+                        curve(w, SPIRAL_CURVE_SPIRAL, 2, SCS_BETWEEN_LINES);
                         ids(w);
                         w.write_bit_long(SPIRAL_DEFINITION);
                         for v in [spiral_in, radius, spiral_out] {
@@ -413,36 +508,234 @@ pub(super) fn write_alignment(doc: &mut CadDocument, common: EntityCommon, name:
                     _ => {}
                 }
             }
-            let n = profiles.len() as i32;
-            for v in [n, views.len() as i32, groups.len() as i32, n] {
-                w.write_bit_long(v);
+            for v in [profiles.len(), views.len(), groups.len(), anchors.len()] {
+                w.write_bit_long(v as i32);
             }
-            for p in profiles.iter().rev() {
-                w.write_bytes(&p.id);
-                w.write_bit(true);
-                for v in [32763, 0, 0, 0] {
+            for a in anchors {
+                w.write_bytes(&a.id);
+                w.write_bit(a.flag);
+                w.write_bit_long(a.kind);
+                for v in [a.value, a.station, a.along, a.remaining] {
+                    w.write_bit_double(v);
+                }
+                for v in [a.element, a.previous, a.next] {
                     w.write_bit_long(v);
                 }
-                w.write_bit_double(first_end);
-                for v in [1, 0, count] {
-                    w.write_bit_long(v);
-                }
-                for v in [0.0, 0.0, first_end, 0.0, 0.0, 0.0] {
-                    w.write_raw_double(v);
+                for p in [a.element_start, a.element_end, a.point] {
+                    point(w, p);
                 }
             }
-            for v in [0, 1, 0] {
+            for v in [0, 1, speeds.len() as i32] {
                 w.write_bit_long(v);
+            }
+            for (station, id) in &speeds {
+                w.write_bit_long(1);
+                w.write_bit_double(*station);
+                w.write_bit_double(0.0);
+                w.write_bytes(id);
             }
             w.write_bit_double(100.0);
-            for v in [0, 0, 1, 2, 2, 2, 0, 3] {
-                w.write_bit_long(v);
+            w.write_bit_long(0);
+            w.write_bit_long(0);
+            match offset {
+                None => {
+                    let (code, extra): (i32, &[i32]) = match kind {
+                        AlignmentKind::Centerline => (1, &[]),
+                        AlignmentKind::Utility => (4, &[]),
+                        AlignmentKind::Rail { .. } => (5, &[0]),
+                    };
+                    for v in [code, 2, 2, 2, 0].iter().chain(extra).chain(&[3]) {
+                        w.write_bit_long(*v);
+                    }
+                }
+                Some(o) => {
+                    w.write_bit_long(2);
+                    write_offset_block(w, o);
+                    for v in [0, 0, 3] {
+                        w.write_bit_long(v);
+                    }
+                }
             }
             w.write_bit(false);
             w.write_bit_short(VERSION);
         },
         Body { refs, strings },
     )
+}
+
+/// The offset block of an offset alignment (the reader's
+/// `offset_parameters`):
+///
+/// ```text
+/// BL 1 (follows its parent), BL 2, BL 1, BD offset, BL side (1 left,
+/// 2 right), B 0, B 0 (start and end not locked to the parent's), BL 1
+/// (geometry locking), BL r, r x region { BD offset, BD parent start,
+/// BD parent end, BD start, BD end, BL kind (2 nominal, 1 widening),
+/// BL first element, BL last element, BL 0 x 5, BL 3 }, BL t, t x
+/// transition { BL 1 (linear), BD length, BL element, BD 0, BD 0, BL 2,
+/// BD 0 }, BL k, k x { BL parent element, BL -1, BL n, n x BL element },
+/// BL a, a x { BD parent station, the parent anchor's identifier }
+/// ```
+fn write_offset_block(w: &mut DwgMergedWriter, o: &OffsetRecord) {
+    for v in [1, 2, 1] {
+        w.write_bit_long(v);
+    }
+    w.write_bit_double(o.offset);
+    w.write_bit_long(if o.offset < 0.0 { 1 } else { 2 });
+    w.write_bit(false);
+    w.write_bit(false);
+    w.write_bit_long(1);
+    w.write_bit_long(o.regions.len() as i32);
+    for r in &o.regions {
+        for v in [r.offset, r.parent.0, r.parent.1, r.own.0, r.own.1] {
+            w.write_bit_double(v);
+        }
+        for v in [if r.widening { 1 } else { 2 }, r.first, r.last, 0, 0, 0, 0, 0, 3] {
+            w.write_bit_long(v);
+        }
+    }
+    w.write_bit_long(o.transitions.len() as i32);
+    for (length, element) in &o.transitions {
+        w.write_bit_long(1);
+        w.write_bit_double(*length);
+        w.write_bit_long(*element);
+        w.write_bit_double(0.0);
+        w.write_bit_double(0.0);
+        w.write_bit_long(2);
+        w.write_bit_double(0.0);
+    }
+    w.write_bit_long(o.map.len() as i32);
+    for (parent, elements) in &o.map {
+        for v in [*parent, -1, elements.len() as i32] {
+            w.write_bit_long(v);
+        }
+        for e in elements {
+            w.write_bit_long(*e);
+        }
+    }
+    w.write_bit_long(o.anchors.len() as i32);
+    for (station, id) in &o.anchors {
+        w.write_bit_double(*station);
+        w.write_bytes(id);
+    }
+}
+
+/// Anchor kind of a profile's start, of an offset alignment's range ends on
+/// its parent, and of an offset alignment's own start.
+pub(super) const PROFILE_ANCHOR: i32 = 32763;
+const OFFSET_END_ANCHOR: i32 = 6;
+const OWN_START_ANCHOR: i32 = 2;
+
+/// A solved piece: its kind, signed curvature (curves) and points.
+type Piece = (AlignmentPiece, f64, Vec<Vector2>);
+
+/// Length of a piece: a curve's arc, a line's or a spiral's points.
+fn piece_length((kind, k, points): &Piece) -> f64 {
+    let (first, last) = (points[0], points[points.len() - 1]);
+    match kind {
+        AlignmentPiece::Curve if *k != 0.0 => 2.0 * (first.distance(&last) * k.abs() / 2.0).min(1.0).asin() / k.abs(),
+        _ => points.windows(2).map(|w| w[0].distance(&w[1])).sum(),
+    }
+}
+
+/// The point at distance `s` from a piece's start and the direction
+/// there.
+fn piece_point((kind, k, points): &Piece, s: f64) -> (Vector2, Vector2) {
+    let (first, last) = (points[0], points[points.len() - 1]);
+    let unit = |v: Vector2| v * (1.0 / v.length());
+    let left = |u: Vector2| Vector2::new(-u.y, u.x);
+    if *kind == AlignmentPiece::Curve && *k != 0.0 && first != last {
+        // The chord turns half the sweep from the start's direction.
+        let sweep = 2.0 * (first.distance(&last) * k.abs() / 2.0).min(1.0).asin() * k.signum();
+        let chord = unit(last - first);
+        let (c, d) = ((-sweep / 2.0).cos(), (-sweep / 2.0).sin());
+        let t0 = Vector2::new(c * chord.x - d * chord.y, d * chord.x + c * chord.y);
+        let center = first + left(t0) * (1.0 / k);
+        let (c, d) = ((s * k).cos(), (s * k).sin());
+        let r = first - center;
+        let p = center + Vector2::new(c * r.x - d * r.y, d * r.x + c * r.y);
+        return (p, Vector2::new(c * t0.x - d * t0.y, d * t0.x + c * t0.y));
+    }
+    let mut left_over = s;
+    for w in points.windows(2) {
+        let l = w[0].distance(&w[1]);
+        if l > 0.0 && (left_over <= l || std::ptr::eq(w[1..].as_ptr(), &points[points.len() - 1])) {
+            return (w[0] + (w[1] - w[0]) * (left_over / l), unit(w[1] - w[0]));
+        }
+        left_over -= l;
+    }
+    (last, if first == last { Vector2::new(1.0, 0.0) } else { unit(last - first) })
+}
+
+/// The elements in station order with their pieces and where each starts
+/// (distance from the path's start): lines and arcs make one piece,
+/// spiral-curve-spirals three.
+fn spans(elements: &[AlignmentElement]) -> Option<Vec<(&AlignmentElement, f64, Vec<Piece>)>> {
+    let pieces = pieces_with_curvature(elements);
+    let mut out = Vec::with_capacity(elements.len());
+    let mut at = elements.iter().find(|e| e.previous == 0);
+    let (mut used, mut from) = (0, 0.0);
+    while let Some(e) = at {
+        let n = match e.kind {
+            AlignmentElementKind::FreeSpiralCurveSpiral { .. } => 3,
+            _ => 1,
+        };
+        let own = pieces.get(used..used + n)?.to_vec();
+        used += n;
+        let length: f64 = own.iter().map(piece_length).sum();
+        out.push((e, from, own));
+        from += length;
+        (out.len() <= elements.len()).then_some(())?;
+        at = (e.next != 0).then(|| elements.iter().find(|x| x.id == e.next)).flatten();
+    }
+    (out.len() == elements.len() && used == pieces.len()).then_some(out)
+}
+
+/// The point at `station` (start station `start`) of the solved path and
+/// its direction.
+fn station_point(spans: &[(&AlignmentElement, f64, Vec<Piece>)], start: f64, station: f64) -> Option<(Vector2, Vector2)> {
+    let (_, from, pieces) = spans.iter().rev().find(|(_, from, _)| station - start >= *from - 1e-9)?;
+    let mut s = station - start - from;
+    for (i, p) in pieces.iter().enumerate() {
+        let l = piece_length(p);
+        if s <= l || i + 1 == pieces.len() {
+            return Some(piece_point(p, s.min(l)));
+        }
+        s -= l;
+    }
+    None
+}
+
+/// An anchor of `kind` at `station` of the alignment `elements` with start
+/// station `start`: the element the station lies on (the one that starts
+/// there at a join, the last one at the end), the distances to its ends,
+/// its ends and the point at the station.
+pub(super) fn anchor_at(elements: &[AlignmentElement], start: f64, kind: i32, id: [u8; 16], station: f64) -> Option<AlignmentAnchor> {
+    let spans = spans(elements)?;
+    let total: f64 = spans.iter().map(|(_, _, p)| p.iter().map(piece_length).sum::<f64>()).sum();
+    let tol = 1e-9 * total.max(1.0);
+    let s = station - start;
+    (s >= -tol && s <= total + tol).then_some(())?;
+    let i = spans.iter().rposition(|(_, from, _)| s >= *from - tol)?;
+    let (e, from, pieces) = &spans[i];
+    let length: f64 = pieces.iter().map(piece_length).sum();
+    let along = (s - from).clamp(0.0, length);
+    let (first, last) = (pieces.first()?.2[0], *pieces.last()?.2.last()?);
+    Some(AlignmentAnchor {
+        id,
+        flag: true,
+        kind,
+        value: 0.0,
+        station,
+        along,
+        remaining: length - along,
+        element: i32::from(e.id),
+        previous: i32::from(e.previous),
+        next: i32::from(e.next),
+        element_start: first,
+        element_end: last,
+        point: station_point(&spans, start, station)?.0,
+    })
 }
 
 /// Adds an alignment through `vertices` (fixed lines, no curves) on
@@ -457,6 +750,15 @@ pub fn add_alignment(doc: &mut CadDocument, name: &str, vertices: &[Vector2], la
 /// lines before and after the vertex, which end where it meets them. The
 /// curves must fit on the lines between them.
 pub fn add_alignment_with_curves(doc: &mut CadDocument, name: &str, vertices: &[Vector2], curves: &[VertexCurve], layer: Option<&str>) -> Result<Handle, DxfError> {
+    add_alignment_of_kind(doc, name, vertices, curves, AlignmentKind::Centerline, layer)
+}
+
+/// [`add_alignment_with_curves`] of type `kind`: a utility alignment, or a
+/// rail alignment with a positive track gauge.
+pub fn add_alignment_of_kind(doc: &mut CadDocument, name: &str, vertices: &[Vector2], curves: &[VertexCurve], kind: AlignmentKind, layer: Option<&str>) -> Result<Handle, DxfError> {
+    if matches!(kind, AlignmentKind::Rail { gauge } if !(gauge.is_finite() && gauge > 0.0)) {
+        return Err(invalid("a rail alignment needs a positive track gauge"));
+    }
     if vertices.len() < 2 || vertices.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) || vertices.windows(2).any(|w| w[0] == w[1]) {
         return Err(invalid("an alignment needs two or more distinct finite vertices"));
     }
@@ -484,9 +786,289 @@ pub fn add_alignment_with_curves(doc: &mut CadDocument, name: &str, vertices: &[
     let companion = doc.allocate_handle();
     let handle = common.handle;
     let label = new_name(handle.value());
-    write_companion(doc, companion, node, tag, handle, &path, &label)?;
+    write_companion(doc, companion, node, tag, handle, &path, &label, false)?;
     add_node_child(doc, node, tag as i32, companion, &label)?;
-    write_alignment(doc, common, name, &elements, style, companion.value(), 1, None, &[], &[], &[])
+    write_alignment_of(doc, common, name, &elements, style, companion.value(), 1, None, &[], &[], &[], &[], None, kind)
+}
+
+/// A widening of an offset alignment: from the parent's station `start` it
+/// moves to `offset` (from the parent, negative to the left) over `entry`
+/// along the parent, keeps it to `end`, and comes back to the nominal
+/// offset over `exit` after `end`, by linear transitions.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Widening {
+    pub start: f64,
+    pub end: f64,
+    pub offset: f64,
+    pub entry: f64,
+    pub exit: f64,
+}
+
+/// Adds an offset alignment `name` at `offset` from `parent` (negative to
+/// the left), between the parent's stations `range` (its whole length when
+/// `None`), on `layer` (layer "0" when `None`). It follows its parent as
+/// the application keeps it: every parent element in the range gives one
+/// element (a line its parallel, an arc the concentric arc), the parent is
+/// written again with an anchor at each end of the range and the offset
+/// alignment keeps their identifiers. The parent must be a siteless
+/// alignment of lines and arcs this crate writes.
+pub fn add_offset_alignment(doc: &mut CadDocument, parent: Handle, name: &str, offset: f64, range: Option<(f64, f64)>, layer: Option<&str>) -> Result<Handle, DxfError> {
+    add_offset_alignment_with_widenings(doc, parent, name, offset, range, &[], layer)
+}
+
+/// One stretch of an offset alignment along its parent: at one offset
+/// (`ramp` none) or moving from one offset to another.
+struct Stretch {
+    from: f64,
+    to: f64,
+    offset: f64,
+    ramp: Option<f64>,
+    widening: bool,
+}
+
+/// [`add_offset_alignment`] with `widenings` (in station order, apart, with
+/// their transitions within the range; a transition longer than 0 must lie
+/// on one line of the parent). Each widening is a region of its own with an
+/// element per parent element it covers; each transition is one element
+/// from where it starts to where it ends.
+pub fn add_offset_alignment_with_widenings(doc: &mut CadDocument, parent: Handle, name: &str, offset: f64, range: Option<(f64, f64)>, widenings: &[Widening], layer: Option<&str>) -> Result<Handle, DxfError> {
+    if name.is_empty() {
+        return Err(invalid("an offset alignment needs a name"));
+    }
+    let side_ok = |v: f64| v.is_finite() && v != 0.0 && v.signum() == offset.signum();
+    if !offset.is_finite() || offset == 0.0 || widenings.iter().any(|w| !side_ok(w.offset)) {
+        return Err(invalid("an offset alignment needs finite offsets other than 0, its widenings on its side"));
+    }
+    let (written, profiles) = rewritable(doc, parent, |h| super::profile::identifier(doc, h)).ok_or_else(|| invalid("the parent is not an alignment this crate writes"))?;
+    if object(doc, Handle::new(written.feature)).is_none_or(|o| o.dxf_name != "AECC_FEATURE_STYLE") {
+        return Err(invalid("the parent is on a site"));
+    }
+    if written.elements.iter().any(|e| !matches!(e.kind, AlignmentElementKind::FixedLine { .. } | AlignmentElementKind::FreeArc { .. })) {
+        return Err(invalid("the parent has elements other than lines and arcs"));
+    }
+    let spans = spans(&written.elements).ok_or_else(|| invalid("the parent cannot be solved"))?;
+    let total: f64 = spans.iter().map(|(_, _, p)| p.iter().map(piece_length).sum::<f64>()).sum();
+    let (s0, s1) = range.unwrap_or((0.0, total));
+    let tol = 1e-9 * total.max(1.0);
+    if !(s0.is_finite() && s1.is_finite() && s0 >= -tol && s1 <= total + tol && s1 - s0 > tol) {
+        return Err(invalid("the range must run forward within the parent's stations"));
+    }
+    // The stretches in station order: nominal, entry, widening, exit, ...
+    let mut stretches = Vec::new();
+    let mut cursor = s0;
+    for w in widenings {
+        let finite = [w.start, w.end, w.entry, w.exit].iter().all(|v| v.is_finite());
+        if !finite || w.entry < 0.0 || w.exit < 0.0 || w.start <= cursor + tol || w.start + w.entry >= w.end - tol || w.end + w.exit >= s1 - tol {
+            return Err(invalid("widenings must lie apart, in station order, with their transitions inside the range"));
+        }
+        stretches.push(Stretch { from: cursor, to: w.start, offset, ramp: None, widening: false });
+        stretches.push(Stretch { from: w.start, to: w.start + w.entry, offset, ramp: Some(w.offset), widening: false });
+        stretches.push(Stretch { from: w.start + w.entry, to: w.end, offset: w.offset, ramp: None, widening: true });
+        stretches.push(Stretch { from: w.end, to: w.end + w.exit, offset: w.offset, ramp: Some(offset), widening: false });
+        cursor = w.end + w.exit;
+    }
+    stretches.push(Stretch { from: cursor, to: s1, offset, ramp: None, widening: false });
+
+    let right = |u: Vector2| Vector2::new(u.y, -u.x);
+    let at = |s: f64, off: f64| -> Option<Vector2> {
+        let (p, u) = station_point(&spans, 0.0, s)?;
+        Some(p + right(u) * off)
+    };
+    // The pieces in station order: (stretch, parent element (none for a
+    // transition), kind, bulge, own length).
+    let mut pieces: Vec<(usize, Option<i32>, AlignmentElementKind, Option<f64>, f64)> = Vec::new();
+    for (si, st) in stretches.iter().enumerate() {
+        if let Some(to_offset) = st.ramp {
+            let (a, b) = (at(st.from, st.offset).ok_or_else(|| invalid("a transition cannot be placed"))?, at(st.to, to_offset).ok_or_else(|| invalid("a transition cannot be placed"))?);
+            if st.to - st.from > tol {
+                let mid = (st.from + st.to) / 2.0;
+                let line = spans.iter().find(|(e, from, ps)| matches!(e.kind, AlignmentElementKind::FixedLine { .. }) && mid >= *from && mid <= from + piece_length(&ps[0]));
+                if line.is_none_or(|(_, from, ps)| st.from < from - tol || st.to > from + piece_length(&ps[0]) + tol) {
+                    return Err(invalid("a transition must lie on one line of the parent"));
+                }
+            }
+            pieces.push((si, None, AlignmentElementKind::Points { points: vec![a, b] }, None, a.distance(&b)));
+            continue;
+        }
+        for (e, from, ps) in &spans {
+            let piece = &ps[0];
+            let length = piece_length(piece);
+            let (a, b) = ((st.from - from).max(0.0), (st.to - from).min(length));
+            if b - a <= tol {
+                continue;
+            }
+            let at = |s: f64| {
+                let (p, u) = piece_point(piece, s);
+                p + right(u) * st.offset
+            };
+            let k = piece.1;
+            let (kind, bulge, own) = match e.kind {
+                AlignmentElementKind::FreeArc { .. } => {
+                    // The concentric arc: the radius grows on the side away
+                    // from the center (left of the path when k > 0).
+                    let radius = 1.0 / k.abs() + if k > 0.0 { st.offset } else { -st.offset };
+                    if radius <= tol {
+                        return Err(invalid("the offset passes an arc's center"));
+                    }
+                    let sweep = (b - a) * k;
+                    (AlignmentElementKind::FixedArc { start: at(a), mid: at((a + b) / 2.0), end: at(b) }, Some((sweep / 4.0).tan()), radius * sweep.abs())
+                }
+                _ => (AlignmentElementKind::FixedLine { start: at(a), end: at(b) }, None, b - a),
+            };
+            pieces.push((si, Some(i32::from(e.id)), kind, bulge, own));
+        }
+    }
+    // Ids as the application gives them: from 2n + 1 the parent elements in
+    // the range (to the first piece each keeps at the nominal offset), then
+    // per widening its pieces, the nominal pieces after it, its transitions.
+    let base = 2 * written.elements.iter().map(|e| i32::from(e.id)).max().unwrap_or(0) + 1;
+    let mut in_range: Vec<i32> = Vec::new();
+    for p in &pieces {
+        if let Some(e) = p.1 {
+            if !in_range.contains(&e) {
+                in_range.push(e);
+            }
+        }
+    }
+    let mut ids: Vec<Option<i32>> = vec![None; pieces.len()];
+    for (i, p) in pieces.iter().enumerate() {
+        let nominal = p.1.is_some() && !stretches[p.0].widening;
+        if nominal && !pieces[..i].iter().any(|q| q.1 == p.1 && !stretches[q.0].widening) {
+            ids[i] = Some(base + in_range.iter().position(|e| Some(*e) == p.1).unwrap_or(0) as i32);
+        }
+    }
+    let mut next = base + in_range.len() as i32;
+    for w in 0..widenings.len() {
+        let (entry, wide, exit, after) = (4 * w + 1, 4 * w + 2, 4 * w + 3, 4 * w + 4);
+        for stretch in [wide, after] {
+            for (i, p) in pieces.iter().enumerate() {
+                if p.0 == stretch && ids[i].is_none() {
+                    ids[i] = Some(next);
+                    next += 1;
+                }
+            }
+        }
+        for stretch in [entry, exit] {
+            if let Some(i) = pieces.iter().position(|p| p.0 == stretch) {
+                ids[i] = Some(next);
+                next += 1;
+            }
+        }
+    }
+    let ids: Vec<i32> = ids.into_iter().collect::<Option<_>>().ok_or_else(|| invalid("the range holds no element"))?;
+    let count = pieces.len();
+    let mut elements: Vec<AlignmentElement> = (0..count)
+        .map(|i| AlignmentElement {
+            id: ids[i] as i16,
+            previous: if i == 0 { 0 } else { ids[i - 1] as i16 },
+            next: if i + 1 == count { 0 } else { ids[i + 1] as i16 },
+            kind: pieces[i].2.clone(),
+        })
+        .collect();
+    let starts_of = |kind: &AlignmentElementKind| match kind {
+        AlignmentElementKind::FixedLine { start, end } => (*start, *end),
+        AlignmentElementKind::FixedArc { start, end, .. } => (*start, *end),
+        AlignmentElementKind::Points { points } => (points[0], points[points.len() - 1]),
+        _ => unreachable!(),
+    };
+    let mut path: Vec<PathPoint> = pieces.iter().map(|p| (starts_of(&p.2).0, p.3)).collect();
+    path.push((starts_of(&pieces.last().ok_or_else(|| invalid("the range holds no element"))?.2).1, None));
+    // Own stations of the pieces' ends.
+    let mut own = vec![s0];
+    for p in &pieces {
+        own.push(own[own.len() - 1] + p.4);
+    }
+    let regions: Vec<OffsetRegionRecord> = stretches
+        .iter()
+        .enumerate()
+        .filter(|(_, st)| st.ramp.is_none())
+        .map(|(si, st)| {
+            let held: Vec<usize> = (0..count).filter(|i| pieces[*i].0 == si).collect();
+            let (first, last) = (held[0], held[held.len() - 1]);
+            OffsetRegionRecord { offset: st.offset, parent: (st.from, st.to), own: (own[first], own[last + 1]), widening: st.widening, first: ids[first], last: ids[last] }
+        })
+        .collect();
+    let transitions: Vec<(f64, i32)> = stretches
+        .iter()
+        .enumerate()
+        .filter(|(_, st)| st.ramp.is_some())
+        .map(|(si, st)| (st.to - st.from, ids[pieces.iter().position(|p| p.0 == si).unwrap_or(0)]))
+        .collect();
+    let mut map: Vec<(i32, Vec<i32>)> = in_range.iter().map(|e| (*e, (0..count).filter(|i| pieces[*i].1 == Some(*e)).map(|i| ids[i]).collect())).collect();
+    map.sort();
+    elements.sort_by_key(|e| e.id);
+    let mut stations: Vec<f64> = Vec::new();
+    for st in &stretches {
+        for s in [st.from, st.to] {
+            if stations.iter().all(|t| (t - s).abs() > tol) {
+                stations.push(s);
+            }
+        }
+    }
+    stations.sort_by(f64::total_cmp);
+
+    let layer = layer.unwrap_or("0");
+    let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
+    let node = companion_node(doc).ok_or_else(|| invalid("drawing has no node for siteless alignments"))?;
+    let used = read_node(doc, node).ok_or_else(|| invalid("feature style node cannot be read"))?;
+    let tag = (FIRST_COMPANION_TAG..).find(|t| used.children.iter().all(|c| c.0 as u32 != *t)).unwrap_or(FIRST_COMPANION_TAG);
+    let common = EntityCommon {
+        handle: doc.allocate_handle(),
+        owner_handle: doc.header.model_space_block_handle,
+        layer: layer.into(),
+        layer_handle: Some(layer_handle),
+        ..EntityCommon::default()
+    };
+    let handle = common.handle;
+    let id = |salt: u64| super::profile::new_identifier(handle.value() ^ salt);
+    let anchors: Vec<(f64, [u8; 16])> = stations.iter().enumerate().map(|(i, s)| (*s, id(i as u64 + 16))).collect();
+    let own_id = id(3);
+    let extra = anchors
+        .iter()
+        .map(|(s, g)| anchor_at(&written.elements, 0.0, OFFSET_END_ANCHOR, *g, *s).ok_or_else(|| invalid("an anchor cannot be placed on the parent")))
+        .collect::<Result<Vec<_>, _>>()?;
+    // Its own anchor lies at the start of its first element.
+    let (first_start, first_end) = starts_of(&pieces[0].2);
+    let own_anchor = AlignmentAnchor {
+        id: own_id,
+        flag: true,
+        kind: OWN_START_ANCHOR,
+        value: 0.0,
+        station: s0,
+        along: 0.0,
+        remaining: pieces[0].4,
+        element: ids[0],
+        previous: 0,
+        next: ids.get(1).copied().unwrap_or(0),
+        element_start: first_start,
+        element_end: first_end,
+        point: first_start,
+    };
+    let record = OffsetRecord { parent: parent.value(), offset, range: (s0, own[count]), regions, transitions, map, anchors, own: own_id };
+    let groups = written.groups.clone();
+    rewrite_adding(doc, parent, written, &profiles, &profiles, None, &groups, &extra)?;
+    let style = default_style(doc).ok_or_else(|| invalid("drawing has no alignment styles"))?;
+    let companion = doc.allocate_handle();
+    let label = new_name(handle.value());
+    write_companion(doc, companion, node, tag, handle, &path, &label, true)?;
+    add_node_child(doc, node, tag as i32, companion, &label)?;
+    write_alignment(doc, common, name, &elements, style, companion.value(), 1, None, &[], &[own_anchor], &[], &[], Some(&record))
+}
+
+/// Anchor kind of a corridor region's end locked to the alignment's
+/// geometry.
+pub(super) const LOCK_ANCHOR: i32 = 582;
+
+/// Writes `alignment` again with anchors of `kind` at the given stations,
+/// by the given identifiers. The alignment must be one this crate writes.
+pub(super) fn add_anchors(doc: &mut CadDocument, alignment: Handle, kind: i32, anchors: &[([u8; 16], f64)]) -> Result<(), DxfError> {
+    let (written, profiles) = rewritable(doc, alignment, |h| super::profile::identifier(doc, h)).ok_or_else(|| invalid("the alignment is not one this crate writes"))?;
+    let extra = anchors
+        .iter()
+        .map(|(id, station)| anchor_at(&written.elements, 0.0, kind, *id, *station).ok_or_else(|| invalid("a station is not on the alignment")))
+        .collect::<Result<Vec<_>, _>>()?;
+    let groups = written.groups.clone();
+    rewrite_adding(doc, alignment, written, &profiles, &profiles, None, &groups, &extra)
 }
 
 /// A profile of an alignment: its record and its identifier.
@@ -506,6 +1088,8 @@ pub(super) struct Written {
     pub feature: u64,
     pub keys: String,
     pub edge: i32,
+    /// Its station anchors as stored.
+    pub anchors: Vec<AlignmentAnchor>,
     /// The profile views of the alignment, oldest first.
     pub views: Vec<u64>,
     /// Its sample line groups, oldest first.
@@ -549,7 +1133,8 @@ pub(super) fn rewritable(doc: &CadDocument, alignment: Handle, profile_id: impl 
     b.skip(10 + 115 + 8)?;
     let high = b.bits_value(8)?;
     let edge = (i32::from(high & 0x3F) << 2) | i32::from(b.bits_value(2)?);
-    let w = Written { common: x.common.clone(), name, elements, style: refs[4].0, feature: refs[1].0, keys, edge, views, groups };
+    let anchors = a.alignment_anchors()?;
+    let w = Written { common: x.common.clone(), name, elements, style: refs[4].0, feature: refs[1].0, keys, edge, anchors, views, groups };
     Some((w, profiles))
 }
 
@@ -568,6 +1153,12 @@ pub(super) fn rewrite_with_views(doc: &mut CadDocument, alignment: Handle, w: Wr
 
 /// [`rewrite_with_views`], with the sample line groups `groups`.
 pub(super) fn rewrite_with(doc: &mut CadDocument, alignment: Handle, w: Written, before: &[ProfileRef], profiles: &[ProfileRef], views: Option<&[u64]>, groups: &[u64]) -> Result<(), DxfError> {
+    rewrite_adding(doc, alignment, w, before, profiles, views, groups, &[])
+}
+
+/// [`rewrite_with`], adding the anchors `extra`.
+#[allow(clippy::too_many_arguments)]
+fn rewrite_adding(doc: &mut CadDocument, alignment: Handle, w: Written, before: &[ProfileRef], profiles: &[ProfileRef], views: Option<&[u64]>, groups: &[u64], extra: &[AlignmentAnchor]) -> Result<(), DxfError> {
     let bits_of = |doc: &CadDocument| -> Option<Vec<u8>> {
         match doc.get_entity(alignment)? {
             crate::entities::EntityType::Extended(x) => match &x.data {
@@ -582,12 +1173,20 @@ pub(super) fn rewrite_with(doc: &mut CadDocument, alignment: Handle, w: Written,
     };
     let original = doc.get_entity(alignment).cloned().ok_or_else(|| invalid("alignment not found"))?;
     let old = bits_of(doc);
-    write_alignment(doc, w.common.clone(), &w.name, &w.elements, w.style, w.feature, w.edge, Some(&w.keys), before, &w.views, &w.groups)?;
+    let handles = |list: &[ProfileRef]| list.iter().map(|p| p.handle).collect::<Vec<_>>();
+    write_alignment(doc, w.common.clone(), &w.name, &w.elements, w.style, w.feature, w.edge, Some(&w.keys), &handles(before), &w.anchors, &w.views, &w.groups, None)?;
     if bits_of(doc) != old {
         *doc.get_entity_mut(alignment).ok_or_else(|| invalid("alignment not found"))? = original;
         return Err(invalid("the alignment holds data this crate does not write"));
     }
-    write_alignment(doc, w.common, &w.name, &w.elements, w.style, w.feature, w.edge, Some(&w.keys), profiles, views.unwrap_or(&w.views), groups)?;
+    // A new profile ties to the alignment's start by its identifier.
+    let mut anchors = w.anchors.clone();
+    anchors.extend_from_slice(extra);
+    for p in profiles.iter().filter(|p| w.anchors.iter().all(|a| a.id != p.id)) {
+        anchors.push(anchor_at(&w.elements, 0.0, PROFILE_ANCHOR, p.id, 0.0).ok_or_else(|| invalid("the alignment's start cannot be placed"))?);
+    }
+    anchors.sort_by(|a, b| a.id.cmp(&b.id));
+    write_alignment(doc, w.common, &w.name, &w.elements, w.style, w.feature, w.edge, Some(&w.keys), &handles(profiles), &anchors, views.unwrap_or(&w.views), groups, None)?;
     Ok(())
 }
 
@@ -732,5 +1331,112 @@ mod tests {
         assert_eq!(elements[2].kind, AlignmentElementKind::FreeSpiralCurveSpiral { spiral_in: 20.0, radius: 50.0, spiral_out: 20.0 });
         let kinds: Vec<AlignmentPiece> = a.alignment_pieces().iter().map(|p| p.0).collect();
         assert_eq!(kinds, vec![AlignmentPiece::Line, AlignmentPiece::Spiral, AlignmentPiece::Curve, AlignmentPiece::Spiral, AlignmentPiece::Line]);
+    }
+
+    #[test]
+    fn offset_alignments_follow_their_parent() {
+        let mut doc = drawing();
+        let v = [Vector2::new(0.0, 0.0), Vector2::new(100.0, 0.0), Vector2::new(200.0, 50.0)];
+        let parent = add_alignment_with_curves(&mut doc, "AL1", &v, &[VertexCurve::Arc(169.4427190999918)], None).unwrap();
+        assert!(add_offset_alignment(&mut doc, parent, "X", 0.0, None, None).is_err());
+        assert!(add_offset_alignment(&mut doc, parent, "X", 10.0, Some((50.0, 400.0)), None).is_err());
+        assert!(add_offset_alignment(&mut doc, parent, "X", -200.0, None, None).is_err());
+        let off = add_offset_alignment(&mut doc, parent, "OFF1", 10.0, Some((30.0, 150.0)), None).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-alignment-offset-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let arch = |h: Handle| match back.get_entity(h) {
+            Some(crate::entities::EntityType::Extended(x)) => match &x.data {
+                crate::entities::ExtendedEntityData::Arch(a) => a.clone(),
+                _ => panic!(),
+            },
+            _ => panic!(),
+        };
+        let (a, o) = (arch(parent), arch(off));
+        assert_eq!(o.alignment_type(), Some(crate::classes::civil::AlignmentType::Offset));
+        let p = o.alignment_offset_parameters().unwrap();
+        assert_eq!((p.offset, p.left, p.regions[0].parent_start, p.regions[0].parent_end), (10.0, false, 30.0, 150.0));
+        assert_eq!((p.regions[0].first_element, p.regions[0].last_element), (7, 9));
+        assert_eq!(p.element_map, vec![(1, vec![7]), (2, vec![9]), (3, vec![8])]);
+        // The parent holds an anchor at each end of the range, by the
+        // identifiers the offset alignment keeps.
+        let anchors = a.alignment_anchors().unwrap();
+        assert_eq!(anchors.len(), 2);
+        for (station, id) in &p.anchors {
+            let at = anchors.iter().find(|x| x.id == *id).unwrap();
+            assert_eq!((at.kind, at.station), (6, *station));
+        }
+        let start = anchors.iter().find(|x| x.station == 30.0).unwrap();
+        assert_eq!((start.element, start.previous, start.next, start.along), (1, 0, 3, 30.0));
+        let own = o.alignment_anchors().unwrap();
+        assert_eq!((own.len(), own[0].kind, own[0].element), (1, 2, 7));
+        match o.alignment_elements().unwrap()[0].kind {
+            AlignmentElementKind::FixedLine { start, .. } => assert!(start.distance(&Vector2::new(30.0, -10.0)) < 1e-9),
+            _ => panic!(),
+        }
+        assert_eq!(o.alignment_start_station(), Some(30.0));
+    }
+
+    #[test]
+    fn offset_alignments_keep_their_widenings() {
+        let mut doc = drawing();
+        let v = [Vector2::new(0.0, 0.0), Vector2::new(100.0, 0.0), Vector2::new(200.0, 50.0)];
+        let parent = add_alignment_with_curves(&mut doc, "AL1", &v, &[VertexCurve::Arc(169.4427190999918)], None).unwrap();
+        let w = |start: f64, end: f64, entry: f64, exit: f64| Widening { start, end, offset: 15.0, entry, exit };
+        // Transitions longer than 0 must lie on one parent line; widenings
+        // keep the offset's side.
+        assert!(add_offset_alignment_with_widenings(&mut doc, parent, "X", 10.0, None, &[w(50.0, 90.0, 20.0, 0.0)], None).is_err());
+        assert!(add_offset_alignment_with_widenings(&mut doc, parent, "X", -10.0, None, &[w(20.0, 50.0, 0.0, 0.0)], None).is_err());
+        let off = add_offset_alignment_with_widenings(&mut doc, parent, "OFF1", 10.0, None, &[w(20.0, 50.0, 10.0, 10.0)], None).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-alignment-widening-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let o = match back.get_entity(off) {
+            Some(crate::entities::EntityType::Extended(x)) => match &x.data {
+                crate::entities::ExtendedEntityData::Arch(a) => a.clone(),
+                _ => panic!(),
+            },
+            _ => panic!(),
+        };
+        let p = o.alignment_offset_parameters().unwrap();
+        let regions: Vec<(f64, f64, f64, i32)> = p.regions.iter().map(|r| (r.offset, r.parent_start, r.parent_end, r.kind)).collect();
+        assert_eq!(regions[..2], [(10.0, 0.0, 20.0, 2), (15.0, 30.0, 50.0, 1)]);
+        assert_eq!((regions[2].1, regions[2].3), (60.0, 2));
+        let transitions: Vec<(i32, f64, i32)> = p.transitions.iter().map(|t| (t.kind, t.length, t.element)).collect();
+        assert_eq!(transitions, vec![(1, 10.0, 11), (1, 10.0, 12)]);
+        assert_eq!(p.element_map[0], (1, vec![7, 10]));
+        assert_eq!(p.anchors.iter().map(|a| a.0).collect::<Vec<_>>()[..5], [0.0, 20.0, 30.0, 50.0, 60.0]);
+        let ramp = o.alignment_elements().unwrap().into_iter().find(|e| e.id == 11).unwrap();
+        match ramp.kind {
+            AlignmentElementKind::Points { points } => {
+                assert!(points[0].distance(&Vector2::new(20.0, -10.0)) < 1e-9 && points[1].distance(&Vector2::new(30.0, -15.0)) < 1e-9);
+            }
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn utility_and_rail_alignments_keep_their_type() {
+        use crate::classes::civil::AlignmentType;
+        let mut doc = drawing();
+        let v = [Vector2::new(0.0, 0.0), Vector2::new(100.0, 0.0)];
+        assert!(add_alignment_of_kind(&mut doc, "X", &v, &[], AlignmentKind::Rail { gauge: 0.0 }, None).is_err());
+        let u = add_alignment_of_kind(&mut doc, "U", &v, &[], AlignmentKind::Utility, None).unwrap();
+        let r = add_alignment_of_kind(&mut doc, "R", &v, &[], AlignmentKind::Rail { gauge: 1.435 }, None).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-alignment-types-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let read = |h: Handle| match back.get_entity(h) {
+            Some(crate::entities::EntityType::Extended(x)) => match &x.data {
+                crate::entities::ExtendedEntityData::Arch(a) => (a.alignment_type(), a.alignment_track_gauge()),
+                _ => panic!(),
+            },
+            _ => panic!(),
+        };
+        assert_eq!(read(u), (Some(AlignmentType::Miscellaneous), Some(0.0)));
+        assert_eq!(read(r), (Some(AlignmentType::Rail), Some(1.435)));
     }
 }

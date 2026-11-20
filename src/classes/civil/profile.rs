@@ -34,6 +34,9 @@ use crate::types::Vector2;
 enum CurveDef {
     ParabolaLength(f64),
     ParabolaK(f64),
+    ParabolaRadius(f64),
+    /// A symmetric parabola through this point.
+    ParabolaThrough(Vector2),
     CircularLength(f64),
     CircularRadius(f64),
     CircularThrough(Vector2),
@@ -133,6 +136,15 @@ fn record_at(data: &[u8], pos: usize, end: usize) -> Option<Record> {
             zero(&mut bits)?;
             let v = positive(bits.bit_double()?)?;
             Entity::Curve(if constraint == 0 { CurveDef::ParabolaLength(v) } else { CurveDef::ParabolaK(v) })
+        }
+        (6, 9) => {
+            zero(&mut bits)?;
+            Entity::Curve(CurveDef::ParabolaRadius(positive(bits.bit_double()?)?))
+        }
+        // `BL 0, 2RD point, BL 0, 3 bits 010, 3 x BD -1` (WV03).
+        (6, 7) => {
+            zero(&mut bits)?;
+            Entity::Curve(CurveDef::ParabolaThrough(point(&mut bits)?))
         }
         (6, 11) => {
             zero(&mut bits)?;
@@ -276,6 +288,27 @@ impl Placed {
 
 /// The circle tangent to both grades at the PVI that `def` gives; the
 /// length given is the horizontal one.
+/// The radius of the circular curve at `pvi` between the grades `g1` and
+/// `g2` that passes through `p`.
+pub(super) fn circle_through(pvi: Vector2, g1: f64, g2: f64, p: Vector2) -> Option<f64> {
+    placed_circle(pvi, g1, g2, CurveDef::CircularThrough(p)).map(|c| c.1)
+}
+
+/// The length of the symmetric parabola at `pvi` between the grades `g1`
+/// and `g2` that passes through `p`: with `u` the station from the PVI and
+/// `d` the height above the first grade, `(g2 - g1) (u + L/2)^2 = 2 d L`,
+/// the root whose curve spans `u`.
+pub(super) fn parabola_length_through(pvi: Vector2, g1: f64, g2: f64, p: Vector2) -> Option<f64> {
+    let (u, d, a) = (p.x - pvi.x, p.y - pvi.y - g1 * (p.x - pvi.x), g2 - g1);
+    let (qa, qb, qc) = (a / 4.0, a * u - 2.0 * d, a * u * u);
+    let disc = qb * qb - 4.0 * qa * qc;
+    (qa != 0.0 && disc >= 0.0).then_some(())?;
+    [(-qb + disc.sqrt()) / (2.0 * qa), (-qb - disc.sqrt()) / (2.0 * qa)]
+        .into_iter()
+        .filter(|l| l.is_finite() && *l > 0.0 && u.abs() <= l / 2.0 + 1e-9)
+        .fold(None, |best: Option<f64>, l| Some(best.map_or(l, |b| b.min(l))))
+}
+
 fn placed_circle(pvi: Vector2, g1: f64, g2: f64, def: CurveDef) -> Option<(Vector2, f64)> {
     let s = if g2 >= g1 { 1.0 } else { -1.0 };
     let (u1, u2) = (unit_grade(g1), unit_grade(g2));
@@ -462,7 +495,7 @@ fn record_list_at(data: &[u8], pos: usize, end: usize) -> Option<Vec<Record>> {
         let mut record = record_at(data, at + 11, end)?;
         let next = match record.code {
             (2, _) => record.end + 4,
-            (6, c) => parabola_tail(&mut record, matches!(c, 0 | 2))?,
+            (6, c) => parabola_tail(&mut record, matches!(c, 0 | 2 | 9))?,
             // Circular and asymmetric curves end with their values
             // (WR10 to WR13).
             _ => record.end,
@@ -620,6 +653,8 @@ fn solve(owned: &[Record]) -> Option<Vec<Segment>> {
             Entity::Curve(
                 def @ (CurveDef::ParabolaLength(_)
                 | CurveDef::ParabolaK(_)
+                | CurveDef::ParabolaRadius(_)
+                | CurveDef::ParabolaThrough(_)
                 | CurveDef::CircularLength(_)
                 | CurveDef::CircularRadius(_)
                 | CurveDef::CircularThrough(_)
@@ -635,6 +670,8 @@ fn solve(owned: &[Record]) -> Option<Vec<Segment>> {
                 let form = match def {
                     CurveDef::ParabolaLength(l) => Form::Parabola(l),
                     CurveDef::ParabolaK(k) => Form::Parabola(k * 100.0 * (g2 - g1).abs()),
+                    CurveDef::ParabolaRadius(r) => Form::Parabola(r * (g2 - g1).abs()),
+                    CurveDef::ParabolaThrough(p) => Form::Parabola(parabola_length_through(a1, g1, g2, p)?),
                     CurveDef::Asymmetric(l1, l2) => Form::Asymmetric(l1, l2),
                     def => {
                         let (center, radius) = placed_circle(a1, g1, g2, def)?;

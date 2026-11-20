@@ -32,7 +32,7 @@ mod tin_build;
 mod tree;
 
 pub use assembly::{add_assembly, add_pkt_subassembly, add_pkt_subassembly_on, PktSource};
-pub use alignment::{add_alignment, add_alignment_with_curves, VertexCurve};
+pub use alignment::{add_alignment, add_alignment_with_curves, add_offset_alignment, add_offset_alignment_with_widenings, add_alignment_of_kind, AlignmentKind, VertexCurve, Widening};
 pub use corridor::{add_corridor, add_corridor_with};
 pub use intersection::add_intersection;
 pub use network::{add_pipe, add_pipe_network, add_pipe_of_family, add_structure, add_structure_of_family, connect_pipe, network_part_families};

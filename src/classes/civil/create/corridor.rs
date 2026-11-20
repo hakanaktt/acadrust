@@ -180,15 +180,23 @@ fn region_flags(f: &RegionFrequency) -> (i32, i32) {
 /// BD along spirals, BD along profile curves, identifier, BL target flags,
 /// BL 0, BL 0, BL n target entries, n x 10 lists {BL k, k x item},
 /// BL 0, 3 bits 110, BL 0
+///
+/// A region locked to its alignment's geometry has the identifier of its
+/// alignment's anchor (kind 582) before each of BD start and BD end (KH01).
+///
 /// item:  BL 0x1015, BL 0, object head, B 0, B 0, BL 0 (a surface), or
 ///        BL 0x1017 (0x1117 for the farthest), BL 0, BL k, k x object head,
 ///        BL 1 farthest / 0 nearest, B 0, B 0, BL 0
 /// ```
-fn write_region(w: &mut DwgMergedWriter, r: &CorridorRegion, asm: &Assembly, entries: &[Vec<Vec<&super::super::corridor::RegionTarget>>], id: &[u8; 16]) {
+fn write_region(w: &mut DwgMergedWriter, r: &CorridorRegion, asm: &Assembly, entries: &[Vec<Vec<&super::super::corridor::RegionTarget>>], id: &[u8; 16], lock: Option<&[[u8; 16]; 2]>) {
     w.write_bytes(&asm.identifier);
     raw(w, &asm.groups);
-    w.write_bit_double(r.start);
-    w.write_bit_double(r.end);
+    for (i, station) in [r.start, r.end].into_iter().enumerate() {
+        if let Some(ids) = lock {
+            w.write_bytes(&ids[i]);
+        }
+        w.write_bit_double(station);
+    }
     bits(w, "00");
     let f = &r.frequency;
     let (flags, target_flags) = region_flags(f);
@@ -316,7 +324,8 @@ fn boundary_lists(def: &CorridorDefinition) -> Vec<Vec<&CorridorBoundary>> {
 /// m x B, BL overhang correction}, BD maximum triangle side, BL n
 /// boundary lists (one per surface with boundaries, in surface order),
 /// n x {BL k, k x {BL kind, BL m, m x 3BD corner}}, BL 0
-/// B rebuild automatically, B 1, RC 32, RC 0x48 (locked to stations),
+/// B rebuild automatically, B 1, RC 32, RC 0x48 (locked to stations;
+/// 0x28 locked to the alignments' geometry),
 /// RC (baselines << 3 | 2), 1 bit 0, 6 bits the first baseline's region
 /// count, BL 0 (no station)
 /// baseline: [after the first: BL region count, BL 0], its regions (see
@@ -344,7 +353,7 @@ fn boundary_lists(def: &CorridorDefinition) -> Vec<Vec<&CorridorBoundary>> {
 /// frequencies and assemblies, the record equals theirs bit for bit (WC13,
 /// WC24 to WC27 with a region flag word of 0, the form of a corridor never
 /// saved after an edit).
-fn write_corridor(doc: &mut CadDocument, common: EntityCommon, def: &CorridorDefinition, styles: Styles, asms: &[Vec<Assembly>]) -> Result<Handle, DxfError> {
+fn write_corridor(doc: &mut CadDocument, common: EntityCommon, def: &CorridorDefinition, styles: Styles, asms: &[Vec<Assembly>], locks: &[[[u8; 16]; 2]]) -> Result<Handle, DxfError> {
     let seed = common.handle.value();
     let regions: Vec<&CorridorRegion> = def.baselines.iter().flat_map(|b| &b.regions).collect();
     let mut entries = Vec::new();
@@ -450,7 +459,7 @@ fn write_corridor(doc: &mut CadDocument, common: EntityCommon, def: &CorridorDef
             w.write_bit(def.rebuild_automatic);
             w.write_bit(true);
             byte(w, 32);
-            byte(w, 0x48);
+            byte(w, if def.geometry_lock { 0x28 } else { 0x48 });
             byte(w, (def.baselines.len() as u8) << 3 | 2);
             bits(w, &format!("0{:06b}", def.baselines[0].regions.len()));
             w.write_bit_long(0);
@@ -462,7 +471,7 @@ fn write_corridor(doc: &mut CadDocument, common: EntityCommon, def: &CorridorDef
                 }
                 for (r, region) in line.regions.iter().enumerate() {
                     let id = new_identifier(seed ^ (0x100 + index as u64));
-                    write_region(w, region, &asms[b][r], &entries[index], &id);
+                    write_region(w, region, &asms[b][r], &entries[index], &id, locks.get(index));
                     index += 1;
                 }
                 w.write_bit_long(0);
@@ -500,17 +509,17 @@ fn alignment_length(al: &ArchEntityData) -> f64 {
 /// boundaries and masks drawn from polygons (closed when open) or along the
 /// corridor extents, and the maximum triangle side length; the rebuild
 /// makes each built surface. `built`, the feature line fields and the
-/// geometry lock are not written (a boundary along feature lines or a
-/// geometry-locked region is refused). A baseline along a feature line
+/// feature line boundaries are not written (a boundary along feature lines
+/// is refused). With `geometry_lock` every region is locked to its
+/// alignment's geometry: each baseline's alignment, one this crate writes,
+/// is written again with an anchor at each region's start and end, whose
+/// identifiers the region keeps. A baseline along a feature line
 /// names it with an alignment and profile that follow it (the
 /// application's own makes them hidden); the rebuild follows the alignment
 /// and profile.
 pub fn add_corridor_with(doc: &mut CadDocument, def: &CorridorDefinition, layer: Option<&str>) -> Result<Handle, DxfError> {
     if def.name.is_empty() || def.baselines.is_empty() || def.baselines.len() > 31 {
         return Err(invalid("a corridor needs a name and 1 to 31 baselines"));
-    }
-    if def.geometry_lock {
-        return Err(invalid("a geometry lock is not written"));
     }
     for b in &def.boundaries {
         let polygon = matches!(b.kind, POLYGON_INSIDE | POLYGON_OUTSIDE | MASK) && b.corners.len() >= 3;
@@ -576,8 +585,20 @@ pub fn add_corridor_with(doc: &mut CadDocument, def: &CorridorDefinition, layer:
         }
     }
     let handle = doc.allocate_handle();
+    let mut locks = Vec::new();
+    if def.geometry_lock {
+        for line in &def.baselines {
+            let mut anchors = Vec::new();
+            for r in &line.regions {
+                let ids = [0x300, 0x301].map(|salt| new_identifier(handle.value() ^ (salt + 2 * locks.len() as u64)));
+                anchors.extend([(ids[0], r.start), (ids[1], r.end)]);
+                locks.push(ids);
+            }
+            super::alignment::add_anchors(doc, Handle::new(line.alignment), super::alignment::LOCK_ANCHOR, &anchors)?;
+        }
+    }
     let common = EntityCommon { handle, owner_handle: doc.header.model_space_block_handle, layer: layer.into(), layer_handle: Some(layer_handle), ..EntityCommon::default() };
-    write_corridor(doc, common, &def, Styles { corridor, surface, material }, &asms)
+    write_corridor(doc, common, &def, Styles { corridor, surface, material }, &asms, &locks)
 }
 
 /// Adds a corridor `name` along `alignment` and its `profile` with one
@@ -733,6 +754,31 @@ mod tests {
         def.surfaces.iter_mut().for_each(|s| s.link_codes.reverse());
         def.boundaries[1].corners.push(corner(10.0, 0.0));
         assert_eq!(arch(&back, c).unwrap().corridor_definition(), Some(def));
+    }
+
+    #[test]
+    fn regions_lock_to_the_alignment_geometry() {
+        let v = Vector2::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let al = crate::classes::civil::add_alignment(&mut doc, "AL1", &[v(0.0, 0.0), v(100.0, 0.0)], None).unwrap();
+        let p = crate::classes::civil::add_profile(&mut doc, al, "P1", &[v(0.0, 10.0), v(100.0, 15.0)], &[], None).unwrap();
+        let [sub, code_set] = [(); 2].map(|_| doc.allocate_handle());
+        let asm = assembly(&mut doc, sub.value(), code_set.value());
+        let region = |name: &str, start, end| CorridorRegion { name: name.into(), assembly: asm.value(), start, end, frequency: RegionFrequency::default(), targets: vec![] };
+        let line = CorridorBaseline { name: "BL1".into(), feature_line: 0, alignment: al.value(), profile: p.value(), regions: vec![region("RG1", 0.0, 40.0), region("RG2", 50.0, 90.0)], stations: vec![], built: false };
+        let def = CorridorDefinition { name: "COR1".into(), geometry_lock: true, baselines: vec![line], ..CorridorDefinition::default() };
+        let c = add_corridor_with(&mut doc, &def, None).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-corridor-lock-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(arch(&back, c).unwrap().corridor_definition(), Some(def));
+        // The alignment holds an anchor at each region end besides its
+        // profile's.
+        let mut locked: Vec<f64> = arch(&back, al).unwrap().alignment_anchors().unwrap().iter().filter(|a| a.kind == 582).map(|a| a.station).collect();
+        locked.sort_by(f64::total_cmp);
+        assert_eq!(locked, vec![0.0, 40.0, 50.0, 90.0]);
     }
 
 }

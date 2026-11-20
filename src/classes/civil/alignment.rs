@@ -405,6 +405,8 @@ pub(super) fn class_header(bits: &mut Bits) -> Option<u8> {
 /// element count.
 struct Section2 {
     start_station: f64,
+    /// The track gauge (rail alignments).
+    gauge: f64,
     /// The 7 criteria bits after the start station.
     criteria_at: usize,
     count_at: usize,
@@ -430,7 +432,7 @@ fn section2_with(data: &[u8], start: usize, end: usize, run: usize) -> Option<Se
     let criteria_at = bits.pos;
     bits.pos += 7;
     // The track gauge (0 unless the superelevation type is cant), one bit.
-    bits.bit_double()?;
+    let gauge = bits.bit_double()?;
     bits.bit()?;
     bits.bit_long()?;
     // The element list must follow: the RECOVER/AUDIT layout reads through
@@ -444,7 +446,7 @@ fn section2_with(data: &[u8], start: usize, end: usize, run: usize) -> Option<Se
         _ => element_list_at(data, bits.pos, end).is_some(),
     };
     listed.then_some(())?;
-    Some(Section2 { start_station, criteria_at, count_at: bits.pos })
+    Some(Section2 { start_station, gauge, criteria_at, count_at: bits.pos })
 }
 
 /// Design elements found in a main stream, keyed by their own ids.
@@ -2743,6 +2745,11 @@ pub(super) fn start_station(data: &[u8], start: usize, end: usize) -> f64 {
     0.0
 }
 
+/// The track gauge of a rail alignment (0 for the other types).
+pub(super) fn track_gauge(data: &[u8], start: usize, end: usize) -> Option<f64> {
+    section2(data, start, end).map(|s| s.gauge)
+}
+
 /// Design Criteria and Constraint Editing check boxes of Alignment
 /// Properties.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2804,28 +2811,95 @@ pub fn display_station(equations: &[StationEquation], raw: f64) -> f64 {
         .map_or(raw, |e| if e.increasing { e.ahead + (raw - e.raw) } else { e.ahead - (raw - e.raw) })
 }
 
-/// The end of the interval block at `pos` (see [`post_cache_starts`]).
-fn interval_block_end(data: &[u8], pos: usize, end: usize) -> Option<usize> {
+/// A station anchor of an alignment: a station other objects tie to by
+/// its identifier (a profile's start, an offset alignment's region ends,
+/// a corridor region locked to the geometry, the alignment's own design
+/// speeds), with the element it lies on as the alignment held it then.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct AlignmentAnchor {
+    pub id: [u8; 16],
+    /// 1 in every sample.
+    pub flag: bool,
+    /// What ties to it: 32763 or 32765 a profile, 6 an offset alignment's
+    /// region end, 2 an offset alignment's own start (its design speed),
+    /// 582 a corridor region locked to the geometry.
+    pub kind: i32,
+    /// 0 in every sample.
+    pub value: f64,
+    pub station: f64,
+    /// Distance from the element's start to the station, and from the
+    /// station to the element's end.
+    pub along: f64,
+    pub remaining: f64,
+    /// The element the station lies on and the elements before and after
+    /// it (0: none).
+    pub element: i32,
+    pub previous: i32,
+    pub next: i32,
+    /// The element's start and end and the point at the station.
+    pub element_start: Vector2,
+    pub element_end: Vector2,
+    pub point: Vector2,
+}
+
+/// The interval block at `pos`:
+///
+/// ```text
+/// BL profiles, BL profile views, BL sample line groups, BL n,
+/// n x { GUID, B, BL kind, BD value, BD station, BD along, BD remaining,
+///       BL element, BL previous, BL next, 2RD element start,
+///       2RD element end, 2RD point }
+/// ```
+///
+/// Returns the anchors, the three counts and the bit after the block.
+pub(super) fn anchors_at(data: &[u8], pos: usize, end: usize) -> Option<(Vec<AlignmentAnchor>, [i32; 3], usize)> {
     let mut bits = Bits::new(data, pos, end);
-    for _ in 0..3 {
-        bits.bit_long()?;
-    }
+    let counts = [bits.bit_long()?, bits.bit_long()?, bits.bit_long()?];
     let k = usize::try_from(bits.bit_long()?).ok()?;
-    // An interval takes at least 529 bits.
+    // An anchor takes at least 529 bits.
     (k <= end.saturating_sub(bits.pos) / 529).then_some(())?;
+    let mut anchors = Vec::with_capacity(k);
     for _ in 0..k {
-        bits.pos += 128;
-        bits.bit()?;
-        bits.bit_long()?;
-        for _ in 0..4 {
-            bits.bit_double()?;
-        }
-        for _ in 0..3 {
-            bits.bit_long()?;
-        }
-        bits.pos += 6 * 64;
+        let id = guid(&mut bits)?;
+        let flag = bits.bit()?;
+        let kind = bits.bit_long()?;
+        let [value, station, along, remaining] = [bits.bit_double()?, bits.bit_double()?, bits.bit_double()?, bits.bit_double()?];
+        let [element, previous, next] = [bits.bit_long()?, bits.bit_long()?, bits.bit_long()?];
+        let mut point = || Some(Vector2::new(bits.raw_double()?, bits.raw_double()?));
+        let (element_start, element_end, at) = (point()?, point()?, point()?);
+        anchors.push(AlignmentAnchor {
+            id,
+            flag,
+            kind,
+            value,
+            station,
+            along,
+            remaining,
+            element,
+            previous,
+            next,
+            element_start,
+            element_end,
+            point: at,
+        });
     }
-    (bits.pos < end).then_some(bits.pos)
+    (bits.pos < end).then_some((anchors, counts, bits.pos))
+}
+
+/// The end of the interval block at `pos` (see [`anchors_at`]).
+fn interval_block_end(data: &[u8], pos: usize, end: usize) -> Option<usize> {
+    anchors_at(data, pos, end).map(|(_, _, pos)| pos)
+}
+
+/// The anchors of the record whose interval block is followed by its
+/// equations, speeds and type (see [`post_cache_starts`]).
+pub(super) fn anchors(data: &[u8], start: usize, end: usize) -> Option<Vec<AlignmentAnchor>> {
+    post_cache_starts_at(data, start, end)?
+        .into_iter()
+        .find(|(_, pos)| typed_at(data, *pos, end, f64::MIN, f64::MAX, true).is_some())
+        .and_then(|(block, _)| anchors_at(data, block, end))
+        .map(|(anchors, _, _)| anchors)
 }
 
 /// Where the station equations start, read field by field: the element
@@ -2839,19 +2913,24 @@ fn interval_block_end(data: &[u8], pos: usize, end: usize) -> Option<usize> {
 /// A free arc last has two tail forms; both positions are returned and the
 /// lists after them settle which one holds.
 fn post_cache_starts(data: &[u8], start: usize, end: usize) -> Option<Vec<usize>> {
+    post_cache_starts_at(data, start, end).map(|at| at.into_iter().map(|(_, pos)| pos).collect())
+}
+
+/// [`post_cache_starts`] with the interval block's start before each.
+fn post_cache_starts_at(data: &[u8], start: usize, end: usize) -> Option<Vec<(usize, usize)>> {
     let count_at = section2(data, start, end)?.count_at;
     let mut bits = Bits::new(data, count_at, end);
     let n = usize::try_from(bits.bit_long()?).ok().filter(|n| *n < 10_000)?;
-    let intervals = |pos: usize| interval_block_end(data, pos, end);
+    let intervals = |pos: usize| interval_block_end(data, pos, end).map(|after| (pos, after));
     if n == 0 {
-        return intervals(bits.pos).map(|pos| vec![pos]);
+        return intervals(bits.pos).map(|at| vec![at]);
     }
     let mut at = bits.pos;
     for _ in 1..n {
         at = record_at(data, at, end, false)?.1;
     }
     let (element, body_end) = record_at(data, at, end, true)?;
-    let ends: Vec<usize> = tails(&element.kind)
+    let ends: Vec<(usize, usize)> = tails(&element.kind)
         .iter()
         .filter_map(|tail| {
             let mut b = Bits::new(data, body_end, end);
@@ -2951,8 +3030,10 @@ pub enum AlignmentType {
     Offset,
     /// A connected (curb return) alignment between two others.
     CurbReturn,
+    /// Utility (the type the application's interfaces name Utility).
     Miscellaneous,
-    /// A value not seen in a sample (5 is most likely Rail).
+    Rail,
+    /// A value not seen in a sample.
     Other(i32),
 }
 
@@ -2963,6 +3044,7 @@ impl AlignmentType {
             2 => Self::Offset,
             3 => Self::CurbReturn,
             4 => Self::Miscellaneous,
+            5 => Self::Rail,
             other => Self::Other(other),
         }
     }
