@@ -1055,6 +1055,14 @@ impl ArchEntityData {
 
     /// Number fields of the part data a Civil 3D pipe (`AECC_PIPE`) keeps
     /// itself: flow coefficients, minimum curve radius and the like.
+    /// Station of a Civil 3D sample line (`AECC_SAMPLE_LINE`).
+    pub fn sample_line_station(&self) -> Option<f64> {
+        if self.dxf_name != "AECC_SAMPLE_LINE" {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        sample_lines::sample_line_station(data, start, end)
+    }
     pub fn pipe_part_fields(&self) -> Vec<PartField> {
         if self.dxf_name != "AECC_PIPE" {
             return Vec::new();
