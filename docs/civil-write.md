@@ -207,6 +207,96 @@ the codes Crown, ETW, ETW_Datum and Crown_Datum (at station 0 ETW (4,
 -0.12) right and (-3.5, -0.07) left), as in a drawing the application had
 opened (E-PK1).
 
+## 2d. Label style settings
+
+A label style (`AECC_LABEL_COLLECTOR_STYLE`) and its text components
+(`AECC_LABEL_TEXT_STYLE`) follow the style layout of §2a with no display
+components; their settings are class data fields after the component
+lists, not keys. Both open with the same base fields (the other component
+kinds, lines, arrows and text iterators, too):
+
+```text
+BL height set, BL, BD height, BL, BL kind
+BL mask A, BL mask B
+BL, BL, B label visible, B visible, B background mask, B,
+BL anchor component id, BL anchor (low byte: 4 + anchor point)
+BL orientation, BL insert, BL, BL, BL plan readable, BD readable bias,
+B flip anchors, BD x offset, BD, BD y offset, BD, B border visible,
+BD gap, B leader visible, B, B leader spline, B, BD arrowhead size,
+CMC text color, BL text lineweight, CMC border color,
+BL border lineweight, BL border type, CMC leader color,
+BL leader lineweight, BL leader attachment, BL, BL, BL mask C
+```
+
+(CMC: `BS 0`, the color word, `RC 0`.) A collector goes on with its
+dragged state, a text component with its text:
+
+```text
+collector:  B, B, B, B stacked, BD text height, B border visible, BD gap,
+            BS border type, B background mask, B leader justification,
+            CMC color, BL lineweight, BL n,
+            n x { BL, BD, BL, 9 bits, BL, BL, BL, BL, B, BL },
+            BL, BD max text width
+text:       BL, BL bytes + UTF-16 contents, BD angle, BL, BL attachment,
+            BL, B, BD max width, BD
+```
+
+A style overrides a setting of the label style defaults by its mask bit;
+with the bit clear the stored value is a leftover and the defaults' value
+applies (the default point style stores a readable bias of 0 and shows
+110°). Mask A: 0x1 visibility, 0x2 orientation, 0x4 plan readable, 0x8
+insert option, 0x100 leader visibility, 0x800 leader shape, 0x2000
+arrowhead size, 0x4000 arrowhead style, 0x100000 text color (component),
+0x200000 layer, 0x800000 text lineweight (component), 0x08000000 leader
+color, 0x10000000 leader linetype, 0x20000000 leader lineweight. Mask B:
+0x2 leader attachment, 0x8 readable bias, 0x10 flip anchors. Mask C
+(dragged state): 0x1 display type, 0x2 text height, 0x4 border
+visibility, 0x8 gap, 0x10 color, 0x20 linetype, 0x40 lineweight, 0x80
+leader justification, 0x100 border type, 0x200 background mask, 0x400
+maximum text width. The text style has no bit of its own (it is set in
+every sample; a null reference takes the defaults' style). A text
+component's other values (contents, offsets, angle, attachment, anchor,
+border) have no mask; its height counts as set when the first BL is 1.
+
+The base references: own (soft), text style, owner style, arrowhead
+block, layer, -, border linetype, leader linetype, dragged state linetype;
+a collector then lists its components three times (hard pointers, hard
+owners, soft pointers) and a null reference. Texts: the record's own (an
+empty one, or the name and an empty one under a text id), one per text
+key (users, the class name `AeccDbCogoPoint` and the like), then a text
+component's anchor component name when that component sits under a text
+id.
+
+Enumerations: orientation 0 object, 1 view, 2 world; insert 0 none, 1
+top, 2 bottom; attachment and anchor point 0 top left to 8 bottom right;
+leader attachment 2 middle, 3 middle of the bottom line; border type 0
+rectangular, 1 rounded.
+
+Samples: LS001-LS040 (one setting of the default point label style
+changed per save), LT001-LT035 (bits back to their defaults, colors,
+linetypes, layer, text style, arrowhead style, anchor component and
+point, enumerations stepped twice). Every collector of the application's
+style tree reads (375 of 379 records; the four pipe and pressure part
+collectors carry two more texts and fields not mapped) and so do 248 of
+252 text components.
+
+Writing: `add_label_style` copies a label style of the drawing and its
+components with the settings and text component values given;
+`add_point_label_style` does so from the default point label style. A
+copy is a new text id in the source's collection with its name; its
+records equal the source's apart from the head and the changed fields
+(an application copy of "Standard" is the same, L03). E-LS1 (new
+drawing, three points, LS1 with every collector setting and the first
+component's text, border and anchor changed, LS2 with the second
+component's height and color): opens with AUDIT 0, the API lists LS1 and
+LS2 with exactly the written values. E-LS2 (an application drawing with
+a copy of each of its 206 leaf label styles, orientation and the first
+text component's x offset changed): AUDIT 0; the API shows the copies of
+53 label style kinds (alignment, profile, surface, parcel, section,
+section view, profile view, point, sample line, match line, view frame,
+intersection, catchment, projection and general labels) with the written
+values.
+
 ## 3. COGO points
 
 ### Defaults looked up in the tree
@@ -2414,7 +2504,8 @@ Corridors are listed in §3i-a.
 | kind | option | read | write | evidence / what blocks it |
 |---|---|---|---|---|
 | COGO points | position, number, raw description, name, styles | yes | yes | §3 |
-| COGO points | point label styles other than the default, user-defined properties | partly (label references) | no | label styles other than §2b are constant runs |
+| COGO points | point label styles other than the default | yes | yes | §2d |
+| COGO points | user-defined properties | partly | no | not sampled |
 | point groups | number lists, elevation comparisons and ranges, description, name and full description patterns, exclusions | yes | yes | §3, §4 |
 | point groups | number ranges (`2-6`) | yes | as a number list | the application stores the range as its numbers |
 | point groups | override styles and descriptions per group, AND of several criteria (advanced query) | partly | no | override settings are not mapped field by field (WP10, WG01) |
@@ -2460,7 +2551,8 @@ Corridors are listed in §3i-a.
 | gradings | criteria, groups, gradings | partly (criteria) | no | §6a |
 | mass haul | line and view | partly | no | §6a |
 | label styles | the defaults of a new drawing (§2b) | partly | yes | §2b |
-| label styles | other styles and roots | partly | no | constant runs |
+| label styles | settings: visibility, layer, text style, orientation, insert option, plan readability, leader, dragged state; text components' contents, height, offsets, angle, attachment, anchor, color, lineweight, border | yes (375 of 379 collectors, 248 of 252 text components) | yes, as copies of a drawing's label style (§2d) | §2d |
+| label styles | adding or removing components; line, arrow and iterator components' own settings; pipe and pressure part label styles | base fields | as copied | not mapped |
 
 ### 6a. Gradings and mass haul
 

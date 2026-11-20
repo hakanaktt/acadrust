@@ -134,6 +134,15 @@ pub(super) fn class_data(data: &[u8], start: usize, end: usize) -> Option<usize>
     Some(layout(data, start, end)?.end)
 }
 
+/// Where a style's class data starts, the index of its own reference
+/// (the first after the header's lists and the keys' references) and how
+/// many keys hold a text (their texts follow the record's own ones).
+pub(super) fn class_layout(data: &[u8], start: usize, end: usize) -> Option<(usize, usize, usize)> {
+    let l = layout(data, start, end)?;
+    (!l.skipped).then_some(())?;
+    Some((l.end, l.refs - 1, l.keys.iter().filter(|(key, _)| key >> 24 == 0x04).count()))
+}
+
 /// Default and code entries of a code set style
 /// (`AECC_ROADWAY_STYLE_SET`), from its class data:
 ///

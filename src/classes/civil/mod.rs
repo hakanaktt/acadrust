@@ -16,6 +16,7 @@ mod corridor;
 mod grading;
 mod intersection;
 mod labels;
+mod label_style;
 mod network;
 mod parameters;
 mod profile;
@@ -31,11 +32,12 @@ pub use alignment::{
     StationEquation,
 };
 pub use cogo::CogoPoint;
-pub use create::{add_tin_surface_with, add_assembly, add_pkt_subassembly, add_pkt_subassembly_on, PktSource, add_alignment, add_alignment_with_curves, add_offset_alignment, add_offset_alignment_with_widenings, Widening, add_alignment_of_kind, AlignmentKind, VertexCurve, add_corridor, add_corridor_with, add_cogo_point, add_intersection, add_point_group, add_point_group_query, add_profile, add_profile_with_curves, add_surface_profile, VerticalCurve, add_profile_view, add_profile_view_with_range, add_sample_line, add_sample_line_through, add_sample_line_group, add_sections, add_section_view, add_site, add_alignment_on_site, add_feature_line, add_parcel, add_feature_line_vertices, FeatureLineVertex, add_tin_surface, cogo_points, ensure_civil, remove_cogo_point, set_cogo_point, set_cogo_point_name, set_point_group, set_point_group_query, Comparison, PointQuery, add_lot_line, add_pipe, add_pipe_network, add_pipe_of_family, add_structure, add_structure_of_family, connect_pipe, network_part_families, add_pressure_appurtenance, add_pressure_arc_pipe, add_pressure_cross, add_pressure_fitting, add_pressure_network, add_pressure_part, add_pressure_pipe, add_pressure_pipe_of_size, add_pressure_tee, connect_pressure_parts, pressure_part_descriptions};
+pub use create::{add_tin_surface_with, add_assembly, add_pkt_subassembly, add_pkt_subassembly_on, PktSource, add_alignment, add_alignment_with_curves, add_offset_alignment, add_offset_alignment_with_widenings, Widening, add_alignment_of_kind, AlignmentKind, VertexCurve, add_corridor, add_corridor_with, add_cogo_point, add_intersection, add_point_group, add_point_group_query, add_profile, add_profile_with_curves, add_surface_profile, VerticalCurve, add_profile_view, add_profile_view_with_range, add_sample_line, add_sample_line_through, add_sample_line_group, add_sections, add_section_view, add_site, add_alignment_on_site, add_feature_line, add_parcel, add_feature_line_vertices, FeatureLineVertex, add_tin_surface, cogo_points, ensure_civil, remove_cogo_point, set_cogo_point, set_cogo_point_label_style, set_cogo_point_name, add_label_style, add_point_label_style, label_style, LabelStyle, set_point_group, set_point_group_query, Comparison, PointQuery, add_lot_line, add_pipe, add_pipe_network, add_pipe_of_family, add_structure, add_structure_of_family, connect_pipe, network_part_families, add_pressure_appurtenance, add_pressure_arc_pipe, add_pressure_cross, add_pressure_fitting, add_pressure_network, add_pressure_part, add_pressure_pipe, add_pressure_pipe_of_size, add_pressure_tee, connect_pressure_parts, pressure_part_descriptions};
 pub use corridor::{CorridorBaseline, CorridorBoundary, CorridorDefinition, CorridorRegion, CorridorSurfaceDefinition, CurveStations, RegionFrequency, RegionTarget, TargetCurveStations, TargetKind};
 pub use grading::{CriteriaValue, GradingCriteria};
 pub use intersection::IntersectionLayout;
 pub use labels::{parse_format, property, LabelPart, LabelText};
+pub use label_style::{LabelBorder, LabelDraggedState, LabelLeader, LabelStyleSettings, LabelTextComponent};
 pub use network::{PartField, PressurePipe, PressurePort};
 pub use parameters::{Parameter, ParameterValue};
 pub use profile::{CurveMinimumK, ProfileCriteria, ProfileLocking, ProfilePiece, ProfileViewFrame, Pvi};
@@ -1284,6 +1286,55 @@ impl ArchObject {
         }
         let entries = strings[first..].chunks(4).zip(&groups[defaults..]).map(|(c, group)| (c[0].clone(), group[1])).collect();
         (groups[..defaults].iter().map(|g| g[1]).collect(), entries)
+    }
+
+    /// The class data fields of a label collector (`collector`) or text
+    /// component style, the index of its own reference and its texts
+    /// after the key texts.
+    pub(in crate::classes::civil) fn label_fields(&self, collector: bool) -> Option<(label_style::LabelFields, usize, usize)> {
+        let want = if collector { "AECC_LABEL_COLLECTOR_STYLE" } else { "AECC_LABEL_TEXT_STYLE" };
+        (self.dxf_name == want).then_some(())?;
+        let (data, start, end) = self.main_stream()?;
+        let (class, own_ref, text_keys) = style::class_layout(data, start, end)?;
+        Some((label_style::LabelFields::read(data, class, end, collector)?, own_ref, text_keys))
+    }
+
+    /// Settings of a label style (`AECC_LABEL_COLLECTOR_STYLE`):
+    /// visibility, layer, text style, behavior, plan readability, leader
+    /// and dragged state, each `Some` when the style overrides the label
+    /// style defaults.
+    pub fn label_style_settings(&self) -> Option<LabelStyleSettings> {
+        let (fields, own, _) = self.label_fields(true)?;
+        let refs: Vec<u64> = self.typed_handles().into_iter().skip(own).map(|r| r.0).collect();
+        Some(fields.settings(&refs))
+    }
+
+    /// Text components a label style lists (their handles), in order.
+    pub fn label_style_components(&self) -> Vec<u64> {
+        let Some((_, own, _)) = self.label_fields(true) else {
+            return Vec::new();
+        };
+        let refs: Vec<u64> = self.typed_handles().into_iter().skip(own + label_style::BASE_REFS).map(|r| r.0).collect();
+        // Three lists of the components and a closing null reference.
+        let n = refs.len().saturating_sub(1) / 3;
+        refs[..n].to_vec()
+    }
+
+    /// A label style's text component (`AECC_LABEL_TEXT_STYLE`).
+    pub fn label_text_component(&self) -> Option<LabelTextComponent> {
+        let (fields, own, text_keys) = self.label_fields(false)?;
+        let refs: Vec<u64> = self.typed_handles().into_iter().skip(own).map(|r| r.0).collect();
+        let (data, start, end) = self.main_stream()?;
+        let mut b = bits::Bits::new(data, start, end);
+        b.bit_short()?;
+        let id = b.bit_long()? as u32;
+        let strings = self.decode().strings;
+        let text_id = |id: u32| id & 0x8000_0000 != 0;
+        let own_texts = if text_id(id) { 2 } else { 1 };
+        let name = text_id(id).then(|| strings.first().cloned()).flatten();
+        let anchor = fields.text_component(id, None, &refs, None)?.anchor_component;
+        let anchor_name = text_id(anchor).then(|| strings.get(own_texts + text_keys).cloned()).flatten();
+        fields.text_component(id, name, &refs, anchor_name)
     }
 
     /// `(minor, major)` contour intervals of a Civil 3D surface style.
