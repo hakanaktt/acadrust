@@ -302,6 +302,20 @@ pub fn set_cogo_point_name(doc: &mut CadDocument, point: Handle, name: Option<&s
     store(doc, &s, &points)
 }
 
+/// Gives a point the label style `style` (an `AECC_LABEL_COLLECTOR_STYLE`
+/// of the drawing's point label styles).
+pub fn set_cogo_point_label_style(doc: &mut CadDocument, point: Handle, style: Handle) -> Result<(), DxfError> {
+    if object(doc, style).is_none_or(|o| o.dxf_name != "AECC_LABEL_COLLECTOR_STYLE") {
+        return Err(invalid("not a label style"));
+    }
+    let number = point_number(doc, point)?;
+    let mut points = cogo_points(doc);
+    let p = points.iter_mut().find(|p| p.number == number).ok_or_else(|| invalid("point is not in the database"))?;
+    p.label_style = style.value();
+    let s = support(doc)?;
+    store(doc, &s, &points)
+}
+
 /// Removes a point from the drawing and from the database.
 pub fn remove_cogo_point(doc: &mut CadDocument, point: Handle) -> Result<(), DxfError> {
     let number = point_number(doc, point)?;
