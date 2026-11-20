@@ -2,6 +2,12 @@
 
 ### Unreleased
 
+- **Extended dimensions keep AcDbDimension base groups** - The
+  ARC_DIMENSION and LARGE_RADIAL_DIMENSION reader had no arms for the
+  AcDbDimension insertion point (12), horizontal direction (51) and
+  flip-arrow (74/75) groups, so a DXF read dropped them — including on
+  files the library itself writes.
+
 - **DXF-format proxy entities** - An `ACAD_PROXY_ENTITY` whose original
   data format is DXF (`70 1`) carries the entity's own DXF groups after
   the header. The reader kept only binary data and let those groups' own

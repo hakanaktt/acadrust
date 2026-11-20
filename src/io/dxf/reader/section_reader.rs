@@ -15369,6 +15369,7 @@ impl<'a> SectionReader<'a> {
         let mut current_subclass = String::new();
         let mut definition_point = PointReader::new();
         let mut text_middle_point = PointReader::new();
+        let mut insertion_point = PointReader::new();
         let mut first = PointReader::new();
         let mut second = PointReader::new();
         let mut third = PointReader::new();
@@ -15396,6 +15397,9 @@ impl<'a> SectionReader<'a> {
                 }
                 11 | 21 | 31 => {
                     text_middle_point.add_coordinate(&pair);
+                }
+                12 | 22 | 32 => {
+                    insertion_point.add_coordinate(&pair);
                 }
                 13 | 23 | 33 => {
                     first.add_coordinate(&pair);
@@ -15428,6 +15432,9 @@ impl<'a> SectionReader<'a> {
                 41 | 44 if current_subclass == "AcDbDimension" => {
                     base.line_spacing_factor = pair.as_double().unwrap_or(1.0)
                 }
+                51 if current_subclass == "AcDbDimension" => {
+                    base.horizontal_direction = pair.as_double().unwrap_or(0.0).to_radians()
+                }
                 53 if current_subclass == "AcDbDimension" => {
                     base.text_rotation = pair.as_double().unwrap_or(0.0).to_radians()
                 }
@@ -15459,6 +15466,12 @@ impl<'a> SectionReader<'a> {
                 72 if current_subclass == "AcDbDimension" => {
                     base.line_spacing_style = pair.as_i16().unwrap_or(1)
                 }
+                74 if current_subclass == "AcDbDimension" => {
+                    base.flip_arrow1 = pair.as_i16().is_some_and(|v| v != 0)
+                }
+                75 if current_subclass == "AcDbDimension" => {
+                    base.flip_arrow2 = pair.as_i16().is_some_and(|v| v != 0)
+                }
                 210 | 220 | 230 => {
                     let mut normal = PointReader::new();
                     normal.add_coordinate(&pair);
@@ -15481,6 +15494,9 @@ impl<'a> SectionReader<'a> {
         }
         if let Some(point) = text_middle_point.get_point() {
             base.text_middle_point = point;
+        }
+        if let Some(point) = insertion_point.get_point() {
+            base.insertion_point = point;
         }
 
         if is_arc {
