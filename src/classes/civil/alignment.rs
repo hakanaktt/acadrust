@@ -3049,6 +3049,128 @@ pub(super) fn equations_and_speeds_with_ids(data: &[u8], start: usize, end: usiz
     Some((equations, speeds))
 }
 
+/// A critical station of a superelevation curve as stored: its kind (3
+/// begin full super, 4 end full super, 7 level crown, 8 low shoulder
+/// match, 9 reverse crown, ...), its station from the curve's start (from
+/// its end in the ending attainment region), the region and the cross
+/// slopes of the left outside lane, left inside lane, right outside lane,
+/// right inside lane, then the same four shoulders.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct CriticalStationData {
+    pub kind: i32,
+    pub offset: f64,
+    pub ending: bool,
+    pub slopes: [f64; 8],
+}
+
+/// A superelevation curve as stored: the curve element it covers and its
+/// critical stations.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SuperelevationCurveData {
+    pub element: i16,
+    pub stations: Vec<CriticalStationData>,
+}
+
+/// The cross segments of a superelevation block in record order: (side 1
+/// left 2 right, 0 outside 1 inside, 1 lane 2 shoulder).
+pub(super) const SUPERELEVATION_SEGMENTS: [(i32, i32, i32); 8] = [(1, 0, 1), (1, 1, 1), (2, 0, 1), (2, 1, 1), (1, 0, 2), (1, 1, 2), (2, 0, 2), (2, 1, 2)];
+
+/// The superelevation curves of a block of the plain form this crate
+/// writes (see the writer's `write_superelevation`): no curve settings,
+/// one unit per critical station and per cross segment with a slope each,
+/// the standard lane table. `None` for any other block.
+fn plain_superelevation(bits: &mut Bits) -> Option<Vec<SuperelevationCurveData>> {
+    let node = |bits: &mut Bits| -> Option<i16> {
+        let v = [bits.bit_long()?, bits.bit_long()?, bits.bit_long()?, bits.bit_long()?];
+        (v[0] == v[2] && v[1] == -1 && v[3] == -1).then_some(())?;
+        i16::try_from(v[0]).ok()
+    };
+    (!bits.bit()?).then_some(())?;
+    let n = bits.bit_long()?;
+    (1..=1000).contains(&n).then_some(())?;
+    (!bits.bit()?).then_some(())?;
+    let mut elements = Vec::new();
+    for i in 0..n {
+        elements.push(node(bits)?);
+        (bits.bit_long()? == 0 && !bits.bit()?).then_some(())?;
+        if i + 1 == n {
+            (bits.bit_long()? == n).then_some(())?;
+        }
+        (!bits.bit()?).then_some(())?;
+    }
+    let mut curves = Vec::new();
+    for (i, element) in elements.into_iter().enumerate() {
+        (node(bits)? == element && !bits.bit()? && node(bits)? == element).then_some(())?;
+        (!bits.bit()? && !bits.bit()? && bits.bits_value(5)? == 0b00010 && bits.bits_value(5)? == 0b10000).then_some(())?;
+        (bits.bit_long()? == 0).then_some(())?;
+        let k = bits.bit_long()?;
+        (0..=1000).contains(&k).then_some(())?;
+        let mut stations = Vec::new();
+        for _ in 0..k {
+            let fields = |bits: &mut Bits| -> Option<(i32, f64, bool)> {
+                let kind = bits.bit_long()?;
+                let offset = bits.bit_double()?;
+                let region = bits.bit_double()?;
+                (!bits.bit()? && (region == 0.0 || region == 1.0)).then_some((kind, offset, region == 1.0))
+            };
+            (bits.bit_long()? == 3).then_some(())?;
+            let (kind, offset, ending) = fields(bits)?;
+            (node(bits)? == element && bits.bit_long()? == 8).then_some(())?;
+            let mut slopes = [0.0; 8];
+            for (segment, slope) in SUPERELEVATION_SEGMENTS.iter().zip(&mut slopes) {
+                ([bits.bit_long()?, bits.bit_long()?, bits.bit_long()?] == [segment.0, segment.1, segment.2] && bits.bit_long()? == 3).then_some(())?;
+                (fields(bits)? == (kind, offset, ending) && node(bits)? == element && bits.bit_long()? == 0).then_some(())?;
+                *slope = bits.bit_double()?;
+            }
+            stations.push(CriticalStationData { kind, offset, ending, slopes });
+        }
+        (bits.bit_long()? == 0).then_some(())?;
+        if i + 1 < n as usize {
+            (!bits.bit()?).then_some(())?;
+        }
+        curves.push(SuperelevationCurveData { element, stations });
+    }
+    for pair in SUPERELEVATION_SEGMENTS.chunks(2) {
+        (bits.bit_long()? == 2).then_some(())?;
+        for s in pair {
+            ([bits.bit_long()?, bits.bit_long()?, bits.bit_long()?] == [s.0, s.1, s.2]).then_some(())?;
+        }
+    }
+    for (i, s) in SUPERELEVATION_SEGMENTS.iter().enumerate() {
+        let tail = |bits: &mut Bits| -> Option<()> {
+            (bits.bit_long()? == 0 && bits.bit_long()? == 0 && bits.bit_double()? == 0.5 && bits.bit_double()? == 1.0).then_some(())?;
+            (!bits.bit()? && bits.bit_long()? == -1 && bits.bit()? && !bits.bit()? && bits.bit_long()? == -1).then_some(())
+        };
+        let head = bits.bit_long()?;
+        (if i == 0 { head == 8 } else { head == 0 && bits.bit_double()? == 0.0 }).then_some(())?;
+        ([bits.bit_long()?, bits.bit_long()?, bits.bit_long()?, bits.bit_long()?] == [s.0, s.1, s.2, 1]).then_some(())?;
+        tail(bits)?;
+        (bits.bit_long()? == 0 && bits.bit_double()? == 0.0 && bits.bit_long()? == 2).then_some(())?;
+        tail(bits)?;
+    }
+    (bits.bit_long()? == 0 && bits.bit_long()? == 0 && bits.bit_long()? == 8).then_some(())?;
+    for _ in 0..24 {
+        bits.bit_long()?;
+    }
+    Some(curves)
+}
+
+/// The superelevation curves of an alignment record of the plain form
+/// (see [`plain_superelevation`]); an empty list when it has no block.
+pub(super) fn superelevation_curves(data: &[u8], start: usize, end: usize, first: f64, last: f64) -> Option<Vec<SuperelevationCurveData>> {
+    let at = post_cache_starts(data, start, end)?.into_iter().find(|pos| typed_at(data, *pos, end, first, last, true).is_some())?;
+    let (_, _, pos) = post_cache_at(data, at, end, first, last, true)?;
+    let mut bits = Bits::new(data, pos, end);
+    bits.bit_double()?;
+    match bits.bit_long()? {
+        0 => Some(Vec::new()),
+        1 => plain_superelevation(&mut bits),
+        _ => None,
+    }
+}
+
 /// What kind of alignment a record is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -3161,7 +3283,8 @@ fn superelevation_entry(bits: &mut Bits, fields: usize) -> Option<()> {
 ///             without a slope), [kind 0: BD slope], BL v
 /// lane table: 4 x { BL n, n x (BL, BL, BL) }, then per lane two entries
 ///             (see [`superelevation_entry`]) with 4 and 1 fields,
-///             BL 0, BL 0, BL n, 2n x BL, RD
+///             BL 0, BL 0, BL n, n x (BL side, BL inside, BL lane)
+///             (the cross segments in name order)
 /// ```
 // ponytail: the 582-bit settings, the 10 bits after them and the 4 lane
 // groups are the same in every sample.
@@ -3230,10 +3353,10 @@ fn superelevation(bits: &mut Bits) -> Option<()> {
     (bits.bit_long()? == 0 && bits.bit_long()? == 0).then_some(())?;
     let n = bits.bit_long()?;
     (0..=64).contains(&n).then_some(())?;
-    for _ in 0..2 * n {
+    for _ in 0..3 * n {
         bits.bit_long()?;
     }
-    bits.raw_double().map(|_| ())
+    Some(())
 }
 
 pub(super) fn alignment_type(data: &[u8], start: usize, end: usize, first: f64, last: f64) -> Option<(AlignmentType, usize)> {

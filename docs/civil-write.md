@@ -557,6 +557,52 @@ write the alignment again with them (equations after its last one); the
 application lists and edits them (E-SE1: AUDIT 0, both lists as written,
 a speed and an equation added on top).
 
+### Superelevation
+
+An alignment with superelevation carries the class key `0x0D00D773` = 2
+(the superelevation type; the application adds it to any alignment it
+saves) and `BL 1` and a block in place of `BL 0` after `BD 100` (SE02 to
+SE16 on a line-arc-line alignment, SB01 and SB02 with two arcs):
+
+```text
+B 0, BL n curves, B 0,
+n x { node, BL 0, B 0, [last: BL n], B 0 }
+n x { node, B 0, node, B 0, B 0 (no settings), 10 bits 0001010000,
+      BL 0, BL k critical stations, k x station, BL 0, [not last: B 0] }
+  node: BL element, BL -1, BL element, BL -1 (the curve element)
+  station: BL 3, fields, node, BL 8 (no slope), then per cross segment
+           BL side (1 left, 2 right), BL 0 outside / 1 inside, BL 1 lane /
+           2 shoulder, BL 3, fields, node, BL 0, BD slope (ratio)
+  fields: BL kind (3 begin full super, 4 end full super, 7 level crown,
+          8 low shoulder match, 9 reverse crown, 10 manual), BD station
+          from the curve's start (from its end in the ending attainment
+          region), BD 0 (1 ending region), B 0
+lane table (the same in every sample): 4 x { BL 2, two segments },
+  8 x { BL 8 (first) or BL 0 + BD 0, segment, BL 1, tail, BL 0, BD 0,
+  BL 2, tail }, BL 0, BL 0, BL 8, the 8 segments in name order
+  tail: BL 0, BL 0, BD 0.5, BD 1, B 0, BL -1, B 1, B 0, BL -1
+```
+
+Cross segments in record order: left outside lane, left inside lane,
+right outside lane, right inside lane, then the shoulders in the same
+order. Texts after all others: the curve names (`Curve.1`, ...), one empty
+text per unit (nine per critical station), each segment's name and two
+empty texts, the names in name order. References after all others: the
+alignment three times per curve and twice per unit, then 16 x (the
+alignment, null). A manual station adds a 582-bit settings block and a
+description text per unit (SE08; not written). The programming interface
+refuses normal crown and normal shoulder stations (they need the runout
+regions; not sampled).
+
+`add_superelevation(doc, alignment, curves)` writes one curve per curve
+element (`SuperelevationCurve`: element id, `CriticalStation`s with kind,
+station, region and the eight cross slopes) and replaces the alignment's
+own; the reader returns the plain form (`alignment_superelevation`) and
+an alignment that has it is written again with it. E-SV1 (two curves,
+three stations, slopes, a profile added afterwards): AUDIT 0, the
+application lists both curves and the stations with their slopes and
+edits a slope.
+
 ### Offset alignments
 
 `add_offset_alignment(doc, parent, name, offset, range, layer)` writes an
@@ -2474,7 +2520,8 @@ Corridors are listed in §3i-a.
 | alignments | types: centerline, utility, rail (track gauge) | yes | yes | §3a (alignment types) |
 | alignments | widening transitions on arcs or curved (kinds 2, 4, 5), offsets of spirals, curb returns (connected alignments), rail cant | yes (offset parameters and regions, connected alignments, type) | no | not written yet |
 | alignments | lone spirals, other constraints (fixed/floating curves, curves through points) | yes (elements) | no | other element kinds not written |
-| alignments | superelevation | yes (critical stations, lanes-only blocks) | no | the superelevation block is read only |
+| alignments | superelevation: curves over curve elements, critical stations (begin/end full super, level crown, low shoulder match, reverse crown) with cross slopes | yes | yes | §3a (superelevation) |
+| alignments | superelevation: manual stations, normal crown and shoulder stations, curve settings, lanes-only blocks, cant | yes (block walked; plain form read) | no | manual stations add a 582-bit settings block; normal crown/shoulder stations were refused by the programming interface |
 | profiles | layout: fixed tangents, free parabolas (symmetric, asymmetric), free circular curves | yes | yes | §3e |
 | profiles | layout: free curves by K, radius, horizontal length or through a point (parabolas and circular curves) | yes | yes | §3e |
 | profiles | layout entity by entity: fixed tangents, fixed parabolas (three points, two points and a grade or K), floating parabolas (end and K or grade) | yes | yes | §3e (entity by entity) |

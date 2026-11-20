@@ -6,7 +6,7 @@ use super::tree::{ensure_alignment_tree, KEY_ALIGNMENT_STYLES, KEY_DEFAULT_FEATU
 use crate::entities::EntityCommon;
 use crate::error::DxfError;
 use crate::io::dwg::dwg_stream_writers::DwgMergedWriter;
-use crate::classes::civil::alignment::{pieces_with_curvature, AlignmentAnchor, AlignmentElement, AlignmentElementKind, AlignmentPiece};
+use crate::classes::civil::alignment::{CriticalStationData, SuperelevationCurveData, SUPERELEVATION_SEGMENTS, pieces_with_curvature, AlignmentAnchor, AlignmentElement, AlignmentElementKind, AlignmentPiece};
 use crate::types::{Handle, Vector2};
 use crate::CadDocument;
 
@@ -400,6 +400,225 @@ pub(super) type Equation = (f64, [u8; 16], f64, f64, bool);
 pub(super) struct Timing {
     pub equations: Vec<Equation>,
     pub speeds: Vec<(f64, f64, [u8; 16])>,
+    /// Its superelevation curves (none: no superelevation block).
+    pub superelevation: Vec<SuperelevationCurveData>,
+}
+
+/// The class key of the superelevation type (2 superelevation).
+const KEY_SUPERELEVATION: i32 = 0x0D00_D773;
+
+/// The bits of `v` written as a BL.
+fn bl_bits(v: i32) -> String {
+    match v {
+        0 => "10".into(),
+        1..=255 => format!("01{v:08b}"),
+        _ => std::iter::once("00".to_string()).chain(v.to_le_bytes().iter().map(|b| format!("{b:08b}"))).collect(),
+    }
+}
+
+/// What a superelevation critical station marks (the kinds a critical
+/// station can be added as at a station of its own).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CriticalStationKind {
+    BeginFullSuper,
+    EndFullSuper,
+    LevelCrown,
+    LowShoulderMatch,
+    ReverseCrown,
+}
+
+impl CriticalStationKind {
+    fn code(self) -> i32 {
+        match self {
+            CriticalStationKind::BeginFullSuper => 3,
+            CriticalStationKind::EndFullSuper => 4,
+            CriticalStationKind::LevelCrown => 7,
+            CriticalStationKind::LowShoulderMatch => 8,
+            CriticalStationKind::ReverseCrown => 9,
+        }
+    }
+}
+
+/// A critical station of a superelevation curve: its kind, its station,
+/// whether it lies in the curve's ending attainment region (else the
+/// beginning one) and the cross slopes (ratios) of the left outside lane,
+/// left inside lane, right outside lane, right inside lane, then the same
+/// four shoulders.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CriticalStation {
+    pub kind: CriticalStationKind,
+    pub station: f64,
+    pub ending: bool,
+    pub slopes: [f64; 8],
+}
+
+/// A superelevation curve over the curve element `element` (its id) with
+/// its critical stations in station order.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SuperelevationCurve {
+    pub element: i16,
+    pub stations: Vec<CriticalStation>,
+}
+
+/// The superelevation block after `BL 1` (SE02 to SE16, SB01, SB02; the
+/// reader's `plain_superelevation`):
+///
+/// ```text
+/// B 0, BL n curves, B 0,
+/// n x { node, BL 0, B 0, [last: BL n], B 0 }
+/// n x { node, B 0, node, B 0, B 0 (no settings), 10 bits 0001010000,
+///       BL 0, BL k, k x station, BL 0, [not last: B 0] }
+///   node: BL element, BL -1, BL element, BL -1
+///   station: BL 3, fields, node, BL 8 (no slope), then per cross segment
+///            BL side, BL inside, BL lane, BL 3, fields, node, BL 0, BD
+///            slope
+///   fields: BL kind, BD station from the curve's start (from its end in
+///           the ending region), BD 0 (1 ending), B 0
+/// lane table: 4 x { BL 2, two segments }, per segment { BL 8 (the first)
+///   or BL 0 + BD 0, BL side, BL inside, BL lane, BL 1, tail, BL 0, BD 0,
+///   BL 2, tail }, BL 0, BL 0, BL 8, the segments in name order
+///   tail: BL 0, BL 0, BD 0.5, BD 1, B 0, BL -1, B 1, B 0, BL -1
+/// ```
+fn write_superelevation(w: &mut DwgMergedWriter, curves: &[SuperelevationCurveData]) {
+    let node = |w: &mut DwgMergedWriter, e: i16| {
+        for v in [i32::from(e), -1, i32::from(e), -1] {
+            w.write_bit_long(v);
+        }
+    };
+    let n = curves.len() as i32;
+    w.write_bit(false);
+    w.write_bit_long(n);
+    w.write_bit(false);
+    for (i, c) in curves.iter().enumerate() {
+        node(w, c.element);
+        w.write_bit_long(0);
+        w.write_bit(false);
+        if i + 1 == curves.len() {
+            w.write_bit_long(n);
+        }
+        w.write_bit(false);
+    }
+    for (i, c) in curves.iter().enumerate() {
+        node(w, c.element);
+        w.write_bit(false);
+        node(w, c.element);
+        w.write_bit(false);
+        w.write_bit(false);
+        bits(w, "0001010000");
+        w.write_bit_long(0);
+        w.write_bit_long(c.stations.len() as i32);
+        for s in &c.stations {
+            let fields = |w: &mut DwgMergedWriter| {
+                w.write_bit_long(s.kind);
+                w.write_bit_double(s.offset);
+                w.write_bit_double(if s.ending { 1.0 } else { 0.0 });
+                w.write_bit(false);
+            };
+            w.write_bit_long(3);
+            fields(w);
+            node(w, c.element);
+            w.write_bit_long(8);
+            for ((side, inside, lane), slope) in SUPERELEVATION_SEGMENTS.iter().zip(s.slopes) {
+                for v in [*side, *inside, *lane, 3] {
+                    w.write_bit_long(v);
+                }
+                fields(w);
+                node(w, c.element);
+                w.write_bit_long(0);
+                w.write_bit_double(slope);
+            }
+        }
+        w.write_bit_long(0);
+        if i + 1 < curves.len() {
+            w.write_bit(false);
+        }
+    }
+    for pair in SUPERELEVATION_SEGMENTS.chunks(2) {
+        w.write_bit_long(2);
+        for (side, inside, lane) in pair {
+            for v in [*side, *inside, *lane] {
+                w.write_bit_long(v);
+            }
+        }
+    }
+    let tail = |w: &mut DwgMergedWriter| {
+        w.write_bit_long(0);
+        w.write_bit_long(0);
+        w.write_bit_double(0.5);
+        w.write_bit_double(1.0);
+        w.write_bit(false);
+        w.write_bit_long(-1);
+        w.write_bit(true);
+        w.write_bit(false);
+        w.write_bit_long(-1);
+    };
+    for (i, (side, inside, lane)) in SUPERELEVATION_SEGMENTS.iter().enumerate() {
+        if i == 0 {
+            w.write_bit_long(8);
+        } else {
+            w.write_bit_long(0);
+            w.write_bit_double(0.0);
+        }
+        for v in [*side, *inside, *lane, 1] {
+            w.write_bit_long(v);
+        }
+        tail(w);
+        w.write_bit_long(0);
+        w.write_bit_double(0.0);
+        w.write_bit_long(2);
+        tail(w);
+    }
+    for v in [0, 0, 8] {
+        w.write_bit_long(v);
+    }
+    for i in by_name() {
+        let (side, inside, lane) = SUPERELEVATION_SEGMENTS[i];
+        for v in [side, inside, lane] {
+            w.write_bit_long(v);
+        }
+    }
+}
+
+/// The cross segments' names in record order.
+const SEGMENT_NAMES: [&str; 8] = ["Left Outside Lane", "Left Inside Lane", "Right Outside Lane", "Right Inside Lane", "Left Outside Shoulder", "Left Inside Shoulder", "Right Outside Shoulder", "Right Inside Shoulder"];
+
+/// The cross segments in name order.
+fn by_name() -> Vec<usize> {
+    let mut order: Vec<usize> = (0..8).collect();
+    order.sort_by_key(|i| SEGMENT_NAMES[*i]);
+    order
+}
+
+/// The texts of a superelevation block (after every other text): the
+/// curve names, one empty text per unit (nine per critical station), the
+/// lane table's names with two empty texts each, the names in name order.
+fn superelevation_strings(curves: &[SuperelevationCurveData]) -> Vec<String> {
+    if curves.is_empty() {
+        return Vec::new();
+    }
+    let units: usize = curves.iter().map(|c| 9 * c.stations.len()).sum();
+    let mut out: Vec<String> = (1..=curves.len()).map(|i| format!("Curve.{i}")).collect();
+    out.extend((0..units).map(|_| String::new()));
+    for name in SEGMENT_NAMES {
+        out.extend([name.to_string(), String::new(), String::new()]);
+    }
+    out.extend(by_name().into_iter().map(|i| SEGMENT_NAMES[i].to_string()));
+    out
+}
+
+/// The references of a superelevation block (after every other one): the
+/// alignment three times per curve and twice per unit, then the
+/// alignment and a null reference per lane table entry.
+fn superelevation_refs(curves: &[SuperelevationCurveData], alignment: u64) -> Vec<Ref> {
+    if curves.is_empty() {
+        return Vec::new();
+    }
+    let own: usize = curves.iter().map(|c| 3 + 18 * c.stations.len()).sum();
+    let mut out: Vec<Ref> = (0..own).map(|_| soft_pointer(alignment)).collect();
+    for _ in 0..16 {
+        out.extend([soft_pointer(alignment), soft_pointer(0)]);
+    }
+    out
 }
 
 /// [`write_alignment`] of type `kind` (offset alignments take `offset`)
@@ -420,8 +639,10 @@ pub(super) fn write_alignment_of(doc: &mut CadDocument, common: EntityCommon, na
     refs.extend(offset.map(|o| soft_pointer(o.parent)));
     refs.extend(profiles.iter().map(|p| soft_pointer(*p)));
     refs.extend(views.iter().chain(groups).map(|v| soft_pointer(*v)));
+    refs.extend(superelevation_refs(&timing.superelevation, common.handle.value()));
     let mut strings = vec!["AeccImpAlignment".to_string(), String::new(), String::new(), name.to_string()];
     strings.extend((0..5 + 3 * curves + 2 * anchors.len() + speeds.len() + 2 * equations.len()).map(|_| String::new()));
+    strings.extend(superelevation_strings(&timing.superelevation));
     let line_flags = if offset.is_some() { 0 } else { 2 };
     put_entity(
         doc,
@@ -564,7 +785,12 @@ pub(super) fn write_alignment_of(doc: &mut CadDocument, common: EntityCommon, na
                 w.write_bytes(id);
             }
             w.write_bit_double(100.0);
-            w.write_bit_long(0);
+            if timing.superelevation.is_empty() {
+                w.write_bit_long(0);
+            } else {
+                w.write_bit_long(1);
+                write_superelevation(w, &timing.superelevation);
+            }
             w.write_bit_long(0);
             match offset {
                 None => {
@@ -1089,6 +1315,36 @@ pub(super) fn length_of(elements: &[AlignmentElement]) -> Option<f64> {
     Some(spans(elements)?.iter().map(|(_, _, p)| p.iter().map(piece_length).sum::<f64>()).sum())
 }
 
+/// Adds superelevation to `alignment`: one curve per curve element (a
+/// free arc or spiral-curve-spiral, by id) with its critical stations
+/// and their cross slopes, replacing the alignment's own. Each station is
+/// stored from the curve's start (from its end in the ending attainment
+/// region). The alignment must be one this crate writes.
+pub fn add_superelevation(doc: &mut CadDocument, alignment: Handle, curves: &[SuperelevationCurve]) -> Result<(), DxfError> {
+    let (written, profiles) = rewritable(doc, alignment, |h| super::profile::identifier(doc, h)).ok_or_else(|| invalid("the alignment is not one this crate writes"))?;
+    let spans = spans(&written.elements).ok_or_else(|| invalid("the alignment cannot be solved"))?;
+    let mut data = Vec::new();
+    for c in curves {
+        let (e, from, pieces) = spans.iter().find(|(e, _, _)| e.id == c.element).ok_or_else(|| invalid("no element with that id"))?;
+        if matches!(e.kind, AlignmentElementKind::FixedLine { .. }) || c.stations.is_empty() {
+            return Err(invalid("a superelevation curve needs a curve element and critical stations"));
+        }
+        if c.stations.iter().any(|s| !s.station.is_finite() || s.slopes.iter().any(|v| !v.is_finite())) || c.stations.windows(2).any(|w| w[1].station < w[0].station) {
+            return Err(invalid("critical stations need finite values in station order"));
+        }
+        let to = from + pieces.iter().map(piece_length).sum::<f64>();
+        let stations = c.stations.iter().map(|s| CriticalStationData { kind: s.kind.code(), offset: s.station - if s.ending { to } else { *from }, ending: s.ending, slopes: s.slopes }).collect();
+        data.push((*from, SuperelevationCurveData { element: c.element, stations }));
+    }
+    data.sort_by(|a, b| a.0.total_cmp(&b.0));
+    if data.windows(2).any(|w| w[0].1.element == w[1].1.element) || data.is_empty() {
+        return Err(invalid("one superelevation curve per curve element"));
+    }
+    let timing = Timing { superelevation: data.into_iter().map(|(_, c)| c).collect(), ..Timing::default() };
+    let groups = written.groups.clone();
+    rewrite_adding(doc, alignment, written, &profiles, &profiles, None, &groups, &[], &timing)
+}
+
 /// Anchor kinds of a station equation and of a design speed.
 const EQUATION_ANCHOR: i32 = 3;
 const SPEED_ANCHOR: i32 = 2;
@@ -1174,6 +1430,8 @@ pub(super) struct Written {
     pub style: u64,
     pub feature: u64,
     pub keys: String,
+    /// Its keys with the superelevation type key (added when missing).
+    pub keys_superelevation: String,
     pub edge: i32,
     /// Its station anchors as stored.
     pub anchors: Vec<AlignmentAnchor>,
@@ -1200,7 +1458,8 @@ pub(super) fn rewritable(doc: &CadDocument, alignment: Handle, profile_id: impl 
     let refs = a.typed_handles();
     (refs.len() >= 6).then_some(())?;
     let is = |h: u64, dxf: &str| matches!(doc.get_entity(Handle::new(h)), Some(crate::entities::EntityType::Extended(x)) if matches!(&x.data, crate::entities::ExtendedEntityData::Arch(v) if v.dxf_name == dxf));
-    let tail: Vec<u64> = refs[6..].iter().map(|(h, _)| *h).collect();
+    let superelevation = a.alignment_superelevation()?;
+    let tail: Vec<u64> = refs[6..refs.len().checked_sub(superelevation_refs(&superelevation, 0).len())?.max(6)].iter().map(|(h, _)| *h).collect();
     let views_at = tail.iter().position(|h| is(*h, "AECC_PROFILE_VIEW") || is(*h, "AECC_SAMPLE_LINE_GROUP")).unwrap_or(tail.len());
     let groups_at = tail.iter().position(|h| is(*h, "AECC_SAMPLE_LINE_GROUP")).unwrap_or(tail.len()).max(views_at);
     let profiles = tail[..views_at].iter().map(|h| Some(ProfileRef { handle: *h, id: profile_id(*h)? })).collect::<Option<Vec<_>>>()?;
@@ -1216,10 +1475,17 @@ pub(super) fn rewritable(doc: &CadDocument, alignment: Handle, profile_id: impl 
     }
     b.skip(6)?;
     let from = b.pos;
+    let mut has_superelevation_key = false;
     for _ in 0..b.bits_value(8)? {
-        crate::classes::civil::alignment::read_key(&mut b)?;
+        has_superelevation_key |= crate::classes::civil::alignment::read_key(&mut b)?.0 == KEY_SUPERELEVATION as u32;
     }
     let keys: String = (from..b.pos).map(|i| if data[i / 8] >> (7 - i % 8) & 1 == 1 { '1' } else { '0' }).collect();
+    let keys_superelevation = if has_superelevation_key {
+        keys.clone()
+    } else {
+        let count = u8::from_str_radix(&keys[..8], 2).ok()?.checked_add(1)?;
+        format!("{count:08b}{}{}{}", &keys[8..], bl_bits(KEY_SUPERELEVATION), bl_bits(2))
+    };
     b.skip(10 + 115 + 8)?;
     let high = b.bits_value(8)?;
     let edge = (i32::from(high & 0x3F) << 2) | i32::from(b.bits_value(2)?);
@@ -1234,8 +1500,9 @@ pub(super) fn rewritable(doc: &CadDocument, alignment: Handle, profile_id: impl 
     let timing = Timing {
         equations: equations.iter().map(|(e, id)| (e.raw, *id, e.back, e.ahead, e.increasing)).collect(),
         speeds: speeds.iter().map(|(s, id)| (s.station, s.speed, *id)).collect(),
+        superelevation,
     };
-    let w = Written { common: x.common.clone(), name, elements, style: refs[4].0, feature: refs[1].0, keys, edge, anchors, kind, timing, views, groups };
+    let w = Written { common: x.common.clone(), name, elements, style: refs[4].0, feature: refs[1].0, keys, keys_superelevation, edge, anchors, kind, timing, views, groups };
     Some((w, profiles))
 }
 
@@ -1291,8 +1558,11 @@ fn rewrite_adding(doc: &mut CadDocument, alignment: Handle, w: Written, before: 
     // The speeds stay in station order.
     let mut speeds = [&w.timing.speeds[..], &extra_timing.speeds[..]].concat();
     speeds.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let timing = Timing { equations: [&w.timing.equations[..], &extra_timing.equations[..]].concat(), speeds };
-    write_alignment_of(doc, w.common, &w.name, &w.elements, w.style, w.feature, w.edge, Some(&w.keys), &handles(profiles), &anchors, views.unwrap_or(&w.views), groups, None, w.kind, &timing)?;
+    // New superelevation curves replace the alignment's.
+    let superelevation = if extra_timing.superelevation.is_empty() { w.timing.superelevation.clone() } else { extra_timing.superelevation.clone() };
+    let keys = if superelevation.is_empty() { &w.keys } else { &w.keys_superelevation };
+    let timing = Timing { equations: [&w.timing.equations[..], &extra_timing.equations[..]].concat(), speeds, superelevation };
+    write_alignment_of(doc, w.common.clone(), &w.name, &w.elements, w.style, w.feature, w.edge, Some(keys), &handles(profiles), &anchors, views.unwrap_or(&w.views), groups, None, w.kind, &timing)?;
     Ok(())
 }
 
@@ -1570,5 +1840,36 @@ mod tests {
         let mut kinds: Vec<i32> = r.alignment_anchors().unwrap().iter().map(|a| a.kind).collect();
         kinds.sort();
         assert_eq!(kinds, [2, 2, 3, 3]);
+    }
+
+    #[test]
+    fn superelevation_curves_read_back() {
+        let mut doc = drawing();
+        let v = [Vector2::new(0.0, 0.0), Vector2::new(100.0, 0.0), Vector2::new(200.0, 60.0), Vector2::new(300.0, 0.0)];
+        let a = add_alignment_with_curves(&mut doc, "A", &v, &[VertexCurve::Arc(80.0), VertexCurve::Arc(80.0)], None).unwrap();
+        let mut slopes = [0.0; 8];
+        slopes[3] = -0.06;
+        let station = |kind, station, ending| CriticalStation { kind, station, ending, slopes };
+        // Element 1 is a line.
+        assert!(add_superelevation(&mut doc, a, &[SuperelevationCurve { element: 1, stations: vec![station(CriticalStationKind::LevelCrown, 50.0, false)] }]).is_err());
+        add_superelevation(&mut doc, a, &[
+            SuperelevationCurve { element: 5, stations: vec![station(CriticalStationKind::BeginFullSuper, 180.0, false), station(CriticalStationKind::EndFullSuper, 240.0, true)] },
+            SuperelevationCurve { element: 4, stations: vec![station(CriticalStationKind::ReverseCrown, 90.0, false)] },
+        ])
+        .unwrap();
+        // The alignment is written again with them.
+        add_design_speeds(&mut doc, a, &[(0.0, 50.0)]).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-superelevation-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let Some(crate::entities::EntityType::Extended(x)) = back.get_entity(a) else { panic!() };
+        let crate::entities::ExtendedEntityData::Arch(r) = &x.data else { panic!() };
+        let curves = r.alignment_superelevation().unwrap();
+        assert_eq!(curves.iter().map(|c| (c.element, c.stations.len())).collect::<Vec<_>>(), [(4, 1), (5, 2)]);
+        let s = curves[1].stations[1];
+        assert_eq!((s.kind, s.ending, s.slopes[3]), (4, true, -0.06));
+        assert!(s.offset < 0.0 && curves[1].stations[0].offset > 0.0);
+        assert_eq!(r.alignment_design_speeds().len(), 1);
     }
 }
