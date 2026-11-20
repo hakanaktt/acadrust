@@ -1101,8 +1101,10 @@ fn view_frame_fields(data: &[u8], start: usize, end: usize) -> Option<ProfileVie
     }
     let items = usize::from(bits.bits_value(8)?);
     bits.pos += 5 * items;
+    // The band items, each opening with its gap to the view (a `BD`; 0 in
+    // most samples, where it reads like `BL 0`).
     for _ in 0..bits.bit_long()? {
-        (bits.bit_long()? == 0).then_some(())?;
+        bits.bit_double()?;
         bits.bit_long()?;
         bits.bit_double()?;
         bits.bit_long()?;
