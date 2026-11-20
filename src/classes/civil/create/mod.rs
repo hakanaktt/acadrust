@@ -36,7 +36,7 @@ mod tree;
 pub use assembly::{add_assembly, add_pkt_subassembly, add_pkt_subassembly_on, PktSource};
 pub use alignment::{add_alignment, add_alignment_with_curves, add_offset_alignment, add_offset_alignment_with_widenings, add_alignment_of_kind, add_design_speeds, add_station_equations, add_superelevation, CriticalStation, CriticalStationKind, SuperelevationCurve, AlignmentKind, VertexCurve, Widening};
 pub use corridor::{add_corridor, add_corridor_with};
-pub use intersection::add_intersection;
+pub use intersection::{add_intersection, add_intersection_with, IntersectionOffsets};
 pub use network::{add_pipe, add_pipe_network, add_pipe_of_family, add_structure, add_structure_of_family, connect_pipe, network_part_families};
 pub use pressure::{add_pressure_appurtenance, add_pressure_arc_pipe, add_pressure_cross, add_pressure_fitting, add_pressure_network, add_pressure_part, add_pressure_pipe, add_pressure_pipe_of_size, add_pressure_tee, connect_pressure_parts, pressure_part_descriptions};
 pub use groups::{add_point_group, add_point_group_query, set_point_group, set_point_group_query, Comparison, PointQuery};

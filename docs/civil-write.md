@@ -2089,9 +2089,9 @@ section, `BL 0`, gave no frame before).
 assembly_sets, layer)` writes the intersection object of two alignments
 that cross once, on line elements and away from their ends, with the
 drawing's default intersection style (style tree key 0x1031). Only the
-intersection is written: the offset alignments, curb returns, corridor
-regions and the profile locking actions the application's command makes
-with it are not, and the record's references to them are null. The two
+intersection is written, its references to offset alignments null;
+`add_intersection_with` adds the offset alignments, actions and label
+the command makes (below). The two
 assembly set files the record names (the file and its form under the
 content folder) are the caller's; empty texts are accepted.
 
@@ -2153,16 +2153,72 @@ WI48 (a crossing whose main road heads north-north-east) names its
 regions by the compass, not from the main road's heading. Only the
 region texts present are written (`"NE - Quadrant", "NW - Quadrant"`).
 
-The application's command makes a tee junction only without profiles:
-with profiles it stops after its profile locking question (WI40); with
-none (WI42, WI44 to WI47: the second road starting or ending on the
-first, north or south of it, at 45 degrees, the first road ending on the
-second) the records are reproduced by `add_intersection` with null
-profiles bit for bit apart from the class word (E-T42 to E-T47); they
-open with AUDIT 0 errors and the API lists the two quadrants with the
-written in and out alignments and angles. A crossing without profiles is
-written the same way (E-X48 equals WI48 apart from the class word and the
-offset alignments the command adds).
+Tee junctions without profiles (WI42, WI44 to WI47: the second road
+starting or ending on the first, north or south of it, at 45 degrees, the
+first road ending on the second) and with them (WT40: the command's
+profile locking question answered "continue") are reproduced by
+`add_intersection` bit for bit apart from the class word (E-T42 to E-T47,
+E-T40); they open with AUDIT 0 errors and the API lists the two quadrants
+with the written in and out alignments and angles, and the profiles. A
+crossing without profiles is written the same way (E-X48 equals WI48
+apart from the class word and the offset alignments the command adds).
+
+### Offset alignments and actions of the command
+
+`add_intersection_with(..., Some(IntersectionOffsets), layer)` writes
+what the application's command writes with the intersection of two
+siteless roads (its curb returns and corridors turned off; WT41 tee with
+profiles, WT43 crossing with profiles, WT44 tee without):
+
+- Per road, main road first, an offset alignment on its left and one on
+  its right over its whole length, named `<road>-Left-<width>` and
+  `<road>-Right-<width>` (three decimals; the command's default width is
+  12). They are the offset alignments of §3a with two differences: the
+  head word is `0x10025F04` (an offset alignment no action keeps has
+  `0x00025F04`) and the alignment's own design speed is 60. Each is kept
+  by an action with an `AECC_ASSOC_OFFSET_ALIGNMENT_ACTION_BODY` (hard
+  pointer to the offset alignment): the road read, the offset written.
+  The intersection refers to them (references 4 and 6 of each road; the
+  offset profiles stay null).
+- A profile locking action, `AECC_ASSOC_PVILOCKING_MULTIALIGNINTER_ACTION_BODY`:
+  its body's 38 bits after the version word are constant
+  (`00010000001101000000111010101001010100`), its references hard
+  pointers to the other road's profile, the intersection, 0, the main
+  road, 0, 0, the main road's profile, 0; its dependencies the
+  intersection (read, order `0x10100`), the other road (read), the other
+  road's profile (written), the main road and its profile (read). Without
+  profiles the body points to the intersection only and the dependencies
+  are the intersection and the other road.
+- The intersection action, `AECC_ASSOC_INTERSECTION_ACTION_BODY` (hard
+  pointer to the intersection): the two roads read, the intersection
+  written (order `0x10000`).
+- The location label, `AECC_INTERSECTION_LOCATION_LABEL`, an entity in
+  model space: a constant 647-bit record, references soft 0, soft 0, the
+  intersection (soft), the label style and the intersection (hard), texts
+  `AeccImpIntersectionLocationLabel` and three empty ones. Its style is the
+  drawing's default intersection label style (label node key 0x1032,
+  collection 0x0F00B579, style 0x800001D5 "Basic" with an iterator and a
+  text component), written with its root and collection when missing
+  (the style's layer layer 0; the application's template has its own
+  text layer).
+
+A dependency's `BL` after its four flags is its order, and dependencies
+on the same object form a chain: the second and third references are the
+previous and next dependency on the object, ordered by order (lower
+first, equal orders in the order added), and the object lists them as
+reactors in chain order (the intersection lists the intersection
+action's dependency, order `0x10000`, before the locking action's,
+`0x10100`, though the locking action comes first). `add_action` links
+every dependency it writes into its entity's chain.
+
+The written records equal the samples' (every action, body and
+dependency bit for bit; the offset alignments apart from their geometry
+stamp and identifiers). E-T42W (WT41's roads and profiles), E-T43W (a
+crossing) and E-T44W (a tee without profiles) open with AUDIT 0 errors
+and the API lists the four offset alignments with their names, types and
+stations and the roads' profiles. Not written: the name template counter
+the command advances, offset alignments of roads on a site, curb
+returns, corridor regions.
 
 ## 3l. Subassembly packages (`pkt`)
 
@@ -2790,7 +2846,7 @@ taken from the records and checked bit for bit against them.
 | sample line groups and sample lines through two or more vertices | yes | yes, with the drawing's sample line label style (§3j) | yes (§3j) | not needed | lines with all vertices on one side |
 | sections of a TIN surface (unsampled) | yes (geometry once sampled) | yes (§3j) | yes (§3j) | the application samples the source | corridor sources, lines added after sampling |
 | section views of a line (default style, unsampled section) | yes (frame) | yes, with the drawing's section view style or the default one (§3j, §2c) | yes (§3j, §2c) | not needed | sampled sections, several sections |
-| intersections of two crossing roads (the object only) | yes (stations, angles) | yes, with the drawing's intersection style or the default one (§3k, §2c) | yes (§3k, §2c) | not needed | offset alignments, curb returns, corridor regions and locking actions; tee junctions |
+| intersections of two crossing roads and tee junctions, with their offset alignments, locking and intersection actions and location label | yes (stations, angles) | yes, with the drawing's intersection style or the default one (§3k, §2c) | yes (§3k, §2c) | not needed | curb returns, corridor regions, roads on a site |
 | gravity pipe networks: every structure and pipe family of the default parts list (its one size each), connections | partly (part positions, pipe ends, connector counts, sizes of older part definitions) | yes (a new drawing gets the default parts list and styles, §3m) | yes (§3m) | not needed (the application recomputes outlines, lengths and extents) | sizes the default parts list does not hold, the catalog's body solids |
 | pressure networks: every pipe, elbow, tee, cross and gate valve size of the default catalog (straight and curved pipes), connections | yes (ports: positions, directions, joint sizes, connections; pipe ends and bulge, part positions and rotations) | yes (a new drawing gets the default pressure part list and styles, §3n) | yes (§3n) | not needed | part kinds of other catalogs, the catalog's body solids |
 | gradings, mass haul | partly (grading criteria, mass haul line and view frame) | no | — | — | no controlled samples (§6a) |
@@ -2856,7 +2912,9 @@ Corridors are listed in §3i-a.
 | corridors | see §3i-a | | | |
 | intersections | two crossing roads (the object) | yes | yes | §3k |
 | intersections | tee junctions without profiles (either side, starting or ending, skewed, the first road ending) | yes | yes | §3k (tee junctions) |
-| intersections | tee junctions with profiles; the offset alignments, curb returns, corridor regions and locking actions the command makes | yes | no | with profiles the command stops after its profile locking question (WI40); the other records are not written |
+| intersections | tee junctions with profiles | yes | yes | §3k (tee junctions) |
+| intersections | the offset alignments, profile locking action, intersection action and location label the command makes (siteless roads) | yes | yes | §3k (offset alignments and actions of the command) |
+| intersections | curb returns, corridor regions, roads on a site (offsets in the site's topology) | yes (records) | no | curb return records not decoded (hand-off notes); site topology of offset alignments not written |
 | gravity pipe networks | every family of the default parts list (one size each), connections | partly | yes | §3m |
 | gravity pipe networks | sizes the parts list does not hold, the catalog's body solids | partly | no | §3m |
 | pressure networks | every size of the default catalog (straight and curved pipes, elbows, tees, crosses, gate valves), connections | yes | yes | §3n |

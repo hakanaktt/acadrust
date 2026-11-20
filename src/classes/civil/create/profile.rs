@@ -872,18 +872,12 @@ pub fn add_offset_profile(doc: &mut CadDocument, source: Handle, offset_alignmen
     };
     let tail = OffsetTail { slope, offset, parent_length, map: ids, anchors, feature: feature.value(), source: source.value() };
     write_profile_of(doc, common, name, &parts, &helpers, style, offset_alignment, &id, None, Some(&tail))?;
-    use super::assoc::{add_action, Dependency};
-    let deps = add_action(
+    use super::assoc::{add_action, ActionBody, Dependency};
+    add_action(
         doc,
-        "AECC_ASSOC_OFFSET_VALIGNMENT_ACTION_BODY",
-        handle,
-        &[Dependency { object: source, writes: false }, Dependency { object: offset_alignment, writes: false }, Dependency { object: handle, writes: true }],
+        ActionBody { dxf: "AECC_ASSOC_OFFSET_VALIGNMENT_ACTION_BODY", refs: vec![handle], tail: "" },
+        &[Dependency { object: source, writes: false, order: 0 }, Dependency { object: offset_alignment, writes: false, order: 0 }, Dependency { object: handle, writes: true, order: 0 }],
     )?;
-    for (object, dep) in [source, offset_alignment, handle].into_iter().zip(deps) {
-        if let Some(e) = doc.get_entity_mut(object) {
-            e.common_mut().reactors.push(dep);
-        }
-    }
     Ok(handle)
 }
 

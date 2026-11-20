@@ -5,7 +5,8 @@ use super::support::*;
 use super::templates::{write_templates, Piece::{Children, Run, Time}, Target, Template};
 use super::tree::{ensure_point_tree, KEY_STYLES};
 use crate::error::DxfError;
-use crate::io::dwg::dwg_reference_type::DwgReferenceType::{HardPointer, SoftPointer};
+use crate::io::dwg::dwg_reference_type::DwgReferenceType::{HardOwnership, HardPointer, SoftPointer};
+use crate::types::Handle;
 use crate::CadDocument;
 
 /// Style tree keys: section styles, section view styles, section view band
@@ -14,6 +15,9 @@ pub(super) const KEY_SECTION_STYLES: i32 = 0xC18;
 pub(super) const KEY_SECTION_VIEW_STYLES: i32 = 0x33;
 const KEY_SECTION_VIEW_BAND_SETS: i32 = 0xC0E;
 pub(super) const KEY_INTERSECTION_STYLES: i32 = 0x1031;
+/// Label node keys of the intersection label root, its collection and
+/// its default style ("Basic").
+pub(super) const INTERSECTION_LABELS: [i32; 3] = [0x1032, 0x0F00_B579, 0x8000_01D5_u32 as i32];
 const KEY_MARKER_STYLES: i32 = 0x11B;
 /// Style tree key of the group plot style collection (section view group
 /// plots; class `AECC_SAMPLE_LINE_GROUP_STYLE`).
@@ -97,6 +101,72 @@ pub(super) fn ensure_intersection_styles(doc: &mut CadDocument) -> Result<(), Dx
     ensure_marker_styles(doc)?;
     ensure(doc, INTERSECTION_STYLES, &[(KEY_INTERSECTION_STYLES, 0)])
 }
+
+/// The default intersection label style, written with its root,
+/// collection and components (the label node with the default label
+/// styles when the drawing has none) when the drawing lacks it.
+pub(super) fn ensure_intersection_label_style(doc: &mut CadDocument) -> Result<u64, DxfError> {
+    if let Some(h) = super::labels::default_label_style(doc, INTERSECTION_LABELS) {
+        return Ok(h);
+    }
+    super::labels::ensure_label_styles(doc)?;
+    let styles = root_node(doc, super::tree::KEY_STYLES).ok_or_else(|| invalid("drawing has no style tree"))?;
+    let tree = read_node(doc, styles).ok_or_else(|| invalid("style tree cannot be read"))?;
+    let labels = tree.children.iter().find(|c| c.0 == super::labels::KEY_LABELS).map(|c| Handle::new(c.1)).ok_or_else(|| invalid("drawing has no label styles"))?;
+    if read_node(doc, labels).ok_or_else(|| invalid("label node cannot be read"))?.children.iter().any(|c| c.0 == INTERSECTION_LABELS[0]) {
+        return Err(invalid("the drawing's intersection labels have no default style"));
+    }
+    let handles = write_templates(doc, labels, INTERSECTION_LABEL_STYLES)?;
+    add_node_child(doc, labels, INTERSECTION_LABELS[0], handles[0], "")?;
+    super::labels::default_label_style(doc, INTERSECTION_LABELS).ok_or_else(|| invalid("the intersection label style was not written"))
+}
+
+/// The intersection label root, its collection and default style "Basic"
+/// with its two components (the application's records, users and its own
+/// name empty, dates the time of writing; the style's layer is layer 0).
+#[rustfmt::skip]
+const INTERSECTION_LABEL_STYLES: &[Template] = &[
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Null,
+        children: &[(0xf00b579, 1)],
+        fields: &[Run(34, "0c8400000"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(76, "046c8000c041e100016"), Time, Run(610, "480d555531fffffe0070400683a4b4900164001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffffa8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Standard), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(0),
+        children: &[(0x800001d5, 2)],
+        fields: &[Run(34, "1e6d4003c"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(76, "046c8000c041e100016"), Time, Run(610, "480d555531fffffe0070400683a4b4900164001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffffa8")],
+        refs: &[(SoftPointer, Target::Record(2)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Standard), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "Basic", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(1),
+        children: &[],
+        fields: &[Run(34, "354040200"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(68, "0684000101e100016"), Time, Run(782, "480d555530f36a001e71401683a4b5900164001080d2034aa0222222222222c27f5400000060001ffffffff000000180007fffffffd000000180007fffffffa05543aa00000030000ffffffff40904a001fffffe0151014128007fffff8054409028")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::Null), (HardPointer, Target::Standard), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(4)), (HardPointer, Target::Record(3)), (HardOwnership, Target::Record(4)), (HardOwnership, Target::Record(3)), (SoftPointer, Target::Record(4)), (SoftPointer, Target::Record(3)), (HardPointer, Target::Null)],
+        strings: &["Basic", "", "", "", "AeccDbIntersection"],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_ITERATOR_STYLE",
+        owner: Target::Record(2),
+        children: &[],
+        fields: &[Run(34, "0c4240200"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(2404, "480d555531fffffe0070400683a4b4900164001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fcf1208036003480338037003680328037003a001e801e002d8018801b001c0019001b8018801c001b801980140019001a001a001c8014802e801f001600100029803a0030803a003480378037001e801e002d80198019801b0018001b801b80188019001400190018001c801b803e0019001a001b801a003e00190019801c001b803e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001b001b801a003e0019001b001c001c803e0019001b8018001b003e0019001b80190018803e0019001b8018001b8014802e801f000000520282a800a00719")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(2)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Standard), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["Text For Each Intersecting Road", "", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(2),
+        children: &[],
+        fields: &[Run(34, "0c0240200"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(882, "480d555531fffffe0070400683a4b5b00164001152034aa0222222222222c27f9400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fc941e002d8018801b001b801b801b801b0019001a801c80140019001a001a001c8014802e801f000000520e82a8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(2)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Standard), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["Intersection Text", "", "", ""],
+    },
+];
 
 /// The parcel style collection (style tree key 2) and the feature line
 /// style collection (128), each with its default style (the feature line

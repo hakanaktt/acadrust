@@ -1,6 +1,7 @@
 //! Intersections of two alignments: crossings and tee junctions.
 
-use super::default_styles::{ensure_intersection_styles, KEY_INTERSECTION_STYLES};
+use super::assoc::{add_action, ActionBody, Dependency};
+use super::default_styles::{ensure_intersection_label_style, ensure_intersection_styles, KEY_INTERSECTION_STYLES};
 use super::sample_lines::arch;
 use super::site::default_style_of;
 use super::support::*;
@@ -28,6 +29,35 @@ const REGION_NAMES: [&str; 4] = ["NE - Quadrant", "SE - Quadrant", "SW - Quadran
 /// then the version word.
 const TAIL: &str = "10010011010100110011001100110011001100110011001100110101001001111110001111011000101001010111001000111111000010111101010100100001111110100000001000000000000000000000000000000000000000000000000000100100101000000101000100001011111000000100";
 
+/// The location label's record: constant (WT40, WT41, WI42, WI44, WI11).
+const LABEL: (usize, &str) = (647, "542541508045f02104800000000000000000000000000000001505400000be043fffffc012030020018008054808f36a001ea2a0350aaaaaaaaaaab6a7e2aaaaaaaaaaae29f8000000000000b281417c08");
+/// The profile locking action body's bits after its version word
+/// (constant in every sample).
+const LOCKING: &str = "00010000001101000000111010101001010100";
+/// The orders of the locking action's and the intersection action's
+/// dependencies on the intersection.
+const LOCKING_ORDER: i32 = 0x1_0100;
+const INTERSECTION_ORDER: i32 = 0x1_0000;
+/// The design speed the application gives an intersection's offset
+/// alignments.
+const OFFSET_SPEED: f64 = 60.0;
+
+/// The widths of the offset alignments an intersection gets on the left
+/// and right of each road (the application's default is 12 for each).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct IntersectionOffsets {
+    pub main_left: f64,
+    pub main_right: f64,
+    pub other_left: f64,
+    pub other_right: f64,
+}
+
+impl Default for IntersectionOffsets {
+    fn default() -> Self {
+        IntersectionOffsets { main_left: 12.0, main_right: 12.0, other_left: 12.0, other_right: 12.0 }
+    }
+}
+
 /// One road of an intersection: its alignment and profile, the station of
 /// the crossing and the direction of the alignment there; a tee
 /// junction's second road `ends` there (its arm runs back along it) or
@@ -38,6 +68,8 @@ struct Road {
     station: f64,
     direction: Vector2,
     ends: Option<bool>,
+    /// Its left and right offset alignments (0 for none).
+    offsets: [u64; 2],
 }
 
 /// A region between two arms: the arm it starts at (in) and the one it
@@ -110,7 +142,7 @@ fn regions(roads: &[Road; 2]) -> Vec<Region> {
 /// TAIL
 /// references: soft 0, style (hard), per road {alignment (hard), profile,
 ///   left offset alignment and profile, right offset alignment and
-///   profile (soft; offsets written null)}, soft 0, per region {soft 0,
+///   profile (soft; offset profiles written null)}, soft 0, per region {soft 0,
 ///   in alignment, out alignment, soft 0}
 /// texts: "AeccImpIntersection", "", name, "", the region names, the two
 ///   assembly set files
@@ -123,7 +155,7 @@ fn write_intersection(doc: &mut CadDocument, common: EntityCommon, name: &str, s
     let regions = regions(roads);
     let mut refs = vec![soft_pointer(0), hard_pointer(style)];
     for r in roads {
-        refs.extend([hard_pointer(r.alignment), soft_pointer(r.profile), soft_pointer(0), soft_pointer(0), soft_pointer(0), soft_pointer(0)]);
+        refs.extend([hard_pointer(r.alignment), soft_pointer(r.profile), soft_pointer(r.offsets[0]), soft_pointer(0), soft_pointer(r.offsets[1]), soft_pointer(0)]);
     }
     refs.push(soft_pointer(0));
     for g in &regions {
@@ -207,8 +239,7 @@ fn crossing(a: (Vector2, Vector2), b: (Vector2, Vector2)) -> Option<(Vector2, f6
 
 /// Adds the intersection `name` of the alignments `main` (the main road)
 /// and `other`, where they cross, with their profiles `main_profile` and
-/// `other_profile` (null for none: the application makes a tee junction
-/// only without profiles), on `layer` (layer "0" when `None`), with the
+/// `other_profile` (null for none), on `layer` (layer "0" when `None`), with the
 /// drawing's default intersection style. The alignments must meet once,
 /// on line elements: crossing away from their ends, or one ending (or
 /// starting) on the other (a tee junction; the through road is made the
@@ -217,9 +248,30 @@ fn crossing(a: (Vector2, Vector2), b: (Vector2, Vector2)) -> Option<(Vector2, f6
 /// file and its form under the content folder, both supplied by the
 /// caller). Only the intersection is written: offset alignments, curb
 /// returns and corridor regions are not (the record's references to them
-/// are null).
+/// are null). [`add_intersection_with`] writes the offset alignments too.
 #[allow(clippy::too_many_arguments)]
 pub fn add_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_profile: Handle, other: Handle, other_profile: Handle, assembly_sets: [&str; 2], layer: Option<&str>) -> Result<Handle, DxfError> {
+    add_intersection_with(doc, name, main, main_profile, other, other_profile, assembly_sets, None, layer)
+}
+
+/// [`add_intersection`] with what the application's command writes with
+/// it when `offsets` is given (its curb returns and corridors turned
+/// off): an offset alignment on each side of each road over the road's
+/// whole length, named `<road>-Left-<width>` and `<road>-Right-<width>`
+/// (three decimals), with the application's design speed 60, each kept
+/// by an offset alignment action (`AECC_ASSOC_OFFSET_ALIGNMENT_ACTION_BODY`;
+/// the road read, the offset written); a profile locking action
+/// (`AECC_ASSOC_PVILOCKING_MULTIALIGNINTER_ACTION_BODY`: the intersection,
+/// the roads and the main road's profile read, the other road's profile
+/// written; without profiles the intersection and the other road read);
+/// the
+/// intersection action (`AECC_ASSOC_INTERSECTION_ACTION_BODY`: the roads
+/// read, the intersection written); and the location label
+/// (`AECC_INTERSECTION_LOCATION_LABEL`) with the drawing's default
+/// intersection label style. The roads must be siteless alignments of
+/// lines and arcs this crate writes.
+#[allow(clippy::too_many_arguments)]
+pub fn add_intersection_with(doc: &mut CadDocument, name: &str, main: Handle, main_profile: Handle, other: Handle, other_profile: Handle, assembly_sets: [&str; 2], offsets: Option<IntersectionOffsets>, layer: Option<&str>) -> Result<Handle, DxfError> {
     if name.is_empty() {
         return Err(invalid("an intersection needs a name"));
     }
@@ -268,9 +320,6 @@ pub fn add_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_pr
     let [(point, a, b, ends)] = found[..] else {
         return Err(invalid("the roads must meet once, on line elements"));
     };
-    if ends.is_some() && !(main_profile.is_null() && other_profile.is_null()) {
-        return Err(invalid("a tee junction is written without profiles"));
-    }
     if a.0.is_nan() || b.0.is_nan() {
         return Err(invalid("a spiral comes before the crossing"));
     }
@@ -280,15 +329,68 @@ pub fn add_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_pr
         station: station + p.distance(&point),
         direction: Vector2::new(q.x - p.x, q.y - p.y),
         ends: None,
+        offsets: [0, 0],
     };
-    let roads = [road(main, main_profile, a), Road { ends, ..road(other, other_profile, b) }];
+    let mut roads = [road(main, main_profile, a), Road { ends, ..road(other, other_profile, b) }];
+    if let Some(o) = offsets {
+        if main_profile.is_null() != other_profile.is_null() {
+            return Err(invalid("an intersection with offset alignments takes both profiles or neither"));
+        }
+        if [o.main_left, o.main_right, o.other_left, o.other_right].iter().any(|w| !(w.is_finite() && *w > 0.0)) {
+            return Err(invalid("offset widths must be positive"));
+        }
+        let label = ensure_intersection_label_style(doc)?;
+        for (r, widths) in roads.iter_mut().zip([[o.main_left, o.main_right], [o.other_left, o.other_right]]) {
+            let parent = Handle::new(r.alignment);
+            let road_name = arch(doc, parent).and_then(|a| a.alignment_name()).unwrap_or_default();
+            for (i, (side, width)) in [("Left", -widths[0]), ("Right", widths[1])].into_iter().enumerate() {
+                let h = super::alignment::add_kept_offset_alignment(doc, parent, &format!("{road_name}-{side}-{:.3}", width.abs()), width, OFFSET_SPEED, layer)?;
+                add_action(doc, ActionBody { dxf: "AECC_ASSOC_OFFSET_ALIGNMENT_ACTION_BODY", refs: vec![h], tail: "" }, &[Dependency { object: parent, writes: false, order: 0 }, Dependency { object: h, writes: true, order: 0 }])?;
+                r.offsets[i] = h.value();
+            }
+        }
+        let handle = write_record(doc, name, &roads, assembly_sets, layer)?;
+        let read = |h: u64| Dependency { object: Handle::new(h), writes: false, order: 0 };
+        let wrote = |h: u64| Dependency { object: Handle::new(h), writes: true, order: 0 };
+        let [m, x] = &roads;
+        // The locking action without profiles depends on the intersection
+        // and the other road only (WT44).
+        let (refs, deps) = if m.profile != 0 {
+            ([x.profile, handle.value(), 0, m.alignment, 0, 0, m.profile, 0], vec![Dependency { order: LOCKING_ORDER, ..read(handle.value()) }, read(x.alignment), wrote(x.profile), read(m.alignment), read(m.profile)])
+        } else {
+            ([0, handle.value(), 0, 0, 0, 0, 0, 0], vec![Dependency { order: LOCKING_ORDER, ..read(handle.value()) }, read(x.alignment)])
+        };
+        add_action(doc, ActionBody { dxf: "AECC_ASSOC_PVILOCKING_MULTIALIGNINTER_ACTION_BODY", refs: refs.map(Handle::new).to_vec(), tail: LOCKING }, &deps)?;
+        add_action(doc, ActionBody { dxf: "AECC_ASSOC_INTERSECTION_ACTION_BODY", refs: vec![handle], tail: "" }, &[read(m.alignment), read(x.alignment), Dependency { order: INTERSECTION_ORDER, ..wrote(handle.value()) }])?;
+        write_location_label(doc, handle, label, layer)?;
+        return Ok(handle);
+    }
+    write_record(doc, name, &roads, assembly_sets, layer)
+}
+
+/// The intersection record with the drawing's default intersection style.
+fn write_record(doc: &mut CadDocument, name: &str, roads: &[Road; 2], assembly_sets: [&str; 2], layer: Option<&str>) -> Result<Handle, DxfError> {
     ensure_intersection_styles(doc)?;
     let style = default_style_of(doc, KEY_INTERSECTION_STYLES).ok_or_else(|| invalid("drawing has no intersection styles"))?;
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
     let handle = doc.allocate_handle();
     let common = EntityCommon { handle, owner_handle: doc.header.model_space_block_handle, layer: layer.into(), layer_handle: Some(layer_handle), ..EntityCommon::default() };
-    write_intersection(doc, common, name, style, &roads, assembly_sets)
+    write_intersection(doc, common, name, style, roads, assembly_sets)
+}
+
+/// The intersection's location label (an entity in model space): the
+/// constant record [`LABEL`]; references soft 0, soft 0, the intersection
+/// (soft), the label style and the intersection (hard); texts
+/// "AeccImpIntersectionLocationLabel" and three empty ones.
+fn write_location_label(doc: &mut CadDocument, intersection: Handle, style: u64, layer: Option<&str>) -> Result<Handle, DxfError> {
+    let layer = layer.unwrap_or("0");
+    let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
+    let handle = doc.allocate_handle();
+    let common = EntityCommon { handle, owner_handle: doc.header.model_space_block_handle, layer: layer.into(), layer_handle: Some(layer_handle), ..EntityCommon::default() };
+    let refs = vec![soft_pointer(0), soft_pointer(0), soft_pointer(intersection.value()), hard_pointer(style), hard_pointer(intersection.value())];
+    let strings = ["AeccImpIntersectionLocationLabel", "", "", ""].map(String::from).to_vec();
+    put_entity(doc, "AECC_INTERSECTION_LOCATION_LABEL", common, |w| super::templates::run(w, LABEL.0, LABEL.1), Body { refs, strings })
 }
 
 #[cfg(test)]
@@ -352,7 +454,8 @@ mod tests {
         // Road B starts on Road A and runs south.
         let b = add_alignment(&mut doc, "Road B", &[v(100.0, 0.0), v(100.0, -100.0)], None).unwrap();
         let pa = add_profile(&mut doc, a, "PA", &[v(0.0, 10.0), v(200.0, 12.0)], &[], None).unwrap();
-        assert!(add_intersection(&mut doc, "T", a, pa, b, Handle::NULL, ["", ""], None).is_err());
+        // With offset alignments it takes both profiles or neither.
+        assert!(add_intersection_with(&mut doc, "T", a, pa, b, Handle::NULL, ["", ""], Some(IntersectionOffsets::default()), None).is_err());
         // Given as the second road, the through road is still made main.
         let i = add_intersection(&mut doc, "T", b, Handle::NULL, a, Handle::NULL, ["", ""], None).unwrap();
         let path = std::env::temp_dir().join(format!("civil-tee-junctions-{}.dwg", std::process::id()));
@@ -367,5 +470,45 @@ mod tests {
         assert!(layout.region_angles.iter().all(|a| (a - std::f64::consts::FRAC_PI_2).abs() < 1e-12));
         assert_eq!(&x.decode().strings[4..6], &["SE - Quadrant", "SW - Quadrant"]);
         assert_eq!(x.typed_handles()[2].0, a.value());
+    }
+
+    #[test]
+    fn intersections_with_offsets_get_their_actions_and_label() {
+        let v = Vector2::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let a = add_alignment(&mut doc, "Road A", &[v(0.0, 0.0), v(200.0, 0.0)], None).unwrap();
+        let b = add_alignment(&mut doc, "Road B", &[v(100.0, 0.0), v(100.0, 100.0)], None).unwrap();
+        let pa = add_profile(&mut doc, a, "PA", &[v(0.0, 10.0), v(200.0, 12.0)], &[], None).unwrap();
+        let pb = add_profile(&mut doc, b, "PB", &[v(0.0, 11.0), v(100.0, 11.0)], &[], None).unwrap();
+        let o = IntersectionOffsets { main_left: 10.0, ..IntersectionOffsets::default() };
+        let i = add_intersection_with(&mut doc, "T", a, pa, b, pb, ["", ""], Some(o), None).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-intersection-offsets-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let refs: Vec<u64> = arch(&back, i).unwrap().typed_handles().iter().map(|r| r.0).collect();
+        // The main road's left offset alignment, its right one, then the
+        // other road's.
+        let left = arch(&back, Handle::new(refs[4])).unwrap();
+        assert_eq!(left.alignment_name(), Some("Road A-Left-10.000".into()));
+        assert_eq!(left.alignment_offset_parameters().unwrap().offset, -10.0);
+        assert_eq!(left.alignment_design_speeds()[0].speed, OFFSET_SPEED);
+        assert_eq!(arch(&back, Handle::new(refs[12])).unwrap().alignment_name(), Some("Road B-Right-12.000".into()));
+        // The intersection action's and the locking action's dependencies,
+        // lower order first; the parent road is depended on by both offset
+        // actions, the locking action and the intersection action.
+        let reactors = |h: Handle| back.get_entity(h).unwrap().common().reactors.clone();
+        let order = |d: &Handle| object(&back, *d).unwrap().main_stream().map(|(data, s, e)| {
+            let mut b = crate::classes::civil::bits::Bits::new(data, s, e);
+            b.bit_short();
+            b.bit_long();
+            b.skip(4);
+            b.bit_long().unwrap()
+        });
+        assert_eq!(reactors(i).iter().map(order).collect::<Vec<_>>(), vec![Some(INTERSECTION_ORDER), Some(LOCKING_ORDER)]);
+        assert_eq!(reactors(a).len(), 4);
+        let labels = back.entities().filter(|e| matches!(e, crate::entities::EntityType::Extended(x) if matches!(&x.data, crate::entities::ExtendedEntityData::Arch(l) if l.dxf_name == "AECC_INTERSECTION_LOCATION_LABEL"))).count();
+        assert_eq!(labels, 1);
     }
 }
