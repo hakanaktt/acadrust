@@ -1678,14 +1678,14 @@ to `(0.5, 0.5, 0)` about the insertion point, as its own structures').
 ### Other families
 
 `add_structure_of_family` and `add_pipe_of_family` place one size of
-other families of the default parts list (`network_part_families`): the
-concentric and eccentric cylindrical structures (48 inch), the cylindrical
-(48 inch) and rectangular (24 x 24 inch) junction structures, the
-concrete rectangular headwall, and the eleven pipe families (the size the
+every other family of the default parts list (`network_part_families`):
+the 21 structure families (cylindrical, eccentric, slab top and two-tier
+structures, junction structures, headwalls and end sections) and the
+eleven pipe families (the size the
 application gives a new part: 12 inch corrugated metal and concrete pipe,
 4 inch corrugated HDPE, 2 inch ductile iron, 3 inch HDPE, 3.6 inch PVC,
 the egg-shaped, elliptical and arch culverts and the 24 x 24 inch box
-culvert). Sample N11: every family of WT01's parts list placed by the
+culvert). The default parts list holds one size of each family. Sample N11: every family of WT01's parts list placed by the
 API, structures at the origin, pipes from (0, 0, -5) to (100, 0, -6).
 
 A pipe record is the same for every family (N11's eleven pipes differ only
@@ -1708,6 +1708,7 @@ below the insertion point in each block.
 | written | result |
 |---|---|
 | WT01 with a network, a structure of each of the six families (the eccentric one turned by 0.5 rad), a pipe of each of the eleven families and a concrete pipe connected to the two cylindrical structures (E-N70); the same in a new drawing (E-N71) | AUDIT 0; every part listed with its family and size, positions as written, extents as the application's own (the turned structure's turned), the connected pipe listing both structures and each structure one pipe |
+| the same with every structure family (E-N72, E-N73) | AUDIT 0; the 22 structures and 12 pipes listed with their families and sizes, extents as N11's about the insertion point (the two-tier eccentric structures' box 5e-6 wider on one side, the application's own extents are not centred) |
 
 ## 3n. Pressure pipe networks
 
@@ -1995,7 +1996,7 @@ taken from the records and checked bit for bit against them.
 | sections of a TIN surface (unsampled) | yes (geometry once sampled) | yes (§3j) | yes (§3j) | the application samples the source | corridor sources, lines added after sampling |
 | section views of a line (default style, unsampled section) | yes (frame) | yes, with the drawing's section view style or the default one (§3j, §2c) | yes (§3j, §2c) | not needed | sampled sections, several sections |
 | intersections of two crossing roads (the object only) | yes (stations, angles) | yes, with the drawing's intersection style or the default one (§3k, §2c) | yes (§3k, §2c) | not needed | offset alignments, curb returns, corridor regions and locking actions; tee junctions |
-| gravity pipe networks: null structures, six structure and eleven pipe families (one size each), connections | partly (part positions, pipe ends, connector counts, sizes of older part definitions) | yes (a new drawing gets the default parts list and styles, §3m) | yes (§3m) | not needed (the application recomputes outlines, lengths and extents) | other sizes, the other structure families (headwall variants, end sections, slab top and two-tier structures), the catalog's body solids |
+| gravity pipe networks: every structure and pipe family of the default parts list (its one size each), connections | partly (part positions, pipe ends, connector counts, sizes of older part definitions) | yes (a new drawing gets the default parts list and styles, §3m) | yes (§3m) | not needed (the application recomputes outlines, lengths and extents) | sizes the default parts list does not hold, the catalog's body solids |
 | pressure networks: all pipe and gate valve sizes of the default catalog (straight and curved pipes), three elbow, three tee and one cross size, connections | yes (ports: positions, directions, joint sizes, connections; pipe ends and bulge, part positions and rotations) | yes (a new drawing gets the default pressure part list and styles, §3n) | yes (§3n) | not needed | other fitting sizes and kinds, the catalog's body solids |
 | gradings, mass haul | partly (grading criteria, mass haul line and view frame) | no | — | — | no controlled samples (§6a) |
 
