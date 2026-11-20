@@ -185,6 +185,54 @@ impl VerticalCurve {
 enum Part {
     Tangent(Vector2, Vector2),
     Curve { curve: VerticalCurve, crest: bool },
+    /// A fixed or floating parabola (an entity of its own).
+    Fixed(ProfileEntity),
+}
+
+/// One entity of a profile laid out entity by entity (station, elevation
+/// points; grades as ratios).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ProfileEntity {
+    /// A fixed tangent.
+    Tangent { start: Vector2, end: Vector2 },
+    /// A fixed symmetric parabola through three points (start, middle, end).
+    ParabolaThreePoints { start: Vector2, middle: Vector2, end: Vector2 },
+    /// A fixed symmetric parabola between two points with its grade at the
+    /// start (or at the end).
+    ParabolaTwoPointsGrade { start: Vector2, end: Vector2, grade: f64, at_end: bool },
+    /// A fixed symmetric parabola between two points with a K value.
+    ParabolaTwoPointsK { start: Vector2, end: Vector2, k: f64, crest: bool },
+    /// A floating symmetric parabola that leaves the entity before it and
+    /// ends at a point, with a K value or its grade at the point.
+    FloatingParabolaK { end: Vector2, k: f64, crest: bool },
+    FloatingParabolaGrade { end: Vector2, grade: f64 },
+}
+
+impl ProfileEntity {
+    /// Its prefix and constraint codes.
+    fn codes(self) -> (u32, i32) {
+        match self {
+            ProfileEntity::Tangent { .. } => (2, 0),
+            ProfileEntity::ParabolaThreePoints { .. } => (6, 11),
+            ProfileEntity::ParabolaTwoPointsGrade { .. } => (6, 12),
+            ProfileEntity::ParabolaTwoPointsK { .. } => (6, 13),
+            ProfileEntity::FloatingParabolaK { .. } => (6, 32),
+            ProfileEntity::FloatingParabolaGrade { .. } => (6, 34),
+        }
+    }
+
+    fn valid(self) -> bool {
+        let p = |v: Vector2| v.x.is_finite() && v.y.is_finite();
+        let k = |v: f64| v.is_finite() && v > 0.0;
+        match self {
+            ProfileEntity::Tangent { start, end } => p(start) && p(end) && start.x < end.x,
+            ProfileEntity::ParabolaThreePoints { start, middle, end } => p(start) && p(middle) && p(end) && start.x < middle.x && middle.x < end.x,
+            ProfileEntity::ParabolaTwoPointsGrade { start, end, grade, .. } => p(start) && p(end) && start.x < end.x && grade.is_finite(),
+            ProfileEntity::ParabolaTwoPointsK { start, end, k: v, .. } => p(start) && p(end) && start.x < end.x && k(v),
+            ProfileEntity::FloatingParabolaK { end, k: v, .. } => p(end) && k(v),
+            ProfileEntity::FloatingParabolaGrade { end, grade } => p(end) && grade.is_finite(),
+        }
+    }
 }
 
 /// The entities through `pvis`: the tangents (ids 1..n in station order)
@@ -276,7 +324,7 @@ fn write_profile_of(doc: &mut CadDocument, common: EntityCommon, name: &str, par
         _ => None,
     }));
     strings.push(name.to_string());
-    let parabolas = parts.iter().filter(|p| matches!(p.3, Part::Curve { curve, .. } if curve.parabola())).count();
+    let parabolas = parts.iter().filter(|p| matches!(p.3, Part::Curve { curve, .. } if curve.parabola()) || matches!(p.3, Part::Fixed(e) if e.codes().0 == 6)).count();
     strings.extend((0..4 + parabolas).map(|_| String::new()));
     put_entity(
         doc,
@@ -335,17 +383,64 @@ fn write_profile_of(doc: &mut CadDocument, common: EntityCommon, name: &str, par
                     Part::Curve { curve: VerticalCurve::ParabolaRadius(_), .. } => (6, 9),
                     Part::Curve { curve: VerticalCurve::ParabolaThrough(_), .. } => (6, 7),
                     Part::Curve { .. } => (6, 0),
+                    Part::Fixed(e) => e.codes(),
                 };
                 bits(w, &format!("{prefix:011b}{:023b}", 0x08 << 13));
                 for v in [constraint, *id, *previous, *next] {
                     w.write_bit_long(v);
                 }
                 match part {
-                    Part::Tangent(a, b) => {
+                    Part::Tangent(a, b) | Part::Fixed(ProfileEntity::Tangent { start: a, end: b }) => {
                         for v in [a.x, a.y, b.x, b.y] {
                             w.write_raw_double(v);
                         }
                         bits(w, "0000");
+                    }
+                    Part::Fixed(e) => {
+                        // BL 0, the points and values, then BL 0, 3 bits
+                        // 010 and no minimum K (WE01 to WE08).
+                        let point = |w: &mut DwgMergedWriter, p: Vector2| {
+                            w.write_raw_double(p.x);
+                            w.write_raw_double(p.y);
+                        };
+                        w.write_bit_long(0);
+                        match *e {
+                            ProfileEntity::ParabolaThreePoints { start, middle, end } => {
+                                for p in [start, middle, end] {
+                                    point(w, p);
+                                }
+                            }
+                            ProfileEntity::ParabolaTwoPointsGrade { start, end, grade, at_end } => {
+                                point(w, start);
+                                point(w, end);
+                                w.write_bit_long(i32::from(at_end));
+                                w.write_bit_double(grade * 100.0);
+                            }
+                            ProfileEntity::ParabolaTwoPointsK { start, end, k, crest } => {
+                                point(w, start);
+                                point(w, end);
+                                w.write_bit_long(if crest { 0x1001 } else { 0x1000 });
+                                w.write_bit_long(0x2000);
+                                w.write_bit_double(k);
+                            }
+                            ProfileEntity::FloatingParabolaK { end, k, crest } => {
+                                point(w, end);
+                                w.write_bit_long(if crest { 0x1001 } else { 0x1000 });
+                                w.write_bit_long(0x2000);
+                                w.write_bit_double(k);
+                            }
+                            ProfileEntity::FloatingParabolaGrade { end, grade } => {
+                                point(w, end);
+                                w.write_bit_long(1);
+                                w.write_bit_double(grade * 100.0);
+                            }
+                            ProfileEntity::Tangent { .. } => {}
+                        }
+                        w.write_bit_long(0);
+                        bits(w, "010");
+                        for _ in 0..3 {
+                            w.write_bit_double(-1.0);
+                        }
                     }
                     Part::Curve { curve, crest } => match *curve {
                         VerticalCurve::Parabola(_) | VerticalCurve::ParabolaK(_) | VerticalCurve::ParabolaRadius(_) | VerticalCurve::ParabolaThrough(_) => {
@@ -480,6 +575,45 @@ pub fn add_profile_with_curves(doc: &mut CadDocument, alignment: Handle, name: &
         ..EntityCommon::default()
     };
     write_profile(doc, common, name, &parts(pvis, curves), &helpers, style, alignment, &id)
+}
+
+/// Adds a layout profile `name` to `alignment` made entity by entity
+/// (`entities` in station order: fixed tangents, fixed parabolas by three
+/// points, by two points and a grade or K, floating parabolas that leave
+/// the entity before them), on `layer` (layer "0" when `None`). The ids
+/// follow the order given and each entity is linked to its neighbours in
+/// it. The alignment must be one this crate writes.
+pub fn add_profile_entities(doc: &mut CadDocument, alignment: Handle, name: &str, entities: &[ProfileEntity], layer: Option<&str>) -> Result<Handle, DxfError> {
+    if name.is_empty() || entities.is_empty() || entities.iter().any(|e| !e.valid()) {
+        return Err(invalid("a profile needs a name and valid entities"));
+    }
+    if matches!(entities[0], ProfileEntity::FloatingParabolaK { .. } | ProfileEntity::FloatingParabolaGrade { .. }) {
+        return Err(invalid("a floating parabola needs an entity before it"));
+    }
+    let n = entities.len() as i32;
+    let parts: Vec<(i32, i32, i32, Part)> = entities.iter().enumerate().map(|(i, e)| {
+        let id = i as i32 + 1;
+        (id, id - 1, if id == n { 0 } else { id + 1 }, Part::Fixed(*e))
+    }).collect();
+    let (written, before) = rewritable(doc, alignment, |h| identifier(doc, h)).ok_or_else(|| invalid("the alignment is not one this crate writes"))?;
+    let layer = layer.unwrap_or("0");
+    let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
+    ensure_profile_tree(doc)?;
+    let style = default_style(doc).ok_or_else(|| invalid("drawing has no profile styles"))?;
+    let handle = doc.allocate_handle();
+    let id = new_identifier(handle.value());
+    let mut profiles: Vec<ProfileRef> = before.iter().map(|p| ProfileRef { handle: p.handle, id: p.id }).collect();
+    profiles.push(ProfileRef { handle: handle.value(), id });
+    rewrite(doc, alignment, written, &before, &profiles)?;
+    let helpers = write_helpers(doc, handle)?;
+    let common = EntityCommon {
+        handle,
+        owner_handle: doc.header.model_space_block_handle,
+        layer: layer.into(),
+        layer_handle: Some(layer_handle),
+        ..EntityCommon::default()
+    };
+    write_profile(doc, common, name, &parts, &helpers, style, alignment, &id)
 }
 
 /// Adds a profile `name` of `alignment` sampled from the TIN surface
@@ -720,5 +854,35 @@ mod tests {
         let a = arch(al);
         assert!(a.typed_handles().iter().any(|r| r.0 == eg.value()));
         assert!(a.alignment_anchors().unwrap().is_empty());
+    }
+
+    #[test]
+    fn fixed_and_floating_parabolas_read_back() {
+        let v = Vector2::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let al = crate::classes::civil::add_alignment(&mut doc, "AL1", &[v(0.0, 0.0), v(100.0, 0.0)], None).unwrap();
+        let t1 = ProfileEntity::Tangent { start: v(0.0, 10.0), end: v(40.0, 18.0) };
+        assert!(add_profile_entities(&mut doc, al, "X", &[ProfileEntity::FloatingParabolaGrade { end: v(60.0, 19.0), grade: -0.1 }], None).is_err());
+        let three = add_profile_entities(&mut doc, al, "P3", &[t1, ProfileEntity::ParabolaThreePoints { start: v(40.0, 18.0), middle: v(50.0, 19.5), end: v(60.0, 19.0) }, ProfileEntity::Tangent { start: v(60.0, 19.0), end: v(100.0, 15.0) }], None).unwrap();
+        let floating = add_profile_entities(&mut doc, al, "FK", &[t1, ProfileEntity::FloatingParabolaK { end: v(60.0, 19.0), k: 0.5, crest: true }], None).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-profile-entities-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let pieces = |h: Handle| match back.get_entity(h) {
+            Some(EntityType::Extended(x)) => match &x.data {
+                ExtendedEntityData::Arch(a) => a.profile_pieces(),
+                _ => panic!(),
+            },
+            _ => panic!(),
+        };
+        let p = pieces(three);
+        assert_eq!(p.len(), 3);
+        assert!(p[1].1[0].distance(&v(40.0, 18.0)) < 1e-9 && p[2].1[0].distance(&v(60.0, 19.0)) < 1e-9);
+        // The floating parabola leaves the tangent where its K brings it:
+        // L = K * 100 * |g2 - g1| with the grade at its end.
+        let p = pieces(floating);
+        assert!((p[1].1[0].x - 42.679491924).abs() < 1e-6);
     }
 }
