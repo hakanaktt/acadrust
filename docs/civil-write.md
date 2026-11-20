@@ -1997,4 +1997,24 @@ taken from the records and checked bit for bit against them.
 | intersections of two crossing roads (the object only) | yes (stations, angles) | yes, with the drawing's intersection style or the default one (§3k, §2c) | yes (§3k, §2c) | not needed | offset alignments, curb returns, corridor regions and locking actions; tee junctions |
 | gravity pipe networks: null structures, six structure and eleven pipe families (one size each), connections | partly (part positions, pipe ends, connector counts, sizes of older part definitions) | yes (a new drawing gets the default parts list and styles, §3m) | yes (§3m) | not needed (the application recomputes outlines, lengths and extents) | other sizes, the other structure families (headwall variants, end sections, slab top and two-tier structures), the catalog's body solids |
 | pressure networks: all pipe and gate valve sizes of the default catalog (straight and curved pipes), three elbow, three tee and one cross size, connections | yes (ports: positions, directions, joint sizes, connections; pipe ends and bulge, part positions and rotations) | yes (a new drawing gets the default pressure part list and styles, §3n) | yes (§3n) | not needed | other fitting sizes and kinds, the catalog's body solids |
-| gradings, mass haul | partly (grading criteria, mass haul line and view frame) | no | — | — | no controlled samples: the application's programming interfaces create neither, and its grading group command ends the application when run from a script |
+| gradings, mass haul | partly (grading criteria, mass haul line and view frame) | no | — | — | no controlled samples (§6a) |
+
+### 6a. Gradings and mass haul
+
+No sample of the application's own making could be produced for either:
+
+- The programming interfaces create neither: the .NET classes for gradings
+  and grading groups have no create methods, the COM interfaces only read
+  styles and settings, and the mass haul diagram is made by a wizard.
+- Creating a grading group (its command and dialog, with or without a
+  name) ends the application when it runs from a script. Creating a
+  grading on a feature line from a command call with every prompt
+  answered, in a drawing that has a grading group already (a sample from
+  the application's tutorials), opens "Select Grading Group" first; its
+  OK ends the application the same way.
+- A grading record (770 to 998 bits in that tutorial drawing) holds no
+  geometry: it refers to its site and label style and to the site's
+  topology by identifiers. Its faces, daylight and target lines are in the
+  site's topology, computed by the application from the target surface and
+  the criteria, so a grading cannot be written by changing values in a
+  copied record; the writer would have to build that geometry itself.
