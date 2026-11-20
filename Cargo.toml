@@ -19,6 +19,9 @@ serde = ["dep:serde", "bitflags/serde", "indexmap/serde"]
 import = ["dep:quick-xml", "dep:serde_json"]
 
 [dependencies]
+# Enum dispatch
+whichever = { version = "0.7", default-features = false }
+
 # Error handling
 thiserror = "2"
 anyhow = "1.0"
