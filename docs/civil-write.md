@@ -1349,7 +1349,10 @@ prefix of that path, avoids this.
 `add_sample_line_group(doc, alignment, name, layer)` writes an empty
 sample line group of an alignment; `add_sample_line(doc, group, name,
 station, left, right, layer)` adds a two-vertex sample line at a station,
-reaching `left` to the left and `right` to the right of the alignment. The
+reaching `left` to the left and `right` to the right of the alignment;
+`add_sample_line_through(doc, group, name, station, vertices, layer)` adds
+a line through vertices given as (station, offset; negative to the left)
+that crosses the alignment at `station`, with vertices on both sides. The
 alignment is written again with the group: the third count after its
 elements (`BL n, BL v, BL g, BL n`) is the number of groups, and the
 groups follow the profiles and views in its references. Adding a line
@@ -1366,10 +1369,12 @@ group (AECC_SAMPLE_LINE_GROUP, an entity in model space):
 line (AECC_SAMPLE_LINE):
   BL 80, 0, 80, 80, 0, BL 0x10025F04, BL 0x40008353, 4 bits 0010, RC 0,
   120 zero bits, 3BD 0, 9 BD identity, BD station,
-  two vertices {BL 1, BD 0, BD offset (right positive), BD 0},
+  the vertices left, then right of the alignment, each side {BL n,
+    n x {BD 0, BD offset (left negative), BD station less the line's}},
+    from the alignment outwards (the crossing is not stored),
   a 100-bit run ending with the version word
-  references: soft 0, hard owner 0, hard 0, soft 0, soft 0, style, group
-    (hard)
+  references: soft 0, hard owner 0, hard 0, soft 0 per vertex, style,
+    group (hard)
   texts: "AeccImpSampleLine", "", name, ""
 ```
 
@@ -1381,6 +1386,17 @@ With the group and three lines written into WR00 (E-L1) the application
 opens the drawing with AUDIT 0 errors and lists the group, its lines in
 station order, their stations and the left, center and right vertices of
 each.
+
+Lines through more vertices (LV00 to LV02 and LV10, LV11: three, four,
+five and seven vertices, some away from the crossing station, made with
+`SampleLine.Create` from points) are reproduced bit for bit; their
+vertices are stored per side from the alignment outwards. A line with all
+its vertices on one side of the alignment (LV03) closes its record with
+another run, and is not written. Written into WL10 (E-L5: a line at 40
+through (38, -12), (40, -4), (42, 6), (41, 14) and a two-vertex line at
+70), the drawing opens with AUDIT 0 errors and the API lists each line's
+station and vertices (left, center at the crossing, right) where they were
+written.
 
 The group's label style is the default sample line label style (style
 tree key 3, then 0x112, 0x1002A00F, id 30). Written with no label style
@@ -2141,7 +2157,7 @@ taken from the records and checked bit for bit against them.
 | profile views (automatic or user ranges) and their profile label groups | yes (frame) | yes (a new drawing gets the default view style, §3h) | yes (§3h) | not needed (the application recomputes the view from its style) | other styles and vertical scales |
 | assemblies and package subassemblies | partly (corridor's group block) | yes (a new drawing gets the default assembly, code set, link and shape styles, §2c) | yes (§3i, §2c) | not needed | — |
 | corridors: baselines along alignments, regions, frequencies, placement flags, added stations, targets (unbuilt) | yes (fields of built ones; names and references of unbuilt ones) | yes, with assemblies of the drawing (a new drawing gets the default corridor style, §2c) | yes (§3i, §2c) | the corridor is written out of date and built by the application's rebuild | see §3i-a |
-| sample line groups and two-vertex sample lines | yes | yes, with the drawing's sample line label style (§3j) | yes (§3j) | not needed | lines with more vertices |
+| sample line groups and sample lines through two or more vertices | yes | yes, with the drawing's sample line label style (§3j) | yes (§3j) | not needed | lines with all vertices on one side |
 | sections of a TIN surface (unsampled) | yes (geometry once sampled) | yes (§3j) | yes (§3j) | the application samples the source | corridor sources, lines added after sampling |
 | section views of a line (default style, unsampled section) | yes (frame) | yes, with the drawing's section view style or the default one (§3j, §2c) | yes (§3j, §2c) | not needed | sampled sections, several sections |
 | intersections of two crossing roads (the object only) | yes (stations, angles) | yes, with the drawing's intersection style or the default one (§3k, §2c) | yes (§3k, §2c) | not needed | offset alignments, curb returns, corridor regions and locking actions; tee junctions |
