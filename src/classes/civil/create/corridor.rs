@@ -326,7 +326,7 @@ fn boundary_lists(def: &CorridorDefinition) -> Vec<Vec<&CorridorBoundary>> {
 /// references: soft 0, style (hard), code set style (hard), per surface
 ///   {soft 0 (its surface is made by the rebuild), surface style, 0,
 ///   render material (hard)}, hard 0 per boundary, per baseline
-///   {hard 0, alignment, profile (hard), per region {assembly (hard), the
+///   {feature line or 0, alignment, profile (hard), per region {assembly (hard), the
 ///   assembly's node pairs {subassembly, the subassembly it hangs from or
 ///   0} (soft), per target entry {subassembly (hard), its target objects
 ///   (soft)}}}
@@ -375,7 +375,7 @@ fn write_corridor(doc: &mut CadDocument, common: EntityCommon, def: &CorridorDef
     }
     let mut index = 0;
     for (b, line) in def.baselines.iter().enumerate() {
-        refs.extend([hard_pointer(0), hard_pointer(line.alignment), hard_pointer(line.profile)]);
+        refs.extend([hard_pointer(line.feature_line), hard_pointer(line.alignment), hard_pointer(line.profile)]);
         for (r, region) in line.regions.iter().enumerate() {
             let asm = &asms[b][r];
             refs.push(hard_pointer(region.assembly));
@@ -500,8 +500,11 @@ fn alignment_length(al: &ArchEntityData) -> f64 {
 /// boundaries and masks drawn from polygons (closed when open) or along the
 /// corridor extents, and the maximum triangle side length; the rebuild
 /// makes each built surface. `built`, the feature line fields and the
-/// geometry lock are not written (a baseline along a feature line, a
-/// boundary along feature lines or a geometry-locked region is refused).
+/// geometry lock are not written (a boundary along feature lines or a
+/// geometry-locked region is refused). A baseline along a feature line
+/// names it with an alignment and profile that follow it (the
+/// application's own makes them hidden); the rebuild follows the alignment
+/// and profile.
 pub fn add_corridor_with(doc: &mut CadDocument, def: &CorridorDefinition, layer: Option<&str>) -> Result<Handle, DxfError> {
     if def.name.is_empty() || def.baselines.is_empty() || def.baselines.len() > 31 {
         return Err(invalid("a corridor needs a name and 1 to 31 baselines"));
@@ -520,8 +523,11 @@ pub fn add_corridor_with(doc: &mut CadDocument, def: &CorridorDefinition, layer:
     }
     let mut asms = Vec::new();
     for line in &def.baselines {
-        if line.name.is_empty() || line.regions.is_empty() || line.regions.len() > 63 || line.feature_line != 0 {
+        if line.name.is_empty() || line.regions.is_empty() || line.regions.len() > 63 {
             return Err(invalid("a baseline needs a name, an alignment and 1 to 63 regions"));
+        }
+        if line.feature_line != 0 && arch(doc, Handle::new(line.feature_line)).map(|a| a.dxf_name.as_str()) != Some("AECC_FEATURE_LINE") {
+            return Err(invalid("feature line not found"));
         }
         let al = arch(doc, Handle::new(line.alignment)).filter(|a| a.dxf_name == "AECC_ALIGNMENT").ok_or_else(|| invalid("alignment not found"))?;
         let pr = arch(doc, Handle::new(line.profile)).filter(|a| a.dxf_name == "AECC_PROFILE").ok_or_else(|| invalid("profile not found"))?;
@@ -706,7 +712,13 @@ mod tests {
         let asm = assembly(&mut doc, sub.value(), code_set.value());
         let mut def = CorridorDefinition { name: "COR1".into(), maximum_triangle_side: 50.0, ..CorridorDefinition::default() };
         let region = CorridorRegion { name: "RG1".into(), assembly: asm.value(), start: 0.0, end: 100.0, frequency: RegionFrequency::default(), targets: vec![] };
-        def.baselines.push(CorridorBaseline { name: "BL1".into(), feature_line: 0, alignment: al.value(), profile: p.value(), regions: vec![region], stations: vec![], built: false });
+        // A baseline along a feature line, built along the alignment that follows it.
+        let site = crate::classes::civil::add_site(&mut doc, "S", "").unwrap();
+        let line = crate::classes::civil::add_feature_line(&mut doc, site, "FL1", &[crate::types::Vector3::new(0.0, 0.0, 10.0), crate::types::Vector3::new(100.0, 0.0, 15.0)], None).unwrap();
+        let mut along = CorridorBaseline { name: "BL1".into(), feature_line: al.value(), alignment: al.value(), profile: p.value(), regions: vec![region], stations: vec![], built: false };
+        assert!(add_corridor_with(&mut doc, &CorridorDefinition { baselines: vec![along.clone()], ..def.clone() }, None).is_err());
+        along.feature_line = line.value();
+        def.baselines.push(along);
         let surface = |name: &str, build| CorridorSurfaceDefinition { name: name.into(), build, link_codes: vec![("Top".into(), true), ("Datum".into(), false)], feature_line_codes: vec![], overhang_correction: 1 };
         def.surfaces = vec![surface("CS1", true), surface("CS2", false)];
         let corner = |x, y| crate::types::Vector3::new(x, y, 0.0);

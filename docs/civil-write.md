@@ -1174,6 +1174,18 @@ build flags, overhang correction, the boundary names, descriptions and
 kinds and the mask, `CS1` with its TIN surface; after the rebuild `CS1`
 holds 26 points with `Top` as a breakline.
 
+A baseline along a feature line is written with the feature line as its
+first reference and an alignment and one of its profiles (written by
+`add_alignment` and `add_profile` through the feature line's points) as
+the next two: the application's own baseline refers to a hidden
+alignment and profile it makes from the feature line. Written so into
+the drawing above (feature line `FLT`), the corridor opens with AUDIT 0
+errors, the API lists the baseline as along `FLT` (stations 0 to 300),
+and the rebuild places the assembly along the given alignment and
+profile. Written with no alignment and profile, it opens with AUDIT 0
+errors but the API cannot read the baseline (null object) and the
+rebuild skips it.
+
 `corridor_definition()` reads the definition of any corridor record
 (fields of built corridors too; names and references of corridors without
 built stations, whose texts and references are not interleaved with the
@@ -1195,14 +1207,14 @@ per boundary.
 | option | read | write | evidence / blocked by |
 |---|---|---|---|
 | several baselines along alignments and profiles, their order | yes | yes | §3i |
-| baseline along a feature line | yes (feature line, the alignment and profile made for it) | no | the application makes a hidden alignment and profile for it (two more records) |
-| offset baselines | no | no | the programming interface lists them but cannot make one; their command is a dialog |
+| baseline along a feature line | yes (feature line, the alignment and profile made for it) | yes, with an alignment and profile the caller gives | the application makes a hidden alignment and profile for its own; written without them the baseline cannot be read through the API (null object); written with a given alignment and profile it reads as a feature line baseline (stations of the feature line) and the rebuild follows that alignment and profile |
+| offset baselines | no | no | neither programming interface can make one (the .NET and COM offset baseline collections have no add); their command is a dialog |
 | several regions, gaps, an assembly per region, region names | yes | yes | §3i |
 | frequencies along tangents, curves, spirals, profile curves, target curves; mid-ordinates; curve placement; at geometry, superelevation, profile, high/low, offset target points | yes | yes | §3i |
 | added stations with descriptions | yes | yes | §3i |
 | offset, elevation and surface targets (any objects; nearest or farthest) | yes | yes | §3i |
 | rebuild automatically, description | yes | yes | §3i |
-| region lock to the alignment geometry | yes (flag) | no | the region holds alignment element identifiers that the alignment gains when the lock is set |
+| region lock to the alignment geometry | yes (flag) | no | the region holds two alignment element identifiers; setting the lock adds an identifier block (640 and 777 bits in the sample) to each locked element of the alignment record, which the alignment writer does not write |
 | corridor surfaces, link and feature line codes, overhang correction, build flag; boundaries and masks from polygons and the corridor extents; maximum triangle side length | yes | yes | §3i (the application makes each built surface's TIN surface) |
 | boundaries along feature lines | yes (component count) | no | they refer to built feature lines |
 | feature line code settings (connect, draw, pay items) | count only | no | codes exist only once built |
@@ -2134,7 +2146,7 @@ taken from the records and checked bit for bit against them.
 - Alignments and feature lines that meet other members on a site, lot
   lines meeting where one has an arc, parcel and feature line styles other than the
   defaults;
-  sections; corridor surfaces, feature line and offset baselines (§3i-a); pipe networks: other families and
+  sections; corridor offset baselines and geometry locks (§3i-a); pipe networks: other families and
   sizes.
 - Profile views with a vertical scale or style other than the default;
   the graph settings between the named values are constant runs.
