@@ -2,6 +2,12 @@
 
 ### Unreleased
 
+- **IMAGE clip mode in DXF** - The DXF writer never emitted group 290,
+  so an image clipped to the inside of its boundary reverted to clipping
+  the outside on every save. `290` (0 = outside, 1 = inside) is now
+  written after the clip boundary vertices for R2010 (AC1024) and later,
+  matching the version gate on the DWG stream's clip-inverted bit.
+
 - **DXF-format proxy entities** - An `ACAD_PROXY_ENTITY` whose original
   data format is DXF (`70 1`) carries the entity's own DXF groups after
   the header. The reader kept only binary data and let those groups' own
