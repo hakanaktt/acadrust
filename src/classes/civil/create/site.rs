@@ -192,17 +192,22 @@ pub(super) struct ReadEdge {
     flags: i32,
     points: Vec<i32>,
     inserted: Vec<(Vector2, i32, i32)>,
+    /// An alignment's path solved from its record when its edge has no
+    /// points (moved onto the site), for the crossing checks.
+    shape: Vec<PathPoint>,
 }
 
 /// What a container read keeps when written again: its next free node id
-/// and elevation point key (0 when written anew: ids and keys from 1), and
+/// and elevation point key (0 when written anew: ids and keys from 1),
 /// whether its outside face has lost flag 8 (once a member has an
-/// elevation point or its elevations were edited: WF11).
+/// elevation point or its elevations were edited: WF11), and the outside
+/// face's flags when no member has points (0 for no outside face).
 #[derive(Clone, Copy, Default)]
 pub(super) struct NextIds {
     node: i32,
     key: i32,
     edited: bool,
+    outside: i32,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -221,6 +226,9 @@ impl Member {
     /// The path the member takes, closed back to its first point for a
     /// closed lot line.
     fn outline(&self) -> Vec<PathPoint> {
+        if self.path.is_empty() {
+            return self.read.as_ref().map(|r| r.shape.clone()).unwrap_or_default();
+        }
         let mut path = self.path.clone();
         if self.closed() {
             path.extend(self.path.first().map(|p| (p.0, None)));
@@ -324,8 +332,16 @@ const READ_POINT: i32 = 0x30;
 /// and the newest member's point flags 0x10 and 0x20 once it meets
 /// another).
 pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handle, members: &[Member], parcels: &[u64], style: u64, next: NextIds) -> Result<Arrangement, DxfError> {
-    let inputs: Vec<Input> = members.iter().map(|m| Input { path: &m.path, elevations: &m.elevations, closed: m.closed() }).collect();
-    let arrangement = build(&inputs).map_err(invalid)?;
+    // Members moved onto the site have no points (their edges are empty)
+    // until the application builds the container again; the arrangement is
+    // that of the others (WT04F: a feature line added to WT04).
+    let inputs: Vec<Input> = members.iter().filter(|m| !m.path.is_empty()).map(|m| Input { path: &m.path, elevations: &m.elevations, closed: m.closed() }).collect();
+    let mut arrangement = if inputs.is_empty() { super::arrangement::without_points(next.outside) } else { build(&inputs).map_err(invalid)? };
+    for (i, m) in members.iter().enumerate() {
+        if m.path.is_empty() {
+            arrangement.edges.insert(i, super::arrangement::Edge::without_points());
+        }
+    }
     // The ids of the arrangement's nodes and the keys of the members'
     // elevation points: those the container gave them, the rest the next
     // free ones in node and edge order (1.. when written anew).
@@ -364,7 +380,9 @@ pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handl
     let elevation_points = members.iter().map(|m| m.elevation_points.iter().filter(|x| **x).count()).sum();
     let mut refs: Vec<Ref> = vec![hard_pointer(0); elevation_points];
     refs.extend(members.iter().flat_map(|m| [soft_pointer(m.handle), soft_pointer(0)]));
-    if !members.is_empty() {
+    // The site is listed with a face (none once the application has opened
+    // a container of members without points again: WT04R).
+    if !arrangement.faces.is_empty() {
         refs.extend([soft_pointer(site.value()), soft_pointer(0)]);
     }
     refs.extend(parcels.iter().flat_map(|p| [soft_pointer(*p), soft_pointer(0)]));
@@ -435,6 +453,8 @@ pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handl
                     MemberKind::LotLine { closed } => LOT_LINE_EDGE | closed as i32,
                 } | if edge.crossed { CROSSED_EDGE } else { 0 }
                     | m.read.as_ref().map_or(0, |r| r.flags & READ_EDGE);
+                // An edge without points keeps the flags read (0x10).
+                let flags = if n == 0 { m.read.as_ref().map_or(flags, |r| r.flags) } else { flags };
                 for v in [0, e as i32 + 1, flags, n as i32, 0] {
                     w.write_bit_long(v);
                 }
@@ -524,8 +544,12 @@ fn members_of(doc: &mut CadDocument, site: Handle) -> Result<(Handle, Vec<Member
         (Vec::new(), Vec::new(), NextIds::default())
     } else {
         let t = o.topology().ok_or_else(refused)?;
-        let edited = t.outside_face_flags != 0 && t.outside_face_flags & 8 == 0;
-        (t.edges, t.edge_flags, NextIds { node: t.next_node, key: t.next_key, edited })
+        // Members without points leave the outside face without entries;
+        // its flags (6, or none) are kept as read.
+        let pointless = t.edges.iter().all(|e| e.is_empty());
+        let edited = !pointless && t.outside_face_flags != 0 && t.outside_face_flags & 8 == 0;
+        let outside = if pointless { t.outside_face_flags } else { 0 };
+        (t.edges, t.edge_flags, NextIds { node: t.next_node, key: t.next_key, edited, outside })
     };
     let elevation_points = edges.iter().flatten().filter(|v| v.is_elevation_point()).count();
     let handles: Vec<u64> = refs.iter().skip(elevation_points).step_by(2).take(edges.len()).map(|r| r.0).collect();
@@ -557,7 +581,10 @@ fn members_of(doc: &mut CadDocument, site: Handle) -> Result<(Handle, Vec<Member
             // Nodes other members' crossings added are not the member's.
             let is_own = |v: &&crate::classes::civil::TopologyVertex| v.flags & (0x400 | 2) != 0x400 || v.is_elevation_point();
             let own: Vec<_> = run.iter().filter(is_own).collect();
-            let read = ReadEdge { flags, points: own.iter().map(|v| v.flags).collect(), inserted: run.iter().filter(|v| !is_own(v)).map(|v| (v.point, v.node, v.flags)).collect() };
+            // A member moved onto the site has no points: its alignment's
+            // path stands in for it in the crossing checks.
+            let shape = if run.is_empty() { alignment_path(doc, *h) } else { Vec::new() };
+            let read = ReadEdge { flags, points: own.iter().map(|v| v.flags).collect(), inserted: run.iter().filter(|v| !is_own(v)).map(|v| (v.point, v.node, v.flags)).collect(), shape };
             Some(Member {
                 handle: *h,
                 path: own.iter().map(|v| (v.point, (v.bulge != 0.0).then_some(v.bulge))).collect(),
@@ -622,6 +649,19 @@ pub fn add_site(doc: &mut CadDocument, name: &str, description: &str) -> Result<
         set_root_entry(doc, KEY_SITES, node)?;
     }
     Ok(site)
+}
+
+/// The solved path of an alignment record (its pieces' points, arcs as
+/// chords), empty for another record.
+fn alignment_path(doc: &CadDocument, alignment: u64) -> Vec<PathPoint> {
+    let Some(EntityType::Extended(x)) = doc.get_entity(Handle::new(alignment)) else { return Vec::new() };
+    let ExtendedEntityData::Arch(a) = &x.data else { return Vec::new() };
+    let mut out: Vec<PathPoint> = Vec::new();
+    for (_, _, points) in a.alignment_pieces_with_curvature() {
+        let skip = usize::from(out.last().zip(points.first()).is_some_and(|(p, q)| p.0.distance(q) < 1e-9));
+        out.extend(points.into_iter().skip(skip).map(|p| (p, None)));
+    }
+    out
 }
 
 /// Whether two solved paths cross or touch (arcs taken by their chords
@@ -824,7 +864,7 @@ pub fn set_feature_line_vertices(doc: &mut CadDocument, feature_line: Handle, ve
             None => (0, 0),
         })
         .collect();
-    let read = old.read.as_ref().map(|r| ReadEdge { flags: r.flags, points: Vec::new(), inserted: r.inserted.clone() });
+    let read = old.read.as_ref().map(|r| ReadEdge { flags: r.flags, points: Vec::new(), inserted: r.inserted.clone(), shape: Vec::new() });
     members[i] = Member {
         read,
         handle: old.handle,
@@ -1166,6 +1206,32 @@ mod tests {
         let mut doc = back;
         assert!(add_alignment_on_site(&mut doc, s2, "AL4", &[v(0.0, 200.0), v(100.0, 200.0)], &[], None).is_ok());
         assert!(add_alignment_on_site(&mut doc, a1, "AL5", &[v(0.0, 300.0), v(100.0, 300.0)], &[], None).is_err());
+    }
+
+    #[test]
+    fn members_without_points_keep_their_empty_edges() {
+        let p = crate::types::Vector3::new;
+        let mut doc = drawing();
+        let s = add_site(&mut doc, "Site 1", "").unwrap();
+        let a = add_alignment_on_site(&mut doc, s, "AL1", &[Vector2::new(0.0, 0.0), Vector2::new(100.0, 0.0)], &[], None).unwrap();
+        // The container as the application leaves it when the alignment
+        // has no points (WT04): an empty edge with flags 0x10, the outside
+        // face with flags 6 and no entries.
+        let (container, mut members, parcels, style, _) = members_of(&mut doc, s).unwrap();
+        members[0].path.clear();
+        members[0].read = Some(ReadEdge { flags: 0x10, points: Vec::new(), inserted: Vec::new(), shape: Vec::new() });
+        write_container(&mut doc, container, s, &members, &parcels, style, NextIds { node: 5, outside: 6, ..NextIds::default() }).unwrap();
+        let t = object(&doc, container).unwrap().topology().unwrap();
+        assert_eq!((t.edges.len(), t.edges[0].len(), t.edge_flags[0], t.next_node, t.outside_face_flags), (1, 0, 0x10, 5, 6));
+        // A feature line joins it: the empty edge is kept, the line's
+        // nodes take the next free ids and it makes the outside face.
+        add_feature_line(&mut doc, s, "FL2", &[p(0.0, 50.0, 5.0), p(100.0, 50.0, 6.0)], None).unwrap();
+        let c = object(&doc, container).unwrap();
+        let t = c.topology().unwrap();
+        assert_eq!(t.edges.iter().map(|e| e.len()).collect::<Vec<_>>(), vec![0, 2]);
+        assert_eq!(t.edges[1].iter().map(|v| v.node).collect::<Vec<_>>(), vec![5, 6]);
+        assert_eq!((t.edge_flags[0], t.outside_face_flags), (0x10, 14));
+        assert_eq!(c.site_members()[0], a.value());
     }
 
     #[test]

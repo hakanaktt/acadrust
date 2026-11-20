@@ -1238,9 +1238,8 @@ crossings added, which keep their ids too (WP04, WP05: an inserted node
 of the member before the newest keeps 0x10). A closed edge is told by its
 flag 1, no longer by its last point's flag 8. Written so, the containers
 of WF04, WF11, WF12, WF22, WF25 to WF28, WP04, WP05, WP08 to WP14, WP18
-to WP20 and WT09 equal the application's bit for bit (every sample of
-the series but WP01, WP02 and WT04 to WT06, whose containers hold
-members without points or nodes and are not read); WP05 and WP08 with a
+to WP20 and WT09 equal the application's bit for bit, and so do those of
+WP01, WP02 and WT04 to WT06 (below); WP05 and WP08 with a
 parcel added by the crate (E-PX5, E-PX8) and WF04 with a feature line
 added (E-FX4) open with AUDIT 0 errors and the API lists the new parcel
 (area 2000) and line; a new drawing whose feature line was
@@ -1249,6 +1248,25 @@ removed and an end lowered) and whose other line got an elevation point
 in the middle of its arc (E-FL1), and WF21 with an elevation point added
 by the crate (E-FL2) open with AUDIT 0 errors and the API lists the
 written points, elevation points and bulges.
+
+Members without points: in WP01, WP02 and WT04 to WT06 the site's
+alignments have no elements and their edges no vertices. The container
+then holds no nodes (`BL next free id, BL 0, BL 0`: no first id), each
+such edge is `BL 0, BL id, BL flags 0x10, BL 0, BL 0`, then `BL 0` and
+three `BL 0`, and the face list holds the outside face with flags 6 and
+no entries; once the application has opened and saved it (WT04R) the
+edges' flags are 0x810, there are no faces and the site is no longer
+listed. The reader reads both, and a container read keeps its empty
+edges, their flags and the outside face as read. A member added to it
+is laid out as if the empty edges were not there, its nodes taking the
+next free ids; the empty edges stay in their places and the site is
+listed again with the new outside face (WT04F: a feature line added to
+WT04 by the application; written to WT04R the container equals WT04F's
+bit for bit, written to WT04 it keeps the edge flags 0x10 read where the
+application, having opened the file, has 0x810). WT04, WP01 and WT06
+with a feature line added by the crate (E-MV-WT04, E-MV-WP01,
+E-MV-WT06) open with AUDIT 0 errors and the API lists the alignments and
+the new feature line's points.
 
 A new
 member must not cross or touch the site's members: the application splits
@@ -2840,7 +2858,7 @@ Corridors are listed in §3i-a.
 | parcels | closed and open, crossing and touching lot lines, arcs, labels | yes | yes | §3g |
 | parcels | members added to containers the application wrote with crossings (its point marks and edge flags kept) | yes | yes | §3g |
 | parcels | lot lines meeting alignments or feature lines; arcs where lines meet; the rule of the newest member's point marks 0x10/0x20 for members the crate adds | yes | no | §3g (rule not found; marks read are kept) |
-| sites | containers with members without points or nodes (WP01, WP02, WT04 to WT06: alignments moved to a site) | no | no | the node list holds no nodes and the edges no vertices; not read |
+| sites | containers with members without points or nodes (WP01, WP02, WT04 to WT06: alignments without elements on a site), members added to them | yes | yes | §3g (members without points) |
 | feature lines | points, elevation points, arcs, on a site | yes | yes | §3g |
 | feature lines | edits: points, arcs, elevations and elevation points replaced, in containers this crate or the application wrote (ids and keys kept) | yes | yes | §3g |
 | feature lines | members meeting other members on a site, styles other than the default | yes | no | §3g |

@@ -513,6 +513,23 @@ fn finish(s: &State) -> Result<Arrangement, &'static str> {
     Ok(Arrangement { nodes: s.nodes.clone(), edges, faces })
 }
 
+/// The arrangement of members that have no points (a container whose
+/// members were moved onto the site: WT04 to WT06, WP01, WP02): no nodes
+/// and no edges, and the outside face with `outside` flags and no entries
+/// (none for 0: the container once the application has opened it again,
+/// WT04R).
+pub(super) fn without_points(outside: i32) -> Arrangement {
+    let faces = (outside != 0).then(|| Face { flags: outside, entries: Vec::new(), label: Vector2::new(0.0, 0.0), loops: Vec::new() });
+    Arrangement { nodes: Vec::new(), edges: Vec::new(), faces: faces.into_iter().collect() }
+}
+
+impl Edge {
+    /// The edge of a member without points.
+    pub(super) fn without_points() -> Self {
+        Edge { vertices: Vec::new(), loose_start: false, crossed: false }
+    }
+}
+
 /// The points of a segment from `p` to `q` with `bulge` other than `q`:
 /// `p` and, along an arc, `n - 1` more points; with `extremes`, also where
 /// the arc reaches its extents.
