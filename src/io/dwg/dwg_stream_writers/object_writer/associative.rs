@@ -101,8 +101,12 @@ impl<'a> DwgObjectWriter<'a> {
     }
 
     fn write_assoc_action_param(&mut self, value: &AssocActionParam) {
-        self.writer.write_bit_short(value.is_r2013);
-        if self.version.r2013_plus(self.dxf_version) {
+        // Before R2013 the word is 0 (AutoCAD 2010 files); a parameter
+        // authored for R2013 (1) is written so, or the reader rejects it.
+        let r2013 = self.version.r2013_plus(self.dxf_version);
+        self.writer
+            .write_bit_short(if r2013 { value.is_r2013 } else { 0 });
+        if r2013 {
             self.writer.write_bit_long(value.version);
         }
         self.writer.write_variable_text(&value.name);
@@ -119,7 +123,9 @@ impl<'a> DwgObjectWriter<'a> {
         self.writer.write_bit_long(value.version);
         self.writer.write_bit_long(value.minor);
         self.writer.write_bit_long(value.dependencies.len() as i32);
-        self.write_assoc_handles(DwgReferenceType::SoftPointer, &value.dependencies);
+        // The body owns these action parameters (AutoCAD writes them as
+        // hard owners, DXF 360).
+        self.write_assoc_handles(DwgReferenceType::HardOwnership, &value.dependencies);
         self.writer.write_bit_long(value.marker);
         self.writer.write_bit_long(value.values.len() as i32);
         if value.values.is_empty() {
@@ -248,9 +254,90 @@ impl<'a> DwgObjectWriter<'a> {
         }
     }
 
-    fn write_assoc_array_body(&mut self, value: &AssocArrayActionBody) {
-        self.write_assoc_action_body(&value.action_body);
-        self.write_assoc_parameter_body(&value.parameter_body);
+    /// The parameter section of the array body `body`, when it is one.
+    fn array_parameters_of(&self, body: Handle) -> Option<&'a AssocParamBasedActionBody> {
+        let document = self.document;
+        match document.objects.get(&body)? {
+            ObjectType::Associative(object) => match &object.data {
+                AssociativeData::ArrayActionBody(value) => Some(&value.parameter_body),
+                AssociativeData::ArrayModifyActionBody(value) => Some(&value.body.parameter_body),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// The action `owner` of an array body.
+    fn array_action_of(&self, owner: Handle) -> Option<&'a AssocAction> {
+        let document = self.document;
+        match document.objects.get(&owner)? {
+            ObjectType::Associative(AssociativeObject {
+                data: AssociativeData::Action(action),
+                ..
+            }) => Some(action),
+            _ => None,
+        }
+    }
+
+    /// An array's action. Before R2013 an array action is class version 1
+    /// and its value parameters and owned action parameters live in the
+    /// body's parameter section; R2013 moved them onto the action (class
+    /// version 2). An action authored in one layout is written in the
+    /// target version's (the body side is in `write_assoc_array_body`).
+    fn write_assoc_array_action(&mut self, value: &AssocAction) {
+        let r2013 = self.version.r2013_plus(self.dxf_version);
+        match self.array_parameters_of(value.action_body) {
+            Some(_) if !r2013 && value.class_version > 1 => {
+                self.write_assoc_action(&AssocAction {
+                    class_version: 1,
+                    owned_parameters: Vec::new(),
+                    values: Vec::new(),
+                    ..value.clone()
+                })
+            }
+            Some(body)
+                if r2013
+                    && value.class_version < 2
+                    && !(body.values.is_empty() && body.dependencies.is_empty()) =>
+            {
+                self.write_assoc_action(&AssocAction {
+                    class_version: 2,
+                    owned_parameters: body.dependencies.clone(),
+                    values: body.values.clone(),
+                    ..value.clone()
+                })
+            }
+            _ => self.write_assoc_action(value),
+        }
+    }
+
+    fn write_assoc_array_body(&mut self, value: &AssocArrayActionBody, owner: Handle) {
+        let r2013 = self.version.r2013_plus(self.dxf_version);
+        let action = self.array_action_of(owner);
+        match action {
+            // Before R2013: the action's parameters, in the body (version 1).
+            Some(action) if !r2013 && action.class_version > 1 => {
+                self.write_assoc_action_body(&AssocActionBody {
+                    version: value.action_body.version.min(1),
+                });
+                self.write_assoc_parameter_body(&AssocParamBasedActionBody {
+                    dependencies: action.owned_parameters.clone(),
+                    values: action.values.clone(),
+                    ..value.parameter_body.clone()
+                });
+            }
+            // From R2013 the body is version 2 and its parameters are on the
+            // action (`write_assoc_array_action`); the section is not written.
+            Some(action) if r2013 && action.class_version < 2 => {
+                self.write_assoc_action_body(&AssocActionBody {
+                    version: value.action_body.version.max(2),
+                });
+            }
+            _ => {
+                self.write_assoc_action_body(&value.action_body);
+                self.write_assoc_parameter_body(&value.parameter_body);
+            }
+        }
         self.writer.write_bit_long(value.version);
         self.writer.write_variable_text(&value.parameter_block);
         self.writer.write_bit_long(value.item_list_version);
@@ -795,7 +882,7 @@ impl<'a> DwgObjectWriter<'a> {
                 self.writer.write_bit(subent.dependent_on_compound_object);
             }
             AssociativeData::SurfaceActionBody(value) => self.write_assoc_surface(value),
-            AssociativeData::Action(value) => self.write_assoc_action(value),
+            AssociativeData::Action(value) => self.write_assoc_array_action(value),
             AssociativeData::Network(value) => {
                 self.write_assoc_action(&value.action);
                 self.writer.write_bit_short(value.network_version);
@@ -980,9 +1067,11 @@ impl<'a> DwgObjectWriter<'a> {
                 }
             }
             AssociativeData::ArrayParameters(value) => self.write_assoc_array_parameters(value),
-            AssociativeData::ArrayActionBody(value) => self.write_assoc_array_body(value),
+            AssociativeData::ArrayActionBody(value) => {
+                self.write_assoc_array_body(value, object.owner)
+            }
             AssociativeData::ArrayModifyActionBody(value) => {
-                self.write_assoc_array_body(&value.body);
+                self.write_assoc_array_body(&value.body, object.owner);
                 self.writer.write_bit_short(value.status);
                 self.writer
                     .write_bit_long(value.item_locations.len() as i32);
