@@ -657,7 +657,8 @@ SE16 on a line-arc-line alignment, SB01 and SB02 with two arcs):
 ```text
 B 0, BL n curves, B 0,
 n x { node, BL 0, B 0, [last: BL n], B 0 }
-n x { node, B 0, node, B 0, B 0 (no settings), 10 bits 0001010000,
+n x { node, B 0, node, B 0, B settings (a curve with a manual station:
+      then the 582-bit settings block), 10 bits 0001010000,
       BL 0, BL k critical stations, k x station, BL 0, [not last: B 0] }
   node: BL element, BL -1, BL element, BL -1 (the curve element)
   station: BL 3, fields, node, BL 8 (no slope), then per cross segment
@@ -679,10 +680,25 @@ order. Texts after all others: the curve names (`Curve.1`, ...), one empty
 text per unit (nine per critical station), each segment's name and two
 empty texts, the names in name order. References after all others: the
 alignment three times per curve and twice per unit, then 16 x (the
-alignment, null). A manual station adds a 582-bit settings block and a
-description text per unit (SE08; not written). The programming interface
-refuses normal crown and normal shoulder stations (they need the runout
-regions; not sampled).
+alignment, null).
+
+A manual station (kind 10) sets the curve's settings bit; the 582-bit
+block after it is the same in every sample (SE08, SM1 to SM3, SM5, SM6:
+one or two manual stations in a curve, with a begin full super station,
+in the ending region, in both curves of SB01), and each of the
+station's nine units gets the description `Manual station`, the second
+manual station of a curve `Manual station(2)` and so on (the units of
+other stations stay empty; the numbering starts again in each curve).
+The application keeps a curve's stations in the order they were added.
+`CriticalStationKind::Manual` writes them; E-SM3 (a begin full super and
+a manual station) and E-SM2 (three manual stations, one in the ending
+region) open with AUDIT 0 errors and the API lists the stations with
+their kinds, stations, regions and descriptions. The reader accepts a
+settings block only when it is that block and the curve has a manual
+station. The programming interface refuses normal crown and normal
+shoulder stations in every region and has no calculation method; the
+calculation command is a wizard whose command name was not found (an
+unknown command name stops a script), so they are not sampled.
 
 `add_superelevation(doc, alignment, curves)` writes one curve per curve
 element (`SuperelevationCurve`: element id, `CriticalStation`s with kind,
@@ -2823,7 +2839,8 @@ Corridors are listed in §3i-a.
 | alignments | widening transitions on arcs or curved (kinds 2, 4, 5), offsets of spirals, curb returns (connected alignments), rail cant | yes (offset parameters and regions, connected alignments, type) | no | not written yet |
 | alignments | lone spirals, other constraints (fixed/floating curves, curves through points) | yes (elements) | no | other element kinds not written |
 | alignments | superelevation: curves over curve elements, critical stations (begin/end full super, level crown, low shoulder match, reverse crown) with cross slopes | yes | yes | §3a (superelevation) |
-| alignments | superelevation: manual stations, normal crown and shoulder stations, curve settings, lanes-only blocks, cant | yes (block walked; plain form read) | no | manual stations add a 582-bit settings block; normal crown/shoulder stations were refused by the programming interface |
+| alignments | superelevation: manual stations (with their curve settings block and descriptions) | yes | yes | §3a (superelevation) |
+| alignments | superelevation: normal crown and shoulder stations, other curve settings, lanes-only blocks, cant | yes (block walked; plain form read) | no | normal crown/shoulder stations were refused by the programming interface; the calculation wizard was not reached |
 | profiles | layout: fixed tangents, free parabolas (symmetric, asymmetric), free circular curves | yes | yes | §3e |
 | profiles | layout: free curves by K, radius, horizontal length or through a point (parabolas and circular curves) | yes | yes | §3e |
 | profiles | layout entity by entity: fixed tangents, fixed parabolas (three points, two points and a grade or K), floating parabolas (end and K or grade) | yes | yes | §3e (entity by entity) |
