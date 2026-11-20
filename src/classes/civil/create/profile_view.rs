@@ -937,6 +937,10 @@ fn add_view(doc: &mut CadDocument, alignment: Handle, name: &str, origin: Vector
     if bands.iter().any(|b| b.top && b.kind != super::bands::BandKind::ProfileData) {
         return Err(invalid("only profile data bands are written above a profile view"));
     }
+    // A geometry band item holds the band's number in four bits.
+    if bands.len() > 15 {
+        return Err(invalid("a profile view holds at most 15 bands"));
+    }
     if bands.iter().any(|b| !(b.gap.is_finite() && b.gap >= 0.0)) {
         return Err(invalid("a band gap is a finite length, zero or more"));
     }
