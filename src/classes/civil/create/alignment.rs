@@ -1021,6 +1021,22 @@ pub fn add_offset_alignment_with_widenings(doc: &mut CadDocument, parent: Handle
     write_alignment(doc, common, name, &elements, style, companion.value(), 1, None, &[], &[own_anchor], &[], &[], Some(&record))
 }
 
+/// Anchor kind of a corridor region's end locked to the alignment's
+/// geometry.
+pub(super) const LOCK_ANCHOR: i32 = 582;
+
+/// Writes `alignment` again with anchors of `kind` at the given stations,
+/// by the given identifiers. The alignment must be one this crate writes.
+pub(super) fn add_anchors(doc: &mut CadDocument, alignment: Handle, kind: i32, anchors: &[([u8; 16], f64)]) -> Result<(), DxfError> {
+    let (written, profiles) = rewritable(doc, alignment, |h| super::profile::identifier(doc, h)).ok_or_else(|| invalid("the alignment is not one this crate writes"))?;
+    let extra = anchors
+        .iter()
+        .map(|(id, station)| anchor_at(&written.elements, 0.0, kind, *id, *station).ok_or_else(|| invalid("a station is not on the alignment")))
+        .collect::<Result<Vec<_>, _>>()?;
+    let groups = written.groups.clone();
+    rewrite_adding(doc, alignment, written, &profiles, &profiles, None, &groups, &extra)
+}
+
 /// A profile of an alignment: its record and its identifier.
 pub(super) struct ProfileRef {
     pub handle: u64,

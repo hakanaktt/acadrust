@@ -1160,7 +1160,8 @@ B rebuild automatically, B 1, RC 32, RC layout (0x48 locked to stations,
 baseline: [after the first: BL region count, BL 0], regions, BL 0, B 1,
   9 bits 000000101, identifier, BL n, n x BD added station
 region: the assembly's identifier, the assembly's group block, BD start,
-  BD end, 2 bits 00, BD frequency along tangents, BD along curves, BL
+  BD end (locked to the geometry: the identifier of the alignment's anchor
+  at each end before each of them, KH01), 2 bits 00, BD frequency along tangents, BD along curves, BL
   flags, BD 0, BD along spirals, BD along profile curves, identifier, BL
   target flags, BL 0, BL 0, BL n target entries, n x 10 lists {BL k, k x
   item}, BL 0, 3 bits 110, BL 0
@@ -1304,7 +1305,7 @@ per boundary.
 | added stations with descriptions | yes | yes | §3i |
 | offset, elevation and surface targets (any objects; nearest or farthest) | yes | yes | §3i |
 | rebuild automatically, description | yes | yes | §3i |
-| region lock to the alignment geometry | yes (flag) | no | the region holds two alignment element identifiers; setting the lock adds an identifier block (640 and 777 bits in the sample) to each locked element of the alignment record, which the alignment writer does not write |
+| region lock to the alignment geometry | yes (flag) | yes | the region keeps the identifiers of two anchors (kind 582, §3a) the alignment holds at its start and end; written for alignments this crate writes, the regions follow the alignment when its geometry changes (E-K9: an arc's radius changed moves the locked region ends) |
 | corridor surfaces, link and feature line codes, overhang correction, build flag; boundaries and masks from polygons and the corridor extents; maximum triangle side length | yes | yes | §3i (the application makes each built surface's TIN surface) |
 | boundaries along feature lines | yes (component count) | no | they refer to built feature lines |
 | feature line code settings (connect, draw, pay items) | count only | no | codes exist only once built |
