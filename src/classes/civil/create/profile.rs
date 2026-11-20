@@ -604,8 +604,8 @@ mod tests {
             let want: Vec<u8> = id.iter().flat_map(|b| (0..8).rev().map(move |k| b >> k & 1)).collect();
             bits.windows(128).position(|w| w == want.as_slice())
         };
-        // Newest first.
-        assert!(find(&ids[1]).unwrap() < find(&ids[0]).unwrap());
+        // The anchors are stored in identifier order.
+        assert_eq!(find(&ids[0]).unwrap() < find(&ids[1]).unwrap(), ids[0] < ids[1]);
         // A record that is not an alignment is refused.
         let mut doc = back;
         assert!(add_profile(&mut doc, p1, "P3", &v, &[0.0], None).is_err());
