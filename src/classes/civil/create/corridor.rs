@@ -1,7 +1,12 @@
-//! Corridors: the definition of a corridor (its baseline, region and
-//! assembly), written out of date for the application to rebuild.
+//! Corridors: the definition of a corridor (its baselines, regions,
+//! frequencies, added stations and targets), written out of date for the
+//! application to rebuild.
 
 use super::super::bits::Bits;
+use super::super::corridor::{
+    CorridorBaseline, CorridorDefinition, CorridorRegion, CurveStations, RegionFrequency, TargetCurveStations, TargetKind, KEY_ALONG_TARGET_CURVES, KEY_CURVE_MID_ORDINATE,
+    KEY_TARGET_CURVE_MID_ORDINATE,
+};
 use super::profile::new_identifier;
 use super::site::default_style_of;
 use super::support::*;
@@ -19,12 +24,14 @@ const UNBUILT: i32 = 0x4000_8353;
 /// The geometry stamp key (`BL 2`, two values; written as 0, as for
 /// alignments).
 const STAMP: i32 = 0x0B00_1081;
-/// Default sampling frequencies of a region: along tangents and along
-/// curves, then three more settings (0, 25 and 10 in every sample).
-const FREQUENCY: f64 = 25.0;
-const FREQUENCY_SETTINGS: [f64; 3] = [0.0, 25.0, 10.0];
-/// The run that closes the record after the baseline's identifier.
-const TAIL: &str = "10101010101010010000001010100001011111000000100";
+/// Keys a corridor with targets holds: an empty list of doubles and a text
+/// (`[]`).
+const KEY_TARGETS: i32 = 0x0C04_A61C;
+const KEY_TARGET_TEXT: i32 = 0x0404_A627;
+/// The run that closes the record after the last baseline's added stations.
+const END: &str = "101010101010010000001010100001011111000000100";
+/// The lists of a target entry (one per subassembly with targets).
+const TARGET_LISTS: usize = 10;
 
 fn arch(doc: &CadDocument, h: Handle) -> Option<&ArchEntityData> {
     match doc.get_entity(h)? {
@@ -38,6 +45,7 @@ fn arch(doc: &CadDocument, h: Handle) -> Option<&ArchEntityData> {
 
 /// What a corridor takes from its assembly.
 struct Assembly {
+    identifier: [u8; 16],
     /// The group block: `BL 0, BL 0, BL group count, BL 1`, then the
     /// groups (nested object heads and nodes), as the assembly stores it.
     groups: Vec<u8>,
@@ -78,7 +86,11 @@ fn read_assembly(a: &ArchEntityData) -> Option<Assembly> {
     for _ in 0..3 {
         b.bit_double()?;
     }
-    b.skip(18 + 128)?;
+    b.skip(18)?;
+    let mut identifier = [0u8; 16];
+    for byte in &mut identifier {
+        *byte = b.bits_value(8)?;
+    }
     let from = b.pos;
     b.bit_long()?;
     b.bit_long()?;
@@ -106,7 +118,7 @@ fn read_assembly(a: &ArchEntityData) -> Option<Assembly> {
     let refs = a.typed_handles();
     (refs.len() >= 4 && refs.len() % 2 == 0).then_some(())?;
     let subassemblies = refs[3..refs.len() - 1].chunks(2).map(|p| (p[0].0, p[1].0)).collect();
-    Some(Assembly { groups, group_names, name: strings.get(2)?.clone(), subassemblies, code_set: refs[refs.len() - 1].0 })
+    Some(Assembly { identifier, groups, group_names, name: strings.get(2)?.clone(), subassemblies, code_set: refs[refs.len() - 1].0 })
 }
 
 /// Writes `bits` (0/1 values).
@@ -116,46 +128,239 @@ fn raw(w: &mut DwgMergedWriter, bits: &[u8]) {
     }
 }
 
-/// The corridor record of an unbuilt corridor, one baseline and one
-/// region:
+fn byte(w: &mut DwgMergedWriter, v: u8) {
+    bits(w, &format!("{v:08b}"));
+}
+
+/// `BL 80, BL 80, BL 0x04BE0000`, the head of a nested object.
+fn object_head(w: &mut DwgMergedWriter) {
+    w.write_bit_long(80);
+    w.write_bit_long(80);
+    w.write_bit_long(0x04BE_0000);
+}
+
+/// A region's flags and target flags (see the reader's `region`).
+fn region_flags(f: &RegionFrequency) -> (i32, i32) {
+    let mut flags = match f.curves {
+        CurveStations::AtIncrement => 0x1000,
+        CurveStations::ByCurvature => 0x400,
+        CurveStations::Both => 0x1400,
+    };
+    for (on, bit) in [(f.at_horizontal_geometry_points, 0x8), (f.at_superelevation_critical_points, 0x80), (f.at_profile_geometry_points, 0x2_0000), (f.at_profile_high_low_points, 0x4_0000)] {
+        if on {
+            flags |= bit;
+        }
+    }
+    let mut target = match f.target_curves {
+        TargetCurveStations::None => 0,
+        TargetCurveStations::AtIncrement => 8,
+        TargetCurveStations::ByCurvature => 16,
+    };
+    if f.at_offset_target_geometry_points {
+        target |= 1;
+    }
+    if f.adjacent_to_offset_target_start_end {
+        target |= 4;
+    }
+    (flags, target)
+}
+
+/// One region block of an unbuilt corridor:
+///
+/// ```text
+/// the assembly's identifier, its group block, BD start, BD end, 2 bits 00,
+/// BD frequency along tangents, BD along curves, BL flags, BD 0,
+/// BD along spirals, BD along profile curves, identifier, BL target flags,
+/// BL 0, BL 0, BL n target entries, n x 10 lists {BL k, k x item},
+/// BL 0, 3 bits 110, BL 0
+/// item:  BL 0x1015, BL 0, object head, B 0, B 0, BL 0 (a surface), or
+///        BL 0x1017 (0x1117 for the farthest), BL 0, BL k, k x object head,
+///        BL 1 farthest / 0 nearest, B 0, B 0, BL 0
+/// ```
+fn write_region(w: &mut DwgMergedWriter, r: &CorridorRegion, asm: &Assembly, entries: &[Vec<Vec<&super::super::corridor::RegionTarget>>], id: &[u8; 16]) {
+    w.write_bytes(&asm.identifier);
+    raw(w, &asm.groups);
+    w.write_bit_double(r.start);
+    w.write_bit_double(r.end);
+    bits(w, "00");
+    let f = &r.frequency;
+    let (flags, target_flags) = region_flags(f);
+    w.write_bit_double(f.along_tangents);
+    w.write_bit_double(f.along_curves);
+    w.write_bit_long(flags);
+    w.write_bit_double(0.0);
+    w.write_bit_double(f.along_spirals);
+    w.write_bit_double(f.along_profile_curves);
+    w.write_bytes(id);
+    w.write_bit_long(target_flags);
+    w.write_bit_long(0);
+    w.write_bit_long(0);
+    w.write_bit_long(entries.len() as i32);
+    for entry in entries {
+        for list in entry {
+            w.write_bit_long(list.len() as i32);
+            for t in list {
+                if t.kind == TargetKind::Surface {
+                    w.write_bit_long(0x1015);
+                    w.write_bit_long(0);
+                    object_head(w);
+                } else {
+                    w.write_bit_long(if t.farthest { 0x1117 } else { 0x1017 });
+                    w.write_bit_long(0);
+                    w.write_bit_long(t.objects.len() as i32);
+                    for _ in &t.objects {
+                        object_head(w);
+                    }
+                    w.write_bit_long(i32::from(t.farthest));
+                }
+                bits(w, "00");
+                w.write_bit_long(0);
+            }
+        }
+    }
+    w.write_bit_long(0);
+    bits(w, "110");
+    w.write_bit_long(0);
+}
+
+/// A region's targets per subassembly of its assembly (in node order), each
+/// in its kind's list.
+fn target_entries<'a>(r: &'a CorridorRegion, asm: &Assembly) -> Result<Vec<Vec<Vec<&'a super::super::corridor::RegionTarget>>>, DxfError> {
+    for t in &r.targets {
+        if !asm.subassemblies.iter().any(|(s, _)| *s == t.subassembly) {
+            return Err(invalid("a target's subassembly is not one of its region's assembly"));
+        }
+        if t.objects.is_empty() || (t.kind == TargetKind::Surface && t.objects.len() != 1) {
+            return Err(invalid("a target needs its objects (one surface for a surface target)"));
+        }
+    }
+    let mut entries = Vec::new();
+    for (sub, _) in &asm.subassemblies {
+        let mine: Vec<_> = r.targets.iter().filter(|t| t.subassembly == *sub).collect();
+        if mine.is_empty() {
+            continue;
+        }
+        let mut lists = vec![Vec::new(); TARGET_LISTS];
+        for t in mine {
+            lists[t.kind.list()].push(t);
+        }
+        entries.push(lists);
+    }
+    Ok(entries)
+}
+
+/// A corridor's keys in the order the application writes them: the
+/// targets' list, the stamp, the per-region settings and the targets' text.
+fn write_keys(w: &mut DwgMergedWriter, regions: &[&CorridorRegion], targets: bool) {
+    let defaults = RegionFrequency::default();
+    let per_region = regions.iter().any(|r| {
+        let f = &r.frequency;
+        (f.along_target_curves, f.curve_mid_ordinate, f.target_curve_mid_ordinate) != (defaults.along_target_curves, defaults.curve_mid_ordinate, defaults.target_curve_mid_ordinate)
+    });
+    byte(w, 1 + 2 * u8::from(targets) + 3 * u8::from(per_region));
+    let doubles = |w: &mut DwgMergedWriter, key: u32, value: &dyn Fn(&RegionFrequency) -> f64| {
+        w.write_bit_long(key as i32);
+        w.write_bit_long(regions.len() as i32);
+        for r in regions {
+            w.write_bit_double(value(&r.frequency));
+        }
+    };
+    if targets {
+        w.write_bit_long(KEY_TARGETS);
+        w.write_bit_long(0);
+    }
+    for v in [STAMP, 2, 0, 0] {
+        w.write_bit_long(v);
+    }
+    if per_region {
+        doubles(w, KEY_ALONG_TARGET_CURVES, &|f| f.along_target_curves);
+        doubles(w, KEY_CURVE_MID_ORDINATE, &|f| f.curve_mid_ordinate);
+    }
+    if targets {
+        w.write_bit_long(KEY_TARGET_TEXT);
+    }
+    if per_region {
+        doubles(w, KEY_TARGET_CURVE_MID_ORDINATE, &|f| f.target_curve_mid_ordinate);
+    }
+}
+
+/// The corridor record of an unbuilt corridor:
 ///
 /// ```text
 /// BL 80, 0, 80, 80, 0, BL 0x10025F04, BL 0x40008353, 4 bits 0101
-/// RC 1, the geometry stamp (BL 2, BL 0, BL 0)
+/// RC n keys, keys (see [`write_keys`])
 /// 2 bits 01, 128 zero bits, 2 bits 01, RC 82
-/// BL 0 (no item), BL 0 (no surface), BL 0, BL 0 (no outline), BL 0
-/// 2 bits 01, RC 32, RC 0x48 (layout), RC (baselines << 3 | 2), 1 bit 0,
-/// 6 bits region count, BL 0 (no station)
-/// region: identifier, the assembly's group block, BD start station,
-///   BD end station, 2 bits 00, BD frequency along tangents, BD along
-///   curves, BL 0, BD 0, BD 25, BD 10, identifier, BL 0 x 3, BL 0 (no
-///   target), BL 0 (no station), 3 bits 110, BL 0
-/// baseline: BL 0, B 1, 9 bits 000000101, identifier, then [`TAIL`]
-/// references: soft 0, style (hard), code set style (hard), hard 0,
-///   alignment, profile, assembly (hard), the assembly's node pairs
-///   {subassembly, the subassembly it hangs from or 0} (soft)
-/// texts: "AeccImpCorridor", "", name, "", "", per assembly group {name,
-///   "", then "", "" per node}, the assembly's name, "", the region's
-///   name, the baseline's name
+/// BL 0 (no code settings), BL 0 (no surface), BD 0 (maximum triangle
+/// side), BL 0 (no outline), BL 0
+/// B rebuild automatically, B 1, RC 32, RC 0x48 (locked to stations),
+/// RC (baselines << 3 | 2), 1 bit 0, 6 bits the first baseline's region
+/// count, BL 0 (no station)
+/// baseline: [after the first: BL region count, BL 0], its regions (see
+///   [`write_region`]), BL 0, B 1, 9 bits 000000101, identifier, BL n,
+///   n x BD added station
+/// [`END`]
+/// references: soft 0, style (hard), code set style (hard), per baseline
+///   {hard 0, alignment, profile (hard), per region {assembly (hard), the
+///   assembly's node pairs {subassembly, the subassembly it hangs from or
+///   0} (soft), per target entry {subassembly (hard), its target objects
+///   (soft)}}}
+/// texts: "AeccImpCorridor", "", name, description, ["[]" with targets],
+///   per baseline {per region {"", per assembly group {name, "", then "",
+///   "" per node}, the assembly's name, "", per target {its name twice, "",
+///   "", "" per object}, the region's name}, the baseline's name, one
+///   description per added station}
 /// ```
 ///
-/// The identifiers are version-4 GUIDs. Written with the samples'
-/// identifiers, stations, frequencies and assemblies (one and two groups),
-/// the record equals theirs bit for bit (WC13, WC24 to WC27).
-#[allow(clippy::too_many_arguments)]
-fn write_corridor(doc: &mut CadDocument, common: EntityCommon, names: [&str; 3], style: u64, alignment: Handle, profile: Handle, assembly: Handle, asm: &Assembly, stations: (f64, f64), ids: [[u8; 16]; 3]) -> Result<Handle, DxfError> {
-    let [name, baseline, region] = names;
-    let mut refs = vec![soft_pointer(0), hard_pointer(style), hard_pointer(asm.code_set), hard_pointer(0), hard_pointer(alignment.value()), hard_pointer(profile.value()), hard_pointer(assembly.value())];
-    for (s, parent) in &asm.subassemblies {
-        refs.extend([soft_pointer(*s), soft_pointer(*parent)]);
+/// The identifiers are version-4 GUIDs; a region starts with its
+/// assembly's. Written with the samples' identifiers, stations,
+/// frequencies and assemblies, the record equals theirs bit for bit (WC13,
+/// WC24 to WC27 with a region flag word of 0, the form of a corridor never
+/// saved after an edit).
+fn write_corridor(doc: &mut CadDocument, common: EntityCommon, def: &CorridorDefinition, style: u64, asms: &[Vec<Assembly>]) -> Result<Handle, DxfError> {
+    let seed = common.handle.value();
+    let regions: Vec<&CorridorRegion> = def.baselines.iter().flat_map(|b| &b.regions).collect();
+    let mut entries = Vec::new();
+    for (b, line) in def.baselines.iter().enumerate() {
+        for (r, region) in line.regions.iter().enumerate() {
+            entries.push(target_entries(region, &asms[b][r])?);
+        }
     }
-    let mut strings: Vec<String> = ["AeccImpCorridor", "", name, "", ""].iter().map(|s| s.to_string()).collect();
-    for (g, k) in &asm.group_names {
-        strings.extend([g.clone(), String::new()]);
-        strings.extend(std::iter::repeat(String::new()).take(2 * k));
+    let targets = entries.iter().any(|e| !e.is_empty());
+    let code_set = asms.first().and_then(|a| a.first()).map_or(0, |a| a.code_set);
+    let mut refs = vec![soft_pointer(0), hard_pointer(style), hard_pointer(code_set)];
+    let mut strings: Vec<String> = ["AeccImpCorridor", "", &def.name, &def.description].iter().map(|s| s.to_string()).collect();
+    if targets {
+        strings.push("[]".into());
     }
-    strings.extend([asm.name.clone(), String::new(), region.to_string(), baseline.to_string()]);
-    let byte = |w: &mut DwgMergedWriter, v: u8| bits(w, &format!("{v:08b}"));
+    let mut index = 0;
+    for (b, line) in def.baselines.iter().enumerate() {
+        refs.extend([hard_pointer(0), hard_pointer(line.alignment), hard_pointer(line.profile)]);
+        for (r, region) in line.regions.iter().enumerate() {
+            let asm = &asms[b][r];
+            refs.push(hard_pointer(region.assembly));
+            for (s, parent) in &asm.subassemblies {
+                refs.extend([soft_pointer(*s), soft_pointer(*parent)]);
+            }
+            strings.push(String::new());
+            for (g, k) in &asm.group_names {
+                strings.extend([g.clone(), String::new()]);
+                strings.extend(std::iter::repeat(String::new()).take(2 * k));
+            }
+            strings.extend([asm.name.clone(), String::new()]);
+            for entry in &entries[index] {
+                refs.push(hard_pointer(entry.iter().flatten().next().map_or(0, |t| t.subassembly)));
+                for t in entry.iter().flatten() {
+                    refs.extend(t.objects.iter().map(|o| soft_pointer(*o)));
+                    strings.extend([t.name.clone(), t.name.clone(), String::new(), String::new()]);
+                    strings.extend(std::iter::repeat(String::new()).take(t.objects.len()));
+                }
+            }
+            strings.push(region.name.clone());
+            index += 1;
+        }
+        strings.push(line.name.clone());
+        strings.extend(line.stations.iter().map(|s| s.1.clone()));
+    }
     put_entity(
         doc,
         "AECC_CORRIDOR",
@@ -165,10 +370,7 @@ fn write_corridor(doc: &mut CadDocument, common: EntityCommon, names: [&str; 3],
                 w.write_bit_long(v);
             }
             bits(w, "0101");
-            byte(w, 1);
-            for v in [STAMP, 2, 0, 0] {
-                w.write_bit_long(v);
-            }
+            write_keys(w, &regions, targets);
             bits(w, "01");
             bits(w, &"0".repeat(128));
             bits(w, "01");
@@ -176,72 +378,119 @@ fn write_corridor(doc: &mut CadDocument, common: EntityCommon, names: [&str; 3],
             for _ in 0..5 {
                 w.write_bit_long(0);
             }
-            bits(w, "01");
+            w.write_bit(def.rebuild_automatic);
+            w.write_bit(true);
             byte(w, 32);
             byte(w, 0x48);
-            byte(w, 1 << 3 | 2);
-            bits(w, &format!("0{:06b}", 1));
+            byte(w, (def.baselines.len() as u8) << 3 | 2);
+            bits(w, &format!("0{:06b}", def.baselines[0].regions.len()));
             w.write_bit_long(0);
-            w.write_bytes(&ids[0]);
-            raw(w, &asm.groups);
-            w.write_bit_double(stations.0);
-            w.write_bit_double(stations.1);
-            bits(w, "00");
-            w.write_bit_double(FREQUENCY);
-            w.write_bit_double(FREQUENCY);
-            w.write_bit_long(0);
-            for v in FREQUENCY_SETTINGS {
-                w.write_bit_double(v);
-            }
-            w.write_bytes(&ids[1]);
-            for _ in 0..5 {
+            let mut index = 0;
+            for (b, line) in def.baselines.iter().enumerate() {
+                if b > 0 {
+                    w.write_bit_long(line.regions.len() as i32);
+                    w.write_bit_long(0);
+                }
+                for (r, region) in line.regions.iter().enumerate() {
+                    let id = new_identifier(seed ^ (0x100 + index as u64));
+                    write_region(w, region, &asms[b][r], &entries[index], &id);
+                    index += 1;
+                }
                 w.write_bit_long(0);
+                bits(w, "1000000101");
+                w.write_bytes(&new_identifier(seed ^ (0x1_0000 + b as u64)));
+                w.write_bit_long(line.stations.len() as i32);
+                for s in &line.stations {
+                    w.write_bit_double(s.0);
+                }
             }
-            bits(w, "110");
-            w.write_bit_long(0);
-            w.write_bit_long(0);
-            bits(w, "1000000101");
-            w.write_bytes(&ids[2]);
-            bits(w, TAIL);
+            bits(w, END);
         },
         Body { refs, strings },
     )
 }
 
-/// Adds a corridor `name` along `alignment` and its `profile` with one
-/// baseline (`baseline`) and one region (`region`) over the alignment's
-/// stations that applies `assembly` every 25 units, on `layer` (layer "0"
-/// when `None`). The corridor is written out of date, as the
+/// The length of an alignment's elements (an arc's chords taken back to
+/// its arc by its curvature).
+fn alignment_length(al: &ArchEntityData) -> f64 {
+    let arc = |chord: f64, k: f64| if k.abs() < 1e-12 { chord } else { 2.0 / k.abs() * (chord * k.abs() / 2.0).min(1.0).asin() };
+    al.alignment_pieces_with_curvature().iter().map(|(_, k, p)| p.windows(2).map(|w| arc(w[0].distance(&w[1]), *k)).sum::<f64>()).sum()
+}
+
+/// Adds the corridor `def` defines on `layer` (layer "0" when `None`):
+/// baselines along an alignment and one of its profiles, each with
+/// regions applying an assembly of the drawing over a station range with
+/// their frequencies and targets, and the stations added by hand (sorted
+/// per baseline). The corridor is written out of date, as the
 /// application's own corridor before its first rebuild: it holds no
 /// stations, applied sections or feature lines until it is rebuilt. The
 /// corridor style is the drawing's default (written when the drawing has
-/// none); the code set style is the assembly's.
-#[allow(clippy::too_many_arguments)]
-pub fn add_corridor(doc: &mut CadDocument, name: &str, baseline: &str, region: &str, alignment: Handle, profile: Handle, assembly: Handle, layer: Option<&str>) -> Result<Handle, DxfError> {
-    if name.is_empty() || baseline.is_empty() || region.is_empty() {
-        return Err(invalid("a corridor needs a name, a baseline name and a region name"));
+/// none); the code set style is the first region's assembly's. Region and
+/// target names and handles come from `def`; `built`, the feature line
+/// fields, surfaces, boundaries and the geometry lock are not written (a
+/// baseline along a feature line, a surface or a geometry-locked region is
+/// refused).
+pub fn add_corridor_with(doc: &mut CadDocument, def: &CorridorDefinition, layer: Option<&str>) -> Result<Handle, DxfError> {
+    if def.name.is_empty() || def.baselines.is_empty() || def.baselines.len() > 31 {
+        return Err(invalid("a corridor needs a name and 1 to 31 baselines"));
     }
-    let al = arch(doc, alignment).filter(|a| a.dxf_name == "AECC_ALIGNMENT").ok_or_else(|| invalid("alignment not found"))?;
-    let pr = arch(doc, profile).filter(|a| a.dxf_name == "AECC_PROFILE").ok_or_else(|| invalid("profile not found"))?;
-    if !al.typed_handles().iter().any(|r| r.0 == profile.value()) || pr.typed_handles().get(12).map(|r| r.0) != Some(alignment.value()) {
-        return Err(invalid("the profile is not one of the alignment's"));
+    if !def.surfaces.is_empty() || !def.boundaries.is_empty() || def.geometry_lock {
+        return Err(invalid("corridor surfaces, boundaries and geometry locks are not written"));
     }
-    let start = al.alignment_start_station().ok_or_else(|| invalid("the alignment has no start station"))?;
-    let length: f64 = al.alignment_pieces().iter().map(|(_, p)| p.windows(2).map(|w| w[0].distance(&w[1])).sum::<f64>()).sum();
-    let asm = arch(doc, assembly).and_then(read_assembly).ok_or_else(|| invalid("the assembly is not one this crate reads"))?;
+    let mut asms = Vec::new();
+    for line in &def.baselines {
+        if line.name.is_empty() || line.regions.is_empty() || line.regions.len() > 63 || line.feature_line != 0 {
+            return Err(invalid("a baseline needs a name, an alignment and 1 to 63 regions"));
+        }
+        let al = arch(doc, Handle::new(line.alignment)).filter(|a| a.dxf_name == "AECC_ALIGNMENT").ok_or_else(|| invalid("alignment not found"))?;
+        let pr = arch(doc, Handle::new(line.profile)).filter(|a| a.dxf_name == "AECC_PROFILE").ok_or_else(|| invalid("profile not found"))?;
+        if !al.typed_handles().iter().any(|r| r.0 == line.profile) || pr.typed_handles().get(12).map(|r| r.0) != Some(line.alignment) {
+            return Err(invalid("the profile is not one of the alignment's"));
+        }
+        let start = al.alignment_start_station().ok_or_else(|| invalid("the alignment has no start station"))?;
+        let end = start + alignment_length(al);
+        // Spirals are measured along their chords: a little slack.
+        let slack = 1e-3 * (end - start) + 1e-6;
+        let mut list = Vec::new();
+        for r in &line.regions {
+            if r.name.is_empty() || !(start - slack..=end + slack).contains(&r.start) || !(r.start < r.end && r.end <= end + slack) {
+                return Err(invalid("a region needs a name and a station range on its alignment"));
+            }
+            list.push(arch(doc, Handle::new(r.assembly)).and_then(read_assembly).ok_or_else(|| invalid("a region's assembly is not one this crate reads"))?);
+        }
+        asms.push(list);
+    }
     ensure_corridor_styles(doc)?;
     let style = default_style_of(doc, KEY_CORRIDOR_STYLES).ok_or_else(|| invalid("drawing has no corridor styles"))?;
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
+    let mut def = def.clone();
+    for line in &mut def.baselines {
+        line.stations.sort_by(|a, b| a.0.total_cmp(&b.0));
+    }
     let handle = doc.allocate_handle();
     let common = EntityCommon { handle, owner_handle: doc.header.model_space_block_handle, layer: layer.into(), layer_handle: Some(layer_handle), ..EntityCommon::default() };
-    let ids = [1, 2, 3].map(|k| new_identifier(handle.value() ^ k));
-    write_corridor(doc, common, [name, baseline, region], style, alignment, profile, assembly, &asm, (start, start + length), ids)
+    write_corridor(doc, common, &def, style, &asms)
+}
+
+/// Adds a corridor `name` along `alignment` and its `profile` with one
+/// baseline (`baseline`) and one region (`region`) over the alignment's
+/// stations that applies `assembly` every 25 units (see
+/// [`add_corridor_with`]).
+#[allow(clippy::too_many_arguments)]
+pub fn add_corridor(doc: &mut CadDocument, name: &str, baseline: &str, region: &str, alignment: Handle, profile: Handle, assembly: Handle, layer: Option<&str>) -> Result<Handle, DxfError> {
+    let al = arch(doc, alignment).filter(|a| a.dxf_name == "AECC_ALIGNMENT").ok_or_else(|| invalid("alignment not found"))?;
+    let start = al.alignment_start_station().ok_or_else(|| invalid("the alignment has no start station"))?;
+    let end = start + alignment_length(al);
+    let region = CorridorRegion { name: region.into(), assembly: assembly.value(), start, end, frequency: RegionFrequency::default(), targets: Vec::new() };
+    let line = CorridorBaseline { name: baseline.into(), feature_line: 0, alignment: alignment.value(), profile: profile.value(), regions: vec![region], stations: Vec::new(), built: false };
+    add_corridor_with(doc, &CorridorDefinition { name: name.into(), baselines: vec![line], ..CorridorDefinition::default() }, layer)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::classes::civil::{RegionTarget, TargetKind};
     use crate::io::dwg::{DwgReader, DwgWriter};
     use crate::types::{DxfVersion, Vector2};
 
@@ -253,7 +502,7 @@ mod tests {
         let object_head = |w: &mut DwgMergedWriter| {
             w.write_bit_long(80);
             w.write_bit_long(80);
-            w.write_raw_long(0x04BE_0000);
+            w.write_bit_long(0x04BE_0000);
         };
         let refs = vec![soft_pointer(0), soft_pointer(0), hard_pointer(0), soft_pointer(sub), soft_pointer(0), hard_pointer(code_set)];
         let strings = ["AeccImpAssembly", "", "ASM1", "", "", "", "Group - (1)", "", "", ""].iter().map(|s| s.to_string()).collect();
@@ -317,4 +566,32 @@ mod tests {
         });
         assert!(found);
     }
+    #[test]
+    fn corridor_definitions_read_back() {
+        let v = Vector2::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let al = crate::classes::civil::add_alignment(&mut doc, "AL1", &[v(0.0, 0.0), v(100.0, 0.0)], None).unwrap();
+        let p = crate::classes::civil::add_profile(&mut doc, al, "P1", &[v(0.0, 10.0), v(100.0, 15.0)], &[], None).unwrap();
+        let al2 = crate::classes::civil::add_alignment(&mut doc, "AL2", &[v(0.0, 9.0), v(100.0, 9.0)], None).unwrap();
+        let p2 = crate::classes::civil::add_profile(&mut doc, al2, "P2", &[v(0.0, 1.0), v(100.0, 2.0)], &[], None).unwrap();
+        let [sub, code_set] = [(); 2].map(|_| doc.allocate_handle());
+        let asm = assembly(&mut doc, sub.value(), code_set.value());
+        let target = RegionTarget { subassembly: sub.value(), name: "TargetHA".into(), kind: TargetKind::Offset, objects: vec![al2.value()], farthest: true };
+        let frequency = RegionFrequency { along_tangents: 10.0, curves: CurveStations::Both, curve_mid_ordinate: 2.0, at_profile_high_low_points: true, target_curves: TargetCurveStations::ByCurvature, ..RegionFrequency::default() };
+        let r1 = CorridorRegion { name: "RG1".into(), assembly: asm.value(), start: 0.0, end: 40.0, frequency, targets: vec![target] };
+        let r2 = CorridorRegion { name: "RG2".into(), assembly: asm.value(), start: 50.0, end: 100.0, frequency: RegionFrequency::default(), targets: vec![] };
+        let b1 = CorridorBaseline { name: "BL1".into(), feature_line: 0, alignment: al.value(), profile: p.value(), regions: vec![r1, r2], stations: vec![(25.5, "A".into())], built: false };
+        let mut b2 = b1.clone();
+        (b2.name, b2.alignment, b2.profile, b2.stations) = ("BL2".into(), al2.value(), p2.value(), vec![]);
+        b2.regions.truncate(1);
+        let def = CorridorDefinition { name: "COR1".into(), description: "D".into(), rebuild_automatic: true, baselines: vec![b1, b2], ..CorridorDefinition::default() };
+        let c = add_corridor_with(&mut doc, &def, None).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-corridor-def-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(arch(&back, c).unwrap().corridor_definition(), Some(def));
+    }
+
 }

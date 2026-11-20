@@ -1038,42 +1038,82 @@ groups.
 
 ## 3i. Corridors
 
-`add_corridor(doc, name, baseline, region, alignment, profile, assembly,
-layer)` writes a corridor with one baseline along the alignment and its
-profile and one region over the alignment's stations that applies an
-assembly of the drawing every 25 units. It is written as the application
-writes a corridor before its first rebuild (WC13, WC24 to WC27: the
-corridor added through the API without a rebuild): out of date, without
-stations, applied sections, feature lines or surfaces. Adding it changes
-no other record (the alignment, the profile and the assembly stay as they
-are). The corridor style is the drawing's default (style tree key 0xEB2;
-a drawing without it gets the application's default, §2c), the code set
-style the assembly's.
+`add_corridor_with(doc, &CorridorDefinition, layer)` writes a corridor
+from the definition the reader returns (`corridor_definition()`): its name
+and description, whether it rebuilds automatically, and its baselines,
+each along an alignment and one of its profiles, with regions applying an
+assembly of the drawing over a station range, each region's frequencies,
+station placement flags and targets, and the stations added by hand per
+baseline (with their descriptions). `add_corridor(doc, name, baseline,
+region, alignment, profile, assembly, layer)` is the one baseline, one
+region form over the alignment's stations with the default frequencies.
+The corridor is written as the application writes a corridor before its
+first rebuild (the samples below: corridors made and changed through the
+API without a rebuild): out of date, without stations, applied sections,
+feature lines or surfaces. Adding it changes no other record. The
+corridor style is the drawing's default (style tree key 0xEB2; a drawing
+without it gets the application's default, §2c), the code set style the
+first region's assembly's.
 
 ```text
 BL 80, 0, 80, 80, 0, BL 0x10025F04, BL 0x40008353 (unbuilt), 4 bits 0101
-RC 1, key 0x0B001081 (BL 2, two values; written 0)
+RC n keys, keys: [0x0C04A61C (BL 0) with targets], 0x0B001081 (BL 2,
+  two values; written 0), [0x0C04A621, 0x0C04A61E: BL regions, one BD
+  per region], [0x0404A627 with targets: its value is the text "[]"],
+  [0x0C04A620: one BD per region]
 2 bits 01, 128 zero bits, 2 bits 01, RC 82
-BL 0 (items), BL 0 (surfaces), BL 0, BL 0 (outlines), BL 0
-2 bits 01, RC 32, RC 0x48, RC (baselines << 3 | 2), 1 bit 0,
-6 bits region count, BL 0 (stations)
-region: identifier, the assembly's group block, BD start, BD end,
-  2 bits 00, BD frequency along tangents (25), BD along curves (25),
-  BL 0, BD 0, BD 25, BD 10, identifier, BL 0 x 3, BL 0 (targets),
-  BL 0 (stations), 3 bits 110, BL 0
-baseline: BL 0, B 1, 9 bits 000000101, identifier, 47 bits ending with
-  the version word
-references: soft 0, style, code set style, hard 0, alignment, profile,
-  assembly (hard), per subassembly {subassembly (soft), soft 0}
-texts: "AeccImpCorridor", "", name, "", "", per assembly group {its name,
-  "", "", ""}, the assembly's name, "", the region's name, the
-  baseline's name
+BL n feature line code settings (0 before a rebuild), BL n surfaces, BD
+  maximum triangle side length, BL n boundary lists, BL 0
+B rebuild automatically, B 1, RC 32, RC layout (0x48 locked to stations,
+  0x28 to the alignment's geometry), RC (baselines << 3 | 2), 1 bit 0,
+  6 bits the first baseline's region count, BL 0 (no station)
+baseline: [after the first: BL region count, BL 0], regions, BL 0, B 1,
+  9 bits 000000101, identifier, BL n, n x BD added station
+region: the assembly's identifier, the assembly's group block, BD start,
+  BD end, 2 bits 00, BD frequency along tangents, BD along curves, BL
+  flags, BD 0, BD along spirals, BD along profile curves, identifier, BL
+  target flags, BL 0, BL 0, BL n target entries, n x 10 lists {BL k, k x
+  item}, BL 0, 3 bits 110, BL 0
+item: BL 0x1015, BL 0, object head, B 0, B 0, BL 0 (a surface), or BL
+  0x1017 (0x1117 for the farthest), BL 0, BL k, k x object head, BL 1
+  farthest / 0 nearest, B 0, B 0, BL 0
+end: 45 bits 101010101010010000001010100001011111000000100
+references: soft 0, style, code set style, per baseline {hard 0,
+  alignment, profile (hard), per region {assembly (hard), per node
+  {subassembly, the subassembly it hangs from or 0} (soft), per target
+  entry {subassembly (hard), its target objects (soft)}}}
+texts: "AeccImpCorridor", "", name, description, ["[]"], per baseline
+  {per region {"", per assembly group {its name, "", "", "" per node},
+  the assembly's name, "", per target {its name twice, "", "", "" per
+  object}, the region's name}, the baseline's name, one description per
+  added station}
 ```
 
-The identifiers are version-4 GUIDs (new ones for every corridor). The
-group block is the assembly's own (`BL 0, BL 0, BL n groups, BL 1`, then
-per group its nested object heads and attachment nodes), copied from the
-assembly record:
+Region flags: 0x1000 at increment and 0x400 by curvature along curves
+(0x1400 both; a region the application never saved after an edit holds
+0, read as at increment), 0x8 at horizontal geometry points, 0x80 at
+superelevation critical points, 0x20000 at profile geometry points,
+0x40000 at profile high and low points. Target flags: 1 at offset target
+geometry points, 4 adjacent to offset target start and end, 8 at
+increment and 16 by curvature along offset target curves. The keys hold,
+per region in corridor order, the frequency along target curves (25
+without the key) and the mid-ordinate distances along curves and along
+target curves (0.1 without them); the application writes all three once a
+region changes one of them. Keys are written in the order above.
+
+A target entry is written for each subassembly of the region's assembly
+that has a target, in node order; its list 5 holds surface targets, 8
+offset (width) targets and 9 elevation (slope) targets, the same lists
+for every stock subassembly tried (nine kinds with targets, list by the target's
+type and not by the parameter's position). An offset or elevation target
+holds any number of objects (alignments, polylines, feature lines,
+profiles, 3D polylines are all object references); a surface target one.
+
+The identifiers are version-4 GUIDs (new ones for every corridor); a
+region starts with its assembly's identifier. The group block is the
+assembly's own (`BL 0, BL 0, BL n groups, BL 1`, then per group its
+nested object heads and attachment nodes), copied from the assembly
+record:
 
 ```text
 BL 80, 0, 80, 80, 0, BL 0x10025F04, BL, 4 bits, RC n keys, keys
@@ -1084,18 +1124,75 @@ texts: "AeccImpAssembly", "", name, "", "", "", per group {name, "", "",
   ""}
 ```
 
-Written with the samples' identifiers, stations, frequencies and
-assemblies (one and two groups), the record equals theirs bit for bit
-(the station range 10-90 and a tangent frequency of 10 included).
+Samples (each one change at a time from a drawing with three alignments
+and profiles, a polyline, a 3D polyline, a feature line, a surface and two
+assemblies, one with a lane, one with a transition lane and a side slope
+ditch): structure (one region, station range, second and third region
+with a gap, a region on another assembly, region name, second baseline
+without and with a region, a baseline along a feature line, removing a
+baseline, renaming, an empty corridor), every frequency and flag, added
+stations with and without a description, targets of each kind (an
+alignment, a polyline and a feature line as offset target, a profile, a
+3D polyline and a feature line as elevation target, a surface, two
+objects, the farthest), targets in several regions and baselines, and
+the targets of nine stock subassembly kinds. Rewriting each sample's
+definition with `add_corridor_with` gives the sample's record field for
+field (the references and texts equal; the identifiers, the geometry
+stamp and the class word differ by design).
 
-Written into WC23 (an assembly of two lanes, E-C1) and WC20 (one lane,
-E-C2), the corridor opens with AUDIT 0 errors and the API lists its
-baseline (alignment, profile, stations 0-100) and region (assembly,
-stations 0-100) as for the application's own unbuilt corridor; the API
-reports it out of date. The API rebuild run after reopening a drawing in
-the check harness changes no corridor, the application's own included (a
-built corridor keeps its stations after a frequency edit and a rebuild),
-so the built result of a written corridor is not checked.
+Written into a drawing with two baselines (`BL1` along a curved
+alignment: a region on the lane assembly from 0 to 100, every 10 along
+tangents, by curvature with a mid-ordinate of 2 along curves, at
+horizontal geometry points; a region on the transition lane and ditch
+assembly from 150 to 300 every 12 along curves and 5 along profile
+curves, at profile high and low points, with the offset alignment and a
+polyline as offset target (farthest), a profile as elevation target and
+the surface as the ditch's target; added stations 33.3 and 175; `BL2` with
+one region at increment and by curvature along curves, by curvature along
+target curves every 7, at offset target geometry points), the corridor
+opens without recovery, AUDIT 0 errors; the API lists both baselines,
+the regions with their assemblies, ranges, every written frequency and
+flag, the added stations (33.3 in the first region, 175 in the second),
+and the targets with their objects. `CorridorCollection.RebuildAll()`
+builds it: stations 0, 10, 20, ..., 33.3, ..., 99.022, 100 in the first
+region, 150, 175, 192, 204, ..., 300 in the second, every 25 along `BL2`,
+and the codes of both assemblies (the ditch's included, its target
+resolved); the rebuilt drawing reads back with its feature lines (seven
+codes on `BL1`, four on `BL2`).
+
+`corridor_definition()` reads the definition of any corridor record
+(fields of built corridors too; names and references of corridors without
+built stations, whose texts and references are not interleaved with the
+built ones). It also reads corridor surfaces (build flag, link and feature
+line code flags, overhang correction) and their boundaries and masks
+(kind, polygon corners, feature line components): the surface head is
+`B, B build, B, BL n link codes, n x B breakline, BL 0, BL m feature line
+codes, m x B, BL overhang` (older files write the link count in its
+one-byte form `01 00000nnn`, read before as an RC 0x20 or 0xA0 and three
+bits), and the field after the surfaces is the maximum triangle side
+length (a BD). Boundary lists are written per surface that has any, each
+introduced by its surface's name in the texts, then each boundary's name
+and description; references: per surface {the corridor surface's own TIN
+surface (soft, 0 when it is not built), style, 0, render material}, one
+per boundary.
+
+### 3i-a. Corridor options
+
+| option | read | write | evidence / blocked by |
+|---|---|---|---|
+| several baselines along alignments and profiles, their order | yes | yes | §3i |
+| baseline along a feature line | yes (feature line, the alignment and profile made for it) | no | the application makes a hidden alignment and profile for it (two more records) |
+| offset baselines | no | no | the programming interface lists them but cannot make one; their command is a dialog |
+| several regions, gaps, an assembly per region, region names | yes | yes | §3i |
+| frequencies along tangents, curves, spirals, profile curves, target curves; mid-ordinates; curve placement; at geometry, superelevation, profile, high/low, offset target points | yes | yes | §3i |
+| added stations with descriptions | yes | yes | §3i |
+| offset, elevation and surface targets (any objects; nearest or farthest) | yes | yes | §3i |
+| rebuild automatically, description | yes | yes | §3i |
+| region lock to the alignment geometry | yes (flag) | no | the region holds alignment element identifiers that the alignment gains when the lock is set |
+| corridor surfaces, link and feature line codes, overhang correction, build flag; boundaries (extents, polygon, feature lines) and masks; maximum triangle side length | yes | no | each surface has its own TIN surface record and changes the settings tree |
+| feature line code settings (connect, draw, pay items) | count only | no | codes exist only once built |
+| built results (stations, applied assemblies, feature lines) | yes (feature lines) | no | written out of date; the application builds them |
+| corridor without baselines | no | no | its record ends in another run after the 32 (one sample) |
 
 ### Code set styles read back
 
@@ -2022,7 +2119,7 @@ taken from the records and checked bit for bit against them.
 - Alignments and feature lines that meet other members on a site, lot
   lines meeting where one has an arc, parcel and feature line styles other than the
   defaults;
-  sections, corridors: not written; pipe networks: other families and
+  sections; corridor surfaces, feature line and offset baselines (§3i-a); pipe networks: other families and
   sizes.
 - Profile views with a vertical scale or style other than the default;
   the graph settings between the named values are constant runs.
@@ -2043,7 +2140,7 @@ taken from the records and checked bit for bit against them.
 | parcels of closed and open, crossing and touching lot lines, with arcs | yes (number, face, boundary) | yes (§3g) | yes (§3g) | not needed | arcs where lines meet; lot lines meeting alignments or feature lines; the label of a nearly isosceles right triangle; the newest member's point marks 0x10, 0x20 where it meets another |
 | profile views (automatic or user ranges) and their profile label groups | yes (frame) | yes (a new drawing gets the default view style, §3h) | yes (§3h) | not needed (the application recomputes the view from its style) | other styles and vertical scales |
 | assemblies and package subassemblies | partly (corridor's group block) | yes (a new drawing gets the default assembly, code set, link and shape styles, §2c) | yes (§3i, §2c) | not needed | — |
-| corridors (one baseline, one region, unbuilt) | yes | yes, with an assembly of the drawing (a new drawing gets the default corridor style, §2c) | yes (§3i, §2c) | the corridor is written out of date and built by the application's rebuild | built results, surfaces, several regions or baselines |
+| corridors: baselines along alignments, regions, frequencies, placement flags, added stations, targets (unbuilt) | yes (fields of built ones; names and references of unbuilt ones) | yes, with assemblies of the drawing (a new drawing gets the default corridor style, §2c) | yes (§3i, §2c) | the corridor is written out of date and built by the application's rebuild | see §3i-a |
 | sample line groups and two-vertex sample lines | yes | yes, with the drawing's sample line label style (§3j) | yes (§3j) | not needed | lines with more vertices |
 | sections of a TIN surface (unsampled) | yes (geometry once sampled) | yes (§3j) | yes (§3j) | the application samples the source | corridor sources, lines added after sampling |
 | section views of a line (default style, unsampled section) | yes (frame) | yes, with the drawing's section view style or the default one (§3j, §2c) | yes (§3j, §2c) | not needed | sampled sections, several sections |
