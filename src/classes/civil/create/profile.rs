@@ -219,6 +219,11 @@ pub enum ProfileEntity {
     /// ends at a point, with a K value or its grade at the point.
     FloatingParabolaK { end: Vector2, k: f64, crest: bool },
     FloatingParabolaGrade { end: Vector2, grade: f64 },
+    /// A floating tangent that leaves the parabola before it towards a
+    /// point.
+    FloatingTangent { through: Vector2 },
+    /// A free tangent touching the parabolas before and after it.
+    FreeTangent,
 }
 
 impl ProfileEntity {
@@ -231,6 +236,8 @@ impl ProfileEntity {
             ProfileEntity::ParabolaTwoPointsK { .. } => (6, 13),
             ProfileEntity::FloatingParabolaK { .. } => (6, 32),
             ProfileEntity::FloatingParabolaGrade { .. } => (6, 34),
+            ProfileEntity::FloatingTangent { .. } => (2, 4),
+            ProfileEntity::FreeTangent => (2, 9),
         }
     }
 
@@ -244,7 +251,15 @@ impl ProfileEntity {
             ProfileEntity::ParabolaTwoPointsK { start, end, k: v, .. } => p(start) && p(end) && start.x < end.x && k(v),
             ProfileEntity::FloatingParabolaK { end, k: v, .. } => p(end) && k(v),
             ProfileEntity::FloatingParabolaGrade { end, grade } => p(end) && grade.is_finite(),
+            ProfileEntity::FloatingTangent { through } => p(through),
+            ProfileEntity::FreeTangent => true,
         }
+    }
+
+    /// A parabola (fixed or floating), which a floating or free tangent
+    /// can touch.
+    fn parabola(self) -> bool {
+        self.codes().0 == 6
     }
 }
 
@@ -458,6 +473,14 @@ fn write_profile_of(doc: &mut CadDocument, common: EntityCommon, name: &str, par
                         }
                         bits(w, "0000");
                     }
+                    // A floating tangent: its point, then 4 bits; a free
+                    // tangent: the 4 bits only (PF02).
+                    Part::Fixed(ProfileEntity::FloatingTangent { through }) => {
+                        w.write_raw_double(through.x);
+                        w.write_raw_double(through.y);
+                        bits(w, "0000");
+                    }
+                    Part::Fixed(ProfileEntity::FreeTangent) => bits(w, "0000"),
                     Part::Fixed(e) => {
                         // BL 0, the points and values, then BL 0, 3 bits
                         // 010 and no minimum K (WE01 to WE08).
@@ -496,7 +519,7 @@ fn write_profile_of(doc: &mut CadDocument, common: EntityCommon, name: &str, par
                                 w.write_bit_long(1);
                                 w.write_bit_double(grade * 100.0);
                             }
-                            ProfileEntity::Tangent { .. } => {}
+                            ProfileEntity::Tangent { .. } | ProfileEntity::FloatingTangent { .. } | ProfileEntity::FreeTangent => {}
                         }
                         w.write_bit_long(0);
                         bits(w, "010");
@@ -678,7 +701,9 @@ pub fn add_profile_with_curves(doc: &mut CadDocument, alignment: Handle, name: &
 /// Adds a layout profile `name` to `alignment` made entity by entity
 /// (`entities` in station order: fixed tangents, fixed parabolas by three
 /// points, by two points and a grade or K, floating parabolas that leave
-/// the entity before them), on `layer` (layer "0" when `None`). The ids
+/// the entity before them, floating tangents that leave the parabola
+/// before them towards a point, free tangents between two parabolas), on
+/// `layer` (layer "0" when `None`). The ids
 /// follow the order given and each entity is linked to its neighbours in
 /// it. The alignment must be one this crate writes.
 pub fn add_profile_entities(doc: &mut CadDocument, alignment: Handle, name: &str, entities: &[ProfileEntity], layer: Option<&str>) -> Result<Handle, DxfError> {
@@ -687,6 +712,18 @@ pub fn add_profile_entities(doc: &mut CadDocument, alignment: Handle, name: &str
     }
     if matches!(entities[0], ProfileEntity::FloatingParabolaK { .. } | ProfileEntity::FloatingParabolaGrade { .. }) {
         return Err(invalid("a floating parabola needs an entity before it"));
+    }
+    // A floating tangent leaves a parabola; a free tangent sits between two.
+    for (i, e) in entities.iter().enumerate() {
+        let parabola = |j: Option<usize>| j.and_then(|j| entities.get(j)).is_some_and(|e| e.parabola());
+        let ok = match e {
+            ProfileEntity::FloatingTangent { .. } => parabola(i.checked_sub(1)),
+            ProfileEntity::FreeTangent => parabola(i.checked_sub(1)) && parabola(Some(i + 1)),
+            _ => true,
+        };
+        if !ok {
+            return Err(invalid("a floating tangent needs a parabola before it, a free tangent one on each side"));
+        }
     }
     let n = entities.len() as i32;
     let parts: Vec<(i32, i32, i32, Part)> = entities.iter().enumerate().map(|(i, e)| {
@@ -1141,5 +1178,32 @@ mod tests {
         assert!((pvis.last().unwrap().point.x - 195.3635239099919).abs() < 1e-9);
         assert_eq!(x.common.reactors.len(), 1);
         assert!(identifier(&back, op.value()).is_some());
+    }
+
+    #[test]
+    fn floating_and_free_tangents_touch_their_parabolas() {
+        use crate::classes::civil::ProfilePiece;
+        let mut doc = drawing();
+        let v = Vector2::new;
+        let al = crate::classes::civil::add_alignment(&mut doc, "AL1", &[v(0.0, 0.0), v(200.0, 0.0)], None).unwrap();
+        let p1 = ProfileEntity::ParabolaThreePoints { start: v(0.0, 10.0), middle: v(25.0, 12.0), end: v(50.0, 11.0) };
+        let p2 = ProfileEntity::ParabolaThreePoints { start: v(120.0, 15.0), middle: v(150.0, 16.0), end: v(180.0, 15.0) };
+        assert!(add_profile_entities(&mut doc, al, "X", &[ProfileEntity::Tangent { start: v(0.0, 10.0), end: v(50.0, 11.0) }, ProfileEntity::FloatingTangent { through: v(150.0, 14.0) }], None).is_err());
+        assert!(add_profile_entities(&mut doc, al, "X", &[p1, ProfileEntity::FreeTangent], None).is_err());
+        let floating = add_profile_entities(&mut doc, al, "P4", &[p1, ProfileEntity::FloatingTangent { through: v(150.0, 14.0) }], None).unwrap();
+        let free = add_profile_entities(&mut doc, al, "P5", &[p1, ProfileEntity::FreeTangent, p2], None).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-profile-tangents-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        // The tangents leave the parabolas where they touch them (the
+        // application's stations: 25.836 and 22.102 to 134.741).
+        let floating = arch(&back, floating).profile_pieces();
+        assert_eq!(floating.iter().map(|p| p.0).collect::<Vec<_>>(), [ProfilePiece::Parabola, ProfilePiece::Tangent]);
+        assert!((floating[1].1[0].x - 25.836129785405483).abs() < 1e-9);
+        let free = arch(&back, free).profile_pieces();
+        assert_eq!(free.iter().map(|p| p.0).collect::<Vec<_>>(), [ProfilePiece::Parabola, ProfilePiece::Tangent, ProfilePiece::Parabola]);
+        let tangent = &free[1].1;
+        assert!((tangent[0].x - 22.102416604041473).abs() < 1e-9 && (tangent[tangent.len() - 1].x - 134.74121986472957).abs() < 1e-9);
     }
 }
