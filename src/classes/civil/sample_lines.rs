@@ -43,6 +43,80 @@ pub struct SampleLines {
     pub right: f64,
 }
 
+/// A section view group plot of a sample line group (records of the
+/// `0x10025F04` schema whose lines are listed in the record, as acadrust
+/// and the application write them): its index (1 up), the point it was
+/// placed at and its number of views, with the values the record holds
+/// besides (the same in every sample).
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SectionViewGroupPlot {
+    pub index: i32,
+    pub origin: crate::types::Vector3,
+    pub views: i32,
+    /// The eight BDs after the point (0), the three values (-30, 30, 40),
+    /// the 16 bytes after the view count (0) and the 52 bits after them.
+    pub extra: [f64; 8],
+    pub values: [f64; 3],
+    pub flags: [bool; 2],
+    pub id: [u8; 16],
+    pub tail: u64,
+}
+
+/// The group plots of a group record that lists its lines:
+///
+/// ```text
+/// (after the keys) 155 bits, BL lines, BL n sources {BL 1, BL 0,
+/// 128 bits, BL, 2 bits}, BL 0, BL p plots {BL index, 3BD point, 8 BD,
+/// B, BD, BD, B, BD, BL views, 16 bytes, 52 bits}
+/// ```
+pub(super) fn group_plots(data: &[u8], start: usize, end: usize) -> Option<Vec<SectionViewGroupPlot>> {
+    let mut bits = Bits::new(data, start, end);
+    for want in [80, 0, 80, 80, 0] {
+        (bits.bit_long()? == want).then_some(())?;
+    }
+    (bits.bit_long()? as u32 == MAPPED).then_some(())?;
+    bits.bit_long()?;
+    bits.skip(4)?;
+    for _ in 0..bits.bits_value(8)? {
+        super::alignment::key(&mut bits)?;
+    }
+    bits.skip(155)?;
+    bits.bit_long()?;
+    for _ in 0..bits.bit_long()? {
+        (bits.bit_long()? == 1 && bits.bit_long()? == 0).then_some(())?;
+        bits.skip(128)?;
+        bits.bit_long()?;
+        bits.skip(2)?;
+    }
+    (bits.bit_long()? == 0).then_some(())?;
+    let n = usize::try_from(bits.bit_long()?).ok().filter(|n| *n <= bits.remaining() / 200)?;
+    (0..n)
+        .map(|_| {
+            let index = bits.bit_long()?;
+            let origin = crate::types::Vector3::new(bits.bit_double()?, bits.bit_double()?, bits.bit_double()?);
+            let mut extra = [0.0; 8];
+            for v in &mut extra {
+                *v = bits.bit_double()?;
+            }
+            let a = bits.bit()?;
+            let (v0, v1) = (bits.bit_double()?, bits.bit_double()?);
+            let b = bits.bit()?;
+            let values = [v0, v1, bits.bit_double()?];
+            let views = bits.bit_long()?;
+            let mut id = [0u8; 16];
+            for x in &mut id {
+                *x = bits.bits_value(8)?;
+            }
+            let mut tail = 0u64;
+            for _ in 0..52 {
+                tail = tail << 1 | u64::from(bits.bits_value(1)?);
+            }
+            Some(SectionViewGroupPlot { index, origin, views, extra, values, flags: [a, b], id, tail })
+        })
+        .collect()
+}
+
 /// Schema word of the records whose sources and placements this decoder
 /// maps.
 const MAPPED: u32 = 0x1002_5F04;

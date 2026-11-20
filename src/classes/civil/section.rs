@@ -133,10 +133,12 @@ pub(super) fn view_frame(data: &[u8], start: usize, end: usize) -> Option<Sectio
         (p.x.is_finite() && p.y.is_finite() && bits.bit_double()?.is_finite()).then_some(p)
     };
     let origin = anchor(&mut bits)?;
-    for _ in 0..10 {
+    // The identity, then `BL n` sections (a view of a line without a
+    // section has `BL 0`, two bits).
+    for _ in 0..9 {
         bits.bit_double()?;
     }
-    let items = usize::from(bits.bits_value(8)?);
+    let items = usize::try_from(bits.bit_long()?).ok().filter(|n| *n <= 1000)?;
     bits.skip(5 * items)?;
     for _ in 0..bits.bit_long()? {
         (bits.bit_long()? == 0).then_some(())?;
