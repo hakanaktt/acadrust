@@ -541,6 +541,8 @@ mod tests {
         assert_eq!(group.label_style, label);
         assert_eq!(object(&back, Handle::new(label)).unwrap().decode().strings.last().map(String::as_str), Some("AeccDbSampleLine"));
         assert_eq!(station(&back, b.value()), Some(80.0));
+        // The public reader takes the layout the codec writes too.
+        assert_eq!([a, b, c].map(|h| arch(&back, h).unwrap().sample_line_station()), [Some(50.0), Some(80.0), Some(20.0)]);
         assert_eq!(arch(&back, a).unwrap().decode().strings[2], "SL1");
         // The alignment lists the group after its own references.
         assert_eq!(arch(&back, al).unwrap().typed_handles().last().map(|r| r.0), Some(g.value()));

@@ -117,6 +117,10 @@ pub(super) fn group_plots(data: &[u8], start: usize, end: usize) -> Option<Vec<S
         .collect()
 }
 
+/// The word after a sample line's schema word in the layout the codec
+/// writes (see `create::sample_lines::write_line`).
+const LINE_WORD: u32 = 0x4000_8353;
+
 /// Schema word of the records whose sources and placements this decoder
 /// maps.
 const MAPPED: u32 = 0x1002_5F04;
@@ -160,6 +164,10 @@ pub(super) fn sample_lines(data: &[u8], start: usize, end: usize) -> Option<Samp
 /// them), BD station
 /// ```
 ///
+/// A record of the layout the codec writes (`BL 0x40008353` after the
+/// schema word) holds 4 bits, RC 0, 120 bits and 12 BD (origin and
+/// identity) before its station instead.
+///
 /// The 275 bits are the same length in every one of the 183 records of
 /// `Sections-Project-Objects.dwg` (19 lines, stations 0 to
 /// 1729.048573328025) and `Mass Haul-2.dwg` (164 lines, 50 to 1658.63)
@@ -173,7 +181,18 @@ pub(super) fn sample_line_station(data: &[u8], start: usize, end: usize) -> Opti
         (bits.bit_long()? == want).then_some(())?;
     }
     (bits.bit_long()? as u32 == MAPPED).then_some(())?;
-    bits.skip(6 + 275)?;
+    let at = bits.pos;
+    if bits.bit_long()? as u32 == LINE_WORD {
+        // The layout the codec writes (WL11 to WL13): 4 bits, RC 0, 120
+        // bits, the origin and the identity (12 BD), then the station.
+        bits.skip(4 + 8 + 120)?;
+        for _ in 0..12 {
+            bits.bit_double()?;
+        }
+    } else {
+        bits.pos = at;
+        bits.skip(6 + 275)?;
+    }
     let station = bits.bit_double()?;
     (station.is_finite() && (0.0..1e7).contains(&station)).then_some(station)
 }
