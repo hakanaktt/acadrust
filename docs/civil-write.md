@@ -286,6 +286,26 @@ after the others. The application adds text, line and block components to
 a point label style (ticks, reference texts, direction arrows and text
 iterators are refused there).
 
+Line (`AECC_LABEL_RADIAL_LINE_STYLE`) and block (`AECC_LABEL_BLOCK_STYLE`)
+components share the base fields: visibility, color and lineweight in
+the text color and lineweight fields (mask A bits as for text), a line's
+linetype in the sixth reference (mask A 0x400000), a block's offsets in
+the base offsets; then (LL01-LL16, BB01-BB10: one setting of a new line
+or block changed per save):
+
+```text
+line:   BL end anchor component, B use end anchor, BL end anchor word,
+        BD start x offset, BD, BD start y offset, BD, BD end x offset,
+        BD, BD end y offset, BD, BD fixed length, BD, BD angle, BD,
+        BL length type (0 fixed, 1 percent), BD percent length, BL 0
+block:  BL 0, BD rotation, BD, BD height, BL 0,
+        BL attachment (9 insertion point, 0 top left ... 8 bottom right)
+```
+
+The start offsets count when mask C has 0x1 (x) and 0x2 (y) set; a
+block's block is its tenth reference. A new line has fixed length 1/12
+and percent length 1, a new block height 1/120.
+
 Samples: LS001-LS040 (one setting of the default point label style
 changed per save), LT001-LT035 (bits back to their defaults, colors,
 linetypes, layer, text style, arrowhead style, anchor component and
@@ -307,7 +327,13 @@ E-LC1 (OP00 with LSX: the description component removed, T9 added with
 other contents and offset; LSY: only the elevation component kept, A1 and
 A2 added) opens with AUDIT 0 and the API lists the components with the
 written values; T9's properties equal the application's added T9 (LC01)
-apart from dates and users. E-LS1 (new
+apart from dates and users. Line and block components keep their number
+in a copy; their values are written as edited (`LabelStyle::lines`,
+`LabelStyle::blocks`). E-LC2 (LC04's style copied with its line's angle,
+start x and end y offsets, lengths, percent length type, color and
+visibility changed) and E-LC3 (LC05's block: height, rotation, x offset,
+attachment, lineweight) open with AUDIT 0 and the API lists the written
+values. Every line component of HB0 (33) and OP00 (5) reads. E-LS1 (new
 drawing, three points, LS1 with every collector setting and the first
 component's text, border and anchor changed, LS2 with the second
 component's height and color): opens with AUDIT 0, the API lists LS1 and
@@ -3114,7 +3140,8 @@ Corridors are listed in §3i-a.
 | label styles | the defaults of a new drawing (§2b) | partly | yes | §2b |
 | label styles | settings: visibility, layer, text style, orientation, insert option, plan readability, leader, dragged state; text components' contents, height, offsets, angle, attachment, anchor, color, lineweight, border | yes (375 of 379 collectors, 248 of 252 text components) | yes, as copies of a drawing's label style (§2d) | §2d |
 | label styles | adding and removing text components | yes | yes (§2d) | §2d |
-| label styles | adding line and block components; line, arrow and iterator components' own settings; pipe and pressure part label styles | base fields | as copied | not mapped |
+| label styles | line and block components' settings | yes | yes, in copies (§2d) | §2d |
+| label styles | adding or removing line and block components; anchors of lines; tick, reference text, direction arrow and iterator components' own settings; pipe and pressure part label styles | base fields | as copied | not mapped; the API refuses to set line and block anchors |
 
 ### 6a. Gradings and mass haul
 
