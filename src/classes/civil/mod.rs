@@ -26,6 +26,7 @@ mod style;
 mod subassembly;
 mod tin;
 mod topology;
+mod view_frames;
 
 pub use alignment::{
     display_station, AlignmentAnchor, AlignmentCriteria, AlignmentElement, AlignmentType, OffsetParameters, OffsetRegion, WideningTransition, AlignmentElementKind, AlignmentPiece, DesignSpeed, GeometryPoint, SpiralShape,
@@ -1062,6 +1063,26 @@ impl ArchEntityData {
         }
         let (data, start, end) = self.main_stream()?;
         sample_lines::sample_line_station(data, start, end)
+    }
+
+    /// A view frame (`AECC_VIEWFRAME`) of a plan production run: its name,
+    /// its view frame group and the match lines on its sides.
+    pub fn view_frame(&self) -> Option<view_frames::ViewFrame> {
+        if self.dxf_name != "AECC_VIEWFRAME" {
+            return None;
+        }
+        let strings = self.decode().strings;
+        view_frames::view_frame(&strings, &self.typed_handles())
+    }
+
+    /// A match line (`AECC_MATCHLINE`) between two view frames: its name,
+    /// its view frame group and the frames on its sides.
+    pub fn match_line(&self) -> Option<view_frames::MatchLine> {
+        if self.dxf_name != "AECC_MATCHLINE" {
+            return None;
+        }
+        let strings = self.decode().strings;
+        view_frames::match_line(&strings, &self.typed_handles())
     }
     pub fn pipe_part_fields(&self) -> Vec<PartField> {
         if self.dxf_name != "AECC_PIPE" {
