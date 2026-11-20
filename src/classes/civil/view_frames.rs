@@ -50,6 +50,31 @@ pub(super) fn view_frame(strings: &[String], refs: &[(u64, u8)]) -> Option<ViewF
     })
 }
 
+/// One sheet (`AECC_SHEET`) a plan production run creates, with the view
+/// frame group the sheet's frame belongs to.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Sheet {
+    /// The sheet's label as stored (`Sheet 1 of 14`, ...).
+    pub label: String,
+    /// The view frame group the sheet's frame belongs to.
+    pub group: u64,
+}
+
+/// A sheet record: its label in the text stream (fourth string), then its
+/// group among its references:
+///
+/// ```text
+/// references: owner, owner, group
+/// ```
+pub(super) fn sheet(strings: &[String], refs: &[(u64, u8)]) -> Option<Sheet> {
+    let group = match refs {
+        [(.., 4), (.., 3), (group, 5), ..] => *group,
+        _ => return None,
+    };
+    Some(Sheet { label: strings.get(3)?.clone(), group })
+}
+
 /// A match line record:
 ///
 /// ```text
