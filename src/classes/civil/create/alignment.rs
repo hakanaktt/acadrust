@@ -361,8 +361,11 @@ pub(super) struct OffsetRecord {
 ///         (point sets), BL 4096, BL n, n x 2RD
 /// BL profiles, BL profile views, BL sample line groups, BL k, the k
 ///   station anchors in identifier order (see `AlignmentAnchor`)
-/// BL 0 (equations), BL 1, BL s, s x { BL 1, BD station, BD speed, the
-///   identifier of the anchor at the station } (design speeds)
+/// BL e, e x { 2 bits 00, RS 0x04BE, BD raw station, the identifier of
+///   its anchor, BD station back, BD station ahead, B increasing }
+///   (station equations, one anchor of kind 3 each)
+/// BL 1, BL s, s x { BL 1, BD station, BD speed, the identifier of the
+///   anchor at the station } (design speeds, one anchor of kind 2 each)
 /// BD 100, BL 0 (no superelevation), BL 0,
 ///   centerline: BL 1 (4 utility), BL 2, 2, 2, 0, 3
 ///   rail:       BL 5, BL 2, 2, 2, 0, 0, 3 (its track gauge in the BD after
@@ -374,7 +377,8 @@ pub(super) struct OffsetRecord {
 ///   pointer), the profiles (soft pointers, oldest first), the profile
 ///   views, the sample line groups (soft pointers, oldest first)
 /// texts: "AeccImpAlignment", "", "", name, five empty texts, three more
-///   per curve element, two more per anchor, one more per design speed
+///   per curve element, two more per anchor, one more per design speed,
+///   two more per station equation
 /// ```
 ///
 /// Written for WA03's and WA04's polylines and curves, the record equals
@@ -383,26 +387,41 @@ pub(super) struct OffsetRecord {
 /// stamp and the identifiers.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn write_alignment(doc: &mut CadDocument, common: EntityCommon, name: &str, elements: &[AlignmentElement], style: u64, feature: u64, edge: i32, keys: Option<&str>, profiles: &[u64], anchors: &[AlignmentAnchor], views: &[u64], groups: &[u64], offset: Option<&OffsetRecord>) -> Result<Handle, DxfError> {
-    write_alignment_of(doc, common, name, elements, style, feature, edge, keys, profiles, anchors, views, groups, offset, AlignmentKind::Centerline)
+    write_alignment_of(doc, common, name, elements, style, feature, edge, keys, profiles, anchors, views, groups, offset, AlignmentKind::Centerline, &Timing::default())
 }
 
-/// [`write_alignment`] of type `kind` (offset alignments take `offset`).
+/// A station equation as written: raw station, its anchor's identifier,
+/// station back, station ahead, increasing.
+pub(super) type Equation = (f64, [u8; 16], f64, f64, bool);
+
+/// An alignment's station equations and design speeds (station, speed,
+/// anchor identifier), in station order.
+#[derive(Clone, Debug, Default)]
+pub(super) struct Timing {
+    pub equations: Vec<Equation>,
+    pub speeds: Vec<(f64, f64, [u8; 16])>,
+}
+
+/// [`write_alignment`] of type `kind` (offset alignments take `offset`)
+/// with `timing`.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn write_alignment_of(doc: &mut CadDocument, common: EntityCommon, name: &str, elements: &[AlignmentElement], style: u64, feature: u64, edge: i32, keys: Option<&str>, profiles: &[u64], anchors: &[AlignmentAnchor], views: &[u64], groups: &[u64], offset: Option<&OffsetRecord>, kind: AlignmentKind) -> Result<Handle, DxfError> {
+pub(super) fn write_alignment_of(doc: &mut CadDocument, common: EntityCommon, name: &str, elements: &[AlignmentElement], style: u64, feature: u64, edge: i32, keys: Option<&str>, profiles: &[u64], anchors: &[AlignmentAnchor], views: &[u64], groups: &[u64], offset: Option<&OffsetRecord>, kind: AlignmentKind, timing: &Timing) -> Result<Handle, DxfError> {
     if !(1..256).contains(&edge) {
         return Err(invalid("the alignment's edge id is out of range"));
     }
     let curves = elements.iter().filter(|e| !matches!(e.kind, AlignmentElementKind::FixedLine { .. })).count();
     let first_id = elements.iter().map(|e| i32::from(e.id)).min().unwrap_or(1);
     let start = offset.map_or(0.0, |o| o.range.0);
-    let speeds: Vec<(f64, [u8; 16])> = offset.iter().map(|o| (o.range.0, o.own)).collect();
+    let mut speeds: Vec<(f64, f64, [u8; 16])> = offset.iter().map(|o| (o.range.0, 0.0, o.own)).collect();
+    speeds.extend(timing.speeds.iter().copied());
+    let equations = &timing.equations;
     let byte = |w: &mut DwgMergedWriter, v: u8| bits(w, &format!("{v:08b}"));
     let mut refs = vec![soft_pointer(0), hard_pointer(feature), hard_pointer(feature), soft_pointer(0), hard_pointer(style), hard_pointer(0)];
     refs.extend(offset.map(|o| soft_pointer(o.parent)));
     refs.extend(profiles.iter().map(|p| soft_pointer(*p)));
     refs.extend(views.iter().chain(groups).map(|v| soft_pointer(*v)));
     let mut strings = vec!["AeccImpAlignment".to_string(), String::new(), String::new(), name.to_string()];
-    strings.extend((0..5 + 3 * curves + 2 * anchors.len() + speeds.len()).map(|_| String::new()));
+    strings.extend((0..5 + 3 * curves + 2 * anchors.len() + speeds.len() + 2 * equations.len()).map(|_| String::new()));
     let line_flags = if offset.is_some() { 0 } else { 2 };
     put_entity(
         doc,
@@ -525,13 +544,23 @@ pub(super) fn write_alignment_of(doc: &mut CadDocument, common: EntityCommon, na
                     point(w, p);
                 }
             }
-            for v in [0, 1, speeds.len() as i32] {
-                w.write_bit_long(v);
+            w.write_bit_long(equations.len() as i32);
+            for (raw, id, back, ahead, increasing) in equations {
+                bits(w, "00");
+                w.write_byte(0xBE);
+                w.write_byte(0x04);
+                w.write_bit_double(*raw);
+                w.write_bytes(id);
+                w.write_bit_double(*back);
+                w.write_bit_double(*ahead);
+                w.write_bit(*increasing);
             }
-            for (station, id) in &speeds {
+            w.write_bit_long(1);
+            w.write_bit_long(speeds.len() as i32);
+            for (station, speed, id) in &speeds {
                 w.write_bit_long(1);
                 w.write_bit_double(*station);
-                w.write_bit_double(0.0);
+                w.write_bit_double(*speed);
                 w.write_bytes(id);
             }
             w.write_bit_double(100.0);
@@ -788,7 +817,7 @@ pub fn add_alignment_of_kind(doc: &mut CadDocument, name: &str, vertices: &[Vect
     let label = new_name(handle.value());
     write_companion(doc, companion, node, tag, handle, &path, &label, false)?;
     add_node_child(doc, node, tag as i32, companion, &label)?;
-    write_alignment_of(doc, common, name, &elements, style, companion.value(), 1, None, &[], &[], &[], &[], None, kind)
+    write_alignment_of(doc, common, name, &elements, style, companion.value(), 1, None, &[], &[], &[], &[], None, kind, &Timing::default())
 }
 
 /// A widening of an offset alignment: from the parent's station `start` it
@@ -1046,7 +1075,7 @@ pub fn add_offset_alignment_with_widenings(doc: &mut CadDocument, parent: Handle
     };
     let record = OffsetRecord { parent: parent.value(), offset, range: (s0, own[count]), regions, transitions, map, anchors, own: own_id };
     let groups = written.groups.clone();
-    rewrite_adding(doc, parent, written, &profiles, &profiles, None, &groups, &extra)?;
+    rewrite_adding(doc, parent, written, &profiles, &profiles, None, &groups, &extra, &Timing::default())?;
     let style = default_style(doc).ok_or_else(|| invalid("drawing has no alignment styles"))?;
     let companion = doc.allocate_handle();
     let label = new_name(handle.value());
@@ -1058,6 +1087,59 @@ pub fn add_offset_alignment_with_widenings(doc: &mut CadDocument, parent: Handle
 /// The solved length of an alignment's elements.
 pub(super) fn length_of(elements: &[AlignmentElement]) -> Option<f64> {
     Some(spans(elements)?.iter().map(|(_, _, p)| p.iter().map(piece_length).sum::<f64>()).sum())
+}
+
+/// Anchor kinds of a station equation and of a design speed.
+const EQUATION_ANCHOR: i32 = 3;
+const SPEED_ANCHOR: i32 = 2;
+
+/// Adds design speeds `(station, speed)` to `alignment`: each ties to an
+/// anchor at its station. The alignment must be one this crate writes.
+pub fn add_design_speeds(doc: &mut CadDocument, alignment: Handle, speeds: &[(f64, f64)]) -> Result<(), DxfError> {
+    if speeds.iter().any(|(s, v)| !s.is_finite() || !(v.is_finite() && *v >= 0.0)) {
+        return Err(invalid("design speeds need finite stations and speeds"));
+    }
+    add_timing(doc, alignment, speeds.iter().map(|(s, v)| (*s, Some(*v), None)).collect())
+}
+
+/// Adds station equations `(raw station, station ahead, increasing)` to
+/// `alignment`, after the ones it has: each ties to an anchor at its raw
+/// station and keeps the station back the equations before it give. The
+/// alignment must be one this crate writes.
+pub fn add_station_equations(doc: &mut CadDocument, alignment: Handle, equations: &[(f64, f64, bool)]) -> Result<(), DxfError> {
+    if equations.iter().any(|(r, a, _)| !r.is_finite() || !a.is_finite()) || equations.windows(2).any(|w| w[1].0 <= w[0].0) {
+        return Err(invalid("station equations need finite stations in increasing order"));
+    }
+    add_timing(doc, alignment, equations.iter().map(|(r, a, i)| (*r, None, Some((*a, *i)))).collect())
+}
+
+/// Writes `alignment` again with design speeds (`Some` speed) or station
+/// equations (`Some` (ahead, increasing)) at the given raw stations.
+fn add_timing(doc: &mut CadDocument, alignment: Handle, items: Vec<(f64, Option<f64>, Option<(f64, bool)>)>) -> Result<(), DxfError> {
+    let (written, profiles) = rewritable(doc, alignment, |h| super::profile::identifier(doc, h)).ok_or_else(|| invalid("the alignment is not one this crate writes"))?;
+    let seed = written.common.handle.value() ^ (written.anchors.len() as u64) << 20;
+    let mut extra = Vec::new();
+    let mut timing = Timing::default();
+    let mut equations: Vec<crate::classes::civil::StationEquation> = written.timing.equations.iter().map(|e| crate::classes::civil::StationEquation { raw: e.0, back: e.2, ahead: e.3, increasing: e.4 }).collect();
+    for (i, (station, speed, equation)) in items.into_iter().enumerate() {
+        let id = super::profile::new_identifier(seed ^ i as u64);
+        let kind = if equation.is_some() { EQUATION_ANCHOR } else { SPEED_ANCHOR };
+        extra.push(anchor_at(&written.elements, 0.0, kind, id, station).ok_or_else(|| invalid("a station is not on the alignment"))?);
+        match (speed, equation) {
+            (Some(v), _) => timing.speeds.push((station, v, id)),
+            (_, Some((ahead, increasing))) => {
+                if equations.last().is_some_and(|e| e.raw >= station) {
+                    return Err(invalid("station equations must follow the alignment's"));
+                }
+                let back = crate::classes::civil::display_station(&equations, station);
+                equations.push(crate::classes::civil::StationEquation { raw: station, back, ahead, increasing });
+                timing.equations.push((station, id, back, ahead, increasing));
+            }
+            _ => {}
+        }
+    }
+    let groups = written.groups.clone();
+    rewrite_adding(doc, alignment, written, &profiles, &profiles, None, &groups, &extra, &timing)
 }
 
 /// Anchor kind of a corridor region's end locked to the alignment's
@@ -1073,7 +1155,7 @@ pub(super) fn add_anchors(doc: &mut CadDocument, alignment: Handle, kind: i32, a
         .map(|(id, station)| anchor_at(&written.elements, 0.0, kind, *id, *station).ok_or_else(|| invalid("a station is not on the alignment")))
         .collect::<Result<Vec<_>, _>>()?;
     let groups = written.groups.clone();
-    rewrite_adding(doc, alignment, written, &profiles, &profiles, None, &groups, &extra)
+    rewrite_adding(doc, alignment, written, &profiles, &profiles, None, &groups, &extra, &Timing::default())
 }
 
 /// A profile of an alignment: its record and its identifier.
@@ -1095,6 +1177,9 @@ pub(super) struct Written {
     pub edge: i32,
     /// Its station anchors as stored.
     pub anchors: Vec<AlignmentAnchor>,
+    /// Its type, station equations and design speeds.
+    pub kind: AlignmentKind,
+    pub timing: Timing,
     /// The profile views of the alignment, oldest first.
     pub views: Vec<u64>,
     /// Its sample line groups, oldest first.
@@ -1139,7 +1224,18 @@ pub(super) fn rewritable(doc: &CadDocument, alignment: Handle, profile_id: impl 
     let high = b.bits_value(8)?;
     let edge = (i32::from(high & 0x3F) << 2) | i32::from(b.bits_value(2)?);
     let anchors = a.alignment_anchors()?;
-    let w = Written { common: x.common.clone(), name, elements, style: refs[4].0, feature: refs[1].0, keys, edge, anchors, views, groups };
+    let kind = match a.alignment_type()? {
+        crate::classes::civil::AlignmentType::Centerline => AlignmentKind::Centerline,
+        crate::classes::civil::AlignmentType::Miscellaneous => AlignmentKind::Utility,
+        crate::classes::civil::AlignmentType::Rail => AlignmentKind::Rail { gauge: a.alignment_track_gauge()? },
+        _ => return None,
+    };
+    let (equations, speeds) = a.alignment_timing_with_ids()?;
+    let timing = Timing {
+        equations: equations.iter().map(|(e, id)| (e.raw, *id, e.back, e.ahead, e.increasing)).collect(),
+        speeds: speeds.iter().map(|(s, id)| (s.station, s.speed, *id)).collect(),
+    };
+    let w = Written { common: x.common.clone(), name, elements, style: refs[4].0, feature: refs[1].0, keys, edge, anchors, kind, timing, views, groups };
     Some((w, profiles))
 }
 
@@ -1158,12 +1254,12 @@ pub(super) fn rewrite_with_views(doc: &mut CadDocument, alignment: Handle, w: Wr
 
 /// [`rewrite_with_views`], with the sample line groups `groups`.
 pub(super) fn rewrite_with(doc: &mut CadDocument, alignment: Handle, w: Written, before: &[ProfileRef], profiles: &[ProfileRef], views: Option<&[u64]>, groups: &[u64]) -> Result<(), DxfError> {
-    rewrite_adding(doc, alignment, w, before, profiles, views, groups, &[])
+    rewrite_adding(doc, alignment, w, before, profiles, views, groups, &[], &Timing::default())
 }
 
 /// [`rewrite_with`], adding the anchors `extra`.
 #[allow(clippy::too_many_arguments)]
-fn rewrite_adding(doc: &mut CadDocument, alignment: Handle, w: Written, before: &[ProfileRef], profiles: &[ProfileRef], views: Option<&[u64]>, groups: &[u64], extra: &[AlignmentAnchor]) -> Result<(), DxfError> {
+fn rewrite_adding(doc: &mut CadDocument, alignment: Handle, w: Written, before: &[ProfileRef], profiles: &[ProfileRef], views: Option<&[u64]>, groups: &[u64], extra: &[AlignmentAnchor], extra_timing: &Timing) -> Result<(), DxfError> {
     let bits_of = |doc: &CadDocument| -> Option<Vec<u8>> {
         match doc.get_entity(alignment)? {
             crate::entities::EntityType::Extended(x) => match &x.data {
@@ -1179,7 +1275,7 @@ fn rewrite_adding(doc: &mut CadDocument, alignment: Handle, w: Written, before: 
     let original = doc.get_entity(alignment).cloned().ok_or_else(|| invalid("alignment not found"))?;
     let old = bits_of(doc);
     let handles = |list: &[ProfileRef]| list.iter().map(|p| p.handle).collect::<Vec<_>>();
-    write_alignment(doc, w.common.clone(), &w.name, &w.elements, w.style, w.feature, w.edge, Some(&w.keys), &handles(before), &w.anchors, &w.views, &w.groups, None)?;
+    write_alignment_of(doc, w.common.clone(), &w.name, &w.elements, w.style, w.feature, w.edge, Some(&w.keys), &handles(before), &w.anchors, &w.views, &w.groups, None, w.kind, &w.timing)?;
     if bits_of(doc) != old {
         *doc.get_entity_mut(alignment).ok_or_else(|| invalid("alignment not found"))? = original;
         return Err(invalid("the alignment holds data this crate does not write"));
@@ -1192,7 +1288,11 @@ fn rewrite_adding(doc: &mut CadDocument, alignment: Handle, w: Written, before: 
         anchors.push(anchor_at(&w.elements, 0.0, PROFILE_ANCHOR, p.id, 0.0).ok_or_else(|| invalid("the alignment's start cannot be placed"))?);
     }
     anchors.sort_by(|a, b| a.id.cmp(&b.id));
-    write_alignment(doc, w.common, &w.name, &w.elements, w.style, w.feature, w.edge, Some(&w.keys), &handles(profiles), &anchors, views.unwrap_or(&w.views), groups, None)?;
+    // The speeds stay in station order.
+    let mut speeds = [&w.timing.speeds[..], &extra_timing.speeds[..]].concat();
+    speeds.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let timing = Timing { equations: [&w.timing.equations[..], &extra_timing.equations[..]].concat(), speeds };
+    write_alignment_of(doc, w.common, &w.name, &w.elements, w.style, w.feature, w.edge, Some(&w.keys), &handles(profiles), &anchors, views.unwrap_or(&w.views), groups, None, w.kind, &timing)?;
     Ok(())
 }
 
@@ -1444,5 +1544,31 @@ mod tests {
         };
         assert_eq!(read(u), (Some(AlignmentType::Miscellaneous), Some(0.0)));
         assert_eq!(read(r), (Some(AlignmentType::Rail), Some(1.435)));
+    }
+
+    #[test]
+    fn design_speeds_and_station_equations_read_back() {
+        use crate::classes::civil::{DesignSpeed, StationEquation};
+        let mut doc = drawing();
+        let v = [Vector2::new(0.0, 0.0), Vector2::new(200.0, 0.0)];
+        let a = add_alignment_of_kind(&mut doc, "A", &v, &[], AlignmentKind::Centerline, None).unwrap();
+        add_design_speeds(&mut doc, a, &[(60.0, 30.0), (0.0, 50.0)]).unwrap();
+        add_station_equations(&mut doc, a, &[(80.0, 1000.0, true)]).unwrap();
+        add_station_equations(&mut doc, a, &[(150.0, 2000.0, false)]).unwrap();
+        assert!(add_station_equations(&mut doc, a, &[(100.0, 0.0, true)]).is_err());
+        let path = std::env::temp_dir().join(format!("civil-alignment-timing-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let Some(crate::entities::EntityType::Extended(x)) = back.get_entity(a) else { panic!() };
+        let crate::entities::ExtendedEntityData::Arch(r) = &x.data else { panic!() };
+        assert_eq!(r.alignment_design_speeds(), [DesignSpeed { station: 0.0, speed: 50.0 }, DesignSpeed { station: 60.0, speed: 30.0 }]);
+        assert_eq!(r.alignment_station_equations(), [
+            StationEquation { raw: 80.0, back: 80.0, ahead: 1000.0, increasing: true },
+            StationEquation { raw: 150.0, back: 1070.0, ahead: 2000.0, increasing: false },
+        ]);
+        let mut kinds: Vec<i32> = r.alignment_anchors().unwrap().iter().map(|a| a.kind).collect();
+        kinds.sort();
+        assert_eq!(kinds, [2, 2, 3, 3]);
     }
 }

@@ -3022,6 +3022,33 @@ fn post_cache_at(
     read(pos)
 }
 
+/// [`equations_and_speeds`] with the identifiers of the anchors they tie
+/// to (see [`anchors`]).
+pub(super) fn equations_and_speeds_with_ids(data: &[u8], start: usize, end: usize, first: f64, last: f64) -> Option<(Vec<(StationEquation, [u8; 16])>, Vec<(DesignSpeed, [u8; 16])>)> {
+    let at = post_cache_starts(data, start, end)?.into_iter().find(|pos| post_cache_at(data, *pos, end, first, last, true).is_some())?;
+    let mut bits = Bits::new(data, at, end);
+    let k = bits.bit_long()?;
+    (0..=1000).contains(&k).then_some(())?;
+    let mut equations = Vec::new();
+    for _ in 0..k {
+        (bits.bits_value(2)? == 0 && bits.raw_short_byte()? == 0xBE && bits.raw_short_byte()? == 0x04).then_some(())?;
+        let raw = bits.bit_double()?;
+        let id = guid(&mut bits)?;
+        let (back, ahead) = (bits.bit_double()?, bits.bit_double()?);
+        equations.push((StationEquation { raw, back, ahead, increasing: bits.bit()? }, id));
+    }
+    (bits.bit_long()? == 1).then_some(())?;
+    let n = bits.bit_long()?;
+    (0..=1000).contains(&n).then_some(())?;
+    let mut speeds = Vec::new();
+    for _ in 0..n {
+        (bits.bit_long()? == 1).then_some(())?;
+        let (station, speed) = (bits.bit_double()?, bits.bit_double()?);
+        speeds.push((DesignSpeed { station, speed }, guid(&mut bits)?));
+    }
+    Some((equations, speeds))
+}
+
 /// What kind of alignment a record is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
