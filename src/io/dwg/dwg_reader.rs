@@ -1319,7 +1319,11 @@ impl<R: Read + Seek> DwgReader<R> {
         if self.decryption_key.is_some() {
             return Ok(());
         }
-        if !info.section_descriptors.iter().any(|s| s.name == "AcDb:Security") {
+        if !info
+            .section_descriptors
+            .iter()
+            .any(|s| s.name == "AcDb:Security")
+        {
             return Ok(());
         }
         let sec_data = self.get_section_buffer("AcDb:Security", info)?;
@@ -1664,7 +1668,11 @@ impl<R: Read + Seek> DwgReader<R> {
                 info.page_records.len(),
             );
         }
-        if info.section_descriptors.iter().any(|s| s.name == "AcDb:Security") {
+        if info
+            .section_descriptors
+            .iter()
+            .any(|s| s.name == "AcDb:Security")
+        {
             if let Err(e) = self.ensure_decryption_key(&info) {
                 if !self.options.failsafe {
                     return Err(e);
@@ -1771,6 +1779,41 @@ impl<R: Read + Seek> DwgReader<R> {
                     "template-decode-failed",
                     ReadStage::Header,
                     Some("AcDb:Template"),
+                    error.to_string(),
+                ),
+                Err(error) => return Err(error),
+            }
+        }
+        let empty_sparse_dependencies = info.is_ac18_format
+            && info.section_descriptors.iter().any(|s| {
+                s.name == "AcDb:FileDepList"
+                    && s.compressed_size == 8
+                    && s.page_count == 0
+                    && s.pages.is_empty()
+            });
+        if !empty_sparse_dependencies
+            && info
+                .section_descriptors
+                .iter()
+                .any(|s| s.name == "AcDb:FileDepList")
+        {
+            let dependencies =
+                self.get_section_buffer("AcDb:FileDepList", &info)
+                    .and_then(|bytes| {
+                        super::file_dependencies::read(
+                            &bytes,
+                            dxf_version,
+                            crate::io::dxf::code_page::encoding_from_dwg_code_page(info.code_page),
+                        )
+                    });
+            match dependencies {
+                Ok(files) => document.file_dependencies = files,
+                Err(error) if failsafe => report_read_error(
+                    &mut self.notifications,
+                    &mut diagnostics,
+                    "file-dependencies-decode-failed",
+                    ReadStage::Header,
+                    Some("AcDb:FileDepList"),
                     error.to_string(),
                 ),
                 Err(error) => return Err(error),
@@ -2410,7 +2453,12 @@ impl<R: Read + Seek> DwgReader<R> {
                 );
                 self.notifications
                     .notify(NotificationType::Warning, message.clone());
-                self.report_section_diagnostic("checksum-mismatch", "FileHeader", Some(crc_at), message);
+                self.report_section_diagnostic(
+                    "checksum-mismatch",
+                    "FileHeader",
+                    Some(crc_at),
+                    message,
+                );
             }
         }
 
@@ -2678,7 +2726,12 @@ impl<R: Read + Seek> DwgReader<R> {
             [section_type, decomp_size as i32, comp_size, compression],
             &compressed,
         );
-        self.check_page_checksum("AC18 section map", Some(page_offset as u64), checksum, computed);
+        self.check_page_checksum(
+            "AC18 section map",
+            Some(page_offset as u64),
+            checksum,
+            computed,
+        );
 
         // Decompress
         let decompressed = if compression == 2 {
@@ -4045,9 +4098,7 @@ mod dwg_reader_tests {
 
     /// A document with one solid, one region and one body (no anchor stored),
     /// each given `centred_sab()` through the record-table attach path.
-    fn attached_modelers(
-        defer: bool,
-    ) -> (crate::document::CadDocument, [crate::Handle; 3]) {
+    fn attached_modelers(defer: bool) -> (crate::document::CadDocument, [crate::Handle; 3]) {
         let sab = centred_sab();
         let mut document = crate::document::CadDocument::new();
         let solid = document
@@ -4124,7 +4175,10 @@ mod dwg_reader_tests {
         solid.point_of_reference = Vector3::new(1.0, 2.0, 3.0);
         let handle = document.add_entity(EntityType::Solid3D(solid)).unwrap();
         let blobs = vec![(handle.value(), centred_sab())];
-        assert_eq!(super::attach_acds_record_blobs(&mut document, blobs, true), 1);
+        assert_eq!(
+            super::attach_acds_record_blobs(&mut document, blobs, true),
+            1
+        );
         match document.get_entity(handle) {
             Some(EntityType::Solid3D(e)) => {
                 assert_eq!(e.point_of_reference, Vector3::new(1.0, 2.0, 3.0));
@@ -4745,11 +4799,19 @@ mod section_recovery_tests {
 /// Ported from CADCraft's DWG bridge (storytold/cadcraft #1051; MIT OR Apache-2.0).
 fn current_style_names(doc: &mut crate::document::CadDocument) {
     let h = doc.header.current_text_style_handle;
-    if let Some(s) = doc.text_styles.iter().find(|s| !h.is_null() && s.handle == h) {
+    if let Some(s) = doc
+        .text_styles
+        .iter()
+        .find(|s| !h.is_null() && s.handle == h)
+    {
         doc.header.current_text_style_name = s.name.clone();
     }
     let h = doc.header.current_dimstyle_handle;
-    if let Some(s) = doc.dim_styles.iter().find(|s| !h.is_null() && s.handle == h) {
+    if let Some(s) = doc
+        .dim_styles
+        .iter()
+        .find(|s| !h.is_null() && s.handle == h)
+    {
         doc.header.current_dimstyle_name = s.name.clone();
     }
 }
