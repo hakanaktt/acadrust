@@ -169,7 +169,7 @@ fn write_intersection(doc: &mut CadDocument, common: EntityCommon, name: &str, s
 
 /// The line pieces of an alignment with the station each starts at (NaN
 /// after a spiral: its length is not solved exactly).
-fn lines(doc: &CadDocument, alignment: Handle) -> Option<Vec<(f64, Vector2, Vector2)>> {
+pub(super) fn lines(doc: &CadDocument, alignment: Handle) -> Option<Vec<(f64, Vector2, Vector2)>> {
     let a = arch(doc, alignment).filter(|a| a.dxf_name == "AECC_ALIGNMENT")?;
     let mut station = a.alignment_start_station()?;
     let mut out = Vec::new();

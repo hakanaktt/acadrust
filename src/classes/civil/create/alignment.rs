@@ -411,6 +411,141 @@ pub(super) fn write_alignment(doc: &mut CadDocument, common: EntityCommon, name:
 /// station back, station ahead, increasing.
 pub(super) type Equation = (f64, [u8; 16], f64, f64, bool);
 
+/// Adds a curb return (a connected alignment of type 3) `name` from
+/// `incoming` to `outgoing`, two siteless alignments this crate writes:
+/// an arc of `radius` tangent to the line `offset_in` from the incoming
+/// alignment and the line `offset_out` from the outgoing one (negative to
+/// the left of each), with a straight overlap of `overlap_in` before it
+/// and `overlap_out` after it along those lines. It runs along the
+/// incoming alignment's stationing into the outgoing one along its
+/// stationing (`forward`) or against it, turning left or right as the
+/// lines meet; the lines must meet on line elements of both alignments
+/// with the overlaps on them. The application keeps it (follows its
+/// roads); the roads get no anchors.
+///
+/// The record is an alignment of a line, a free arc fitted between the
+/// lines and a line, followed by the connection block: for each side the
+/// signed offset toward the turn's inside, the overlap and a region list
+/// like an offset alignment's (the side's line over its stations on the
+/// road, kept by the overlap less a thousandth of it at each end, two
+/// empty regions, the line again); the arc's start and end stations and
+/// radius; the point half a unit from where the roads meet into the
+/// corner between the arms it joins; and the stations on each road where
+/// the two lines meet (CR01 to CR05, CR07 to CR10).
+#[allow(clippy::too_many_arguments)]
+pub fn add_curb_return(doc: &mut CadDocument, name: &str, incoming: Handle, offset_in: f64, outgoing: Handle, offset_out: f64, forward: bool, radius: f64, overlaps: (f64, f64), layer: Option<&str>) -> Result<Handle, DxfError> {
+    let positive = |v: f64| v.is_finite() && v > 0.0;
+    if name.is_empty() || !positive(radius) || !positive(overlaps.0) || !positive(overlaps.1) || !offset_in.is_finite() || !offset_out.is_finite() || incoming == outgoing {
+        return Err(invalid("a curb return needs a name, two roads, finite offsets and a positive radius and overlaps"));
+    }
+    let lines = |h| super::intersection::lines(doc, h).ok_or_else(|| invalid("a road is not an alignment this crate solves"));
+    let (la, lb) = (lines(incoming)?, lines(outgoing)?);
+    let unit = |v: Vector2| v * (1.0 / v.length());
+    let left = |u: Vector2| Vector2::new(-u.y, u.x);
+    let cross = |a: Vector2, b: Vector2| a.x * b.y - a.y * b.x;
+    // The point where two lines (point, direction) meet, as the distance
+    // along each.
+    let meet = |p: Vector2, d: Vector2, q: Vector2, e: Vector2| -> Option<(f64, f64)> {
+        let den = cross(d, e);
+        (den.abs() > 1e-12).then(|| (cross(q - p, e) / den, cross(q - p, d) / den))
+    };
+    let mut found = None;
+    for &(sa, pa, qa) in &la {
+        for &(sb, pb, qb) in &lb {
+            let (d1, d2) = (unit(qa - pa), unit(qb - pb));
+            let travel = if forward { d2 } else { d2 * -1.0 };
+            let (o1, o2) = (pa + left(d1) * -offset_in, pb + left(d2) * -offset_out);
+            let Some((t1, t2)) = meet(o1, d1, o2, d2) else { continue };
+            let x = o1 + d1 * t1;
+            let turn = cross(d1, travel);
+            let sweep = travel.dot(&d1).clamp(-1.0, 1.0).acos();
+            let tangent = radius * (sweep / 2.0).tan();
+            let (len_a, len_b) = (pa.distance(&qa), pb.distance(&qb));
+            // The overlaps lie on the line elements.
+            let along_in = t1 - tangent - overlaps.0;
+            let along_out = t2 + if forward { tangent + overlaps.1 } else { -(tangent + overlaps.1) };
+            let inside = |t: f64, len: f64| t >= -1e-9 && t <= len + 1e-9;
+            if sa.is_nan() || sb.is_nan() || turn.abs() < 1e-12 || !inside(along_in, len_a) || !inside(t1 - tangent, len_a) || !inside(t1, len_a) || !inside(along_out, len_b) || !inside(t2 + if forward { tangent } else { -tangent }, len_b) {
+                continue;
+            }
+            found = Some((sa, pa, d1, sb, pb, d2, travel, x, t1, turn, sweep, tangent));
+            break;
+        }
+        if found.is_some() {
+            break;
+        }
+    }
+    let (sa, pa, d1, sb, pb, d2, travel, x, t1, turn, sweep, tangent) = found.ok_or_else(|| invalid("the offset lines do not meet on line elements of both roads with room for the arc and the overlaps"))?;
+    let right = turn < 0.0;
+    let turn_sign = if right { -1.0 } else { 1.0 };
+    let dir = if forward { 1.0 } else { -1.0 };
+    let t_in = x - d1 * tangent;
+    let t_out = x + travel * tangent;
+    let start = t_in - d1 * overlaps.0;
+    let end = t_out + travel * overlaps.1;
+    let arc_end = overlaps.0 + radius * sweep;
+    let total = arc_end + overlaps.1;
+    // The roads' stations: the incoming line's from its start to the
+    // tangent point, the outgoing one's in station order.
+    let (in_end, in_start) = (sa + t1 - tangent, sa + t1 - tangent - overlaps.0);
+    let s_out = |p: Vector2| sb + (p - pb).dot(&d2);
+    let (out_a, out_b) = (s_out(t_out), s_out(end));
+    let (out_start, out_end) = (out_a.min(out_b), out_a.max(out_b));
+    let eps_in = (in_start + overlaps.0 / 1000.0) - in_start;
+    let eps_out = (out_start + overlaps.1 / 1000.0) - out_start;
+    let region_in = [offset_in, in_start, in_end, eps_in, overlaps.0 - eps_in];
+    let region_out = if forward { [offset_out, out_start, out_end, arc_end + eps_out, total - eps_out] } else { [offset_out, out_start, out_end, total - eps_out, arc_end + eps_out] };
+    // Where the roads themselves meet, and the point half a unit into the
+    // corner between the incoming road's arm behind and the outgoing arm.
+    let (u1, _) = meet(pa, d1, pb, d2).ok_or_else(|| invalid("the roads are parallel"))?;
+    let roads_meet = pa + d1 * u1;
+    let pick = roads_meet + d1 * -0.5 + travel * 0.5;
+    let mut values = [0.0; 31];
+    values[0] = -offset_in * turn_sign;
+    values[1] = overlaps.0;
+    values[2..7].copy_from_slice(&region_in);
+    values[7..12].copy_from_slice(&region_in);
+    values[12] = -offset_out * turn_sign * dir;
+    values[13] = overlaps.1;
+    values[14..19].copy_from_slice(&region_out);
+    values[19..24].copy_from_slice(&region_out);
+    values[24] = overlaps.0;
+    values[25] = arc_end;
+    values[26] = radius;
+    values[27] = pick.x;
+    values[28] = pick.y;
+    values[29] = sa + t1;
+    values[30] = s_out(x);
+    // A value of 0 or 1 would change the block's length.
+    if values.iter().any(|v| *v == 0.0 || *v == 1.0) {
+        return Err(invalid("a curb return value of 0 or 1 is not written"));
+    }
+    let connected = Connected { values, right, forward, outside_in: values[0] < 0.0, roads: [incoming.value(), outgoing.value()] };
+    let elements = vec![
+        AlignmentElement { id: 1, previous: 0, next: 2, kind: AlignmentElementKind::FixedLine { start, end: t_in } },
+        AlignmentElement { id: 2, previous: 1, next: 3, kind: AlignmentElementKind::FreeArc { radius } },
+        AlignmentElement { id: 3, previous: 2, next: 0, kind: AlignmentElementKind::FixedLine { start: t_out, end } },
+    ];
+    let path: Vec<PathPoint> = vec![(start, None), (t_in, Some(turn_sign * (sweep / 4.0).tan())), (t_out, None), (end, None)];
+    let layer = layer.unwrap_or("0");
+    let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
+    if default_style(doc).is_none() || companion_node(doc).is_none() {
+        ensure_alignment_tree(doc)?;
+    }
+    let style = default_style(doc).ok_or_else(|| invalid("drawing has no alignment styles"))?;
+    let node = companion_node(doc).ok_or_else(|| invalid("drawing has no node for siteless alignments"))?;
+    let used = read_node(doc, node).ok_or_else(|| invalid("feature style node cannot be read"))?;
+    let tag = (FIRST_COMPANION_TAG..).find(|t| used.children.iter().all(|c| c.0 as u32 != *t)).unwrap_or(FIRST_COMPANION_TAG);
+    let common = EntityCommon { handle: doc.allocate_handle(), owner_handle: doc.header.model_space_block_handle, layer: layer.into(), layer_handle: Some(layer_handle), ..EntityCommon::default() };
+    let companion = doc.allocate_handle();
+    let handle = common.handle;
+    let label = new_name(handle.value());
+    write_companion(doc, companion, node, tag, handle, &path, &label, false)?;
+    add_node_child(doc, node, tag as i32, companion, &label)?;
+    let timing = Timing { connected: Some(connected), ..Timing::default() };
+    write_alignment_of(doc, common, name, &elements, style, companion.value(), 1, None, &[], &[], &[], &[], None, AlignmentKind::Centerline, &timing)
+}
+
 /// An alignment's station equations and design speeds (station, speed,
 /// anchor identifier), in station order.
 #[derive(Clone, Debug, Default)]
@@ -419,6 +554,90 @@ pub(super) struct Timing {
     pub speeds: Vec<(f64, f64, [u8; 16])>,
     /// Its superelevation curves (none: no superelevation block).
     pub superelevation: Vec<SuperelevationCurveData>,
+    /// A curb return's connection block (type 3).
+    pub connected: Option<Connected>,
+}
+
+/// A curb return's connection block (see [`add_curb_return`]): its 31
+/// values and flags, and the incoming and outgoing alignments.
+#[derive(Clone, Debug)]
+pub(super) struct Connected {
+    pub values: [f64; 31],
+    /// It turns right (clockwise).
+    pub right: bool,
+    /// It runs along the outgoing alignment's stationing.
+    pub forward: bool,
+    /// Its first value is negative: the incoming offset lies outside the
+    /// turn.
+    pub outside_in: bool,
+    pub roads: [u64; 2],
+}
+
+/// The constant runs around the connection block's 31 values (the
+/// samples' bits; CR01 to CR10 equal apart from the values and three
+/// flags). The last run ends with `BL 0, BL 3`.
+const CONNECTED_RUNS: [(usize, &str); 32] = [
+    (51, "4050140680a02"),
+    (1, "8"),
+    (6, "50"),
+    (0, ""),
+    (0, ""),
+    (0, ""),
+    (0, ""),
+    (138, "40501406aa40eaa406aaa40eaa406aaa40c"),
+    (0, ""),
+    (0, ""),
+    (0, ""),
+    (0, ""),
+    (73, "40501406aa40ca02810"),
+    (1, "8"),
+    (6, "50"),
+    (0, ""),
+    (0, ""),
+    (0, ""),
+    (0, ""),
+    (138, "4050340eaa40eaa406aaa40eaa406aaa40c"),
+    (0, ""),
+    (0, ""),
+    (0, ""),
+    (0, ""),
+    (79, "4050340eaa40ea048154"),
+    (0, ""),
+    (34, "406aaa40c"),
+    (1, "0"),
+    (0, ""),
+    (12, "902"),
+    (0, ""),
+    (12, "903"),
+];
+
+/// The flags of the connection block: (run, bit) of the right turn, of
+/// the forward run along the outgoing alignment, of the incoming offset
+/// outside the turn and of the backward run (CR07, CR09).
+const CONNECTED_RIGHT: (usize, usize) = (12, 51);
+const CONNECTED_FORWARD: (usize, usize) = (24, 50);
+const CONNECTED_OUTSIDE_IN: (usize, usize) = (24, 51);
+const CONNECTED_BACKWARD: (usize, usize) = (29, 11);
+
+/// Writes the connection block: the runs with the values between them,
+/// each a `BD`, and the flags set in their runs.
+fn write_connected(w: &mut DwgMergedWriter, c: &Connected) {
+    let flags = [(CONNECTED_RIGHT, c.right), (CONNECTED_FORWARD, c.forward), (CONNECTED_OUTSIDE_IN, c.outside_in), (CONNECTED_BACKWARD, !c.forward)];
+    for (i, (len, hex)) in CONNECTED_RUNS.iter().enumerate() {
+        for bit in 0..*len {
+            let digit = hex.as_bytes()[bit / 4] as char;
+            let mut v = digit.to_digit(16).unwrap_or(0) >> (3 - bit % 4) & 1 == 1;
+            for ((run, at), on) in flags {
+                if run == i && at == bit {
+                    v = on;
+                }
+            }
+            w.write_bit(v);
+        }
+        if let Some(v) = c.values.get(i) {
+            w.write_bit_double(*v);
+        }
+    }
 }
 
 /// The class key of the superelevation type (2 superelevation).
@@ -660,6 +879,11 @@ pub(super) fn write_alignment_of(doc: &mut CadDocument, common: EntityCommon, na
     // (see `add_superelevation`).
     refs.extend(superelevation_refs(&timing.superelevation, common.handle.value()));
     refs.extend(offset.map(|o| soft_pointer(o.parent)));
+    // A curb return names its roads last: in, in, out, out, in, out.
+    if let Some(c) = &timing.connected {
+        let [a, b] = c.roads;
+        refs.extend([a, a, b, b, a, b].map(soft_pointer));
+    }
     let mut strings = vec!["AeccImpAlignment".to_string(), String::new(), String::new(), name.to_string()];
     strings.extend((0..5 + 3 * curves + 2 * anchors.len() + speeds.len() + 2 * equations.len()).map(|_| String::new()));
     strings.extend(superelevation_strings(&timing.superelevation));
@@ -813,6 +1037,12 @@ pub(super) fn write_alignment_of(doc: &mut CadDocument, common: EntityCommon, na
             }
             w.write_bit_long(0);
             match offset {
+                None if timing.connected.is_some() => {
+                    w.write_bit_long(3);
+                    if let Some(c) = &timing.connected {
+                        write_connected(w, c);
+                    }
+                }
                 None => {
                     let (code, extra): (i32, &[i32]) = match kind {
                         AlignmentKind::Centerline => (1, &[]),
@@ -1541,6 +1771,7 @@ pub(super) fn rewritable(doc: &CadDocument, alignment: Handle, profile_id: impl 
         // An offset alignment's own speed is written from its block.
         speeds: speeds.iter().filter(|(_, id)| offset.as_ref().is_none_or(|o| *id != o.own)).map(|(s, id)| (s.station, s.speed, *id)).collect(),
         superelevation,
+        connected: None,
     };
     let w = Written { common: x.common.clone(), name, elements, style: refs[4].0, feature: refs[1].0, keys, keys_superelevation, edge, anchors, kind, timing, views, groups, offset };
     Some((w, profiles))
@@ -1656,7 +1887,7 @@ fn rewrite_adding(doc: &mut CadDocument, alignment: Handle, w: Written, before: 
     // New superelevation curves replace the alignment's.
     let superelevation = if extra_timing.superelevation.is_empty() { w.timing.superelevation.clone() } else { extra_timing.superelevation.clone() };
     let keys = if superelevation.is_empty() { &w.keys } else { &w.keys_superelevation };
-    let timing = Timing { equations: [&w.timing.equations[..], &extra_timing.equations[..]].concat(), speeds, superelevation };
+    let timing = Timing { equations: [&w.timing.equations[..], &extra_timing.equations[..]].concat(), speeds, superelevation, connected: None };
     write_alignment_of(doc, w.common.clone(), &w.name, &w.elements, w.style, w.feature, w.edge, Some(keys), &handles(profiles), &anchors, views.unwrap_or(&w.views), groups, w.offset.as_ref(), w.kind, &timing)?;
     Ok(())
 }
@@ -1966,5 +2197,40 @@ mod tests {
         assert_eq!((s.kind, s.ending, s.slopes[3]), (4, true, -0.06));
         assert!(s.offset < 0.0 && curves[1].stations[0].offset > 0.0);
         assert_eq!(r.alignment_design_speeds().len(), 1);
+    }
+
+    #[test]
+    fn curb_returns_join_their_roads() {
+        let mut doc = drawing();
+        let v = Vector2::new;
+        let a = add_alignment(&mut doc, "AL1", &[v(0.0, 0.0), v(200.0, 0.0)], None).unwrap();
+        let b = add_alignment(&mut doc, "AL2", &[v(100.0, -100.0), v(100.0, 100.0)], None).unwrap();
+        let c = add_alignment(&mut doc, "AL3", &[v(0.0, 50.0), v(200.0, 50.0)], None).unwrap();
+        assert!(add_curb_return(&mut doc, "X", a, -10.0, c, -10.0, true, 10.0, (5.0, 5.0), None).is_err());
+        // A left turn from AL1 into AL2, then a right turn into AL2 run
+        // against its stationing.
+        let left = add_curb_return(&mut doc, "CR1", a, -10.0, b, -10.0, true, 10.0, (5.0, 5.0), None).unwrap();
+        let right = add_curb_return(&mut doc, "CR2", a, 10.0, b, 10.0, false, 10.0, (5.0, 5.0), None).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-curb-returns-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let read = |h: Handle| match back.get_entity(h) {
+            Some(crate::entities::EntityType::Extended(x)) => match &x.data {
+                crate::entities::ExtendedEntityData::Arch(r) => r.clone(),
+                _ => panic!(),
+            },
+            _ => panic!(),
+        };
+        for (h, start, end) in [(left, v(75.0, 10.0), v(90.0, 25.0)), (right, v(95.0, -10.0), v(110.0, -25.0))] {
+            let r = read(h);
+            assert_eq!(r.alignment_type(), Some(crate::classes::civil::AlignmentType::CurbReturn));
+            assert_eq!(r.alignment_connected_inputs(), Some([a.value(), b.value()]));
+            let e = r.alignment_elements().unwrap();
+            assert!(matches!(e[1].kind, AlignmentElementKind::FreeArc { radius } if radius == 10.0));
+            let AlignmentElementKind::FixedLine { start: s, .. } = e[0].kind else { panic!() };
+            let AlignmentElementKind::FixedLine { end: t, .. } = e[2].kind else { panic!() };
+            assert!(s.distance(&start) < 1e-9 && t.distance(&end) < 1e-9, "{s:?} {t:?}");
+        }
     }
 }

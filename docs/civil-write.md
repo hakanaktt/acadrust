@@ -601,6 +601,50 @@ AT13). The reader returns the gauge (`alignment_track_gauge`) and reads
 type 5 as `AlignmentType::Rail`. Written (E-AT1), the three open, audit
 clean and list as Centerline, Utility and Rail with the given track width.
 
+### Curb returns
+
+`add_curb_return(doc, name, incoming, offset_in, outgoing, offset_out,
+forward, radius, (overlap_in, overlap_out), layer)` writes a connected
+alignment (type 3) of the arc curve group between two siteless roads: a
+line of `overlap_in` along the incoming road's offset line (negative to
+its left), a free arc of `radius` fitted between the lines, and a line of
+`overlap_out` along the outgoing road's offset line (negative to the left
+of its stationing), run along the outgoing road's stationing (`forward`)
+or against it. The parents get no anchors. The record is an alignment of
+those three elements whose type block is `BL 3` and the connection block:
+
+```text
+side (incoming, then outgoing): [B backward (outgoing only), B ...],
+  BD signed offset toward the turn's inside (-offset x turn x direction),
+  B 1, BD overlap, 6 bits 010100,
+  4 regions like an offset alignment's: { BD offset, BD road start,
+  BD road end, BD own start, BD own end, BL 1, BL first, BL last,
+  5 x BL 0, BL 3 }: the line (its road stations, its own stations kept a
+  thousandth of the overlap in from each end, reversed for a backward
+  run), two empty regions (zeros, elements 0), the line again
+BD overlap in, BD arc end station, BD radius,
+2 x BD: the point half a unit from where the roads meet into the corner
+  between the incoming road's arm behind and the outgoing arm,
+BD the incoming road's and BD the outgoing road's station where the
+  offset lines meet, BL 0, BL 2 (forward) or 3 (backward), BL 0, BL 3
+```
+
+The runs between the 31 values are constant (written as the samples'
+bits) apart from three flags: right turn, forward, incoming offset outside
+the turn. References: the alignment's six, then in, in, out, out, in,
+out (soft). Samples CR01 to CR05 (left turns: radius, overlaps, offsets
+varied; the stations given to the command are not stored), CR07 (a right
+turn into AL2 against its stationing), CR08, CR09 (a left turn into a
+road against its stationing with the incoming offset outside the turn)
+and CR10 (from a road heading south): written for their roads the
+records equal the samples' apart from the geometry stamp and the last
+bits of four values; E-CR01, E-CR07, E-CR09 and E-CR10 open with AUDIT
+0 errors and the API lists the three elements where they were written
+and the connection parameters (the application reports the outgoing
+offset relative to the direction travelled). A value of exactly 0 or 1
+would shorten the block and is refused; curve groups other than an arc
+are not written.
+
 ### Station anchors
 
 Objects that tie to a station of an alignment do so through an anchor in
@@ -2820,7 +2864,8 @@ Corridors are listed in §3i-a.
 | alignments | design speeds, station equations (increasing, decreasing) | yes | yes | §3a (design speeds and station equations) |
 | alignments | widenings with linear transitions (on lines; of length 0 anywhere) | yes | yes | §3a (offset alignments) |
 | alignments | types: centerline, utility, rail (track gauge) | yes | yes | §3a (alignment types) |
-| alignments | widening transitions on arcs or curved (kinds 2, 4, 5), offsets of spirals, curb returns (connected alignments), rail cant | yes (offset parameters and regions, connected alignments, type) | no | not written yet |
+| alignments | curb returns (connected alignments) of one arc between two roads' offset lines, turning left or right, into the outgoing road along or against its stationing | yes (type, roads) | yes | §3a (curb returns) |
+| alignments | curb returns of the other curve groups (three-centred, spiral-curve-spiral and the like), widening transitions on arcs or curved (kinds 2, 4, 5), offsets of spirals, rail cant | yes (offset parameters and regions, connected alignments, type) | no | only arc curb returns sampled; the other blocks not decoded |
 | alignments | lone spirals, other constraints (fixed/floating curves, curves through points) | yes (elements) | no | other element kinds not written |
 | alignments | superelevation: curves over curve elements, critical stations (begin/end full super, level crown, low shoulder match, reverse crown) with cross slopes | yes | yes | §3a (superelevation) |
 | alignments | superelevation: manual stations, normal crown and shoulder stations, curve settings, lanes-only blocks, cant | yes (block walked; plain form read) | no | manual stations add a 582-bit settings block; normal crown/shoulder stations were refused by the programming interface |
