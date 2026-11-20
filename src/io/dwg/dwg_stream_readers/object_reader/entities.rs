@@ -7129,4 +7129,92 @@ mod tests {
             assert_eq!(value.vertical_cell_margin, Some(0.0432), "{dxf:?}");
         }
     }
+
+    /// AutoCAD stores more than 0/1 in the AcDb*TableData flag slots: the
+    /// cell has_linked_data gate reads `& 1` because real files carry 3.
+    /// A TABLE whose break-data presence long is 3 must still decode the
+    /// block; reading the gate as == 1 skips it and pushes every later
+    /// field out of place. The wire is built from raw primitives — the
+    /// layout the writer emits, but with 3 in the gate — so it does not
+    /// depend on `ObjectWriter`.
+    #[test]
+    fn table_break_data_present_for_any_nonzero_gate() {
+        use crate::io::dwg::dwg_reference_type::DwgReferenceType::{HardPointer, SoftPointer};
+        const SENTINEL: i32 = 0x0123_4567;
+        let break_position = Vector3::new(9.0, 8.0, 7.0);
+        let range_position = Vector3::new(4.0, 5.0, 6.0);
+        for (dwg, dxf) in [
+            (DwgVersion::AC24, DxfVersion::AC1024),
+            (DwgVersion::AC24, DxfVersion::AC1032),
+        ] {
+            let mut reader = make_reader(dwg, dxf, |w| {
+                // Record size field, then the entity data.
+                w.save_position_for_size();
+                // INSERT part: insertion point, scale shortcut, rotation,
+                // normal, no attributes, block record handle.
+                w.write_3bit_double(Vector3::new(1.0, 2.0, 3.0));
+                w.write_2bits(3); // x/y/z scale all 1.0
+                w.write_bit_double(0.0); // rotation
+                w.write_3bit_double(Vector3::UNIT_Z);
+                w.write_bit(false); // has attributes
+                w.write_handle(HardPointer, 0x40);
+
+                // R2010+ TABLE preamble.
+                w.write_byte(0); // unknown_byte
+                w.write_handle(SoftPointer, 0); // unknown_handle
+                w.write_bit_long(0); // unknown_long1
+                if dwg.r2013_plus(dxf) {
+                    w.write_bit_long(0); // unknown_long2
+                } else {
+                    w.write_bit(true); // R2010 stores a bit instead
+                }
+                // Table content: empty name and description, no columns,
+                // rows or field handles, no base style, no merged ranges.
+                w.write_variable_text("");
+                w.write_variable_text("");
+                w.write_bit_long(0); // columns
+                w.write_bit_long(0); // rows
+                w.write_bit_long(0); // field handles
+                w.write_bit_long(0); // base style type
+                w.write_bit_short(0); // base style data flags: absent
+                w.write_bit_long(0); // merged ranges
+                w.write_handle(HardPointer, 0x30); // table style
+
+                w.write_bit_short(0); // unknown_short
+                w.write_3bit_double(Vector3::UNIT_X); // horizontal_direction
+
+                w.write_bit_long(3); // break-data gate: truthy, not 1
+                w.write_bit_long(5); // break_options
+                w.write_bit_long(1); // break_flow_direction
+                w.write_bit_double(12.5); // break_spacing
+                w.write_bit_long(0);
+                w.write_bit_long(0);
+                w.write_bit_long(1); // one TableBreakData
+                w.write_3bit_double(break_position);
+                w.write_bit_double(2.5); // height
+                w.write_bit_long(4); // flags
+                w.write_bit_long(1); // one TableBreakRange
+                w.write_3bit_double(range_position);
+                w.write_bit_long(2); // start_row
+                w.write_bit_long(6); // end_row
+                w.write_bit_long(SENTINEL);
+            });
+            let size = reader.read_raw_long();
+            reader.setup_text_and_handle(size);
+            let table = read_table(&mut reader, dwg, dxf);
+            assert_eq!(table.break_options, 5, "{dxf:?}");
+            assert_eq!(table.break_flow_direction, 1, "{dxf:?}");
+            assert_eq!(table.break_spacing, 12.5, "{dxf:?}");
+            assert_eq!(table.break_data.len(), 1, "{dxf:?}");
+            assert_eq!(table.break_data[0].position, break_position, "{dxf:?}");
+            assert_eq!(table.break_data[0].height, 2.5, "{dxf:?}");
+            assert_eq!(table.break_data[0].flags, 4, "{dxf:?}");
+            assert_eq!(table.break_ranges.len(), 1, "{dxf:?}");
+            assert_eq!(table.break_ranges[0].position, range_position, "{dxf:?}");
+            assert_eq!(table.break_ranges[0].start_row, 2, "{dxf:?}");
+            assert_eq!(table.break_ranges[0].end_row, 6, "{dxf:?}");
+            assert_eq!(reader.read_bit_long(), SENTINEL, "{dxf:?}");
+            reader.check_error().expect("table break data");
+        }
+    }
 }
