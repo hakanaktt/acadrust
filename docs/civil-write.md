@@ -1064,9 +1064,15 @@ triangulation the definitions before it built (the later ones raise the
 surface, not the snapshot). Removing the snapshot removes the definition
 and the copy but leaves the byte that counts definitions at its highest
 (TS05: 5 for 4 definitions), so the reader takes the count from the ten
-bits. After the application rebuilds a snapshot (TS03, TS04) the field
-written `BS 0x800C` holds 0x100A and seven more bits follow its `B`; the
-definitions of such a surface are not read (its triangulation is).
+bits. After the application rebuilds a snapshot (TS03, TS04; TO03 with a
+breakline, TO04 after removing it, TO05 rebuilt again) the first byte of
+the field written `BS 0x800C` is 0x0A instead of 0x0C and one more byte
+follows it: 8 x the snapshot definition's index (0x10 for the third, 0x08
+for the second; TO04, read before the surface is rebuilt, still holds
+0x18), then the byte 0x80 + breakline count / 2 and the bit as before.
+The reader reads both forms. A surface out of date (TO01: its breakline
+moved) keeps the 0x0C form. The writer writes the form of a snapshot
+just taken; the application rebuilds it from the same triangulation.
 
 `add_tin_surface_with` writes a snapshot where the definitions hold one
 (`TinOperation::Kind40(0)`, at most one), keeping the triangulation the
@@ -3371,7 +3377,8 @@ Corridors are listed in §3i-a.
 | TIN surfaces | point groups, breaklines (standard, proximity, non-destructive; from objects or held points, mid-ordinate, supplementing, weeding), contours, boundaries (outer, hide, show, data clip; destructive or not), add/delete/move vertex, vertex elevation, swap edge, add/delete line, raise, drawing objects, automatic rebuild | yes (every field by kind, §3c) | yes, with the triangulation the definitions build (§3c) | 62 of 67 sample surfaces built identically; non-destructive lines through vertices, far point clusters and a non-convex deleted vertex's hole differ (§3c) |
 | TIN surfaces | pasted surfaces, point files, imported files, corridor surfaces | yes | the definition (no geometry from the source) | the application adds the source's geometry when it rebuilds |
 | TIN surfaces | snapshots | yes | yes | §3c (snapshots) |
-| TIN surfaces | definitions of a surface whose snapshot was rebuilt; transform and polygon definitions of older drawings, DEM files, surfaces referenced from other drawings | partly (triangulation; older kinds walked) | no | the rebuilt snapshot's head field not decoded (TS03); the others not sampled; referenced surfaces have no definitions list |
+| TIN surfaces | definitions of a surface whose snapshot was rebuilt | yes | as a snapshot just taken | §3c (snapshots; TS03, TO03 to TO05) |
+| TIN surfaces | transform and polygon definitions of older drawings, DEM files, surfaces referenced from other drawings | partly (older kinds walked) | no | not sampled; referenced surfaces have no definitions list |
 | alignments | fixed lines, free arcs, spiral-curve-spirals, start station, siteless and on a site | yes | yes | §3a, §3g |
 | alignments | offset alignments of lines and arcs, on either side, over the whole parent or a station range | yes | yes | §3a (station anchors, offset alignments) |
 | alignments | station anchors (profiles, offset ranges, own design speed, corridor geometry locks, design speeds, station equations) | yes | yes | §3a |

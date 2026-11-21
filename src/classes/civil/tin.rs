@@ -236,12 +236,14 @@ pub(super) const AUTO_REBUILD: i32 = 0x0100_0000;
 /// ```text
 /// head: 10 bits 8 + 32 x count, RC 2 + 8 x count, RC (4 with a boundary,
 ///   else 2), RC (0x81 with contours, else 0x80);
-/// 2 bits, BL 0, BS flags, B,
+/// 2 bits, BL 0, 2 bits 00, RC 0x0C (0x0A and a byte, 8 x the snapshot's
+///   index, once the application rebuilt the snapshot: TS03, TO03 to TO05),
+///   RC 0x80 + breakline count / 2, B,
 /// count x { BL kind, BL flags, BL 16, GUID, BL named, data (`read_operation`) },
 /// BL 0, BL options (0x01000000: rebuild automatically), 2 bits
 /// ```
-// ponytail: the head's other bits, the two bits after it, the BS and the
-// bit are skipped here; the writer stores them as the samples show them.
+// ponytail: the head's other bits, the two bits after it, the 0x0C field
+// and the bit are skipped here; the writer stores them as the samples show them.
 pub(super) fn read_definitions(bits: &mut Bits) -> Option<Definitions> {
     let first = usize::from(bits.bits_value(2)?) << 8 | usize::from(bits.bits_value(8)?);
     let count = bits.raw_short_byte()?;
@@ -254,8 +256,11 @@ pub(super) fn read_definitions(bits: &mut Bits) -> Option<Definitions> {
     }
     bits.skip(2)?;
     bits.bit_long()?;
-    bits.bit_short()?;
-    bits.bit()?;
+    bits.skip(2)?;
+    if bits.bits_value(8)? == 0x0A {
+        bits.skip(8)?;
+    }
+    bits.skip(9)?;
     let list = (0..n).map(|_| read_operation(bits)).collect::<Option<_>>()?;
     bits.bit_long()?;
     let options = bits.bit_long()?;
@@ -647,5 +652,19 @@ mod tests {
         assert_eq!(read_operation(&mut bits).unwrap().operation, TinOperation::Kind40(1));
         assert_eq!(bits.pos, 2 * (30 + 128 + 2) + 66 + 10);
         assert!(read_operation(&mut bits).is_none());
+    }
+
+    #[test]
+    fn reads_the_head_of_a_created_and_of_a_rebuilt_snapshot() {
+        let guid = "0".repeat(128);
+        let kind_40 = format!("0100101000 0100001001 0100010000 {guid} 10 10");
+        let tail = format!("00{} 00{} 00", "0".repeat(32), "0".repeat(32));
+        for field in ["00001100 10000000 1", "00001010 00001000 10000000 1"] {
+            let b = bits_of(&format!("0000101000 00001010 00000010 10000000 10 10 00 {field} {kind_40} {tail}"));
+            let mut bits = Bits::new(&b, 0, b.len() * 8);
+            let found = read_definitions(&mut bits).unwrap();
+            assert_eq!(found.list[0].operation, TinOperation::Kind40(0));
+            assert_eq!(bits.pos, 40 + field.replace(' ', "").len() + 162 + 70);
+        }
     }
 }
