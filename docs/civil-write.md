@@ -561,18 +561,23 @@ owner its classification):
 
 ```text
 BS 0x04BE, BL key, BL 0, BL 0, 3 bits 010
-BL key, default (whole BL, double BD, boolean RC, text: none), BL key
+BL key, default (whole BL, double BD, boolean RC, text: none, choice:
+  BL index), BL key
 B use default, B bounded
 [bounded: BL code << 24 | 0x400000 if inclusive, lower, the same for upper]
+[enumeration: BL n choices]
 BL 0x4000806B, 3 bits 010
 handles: hard pointer to itself
 strings: key, "", key, [text default], key, the type-info class name
-         (AeccAttributeTypeInfoInt, ...Double, ...Bool, ...String), name,
-         description, classification name
+         (AeccAttributeTypeInfoInt, ...Double, ...Bool, ...String,
+         ...UserDefinedEnum), [the n choices], name, description,
+         classification name
 ```
 
 `key` is `0x80000000 | code << 24 | serial`: code 1 whole number, 2
-double, 3 boolean, 4 text; the serial counts the properties of a kind
+double, 3 boolean, 4 text, 13 enumeration (UE20, UE21: choices A, B, C;
+a point's value and the default are choice indexes, stored like whole
+numbers, in slot 7 of the database); the serial counts the properties of a kind
 over the drawing (a second double in another classification is
 `0x82000002`). Its text is 32 hexadecimal digits of the property's
 identifier (as the application prints it) and the name. Whole numbers,
@@ -3250,7 +3255,8 @@ Corridors are listed in §3i-a.
 | COGO points | position, number, raw description, name, styles | yes | yes | §3 |
 | COGO points | point label styles other than the default | yes | yes | §2d |
 | COGO points | user-defined properties (classifications; whole number, double, text and boolean properties with defaults, bounds and descriptions; values) | yes | yes | §3 (user-defined properties) |
-| COGO points | enumeration properties, properties of other kinds (distance, elevation, ...) | no | no | the programming interface makes only whole number, double, text, boolean and enumeration type infos; enumerations not sampled |
+| COGO points | enumeration properties (choices, default, values) | yes | yes | §3 (user-defined properties): `add_point_choice_property`; E-UE1 opens with AUDIT 0 and the programming interface reads the choices and the values |
+| COGO points | properties of other kinds (distance, elevation, ...) | no | no | the programming interface makes only whole number, double, text, boolean and enumeration type infos |
 | point groups | number lists, elevation comparisons and ranges, description, name and full description patterns, exclusions | yes | yes | §3, §4 |
 | point groups | number ranges (`2-6`) | yes | as a number list | the application stores the range as its numbers |
 | point groups | overrides: point style, label style, fixed elevation, raw description; locked points; classifications applied (none, all, one) | yes | yes | §3 (point groups) |

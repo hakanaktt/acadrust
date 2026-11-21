@@ -95,6 +95,8 @@ pub enum PropertyValue {
     Double(f64),
     Boolean(bool),
     Text(String),
+    /// The index of one of an enumeration property's choices.
+    Choice(u32),
 }
 
 impl PropertyValue {
@@ -105,12 +107,19 @@ impl PropertyValue {
             Self::Double(_) => 2,
             Self::Boolean(_) => 3,
             Self::Text(_) => 4,
+            Self::Choice(_) => 13,
         }
     }
 
     /// Slot of the point database holding values of kind `code`.
     pub(super) fn slot(code: u32) -> Option<usize> {
-        [None, Some(7), Some(4), Some(5), Some(6)].get(code as usize).copied().flatten()
+        match code {
+            1 | 13 => Some(7),
+            2 => Some(4),
+            3 => Some(5),
+            4 => Some(6),
+            _ => None,
+        }
     }
 
     /// Reads a value of kind `code`; a text value takes the next text.
@@ -120,6 +129,7 @@ impl PropertyValue {
             2 => Self::Double(bits.bit_double()?),
             3 => Self::Boolean(bits.raw_short_byte()? != 0),
             4 => Self::Text(texts.next()?),
+            13 => Self::Choice(u32::try_from(bits.bit_long()?).ok()?),
             _ => return None,
         })
     }
@@ -129,14 +139,16 @@ impl PropertyValue {
 ///
 /// ```text
 /// BS 0x04BE, BL key, BL 0, BL 0, 3 bits 010      (a tree node without children)
-/// BL key, default (integer BL, double BD, boolean RC, text: none), BL key
+/// BL key, default (integer BL, double BD, boolean RC, text: none,
+///   choice: BL index), BL key
 /// B use default, B bounded,
 /// [bounded: BL code << 24 | 0x400000 if inclusive, lower,
 ///           BL code << 24 | 0x400000 if inclusive, upper]
+/// [enumeration: BL n choices]
 /// BL 0x4000806B, 3 bits 010
 /// handles: hard pointer to itself
 /// strings: key, "", key, [text default], key, the type-info class name,
-///          name, description, classification name
+///          [the n choices], name, description, classification name
 /// ```
 ///
 /// `key` is `0x80000000 | code << 24 | serial` with the code of
@@ -157,6 +169,8 @@ pub struct UserProperty {
     pub use_default: bool,
     /// Lower and upper bound, each with whether it is inclusive.
     pub bounds: Option<((PropertyValue, bool), (PropertyValue, bool))>,
+    /// An enumeration's choices, in order (empty for the other kinds).
+    pub choices: Vec<String>,
 }
 
 /// Inclusive flag of a bound word.
@@ -190,9 +204,11 @@ pub(super) fn user_property(data: &[u8], start: usize, end: usize, strings: &[St
     } else {
         None
     };
+    let count = if code == 13 { usize::try_from(bits.bit_long()?).ok()? } else { 0 };
     bits.bit_long()?;
     (bits.bits_value(3)? == 0b010).then_some(())?;
     let rest: Vec<String> = texts.collect();
+    let (choices, rest) = (rest.get(2..2 + count)?.to_vec(), [&rest[..2], &rest[2 + count..]].concat());
     let [_, _class, name, description, classification] = rest.as_slice() else {
         return None;
     };
@@ -204,6 +220,7 @@ pub(super) fn user_property(data: &[u8], start: usize, end: usize, strings: &[St
         default,
         use_default,
         bounds,
+        choices,
     })
 }
 
@@ -556,6 +573,19 @@ mod tests {
         let len = s.bytes().filter(|c| *c == b'0' || *c == b'1').count();
         let points = points(&b, 0, len, &[0x185], &["".into(), "kB1".into(), "kS1".into(), "xy".into()]);
         assert_eq!(points[0].properties, vec![("kB1".into(), PropertyValue::Boolean(true)), ("kS1".into(), PropertyValue::Text("xy".into()))]);
+    }
+
+    #[test]
+    fn choice_properties_read_their_choices() {
+        let key = 0x8D00_0001;
+        let s = format!("00 10111110 00000100 {}{}{} 010 {}{}{} 1 0 {} {} 010", bl(key), bl(0), bl(0), bl(key), bl(1), bl(key), bl(3), bl(0x4000_806B));
+        let b = bits_of(&s);
+        let len = s.bytes().filter(|c| *c == b'0' || *c == b'1').count();
+        let t: Vec<String> = ["kE1", "", "kE1", "kE1", "AeccAttributeTypeInfoUserDefinedEnum", "A", "B", "C", "E1", "", "C1"].map(String::from).to_vec();
+        let p = user_property(&b, 0, len, &t).unwrap();
+        assert_eq!((p.default, p.choices, p.name.as_str(), p.bounds), (PropertyValue::Choice(1), vec!["A".to_string(), "B".into(), "C".into()], "E1", None));
+        // Choices share the whole numbers' slot.
+        assert_eq!(PropertyValue::slot(13), PropertyValue::slot(1));
     }
 
     #[test]
