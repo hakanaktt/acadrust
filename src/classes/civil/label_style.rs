@@ -876,16 +876,26 @@ impl LabelFields {
     }
 }
 
+/// The class data of a line (LC04) and a block (LC05) component as the
+/// label style editor adds them.
+const NEW_LINE: (usize, &str) = (647, "a63fffffc00e0800d0749692002c80022a406954044444444444584fc28000000c0003fffffffe00000030000ffffffffa00000030000ffffffff40a8fc07000080258800455550aaaaaaaaaaab6a7f54c");
+const NEW_BLOCK: (usize, &str) = (576, "a63fffffc00e0800d0749692002c80022a406954044444444444584fc28000000c0003fffffffe00000030000ffffffffa00000030000ffffffff40a91ba8111111111111813f909");
+
+fn bytes(hex: &str) -> Vec<u8> {
+    let hex = if hex.len() % 2 == 1 { format!("{hex}0") } else { hex.to_string() };
+    (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap_or(0)).collect()
+}
+
+impl LabelFields {
+    /// The class data of a new line (`line`) or block component.
+    pub(super) fn new_component(line: bool) -> Option<Self> {
+        let (len, hex) = if line { NEW_LINE } else { NEW_BLOCK };
+        Self::read_component(&bytes(hex), 0, len, line)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    /// The class data of a new line (LC04) and block (LC05) component.
-    const NEW_LINE: (usize, &str) = (647, "a63fffffc00e0800d0749692002c80022a406954044444444444584fc28000000c0003fffffffe00000030000ffffffffa00000030000ffffffff40a8fc07000080258800455550aaaaaaaaaaab6a7f54c");
-    const NEW_BLOCK: (usize, &str) = (576, "a63fffffc00e0800d0749692002c80022a406954044444444444584fc28000000c0003fffffffe00000030000ffffffffa00000030000ffffffff40a91ba8111111111111813f909");
-
-    fn bytes(hex: &str) -> Vec<u8> {
-        let hex = if hex.len() % 2 == 1 { format!("{hex}0") } else { hex.to_string() };
-        (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap()).collect()
-    }
 
     /// A new line and block component read with their defaults, and a
     /// line's start offset needs its mask C bit.

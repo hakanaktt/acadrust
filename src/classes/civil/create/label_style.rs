@@ -12,21 +12,41 @@ use crate::CadDocument;
 /// Text ids this crate gives the label styles it adds (the first one,
 /// then one more than the highest in the collection).
 const FIRST_LABEL_STYLE_ID: u32 = 0x8004_0001;
-/// Text ids this crate gives the text components it adds to a style.
+/// Text ids this crate gives the text and line components it adds to a
+/// style.
 const FIRST_COMPONENT_ID: u32 = 0x8005_0001;
+/// Ids the label style editor gives the block components it adds (one
+/// more for each: LC06).
+const FIRST_BLOCK_ID: u32 = 0xA71;
 
 /// A label style: its settings and text components.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LabelStyle {
     pub settings: LabelStyleSettings,
     pub components: Vec<LabelTextComponent>,
-    /// The line and block components, in order (kept by a copy: their
-    /// values change, not their number).
+    /// The line and block components, in order: a copy writes the values
+    /// of those it keeps, leaves out those removed and adds those with id
+    /// 0 after the others.
     pub lines: Vec<LabelLineComponent>,
     pub blocks: Vec<LabelBlockComponent>,
 }
 
 impl LabelStyle {
+    /// A line component to add (id 0) named `name`, with the values the
+    /// label style editor gives a new one (LC04): from the labelled
+    /// object's location, 1/12 long at angle 0, the defaults' color,
+    /// lineweight and linetype.
+    pub fn new_line_component(&self, name: &str) -> Option<LabelLineComponent> {
+        crate::classes::civil::label_style::LabelFields::new_component(true)?.line_component(0, Some(name.to_string()), &[0; 9])
+    }
+
+    /// A block component to add (id 0) with the values the label style
+    /// editor gives a new one (LC05): height 1/120, at the insertion
+    /// point, no block (set `block` to a block record).
+    pub fn new_block_component(&self) -> Option<LabelBlockComponent> {
+        crate::classes::civil::label_style::LabelFields::new_component(false)?.block_component(0, None, &[0; 10])
+    }
+
     /// A text component to add to the style (id 0) named `name`, with the
     /// values the label style editor gives a new one (LC01): "Label Text"
     /// at the labelled object's location, middle center attachment, the
@@ -128,10 +148,17 @@ pub fn add_label_style(doc: &mut CadDocument, source: Handle, name: &str, edit: 
         seen.push(c.id);
     }
     let removed: Vec<u32> = source_ids.iter().copied().filter(|id| !seen.contains(id)).collect();
-    let (source_lines, source_blocks) = (label_style(doc, source).map(|s| (s.lines, s.blocks)).unwrap_or_default());
-    if style.lines.iter().map(|l| l.id).ne(source_lines.iter().map(|l| l.id)) || style.blocks.iter().map(|b| b.id).ne(source_blocks.iter().map(|b| b.id)) {
-        return Err(invalid("a label style copy keeps the source's line and block components"));
+    let (source_lines, source_blocks) = label_style(doc, source).map(|s| (s.lines, s.blocks)).unwrap_or_default();
+    let kept = |ids: Vec<u32>, of: &[u32]| ids.iter().filter(|i| **i != 0).all(|i| of.contains(i)) && (1..ids.len()).all(|n| ids[n] == 0 || !ids[..n].contains(&ids[n]));
+    if !kept(style.lines.iter().map(|l| l.id).collect(), &source_lines.iter().map(|l| l.id).collect::<Vec<_>>()) || !kept(style.blocks.iter().map(|b| b.id).collect(), &source_blocks.iter().map(|b| b.id).collect::<Vec<_>>()) {
+        return Err(invalid("a label style line or block component id is not one of the source's, or repeats"));
     }
+    if style.lines.iter().any(|l| l.id == 0 && l.name.as_deref().is_none_or(|n| n.trim().is_empty())) {
+        return Err(invalid("a new line component needs a name"));
+    }
+    let mut removed = removed;
+    removed.extend(source_lines.iter().map(|l| l.id).filter(|id| !style.lines.iter().any(|l| l.id == *id)));
+    removed.extend(source_blocks.iter().map(|b| b.id).filter(|id| !style.blocks.iter().any(|b| b.id == *id)));
     if style.components.iter().any(|c| removed.contains(&c.anchor_component)) {
         return Err(invalid("a label style component is anchored to a removed one"));
     }
@@ -147,9 +174,10 @@ pub fn add_label_style(doc: &mut CadDocument, source: Handle, name: &str, edit: 
     let strings = src.decode().strings;
     let reactors = src.reactors.clone();
     let comps = src.label_style_components();
-    // The written components: the source's (but the removed text ones),
-    // then the added text ones; each with the record it copies, the values
-    // of a text component and, for an added one, its new id.
+    // The written components: the source's (but the removed ones), then
+    // the added text, line and block ones; each with the record it copies
+    // (a text component of the style for an added line or block), its
+    // values and, for an added one, its new id.
     let mut by_id: Vec<LabelTextComponent> = style.components.iter().filter(|c| c.id != 0).cloned().collect();
     let mut plan: Vec<(Handle, Option<Edit>, Option<u32>)> = Vec::new();
 
@@ -170,7 +198,14 @@ pub fn add_label_style(doc: &mut CadDocument, source: Handle, name: &str, edit: 
                 "AECC_LABEL_BLOCK_STYLE" => style.blocks.iter().find(|b| Some(b.id) == id).cloned().map(Edit::Block),
                 _ => None,
             };
-            plan.push((Handle::new(*c), edit, None));
+            let gone = match dxf.as_str() {
+                "AECC_LABEL_RADIAL_LINE_STYLE" => source_lines.iter().any(|l| Some(l.id) == id) && edit.is_none(),
+                "AECC_LABEL_BLOCK_STYLE" => source_blocks.iter().any(|b| Some(b.id) == id) && edit.is_none(),
+                _ => false,
+            };
+            if !gone {
+                plan.push((Handle::new(*c), edit, None));
+            }
         }
     }
     let mut next_id = comps.iter().filter_map(|c| head_id(doc, Handle::new(*c))).filter(|k| *k & 0xFFFF_0000 == FIRST_COMPONENT_ID & 0xFFFF_0000).max().map_or(FIRST_COMPONENT_ID, |k| k + 1);
@@ -178,6 +213,17 @@ pub fn add_label_style(doc: &mut CadDocument, source: Handle, name: &str, edit: 
         let source = skeleton.ok_or_else(|| invalid("a label style without text components takes no new one"))?;
         plan.push((source, Some(Edit::Text(c.clone())), Some(next_id)));
         next_id += 1;
+    }
+    for l in style.lines.iter().filter(|l| l.id == 0) {
+        let source = skeleton.ok_or_else(|| invalid("a label style without text components takes no new line"))?;
+        plan.push((source, Some(Edit::Line(l.clone())), Some(next_id)));
+        next_id += 1;
+    }
+    let mut next_block = comps.iter().filter(|c| object(doc, Handle::new(**c)).is_some_and(|o| o.dxf_name == "AECC_LABEL_BLOCK_STYLE")).filter_map(|c| head_id(doc, Handle::new(*c))).filter(|k| !text_id(*k)).max().map_or(FIRST_BLOCK_ID, |k| k.max(FIRST_BLOCK_ID - 1) + 1);
+    for b in style.blocks.iter().filter(|b| b.id == 0) {
+        let source = skeleton.ok_or_else(|| invalid("a label style without text components takes no new block"))?;
+        plan.push((source, Some(Edit::Block(b.clone())), Some(next_block)));
+        next_block += 1;
     }
 
     let handle = doc.allocate_handle();
@@ -224,9 +270,12 @@ fn head_id(doc: &CadDocument, h: Handle) -> Option<u32> {
 
 /// Writes a copy of the component `source` as `handle`, owned by
 /// `style`: a text component with the values of `c`, a component of
-/// another kind as it is; with `new_id` a new text component under that
-/// id (`source` a text component of the style).
+/// another kind as it is; with `new_id` a new text, line or block
+/// component under that id (`source` a text component of the style).
 fn copy_component(doc: &mut CadDocument, source: Handle, handle: Handle, style: Handle, edit: Option<&Edit>, new_id: Option<u32>) -> Result<(), DxfError> {
+    if let (Some(id), Some(Edit::Line(_) | Edit::Block(_))) = (new_id, edit) {
+        return new_component(doc, source, handle, style, edit, id);
+    }
     let c = match edit {
         Some(Edit::Text(c)) => Some(c),
         _ => None,
@@ -289,6 +338,44 @@ fn copy_component(doc: &mut CadDocument, source: Handle, handle: Handle, style: 
             Some(f) => f.write(w),
             None => bits(w, &class_bits),
         }
+    }, Body { refs, strings: texts })
+}
+
+/// Writes a new line or block component (`edit`) as `handle`, owned by
+/// `style`, under `id`, as the label style editor adds them (LC04 to
+/// LC06): the head of the style's text component `skeleton`, the class
+/// data of a new component with the values of `edit`, the references of
+/// the skeleton's base (none but its border linetype: no owner, layer or
+/// block), a line's name under its text id and empty users.
+fn new_component(doc: &mut CadDocument, skeleton: Handle, handle: Handle, style: Handle, edit: Option<&Edit>, id: u32) -> Result<(), DxfError> {
+    let bad = || invalid("label style component cannot be read");
+    let src = object(doc, skeleton).ok_or_else(bad)?;
+    let (data, start, end) = src.main_stream().ok_or_else(bad)?;
+    let class = crate::classes::civil::style::class_layout(data, start, end).ok_or_else(bad)?.0;
+    let rest = head(doc, skeleton, class).ok_or_else(bad)?.1;
+    let border = src.typed_handles().get(crate::classes::civil::label_style::BASE_REFS - 3).map_or(0, |r| r.0);
+    let line = matches!(edit, Some(Edit::Line(_)));
+    let mut fields = crate::classes::civil::label_style::LabelFields::new_component(line).ok_or_else(bad)?;
+    let mut values = vec![0; if line { 9 } else { 10 }];
+    values[crate::classes::civil::label_style::BASE_REFS - 3] = border;
+    let (dxf, texts) = match edit {
+        Some(Edit::Line(l)) => {
+            fields.set_line_component(l, &mut values);
+            ("AECC_LABEL_RADIAL_LINE_STYLE", vec![l.name.clone().unwrap_or_default(), String::new(), String::new(), String::new(), String::new()])
+        }
+        Some(Edit::Block(b)) => {
+            fields.set_block_component(b, &mut values);
+            ("AECC_LABEL_BLOCK_STYLE", vec![String::new(); 3])
+        }
+        _ => return Err(bad()),
+    };
+    let mut refs = vec![Ref(DwgReferenceType::SoftPointer, values[0])];
+    refs.extend(values[1..].iter().map(|v| Ref(DwgReferenceType::HardPointer, *v)));
+    put_object(doc, dxf, handle, style, Vec::new(), |w| {
+        w.write_bit_long(id as i32);
+        w.write_bit_long(0);
+        bits(w, &rest);
+        fields.write(w);
     }, Body { refs, strings: texts })
 }
 
@@ -355,5 +442,35 @@ mod tests {
         let fields = object(&doc, h).unwrap().label_fields(true).unwrap().0;
         assert_eq!(fields.entry_count(), 4);
         assert!(add_point_label_style(&mut doc, "LS3", |s| s.components.push(s.new_text_component("").unwrap())).is_err());
+    }
+
+    /// Line and block components are added after the others (lines under
+    /// text ids with their names, blocks numbered from 0xA71) and can be
+    /// removed again in a copy.
+    #[test]
+    fn line_and_block_components_are_added_and_removed() {
+        let mut doc = CadDocument::new();
+        crate::classes::civil::add_cogo_point(&mut doc, None, Vector3::new(1.0, 2.0, 3.0), None, None, None).unwrap();
+        let h = add_point_label_style(&mut doc, "LB1", |s| {
+            let mut l = s.new_line_component("L1").unwrap();
+            l.angle = 0.5;
+            let mut b = s.new_block_component().unwrap();
+            b.height = 0.05;
+            s.lines.push(l);
+            s.blocks.extend([b.clone(), b]);
+        })
+        .unwrap();
+        let back = label_style(&doc, h).unwrap();
+        assert_eq!((back.lines.len(), back.lines[0].id, back.lines[0].name.as_deref(), back.lines[0].angle), (1, 0x8005_0001, Some("L1"), 0.5));
+        assert_eq!(back.blocks.iter().map(|b| (b.id, b.height)).collect::<Vec<_>>(), vec![(0xA71, 0.05), (0xA72, 0.05)]);
+        assert!(add_point_label_style(&mut doc, "LB2", |s| s.lines.push(s.new_line_component(" ").unwrap())).is_err());
+        let h2 = add_label_style(&mut doc, h, "LB3", |s| {
+            s.lines.clear();
+            s.blocks.remove(0);
+        })
+        .unwrap();
+        let back = label_style(&doc, h2).unwrap();
+        assert_eq!((back.lines.len(), back.blocks.iter().map(|b| b.id).collect::<Vec<_>>()), (0, vec![0xA72]));
+        assert_eq!(object(&doc, h2).unwrap().label_fields(true).unwrap().0.entry_count(), 4);
     }
 }

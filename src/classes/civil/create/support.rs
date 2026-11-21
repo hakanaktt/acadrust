@@ -124,6 +124,7 @@ const CLASSES: &[Class] = &[
     Class { dxf: "AECC_LABEL_TEXT_STYLE", cpp: "AeccDbLabelStyleText", module: "AeccLand130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_LABEL_TEXT_ITERATOR_STYLE", cpp: "AeccDbLabelStyleTextIterator", module: "AeccLand130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_LABEL_RADIAL_LINE_STYLE", cpp: "AeccDbLabelStyleRadialLine", module: "AeccLand130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_LABEL_BLOCK_STYLE", cpp: "AeccDbLabelStyleBlock", module: "AeccLand130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_LABEL_TEXT_ITERATOR_CURVE_OR_SPIRAL_STYLE", cpp: "AeccDbLabelStyleTextIteratorCurveOrSpiral", module: "AeccLand130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_PROFILE_VIEW_DATA_BAND_STYLE", cpp: "AeccDbGraphStyleProfileDataBands", module: "AeccLand130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_PROFILE_VIEW_VERTICAL_GEOMETRY_BAND_STYLE", cpp: "AeccDbGraphStyleVertGeometryBands", module: "AeccLand130", proxy_flags: 0x81, entity: false },
