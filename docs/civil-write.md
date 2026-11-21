@@ -2051,11 +2051,26 @@ start radius (the end's at the alignment's start) turns left (byte
 number (0x0100D61E: lines first, then curves); each curve has one more
 five-key label at its middle numbered by curve. The 44-bit run of the
 two label kinds differs (bits 17-19). The application's groups (HG1-HG3,
-HG3P, PB04) list the same values; their key order varies. Alignments of
-other pieces (spirals) or with two lines or two curves meeting get an
-empty group, which the application fills as soon as the view or one of
-its bands changes (it rebuilds every band label group then; an empty
-group stays empty through open and regeneration).
+HG3P, PB04) list the same values; their key order varies. A
+spiral-curve-spiral is one curve labelled piece by piece (E-HS1 to
+E-HS4, two to five pieces of mixed arcs and spiral-curve-spirals): each
+spiral and its arc carries the element keys with 0x0100D621 273, 274 and
+275, a spiral the kind key 0x0101780D = 2, all three the curve's number;
+a spiral's radius at its tangent end is infinite with the sign of its
+arc, a line takes its neighbours' radii, the turn byte reads finite
+radii only, and the points between a spiral and a tangent or curve are
+coded 264 (tangent to spiral), 265 (spiral to tangent), 266 (curve to
+spiral) and 267 (spiral to curve). The curve's middle label sits at the
+station nearest the intersection of its lines (an arc's middle; for
+unequal spirals not the middle of the curve's stations). Alignments of
+other elements or with two lines or two curves meeting get an empty
+group, which the application fills as soon as the view or one of its
+bands changes (it rebuilds every band label group then; an empty group
+stays empty through open and regeneration). A spiral's solved points
+are stepped with three-point Gauss integration of its direction (the
+chord along the middle heading drifted 3e-4 over 30 m, giving tangent
+points 1e-4 off), and stations along a spiral-curve-spiral use the
+spirals' stored lengths.
 
 A band that hides its labels has no label group (the application
 deletes it: BVPD-SL, BVHG-SL, E-BW1-edit). A group's tail repeats the
@@ -2144,7 +2159,11 @@ data and pipe network bands below, vertical and horizontal geometry above)
 and E-BV4 (the application's HB0 with such a second view, reusing its
 styles) open with AUDIT 0; the API lists the five bands with their types
 and locations and the profile; after a band change all five groups stay
-and the horizontal geometry labels are rebuilt equal. E-SD1 (a new
+and the horizontal geometry labels are rebuilt equal. E-HS1 to E-HS4 (a
+new drawing: one and two spiral-curve-spirals, equal and unequal
+spirals, with an arc, and an arcs-only alignment) open with AUDIT 0 and
+after a band change the application's groups hold the written labels
+value for value (label and key order aside). E-SD1 (a new
 drawing: a sample line group with lines at stations 50, 20 and 150 and a
 sectional data band reading it below the view, one without a group
 above) opens with AUDIT 0, the API lists the band's data source as the
@@ -3508,7 +3527,7 @@ Corridors are listed in §3i-a.
 | profile views | styles that copy the default with another vertical exaggeration, views with them | yes (frame, style exaggeration) | yes | §3h |
 | profile views | stacked views (separate views at stacked origins) | yes | yes | §3h |
 | profile views | every style setting the API exposes (graph title, direction, exaggeration, grid, the four axes' titles and ticks, text styles) | yes | yes | §3h |
-| profile views | profile data, vertical and horizontal geometry, superelevation, sectional data and pipe network bands below or above the view, with their gaps, end station labels, label visibility, weeding, stagger, profiles and label groups; the default band styles of a new drawing | yes | yes (horizontal geometry labels of alignments with spirals left to the application; superelevation, sectional data and pipe network bands without data source and labels) | §3h (Bands) |
+| profile views | profile data, vertical and horizontal geometry, superelevation, sectional data and pipe network bands below or above the view, with their gaps, end station labels, label visibility, weeding, stagger, profiles and label groups; the default band styles of a new drawing | yes | yes (horizontal geometry labels of spiral-curve-spirals; alignments of other spiral elements left to the application) | §3h (Bands) |
 | profile views | sectional data bands reading a sample line group, pipe network bands reading a gravity network (its parts drawn in the view), superelevation bands of an alignment with superelevation, with their labels | yes | yes (no labels with manual stations) | §3h (Bands) |
 | profile views | pressure network band data sources and labels, pressure network/cant/distance/COGO/speed bands, band styles other than the defaults, intervals, stagger line height | partly | no | the API adds no band of the last five kinds; the API ignores the interval setters and refuses the stagger line height |
 | sites | name, description, members | yes | yes | §3g |

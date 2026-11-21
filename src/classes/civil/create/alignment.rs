@@ -1171,6 +1171,41 @@ fn piece_length((kind, k, points): &Piece) -> f64 {
     }
 }
 
+/// The elements of an alignment in station order, each a curve or not,
+/// as pieces of kind (0 line, 1 arc, 2 spiral), length and signed radius
+/// (right of travel positive; a spiral's that of its arc, 0 on lines):
+/// lines and arcs one piece, spiral-curve-spirals three (spirals of their
+/// stored lengths), with each element's first and last point. `None`
+/// for other elements.
+#[allow(clippy::type_complexity)]
+pub(super) fn element_pieces(elements: &[AlignmentElement]) -> Option<Vec<(bool, Vec<(u8, f64, f64)>, [Vector2; 2])>> {
+    let mut out = Vec::new();
+    for (e, _, pieces) in spans(elements)? {
+        let radius = |p: &Piece| if p.1 != 0.0 { -1.0 / p.1 } else { 0.0 };
+        // An arc's length, also past half a circle (its middle point then
+        // lies farther than the radius from its chord's middle).
+        let arc = |(_, k, points): &Piece| {
+            let (a, b) = (points[0], points[points.len() - 1]);
+            let r = 1.0 / k.abs();
+            let half = (a.distance(&b) / (2.0 * r)).clamp(-1.0, 1.0).asin();
+            let past = points[points.len() / 2].distance(&Vector2::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0)) > r;
+            2.0 * r * if past { std::f64::consts::PI - half } else { half }
+        };
+        let ends = [*pieces.first()?.2.first()?, *pieces.last()?.2.last()?];
+        let (curve, parts) = match (&e.kind, pieces.as_slice()) {
+            (_, [p]) if p.0 == AlignmentPiece::Line => (false, vec![(0, piece_length(p), 0.0)]),
+            (_, [p]) if p.0 == AlignmentPiece::Curve && p.1 != 0.0 => (true, vec![(1, arc(p), radius(p))]),
+            (AlignmentElementKind::FreeSpiralCurveSpiral { spiral_in, spiral_out, .. }, [_, c, _]) if c.0 == AlignmentPiece::Curve && c.1 != 0.0 => {
+                let r = radius(c);
+                (true, vec![(2, *spiral_in, r), (1, arc(c), r), (2, *spiral_out, r)])
+            }
+            _ => return None,
+        };
+        out.push((curve, parts, ends));
+    }
+    Some(out)
+}
+
 /// The point at distance `s` from a piece's start and the direction
 /// there.
 fn piece_point((kind, k, points): &Piece, s: f64) -> (Vector2, Vector2) {
@@ -1200,6 +1235,17 @@ fn piece_point((kind, k, points): &Piece, s: f64) -> (Vector2, Vector2) {
     (last, if first == last { Vector2::new(1.0, 0.0) } else { unit(last - first) })
 }
 
+/// The lengths of an element's pieces: a spiral-curve-spiral's spirals
+/// their stored lengths (their solved points run a little short), the
+/// others [`piece_length`].
+fn piece_lengths(e: &AlignmentElement, pieces: &[Piece]) -> Vec<f64> {
+    let mut out: Vec<f64> = pieces.iter().map(piece_length).collect();
+    if let (AlignmentElementKind::FreeSpiralCurveSpiral { spiral_in, spiral_out, .. }, [a, _, b]) = (&e.kind, out.as_mut_slice()) {
+        (*a, *b) = (*spiral_in, *spiral_out);
+    }
+    out
+}
+
 /// The elements in station order with their pieces and where each starts
 /// (distance from the path's start): lines and arcs make one piece,
 /// spiral-curve-spirals three.
@@ -1215,7 +1261,7 @@ fn spans(elements: &[AlignmentElement]) -> Option<Vec<(&AlignmentElement, f64, V
         };
         let own = pieces.get(used..used + n)?.to_vec();
         used += n;
-        let length: f64 = own.iter().map(piece_length).sum();
+        let length: f64 = piece_lengths(e, &own).iter().sum();
         out.push((e, from, own));
         from += length;
         (out.len() <= elements.len()).then_some(())?;
@@ -1233,12 +1279,12 @@ pub(super) fn superelevation_stations(elements: &[AlignmentElement], start: f64,
     let spans = spans(elements)?;
     let mut out = Vec::new();
     for c in curves {
-        let (_, from, pieces) = spans.iter().find(|(e, _, _)| e.id == c.element)?;
-        let to = from + pieces.iter().map(piece_length).sum::<f64>();
+        let (e, from, pieces) = spans.iter().find(|(e, _, _)| e.id == c.element)?;
+        let to = from + piece_lengths(e, pieces).iter().sum::<f64>();
         out.extend(c.stations.iter().map(|s| (start + if s.ending { to } else { *from } + s.offset, c.element, s.kind, s.ending, s.slopes)));
     }
     out.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let length: f64 = spans.iter().flat_map(|(_, _, p)| p.iter().map(piece_length)).sum();
+    let length: f64 = spans.iter().flat_map(|(e, _, p)| piece_lengths(e, p)).sum();
     Some((out, start + length))
 }
 
@@ -1252,9 +1298,12 @@ pub(super) fn station_of_point(elements: &[AlignmentElement], start: f64, p: Vec
             best = Some((d, s));
         }
     };
-    for (_, from, pieces) in spans(elements)? {
+    for (e, from, pieces) in spans(elements)? {
         let mut at = from;
-        for piece in &pieces {
+        // A spiral's points run a little short of its length: their
+        // distances are scaled to it.
+        for (piece, length) in pieces.iter().zip(piece_lengths(e, &pieces)) {
+            let scale = length / piece_length(piece).max(1e-12);
             let (kind, k, points) = piece;
             let (first, last) = (points[0], points[points.len() - 1]);
             if *kind == AlignmentPiece::Curve && *k != 0.0 && first != last {
@@ -1274,11 +1323,11 @@ pub(super) fn station_of_point(elements: &[AlignmentElement], start: f64, p: Vec
                 for w in points.windows(2) {
                     let (d, l) = (w[1] - w[0], w[0].distance(&w[1]));
                     let t = if l > 0.0 { ((p - w[0]).dot(&d) / (l * l)).clamp(0.0, 1.0) } else { 0.0 };
-                    take((w[0] + d * t).distance(&p), start + at + run + t * l);
+                    take((w[0] + d * t).distance(&p), start + at + (run + t * l) * scale);
                     run += l;
                 }
             }
-            at += piece_length(piece);
+            at += length;
         }
     }
     best.map(|b| b.1)
@@ -1287,12 +1336,12 @@ pub(super) fn station_of_point(elements: &[AlignmentElement], start: f64, p: Vec
 /// The point at `station` (start station `start`) of the solved path and
 /// its direction.
 fn station_point(spans: &[(&AlignmentElement, f64, Vec<Piece>)], start: f64, station: f64) -> Option<(Vector2, Vector2)> {
-    let (_, from, pieces) = spans.iter().rev().find(|(_, from, _)| station - start >= *from - 1e-9)?;
+    let (e, from, pieces) = spans.iter().rev().find(|(_, from, _)| station - start >= *from - 1e-9)?;
     let mut s = station - start - from;
-    for (i, p) in pieces.iter().enumerate() {
-        let l = piece_length(p);
+    for (i, (p, l)) in pieces.iter().zip(piece_lengths(e, pieces)).enumerate() {
         if s <= l || i + 1 == pieces.len() {
-            return Some(piece_point(p, s.min(l)));
+            // Along a spiral's points, scaled from its length to theirs.
+            return Some(piece_point(p, s.min(l) * piece_length(p) / l.max(1e-12)));
         }
         s -= l;
     }
@@ -1305,13 +1354,13 @@ fn station_point(spans: &[(&AlignmentElement, f64, Vec<Piece>)], start: f64, sta
 /// its ends and the point at the station.
 pub(super) fn anchor_at(elements: &[AlignmentElement], start: f64, kind: i32, id: [u8; 16], station: f64) -> Option<AlignmentAnchor> {
     let spans = spans(elements)?;
-    let total: f64 = spans.iter().map(|(_, _, p)| p.iter().map(piece_length).sum::<f64>()).sum();
+    let total: f64 = spans.iter().map(|(e, _, p)| piece_lengths(e, p).iter().sum::<f64>()).sum();
     let tol = 1e-9 * total.max(1.0);
     let s = station - start;
     (s >= -tol && s <= total + tol).then_some(())?;
     let i = spans.iter().rposition(|(_, from, _)| s >= *from - tol)?;
     let (e, from, pieces) = &spans[i];
-    let length: f64 = pieces.iter().map(piece_length).sum();
+    let length: f64 = piece_lengths(e, pieces).iter().sum();
     let along = (s - from).clamp(0.0, length);
     let (first, last) = (pieces.first()?.2[0], *pieces.last()?.2.last()?);
     Some(AlignmentAnchor {
@@ -1454,7 +1503,7 @@ fn write_offset_alignment(doc: &mut CadDocument, parent: Handle, name: &str, off
         return Err(invalid("the parent has elements other than lines and arcs"));
     }
     let spans = spans(&written.elements).ok_or_else(|| invalid("the parent cannot be solved"))?;
-    let total: f64 = spans.iter().map(|(_, _, p)| p.iter().map(piece_length).sum::<f64>()).sum();
+    let total: f64 = spans.iter().map(|(e, _, p)| piece_lengths(e, p).iter().sum::<f64>()).sum();
     let (s0, s1) = range.unwrap_or((0.0, total));
     let tol = 1e-9 * total.max(1.0);
     if !(s0.is_finite() && s1.is_finite() && s0 >= -tol && s1 <= total + tol && s1 - s0 > tol) {
@@ -1664,7 +1713,7 @@ fn write_offset_alignment(doc: &mut CadDocument, parent: Handle, name: &str, off
 
 /// The solved length of an alignment's elements.
 pub(super) fn length_of(elements: &[AlignmentElement]) -> Option<f64> {
-    Some(spans(elements)?.iter().map(|(_, _, p)| p.iter().map(piece_length).sum::<f64>()).sum())
+    Some(spans(elements)?.iter().map(|(e, _, p)| piece_lengths(e, p).iter().sum::<f64>()).sum())
 }
 
 /// Adds superelevation to `alignment`: one curve per curve element (a
@@ -1687,7 +1736,7 @@ pub fn add_superelevation(doc: &mut CadDocument, alignment: Handle, curves: &[Su
         if c.stations.iter().any(|s| !s.station.is_finite() || s.slopes.iter().any(|v| !v.is_finite())) || c.stations.windows(2).any(|w| w[1].station < w[0].station) {
             return Err(invalid("critical stations need finite values in station order"));
         }
-        let to = from + pieces.iter().map(piece_length).sum::<f64>();
+        let to = from + piece_lengths(e, pieces).iter().sum::<f64>();
         let stations = c.stations.iter().map(|s| CriticalStationData { kind: s.kind.code(), offset: s.station - if s.ending { to } else { *from }, ending: s.ending, slopes: s.slopes }).collect();
         data.push((*from, SuperelevationCurveData { element: c.element, stations }));
     }
