@@ -415,6 +415,14 @@ struct Walked {
 /// end:      45 bits after the last baseline
 /// ```
 ///
+/// The 2027 generator writes the same layout with two differences: an
+/// unbuilt region block ends with the region's index (0, 1, 2, ... in
+/// region order) where the older files end with 0, and it keeps writing
+/// BL 0 before the baseline tail. A baseline whose region count is 0 (its
+/// regions were deleted after the corridor was built) ends with a
+/// different, so far unmapped tail that carries the baseline's added
+/// stations; such a record still gives no definition.
+///
 /// Keys 0x0C04A621, 0x0C04A61E and 0x0C04A620 hold one double per region
 /// in corridor order: the frequency along offset target curves and the mid
 /// ordinates along curves and along target curves (written once a region
@@ -509,7 +517,10 @@ fn walk(bits: &mut Bits) -> Option<Walked> {
             records = next;
         }
         if w.unbuilt {
-            (records == 0 && bits.bit_long()? == 0).then_some(())?;
+            // The count after the last region block is 0 in the older
+            // files and the region's index (0, 1, ...) in the 2027 files;
+            // the record gives BL 0 either way.
+            (bits.bit_long()? == 0).then_some(())?;
             bits.bit()?;
             bits.skip(9 + 128)?;
             line.stations = added_stations(bits)?;
@@ -751,8 +762,12 @@ fn target(bits: &mut Bits) -> Option<Option<(usize, bool)>> {
 ///             {subassembly (hard), per target item its objects (soft)}}}
 /// ```
 fn name(w: &mut Walked, strings: &[String], refs: &[u64]) -> Option<()> {
-    let mut texts = strings.iter();
-    let mut text = || texts.next().cloned();
+    let taken = std::cell::Cell::new(0usize);
+    let text = || {
+        let t = strings.get(taken.get()).cloned();
+        taken.set(taken.get() + 1);
+        t
+    };
     text()?;
     text()?;
     w.definition.name = text()?;
@@ -817,6 +832,22 @@ fn name(w: &mut Walked, strings: &[String], refs: &[u64]) -> Option<()> {
             }
             region.name = text()?;
             index += 1;
+        }
+        // The 2027 generator repeats the feature line code texts after the
+        // last region, before the baseline's name (the older files do not).
+        // Which of the two layouts the record holds follows from how many
+        // texts are left: the baseline's name plus one text per added
+        // station without the codes, their number plus the codes with them.
+        // A baseline whose added stations sit in the 2027 tail this reader
+        // does not map yet gives no count (`known` below its true number),
+        // so the codes are taken whenever more texts remain than the
+        // name's alone.
+        let remaining = strings.len() - taken.get();
+        let known = line.stations.len();
+        if remaining > known + 1 {
+            for _ in 0..w.codes {
+                text()?;
+            }
         }
         line.name = text()?;
         for station in &mut line.stations {
