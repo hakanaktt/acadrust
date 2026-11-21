@@ -144,6 +144,40 @@ const DRAGGED: [(&str, K); 13] = [
 
 const ENTRY: [K; 10] = [K::Bl, K::Bd, K::Bl, K::Bits9, K::Bl, K::Bl, K::Bl, K::Bl, K::B, K::Bl];
 
+/// What a line component (`AECC_LABEL_RADIAL_LINE_STYLE`) holds after the
+/// base fields (LL01 to LL16: one setting of a new line changed per save).
+const LINE: [(&str, K); 18] = [
+    ("end_anchor_component", K::Bl),
+    ("use_end_anchor", K::B),
+    ("end_anchor", K::Bl),
+    ("start_x_offset", K::Bd),
+    ("l4", K::Bd),
+    ("start_y_offset", K::Bd),
+    ("l6", K::Bd),
+    ("end_x_offset", K::Bd),
+    ("l8", K::Bd),
+    ("end_y_offset", K::Bd),
+    ("l10", K::Bd),
+    ("fixed_length", K::Bd),
+    ("l12", K::Bd),
+    ("line_angle", K::Bd),
+    ("l14", K::Bd),
+    ("length_type", K::Bl),
+    ("percent_length", K::Bd),
+    ("l17", K::Bl),
+];
+
+/// What a block component (`AECC_LABEL_BLOCK_STYLE`) holds after the base
+/// fields (BB01 to BB10).
+const BLOCK: [(&str, K); 6] = [
+    ("k0", K::Bl),
+    ("block_rotation", K::Bd),
+    ("k2", K::Bd),
+    ("block_height", K::Bd),
+    ("k4", K::Bl),
+    ("block_attachment", K::Bl),
+];
+
 const DRAGGED_END: [(&str, K); 2] = [("d_end", K::Bl), ("dragged_max_width", K::Bd)];
 
 const TEXT: [(&str, K); 9] = [
@@ -170,6 +204,11 @@ const ARROW_BLOCK: u32 = 0x4000;
 const TEXT_COLOR: u32 = 0x10_0000;
 const LAYER: u32 = 0x20_0000;
 const TEXT_LINEWEIGHT: u32 = 0x80_0000;
+/// Mask C bits of a line component's start point offsets (LL02, LL03).
+const START_X_OFFSET: u32 = 0x1;
+const START_Y_OFFSET: u32 = 0x2;
+/// A line component's own linetype (LL16).
+const COMPONENT_LINETYPE: u32 = 0x40_0000;
 const LEADER_COLOR: u32 = 0x0800_0000;
 const LEADER_LINETYPE: u32 = 0x1000_0000;
 const LEADER_LINEWEIGHT: u32 = 0x2000_0000;
@@ -195,7 +234,11 @@ const REF_TEXT_STYLE: usize = 1;
 pub(super) const REF_OWNER: usize = 2;
 const REF_ARROW: usize = 3;
 const REF_LAYER: usize = 4;
+/// A line component's linetype (ByLayer: LL16).
+const REF_LINETYPE: usize = 5;
 const REF_BORDER_LINETYPE: usize = 6;
+/// A block component's block (its tenth reference).
+const REF_BLOCK: usize = 9;
 const REF_LEADER_LINETYPE: usize = 7;
 const REF_DRAGGED_LINETYPE: usize = 8;
 /// References before a collector's text components.
@@ -238,6 +281,16 @@ impl LabelFields {
             self.0.push(Field { name, value, raw: bit_string(data, from, b.pos) });
         }
         Some(())
+    }
+
+    /// Reads a line or block component's class data (`tail` its fields
+    /// after the base ones); `None` unless they end exactly at `end`.
+    pub(super) fn read_component(data: &[u8], start: usize, end: usize, line: bool) -> Option<Self> {
+        let mut b = Bits::new(data, start, end);
+        let mut f = LabelFields(Vec::new());
+        f.read_list(data, &mut b, &BASE)?;
+        f.read_list(data, &mut b, if line { &LINE } else { &BLOCK })?;
+        (b.pos == end).then_some(f)
     }
 
     /// Reads a collector's (`collector`) or text component's class data
@@ -469,6 +522,52 @@ pub struct LabelBorder {
     pub linetype: u64,
 }
 
+/// A label style's line component (`AECC_LABEL_RADIAL_LINE_STYLE`).
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct LabelLineComponent {
+    pub id: u32,
+    pub name: Option<String>,
+    pub visible: bool,
+    /// `None` takes the defaults' color, lineweight, linetype.
+    pub color: Option<Color>,
+    pub lineweight: Option<i32>,
+    pub linetype: Option<u64>,
+    /// Ends at its end point anchor rather than at its length.
+    pub use_end_anchor: bool,
+    /// `None` takes the defaults' start point offsets.
+    pub start_x_offset: Option<f64>,
+    pub start_y_offset: Option<f64>,
+    pub end_x_offset: f64,
+    pub end_y_offset: f64,
+    /// Angle in radians.
+    pub angle: f64,
+    /// Length as a percentage (of the anchors' distance) rather than fixed.
+    pub percent: bool,
+    pub fixed_length: f64,
+    pub percent_length: f64,
+}
+
+/// A label style's block component (`AECC_LABEL_BLOCK_STYLE`).
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct LabelBlockComponent {
+    pub id: u32,
+    pub name: Option<String>,
+    pub visible: bool,
+    pub color: Option<Color>,
+    pub lineweight: Option<i32>,
+    pub x_offset: f64,
+    pub y_offset: f64,
+    /// Rotation in radians.
+    pub rotation: f64,
+    pub height: f64,
+    /// 9 insertion point; 0 top left to 8 bottom right.
+    pub attachment: i32,
+    /// The block definition (its block record), 0 for none.
+    pub block: u64,
+}
+
 /// A label style's text component (`AECC_LABEL_TEXT_STYLE`).
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -620,6 +719,118 @@ impl LabelFields {
         })
     }
 
+    /// The line component, given its id, name and references.
+    pub(super) fn line_component(&self, id: u32, name: Option<String>, refs: &[u64]) -> Option<LabelLineComponent> {
+        Some(LabelLineComponent {
+            id,
+            name,
+            visible: self.flag("visible")?,
+            color: self.when("mask_a", TEXT_COLOR, || self.color("text_color")),
+            lineweight: self.when("mask_a", TEXT_LINEWEIGHT, || self.long("text_lineweight")),
+            linetype: self.when("mask_a", COMPONENT_LINETYPE, || refs.get(REF_LINETYPE).copied()),
+            use_end_anchor: self.flag("use_end_anchor")?,
+            start_x_offset: self.when("mask_c", START_X_OFFSET, || self.double("start_x_offset")),
+            start_y_offset: self.when("mask_c", START_Y_OFFSET, || self.double("start_y_offset")),
+            end_x_offset: self.double("end_x_offset")?,
+            end_y_offset: self.double("end_y_offset")?,
+            angle: self.double("line_angle")?,
+            percent: self.long("length_type")? == 1,
+            fixed_length: self.double("fixed_length")?,
+            percent_length: self.double("percent_length")?,
+        })
+    }
+
+    /// Writes a line component's values into its fields and references.
+    pub(super) fn set_line_component(&mut self, c: &LabelLineComponent, refs: &mut [u64]) {
+        self.set("visible", V::B(c.visible));
+        self.put("mask_a", TEXT_COLOR, c.color, |f, v| f.set("text_color", V::Cmc(word_of(v))));
+        self.put("mask_a", TEXT_LINEWEIGHT, c.lineweight, |f, v| f.set("text_lineweight", V::Bl(v)));
+        self.put("mask_a", COMPONENT_LINETYPE, c.linetype, |_, v| if let Some(slot) = refs.get_mut(REF_LINETYPE) { *slot = v });
+        self.set("use_end_anchor", V::B(c.use_end_anchor));
+        self.put("mask_c", START_X_OFFSET, c.start_x_offset, |f, v| f.set("start_x_offset", V::Bd(v)));
+        self.put("mask_c", START_Y_OFFSET, c.start_y_offset, |f, v| f.set("start_y_offset", V::Bd(v)));
+        self.set("end_x_offset", V::Bd(c.end_x_offset));
+        self.set("end_y_offset", V::Bd(c.end_y_offset));
+        self.set("line_angle", V::Bd(c.angle));
+        self.set("length_type", V::Bl(i32::from(c.percent)));
+        self.set("fixed_length", V::Bd(c.fixed_length));
+        self.set("percent_length", V::Bd(c.percent_length));
+    }
+
+    /// The block component, given its id, name and references.
+    pub(super) fn block_component(&self, id: u32, name: Option<String>, refs: &[u64]) -> Option<LabelBlockComponent> {
+        Some(LabelBlockComponent {
+            id,
+            name,
+            visible: self.flag("visible")?,
+            color: self.when("mask_a", TEXT_COLOR, || self.color("text_color")),
+            lineweight: self.when("mask_a", TEXT_LINEWEIGHT, || self.long("text_lineweight")),
+            x_offset: self.double("x_offset")?,
+            y_offset: self.double("y_offset")?,
+            rotation: self.double("block_rotation")?,
+            height: self.double("block_height")?,
+            attachment: self.long("block_attachment")?,
+            block: refs.get(REF_BLOCK).copied().unwrap_or(0),
+        })
+    }
+
+    /// Writes a block component's values into its fields and references.
+    pub(super) fn set_block_component(&mut self, c: &LabelBlockComponent, refs: &mut [u64]) {
+        self.set("visible", V::B(c.visible));
+        self.put("mask_a", TEXT_COLOR, c.color, |f, v| f.set("text_color", V::Cmc(word_of(v))));
+        self.put("mask_a", TEXT_LINEWEIGHT, c.lineweight, |f, v| f.set("text_lineweight", V::Bl(v)));
+        self.set("x_offset", V::Bd(c.x_offset));
+        self.set("y_offset", V::Bd(c.y_offset));
+        self.set("block_rotation", V::Bd(c.rotation));
+        self.set("block_height", V::Bd(c.height));
+        self.set("block_attachment", V::Bl(c.attachment));
+        if let Some(slot) = refs.get_mut(REF_BLOCK) {
+            *slot = c.block;
+        }
+    }
+
+    /// Sets a collector's per component entry list to `n` entries: the
+    /// entries are the same for every component apart from their number
+    /// (1, 2, ...; LC00 to LC05: a component added or removed changes only
+    /// their count), so the first one is repeated (a constant one when there
+    /// is none).
+    pub(super) fn set_entries(&mut self, n: usize) {
+        let Some(at) = self.0.iter().position(|f| f.name == "entries") else { return };
+        let old = self.0[at + 1..].iter().take_while(|f| f.name == "entry").count();
+        let first: Vec<Field> = self.0[at + 1..at + 1 + old.min(ENTRY.len())].to_vec();
+        let proto: Vec<Field> = if first.len() == ENTRY.len() {
+            first
+        } else {
+            let values = [V::Bl(4), V::Bd(0.0), V::Bl(0), V::Bits(0), V::Bl(0xFF_FFFF), V::Bl(0), V::Bl(0), V::Bl(0), V::B(false), V::Bl(1)];
+            values.into_iter().map(|value| Field { name: "entry", value, raw: String::new() }).collect()
+        };
+        let entries = (0..n).flat_map(|i| {
+            let mut e = proto.clone();
+            let last = e.len() - 1;
+            e[last] = Field { name: "entry", value: V::Bl(i as i32 + 1), raw: String::new() };
+            e
+        });
+        self.0.splice(at + 1..at + 1 + old, entries);
+        self.set("entries", V::Bl(n as i32));
+        self.set("d_end", V::Bl(n as i32));
+    }
+
+    /// The number of a collector's per component entries.
+    #[cfg(test)]
+    pub(super) fn entry_count(&self) -> i32 {
+        self.long("entries").unwrap_or(-1)
+    }
+
+    /// Makes a text component's fields those of a component the label
+    /// style editor adds (LC01): field `t5` 5 and the anchor word's kind
+    /// byte 0xB2 for the labelled object's location (`anchor_point` -4),
+    /// 0xB1 for an anchor point.
+    pub(super) fn set_new_text_component(&mut self, c: &LabelTextComponent) {
+        self.set("t5", V::Bl(5));
+        let kind = if c.anchor_point < 0 { 0x0800_B200 } else { 0x0800_B100 };
+        self.set("anchor", V::Bl(kind));
+    }
+
     /// Writes a text component's values (its id and name are the record's
     /// head and texts) into its fields and references.
     pub(super) fn set_text_component(&mut self, c: &LabelTextComponent, refs: &mut [u64]) {
@@ -654,6 +865,34 @@ impl LabelFields {
 
 #[cfg(test)]
 mod tests {
+    /// The class data of a new line (LC04) and block (LC05) component.
+    const NEW_LINE: (usize, &str) = (647, "a63fffffc00e0800d0749692002c80022a406954044444444444584fc28000000c0003fffffffe00000030000ffffffffa00000030000ffffffff40a8fc07000080258800455550aaaaaaaaaaab6a7f54c");
+    const NEW_BLOCK: (usize, &str) = (576, "a63fffffc00e0800d0749692002c80022a406954044444444444584fc28000000c0003fffffffe00000030000ffffffffa00000030000ffffffff40a91ba8111111111111813f909");
+
+    fn bytes(hex: &str) -> Vec<u8> {
+        let hex = if hex.len() % 2 == 1 { format!("{hex}0") } else { hex.to_string() };
+        (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap()).collect()
+    }
+
+    /// A new line and block component read with their defaults, and a
+    /// line's start offset needs its mask C bit.
+    #[test]
+    fn line_and_block_components_read() {
+        let line = LabelFields::read_component(&bytes(NEW_LINE.1), 0, NEW_LINE.0, true).unwrap();
+        let l = line.line_component(1, None, &[0; 9]).unwrap();
+        assert_eq!((l.fixed_length, l.percent_length, l.percent, l.start_x_offset), (1.0 / 12.0, 1.0, false, None));
+        let mut edited = line.clone();
+        let mut changed = l.clone();
+        changed.start_x_offset = Some(0.01);
+        changed.percent = true;
+        edited.set_line_component(&changed, &mut [0; 9]);
+        assert_eq!(edited.line_component(1, None, &[0; 9]).unwrap().start_x_offset, Some(0.01));
+        assert_eq!(edited.long("mask_c"), Some(2045));
+        let block = LabelFields::read_component(&bytes(NEW_BLOCK.1), 0, NEW_BLOCK.0, false).unwrap();
+        let b = block.block_component(2, None, &[0; 10]).unwrap();
+        assert_eq!((b.height, b.attachment, b.rotation), (1.0 / 120.0, 9, 0.0));
+    }
+
     use super::*;
 
     #[test]

@@ -38,7 +38,7 @@ pub use corridor::{CorridorBaseline, CorridorBoundary, CorridorDefinition, Corri
 pub use grading::{CriteriaValue, GradingCriteria};
 pub use intersection::IntersectionLayout;
 pub use labels::{parse_format, property, LabelPart, LabelText};
-pub use label_style::{LabelBorder, LabelDraggedState, LabelLeader, LabelStyleSettings, LabelTextComponent};
+pub use label_style::{LabelBlockComponent, LabelBorder, LabelDraggedState, LabelLeader, LabelLineComponent, LabelStyleSettings, LabelTextComponent};
 pub use network::{PartField, PressurePipe, PressurePort};
 pub use parameters::{Parameter, ParameterValue};
 pub use profile::{CurveMinimumK, OffsetProfile, ProfileCriteria, ProfileLocking, ProfilePiece, ProfileViewFrame, Pvi};
@@ -1456,6 +1456,40 @@ impl ArchObject {
         // Three lists of the components and a closing null reference.
         let n = refs.len().saturating_sub(1) / 3;
         refs[..n].to_vec()
+    }
+
+    /// The fields of a line (`line`) or block component and where its
+    /// references and texts start.
+    pub(in crate::classes::civil) fn label_component_fields(&self, line: bool) -> Option<(label_style::LabelFields, usize, usize)> {
+        (self.dxf_name == if line { "AECC_LABEL_RADIAL_LINE_STYLE" } else { "AECC_LABEL_BLOCK_STYLE" }).then_some(())?;
+        let (data, start, end) = self.main_stream()?;
+        let (class, own_ref, text_keys) = style::class_layout(data, start, end)?;
+        Some((label_style::LabelFields::read_component(data, class, end, line)?, own_ref, text_keys))
+    }
+
+    /// Id and name (under a text id) of a label style component.
+    fn label_component_head(&self) -> Option<(u32, Option<String>)> {
+        let (data, start, end) = self.main_stream()?;
+        let mut b = bits::Bits::new(data, start, end);
+        b.bit_short()?;
+        let id = b.bit_long()? as u32;
+        Some((id, (id & 0x8000_0000 != 0).then(|| self.decode().strings.first().cloned()).flatten()))
+    }
+
+    /// A label style's line component (`AECC_LABEL_RADIAL_LINE_STYLE`).
+    pub fn label_line_component(&self) -> Option<LabelLineComponent> {
+        let (fields, own, _) = self.label_component_fields(true)?;
+        let refs: Vec<u64> = self.typed_handles().into_iter().skip(own).map(|r| r.0).collect();
+        let (id, name) = self.label_component_head()?;
+        fields.line_component(id, name, &refs)
+    }
+
+    /// A label style's block component (`AECC_LABEL_BLOCK_STYLE`).
+    pub fn label_block_component(&self) -> Option<LabelBlockComponent> {
+        let (fields, own, _) = self.label_component_fields(false)?;
+        let refs: Vec<u64> = self.typed_handles().into_iter().skip(own).map(|r| r.0).collect();
+        let (id, name) = self.label_component_head()?;
+        fields.block_component(id, name, &refs)
     }
 
     /// A label style's text component (`AECC_LABEL_TEXT_STYLE`).

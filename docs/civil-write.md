@@ -272,6 +272,40 @@ top, 2 bottom; attachment and anchor point 0 top left to 8 bottom right;
 leader attachment 2 middle, 3 middle of the bottom line; border type 0
 rectangular, 1 rounded.
 
+Components added or removed (LC00 to LC05: a text, line or block
+component added to the default point label style, its first or last
+text component removed) change the collector only in its component
+lists and its entry list (`BL n` entries, the same 74 bits for each but
+their number 1..n, then `BL n`); the other components stay as they are.
+An added text component is a text id (the application's own counter,
+0x800006A7 here) with the name and an empty text, its fields those of the
+style's other text components but `t5` 5, contents "Label Text", the
+labelled object's location as anchor (anchor word 0x0800B200; an anchor
+point gives 0x0800B1xx), middle center attachment, no offsets; it comes
+after the others. The application adds text, line and block components to
+a point label style (ticks, reference texts, direction arrows and text
+iterators are refused there).
+
+Line (`AECC_LABEL_RADIAL_LINE_STYLE`) and block (`AECC_LABEL_BLOCK_STYLE`)
+components share the base fields: visibility, color and lineweight in
+the text color and lineweight fields (mask A bits as for text), a line's
+linetype in the sixth reference (mask A 0x400000), a block's offsets in
+the base offsets; then (LL01-LL16, BB01-BB10: one setting of a new line
+or block changed per save):
+
+```text
+line:   BL end anchor component, B use end anchor, BL end anchor word,
+        BD start x offset, BD, BD start y offset, BD, BD end x offset,
+        BD, BD end y offset, BD, BD fixed length, BD, BD angle, BD,
+        BL length type (0 fixed, 1 percent), BD percent length, BL 0
+block:  BL 0, BD rotation, BD, BD height, BL 0,
+        BL attachment (9 insertion point, 0 top left ... 8 bottom right)
+```
+
+The start offsets count when mask C has 0x1 (x) and 0x2 (y) set; a
+block's block is its tenth reference. A new line has fixed length 1/12
+and percent length 1, a new block height 1/120.
+
 Samples: LS001-LS040 (one setting of the default point label style
 changed per save), LT001-LT035 (bits back to their defaults, colors,
 linetypes, layer, text style, arrowhead style, anchor component and
@@ -285,7 +319,21 @@ components with the settings and text component values given;
 `add_point_label_style` does so from the default point label style. A
 copy is a new text id in the source's collection with its name; its
 records equal the source's apart from the head and the changed fields
-(an application copy of "Standard" is the same, L03). E-LS1 (new
+(an application copy of "Standard" is the same, L03). The copy leaves out
+the text components `edit` removes and adds the new ones it pushes
+(`LabelStyle::new_text_component`, id 0) after the others, under text ids
+from 0x80050001; a component anchored to a removed one is refused.
+E-LC1 (OP00 with LSX: the description component removed, T9 added with
+other contents and offset; LSY: only the elevation component kept, A1 and
+A2 added) opens with AUDIT 0 and the API lists the components with the
+written values; T9's properties equal the application's added T9 (LC01)
+apart from dates and users. Line and block components keep their number
+in a copy; their values are written as edited (`LabelStyle::lines`,
+`LabelStyle::blocks`). E-LC2 (LC04's style copied with its line's angle,
+start x and end y offsets, lengths, percent length type, color and
+visibility changed) and E-LC3 (LC05's block: height, rotation, x offset,
+attachment, lineweight) open with AUDIT 0 and the API lists the written
+values. Every line component of HB0 (33) and OP00 (5) reads. E-LS1 (new
 drawing, three points, LS1 with every collector setting and the first
 component's text, border and anchor changed, LS2 with the second
 component's height and color): opens with AUDIT 0, the API lists LS1 and
@@ -3126,7 +3174,9 @@ Corridors are listed in §3i-a.
 | mass haul | line and view | partly | no | §6a |
 | label styles | the defaults of a new drawing (§2b) | partly | yes | §2b |
 | label styles | settings: visibility, layer, text style, orientation, insert option, plan readability, leader, dragged state; text components' contents, height, offsets, angle, attachment, anchor, color, lineweight, border | yes (375 of 379 collectors, 248 of 252 text components) | yes, as copies of a drawing's label style (§2d) | §2d |
-| label styles | adding or removing components; line, arrow and iterator components' own settings; pipe and pressure part label styles | base fields | as copied | not mapped |
+| label styles | adding and removing text components | yes | yes (§2d) | §2d |
+| label styles | line and block components' settings | yes | yes, in copies (§2d) | §2d |
+| label styles | adding or removing line and block components; anchors of lines; tick, reference text, direction arrow and iterator components' own settings; pipe and pressure part label styles | base fields | as copied | not mapped; the API refuses to set line and block anchors |
 
 ### 6a. Gradings and mass haul
 
