@@ -805,8 +805,38 @@ bits of four values; E-CR01, E-CR07, E-CR09 and E-CR10 open with AUDIT
 0 errors and the API lists the three elements where they were written
 and the connection parameters (the application reports the outgoing
 offset relative to the direction travelled). A value of exactly 0 or 1
-would shorten the block and is refused; curve groups other than an arc
-are not written.
+would shorten the block and is refused.
+
+`add_curb_return_with` takes the other curve groups (`CurbReturnCurve`):
+
+- three arcs (CG01, CG07; CG11 a right turn): one element of kind 267
+  (constraint 1: `BL 0, BL 1, BL 3`, then radius and length of each arc,
+  the middle length 0); the connection block's code (the BL at bits 53
+  to 62 of the run after value 23) is 3, the six values take the
+  radius's place and `BL 1` comes before the bit after them;
+- a clothoid spiral-curve-spiral (CG02, CG06, CG08; CG10 a right turn):
+  the lines keep ids 1 and 3 and the curve is a spiral in (kind 259,
+  constraint 0: `BL 256, B clockwise, 2RD start, 2RD direction, BD
+  length, BD radius, BD 0, BD 0, BD 1`), a fixed arc (start, middle,
+  end) and a spiral out (constraint 1: `BL 256, B clockwise, BD radius,
+  BD length, 2RD start, 2RD direction, BD 0, BD 0, BD 1`), ids 4 to 6,
+  stored after the lines; the code is 4 and the run ends after it,
+  without the overlap, the curve's end station or the radius; the
+  record's keys gain `0x0400D783`, a text before the name holding
+  `{"CurveType": 4, "CurveParameters": {"CurveRadius", "SpiralInLength",
+  "SpiralOutLength", "Greater180": false, "SpiralType": 256}}`
+  (tab-indented lines, numbers in their shortest form).
+
+Written for CR00's roads the records equal the samples' apart from the
+stamp and the last bits of values (the application's spiral points lie
+up to 1e-11 from the series; its lines start up to 4e-10 apart). E-CG01,
+E-CG02, E-CG07, E-CG08, E-CG10 and E-CG11 open with AUDIT 0 and the API
+reports the curve group and its parameters; the application solves a
+spiral-curve-spiral again on open (its own points), three arcs as
+written. The application's interface refuses every spiral-spiral group
+(SSCS, SCSS, SSCSS: "No solution because of invalid parameters" for
+the radii, lengths, offsets and stations tried), so they are not
+written; spirals other than the clothoid are not written either.
 
 ### Station anchors
 
@@ -3355,7 +3385,9 @@ Corridors are listed in §3i-a.
 | alignments | widenings with linear transitions (on lines; of length 0 anywhere) | yes | yes | §3a (offset alignments) |
 | alignments | types: centerline, utility, rail (track gauge) | yes | yes | §3a (alignment types) |
 | alignments | curb returns (connected alignments) of one arc between two roads' offset lines, turning left or right, into the outgoing road along or against its stationing | yes (type, roads) | yes | §3a (curb returns) |
-| alignments | curb returns of the other curve groups (three-centred, spiral-curve-spiral and the like), widening transitions on arcs or curved (kinds 2, 4, 5), offsets of spirals, rail cant | yes (offset parameters and regions, connected alignments, type) | no | only arc curb returns sampled; the other blocks not decoded |
+| alignments | curb returns of three arcs and of a clothoid spiral-curve-spiral | yes | yes | §3a (curb returns; CG01 to CG11) |
+| alignments | curb returns of spiral-spiral groups (SSCS, SCSS, SSCSS) | — | no | the application's interface refuses every set of parameters tried (§3a) |
+| alignments | widening transitions on arcs or curved (kinds 2, 4, 5), offsets of spirals, rail cant | yes (offset parameters and regions, connected alignments, type) | no | not decoded |
 | alignments | lone spirals, other constraints (fixed/floating curves, curves through points) | yes (elements) | no | other element kinds not written; no sample: after a fixed line the API's floating line and floating curve additions never return in a batch run (AE01, AE02) |
 | alignments | superelevation: curves over curve elements, critical stations (begin/end full super, level crown, low shoulder match, reverse crown) with cross slopes | yes | yes | §3a (superelevation) |
 | alignments | superelevation: manual stations (with their curve settings block and descriptions) | yes | yes | §3a (superelevation) |
