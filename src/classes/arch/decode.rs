@@ -119,6 +119,21 @@ pub(crate) fn open_entity(data: &ArchEntityData) -> crate::error::Result<DwgMerg
     Ok(reader)
 }
 
+/// Raw bytes of an entity's graphic-image section (the `B`-flagged,
+/// bit-long-long-sized byte block of its common preamble the common
+/// entity reader isolates; empty for an entity without one).
+pub(crate) fn entity_graphic_data(data: &ArchEntityData) -> Option<Vec<u8>> {
+    let raw = data.raw_dwg_data.as_deref()?;
+    let version = data.dwg_source_version.unwrap_or(DxfVersion::AC1032);
+    let objects = DwgObjectReader::new(Vec::new(), version, Default::default()).ok()?;
+    let (type_code, mut reader) = objects.read_raw_record(raw, data.dwg_handle_bits).ok()?;
+    let common = objects.read_common_entity_data(&mut reader, type_code);
+    reader.check_error().ok()?;
+    common.graphic_data.filter(|g| !g.is_empty())
+}
+
+
+
 fn open_object(object: &ArchObject) -> crate::error::Result<DwgMergedReader> {
     let raw = object.raw_dwg_data.as_deref().ok_or_else(|| {
         crate::error::DxfError::Parse("architecture object has no DWG body".into())
