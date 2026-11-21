@@ -1193,13 +1193,24 @@ fn walk_points(start: Vector2, h: f64, k0: f64, k1: f64, length: f64) -> (Vec<Ve
     points.push(start);
     let mut p = start;
     let heading_at = |s: f64| h + k0 * s + (k1 - k0) * s * s / (2.0 * length);
+    let spiral = (k1 - k0).abs() > 1e-12;
+    // Three-point Gauss weights and nodes on a step.
+    let gauss = [(5.0 / 18.0, (1.0 - (0.6f64).sqrt()) / 2.0), (8.0 / 18.0, 0.5), (5.0 / 18.0, (1.0 + (0.6f64).sqrt()) / 2.0)];
     for i in 0..n {
         let (s0, s1) = (i as f64 * ds, (i + 1) as f64 * ds);
-        // The chord of a step is shorter than the step by sinc of half its
-        // turn: exact on an arc, close on a spiral.
-        let half = (heading_at(s1) - heading_at(s0)) / 2.0;
-        let chord = if half.abs() < 1e-12 { ds } else { ds * half.sin() / half };
-        p = p + direction(heading_at((s0 + s1) / 2.0)) * chord;
+        if spiral {
+            // A spiral's step: its direction integrated (the chord along
+            // the middle heading drifts 3e-4 over a 30 m spiral).
+            for (w, t) in gauss {
+                p = p + direction(heading_at(s0 + t * ds)) * (w * ds);
+            }
+        } else {
+            // The chord of an arc's step is shorter than the step by sinc
+            // of half its turn.
+            let half = (heading_at(s1) - heading_at(s0)) / 2.0;
+            let chord = if half.abs() < 1e-12 { ds } else { ds * half.sin() / half };
+            p = p + direction(heading_at((s0 + s1) / 2.0)) * chord;
+        }
         points.push(p);
     }
     (points, h + k0 * length + (k1 - k0) * length / 2.0)

@@ -374,73 +374,110 @@ fn vertical_labels(profile: &ArchEntityData, number: i32) -> Vec<Label> {
 /// and the previous element's start, whether that radius (the end's at the
 /// alignment's start) turns left, how many curves lie up to it and its
 /// number (the lines numbered first, then the curves); and one more label
-/// at each curve's middle, numbered by curve. `None` for an alignment of
-/// other pieces or where two lines or two curves meet.
+/// at each curve's middle, numbered by curve. A spiral-curve-spiral is one
+/// curve of three pieces (E-HS1, E-HS2 rebuilt by the application): each
+/// piece is labelled (0x0100D621 273, 274, 275; kind key 0x0101780D 2 for
+/// a spiral), all three numbered as the curve and its middle label at the
+/// station nearest the lines' intersection (an arc's middle; E-HS2, E-HS4); a spiral's radius at its tangent end is
+/// infinite (signed as its arc's), the turn byte reads finite radii only,
+/// and its points are coded 264 (tangent to spiral), 265 (spiral to
+/// tangent), 266 (curve to spiral), 267 (spiral to curve). `None` for an
+/// alignment of other elements or where two lines or two curves meet.
 fn horizontal_labels(alignment: &ArchEntityData, number: i32) -> Option<Vec<(f64, Label)>> {
-    let mut at = alignment.alignment_start_station()?;
-    // (start station, length, signed radius: 0 for a line)
-    let mut elements = Vec::new();
-    for (kind, curvature, pts) in alignment.alignment_pieces_with_curvature() {
-        let (a, b) = (*pts.first()?, *pts.last()?);
-        let chord = a.distance(&b);
-        let (length, radius) = match kind {
-            AlignmentPiece::Line => (chord, 0.0),
-            AlignmentPiece::Curve if curvature != 0.0 => {
-                let r = 1.0 / curvature.abs();
-                let half = (chord / (2.0 * r)).clamp(-1.0, 1.0).asin();
-                let mid = pts[pts.len() / 2];
-                let past_half = mid.distance(&crate::types::Vector2::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0)) > r;
-                (2.0 * r * if past_half { std::f64::consts::PI - half } else { half }, -1.0 / curvature)
-            }
-            _ => return None,
-        };
-        elements.push((at, length, radius));
-        at += length;
-    }
-    let curve = |i: usize| elements[i].2 != 0.0;
-    if elements.windows(2).any(|w| (w[0].2 != 0.0) == (w[1].2 != 0.0)) {
+    let all = alignment.alignment_elements()?;
+    let elements = super::alignment::element_pieces(&all)?;
+    if elements.windows(2).any(|w| w[0].0 == w[1].0) {
         return None;
     }
-    let n = elements.len();
-    let start_code = |i: usize| if i == 0 { POINT_START } else if curve(i) { POINT_CURVE_IN } else { POINT_CURVE_OUT };
+    // Pieces in station order: (start, length, kind, radius at start, at
+    // end, element index, position in a spiral-curve-spiral).
+    let mut pieces = Vec::new();
+    let mut at = alignment.alignment_start_station()?;
+    for (i, (_, parts, _)) in elements.iter().enumerate() {
+        let scs = parts.len() == 3;
+        for (k, &(kind, length, r)) in parts.iter().enumerate() {
+            let infinite = f64::INFINITY.copysign(r);
+            let (a, b) = match (kind, k) {
+                (2, 0) => (infinite, r),
+                (2, _) => (r, infinite),
+                _ => (r, r),
+            };
+            pieces.push((at, length, kind, a, b, i, scs.then_some(k)));
+            at += length;
+        }
+    }
+    let n = pieces.len();
+    // Lines take their radii from their neighbours.
+    for i in 0..n {
+        if pieces[i].2 == 0 {
+            pieces[i].3 = if i == 0 { 0.0 } else { pieces[i - 1].4 };
+            pieces[i].4 = if i + 1 == n { 0.0 } else { pieces[i + 1].3 };
+        }
+    }
+    let junction = |a: u8, b: u8| match (a, b) {
+        (0, 1) => POINT_CURVE_IN,
+        (1, 0) => POINT_CURVE_OUT,
+        (0, _) => 264,
+        (_, 0) => 265,
+        (1, _) => 266,
+        _ => 267,
+    };
+    let start_code = |i: usize| if i == 0 { POINT_START } else { junction(pieces[i - 1].2, pieces[i].2) };
     let end_code = |i: usize| if i + 1 == n { POINT_END } else { start_code(i + 1) };
-    // The radius at an element's start and end: the curve's that the
-    // point belongs to.
-    let start_radius = |i: usize| if i == 0 { 0.0 } else if curve(i) { elements[i].2 } else { elements[i - 1].2 };
-    let end_radius = |i: usize| if i + 1 == n { 0.0 } else if curve(i) { elements[i].2 } else { elements[i + 1].2 };
-    let lines = (0..n).filter(|i| !curve(*i)).count() as i32;
+    let finite = |r: f64| if r.is_finite() { r } else { 0.0 };
+    let lines = elements.iter().filter(|e| !e.0).count() as i32;
     let mut out = Vec::new();
     let (mut line_no, mut curve_no) = (0, 0);
-    for (i, &(start, length, _)) in elements.iter().enumerate() {
-        let middle = start + length / 2.0;
-        let numbered = if curve(i) {
-            curve_no += 1;
-            lines + curve_no
-        } else {
-            line_no += 1;
-            line_no
-        };
-        let previous = i.checked_sub(1).unwrap_or(0);
-        let turn = if start_radius(i) != 0.0 { start_radius(i) } else { end_radius(i) };
-        if curve(i) {
-            let keys = vec![(0x0101_5013, KeyValue::Long(number)), (0x0100_D731, KeyValue::Long(curve_no)), (0x0200_D020, KeyValue::Double(middle)), (0x0100_D621, KeyValue::Long(-1)), (0x0100_D61E, KeyValue::Long(curve_no))];
-            out.push((middle, Label { keys, run: RUN_CURVE_MIDDLE, list: LIST_CURVE_MIDDLE, children: Vec::new() }));
+    for i in 0..n {
+        let (start, length, kind, a, b, element, position) = pieces[i];
+        let curve = elements[element].0;
+        let first = position.is_none_or(|k| k == 0);
+        if first {
+            if curve {
+                curve_no += 1;
+                let span: f64 = elements[element].1.iter().map(|p| p.1).sum();
+                // Where the lines around a spiral-curve-spiral meet, the
+                // nearest station.
+                let lines = (element > 0 && element + 1 < elements.len()).then(|| (elements[element - 1].2, elements[element + 1].2));
+                let meet = lines.filter(|_| position.is_some()).and_then(|(a, b)| {
+                    let (u, v) = (a[1] - a[0], b[1] - b[0]);
+                    let det = u.x * v.y - u.y * v.x;
+                    (det.abs() > 1e-12).then(|| a[0] + u * (((b[0].x - a[0].x) * v.y - (b[0].y - a[0].y) * v.x) / det))
+                });
+                let middle = match meet {
+                    Some(p) => super::alignment::station_of_point(&all, alignment.alignment_start_station()?, p)?,
+                    None => start + span / 2.0,
+                };
+                let keys = vec![(0x0101_5013, KeyValue::Long(number)), (0x0100_D731, KeyValue::Long(curve_no)), (0x0200_D020, KeyValue::Double(middle)), (0x0100_D621, KeyValue::Long(-1)), (0x0100_D61E, KeyValue::Long(curve_no))];
+                out.push((middle, Label { keys, run: RUN_CURVE_MIDDLE, list: LIST_CURVE_MIDDLE, children: Vec::new() }));
+            } else {
+                line_no += 1;
+            }
         }
+        let numbered = if curve { lines + curve_no } else { line_no };
+        let middle = start + length / 2.0;
+        let previous = i.checked_sub(1).unwrap_or(0);
+        let turn = if finite(a) != 0.0 { finite(a) } else { finite(b) };
+        let kind_key = match kind {
+            0 => (0x0101_780B, KeyValue::Long(0)),
+            1 => (0x0101_780C, KeyValue::Long(1)),
+            _ => (0x0101_780D, KeyValue::Long(2)),
+        };
         let keys = vec![
             (0x0101_782A, KeyValue::Long(end_code(i))),
             (0x0101_782F, KeyValue::Long(0)),
             (0x0301_782C, KeyValue::Byte(u8::from(turn < 0.0))),
             (0x0101_7829, KeyValue::Long(start_code(i))),
-            (0x0201_782E, KeyValue::Double(end_radius(i))),
+            (0x0201_782E, KeyValue::Double(b)),
             (0x0101_782B, KeyValue::Long(start_code(previous))),
             (0x0101_5013, KeyValue::Long(number)),
             (0x0100_D731, KeyValue::Long(curve_no)),
             (0x0200_D020, KeyValue::Double(middle)),
-            (0x0100_D621, KeyValue::Long(-1)),
-            (0x0201_7830, KeyValue::Double(if i == 0 { 0.0 } else { start_radius(previous) })),
+            (0x0100_D621, KeyValue::Long(position.map_or(-1, |k| 273 + k as i32))),
+            (0x0201_7830, KeyValue::Double(if i == 0 { 0.0 } else { pieces[previous].3 })),
             (0x0100_D61E, KeyValue::Long(numbered)),
-            if curve(i) { (0x0101_780C, KeyValue::Long(1)) } else { (0x0101_780B, KeyValue::Long(0)) },
-            (0x0201_782D, KeyValue::Double(start_radius(i))),
+            kind_key,
+            (0x0201_782D, KeyValue::Double(a)),
         ];
         out.push((middle, Label { keys, run: RUN_ELEMENT, list: LIST_ELEMENT, children: Vec::new() }));
     }
@@ -812,5 +849,29 @@ mod tests {
         assert!((value(&labels[5], 0x0201_7826).unwrap() + 0.02).abs() < 1e-12);
         assert_eq!((value(&labels[7].children[0], 0x0100_1025), labels[7].children[0].children.len()), (Some(2.0), 0));
         assert_eq!(labels.iter().map(Label::texts).sum::<usize>(), 8);
+    }
+
+    /// A spiral-curve-spiral is one curve of three labelled pieces after
+    /// its middle label; a spiral's tangent end has an infinite radius.
+    #[test]
+    fn horizontal_geometry_labels_with_spirals() {
+        use super::super::alignment::{add_alignment_with_curves, VertexCurve};
+        let v = crate::types::Vector2::new;
+        let mut doc = CadDocument::new();
+        let a = add_alignment_with_curves(&mut doc, "AL1", &[v(0.0, 0.0), v(200.0, 0.0), v(400.0, 150.0)], &[VertexCurve::SpiralCurveSpiral { spiral_in: 30.0, radius: 150.0, spiral_out: 30.0 }], None).unwrap();
+        let labels = horizontal_labels(super::super::network::arch_entity(&doc, a).unwrap(), 1).unwrap();
+        let key = |l: &Label, k: u32| l.keys.iter().find(|x| x.0 == k).map(|x| match x.1 {
+            KeyValue::Long(i) => f64::from(i),
+            KeyValue::Double(d) => d,
+            KeyValue::Byte(b) => f64::from(b),
+            KeyValue::NullGuid | KeyValue::Reference => 0.0,
+        });
+        // E-HS1-edit: line, middle, spiral, arc, spiral, line.
+        assert_eq!(labels.len(), 6);
+        assert_eq!(labels[1].1.list, LIST_CURVE_MIDDLE);
+        let spiral = &labels[2].1;
+        assert_eq!((key(spiral, 0x0101_7829), key(spiral, 0x0101_782A), key(spiral, 0x0100_D621), key(spiral, 0x0101_780D), key(spiral, 0x0100_D61E)), (Some(264.0), Some(267.0), Some(273.0), Some(2.0), Some(3.0)));
+        assert_eq!((key(spiral, 0x0201_782D), key(&labels[0].1, 0x0301_782C)), (Some(f64::NEG_INFINITY), Some(0.0)));
+        assert!((key(spiral, 0x0200_D020).unwrap() - 149.92169503359918).abs() < 1e-9);
     }
 }
