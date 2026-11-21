@@ -551,6 +551,48 @@ texts:     ["AND"], part: ["NOT", ""], "PARENS", "", ORs, leaves; a range
            leaves and the range text
 ```
 
+Custom queries (`PointQuery::Custom`: a `QueryExpression` of
+comparisons joined by AND and OR, parentheses and a leading NOT) are
+stored without generated parentheses (PQ01 to PQ03: 25 queries over
+number, elevation, raw and full description and name):
+
+```text
+head:    BS 0x04BE, BL text id, BL 0, BL 0, 5 bits 01010,
+         BL k comparisons (byte form), 7 zero bits
+records: per comparison, in the order of the query text: the attribute's
+         header, its number bit, opens parentheses, closes parentheses,
+         byte comparison code, byte joint (0 first, 1 AND, 3 OR, 2 a NOT
+         opening the query or its first group), 7 zero bits
+leaves:  per comparison, in the same order: header, number bit, BL
+         attribute id, the constant (BL number, BD elevation, none for a
+         pattern), 7 zero bits but after the last
+texts:   "Point Group Query - <name>", "", the k constants, then the
+         expression's nodes in pre-order: "AeccQueryNodeAND" / "OR",
+         "NOT" and "PARENS" each with an empty text, a comparison as in
+         the standard queries (a pattern repeated after its leaf)
+```
+
+The tree the texts list is the one the application reads from the text:
+NOT before AND before OR, left to right (`a OR b AND c` is `a OR (b AND
+c)`; `a AND b AND c` is `(a AND b) AND c`). The application refuses `AND
+NOT` and `OR NOT` ("Unsupported property name found") and other
+operators ("Invalid operator found"); a query opening with two
+parentheses gets an extra record and an empty constant (PQ02 D4): the
+application keeps each parenthesis beyond one per comparison as a
+comparison with an empty text, and lists such queries so itself (PQ04:
+`((PointNumber>=2))` reads back as `(''  (PointNumber>=2)  '')`, a
+comparison closing two parentheses gains a trailing `''`); they are
+neither read nor written; names are kept in lower case; the custom query
+names are PointNumber, PointElevation, RawDescription, FullDescription and
+Name. The writer puts an OR under an AND or NOT and an AND under a NOT in
+parentheses and refuses a NOT elsewhere and a comparison opening or
+closing two parentheses; every query of PQ01 to PQ03 reads and is written
+back bit for bit. E-PQ1 (a new drawing, six points, seven custom groups:
+parentheses, a leading NOT before a comparison and a group, an OR put in
+parentheses, name, raw and full description patterns, precedence without
+parentheses) opens with AUDIT 0; the application lists the queries as
+written and, updated, the same members.
+
 Point names live in the point database: after the label style list,
 `BL 0`, the names by number `BL j, j x {BL number, BL text id}`, the same
 keyed by text `BL j, j x {BL text id, BL number}`, then the descriptions;
@@ -3372,7 +3414,9 @@ Corridors are listed in §3i-a.
 | point groups | number lists, elevation comparisons and ranges, description, name and full description patterns, exclusions | yes | yes | §3, §4 |
 | point groups | number ranges (`2-6`) | yes | as a number list | the application stores the range as its numbers |
 | point groups | overrides: point style, label style, fixed elevation, raw description; locked points; classifications applied (none, all, one) | yes | yes | §3 (point groups) |
-| point groups | AND of several criteria and other custom queries (advanced query), case-sensitive matching, elevation and description overrides from a property or extended data | partly | no | the custom query's node records are not decoded beyond the standard forms; the other override sources not sampled |
+| point groups | custom queries: AND, OR, parentheses, a leading NOT over number, elevation, descriptions and name | yes | yes | §3 (custom queries) |
+| point groups | custom queries with a comparison opening or closing two parentheses | no | no | the application stores the extra parenthesis as an empty-text comparison and shows it in its own query text (PQ02 D4, PQ04); not written |
+| point groups | case-sensitive matching, elevation and description overrides from a property or extended data | partly | no | not sampled |
 | TIN surfaces | points added to the surface | yes | yes | §3c |
 | TIN surfaces | point groups, breaklines (standard, proximity, non-destructive; from objects or held points, mid-ordinate, supplementing, weeding), contours, boundaries (outer, hide, show, data clip; destructive or not), add/delete/move vertex, vertex elevation, swap edge, add/delete line, raise, drawing objects, automatic rebuild | yes (every field by kind, §3c) | yes, with the triangulation the definitions build (§3c) | 62 of 67 sample surfaces built identically; non-destructive lines through vertices, far point clusters and a non-convex deleted vertex's hole differ (§3c) |
 | TIN surfaces | pasted surfaces, point files, imported files, corridor surfaces | yes | the definition (no geometry from the source) | the application adds the source's geometry when it rebuilds |
