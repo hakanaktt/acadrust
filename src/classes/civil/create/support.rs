@@ -136,6 +136,7 @@ const CLASSES: &[Class] = &[
     Class { dxf: "AECC_PROFILE_VIEW_PIPE_NETWORK_BAND_STYLE", cpp: "AeccDbGraphProfileStylePipeNetworkBand", module: "AeccNetwork130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_SUPERELEVATIONBAND_LABELGROUP", cpp: "AeccDbSuperElevationBandLabeling", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_SECTIONALDTABAND_LABELGROUP", cpp: "AeccDbSectionalDataBandLabeling", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
+    Class { dxf: "AECC_GRAPH_PROFILE_NETWORK_PART", cpp: "AeccDbGraphProfileNetworkPart", module: "AeccNetwork130", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_PIPENETWORKBAND_LABELGROUP", cpp: "AeccDbPipeNetworkBandLabeling", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_PROFILE_LABEL_SET", cpp: "AeccDbVAlignStnLabelsDlgTemplate", module: "AeccLand130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_ASSOC_ACTION", cpp: "AeccDbAssocAction", module: "AeccvBase130", proxy_flags: 0x81, entity: false },

@@ -1940,10 +1940,47 @@ sample line group labels each of its lines in station order (keys
 group), each line after the first followed by a label of the step from
 the line before (the same keys and 0x02017823 the previous station; run
 bits 17-19 differ); a label's references are its line and the group
-(soft) before the view. Superelevation and pipe network bands are
-written without a data source and without labels (the application's own
-groups for such bands are empty: no superelevation or pipe network
-chosen), and so are sectional data bands without a group; the group's
+(soft) before the view. A pipe network band reading a gravity network
+labels the network's parts drawn in the view: each pipe (0x0201783B its
+slope, the drop from start to end over its plan length; 0x0201783A the
+largest slope of the network's pipes either way; 0x02017835 and
+0x02017836 the stations of its ends on the alignment; 0x02017837 the
+view's first station; 0x02017838 1.0; 0x02017839 0.0; 0x0301781D 0;
+0x0F01781C the pipe), then each structure (0x0200D020 its station,
+0x0F01781C the structure), in the network's order; a label's reference
+is its part (soft) before the view (DU01, DW01). A part drawn in a view
+is an `AECC_GRAPH_PROFILE_NETWORK_PART` in model space, a constant
+221-bit record with the references soft 0 and the part (hard); the view
+counts it among its items (`RC n`, `10000` each), lists `(soft drawn
+part, hard 0, hard 0)` after its profiles, the drawn parts (soft) after
+its last references, and `BL n` drawn parts as the third `BL` after its
+last `BD 10`. The writer draws the parts of every pipe network band's
+network, its pipes then its structures. Drawing parts in a view leaves
+two AUDIT errors per part, in the application's own drawings too (DW01:
+10 for 5 parts; E-PN4 with the parts drawn by the application: 12 for
+6). A superelevation band needs no data source (the API refuses one): it
+reads the view's alignment. A label is a tree: its keys, run and key
+list, then `BL n` nodes, each written the same way (keys, run, list,
+`BL n` nodes), and the closing `BL 0` only after the label itself (the
+labels of the other kinds have no nodes); each node takes one hard
+reference to the alignment after the label's view, each text key (type
+0x04) one empty text after the group's three. The band labels each
+critical station in station order (key 0x01017812 + n = n: 1 level
+crown, 2 reverse crown, 3 begin or end full super, 4 low shoulder match;
+0x0200D020 its station) with a node naming it (0x0400D56F a text,
+0x0100D551 its kind code, 0x01001025 3, 0x03001040 0, 0x0200D61D 1 when
+it ends its curve, 0x0100D571 0) under which two nodes name the curve
+element (0x0100D61E its id, 0x0100D621 -1, 0x0200D61D 0 and 1); then for
+each cross segment in ascending code (0x100 right side + 2 inside + 1
+lane), each run between two consecutive points where the segment's
+slope changes, the points being the alignment's start (slope 0), the
+critical stations and its end (slope 0): 0x0200D101 and 0x0200D102 its
+stations, 0x0200D020 their middle, 0x02017826 and 0x02017827 the slopes
+there, 0x0101781B the code, 0x02017817 the largest slope of all stations
+either way, 0x03017834 0, with the node of its end point (the
+alignment's end: kind 0, 0x01001025 2, 0x0200D61D 0.5, no element
+nodes). Alignments with manual stations are written without labels.
+Sectional data and pipe network bands without a source have no labels; the group's
 texts are its class text and three empty ones as for the others.
 
 The default band styles of a new drawing (style tree keys 0x42, 0x43,
@@ -1981,7 +2018,18 @@ drawing: a sample line group with lines at stations 50, 20 and 150 and a
 sectional data band reading it below the view, one without a group
 above) opens with AUDIT 0, the API lists the band's data source as the
 group, and after a band change the application's group equals the
-written one bit for bit and reference for reference. E-BW1 to E-BW4
+written one bit for bit and reference for reference. E-PN1 (a new
+drawing: a network of four pipes, one rising, and two structures beside
+an alignment with arcs, a pipe network band reading it) opens with 12
+AUDIT errors as the application's own version (E-PN4-app), the API lists
+the band's data source as the network, and after a band change the
+application's group holds the written labels value for value (stations
+to 1e-13; key order within a label differs). E-SE0 to E-SE4 (a new
+drawing: superelevation on one or both arcs with reverse crown, level
+crown, low shoulder match and full super stations, one to three cross
+segments sloped, and a superelevation band) open with AUDIT 0 and after
+a band change the application's group holds the written labels value
+for value (key order within a label aside). E-BW1 to E-BW4
 (weeding 50, stagger left/right/both, labels hidden below and above the
 view) open with AUDIT 0 and the API lists the written weeding, stagger
 and label visibility.
@@ -3326,8 +3374,8 @@ Corridors are listed in §3i-a.
 | profile views | stacked views (separate views at stacked origins) | yes | yes | §3h |
 | profile views | every style setting the API exposes (graph title, direction, exaggeration, grid, the four axes' titles and ticks, text styles) | yes | yes | §3h |
 | profile views | profile data, vertical and horizontal geometry, superelevation, sectional data and pipe network bands below or above the view, with their gaps, end station labels, label visibility, weeding, stagger, profiles and label groups; the default band styles of a new drawing | yes | yes (horizontal geometry labels of alignments with spirals left to the application; superelevation, sectional data and pipe network bands without data source and labels) | §3h (Bands) |
-| profile views | sectional data bands reading a sample line group, with their labels | yes | yes | §3h (Bands) |
-| profile views | band data sources (superelevation, pipe network) and their labels, pressure network/cant/distance/COGO/speed bands, band styles other than the defaults, intervals, stagger line height | partly | no | the API adds no band of the last five kinds; the API ignores the interval setters and refuses the stagger line height |
+| profile views | sectional data bands reading a sample line group, pipe network bands reading a gravity network (its parts drawn in the view), superelevation bands of an alignment with superelevation, with their labels | yes | yes (no labels with manual stations) | §3h (Bands) |
+| profile views | pressure network band data sources and labels, pressure network/cant/distance/COGO/speed bands, band styles other than the defaults, intervals, stagger line height | partly | no | the API adds no band of the last five kinds; the API ignores the interval setters and refuses the stagger line height |
 | sites | name, description, members | yes | yes | §3g |
 | parcels | closed and open, crossing and touching lot lines, arcs, labels | yes | yes | §3g |
 | parcels | members added to containers the application wrote with crossings (its point marks and edge flags kept) | yes | yes | §3g |
