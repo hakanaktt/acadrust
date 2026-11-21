@@ -1073,6 +1073,16 @@ impl ArchEntityData {
         survey::network_name(&self.decode().strings)
     }
 
+    /// A sheet (`AECC_SHEET`) a plan production run creates: its label and
+    /// its frame's view frame group.
+    pub fn sheet(&self) -> Option<view_frames::Sheet> {
+        if self.dxf_name != "AECC_SHEET" {
+            return None;
+        }
+        let strings = self.decode().strings;
+        view_frames::sheet(&strings, &self.typed_handles())
+    }
+
     /// A superelevation diagram view (`AECC_SUPERELEVATION_DIAGRAM_VIEW`)
     /// of an alignment: its name and the alignment it shows.
     pub fn superelevation_view(&self) -> Option<alignment::SuperelevationView> {
@@ -1114,6 +1124,10 @@ impl ArchEntityData {
 
     /// Number fields of the part data a Civil 3D pipe (`AECC_PIPE`) keeps
     /// itself: flow coefficients, minimum curve radius and the like.
+    /// TEMPORARY forensic accessor (uncommitted).
+    pub fn forensic_main_stream_bits(&self) -> Option<(usize, usize)> {
+        self.main_stream().map(|(_, start, end)| (start, end))
+    }
     pub fn pipe_part_fields(&self) -> Vec<PartField> {
         if self.dxf_name != "AECC_PIPE" {
             return Vec::new();
