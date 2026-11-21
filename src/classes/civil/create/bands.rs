@@ -21,6 +21,12 @@ pub enum BandKind {
     VerticalGeometry,
     /// The alignment's lines and curves.
     HorizontalGeometry,
+    /// The alignment's superelevation.
+    Superelevation,
+    /// The sample lines of a sample line group.
+    SectionalData,
+    /// The parts of a pipe network.
+    PipeNetwork,
 }
 
 /// A band of a profile view, drawn with the drawing's default band style
@@ -29,7 +35,7 @@ pub enum BandKind {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ProfileViewBand {
     pub kind: BandKind,
-    /// Above the view; only profile data bands are written above.
+    /// Above the view.
     pub top: bool,
     /// The profiles the band reads; the view's first profile when `None`.
     pub profile1: Option<Handle>,
@@ -38,6 +44,21 @@ pub struct ProfileViewBand {
     pub gap: f64,
     pub label_at_start: bool,
     pub label_at_end: bool,
+    /// Whether the band shows its labels.
+    pub show_labels: bool,
+    /// Weeding distance of the labels.
+    pub weeding: f64,
+    pub stagger: BandStagger,
+}
+
+/// How a band staggers its labels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum BandStagger {
+    None,
+    Both,
+    Right,
+    Left,
 }
 
 impl ProfileViewBand {
@@ -46,7 +67,7 @@ impl ProfileViewBand {
     /// for vertical geometry bands.
     pub fn new(kind: BandKind) -> Self {
         let ends = kind != BandKind::VerticalGeometry;
-        ProfileViewBand { kind, top: false, profile1: None, profile2: None, gap: 0.5 / 12.0, label_at_start: ends, label_at_end: ends }
+        ProfileViewBand { kind, top: false, profile1: None, profile2: None, gap: 0.5 / 12.0, label_at_start: ends, label_at_end: ends, show_labels: true, weeding: 100.0, stagger: BandStagger::None }
     }
 }
 
@@ -65,6 +86,9 @@ impl BandKind {
             BandKind::ProfileData => super::band_styles::KEY_DATA_BANDS,
             BandKind::VerticalGeometry => super::band_styles::KEY_VERTICAL_GEOMETRY_BANDS,
             BandKind::HorizontalGeometry => super::band_styles::KEY_HORIZONTAL_GEOMETRY_BANDS,
+            BandKind::Superelevation => super::band_styles::KEY_SUPERELEVATION_BANDS,
+            BandKind::SectionalData => super::band_styles::KEY_SECTIONAL_DATA_BANDS,
+            BandKind::PipeNetwork => super::band_styles::KEY_PIPE_NETWORK_BANDS,
         }
     }
 
@@ -73,6 +97,9 @@ impl BandKind {
             BandKind::ProfileData => "AECC_PROFILEDATABAND_LABELGROUP",
             BandKind::VerticalGeometry => "AECC_VERTICALGEOMETRYBAND_LABELGROUP",
             BandKind::HorizontalGeometry => "AECC_HORIZONTALGEOMETRYBAND_LABELGROUP",
+            BandKind::Superelevation => "AECC_SUPERELEVATIONBAND_LABELGROUP",
+            BandKind::SectionalData => "AECC_SECTIONALDTABAND_LABELGROUP",
+            BandKind::PipeNetwork => "AECC_PIPENETWORKBAND_LABELGROUP",
         }
     }
 
@@ -81,16 +108,27 @@ impl BandKind {
             BandKind::ProfileData => "AeccImpProfileDataBandLabeling",
             BandKind::VerticalGeometry => "AeccImpVerticalGeometryBandLabeling",
             BandKind::HorizontalGeometry => "AeccImpHorizontalGeometryBandLabeling",
+            BandKind::Superelevation => "AeccImpSuperElevationBandLabeling",
+            BandKind::SectionalData => "AeccImpSectionalDataBandLabeling",
+            BandKind::PipeNetwork => "AeccImpPipeNetworkBandLabeling",
         }
     }
 }
 
-/// A profile data band item after its gap (`BD`): bit 4 label at end, bit
-/// 5 label at start, bit 9 below the view; above the view bits 921 and
-/// 923 are 1 and 0.
+/// An item after its gap (`BD`) opens with `BL` flags (0x01 below the
+/// view, 0x10 label at start, 0x20 label at end, 0x100 labels shown),
+/// `BD` weeding, `BL` stagger (0 none, 1 both, 2 right, 3 left) and `BD`
+/// stagger line height (1/60); the rest is constant per kind but for the
+/// patches below (BVPD-W, -SL, -ST, -SR, -SLF; BVHG-SL, -W). The template
+/// holds these four fields in its first 168 bits.
+const ITEM_HEAD: usize = 168;
+const STAGGER_LINE_HEIGHT: f64 = 1.0 / 60.0;
+/// A profile data band item: above the view bits 921 and 923 are 1 and 0.
 const DATA_ITEM: (usize, &str) = (1056, "0c404000000000000000059408111111111111913f0000000000000000000000000000000000000000000000000000000000000000243801010000008040000030100000100400000501000001804000007010000020040000090100000280400000b0100000300400000d01000007404000101000000000000165000000000000003940");
-/// A vertical or horizontal geometry band item after its gap: bits 4 and
-/// 5 as above, the band's number in the view (bottom bands first, from 1)
+/// The item of every other band after its gap (vertical and horizontal
+/// geometry, superelevation, sectional data, pipe network: BV-SE, BV-SD,
+/// BV-PN equal a vertical geometry item; above the view only the flags
+/// change: BV-VGT, BV-HGT), the band's number in the view (bottom bands first, from 1)
 /// in bits 436 to 439 (a lone horizontal geometry band: 1, HG3P; PB04: 2
 /// and 3).
 const GEOMETRY_ITEM: (usize, &str) = (572, "0c404000000000000000059408111111111111913f00000000000000000000000000000000000000000000000000000000000000002903000000000000165000000000000003940");
@@ -107,13 +145,16 @@ pub(super) fn write_items(w: &mut DwgMergedWriter, bands: &[Resolved]) {
     for (n, b) in bands.iter().enumerate() {
         w.write_bit_double(b.band.gap);
         let mut bits = hex_bits(if b.band.kind == BandKind::ProfileData { DATA_ITEM } else { GEOMETRY_ITEM });
-        bits[4] = b.band.label_at_end;
-        bits[5] = b.band.label_at_start;
-        match b.band.kind {
+        let band = &b.band;
+        let flags = i32::from(!band.top) | i32::from(band.label_at_start) << 4 | i32::from(band.label_at_end) << 5 | i32::from(band.show_labels) << 8;
+        w.write_bit_long(flags);
+        w.write_bit_double(band.weeding);
+        w.write_bit_long(band.stagger as i32);
+        w.write_bit_double(STAGGER_LINE_HEIGHT);
+        match band.kind {
             BandKind::ProfileData => {
-                bits[9] = !b.band.top;
-                bits[921] = b.band.top;
-                bits[923] = !b.band.top;
+                bits[921] = band.top;
+                bits[923] = !band.top;
             }
             _ => {
                 let number = n as u8 + 1;
@@ -122,8 +163,8 @@ pub(super) fn write_items(w: &mut DwgMergedWriter, bands: &[Resolved]) {
                 }
             }
         }
-        for bit in bits {
-            w.write_bit(bit);
+        for bit in &bits[ITEM_HEAD..] {
+            w.write_bit(*bit);
         }
     }
 }
@@ -185,8 +226,11 @@ const MINOR: f64 = 25.0;
 /// groups).
 const HEADER: &str = super::profile_view::GROUP_HEADER;
 
+const STAGGER_AT: usize = 26;
+
 /// What follows a group's labels, around its band number (`BL`, 1 for the
-/// first band, the bands below the view first).
+/// first band, the bands below the view first); the band's stagger (`BL`)
+/// sits at bit [`STAGGER_AT`] (BVPD-ST, -SR, -SLF), where the runs hold 0.
 fn tail(kind: BandKind) -> (&'static str, &'static str) {
     const AFTER: &str = "0001011111000000100";
     match kind {
@@ -405,6 +449,9 @@ pub(super) fn write_group(doc: &mut CadDocument, common: EntityCommon, b: &Resol
         }
         BandKind::VerticalGeometry => super::network::arch_entity(doc, Handle::new(b.profile1)).map(|p| vertical_labels(p, number)).unwrap_or_default(),
         BandKind::HorizontalGeometry => horizontal_labels(a, number).unwrap_or_default().into_iter().map(|l| l.1).collect(),
+        // Without a data source (superelevation, sample line group, pipe
+        // network: not written) these bands have no labels.
+        BandKind::Superelevation | BandKind::SectionalData | BandKind::PipeNetwork => Vec::new(),
     };
     let mut refs = vec![soft_pointer(0), soft_pointer(0), soft_pointer(view), hard_pointer(0)];
     refs.extend(labels.iter().map(|_| hard_pointer(view)));
@@ -421,7 +468,9 @@ pub(super) fn write_group(doc: &mut CadDocument, common: EntityCommon, b: &Resol
             for l in &labels {
                 write_label(w, l);
             }
-            bits(w, before);
+            bits(w, &before[..STAGGER_AT]);
+            w.write_bit_long(b.band.stagger as i32);
+            bits(w, &before[STAGGER_AT + 2..]);
             w.write_bit_long(number);
             bits(w, after);
         },

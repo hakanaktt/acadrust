@@ -1,8 +1,9 @@
 //! The default profile view band styles of a new drawing: the profile
-//! data, vertical geometry and horizontal geometry band style collections
-//! of the style tree (keys 0x42, 0x43, 0x44) with their default styles,
-//! and the label style collections their labels use under the label node
-//! (keys 0x1001B200 to 0x1001B802).
+//! data, vertical geometry, horizontal geometry, superelevation, sectional
+//! data and pipe network band style collections of the style tree (keys
+//! 0x42 to 0x45, 0x148, 0x140) with their default styles, and the label
+//! style collections their labels use under the label node (keys
+//! 0x1001B200 to 0x1001B805).
 
 use super::labels::{ensure_label_styles, KEY_LABELS};
 use super::support::*;
@@ -18,33 +19,51 @@ use crate::CadDocument;
 pub(super) const KEY_DATA_BANDS: i32 = 0x42;
 pub(super) const KEY_VERTICAL_GEOMETRY_BANDS: i32 = 0x43;
 pub(super) const KEY_HORIZONTAL_GEOMETRY_BANDS: i32 = 0x44;
+/// Style tree keys of the superelevation, sectional data and pipe network
+/// band style collections.
+pub(super) const KEY_SUPERELEVATION_BANDS: i32 = 0x45;
+pub(super) const KEY_SECTIONAL_DATA_BANDS: i32 = 0x148;
+pub(super) const KEY_PIPE_NETWORK_BANDS: i32 = 0x140;
 
 /// Label node keys of the band label style collections, in the order of
 /// their templates.
 const LABEL_KEYS: [u32; 17] = [0x1001_B200, 0x1001_B210, 0x1001_B220, 0x1001_B230, 0x1001_B240, 0x1001_B250, 0x1001_B800, 0x1001_B300, 0x1001_B310, 0x1001_B320, 0x1001_B330, 0x1001_B801, 0x1001_B400, 0x1001_B410, 0x1001_B420, 0x1001_B802, 0x1001_B430];
 
+/// Label node keys of the superelevation, sectional data and pipe network
+/// band label style collections, in the order of their templates.
+const MORE_LABEL_KEYS: [u32; 14] = [0x1001_B500, 0x1001_B560, 0x1001_B540, 0x1001_B520, 0x1001_B530, 0x1001_B620, 0x1001_B550, 0x1001_B803, 0x1001_B650, 0x1001_B660, 0x1001_B804, 0x1001_B630, 0x1001_B640, 0x1001_B805];
+
 /// Writes the default band styles a drawing lacks (with the label styles
-/// they use, and the default label styles when the drawing has none); a
-/// drawing whose style tree has the profile data band styles is left as
-/// it is.
+/// they use, and the default label styles when the drawing has none): the
+/// profile data, vertical and horizontal geometry styles unless the style
+/// tree has the profile data ones, the superelevation, sectional data and
+/// pipe network styles unless it has the superelevation ones.
 pub(super) fn ensure_band_styles(doc: &mut CadDocument) -> Result<(), DxfError> {
     ensure_label_styles(doc)?;
+    write_kinds(doc, &LABEL_KEYS, BAND_LABEL_STYLES, &[KEY_DATA_BANDS, KEY_VERTICAL_GEOMETRY_BANDS, KEY_HORIZONTAL_GEOMETRY_BANDS], BAND_STYLES)?;
+    write_kinds(doc, &MORE_LABEL_KEYS, MORE_BAND_LABEL_STYLES, &[KEY_SUPERELEVATION_BANDS, KEY_SECTIONAL_DATA_BANDS, KEY_PIPE_NETWORK_BANDS], MORE_BAND_STYLES)
+}
+
+/// Writes the band style collections `keys` from `bands` unless the style
+/// tree has the first, and the label style collections `label_keys` from
+/// `labels` unless the label node has the first.
+fn write_kinds(doc: &mut CadDocument, label_keys: &[u32], labels_tpl: &[Template], keys: &[i32], bands: &[Template]) -> Result<(), DxfError> {
     let styles = root_node(doc, KEY_STYLES).ok_or_else(|| invalid("drawing has no style tree"))?;
     let tree = read_node(doc, styles).ok_or_else(|| invalid("style tree cannot be read"))?;
-    if tree.children.iter().any(|c| c.0 == KEY_DATA_BANDS) {
+    if tree.children.iter().any(|c| c.0 == keys[0]) {
         return Ok(());
     }
     let labels = tree.children.iter().find(|c| c.0 == KEY_LABELS).map(|c| Handle::new(c.1)).ok_or_else(|| invalid("drawing has no label styles"))?;
     let node = read_node(doc, labels).ok_or_else(|| invalid("label node cannot be read"))?;
-    if !node.children.iter().any(|c| c.0 == LABEL_KEYS[0] as i32) {
-        let handles = write_templates(doc, labels, BAND_LABEL_STYLES)?;
-        for (key, h) in LABEL_KEYS.iter().zip(handles) {
+    if !node.children.iter().any(|c| c.0 == label_keys[0] as i32) {
+        let handles = write_templates(doc, labels, labels_tpl)?;
+        for (key, h) in label_keys.iter().zip(handles) {
             add_node_child(doc, labels, *key as i32, h, "")?;
         }
     }
-    let handles = write_templates(doc, styles, BAND_STYLES)?;
-    for (key, h) in [KEY_DATA_BANDS, KEY_VERTICAL_GEOMETRY_BANDS, KEY_HORIZONTAL_GEOMETRY_BANDS].into_iter().zip(handles) {
-        add_node_child(doc, styles, key, h, "")?;
+    let handles = write_templates(doc, styles, bands)?;
+    for (key, h) in keys.iter().zip(handles) {
+        add_node_child(doc, styles, *key, h, "")?;
     }
     Ok(())
 }
@@ -901,20 +920,673 @@ const BAND_STYLES: &[Template] = &[
     },
 ];
 
+/// The superelevation, sectional data and pipe network band label style
+/// collections with their styles (the application's records, users empty,
+/// dates the time of writing).
+#[rustfmt::skip]
+const MORE_BAND_LABEL_STYLES: &[Template] = &[
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Null,
+        children: &[(0x80000285, 14), (0x80000286, 15)],
+        fields: &[Run(34, "002d40440"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(76, "046c8000c041e100016"), Time, Run(610, "480d555531fffffe0070400683a4b4900164001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffffa8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "c8633401-df36-4e18-9587-2691d8335b28", "39fc6462-f8e6-4504-ae5d-a97b8f72d9b9", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Null,
+        children: &[(0x8000028d, 19), (0x8000028e, 18)],
+        fields: &[Run(34, "182d40440"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(76, "046c8000c041e100016"), Time, Run(610, "480d555531fffffe0070400683a4b4900164001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffffa8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "69e66275-007f-4fa8-b45f-9a959b1227b7", "01d09d30-6c1d-4540-b11d-c5d8a25a7c13", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Null,
+        children: &[(0x80000288, 22), (0x80000287, 23)],
+        fields: &[Run(34, "102d40440"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(76, "046c8000c041e100016"), Time, Run(610, "480d555531fffffe0070400683a4b4900164001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffffa8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "568e8dd5-a823-4ebd-a697-08261270a93b", "6e37637c-d3d8-49eb-b285-234f590de89c", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Null,
+        children: &[(0x80000289, 27), (0x8000028a, 26)],
+        fields: &[Run(34, "082d40440"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(76, "046c8000c041e100016"), Time, Run(610, "480d555531fffffe0070400683a4b4900164001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffffa8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "50bc1017-e896-4e51-af3e-8037c40896cb", "af4fe787-cf8d-4c41-9d1d-8643088b2f60", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Null,
+        children: &[(0x8000028b, 31), (0x8000028c, 30)],
+        fields: &[Run(34, "0c2d40440"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(76, "046c8000c041e100016"), Time, Run(610, "480d555531fffffe0070400683a4b4900164001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffffa8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "fc7c398b-8ae1-4049-af28-bbb7717f81a9", "4a07718b-5bb0-4a90-befb-797320d15ca9", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Null,
+        children: &[(0x80000290, 34), (0x8000028f, 35)],
+        fields: &[Run(34, "082d80440"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(76, "046c8000c041e100016"), Time, Run(610, "480d555531fffffe0070400683a4b4900164001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffffa8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "47132f1d-0e4b-4cfa-b81f-1c58a14b352b", "6eccdfcc-3ec3-4632-bfc2-246ce473da18", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Null,
+        children: &[(0x80000291, 39), (0x80000292, 38)],
+        fields: &[Run(34, "142d40440"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(76, "046c8000c041e100016"), Time, Run(610, "480d555531fffffe0070400683a4b4900164001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffffa8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "c574a453-b91b-4f26-a1e8-b0d19cf06d13", "c27e8552-777c-4281-9e26-e7413ac862b1", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Null,
+        children: &[(0x80000293, 43), (0x80000294, 42)],
+        fields: &[Run(34, "00ee00440"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(76, "046c8000c041e100016"), Time, Run(610, "480d555531fffffe0070400683a4b4900164001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffffa8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "84acde3a-9feb-4965-ab8e-4ef6a2d4f46c", "a29b0d8f-bae1-4770-a318-4839006be3b3", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Null,
+        children: &[(0x80000295, 46), (0x80000296, 47)],
+        fields: &[Run(34, "142d80440"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(76, "046c8000c041e100016"), Time, Run(610, "480d555531fffffe0070400683a4b4900164001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffffa8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "686c38f1-d033-4305-b960-645dd7fdb2be", "0dac2d2f-fca2-4953-821e-eb9baf38936a", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Null,
+        children: &[(0x80000298, 51), (0x80000297, 50)],
+        fields: &[Run(34, "182d80440"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(76, "046c8000c041e100016"), Time, Run(610, "480d555531fffffe0070400683a4b4900164001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffffa8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "88351299-4f6c-4eb2-983e-dbffd98efff1", "250bbe43-3cca-4749-bf04-31c2115a0238", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Null,
+        children: &[(0x80000299, 55), (0x8000029a, 54)],
+        fields: &[Run(34, "012e00440"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(76, "046c8000c041e100016"), Time, Run(610, "480d555531fffffe0070400683a4b4900164001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffffa8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "ba19a9d5-aa13-4847-bc2a-a734710bdd87", "f2b7ff6b-1c3e-47f8-871d-1e7f00aa5f98", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Null,
+        children: &[(0x8000049a, 58), (0x8000049b, 59)],
+        fields: &[Run(34, "0c2d80440"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(76, "046c8000c041e100016"), Time, Run(610, "480d555531fffffe0070400683a4b4900164001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffffa8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "f40a13f9-7c6a-4cd7-8b81-87cfa23911f9", "44fd9a20-080f-4bd7-975a-4f4a55ec4c5b", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Null,
+        children: &[(0x8000049c, 64), (0x8000049e, 65)],
+        fields: &[Run(34, "102d80440"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(76, "046c8000c041e100016"), Time, Run(610, "480d555531fffffe0070400683a4b4900164001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffffa8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "211f0b0e-42f6-478e-8359-38224aea0328", "52deeebb-f626-4284-9b72-787f914401f3", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Null,
+        children: &[(0x800004a0, 71), (0x8000049f, 70)],
+        fields: &[Run(34, "016e00440"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(76, "046c8000c041e100016"), Time, Run(610, "480d555531fffffe0070400683a4b4900164001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffffa8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "a872ffae-111c-46b2-86fe-6d9a5b8e8bdf", "0bd048f1-d8c4-4458-98da-1824d044b4c1", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(0),
+        children: &[],
+        fields: &[Run(34, "214080200"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(68, "0684000101e100016"), Time, Run(764, "480d555530016a02207fc01683a7b5900164001152031aebc9413836ffc7eaa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffff40504a001fffffe015101406")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(16)), (HardOwnership, Target::Record(16)), (SoftPointer, Target::Record(16)), (HardPointer, Target::Null)],
+        strings: &["c8633401-df36-4e18-9587-2691d8335b28", "", "", "", "AeccDbGraphProfile"],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(0),
+        children: &[],
+        fields: &[Run(34, "218080200"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(68, "0684000101e100016"), Time, Run(764, "480d555530016a02207fc01683a7b5900164001152031aebc9413836ffc7eaa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffff40504a001fffffe015101406")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(17)), (HardOwnership, Target::Record(17)), (SoftPointer, Target::Record(17)), (HardPointer, Target::Null)],
+        strings: &["39fc6462-f8e6-4504-ae5d-a97b8f72d9b9", "", "", "", "AeccDbGraphProfile"],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(14),
+        children: &[],
+        fields: &[Run(34, "083400008"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(2042, "480d5552030222222222223027f1fffffe0070400683a4b4908362001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fcd41e002d80198019801b0018001b801b80188019001400190018001c801b803e0019001a001b801a003e00190019801c001b803e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001b001b801a003e0019001b001c001c803e0019001b8018001b003e0019001b80190018803e0019001b8018001b803e0019001c00180019803e0019001c0018801b8014802e801f0000000305a88a9f643f27f20882a8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(14)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(15),
+        children: &[],
+        fields: &[Run(34, "083400008"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(2042, "480d5552030222222222223027f1fffffe0070400683a4b4908362001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fcd41e002d80198019801b0018001b801b80188019001400190018001c801b803e0019001a001b801a003e00190019801c001b803e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001b001b801a003e0019001b001c001c803e0019001b8018001b003e0019001b80190018803e0019001b8018001b803e0019001c00180019803e0019001c0018801b8014802e801f0000000305a88a9f643f27f20882a8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(15)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(1),
+        children: &[],
+        fields: &[Run(34, "238080200"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(68, "0684000101e100016"), Time, Run(764, "480d555530c16a02207fc01683a7b5900164001152031aebc9413836ffc7eaa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffff40504a001fffffe015101406")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(20)), (HardOwnership, Target::Record(20)), (SoftPointer, Target::Record(20)), (HardPointer, Target::Null)],
+        strings: &["01d09d30-6c1d-4540-b11d-c5d8a25a7c13", "", "", "", "AeccDbGraphProfile"],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(1),
+        children: &[],
+        fields: &[Run(34, "234080200"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(68, "0684000101e100016"), Time, Run(764, "480d555530c16a02207fc01683a7b5900164001152031aebc9413836ffc7eaa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffff40504a001fffffe015101406")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(21)), (HardOwnership, Target::Record(21)), (SoftPointer, Target::Record(21)), (HardPointer, Target::Null)],
+        strings: &["69e66275-007f-4fa8-b45f-9a959b1227b7", "", "", "", "AeccDbGraphProfile"],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(18),
+        children: &[],
+        fields: &[Run(34, "083400008"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(2042, "480d5552030222222222223027f1fffffe0070400683a4b4908362001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fcd41e002d80198019801b0018001b801b80188019001400190018001c801b803e0019001a001b801a003e00190019801c001b803e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001b001b801a003e0019001b001c001c803e0019001b8018001b003e0019001b80190018803e0019001b8018001b803e0019001c00180019803e0019001c0018801b8014802e801f0000000305a88a9f643f27f20882a8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(18)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(19),
+        children: &[],
+        fields: &[Run(34, "083400008"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(2042, "480d5552030222222222223027f1fffffe0070400683a4b4908362001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fcd41e002d80198019801b0018001b801b80188019001400190018001c801b803e0019001a001b801a003e00190019801c001b803e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001b001b801a003e0019001b001c001c803e0019001b8018001b003e0019001b80190018803e0019001b8018001b803e0019001c00180019803e0019001c0018801b8014802e801f0000000305a88a9f643f27f20882a8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(19)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(2),
+        children: &[],
+        fields: &[Run(34, "220080200"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(68, "0684000101e100016"), Time, Run(764, "480d555530816a02207fc01683a7b5900164001152031aebc9413836ffc7eaa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffff40504a001fffffe015101406")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(24)), (HardOwnership, Target::Record(24)), (SoftPointer, Target::Record(24)), (HardPointer, Target::Null)],
+        strings: &["568e8dd5-a823-4ebd-a697-08261270a93b", "", "", "", "AeccDbGraphProfile"],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(2),
+        children: &[],
+        fields: &[Run(34, "21c080200"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(68, "0684000101e100016"), Time, Run(764, "480d555530816a02207fc01683a7b5900164001152031aebc9413836ffc7eaa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffff40504a001fffffe015101406")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(25)), (HardOwnership, Target::Record(25)), (SoftPointer, Target::Record(25)), (HardPointer, Target::Null)],
+        strings: &["6e37637c-d3d8-49eb-b285-234f590de89c", "", "", "", "AeccDbGraphProfile"],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(22),
+        children: &[],
+        fields: &[Run(34, "083400008"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(2042, "480d5552030222222222223027f1fffffe0070400683a4b4908362001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fcd41e002d80198019801b0018001b801b80188019001400190018001c801b803e0019001a001b801a003e00190019801c001b803e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001b001b801a003e0019001b001c001c803e0019001b8018001b003e0019001b80190018803e0019001b8018001b803e0019001c00180019803e0019001c0018801b8014802e801f0000000305a88a9f643f27f20882a8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(22)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(23),
+        children: &[],
+        fields: &[Run(34, "083400008"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(2042, "480d5552030222222222223027f1fffffe0070400683a4b4908362001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fcd41e002d80198019801b0018001b801b80188019001400190018001c801b803e0019001a001b801a003e00190019801c001b803e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001b001b801a003e0019001b001c001c803e0019001b8018001b003e0019001b80190018803e0019001b8018001b803e0019001c00180019803e0019001c0018801b8014802e801f0000000305a88a9f643f27f20882a8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(23)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(3),
+        children: &[],
+        fields: &[Run(34, "228080200"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(68, "0684000101e100016"), Time, Run(764, "480d555530416a02207fc01683a7b5900164001152031aebc9413836ffc7eaa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffff40504a001fffffe015101406")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(28)), (HardOwnership, Target::Record(28)), (SoftPointer, Target::Record(28)), (HardPointer, Target::Null)],
+        strings: &["af4fe787-cf8d-4c41-9d1d-8643088b2f60", "", "", "", "AeccDbGraphProfile"],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(3),
+        children: &[],
+        fields: &[Run(34, "224080200"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(68, "0684000101e100016"), Time, Run(764, "480d555530416a02207fc01683a7b5900164001152031aebc9413836ffc7eaa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffff40504a001fffffe015101406")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(29)), (HardOwnership, Target::Record(29)), (SoftPointer, Target::Record(29)), (HardPointer, Target::Null)],
+        strings: &["50bc1017-e896-4e51-af3e-8037c40896cb", "", "", "", "AeccDbGraphProfile"],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(26),
+        children: &[],
+        fields: &[Run(34, "083400008"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(2042, "480d5552030222222222223027f1fffffe0070400683a4b4908362001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fcd41e002d80198019801b0018001b801b80188019001400190018001c801b803e0019001a001b801a003e00190019801c001b803e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001b001b801a003e0019001b001c001c803e0019001b8018001b003e0019001b80190018803e0019001b8018001b803e0019001c00180019803e0019001c0018801b8014802e801f0000000305a88a9f643f27f20882a8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(26)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(27),
+        children: &[],
+        fields: &[Run(34, "083400008"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(2042, "480d5552030222222222223027f1fffffe0070400683a4b4908362001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fcd41e002d80198019801b0018001b801b80188019001400190018001c801b803e0019001a001b801a003e00190019801c001b803e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001b001b801a003e0019001b001c001c803e0019001b8018001b003e0019001b80190018803e0019001b8018001b803e0019001c00180019803e0019001c0018801b8014802e801f0000000305a88a9f643f27f20882a8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(27)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(4),
+        children: &[],
+        fields: &[Run(34, "230080200"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(68, "0684000101e100016"), Time, Run(764, "480d555530616a02207fc01683a7b5900164001152031aebc9413836ffc7eaa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffff40504a001fffffe015101406")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(32)), (HardOwnership, Target::Record(32)), (SoftPointer, Target::Record(32)), (HardPointer, Target::Null)],
+        strings: &["4a07718b-5bb0-4a90-befb-797320d15ca9", "", "", "", "AeccDbGraphProfile"],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(4),
+        children: &[],
+        fields: &[Run(34, "22c080200"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(68, "0684000101e100016"), Time, Run(764, "480d555530616a02207fc01683a7b5900164001152031aebc9413836ffc7eaa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffff40504a001fffffe015101406")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(33)), (HardOwnership, Target::Record(33)), (SoftPointer, Target::Record(33)), (HardPointer, Target::Null)],
+        strings: &["fc7c398b-8ae1-4049-af28-bbb7717f81a9", "", "", "", "AeccDbGraphProfile"],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(30),
+        children: &[],
+        fields: &[Run(34, "083400008"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(2042, "480d5552030222222222223027f1fffffe0070400683a4b4908362001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fcd41e002d80198019801b0018001b801b80188019001400190018001c801b803e0019001a001b801a003e00190019801c001b803e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001b001b801a003e0019001b001c001c803e0019001b8018001b003e0019001b80190018803e0019001b8018001b803e0019001c00180019803e0019001c0018801b8014802e801f0000000305a88a9f643f27f20882a8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(30)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(31),
+        children: &[],
+        fields: &[Run(34, "083400008"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(2042, "480d5552030222222222223027f1fffffe0070400683a4b4908362001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fcd41e002d80198019801b0018001b801b80188019001400190018001c801b803e0019001a001b801a003e00190019801c001b803e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001b001b801a003e0019001b001c001c803e0019001b8018001b003e0019001b80190018803e0019001b8018001b803e0019001c00180019803e0019001c0018801b8014802e801f0000000305a88a9f643f27f20882a8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(31)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(5),
+        children: &[],
+        fields: &[Run(34, "240080200"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(68, "0684000101e100016"), Time, Run(764, "480d555530416c02207fc01683a7b5900164001152031aebc9413836ffc7eaa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffff40504a001fffffe015101406")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(36)), (HardOwnership, Target::Record(36)), (SoftPointer, Target::Record(36)), (HardPointer, Target::Null)],
+        strings: &["47132f1d-0e4b-4cfa-b81f-1c58a14b352b", "", "", "", "AeccDbGraphProfile"],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(5),
+        children: &[],
+        fields: &[Run(34, "23c080200"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(68, "0684000101e100016"), Time, Run(764, "480d555530416c02207fc01683a7b5900164001152031aebc9413836ffc7eaa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffff40504a001fffffe015101406")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(37)), (HardOwnership, Target::Record(37)), (SoftPointer, Target::Record(37)), (HardPointer, Target::Null)],
+        strings: &["6eccdfcc-3ec3-4632-bfc2-246ce473da18", "", "", "", "AeccDbGraphProfile"],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(34),
+        children: &[],
+        fields: &[Run(34, "083400008"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(2042, "480d5552030222222222223027f1fffffe0070400683a4b4908362001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fcd41e002d80198019801b0018001b801b80188019001400190018001c801b803e0019001a001b801a003e00190019801c001b803e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001b001b801a003e0019001b001c001c803e0019001b8018001b003e0019001b80190018803e0019001b8018001b803e0019001c00180019803e0019001c0018801b8014802e801f0000000305a88a9f643f27f20882a8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(34)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(35),
+        children: &[],
+        fields: &[Run(34, "083400008"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(2042, "480d5552030222222222223027f1fffffe0070400683a4b4908362001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fcd41e002d80198019801b0018001b801b80188019001400190018001c801b803e0019001a001b801a003e00190019801c001b803e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001b001b801a003e0019001b001c001c803e0019001b8018001b003e0019001b80190018803e0019001b8018001b803e0019001c00180019803e0019001c0018801b8014802e801f0000000305a88a9f643f27f20882a8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(35)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(6),
+        children: &[],
+        fields: &[Run(34, "248080200"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(68, "0684000101e100016"), Time, Run(764, "480d555530a16a02207fc01683a7b5900164001152031aebc9413836ffc7eaa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffff40504a001fffffe015101406")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(40)), (HardOwnership, Target::Record(40)), (SoftPointer, Target::Record(40)), (HardPointer, Target::Null)],
+        strings: &["c27e8552-777c-4281-9e26-e7413ac862b1", "", "", "", "AeccDbGraphProfile"],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(6),
+        children: &[],
+        fields: &[Run(34, "244080200"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(68, "0684000101e100016"), Time, Run(764, "480d555530a16a02207fc01683a7b5900164001152031aebc9413836ffc7eaa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffff40504a001fffffe015101406")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(41)), (HardOwnership, Target::Record(41)), (SoftPointer, Target::Record(41)), (HardPointer, Target::Null)],
+        strings: &["c574a453-b91b-4f26-a1e8-b0d19cf06d13", "", "", "", "AeccDbGraphProfile"],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(38),
+        children: &[],
+        fields: &[Run(34, "00f580008"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(1498, "480d5552030222222222223027f1fffffe0070400683a4b490396a001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fcb61e002d80198019801b0018001c80190018801c801400190018001c801b803e00190019801c001b803e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001c00180019803e0019001c0018801b8014802e801f000000520882a8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(38)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(39),
+        children: &[],
+        fields: &[Run(34, "00f580008"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(1498, "480d5552030222222222223027f1fffffe0070400683a4b490396a001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fcb61e002d80198019801b0018001c80190018801c801400190018001c801b803e00190019801c001b803e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001c00180019803e0019001c0018801b8014802e801f000000520882a8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(39)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(7),
+        children: &[],
+        fields: &[Run(34, "250080200"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(68, "0684000101e100016"), Time, Run(764, "480d555530077002207fc01683a7b5900164001152031aebc9413836ffc7eaa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffff40504a001fffffe015101406")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(44)), (HardOwnership, Target::Record(44)), (SoftPointer, Target::Record(44)), (HardPointer, Target::Null)],
+        strings: &["a29b0d8f-bae1-4770-a318-4839006be3b3", "", "", "", "AeccDbGraphProfile"],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(7),
+        children: &[],
+        fields: &[Run(34, "24c080200"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(68, "0684000101e100016"), Time, Run(764, "480d555530077002207fc01683a7b5900164001152031aebc9413836ffc7eaa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffff40504a001fffffe015101406")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(45)), (HardOwnership, Target::Record(45)), (SoftPointer, Target::Record(45)), (HardPointer, Target::Null)],
+        strings: &["84acde3a-9feb-4965-ab8e-4ef6a2d4f46c", "", "", "", "AeccDbGraphProfile"],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(42),
+        children: &[],
+        fields: &[Run(34, "040300000"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(802, "480d555531fffffe0070400683a4b4901362001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fc8f29803a803800328039003280360032803b0030803a003480378037000000520a8328")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(42)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(43),
+        children: &[],
+        fields: &[Run(34, "040300000"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(802, "480d555531fffffe0070400683a4b4901362001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fc8f29803a803800328039003280360032803b0030803a003480378037000000520a8328")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(43)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(8),
+        children: &[],
+        fields: &[Run(34, "254080200"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(68, "0684000101e100016"), Time, Run(764, "480d555530a16c02207fc01683a7b5900164001152031aebc9413836ffc7eaa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffff40504a001fffffe015101406")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(48)), (HardOwnership, Target::Record(48)), (SoftPointer, Target::Record(48)), (HardPointer, Target::Null)],
+        strings: &["686c38f1-d033-4305-b960-645dd7fdb2be", "", "", "", "AeccDbGraphProfile"],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(8),
+        children: &[],
+        fields: &[Run(34, "258080200"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(68, "0684000101e100016"), Time, Run(764, "480d555530a16c02207fc01683a7b5900164001152031aebc9413836ffc7eaa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffff40504a001fffffe015101406")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(49)), (HardOwnership, Target::Record(49)), (SoftPointer, Target::Record(49)), (HardPointer, Target::Null)],
+        strings: &["0dac2d2f-fca2-4953-821e-eb9baf38936a", "", "", "", "AeccDbGraphProfile"],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(46),
+        children: &[],
+        fields: &[Run(34, "083400008"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(2634, "480d5552030222222222223027f1fffffe0070400683a4b4908162001152034044444444444586fea0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fcf5298026001d0010001e002d8018801b001c801a001c8019001c001b00140019001a801c8019803e0019001c00180019803e0019001c0018801b8014802e801f0010001e002d80198019801b0018001b801b80188019001400190018001c801b803e0019001a001b801a003e00190019801c001b803e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001b001b801a003e0019001b001c001c803e0019001b8018001b003e0019001b80190018803e0019001b8018001b803e0019001c00180019803e0019001c0018801b8014802e801f0000000305a88a9f643f27f21082a8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(46)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(47),
+        children: &[],
+        fields: &[Run(34, "083400008"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(2634, "480d5552030222222222223027f1fffffe0070400683a4b4908162001152034044444444444586fea0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fcf5298026001d0010001e002d8018801b001c801a001c8019001c001b00140019001a801c8019803e0019001c00180019803e0019001c0018801b8014802e801f0010001e002d80198019801b0018001b801b80188019001400190018001c801b803e0019001a001b801a003e00190019801c001b803e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001b001b801a003e0019001b001c001c803e0019001b8018001b003e0019001b80190018803e0019001b8018001b803e0019001c00180019803e0019001c0018801b8014802e801f0000000305a88a9f643f27f21082a8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(47)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(9),
+        children: &[],
+        fields: &[Run(34, "25c080200"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(68, "0684000101e100016"), Time, Run(764, "480d555530c16c02207fc01683a7b5900164001152031aebc9413836ffc7eaa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffff40504a001fffffe015101406")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(52)), (HardOwnership, Target::Record(52)), (SoftPointer, Target::Record(52)), (HardPointer, Target::Null)],
+        strings: &["250bbe43-3cca-4749-bf04-31c2115a0238", "", "", "", "AeccDbGraphProfile"],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(9),
+        children: &[],
+        fields: &[Run(34, "260080200"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(68, "0684000101e100016"), Time, Run(764, "480d555530c16c02207fc01683a7b5900164001152031aebc9413836ffc7eaa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffff40504a001fffffe015101406")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(53)), (HardOwnership, Target::Record(53)), (SoftPointer, Target::Record(53)), (HardPointer, Target::Null)],
+        strings: &["88351299-4f6c-4eb2-983e-dbffd98efff1", "", "", "", "AeccDbGraphProfile"],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(50),
+        children: &[],
+        fields: &[Run(34, "02e800808"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(1562, "480d5552030222222222223027f1fffffe0070400683a4b4902d6a001152034a044444444444584fe0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fcb61e002d80198019801b8019001b001a001b801a801400190018001c801b803e00190019801c001b803e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001c00180019803e0019001c0018801b8014802e801f000000520e82a8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(50)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(51),
+        children: &[],
+        fields: &[Run(34, "02e800808"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(1562, "480d5552030222222222223027f1fffffe0070400683a4b4902d6a001152034a044444444444584fe0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fcb61e002d80198019801b8019001b001a001b801a801400190018001c801b803e00190019801c001b803e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001c00180019803e0019001c0018801b8014802e801f000000520e82a8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(51)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(10),
+        children: &[],
+        fields: &[Run(34, "268080200"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(68, "0684000101e100016"), Time, Run(764, "480d555530097002207fc01683a7b5900164001152031aebc9413836ffc7eaa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffff40504a001fffffe015101406")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(56)), (HardOwnership, Target::Record(56)), (SoftPointer, Target::Record(56)), (HardPointer, Target::Null)],
+        strings: &["f2b7ff6b-1c3e-47f8-871d-1e7f00aa5f98", "", "", "", "AeccDbGraphProfile"],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(10),
+        children: &[],
+        fields: &[Run(34, "264080200"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(68, "0684000101e100016"), Time, Run(764, "480d555530097002207fc01683a7b5900164001152031aebc9413836ffc7eaa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffff40504a001fffffe015101406")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(57)), (HardOwnership, Target::Record(57)), (SoftPointer, Target::Record(57)), (HardPointer, Target::Null)],
+        strings: &["ba19a9d5-aa13-4847-bc2a-a734710bdd87", "", "", "", "AeccDbGraphProfile"],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(54),
+        children: &[],
+        fields: &[Run(34, "040300000"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(962, "480d555531fffffe0070400683a4b4901362001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fc991e002d801b001b8019001c001a001c801c801b00140019001a001a001c8014802e801f001000220030803a0030801d000000520a8328")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(54)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(55),
+        children: &[],
+        fields: &[Run(34, "040300000"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(962, "480d555531fffffe0070400683a4b4901362001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fc991e002d801b001b8019001c001a001c801c801b00140019001a001a001c8014802e801f001000220030803a0030801d000000520a8328")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(55)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(11),
+        children: &[],
+        fields: &[Run(34, "268100200"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(68, "0684000101e100016"), Time, Run(838, "480d555530616c02207fc01683a7b5900164001152031aebc9413836ffc7eaa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffff40904a001fffffe0151014128007fffff8054409028")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(60)), (HardPointer, Target::Record(61)), (HardOwnership, Target::Record(60)), (HardOwnership, Target::Record(61)), (SoftPointer, Target::Record(60)), (SoftPointer, Target::Record(61)), (HardPointer, Target::Null)],
+        strings: &["f40a13f9-7c6a-4cd7-8b81-87cfa23911f9", "", "", "", "AeccDbGraphProfile"],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(11),
+        children: &[],
+        fields: &[Run(34, "26c100200"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(68, "0684000101e100016"), Time, Run(838, "480d555530616c02207fc01683a7b5900164001152031aebc9413836ffc7eaa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffff40904a001fffffe0151014128007fffff8054409028")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(63)), (HardPointer, Target::Record(62)), (HardOwnership, Target::Record(63)), (HardOwnership, Target::Record(62)), (SoftPointer, Target::Record(63)), (SoftPointer, Target::Record(62)), (HardPointer, Target::Null)],
+        strings: &["44fd9a20-080f-4bd7-975a-4f4a55ec4c5b", "", "", "", "AeccDbGraphProfile"],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(58),
+        children: &[],
+        fields: &[Run(34, "083400008"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(2106, "480d5552030222222222223027f1fffffe0070400683a4b4908362001152034044444444444586fea0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fcd41e002d80198019801b0018001b801b80188019001400190018001c801b803e0019001a001b801a003e00190019801c001b803e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001b001b801a003e0019001b001c001c803e0019001b8018001b003e0019001b80190018803e0019001b8018001b803e0019001c00180019803e0019001c0018801b8014802e801f0000000305a88a9f643f27f20e82a8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(58)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(58),
+        children: &[],
+        fields: &[Run(34, "0b6c41408"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(1626, "480d5552030222222222223027f1fffffe0070400683a4b4908362001152034044444444444584fea0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fcb61e002d80198019801c8019001b801a001b001c801400190018001c801b803e00190019801c001b803e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001c00180019803e0019001c0018801b8014802e801f0000000305a88a9f643f27f20282a8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(58)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(59),
+        children: &[],
+        fields: &[Run(34, "0b6c41408"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(1626, "480d5552030222222222223027f1fffffe0070400683a4b4908362001152034044444444444584fea0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fcb61e002d80198019801c8019001b801a001b001c801400190018001c801b803e00190019801c001b803e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001c00180019803e0019001c0018801b8014802e801f0000000305a88a9f643f27f20282a8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(59)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(59),
+        children: &[],
+        fields: &[Run(34, "083400008"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(2106, "480d5552030222222222223027f1fffffe0070400683a4b4908362001152034044444444444586fea0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fcd41e002d80198019801b0018001b801b80188019001400190018001c801b803e0019001a001b801a003e00190019801c001b803e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001b001b801a003e0019001b001c001c803e0019001b8018001b003e0019001b80190018803e0019001b8018001b803e0019001c00180019803e0019001c0018801b8014802e801f0000000305a88a9f643f27f20e82a8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(59)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(12),
+        children: &[],
+        fields: &[Run(34, "270100200"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(68, "0684000101e100016"), Time, Run(838, "480d555530816c02207fc01683a7b5900164001152031aebc9413836ffc7eaa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffff40904a001fffffe0151014128007fffff8054409028")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(66)), (HardPointer, Target::Record(67)), (HardOwnership, Target::Record(66)), (HardOwnership, Target::Record(67)), (SoftPointer, Target::Record(66)), (SoftPointer, Target::Record(67)), (HardPointer, Target::Null)],
+        strings: &["211f0b0e-42f6-478e-8359-38224aea0328", "", "", "", "AeccDbGraphProfile"],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(12),
+        children: &[],
+        fields: &[Run(34, "278100200"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(68, "0684000101e100016"), Time, Run(838, "480d555530816c02207fc01683a7b5900164001152031aebc9413836ffc7eaa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffff40904a001fffffe0151014128007fffff8054409028")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(68)), (HardPointer, Target::Record(69)), (HardOwnership, Target::Record(68)), (HardOwnership, Target::Record(69)), (SoftPointer, Target::Record(68)), (SoftPointer, Target::Record(69)), (HardPointer, Target::Null)],
+        strings: &["52deeebb-f626-4284-9b72-787f914401f3", "", "", "", "AeccDbGraphProfile"],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(64),
+        children: &[],
+        fields: &[Run(34, "274100200"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(2426, "480d5552030222222222223027f1fffffe0070400683a4b490396a001152034a044444444444584fe0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fcec1e002d80198019801c801900198019801a801980140019001a001b001b803e00190019801c001b803e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001c00180019803e0019001c0018801b8014802e801f0010001e002d80198019801c801900198019801c801b801400190018001c801b803e00190019801c001c003e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001c00180019803e0019001c0018801b8014802e801f000000520e82a8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(64)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["Slope and Length", "", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(64),
+        children: &[],
+        fields: &[Run(10, "4a8"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(2802, "480d5552030222222222223027f1fffffe0070400683a4b490396a001152034a044444444444586fe0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fc0200800029803a00308039003a0010002280360032803b001d0010001e002d80198019801c801900198019801c0018801400190018001c801b803e00190019801c001c003e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001c00180019803e0019001c0018801b8014802e801f00100022803700320010002280360032803b001d0010001e002d80198019801c801900198019801c0019001400190018001c801b803e00190019801c001c003e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001c00180019803e0019001c0018801b8014802e801f000000520282a8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(64)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(65),
+        children: &[],
+        fields: &[Run(34, "274100200"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(2426, "480d5552030222222222223027f1fffffe0070400683a4b490396a001152034a044444444444584fe0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fcec1e002d80198019801c801900198019801a801980140019001a001b001b803e00190019801c001b803e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001c00180019803e0019001c0018801b8014802e801f0010001e002d80198019801c801900198019801c801b801400190018001c801b803e00190019801c001c003e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001c00180019803e0019001c0018801b8014802e801f000000520e82a8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(65)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["Slope and Length", "", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(65),
+        children: &[],
+        fields: &[Run(10, "4a8"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(2802, "480d5552030222222222223027f1fffffe0070400683a4b490396a001152034a044444444444586fe0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fc0200800029803a00308039003a0010002280360032803b001d0010001e002d80198019801c801900198019801c0018801400190018001c801b803e00190019801c001c003e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001c00180019803e0019001c0018801b8014802e801f00100022803700320010002280360032803b001d0010001e002d80198019801c801900198019801c0019001400190018001c801b803e00190019801c001c003e0019001a00198019803e0019001a801c8019803e0019001b0018001c803e0019001b001a801b803e0019001c00180019803e0019001c0018801b8014802e801f000000520282a8")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(65)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(13),
+        children: &[],
+        fields: &[Run(34, "27c100200"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(68, "0684000101e100016"), Time, Run(764, "480d5555300b7002207fc01683a7b5900164001152031aebc9413836ffc7eaa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffff40504a001fffffe015101406")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(72)), (HardOwnership, Target::Record(72)), (SoftPointer, Target::Record(72)), (HardPointer, Target::Null)],
+        strings: &["0bd048f1-d8c4-4458-98da-1824d044b4c1", "", "", "", "AeccDbGraphProfile"],
+    },
+    Template {
+        dxf: "AECC_LABEL_COLLECTOR_STYLE",
+        owner: Target::Record(13),
+        children: &[],
+        fields: &[Run(34, "280100200"), Children, Run(115, "a828102000080808000203e20002c"), Time, Run(68, "0684000101e100016"), Time, Run(764, "480d5555300b7002207fc01683a7b5900164001152031aebc9413836ffc7eaa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa05542a200000030000ffffffff40504a001fffffe015101406")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(73)), (HardOwnership, Target::Record(73)), (SoftPointer, Target::Record(73)), (HardPointer, Target::Null)],
+        strings: &["a872ffae-111c-46b2-86fe-6d9a5b8e8bdf", "", "", "", "AeccDbGraphProfile"],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(70),
+        children: &[],
+        fields: &[Run(34, "040300000"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(962, "480d555531fffffe0070400683a4b4901362001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fc991e002d801b001b801a001c001a801c801c801a00140019001a001a001c8014802e801f001000220030803a0030801d000000520a8328")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(70)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+    Template {
+        dxf: "AECC_LABEL_TEXT_STYLE",
+        owner: Target::Record(71),
+        children: &[],
+        fields: &[Run(34, "040300000"), Children, Run(115, "a820102000080808000203e20002c"), Time, Run(34, "078400058"), Time, Run(962, "480d555531fffffe0070400683a4b4901362001152034aa0222222222222c27e1400000060001ffffffff000000180007fffffffd000000180007fffffffa0549fc991e002d801b001b801a001c001a801c801c801a00140019001a001a001c8014802e801f001000220030803a0030801d000000520a8328")],
+        refs: &[(SoftPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Record(71)), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::Null), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Null)],
+        strings: &["", "", ""],
+    },
+];
+
+/// The superelevation, sectional data and pipe network band style
+/// collections with their default styles.
+#[rustfmt::skip]
+const MORE_BAND_STYLES: &[Template] = &[
+    Template {
+        dxf: "AECC_PROFILE_VIEW_SUPERELEVATION_DIAGRAM_BAND_STYLE",
+        owner: Target::Null,
+        children: &[(0x1e, 3)],
+        fields: &[Run(10, "514"), Children, Run(2721, "aa58a76a02060018da8081800856a020602325a80818081ae002048c36a02060004b80086c040800020416a0220285a808804f6c02042aaaaaaaaaaaca9f80d6a02042aaaaaaaaaaad29f8496c0206021b5a80810aaaaaaaaaaab4a7e12da80810aaaaaaaaaaab2a7e23da80810aaaaaaaaaaab2a7e01da8081800202000080b880000a8a01dc0088002e002042aaaaaaaaaaada9f8ab6a02042aaaaaaaaaaaca9f8436c02060019da8081800456a020602225a8081808cd6a02042aaaaaaaaaaad29f8a56a02060220da8081800c76a020600005a8088010e0021b0616a0220305a808804d6c02042aaaaaaaaaaad29f84f6a02042aaaaaaaaaaaca9f80b6a02042aaaaaaaaaaaca9f80ce00205006e002042aaaaaaaaaaaca9f8af6a02042aaaaaaaaaaaca9f8476c0206001ada80810aaaaaaaaaaab2a7e125a80818088d6a02042aaaaaaaaaaad29f8056a0206020f88000b0"), Time, Run(2002, "152d4040c0432b5010301086d4040c0043b5010300196d40408555555555555953f146d4040c0062b501030106840001020b60110001c004400b7001030001dc0043505102d4044007b50102155555555555654fc05700102155555555555654fc25b60102155555555555654fc37b50102155555555555654fc26b50102155555555555694fc04b5010301009c00408555555555555c53f15ad40408555555555555a53f08ad8040c0434b501030108ed4040c0045b50102155555555555654fc67b50102155555555555654fc01b5010300011c004611e5300750070006500720065006c00650076006100740069006f006e000000078400058"), Time, Run(4059, "480a352a0a84a8600800030c00feff50180000000190154150950c02800061801fdfea03000000003204a82a12a18030000c3003fbfd40600000000640d50542543002000186007f7fa80c00000000c822a0a84a8600000030400feff50180000000190554150950c00800061801fdfea0300000000320ca82a12a18020000c3003fbfd40600000000641d50542543004000186007f7fa80c00000000c842a0a84a8601400030c00feff50180000000190954150950c01800061801fdfea03000000003214a82a12a18010000c3003fbfd40600000000642d50542543006000186007f7fa80c00000000c862a0a84a8600000030400feff50180000000190d54150950c01800061801fdfea0300000000321ca82a12a18020000c3003fbfd40600000000643d50542543004000186007f7fa80c00000000c882a0a84a8600c00030c00feff50180000000191154150950c01800061801fdfea03000000003224a82a12a18010000c3003fbfd40600000000644d50542543006000186007f7fa80c00000000c8a2a0a84a8600400030c00feff50180000000191554150950c01000061801fdfea0300000000322ca82a12a18020000c3003fbfd40600000000645d5054254300a000186007f7fa80c00000000c8c2a0a84a8600400030c00feff50180000000191954150950c00800061801fdfea030000000035554")],
+        refs: &[(HardPointer, Target::Label(0x1001b520, 0x80000289)), (HardPointer, Target::Label(0x1001b550, 0x80000291)), (HardPointer, Target::Label(0x1001b803, 0x80000293)), (HardPointer, Target::Label(0x1001b500, 0x80000285)), (HardPointer, Target::Label(0x1001b530, 0x8000028b)), (HardPointer, Target::Label(0x1001b560, 0x8000028d)), (HardPointer, Target::Label(0x1001b620, 0x8000028f)), (HardPointer, Target::Standard), (HardPointer, Target::Label(0x1001b540, 0x80000287)), (SoftPointer, Target::Record(3)), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
+        strings: &["", "", "", "AeccDbGraphProfile", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
+    },
+    Template {
+        dxf: "AECC_PROFILE_VIEW_SECTIONAL_DATA_BAND_STYLE",
+        owner: Target::Null,
+        children: &[(0x1e, 4)],
+        fields: &[Run(34, "120040000"), Children, Run(1135, "a908c76c020600295b008180012e0021b010200008305b00880af6c02042aaaaaaaaaaaca9f8202000080b88000089002000000b800810aaaaaaaaaaab6a7e32db00810aaaaaaaaaaab2a7e2a5b0081800c56c02060028db008180810e0021b00ce00205006e002042aaaaaaaaaaaca9f8cf6c02042aaaaaaaaaaaca9f8ad6c02042aaaaaaaaaaad29f83e20002c"), Time, Run(1184, "192d8040c0053b6010300186d8040c041a100004001c004400770010d41450b60110015c00408555555555555953f012e0044002700102155555555555714fc66b60102155555555555694fc55b60102155555555555654fc047001184c8f0016c00d800dc00c800e000d000e400e400d800a000c800d000d000e400a4017400f800800110018401d0018400e80000001e100016"), Time, Run(959, "480a0d2a0a84a8600800030c00feff50180000000190154150950c02800061801fdfea03000000003204a82a12a18030000c3003fbfd40600000000640d50542543002000186007f7fa80c00000000c822a0a84a8601800030c00feff50180000000190554150950c02800061801fdfea030000000035554")],
+        refs: &[(HardPointer, Target::Label(0x1001b660, 0x80000297)), (HardPointer, Target::Standard), (HardPointer, Target::Label(0x1001b650, 0x80000295)), (HardPointer, Target::Label(0x1001b804, 0x80000299)), (SoftPointer, Target::Record(4)), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
+        strings: &["", "", "", "AeccDbGraphProfile", "", "", "", "", "", "", "", "", "", "", "", ""],
+    },
+    Template {
+        dxf: "AECC_PROFILE_VIEW_PIPE_NETWORK_BAND_STYLE",
+        owner: Target::Null,
+        children: &[(0x1e, 5)],
+        fields: &[Run(34, "100040000"), Children, Run(1161, "a908836c02060004b80086c040800020616c0220235b00810aaaaaaaaaaab4a7e1adb00810aaaaaaaaaaab2a7e0808000202e20000220008000002e002042aaaaaaaaaaada9f8876c020600195b008180010e0021b0816c02201bdb00810aaaaaaaaaaab2a7e03380081402dc0088006e002042aaaaaaaaaaaca9f88b6c02042aaaaaaaaaaaca9f8696c0206000f88000b0"), Time, Run(1158, "10ad8040c0431b60103010684000100070011001dc0043505015c00408555555555555953f11ed80408555555555555953f0dad80408555555555555a53f009c00408555555555555c53f112d8040c0433b6010300011c00461323c005b00360037003400380035003900390034002800320034003400390029005d003e00200044006100740061003a000000078400058"), Time, Run(1269, "480a112a0a84a8600800030c00feff50180000000190154150950c02800061801fdfea03000000003204a82a12a18030000c3003fbfd40600000000640d50542543002000186007f7fa80c00000000c822a0a84a8600c00030c00feff50180000000190554150950c00800061801fdfea0300000000320ca82a12a18020000c3003fbfd40600000000641d50542543004000186007f7fa80c00000000d5550")],
+        refs: &[(HardPointer, Target::Label(0x1001b630, 0x8000049a)), (HardPointer, Target::Label(0x1001b640, 0x8000049c)), (HardPointer, Target::Label(0x1001b805, 0x8000049f)), (HardPointer, Target::Standard), (SoftPointer, Target::Record(5)), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
+        strings: &["", "", "", "AeccDbGraphProfile", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
+    },
+    Template {
+        dxf: "AECC_PROFILE_VIEW_SUPERELEVATION_DIAGRAM_BAND_STYLE",
+        owner: Target::Record(0),
+        children: &[],
+        fields: &[Run(10, "478"), Children, Run(2721, "aa58a76a02060018da8081800856a020602325a80818081ae002048c36a02060004b80086c040800020416a0220285a808804f6c02042aaaaaaaaaaaca9f80d6a02042aaaaaaaaaaad29f8496c0206021b5a80810aaaaaaaaaaab4a7e12da80810aaaaaaaaaaab2a7e23da80810aaaaaaaaaaab2a7e01da8081800202000080b880000a8a01dc0088002e002042aaaaaaaaaaada9f8ab6a02042aaaaaaaaaaaca9f8436c02060019da8081800456a020602225a8081808cd6a02042aaaaaaaaaaad29f8a56a02060220da8081800c76a020600005a8088010e0021b0616a0220305a808804d6c02042aaaaaaaaaaad29f84f6a02042aaaaaaaaaaaca9f80b6a02042aaaaaaaaaaaca9f80ce00205006e002042aaaaaaaaaaaca9f8af6a02042aaaaaaaaaaaca9f8476c0206001ada80810aaaaaaaaaaab2a7e125a80818088d6a02042aaaaaaaaaaad29f8056a0206020f88000b0"), Time, Run(2002, "152d4040c0432b5010301086d4040c0043b5010300196d40408555555555555953f146d4040c0062b501030106840001020b60110001c004400b7001030001dc0043505102d4044007b50102155555555555654fc05700102155555555555654fc25b60102155555555555654fc37b50102155555555555654fc26b50102155555555555694fc04b5010301009c00408555555555555c53f15ad40408555555555555a53f08ad8040c0434b501030108ed4040c0045b50102155555555555654fc67b50102155555555555654fc01b5010300011c004611e5300750070006500720065006c00650076006100740069006f006e000000078400058"), Time, Run(4059, "480a352a0a84a8600800030c00feff50180000000190154150950c02800061801fdfea03000000003204a82a12a18030000c3003fbfd40600000000640d50542543002000186007f7fa80c00000000c822a0a84a8600000030400feff50180000000190554150950c00800061801fdfea0300000000320ca82a12a18020000c3003fbfd40600000000641d50542543004000186007f7fa80c00000000c842a0a84a8601400030c00feff50180000000190954150950c01800061801fdfea03000000003214a82a12a18010000c3003fbfd40600000000642d50542543006000186007f7fa80c00000000c862a0a84a8600000030400feff50180000000190d54150950c01800061801fdfea0300000000321ca82a12a18020000c3003fbfd40600000000643d50542543004000186007f7fa80c00000000c882a0a84a8600c00030c00feff50180000000191154150950c01800061801fdfea03000000003224a82a12a18010000c3003fbfd40600000000644d50542543006000186007f7fa80c00000000c8a2a0a84a8600400030c00feff50180000000191554150950c01000061801fdfea0300000000322ca82a12a18020000c3003fbfd40600000000645d5054254300a000186007f7fa80c00000000c8c2a0a84a8600400030c00feff50180000000191954150950c00800061801fdfea030000000035554")],
+        refs: &[(HardPointer, Target::Label(0x1001b520, 0x8000028a)), (HardPointer, Target::Label(0x1001b550, 0x80000292)), (HardPointer, Target::Label(0x1001b803, 0x80000294)), (HardPointer, Target::Label(0x1001b500, 0x80000286)), (HardPointer, Target::Label(0x1001b530, 0x8000028c)), (HardPointer, Target::Label(0x1001b560, 0x8000028e)), (HardPointer, Target::Label(0x1001b620, 0x80000290)), (HardPointer, Target::Standard), (HardPointer, Target::Label(0x1001b540, 0x80000288)), (SoftPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
+        strings: &["", "", "", "AeccDbGraphProfile", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
+    },
+    Template {
+        dxf: "AECC_PROFILE_VIEW_SECTIONAL_DATA_BAND_STYLE",
+        owner: Target::Record(1),
+        children: &[],
+        fields: &[Run(10, "478"), Children, Run(1135, "a908c76c020600295b008180012e0021b010200008305b00880af6c02042aaaaaaaaaaaca9f8202000080b88000089002000000b800810aaaaaaaaaaab6a7e32db00810aaaaaaaaaaab2a7e2a5b0081800c56c02060028db008180810e0021b00ce00205006e002042aaaaaaaaaaaca9f8cf6c02042aaaaaaaaaaaca9f8ad6c02042aaaaaaaaaaad29f83e20002c"), Time, Run(1184, "192d8040c0053b6010300186d8040c041a100004001c004400770010d41450b60110015c00408555555555555953f012e0044002700102155555555555714fc66b60102155555555555694fc55b60102155555555555654fc047001184c8f0016c00d800dc00c800e000d000e400e400d800a000c800d000d000e400a4017400f800800110018401d0018400e80000001e100016"), Time, Run(959, "480a0d2a0a84a8600800030c00feff50180000000190154150950c02800061801fdfea03000000003204a82a12a18030000c3003fbfd40600000000640d50542543002000186007f7fa80c00000000c822a0a84a8601800030c00feff50180000000190554150950c02800061801fdfea030000000035554")],
+        refs: &[(HardPointer, Target::Label(0x1001b660, 0x80000298)), (HardPointer, Target::Standard), (HardPointer, Target::Label(0x1001b650, 0x80000296)), (HardPointer, Target::Label(0x1001b804, 0x8000029a)), (SoftPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
+        strings: &["", "", "", "AeccDbGraphProfile", "", "", "", "", "", "", "", "", "", "", "", ""],
+    },
+    Template {
+        dxf: "AECC_PROFILE_VIEW_PIPE_NETWORK_BAND_STYLE",
+        owner: Target::Record(2),
+        children: &[],
+        fields: &[Run(10, "478"), Children, Run(1161, "a908836c02060004b80086c040800020616c0220235b00810aaaaaaaaaaab4a7e1adb00810aaaaaaaaaaab2a7e0808000202e20000220008000002e002042aaaaaaaaaaada9f8876c020600195b008180010e0021b0816c02201bdb00810aaaaaaaaaaab2a7e03380081402dc0088006e002042aaaaaaaaaaaca9f88b6c02042aaaaaaaaaaaca9f8696c0206000f88000b0"), Time, Run(1158, "10ad8040c0431b60103010684000100070011001dc0043505015c00408555555555555953f11ed80408555555555555953f0dad80408555555555555a53f009c00408555555555555c53f112d8040c0433b6010300011c00461323c005b00360037003400380035003900390034002800320034003400390029005d003e00200044006100740061003a000000078400058"), Time, Run(1269, "480a112a0a84a8600800030c00feff50180000000190154150950c02800061801fdfea03000000003204a82a12a18030000c3003fbfd40600000000640d50542543002000186007f7fa80c00000000c822a0a84a8600c00030c00feff50180000000190554150950c00800061801fdfea0300000000320ca82a12a18020000c3003fbfd40600000000641d50542543004000186007f7fa80c00000000d5550")],
+        refs: &[(HardPointer, Target::Label(0x1001b630, 0x8000049b)), (HardPointer, Target::Label(0x1001b640, 0x8000049e)), (HardPointer, Target::Label(0x1001b805, 0x800004a0)), (HardPointer, Target::Standard), (SoftPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null), (HardPointer, Target::Layer0), (HardPointer, Target::ByBlock), (HardPointer, Target::Null)],
+        strings: &["", "", "", "AeccDbGraphProfile", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
+    },
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A new drawing gets the three band style collections with a default
+    /// A new drawing gets the six band style collections with a default
     /// style each, whose label styles resolve.
     #[test]
     fn band_styles_of_a_new_drawing() {
         let mut doc = CadDocument::new();
         ensure_band_styles(&mut doc).unwrap();
-        for key in [KEY_DATA_BANDS, KEY_VERTICAL_GEOMETRY_BANDS, KEY_HORIZONTAL_GEOMETRY_BANDS] {
+        for key in [KEY_DATA_BANDS, KEY_VERTICAL_GEOMETRY_BANDS, KEY_HORIZONTAL_GEOMETRY_BANDS, KEY_SUPERELEVATION_BANDS, KEY_SECTIONAL_DATA_BANDS, KEY_PIPE_NETWORK_BANDS] {
             let style = super::super::site::default_style_of(&doc, key).unwrap();
             let refs = object(&doc, Handle::new(style)).unwrap().decode().handles;
-            assert!(refs.iter().take(4).all(|h| object(&doc, Handle::new(*h)).is_some_and(|o| o.dxf_name == "AECC_LABEL_COLLECTOR_STYLE")));
+            assert!(refs.iter().take(1).all(|h| object(&doc, Handle::new(*h)).is_some_and(|o| o.dxf_name == "AECC_LABEL_COLLECTOR_STYLE")));
         }
         let before = doc.objects.len();
         ensure_band_styles(&mut doc).unwrap();
