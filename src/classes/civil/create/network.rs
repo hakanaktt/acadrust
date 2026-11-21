@@ -261,15 +261,15 @@ fn write_network(doc: &mut CadDocument, common: EntityCommon, name: &str, list: 
 
 /// A network read back from its record: entity data, name, parts list,
 /// pipes and structures.
-struct Network {
+pub(super) struct Network {
     common: EntityCommon,
     name: String,
     list: u64,
-    pipes: Vec<u64>,
-    structures: Vec<u64>,
+    pub pipes: Vec<u64>,
+    pub structures: Vec<u64>,
 }
 
-fn read_network(doc: &CadDocument, network: Handle) -> Option<Network> {
+pub(super) fn read_network(doc: &CadDocument, network: Handle) -> Option<Network> {
     let a = arch_entity(doc, network).filter(|a| a.dxf_name == "AECC_NETWORK")?;
     let common = doc.get_entity(network)?.common().clone();
     let refs: Vec<u64> = a.typed_handles().iter().map(|r| r.0).collect();

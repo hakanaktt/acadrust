@@ -97,6 +97,8 @@ enum Piece {
     Title,
     /// An axis title in the same form.
     Text(&'static str),
+    /// `BL` the number of network parts drawn in the view.
+    Parts,
 }
 
 /// The graph record after the vertical scale: the graph's title and
@@ -197,8 +199,21 @@ const GRAPH: &[Piece] = &[
     Piece::Value(Value::Fixed(10.0)),
     Piece::Value(Value::Fixed(10.0)),
     Piece::Value(Value::Fixed(10.0)),
-    Piece::Bits("10101010101010010000000110010000001010010000001110010000010010100001011111000000100"),
+    Piece::Bits("1010"),
+    Piece::Parts,
+    Piece::Bits("10101010010000000110010000001010010000001110010000010010100001011111000000100"),
 ];
+
+/// A network part drawn in a profile view
+/// (`AECC_GRAPH_PROFILE_NETWORK_PART`, in model space): a constant run
+/// (DU01, DW01: every one the same); references soft 0 and the part
+/// (hard); texts "AeccImpGraphProfileNetworkPart", "", "". The view lists
+/// it among its items and at the end of its references.
+fn write_drawn_part(doc: &mut CadDocument, common: EntityCommon, part: u64) -> Result<Handle, DxfError> {
+    const RUN: &str = "01010100001001010100000101010000100000000100010111110000001000010000010010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001011111000000100";
+    let strings = ["AeccImpGraphProfileNetworkPart", "", ""].iter().map(|s| s.to_string()).collect();
+    put_entity(doc, "AECC_GRAPH_PROFILE_NETWORK_PART", common, |w| bits(w, RUN), Body { refs: vec![soft_pointer(0), hard_pointer(part)], strings })
+}
 
 pub(super) fn text(w: &mut DwgMergedWriter, s: &str) {
     let mut bytes: Vec<u8> = s.encode_utf16().flat_map(u16::to_le_bytes).collect();
@@ -241,17 +256,21 @@ struct Shown {
 /// Written with the samples' origins, ranges and profiles the record
 /// equals theirs bit for bit.
 #[allow(clippy::too_many_arguments)]
-fn write_view(doc: &mut CadDocument, common: EntityCommon, name: &str, frame: &ProfileViewFrame, user: (bool, bool), style: u64, alignment: Handle, profiles: &[Shown], bands: &[Resolved]) -> Result<Handle, DxfError> {
+fn write_view(doc: &mut CadDocument, common: EntityCommon, name: &str, frame: &ProfileViewFrame, user: (bool, bool), style: u64, alignment: Handle, profiles: &[Shown], bands: &[Resolved], parts: &[u64]) -> Result<Handle, DxfError> {
     let word = (VIEW_RANGE_WORD | if user.0 { USER_STATIONS } else { 0 } | if user.1 { USER_ELEVATIONS } else { 0 }) as i32;
     let mut refs: Vec<Ref> = bands.iter().map(|_| hard_pointer(0)).collect();
     refs.extend([soft_pointer(0), Ref(DwgReferenceType::HardOwnership, 0), hard_pointer(style), hard_pointer(alignment.value())]);
     for p in profiles {
         refs.extend([soft_pointer(p.handle), hard_pointer(p.style), hard_pointer(0)]);
     }
+    for g in parts {
+        refs.extend([soft_pointer(*g), hard_pointer(0), hard_pointer(0)]);
+    }
     for b in bands {
         refs.extend([hard_pointer(b.style), soft_pointer(b.band.data_source.map_or(0, |h| h.value())), hard_pointer(alignment.value()), hard_pointer(b.profile1), hard_pointer(b.profile2)]);
     }
     refs.extend([hard_pointer(0), hard_pointer(0), hard_pointer(0), hard_pointer(0), soft_pointer(0), hard_pointer(0)]);
+    refs.extend(parts.iter().map(|g| soft_pointer(*g)));
     let strings = ["", "", name, "", name, ""].iter().map(|s| s.to_string()).collect();
     let origin = frame.origin;
     let lo = Vector2::new(frame.station_min, frame.elevation_min);
@@ -289,8 +308,8 @@ fn write_view(doc: &mut CadDocument, common: EntityCommon, name: &str, frame: &P
             for v in [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0] {
                 w.write_bit_double(v);
             }
-            bits(w, &format!("{:08b}", profiles.len()));
-            for i in 0..profiles.len() {
+            bits(w, &format!("{:08b}", profiles.len() + parts.len()));
+            for i in 0..profiles.len() + parts.len() {
                 bits(w, if i == 0 { "11001" } else { "10000" });
             }
             w.write_bit_long(bands.len() as i32);
@@ -321,6 +340,7 @@ fn write_view(doc: &mut CadDocument, common: EntityCommon, name: &str, frame: &P
                     Piece::Value(v) => w.write_bit_double(v.of(frame)),
                     Piece::Title => text(w, TITLE),
                     Piece::Text(t) => text(w, t),
+                    Piece::Parts => w.write_bit_long(parts.len() as i32),
                 }
             }
         },
@@ -987,8 +1007,14 @@ fn add_view(doc: &mut CadDocument, alignment: Handle, name: &str, origin: Vector
         let profile = |p: Option<Handle>| p.map_or(Ok(first), |p| if list.iter().any(|s| s.handle == p.value()) { Ok(p.value()) } else { Err(invalid("a band's profile is not a profile of the alignment")) });
         let style = default_style_of(doc, b.kind.style_key()).ok_or_else(|| invalid("drawing has no band style of that kind"))?;
         if let Some(source) = b.data_source {
-            let group = super::sample_lines::read_group(doc, source).filter(|g| b.kind == BandKind::SectionalData && g.alignment == alignment.value());
-            group.ok_or_else(|| invalid("a band's data source is a sample line group of the view's alignment, for a sectional data band"))?;
+            let group = || super::sample_lines::read_group(doc, source).is_some_and(|g| g.alignment == alignment.value());
+            let network = || super::network::read_network(doc, source).is_some();
+            let fits = match b.kind {
+                BandKind::SectionalData => group(),
+                BandKind::PipeNetwork => network(),
+                _ => false,
+            };
+            fits.then_some(()).ok_or_else(|| invalid("a band's data source is a sample line group of the view's alignment (sectional data) or a gravity pipe network (pipe network)"))?;
         }
         resolved.push(Resolved { band: b.clone(), style, profile1: profile(b.profile1)?, profile2: profile(b.profile2.or(b.profile1))? });
     }
@@ -1011,7 +1037,24 @@ fn add_view(doc: &mut CadDocument, alignment: Handle, name: &str, origin: Vector
     let mut views = written.views.clone();
     views.push(handle.value());
     rewrite_with_views(doc, alignment, written, &profiles, &profiles, Some(&views))?;
-    write_view(doc, common(handle), name, &frame, (stations.is_some(), elevations.is_some()), style, alignment, &list, &resolved)?;
+    // The parts of the pipe network bands' networks are drawn in the
+    // view: each network once, its pipes then its structures (DU01).
+    let mut parts: Vec<u64> = Vec::new();
+    for b in resolved.iter().filter(|b| b.band.kind == BandKind::PipeNetwork) {
+        if let Some(n) = b.band.data_source.and_then(|n| super::network::read_network(doc, n)) {
+            for h in n.pipes.iter().chain(&n.structures) {
+                if !parts.contains(h) {
+                    parts.push(*h);
+                }
+            }
+        }
+    }
+    let mut drawn = Vec::new();
+    for part in &parts {
+        let h = doc.allocate_handle();
+        drawn.push(write_drawn_part(doc, common(h), *part)?.value());
+    }
+    write_view(doc, common(handle), name, &frame, (stations.is_some(), elevations.is_some()), style, alignment, &list, &resolved, &drawn)?;
     for (h, kind, ids, profile, s) in groups {
         write_group(doc, common(h), kind, &ids, profile, s, handle.value())?;
     }

@@ -1224,6 +1224,48 @@ fn spans(elements: &[AlignmentElement]) -> Option<Vec<(&AlignmentElement, f64, V
     (out.len() == elements.len() && used == pieces.len()).then_some(out)
 }
 
+/// The station of the point of the alignment `elements` (start station
+/// `start`) nearest to `p`: lines and arcs exactly, spirals along their
+/// points.
+pub(super) fn station_of_point(elements: &[AlignmentElement], start: f64, p: Vector2) -> Option<f64> {
+    let mut best: Option<(f64, f64)> = None;
+    let mut take = |d: f64, s: f64| {
+        if best.is_none_or(|b| d < b.0) {
+            best = Some((d, s));
+        }
+    };
+    for (_, from, pieces) in spans(elements)? {
+        let mut at = from;
+        for piece in &pieces {
+            let (kind, k, points) = piece;
+            let (first, last) = (points[0], points[points.len() - 1]);
+            if *kind == AlignmentPiece::Curve && *k != 0.0 && first != last {
+                let r = 1.0 / k.abs();
+                let sweep = 2.0 * (first.distance(&last) * k.abs() / 2.0).min(1.0).asin();
+                let (_, tangent) = piece_point(piece, 0.0);
+                let left = Vector2::new(-tangent.y, tangent.x);
+                let center = first + left * (r * k.signum());
+                let angle = |q: Vector2| (q.y - center.y).atan2(q.x - center.x);
+                // Turned from the start in the direction of travel.
+                let turned = ((angle(p) - angle(first)) * k.signum()).rem_euclid(std::f64::consts::TAU);
+                let a = if turned <= sweep { turned } else if turned - sweep < std::f64::consts::TAU - turned { sweep } else { 0.0 };
+                let (q, _) = piece_point(piece, a * r);
+                take(q.distance(&p), start + at + a * r);
+            } else {
+                let mut run = 0.0;
+                for w in points.windows(2) {
+                    let (d, l) = (w[1] - w[0], w[0].distance(&w[1]));
+                    let t = if l > 0.0 { ((p - w[0]).dot(&d) / (l * l)).clamp(0.0, 1.0) } else { 0.0 };
+                    take((w[0] + d * t).distance(&p), start + at + run + t * l);
+                    run += l;
+                }
+            }
+            at += piece_length(piece);
+        }
+    }
+    best.map(|b| b.1)
+}
+
 /// The point at `station` (start station `start`) of the solved path and
 /// its direction.
 fn station_point(spans: &[(&AlignmentElement, f64, Vec<Piece>)], start: f64, station: f64) -> Option<(Vector2, Vector2)> {

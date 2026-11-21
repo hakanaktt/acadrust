@@ -50,7 +50,8 @@ pub struct ProfileViewBand {
     pub weeding: f64,
     pub stagger: BandStagger,
     /// A sectional data band's sample line group (one of the view's
-    /// alignment); `None` for the other kinds.
+    /// alignment) or a pipe network band's gravity pipe network (its
+    /// parts are drawn in the view); `None` for the other kinds.
     pub data_source: Option<Handle>,
 }
 
@@ -217,6 +218,10 @@ const RUN_SAMPLE_LINE: &str = "00000000010000001101100100000000000000000000";
 const RUN_INCREMENT: &str = "00000000010000001110100100000000000000000000";
 const LIST_SAMPLE_LINE: &[u32] = &[0x0101_5013, 0x0200_D020, 0x0F01_7824, 0x0F01_7825, 0x1501_7821, 0x1501_7822];
 const LIST_INCREMENT: &[u32] = &[0x0101_5013, 0x0200_D020, 0x0201_7823, 0x0F01_7824, 0x0F01_7825, 0x1501_7821, 0x1501_7822];
+const RUN_PIPE: &str = "00000000010000001100100100000000000000000000";
+const RUN_STRUCTURE: &str = "00000000010000001011100100000000000000000000";
+const LIST_PIPE: &[u32] = &[0x0101_5013, 0x0F01_781C];
+const LIST_STRUCTURE: &[u32] = &[0x0101_5013, 0x0200_D020, 0x0F01_781C];
 const RUN_ELEMENT: &str = "00000000010000001000100100000000000000000000";
 const RUN_CURVE_MIDDLE: &str = "00000000010000001111100100000000000000000000";
 const LIST_ELEMENT: &[u32] = &[0x0100_D61E, 0x0100_D621, 0x0100_D731, 0x0101_5013, 0x0200_D020, 0x0200_D61D];
@@ -446,6 +451,50 @@ fn sectional_labels(doc: &CadDocument, group: Handle, number: i32) -> Option<Vec
     Some(out)
 }
 
+/// The labels of a pipe network band reading `network` in a view from
+/// `station_min`: one per pipe, then one per structure, in the network's
+/// order (DU01, DW01, E-PN1-edit). A pipe's label holds its slope (0x0201783B, the
+/// drop from start to end over its plan length), the largest slope of the
+/// network's pipes either way (0x0201783A), the stations of its ends on the
+/// alignment (0x02017835, 0x02017836), the view's first station
+/// (0x02017837), 1.0 (0x02017838), 0.0 (0x02017839) and a zero byte
+/// (0x0301781D); a structure's its station (0x0200D020). Each refers to
+/// its part (key 0x0F01781C).
+fn network_labels(doc: &CadDocument, network: Handle, alignment: &ArchEntityData, station_min: f64, number: i32) -> Option<Vec<(Label, Vec<u64>)>> {
+    let n = super::network::read_network(doc, network)?;
+    let elements = alignment.alignment_elements()?;
+    let start = alignment.alignment_start_station()?;
+    let station = |p: crate::types::Vector3| super::alignment::station_of_point(&elements, start, crate::types::Vector2::new(p.x, p.y));
+    let ends: Vec<(u64, crate::types::Vector3, crate::types::Vector3)> = n.pipes.iter().map(|h| super::network::arch_entity(doc, Handle::new(*h))?.pipe_ends().map(|(a, b)| (*h, a, b))).collect::<Option<_>>()?;
+    let slope = |a: crate::types::Vector3, b: crate::types::Vector3| {
+        let run = ((b.x - a.x).powi(2) + (b.y - a.y).powi(2)).sqrt();
+        if run > 0.0 { (a.z - b.z) / run } else { 0.0 }
+    };
+    let steepest = ends.iter().map(|e| slope(e.1, e.2).abs()).fold(0.0, f64::max);
+    let mut out = Vec::new();
+    for &(h, a, b) in &ends {
+        let keys = vec![
+            (0x0201_783B, KeyValue::Double(slope(a, b))),
+            (0x0201_7838, KeyValue::Double(1.0)),
+            (0x0F01_781C, KeyValue::Reference),
+            (0x0201_7835, KeyValue::Double(station(a)?)),
+            (0x0201_783A, KeyValue::Double(steepest)),
+            (0x0201_7837, KeyValue::Double(station_min)),
+            (0x0301_781D, KeyValue::Byte(0)),
+            (0x0201_7839, KeyValue::Double(0.0)),
+            (0x0101_5013, KeyValue::Long(number)),
+            (0x0201_7836, KeyValue::Double(station(b)?)),
+        ];
+        out.push((Label { keys, run: RUN_PIPE, list: LIST_PIPE }, vec![h]));
+    }
+    for &h in &n.structures {
+        let p = super::network::arch_entity(doc, Handle::new(h))?.structure_position()?;
+        let keys = vec![(0x0F01_781C, KeyValue::Reference), (0x0101_5013, KeyValue::Long(number)), (0x0200_D020, KeyValue::Double(station(p)?))];
+        out.push((Label { keys, run: RUN_STRUCTURE, list: LIST_STRUCTURE }, vec![h]));
+    }
+    Some(out)
+}
+
 fn write_label(w: &mut DwgMergedWriter, l: &Label) {
     w.write_bit_long(l.keys.len() as i32);
     for (key, value) in &l.keys {
@@ -489,6 +538,10 @@ pub(super) fn write_group(doc: &mut CadDocument, common: EntityCommon, b: &Resol
             Some(group) => sectional_labels(doc, group, number).ok_or_else(|| invalid("a sectional data band's sample line group cannot be read"))?,
             None => Vec::new(),
         },
+        BandKind::PipeNetwork => match b.band.data_source {
+            Some(network) => network_labels(doc, network, a, frame.station_min, number).ok_or_else(|| invalid("a pipe network band's network cannot be read"))?,
+            None => Vec::new(),
+        },
         _ => {
     let labels: Vec<Label> = match b.band.kind {
         BandKind::ProfileData => {
@@ -497,8 +550,8 @@ pub(super) fn write_group(doc: &mut CadDocument, common: EntityCommon, b: &Resol
         }
         BandKind::VerticalGeometry => super::network::arch_entity(doc, Handle::new(b.profile1)).map(|p| vertical_labels(p, number)).unwrap_or_default(),
         BandKind::HorizontalGeometry => horizontal_labels(a, number).unwrap_or_default().into_iter().map(|l| l.1).collect(),
-        // Without a data source (superelevation, pipe network: not
-        // written) these bands have no labels.
+        // Without a data source (superelevation: not written) these
+        // bands have no labels.
         BandKind::Superelevation | BandKind::SectionalData | BandKind::PipeNetwork => Vec::new(),
     };
     labels.into_iter().map(|l| (l, Vec::new())).collect()
@@ -596,5 +649,32 @@ mod tests {
         assert_eq!(labels.len(), 3);
         assert_eq!((station(&labels[0].0, 0x0200_D020), labels[0].1.clone()), (Some(20.0), vec![near.value(), g.value()]));
         assert_eq!((labels[2].0.list, station(&labels[2].0, 0x0201_7823), station(&labels[2].0, 0x0200_D020), labels[2].1[0]), (LIST_INCREMENT, Some(20.0), Some(50.0), far.value()));
+    }
+
+    /// A pipe network band labels the network's pipes (slopes, end
+    /// stations, the largest slope either way) then its structures; a
+    /// point beside an arc gets the arc's station.
+    #[test]
+    fn pipe_network_labels_of_a_network() {
+        use super::super::alignment::{add_alignment_with_curves, VertexCurve};
+        use super::super::network::{add_pipe, add_pipe_network, add_structure};
+        use crate::types::Vector3;
+        let v = crate::types::Vector2::new;
+        let mut doc = CadDocument::new();
+        let a = add_alignment_with_curves(&mut doc, "AL1", &[v(0.0, 0.0), v(100.0, 0.0), v(200.0, 60.0), v(300.0, 0.0)], &[VertexCurve::Arc(144.4126919312708), VertexCurve::Arc(51.07935859793733)], None).unwrap();
+        let n = add_pipe_network(&mut doc, "NET1", None).unwrap();
+        add_pipe(&mut doc, n, Vector3::new(0.0, 0.0, -5.0), Vector3::new(40.0, 0.0, -6.0)).unwrap();
+        add_structure(&mut doc, n, Vector3::new(20.0, 5.0, 3.0), 0.0).unwrap();
+        add_pipe(&mut doc, n, Vector3::new(40.0, 0.0, -6.0), Vector3::new(60.0, 2.0, -5.0)).unwrap();
+        add_structure(&mut doc, n, Vector3::new(70.0, 5.0, 3.0), 0.0).unwrap();
+        let al = super::super::network::arch_entity(&doc, a).unwrap();
+        let labels = network_labels(&doc, n, al, -200.0, 1).unwrap();
+        let value = |l: &Label, k: u32| l.keys.iter().find_map(|x| match x { (key, KeyValue::Double(d)) if *key == k => Some(*d), _ => None });
+        assert_eq!(labels.iter().map(|l| l.0.list).collect::<Vec<_>>(), vec![LIST_PIPE, LIST_PIPE, LIST_STRUCTURE, LIST_STRUCTURE]);
+        let up = -1.0 / 20.0f64.hypot(2.0);
+        assert_eq!((value(&labels[0].0, 0x0201_783B), value(&labels[0].0, 0x0201_7836), value(&labels[0].0, 0x0201_7837)), (Some(0.025), Some(40.0), Some(-200.0)));
+        assert!((value(&labels[1].0, 0x0201_783B).unwrap() - up).abs() < 1e-12 && (value(&labels[0].0, 0x0201_783A).unwrap() + up).abs() < 1e-12);
+        // E-PN1-edit: the structure at (70, 5) sits at 70.34093655710718.
+        assert!((value(&labels[3].0, 0x0200_D020).unwrap() - 70.34093655710718).abs() < 1e-9);
     }
 }
