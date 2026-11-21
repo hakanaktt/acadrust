@@ -28,6 +28,8 @@ const POINT_SETS: i32 = 3;
 const SPIRAL_CURVE_SPIRAL: i32 = 260;
 const SCS_BETWEEN_LINES: i32 = 0;
 const SPIRAL_DEFINITION: i32 = 256;
+/// Element kind of a spiral.
+const SPIRAL: i32 = 259;
 /// Flags of an arc edge in the companion topology, besides the line flags.
 pub(super) const ARC_EDGE: i32 = 0x010F_0000;
 
@@ -108,6 +110,8 @@ pub(super) fn elements(vertices: &[Vector2], curves: &[VertexCurve]) -> Vec<Alig
 }
 /// Key of the geometry stamp setting.
 const STAMP: i32 = 0x0B00_1081;
+/// Key of a curb return's curve parameters (a text, CG02).
+const KEY_CURB_CURVE: i32 = 0x0400_D783;
 
 /// The drawing's default alignment style: the first style of the style
 /// tree's alignment style collection.
@@ -174,27 +178,47 @@ pub(super) fn solve(vertices: &[Vector2], curves: &[VertexCurve], elements: &[Al
     let scale = vertices.iter().map(|p| p.x.abs().max(p.y.abs())).fold(1.0, f64::max);
     let mut path: Vec<PathPoint> = Vec::new();
     let mut line = 0;
-    for (kind, k, points) in &pieces {
-        let (first, last) = (*points.first()?, *points.last()?);
-        match kind {
-            AlignmentPiece::Line => {
-                let along = *vertices.get(line + 1)? - vertices[line];
-                (along.dot(&(last - first)) >= -1e-9 * scale * along.length()).then_some(())?;
-                line += 1;
-                if first.distance(&last) > 1e-12 * scale {
-                    path.push((first, None));
-                }
-            }
-            AlignmentPiece::Curve => {
-                let sweep = 2.0 * (first.distance(&last) * k.abs() / 2.0).min(1.0).asin() * k.signum();
-                path.push((first, Some((sweep / 4.0).tan())));
-            }
-            _ => path.extend(points[..points.len() - 1].iter().map(|p| (*p, None))),
+    for piece in &pieces {
+        let (kind, _, points) = piece;
+        if *kind == AlignmentPiece::Line {
+            let (first, last) = (*points.first()?, *points.last()?);
+            let along = *vertices.get(line + 1)? - vertices[line];
+            (along.dot(&(last - first)) >= -1e-9 * scale * along.length()).then_some(())?;
+            line += 1;
         }
+        push_piece(&mut path, piece, scale);
     }
     (pieces.len() == vertices.len() - 1 + curve_pieces && line == vertices.len() - 1).then_some(())?;
     path.push((*vertices.last()?, None));
     Some(path)
+}
+
+/// A solved piece added to a path: a line from its start (unless it has no
+/// length), an arc from its start with its bulge, a spiral as chords
+/// between its points.
+fn push_piece(path: &mut Vec<PathPoint>, (kind, k, points): &(AlignmentPiece, f64, Vec<Vector2>), scale: f64) {
+    let (first, last) = (points[0], points[points.len() - 1]);
+    match kind {
+        AlignmentPiece::Line => {
+            if first.distance(&last) > 1e-12 * scale {
+                path.push((first, None));
+            }
+        }
+        AlignmentPiece::Curve => {
+            let sweep = 2.0 * (first.distance(&last) * k.abs() / 2.0).min(1.0).asin() * k.signum();
+            path.push((first, Some((sweep / 4.0).tan())));
+        }
+        _ => path.extend(points[..points.len() - 1].iter().map(|p| (*p, None))),
+    }
+}
+
+/// The path of solved `elements` without its end point (see `solve`).
+fn path_of(elements: &[AlignmentElement]) -> Vec<PathPoint> {
+    let mut path = Vec::new();
+    for piece in &pieces_with_curvature(elements) {
+        push_piece(&mut path, piece, 1.0);
+    }
+    path
 }
 
 /// The companion of a siteless alignment (`AECC_FEATURE_STYLE` under the
@@ -440,9 +464,92 @@ pub(super) type Equation = (f64, [u8; 16], f64, f64, bool);
 /// the two lines meet (CR01 to CR05, CR07 to CR10).
 #[allow(clippy::too_many_arguments)]
 pub fn add_curb_return(doc: &mut CadDocument, name: &str, incoming: Handle, offset_in: f64, outgoing: Handle, offset_out: f64, forward: bool, radius: f64, overlaps: (f64, f64), layer: Option<&str>) -> Result<Handle, DxfError> {
+    add_curb_return_with(doc, name, incoming, offset_in, outgoing, offset_out, forward, CurbReturnCurve::Arc(radius), overlaps, layer)
+}
+
+/// The curve group of a curb return between its two overlaps.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CurbReturnCurve {
+    /// One arc of this radius.
+    Arc(f64),
+    /// Three arcs turning the same way: the first and last by radius and
+    /// length, the middle one by radius (its length takes the rest of the
+    /// turn).
+    ThreeCentered { first: (f64, f64), middle: f64, last: (f64, f64) },
+    /// A clothoid of `spiral_in` into an arc of `radius`, then a clothoid
+    /// of `spiral_out` out of it.
+    SpiralCurveSpiral { spiral_in: f64, radius: f64, spiral_out: f64 },
+}
+
+/// A curb return's curve from its start at the origin heading along +x and
+/// turning left by `sweep`: the points where its parts meet (start first,
+/// end last), each part's turn, and its length; `None` when the parts do
+/// not fit the turn.
+fn curb_curve(curve: CurbReturnCurve, sweep: f64) -> Option<(Vec<Vector2>, Vec<f64>, f64)> {
+    // An arc of radius r turning by t from p heading h.
+    let arc = |p: Vector2, h: f64, r: f64, t: f64| p + Vector2::new((h + t).sin() - h.sin(), h.cos() - (h + t).cos()) * r;
+    let origin = Vector2::new(0.0, 0.0);
+    match curve {
+        CurbReturnCurve::Arc(r) => Some((vec![origin, arc(origin, 0.0, r, sweep)], vec![sweep], r * sweep)),
+        CurbReturnCurve::ThreeCentered { first, middle, last } => {
+            let turns = [first.1 / first.0, sweep - first.1 / first.0 - last.1 / last.0, last.1 / last.0];
+            (turns[1] > 1e-9).then_some(())?;
+            let mut points = vec![origin];
+            let mut h = 0.0;
+            for (r, t) in [first.0, middle, last.0].into_iter().zip(turns) {
+                points.push(arc(*points.last()?, h, r, t));
+                h += t;
+            }
+            Some((points, turns.to_vec(), first.1 + middle * turns[1] + last.1))
+        }
+        CurbReturnCurve::SpiralCurveSpiral { spiral_in, radius, spiral_out } => {
+            let (t1, t3) = (spiral_in / (2.0 * radius), spiral_out / (2.0 * radius));
+            let t2 = sweep - t1 - t3;
+            (t2 > 1e-9).then_some(())?;
+            let p1 = clothoid(spiral_in, radius);
+            let p2 = arc(p1, t1, radius, t2);
+            // The spiral out seen backwards from its end is a clothoid too.
+            let (u, n) = (Vector2::new(sweep.cos(), sweep.sin()), Vector2::new(-sweep.sin(), sweep.cos()));
+            let q = clothoid(spiral_out, radius);
+            Some((vec![origin, p1, p2, p2 + u * q.x - n * q.y], vec![t1, t2, t3], spiral_in + radius * t2 + spiral_out))
+        }
+    }
+}
+
+/// The end of a clothoid of `length` from zero curvature to `1/radius`,
+/// started at the origin along +x turning left (its series in the end
+/// heading `t`: x = L sum (-1)^n t^2n / ((4n+1)(2n)!), y alike).
+fn clothoid(length: f64, radius: f64) -> Vector2 {
+    let t = length / (2.0 * radius);
+    let (mut x, mut y, mut term) = (0.0, 0.0, 1.0);
+    for n in 0..30 {
+        // term = t^n / n!
+        let sign = if n % 4 < 2 { 1.0 } else { -1.0 };
+        if n % 2 == 0 {
+            x += sign * term / (2 * n + 1) as f64;
+        } else {
+            y += sign * term / (2 * n + 1) as f64;
+        }
+        term *= t / (n + 1) as f64;
+    }
+    Vector2::new(x * length, y * length)
+}
+
+/// [`add_curb_return`] with any curve group: an arc, three arcs (CG01,
+/// CG07) or a spiral-curve-spiral (CG02, CG06, CG08). The three arcs are
+/// one element; the spiral-curve-spiral is a spiral in, a fixed arc and a
+/// spiral out between the lines (ids 4 to 6, the lines keeping 1 and 3)
+/// and keeps its parameters in a text of the record's second key.
+#[allow(clippy::too_many_arguments)]
+pub fn add_curb_return_with(doc: &mut CadDocument, name: &str, incoming: Handle, offset_in: f64, outgoing: Handle, offset_out: f64, forward: bool, curve: CurbReturnCurve, overlaps: (f64, f64), layer: Option<&str>) -> Result<Handle, DxfError> {
     let positive = |v: f64| v.is_finite() && v > 0.0;
-    if name.is_empty() || !positive(radius) || !positive(overlaps.0) || !positive(overlaps.1) || !offset_in.is_finite() || !offset_out.is_finite() || incoming == outgoing {
-        return Err(invalid("a curb return needs a name, two roads, finite offsets and a positive radius and overlaps"));
+    let curve_ok = match curve {
+        CurbReturnCurve::Arc(r) => positive(r),
+        CurbReturnCurve::ThreeCentered { first, middle, last } => [first.0, first.1, middle, last.0, last.1].into_iter().all(positive),
+        CurbReturnCurve::SpiralCurveSpiral { spiral_in, radius, spiral_out } => [spiral_in, radius, spiral_out].into_iter().all(positive),
+    };
+    if name.is_empty() || !curve_ok || !positive(overlaps.0) || !positive(overlaps.1) || !offset_in.is_finite() || !offset_out.is_finite() || incoming == outgoing {
+        return Err(invalid("a curb return needs a name, two roads, finite offsets and a positive curve and overlaps"));
     }
     let lines = |h| super::intersection::lines(doc, h).ok_or_else(|| invalid("a road is not an alignment this crate solves"));
     let (la, lb) = (lines(incoming)?, lines(outgoing)?);
@@ -465,31 +572,37 @@ pub fn add_curb_return(doc: &mut CadDocument, name: &str, incoming: Handle, offs
             let x = o1 + d1 * t1;
             let turn = cross(d1, travel);
             let sweep = travel.dot(&d1).clamp(-1.0, 1.0).acos();
-            let tangent = radius * (sweep / 2.0).tan();
+            let Some(shape) = curb_curve(curve, sweep) else { continue };
+            // How far before and after the lines' meeting point the curve
+            // starts and ends.
+            let e = shape.0[shape.0.len() - 1];
+            let (tangent, tangent_out) = (e.x - e.y * sweep.cos() / sweep.sin(), e.y / sweep.sin());
             let (len_a, len_b) = (pa.distance(&qa), pb.distance(&qb));
             // The overlaps lie on the line elements.
             let along_in = t1 - tangent - overlaps.0;
-            let along_out = t2 + if forward { tangent + overlaps.1 } else { -(tangent + overlaps.1) };
+            let along_out = t2 + if forward { tangent_out + overlaps.1 } else { -(tangent_out + overlaps.1) };
             let inside = |t: f64, len: f64| t >= -1e-9 && t <= len + 1e-9;
-            if sa.is_nan() || sb.is_nan() || turn.abs() < 1e-12 || !inside(along_in, len_a) || !inside(t1 - tangent, len_a) || !inside(t1, len_a) || !inside(along_out, len_b) || !inside(t2 + if forward { tangent } else { -tangent }, len_b) {
+            if sa.is_nan() || sb.is_nan() || turn.abs() < 1e-12 || !inside(along_in, len_a) || !inside(t1 - tangent, len_a) || !inside(t1, len_a) || !inside(along_out, len_b) || !inside(t2 + if forward { tangent_out } else { -tangent_out }, len_b) {
                 continue;
             }
-            found = Some((sa, pa, d1, sb, pb, d2, travel, x, t1, turn, sweep, tangent));
+            found = Some((sa, pa, d1, sb, pb, d2, travel, x, t1, turn, sweep, tangent, tangent_out, shape));
             break;
         }
         if found.is_some() {
             break;
         }
     }
-    let (sa, pa, d1, sb, pb, d2, travel, x, t1, turn, sweep, tangent) = found.ok_or_else(|| invalid("the offset lines do not meet on line elements of both roads with room for the arc and the overlaps"))?;
+    let (sa, pa, d1, sb, pb, d2, travel, x, t1, turn, sweep, tangent, tangent_out, (joins, turns, curve_length)) = found.ok_or_else(|| invalid("the offset lines do not meet on line elements of both roads with room for the curve and the overlaps"))?;
     let right = turn < 0.0;
     let turn_sign = if right { -1.0 } else { 1.0 };
     let dir = if forward { 1.0 } else { -1.0 };
     let t_in = x - d1 * tangent;
-    let t_out = x + travel * tangent;
+    let t_out = x + travel * tangent_out;
     let start = t_in - d1 * overlaps.0;
     let end = t_out + travel * overlaps.1;
-    let arc_end = overlaps.0 + radius * sweep;
+    let arc_end = overlaps.0 + curve_length;
+    // A point of the curve's own frame (a left turn along +x) in the drawing.
+    let world = |p: Vector2| t_in + d1 * p.x + left(d1) * (p.y * turn_sign);
     let total = arc_end + overlaps.1;
     // The roads' stations: the incoming line's from its start to the
     // tangent point, the outgoing one's in station order.
@@ -517,7 +630,11 @@ pub fn add_curb_return(doc: &mut CadDocument, name: &str, incoming: Handle, offs
     values[19..24].copy_from_slice(&region_out);
     values[24] = overlaps.0;
     values[25] = arc_end;
-    values[26] = radius;
+    values[26] = match curve {
+        CurbReturnCurve::Arc(r) => r,
+        CurbReturnCurve::ThreeCentered { first, .. } => first.0,
+        CurbReturnCurve::SpiralCurveSpiral { radius, .. } => radius,
+    };
     values[27] = pick.x;
     values[28] = pick.y;
     values[29] = sa + t1;
@@ -526,13 +643,44 @@ pub fn add_curb_return(doc: &mut CadDocument, name: &str, incoming: Handle, offs
     if values.iter().any(|v| *v == 0.0 || *v == 1.0) {
         return Err(invalid("a curb return value of 0 or 1 is not written"));
     }
-    let connected = Connected { values, right, forward, outside_in: values[0] < 0.0, roads: [incoming.value(), outgoing.value()] };
-    let elements = vec![
-        AlignmentElement { id: 1, previous: 0, next: 2, kind: AlignmentElementKind::FixedLine { start, end: t_in } },
-        AlignmentElement { id: 2, previous: 1, next: 3, kind: AlignmentElementKind::FreeArc { radius } },
-        AlignmentElement { id: 3, previous: 2, next: 0, kind: AlignmentElementKind::FixedLine { start: t_out, end } },
-    ];
-    let path: Vec<PathPoint> = vec![(start, None), (t_in, Some(turn_sign * (sweep / 4.0).tan())), (t_out, None), (end, None)];
+    let line = |id, previous, next, start, end| AlignmentElement { id, previous, next, kind: AlignmentElementKind::FixedLine { start, end } };
+    let bulge = |t: f64| Some(turn_sign * (t / 4.0).tan());
+    let (elements, path, spiral_out, text): (Vec<AlignmentElement>, Vec<PathPoint>, _, _) = match curve {
+        CurbReturnCurve::Arc(radius) => (
+            vec![line(1, 0, 2, start, t_in), AlignmentElement { id: 2, previous: 1, next: 3, kind: AlignmentElementKind::FreeArc { radius } }, line(3, 2, 0, t_out, end)],
+            vec![(start, None), (t_in, bulge(sweep)), (t_out, None), (end, None)],
+            None,
+            None,
+        ),
+        CurbReturnCurve::ThreeCentered { first, middle, last } => {
+            let mut path = vec![(start, None)];
+            path.extend(joins[..3].iter().zip(&turns).map(|(p, t)| (world(*p), bulge(*t))));
+            path.extend([(t_out, None), (end, None)]);
+            let arcs = [first, (middle, 0.0), last];
+            (vec![line(1, 0, 2, start, t_in), AlignmentElement { id: 2, previous: 1, next: 3, kind: AlignmentElementKind::ThreeCenteredArc { arcs } }, line(3, 2, 0, t_out, end)], path, None, None)
+        }
+        CurbReturnCurve::SpiralCurveSpiral { spiral_in, radius, spiral_out } => {
+            let shape = crate::classes::civil::SpiralShape::Clothoid;
+            let (sc, cs) = (world(joins[1]), world(joins[2]));
+            // The arc's middle, and the direction where the spiral out starts.
+            let h = turns[0] + turns[1] / 2.0;
+            let mid = world(joins[1] + Vector2::new(h.sin() - turns[0].sin(), turns[0].cos() - h.cos()) * radius);
+            let a = turn_sign * (turns[0] + turns[1]);
+            let out_dir = Vector2::new(d1.x * a.cos() - d1.y * a.sin(), d1.x * a.sin() + d1.y * a.cos());
+            let elements = vec![
+                line(1, 0, 4, start, t_in),
+                line(3, 6, 0, t_out, end),
+                AlignmentElement { id: 4, previous: 1, next: 5, kind: AlignmentElementKind::SpiralIn { start: t_in, direction: d1, length: spiral_in, radius, clockwise: right, shape } },
+                AlignmentElement { id: 5, previous: 4, next: 6, kind: AlignmentElementKind::FixedArc { start: sc, mid, end: cs } },
+                AlignmentElement { id: 6, previous: 5, next: 3, kind: AlignmentElementKind::SpiralOut { radius, length: spiral_out, clockwise: right, shape } },
+            ];
+            let mut path = path_of(&elements);
+            path.push((end, None));
+            let text = format!("{{\r\n\t\"CurveType\": 4,\r\n\t\"CurveParameters\": {{\r\n\t\t\"CurveRadius\": {radius},\r\n\t\t\"SpiralInLength\": {spiral_in},\r\n\t\t\"SpiralOutLength\": {spiral_out},\r\n\t\t\"Greater180\": false,\r\n\t\t\"SpiralType\": 256\r\n\t}}\r\n}}");
+            (elements, path, Some((cs, out_dir)), Some(text))
+        }
+    };
+    let connected = Connected { values, right, forward, outside_in: values[0] < 0.0, roads: [incoming.value(), outgoing.value()], curve, spiral_out, text };
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
     if default_style(doc).is_none() || companion_node(doc).is_none() {
@@ -577,6 +725,14 @@ pub(super) struct Connected {
     /// turn.
     pub outside_in: bool,
     pub roads: [u64; 2],
+    /// Its curve group: three arcs store their six values in place of the
+    /// radius, a spiral-curve-spiral stores none (see `write_connected`).
+    pub curve: CurbReturnCurve,
+    /// Where its spiral out starts and the direction there.
+    pub spiral_out: Option<(Vector2, Vector2)>,
+    /// The text of the record's second key (a spiral-curve-spiral's
+    /// parameters).
+    pub text: Option<String>,
 }
 
 /// The constant runs around the connection block's 31 values (the
@@ -627,10 +783,32 @@ const CONNECTED_BACKWARD: (usize, usize) = (29, 11);
 
 /// Writes the connection block: the runs with the values between them,
 /// each a `BD`, and the flags set in their runs.
+///
+/// The curve group's code is the BL at bits 53 to 62 of run 24 (2 an arc,
+/// 3 three arcs, 4 a spiral-curve-spiral). Three arcs write the radius and
+/// length of each arc (the middle length 0) in place of the radius and
+/// `BL 1` before the bit after them (CG01, CG07); a spiral-curve-spiral
+/// ends run 24 after its code and writes neither the overlap, the curve's
+/// end station nor the radius (CG02, CG06, CG08).
 fn write_connected(w: &mut DwgMergedWriter, c: &Connected) {
     let flags = [(CONNECTED_RIGHT, c.right), (CONNECTED_FORWARD, c.forward), (CONNECTED_OUTSIDE_IN, c.outside_in), (CONNECTED_BACKWARD, !c.forward)];
+    let code = format!("01{:08b}", match c.curve {
+        CurbReturnCurve::Arc(_) => 2,
+        CurbReturnCurve::ThreeCentered { .. } => 3,
+        CurbReturnCurve::SpiralCurveSpiral { .. } => 4,
+    });
+    let spiral = matches!(c.curve, CurbReturnCurve::SpiralCurveSpiral { .. });
     for (i, (len, hex)) in CONNECTED_RUNS.iter().enumerate() {
-        for bit in 0..*len {
+        if spiral && (25..=26).contains(&i) {
+            continue;
+        }
+        if i == 27 {
+            if let CurbReturnCurve::ThreeCentered { .. } = c.curve {
+                w.write_bit_long(1);
+            }
+        }
+        let len = if spiral && i == 24 { 63 } else { *len };
+        for bit in 0..len {
             let digit = hex.as_bytes()[bit / 4] as char;
             let mut v = digit.to_digit(16).unwrap_or(0) >> (3 - bit % 4) & 1 == 1;
             for ((run, at), on) in flags {
@@ -638,10 +816,20 @@ fn write_connected(w: &mut DwgMergedWriter, c: &Connected) {
                     v = on;
                 }
             }
+            if i == 24 && (53..63).contains(&bit) {
+                v = code.as_bytes()[bit - 53] == b'1';
+            }
             w.write_bit(v);
         }
-        if let Some(v) = c.values.get(i) {
-            w.write_bit_double(*v);
+        match (c.values.get(i), c.curve) {
+            (Some(_), CurbReturnCurve::SpiralCurveSpiral { .. }) if (24..=26).contains(&i) => {}
+            (Some(_), CurbReturnCurve::ThreeCentered { first, middle, last }) if i == 26 => {
+                for v in [first.0, first.1, middle, 0.0, last.0, last.1] {
+                    w.write_bit_double(v);
+                }
+            }
+            (Some(v), _) => w.write_bit_double(*v),
+            (None, _) => {}
         }
     }
 }
@@ -912,7 +1100,9 @@ pub(super) fn write_alignment_of(doc: &mut CadDocument, common: EntityCommon, na
         let [a, b] = c.roads;
         refs.extend([a, a, b, b, a, b].map(soft_pointer));
     }
-    let mut strings = vec!["AeccImpAlignment".to_string(), String::new(), String::new(), name.to_string()];
+    let mut strings = vec!["AeccImpAlignment".to_string(), String::new(), String::new()];
+    strings.extend(timing.connected.as_ref().and_then(|c| c.text.clone()));
+    strings.push(name.to_string());
     strings.extend((0..5 + 3 * curves + 2 * anchors.len() + speeds.len() + 2 * equations.len()).map(|_| String::new()));
     strings.extend(superelevation_strings(&timing.superelevation));
     let line_flags = if offset.is_some() { 0 } else { 2 };
@@ -929,11 +1119,16 @@ pub(super) fn write_alignment_of(doc: &mut CadDocument, common: EntityCommon, na
                 // An alignment written again keeps its keys as stored.
                 Some(k) => bits(w, k),
                 None => {
-                    byte(w, 1);
+                    let text = timing.connected.as_ref().is_some_and(|c| c.text.is_some());
+                    byte(w, if text { 2 } else { 1 });
                     w.write_bit_long(STAMP);
                     w.write_bit_long(2);
                     w.write_bit_long(0);
                     w.write_bit_long(0);
+                    // A curb return's curve parameters (a text key).
+                    if text {
+                        w.write_bit_long(KEY_CURB_CURVE);
+                    }
                 }
             }
             bl_byte(w, 0);
@@ -992,7 +1187,7 @@ pub(super) fn write_alignment_of(doc: &mut CadDocument, common: EntityCommon, na
                         w.write_bit_double(radius);
                     }
                     AlignmentElementKind::FixedArc { start, mid, end } => {
-                        curve(w, ARC, 0, FIXED_ARC);
+                        curve(w, ARC, line_flags, FIXED_ARC);
                         w.write_bit(false);
                         ids(w);
                         for p in [start, mid, end] {
@@ -1014,6 +1209,46 @@ pub(super) fn write_alignment_of(doc: &mut CadDocument, common: EntityCommon, na
                         ids(w);
                         w.write_bit_long(SPIRAL_DEFINITION);
                         for v in [spiral_in, radius, spiral_out] {
+                            w.write_bit_double(v);
+                        }
+                    }
+                    AlignmentElementKind::ThreeCenteredArc { arcs } => {
+                        curve(w, TRANSITION, 2, 1);
+                        ids(w);
+                        for v in [0, 1, 3] {
+                            w.write_bit_long(v);
+                        }
+                        for (r, l) in arcs {
+                            w.write_bit_double(r);
+                            w.write_bit_double(l);
+                        }
+                    }
+                    // A curb return's spirals (CG02): the spiral in from its
+                    // start and direction, the spiral out from the start and
+                    // direction its connection block keeps; both end with
+                    // BD 0, BD 0, BD 1.
+                    AlignmentElementKind::SpiralIn { start, direction, length, radius, clockwise, .. } => {
+                        curve(w, SPIRAL, 2, 0);
+                        ids(w);
+                        w.write_bit_long(SPIRAL_DEFINITION);
+                        w.write_bit(clockwise);
+                        point(w, start);
+                        point(w, direction);
+                        for v in [length, radius, 0.0, 0.0, 1.0] {
+                            w.write_bit_double(v);
+                        }
+                    }
+                    AlignmentElementKind::SpiralOut { radius, length, clockwise, .. } => {
+                        let (from, along) = timing.connected.as_ref().and_then(|c| c.spiral_out).unwrap_or_default();
+                        curve(w, SPIRAL, 2, 1);
+                        ids(w);
+                        w.write_bit_long(SPIRAL_DEFINITION);
+                        w.write_bit(clockwise);
+                        w.write_bit_double(radius);
+                        w.write_bit_double(length);
+                        point(w, from);
+                        point(w, along);
+                        for v in [0.0, 0.0, 1.0] {
                             w.write_bit_double(v);
                         }
                     }
@@ -2414,5 +2649,40 @@ mod tests {
             let AlignmentElementKind::FixedLine { end: t, .. } = e[2].kind else { panic!() };
             assert!(s.distance(&start) < 1e-9 && t.distance(&end) < 1e-9, "{s:?} {t:?}");
         }
+    }
+
+    /// Three arcs and a spiral-curve-spiral between AL1 and AL2 (CG01,
+    /// CG02): the lines start where the samples' do.
+    #[test]
+    fn curb_returns_of_other_curve_groups() {
+        let mut doc = drawing();
+        let v = Vector2::new;
+        let a = add_alignment(&mut doc, "AL1", &[v(0.0, 0.0), v(200.0, 0.0)], None).unwrap();
+        let b = add_alignment(&mut doc, "AL2", &[v(100.0, -100.0), v(100.0, 100.0)], None).unwrap();
+        let ccc = CurbReturnCurve::ThreeCentered { first: (30.0, 5.0), middle: 10.0, last: (30.0, 5.0) };
+        let scs = CurbReturnCurve::SpiralCurveSpiral { spiral_in: 6.0, radius: 10.0, spiral_out: 6.0 };
+        let h1 = add_curb_return_with(&mut doc, "CR1", a, -10.0, b, -10.0, true, ccc, (5.0, 5.0), None).unwrap();
+        let h2 = add_curb_return_with(&mut doc, "CR2", a, -10.0, b, -10.0, true, scs, (5.0, 5.0), None).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-curb-groups-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let read = |h: Handle| match back.get_entity(h) {
+            Some(crate::entities::EntityType::Extended(x)) => match &x.data {
+                crate::entities::ExtendedEntityData::Arch(r) => r.clone(),
+                _ => panic!(),
+            },
+            _ => panic!(),
+        };
+        let e = read(h1).alignment_elements().unwrap();
+        assert!(matches!(e[1].kind, AlignmentElementKind::ThreeCenteredArc { arcs } if arcs[1] == (10.0, 0.0)));
+        let AlignmentElementKind::FixedLine { end, .. } = e[0].kind else { panic!() };
+        assert!(end.distance(&v(76.4049419773902, 10.0)) < 1e-9);
+        let r = read(h2);
+        assert_eq!(r.decode().strings[3].lines().next(), Some("{"));
+        let e = r.alignment_elements().unwrap();
+        assert_eq!(e.iter().map(|e| e.id).collect::<Vec<_>>(), [1, 3, 4, 5, 6]);
+        let AlignmentElementKind::FixedLine { end, .. } = e[0].kind else { panic!() };
+        assert!(end.distance(&v(76.85945875683416, 10.0)) < 1e-9);
     }
 }
