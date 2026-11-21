@@ -333,6 +333,30 @@ arrows of the application's line label styles are under a plain id
 (0xCD7) with no name. A new tick is 1/120 high and aligned with the
 object, a new arrow at least 1/40 long with a 1/120 arrowhead.
 
+Text iterators (`AECC_LABEL_TEXT_ITERATOR_STYLE`: an intersection's
+roads; `AECC_LABEL_TEXT_ITERATOR_CURVE_OR_SPIRAL_STYLE`: an alignment's
+curves and spirals) are text components with, after the text fields,
+`BL` what they label each of (0x1907A000 intersecting roads, 0x1900D752
+curves and spirals) and for curves and spirals `BL` 1, `BL` 0 and the
+spirals' text (`BL` bytes + UTF-16; the contents are the curves' text).
+Every iterator of LS000, IT001 to IT005 reads (spirals' text, curves'
+text, a road iterator's text and height changed per save). The API adds
+none (`AddComponent` with the iterator type: "The method doesn't support
+this operation", also in the styles that have one, IT001), so a copy
+keeps or removes them only (`LabelStyle::iterators`; the text settings
+and spirals' text written as edited, a new one refused). E-IT1 (LS000's
+point of intersection label style with its iterator's curves' and
+spirals' texts, height and color changed, its intersection label style
+without its iterator) opens with AUDIT 0 and the API lists the written
+values and the remaining text component.
+
+Reference text components cannot be sampled: `AddComponent` refuses the
+reference text type in every collection tried (point, alignment major station, curve,
+spiral, station offset and line, profile major station, parcel line:
+"The method doesn't support this operation") and no style of the
+template or of the sample drawings has one (no reference text class
+among their label style components), so their record is unknown.
+
 Samples: LS001-LS040 (one setting of the default point label style
 changed per save), LT001-LT035 (bits back to their defaults, colors,
 linetypes, layer, text style, arrowhead style, anchor component and
@@ -3448,7 +3472,8 @@ Corridors are listed in §3i-a.
 | label styles | pipe, structure and pressure part label styles (plan, profile, section, crossing profile) | yes | yes, as copies (§2d, E-NL1) | §2d |
 | label styles | adding and removing text components | yes | yes (§2d) | §2d |
 | label styles | line, block, tick and direction arrow components: settings, adding and removing them | yes | yes, in copies (§2d) | §2d |
-| label styles | anchors of lines; reference text and iterator components' own settings | base fields | as copied | not mapped; the API refuses to set line and block anchors |
+| label styles | text iterators: settings and removing them | yes | yes, in copies (§2d) | §2d |
+| label styles | adding text iterators; reference text components; anchors of lines | iterators yes | no | impossible: the API adds no iterator or reference text, no drawing has a reference text component, and it refuses to set line and block anchors (§2d) |
 
 ### 6a. Gradings and mass haul
 

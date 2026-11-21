@@ -38,7 +38,7 @@ pub use corridor::{CorridorBaseline, CorridorBoundary, CorridorDefinition, Corri
 pub use grading::{CriteriaValue, GradingCriteria};
 pub use intersection::IntersectionLayout;
 pub use labels::{parse_format, property, LabelPart, LabelText};
-pub use label_style::{LabelArrowComponent, LabelBlockComponent, LabelBorder, LabelDraggedState, LabelLeader, LabelLineComponent, LabelStyleSettings, LabelTextComponent, LabelTickComponent};
+pub use label_style::{LabelArrowComponent, LabelBlockComponent, LabelBorder, LabelDraggedState, LabelIteratorComponent, LabelLeader, LabelLineComponent, LabelStyleSettings, LabelTextComponent, LabelTickComponent};
 pub use network::{PartField, PressurePipe, PressurePort};
 pub use parameters::{Parameter, ParameterValue};
 pub use profile::{CurveMinimumK, OffsetProfile, ProfileCriteria, ProfileLocking, ProfilePiece, ProfileViewFrame, Pvi};
@@ -1448,11 +1448,20 @@ impl ArchObject {
     /// component style, the index of its own reference and its texts
     /// after the key texts.
     pub(in crate::classes::civil) fn label_fields(&self, collector: bool) -> Option<(label_style::LabelFields, usize, usize)> {
-        let want = if collector { "AECC_LABEL_COLLECTOR_STYLE" } else { "AECC_LABEL_TEXT_STYLE" };
-        (self.dxf_name == want).then_some(())?;
+        let iterator = match self.dxf_name.as_str() {
+            "AECC_LABEL_COLLECTOR_STYLE" if collector => None,
+            "AECC_LABEL_TEXT_STYLE" if !collector => None,
+            "AECC_LABEL_TEXT_ITERATOR_STYLE" if !collector => Some(false),
+            "AECC_LABEL_TEXT_ITERATOR_CURVE_OR_SPIRAL_STYLE" if !collector => Some(true),
+            _ => return None,
+        };
         let (data, start, end) = self.main_stream()?;
         let (class, own_ref, text_keys) = style::class_layout(data, start, end)?;
-        Some((label_style::LabelFields::read(data, class, end, collector)?, own_ref, text_keys))
+        let fields = match iterator {
+            Some(curve) => label_style::LabelFields::read_iterator(data, class, end, curve)?,
+            None => label_style::LabelFields::read(data, class, end, collector)?,
+        };
+        Some((fields, own_ref, text_keys))
     }
 
     /// Settings of a label style (`AECC_LABEL_COLLECTOR_STYLE`):
@@ -1534,7 +1543,17 @@ impl ArchObject {
         fields.block_component(id, name, &refs)
     }
 
-    /// A label style's text component (`AECC_LABEL_TEXT_STYLE`).
+    /// A label style's text iterator component
+    /// (`AECC_LABEL_TEXT_ITERATOR_STYLE`,
+    /// `AECC_LABEL_TEXT_ITERATOR_CURVE_OR_SPIRAL_STYLE`).
+    pub fn label_iterator_component(&self) -> Option<LabelIteratorComponent> {
+        self.dxf_name.starts_with("AECC_LABEL_TEXT_ITERATOR").then_some(())?;
+        let (iterates, spiral_contents) = self.label_fields(false)?.0.iterator()?;
+        Some(LabelIteratorComponent { text: self.label_text_component()?, iterates, spiral_contents })
+    }
+
+    /// A label style's text component (`AECC_LABEL_TEXT_STYLE`; the text
+    /// settings of an iterator).
     pub fn label_text_component(&self) -> Option<LabelTextComponent> {
         let (fields, own, text_keys) = self.label_fields(false)?;
         let refs: Vec<u64> = self.typed_handles().into_iter().skip(own).map(|r| r.0).collect();

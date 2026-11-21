@@ -3,7 +3,7 @@
 
 use super::labels::{default_label_style, ensure_label_styles, POINT_LABELS};
 use super::support::*;
-use crate::classes::civil::{LabelArrowComponent, LabelBlockComponent, LabelLineComponent, LabelStyleSettings, LabelTextComponent, LabelTickComponent};
+use crate::classes::civil::{LabelArrowComponent, LabelBlockComponent, LabelIteratorComponent, LabelLineComponent, LabelStyleSettings, LabelTextComponent, LabelTickComponent};
 use crate::error::DxfError;
 use crate::io::dwg::dwg_reference_type::DwgReferenceType;
 use crate::types::Handle;
@@ -31,6 +31,9 @@ pub struct LabelStyle {
     pub blocks: Vec<LabelBlockComponent>,
     pub ticks: Vec<LabelTickComponent>,
     pub arrows: Vec<LabelArrowComponent>,
+    /// The text iterators: a copy writes the values of those it keeps
+    /// and leaves out those removed (none can be added).
+    pub iterators: Vec<LabelIteratorComponent>,
 }
 
 impl LabelStyle {
@@ -106,7 +109,8 @@ pub fn label_style(doc: &CadDocument, style: Handle) -> Option<LabelStyle> {
     let blocks = of("AECC_LABEL_BLOCK_STYLE").iter().filter_map(|c| c.label_block_component()).collect();
     let ticks = of("AECC_LABEL_TICK_STYLE").iter().filter_map(|c| c.label_tick_component()).collect();
     let arrows = of("AECC_LABEL_VECTOR_ARROW_STYLE").iter().filter_map(|c| c.label_arrow_component()).collect();
-    Some(LabelStyle { settings: o.label_style_settings()?, components, lines, blocks, ticks, arrows })
+    let iterators = comps.iter().filter_map(|h| object(doc, Handle::new(*h))?.label_iterator_component()).collect();
+    Some(LabelStyle { settings: o.label_style_settings()?, components, lines, blocks, ticks, arrows, iterators })
 }
 
 fn is_text(doc: &CadDocument, component: u64) -> bool {
@@ -169,13 +173,16 @@ pub fn add_label_style(doc: &mut CadDocument, source: Handle, name: &str, edit: 
     let source_style = label_style(doc, source).ok_or_else(|| invalid("label style components cannot be read"))?;
     // The ids of the line, block, tick and arrow components: the source's
     // and those `edit` leaves.
-    let others = |s: &LabelStyle| -> [Vec<u32>; 4] {
-        [s.lines.iter().map(|l| l.id).collect(), s.blocks.iter().map(|b| b.id).collect(), s.ticks.iter().map(|t| t.id).collect(), s.arrows.iter().map(|a| a.id).collect()]
+    let others = |s: &LabelStyle| -> [Vec<u32>; 5] {
+        [s.lines.iter().map(|l| l.id).collect(), s.blocks.iter().map(|b| b.id).collect(), s.ticks.iter().map(|t| t.id).collect(), s.arrows.iter().map(|a| a.id).collect(), s.iterators.iter().map(|i| i.text.id).collect()]
     };
     let (source_others, edited) = (others(&source_style), others(&style));
     let kept = |ids: &[u32], of: &[u32]| ids.iter().filter(|i| **i != 0).all(|i| of.contains(i)) && (1..ids.len()).all(|n| ids[n] == 0 || !ids[..n].contains(&ids[n]));
     if !edited.iter().zip(&source_others).all(|(ids, of)| kept(ids, of)) {
-        return Err(invalid("a label style line, block, tick or arrow component id is not one of the source's, or repeats"));
+        return Err(invalid("a label style line, block, tick, arrow or iterator component id is not one of the source's, or repeats"));
+    }
+    if style.iterators.iter().any(|i| i.text.id == 0) {
+        return Err(invalid("text iterators cannot be added"));
     }
     let unnamed = |n: &Option<String>| n.as_deref().is_none_or(|n| n.trim().is_empty());
     if style.lines.iter().any(|l| l.id == 0 && unnamed(&l.name)) || style.ticks.iter().any(|t| t.id == 0 && unnamed(&t.name)) || style.arrows.iter().any(|a| a.id == 0 && unnamed(&a.name)) {
@@ -224,9 +231,11 @@ pub fn add_label_style(doc: &mut CadDocument, source: Handle, name: &str, edit: 
                 "AECC_LABEL_BLOCK_STYLE" => style.blocks.iter().find(|b| Some(b.id) == id).cloned().map(Edit::Block),
                 "AECC_LABEL_TICK_STYLE" => style.ticks.iter().find(|t| Some(t.id) == id).cloned().map(Edit::Tick),
                 "AECC_LABEL_VECTOR_ARROW_STYLE" => style.arrows.iter().find(|a| Some(a.id) == id).cloned().map(Edit::Arrow),
+                d if d.starts_with("AECC_LABEL_TEXT_ITERATOR") => style.iterators.iter().find(|i| Some(i.text.id) == id).cloned().map(Edit::Iterator),
                 _ => None,
             };
-            let slot = ["AECC_LABEL_RADIAL_LINE_STYLE", "AECC_LABEL_BLOCK_STYLE", "AECC_LABEL_TICK_STYLE", "AECC_LABEL_VECTOR_ARROW_STYLE"].iter().position(|d| *d == dxf);
+            let kind = if dxf.starts_with("AECC_LABEL_TEXT_ITERATOR") { "AECC_LABEL_TEXT_ITERATOR" } else { dxf.as_str() };
+            let slot = ["AECC_LABEL_RADIAL_LINE_STYLE", "AECC_LABEL_BLOCK_STYLE", "AECC_LABEL_TICK_STYLE", "AECC_LABEL_VECTOR_ARROW_STYLE", "AECC_LABEL_TEXT_ITERATOR"].iter().position(|d| *d == kind);
             let gone = edit.is_none() && slot.is_some_and(|k| id.is_some_and(|id| source_others[k].contains(&id)));
             if !gone {
                 plan.push((Handle::new(*c), edit, None));
@@ -288,6 +297,7 @@ enum Edit {
     Block(LabelBlockComponent),
     Tick(LabelTickComponent),
     Arrow(LabelArrowComponent),
+    Iterator(LabelIteratorComponent),
 }
 
 /// The id of a label style component record.
@@ -306,6 +316,7 @@ fn copy_component(doc: &mut CadDocument, source: Handle, handle: Handle, style: 
     }
     let c = match edit {
         Some(Edit::Text(c)) => Some(c),
+        Some(Edit::Iterator(i)) => Some(&i.text),
         _ => None,
     };
     let src = object(doc, source).ok_or_else(|| invalid("label style component not found"))?;
@@ -325,6 +336,9 @@ fn copy_component(doc: &mut CadDocument, source: Handle, handle: Handle, style: 
                 fields.set_new_text_component(c);
             }
             fields.set_text_component(c, &mut values);
+            if let Some(Edit::Iterator(LabelIteratorComponent { spiral_contents: Some(t), .. })) = edit {
+                fields.set_spiral_contents(t);
+            }
             Some(fields)
         }
         None => match edit {
@@ -551,5 +565,31 @@ mod tests {
         let h2 = add_label_style(&mut doc, h, "TA3", |s| s.ticks.clear()).unwrap();
         let back = label_style(&doc, h2).unwrap();
         assert_eq!((back.ticks.len(), back.arrows.len()), (0, 1));
+    }
+
+    /// A text iterator's text settings and kind read; a copy writes its
+    /// edited values, leaves it out when removed and refuses a new one.
+    #[test]
+    fn text_iterators_are_edited_and_removed() {
+        let mut doc = CadDocument::new();
+        crate::classes::civil::add_cogo_point(&mut doc, None, Vector3::new(1.0, 2.0, 3.0), None, None, None).unwrap();
+        let basic = Handle::new(super::super::default_styles::ensure_intersection_label_style(&mut doc).unwrap());
+        let source = label_style(&doc, basic).unwrap();
+        assert_eq!((source.iterators.len(), source.iterators[0].iterates, source.iterators[0].spiral_contents.is_none()), (1, 0x1907_A000, true));
+        let h = add_label_style(&mut doc, basic, "IT1", |s| {
+            s.iterators[0].text.contents = "Road".into();
+            s.iterators[0].text.height = Some(0.02);
+        })
+        .unwrap();
+        let back = label_style(&doc, h).unwrap();
+        assert_eq!((back.iterators[0].text.id, back.iterators[0].text.contents.as_str(), back.iterators[0].text.height), (source.iterators[0].text.id, "Road", Some(0.02)));
+        let h2 = add_label_style(&mut doc, h, "IT2", |s| s.iterators.clear()).unwrap();
+        assert!(label_style(&doc, h2).unwrap().iterators.is_empty());
+        assert!(add_label_style(&mut doc, h, "IT3", |s| {
+            let mut i = s.iterators[0].clone();
+            i.text.id = 0;
+            s.iterators.push(i);
+        })
+        .is_err());
     }
 }

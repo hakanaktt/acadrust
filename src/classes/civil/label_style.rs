@@ -218,6 +218,14 @@ const TEXT: [(&str, K); 9] = [
     ("t8", K::Bd),
 ];
 
+/// What a text iterator (`AECC_LABEL_TEXT_ITERATOR_STYLE`) adds to a text
+/// component's fields: the kind of item it labels each of (0x1907A000 the
+/// intersecting roads of an intersection); a curve or spiral iterator
+/// (`AECC_LABEL_TEXT_ITERATOR_CURVE_OR_SPIRAL_STYLE`: 0x1900D752) then
+/// `BL` 1, `BL` 0 and its spirals' text (its curves' is the contents).
+const ITERATOR: [(&str, K); 1] = [("iterates", K::Bl)];
+const CURVE_ITERATOR: [(&str, K); 3] = [("i1", K::Bl), ("i2", K::Bl), ("spiral_contents", K::Text)];
+
 // Mask A bits.
 const VISIBLE: u32 = 0x1;
 const ORIENTATION: u32 = 0x2;
@@ -355,6 +363,31 @@ impl LabelFields {
             f.read_list(data, &mut b, &TEXT)?;
         }
         (b.pos == end).then_some(f)
+    }
+
+    /// Reads a text iterator's class data (a curve or spiral iterator's
+    /// with `curve`); `None` unless it ends exactly at `end`.
+    pub(super) fn read_iterator(data: &[u8], start: usize, end: usize, curve: bool) -> Option<Self> {
+        let mut b = Bits::new(data, start, end);
+        let mut f = LabelFields(Vec::new());
+        f.read_base(data, &mut b)?;
+        f.read_list(data, &mut b, &TEXT)?;
+        f.read_list(data, &mut b, &ITERATOR)?;
+        if curve {
+            f.read_list(data, &mut b, &CURVE_ITERATOR)?;
+        }
+        (b.pos == end).then_some(f)
+    }
+
+    /// What a text iterator labels each of, and a curve or spiral
+    /// iterator's spirals' text.
+    pub(super) fn iterator(&self) -> Option<(u32, Option<String>)> {
+        Some((self.long("iterates")? as u32, self.text("spiral_contents").map(str::to_string)))
+    }
+
+    /// Writes a curve or spiral iterator's spirals' text.
+    pub(super) fn set_spiral_contents(&mut self, text: &str) {
+        self.set("spiral_contents", V::Text(text.to_string()));
     }
 
     /// Writes the fields: each unchanged one as it was read.
@@ -998,6 +1031,21 @@ impl LabelFields {
         self.set("arrowhead_size", V::Bd(c.arrowhead_size));
         self.set("arrow_rotation", V::Bd(c.rotation));
     }
+}
+
+/// A label style's text iterator component: a text component labelling
+/// each of a kind of item.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct LabelIteratorComponent {
+    /// Its text settings (`contents` a curve or spiral iterator's text for
+    /// curves).
+    pub text: LabelTextComponent,
+    /// What it labels each of: 0x1900D752 curves and spirals, 0x1907A000
+    /// intersecting roads.
+    pub iterates: u32,
+    /// A curve or spiral iterator's text for spirals.
+    pub spiral_contents: Option<String>,
 }
 
 /// A label style's tick component (`AECC_LABEL_TICK_STYLE`: alignment and
