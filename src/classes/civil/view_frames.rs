@@ -5,14 +5,14 @@
 //! entity preamble the common entity reader isolates (the container the
 //! parcel segments read, upstream PR #591; here proven across a rotated
 //! view frame and four sheets of `CH Beispielprojekt 2017.dwg`). The
-//! section is a run-chain list that tiles it exactly:
+//! section is a proxy-graphics metafile (ProxyGraphics):
 //!
 //! ```text
-//! u32 section byte length, u32 chain count, then that many chains:
-//!     u32 chain byte length, u32 kind, kind-specific data
-//!     kind 7 (points): u32 count, then count × (RD x, RD y, RD z)
-//!     (other kinds seen — 0x0c, 0x0e, 0x10, 0x12, 0x22 — carry style
-//!     values, flags and a preview blob; they are skipped by length)
+//! u32 section byte length, u32 record count, then that many records:
+//!     u32 record byte length, u32 type, type-specific data
+//!     type 7 (polygon): u32 count, then count × (RD x, RD y, RD z)
+//!     (other types seen — 0x0c, 0x0e, 0x10, 0x12, 0x22 — are colour,
+//!     layer, linetype and similar trait records; they are skipped)
 //! ```
 //!
 //! The plan-production class bodies (the view frame group `AECC_PLANPROD`,
@@ -41,6 +41,8 @@
 //! representations), so match-line geometry stays unmapped.
 
 use super::bits::Bits;
+use crate::classes::arch::polyline_from_type6;
+use crate::entities::{ProxyGraphicRecord, ProxyGraphics};
 use crate::types::Vector3;
 
 /// The plan-production class bodies' shared schema word — the parcel
@@ -178,34 +180,18 @@ fn plan_production_head(bits: &mut Bits) -> Option<()> {
     Some(())
 }
 
-/// The graphic-image section's kind-7 point chains, in record order;
-/// `None` unless the chains tile the section exactly (see the
+/// The graphic-image section (a proxy-graphics metafile) records' type-7
+/// polygons, in record order; `None` unless the metafile decodes (see the
 /// [module](self) documentation).
 fn point_chains(g: &[u8]) -> Option<Vec<Vec<Vector3>>> {
-    let u32_at = |at: usize| -> Option<u32> { Some(u32::from_le_bytes(g.get(at..at + 4)?.try_into().ok()?)) };
-    let f64_at = |at: usize| -> Option<f64> { Some(f64::from_le_bytes(g.get(at..at + 8)?.try_into().ok()?)) };
-    let chains = u32_at(4)?;
-    (u32_at(0)? as usize == g.len()).then_some(())?;
-    let mut at = 8;
-    let mut out = Vec::new();
-    for _ in 0..chains {
-        let len = usize::try_from(u32_at(at)?).ok()?;
-        (len >= 12 && g.len() >= at + len).then_some(())?;
-        if u32_at(at + 4)? == 7 {
-            let count = usize::try_from(u32_at(at + 8)?).ok()?;
-            (len == 12 + 24 * count).then_some(())?;
-            let mut points = Vec::with_capacity(count);
-            for point in 0..count {
-                let base = at + 12 + 24 * point;
-                let (x, y, z) = (f64_at(base)?, f64_at(base + 8)?, f64_at(base + 16)?);
-                (x.is_finite() && y.is_finite() && z.is_finite()).then_some(())?;
-                points.push(Vector3::new(x, y, z));
-            }
-            out.push(points);
-        }
-        at += len;
-    }
-    (at == g.len()).then_some(out)
+    ProxyGraphics::decode(g)?
+        .records
+        .iter()
+        .filter_map(|record| match record {
+            ProxyGraphicRecord::Unknown { record_type: 7, data } => Some(polyline_from_type6(data)),
+            _ => None,
+        })
+        .collect()
 }
 
 /// One axis-aligned rectangle walked around its four corners, at one

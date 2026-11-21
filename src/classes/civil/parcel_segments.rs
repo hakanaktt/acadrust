@@ -11,13 +11,10 @@
 //!
 //! ```text
 //! class stream: BL 80, 0, 80, 80, 0, BL 0x10025F04, 6 bits 010010, ...
-//! graphic-image section (byte-aligned):
-//!     u32 section byte length, u32 3, u32 blob length (itself
-//!     included), u32 36, RD label point x, RD label point y,
-//!     constants (zeros, 1.0, 1.0, 0.2, 1.0), UTF-16 class name
-//!     (`AeccDbLotLine (AeccLand130)`), then run chains up to the
-//!     section end: [u32 byte length][u32 kind][u32 count]
-//!     + count x (RD x, RD y, RD z)
+//! graphic-image section: a proxy-graphics metafile (ProxyGraphics),
+//!     a type-36 text record (the class name `AeccDbLotLine
+//!     (AeccLand130)` at the label point, height 0.2) and a type-6
+//!     polyline (u32 count, count x (RD x, RD y, RD z))
 //! ```
 //!
 //! The one kind-6 chain of the samples (Assembly-1b.dwg: all 157
@@ -45,6 +42,8 @@
 //! to `None` here.
 
 use super::bits::Bits;
+use crate::classes::arch::polyline_from_type6;
+use crate::entities::{ProxyGraphicRecord, ProxyGraphics};
 use crate::types::Vector2;
 
 /// Schema word of the parcel segment records.
@@ -74,45 +73,39 @@ pub(super) fn geometry(data: &[u8], start: usize, end: usize, graphic: &[u8]) ->
     section(graphic)
 }
 
-/// The graphic-image section's blob and run chains (see the
-/// [module](self) documentation).
+/// The record's graphic-image section is a proxy-graphics metafile: a
+/// type-36 text record (the class name, at the label point) and a type-6
+/// polyline walking the extents rectangle (see the [module](self)
+/// documentation).
 fn section(g: &[u8]) -> Option<ParcelSegmentGeometry> {
-    let u32_at = |at: usize| -> Option<u32> { Some(u32::from_le_bytes(g.get(at..at + 4)?.try_into().ok()?)) };
-    let f64_at = |at: usize| -> Option<f64> { Some(f64::from_le_bytes(g.get(at..at + 8)?.try_into().ok()?)) };
-    let (total, form, blob_len, label_tag) = (u32_at(0)?, u32_at(4)?, u32_at(8)?, u32_at(12)?);
-    (total as usize == g.len() && form == 3 && label_tag == 36).then_some(())?;
-    let (x, y) = (f64_at(16)?, f64_at(24)?);
-    (x.is_finite() && y.is_finite()).then_some(())?;
-    let label_point = Vector2::new(x, y);
-    // The run chains fill the section from the end of the sized blob.
-    let mut at = 8 + usize::try_from(blob_len).ok()?;
+    let graphics = ProxyGraphics::decode(g)?;
+    let mut label_point = None;
     let mut corners = None;
-    while at + 12 <= g.len() {
-        let (len, kind, count) = (u32_at(at)?, u32_at(at + 4)?, u32_at(at + 8)?);
-        let (len, count) = (usize::try_from(len).ok()?, usize::try_from(count).ok()?);
-        let data_at = at + 12;
-        (len == 12 + 24 * count && g.len() >= data_at + 24 * count).then_some(())?;
-        // The extents rectangle: five corners around it, the first one
-        // repeated, walked low, low-right, high, high-left.
-        if kind == 6 && count == 5 {
-            let corner = |i: usize| -> Option<Vector2> {
-                let (x, y) = (f64_at(data_at + 24 * i)?, f64_at(data_at + 24 * i + 8)?);
-                (x.is_finite() && y.is_finite()).then_some(Vector2::new(x, y))
-            };
-            let c = [corner(0)?, corner(1)?, corner(2)?, corner(3)?];
-            (corner(4)? == c[0]
-                && c[0].x == c[3].x
-                && c[1].x == c[2].x
-                && c[0].y == c[1].y
-                && c[2].y == c[3].y
-                && c[0].x <= c[1].x
-                && c[0].y <= c[3].y)
-            .then_some(())?;
-            corners = Some(c);
+    for record in &graphics.records {
+        match record {
+            ProxyGraphicRecord::UnicodeText(text) => {
+                label_point = Some(Vector2::new(text.position.x, text.position.y));
+            }
+            ProxyGraphicRecord::Unknown { record_type: 6, data } => {
+                // The extents rectangle: five corners around it, the first
+                // one repeated, walked low, low-right, high, high-left.
+                let points = polyline_from_type6(data)?;
+                let [p0, p1, p2, p3, p4] = points.as_slice() else { continue };
+                let c = [p0, p1, p2, p3].map(|p| Vector2::new(p.x, p.y));
+                (p4 == p0
+                    && c[0].x == c[3].x
+                    && c[1].x == c[2].x
+                    && c[0].y == c[1].y
+                    && c[2].y == c[3].y
+                    && c[0].x <= c[1].x
+                    && c[0].y <= c[3].y)
+                    .then_some(())?;
+                corners = Some(c);
+            }
+            _ => {}
         }
-        at = data_at + 24 * count;
     }
-    Some(ParcelSegmentGeometry { label_point, corners: corners? })
+    Some(ParcelSegmentGeometry { label_point: label_point?, corners: corners? })
 }
 
 #[cfg(test)]
@@ -124,7 +117,7 @@ mod tests {
         let mut bits = String::new();
         // BL: 2-bit form, then the value's raw bytes in memory order
         // (little-endian for the 32-bit form).
-        let mut bl = |v: u32, bits: &mut String| match v {
+        let bl = |v: u32, bits: &mut String| match v {
             0 => bits.push_str("10"),
             v if v < 256 => bits.push_str(&format!("01{v:08b}")),
             v => {
@@ -154,8 +147,8 @@ mod tests {
         let put_u32 = |g: &mut Vec<u8>, v: u32| g.extend(v.to_le_bytes());
         let put_f64 = |g: &mut Vec<u8>, v: f64| g.extend(v.to_le_bytes());
         put_u32(&mut g, 0); // section length, patched below
-        put_u32(&mut g, 3);
-        put_u32(&mut g, 0); // blob length, patched below
+        put_u32(&mut g, 2); // records: the text, the rectangle
+        put_u32(&mut g, 0); // text record length, patched below
         put_u32(&mut g, 36);
         put_f64(&mut g, 10.1);
         put_f64(&mut g, 20.1);
