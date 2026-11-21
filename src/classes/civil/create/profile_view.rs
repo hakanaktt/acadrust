@@ -5,7 +5,7 @@ use super::alignment::{rewritable, rewrite_with_views};
 use super::profile::identifier;
 use super::site::default_style_of;
 use super::support::*;
-use super::bands::{ProfileViewBand, Resolved};
+use super::bands::{BandKind, ProfileViewBand, Resolved};
 use super::tree::{ensure_point_tree, style, Component, Shared, Style, Value as StyleValue, DEFAULT_STYLE_ID, KEY_STYLES};
 use crate::classes::civil::alignment::KeyValue;
 use crate::classes::civil::style::{view_key, view_settings_from};
@@ -249,7 +249,7 @@ fn write_view(doc: &mut CadDocument, common: EntityCommon, name: &str, frame: &P
         refs.extend([soft_pointer(p.handle), hard_pointer(p.style), hard_pointer(0)]);
     }
     for b in bands {
-        refs.extend([hard_pointer(b.style), soft_pointer(0), hard_pointer(alignment.value()), hard_pointer(b.profile1), hard_pointer(b.profile2)]);
+        refs.extend([hard_pointer(b.style), soft_pointer(b.band.data_source.map_or(0, |h| h.value())), hard_pointer(alignment.value()), hard_pointer(b.profile1), hard_pointer(b.profile2)]);
     }
     refs.extend([hard_pointer(0), hard_pointer(0), hard_pointer(0), hard_pointer(0), soft_pointer(0), hard_pointer(0)]);
     let strings = ["", "", name, "", name, ""].iter().map(|s| s.to_string()).collect();
@@ -986,6 +986,10 @@ fn add_view(doc: &mut CadDocument, alignment: Handle, name: &str, origin: Vector
     for b in bands.iter().filter(|b| !b.top).chain(bands.iter().filter(|b| b.top)) {
         let profile = |p: Option<Handle>| p.map_or(Ok(first), |p| if list.iter().any(|s| s.handle == p.value()) { Ok(p.value()) } else { Err(invalid("a band's profile is not a profile of the alignment")) });
         let style = default_style_of(doc, b.kind.style_key()).ok_or_else(|| invalid("drawing has no band style of that kind"))?;
+        if let Some(source) = b.data_source {
+            let group = super::sample_lines::read_group(doc, source).filter(|g| b.kind == BandKind::SectionalData && g.alignment == alignment.value());
+            group.ok_or_else(|| invalid("a band's data source is a sample line group of the view's alignment, for a sectional data band"))?;
+        }
         resolved.push(Resolved { band: b.clone(), style, profile1: profile(b.profile1)?, profile2: profile(b.profile2.or(b.profile1))? });
     }
     let label_styles = default_style_of(doc, KEY_PROFILE_LABEL_SETS).and_then(|set| object(doc, Handle::new(set))).map(|o| o.decode().handles);

@@ -49,6 +49,9 @@ pub struct ProfileViewBand {
     /// Weeding distance of the labels.
     pub weeding: f64,
     pub stagger: BandStagger,
+    /// A sectional data band's sample line group (one of the view's
+    /// alignment); `None` for the other kinds.
+    pub data_source: Option<Handle>,
 }
 
 /// How a band staggers its labels.
@@ -67,7 +70,7 @@ impl ProfileViewBand {
     /// for vertical geometry bands.
     pub fn new(kind: BandKind) -> Self {
         let ends = kind != BandKind::VerticalGeometry;
-        ProfileViewBand { kind, top: false, profile1: None, profile2: None, gap: 0.5 / 12.0, label_at_start: ends, label_at_end: ends, show_labels: true, weeding: 100.0, stagger: BandStagger::None }
+        ProfileViewBand { kind, top: false, profile1: None, profile2: None, gap: 0.5 / 12.0, label_at_start: ends, label_at_end: ends, show_labels: true, weeding: 100.0, stagger: BandStagger::None, data_source: None }
     }
 }
 
@@ -196,6 +199,10 @@ enum KeyValue {
     Long(i32),
     Double(f64),
     Byte(u8),
+    /// 128 zero bits.
+    NullGuid,
+    /// No value (the key's object is a reference of the label).
+    Reference,
 }
 
 const RUN_ENDS: &str = "00000000010000000001100100000000000000000000";
@@ -206,6 +213,10 @@ const LIST_ENDS: &[u32] = &[0x0101_5013, 0x0200_D020, 0x0300_D622, 0x0300_D623];
 const LIST_MINOR: &[u32] = &[0x0101_5013, 0x0200_D020, 0x0200_D620];
 const LIST_POINT: &[u32] = &[0x0100_D068, 0x0100_D61E, 0x0100_D621, 0x0101_5013, 0x0200_D61D];
 const LIST_VERTICAL: &[u32] = &[0x0100_FC31, 0x0101_5013];
+const RUN_SAMPLE_LINE: &str = "00000000010000001101100100000000000000000000";
+const RUN_INCREMENT: &str = "00000000010000001110100100000000000000000000";
+const LIST_SAMPLE_LINE: &[u32] = &[0x0101_5013, 0x0200_D020, 0x0F01_7824, 0x0F01_7825, 0x1501_7821, 0x1501_7822];
+const LIST_INCREMENT: &[u32] = &[0x0101_5013, 0x0200_D020, 0x0201_7823, 0x0F01_7824, 0x0F01_7825, 0x1501_7821, 0x1501_7822];
 const RUN_ELEMENT: &str = "00000000010000001000100100000000000000000000";
 const RUN_CURVE_MIDDLE: &str = "00000000010000001111100100000000000000000000";
 const LIST_ELEMENT: &[u32] = &[0x0100_D61E, 0x0100_D621, 0x0100_D731, 0x0101_5013, 0x0200_D020, 0x0200_D61D];
@@ -407,6 +418,34 @@ fn horizontal_labels(alignment: &ArchEntityData, number: i32) -> Option<Vec<(f64
     Some(out)
 }
 
+/// The labels of a sectional data band reading the sample line group
+/// `group` (its lines in station order): one per line at its station,
+/// each line after the first followed by one more holding the previous
+/// line's station (key 0x02017823). Each label refers to its line and the
+/// group (keys 0x0F017824, 0x0F017825); keys 0x15017821/22 hold 128 zero
+/// bits (DT02, DU01, E-SD1-edit).
+fn sectional_labels(doc: &CadDocument, group: Handle, number: i32) -> Option<Vec<(Label, Vec<u64>)>> {
+    let g = super::sample_lines::read_group(doc, group)?;
+    let lines: Vec<(f64, u64)> = g.lines.iter().map(|l| Some((super::sample_lines::station(doc, *l)?, *l))).collect::<Option<_>>()?;
+    let head = |keys: &mut Vec<(u32, KeyValue)>| keys.extend([(0x1501_7822, KeyValue::NullGuid), (0x0F01_7824, KeyValue::Reference), (0x1501_7821, KeyValue::NullGuid)]);
+    let tail = |keys: &mut Vec<(u32, KeyValue)>, s: f64| keys.extend([(0x0101_5013, KeyValue::Long(number)), (0x0200_D020, KeyValue::Double(s)), (0x0F01_7825, KeyValue::Reference)]);
+    let mut out = Vec::new();
+    for (i, &(s, line)) in lines.iter().enumerate() {
+        let mut keys = Vec::new();
+        head(&mut keys);
+        tail(&mut keys, s);
+        out.push((Label { keys, run: RUN_SAMPLE_LINE, list: LIST_SAMPLE_LINE }, vec![line, group.value()]));
+        if i > 0 {
+            let mut keys = Vec::new();
+            head(&mut keys);
+            keys.push((0x0201_7823, KeyValue::Double(lines[i - 1].0)));
+            tail(&mut keys, s);
+            out.push((Label { keys, run: RUN_INCREMENT, list: LIST_INCREMENT }, vec![line, group.value()]));
+        }
+    }
+    Some(out)
+}
+
 fn write_label(w: &mut DwgMergedWriter, l: &Label) {
     w.write_bit_long(l.keys.len() as i32);
     for (key, value) in &l.keys {
@@ -415,6 +454,8 @@ fn write_label(w: &mut DwgMergedWriter, l: &Label) {
             KeyValue::Long(v) => w.write_bit_long(*v),
             KeyValue::Double(v) => w.write_bit_double(*v),
             KeyValue::Byte(v) => w.write_byte(*v),
+            KeyValue::NullGuid => (0..128).for_each(|_| w.write_bit(false)),
+            KeyValue::Reference => {}
         }
     }
     bits(w, l.run);
@@ -431,7 +472,8 @@ fn write_label(w: &mut DwgMergedWriter, l: &Label) {
 /// ```text
 /// HEADER, BL n, n labels { BL k, k keys, 44 bits, BL m, m key ids,
 ///   BL 0, BL 0 }, the kind's tail around BL band number
-/// references: soft 0, soft 0, view (soft), hard 0, per label view (hard)
+/// references: soft 0, soft 0, view (soft), hard 0, per label its objects
+///   (soft) and the view (hard)
 /// texts: the kind's class text, three empty texts
 /// ```
 ///
@@ -442,6 +484,12 @@ fn write_label(w: &mut DwgMergedWriter, l: &Label) {
 /// the application fills them once the view or its bands change).
 pub(super) fn write_group(doc: &mut CadDocument, common: EntityCommon, b: &Resolved, number: i32, view: u64, frame: &ProfileViewFrame, alignment: Handle) -> Result<Handle, DxfError> {
     let a = super::network::arch_entity(doc, alignment).ok_or_else(|| invalid("alignment not found"))?;
+    let labels: Vec<(Label, Vec<u64>)> = match b.band.kind {
+        BandKind::SectionalData => match b.band.data_source {
+            Some(group) => sectional_labels(doc, group, number).ok_or_else(|| invalid("a sectional data band's sample line group cannot be read"))?,
+            None => Vec::new(),
+        },
+        _ => {
     let labels: Vec<Label> = match b.band.kind {
         BandKind::ProfileData => {
             let points = geometry_points(a).unwrap_or_default();
@@ -449,12 +497,18 @@ pub(super) fn write_group(doc: &mut CadDocument, common: EntityCommon, b: &Resol
         }
         BandKind::VerticalGeometry => super::network::arch_entity(doc, Handle::new(b.profile1)).map(|p| vertical_labels(p, number)).unwrap_or_default(),
         BandKind::HorizontalGeometry => horizontal_labels(a, number).unwrap_or_default().into_iter().map(|l| l.1).collect(),
-        // Without a data source (superelevation, sample line group, pipe
-        // network: not written) these bands have no labels.
+        // Without a data source (superelevation, pipe network: not
+        // written) these bands have no labels.
         BandKind::Superelevation | BandKind::SectionalData | BandKind::PipeNetwork => Vec::new(),
     };
+    labels.into_iter().map(|l| (l, Vec::new())).collect()
+        }
+    };
     let mut refs = vec![soft_pointer(0), soft_pointer(0), soft_pointer(view), hard_pointer(0)];
-    refs.extend(labels.iter().map(|_| hard_pointer(view)));
+    for (_, objects) in &labels {
+        refs.extend(objects.iter().map(|h| soft_pointer(*h)));
+        refs.push(hard_pointer(view));
+    }
     let mut strings = vec![b.band.kind.class_text().to_string()];
     strings.extend((0..3).map(|_| String::new()));
     let (before, after) = tail(b.band.kind);
@@ -465,7 +519,7 @@ pub(super) fn write_group(doc: &mut CadDocument, common: EntityCommon, b: &Resol
         |w| {
             bits(w, HEADER);
             w.write_bit_long(labels.len() as i32);
-            for l in &labels {
+            for (l, _) in &labels {
                 write_label(w, l);
             }
             bits(w, &before[..STAGGER_AT]);
@@ -514,6 +568,7 @@ mod tests {
             KeyValue::Long(i) => f64::from(i),
             KeyValue::Double(d) => d,
             KeyValue::Byte(b) => f64::from(b),
+            KeyValue::NullGuid | KeyValue::Reference => 0.0,
         });
         assert_eq!(labels.len(), 7);
         assert_eq!((labels[1].1.list, key(&labels[1].1, 0x0100_D61E)), (LIST_CURVE_MIDDLE, Some(1.0)));
@@ -522,5 +577,24 @@ mod tests {
         assert!((key(arc, 0x0201_782D).unwrap() + 144.4126919312708).abs() < 1e-9);
         assert!((labels[2].0 - 99.0217174).abs() < 1e-6);
         assert_eq!((key(&labels[6].1, 0x0101_782A), key(&labels[6].1, 0x0301_782C)), (Some(258.0), Some(0.0)));
+    }
+
+    /// A sectional data band labels its group's lines in station order,
+    /// each followed by the step from the line before.
+    #[test]
+    fn sectional_data_labels_of_a_group() {
+        use super::super::alignment::{add_alignment_with_curves, VertexCurve};
+        use super::super::sample_lines::{add_sample_line, add_sample_line_group};
+        let v = crate::types::Vector2::new;
+        let mut doc = CadDocument::new();
+        let a = add_alignment_with_curves(&mut doc, "AL1", &[v(0.0, 0.0), v(100.0, 0.0)], &[] as &[VertexCurve], None).unwrap();
+        let g = add_sample_line_group(&mut doc, a, "SLG1", None).unwrap();
+        let far = add_sample_line(&mut doc, g, "SL1", 50.0, 10.0, 10.0, None).unwrap();
+        let near = add_sample_line(&mut doc, g, "SL2", 20.0, 5.0, 7.0, None).unwrap();
+        let labels = sectional_labels(&doc, g, 1).unwrap();
+        let station = |l: &Label, k: u32| l.keys.iter().find_map(|x| match x { (key, KeyValue::Double(d)) if *key == k => Some(*d), _ => None });
+        assert_eq!(labels.len(), 3);
+        assert_eq!((station(&labels[0].0, 0x0200_D020), labels[0].1.clone()), (Some(20.0), vec![near.value(), g.value()]));
+        assert_eq!((labels[2].0.list, station(&labels[2].0, 0x0201_7823), station(&labels[2].0, 0x0200_D020), labels[2].1[0]), (LIST_INCREMENT, Some(20.0), Some(50.0), far.value()));
     }
 }
