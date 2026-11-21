@@ -12,6 +12,8 @@ mod bands;
 mod assoc;
 mod corridor;
 mod default_styles;
+mod grading;
+pub use grading::{add_grading, grading_record, GradingRecord};
 mod groups;
 mod intersection;
 mod labels;
