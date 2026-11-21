@@ -183,27 +183,49 @@ impl From<i16> for TextAttachmentDirectionType {
     }
 }
 
-/// Text attachment point type (left/center/right).
+/// Text attachment point type.
+///
+/// AutoCAD stores the attachment point of the MTEXT content here, the same
+/// values MTEXT uses for its attachment point: 1 to 9 for the nine anchor
+/// positions of the text box.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(i16)]
 pub enum TextAttachmentPointType {
-    /// Attach to left.
-    Left = 1,
-    /// Attach to center.
+    /// Attach at top left.
+    TopLeft = 1,
+    /// Attach at top center.
     #[default]
-    Center = 2,
-    /// Attach to right.
-    Right = 3,
+    TopCenter = 2,
+    /// Attach at top right.
+    TopRight = 3,
+    /// Attach at middle left.
+    MiddleLeft = 4,
+    /// Attach at middle center.
+    MiddleCenter = 5,
+    /// Attach at middle right.
+    MiddleRight = 6,
+    /// Attach at bottom left.
+    BottomLeft = 7,
+    /// Attach at bottom center.
+    BottomCenter = 8,
+    /// Attach at bottom right.
+    BottomRight = 9,
 }
 
 impl From<i16> for TextAttachmentPointType {
     fn from(value: i16) -> Self {
         match value {
-            1 => Self::Left,
-            2 => Self::Center,
-            3 => Self::Right,
-            _ => Self::Center,
+            1 => Self::TopLeft,
+            2 => Self::TopCenter,
+            3 => Self::TopRight,
+            4 => Self::MiddleLeft,
+            5 => Self::MiddleCenter,
+            6 => Self::MiddleRight,
+            7 => Self::BottomLeft,
+            8 => Self::BottomCenter,
+            9 => Self::BottomRight,
+            _ => Self::TopCenter,
         }
     }
 }
@@ -787,7 +809,7 @@ impl MultiLeaderAnnotContext {
             line_spacing_factor: 1.0,
             line_spacing_style: LineSpacingStyle::AtLeast,
             text_color: Color::ByBlock,
-            text_attachment_point: TextAttachmentPointType::Center,
+            text_attachment_point: TextAttachmentPointType::TopCenter,
             text_flow_direction: FlowDirectionType::Horizontal,
             text_alignment: TextAlignmentType::Left,
             text_left_attachment: TextAttachmentType::MiddleOfText,
@@ -1012,7 +1034,7 @@ impl MultiLeader {
             text_top_attachment: TextAttachmentType::CenterOfText,
             text_bottom_attachment: TextAttachmentType::CenterOfText,
             text_attachment_direction: TextAttachmentDirectionType::Horizontal,
-            text_attachment_point: TextAttachmentPointType::Center,
+            text_attachment_point: TextAttachmentPointType::TopCenter,
             text_alignment: TextAlignmentType::Left,
             text_angle_type: TextAngleType::Horizontal,
             text_direction_negative: false,
