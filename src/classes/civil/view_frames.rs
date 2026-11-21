@@ -36,9 +36,16 @@
 //! the 1680 m width in the sample). What the first rectangle bounds the
 //! API does not expose, so it is reported without a name.
 //!
-//! **Match lines**: no `AECC_MATCHLINE` record exists in any drawing
-//! available (the CH sample carries only match-line labelings and display
-//! representations), so match-line geometry stays unmapped.
+//! Point chains ride both point-chain record kinds the metafile defines:
+//! the CH sample's frames and sheets carry kind-7 polygons, the tutorial
+//! corpus' frames and match lines (`Plan Production-Plan Profile
+//! Sheets-Create.dwg`) kind-6 polylines — same payload either way.
+//!
+//! **A match line's** single chain is a *closed* axis-aligned rectangle:
+//! five points at a common elevation walked low corner, low-right, high,
+//! high-left and back to the low corner, whose bounds are the live API's
+//! `GeometricExtents` exactly — bit for bit for all four match lines of
+//! the tutorial drawing.
 
 use super::bits::Bits;
 use crate::classes::arch::polyline_from_type6;
@@ -169,6 +176,16 @@ pub struct SheetGeometry {
     pub inner: [Vector3; 4],
 }
 
+/// The rectangle a match line record holds (see the [module](self)
+/// documentation).
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct MatchLineGeometry {
+    /// The match line's rectangle walked around its four corners; its
+    /// axis-aligned bounds are the live API's `GeometricExtents` exactly.
+    pub corners: [Vector3; 4],
+}
+
 /// The plan-production class bodies' shared opening — the parcel
 /// segments' head (upstream PR #591) with the plan-production schema
 /// word (see the [module](self) documentation).
@@ -180,15 +197,17 @@ fn plan_production_head(bits: &mut Bits) -> Option<()> {
     Some(())
 }
 
-/// The graphic-image section (a proxy-graphics metafile) records' type-7
-/// polygons, in record order; `None` unless the metafile decodes (see the
-/// [module](self) documentation).
+/// The graphic-image section (a proxy-graphics metafile) point-chain
+/// records' polygons, in record order: the kind-6 polylines and kind-7
+/// polygons the metafile defines (same `u32` count + XYZ payload — see
+/// the [module](self) documentation); `None` unless the metafile decodes.
 fn point_chains(g: &[u8]) -> Option<Vec<Vec<Vector3>>> {
     ProxyGraphics::decode(g)?
         .records
         .iter()
         .filter_map(|record| match record {
-            ProxyGraphicRecord::Unknown { record_type: 7, data } => Some(polyline_from_type6(data)),
+            ProxyGraphicRecord::Unknown { record_type: 6, data }
+            | ProxyGraphicRecord::Unknown { record_type: 7, data } => Some(polyline_from_type6(data)),
             _ => None,
         })
         .collect()
@@ -250,6 +269,24 @@ pub(super) fn sheet_geometry(data: &[u8], start: usize, end: usize, graphic: &[u
         .then_some(SheetGeometry { extents, inner })
 }
 
+/// A match line record's rectangle: `graphic` is the entity's
+/// graphic-image section, `data`/`start`/`end` its class stream.
+pub(super) fn match_line_geometry(
+    data: &[u8],
+    start: usize,
+    end: usize,
+    graphic: &[u8],
+) -> Option<MatchLineGeometry> {
+    let mut bits = Bits::new(data, start, end);
+    plan_production_head(&mut bits)?;
+    let chains = point_chains(graphic)?;
+    let [chain]: [_; 1] = chains.try_into().ok()?;
+    let [a, b, c, d, low]: [Vector3; 5] = <[Vector3; 5]>::try_from(chain).ok()?;
+    // The chain walks the rectangle and closes back onto its low corner.
+    (low == a).then_some(())?;
+    Some(MatchLineGeometry { corners: axis_aligned_rectangle(&[a, b, c, d])? })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,8 +319,9 @@ mod tests {
     }
 
     /// A graphic-image section over the given point chains, plus an
-    /// unparsed four-byte filler chain (kind 0x10) in between.
-    fn section(chains: &[&[(f64, f64, f64)]], filler: bool) -> Vec<u8> {
+    /// unparsed four-byte filler chain (kind 0x10) in between; `kind` is
+    /// the point-chain record kind (6 polyline, 7 polygon).
+    fn section_of_kind(kind: u32, chains: &[&[(f64, f64, f64)]], filler: bool) -> Vec<u8> {
         let mut g = Vec::new();
         let put_u32 = |g: &mut Vec<u8>, v: u32| g.extend(v.to_le_bytes());
         let put_f64 = |g: &mut Vec<u8>, v: f64| g.extend(v.to_le_bytes());
@@ -296,7 +334,7 @@ mod tests {
         }
         for chain in chains {
             put_u32(&mut g, (12 + 24 * chain.len()) as u32);
-            put_u32(&mut g, 7);
+            put_u32(&mut g, kind);
             put_u32(&mut g, chain.len() as u32);
             for &(x, y, z) in *chain {
                 put_f64(&mut g, x);
@@ -307,6 +345,12 @@ mod tests {
         let len = g.len() as u32;
         g[0..4].copy_from_slice(&len.to_le_bytes());
         g
+    }
+
+    /// A graphic-image section of kind-7 polygons (the CH sample's
+    /// point-chain record kind).
+    fn section(chains: &[&[(f64, f64, f64)]], filler: bool) -> Vec<u8> {
+        section_of_kind(7, chains, filler)
     }
 
     /// A rotated rectangle: 830 m at 18.43 degrees, 287 m wide, around the
@@ -368,6 +412,58 @@ mod tests {
         assert_eq!(sheet_geometry(&class, 0, class.len() * 8, &g), None);
     }
 
+    /// The tutorial drawing's first match line (`ML - 1` of `Plan
+    /// Production-Plan Profile Sheets-Create.dwg`): a closed axis-aligned
+    /// rectangle carried in a kind-6 polyline, whose bounds are the live
+    /// API's `GeometricExtents` bit for bit.
+    fn match_line_chain() -> Vec<(f64, f64, f64)> {
+        [
+            (979164.0938625354, 178278.73408678515, 0.0),
+            (979528.6093829795, 178278.73408678515, 0.0),
+            (979528.6093829795, 178653.52285458875, 0.0),
+            (979164.0938625354, 178653.52285458875, 0.0),
+            (979164.0938625354, 178278.73408678515, 0.0),
+        ]
+        .into()
+    }
+
+    #[test]
+    fn reads_a_match_lines_closed_rectangle() {
+        let class = class_stream();
+        let g = section_of_kind(6, &[&match_line_chain()], false);
+        let at = match_line_geometry(&class, 0, class.len() * 8, &g).expect("geometry decodes");
+        assert_eq!(at.corners[0], Vector3::new(979164.0938625354, 178278.73408678515, 0.0));
+        assert_eq!(at.corners[2], Vector3::new(979528.6093829795, 178653.52285458875, 0.0));
+    }
+
+    #[test]
+    fn a_match_line_chain_must_close() {
+        let class = class_stream();
+        let mut open = match_line_chain();
+        open.truncate(4); // the walk does not return to the low corner
+        let g = section_of_kind(6, &[&open], false);
+        assert_eq!(match_line_geometry(&class, 0, class.len() * 8, &g), None);
+    }
+
+    #[test]
+    fn a_skewed_chain_is_not_a_match_line_rectangle() {
+        let class = class_stream();
+        let mut skewed = match_line_chain();
+        skewed[1].1 += 1.0; // the low edge leaves the axis
+        let g = section_of_kind(6, &[&skewed], false);
+        assert_eq!(match_line_geometry(&class, 0, class.len() * 8, &g), None);
+    }
+
+    #[test]
+    fn a_frame_also_reads_from_a_kind_6_chain() {
+        // The tutorial corpus carries its view frames' rectangles in
+        // kind-6 polylines, not the CH sample's kind-7 polygons.
+        let class = class_stream();
+        let g = section_of_kind(6, &[&rotated_corners()], false);
+        let at = view_frame_geometry(&class, 0, class.len() * 8, &g).expect("geometry decodes");
+        assert_eq!(at.corners[0], Vector3::new(5518791.420847342, 4351596.896317183, 0.0));
+    }
+
     #[test]
     fn another_schema_word_is_not_a_plan_production_record() {
         let mut bits = String::new();
@@ -391,6 +487,8 @@ mod tests {
         let g = section(&[&rotated_corners()], false);
         assert_eq!(view_frame_geometry(&data, 0, data.len() * 8, &g), None);
         assert_eq!(sheet_geometry(&data, 0, data.len() * 8, &g), None);
+        let g6 = section_of_kind(6, &[&match_line_chain()], false);
+        assert_eq!(match_line_geometry(&data, 0, data.len() * 8, &g6), None);
     }
 
     #[test]
