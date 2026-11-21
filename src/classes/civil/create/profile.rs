@@ -215,6 +215,8 @@ pub enum ProfileEntity {
     ParabolaTwoPointsGrade { start: Vector2, end: Vector2, grade: f64, at_end: bool },
     /// A fixed symmetric parabola between two points with a K value.
     ParabolaTwoPointsK { start: Vector2, end: Vector2, k: f64, crest: bool },
+    /// A fixed symmetric parabola between two points with a radius.
+    ParabolaTwoPointsRadius { start: Vector2, end: Vector2, radius: f64, crest: bool },
     /// A floating symmetric parabola that leaves the entity before it and
     /// ends at a point, with a K value or its grade at the point.
     FloatingParabolaK { end: Vector2, k: f64, crest: bool },
@@ -233,7 +235,7 @@ impl ProfileEntity {
             ProfileEntity::Tangent { .. } => (2, 0),
             ProfileEntity::ParabolaThreePoints { .. } => (6, 11),
             ProfileEntity::ParabolaTwoPointsGrade { .. } => (6, 12),
-            ProfileEntity::ParabolaTwoPointsK { .. } => (6, 13),
+            ProfileEntity::ParabolaTwoPointsK { .. } | ProfileEntity::ParabolaTwoPointsRadius { .. } => (6, 13),
             ProfileEntity::FloatingParabolaK { .. } => (6, 32),
             ProfileEntity::FloatingParabolaGrade { .. } => (6, 34),
             ProfileEntity::FloatingTangent { .. } => (2, 4),
@@ -248,7 +250,7 @@ impl ProfileEntity {
             ProfileEntity::Tangent { start, end } => p(start) && p(end) && start.x < end.x,
             ProfileEntity::ParabolaThreePoints { start, middle, end } => p(start) && p(middle) && p(end) && start.x < middle.x && middle.x < end.x,
             ProfileEntity::ParabolaTwoPointsGrade { start, end, grade, .. } => p(start) && p(end) && start.x < end.x && grade.is_finite(),
-            ProfileEntity::ParabolaTwoPointsK { start, end, k: v, .. } => p(start) && p(end) && start.x < end.x && k(v),
+            ProfileEntity::ParabolaTwoPointsK { start, end, k: v, .. } | ProfileEntity::ParabolaTwoPointsRadius { start, end, radius: v, .. } => p(start) && p(end) && start.x < end.x && k(v),
             ProfileEntity::FloatingParabolaK { end, k: v, .. } => p(end) && k(v),
             ProfileEntity::FloatingParabolaGrade { end, grade } => p(end) && grade.is_finite(),
             ProfileEntity::FloatingTangent { through } => p(through),
@@ -501,12 +503,13 @@ fn write_profile_of(doc: &mut CadDocument, common: EntityCommon, name: &str, par
                                 w.write_bit_long(i32::from(at_end));
                                 w.write_bit_double(grade * 100.0);
                             }
-                            ProfileEntity::ParabolaTwoPointsK { start, end, k, crest } => {
+                            // The value word: 0x2000 a K value, 0x2002 a radius.
+                            ProfileEntity::ParabolaTwoPointsK { start, end, k: value, crest } | ProfileEntity::ParabolaTwoPointsRadius { start, end, radius: value, crest } => {
                                 point(w, start);
                                 point(w, end);
                                 w.write_bit_long(if crest { 0x1001 } else { 0x1000 });
-                                w.write_bit_long(0x2000);
-                                w.write_bit_double(k);
+                                w.write_bit_long(if matches!(*e, ProfileEntity::ParabolaTwoPointsK { .. }) { 0x2000 } else { 0x2002 });
+                                w.write_bit_double(value);
                             }
                             ProfileEntity::FloatingParabolaK { end, k, crest } => {
                                 point(w, end);
@@ -1115,6 +1118,27 @@ mod tests {
         let a = arch(al);
         assert!(a.typed_handles().iter().any(|r| r.0 == eg.value()));
         assert!(a.alignment_anchors().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_radius_parabola_reads_back_as_its_k() {
+        // A radius of 500 is a K of 5 (grades in percent).
+        let v = Vector2::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let al = crate::classes::civil::add_alignment(&mut doc, "AL1", &[v(0.0, 0.0), v(100.0, 0.0)], None).unwrap();
+        let k = add_profile_entities(&mut doc, al, "K", &[ProfileEntity::ParabolaTwoPointsK { start: v(0.0, 10.0), end: v(50.0, 11.0), k: 5.0, crest: true }], None).unwrap();
+        let r = add_profile_entities(&mut doc, al, "R", &[ProfileEntity::ParabolaTwoPointsRadius { start: v(0.0, 10.0), end: v(50.0, 11.0), radius: 500.0, crest: true }], None).unwrap();
+        let pieces = |h: Handle| match doc.get_entity(h) {
+            Some(EntityType::Extended(x)) => match &x.data {
+                ExtendedEntityData::Arch(a) => a.profile_pieces(),
+                _ => panic!(),
+            },
+            _ => panic!(),
+        };
+        let (a, b) = (pieces(k), pieces(r));
+        assert_eq!(a.len(), 1);
+        assert!(a[0].1.iter().zip(&b[0].1).all(|(p, q)| p.distance(q) < 1e-9));
     }
 
     #[test]

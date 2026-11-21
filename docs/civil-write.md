@@ -1058,6 +1058,9 @@ fixed by two points and a grade (6, 12): BL 0, 2 x 2RD, BL 0 start / 1 end,
                                      BD grade (percent)
 fixed by two points and K (6, 13):   BL 0, 2 x 2RD, BL 0x1001 crest /
                                      0x1000 sag, BL 0x2000, BD K
+                    ... and a radius: the same with BL 0x2002, BD radius
+                                     (PE10 K 5 and PE11 radius 500 differ
+                                     only there)
 floating, end and K (6, 32):         BL 0, 2RD end, crest flag, BL 0x2000,
                                      BD K (hangs from the entity before)
 floating, end and grade (6, 34):     BL 0, 2RD end, BL 1, BD grade (percent)
@@ -1076,6 +1079,16 @@ that parabola and one through (120, 15), (150, 16), (180, 15), from
 22.102 to 134.741). Written with the same entities (E-PF1) they open with
 AUDIT 0 errors and the API lists the same entities and stations; the
 reader solves them the same way.
+
+`ProfileEntity::ParabolaTwoPointsRadius` writes the radius form (E-PR1:
+a parabola from (0, 10) to (50, 11) with radius 500 and a tangent to
+(100, 9) open with AUDIT 0 errors; the programming interface reads the
+parabola as fixed by two points and a parameter, K 5, radius 500, length
+50). The programming interface's other inputs did not return: a fixed
+parabola by an entity's end and a point, a floating parabola by a point
+and a radius, and free parabolas between two fixed tangents by K or
+radius each left the application waiting (PE12 to PE15); free curves
+between tangents are the layout's curves (`add_profile_with_curves`).
 
 The application's floating parabola by K holds an arbitrary word in place
 of the crest flag (WE07); the writer writes the flag. Written (E-PE1) they
@@ -3050,7 +3063,8 @@ Corridors are listed in §3i-a.
 | profiles | layout: free curves by K, radius, horizontal length or through a point (parabolas and circular curves) | yes | yes | §3e |
 | profiles | layout entity by entity: fixed tangents, fixed parabolas (three points, two points and a grade or K), floating parabolas (end and K or grade) | yes | yes | §3e (entity by entity) |
 | profiles | floating tangents after a parabola, free tangents between parabolas | yes | yes | §3e (entity by entity) |
-| profiles | fixed and floating circular curves, asymmetric fixed curves | yes (tangents) | no | not sampled entity by entity |
+| profiles | fixed parabolas by two points and a radius | yes | yes | §3e (entity by entity) |
+| profiles | fixed and floating circular curves, asymmetric fixed curves; fixed parabolas by an entity's end and a point, floating parabolas by a radius | yes (tangents; parameter words read) | no | the programming interface has no add for circular or asymmetric fixed or floating curves (only free ones by PVI); the other inputs never returned (PE12, PE13) |
 | profiles | from a TIN surface (existing ground), at an offset, over the whole alignment or a station range | yes (definition) | yes | §3e (profiles from a surface) |
 | profiles | offset profiles by slope, of tangents and symmetric parabolas, on an offset alignment of one region | yes | yes | §3e (offset profiles) |
 | profiles | offset profiles of other source curves or over widenings; superimposed profiles, profiles of corridor feature lines, static copies | partly | no | not sampled for writing |
