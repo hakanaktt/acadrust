@@ -49,7 +49,7 @@ pub use section::{MassHaulViewFrame, SectionGeometry, SectionViewFrame};
 pub use style::{DisplayComponent, Marker, ProfileViewAxisStyle, ProfileViewAxisTitle, ProfileViewGrid, ProfileViewGridLines, ProfileViewStyleSettings, ProfileViewTicks, ProfileViewTitle, ViewAxes, ViewAxis};
 pub use subassembly::{AssemblyLayout, Attachment, SubassemblyShape};
 pub use survey::SurveyFigure;
-pub use view_frames::{MatchLine, SheetGeometry, ViewFrame, ViewFrameGeometry};
+pub use view_frames::{MatchLine, MatchLineGeometry, SheetGeometry, ViewFrame, ViewFrameGeometry};
 pub use topology::{Topology, TopologyVertex};
 pub use tin::{TinBoundaryType, TinBreaklineType, TinDefinition, TinLines, TinOperation, TinSurface, TinTriangle, TinVertex};
 
@@ -1155,6 +1155,19 @@ impl ArchEntityData {
         }
         let strings = self.decode().strings;
         view_frames::match_line(&strings, &self.typed_handles())
+    }
+
+    /// The rectangle a match line (`AECC_MATCHLINE`) record keeps in its
+    /// graphic-image section: the closed four-corner walk whose bounds are
+    /// the live API's `GeometricExtents`; see
+    /// [`view_frames::MatchLineGeometry`].
+    pub fn match_line_geometry(&self) -> Option<view_frames::MatchLineGeometry> {
+        if self.dxf_name != "AECC_MATCHLINE" {
+            return None;
+        }
+        let graphic = super::arch::decode::entity_graphic_data(self)?;
+        let (data, start, end) = self.main_stream()?;
+        view_frames::match_line_geometry(data, start, end, &graphic)
     }
 
     /// Number fields of the part data a Civil 3D pipe (`AECC_PIPE`) keeps
