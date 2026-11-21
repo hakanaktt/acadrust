@@ -176,6 +176,34 @@ const BLOCK: [(&str, K); 6] = [
     ("block_attachment", K::Bl),
 ];
 
+/// What a tick component (`AECC_LABEL_TICK_STYLE`) holds after the base
+/// fields (TA001 to TA003): a block component's fields, then `BL` 1,
+/// `BL` 0 and whether it aligns with the labelled object.
+const TICK: [(&str, K); 9] = [
+    ("k0", K::Bl),
+    ("block_rotation", K::Bd),
+    ("k2", K::Bd),
+    ("block_height", K::Bd),
+    ("k4", K::Bl),
+    ("block_attachment", K::Bl),
+    ("k6", K::Bl),
+    ("k7", K::Bl),
+    ("align", K::B),
+];
+
+/// What a direction arrow component (`AECC_LABEL_VECTOR_ARROW_STYLE`)
+/// holds after the base fields (TA008 to TA011).
+const ARROW: [(&str, K); 8] = [
+    ("r0", K::Bl),
+    ("fixed", K::Bl),
+    ("arrow_length", K::Bd),
+    ("r3", K::Bd),
+    ("arrowhead_size", K::Bd),
+    ("r5", K::Bd),
+    ("arrow_rotation", K::Bd),
+    ("r7", K::Bl),
+];
+
 const DRAGGED_END: [(&str, K); 2] = [("d_end", K::Bl), ("dragged_max_width", K::Bd)];
 
 const TEXT: [(&str, K); 9] = [
@@ -237,6 +265,8 @@ const REF_LINETYPE: usize = 5;
 const REF_BORDER_LINETYPE: usize = 6;
 /// A block component's block (its tenth reference).
 const REF_BLOCK: usize = 9;
+/// A tick component's block (its ninth reference: TB001).
+const REF_TICK_BLOCK: usize = 8;
 const REF_LEADER_LINETYPE: usize = 7;
 const REF_DRAGGED_LINETYPE: usize = 8;
 /// References before a collector's text components.
@@ -876,8 +906,10 @@ impl LabelFields {
     }
 }
 
-/// The class data of a line (LC04) and a block (LC05) component as the
-/// label style editor adds them.
+/// The class data of a line (LC04), a block (LC05), a tick and a
+/// direction arrow (TA000) component as the label style editor adds them.
+const NEW_TICK: (usize, &str) = (557, "a63fffffc002080010749692aa40e954044444444444584fc28000000c0003fffffffe00000030000ffffffffa00000030000ffffffff40a91ba8111111111111813f9094068");
+const NEW_ARROW: (usize, &str) = (636, "a63fffffc00e0800d0749692002c80022a406954044444444444584fc28000000c0003fffffffe00000030000ffffffffa00000030000ffffffff40a91fa26a666666666664fe044444444444604fea");
 const NEW_LINE: (usize, &str) = (647, "a63fffffc00e0800d0749692002c80022a406954044444444444584fc28000000c0003fffffffe00000030000ffffffffa00000030000ffffffff40a8fc07000080258800455550aaaaaaaaaaab6a7f54c");
 const NEW_BLOCK: (usize, &str) = (576, "a63fffffc00e0800d0749692002c80022a406954044444444444584fc28000000c0003fffffffe00000030000ffffffffa00000030000ffffffff40a91ba8111111111111813f909");
 
@@ -892,6 +924,118 @@ impl LabelFields {
         let (len, hex) = if line { NEW_LINE } else { NEW_BLOCK };
         Self::read_component(&bytes(hex), 0, len, line)
     }
+
+    /// The class data of a new tick (`tick`) or direction arrow component.
+    pub(super) fn new_mark(tick: bool) -> Option<Self> {
+        let (len, hex) = if tick { NEW_TICK } else { NEW_ARROW };
+        Self::read_mark(&bytes(hex), 0, len, tick)
+    }
+
+    /// Reads a tick (`tick`) or direction arrow component's class data;
+    /// `None` unless it ends exactly at `end`.
+    pub(super) fn read_mark(data: &[u8], start: usize, end: usize, tick: bool) -> Option<Self> {
+        let mut b = Bits::new(data, start, end);
+        let mut f = LabelFields(Vec::new());
+        f.read_base(data, &mut b)?;
+        f.read_list(data, &mut b, if tick { &TICK } else { &ARROW })?;
+        (b.pos == end).then_some(f)
+    }
+
+    /// The tick component, given its id, name and references.
+    pub(super) fn tick_component(&self, id: u32, name: Option<String>, refs: &[u64]) -> Option<LabelTickComponent> {
+        Some(LabelTickComponent {
+            id,
+            name,
+            visible: self.flag("visible")?,
+            color: self.when("mask_a", TEXT_COLOR, || self.color("text_color")),
+            lineweight: self.when("mask_a", TEXT_LINEWEIGHT, || self.long("text_lineweight")),
+            rotation: self.double("block_rotation")?,
+            height: self.double("block_height")?,
+            align_with_object: self.flag("align")?,
+            block: refs.get(REF_TICK_BLOCK).copied().unwrap_or(0),
+        })
+    }
+
+    /// Writes a tick component's values into its fields and references.
+    pub(super) fn set_tick_component(&mut self, c: &LabelTickComponent, refs: &mut [u64]) {
+        self.set("visible", V::B(c.visible));
+        self.put("mask_a", TEXT_COLOR, c.color, |f, v| f.set("text_color", V::Cmc(word_of(v))));
+        self.put("mask_a", TEXT_LINEWEIGHT, c.lineweight, |f, v| f.set("text_lineweight", V::Bl(v)));
+        self.set("block_rotation", V::Bd(c.rotation));
+        self.set("block_height", V::Bd(c.height));
+        self.set("align", V::B(c.align_with_object));
+        if let Some(slot) = refs.get_mut(REF_TICK_BLOCK) {
+            *slot = c.block;
+        }
+    }
+
+    /// The direction arrow component, given its id and name.
+    pub(super) fn arrow_component(&self, id: u32, name: Option<String>) -> Option<LabelArrowComponent> {
+        Some(LabelArrowComponent {
+            id,
+            name,
+            visible: self.flag("visible")?,
+            color: self.when("mask_a", TEXT_COLOR, || self.color("text_color")),
+            lineweight: self.when("mask_a", TEXT_LINEWEIGHT, || self.long("text_lineweight")),
+            x_offset: self.double("x_offset")?,
+            y_offset: self.double("y_offset")?,
+            fixed_length: self.long("fixed")? == 1,
+            length: self.double("arrow_length")?,
+            arrowhead_size: self.double("arrowhead_size")?,
+            rotation: self.double("arrow_rotation")?,
+        })
+    }
+
+    /// Writes a direction arrow component's values into its fields.
+    pub(super) fn set_arrow_component(&mut self, c: &LabelArrowComponent) {
+        self.set("visible", V::B(c.visible));
+        self.put("mask_a", TEXT_COLOR, c.color, |f, v| f.set("text_color", V::Cmc(word_of(v))));
+        self.put("mask_a", TEXT_LINEWEIGHT, c.lineweight, |f, v| f.set("text_lineweight", V::Bl(v)));
+        self.set("x_offset", V::Bd(c.x_offset));
+        self.set("y_offset", V::Bd(c.y_offset));
+        self.set("fixed", V::Bl(i32::from(c.fixed_length)));
+        self.set("arrow_length", V::Bd(c.length));
+        self.set("arrowhead_size", V::Bd(c.arrowhead_size));
+        self.set("arrow_rotation", V::Bd(c.rotation));
+    }
+}
+
+/// A label style's tick component (`AECC_LABEL_TICK_STYLE`: alignment and
+/// profile station labels).
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct LabelTickComponent {
+    pub id: u32,
+    pub name: Option<String>,
+    pub visible: bool,
+    pub color: Option<Color>,
+    pub lineweight: Option<i32>,
+    /// Rotation in radians.
+    pub rotation: f64,
+    pub height: f64,
+    pub align_with_object: bool,
+    /// The tick's block (its block record), 0 for the default tick.
+    pub block: u64,
+}
+
+/// A label style's direction arrow component
+/// (`AECC_LABEL_VECTOR_ARROW_STYLE`: line labels).
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct LabelArrowComponent {
+    pub id: u32,
+    pub name: Option<String>,
+    pub visible: bool,
+    pub color: Option<Color>,
+    pub lineweight: Option<i32>,
+    pub x_offset: f64,
+    pub y_offset: f64,
+    /// A fixed length rather than a minimum one.
+    pub fixed_length: bool,
+    pub length: f64,
+    pub arrowhead_size: f64,
+    /// Rotation in radians.
+    pub rotation: f64,
 }
 
 #[cfg(test)]

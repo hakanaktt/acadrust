@@ -38,7 +38,7 @@ pub use corridor::{CorridorBaseline, CorridorBoundary, CorridorDefinition, Corri
 pub use grading::{CriteriaValue, GradingCriteria};
 pub use intersection::IntersectionLayout;
 pub use labels::{parse_format, property, LabelPart, LabelText};
-pub use label_style::{LabelBlockComponent, LabelBorder, LabelDraggedState, LabelLeader, LabelLineComponent, LabelStyleSettings, LabelTextComponent};
+pub use label_style::{LabelArrowComponent, LabelBlockComponent, LabelBorder, LabelDraggedState, LabelLeader, LabelLineComponent, LabelStyleSettings, LabelTextComponent, LabelTickComponent};
 pub use network::{PartField, PressurePipe, PressurePort};
 pub use parameters::{Parameter, ParameterValue};
 pub use profile::{CurveMinimumK, OffsetProfile, ProfileCriteria, ProfileLocking, ProfilePiece, ProfileViewFrame, Pvi};
@@ -1492,6 +1492,30 @@ impl ArchObject {
         b.bit_short()?;
         let id = b.bit_long()? as u32;
         Some((id, (id & 0x8000_0000 != 0).then(|| self.decode().strings.first().cloned()).flatten()))
+    }
+
+    /// The fields of a tick (`tick`) or direction arrow component.
+    pub(in crate::classes::civil) fn label_mark_fields(&self, tick: bool) -> Option<(label_style::LabelFields, usize, usize)> {
+        (self.dxf_name == if tick { "AECC_LABEL_TICK_STYLE" } else { "AECC_LABEL_VECTOR_ARROW_STYLE" }).then_some(())?;
+        let (data, start, end) = self.main_stream()?;
+        let (class, own_ref, text_keys) = style::class_layout(data, start, end)?;
+        Some((label_style::LabelFields::read_mark(data, class, end, tick)?, own_ref, text_keys))
+    }
+
+    /// A label style's tick component (`AECC_LABEL_TICK_STYLE`).
+    pub fn label_tick_component(&self) -> Option<LabelTickComponent> {
+        let (fields, own, _) = self.label_mark_fields(true)?;
+        let refs: Vec<u64> = self.typed_handles().into_iter().skip(own).map(|r| r.0).collect();
+        let (id, name) = self.label_component_head()?;
+        fields.tick_component(id, name, &refs)
+    }
+
+    /// A label style's direction arrow component
+    /// (`AECC_LABEL_VECTOR_ARROW_STYLE`).
+    pub fn label_arrow_component(&self) -> Option<LabelArrowComponent> {
+        let (fields, _, _) = self.label_mark_fields(false)?;
+        let (id, name) = self.label_component_head()?;
+        fields.arrow_component(id, name)
     }
 
     /// A label style's line component (`AECC_LABEL_RADIAL_LINE_STYLE`).

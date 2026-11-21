@@ -307,6 +307,9 @@ line:   BL end anchor component, B use end anchor, BL end anchor word,
         BL length type (0 fixed, 1 percent), BD percent length, BL 0
 block:  BL 0, BD rotation, BD, BD height, BL 0,
         BL attachment (9 insertion point, 0 top left ... 8 bottom right)
+tick:   the block's fields, then BL 1, BL 0, B align with object
+arrow:  BL 0, BL fixed length (1) or minimum length (0), BD length, BD,
+        BD arrowhead size, BD, BD rotation, BL 0
 ```
 
 The start offsets count when mask C has 0x1 (x) and 0x2 (y) set; a
@@ -317,6 +320,18 @@ name and empty texts, a block under a plain id counting from 0xA71 (its
 name is "B" and the id less 0xA70) without texts; both have the
 references of a new component (null but the border linetype, the owner
 too) and the head of the style's other components.
+
+Tick (`AECC_LABEL_TICK_STYLE`: station labels) and direction arrow
+(`AECC_LABEL_VECTOR_ARROW_STYLE`: line labels) components have the same
+base fields: color and lineweight in the text color and lineweight
+fields, an arrow's offsets in the base offsets (TA000 to TA013: one
+setting of a new tick and arrow changed per save); a tick's block is its
+ninth reference (TB001, its class data unchanged). The editor adds both
+under text ids from its counter (0x800001A2, 0x800001A5) with the name,
+an empty text and the users, with the references of a new component; the
+arrows of the application's line label styles are under a plain id
+(0xCD7) with no name. A new tick is 1/120 high and aligned with the
+object, a new arrow at least 1/40 long with a 1/120 arrowhead.
 
 Samples: LS001-LS040 (one setting of the default point label style
 changed per save), LT001-LT035 (bits back to their defaults, colors,
@@ -355,7 +370,15 @@ the style's highest block id (at least 0xA71). E-LB1 (OP00's point label
 style with two lines and a block added) and E-LB2 (LC06's, its first
 line and block removed, a block added) open with AUDIT 0 and the API
 lists the components with the written values (the blocks named B1, B2,
-B3 after their ids). E-LC2 (LC04's style copied with its line's angle,
+B3 after their ids). Tick and arrow components are kept, removed and
+added the same way (`LabelStyle::ticks`, `LabelStyle::arrows`,
+`new_tick_component`, `new_arrow_component`; added ones under the text
+ids after the lines). E-TA1 (LS000's major station label style with a
+tick added, its line label style with an arrow added), E-TA2 (TA015's:
+the editor's tick removed and a tick added, the template arrow's length,
+rotation and length type changed) and E-TA3 (TB000's: the editor's tick
+and an added one with a block) open with AUDIT 0 and the API lists the
+components with the written values and block name. E-LC2 (LC04's style copied with its line's angle,
 start x and end y offsets, lengths, percent length type, color and
 visibility changed) and E-LC3 (LC05's block: height, rotation, x offset,
 attachment, lineweight) open with AUDIT 0 and the API lists the written
@@ -3424,8 +3447,8 @@ Corridors are listed in §3i-a.
 | label styles | settings: visibility, layer, text style, orientation, insert option, plan readability, leader, dragged state; text components' contents, height, offsets, angle, attachment, anchor, color, lineweight, border | yes (every record of the application's style tree; 23 collectors of drawings of older releases do not read) | yes, as copies of a drawing's label style (§2d) | §2d |
 | label styles | pipe, structure and pressure part label styles (plan, profile, section, crossing profile) | yes | yes, as copies (§2d, E-NL1) | §2d |
 | label styles | adding and removing text components | yes | yes (§2d) | §2d |
-| label styles | line and block components: settings, adding and removing them | yes | yes, in copies (§2d) | §2d |
-| label styles | adding or removing line and block components; anchors of lines; tick, reference text, direction arrow and iterator components' own settings; pipe and pressure part label styles | base fields | as copied | not mapped; the API refuses to set line and block anchors |
+| label styles | line, block, tick and direction arrow components: settings, adding and removing them | yes | yes, in copies (§2d) | §2d |
+| label styles | anchors of lines; reference text and iterator components' own settings | base fields | as copied | not mapped; the API refuses to set line and block anchors |
 
 ### 6a. Gradings and mass haul
 
