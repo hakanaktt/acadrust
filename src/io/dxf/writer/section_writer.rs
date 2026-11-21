@@ -10867,6 +10867,12 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer.write_double(24, v.y)?;
         }
 
+        // Clip mode (0 = outside, 1 = inside); R2010+ only.
+        if self.dxf_version >= DxfVersion::AC1024 {
+            self.writer
+                .write_bool(290, image.clip_boundary.clip_mode == ClipMode::Inside)?;
+        }
+
         Ok(())
     }
 
