@@ -1255,6 +1255,36 @@ written and the siteless node is not changed. With the edge id left at 1
 the drawing opens, but the application no longer lists a feature line that
 comes before the alignment in the container (E-F6).
 
+### Feature lines that cross
+
+Samples FX00 (a site with FL1 through (0, 0, 10), (50, 0, 12), (100, 30,
+11)), FX01 (a line crossing FL1 at its PI), FX02 (a line ending on FL1),
+FX03 (a line crossing FL1 between its PIs, from (25, -20, 8) to (25, 20,
+9)), FX04 and FX07 (a third line closing a region with them). A feature
+line is split where it meets the site's other members like a lot line
+(the arrangement of §3g, straight segments only), with two rules of its
+own:
+
+- the node a crossing adds takes the elevation of the new line there
+  (FX03: 8.5 on both lines, not FL1's 11);
+- the new line's points take the marks 0x30 of an earlier member's when
+  it crosses another (FX01, FX03; the newest member's points otherwise
+  lack them at the last segment).
+
+Several crossings take node ids by the member crossed, earlier members
+first, then along the new line (FX04, FX07). Written for their lines the
+containers equal the samples' but for the flag 0x800 (and the last point
+mark 2) the application sets on an edge read from a file when another
+member joins, and the crossing points' last digits (the application
+computes them to about 1e-10). E-FX5 (FX00 plus the FX03 line) and E-FX9
+(a new drawing with both lines) open without recovery, AUDIT 0, and the
+programming interface lists both lines with their points.
+
+A line that closes or splits a region makes the application add an
+`AECC_GRADING` for the face (FX04: 744 bits) and list the face without a
+parcel; written without the grading such drawings open with errors, so
+the writer refuses the line.
+
 A feature line is a short record; its points are its edge in the
 container:
 
@@ -3067,7 +3097,8 @@ Corridors are listed in §3i-a.
 | sites | containers with members without points or nodes (WP01, WP02, WT04 to WT06: alignments without elements on a site), members added to them | yes | yes | §3g (members without points) |
 | feature lines | points, elevation points, arcs, on a site | yes | yes | §3g |
 | feature lines | edits: points, arcs, elevations and elevation points replaced, in containers this crate or the application wrote (ids and keys kept) | yes | yes | §3g |
-| feature lines | members meeting other members on a site, styles other than the default | yes | no | §3g |
+| feature lines | crossing and touching other members on a site (straight segments), where no region closes | yes | yes | §3g (feature lines that cross) |
+| feature lines | crossings that close or split a region (the application adds a grading of the face), styles other than the default | yes | no | §3g (FX04, FX07); gradings are not written (§6a) |
 | sample line groups | lines by station or through vertices on both sides | yes | yes | §3j |
 | sample line groups | lines with all vertices on one side; section sources other than a TIN surface (corridors, corridor surfaces, pipe networks) | yes | no | one-sided lines close with another run (LV03); other sources not sampled |
 | sections | of a TIN surface (unsampled) | yes (geometry once sampled) | yes | §3j |

@@ -321,7 +321,7 @@ const READ_POINT: i32 = 0x30;
 /// point's are 10 (WT07, WT10 to WT13, WF01 to WF06; written for their
 /// members, the containers equal the samples' bit for bit).
 ///
-/// Members that meet (lot lines only) are split where they meet: the
+/// Members that meet (lot lines, feature lines) are split where they meet: the
 /// nodes another member's crossing adds to an edge have flags 0x400
 /// instead of 2 and mark the edge with 0x80; a point on an earlier node
 /// carries 0x800000, and 0x80 on a first point only marks an edge that
@@ -461,6 +461,9 @@ pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handl
                 let last_member = e + 1 == members.len();
                 let keys: Vec<i32> = member_keys.iter().copied().filter(|k| *k != 0).collect();
                 let mut own = 0;
+                // A newest feature line that crosses another member marks
+                // its points as the others' are (FX01, FX03).
+                let meets = m.kind == MemberKind::FeatureLine && edge.vertices.iter().any(|v| v.inserted);
                 for (i, v) in edge.vertices.iter().enumerate() {
                     let read = m.read.as_ref().and_then(|r| {
                         if v.inserted {
@@ -478,7 +481,7 @@ pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handl
                     own += !v.inserted as usize;
                     let last = i + 1 == n && !closed;
                     let arc = v.bulge.filter(|_| !last);
-                    let follows = i + 2 < n || (closed && i + 1 < n) || !last_member;
+                    let follows = i + 2 < n || (closed && i + 1 < n) || !last_member || meets;
                     let shared = if v.shared { SHARED_NODE } else { 0 };
                     let flags = if last {
                         (if m.read.as_ref().is_some_and(|r| r.flags & READ_EDGE != 0) { 2 | read.unwrap_or(10) & 8 } else { 10 }) | shared
@@ -784,9 +787,9 @@ pub fn add_feature_line(doc: &mut CadDocument, site: Handle, name: &str, points:
 }
 
 /// Adds a feature line through `vertices` on `site`: its edge joins the
-/// site's container. Like an alignment on a site it must not cross or
-/// touch the site's other members, and the site must be one this crate
-/// writes. The ends are PIs; an elevation point on an arc splits it, so
+/// site's container, split where it crosses or touches the site's other
+/// members (straight segments; a crossing takes the new line's elevation
+/// there), and the site must be one this crate writes. The ends are PIs; an elevation point on an arc splits it, so
 /// the bulges on its two sides are those of the two parts. It takes the
 /// feature line style the site's container uses.
 pub fn add_feature_line_vertices(doc: &mut CadDocument, site: Handle, name: &str, vertices: &[FeatureLineVertex], layer: Option<&str>) -> Result<Handle, DxfError> {
@@ -804,9 +807,11 @@ pub fn add_feature_line_vertices(doc: &mut CadDocument, site: Handle, name: &str
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
     let (container, mut members, parcels, line_style, next) = members_of(doc, site)?;
-    if members.iter().any(|m| paths_meet(&m.outline(), &path)) {
-        return Err(invalid("the feature line crosses or touches another member of the site"));
-    }
+    let faces = |members: &[Member]| {
+        let inputs: Vec<Input> = members.iter().filter(|m| !m.path.is_empty()).map(|m| Input { path: &m.path, elevations: &m.elevations, closed: m.closed() }).collect();
+        if inputs.is_empty() { Ok(0) } else { build(&inputs).map(|a| a.faces.len()).map_err(invalid) }
+    };
+    let before = faces(&members)?;
     let common = EntityCommon {
         handle: doc.allocate_handle(),
         owner_handle: doc.header.model_space_block_handle,
@@ -823,6 +828,12 @@ pub fn add_feature_line_vertices(doc: &mut CadDocument, site: Handle, name: &str
         ids: Vec::new(),
         read: None,
     });
+    // A feature line that closes a region or splits one makes the
+    // application add a grading of that face (FX04, FX07), which is not
+    // written.
+    if before != 0 && faces(&members)? != before {
+        return Err(invalid("the feature line closes or splits a region of the site"));
+    }
     write_container(doc, container, site, &members, &parcels, line_style, next)?;
     write_feature_line(doc, common, name, members.len() as i32, container, line_style)
 }
@@ -1264,7 +1275,7 @@ mod tests {
         let f1 = add_feature_line(&mut doc, s, "FL1", &[p(0.0, 0.0, 10.0), p(50.0, 0.0, 12.0), p(100.0, 30.0, 11.0)], None).unwrap();
         let a = add_alignment_on_site(&mut doc, s, "AL1", &[v(0.0, 100.0), v(100.0, 100.0), v(150.0, 120.0)], &[VertexCurve::None], None).unwrap();
         let f2 = add_feature_line(&mut doc, s, "FL2", &[p(0.0, 50.0, 5.0), p(100.0, 50.0, 6.0)], None).unwrap();
-        assert!(add_feature_line(&mut doc, s, "FL3", &[p(50.0, -10.0, 0.0), p(50.0, 10.0, 0.0)], None).is_err());
+        assert!(add_feature_line(&mut doc, s, "FL3", &[p(20.0, 50.0, 0.0), p(80.0, 50.0, 0.0)], None).is_err());
         let path = std::env::temp_dir().join(format!("civil-feature-line-{}.dwg", std::process::id()));
         DwgWriter::write_to_file(&path, &doc).unwrap();
         let back = DwgReader::from_file(&path).unwrap().read().unwrap();
@@ -1279,6 +1290,23 @@ mod tests {
         // The alignment keeps its member number (2) as its edge id.
         let (w, _) = super::super::alignment::rewritable(&back, a, |_| None).unwrap();
         assert_eq!(w.edge, 2);
+    }
+
+    #[test]
+    fn a_crossing_feature_line_splits_at_its_own_elevation() {
+        let p = crate::types::Vector3::new;
+        let mut doc = drawing();
+        let s = add_site(&mut doc, "Site 1", "").unwrap();
+        add_feature_line(&mut doc, s, "FL1", &[p(0.0, 0.0, 10.0), p(50.0, 0.0, 12.0), p(100.0, 30.0, 11.0)], None).unwrap();
+        add_feature_line(&mut doc, s, "FLZ", &[p(25.0, -20.0, 8.0), p(25.0, 20.0, 9.0)], None).unwrap();
+        // A third line closing a region with them is refused.
+        assert!(add_feature_line(&mut doc, s, "FLW", &[p(10.0, 10.0, 5.0), p(90.0, 10.0, 7.0)], None).is_err());
+        let container = arch(&doc, s).typed_handles()[5].0;
+        let edges = object(&doc, Handle::new(container)).unwrap().topology().unwrap().edges;
+        let at = |e: &Vec<crate::classes::civil::TopologyVertex>| e.iter().map(|v| (v.point.x, v.z, v.flags)).collect::<Vec<_>>();
+        assert_eq!(at(&edges[0])[1], (25.0, 8.5, 0x430));
+        // The new line's points are marked as the earlier lines' are.
+        assert_eq!(at(&edges[1]), vec![(25.0, 8.0, 0xB2), (25.0, 8.5, 0x430), (25.0, 9.0, 0xA)]);
     }
 
     #[test]
