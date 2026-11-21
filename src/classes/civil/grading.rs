@@ -6,6 +6,11 @@
 //! RC count, count x key, BL 32, ...
 //! ```
 //!
+//! Grading entities (`AECC_GRADING`) carry no style, criteria, or site
+//! assignment of their own: their class stream opens with a constant
+//! schema head and their body holds references, not assignments — see
+//! [`GradingEntity`].
+//!
 //! A key is the class key of [`super::alignment::read_key`] with two flag
 //! bits: 0x00400000 locks the value, and with 0x40000000 the key carries no
 //! value (a locked value the criteria does not override). A value the
@@ -141,6 +146,52 @@ pub(super) fn criteria(data: &[u8], start: usize, end: usize, handles: &[u64]) -
     Some(out)
 }
 
+/// The references a grading entity (`AECC_GRADING`) record carries.
+///
+/// A grading's style and criteria assignment live with its group, not
+/// here: Grading-3A.dwg holds the Ditch and the Cut Slope Grading styles
+/// under byte-identical heads and references. `AECC_GRADING` also stores
+/// no geometry — the record's graphic-image section draws the grading
+/// solution.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct GradingEntity {
+    /// Handle of the `AECC_PARCEL` the grading grades from. The two
+    /// gradings of DE_RE2012_Vorentwurf_5000_2027.dwg point at its two
+    /// parcels; drawings with a single parcel point at it from every
+    /// grading.
+    pub parcel: u64,
+    /// Handle of the `AECC_LABEL_COLLECTOR_STYLE` the record hard-points
+    /// at — in the samples the label style of the parcels of the site
+    /// the parcel belongs to (its name strings style `AeccDbFace`),
+    /// constant per drawing.
+    pub label_style: u64,
+}
+
+/// Reads a grading entity record: `data`/`start`/`end` is its class
+/// stream, `handles` its class-body references in stream order.
+///
+/// The class stream opens with a constant schema head, identical in all
+/// 26 observed records (15 Sample drawings and Grading-3A.dwg): the six
+/// words below, the lot lines' schema word (see
+/// [`super::parcel_segments::SCHEMA`]), and three more words. The two
+/// references follow the common ones; everything after them (an ordinal
+/// of the grading within its group and byte runs that match no oracle
+/// quantity) is unmapped and read past.
+pub(super) fn entity(data: &[u8], start: usize, end: usize, handles: &[u64]) -> Option<GradingEntity> {
+    let mut bits = Bits::new(data, start, end);
+    for word in [80u16, 256, 0xC76A, 80, 80, 0] {
+        (bits.bit_short()? as u16 == word).then_some(())?;
+    }
+    (bits.bit_long()? as u32 == super::parcel_segments::SCHEMA).then_some(())?;
+    for word in [80u16, 0x1540, 0xC1C0] {
+        (bits.bit_short()? as u16 == word).then_some(())?;
+    }
+    let parcel = handles.get(1).copied().filter(|handle| *handle != 0)?;
+    let label_style = handles.get(4).copied().filter(|handle| *handle != 0)?;
+    Some(GradingEntity { parcel, label_style })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,6 +199,34 @@ mod tests {
     fn bits_of(s: &str) -> Vec<u8> {
         let s: Vec<u8> = s.bytes().filter(|b| *b == b'0' || *b == b'1').collect();
         s.chunks(8).map(|c| c.iter().enumerate().fold(0u8, |a, (i, b)| a | ((b - b'0') << (7 - i)))).collect()
+    }
+
+    /// The grading entity records' schema head as bits, MSB first: the
+    /// six leading words, the lot lines' schema word, three more words.
+    fn entity_head() -> String {
+        let mut bits = String::new();
+        let bs = |v: u16, bits: &mut String| match v {
+            0 => bits.push_str("10"),
+            256 => bits.push_str("11"),
+            v if v < 256 => bits.push_str(&format!("01{v:08b}")),
+            v => {
+                bits.push_str("00");
+                for b in v.to_le_bytes() {
+                    bits.push_str(&format!("{b:08b}"));
+                }
+            }
+        };
+        for v in [80u16, 256, 0xC76A, 80, 80, 0] {
+            bs(v, &mut bits);
+        }
+        bits.push_str("00");
+        for b in super::super::parcel_segments::SCHEMA.to_le_bytes() {
+            bits.push_str(&format!("{b:08b}"));
+        }
+        for v in [80u16, 0x1540, 0xC1C0] {
+            bs(v, &mut bits);
+        }
+        bits
     }
 
     #[test]
@@ -166,5 +245,47 @@ mod tests {
         assert_eq!(read.target, CriteriaValue { value: Some(3), locked: true });
         assert_eq!(read.slope_format, CriteriaValue { value: None, locked: true });
         assert_eq!(read.slope, CriteriaValue::default());
+    }
+
+    #[test]
+    fn reads_a_grading_entitys_references() {
+        // The head, then an unmapped tail; references as the handle
+        // stream holds them: null, parcel, null, null, style, null.
+        let mut bits = entity_head();
+        bits.push_str("00000000"); // the unmapped body the samples carry
+        let data: Vec<u8> = bits
+            .as_bytes()
+            .chunks(8)
+            .map(|c| u8::from_str_radix(std::str::from_utf8(c).unwrap(), 2).unwrap())
+            .collect();
+        let read = entity(&data, 0, data.len() * 8, &[0, 0xc68, 0, 0, 0x63d, 0]).unwrap();
+        assert_eq!(read.parcel, 0xc68);
+        assert_eq!(read.label_style, 0x63d);
+    }
+
+    #[test]
+    fn another_schema_word_is_not_a_grading() {
+        let mut bits = entity_head();
+        // flip the schema word's first bit: 0x10025F04 becomes 0x10025F84
+        assert_eq!(&bits[54..55], "0");
+        bits.replace_range(54..55, "1");
+        let data: Vec<u8> = bits
+            .as_bytes()
+            .chunks(8)
+            .map(|c| u8::from_str_radix(std::str::from_utf8(c).unwrap(), 2).unwrap())
+            .collect();
+        assert_eq!(entity(&data, 0, data.len() * 8, &[0, 0xc68, 0, 0, 0x63d]), None);
+    }
+
+    #[test]
+    fn a_grading_without_its_references_decodes_to_none() {
+        let bits = entity_head();
+        let data: Vec<u8> = bits
+            .as_bytes()
+            .chunks(8)
+            .map(|c| u8::from_str_radix(std::str::from_utf8(c).unwrap(), 2).unwrap())
+            .collect();
+        assert_eq!(entity(&data, 0, data.len() * 8, &[]), None);
+        assert_eq!(entity(&data, 0, data.len() * 8, &[0, 0, 0, 0, 0]), None);
     }
 }
