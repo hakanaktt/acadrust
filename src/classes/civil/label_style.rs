@@ -79,7 +79,7 @@ struct Field {
     raw: String,
 }
 
-const BASE: [(&str, K); 44] = [
+const BASE: [(&str, K); 42] = [
     ("height_set", K::Bl),
     ("b1", K::Bl),
     ("height", K::Bd),
@@ -122,8 +122,6 @@ const BASE: [(&str, K); 44] = [
     ("leader_lineweight", K::Bl),
     ("leader_attachment", K::Bl),
     ("b41", K::Bl),
-    ("b42", K::Bl),
-    ("mask_c", K::Bl),
 ];
 
 const DRAGGED: [(&str, K); 13] = [
@@ -283,12 +281,27 @@ impl LabelFields {
         Some(())
     }
 
+    /// Reads the fields every label style record opens with: [`BASE`],
+    /// `BL` n and n `BL` keys (n 0 but in the collectors of pipe and
+    /// structure labels in plan, profile and section, which list two:
+    /// 0x0405D122 and 0x0405D123 for a pipe, 0x0405D120 and 0x0405D121
+    /// for a structure), then `BL` the dragged state's override mask.
+    fn read_base(&mut self, data: &[u8], b: &mut Bits) -> Option<()> {
+        self.read_list(data, b, &BASE)?;
+        self.read_list(data, b, &[("keys", K::Bl)])?;
+        let n = usize::try_from(self.long("keys")?).ok().filter(|n| *n * 2 <= b.remaining())?;
+        for _ in 0..n {
+            self.read_list(data, b, &[("key", K::Bl)])?;
+        }
+        self.read_list(data, b, &[("mask_c", K::Bl)])
+    }
+
     /// Reads a line or block component's class data (`tail` its fields
     /// after the base ones); `None` unless they end exactly at `end`.
     pub(super) fn read_component(data: &[u8], start: usize, end: usize, line: bool) -> Option<Self> {
         let mut b = Bits::new(data, start, end);
         let mut f = LabelFields(Vec::new());
-        f.read_list(data, &mut b, &BASE)?;
+        f.read_base(data, &mut b)?;
         f.read_list(data, &mut b, if line { &LINE } else { &BLOCK })?;
         (b.pos == end).then_some(f)
     }
@@ -299,7 +312,7 @@ impl LabelFields {
     pub(super) fn read(data: &[u8], start: usize, end: usize, collector: bool) -> Option<Self> {
         let mut b = Bits::new(data, start, end);
         let mut f = LabelFields(Vec::new());
-        f.read_list(data, &mut b, &BASE)?;
+        f.read_base(data, &mut b)?;
         if collector {
             f.read_list(data, &mut b, &DRAGGED)?;
             let n = usize::try_from(f.long("entries")?).ok().filter(|n| *n * 20 <= b.remaining())?;
@@ -891,6 +904,18 @@ mod tests {
         let block = LabelFields::read_component(&bytes(NEW_BLOCK.1), 0, NEW_BLOCK.0, false).unwrap();
         let b = block.block_component(2, None, &[0; 10]).unwrap();
         assert_eq!((b.height, b.attachment, b.rotation), (1.0 / 120.0, 9, 0.0));
+    }
+
+    /// The class data of the default pipe label style (plan and profile).
+    const PIPE: (usize, &str) = (747, "a60eed0003ce0800d0749692002c80022a406954044444444444584fc28000000c0003fffffffe00000030000ffffffffa00000030000ffffffff40a40822d1050408f441412854400000060001fffffffe80a094003fffffc02a20280c0");
+
+    /// A pipe label style lists its two keys before the dragged state's
+    /// mask and reads to its end.
+    #[test]
+    fn pipe_label_style_reads_its_keys() {
+        let f = LabelFields::read(&bytes(PIPE.1), 0, PIPE.0, true).unwrap();
+        let keys: Vec<i32> = f.0.iter().filter(|x| x.name == "key").filter_map(|x| if let V::Bl(v) = x.value { Some(v) } else { None }).collect();
+        assert_eq!((f.long("keys"), keys, f.long("mask_c"), f.entry_count()), (Some(2), vec![0x0405_D122, 0x0405_D123], Some(0), 1));
     }
 
     use super::*;

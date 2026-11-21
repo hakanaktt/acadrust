@@ -225,8 +225,15 @@ B flip anchors, BD x offset, BD, BD y offset, BD, B border visible,
 BD gap, B leader visible, B, B leader spline, B, BD arrowhead size,
 CMC text color, BL text lineweight, CMC border color,
 BL border lineweight, BL border type, CMC leader color,
-BL leader lineweight, BL leader attachment, BL, BL, BL mask C
+BL leader lineweight, BL leader attachment, BL, BL n, n x BL key,
+BL mask C
 ```
+
+The keys are listed only by the collectors of gravity network part
+labels (pipe and structure labels in plan and profile, pipe labels in
+sections and crossing profiles; their texts end with "<ALL>", "<ALL>"):
+0x0405D122 and 0x0405D123 for a pipe, 0x0405D120 and 0x0405D121 for a
+structure. Pressure pipe, fitting and appurtenance labels list none.
 
 (CMC: `BS 0`, the color word, `RC 0`.) A collector goes on with its
 dragged state, a text component with its text:
@@ -309,10 +316,16 @@ and percent length 1, a new block height 1/120.
 Samples: LS001-LS040 (one setting of the default point label style
 changed per save), LT001-LT035 (bits back to their defaults, colors,
 linetypes, layer, text style, arrowhead style, anchor component and
-point, enumerations stepped twice). Every collector of the application's
-style tree reads (375 of 379 records; the four pipe and pressure part
-collectors carry two more texts and fields not mapped) and so do 248 of
-252 text components.
+point, enumerations stepped twice). Every collector and text component of the application's style tree reads
+(631 records, HB0, N02, N07, P10, LC00). Collectors of drawings saved by
+older releases (texts naming an older user, e.g. pn2, q7) fail in the
+dragged state in 23 of about 300: their text height, gap and border type
+fields hold 32-bit words that look like memory addresses (0x1FFF18A8),
+not values. E-NL1 (N02 with a copy of each gravity network part label style:
+pipe, structure, section pipe and crossing profile pipe, and of the
+pressure pipe label style; dragged text height and border, orientation,
+leader color, the first component's height changed and a text component
+added): AUDIT 0; the API lists the five copies with the written values.
 
 Writing: `add_label_style` copies a label style of the drawing and its
 components with the settings and text component values given;
@@ -3281,7 +3294,7 @@ Corridors are listed in §3i-a.
 | alignments | types: centerline, utility, rail (track gauge) | yes | yes | §3a (alignment types) |
 | alignments | curb returns (connected alignments) of one arc between two roads' offset lines, turning left or right, into the outgoing road along or against its stationing | yes (type, roads) | yes | §3a (curb returns) |
 | alignments | curb returns of the other curve groups (three-centred, spiral-curve-spiral and the like), widening transitions on arcs or curved (kinds 2, 4, 5), offsets of spirals, rail cant | yes (offset parameters and regions, connected alignments, type) | no | only arc curb returns sampled; the other blocks not decoded |
-| alignments | lone spirals, other constraints (fixed/floating curves, curves through points) | yes (elements) | no | other element kinds not written |
+| alignments | lone spirals, other constraints (fixed/floating curves, curves through points) | yes (elements) | no | other element kinds not written; no sample: after a fixed line the API's floating line and floating curve additions never return in a batch run (AE01, AE02) |
 | alignments | superelevation: curves over curve elements, critical stations (begin/end full super, level crown, low shoulder match, reverse crown) with cross slopes | yes | yes | §3a (superelevation) |
 | alignments | superelevation: manual stations (with their curve settings block and descriptions) | yes | yes | §3a (superelevation) |
 | alignments | superelevation: normal crown and shoulder stations, other curve settings, lanes-only blocks, cant | yes (block walked; plain form read) | no | normal crown/shoulder stations were refused by the programming interface; the calculation wizard was not reached |
@@ -3332,7 +3345,8 @@ Corridors are listed in §3i-a.
 | gradings | criteria, groups, gradings | partly (criteria) | no | §6a |
 | mass haul | line and view | partly | no | §6a |
 | label styles | the defaults of a new drawing (§2b) | partly | yes | §2b |
-| label styles | settings: visibility, layer, text style, orientation, insert option, plan readability, leader, dragged state; text components' contents, height, offsets, angle, attachment, anchor, color, lineweight, border | yes (375 of 379 collectors, 248 of 252 text components) | yes, as copies of a drawing's label style (§2d) | §2d |
+| label styles | settings: visibility, layer, text style, orientation, insert option, plan readability, leader, dragged state; text components' contents, height, offsets, angle, attachment, anchor, color, lineweight, border | yes (every record of the application's style tree; 23 collectors of drawings of older releases do not read) | yes, as copies of a drawing's label style (§2d) | §2d |
+| label styles | pipe, structure and pressure part label styles (plan, profile, section, crossing profile) | yes | yes, as copies (§2d, E-NL1) | §2d |
 | label styles | adding and removing text components | yes | yes (§2d) | §2d |
 | label styles | line and block components' settings | yes | yes, in copies (§2d) | §2d |
 | label styles | adding or removing line and block components; anchors of lines; tick, reference text, direction arrow and iterator components' own settings; pipe and pressure part label styles | base fields | as copied | not mapped; the API refuses to set line and block anchors |
