@@ -818,7 +818,11 @@ mod tests {
         let value = |l: &Label, k: u32| l.keys.iter().find_map(|x| match x { (key, KeyValue::Double(d)) if *key == k => Some(*d), _ => None });
         assert_eq!(labels.iter().map(|l| l.0.list).collect::<Vec<_>>(), vec![LIST_PIPE, LIST_PIPE, LIST_STRUCTURE, LIST_STRUCTURE]);
         let up = -1.0 / 20.0f64.hypot(2.0);
-        assert_eq!((value(&labels[0].0, 0x0201_783B), value(&labels[0].0, 0x0201_7836), value(&labels[0].0, 0x0201_7837)), (Some(0.025), Some(40.0), Some(-200.0)));
+        assert_eq!((value(&labels[0].0, 0x0201_783B), value(&labels[0].0, 0x0201_7837)), (Some(0.025), Some(-200.0)));
+        // The end station is a solved value: its walk's lengths scale it,
+        // and another platform's libm rounds those ulps its own way.
+        let end = value(&labels[0].0, 0x0201_7836).expect("a pipe's end station");
+        assert!((end - 40.0).abs() < 1e-9);
         assert!((value(&labels[1].0, 0x0201_783B).unwrap() - up).abs() < 1e-12 && (value(&labels[0].0, 0x0201_783A).unwrap() + up).abs() < 1e-12);
         // E-PN1-edit: the structure at (70, 5) sits at 70.34093655710718.
         assert!((value(&labels[3].0, 0x0200_D020).unwrap() - 70.34093655710718).abs() < 1e-9);

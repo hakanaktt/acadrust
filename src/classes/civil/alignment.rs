@@ -1302,11 +1302,18 @@ pub enum AlignmentPiece {
 use AlignmentPiece as Piece;
 
 /// `(start, end, kind)` index ranges of the pieces of a solved run. Every
-/// solved piece repeats its first point at the join.
+/// solved piece repeats its first point at the join. A join's repeated
+/// point is the same solved point carried across the boundary, so the
+/// tolerance follows the piece matcher's scale (`1e-9` of the
+/// coordinate magnitude): a joint recomputed along its element's points
+/// can differ in the last ulps of the trigonometry without being a
+/// different point, and an absolute `1e-9` missed it on macOS, whose
+/// libm rounds those ulps differently than the other CI platforms'.
 fn split_points(raw: &[Vector2]) -> Vec<(usize, usize)> {
     let mut joins = vec![0];
     for i in 1..raw.len() {
-        if raw[i].distance(&raw[i - 1]) < 1e-9 {
+        let (a, b) = (raw[i - 1], raw[i]);
+        if a.distance(&b) <= 1e-9 * (1.0 + a.x.abs().max(a.y.abs())) {
             joins.push(i);
         }
     }
