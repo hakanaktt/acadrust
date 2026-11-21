@@ -230,6 +230,16 @@ impl ArchEntityData {
         kind_of(&self.dxf_name)
     }
 
+    /// The triangulation a TIN surface's snapshot keeps; `None` without a
+    /// snapshot.
+    pub fn tin_snapshot(&self) -> Option<TinSurface> {
+        if self.civil_kind() != Some(CivilKind::TinSurface) {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        tin::snapshot(data, start, end)
+    }
+
     /// Triangulation stored by a Civil 3D TIN surface.
     ///
     /// `None` for other classes or when the body has no readable

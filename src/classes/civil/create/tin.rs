@@ -279,21 +279,47 @@ fn write_operation(w: &mut DwgMergedWriter, operation: &TinOperation, guid: [u8;
 ///   per vertex RL flags (corner 0x8440, point 0x80), RL a triangle using
 ///   it, 3 RD; BL triangle count, per triangle 3 RL vertices, 3 RL
 ///   neighbours, RL flags (1 hidden), RL -1
-/// 7 bits 1010100, BS 0x04BE
+/// BL 0, BL 0 (1 with a snapshot: "MMS01", the snapshot's triangulation
+///   as above, BL 0), BL 0, B 0, BS 0x04BE
 /// references: soft pointer 0, hard owner 0, the definitions' sources,
 ///   hard pointer 0, style
 /// texts: "", "", the definitions' names, name, "", ""
 /// ```
-pub(super) fn write_surface(doc: &mut CadDocument, common: EntityCommon, name: &str, definitions: &[TinDefinition], auto_rebuild: bool, tin: &Triangulation, hidden: &[bool], style: u64) -> Result<Handle, DxfError> {
+#[allow(clippy::too_many_arguments)]
+pub(super) fn write_surface(doc: &mut CadDocument, common: EntityCommon, name: &str, definitions: &[TinDefinition], auto_rebuild: bool, tin: &Triangulation, hidden: &[bool], snapshot: Option<(&Triangulation, &[bool])>, style: u64) -> Result<Handle, DxfError> {
     let byte = |w: &mut DwgMergedWriter, v: u8| bits(w, &format!("{v:08b}"));
     let seed = common.handle.value() ^ tin.vertices.len() as u64;
-    let neighbors = tin.neighbors();
-    let mut incident = vec![0i32; tin.vertices.len()];
-    for (t, tri) in tin.triangles.iter().enumerate() {
-        for v in tri {
-            incident[*v] = t as i32;
+    let triangulation = |w: &mut DwgMergedWriter, tin: &Triangulation, hidden: &[bool]| {
+        let neighbors = tin.neighbors();
+        let mut incident = vec![0i32; tin.vertices.len()];
+        for (t, tri) in tin.triangles.iter().enumerate() {
+            for v in tri {
+                incident[*v] = t as i32;
+            }
         }
-    }
+        w.write_bit_long(tin.vertices.len() as i32);
+        for c in 0..4 {
+            w.write_bit_long(c);
+        }
+        for (i, v) in tin.vertices.iter().enumerate() {
+            w.write_raw_long((if i < 4 { CORNER } else { POINT }) as i32);
+            w.write_raw_long(incident[i]);
+            w.write_raw_double(v.x);
+            w.write_raw_double(v.y);
+            w.write_raw_double(v.z);
+        }
+        w.write_bit_long(tin.triangles.len() as i32);
+        for ((tri, n), h) in tin.triangles.iter().zip(&neighbors).zip(hidden) {
+            for v in tri {
+                w.write_raw_long(*v as i32);
+            }
+            for t in n {
+                w.write_raw_long(*t);
+            }
+            w.write_raw_long(i32::from(*h));
+            w.write_raw_long(-1);
+        }
+    };
     let mut refs = vec![soft_pointer(0), Ref(crate::io::dwg::dwg_reference_type::DwgReferenceType::HardOwnership, 0)];
     refs.extend(definitions.iter().flat_map(|d| d.sources.iter().map(|h| hard_pointer(*h))));
     refs.extend([hard_pointer(0), hard_pointer(style)]);
@@ -337,29 +363,18 @@ pub(super) fn write_surface(doc: &mut CadDocument, common: EntityCommon, name: &
             w.write_raw_long(-1);
             w.write_bytes(&[0xA2, 0x04, 2, 0, 0, 0x3C, 0x2A]);
             w.write_bytes(b"MMS01");
-            w.write_bit_long(tin.vertices.len() as i32);
-            for c in 0..4 {
-                w.write_bit_long(c);
-            }
-            for (i, v) in tin.vertices.iter().enumerate() {
-                w.write_raw_long((if i < 4 { CORNER } else { POINT }) as i32);
-                w.write_raw_long(incident[i]);
-                w.write_raw_double(v.x);
-                w.write_raw_double(v.y);
-                w.write_raw_double(v.z);
-            }
-            w.write_bit_long(tin.triangles.len() as i32);
-            for ((tri, n), h) in tin.triangles.iter().zip(&neighbors).zip(hidden) {
-                for v in tri {
-                    w.write_raw_long(*v as i32);
+            triangulation(w, tin, hidden);
+            w.write_bit_long(0);
+            match snapshot {
+                Some((s, h)) => {
+                    w.write_bit_long(1);
+                    w.write_bytes(b"MMS01");
+                    triangulation(w, s, h);
+                    w.write_bit_long(0);
                 }
-                for t in n {
-                    w.write_raw_long(*t);
-                }
-                w.write_raw_long(i32::from(*h));
-                w.write_raw_long(-1);
+                None => w.write_bit_long(0),
             }
-            bits(w, "1010100");
+            bits(w, "100");
             w.write_bit_short(VERSION);
         },
         Body { refs, strings },
@@ -447,6 +462,13 @@ pub fn add_tin_surface_with(doc: &mut CadDocument, name: &str, definitions: &[Ti
         _ => true,
     });
     let (tin, hidden) = all_finite.then(|| super::tin_build::build(&resolved)).flatten().ok_or_else(|| invalid("a surface needs three or more finite points, distinct in plan"))?;
+    // A snapshot keeps what the definitions before it build.
+    let snapshots: Vec<usize> = definitions.iter().enumerate().filter(|(_, d)| matches!(d.operation, TinOperation::Kind40(_))).map(|(i, _)| i).collect();
+    let snapshot = match snapshots.as_slice() {
+        [] => None,
+        [k] => Some(super::tin_build::build(&resolved[..*k]).ok_or_else(|| invalid("a snapshot needs a surface of three or more points before it"))?),
+        _ => return Err(invalid("a surface holds one snapshot")),
+    };
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
     if default_style(doc).is_none() {
@@ -460,7 +482,7 @@ pub fn add_tin_surface_with(doc: &mut CadDocument, name: &str, definitions: &[Ti
         layer_handle: Some(layer_handle),
         ..EntityCommon::default()
     };
-    write_surface(doc, common, name, definitions, auto_rebuild, &tin, &hidden, style)
+    write_surface(doc, common, name, definitions, auto_rebuild, &tin, &hidden, snapshot.as_ref().map(|(t, h)| (t, h.as_slice())), style)
 }
 
 #[cfg(test)]
@@ -591,5 +613,22 @@ mod tests {
         assert!(tin.triangles.iter().any(|t| t.is_visible() && t.vertices.contains(&ia) && t.vertices.contains(&ib)));
         assert!(!tin.vertices.iter().any(|v| v.position.x == 25.0 && v.position.y == 75.0));
         assert!(!tin.visible_triangles().any(|t| t.iter().all(|p| p.x >= 75.0 && p.y <= 25.0)));
+    }
+
+    /// A snapshot keeps what the definitions before it build; the surface
+    /// applies the later ones (TS01, TS02); a second snapshot is refused.
+    #[test]
+    fn a_snapshot_keeps_the_triangulation_before_it() {
+        let mut doc = drawing();
+        let def = |operation| TinDefinition { operation, id: [0; 16], texts: Vec::new(), sources: Vec::new() };
+        let grid: Vec<Vector3> = (0..3).flat_map(|i| (0..3).map(move |j| Vector3::new(i as f64 * 10.0, j as f64 * 10.0, 5.0))).collect();
+        let defs = [def(TinOperation::AddPoints(grid)), def(TinOperation::Kind40(0)), def(TinOperation::Raise(2.0))];
+        assert!(add_tin_surface_with(&mut doc, "T", &[defs[0].clone(), defs[1].clone(), defs[1].clone()], false, None).is_err());
+        let h = add_tin_surface_with(&mut doc, "S", &defs, false, None).unwrap();
+        let Some(crate::entities::EntityType::Extended(x)) = doc.get_entity(h) else { panic!() };
+        let crate::entities::ExtendedEntityData::Arch(a) = &x.data else { panic!() };
+        let (now, kept) = (a.tin_surface().unwrap(), a.tin_snapshot().unwrap());
+        assert_eq!((now.vertices.len(), kept.vertices.len(), now.vertices[4].position.z, kept.vertices[4].position.z), (13, 13, 7.0, 5.0));
+        assert_eq!(a.tin_definitions().unwrap().0.len(), 3);
     }
 }
