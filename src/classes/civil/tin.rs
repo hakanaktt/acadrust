@@ -75,13 +75,25 @@ impl TinSurface {
 
 /// The triangulation block of a surface body.
 pub(super) fn find(data: &[u8], start: usize, end: usize) -> Option<TinSurface> {
-    if let Some(surface) = triangulation_at(data, start, end).and_then(|pos| read_at(data, pos, end)) {
+    if let Some((surface, _)) = triangulation_at(data, start, end).and_then(|pos| read_at(data, pos, end)) {
         return Some(surface);
     }
     // debt: surfaces whose first definition is none of the forms below or
     // that hold an operation kind not mapped in [`operation`] are found by
     // probing (none in the samples).
-    (start..end).find_map(|pos| read_at(data, pos, end))
+    (start..end).find_map(|pos| read_at(data, pos, end)).map(|(s, _)| s)
+}
+
+/// The triangulation a snapshot keeps: after the surface's triangulation
+/// `BL 0, BL n` (1 with a snapshot), then "MMS01" and the snapshot's
+/// triangulation (TS01 to TS04); `None` without a snapshot.
+pub(super) fn snapshot(data: &[u8], start: usize, end: usize) -> Option<TinSurface> {
+    let (_, pos) = read_at(data, triangulation_at(data, start, end)?, end)?;
+    let mut bits = Bits::new(data, pos, end);
+    bits.bit_long()?;
+    (bits.bit_long()? == 1).then_some(())?;
+    b"MMS01".iter().all(|c| bits.raw_short_byte() == Some(*c)).then_some(())?;
+    read_at(data, bits.pos, end).map(|(s, _)| s)
 }
 
 /// Lines of a breakline, contour or boundary definition.
@@ -169,7 +181,9 @@ pub enum TinOperation {
     /// A corridor surface (the corridor is the source; the identifier is
     /// the corridor surface's).
     CorridorSurface([u8; 16]),
-    /// Kind 40: one value.
+    /// Kind 40, a snapshot: the triangulation the definitions before it
+    /// build is kept after the surface's (`ArchEntityData::tin_snapshot`); the
+    /// value is 0 (1 in drawings of older releases).
     Kind40(i32),
 }
 
@@ -232,14 +246,17 @@ pub(super) fn read_definitions(bits: &mut Bits) -> Option<Definitions> {
     let first = usize::from(bits.bits_value(2)?) << 8 | usize::from(bits.bits_value(8)?);
     let count = bits.raw_short_byte()?;
     bits.raw_short_byte()?;
-    if bits.raw_short_byte()? & 0x80 == 0 || first != 8 + 32 * usize::from(count >> 3) {
+    // The byte keeps the highest count the surface had (a removed snapshot
+    // leaves it one above: TS05); the ten bits hold the current one.
+    let n = (first >= 8 && (first - 8) % 32 == 0).then(|| (first - 8) / 32)?;
+    if bits.raw_short_byte()? & 0x80 == 0 || usize::from(count >> 3) < n {
         return None;
     }
     bits.skip(2)?;
     bits.bit_long()?;
     bits.bit_short()?;
     bits.bit()?;
-    let list = (0..count >> 3).map(|_| read_operation(bits)).collect::<Option<_>>()?;
+    let list = (0..n).map(|_| read_operation(bits)).collect::<Option<_>>()?;
     bits.bit_long()?;
     let options = bits.bit_long()?;
     bits.skip(2)?;
@@ -422,7 +439,8 @@ fn triangulation_at(data: &[u8], start: usize, end: usize) -> Option<usize> {
     marker(&mut bits)
 }
 
-fn read_at(data: &[u8], pos: usize, end: usize) -> Option<TinSurface> {
+/// A triangulation at `pos` and where it ends.
+fn read_at(data: &[u8], pos: usize, end: usize) -> Option<(TinSurface, usize)> {
     let mut bits = Bits::new(data, pos, end);
     let count = usize::try_from(bits.bit_long()?).ok()?;
     if count < 7 || count.checked_mul(VERTEX_BITS)? > bits.remaining() {
@@ -490,11 +508,14 @@ fn read_at(data: &[u8], pos: usize, end: usize) -> Option<TinSurface> {
             flags,
         });
     }
-    Some(TinSurface {
-        vertices,
-        triangles,
-        corners,
-    })
+    Some((
+        TinSurface {
+            vertices,
+            triangles,
+            corners,
+        },
+        bits.pos,
+    ))
 }
 
 /// Join `(a, b)` segments sharing end keys into polylines of keys.

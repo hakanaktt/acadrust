@@ -1044,7 +1044,8 @@ BL 0 (four-byte form), BL options (0xAC150A00; 0x01000000: rebuild
 | 30 | point file | BL, BL (the file's FILETIME, high half first), 3 option bits | the file | the point file format |
 | 33 | imported file | BL, BL (FILETIME), BL | name, the file | — |
 | 41 | corridor surface | GUID (the corridor's surface) | name | the corridor |
-| 34, 35, 40 | transform, polygon, kind 40 (older drawings) | 16 RD + BL; BL n, n x 2 RD; BL | — | — |
+| 34, 35 | transform, polygon (older drawings) | 16 RD + BL; BL n, n x 2 RD | — | — |
+| 40 | snapshot | BL 0 (1 in older drawings) | — | — |
 
 `lines`: `BL objects, BD mid-ordinate distance, BL m, m x { BL n, n x 3BD }
 (lines held by the definition, made from points), BL k, k x BL (1 to k),
@@ -1052,6 +1053,28 @@ BD maximum distance (supplementing), BD weeding distance, BD weeding
 angle`. A definition made from drawing objects holds no lines (its
 objects are the sources, in order after the hard owner); the application
 marks such a surface out of date on open (it compares with the objects).
+
+A snapshot (TS00 to TS05: a surface of 25 points and a vertex, a
+snapshot taken, then raised, the snapshot rebuilt, a vertex deleted, the
+snapshot removed) is a definition of kind 40 after those it keeps; after
+the surface's triangulation come `BL 0`, `BL 1`, "MMS01" (no header
+before it) and the snapshot's triangulation in the same form, then `BL
+0` (without a snapshot `BL 0, BL 0`); the snapshot keeps the
+triangulation the definitions before it built (the later ones raise the
+surface, not the snapshot). Removing the snapshot removes the definition
+and the copy but leaves the byte that counts definitions at its highest
+(TS05: 5 for 4 definitions), so the reader takes the count from the ten
+bits. After the application rebuilds a snapshot (TS03, TS04) the field
+written `BS 0x800C` holds 0x100A and seven more bits follow its `B`; the
+definitions of such a surface are not read (its triangulation is).
+
+`add_tin_surface_with` writes a snapshot where the definitions hold one
+(`TinOperation::Kind40(0)`, at most one), keeping the triangulation the
+definitions before it build; `ArchEntityData::tin_snapshot` reads it.
+E-TS1 (points, a vertex, a snapshot, a raise) and E-TS2 (points, a
+snapshot, a deleted vertex) open with AUDIT 0; the API reports the
+snapshot and the points and elevations of the written surface, and the
+same after rebuilding the surface and the snapshot.
 
 ### The written triangulation
 
@@ -3347,7 +3370,8 @@ Corridors are listed in §3i-a.
 | TIN surfaces | points added to the surface | yes | yes | §3c |
 | TIN surfaces | point groups, breaklines (standard, proximity, non-destructive; from objects or held points, mid-ordinate, supplementing, weeding), contours, boundaries (outer, hide, show, data clip; destructive or not), add/delete/move vertex, vertex elevation, swap edge, add/delete line, raise, drawing objects, automatic rebuild | yes (every field by kind, §3c) | yes, with the triangulation the definitions build (§3c) | 62 of 67 sample surfaces built identically; non-destructive lines through vertices, far point clusters and a non-convex deleted vertex's hole differ (§3c) |
 | TIN surfaces | pasted surfaces, point files, imported files, corridor surfaces | yes | the definition (no geometry from the source) | the application adds the source's geometry when it rebuilds |
-| TIN surfaces | transform, polygon and kind 40 definitions of older drawings, DEM files, snapshots, surfaces referenced from other drawings | partly (older kinds walked) | no | not sampled; referenced surfaces have no definitions list |
+| TIN surfaces | snapshots | yes | yes | §3c (snapshots) |
+| TIN surfaces | definitions of a surface whose snapshot was rebuilt; transform and polygon definitions of older drawings, DEM files, surfaces referenced from other drawings | partly (triangulation; older kinds walked) | no | the rebuilt snapshot's head field not decoded (TS03); the others not sampled; referenced surfaces have no definitions list |
 | alignments | fixed lines, free arcs, spiral-curve-spirals, start station, siteless and on a site | yes | yes | §3a, §3g |
 | alignments | offset alignments of lines and arcs, on either side, over the whole parent or a station range | yes | yes | §3a (station anchors, offset alignments) |
 | alignments | station anchors (profiles, offset ranges, own design speed, corridor geometry locks, design speeds, station equations) | yes | yes | §3a |
