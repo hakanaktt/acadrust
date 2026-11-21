@@ -48,7 +48,7 @@ pub use section::{MassHaulViewFrame, SectionGeometry, SectionViewFrame};
 pub use style::{DisplayComponent, Marker, ProfileViewAxisStyle, ProfileViewAxisTitle, ProfileViewGrid, ProfileViewGridLines, ProfileViewStyleSettings, ProfileViewTicks, ProfileViewTitle, ViewAxes, ViewAxis};
 pub use subassembly::{AssemblyLayout, Attachment, SubassemblyShape};
 pub use survey::SurveyFigure;
-pub use view_frames::{MatchLine, ViewFrame};
+pub use view_frames::{MatchLine, SheetGeometry, ViewFrame, ViewFrameGeometry};
 pub use topology::{Topology, TopologyVertex};
 pub use tin::{TinBoundaryType, TinBreaklineType, TinDefinition, TinLines, TinOperation, TinSurface, TinTriangle, TinVertex};
 
@@ -1121,6 +1121,29 @@ impl ArchEntityData {
         }
         let strings = self.decode().strings;
         view_frames::view_frame(&strings, &self.typed_handles())
+    }
+
+    /// The frame rectangle a view frame (`AECC_VIEWFRAME`) record keeps in
+    /// its graphic-image section: the four corners of the frame rotated to
+    /// the alignment; see [`view_frames::ViewFrameGeometry`].
+    pub fn view_frame_geometry(&self) -> Option<view_frames::ViewFrameGeometry> {
+        if self.dxf_name != "AECC_VIEWFRAME" {
+            return None;
+        }
+        let graphic = super::arch::decode::entity_graphic_data(self)?;
+        let (data, start, end) = self.main_stream()?;
+        view_frames::view_frame_geometry(data, start, end, &graphic)
+    }
+
+    /// The rectangles a sheet (`AECC_SHEET`) record keeps in its
+    /// graphic-image section; see [`view_frames::SheetGeometry`].
+    pub fn sheet_geometry(&self) -> Option<view_frames::SheetGeometry> {
+        if self.dxf_name != "AECC_SHEET" {
+            return None;
+        }
+        let graphic = super::arch::decode::entity_graphic_data(self)?;
+        let (data, start, end) = self.main_stream()?;
+        view_frames::sheet_geometry(data, start, end, &graphic)
     }
 
     /// A match line (`AECC_MATCHLINE`) between two view frames: its name,
