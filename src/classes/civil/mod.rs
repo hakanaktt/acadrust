@@ -1124,10 +1124,6 @@ impl ArchEntityData {
 
     /// Number fields of the part data a Civil 3D pipe (`AECC_PIPE`) keeps
     /// itself: flow coefficients, minimum curve radius and the like.
-    /// TEMPORARY forensic accessor (uncommitted).
-    pub fn forensic_main_stream_bits(&self) -> Option<(usize, usize)> {
-        self.main_stream().map(|(_, start, end)| (start, end))
-    }
     pub fn pipe_part_fields(&self) -> Vec<PartField> {
         if self.dxf_name != "AECC_PIPE" {
             return Vec::new();
