@@ -1,4 +1,52 @@
 //! View frames and match lines of a plan production run.
+//!
+//! Geometry: the frame and sheet records hold their rectangles in the
+//! **graphic-image section** — the `B`-flagged byte block of the common
+//! entity preamble the common entity reader isolates (the container the
+//! parcel segments read, upstream PR #591; here proven across a rotated
+//! view frame and four sheets of `CH Beispielprojekt 2017.dwg`). The
+//! section is a run-chain list that tiles it exactly:
+//!
+//! ```text
+//! u32 section byte length, u32 chain count, then that many chains:
+//!     u32 chain byte length, u32 kind, kind-specific data
+//!     kind 7 (points): u32 count, then count × (RD x, RD y, RD z)
+//!     (other kinds seen — 0x0c, 0x0e, 0x10, 0x12, 0x22 — carry style
+//!     values, flags and a preview blob; they are skipped by length)
+//! ```
+//!
+//! The plan-production class bodies (the view frame group `AECC_PLANPROD`,
+//! `AECC_VIEWFRAME`, `AECC_SHEET`) open their class stream with the same
+//! head as the parcel segments (upstream PR #591) — `BL 80, 0, 80, 80, 0`,
+//! before touching the section. The
+//! group record's own section carries no point chain: it holds no
+//! geometry in the sample.
+//!
+//! A **view frame's** single kind-7 chain is its frame rectangle walked
+//! around its four corners, rotated to the alignment: opposite edges are
+//! equal bit for bit, and the corners' axis-aligned bounds are the live
+//! API's `GeometricExtents` exactly — the API exposes only those bounds,
+//! the record the rotated corners themselves.
+//!
+//! A **sheet's** two kind-7 chains are axis-aligned rectangles at a
+//! common elevation: the second is the sheet rectangle — its bounds are
+//! the sheet's `GeometricExtents` to the last digit (checked against the
+//! live API for every sheet the drawing exposes) — and the first spans
+//! the same elevation band with its station-low edge pulled in (210 of
+//! the 1680 m width in the sample). What the first rectangle bounds the
+//! API does not expose, so it is reported without a name.
+//!
+//! **Match lines**: no `AECC_MATCHLINE` record exists in any drawing
+//! available (the CH sample carries only match-line labelings and display
+//! representations), so match-line geometry stays unmapped.
+
+use super::bits::Bits;
+use crate::types::Vector3;
+
+/// The plan-production class bodies' shared schema word — the parcel
+/// segments' word (upstream PR #591); `AECC_PLANPROD`, `AECC_VIEWFRAME`
+/// and `AECC_SHEET` open their class stream with the same head.
+const SCHEMA: u32 = 0x1002_5F04;
 
 /// One view frame of a view frame group, with the match lines on its
 /// sides. The frames of a run hang in a chain: the match line after one
@@ -92,4 +140,278 @@ pub(super) fn match_line(strings: &[String], refs: &[(u64, u8)]) -> Option<Match
         view_frame_before: *before,
         view_frame_after: *after,
     })
+}
+
+/// The rectangle a view frame record holds: its frame's four corners in
+/// record order, rotated to the alignment (see the [module](self)
+/// documentation).
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ViewFrameGeometry {
+    /// The frame's corners walked around the rectangle; opposite edges are
+    /// equal bit for bit, and the corners' axis-aligned bounds are the
+    /// live API's `GeometricExtents`.
+    pub corners: [Vector3; 4],
+}
+
+/// The rectangles a sheet record holds (see the [module](self)
+/// documentation).
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SheetGeometry {
+    /// The sheet rectangle: its corners' axis-aligned bounds are the
+    /// sheet's live `GeometricExtents` to the last digit.
+    pub extents: [Vector3; 4],
+    /// The record's first rectangle — the same elevation band, its
+    /// station-low edge pulled in; what it bounds the API does not expose.
+    pub inner: [Vector3; 4],
+}
+
+/// The plan-production class bodies' shared opening — the parcel
+/// segments' head (upstream PR #591) with the plan-production schema
+/// word (see the [module](self) documentation).
+fn plan_production_head(bits: &mut Bits) -> Option<()> {
+    for want in [80, 0, 80, 80, 0] {
+        (bits.bit_long()? == want).then_some(())?;
+    }
+    (bits.bit_long()? as u32 == SCHEMA).then_some(())?;
+    Some(())
+}
+
+/// The graphic-image section's kind-7 point chains, in record order;
+/// `None` unless the chains tile the section exactly (see the
+/// [module](self) documentation).
+fn point_chains(g: &[u8]) -> Option<Vec<Vec<Vector3>>> {
+    let u32_at = |at: usize| -> Option<u32> { Some(u32::from_le_bytes(g.get(at..at + 4)?.try_into().ok()?)) };
+    let f64_at = |at: usize| -> Option<f64> { Some(f64::from_le_bytes(g.get(at..at + 8)?.try_into().ok()?)) };
+    let chains = u32_at(4)?;
+    (u32_at(0)? as usize == g.len()).then_some(())?;
+    let mut at = 8;
+    let mut out = Vec::new();
+    for _ in 0..chains {
+        let len = usize::try_from(u32_at(at)?).ok()?;
+        (len >= 12 && g.len() >= at + len).then_some(())?;
+        if u32_at(at + 4)? == 7 {
+            let count = usize::try_from(u32_at(at + 8)?).ok()?;
+            (len == 12 + 24 * count).then_some(())?;
+            let mut points = Vec::with_capacity(count);
+            for point in 0..count {
+                let base = at + 12 + 24 * point;
+                let (x, y, z) = (f64_at(base)?, f64_at(base + 8)?, f64_at(base + 16)?);
+                (x.is_finite() && y.is_finite() && z.is_finite()).then_some(())?;
+                points.push(Vector3::new(x, y, z));
+            }
+            out.push(points);
+        }
+        at += len;
+    }
+    (at == g.len()).then_some(out)
+}
+
+/// One axis-aligned rectangle walked around its four corners, at one
+/// elevation: low, low-right, high, high-left.
+fn axis_aligned_rectangle(chain: &[Vector3]) -> Option<[Vector3; 4]> {
+    let [a, b, c, d] = chain else { return None };
+    (a.z == b.z
+        && b.z == c.z
+        && c.z == d.z
+        && a.x == d.x
+        && b.x == c.x
+        && a.y == b.y
+        && c.y == d.y
+        && a.x <= b.x
+        && a.y <= d.y)
+        .then_some([*a, *b, *c, *d])
+}
+
+/// A view frame record's frame rectangle: `graphic` is the entity's
+/// graphic-image section, `data`/`start`/`end` its class stream.
+pub(super) fn view_frame_geometry(data: &[u8], start: usize, end: usize, graphic: &[u8]) -> Option<ViewFrameGeometry> {
+    let mut bits = Bits::new(data, start, end);
+    plan_production_head(&mut bits)?;
+    let chains = point_chains(graphic)?;
+    let [chain]: [_; 1] = chains.try_into().ok()?;
+    let [a, b, c, d] = <[Vector3; 4]>::try_from(chain).ok()?;
+    // A rectangle rotated to the alignment: opposite edges equal bit for
+    // bit, right angle to 1e-9 of the edge products (1.5e-12 in the
+    // sample).
+    let dot = (b.x - a.x) * (c.x - b.x) + (b.y - a.y) * (c.y - b.y);
+    let edges = ((b.x - a.x).hypot(b.y - a.y)) * ((c.x - b.x).hypot(c.y - b.y));
+    (b.x - a.x == c.x - d.x
+        && b.y - a.y == c.y - d.y
+        && c.x - b.x == d.x - a.x
+        && c.y - b.y == d.y - a.y
+        && dot.abs() <= 1e-9 * edges)
+        .then_some(ViewFrameGeometry { corners: [a, b, c, d] })
+}
+
+/// A sheet record's rectangles: `graphic` is the entity's graphic-image
+/// section, `data`/`start`/`end` its class stream.
+pub(super) fn sheet_geometry(data: &[u8], start: usize, end: usize, graphic: &[u8]) -> Option<SheetGeometry> {
+    let mut bits = Bits::new(data, start, end);
+    plan_production_head(&mut bits)?;
+    let chains = point_chains(graphic)?;
+    let [inner, extents]: [Vec<Vector3>; 2] = chains.try_into().ok()?;
+    let inner = axis_aligned_rectangle(&inner)?;
+    let extents = axis_aligned_rectangle(&extents)?;
+    // The sheet rectangle encloses the first one; in the sample three
+    // edges are shared and the station-low edge is pulled in.
+    (inner[0].z == extents[0].z
+        && inner[0].x >= extents[0].x
+        && inner[0].y >= extents[0].y
+        && inner[2].x <= extents[2].x
+        && inner[2].y <= extents[2].y)
+        .then_some(SheetGeometry { extents, inner })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A plan-production class body opening (shared head) as bytes.
+    fn class_stream() -> Vec<u8> {
+        let mut bits = String::new();
+        // BL: 2-bit form, then the value's raw bytes in memory order
+        // (little-endian for the 32-bit form).
+        let bl = |v: u32, bits: &mut String| match v {
+            0 => bits.push_str("10"),
+            v if v < 256 => bits.push_str(&format!("01{v:08b}")),
+            v => {
+                bits.push_str("00");
+                for b in v.to_le_bytes() {
+                    bits.push_str(&format!("{b:08b}"));
+                }
+            }
+        };
+        for v in [80, 0, 80, 80, 0, SCHEMA] {
+            bl(v, &mut bits);
+        }
+        while bits.len() % 8 != 0 {
+            bits.push('0');
+        }
+        bits.as_bytes()
+            .chunks(8)
+            .map(|c| u8::from_str_radix(std::str::from_utf8(c).unwrap(), 2).unwrap())
+            .collect()
+    }
+
+    /// A graphic-image section over the given point chains, plus an
+    /// unparsed four-byte filler chain (kind 0x10) in between.
+    fn section(chains: &[&[(f64, f64, f64)]], filler: bool) -> Vec<u8> {
+        let mut g = Vec::new();
+        let put_u32 = |g: &mut Vec<u8>, v: u32| g.extend(v.to_le_bytes());
+        let put_f64 = |g: &mut Vec<u8>, v: f64| g.extend(v.to_le_bytes());
+        put_u32(&mut g, 0); // section length, patched below
+        put_u32(&mut g, chains.len() as u32 + u32::from(filler));
+        if filler {
+            put_u32(&mut g, 12);
+            put_u32(&mut g, 0x10);
+            put_u32(&mut g, 0x4c);
+        }
+        for chain in chains {
+            put_u32(&mut g, (12 + 24 * chain.len()) as u32);
+            put_u32(&mut g, 7);
+            put_u32(&mut g, chain.len() as u32);
+            for &(x, y, z) in *chain {
+                put_f64(&mut g, x);
+                put_f64(&mut g, y);
+                put_f64(&mut g, z);
+            }
+        }
+        let len = g.len() as u32;
+        g[0..4].copy_from_slice(&len.to_le_bytes());
+        g
+    }
+
+    /// A rotated rectangle: 830 m at 18.43 degrees, 287 m wide, around the
+    /// sample's low corner.
+    fn rotated_corners() -> Vec<(f64, f64, f64)> {
+        [
+            (5518791.420847342, 4351596.896317183, 0.0),
+            (5519578.861366005, 4351859.265197898, 0.0),
+            (5519669.584099456, 4351586.9815486735, 0.0),
+            (5518882.143580793, 4351324.612667958, 0.0),
+        ]
+        .into()
+    }
+
+    #[test]
+    fn reads_a_frames_rotated_rectangle() {
+        let class = class_stream();
+        let g = section(&[&rotated_corners()], false);
+        let at = view_frame_geometry(&class, 0, class.len() * 8, &g).expect("geometry decodes");
+        assert_eq!(at.corners[0], Vector3::new(5518791.420847342, 4351596.896317183, 0.0));
+        assert_eq!(at.corners[2], Vector3::new(5519669.584099456, 4351586.9815486735, 0.0));
+    }
+
+    #[test]
+    fn a_frame_needs_its_right_angle() {
+        let class = class_stream();
+        let mut corners = rotated_corners();
+        corners[2].1 += 1.0; // no longer a rectangle
+        let g = section(&[&corners], false);
+        assert_eq!(view_frame_geometry(&class, 0, class.len() * 8, &g), None);
+    }
+
+    #[test]
+    fn reads_a_sheets_two_rectangles() {
+        let class = class_stream();
+        let inner = [
+            (5522166.0, 4350250.0, 273.4),
+            (5523636.0, 4350250.0, 273.4),
+            (5523636.0, 4350844.0, 273.4),
+            (5522166.0, 4350844.0, 273.4),
+        ];
+        let extents = [
+            (5521956.012249335, 4350250.0, 273.4),
+            (5523636.012249335, 4350250.0, 273.4),
+            (5523636.012249335, 4350844.0, 273.4),
+            (5521956.012249335, 4350844.0, 273.4),
+        ];
+        // An unparsed filler chain sits between the record's chains.
+        let g = section(&[&inner, &extents], true);
+        let at = sheet_geometry(&class, 0, class.len() * 8, &g).expect("geometry decodes");
+        assert_eq!(at.extents[0], Vector3::new(5521956.012249335, 4350250.0, 273.4));
+        assert_eq!(at.inner[0], Vector3::new(5522166.0, 4350250.0, 273.4));
+    }
+
+    #[test]
+    fn a_sheet_with_one_chain_is_not_a_sheet_geometry() {
+        let class = class_stream();
+        let g = section(&[&[(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, 0.0), (0.0, 1.0, 0.0)]], false);
+        assert_eq!(sheet_geometry(&class, 0, class.len() * 8, &g), None);
+    }
+
+    #[test]
+    fn another_schema_word_is_not_a_plan_production_record() {
+        let mut bits = String::new();
+        let bl = |v: u32, bits: &mut String| {
+            bits.push_str("00");
+            for b in v.to_le_bytes() {
+                bits.push_str(&format!("{b:08b}"));
+            }
+        };
+        for v in [80, 0, 80, 80, 0, SCHEMA ^ 1] {
+            bl(v, &mut bits);
+        }
+        while bits.len() % 8 != 0 {
+            bits.push('0');
+        }
+        let data: Vec<u8> = bits
+            .as_bytes()
+            .chunks(8)
+            .map(|c| u8::from_str_radix(std::str::from_utf8(c).unwrap(), 2).unwrap())
+            .collect();
+        let g = section(&[&rotated_corners()], false);
+        assert_eq!(view_frame_geometry(&data, 0, data.len() * 8, &g), None);
+        assert_eq!(sheet_geometry(&data, 0, data.len() * 8, &g), None);
+    }
+
+    #[test]
+    fn chains_must_tile_the_section() {
+        let class = class_stream();
+        let mut g = section(&[&rotated_corners()], false);
+        g.truncate(g.len() - 8); // the section length no longer matches
+        assert_eq!(view_frame_geometry(&class, 0, class.len() * 8, &g), None);
+    }
 }
