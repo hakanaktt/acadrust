@@ -1224,6 +1224,24 @@ fn spans(elements: &[AlignmentElement]) -> Option<Vec<(&AlignmentElement, f64, V
     (out.len() == elements.len() && used == pieces.len()).then_some(out)
 }
 
+/// The critical stations of the superelevation `curves` of the alignment
+/// `elements` (start station `start`): station, curve element, kind code,
+/// ending and cross slopes, in station order; and the alignment's end
+/// station.
+#[allow(clippy::type_complexity)]
+pub(super) fn superelevation_stations(elements: &[AlignmentElement], start: f64, curves: &[SuperelevationCurveData]) -> Option<(Vec<(f64, i16, i32, bool, [f64; 8])>, f64)> {
+    let spans = spans(elements)?;
+    let mut out = Vec::new();
+    for c in curves {
+        let (_, from, pieces) = spans.iter().find(|(e, _, _)| e.id == c.element)?;
+        let to = from + pieces.iter().map(piece_length).sum::<f64>();
+        out.extend(c.stations.iter().map(|s| (start + if s.ending { to } else { *from } + s.offset, c.element, s.kind, s.ending, s.slopes)));
+    }
+    out.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let length: f64 = spans.iter().flat_map(|(_, _, p)| p.iter().map(piece_length)).sum();
+    Some((out, start + length))
+}
+
 /// The station of the point of the alignment `elements` (start station
 /// `start`) nearest to `p`: lines and arcs exactly, spirals along their
 /// points.

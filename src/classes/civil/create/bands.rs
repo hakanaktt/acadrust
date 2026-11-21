@@ -194,6 +194,21 @@ struct Label {
     keys: Vec<(u32, KeyValue)>,
     run: &'static str,
     list: &'static [u32],
+    /// Nodes under the label, each written like a label without the
+    /// closing `BL 0`; each takes one hard reference to the alignment.
+    children: Vec<Label>,
+}
+
+impl Label {
+    /// The nodes under the label, all levels.
+    fn descendants(&self) -> usize {
+        self.children.iter().map(|c| 1 + c.descendants()).sum()
+    }
+
+    /// Its text keys (type 0x04), all levels: one text each.
+    fn texts(&self) -> usize {
+        self.keys.iter().filter(|k| k.0 >> 24 == 4).count() + self.children.iter().map(Label::texts).sum::<usize>()
+    }
 }
 
 enum KeyValue {
@@ -222,6 +237,14 @@ const RUN_PIPE: &str = "00000000010000001100100100000000000000000000";
 const RUN_STRUCTURE: &str = "00000000010000001011100100000000000000000000";
 const LIST_PIPE: &[u32] = &[0x0101_5013, 0x0F01_781C];
 const LIST_STRUCTURE: &[u32] = &[0x0101_5013, 0x0200_D020, 0x0F01_781C];
+const RUN_SE_STATION: &str = "00000000010000001001100100000000000000000000";
+const RUN_SE_REGION: &str = "00000000010000001010100100000000000000000000";
+const RUN_SE_POINT: &str = "00000000010000000100000100000000000000000000";
+const RUN_SE_ELEMENT: &str = "00000000010000000001000100000000000000000000";
+const LIST_SE_STATION: &[u32] = &[0x0101_5013];
+const LIST_SE_REGION: &[u32] = &[0x0101_5013, 0x0101_781B, 0x0201_7817];
+const LIST_SE_POINT: &[u32] = &[0x0100_1025, 0x0100_D551, 0x0100_D571, 0x0200_D61D, 0x0300_1040, 0x0400_D56F];
+const LIST_SE_ELEMENT: &[u32] = &[0x0100_D61E, 0x0100_D621, 0x0200_D61D];
 const RUN_ELEMENT: &str = "00000000010000001000100100000000000000000000";
 const RUN_CURVE_MIDDLE: &str = "00000000010000001111100100000000000000000000";
 const LIST_ELEMENT: &[u32] = &[0x0100_D61E, 0x0100_D621, 0x0100_D731, 0x0101_5013, 0x0200_D020, 0x0200_D61D];
@@ -302,15 +325,15 @@ fn data_labels(frame: &ProfileViewFrame, band: &ProfileViewBand, number: i32, po
     let mut out: Vec<(f64, Label)> = Vec::new();
     let near = |s: f64| points.iter().any(|p| (p.0 - s).abs() < 1e-6);
     if band.label_at_start {
-        out.push((frame.station_min, Label { keys: vec![(0x0300_D622, KeyValue::Byte(1)), (0x0101_5013, KeyValue::Long(number)), station(frame.station_min)], run: RUN_ENDS, list: LIST_ENDS }));
+        out.push((frame.station_min, Label { keys: vec![(0x0300_D622, KeyValue::Byte(1)), (0x0101_5013, KeyValue::Long(number)), station(frame.station_min)], run: RUN_ENDS, list: LIST_ENDS, children: Vec::new() }));
     }
     let mut s = (frame.station_min / MINOR).floor() * MINOR + MINOR;
     while s < frame.station_max - 1e-9 {
         if !near(s) {
             let label = if (s / MAJOR).round() * MAJOR == s {
-                Label { keys: vec![(0x0200_D61F, KeyValue::Double(MAJOR)), (0x0101_5013, KeyValue::Long(number)), station(s)], run: RUN_ENDS, list: LIST_ENDS }
+                Label { keys: vec![(0x0200_D61F, KeyValue::Double(MAJOR)), (0x0101_5013, KeyValue::Long(number)), station(s)], run: RUN_ENDS, list: LIST_ENDS, children: Vec::new() }
             } else {
-                Label { keys: vec![(0x0200_D61F, KeyValue::Double(MAJOR)), (0x0101_5013, KeyValue::Long(number)), (0x0200_D620, KeyValue::Double(MINOR)), station(s)], run: RUN_MINOR, list: LIST_MINOR }
+                Label { keys: vec![(0x0200_D61F, KeyValue::Double(MAJOR)), (0x0101_5013, KeyValue::Long(number)), (0x0200_D620, KeyValue::Double(MINOR)), station(s)], run: RUN_MINOR, list: LIST_MINOR, children: Vec::new() }
             };
             out.push((s, label));
         }
@@ -318,10 +341,10 @@ fn data_labels(frame: &ProfileViewFrame, band: &ProfileViewBand, number: i32, po
     }
     for &(s, code, kind, fraction) in points.iter().filter(|p| p.0 > frame.station_min && p.0 < frame.station_max) {
         let keys = vec![(0x0101_5013, KeyValue::Long(number)), (0x0200_D61D, KeyValue::Double(fraction)), station(s), (0x0100_D068, KeyValue::Long(code)), (0x0100_D61E, KeyValue::Long(kind))];
-        out.push((s, Label { keys, run: RUN_POINT, list: LIST_POINT }));
+        out.push((s, Label { keys, run: RUN_POINT, list: LIST_POINT, children: Vec::new() }));
     }
     if band.label_at_end {
-        out.push((frame.station_max, Label { keys: vec![(0x0300_D623, KeyValue::Byte(1)), (0x0101_5013, KeyValue::Long(number)), station(frame.station_max)], run: RUN_ENDS, list: LIST_ENDS }));
+        out.push((frame.station_max, Label { keys: vec![(0x0300_D623, KeyValue::Byte(1)), (0x0101_5013, KeyValue::Long(number)), station(frame.station_max)], run: RUN_ENDS, list: LIST_ENDS, children: Vec::new() }));
     }
     out.sort_by(|a, b| a.0.total_cmp(&b.0));
     out
@@ -339,6 +362,7 @@ fn vertical_labels(profile: &ArchEntityData, number: i32) -> Vec<Label> {
             keys: vec![(0x0101_7807 + i as u32, KeyValue::Long(i as i32)), (0x0101_5013, KeyValue::Long(number)), (0x0100_FC31, KeyValue::Long(id))],
             run: RUN_VERTICAL,
             list: LIST_VERTICAL,
+            children: Vec::new(),
         })
         .collect()
 }
@@ -400,7 +424,7 @@ fn horizontal_labels(alignment: &ArchEntityData, number: i32) -> Option<Vec<(f64
         let turn = if start_radius(i) != 0.0 { start_radius(i) } else { end_radius(i) };
         if curve(i) {
             let keys = vec![(0x0101_5013, KeyValue::Long(number)), (0x0100_D731, KeyValue::Long(curve_no)), (0x0200_D020, KeyValue::Double(middle)), (0x0100_D621, KeyValue::Long(-1)), (0x0100_D61E, KeyValue::Long(curve_no))];
-            out.push((middle, Label { keys, run: RUN_CURVE_MIDDLE, list: LIST_CURVE_MIDDLE }));
+            out.push((middle, Label { keys, run: RUN_CURVE_MIDDLE, list: LIST_CURVE_MIDDLE, children: Vec::new() }));
         }
         let keys = vec![
             (0x0101_782A, KeyValue::Long(end_code(i))),
@@ -418,7 +442,7 @@ fn horizontal_labels(alignment: &ArchEntityData, number: i32) -> Option<Vec<(f64
             if curve(i) { (0x0101_780C, KeyValue::Long(1)) } else { (0x0101_780B, KeyValue::Long(0)) },
             (0x0201_782D, KeyValue::Double(start_radius(i))),
         ];
-        out.push((middle, Label { keys, run: RUN_ELEMENT, list: LIST_ELEMENT }));
+        out.push((middle, Label { keys, run: RUN_ELEMENT, list: LIST_ELEMENT, children: Vec::new() }));
     }
     Some(out)
 }
@@ -439,13 +463,13 @@ fn sectional_labels(doc: &CadDocument, group: Handle, number: i32) -> Option<Vec
         let mut keys = Vec::new();
         head(&mut keys);
         tail(&mut keys, s);
-        out.push((Label { keys, run: RUN_SAMPLE_LINE, list: LIST_SAMPLE_LINE }, vec![line, group.value()]));
+        out.push((Label { keys, run: RUN_SAMPLE_LINE, list: LIST_SAMPLE_LINE, children: Vec::new() }, vec![line, group.value()]));
         if i > 0 {
             let mut keys = Vec::new();
             head(&mut keys);
             keys.push((0x0201_7823, KeyValue::Double(lines[i - 1].0)));
             tail(&mut keys, s);
-            out.push((Label { keys, run: RUN_INCREMENT, list: LIST_INCREMENT }, vec![line, group.value()]));
+            out.push((Label { keys, run: RUN_INCREMENT, list: LIST_INCREMENT, children: Vec::new() }, vec![line, group.value()]));
         }
     }
     Some(out)
@@ -485,17 +509,98 @@ fn network_labels(doc: &CadDocument, network: Handle, alignment: &ArchEntityData
             (0x0101_5013, KeyValue::Long(number)),
             (0x0201_7836, KeyValue::Double(station(b)?)),
         ];
-        out.push((Label { keys, run: RUN_PIPE, list: LIST_PIPE }, vec![h]));
+        out.push((Label { keys, run: RUN_PIPE, list: LIST_PIPE, children: Vec::new() }, vec![h]));
     }
     for &h in &n.structures {
         let p = super::network::arch_entity(doc, Handle::new(h))?.structure_position()?;
         let keys = vec![(0x0F01_781C, KeyValue::Reference), (0x0101_5013, KeyValue::Long(number)), (0x0200_D020, KeyValue::Double(station(p)?))];
-        out.push((Label { keys, run: RUN_STRUCTURE, list: LIST_STRUCTURE }, vec![h]));
+        out.push((Label { keys, run: RUN_STRUCTURE, list: LIST_STRUCTURE, children: Vec::new() }, vec![h]));
+    }
+    Some(out)
+}
+
+/// The labels of a superelevation band of an alignment with
+/// superelevation (E-SE0 to E-SE4, rebuilt by the application): one per
+/// critical station in station order (key 0x01017812 + n = n: 1 level
+/// crown, 2 reverse crown, 3 begin and end full super, 4 low shoulder
+/// match; its station), then per cross segment, in ascending code (0x100
+/// right + 2 inside + 1 lane), one per run between two consecutive points
+/// where the segment's slope changes, the points being the alignment's
+/// start (slope 0), the critical stations and its end (slope 0): its
+/// start and end stations (0x0200D101, 0x0200D102) and their middle, the
+/// slopes there (0x02017826, 0x02017827), the code (0x0101781B) and the
+/// largest slope of all stations either way (0x02017817). A label's node
+/// names its point: a critical station by kind code, ending and its curve
+/// element (two element nodes, at 0 and 1), the alignment's end by code
+/// 0, 2 and 0.5. `None` with a manual station (not sampled).
+fn superelevation_labels(alignment: &ArchEntityData, number: i32) -> Option<Vec<Label>> {
+    let curves = alignment.alignment_superelevation()?;
+    let start = alignment.alignment_start_station()?;
+    let (stations, end) = super::alignment::superelevation_stations(&alignment.alignment_elements()?, start, &curves)?;
+    let element = |id: i16, at: f64| Label { keys: vec![(0x0200_D61D, KeyValue::Double(at)), (0x0100_D621, KeyValue::Long(-1)), (0x0100_D61E, KeyValue::Long(i32::from(id)))], run: RUN_SE_ELEMENT, list: LIST_SE_ELEMENT, children: Vec::new() };
+    let point = |kind: i32, ending: bool, id: i16| Label {
+        keys: vec![(0x0400_D56F, KeyValue::Reference), (0x0100_D551, KeyValue::Long(kind)), (0x0100_1025, KeyValue::Long(3)), (0x0300_1040, KeyValue::Byte(0)), (0x0200_D61D, KeyValue::Double(if ending { 1.0 } else { 0.0 })), (0x0100_D571, KeyValue::Long(0))],
+        run: RUN_SE_POINT,
+        list: LIST_SE_POINT,
+        children: vec![element(id, 0.0), element(id, 1.0)],
+    };
+    let end_point = || Label { keys: vec![(0x0400_D56F, KeyValue::Reference), (0x0100_D551, KeyValue::Long(0)), (0x0100_1025, KeyValue::Long(2)), (0x0200_D61D, KeyValue::Double(0.5)), (0x0100_D571, KeyValue::Long(0))], run: RUN_SE_POINT, list: LIST_SE_POINT, children: Vec::new() };
+    let mut out = Vec::new();
+    for &(s, id, kind, ending, _) in &stations {
+        let n = match kind {
+            7 => 1,
+            9 => 2,
+            3 | 4 => 3,
+            8 => 4,
+            _ => return None,
+        };
+        let keys = vec![(0x0101_7812 + n as u32, KeyValue::Long(n)), (0x0101_5013, KeyValue::Long(number)), (0x0200_D020, KeyValue::Double(s))];
+        out.push(Label { keys, run: RUN_SE_STATION, list: LIST_SE_STATION, children: vec![point(kind, ending, id)] });
+    }
+    let largest = stations.iter().flat_map(|s| s.4).map(f64::abs).fold(0.0, f64::max);
+    let code = |i: usize| {
+        let (side, inside, part) = crate::classes::civil::alignment::SUPERELEVATION_SEGMENTS[i];
+        i32::from(side == 2) * 0x100 + i32::from(inside == 1) * 2 + i32::from(part == 1)
+    };
+    let mut segments: Vec<usize> = (0..8).collect();
+    segments.sort_by_key(|i| code(*i));
+    for i in segments {
+        let mut points: Vec<(f64, f64, Option<usize>)> = vec![(start, 0.0, None)];
+        points.extend(stations.iter().enumerate().map(|(j, s)| (s.0, s.4[i], Some(j))));
+        points.push((end, 0.0, None));
+        for w in points.windows(2) {
+            let ((a, sa, _), (b, sb, at)) = (w[0], w[1]);
+            if sa == sb {
+                continue;
+            }
+            let keys = vec![
+                (0x0201_7827, KeyValue::Double(sb)),
+                (0x0200_D102, KeyValue::Double(b)),
+                (0x0101_781B, KeyValue::Long(code(i))),
+                (0x0201_7826, KeyValue::Double(sa)),
+                (0x0200_D101, KeyValue::Double(a)),
+                (0x0301_7834, KeyValue::Byte(0)),
+                (0x0101_5013, KeyValue::Long(number)),
+                (0x0201_7817, KeyValue::Double(largest)),
+                (0x0200_D020, KeyValue::Double((a + b) / 2.0)),
+            ];
+            let node = match at {
+                Some(j) => point(stations[j].2, stations[j].3, stations[j].1),
+                None => end_point(),
+            };
+            out.push(Label { keys, run: RUN_SE_REGION, list: LIST_SE_REGION, children: vec![node] });
+        }
     }
     Some(out)
 }
 
 fn write_label(w: &mut DwgMergedWriter, l: &Label) {
+    write_node(w, l);
+    w.write_bit_long(0);
+}
+
+/// A label's keys, run, key list and nodes.
+fn write_node(w: &mut DwgMergedWriter, l: &Label) {
     w.write_bit_long(l.keys.len() as i32);
     for (key, value) in &l.keys {
         w.write_bit_long(*key as i32);
@@ -512,8 +617,10 @@ fn write_label(w: &mut DwgMergedWriter, l: &Label) {
     for k in l.list {
         w.write_bit_long(*k as i32);
     }
-    w.write_bit_long(0);
-    w.write_bit_long(0);
+    w.write_bit_long(l.children.len() as i32);
+    for c in &l.children {
+        write_node(w, c);
+    }
 }
 
 /// Writes the label group of the band `b`, the `number`th band of `view`:
@@ -550,20 +657,22 @@ pub(super) fn write_group(doc: &mut CadDocument, common: EntityCommon, b: &Resol
         }
         BandKind::VerticalGeometry => super::network::arch_entity(doc, Handle::new(b.profile1)).map(|p| vertical_labels(p, number)).unwrap_or_default(),
         BandKind::HorizontalGeometry => horizontal_labels(a, number).unwrap_or_default().into_iter().map(|l| l.1).collect(),
-        // Without a data source (superelevation: not written) these
-        // bands have no labels.
-        BandKind::Superelevation | BandKind::SectionalData | BandKind::PipeNetwork => Vec::new(),
+        // A superelevation band reads the alignment's superelevation
+        // (none: no labels; manual stations: left to the application).
+        BandKind::Superelevation => superelevation_labels(a, number).unwrap_or_default(),
+        BandKind::SectionalData | BandKind::PipeNetwork => Vec::new(),
     };
     labels.into_iter().map(|l| (l, Vec::new())).collect()
         }
     };
     let mut refs = vec![soft_pointer(0), soft_pointer(0), soft_pointer(view), hard_pointer(0)];
-    for (_, objects) in &labels {
+    for (l, objects) in &labels {
         refs.extend(objects.iter().map(|h| soft_pointer(*h)));
         refs.push(hard_pointer(view));
+        refs.extend((0..l.descendants()).map(|_| hard_pointer(alignment.value())));
     }
     let mut strings = vec![b.band.kind.class_text().to_string()];
-    strings.extend((0..3).map(|_| String::new()));
+    strings.extend((0..3 + labels.iter().map(|l| l.0.texts()).sum::<usize>()).map(|_| String::new()));
     let (before, after) = tail(b.band.kind);
     put_entity(
         doc,
@@ -676,5 +785,32 @@ mod tests {
         assert!((value(&labels[1].0, 0x0201_783B).unwrap() - up).abs() < 1e-12 && (value(&labels[0].0, 0x0201_783A).unwrap() + up).abs() < 1e-12);
         // E-PN1-edit: the structure at (70, 5) sits at 70.34093655710718.
         assert!((value(&labels[3].0, 0x0200_D020).unwrap() - 70.34093655710718).abs() < 1e-9);
+    }
+
+    /// A superelevation band labels the critical stations, then the runs
+    /// where a cross segment's slope changes, each run naming its end.
+    #[test]
+    fn superelevation_labels_of_an_alignment() {
+        use super::super::alignment::{add_alignment_with_curves, add_superelevation, CriticalStation, CriticalStationKind, SuperelevationCurve, VertexCurve};
+        let v = crate::types::Vector2::new;
+        let mut doc = CadDocument::new();
+        let a = add_alignment_with_curves(&mut doc, "AL1", &[v(0.0, 0.0), v(100.0, 0.0), v(200.0, 60.0), v(300.0, 0.0)], &[VertexCurve::Arc(80.0), VertexCurve::Arc(80.0)], None).unwrap();
+        let slopes = |s: f64| {
+            let mut x = [0.0; 8];
+            x[3] = s;
+            x
+        };
+        let st = |kind, station, ending, s| CriticalStation { kind, station, ending, slopes: slopes(s) };
+        let stations = vec![st(CriticalStationKind::LowShoulderMatch, 50.0, false, -0.02), st(CriticalStationKind::BeginFullSuper, 70.0, false, -0.06), st(CriticalStationKind::EndFullSuper, 100.0, true, -0.06), st(CriticalStationKind::LowShoulderMatch, 120.0, true, -0.02)];
+        add_superelevation(&mut doc, a, &[SuperelevationCurve { element: 4, stations }]).unwrap();
+        let labels = superelevation_labels(super::super::network::arch_entity(&doc, a).unwrap(), 1).unwrap();
+        let value = |l: &Label, k: u32| l.keys.iter().find_map(|x| match x { (key, KeyValue::Double(d)) if *key == k => Some(*d), (key, KeyValue::Long(i)) if *key == k => Some(f64::from(*i)), _ => None });
+        // E-SE4-edit: four stations, then the runs 0-50, 50-70, 100-120 and 120 to the end.
+        assert_eq!(labels.len(), 8);
+        assert_eq!((value(&labels[0], 0x0101_7816), labels[0].children[0].children.len()), (Some(4.0), 2));
+        assert_eq!((value(&labels[5], 0x0200_D101), value(&labels[5], 0x0200_D102), value(&labels[5], 0x0101_781B), value(&labels[5], 0x0201_7817)), (Some(50.0), Some(70.0), Some(259.0), Some(0.06)));
+        assert!((value(&labels[5], 0x0201_7826).unwrap() + 0.02).abs() < 1e-12);
+        assert_eq!((value(&labels[7].children[0], 0x0100_1025), labels[7].children[0].children.len()), (Some(2.0), 0));
+        assert_eq!(labels.iter().map(Label::texts).sum::<usize>(), 8);
     }
 }
