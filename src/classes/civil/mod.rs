@@ -26,6 +26,7 @@ mod style;
 mod subassembly;
 mod tin;
 mod survey;
+mod parcel_segments;
 mod topology;
 mod view_frames;
 
