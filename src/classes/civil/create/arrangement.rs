@@ -120,11 +120,16 @@ fn near(a: Vector2, b: Vector2) -> bool {
 impl State {
     /// Every segment in the graph: (from, to, bulge).
     fn segments(&self) -> Vec<(usize, usize, f64)> {
+        self.member_segments().into_iter().map(|(_, s)| s).collect()
+    }
+
+    /// The segments with the index of the member they belong to.
+    fn member_segments(&self) -> Vec<(usize, (usize, usize, f64))> {
         let mut out = Vec::new();
-        for e in &self.edges {
+        for (k, e) in self.edges.iter().enumerate() {
             let n = e.vertices.len();
             for i in 0..e.present {
-                out.push((e.vertices[i].node, e.vertices[(i + 1) % n].node, e.vertices[i].bulge.unwrap_or(0.0)));
+                out.push((k, (e.vertices[i].node, e.vertices[(i + 1) % n].node, e.vertices[i].bulge.unwrap_or(0.0))));
             }
         }
         out
@@ -222,7 +227,8 @@ pub(super) fn build(members: &[Input]) -> Result<Arrangement, &'static str> {
     for m in members {
         let old_faces = s.faces.len();
         let old_nodes = s.nodes.len();
-        let old_segments = s.segments();
+        let crossed_segments = s.member_segments();
+        let old_segments: Vec<(usize, usize, f64)> = crossed_segments.iter().map(|x| x.1).collect();
         let n = m.path.len();
         // Own nodes: an open member's ends, then its inner points; a closed
         // one's in path order. A point on an earlier node takes that node.
@@ -243,11 +249,11 @@ pub(super) fn build(members: &[Input]) -> Result<Arrangement, &'static str> {
         let segs = if m.closed { n } else { n - 1 };
         let mut on_new: Vec<Vec<(f64, usize)>> = vec![Vec::new(); segs];
         let mut on_old: Vec<(usize, usize, f64, usize)> = Vec::new();
-        let mut crossings: Vec<(usize, f64, Vector2)> = Vec::new();
+        let mut crossings: Vec<(usize, usize, f64, Vector2)> = Vec::new();
         for i in 0..segs {
             let (p, q) = (m.path[i].0, m.path[(i + 1) % n].0);
             let straight = m.path[i].1.is_none();
-            for &(a, b, g) in &old_segments {
+            for &(member, (a, b, g)) in &crossed_segments {
                 let (pa, pb) = (s.nodes[a].0, s.nodes[b].0);
                 if !straight || g != 0.0 {
                     continue;
@@ -287,18 +293,22 @@ pub(super) fn build(members: &[Input]) -> Result<Arrangement, &'static str> {
                             on_new[i].push((t, node));
                         }
                     }
-                    (true, true) => crossings.push((i, t, x)),
+                    (true, true) => crossings.push((member, i, t, x)),
                 }
             }
         }
-        // Crossing nodes take the next ids in the member's order.
-        crossings.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
+        // Crossing nodes take the next ids by the member crossed, then in
+        // the new member's order (FX04: a feature line crossing a later
+        // one first gives the earlier one's crossing the lower id).
+        crossings.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.total_cmp(&b.2)));
         let mut placed: Vec<(Vector2, usize)> = Vec::new();
-        for &(i, t, x) in &crossings {
+        for &(_, i, t, x) in &crossings {
             let node = match placed.iter().find(|p| near(p.0, x)) {
                 Some(p) => p.1,
                 None => {
-                    s.nodes.push((x, 0.0));
+                    // A crossing takes the new member's elevation there.
+                    let (z0, z1) = (m.elevations[i], m.elevations[(i + 1) % n]);
+                    s.nodes.push((x, z0 + (z1 - z0) * t));
                     placed.push((x, s.nodes.len() - 1));
                     s.nodes.len() - 1
                 }
@@ -307,7 +317,7 @@ pub(super) fn build(members: &[Input]) -> Result<Arrangement, &'static str> {
                 on_new[i].push((t, node));
             }
         }
-        for &(_, _, x) in &crossings {
+        for &(_, _, _, x) in &crossings {
             let node = placed.iter().find(|p| near(p.0, x)).map(|p| p.1).ok_or("a crossing has no node")?;
             for &(a, b, g) in &old_segments {
                 if g == 0.0 && a != node && b != node {
