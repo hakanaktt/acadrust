@@ -154,7 +154,8 @@ pub(super) fn write_group(doc: &mut CadDocument, g: &Group) -> Result<Handle, Dx
 /// the vertices left of the alignment, then those right of it, each side
 /// `BL n, n x {BD 0, BD offset (left negative), BD station less the
 /// line's}` from the alignment outwards,
-/// BL sections, BL section views, LINE_TAIL
+/// BL sections, BL section views, LINE_TAIL (a line with all its vertices
+///   on one side: its first bit, BL 1, its bits after the first three)
 /// references: soft 0, hard owner 0, hard 0, soft 0 per vertex, style,
 ///   group (hard), the sections, the section views (soft)
 /// texts: "AeccImpSampleLine", "", name, ""
@@ -163,8 +164,8 @@ pub(super) fn write_group(doc: &mut CadDocument, g: &Group) -> Result<Handle, Dx
 /// The line's station is where it crosses the alignment. The lines of WL11
 /// to WL13 (stations 50, 80 and 20) and of LV00 to LV02 (three and four
 /// vertices, stations away from the line's) equal the samples' records bit
-/// for bit. A line with all its vertices on one side closes with another
-/// run (one sample) and is not written.
+/// for bit, and so do the one-sided lines of LV03 and LW01 to LW04 (left
+/// or right, two or three vertices, square or skewed to the alignment).
 pub(super) fn write_line(doc: &mut CadDocument, l: &Line) -> Result<Handle, DxfError> {
     let (name, station) = (l.name.as_str(), l.station);
     let mut refs = vec![soft_pointer(0), Ref(DwgReferenceType::HardOwnership, 0), hard_pointer(0)];
@@ -194,7 +195,13 @@ pub(super) fn write_line(doc: &mut CadDocument, l: &Line) -> Result<Handle, DxfE
             }
             w.write_bit_long(l.sections.len() as i32);
             w.write_bit_long(l.views.len() as i32);
-            bits(w, LINE_TAIL);
+            if l.sides.iter().any(|s| s.is_empty()) {
+                bits(w, &LINE_TAIL[..1]);
+                w.write_bit_long(1);
+                bits(w, &LINE_TAIL[3..]);
+            } else {
+                bits(w, LINE_TAIL);
+            }
         },
         Body { refs, strings },
     )
@@ -402,15 +409,21 @@ pub fn add_sample_line(doc: &mut CadDocument, group: Handle, name: &str, station
 
 /// Adds a sample line `name` to `group` through `vertices` (station,
 /// offset; the offset negative left of the alignment), crossing the
-/// alignment at `station`, with at least one vertex on each side, on
-/// `layer` (layer "0" when `None`). The group is written again with the
-/// line among its lines (kept in station order).
+/// alignment at `station`, on `layer` (layer "0" when `None`). A line
+/// with all its vertices on one side (two or more) stands at the station
+/// of its vertex nearest the alignment, as the application places one.
+/// The group is written again with the line among its lines (kept in
+/// station order).
 pub fn add_sample_line_through(doc: &mut CadDocument, group: Handle, name: &str, station_value: f64, vertices: &[(f64, f64)], layer: Option<&str>) -> Result<Handle, DxfError> {
     let finite = vertices.iter().all(|v| v.0.is_finite() && v.1.is_finite());
     // The side is the offset's sign (-0 is left).
     let left = |v: &&(f64, f64)| v.1.is_sign_negative();
-    if name.is_empty() || !station_value.is_finite() || !finite || !vertices.iter().any(|v| left(&v)) || vertices.iter().all(|v| left(&v)) {
-        return Err(invalid("a sample line needs a name, a station and vertices off the alignment on both sides"));
+    if name.is_empty() || !station_value.is_finite() || !finite || vertices.len() < 2 || vertices.iter().any(|v| v.1 == 0.0) {
+        return Err(invalid("a sample line needs a name, a station and two or more vertices off the alignment"));
+    }
+    let one_side = vertices.iter().all(|v| left(&v)) || !vertices.iter().any(|v| left(&v));
+    if one_side && vertices.iter().min_by(|a, b| a.1.abs().total_cmp(&b.1.abs())).is_some_and(|v| v.0 != station_value) {
+        return Err(invalid("a one-sided sample line stands at the station of its vertex nearest the alignment"));
     }
     let side = |left_side: bool| {
         let mut v: Vec<(f64, f64)> = vertices.iter().filter(|v| v.1.is_sign_negative() == left_side).map(|v| (v.1, v.0 - station_value)).collect();
@@ -557,8 +570,10 @@ mod tests {
         doc.version = DxfVersion::AC1032;
         let al = crate::classes::civil::add_alignment(&mut doc, "AL1", &[v(0.0, 0.0), v(100.0, 0.0)], None).unwrap();
         let g = add_sample_line_group(&mut doc, al, "SLG1", None).unwrap();
-        // Both vertices on one side: refused.
-        assert!(add_sample_line_through(&mut doc, g, "X", 40.0, &[(40.0, 5.0), (40.0, 15.0)], None).is_err());
+        // Both vertices on one side: at the nearest vertex's station.
+        assert!(add_sample_line_through(&mut doc, g, "X", 40.0, &[(45.0, 5.0), (55.0, 15.0)], None).is_err());
+        let one = add_sample_line_through(&mut doc, g, "SL0", 45.0, &[(45.0, 5.0), (55.0, 15.0)], None).unwrap();
+        assert_eq!(read_line(&doc, one).unwrap().sides, [vec![], vec![(5.0, 0.0), (15.0, 10.0)]]);
         let line = add_sample_line_through(&mut doc, g, "SL1", 40.0, &[(38.0, -12.0), (40.0, -4.0), (42.0, 6.0), (41.0, 14.0)], None).unwrap();
         let l = read_line(&doc, line).unwrap();
         assert_eq!(l.sides, [vec![(-4.0, 0.0), (-12.0, -2.0)], vec![(6.0, 2.0), (14.0, 1.0)]]);
