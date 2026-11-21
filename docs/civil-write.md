@@ -418,16 +418,37 @@ The ids are stored by hash bucket (id mod 8), a new id last in its bucket;
 
 ```text
 BS 0x04BE, BL id, BL 0, BL 0 (no override lists, no keys),
-BL 0 written in its one-byte form, 5 bits 00000, 6 bits 100000,
-BL serial, BL count, count × RL number,
+BL flags written in its one-byte form (1 raw description overridden,
+  2 elevation overridden),
+5 bits: label style overridden, point style overridden, 0, 0, locked,
+6 bits 100000, BL serial, BL count, count × RL number,
 2 bits 00, BD 0, 3BD extents min, 3BD extents max,
-164 bits (the same in `_All Points` and every named group of WP01, WP08,
-WP10 and WG01: the group's override settings, not mapped field by field)
+BD fixed elevation, BL raw description text id (0: none),
+BL classification (87 none, 0xEA7 all, a text id: the classification
+  named by the text),
+150 bits (six BL 0, then constant bits; the same in every group sampled)
 handles (hard pointers): label style, point style, inner query, database,
          group node, create-points settings node, 0, 0
 strings: `_All Points`: "", "AeccImpAllPointsPG"
          named group: name, description, "AeccImpPG"
+         then the raw description and the classification name, when set
 ```
+
+Samples PG01-PG07 (one change each from a group `G` of PG00b): point
+style and label style overridden (the overriding styles are the group's
+first two references), elevation overridden (0, then 5), raw
+description overridden ("", then "XY": the text gets an id and follows
+the group's texts), points locked, classifications applied: all, then
+C1. Older releases' groups store other flags (0x48, 0x4A) and no serial;
+`ArchObject::point_group_overrides()` reads the recent form,
+`set_point_group_overrides(doc, group, overrides)` writes it (override
+texts take ids from `0x80040001`) and every rewrite of a group's members
+keeps them. Written from PG00b each record equals the application's bit
+for bit but for the text ids; E-PG1 (every override on G, the
+classification C1) and E-PG2 (a new drawing, group of points 2 and 3
+with elevation 7.5, raw description "ZZ" and all classifications, then
+a point added) open without recovery, AUDIT 0, and the programming
+interface reads each override as written.
 
 `_All Points` has id 33, serial 0, no label style, and always the extents
 pair (1e20, 1e20, 1e20) / (-1e20, -1e20, -1e20); a named group stores the
@@ -3189,7 +3210,8 @@ Corridors are listed in §3i-a.
 | COGO points | enumeration properties, properties of other kinds (distance, elevation, ...) | no | no | the programming interface makes only whole number, double, text, boolean and enumeration type infos; enumerations not sampled |
 | point groups | number lists, elevation comparisons and ranges, description, name and full description patterns, exclusions | yes | yes | §3, §4 |
 | point groups | number ranges (`2-6`) | yes | as a number list | the application stores the range as its numbers |
-| point groups | override styles and descriptions per group, AND of several criteria (advanced query) | partly | no | override settings are not mapped field by field (WP10, WG01) |
+| point groups | overrides: point style, label style, fixed elevation, raw description; locked points; classifications applied (none, all, one) | yes | yes | §3 (point groups) |
+| point groups | AND of several criteria and other custom queries (advanced query), case-sensitive matching, elevation and description overrides from a property or extended data | partly | no | the custom query's node records are not decoded beyond the standard forms; the other override sources not sampled |
 | TIN surfaces | points added to the surface | yes | yes | §3c |
 | TIN surfaces | point groups, breaklines (standard, proximity, non-destructive; from objects or held points, mid-ordinate, supplementing, weeding), contours, boundaries (outer, hide, show, data clip; destructive or not), add/delete/move vertex, vertex elevation, swap edge, add/delete line, raise, drawing objects, automatic rebuild | yes (every field by kind, §3c) | yes, with the triangulation the definitions build (§3c) | 62 of 67 sample surfaces built identically; non-destructive lines through vertices, far point clusters and a non-convex deleted vertex's hole differ (§3c) |
 | TIN surfaces | pasted surfaces, point files, imported files, corridor surfaces | yes | the definition (no geometry from the source) | the application adds the source's geometry when it rebuilds |

@@ -4,7 +4,8 @@
 use super::super::bits::Bits;
 use super::points::{support, Support};
 use super::support::*;
-use crate::classes::civil::CogoPoint;
+use crate::classes::civil::cogo::{CLASSIFICATION_ALL, CLASSIFICATION_NONE};
+use crate::classes::civil::{CogoPoint, PointGroupClassification, PointGroupOverrides};
 use crate::error::DxfError;
 use crate::io::dwg::dwg_stream_writers::DwgMergedWriter;
 use crate::types::{Handle, Vector3};
@@ -219,6 +220,9 @@ const FIRST_GROUP_TAG: u32 = 0x8001_0001;
 /// Bits after a group's extents: the same 164 bits in every group of WP01,
 /// WP08, WP10 and WG01 (`_All Points` and six named groups; the group's
 /// override settings, not mapped field by field).
+/// First text id given to a group's override texts.
+const FIRST_OVERRIDE_TAG: u32 = 0x8004_0001;
+
 const GROUP_TAIL: &str = "10100101010111101010101010100000000000000000000000000000000000000000000000000000000000000000101010000000000000000000000000000000000000000000000000000000000000000010";
 
 /// One group of the point group node: its id, record and name.
@@ -627,6 +631,113 @@ pub(super) struct Group<'a> {
     pub extents: Option<(Vector3, Vector3)>,
     /// label style, point style, query, database, group node, settings node
     pub refs: [u64; 6],
+    pub settings: GroupSettings,
+}
+
+/// A point group's overrides as its record stores them (see
+/// `cogo::group_record`).
+#[derive(Clone)]
+pub(super) struct GroupSettings {
+    pub flags: u8,
+    pub run: u8,
+    pub elevation: f64,
+    /// Raw description text id and text.
+    pub raw: Option<(i32, String)>,
+    /// Classification word and, for a named one, its name.
+    pub classification: (i32, Option<String>),
+    /// The bits after the classification word.
+    pub rest: String,
+}
+
+impl Default for GroupSettings {
+    fn default() -> Self {
+        GroupSettings { flags: 0, run: 0, elevation: 0.0, raw: None, classification: (CLASSIFICATION_NONE, None), rest: GROUP_TAIL[14..].to_string() }
+    }
+}
+
+/// The settings of a group record of the recent form.
+pub(super) fn group_settings(doc: &CadDocument, group: Handle) -> Option<GroupSettings> {
+    let o = object(doc, group)?;
+    let (data, start, end) = o.main_stream()?;
+    let g = crate::classes::civil::cogo::group_record(data, start, end)?;
+    let t = g.tail?;
+    let strings = o.decode().strings;
+    let own = strings.iter().position(|s| s == "AeccImpPG" || s == "AeccImpAllPointsPG")? + 1;
+    let mut texts = strings.into_iter().skip(own);
+    let raw = if t.raw_tag != 0 { Some((t.raw_tag, texts.next()?)) } else { None };
+    let named = t.classification as u32 & 0x8000_0000 != 0;
+    let classification = (t.classification, if named { Some(texts.next()?) } else { None });
+    let rest = (t.rest..end).map(|i| if data[i / 8] >> (7 - i % 8) & 1 == 1 { '1' } else { '0' }).collect();
+    Some(GroupSettings { flags: g.flags, run: g.run, elevation: t.elevation, raw, classification, rest })
+}
+
+/// A text id for an override text of a group: an id another group uses
+/// for the same text, else one above every override id of the groups.
+fn override_tag(doc: &CadDocument, text: &str) -> i32 {
+    let mut top = FIRST_OVERRIDE_TAG - 1;
+    for h in doc.objects.iter().filter(|(_, o)| matches!(o, crate::objects::ObjectType::Arch(a) if a.dxf_name == "AECC_POINT_PG")).map(|(h, _)| *h) {
+        let Some(s) = group_settings(doc, h) else { continue };
+        for (tag, t) in s.raw.iter().map(|r| (r.0, Some(&r.1))).chain([(s.classification.0, s.classification.1.as_ref())]) {
+            if tag as u32 & 0x8000_0000 == 0 {
+                continue;
+            }
+            if t.is_some_and(|t| t == text) {
+                return tag;
+            }
+            top = top.max(tag as u32);
+        }
+    }
+    (top.max(FIRST_OVERRIDE_TAG - 1) + 1) as i32
+}
+
+/// Sets what point group `group` overrides in its points: styles,
+/// elevation, raw description, lock and classification. The group keeps
+/// its points, query and serial; it must be of the form recent releases
+/// write. A custom classification is named, not checked.
+pub fn set_point_group_overrides(doc: &mut CadDocument, group: Handle, o: &PointGroupOverrides) -> Result<(), DxfError> {
+    let bad = || invalid("point group record cannot be rewritten");
+    if !plain(doc, group) {
+        return Err(bad());
+    }
+    let obj = object(doc, group).ok_or_else(bad)?;
+    let (owner, d) = (obj.owner, obj.decode());
+    let (data, start, end) = obj.main_stream().ok_or_else(bad)?;
+    let rec = crate::classes::civil::cogo::group_record(data, start, end).ok_or_else(bad)?;
+    let tail = rec.tail.ok_or_else(bad)?;
+    let mut settings = group_settings(doc, group).ok_or_else(bad)?;
+    let id = fields_of(obj).and_then(|(x, s0, e0)| Bits::new(x, s0, e0).bit_long()).ok_or_else(bad)?;
+    let all = d.strings.iter().any(|s| s == "AeccImpAllPointsPG");
+    let (name, description) = if all { (None, String::new()) } else { (d.strings.first().cloned(), d.strings.get(1).cloned().unwrap_or_default()) };
+    let mut refs = [0, 1, 2, 3, 4, 5].map(|j| d.handles.get(j).copied().unwrap_or(0));
+    if let Some(h) = o.label_style {
+        refs[0] = h;
+    }
+    if let Some(h) = o.point_style {
+        refs[1] = h;
+    }
+    if o.elevation.is_some_and(|e| !e.is_finite()) {
+        return Err(invalid("override elevation must be finite"));
+    }
+    settings.run = (u8::from(o.label_style.is_some()) << 4) | (u8::from(o.point_style.is_some()) << 3) | (settings.run & 0b110) | u8::from(o.locked);
+    settings.flags = (settings.flags & !3) | (u8::from(o.elevation.is_some()) << 1) | u8::from(o.raw_description.is_some());
+    if let Some(e) = o.elevation {
+        settings.elevation = e;
+    }
+    if let Some(text) = &o.raw_description {
+        let tag = match &settings.raw {
+            Some((tag, t)) if t == text => *tag,
+            _ => override_tag(doc, text),
+        };
+        settings.raw = Some((tag, text.clone()));
+    }
+    settings.classification = match &o.classification {
+        PointGroupClassification::None => (CLASSIFICATION_NONE, None),
+        PointGroupClassification::All => (CLASSIFICATION_ALL, None),
+        PointGroupClassification::Custom(n) if n.trim().is_empty() => return Err(invalid("a classification needs a name")),
+        PointGroupClassification::Custom(n) => (override_tag(doc, n), Some(n.clone())),
+    };
+    let g = Group { id, serial: rec.serial.ok_or_else(bad)?, name: name.as_deref(), description: &description, numbers: rec.numbers, extents: Some(tail.extents), refs, settings };
+    write_group(doc, group, owner, &g)
 }
 
 /// `BL id, BL 0, BL 0` (no override lists or keys), `a` = 0 in its byte
@@ -634,10 +745,13 @@ pub(super) struct Group<'a> {
 /// constant bits, `BD 0`, the extents (min, max) and [`GROUP_TAIL`].
 pub(super) fn write_group(doc: &mut CadDocument, handle: Handle, owner: Handle, g: &Group) -> Result<(), DxfError> {
     let (min, max) = g.extents.unwrap_or((Vector3::new(1e20, 1e20, 1e20), Vector3::new(-1e20, -1e20, -1e20)));
-    let strings = match g.name {
+    let mut strings = match g.name {
         Some(name) => vec![name.to_string(), g.description.to_string(), "AeccImpPG".into()],
         None => vec![String::new(), "AeccImpAllPointsPG".into()],
     };
+    let st = &g.settings;
+    strings.extend(st.raw.iter().map(|r| r.1.clone()));
+    strings.extend(st.classification.1.iter().cloned());
     let mut refs: Vec<Ref> = g.refs.iter().map(|h| hard_pointer(*h)).collect();
     refs.extend([hard_pointer(0), hard_pointer(0)]);
     put_object(
@@ -650,8 +764,11 @@ pub(super) fn write_group(doc: &mut CadDocument, handle: Handle, owner: Handle, 
             w.write_bit_long(g.id);
             w.write_bit_long(0);
             w.write_bit_long(0);
-            bl_byte(w, 0);
-            bits(w, "00000100000");
+            bl_byte(w, st.flags);
+            for i in (0..5).rev() {
+                w.write_bit(st.run >> i & 1 == 1);
+            }
+            bits(w, "100000");
             w.write_bit_long(g.serial);
             w.write_bit_long(g.numbers.len() as i32);
             for n in &g.numbers {
@@ -662,7 +779,10 @@ pub(super) fn write_group(doc: &mut CadDocument, handle: Handle, owner: Handle, 
             for v in [min.x, min.y, min.z, max.x, max.y, max.z] {
                 w.write_bit_double(v);
             }
-            bits(w, GROUP_TAIL);
+            w.write_bit_double(st.elevation);
+            w.write_bit_long(st.raw.as_ref().map_or(0, |r| r.0));
+            w.write_bit_long(st.classification.0);
+            bits(w, &st.rest);
         },
         Body { refs, strings },
     )
@@ -731,7 +851,8 @@ pub(super) fn refresh_groups(doc: &mut CadDocument, s: &Support, points: &[CogoP
         let (numbers, extents) = members(points, &query);
         let refs = [0, 1, 2, 3, 4, 5].map(|j| d.handles.get(j).copied().unwrap_or(0));
         let description = d.strings.get(1).cloned().unwrap_or_default();
-        let g = Group { id: e.id, serial, name: Some(&e.name), description: &description, numbers, extents, refs };
+        let settings = group_settings(doc, e.handle).unwrap_or_default();
+        let g = Group { id: e.id, serial, name: Some(&e.name), description: &description, numbers, extents, refs, settings };
         write_group(doc, e.handle, s.group_node, &g)?;
     }
     Ok(())
@@ -798,5 +919,5 @@ fn write_point_group(doc: &mut CadDocument, s: &Support, handle: Handle, id: i32
     let query = set_query(doc, &format!("Point Group Query - {name}"), id.wrapping_add(1), criteria)?;
     let d = s.defaults;
     let refs = [d.label_style, d.point_style, query.value(), s.database.value(), s.group_node.value(), d.create_settings];
-    write_group(doc, handle, s.group_node, &Group { id, serial, name: Some(name), description, numbers, extents, refs })
+    write_group(doc, handle, s.group_node, &Group { id, serial, name: Some(name), description, numbers, extents, refs, settings: GroupSettings::default() })
 }

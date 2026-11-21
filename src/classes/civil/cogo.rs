@@ -42,12 +42,20 @@
 //! ```text
 //! BS 0x04BE, BL id, BL n, n × BL, BL m, m × BL,
 //! [BL 0 (as 2 bits), B 1, RC count, count × class key]   settings
-//! BL a, 5 bits, [a = 0: 6 bits, BL serial], BL count, count × RL number
+//! BL flags, 5 bits, [flags < 4: 6 bits, BL serial], BL count, count × RL number
+//! [flags < 4: 2 bits, BD, 3BD extents min, 3BD extents max,
+//!   BD fixed elevation, BL raw description text id (0: none),
+//!   BL classification (87 none, 0xEA7 all, a text id: the one named), the rest]
 //! ```
 //!
-//! Groups made or edited by recent releases store `a = 0` and a serial
-//! that counts the groups made; others store a nonzero `a` and nothing
-//! before the count. `id` is 33 for `_All Points` and the group name's tag
+//! Groups made or edited by recent releases store flags below 4 (1 the
+//! raw description overridden, 2 the elevation) and a serial that counts
+//! the groups made; the 5 bits are the label style overridden, the point
+//! style overridden, two unset bits and locked. Older releases' groups
+//! store other flags (0x48, 0x4A) and nothing before the count. The
+//! override texts follow the group's own (name, description,
+//! "AeccImpPG"): the raw description, then the classification name; the
+//! overriding styles are the group's first two references. `id` is 33 for `_All Points` and the group name's tag
 //! for the others; the point group node (`AECC_POINT_GROUP_NODE`) lists them
 //! in draw order: `BS 0x04BE, BL 32 (its key in the root tree node), BL n,
 //! n × BL id, BL 0, 3 bits (010)`,
@@ -330,9 +338,61 @@ pub(super) fn points(data: &[u8], start: usize, end: usize, handles: &[u64], str
 }
 
 /// Point numbers a point group holds, in record order.
-// ponytail: the 5 and 6-bit runs and `a` are read past; name them once a
-// sample varies them alongside the group's settings.
 pub(super) fn group_numbers(data: &[u8], start: usize, end: usize) -> Option<Vec<u32>> {
+    group_record(data, start, end).map(|g| g.numbers)
+}
+
+/// How a point group applies the point property classifications.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum PointGroupClassification {
+    None,
+    All,
+    /// The classification of this name.
+    Custom(String),
+}
+
+/// What a point group overrides in the points it holds.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct PointGroupOverrides {
+    /// The overriding point style (`AECC_POINT_STYLE`) when overridden.
+    pub point_style: Option<u64>,
+    /// The overriding point label style when overridden.
+    pub label_style: Option<u64>,
+    /// The fixed elevation when the elevation is overridden.
+    pub elevation: Option<f64>,
+    /// The raw description when it is overridden.
+    pub raw_description: Option<String>,
+    /// Whether the group's points are locked.
+    pub locked: bool,
+    pub classification: PointGroupClassification,
+}
+
+/// Classification word of a point group that applies none / all.
+pub(super) const CLASSIFICATION_NONE: i32 = 87;
+pub(super) const CLASSIFICATION_ALL: i32 = 0xEA7;
+
+/// The fields of a point group record (see the module docs); the tail
+/// fields only for the recent form.
+pub(super) struct GroupRecord {
+    pub flags: u8,
+    pub run: u8,
+    pub serial: Option<i32>,
+    pub numbers: Vec<u32>,
+    pub tail: Option<GroupTail>,
+}
+
+pub(super) struct GroupTail {
+    pub extents: (Vector3, Vector3),
+    pub elevation: f64,
+    pub raw_tag: i32,
+    pub classification: i32,
+    /// Position of the bits after the classification word.
+    pub rest: usize,
+}
+
+pub(super) fn group_record(data: &[u8], start: usize, end: usize) -> Option<GroupRecord> {
     let mut bits = Bits::new(data, start, end);
     (bits.bit_short()? == 0x04BE).then_some(())?;
     bits.bit_long()?;
@@ -350,14 +410,52 @@ pub(super) fn group_numbers(data: &[u8], start: usize, end: usize) -> Option<Vec
         }
         bits = probe;
     }
-    let a = bits.bit_long()?;
-    bits.skip(5)?;
-    if a == 0 {
+    let flags = u8::try_from(bits.bit_long()?).ok()?;
+    let run = bits.bits_value(5)?;
+    let recent = flags & !3 == 0;
+    let serial = if recent {
         bits.skip(6)?;
-        bits.bit_long()?;
-    }
+        Some(bits.bit_long()?)
+    } else {
+        None
+    };
     let n = usize::try_from(bits.bit_long()?).ok().filter(|n| n * 32 <= bits.remaining())?;
-    (0..n).map(|_| u32::try_from(bits.raw_long()?).ok()).collect()
+    let numbers = (0..n).map(|_| u32::try_from(bits.raw_long()?).ok()).collect::<Option<Vec<_>>>()?;
+    let tail = recent
+        .then(|| -> Option<GroupTail> {
+            bits.skip(2)?;
+            bits.bit_double()?;
+            let mut v = || Some(Vector3::new(bits.bit_double()?, bits.bit_double()?, bits.bit_double()?));
+            let extents = (v()?, v()?);
+            Some(GroupTail { extents, elevation: bits.bit_double()?, raw_tag: bits.bit_long()?, classification: bits.bit_long()?, rest: bits.pos })
+        })
+        .flatten();
+    Some(GroupRecord { flags, run, serial, numbers, tail })
+}
+
+/// The overrides of a recent point group record; `handles` and `strings`
+/// are the record's.
+pub(super) fn group_overrides(data: &[u8], start: usize, end: usize, handles: &[u64], strings: &[String]) -> Option<PointGroupOverrides> {
+    let g = group_record(data, start, end)?;
+    let t = g.tail?;
+    // name, description, "AeccImpPG" ("", "AeccImpAllPointsPG" for _All Points)
+    let own = strings.iter().position(|s| s == "AeccImpPG" || s == "AeccImpAllPointsPG")? + 1;
+    let mut texts = strings.iter().skip(own).cloned();
+    let raw_text = if t.raw_tag != 0 { Some(texts.next()?) } else { None };
+    let classification = match t.classification {
+        CLASSIFICATION_NONE => PointGroupClassification::None,
+        CLASSIFICATION_ALL => PointGroupClassification::All,
+        k if k as u32 & 0x8000_0000 != 0 => PointGroupClassification::Custom(texts.next()?),
+        _ => return None,
+    };
+    Some(PointGroupOverrides {
+        point_style: (g.run & 0b01000 != 0).then(|| handles.get(1).copied()).flatten(),
+        label_style: (g.run & 0b10000 != 0).then(|| handles.first().copied()).flatten(),
+        elevation: (g.flags & 2 != 0).then_some(t.elevation),
+        raw_description: raw_text.filter(|_| g.flags & 1 != 0),
+        locked: g.run & 1 != 0,
+        classification,
+    })
 }
 
 
@@ -404,6 +502,26 @@ mod tests {
         assert_eq!((points[0].number, points[0].style, points[0].label_style, points[0].description.as_deref()), (9, 0, 0, None));
         assert_eq!(points[1].position, Vector3::new(100.0, 200.0, 10.0));
         assert_eq!((points[1].style, points[1].label_style, points[1].description.as_deref()), (0x68D, 0x690, Some("TEST")));
+    }
+
+    #[test]
+    fn group_overrides_read_flags_and_tail() {
+        // id 0x21, no lists; flags 3 (raw description and elevation), run
+        // label + locked, 6 bits, serial 2, no numbers; 2 bits, BD 0,
+        // extents, elevation 5, raw description tag, classification all.
+        let s = [
+            format!("00 10111110 00000100 {} {}{} 01 00000011 10001 100000 {} {}", bl(0x21), bl(0), bl(0), bl(2), bl(0)),
+            format!("00 {} {}{}{}{}{}{}", bd(0.0), bd(1.0), bd(1.0), bd(1.0), bd(2.0), bd(2.0), bd(2.0)),
+            format!("{} {} {}", bd(5.0), bl(0x8004_0001), bl(0xEA7)),
+        ]
+        .concat();
+        let b = bits_of(&s);
+        let len = s.bytes().filter(|c| *c == b'0' || *c == b'1').count();
+        let strings: Vec<String> = ["G", "", "AeccImpPG", "XY"].map(String::from).to_vec();
+        let o = group_overrides(&b, 0, len, &[0x690, 0x68D], &strings).unwrap();
+        assert_eq!((o.label_style, o.point_style, o.elevation, o.raw_description.as_deref(), o.locked), (Some(0x690), None, Some(5.0), Some("XY"), true));
+        assert_eq!(o.classification, PointGroupClassification::All);
+        assert_eq!(group_record(&b, 0, len).unwrap().serial, Some(2));
     }
 
     #[test]

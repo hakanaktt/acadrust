@@ -113,7 +113,8 @@ fn write_all_points(doc: &mut CadDocument, s: &Support, query: Handle, numbers: 
     let old = object(doc, s.all_points).map(|o| o.decode().handles).unwrap_or_default();
     let keep = |i: usize, new: u64| old.get(i).copied().unwrap_or(new);
     let refs = [keep(0, 0), keep(1, s.defaults.point_style), query.value(), s.database.value(), s.group_node.value(), keep(5, s.defaults.create_settings)];
-    let g = Group { id: ALL_POINTS_ID, serial: 0, name: None, description: "", numbers, extents: None, refs };
+    let settings = super::groups::group_settings(doc, s.all_points).unwrap_or_default();
+    let g = Group { id: ALL_POINTS_ID, serial: 0, name: None, description: "", numbers, extents: None, refs, settings };
     write_group(doc, s.all_points, s.group_node, &g)
 }
 
