@@ -1931,11 +1931,20 @@ deletes it: BVPD-SL, BVHG-SL, E-BW1-edit). A group's tail repeats the
 band's stagger (`BL`, after its first 26 bits). The major and minor
 intervals (100, 25) stay constant: the API's setters change nothing.
 
-Superelevation, sectional data and pipe network bands are written
-without a data source and without labels (the application's own groups
-for such bands are empty: no superelevation, sample line group or pipe
-network chosen); the group's texts are its class text and three empty
-ones as for the others.
+A band's data source is the soft reference after its style in the
+view's band tuple (sample line group or pipe network; DT01-DT03: the
+view record does not change otherwise). A sectional data band reading a
+sample line group labels each of its lines in station order (keys
+0x15017822 and 0x15017821 with 128 zero bits, 0x0F017824 the line,
+0x01015013 the band number, 0x0200D020 the station, 0x0F017825 the
+group), each line after the first followed by a label of the step from
+the line before (the same keys and 0x02017823 the previous station; run
+bits 17-19 differ); a label's references are its line and the group
+(soft) before the view. Superelevation and pipe network bands are
+written without a data source and without labels (the application's own
+groups for such bands are empty: no superelevation or pipe network
+chosen), and so are sectional data bands without a group; the group's
+texts are its class text and three empty ones as for the others.
 
 The default band styles of a new drawing (style tree keys 0x42, 0x43,
 0x44, each with its default style, 6 records) refer to label styles of 17
@@ -1967,7 +1976,12 @@ data and pipe network bands below, vertical and horizontal geometry above)
 and E-BV4 (the application's HB0 with such a second view, reusing its
 styles) open with AUDIT 0; the API lists the five bands with their types
 and locations and the profile; after a band change all five groups stay
-and the horizontal geometry labels are rebuilt equal. E-BW1 to E-BW4
+and the horizontal geometry labels are rebuilt equal. E-SD1 (a new
+drawing: a sample line group with lines at stations 50, 20 and 150 and a
+sectional data band reading it below the view, one without a group
+above) opens with AUDIT 0, the API lists the band's data source as the
+group, and after a band change the application's group equals the
+written one bit for bit and reference for reference. E-BW1 to E-BW4
 (weeding 50, stagger left/right/both, labels hidden below and above the
 view) open with AUDIT 0 and the API lists the written weeding, stagger
 and label visibility.
@@ -3312,7 +3326,8 @@ Corridors are listed in §3i-a.
 | profile views | stacked views (separate views at stacked origins) | yes | yes | §3h |
 | profile views | every style setting the API exposes (graph title, direction, exaggeration, grid, the four axes' titles and ticks, text styles) | yes | yes | §3h |
 | profile views | profile data, vertical and horizontal geometry, superelevation, sectional data and pipe network bands below or above the view, with their gaps, end station labels, label visibility, weeding, stagger, profiles and label groups; the default band styles of a new drawing | yes | yes (horizontal geometry labels of alignments with spirals left to the application; superelevation, sectional data and pipe network bands without data source and labels) | §3h (Bands) |
-| profile views | band data sources (superelevation, sample line group, pipe network) and their labels, pressure network/cant/distance/COGO/speed bands, band styles other than the defaults, intervals, stagger line height | partly | no | the API adds no band of the last five kinds; the API ignores the interval setters and refuses the stagger line height |
+| profile views | sectional data bands reading a sample line group, with their labels | yes | yes | §3h (Bands) |
+| profile views | band data sources (superelevation, pipe network) and their labels, pressure network/cant/distance/COGO/speed bands, band styles other than the defaults, intervals, stagger line height | partly | no | the API adds no band of the last five kinds; the API ignores the interval setters and refuses the stagger line height |
 | sites | name, description, members | yes | yes | §3g |
 | parcels | closed and open, crossing and touching lot lines, arcs, labels | yes | yes | §3g |
 | parcels | members added to containers the application wrote with crossings (its point marks and edge flags kept) | yes | yes | §3g |

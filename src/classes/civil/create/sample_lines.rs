@@ -392,7 +392,7 @@ pub(super) fn read_line(doc: &CadDocument, line: Handle) -> Option<Line> {
     })
 }
 
-fn station(doc: &CadDocument, line: u64) -> Option<f64> {
+pub(super) fn station(doc: &CadDocument, line: u64) -> Option<f64> {
     read_line(doc, Handle::new(line)).map(|l| l.station)
 }
 
