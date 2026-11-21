@@ -43,6 +43,7 @@ pub use label_style::{LabelArrowComponent, LabelBlockComponent, LabelBorder, Lab
 pub use network::{PartField, PressurePipe, PressurePort};
 pub use parameters::{Parameter, ParameterValue};
 pub use profile::{CurveMinimumK, OffsetProfile, ProfileCriteria, ProfileLocking, ProfilePiece, ProfileViewFrame, Pvi};
+pub use parcel_segments::ParcelSegmentGeometry;
 pub use sample_lines::{SampleLines, SectionViewGroupPlot};
 pub use section::{MassHaulViewFrame, SectionGeometry, SectionViewFrame};
 pub use style::{DisplayComponent, Marker, ProfileViewAxisStyle, ProfileViewAxisTitle, ProfileViewGrid, ProfileViewGridLines, ProfileViewStyleSettings, ProfileViewTicks, ProfileViewTitle, ViewAxes, ViewAxis};
@@ -1221,6 +1222,18 @@ impl ArchEntityData {
         let start = usize::try_from(reader.position_in_bits()).ok()?;
         let len = usize::try_from(reader.main_remaining_bits()).ok()?;
         Some((self.raw_dwg_data.as_deref()?, start, start + len))
+    }
+
+    /// Geometry a Civil 3D parcel segment (`AECC_PARCEL_SEGMENT`, the
+    /// application's lot line) record holds; see
+    /// [`parcel_segments::ParcelSegmentGeometry`].
+    pub fn parcel_segment_geometry(&self) -> Option<ParcelSegmentGeometry> {
+        if self.dxf_name != "AECC_PARCEL_SEGMENT" {
+            return None;
+        }
+        let graphic = super::arch::decode::entity_graphic_data(self)?;
+        let (data, start, end) = self.main_stream()?;
+        parcel_segments::geometry(&data, start, end, &graphic)
     }
 }
 
