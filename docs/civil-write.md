@@ -2337,8 +2337,16 @@ Lines through more vertices (LV00 to LV02 and LV10, LV11: three, four,
 five and seven vertices, some away from the crossing station, made with
 `SampleLine.Create` from points) are reproduced bit for bit; their
 vertices are stored per side from the alignment outwards. A line with all
-its vertices on one side of the alignment (LV03) closes its record with
-another run, and is not written. Written into WL10 (E-L5: a line at 40
+its vertices on one side of the alignment (LV03; LW01 left, LW02 right
+with three vertices, LW04 right and skewed) stands at the station of its
+vertex nearest the alignment (LW04: 45 for (45, -5), (55, -15)), lists
+nothing on the other side and writes `BL 1` in place of the tail's
+second and third bits (`BL 0`); the programming interface lists no
+center vertex for it. Written (`add_sample_line_through` with all
+vertices on one side) the records equal the samples' but for the class
+word; LV02 with a skewed right line and a left line (E-SL1) opens with
+AUDIT 0 errors and the API lists both lines' stations and vertices as
+written. Written into WL10 (E-L5: a line at 40
 through (38, -12), (40, -4), (42, 6), (41, 14) and a two-vertex line at
 70), the drawing opens with AUDIT 0 errors and the API lists each line's
 station and vertices (left, center at the crossing, right) where they were
@@ -3296,7 +3304,8 @@ Corridors are listed in §3i-a.
 | feature lines | crossing and touching other members on a site (straight segments), where no region closes | yes | yes | §3g (feature lines that cross) |
 | feature lines | crossings that close or split a region (the application adds a grading of the face), styles other than the default | yes | no | §3g (FX04, FX07); gradings are not written (§6a) |
 | sample line groups | lines by station or through vertices on both sides | yes | yes | §3j |
-| sample line groups | lines with all vertices on one side; section sources other than a TIN surface (corridors, corridor surfaces, pipe networks) | yes | no | one-sided lines close with another run (LV03); other sources not sampled |
+| sample line groups | lines with all vertices on one side | yes | yes | §3j |
+| sample line groups | section sources other than a TIN surface (corridors, corridor surfaces, pipe networks) | yes | no | not sampled |
 | sections | of a TIN surface (unsampled) | yes (geometry once sampled) | yes | §3j |
 | section views | one view of a line, default style | yes (frame) | yes | §3j |
 | section views | group plots with the default group plot style, one or more per group | yes | yes | §3j (section view group plots) |
