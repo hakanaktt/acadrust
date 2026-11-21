@@ -577,7 +577,11 @@ NOT before AND before OR, left to right (`a OR b AND c` is `a OR (b AND
 c)`; `a AND b AND c` is `(a AND b) AND c`). The application refuses `AND
 NOT` and `OR NOT` ("Unsupported property name found") and other
 operators ("Invalid operator found"); a query opening with two
-parentheses gets an extra record and an empty constant (PQ02 D4) and is
+parentheses gets an extra record and an empty constant (PQ02 D4): the
+application keeps each parenthesis beyond one per comparison as a
+comparison with an empty text, and lists such queries so itself (PQ04:
+`((PointNumber>=2))` reads back as `(''  (PointNumber>=2)  '')`, a
+comparison closing two parentheses gains a trailing `''`); they are
 neither read nor written; names are kept in lower case; the custom query
 names are PointNumber, PointElevation, RawDescription, FullDescription and
 Name. The writer puts an OR under an AND or NOT and an AND under a NOT in
@@ -3382,7 +3386,8 @@ Corridors are listed in §3i-a.
 | point groups | number ranges (`2-6`) | yes | as a number list | the application stores the range as its numbers |
 | point groups | overrides: point style, label style, fixed elevation, raw description; locked points; classifications applied (none, all, one) | yes | yes | §3 (point groups) |
 | point groups | custom queries: AND, OR, parentheses, a leading NOT over number, elevation, descriptions and name | yes | yes | §3 (custom queries) |
-| point groups | custom queries opening with two parentheses, case-sensitive matching, elevation and description overrides from a property or extended data | partly | no | two opening parentheses add a record not decoded (PQ02 D4); the other forms not sampled |
+| point groups | custom queries with a comparison opening or closing two parentheses | no | no | the application stores the extra parenthesis as an empty-text comparison and shows it in its own query text (PQ02 D4, PQ04); not written |
+| point groups | case-sensitive matching, elevation and description overrides from a property or extended data | partly | no | not sampled |
 | TIN surfaces | points added to the surface | yes | yes | §3c |
 | TIN surfaces | point groups, breaklines (standard, proximity, non-destructive; from objects or held points, mid-ordinate, supplementing, weeding), contours, boundaries (outer, hide, show, data clip; destructive or not), add/delete/move vertex, vertex elevation, swap edge, add/delete line, raise, drawing objects, automatic rebuild | yes (every field by kind, §3c) | yes, with the triangulation the definitions build (§3c) | 62 of 67 sample surfaces built identically; non-destructive lines through vertices, far point clusters and a non-convex deleted vertex's hole differ (§3c) |
 | TIN surfaces | pasted surfaces, point files, imported files, corridor surfaces | yes | the definition (no geometry from the source) | the application adds the source's geometry when it rebuilds |
