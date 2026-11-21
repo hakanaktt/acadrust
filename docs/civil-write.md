@@ -333,11 +333,18 @@ BL 0
 BL j, j × { BL number, BL text id }   named points
 BL j, j × { BL text id, BL number }   the same keyed by name
 BL k, k × { BL number, BL text id }
-13 × BL 0
+13 × slot: BL e, e × { BL key | 0x40000000, BL c, c × { BL number, value } }
 handles: n × point style (hard pointer), m × label style (hard pointer),
          class node (soft pointer)
-strings: "", then the raw description of the k points in order
+strings: "", the names twice, the raw description of the k points in
+         order, then each slot entry's property key text and its texts
 ```
+
+The slots hold user-defined property values (below) by kind: 4 doubles
+(BD), 5 booleans (one bit), 6 texts (each value a text after the key
+text), 7 whole numbers (BL); the other slots are empty in every sample.
+An entry lists the points holding a value, in database order; a point
+without a value of a property has none (it shows the default).
 
 Text ids are `0x80000000 | n`; the application numbers texts per session
 and accepts ids a writer numbers itself. The writer gives
@@ -470,6 +477,75 @@ descriptions share the text ids. `set_cogo_point_name` names a point
 (names are unique, case ignored). A drawing written with named points and
 groups of every kind above (E-Q5) opens with AUDIT 0; the application
 lists the queries as its own and the same members.
+
+### User-defined properties
+
+Samples UD01, UD02, UE01-UE15 (one change each from two points): a
+classification, a property of each kind (double, whole number, text,
+boolean), a second classification, bounds and a description, values on
+one and on two points, two kinds on two points.
+
+A classification (`AECC_USER_DEFINED_ATTRIBUTE_CLASSIFICATION`) is a
+child of the COGO point class node, keyed by a text id of its name; its
+children are its properties. A property (`AECC_USER_DEFINED_ATTRIBUTE`,
+owner its classification):
+
+```text
+BS 0x04BE, BL key, BL 0, BL 0, 3 bits 010
+BL key, default (whole BL, double BD, boolean RC, text: none), BL key
+B use default, B bounded
+[bounded: BL code << 24 | 0x400000 if inclusive, lower, the same for upper]
+BL 0x4000806B, 3 bits 010
+handles: hard pointer to itself
+strings: key, "", key, [text default], key, the type-info class name
+         (AeccAttributeTypeInfoInt, ...Double, ...Bool, ...String), name,
+         description, classification name
+```
+
+`key` is `0x80000000 | code << 24 | serial`: code 1 whole number, 2
+double, 3 boolean, 4 text; the serial counts the properties of a kind
+over the drawing (a second double in another classification is
+`0x82000002`). Its text is 32 hexadecimal digits of the property's
+identifier (as the application prints it) and the name. Whole numbers,
+doubles and booleans are bounded (by default the full range inclusive,
+±1e24 for doubles, booleans 0 and 1 without the inclusive flag); texts
+are not. The word after the bounds is `0x4000806B` in every record read
+back from a file (a property made in the session it was saved in can
+hold another value; it reads the same).
+
+The class node lists, after its children:
+
+```text
+BL 0, B has properties,
+  [BL n, n × { BL key, default (as in the property) }, B 0],
+BL m, m × BL key             the users of each key: the point database
+                             (before the definition, while a point holds
+                             a value) and the property's record
+handles: children, m × soft pointer (the users), hard owner 0
+strings: own name, "", the children's names, each property's key text
+         (and its text default), each user's key text, "AeccDbCogoPoint"
+```
+
+`add_point_property_classification(doc, name)`, `add_point_property(doc,
+classification, name, description, default, use_default, bounds)` (it
+returns the key text) and `set_cogo_point_property(doc, point, key,
+value)` write these; every point edit rewrites the slots from the values
+read back (they were dropped before) and lists the database as a user of
+the keys some point holds. `point_properties(doc)` and
+`ArchObject::user_property()` read the definitions, `CogoPoint::properties`
+the values.
+
+A classification written with a key in a lower bucket (key mod 8) than
+`Unclassified` (`0xEA6`), so stored before it, opens with errors once it
+holds a property; the writer keys classifications `0x80030007 + 8i`. A
+boolean value written as a byte in the database opened with errors (the
+definitions and the class node do store booleans as bytes).
+
+| written | result |
+|---|---|
+| E-UD1: a new drawing, two points, classifications C1 and C2, properties P1 double, I1 whole number ("whole"), S1 text ("ab"), B1 boolean (no default), Q1 double 0 (exclusive) to 10 ("dd"); values P1 2.25 and 4.5, I1 7, S1 "xy", B1 false, Q1 9 | opens without recovery, AUDIT 0; the programming interface reads every definition (bounds, defaults, descriptions) and value as written; saved again it reads back the same |
+| E-UD2: the same on an application drawing with two points | the same |
+| E-UD5: one value on an application property; E-UD8: a property in an application classification | the same; the database and class node equal the application's bit for bit but for session text ids |
 
 ### Edits
 
@@ -3026,7 +3102,8 @@ Corridors are listed in §3i-a.
 |---|---|---|---|---|
 | COGO points | position, number, raw description, name, styles | yes | yes | §3 |
 | COGO points | point label styles other than the default | yes | yes | §2d |
-| COGO points | user-defined properties | partly | no | not sampled |
+| COGO points | user-defined properties (classifications; whole number, double, text and boolean properties with defaults, bounds and descriptions; values) | yes | yes | §3 (user-defined properties) |
+| COGO points | enumeration properties, properties of other kinds (distance, elevation, ...) | no | no | the programming interface makes only whole number, double, text, boolean and enumeration type infos; enumerations not sampled |
 | point groups | number lists, elevation comparisons and ranges, description, name and full description patterns, exclusions | yes | yes | §3, §4 |
 | point groups | number ranges (`2-6`) | yes | as a number list | the application stores the range as its numbers |
 | point groups | override styles and descriptions per group, AND of several criteria (advanced query) | partly | no | override settings are not mapped field by field (WP10, WG01) |

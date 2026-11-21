@@ -19,11 +19,17 @@
 //! BL j, j × { BL number, BL name tag }          named points
 //! BL j, j × { BL name tag, BL number }          the same, keyed by name
 //! BL k, k × { BL number, BL description tag }
-//! 13 × BL 0
+//! 13 × slot: BL e, e × { BL key | 0x40000000, BL c, c × { BL number, value } }
 //! handles: n × point style, m × label style, the AeccDbCogoPoint class node
-//! strings: "", the names of the j points, the same names again, then the
-//!          raw description of each of the k points in order
+//! strings: "", the names of the j points, the same names again, the raw
+//!          description of each of the k points in order, then for each
+//!          slot entry its property's key text and its text values
 //! ```
+//!
+//! The slots hold the values of user-defined properties by kind: slot 4
+//! doubles (BD), 5 booleans (B; RC in the definitions), 6 texts (none inline: each text follows
+//! the key text), 7 integers (BL); the others are empty in every sample.
+//! `key` is the property's (see [`UserProperty`]).
 //!
 //! Records are in the database's own order, not by number. A point without
 //! its own style draws with its point group's; the description tag
@@ -68,6 +74,129 @@ pub struct CogoPoint {
     pub description: Option<String>,
     /// Point name, `None` when the point has none.
     pub name: Option<String>,
+    /// Values of user-defined properties the point holds, by the
+    /// property's key text ([`UserProperty::key`]).
+    pub properties: Vec<(String, PropertyValue)>,
+}
+
+/// Value of a user-defined property.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum PropertyValue {
+    Integer(i32),
+    Double(f64),
+    Boolean(bool),
+    Text(String),
+}
+
+impl PropertyValue {
+    /// Kind code of the property keys (`0x80000000 | code << 24 | serial`).
+    pub fn code(&self) -> u32 {
+        match self {
+            Self::Integer(_) => 1,
+            Self::Double(_) => 2,
+            Self::Boolean(_) => 3,
+            Self::Text(_) => 4,
+        }
+    }
+
+    /// Slot of the point database holding values of kind `code`.
+    pub(super) fn slot(code: u32) -> Option<usize> {
+        [None, Some(7), Some(4), Some(5), Some(6)].get(code as usize).copied().flatten()
+    }
+
+    /// Reads a value of kind `code`; a text value takes the next text.
+    pub(super) fn read(bits: &mut Bits, code: u32, texts: &mut dyn Iterator<Item = String>) -> Option<Self> {
+        Some(match code {
+            1 => Self::Integer(bits.bit_long()?),
+            2 => Self::Double(bits.bit_double()?),
+            3 => Self::Boolean(bits.raw_short_byte()? != 0),
+            4 => Self::Text(texts.next()?),
+            _ => return None,
+        })
+    }
+}
+
+/// A user-defined property of COGO points (`AECC_USER_DEFINED_ATTRIBUTE`):
+///
+/// ```text
+/// BS 0x04BE, BL key, BL 0, BL 0, 3 bits 010      (a tree node without children)
+/// BL key, default (integer BL, double BD, boolean RC, text: none), BL key
+/// B use default, B bounded,
+/// [bounded: BL code << 24 | 0x400000 if inclusive, lower,
+///           BL code << 24 | 0x400000 if inclusive, upper]
+/// BL 0x4000806B, 3 bits 010
+/// handles: hard pointer to itself
+/// strings: key, "", key, [text default], key, the type-info class name,
+///          name, description, classification name
+/// ```
+///
+/// `key` is `0x80000000 | code << 24 | serial` with the code of
+/// [`PropertyValue::code`] and a serial counted per kind over the drawing;
+/// its text is 32 hexadecimal digits of an identifier and the name. Whole
+/// numbers, doubles and booleans are bounded (by default by their full
+/// range, ±1e24 for doubles), texts are not.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct UserProperty {
+    /// Key text: identifier digits and name.
+    pub key: String,
+    pub name: String,
+    pub description: String,
+    /// Name of the classification holding the property.
+    pub classification: String,
+    pub default: PropertyValue,
+    pub use_default: bool,
+    /// Lower and upper bound, each with whether it is inclusive.
+    pub bounds: Option<((PropertyValue, bool), (PropertyValue, bool))>,
+}
+
+/// Inclusive flag of a bound word.
+pub(super) const INCLUSIVE: u32 = 0x0040_0000;
+
+/// Kind code of a property key.
+pub(super) fn key_code(key: i32) -> u32 {
+    (key as u32 >> 24) & 0x3F
+}
+
+pub(super) fn user_property(data: &[u8], start: usize, end: usize, strings: &[String]) -> Option<UserProperty> {
+    let mut bits = Bits::new(data, start, end);
+    (bits.bit_short()? == 0x04BE).then_some(())?;
+    let key = bits.bit_long()?;
+    (bits.bit_long()? == 0 && bits.bit_long()? == 0 && bits.bits_value(3)? == 0b010).then_some(())?;
+    let code = key_code(key);
+    (bits.bit_long()? == key).then_some(())?;
+    // Texts: key, "", key, [text default], key, class name, name, description, classification.
+    let mut texts = strings.iter().skip(3).cloned();
+    let default = PropertyValue::read(&mut bits, code, &mut texts)?;
+    (bits.bit_long()? == key).then_some(())?;
+    let use_default = bits.bit()?;
+    let bounds = if bits.bit()? {
+        let mut bound = || -> Option<(PropertyValue, bool)> {
+            let word = bits.bit_long()? as u32;
+            (word & !INCLUSIVE == code << 24).then_some(())?;
+            Some((PropertyValue::read(&mut bits, code, &mut std::iter::empty())?, word & INCLUSIVE != 0))
+        };
+        let lower = bound()?;
+        Some((lower, bound()?))
+    } else {
+        None
+    };
+    bits.bit_long()?;
+    (bits.bits_value(3)? == 0b010).then_some(())?;
+    let rest: Vec<String> = texts.collect();
+    let [_, _class, name, description, classification] = rest.as_slice() else {
+        return None;
+    };
+    Some(UserProperty {
+        key: strings.first()?.clone(),
+        name: name.clone(),
+        description: description.clone(),
+        classification: classification.clone(),
+        default,
+        use_default,
+        bounds,
+    })
 }
 
 /// Point number a COGO point entity refers to.
@@ -99,6 +228,8 @@ struct PointDatabase {
     /// Length of the list after the names (the same names keyed by text).
     again: usize,
     described: Vec<u32>,
+    /// Property values: (key, values by number; text values `None`).
+    values: Vec<(i32, Vec<(u32, Option<PropertyValue>)>)>,
 }
 
 /// `BL k, k × { BL number, BL text tag }`: the numbers.
@@ -129,7 +260,28 @@ fn database(bits: &mut Bits) -> Option<PointDatabase> {
         bits.bit_long()?;
     }
     let described = tagged(bits)?;
-    Some(PointDatabase { records, styled, labelled, named, again, described })
+    let mut values = Vec::new();
+    for slot in 0..13 {
+        for _ in 0..bits.bit_long()? {
+            let key = bits.bit_long()? & !0x4000_0000;
+            let code = key_code(key);
+            (PropertyValue::slot(code) == Some(slot)).then_some(())?;
+            let count = bits.bit_long()?;
+            let list = (0..count)
+                .map(|_| {
+                    let number = u32::try_from(bits.bit_long()?).ok()?;
+                    let value = match code {
+                        3 => Some(PropertyValue::Boolean(bits.bit()?)),
+                        4 => None,
+                        _ => Some(PropertyValue::read(bits, code, &mut std::iter::empty())?),
+                    };
+                    Some((number, value))
+                })
+                .collect::<Option<Vec<_>>>()?;
+            values.push((key, list));
+        }
+    }
+    Some(PointDatabase { records, styled, labelled, named, again, described, values })
 }
 
 /// Every point of a point database, in record order. `handles` and
@@ -138,6 +290,20 @@ pub(super) fn points(data: &[u8], start: usize, end: usize, handles: &[u64], str
     let Some(db) = database(&mut Bits::new(data, start, end)) else {
         return Vec::new();
     };
+    // Each value entry: its key text, then its text values.
+    let mut texts = strings.iter().skip(1 + db.named.len() + db.again + db.described.len()).cloned();
+    let mut values: Vec<(String, Vec<(u32, PropertyValue)>)> = Vec::new();
+    for (_, list) in &db.values {
+        let Some(key) = texts.next() else { return Vec::new() };
+        let mut entry = Vec::new();
+        for (number, value) in list {
+            match value.clone().or_else(|| texts.next().map(PropertyValue::Text)) {
+                Some(v) => entry.push((*number, v)),
+                None => return Vec::new(),
+            }
+        }
+        values.push((key, entry));
+    }
     let handle = |list: &[u32], offset: usize, number: u32| {
         list.iter().position(|n| *n == number).and_then(|i| handles.get(offset + i)).copied().unwrap_or(0)
     };
@@ -155,6 +321,10 @@ pub(super) fn points(data: &[u8], start: usize, end: usize, handles: &[u64], str
                 .and_then(|i| strings.get(1 + db.named.len() + db.again + i))
                 .cloned(),
             name: db.named.iter().position(|n| *n == number).and_then(|i| strings.get(1 + i)).cloned(),
+            properties: values
+                .iter()
+                .filter_map(|(key, list)| list.iter().find(|(n, _)| *n == number).map(|(_, v)| (key.clone(), v.clone())))
+                .collect(),
         })
         .collect()
 }
@@ -234,6 +404,40 @@ mod tests {
         assert_eq!((points[0].number, points[0].style, points[0].label_style, points[0].description.as_deref()), (9, 0, 0, None));
         assert_eq!(points[1].position, Vector3::new(100.0, 200.0, 10.0));
         assert_eq!((points[1].style, points[1].label_style, points[1].description.as_deref()), (0x68D, 0x690, Some("TEST")));
+    }
+
+    #[test]
+    fn user_property_and_point_values_read_by_kind() {
+        let bs_04be = "00 10111110 00000100";
+        let key = 0x8200_0001;
+        let s = [
+            format!("{bs_04be} {}{}{} 010 {}{}{}", bl(key), bl(0), bl(0), bl(key), bd(1.5), bl(key)),
+            format!("1 1 {}{} {}{}", bl(0x0200_0000), bd(0.0), bl(0x0240_0000), bd(10.0)),
+            format!("{} 010", bl(0x4000_806B)),
+        ]
+        .concat();
+        let b = bits_of(&s);
+        let len = s.bytes().filter(|c| *c == b'0' || *c == b'1').count();
+        let t: Vec<String> = ["kP1", "", "kP1", "kP1", "AeccAttributeTypeInfoDouble", "P1", "d", "C1"].map(String::from).to_vec();
+        let p = user_property(&b, 0, len, &t).unwrap();
+        assert_eq!((p.key.as_str(), p.name.as_str(), p.description.as_str(), p.classification.as_str()), ("kP1", "P1", "d", "C1"));
+        assert_eq!(p.default, PropertyValue::Double(1.5));
+        assert_eq!(p.bounds, Some(((PropertyValue::Double(0.0), false), (PropertyValue::Double(10.0), true))));
+        // One point (5) holding a boolean (slot 5, one bit) and a text (slot 6).
+        let record = format!("{} {} {}{}{}{} 00 00100000 00000100", bl(1), bl(1), bd(1.0), bd(2.0), bd(3.0), bl(5));
+        let s = [
+            format!("{bs_04be} {}{}{} 010 {record}", bl(34), bl(0), bl(0)),
+            bl(0).repeat(6),
+            bl(0).repeat(5),
+            format!("{} {} {} {} 1", bl(1), bl(0xC300_0001), bl(1), bl(5)),
+            format!("{} {} {} {}", bl(1), bl(0xC400_0001), bl(1), bl(5)),
+            bl(0).repeat(6),
+        ]
+        .concat();
+        let b = bits_of(&s);
+        let len = s.bytes().filter(|c| *c == b'0' || *c == b'1').count();
+        let points = points(&b, 0, len, &[0x185], &["".into(), "kB1".into(), "kS1".into(), "xy".into()]);
+        assert_eq!(points[0].properties, vec![("kB1".into(), PropertyValue::Boolean(true)), ("kS1".into(), PropertyValue::Text("xy".into()))]);
     }
 
     #[test]

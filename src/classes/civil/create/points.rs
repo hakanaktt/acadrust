@@ -2,7 +2,8 @@
 
 use super::groups::{all_points_query, refresh_groups, set_query, write_group, write_group_node, Entry, Group, ALL_POINTS_ID};
 use super::support::*;
-use crate::classes::civil::CogoPoint;
+use crate::classes::civil::cogo::key_code;
+use crate::classes::civil::{CogoPoint, PropertyValue};
 use crate::entities::{EntityCommon, EntityType, ExtendedEntityData};
 use crate::error::DxfError;
 use crate::io::dwg::dwg_stream_writers::DwgMergedWriter;
@@ -92,7 +93,7 @@ pub(super) fn support(doc: &mut CadDocument) -> Result<Support, DxfError> {
     let database = doc.allocate_handle();
     let group_node = doc.allocate_handle();
     let all_points = doc.allocate_handle();
-    write_database(doc, database, root, &[], defaults.class_node)?;
+    write_database(doc, database, root, &[], defaults.class_node, &[])?;
     let all = Entry { id: ALL_POINTS_ID, handle: all_points, name: String::new() };
     write_group_node(doc, group_node, root, &[all], defaults.label_style, defaults.point_style)?;
     let inner = set_query(doc, "Point Group Query - _All Points", QUERY_TAG, all_points_query())?;
@@ -116,7 +117,7 @@ fn write_all_points(doc: &mut CadDocument, s: &Support, query: Handle, numbers: 
     write_group(doc, s.all_points, s.group_node, &g)
 }
 
-fn write_database<'a>(doc: &mut CadDocument, handle: Handle, root: Handle, points: &'a [CogoPoint], class_node: u64) -> Result<(), DxfError> {
+fn write_database<'a>(doc: &mut CadDocument, handle: Handle, root: Handle, points: &'a [CogoPoint], class_node: u64, keys: &[(String, i32)]) -> Result<(), DxfError> {
     let styled: Vec<&CogoPoint> = points.iter().filter(|p| p.style != 0).collect();
     let labelled: Vec<&CogoPoint> = points.iter().filter(|p| p.label_style != 0).collect();
     let named: Vec<&CogoPoint> = points.iter().filter(|p| p.name.is_some()).collect();
@@ -140,6 +141,22 @@ fn write_database<'a>(doc: &mut CadDocument, handle: Handle, root: Handle, point
         strings.extend(named.iter().map(|p| p.name.clone().unwrap_or_default()));
     }
     strings.extend(described.iter().map(|p| p.description.clone().unwrap_or_default()));
+    // Property values by slot, one entry per key in key order, points in
+    // database order; each entry's key text, then its text values.
+    let mut slots: Vec<Vec<(i32, Vec<(u32, &PropertyValue)>)>> = vec![Vec::new(); 13];
+    for (text, key) in keys {
+        let values: Vec<(u32, &PropertyValue)> = points.iter().filter_map(|p| p.properties.iter().find(|(k, _)| k == text).map(|(_, v)| (p.number, v))).collect();
+        if let (false, Some(slot)) = (values.is_empty(), PropertyValue::slot(key_code(*key))) {
+            slots[slot].push((*key, values));
+        }
+    }
+    for (key, values) in slots.iter().flatten() {
+        strings.extend(keys.iter().find(|k| k.1 == *key).map(|k| k.0.clone()));
+        strings.extend(values.iter().filter_map(|(_, v)| match v {
+            PropertyValue::Text(t) => Some(t.clone()),
+            _ => None,
+        }));
+    }
     let list = |w: &mut DwgMergedWriter, v: &[&CogoPoint]| {
         w.write_bit_long(v.len() as i32);
         for p in v {
@@ -183,8 +200,21 @@ fn write_database<'a>(doc: &mut CadDocument, handle: Handle, root: Handle, point
                 w.write_bit_long(p.number as i32);
                 w.write_bit_long(*tag);
             }
-            for _ in 0..13 {
-                w.write_bit_long(0);
+            for slot in &slots {
+                w.write_bit_long(slot.len() as i32);
+                for (key, values) in slot {
+                    w.write_bit_long(key | 0x4000_0000);
+                    w.write_bit_long(values.len() as i32);
+                    for (number, value) in values {
+                        w.write_bit_long(*number as i32);
+                        match value {
+                            PropertyValue::Integer(v) => w.write_bit_long(*v),
+                            PropertyValue::Double(v) => w.write_bit_double(*v),
+                            PropertyValue::Boolean(v) => w.write_bit(*v),
+                            PropertyValue::Text(_) => {}
+                        }
+                    }
+                }
             }
         },
         Body { refs, strings },
@@ -192,9 +222,18 @@ fn write_database<'a>(doc: &mut CadDocument, handle: Handle, root: Handle, point
 }
 
 /// Rewrites the database and `_All Points` from `points`.
+pub(super) fn store_points(doc: &mut CadDocument, points: &[CogoPoint]) -> Result<(), DxfError> {
+    let s = support(doc)?;
+    store(doc, &s, points)
+}
+
+/// Rewrites the database and `_All Points` from `points`.
 fn store(doc: &mut CadDocument, s: &Support, points: &[CogoPoint]) -> Result<(), DxfError> {
     let root = root(doc).ok_or_else(|| invalid("drawing has no root tree node"))?;
-    write_database(doc, s.database, root, points, s.class_node)?;
+    let keys = super::user_properties::property_keys(doc, s.class_node);
+    write_database(doc, s.database, root, points, s.class_node, &keys)?;
+    let held: Vec<i32> = keys.iter().filter(|(t, _)| points.iter().any(|p| p.properties.iter().any(|(k, _)| k == t))).map(|k| k.1).collect();
+    super::user_properties::sync_users(doc, s.class_node, s.database.value(), &held)?;
     let query = object(doc, s.all_points).and_then(|o| o.decode().handles.get(2).copied()).map(Handle::new).unwrap_or(Handle::NULL);
     let numbers: Vec<u32> = points.iter().map(|p| p.number).collect();
     write_all_points(doc, s, query, &numbers)?;
@@ -259,6 +298,7 @@ pub fn add_cogo_point(
         label_style: s.defaults.label_style,
         description: description.map(str::to_string),
         name: None,
+        properties: Vec::new(),
     });
     store(doc, &s, &points)?;
     put_point(doc, None, number, layer)
@@ -326,7 +366,7 @@ pub fn remove_cogo_point(doc: &mut CadDocument, point: Handle) -> Result<(), Dxf
     Ok(())
 }
 
-fn point_number(doc: &CadDocument, point: Handle) -> Result<u32, DxfError> {
+pub(super) fn point_number(doc: &CadDocument, point: Handle) -> Result<u32, DxfError> {
     match doc.get_entity(point) {
         Some(EntityType::Extended(x)) => match &x.data {
             ExtendedEntityData::Arch(d) => d.cogo_point_number(),
