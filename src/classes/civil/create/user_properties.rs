@@ -83,6 +83,7 @@ fn write_value(w: &mut DwgMergedWriter, value: &PropertyValue) {
         PropertyValue::Integer(v) => w.write_bit_long(*v),
         PropertyValue::Double(v) => w.write_bit_double(*v),
         PropertyValue::Boolean(v) => w.write_byte(*v as u8),
+        PropertyValue::Choice(v) => w.write_bit_long(*v as i32),
         PropertyValue::Text(_) => {}
     }
 }
@@ -212,7 +213,7 @@ fn full_range(value: &PropertyValue) -> Option<((PropertyValue, bool), (Property
         PropertyValue::Integer(_) => Some(((PropertyValue::Integer(i32::MIN), true), (PropertyValue::Integer(i32::MAX), true))),
         PropertyValue::Double(_) => Some(((PropertyValue::Double(-1e24), true), (PropertyValue::Double(1e24), true))),
         PropertyValue::Boolean(_) => Some(((PropertyValue::Boolean(false), false), (PropertyValue::Boolean(true), false))),
-        PropertyValue::Text(_) => None,
+        PropertyValue::Text(_) | PropertyValue::Choice(_) => None,
     }
 }
 
@@ -221,7 +222,7 @@ fn as_number(v: &PropertyValue) -> Option<f64> {
         PropertyValue::Integer(i) => Some(f64::from(*i)),
         PropertyValue::Double(d) => Some(*d),
         PropertyValue::Boolean(b) => Some(f64::from(u8::from(*b))),
-        PropertyValue::Text(_) => None,
+        PropertyValue::Text(_) | PropertyValue::Choice(_) => None,
     }
 }
 
@@ -238,7 +239,8 @@ fn within(value: &PropertyValue, bounds: &Option<((PropertyValue, bool), (Proper
 /// Adds a point property `name` to the classification `classification`.
 /// `default` gives its kind; `bounds` `None` bounds a number by its kind's
 /// full range (texts have none). Returns the property's key text, the key
-/// of the values points hold ([`set_cogo_point_property`]).
+/// of the values points hold ([`set_cogo_point_property`]). Enumerations
+/// are added with [`add_point_choice_property`].
 pub fn add_point_property(
     doc: &mut CadDocument,
     classification: &str,
@@ -247,6 +249,34 @@ pub fn add_point_property(
     default: PropertyValue,
     use_default: bool,
     bounds: Option<((PropertyValue, bool), (PropertyValue, bool))>,
+) -> Result<String, DxfError> {
+    if matches!(default, PropertyValue::Choice(_)) {
+        return Err(invalid("an enumeration is added with add_point_choice_property"));
+    }
+    add_property(doc, classification, name, description, default, use_default, bounds, &[])
+}
+
+/// Adds an enumeration point property `name` with `choices` (distinct,
+/// in order) and the choice `default` (an index) to `classification`; a
+/// point's value is a [`PropertyValue::Choice`] index.
+pub fn add_point_choice_property(doc: &mut CadDocument, classification: &str, name: &str, description: &str, choices: &[&str], default: u32, use_default: bool) -> Result<String, DxfError> {
+    if choices.is_empty() || choices.iter().any(|c| c.is_empty()) || (1..choices.len()).any(|i| choices[..i].contains(&choices[i])) || default as usize >= choices.len() {
+        return Err(invalid("an enumeration needs distinct choices and a default among them"));
+    }
+    let choices: Vec<String> = choices.iter().map(|c| c.to_string()).collect();
+    add_property(doc, classification, name, description, PropertyValue::Choice(default), use_default, None, &choices)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_property(
+    doc: &mut CadDocument,
+    classification: &str,
+    name: &str,
+    description: &str,
+    default: PropertyValue,
+    use_default: bool,
+    bounds: Option<((PropertyValue, bool), (PropertyValue, bool))>,
+    choices: &[String],
 ) -> Result<String, DxfError> {
     if name.trim().is_empty() {
         return Err(invalid("a property needs a name"));
@@ -260,7 +290,7 @@ pub fn add_point_property(
     }
     let code = default.code();
     let bounds = match (&default, bounds) {
-        (PropertyValue::Text(_), Some(_)) => return Err(invalid("text properties have no bounds")),
+        (PropertyValue::Text(_) | PropertyValue::Choice(_), Some(_)) => return Err(invalid("text and enumeration properties have no bounds")),
         (_, Some(b)) if b.0 .0.code() != code || b.1 .0.code() != code => return Err(invalid("bounds are not of the property's kind")),
         (_, Some(b)) => Some(b),
         (v, None) => full_range(v),
@@ -276,13 +306,16 @@ pub fn add_point_property(
         1 => "AeccAttributeTypeInfoInt",
         2 => "AeccAttributeTypeInfoDouble",
         3 => "AeccAttributeTypeInfoBool",
+        13 => "AeccAttributeTypeInfoUserDefinedEnum",
         _ => "AeccAttributeTypeInfoString",
     };
     let mut strings = vec![text.clone(), String::new(), text.clone()];
     if let PropertyValue::Text(s) = &default {
         strings.push(s.clone());
     }
-    strings.extend([text.clone(), class.to_string(), name.to_string(), description.to_string(), class_name.clone()]);
+    strings.extend([text.clone(), class.to_string()]);
+    strings.extend(choices.iter().cloned());
+    strings.extend([name.to_string(), description.to_string(), class_name.clone()]);
     put_object(
         doc,
         "AECC_USER_DEFINED_ATTRIBUTE",
@@ -305,6 +338,9 @@ pub fn add_point_property(
                     write_value(w, v);
                 }
             }
+            if code == 13 {
+                w.write_bit_long(choices.len() as i32);
+            }
             w.write_bit_long(PROPERTY_TAIL);
             bits(w, "010");
         },
@@ -325,8 +361,8 @@ pub fn set_cogo_point_property(doc: &mut CadDocument, point: Handle, key: &str, 
         if v.code() != property.default.code() {
             return Err(invalid("value is not of the property's kind"));
         }
-        if !within(v, &property.bounds) {
-            return Err(invalid("value lies outside the property's bounds"));
+        if !within(v, &property.bounds) || matches!(v, PropertyValue::Choice(i) if *i as usize >= property.choices.len()) {
+            return Err(invalid("value lies outside the property's bounds or choices"));
         }
     }
     let number = super::points::point_number(doc, point)?;

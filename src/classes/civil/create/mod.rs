@@ -52,5 +52,5 @@ pub use site::{add_alignment_on_site, add_feature_line, add_lot_line, add_parcel
 pub use points::{add_cogo_point, cogo_points, remove_cogo_point, set_cogo_point, set_cogo_point_name, set_cogo_point_label_style};
 pub use label_style::{add_label_style, add_point_label_style, label_style, LabelStyle};
 pub use support::ensure_civil;
-pub use user_properties::{add_point_property, add_point_property_classification, point_properties, set_cogo_point_property};
+pub use user_properties::{add_point_choice_property, add_point_property, add_point_property_classification, point_properties, set_cogo_point_property};
 pub use tin::{add_tin_surface, add_tin_surface_with};

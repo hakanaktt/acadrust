@@ -212,6 +212,7 @@ fn write_database<'a>(doc: &mut CadDocument, handle: Handle, root: Handle, point
                             PropertyValue::Integer(v) => w.write_bit_long(*v),
                             PropertyValue::Double(v) => w.write_bit_double(*v),
                             PropertyValue::Boolean(v) => w.write_bit(*v),
+                            PropertyValue::Choice(v) => w.write_bit_long(*v as i32),
                             PropertyValue::Text(_) => {}
                         }
                     }
