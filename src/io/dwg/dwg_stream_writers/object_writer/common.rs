@@ -1146,7 +1146,11 @@ impl<'a> DwgObjectWriter<'a> {
             xdata
                 .raw_dwg_eed
                 .iter()
-                .filter(|(app, bytes)| registered(*app) && !edited(*app, bytes))
+                // A block with no bytes would write size 0, which is the EED
+                // terminator: the reader would stop there (#597).
+                .filter(|(app, bytes)| {
+                    !bytes.is_empty() && registered(*app) && !edited(*app, bytes)
+                })
                 .cloned()
                 .collect()
         } else {
@@ -1165,6 +1169,7 @@ impl<'a> DwgObjectWriter<'a> {
             .filter_map(|rec| self.encode_xdata_record(rec))
             .filter(|(app, _)| !raw_blocks.iter().chain(extra).any(|(a, _)| a == app))
             .chain(extra.iter().cloned())
+            .filter(|(_, bytes)| !bytes.is_empty())
             .collect();
 
         if raw_blocks.is_empty() && record_blocks.is_empty() {
