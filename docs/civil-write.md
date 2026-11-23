@@ -2957,6 +2957,54 @@ stations and the roads' profiles. Not written: the name template counter
 the command advances, offset alignments of roads on a site, curb
 returns, corridor regions.
 
+### Curb returns of the command
+
+`add_intersection_with_curb_returns(..., offsets, radius, layer)` writes
+what the command writes for a crossing of two siteless roads with its
+curb return alignments setting on (profiles and corridors off; WC40:
+roads (0, 0)-(200, 0) and (100, -100)-(100, 100), widths 12, radius 25):
+
+- In every region a curb return alignment `<intersection> - <region
+  name>` (type 3): a line of one unit along the incoming arm's offset
+  alignment toward the crossing (the road's left offset when the arm runs
+  along the road, else its right), a free arc of the radius, and a line of
+  one unit away along the outgoing arm's offset alignment (the road's
+  right when that arm runs along the road). Its record is a curb return's
+  (§3a) with these differences: both offsets, both overlaps and both
+  region offsets are 0 (it runs on the offset alignments themselves); the
+  region lists give the roads' stations of each line and the own stations
+  kept a thousandth in from the line's ends, paired by station; run 0 bits
+  39 and 40 are `10`, runs 1 and 13 `0`, run 12 bit 50 says the incoming
+  line runs against its road, bit 51 the right turn unless it does, bits
+  61 and 62 `10`, run 24 bits 50 and 51 both say the outgoing line runs
+  along its road; after the radius come `B 1, BL region (1 up), BD, BD`
+  the corner where the two offset lines meet and the last run (`BL 0, BL
+  3`), without the roads' stations. Its last references are the in road,
+  its offset alignment, the out road, its offset alignment and the
+  intersection.
+- An action (`AECC_ASSOC_CURBRETURN_ALIGNMENT_ACTION_BODY`, hard pointer
+  to the curb return) reading both offset alignments and the
+  intersection (order `0x20000`) and writing the curb return.
+- The intersection names each region's curb return as the first of the
+  region's four references (its profile null).
+- The offset alignments run only over the stations the curb returns'
+  lines take on their road and 0.076 beyond (`CURB_RETURN_MARGIN`; WC40:
+  61.924 to 138.076, the command's "intersection extents" length option).
+
+Written into WC40's roads the intersection equals the sample's record but
+for the class word; the curb returns' blocks equal the samples' values
+and flags. Differences left: the curb return records' geometry stamp and
+two element words the application writes as the largest double where the
+writer writes 0; the offset alignments start at their parent's station
+(the application's start at 0 over an element of the parent's whole
+length). E-IC1 (WC40's roads) and E-IC2 (a new drawing: a skewed
+crossing with profiles, widths 10 and 12, radius 30) open with AUDIT 0
+errors; the API lists the four regions with their curb return
+alignments, types and lengths (41.2699 for WC40's, as the sample's). Not
+written: the margin for other radii and widths (one sample: the samples
+for others could not be made), curb returns of tee junctions, profiles
+and corridors of the command, roads on a site.
+
 ## 3l. Subassembly packages (`pkt`)
 
 A package is a ZIP archive of deflated parts; `read_pkt` and `write_pkt`
@@ -3673,7 +3721,8 @@ Corridors are listed in §3i-a.
 | intersections | tee junctions without profiles (either side, starting or ending, skewed, the first road ending) | yes | yes | §3k (tee junctions) |
 | intersections | tee junctions with profiles | yes | yes | §3k (tee junctions) |
 | intersections | the offset alignments, profile locking action, intersection action and location label the command makes (siteless roads) | yes | yes | §3k (offset alignments and actions of the command) |
-| intersections | curb returns, corridor regions, roads on a site (offsets in the site's topology) | yes (records) | no | curb return records not decoded (hand-off notes); site topology of offset alignments not written |
+| intersections | curb returns of a crossing (arc, offset alignments over the intersection extents) | yes | yes | §3k (curb returns of the command; the extents margin from one sample) |
+| intersections | curb returns of tee junctions, curb return profiles, corridor regions, roads on a site (offsets in the site's topology) | yes (records) | no | not sampled; the sample generator could not run in the reference session after the first samples |
 | gravity pipe networks | every family of the default parts list (one size each), connections | partly | yes | §3m |
 | gravity pipe networks | sizes the parts list does not hold, the catalog's body solids | partly | no | §3m |
 | pressure networks | every size of the default catalog (straight and curved pipes, elbows, tees, crosses, gate valves), connections | yes | yes | §3n |
