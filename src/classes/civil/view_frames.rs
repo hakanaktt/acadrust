@@ -41,11 +41,10 @@
 //! corpus' frames and match lines (`Plan Production-Plan Profile
 //! Sheets-Create.dwg`) kind-6 polylines — same payload either way.
 //!
-//! **A match line's** single chain is a *closed* axis-aligned rectangle:
-//! five points at a common elevation walked low corner, low-right, high,
-//! high-left and back to the low corner, whose bounds are the live API's
-//! `GeometricExtents` exactly — bit for bit for all four match lines of
-//! the tutorial drawing.
+//! **A match line's** single chain is its rectangle walked around its
+//! four corners at a common elevation and closed back onto the first; its
+//! bounds are the live API's `GeometricExtents` exactly. A view frame's
+//! chain may be closed the same way.
 
 use super::bits::Bits;
 use crate::classes::arch::polyline_from_type6;
@@ -181,8 +180,9 @@ pub struct SheetGeometry {
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MatchLineGeometry {
-    /// The match line's rectangle walked around its four corners; its
-    /// axis-aligned bounds are the live API's `GeometricExtents` exactly.
+    /// The match line's rectangle walked around its four corners, rotated
+    /// with its frame; the corners' axis-aligned bounds are the live API's
+    /// `GeometricExtents` exactly.
     pub corners: [Vector3; 4],
 }
 
@@ -229,6 +229,28 @@ fn axis_aligned_rectangle(chain: &[Vector3]) -> Option<[Vector3; 4]> {
         .then_some([*a, *b, *c, *d])
 }
 
+/// A rectangle walked around its four corners at one elevation, possibly
+/// rotated: four points, or five whose last closes back onto the first.
+/// Opposite edges are equal bit for bit and the corner is right to 1e-9
+/// of the edge products (1.5e-12 in the sample).
+fn rectangle(chain: Vec<Vector3>) -> Option<[Vector3; 4]> {
+    let [a, b, c, d] = match <[Vector3; 5]>::try_from(chain) {
+        Ok([a, b, c, d, closing]) => (closing == a).then_some([a, b, c, d])?,
+        Err(chain) => <[Vector3; 4]>::try_from(chain).ok()?,
+    };
+    let dot = (b.x - a.x) * (c.x - b.x) + (b.y - a.y) * (c.y - b.y);
+    let edges = ((b.x - a.x).hypot(b.y - a.y)) * ((c.x - b.x).hypot(c.y - b.y));
+    (a.z == b.z
+        && b.z == c.z
+        && c.z == d.z
+        && b.x - a.x == c.x - d.x
+        && b.y - a.y == c.y - d.y
+        && c.x - b.x == d.x - a.x
+        && c.y - b.y == d.y - a.y
+        && dot.abs() <= 1e-9 * edges)
+        .then_some([a, b, c, d])
+}
+
 /// A view frame record's frame rectangle: `graphic` is the entity's
 /// graphic-image section, `data`/`start`/`end` its class stream.
 pub(super) fn view_frame_geometry(data: &[u8], start: usize, end: usize, graphic: &[u8]) -> Option<ViewFrameGeometry> {
@@ -236,18 +258,7 @@ pub(super) fn view_frame_geometry(data: &[u8], start: usize, end: usize, graphic
     plan_production_head(&mut bits)?;
     let chains = point_chains(graphic)?;
     let [chain]: [_; 1] = chains.try_into().ok()?;
-    let [a, b, c, d] = <[Vector3; 4]>::try_from(chain).ok()?;
-    // A rectangle rotated to the alignment: opposite edges equal bit for
-    // bit, right angle to 1e-9 of the edge products (1.5e-12 in the
-    // sample).
-    let dot = (b.x - a.x) * (c.x - b.x) + (b.y - a.y) * (c.y - b.y);
-    let edges = ((b.x - a.x).hypot(b.y - a.y)) * ((c.x - b.x).hypot(c.y - b.y));
-    (b.x - a.x == c.x - d.x
-        && b.y - a.y == c.y - d.y
-        && c.x - b.x == d.x - a.x
-        && c.y - b.y == d.y - a.y
-        && dot.abs() <= 1e-9 * edges)
-        .then_some(ViewFrameGeometry { corners: [a, b, c, d] })
+    Some(ViewFrameGeometry { corners: rectangle(chain)? })
 }
 
 /// A sheet record's rectangles: `graphic` is the entity's graphic-image
@@ -271,20 +282,14 @@ pub(super) fn sheet_geometry(data: &[u8], start: usize, end: usize, graphic: &[u
 
 /// A match line record's rectangle: `graphic` is the entity's
 /// graphic-image section, `data`/`start`/`end` its class stream.
-pub(super) fn match_line_geometry(
-    data: &[u8],
-    start: usize,
-    end: usize,
-    graphic: &[u8],
-) -> Option<MatchLineGeometry> {
+pub(super) fn match_line_geometry(data: &[u8], start: usize, end: usize, graphic: &[u8]) -> Option<MatchLineGeometry> {
     let mut bits = Bits::new(data, start, end);
     plan_production_head(&mut bits)?;
     let chains = point_chains(graphic)?;
     let [chain]: [_; 1] = chains.try_into().ok()?;
-    let [a, b, c, d, low]: [Vector3; 5] = <[Vector3; 5]>::try_from(chain).ok()?;
-    // The chain walks the rectangle and closes back onto its low corner.
-    (low == a).then_some(())?;
-    Some(MatchLineGeometry { corners: axis_aligned_rectangle(&[a, b, c, d])? })
+    // A match line's walk is always closed: five points.
+    (chain.len() == 5).then_some(())?;
+    Some(MatchLineGeometry { corners: rectangle(chain)? })
 }
 
 #[cfg(test)]
@@ -442,6 +447,27 @@ mod tests {
         let mut open = match_line_chain();
         open.truncate(4); // the walk does not return to the low corner
         let g = section_of_kind(6, &[&open], false);
+        assert_eq!(match_line_geometry(&class, 0, class.len() * 8, &g), None);
+    }
+
+    #[test]
+    fn reads_a_rotated_match_line_and_a_closed_frame() {
+        let class = class_stream();
+        let mut closed = rotated_corners();
+        closed.push(closed[0]);
+        let g = section_of_kind(6, &[&closed], false);
+        let at = match_line_geometry(&class, 0, class.len() * 8, &g).expect("rotated match line");
+        assert_eq!(at.corners[1], Vector3::new(5519578.861366005, 4351859.265197898, 0.0));
+        let at = view_frame_geometry(&class, 0, class.len() * 8, &g).expect("closed frame");
+        assert_eq!(at.corners[3], Vector3::new(5518882.143580793, 4351324.612667958, 0.0));
+        // A walk that does not close, or leaves its elevation, is refused.
+        let mut open = closed.clone();
+        open[4].0 += 1.0;
+        let g = section_of_kind(6, &[&open], false);
+        assert_eq!(match_line_geometry(&class, 0, class.len() * 8, &g), None);
+        let mut lifted = closed;
+        lifted[2].2 = 1.0;
+        let g = section_of_kind(6, &[&lifted], false);
         assert_eq!(match_line_geometry(&class, 0, class.len() * 8, &g), None);
     }
 
