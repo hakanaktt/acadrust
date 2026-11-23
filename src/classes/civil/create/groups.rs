@@ -75,7 +75,7 @@ pub enum PointQuery {
     Custom(QueryExpression),
     /// The query with its description patterns matched case and all (the
     /// query's case-sensitive match setting; PC01). Not over name patterns
-    /// nor inside an exclusion.
+    /// nor inside or around an exclusion.
     CaseSensitive(Box<PointQuery>),
 }
 
@@ -186,8 +186,8 @@ impl PointQuery {
                 Statement { include: None, exclude: None, custom: Some(e.clone()), case_sensitive: false }
             }
             PointQuery::CaseSensitive(q) => {
-                if matches!(**q, PointQuery::CaseSensitive(_) | PointQuery::Names(_)) || matches!(&**q, PointQuery::Custom(e) if e.compares_names()) {
-                    return Err(invalid("a case-sensitive query holds no name patterns nor another case-sensitive query"));
+                if matches!(**q, PointQuery::CaseSensitive(_) | PointQuery::Excluding(..)) || q.has_names() {
+                    return Err(invalid("a case-sensitive query holds no name patterns, exclusion or another case-sensitive query"));
                 }
                 Statement { case_sensitive: true, ..q.statement()? }
             }
@@ -231,6 +231,18 @@ impl PointQuery {
                 Criteria { attribute, comparison: Comparison::Equal, constants: patterns.iter().map(text).collect() }
             }
         })
+    }
+
+    /// It matches names somewhere, through exclusions and custom
+    /// expressions too.
+    fn has_names(&self) -> bool {
+        match self {
+            PointQuery::Names(_) => true,
+            PointQuery::Excluding(include, exclude) => include.as_deref().is_some_and(PointQuery::has_names) || exclude.has_names(),
+            PointQuery::Custom(e) => e.compares_names(),
+            PointQuery::CaseSensitive(q) => q.has_names(),
+            _ => false,
+        }
     }
 
     /// True when the point belongs to the query's group (patterns matched
@@ -1318,5 +1330,10 @@ mod tests {
         assert!(!raw("test*").statement().unwrap().case_sensitive);
         assert!(PointQuery::CaseSensitive(Box::new(PointQuery::Names(vec!["a".into()]))).statement().is_err());
         assert!(PointQuery::Excluding(None, Box::new(PointQuery::CaseSensitive(Box::new(raw("a"))))).statement().is_err());
+        let names = || Box::new(PointQuery::Names(vec!["a".into()]));
+        let excluding = PointQuery::Excluding(Some(names()), Box::new(raw("a")));
+        assert!(excluding.has_names());
+        assert!(PointQuery::CaseSensitive(Box::new(excluding)).statement().is_err());
+        assert!(PointQuery::CaseSensitive(Box::new(PointQuery::Excluding(None, Box::new(raw("a"))))).statement().is_err());
     }
 }

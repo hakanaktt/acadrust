@@ -585,7 +585,7 @@ query's case-sensitive setting) stores 1 in the last of the statement's
 five head bits (`01001`, a custom query `01011`) and matches the patterns
 as written (PC01: `test*` then selects no point described TEST, `TEST`
 selects it); the writer refuses it over name patterns (not sampled) and
-inside an exclusion. Written for PG00b (E-PC1: description, custom and
+inside or around an exclusion (not sampled). Written for PG00b (E-PC1: description, custom and
 upper-case queries) the statements equal PC01's but for the text ids; the
 drawing opens with AUDIT 0 errors and the application lists and updates
 the groups with the written members. Number ranges (`2-6`) are stored with generated parentheses, an AND
