@@ -519,6 +519,11 @@ pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handl
                     w.write_bit_long(k);
                 }
             }
+            // The parcels: one over several faces counts once (PD01).
+            let mut distinct: Vec<u64> = parcels.iter().copied().filter(|h| *h != 0).collect();
+            distinct.sort_unstable();
+            distinct.dedup();
+            let p = if distinct.len() < parcels.len() { distinct.len() as i32 } else { p };
             let tail = [1, 1, p + 1].into_iter().chain([1; 10]).chain([p]).chain(1..=p);
             for v in tail.chain([0; 5]) {
                 w.write_bit_long(v);
@@ -791,11 +796,11 @@ pub fn add_feature_line_vertices(doc: &mut CadDocument, site: Handle, name: &str
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
     let (container, mut members, parcels, line_style, next) = members_of(doc, site)?;
-    let faces = |members: &[Member]| {
+    let arrange = |members: &[Member]| {
         let inputs: Vec<Input> = members.iter().filter(|m| !m.path.is_empty()).map(|m| Input { path: &m.path, elevations: &m.elevations, closed: m.closed() }).collect();
-        if inputs.is_empty() { Ok(0) } else { build(&inputs).map(|a| a.faces.len()).map_err(invalid) }
+        if inputs.is_empty() { Ok(None) } else { build(&inputs).map(Some).map_err(invalid) }
     };
-    let before = faces(&members)?;
+    let before = arrange(&members)?;
     let common = EntityCommon {
         handle: doc.allocate_handle(),
         owner_handle: doc.header.model_space_block_handle,
@@ -812,14 +817,64 @@ pub fn add_feature_line_vertices(doc: &mut CadDocument, site: Handle, name: &str
         ids: Vec::new(),
         read: None,
     });
-    // A feature line that closes a region or splits one makes the
-    // application add a grading of that face (FX04, FX07), which is not
-    // written.
-    if before != 0 && faces(&members)? != before {
-        return Err(invalid("the feature line closes or splits a region of the site"));
+    // A feature line that splits a parcel's face leaves the parcel over
+    // the parts (PD01, PD05, PD06, PD09: one parcel over two faces; PD08:
+    // over four). One that closes or splits a region no parcel covers
+    // makes the application add a grading of that face (FX04, FX07),
+    // which is not written.
+    let after = arrange(&members)?;
+    let (Some(old), Some(new)) = (&before, &after) else {
+        write_container(doc, container, site, &members, &parcels, line_style, next)?;
+        return write_feature_line(doc, common, name, members.len() as i32, container, line_style);
+    };
+    if old.faces.len() == new.faces.len() {
+        write_container(doc, container, site, &members, &parcels, line_style, next)?;
+        return write_feature_line(doc, common, name, members.len() as i32, container, line_style);
     }
-    write_container(doc, container, site, &members, &parcels, line_style, next)?;
-    write_feature_line(doc, common, name, members.len() as i32, container, line_style)
+    let owners: Vec<u64> = (1..new.faces.len())
+        .map(|i| old.face_at(new.faces[i].label, 0).and_then(|f| parcels.get(f as usize - 2).copied()).filter(|h| *h != 0))
+        .collect::<Option<_>>()
+        .ok_or_else(|| invalid("the feature line closes or splits a region of the site no parcel covers"))?;
+    let mut distinct = parcels.clone();
+    distinct.sort_unstable();
+    distinct.dedup();
+    let earlier: Vec<(u64, i32, Vector2, u64, u64, EntityCommon)> = distinct
+        .iter()
+        .filter(|h| **h != 0)
+        .map(|h| match doc.get_entity(Handle::new(*h)) {
+            Some(EntityType::Extended(x)) => match &x.data {
+                ExtendedEntityData::Arch(a) => {
+                    let refs = a.typed_handles();
+                    a.parcel_face().zip(a.parcel_label()).map(|((n, _), l)| (*h, n, l, refs.get(3).map_or(0, |r| r.0), refs.get(4).map_or(0, |r| r.0), x.common.clone()))
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect::<Option<_>>()
+        .ok_or_else(|| invalid("a parcel of the site cannot be read"))?;
+    write_container(doc, container, site, &members, &owners, line_style, next)?;
+    let line = write_feature_line(doc, common, name, members.len() as i32, container, line_style)?;
+    for (h, number, label, style, label_style, common) in earlier {
+        let faces: Vec<i32> = owners.iter().enumerate().filter(|(_, o)| **o == h).map(|(i, _)| i as i32 + 2).collect();
+        // The label's elevation: the mean of the nodes on the parcel's
+        // outline, the segments with its faces on one side only (PD01:
+        // 11 / 6; PD08: 22 / 8).
+        let mut outline: Vec<i32> = Vec::new();
+        for e in &new.edges {
+            for (k, v) in e.vertices.iter().enumerate() {
+                let Some(next) = e.vertices.get(k + 1) else { continue };
+                if faces.contains(&v.faces.0) != faces.contains(&v.faces.1) {
+                    outline.extend([v.node, next.node]);
+                }
+            }
+        }
+        outline.sort_unstable();
+        outline.dedup();
+        let z = outline.iter().map(|n| new.nodes[*n as usize - 1].1).sum::<f64>() / outline.len().max(1) as f64;
+        write_parcel_over(doc, common, site, number, &faces, label, z, style, label_style)?;
+    }
+    Ok(line)
 }
 
 /// Replaces the vertices of `feature_line` (a feature line on a site this
@@ -918,7 +973,7 @@ fn write_lot_line(doc: &mut CadDocument, common: EntityCommon, edge: i32, contai
 /// RC 3 keys: 0x0D00800A BL 0, 0x02008022 BD 0.1, 0x0200800B BD 1/24
 /// BL 0 (one-byte form), 121 zero bits
 /// BL number, BL 0, BL 0, BD 0, 3BD label location, BL 80, BL 1,
-/// 3BD label location, BL 2, BL 1, BL face, BL 0, B 0, BS 0x04BE
+/// 3BD label location, BL 2, BL n, n x BL face, BL 0, B 0, BS 0x04BE
 /// references: soft pointer 0, the site (hard), hard ownership 0, the
 ///   parcel style (hard), the area label style (hard)
 /// texts: "AeccImpFace", "", "" (the application names the parcel from
@@ -930,6 +985,14 @@ fn write_lot_line(doc: &mut CadDocument, common: EntityCommon, edge: i32, contai
 /// boundary come from its face in the site's container (WP03 to WP14:
 /// parcels of other areas have the same record).
 fn write_parcel(doc: &mut CadDocument, common: EntityCommon, site: Handle, number: i32, face: i32, label: Vector2, style: u64, label_style: u64) -> Result<Handle, DxfError> {
+    write_parcel_over(doc, common, site, number, &[face], label, 0.0, style, label_style)
+}
+
+/// [`write_parcel`] over the faces `faces` (`BL 2, BL n, n x BL face`; a
+/// feature line splitting a parcel's face leaves the parcel over the
+/// parts, PD01) with the label at elevation `z`.
+#[allow(clippy::too_many_arguments)]
+fn write_parcel_over(doc: &mut CadDocument, common: EntityCommon, site: Handle, number: i32, faces: &[i32], label: Vector2, z: f64, style: u64, label_style: u64) -> Result<Handle, DxfError> {
     let byte = |w: &mut crate::io::dwg::dwg_stream_writers::DwgMergedWriter, v: u8| bits(w, &format!("{v:08b}"));
     let refs = vec![soft_pointer(0), hard_pointer(site.value()), Ref(DwgReferenceType::HardOwnership, 0), hard_pointer(style), hard_pointer(label_style)];
     let strings = vec!["AeccImpFace".to_string(), String::new(), String::new()];
@@ -958,14 +1021,16 @@ fn write_parcel(doc: &mut CadDocument, common: EntityCommon, site: Handle, numbe
             }
             w.write_bit_double(0.0);
             for round in 0..2 {
-                for v in [label.x, label.y, 0.0] {
+                for v in [label.x, label.y, z] {
                     w.write_bit_double(v);
                 }
-                for v in if round == 0 { [80, 1] } else { [2, 1] } {
+                for v in if round == 0 { [80, 1] } else { [2, faces.len() as i32] } {
                     w.write_bit_long(v);
                 }
             }
-            w.write_bit_long(face);
+            for face in faces {
+                w.write_bit_long(*face);
+            }
             w.write_bit_long(0);
             w.write_bit(false);
             w.write_bit_short(VERSION);
@@ -1019,6 +1084,9 @@ fn join_site(doc: &mut CadDocument, site: Handle, path: Vec<PathPoint>, elevatio
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
     let (container, mut members, parcels, line_style, next) = members_of(doc, site)?;
+    if parcels.iter().enumerate().any(|(i, p)| *p != 0 && parcels[..i].contains(p)) {
+        return Err(invalid("a parcel of the site lies over several faces"));
+    }
     let probe = Member { handle: 0, path: path.clone(), elevations: Vec::new(), elevation_points: Vec::new(), kind, ids: Vec::new(), read: None };
     let outline = probe.outline();
     let met = members.iter().filter(|m| paths_meet(&m.outline(), &outline)).map(|m| m.kind).collect::<Vec<_>>();
@@ -1396,6 +1464,43 @@ mod tests {
         let lines: Vec<u64> = refs.iter().step_by(2).take(4).copied().collect();
         assert_eq!((lines[0], lines[3]), (a.value(), f.value()));
         assert_eq!(&refs[10..14], &[p1.value(), 0, p2.value(), 0]);
+    }
+    #[test]
+    fn feature_lines_split_a_parcel_into_faces() {
+        let v = Vector2::new;
+        let p = crate::types::Vector3::new;
+        let mut doc = drawing();
+        let s = add_site(&mut doc, "Site 1", "").unwrap();
+        let parcel = add_parcel(&mut doc, s, &[v(0.0, 0.0), v(100.0, 0.0), v(100.0, 50.0), v(0.0, 50.0)], None).unwrap();
+        add_feature_line(&mut doc, s, "FL1", &[p(-20.0, 25.0, 5.0), p(120.0, 25.0, 6.0)], None).unwrap();
+        add_feature_line(&mut doc, s, "FL2", &[p(50.0, -20.0, 5.0), p(50.0, 70.0, 6.0)], None).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-parcel-faces-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        // One parcel over the four parts, listed once per face in the
+        // container; its label sits at the mean elevation of its outline
+        // (corners at 0, crossings 5.143 to 5.857: 22 / 8).
+        let (number, faces) = arch(&back, parcel).parcel_faces().unwrap();
+        assert_eq!((number, faces.len()), (1, 4));
+        let container = arch(&back, s).typed_handles()[5].0;
+        let refs: Vec<u64> = object(&back, Handle::new(container)).unwrap().typed_handles().iter().map(|r| r.0).collect();
+        assert_eq!(refs.iter().filter(|r| **r == parcel.value()).count(), 4);
+        let record = arch(&back, parcel);
+        let (data, start, end) = record.main_stream().unwrap();
+        let mut b = crate::classes::civil::bits::Bits::new(data, start, end);
+        crate::classes::civil::alignment::class_keys(&mut b).unwrap();
+        b.pos += 121;
+        for _ in 0..3 {
+            b.bit_long().unwrap();
+        }
+        b.bit_double().unwrap();
+        let label = [b.bit_double().unwrap(), b.bit_double().unwrap(), b.bit_double().unwrap()];
+        assert_eq!(label[..2], [50.0, 25.0]);
+        assert!((label[2] - 2.75).abs() < 1e-9);
+        // A lot line cannot yet join a site with such a parcel.
+        let mut back = back;
+        assert!(add_lot_line(&mut back, s, &[(v(-10.0, 10.0), 0.0), (v(110.0, 10.0), 0.0)], false, None).is_err());
     }
     #[test]
     fn crossing_lot_lines_split_the_parcels() {

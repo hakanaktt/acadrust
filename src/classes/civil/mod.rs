@@ -879,9 +879,19 @@ impl ArchEntityData {
     /// class head with keys 0x0D00800A BL 0, 0x02008022 BD 0.1,
     ///   0x0200800B BD 1/24, BL 0, 121 zero bits
     /// BL number, BL 0, BL 0, BD 0, 3BD label location, BL 80, BL 1,
-    /// 3BD label location, BL 2, BL 1, BL face, BL 0, B 0, BS 0x04BE
+    /// 3BD label location, BL 2, BL n, n x BL face, BL 0, B 0, BS 0x04BE
     /// ```
+    ///
+    /// A parcel a feature line split lies over several faces (PD01); this
+    /// gives the first, [`Self::parcel_faces`] all.
     pub fn parcel_face(&self) -> Option<(i32, i32)> {
+        let (number, faces) = self.parcel_faces()?;
+        Some((number, *faces.first()?))
+    }
+
+    /// A parcel's number and every face of its site's topology it covers
+    /// (see [`Self::parcel_face`]).
+    pub fn parcel_faces(&self) -> Option<(i32, Vec<i32>)> {
         self.parcel_site()?;
         let (data, start, end) = self.main_stream()?;
         let mut b = bits::Bits::new(data, start, end);
@@ -897,8 +907,10 @@ impl ArchEntityData {
         for _ in 0..3 {
             b.bit_double()?;
         }
-        (b.bit_long()? == 2 && b.bit_long()? == 1).then_some(())?;
-        Some((number, b.bit_long()?))
+        (b.bit_long()? == 2).then_some(())?;
+        let n = b.bit_long()?;
+        (1..=64).contains(&n).then_some(())?;
+        Some((number, (0..n).map(|_| b.bit_long()).collect::<Option<_>>()?))
     }
 
     /// Where a parcel's area label sits (the label location after its
