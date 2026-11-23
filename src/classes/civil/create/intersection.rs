@@ -223,7 +223,7 @@ fn station_on(road: &Road, point: Vector2, p: Vector2) -> f64 {
     road.station + (p - point).dot(&d)
 }
 
-/// The curb return of each region of a crossing: it runs toward the
+/// The curb return of each region of a crossing or tee junction: it runs toward the
 /// crossing along the incoming arm's offset line on the region's side
 /// (the road's left offset when the arm runs along the road, else its
 /// right) and away along the outgoing arm's (the road's right when that
@@ -342,7 +342,9 @@ pub fn add_intersection_with(doc: &mut CadDocument, name: &str, main: Handle, ma
 /// reads both offset alignments and the intersection. The offset
 /// alignments then run only over the curb returns' stations on their road
 /// and a thousandth of that span beyond, see [`CURB_RETURN_MARGIN`] (the command's intersection-extents
-/// option). Tee junctions are refused.
+/// option); both offsets of a road run over every curb return line on the
+/// road and the crossing station, cut to the road's ends (tee junctions,
+/// WC50 to WC52).
 #[allow(clippy::too_many_arguments)]
 pub fn add_intersection_with_curb_returns(doc: &mut CadDocument, name: &str, main: Handle, main_profile: Handle, other: Handle, other_profile: Handle, assembly_sets: [&str; 2], offsets: IntersectionOffsets, radius: f64, layer: Option<&str>) -> Result<Handle, DxfError> {
     if !(radius.is_finite() && radius > 0.0) {
@@ -433,20 +435,18 @@ fn build_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_prof
         // The curb returns: per region its geometry, and the stations its
         // lines take on each offset alignment (road, side).
         let returns = match curb_radius {
-            Some(radius) => {
-                if roads[1].ends.is_some() {
-                    return Err(invalid("curb returns are written for crossings only"));
-                }
-                Some(curb_returns(&roads, point, &widths, radius)?)
-            }
+            Some(radius) => Some(curb_returns(&roads, point, &widths, radius)?),
             None => None,
         };
         for (k, r) in roads.iter_mut().enumerate() {
             let parent = Handle::new(r.alignment);
             let road_name = arch(doc, parent).and_then(|a| a.alignment_name()).unwrap_or_default();
             for (i, (side, width)) in [("Left", -widths[k][0]), ("Right", widths[k][1])].into_iter().enumerate() {
+                // Both offsets of a road run over the stations of every
+                // curb return line on the road and the crossing (WC50: a
+                // tee's through road's right offset as its left).
                 let range = returns.as_ref().map(|c| {
-                    let s: Vec<f64> = c.iter().flat_map(|g| g.spans.iter().filter(|x| x.0 == (k, i)).flat_map(|x| [x.1, x.2])).collect();
+                    let s: Vec<f64> = c.iter().flat_map(|g| g.spans.iter().filter(|x| x.0 .0 == k).flat_map(|x| [x.1, x.2])).chain([r.station]).collect();
                     let (lo, hi) = (s.iter().copied().fold(f64::INFINITY, f64::min), s.iter().copied().fold(f64::NEG_INFINITY, f64::max));
                     let margin = (hi - lo) * CURB_RETURN_MARGIN;
                     (lo - margin, hi + margin)

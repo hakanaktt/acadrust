@@ -3067,15 +3067,25 @@ Written into WC40's roads the intersection equals the sample's record but
 for the class word; the curb returns' blocks equal the samples' values
 and flags. Differences left: the curb return records' geometry stamp and
 two element words the application writes as the largest double where the
-writer writes 0; the offset alignments start at their parent's station
-(the application's start at 0 over an element of the parent's whole
-length). E-IC1 (WC40's roads) and E-IC2 (a new drawing: a skewed
+writer writes 0. The clipped offset alignments start at station 0, their
+own anchor naming the whole parent element's offset (as the
+application's). E-IC1 (WC40's roads) and E-IC2 (a new drawing: a skewed
 crossing with profiles, widths 10 and 12, radius 30) open with AUDIT 0
 errors; the API lists the four regions with their curb return
-alignments, types and lengths (41.2699 for WC40's, as the sample's). Not
-written: the margin for other radii and widths (one sample: the samples
-for others could not be made), curb returns of tee junctions, profiles
-and corridors of the command, roads on a site.
+alignments, types and lengths (41.2699 for WC40's, as the sample's).
+
+Tee junctions (WC50: the second road starting at the through road; WC51:
+ending there; WC52: skewed) get a curb return in each of their two
+regions; both offsets of a road, also the through road's side without a
+curb return, run over every curb return line on that road and the
+crossing station, stretched by the same thousandth and cut to the road's
+ends (WC50: through road 61.924 to 138.076, second road 0 to 38.038).
+The span rule holds over WC40 to WC47 (radii 10 to 50, widths 10 to 20).
+Written: E-IC5, E-IC6 (crossings, radius 30 width 12, radius 40 width
+15), E-IC7 to E-IC9 (WC50 to WC52's roads) open with AUDIT 0, the API
+lists the regions with their curb returns, the offset and curb return
+lengths as the samples'. Not written: profiles and corridors of the
+command, roads on a site.
 
 ## 3l. Subassembly packages (`pkt`)
 
@@ -3795,8 +3805,8 @@ Corridors are listed in §3i-a.
 | intersections | tee junctions without profiles (either side, starting or ending, skewed, the first road ending) | yes | yes | §3k (tee junctions) |
 | intersections | tee junctions with profiles | yes | yes | §3k (tee junctions) |
 | intersections | the offset alignments, profile locking action, intersection action and location label the command makes (siteless roads) | yes | yes | §3k (offset alignments and actions of the command) |
-| intersections | curb returns of a crossing (arc, offset alignments over the intersection extents) | yes | yes | §3k (curb returns of the command; the extents margin from one sample) |
-| intersections | curb returns of tee junctions, curb return profiles, corridor regions, roads on a site (offsets in the site's topology) | yes (records) | no | not sampled; the sample generator could not run in the reference session after the first samples |
+| intersections | curb returns of crossings and tee junctions (arc, offset alignments over the intersection extents) | yes | yes | §3k (curb returns of the command) |
+| intersections | curb return profiles, corridor regions, roads on a site (offsets in the site's topology) | yes (records) | no | not sampled |
 | gravity pipe networks | every family of the default parts list (one size each), connections | partly | yes | §3m |
 | gravity pipe networks | sizes the parts list does not hold, the catalog's body solids | partly | no | §3m |
 | pressure networks | every size of the default catalog (straight and curved pipes, elbows, tees, crosses, gate valves), connections | yes | yes | §3n |

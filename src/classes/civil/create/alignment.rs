@@ -1883,7 +1883,9 @@ fn write_offset_alignment(doc: &mut CadDocument, parent: Handle, name: &str, off
     }
     let spans = spans(&written.elements).ok_or_else(|| invalid("the parent cannot be solved"))?;
     let total: f64 = spans.iter().map(|(e, _, p)| piece_lengths(e, p).iter().sum::<f64>()).sum();
-    let (s0, s1) = range.unwrap_or((0.0, total));
+    // An intersection's offsets are cut to the parent's ends (a tee
+    // junction's road ending or starting at the intersection, WC50).
+    let (s0, s1) = range.map_or((0.0, total), |(a, b)| if kept.1 { (a.max(0.0), b.min(total)) } else { (a, b) });
     let tol = 1e-9 * total.max(1.0);
     if !(s0.is_finite() && s1.is_finite() && s0 >= -tol && s1 <= total + tol && s1 - s0 > tol) {
         return Err(invalid("the range must run forward within the parent's stations"));
