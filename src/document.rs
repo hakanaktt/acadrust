@@ -5463,14 +5463,29 @@ impl CadDocument {
         let EntityType::Insert(insert) = self.get_entity(insert_handle)? else {
             return None;
         };
+        // The representation lies under the INSERT's extension dictionary:
+        // search down from it (as deep as an owner chain is followed), not
+        // through every representation of the drawing.
         if let Some(xdict) = insert.common.xdictionary_handle {
-            if let Some(definition) = self
-                .block_representations
-                .iter()
-                .find(|(rep, _)| self.owner_chain_reaches(**rep, xdict))
-                .map(|(_, definition)| *definition)
-            {
-                return Some(definition);
+            let mut level = vec![xdict];
+            for _ in 0..16 {
+                let mut next = Vec::new();
+                for handle in level {
+                    if let Some(definition) = self.block_representations.get(&handle) {
+                        if self.owner_chain_reaches(handle, xdict) {
+                            return Some(*definition);
+                        }
+                    }
+                    match self.objects.get(&handle) {
+                        Some(ObjectType::Dictionary(d)) => next.extend(d.entries.iter().map(|(_, h)| *h)),
+                        Some(ObjectType::DictionaryWithDefault(d)) => next.extend(d.entries.iter().map(|(_, h)| *h)),
+                        _ => {}
+                    }
+                }
+                if next.is_empty() {
+                    break;
+                }
+                level = next;
             }
         }
         self.block_records
