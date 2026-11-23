@@ -39,15 +39,9 @@
 //!
 //! Records the codec writes itself (`create::add_lot_line`) carry the
 //! same head and schema word but no graphic-image section; they decode
-//! to `None` here. The tutorial corpus also holds a shorter form —
-//! 94–106 bytes, same head and schema word, no graphic-image section
-//! (8 of 30 records in Parcel-2B.dwg, 2 of 24 in Parcel-2A.dwg, 1 of 22
-//! in Parcel-1D.dwg; the first of them bit-identical across the three
-//! drawings). The live API gives these segments no `BaseCurve` at all —
-//! `<null>`, `EndParam` 0, while every other segment of the same
-//! drawings reports a polyline — so the variant legitimately holds
-//! less: its bit-coded tail matches nothing recorded truth states, and
-//! these records decode to `None` here.
+//! to `None` here. A shorter form (same head and schema word, no
+//! graphic-image section) is a segment stored without a base curve and
+//! also decodes to `None`.
 
 use super::bits::Bits;
 use crate::classes::arch::polyline_from_type6;

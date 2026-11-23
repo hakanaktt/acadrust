@@ -38,34 +38,9 @@
 //!
 //! The tail has no field grammar common to the four records (the 0-line
 //! group's tail is as long as the 19-line group's; the 132-line group's
-//! is about 130 times the 32-line group's), and nothing on record states
-//! what it holds. A live-API differential over the whole tutorial corpus
-//! (every group of the nine corpus files that carries one, thirteen
-//! groups — names, descriptions, styles, material lists, sections and
-//! material sections of each; plus bit-exact tail dumps for all twelve
-//! distinct records) characterizes it as the application's internal
-//! save-state cache, not a decodable field stream:
-//!
-//! * The small tails are not member-proportional (the 0-line group's tail
-//!   is 2149 bits, the 19-line group's 2178) and are byte-identical
-//!   between saves of the same record lineage (Mass Haul-1 and Mass
-//!   Haul-2's `0x1389`; the `0x1c91` records of Plan Production-Section
-//!   Sheets-Create, Sections-Data-Band and Sections-Grade-Label).
-//! * The large tails are proportional to the group's quantity-takeoff
-//!   material sections, not to its lines: Earthworks-2's tail is nine
-//!   extra front bits, then Earthworks-1's tail verbatim (1837 bits),
-//!   then an appended region for exactly the +91 material sections the
-//!   second drawing adds; Mass Haul's `0x530B` tail carries ~132-bit
-//!   per-material-section entries (132 of them, one material) around a
-//!   per-line interior.
-//! * Application linkage closes the record: giving Mass Haul-2 its mass
-//!   haul view and line (+2 references) changes only the last ~40 bits.
-//!
-//! The API surface exposes the computed results (the sections and
-//! material sections themselves), never this cache, and the corpus's
-//! group properties the fields could map to are constant (every
-//! description empty, every style `None`); there is no stable content
-//! mapping to read. The member lines are not in the body: the record's
+//! is about 130 times the 32-line group's): it is the application's
+//! save-state cache, byte-identical across saves of the same record, and
+//! stays unmapped. The member lines are not in the body: the record's
 //! handle stream lists them after its fourth reference, in station
 //! order, and each line names itself and gives its station (see
 //! [`sample_line_station`]); the group's name is its text stream's third
