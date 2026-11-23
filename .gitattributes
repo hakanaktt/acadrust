@@ -4,3 +4,7 @@
 # Versioned IFCCAD conformance data
 conformance/ifccad/**/*.json text eol=lf
 conformance/ifccad/**/blobs/* binary
+
+# A CTB or STB is a binary container; text normalisation would corrupt it.
+*.ctb binary
+*.stb binary
