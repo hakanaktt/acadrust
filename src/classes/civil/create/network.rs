@@ -137,19 +137,23 @@ fn ensure_parts_list(doc: &mut CadDocument) -> Result<Handle, DxfError> {
 
 /// The part definition of `part`, written when the drawing lacks it.
 fn ensure_definition(doc: &mut CadDocument, part: &Family) -> Result<Handle, DxfError> {
+    ensure_definition_with(doc, part.key, part.definition, part.definition_strings, |doc| body_refs(doc, &part.body))
+}
+
+/// The references a part definition makes to the blocks of `body`: none
+/// for a pipe, one block twice for a sphere, two blocks otherwise.
+pub(super) fn body_refs(doc: &mut CadDocument, body: &FamilyBody) -> Result<Vec<Ref>, DxfError> {
     use crate::entities::acis::primitives::{build_box, build_cylinder, build_sphere};
-    ensure_definition_with(doc, part.key, part.definition, part.definition_strings, |doc| {
-        let solid = || match part.body {
-            FamilyBody::None => None,
-            FamilyBody::Sphere(r) => Some(build_sphere([0.0, 0.0, -r], r)),
-            FamilyBody::Cylinder { radius, depth } => Some(build_cylinder([0.0, 0.0, -depth], radius, depth)),
-            FamilyBody::Box { min, max } => Some(build_box([(min[0] + max[0]) / 2.0, (min[1] + max[1]) / 2.0, (min[2] + max[2]) / 2.0], max[0] - min[0], max[1] - min[1], max[2] - min[2])),
-        };
-        Ok(match part.body {
-            FamilyBody::None => Vec::new(),
-            FamilyBody::Sphere(_) => vec![hard_pointer(body_block(doc, solid())?.value()); 2],
-            _ => vec![hard_pointer(body_block(doc, solid())?.value()), hard_pointer(body_block(doc, solid())?.value())],
-        })
+    let solid = || match *body {
+        FamilyBody::None => None,
+        FamilyBody::Sphere(r) => Some(build_sphere([0.0, 0.0, -r], r)),
+        FamilyBody::Cylinder { radius, depth } => Some(build_cylinder([0.0, 0.0, -depth], radius, depth)),
+        FamilyBody::Box { min, max } => Some(build_box([(min[0] + max[0]) / 2.0, (min[1] + max[1]) / 2.0, (min[2] + max[2]) / 2.0], max[0] - min[0], max[1] - min[1], max[2] - min[2])),
+    };
+    Ok(match body {
+        FamilyBody::None => Vec::new(),
+        FamilyBody::Sphere(_) => vec![hard_pointer(body_block(doc, solid())?.value()); 2],
+        _ => vec![hard_pointer(body_block(doc, solid())?.value()), hard_pointer(body_block(doc, solid())?.value())],
     })
 }
 
@@ -307,7 +311,7 @@ fn place(doc: &mut CadDocument, network: Handle, part: &Family, structure: bool,
 
 /// [`place`] with the part definition `definition` (the family's own one
 /// when `None`).
-fn place_with(doc: &mut CadDocument, network: Handle, part: &Family, structure: bool, definition: Option<Handle>, write: impl FnOnce(&mut CadDocument, EntityCommon, Vec<Ref>, usize) -> Result<Handle, DxfError>) -> Result<Handle, DxfError> {
+pub(super) fn place_with(doc: &mut CadDocument, network: Handle, part: &Family, structure: bool, definition: Option<Handle>, write: impl FnOnce(&mut CadDocument, EntityCommon, Vec<Ref>, usize) -> Result<Handle, DxfError>) -> Result<Handle, DxfError> {
     let mut net = read_network(doc, network).ok_or_else(|| invalid("not a pipe network"))?;
     let (style, rules) = family_style(doc, Handle::new(net.list), part.family).ok_or_else(|| invalid("the network's parts list lacks the part's family"))?;
     let definition = match definition {
@@ -418,31 +422,36 @@ pub fn add_structure_of_family(doc: &mut CadDocument, network: Handle, name: &st
         return add_structure(doc, network, position, rotation);
     }
     let family = STRUCTURES.iter().find(|f| f.name == name).ok_or_else(|| invalid("no structure family of that name"))?;
-    let (before, after) = family.record.ok_or_else(|| invalid("the family has no structure record"))?;
+    family.record.ok_or_else(|| invalid("the family has no structure record"))?;
     if ![position.x, position.y, position.z, rotation].iter().all(|v| v.is_finite()) {
         return Err(invalid("a structure needs a finite position and rotation"));
     }
-    place(doc, network, family, true, |doc, common, refs, n| {
-        let id = new_identifier(common.handle.value());
-        let mut strings = texts(family.strings);
-        strings[6] = format!("Structure - ({n})");
-        let (c, s) = (rotation.cos(), rotation.sin());
-        put_entity(
-            doc,
-            "AECC_STRUCTURE",
-            common,
-            |w| {
-                run(w, STRUCTURE_HEAD.0, STRUCTURE_HEAD.1);
-                for v in [position.x, position.y, position.z, c, s, 0.0, -s, c, 0.0, 0.0, 0.0, 1.0] {
-                    w.write_bit_double(v);
-                }
-                run(w, before.0, before.1);
-                write_id(w, &id);
-                run(w, after.0, after.1);
-            },
-            Body { refs, strings },
-        )
-    })
+    place(doc, network, family, true, |doc, common, refs, n| write_structure_record(doc, family, common, refs, n, position, rotation))
+}
+
+/// The record of a structure of `family` (not the null structure): see
+/// [`add_structure_of_family`].
+pub(super) fn write_structure_record(doc: &mut CadDocument, family: &Family, common: EntityCommon, refs: Vec<Ref>, n: usize, position: Vector3, rotation: f64) -> Result<Handle, DxfError> {
+    let (before, after) = family.record.ok_or_else(|| invalid("the family has no structure record"))?;
+    let id = new_identifier(common.handle.value());
+    let mut strings = texts(family.strings);
+    strings[6] = format!("Structure - ({n})");
+    let (c, s) = (rotation.cos(), rotation.sin());
+    put_entity(
+        doc,
+        "AECC_STRUCTURE",
+        common,
+        |w| {
+            run(w, STRUCTURE_HEAD.0, STRUCTURE_HEAD.1);
+            for v in [position.x, position.y, position.z, c, s, 0.0, -s, c, 0.0, 0.0, 0.0, 1.0] {
+                w.write_bit_double(v);
+            }
+            run(w, before.0, before.1);
+            write_id(w, &id);
+            run(w, after.0, after.1);
+        },
+        Body { refs, strings },
+    )
 }
 
 /// Adds a pipe of the family `name` (one of [`network_part_families`]) from

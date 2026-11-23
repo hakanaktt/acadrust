@@ -3293,6 +3293,51 @@ below the insertion point in each block.
 | WT01 with a network, a structure of each of the six families (the eccentric one turned by 0.5 rad), a pipe of each of the eleven families and a concrete pipe connected to the two cylindrical structures (E-N70); the same in a new drawing (E-N71) | AUDIT 0; every part listed with its family and size, positions as written, extents as the application's own (the turned structure's turned), the connected pipe listing both structures and each structure one pipe |
 | the same with every structure family (E-N72, E-N73) | AUDIT 0; the 22 structures and 12 pipes listed with their families and sizes, extents as N11's about the insertion point (the two-tier eccentric structures' box 5e-6 wider on one side, the application's own extents are not centred) |
 
+### Other structure sizes
+
+`add_structure_of_size` places a structure of any family but the null
+structure with chosen size fields (`network_structure_size_fields`: per
+family the catalog's lists — inner diameter or width and length, wall,
+floor, slab and frame sizes, cone height, headwall sizes — and ranges —
+rim to sump height, base height, a variable headwall's height). A size's
+part definition is the family's with other values:
+
+```text
+fields:  the chosen values; the fields the catalog derives from them
+         (structure diameter, width, length and height, body sizes,
+         offsets, vertical pipe clearance); the rest the family's own
+values: raw bit doubles where the family's record has the short form of
+         0 or 1, every other bit as the family's
+texts:   the family's, with the size name the catalog's pattern makes
+         ("60 inch Cylindrical Structure", "Concentric Structure 96 dia
+         48 x 48 frame 48 cone 8 wall 10 floor")
+key:     family id, then the codes and values of the family's key fields
+         in the family's order (`1D412393942C400EAC7DCECB4D23AEE4SID72SRS96`)
+body:    the family's body blocks scaled along X by the width (or
+         diameter), along Y by the length (or diameter) and along Z by the
+         height, each in feet to five decimals
+```
+
+Sizes the catalog rejects (an eccentric frame not narrower than the
+inner diameter, a two-tier base and cone taller than the rim to sump
+height) and sizes giving a negative length are refused. A record's
+fields are found by their start markers (`BL 80, BS 0x04BE, ...`); in
+the definitions whose field count before the first field ends in the
+marker's first bits, a marker also starts the first field (four
+structure and five pipe families), and the reader no longer takes it
+for the end of the first field (their first values were shifted).
+
+The definition's bounding shape (a list of the body's boxes and
+cylinders in feet after the last field) stays the family's: the
+application's extents come from the body blocks, not from it (samples
+GZ10, GZ20, GZ21: sizes added by the API; GZ20's records of one size
+differ in field order and in the bounding shape only).
+
+| written | result |
+|---|---|
+| WT01 with a structure of the family's own size, of its last list values and ranges raised (SRS +150, SBH +24) and of its first field's second value for each of the 21 families (E-SS1); the same in a new drawing (E-SS2) | AUDIT 0; the 63 structures listed with their families and size names, sumps at the chosen rim to sump heights, extents of the scaled bodies |
+| a 72 inch cylindrical junction structure (E-SS3); every family's own size through `add_structure_of_size` (E-SS4) | AUDIT 0; size names and extents as the application's |
+
 ## 3n. Pressure pipe networks
 
 `add_pressure_network`, `add_pressure_pipe_of_size` (straight or curved),
@@ -3609,7 +3654,7 @@ taken from the records and checked bit for bit against them.
 | sections of a TIN surface (unsampled) | yes (geometry once sampled) | yes (§3j) | yes (§3j) | the application samples the source | corridor sources, lines added after sampling |
 | section views of a line (default style, unsampled section) | yes (frame) | yes, with the drawing's section view style or the default one (§3j, §2c) | yes (§3j, §2c) | not needed | sampled sections, several sections |
 | intersections of two crossing roads and tee junctions, with their offset alignments, locking and intersection actions and location label | yes (stations, angles) | yes, with the drawing's intersection style or the default one (§3k, §2c) | yes (§3k, §2c) | not needed | curb returns, corridor regions, roads on a site |
-| gravity pipe networks: every structure and pipe family of the default parts list (its one size each), connections | partly (part positions, pipe ends, connector counts, sizes of older part definitions) | yes (a new drawing gets the default parts list and styles, §3m) | yes (§3m) | not needed (the application recomputes outlines, lengths and extents) | structure sizes the default parts list does not hold, the catalog's body solids |
+| gravity pipe networks: every structure and pipe family of the default parts list, every catalog pipe size, structures of any catalog size, connections | partly (part positions, pipe ends, connector counts, part definition fields) | yes (a new drawing gets the default parts list and styles, §3m) | yes (§3m) | not needed (the application recomputes outlines, lengths and extents) | the catalog's body solids |
 | pressure networks: every pipe, elbow, tee, cross and gate valve size of the default catalog (straight and curved pipes), connections | yes (ports: positions, directions, joint sizes, connections; pipe ends and bulge, part positions and rotations) | yes (a new drawing gets the default pressure part list and styles, §3n) | yes (§3n) | not needed | part kinds of other catalogs, the catalog's body solids |
 | gradings, mass haul | partly (grading criteria, mass haul line and view frame) | no | — | — | no controlled samples (§6a) |
 
@@ -3701,7 +3746,8 @@ Corridors are listed in §3i-a.
 | intersections | curb returns, corridor regions, roads on a site (offsets in the site's topology) | yes (records) | no | curb return records not decoded (hand-off notes); site topology of offset alignments not written |
 | gravity pipe networks | every family of the default parts list (one size each), connections | partly | yes | §3m |
 | gravity pipe networks | every pipe size of the default catalog, whether the parts list holds it or not | yes | yes | §3m (other pipe sizes) |
-| gravity pipe networks | structure sizes other than the parts list's, the catalog's body solids | partly | no | §3m; a structure size's definition is keyed by its fields' values (`SID48SRS60`, `WTh5FTh6SID48SFH4SFL18SFW18SCH36SRS60`), the sizes the programming interface adds list the fields in another order than the family's own, the adding ignores the rim to sump value and a placed structure's rim to sump height makes no new definition (GZ10, GZ20, GZ21); the derived fields and the bounding shape would need each family's catalog formulas |
+| gravity pipe networks | structures of any catalog size (chosen list and range fields, the catalog's derived fields and size names) | yes | yes | §3m (other structure sizes) |
+| gravity pipe networks | the catalog's body solids | partly | no | §3m; the writer writes a box or cylinder scaled from the family's; where the family's own body is as wide as its frame rather than its walls (rectangular slab top structure: 24 inch frame over 21 inch walls) the scaled box keeps that ratio instead of following the frame |
 | pressure networks | every size of the default catalog (straight and curved pipes, elbows, tees, crosses, gate valves), connections | yes | yes | §3n |
 | pressure networks | parts of other catalogs | partly | no | §3n; a pressure parts list is bound to its catalog and the programming interface neither sets a drawing's catalog nor adds another catalog's sizes (`PressurePartList.AddPart` takes the list's own) |
 | gradings | criteria, groups, gradings | partly (criteria) | no | §6a |

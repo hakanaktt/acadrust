@@ -20,6 +20,7 @@ mod network;
 mod network_content;
 mod network_families;
 mod network_sizes;
+mod network_structure_sizes;
 mod points;
 mod pressure;
 mod pressure_content;
@@ -42,6 +43,7 @@ pub use alignment::{add_curb_return, add_curb_return_with, CurbReturnCurve, add_
 pub use corridor::{add_corridor, add_corridor_with};
 pub use intersection::{add_intersection, add_intersection_with, IntersectionOffsets};
 pub use network::{add_pipe, add_pipe_network, add_pipe_of_family, add_pipe_of_size, network_pipe_sizes, add_structure, add_structure_of_family, connect_pipe, network_part_families};
+pub use network_structure_sizes::{add_structure_of_size, network_structure_size_fields, StructureSizeChoice};
 pub use pressure::{add_pressure_appurtenance, add_pressure_arc_pipe, add_pressure_cross, add_pressure_fitting, add_pressure_network, add_pressure_part, add_pressure_pipe, add_pressure_pipe_of_size, add_pressure_tee, connect_pressure_parts, pressure_part_descriptions};
 pub use groups::{add_point_group, add_point_group_query, set_point_group, set_point_group_overrides, set_point_group_query, Comparison, PointAttribute, PointQuery, QueryConstant, QueryExpression};
 pub use profile::{add_profile, add_profile_entities, add_profile_with_curves, add_static_profile, add_surface_profile, ProfileEntity, VerticalCurve, add_offset_profile};
