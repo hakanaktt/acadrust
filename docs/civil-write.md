@@ -1501,6 +1501,47 @@ element boundary):
   read, the profile written; each object lists its dependency as a
   reactor. The action records equal the samples' bit for bit.
 
+Other source curves and widenings (OC01 to OC03, OX01: circular curves,
+asymmetric parabolas, widenings with transitions of length 0 and along
+the parent):
+
+- A circular curve stays circular: each piece is a fixed circular curve
+  through three points (`(4, 11)`: start, the point at the middle station,
+  end; no fields after the points). An asymmetric parabola becomes fixed
+  parabolas by three points; every point is on the source's own curve.
+- Each piece is cut where the offset alignment's regions change as well as
+  its elements, and is raised by `slope` times the offset where its point
+  lies (the widened offset inside a widening). A parent station where a
+  widening meets the nominal offset maps to the nominal side: a transition
+  of length 0 follows no parent station, so the stretch it jumps is part
+  of the piece that crosses it.
+- A transition along the parent maps its stations linearly and its offset
+  runs linearly; a piece along it is a fixed parabola by two points with
+  the grade at its start (`(6, 12)`, the source's grade there in parent
+  stations). Such a piece of a source tangent is listed in the entity map
+  under source id 0 (first), a piece of a source curve under the curve.
+
+Written for OC00's and OX00's offset alignments the records equal the
+samples' apart from the stamp, the identifiers and the last bits of
+values; E-OC1 and E-OX1 open with AUDIT 0, the API lists the
+application's entities, stations and elevations of OC01 to OC03 and OX01,
+and raising a source PVI recomputes them.
+
+`add_static_profile(doc, source, name, layer)` writes the static
+finished-ground copy the application makes of a derived profile (OS01,
+OS02; it refuses layout profiles): an entity-by-entity layout profile on
+the source's alignment with the source's records as stored and the
+source's start and end station as the first two `BD` before the entity
+list (0 in other layout profiles). E-OS1 (copies of three offset profiles,
+tangents, parabolas by three points and two points and a grade, circular
+curves) opens with AUDIT 0, the API lists each copy as a finished-ground
+profile with its source's entities, and raising a PVI of the source's
+source leaves the copies as they were.
+
+The programming interface creates no superimposed profile; a profile of a
+corridor feature line needs the corridor's built feature lines, which the
+application makes when it rebuilds a corridor this crate writes unbuilt.
+
 E-OF1 (both OB01 cases written): no recovery prompt, AUDIT 0 errors, the
 API lists both as offset profiles with the application's entities,
 stations and elevations; after the source's PVI at 85 is raised to 17 the
@@ -3592,7 +3633,9 @@ Corridors are listed in §3i-a.
 | profiles | fixed and floating circular curves, asymmetric fixed curves; fixed parabolas by an entity's end and a point, floating parabolas by a radius | yes (tangents; parameter words read) | no | the programming interface has no add for circular or asymmetric fixed or floating curves (only free ones by PVI); the other inputs never returned (PE12, PE13) |
 | profiles | from a TIN surface (existing ground), at an offset, over the whole alignment or a station range | yes (definition) | yes | §3e (profiles from a surface) |
 | profiles | offset profiles by slope, of tangents and symmetric parabolas, on an offset alignment of one region | yes | yes | §3e (offset profiles) |
-| profiles | offset profiles of other source curves or over widenings; superimposed profiles, profiles of corridor feature lines, static copies | partly | no | not sampled for writing |
+| profiles | offset profiles of circular curves and asymmetric parabolas, over widenings (transitions of length 0 or along the parent) | yes | yes | §3e (offset profiles; OC01 to OC03, OX01) |
+| profiles | static copies of offset profiles | yes | yes | §3e (offset profiles; OS01, OS02) |
+| profiles | superimposed profiles, profiles of corridor feature lines, static copies of other derived profiles | partly | no | the programming interface creates no superimposed profile; feature line profiles need the corridor's built feature lines (written unbuilt, §3i); static copies of surface profiles need the sampled surface |
 | profile views | automatic and user ranges, default style, profile label groups | yes (frame) | yes | §3h |
 | profile views | styles that copy the default with another vertical exaggeration, views with them | yes (frame, style exaggeration) | yes | §3h |
 | profile views | stacked views (separate views at stacked origins) | yes | yes | §3h |
