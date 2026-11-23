@@ -131,12 +131,12 @@ fn a_lot_line_across_a_parcel_splits_face_and_parcel() {
 
     // Two parcels over faces 2 and 3. The first parcel keeps its number
     // and takes the part its label lies in: the right part (x > 50),
-    // middle (125, 50); the left half becomes a new parcel, number 2,
+    // middle (125, 50); the left part (x < 50) becomes a new parcel, number 2,
     // label (25, 50).
     let got = parcels_of(&back, site_h);
     assert_eq!(got.len(), 2);
     assert!(got.contains(&(1, 2, Vector2::new(125.0, 50.0))) || got.contains(&(1, 3, Vector2::new(125.0, 50.0))), "parcel 1 over the right part: {got:?}");
-    assert!(got.iter().any(|(n, _, l)| *n == 2 && *l == Vector2::new(25.0, 50.0)), "the left half is parcel 2: {got:?}");
+    assert!(got.iter().any(|(n, _, l)| *n == 2 && *l == Vector2::new(25.0, 50.0)), "the left part is parcel 2: {got:?}");
     let faces: Vec<i32> = got.iter().map(|p| p.1).collect();
     assert!(faces.contains(&2) && faces.contains(&3), "faces 2 and 3: {faces:?}");
 
