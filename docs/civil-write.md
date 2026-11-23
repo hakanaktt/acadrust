@@ -582,7 +582,15 @@ WP08 (2, 4, 6) and WG01 (5; 7; 2, 4) and the elevation (`>25`, `<12`,
 queries of WQ03 bit for bit. The application matches descriptions over
 the whole text, case ignored, `*` any run and `?` one character (WQ03:
 `TEST` selects TEST and test, not TESTS); it stores a name query in lower
-case. Number ranges (`2-6`) are stored with generated parentheses, an AND
+case. A query set to match case and all (`PointQuery::CaseSensitive`, the
+query's case-sensitive setting) stores 1 in the last of the statement's
+five head bits (`01001`, a custom query `01011`) and matches the patterns
+as written (PC01: `test*` then selects no point described TEST, `TEST`
+selects it); the writer refuses it over name patterns (not sampled) and
+inside an exclusion. Written for PG00b (E-PC1: description, custom and
+upper-case queries) the statements equal PC01's but for the text ids; the
+drawing opens with AUDIT 0 errors and the application lists and updates
+the groups with the written members. Number ranges (`2-6`) are stored with generated parentheses, an AND
 of two comparisons and an equal leaf holding the range text; the writer
 lists the numbers instead (the same members).
 
@@ -3525,7 +3533,8 @@ Corridors are listed in §3i-a.
 | point groups | overrides: point style, label style, fixed elevation, raw description; locked points; classifications applied (none, all, one) | yes | yes | §3 (point groups) |
 | point groups | custom queries: AND, OR, parentheses, a leading NOT over number, elevation, descriptions and name | yes | yes | §3 (custom queries) |
 | point groups | custom queries with a comparison opening or closing two parentheses | no | no | the application stores the extra parenthesis as an empty-text comparison and shows it in its own query text (PQ02 D4, PQ04); not written |
-| point groups | case-sensitive matching, elevation and description overrides from a property or extended data | partly | no | not sampled |
+| point groups | case-sensitive matching of description patterns (standard and custom queries) | yes | yes | §3 (point groups; PC01) |
+| point groups | case-sensitive matching of name patterns, elevation and description overrides from a property or extended data | partly | no | not sampled |
 | TIN surfaces | points added to the surface | yes | yes | §3c |
 | TIN surfaces | point groups, breaklines (standard, proximity, non-destructive; from objects or held points, mid-ordinate, supplementing, weeding), contours, boundaries (outer, hide, show, data clip; destructive or not), add/delete/move vertex, vertex elevation, swap edge, add/delete line, raise, drawing objects, automatic rebuild | yes (every field by kind, §3c) | yes, with the triangulation the definitions build (§3c) | 62 of 67 sample surfaces built identically; non-destructive lines through vertices, far point clusters and a non-convex deleted vertex's hole differ (§3c) |
 | TIN surfaces | pasted surfaces, point files, imported files, corridor surfaces | yes | the definition (no geometry from the source) | the application adds the source's geometry when it rebuilds |
