@@ -1632,7 +1632,23 @@ outline (PD01: (0 + 0 + 5.857 + 0 + 0 + 5.143) / 6; PD08: 22 / 8). The
 application numbers the parts anew (PD01: faces 4 and 5 after WP03's 2)
 and marks the crossings and the lot line's points as it does for a line
 read from a file (0x800 and 0x800000 flags); the writer keeps its own
-face ids and marks. A lot line is not added to a site with such a parcel.
+face ids and marks.
+
+A lot line across such a parcel splits it along its own segments only:
+the faces on either side of a feature line stay together, each group one
+parcel (PD20: a lot line x = 50 across PD01's parcel: two parcels of
+2500 over two faces each). An earlier parcel keeps the group its label
+lies in, the others get new parcels; a parcel's label goes to the middle
+of its outline's extents (PD20: (25, 25) and (75, 25)). The lot line
+takes a feature line's elevation where it crosses it, and its stretches
+between such points and its own points run straight between their
+elevations (PD20: (50, 25) at 5.5, (50, 0) and (50, 50) at 2.444); the
+writer adds those crossings to the lot line as points of its own (the
+application writes them as crossing nodes; straight segments only).
+
+| written | result |
+|---|---|
+| WP03 plus PD01's feature line and PD20's lot line (E-PD20) | AUDIT 0; two parcels of area 2500 with the sample's extents and centroids ((25, 25, 2.5886), (75, 25, 2.7077)) |
 
 | written | result |
 |---|---|
@@ -3658,7 +3674,7 @@ Corridors are listed in §3i-a.
 | feature lines | points, elevation points, arcs, on a site | yes | yes | §3g |
 | feature lines | edits: points, arcs, elevations and elevation points replaced, in containers this crate or the application wrote (ids and keys kept) | yes | yes | §3g |
 | feature lines | crossing and touching other members on a site (straight segments), where no region closes | yes | yes | §3g (feature lines that cross) |
-| feature lines | crossings that split a parcel's face (the parcel over the parts) | yes | yes | §3g (PD01 to PD09) |
+| feature lines | crossings that split a parcel's face (the parcel over the parts); lot lines added across such a parcel | yes | yes | §3g (PD01 to PD09, PD20) |
 | feature lines | crossings that close or split a region no parcel covers (the application adds a grading of the face), styles other than the default | yes | no | §3g (FX04, FX07); gradings are not written (§6a) |
 | sample line groups | lines by station or through vertices on both sides | yes | yes | §3j |
 | sample line groups | lines with all vertices on one side | yes | yes | §3j |
