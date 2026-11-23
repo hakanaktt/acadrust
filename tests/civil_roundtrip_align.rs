@@ -153,15 +153,15 @@ fn rt_align_anchors_speeds_and_equations_round_trip() {
     // element (the arc is element 3).
     let start = anchors.iter().find(|x| x.kind == 32763).unwrap();
     assert_eq!((start.element, start.previous, start.next), (1, 0, 3));
-    // The first line runs to the arc's tangent point, just short of 100.
+    // The first line runs to the arc's tangent point at 60.
     assert_eq!((start.along, start.value), (0.0, 0.0));
     assert!((start.remaining - start.element_start.distance(&start.element_end)).abs() < 1e-12);
     assert!((start.remaining - 60.0).abs() < 1e-9);
     assert!(start.flag);
     assert_eq!((start.element_start, start.point), (v[0], v[0]));
     assert!(start.element_end.distance(&Vector2::new(60.0, 0.0)) < 1e-9);
-    // The profile's own identifier is the same version-4 GUID.
-    assert!(arch(&back, p).profile_name().as_deref() == Some("P1"));
+    // The profile reads back by its name.
+    assert_eq!(arch(&back, p).profile_name().as_deref(), Some("P1"));
 }
 
 /// 3. Offset alignments, with and without widenings. Transitions on arcs
@@ -232,9 +232,7 @@ fn rt_align_offset_and_widenings_round_trip() {
     let p = o.alignment_offset_parameters().unwrap();
     let regions: Vec<(f64, f64, f64, f64, i32)> = p.regions.iter().map(|r| (r.offset, r.parent_start, r.parent_end, r.end, r.kind)).collect();
     // Nominal, widening, nominal: the widening's full offset runs from its
-    // start plus the entry to its end. The offset alignment's own stations
-    // keep the parent's measure over the widening and add each ramp's true
-    // length (sqrt(15² + 10²) from offset 10 to 20).
+    // start plus the entry to its end.
     let ramp = (15.0f64 * 15.0 + 10.0 * 10.0).sqrt();
     for (region, want) in regions.iter().zip([(10.0, 0.0, 100.0, 2.0), (20.0, 115.0, 150.0, 1.0), (10.0, 165.0, 300.0, 2.0)]) {
         assert_eq!((region.0, region.1, region.2, region.4 as f64), want);
