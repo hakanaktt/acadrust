@@ -44,7 +44,7 @@ pub use network::{PartField, PressurePipe, PressurePort};
 pub use parameters::{Parameter, ParameterValue};
 pub use profile::{CurveMinimumK, OffsetProfile, ProfileCriteria, ProfileLocking, ProfilePiece, ProfileViewFrame, Pvi};
 pub use parcel_segments::ParcelSegmentGeometry;
-pub use sample_lines::{SampleLines, SectionViewGroupPlot};
+pub use sample_lines::{SampleLines, SampleLineVertices, SectionViewGroupPlot};
 pub use section::{MassHaulViewFrame, SectionGeometry, SectionViewFrame};
 pub use style::{DisplayComponent, Marker, ProfileViewAxisStyle, ProfileViewAxisTitle, ProfileViewGrid, ProfileViewGridLines, ProfileViewStyleSettings, ProfileViewTicks, ProfileViewTitle, ViewAxes, ViewAxis};
 pub use subassembly::{AssemblyLayout, Attachment, SubassemblyShape};
@@ -1017,6 +1017,21 @@ impl ArchEntityData {
         }
         let (data, start, end) = self.main_stream()?;
         section::mass_haul_view_frame(data, start, end)
+    }
+
+
+    /// Station and vertex sides of a Civil 3D sample line
+    /// (`AECC_SAMPLE_LINE`): where it crosses its alignment and, per side
+    /// (left first), its vertices as `(offset, station less the line's)`
+    /// from the alignment outwards. The line's swath widths are its
+    /// extreme offsets.
+    pub fn sample_line_vertices(&self) -> Option<SampleLineVertices> {
+        if self.dxf_name != "AECC_SAMPLE_LINE" {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        let (station, sides) = sample_lines::line_station_and_sides(data, start, end)?;
+        Some(SampleLineVertices { station, left: sides[0].clone(), right: sides[1].clone() })
     }
 
     /// Insertion point of a Civil 3D pressure fitting or appurtenance
