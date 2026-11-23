@@ -3783,7 +3783,7 @@ Corridors are listed in §3i-a.
 | section views | one view of a line, default style | yes (frame) | yes | §3j |
 | section views | group plots with the default group plot style, one or more per group | yes | yes | §3j (section view group plots) |
 | section views | several sections in a view (a section of each source), in single views and group plots | yes | yes | §3j (section views; SM01, SM02, SM13a) |
-| section views | group plots with other group plot styles | partly | no | through the programming interface a plot given another group plot style keeps the default placement after `UpdateLayout` (a start corner of upper left, GS02) or never returns (columns, GS01); no sample of the application's own placement |
+| section views | group plots with other group plot styles | partly | no | impossible without the style dialog: through the programming interface a plot given another group plot style keeps the default placement after `UpdateLayout` (a start corner of upper left, GS02) or never returns (columns, GS01); a group plot style's setters are ignored (GS20: start corner, plot rule and alignment read back as the defaults; its name and row and column limits throw), and a plot made after changing the drawing's default style never returns (GS11); no sample of the application's own placement |
 | section views | plot settings (pages, sheets), views of sampled sections, other section view styles | partly | no | not sampled (a sampled section needs the surface's section points, other styles a section view style writer) |
 | assemblies | groups of package subassemblies (offsets, attachments) | partly | yes | §3l, §3i |
 | subassemblies | packages (`pkt`) written by acadrust | yes | yes | §3l |
