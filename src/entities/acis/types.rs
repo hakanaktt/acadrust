@@ -1562,6 +1562,34 @@ impl<'a> SatIntCurve<'a> {
     }
 }
 
+/// The highest spline degree a record may give; ACIS splines stay far
+/// below it.
+const MAX_SPLINE_DEGREE: usize = 64;
+
+/// A spline degree as read: refused when negative or above
+/// [`MAX_SPLINE_DEGREE`].
+fn spline_degree(token: &SatToken) -> Option<usize> {
+    usize::try_from(token.as_integer()?).ok().filter(|d| *d <= MAX_SPLINE_DEGREE)
+}
+
+/// `count` knots of a degree-`degree` spline from `position` on, each a
+/// value and its multiplicity: refused when the count exceeds the tokens
+/// left or a multiplicity exceeds `degree + 1`, so a damaged record cannot
+/// ask for unbounded memory. `position` ends after the last knot.
+fn read_knots(tokens: &[SatToken], position: &mut usize, count: i64, degree: usize) -> Option<Vec<f64>> {
+    let count = usize::try_from(count).ok()?;
+    (count <= tokens.len().saturating_sub(*position) / 2).then_some(())?;
+    let mut knots = Vec::new();
+    for _ in 0..count {
+        let value = tokens.get(*position)?.as_float()?;
+        let multiplicity = usize::try_from(tokens.get(*position + 1)?.as_integer()?).ok()?;
+        (multiplicity <= degree + 1).then_some(())?;
+        knots.extend(std::iter::repeat(value).take(multiplicity));
+        *position += 2;
+    }
+    Some(knots)
+}
+
 fn decode_bspline_curve(t: &[SatToken]) -> Option<(usize, Vec<f64>, Vec<[f64; 4]>)> {
     // An intcurve saves its spline ahead of its support surfaces and their
     // pcurves. One saved without it (only a knot summary) would otherwise
@@ -1574,19 +1602,10 @@ fn decode_bspline_curve(t: &[SatToken]) -> Option<(usize, Vec<f64>, Vec<[f64; 4]
         return None;
     }
     let rational = t.get(ni)?.as_ident() == Some("nurbs");
-    let degree = t.get(ni + 1)?.as_integer()? as usize;
+    let degree = spline_degree(t.get(ni + 1)?)?;
     // t[ni + 2] is the curve form/closure flag.
-    let n_knots = t.get(ni + 3)?.as_integer()? as usize;
-    let mut knots: Vec<f64> = Vec::new();
     let mut i = ni + 4;
-    for _ in 0..n_knots {
-        let k = t.get(i)?.as_float()?;
-        let mult = t.get(i + 1)?.as_integer()?.max(0) as usize;
-        for _ in 0..mult {
-            knots.push(k);
-        }
-        i += 2;
-    }
+    let mut knots = read_knots(t, &mut i, t.get(ni + 3)?.as_integer()?, degree)?;
     if knots.len() < 2 {
         return None;
     }
@@ -1652,18 +1671,9 @@ impl<'a> SatPCurve<'a> {
 
     fn bspline_at(tokens: &[SatToken], start: usize) -> Option<(usize, Vec<f64>, Vec<[f64; 4]>)> {
         let rational = tokens.get(start)?.as_ident() == Some("nurbs");
-        let degree = tokens.get(start + 1)?.as_integer()?.max(0) as usize;
-        let knot_count = tokens.get(start + 3)?.as_integer()?.max(0) as usize;
+        let degree = spline_degree(tokens.get(start + 1)?)?;
         let mut position = start + 4;
-        let mut knots = Vec::new();
-        for _ in 0..knot_count {
-            let value = tokens.get(position)?.as_float()?;
-            let multiplicity = tokens.get(position + 1)?.as_integer()?.max(0) as usize;
-            for _ in 0..multiplicity {
-                knots.push(value);
-            }
-            position += 2;
-        }
+        let mut knots = read_knots(tokens, &mut position, tokens.get(start + 3)?.as_integer()?, degree)?;
         if knots.len() < 2 {
             return None;
         }
@@ -2474,8 +2484,8 @@ fn decode_bspline_surface(tokens: &[SatToken]) -> Option<SatBSplineSurface> {
         .iter()
         .rposition(|token| matches!(token.as_ident(), Some("nubs" | "nurbs")))?;
     let rational = tokens.get(start)?.as_ident() == Some("nurbs");
-    let degree_u = usize::try_from(tokens.get(start + 1)?.as_integer()?).ok()?;
-    let degree_v = usize::try_from(tokens.get(start + 2)?.as_integer()?).ok()?;
+    let degree_u = spline_degree(tokens.get(start + 1)?)?;
+    let degree_v = spline_degree(tokens.get(start + 2)?)?;
 
     let string_at = |index: usize| {
         tokens
@@ -2496,24 +2506,11 @@ fn decode_bspline_surface(tokens: &[SatToken]) -> Option<SatBSplineSurface> {
     let v_closure = string_at(form_start + 1);
     let u_singularity = string_at(form_start + 2);
     let v_singularity = string_at(form_start + 3);
-    let u_knot_count = usize::try_from(tokens.get(form_start + 4)?.as_integer()?).ok()?;
-    let v_knot_count = usize::try_from(tokens.get(form_start + 5)?.as_integer()?).ok()?;
+    let u_knot_count = tokens.get(form_start + 4)?.as_integer()?;
+    let v_knot_count = tokens.get(form_start + 5)?.as_integer()?;
     let mut position = form_start + 6;
-
-    let mut u_knots = Vec::new();
-    for _ in 0..u_knot_count {
-        let value = tokens.get(position)?.as_float()?;
-        let multiplicity = usize::try_from(tokens.get(position + 1)?.as_integer()?).ok()?;
-        u_knots.extend(std::iter::repeat(value).take(multiplicity));
-        position += 2;
-    }
-    let mut v_knots = Vec::new();
-    for _ in 0..v_knot_count {
-        let value = tokens.get(position)?.as_float()?;
-        let multiplicity = usize::try_from(tokens.get(position + 1)?.as_integer()?).ok()?;
-        v_knots.extend(std::iter::repeat(value).take(multiplicity));
-        position += 2;
-    }
+    let mut u_knots = read_knots(tokens, &mut position, u_knot_count, degree_u)?;
+    let mut v_knots = read_knots(tokens, &mut position, v_knot_count, degree_v)?;
     if u_knots.len() < 2 || v_knots.len() < 2 {
         return None;
     }
