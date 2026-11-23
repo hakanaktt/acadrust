@@ -353,10 +353,11 @@ fn outlines(bits: &mut Bits) -> Option<Vec<Vec<CorridorBoundary>>> {
     Some(lists)
 }
 
-/// Corridor keys holding one value per region, in region order.
 /// What a corridor without baselines holds after its `RC 32` in place of
 /// the layout, the baselines and the closing run (CB01, CB02).
 pub(super) const BARE_END: &str = "010101010101010101010100001011111000000100";
+
+/// Corridor keys holding one value per region, in region order.
 pub(super) const KEY_ALONG_TARGET_CURVES: u32 = 0x0C04_A621;
 pub(super) const KEY_CURVE_MID_ORDINATE: u32 = 0x0C04_A61E;
 pub(super) const KEY_TARGET_CURVE_MID_ORDINATE: u32 = 0x0C04_A620;
