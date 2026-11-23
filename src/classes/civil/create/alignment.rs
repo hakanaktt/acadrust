@@ -2008,8 +2008,10 @@ fn write_offset_alignment(doc: &mut CadDocument, parent: Handle, name: &str, off
     };
     let mut path: Vec<PathPoint> = pieces.iter().map(|p| (starts_of(&p.2).0, p.3)).collect();
     path.push((starts_of(&pieces.last().ok_or_else(|| invalid("the range holds no element"))?.2).1, None));
-    // Own stations of the pieces' ends.
-    let mut own = vec![s0];
+    // Own stations of the pieces' ends. An intersection's clipped offset
+    // alignment starts at 0 (WC40), any other at its parent's station.
+    let clipped = kept.1 && range.is_some();
+    let mut own = vec![if clipped { 0.0 } else { s0 }];
     for p in &pieces {
         own.push(own[own.len() - 1] + p.4);
     }
@@ -2062,16 +2064,35 @@ fn write_offset_alignment(doc: &mut CadDocument, parent: Handle, name: &str, off
         .iter()
         .map(|(s, g)| anchor_at(&written.elements, 0.0, OFFSET_END_ANCHOR, *g, *s).ok_or_else(|| invalid("an anchor cannot be placed on the parent")))
         .collect::<Result<Vec<_>, _>>()?;
-    // Its own anchor lies at the start of its first element.
-    let (first_start, first_end) = starts_of(&pieces[0].2);
+    // Its own anchor lies at the start of its first element; a clipped
+    // intersection offset's anchor names the whole parent element's offset
+    // (WC40: station 0 at the start of the uncut line, 200 remaining).
+    let (mut first_start, mut first_end) = starts_of(&pieces[0].2);
+    let mut remaining = pieces[0].4;
+    if clipped {
+        if let Some((e, from, ps)) = spans.iter().find(|(e, ..)| Some(i32::from(e.id)) == pieces[0].1) {
+            let piece = &ps[0];
+            let length = piece_length(piece);
+            let at = |s: f64| {
+                let (p, u) = piece_point(piece, s);
+                p + right(u) * offset
+            };
+            let _ = from;
+            (first_start, first_end) = (at(0.0), at(length));
+            remaining = match e.kind {
+                AlignmentElementKind::FreeArc { .. } => (1.0 / piece.1.abs() + if piece.1 > 0.0 { offset } else { -offset }) * (length * piece.1).abs(),
+                _ => length,
+            };
+        }
+    }
     let own_anchor = AlignmentAnchor {
         id: own_id,
         flag: true,
         kind: OWN_START_ANCHOR,
         value: 0.0,
-        station: s0,
+        station: own[0],
         along: 0.0,
-        remaining: pieces[0].4,
+        remaining,
         element: ids[0],
         previous: 0,
         next: ids.get(1).copied().unwrap_or(0),
@@ -2079,7 +2100,7 @@ fn write_offset_alignment(doc: &mut CadDocument, parent: Handle, name: &str, off
         element_end: first_end,
         point: first_start,
     };
-    let record = OffsetRecord { parent: parent.value(), offset, range: (s0, own[count]), regions, transitions, map, anchors, own: own_id, speed: kept.0, associative: kept.1 };
+    let record = OffsetRecord { parent: parent.value(), offset, range: (own[0], own[count]), regions, transitions, map, anchors, own: own_id, speed: kept.0, associative: kept.1 };
     let groups = written.groups.clone();
     rewrite_adding(doc, parent, written, &profiles, &profiles, None, &groups, &extra, &Timing::default())?;
     let style = default_style(doc).ok_or_else(|| invalid("drawing has no alignment styles"))?;

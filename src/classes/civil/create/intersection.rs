@@ -341,7 +341,7 @@ pub fn add_intersection_with(doc: &mut CadDocument, name: &str, main: Handle, ma
 /// outgoing road's offset alignment, kept by an associative action that
 /// reads both offset alignments and the intersection. The offset
 /// alignments then run only over the curb returns' stations on their road
-/// and [`CURB_RETURN_MARGIN`] beyond (the command's intersection-extents
+/// and a thousandth of that span beyond, see [`CURB_RETURN_MARGIN`] (the command's intersection-extents
 /// option). Tee junctions are refused.
 #[allow(clippy::too_many_arguments)]
 pub fn add_intersection_with_curb_returns(doc: &mut CadDocument, name: &str, main: Handle, main_profile: Handle, other: Handle, other_profile: Handle, assembly_sets: [&str; 2], offsets: IntersectionOffsets, radius: f64, layer: Option<&str>) -> Result<Handle, DxfError> {
@@ -351,10 +351,12 @@ pub fn add_intersection_with_curb_returns(doc: &mut CadDocument, name: &str, mai
     build_intersection(doc, name, main, main_profile, other, other_profile, assembly_sets, Some(offsets), Some(radius), layer)
 }
 
-/// How far an offset alignment of an intersection with curb returns runs
-/// past the curb returns' lines on it (WC40: 61.924 to 138.076 for lines
-/// over 62 to 63 and 137 to 138).
-pub const CURB_RETURN_MARGIN: f64 = 0.076;
+/// How far, as a share of the span of the curb returns' lines on it, an
+/// offset alignment of an intersection with curb returns runs past those
+/// lines at either end: lines over 62 to 63 and 137 to 138 give 61.924 to
+/// 138.076; over radii 10 to 50 and widths 10 to 20 the offset is always
+/// the lines' span stretched by a thousandth at each end.
+pub const CURB_RETURN_MARGIN: f64 = 0.001;
 
 #[allow(clippy::too_many_arguments)]
 fn build_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_profile: Handle, other: Handle, other_profile: Handle, assembly_sets: [&str; 2], offsets: Option<IntersectionOffsets>, curb_radius: Option<f64>, layer: Option<&str>) -> Result<Handle, DxfError> {
@@ -445,7 +447,9 @@ fn build_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_prof
             for (i, (side, width)) in [("Left", -widths[k][0]), ("Right", widths[k][1])].into_iter().enumerate() {
                 let range = returns.as_ref().map(|c| {
                     let s: Vec<f64> = c.iter().flat_map(|g| g.spans.iter().filter(|x| x.0 == (k, i)).flat_map(|x| [x.1, x.2])).collect();
-                    (s.iter().copied().fold(f64::INFINITY, f64::min) - CURB_RETURN_MARGIN, s.iter().copied().fold(f64::NEG_INFINITY, f64::max) + CURB_RETURN_MARGIN)
+                    let (lo, hi) = (s.iter().copied().fold(f64::INFINITY, f64::min), s.iter().copied().fold(f64::NEG_INFINITY, f64::max));
+                    let margin = (hi - lo) * CURB_RETURN_MARGIN;
+                    (lo - margin, hi + margin)
                 });
                 let h = super::alignment::add_kept_offset_alignment(doc, parent, &format!("{road_name}-{side}-{:.3}", width.abs()), width, range, OFFSET_SPEED, layer)?;
                 add_action(doc, ActionBody { dxf: "AECC_ASSOC_OFFSET_ALIGNMENT_ACTION_BODY", refs: vec![h], tail: "" }, &[Dependency { object: parent, writes: false, order: 0 }, Dependency { object: h, writes: true, order: 0 }])?;
@@ -677,6 +681,7 @@ mod tests {
         // The offset alignments run over the curb returns' stations and
         // the margin: 62 - 0.076 to 138 + 0.076.
         let left = arch(&back, Handle::new(refs[4])).unwrap().alignment_offset_parameters().unwrap();
-        assert!((left.regions[0].parent_start - (62.0 - CURB_RETURN_MARGIN)).abs() < 1e-9 && (left.regions[0].parent_end - (138.0 + CURB_RETURN_MARGIN)).abs() < 1e-9);
+        let margin = 76.0 * CURB_RETURN_MARGIN;
+        assert!((left.regions[0].parent_start - (62.0 - margin)).abs() < 1e-9 && (left.regions[0].parent_end - (138.0 + margin)).abs() < 1e-9);
     }
 }

@@ -3058,8 +3058,10 @@ roads (0, 0)-(200, 0) and (100, -100)-(100, 100), widths 12, radius 25):
 - The intersection names each region's curb return as the first of the
   region's four references (its profile null).
 - The offset alignments run only over the stations the curb returns'
-  lines take on their road and 0.076 beyond (`CURB_RETURN_MARGIN`; WC40:
-  61.924 to 138.076, the command's "intersection extents" length option).
+  lines take on their road and a thousandth of that span beyond at each
+  end (`CURB_RETURN_MARGIN`; WC40: 61.924 to 138.076; WC41 to WC47, radii
+  10 to 50 and widths 10 to 20, all fit; the command's "intersection
+  extents" length option).
 
 Written into WC40's roads the intersection equals the sample's record but
 for the class word; the curb returns' blocks equal the samples' values
