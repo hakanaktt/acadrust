@@ -4313,3 +4313,44 @@ mod serde_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod spline_knot_limit_tests {
+    use super::*;
+
+    /// Tokens of a record text: integers, floats (with a '.'), identifiers.
+    fn tokens(text: &str) -> Vec<SatToken> {
+        text.split_whitespace()
+            .map(|t| {
+                if let Ok(i) = t.parse::<i64>() {
+                    SatToken::Integer(i)
+                } else if let Ok(f) = t.parse::<f64>() {
+                    SatToken::Float(f)
+                } else {
+                    SatToken::Ident(t.to_string())
+                }
+            })
+            .collect()
+    }
+
+    /// A degree-1 line from (5, 0, 0) to (5, 0, 8): knots 0 and 1, `first`
+    /// the multiplicity of the first one.
+    fn line(degree: i64, first: i64) -> Vec<SatToken> {
+        tokens(&format!("exactcur full nubs {degree} open 2 0 {first} 1 1 5 0 0 5 0 8 0 null_surface"))
+    }
+
+    #[test]
+    fn a_knot_repeats_at_most_degree_plus_one_times() {
+        assert!(decode_bspline_curve(&line(1, 1)).is_some());
+        assert_eq!(decode_bspline_curve(&line(1, 3)), None);
+        assert_eq!(decode_bspline_curve(&line(1, 4_000_000_000)), None);
+        let t = line(1, 3);
+        assert_eq!(SatPCurve::bspline_at(&t, 2), None);
+    }
+
+    #[test]
+    fn a_negative_degree_is_refused() {
+        assert_eq!(decode_bspline_curve(&line(-1, 1)), None);
+        assert_eq!(SatPCurve::bspline_at(&line(-1, 1), 2), None);
+    }
+}
