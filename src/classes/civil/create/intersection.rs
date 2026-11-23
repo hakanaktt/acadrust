@@ -1085,4 +1085,23 @@ mod tests {
         assert!(at(0, 94.0, -6.0) && at(3, 106.0, 6.0));
         assert!(at(4, 100.0 + d, d), "{:?}", labels[4]);
     }
+
+    #[test]
+    fn tee_junctions_lock_the_other_profile_by_the_grade_rule() {
+        let v = Vector2::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let a = add_alignment(&mut doc, "Road A", &[v(0.0, 0.0), v(200.0, 0.0)], None).unwrap();
+        let b = add_alignment(&mut doc, "Road B", &[v(100.0, 0.0), v(100.0, 100.0)], None).unwrap();
+        let pa = add_profile(&mut doc, a, "PA", &[v(0.0, 10.0), v(200.0, 12.0)], &[], None).unwrap();
+        let pb = add_profile(&mut doc, b, "PB", &[v(0.0, 11.0), v(100.0, 13.0)], &[], None).unwrap();
+        add_intersection_with_curb_return_profiles(&mut doc, "T", a, pa, b, pb, ["", ""], IntersectionOffsets::default(), 25.0, CurbReturnProfiles::default(), None).unwrap();
+        // The junction, the left offset line, then 2 % (the grade -2 % at
+        // the offset line changed by 4 %) for 50 before the profile's end.
+        let pvis: Vec<(f64, f64)> = arch(&doc, pb).unwrap().profile_pvis().iter().map(|p| (p.point.x, p.point.y)).collect();
+        assert_eq!(pvis.len(), 4);
+        for (got, want) in pvis.iter().zip([(0.0, 11.0), (12.0, 10.76), (62.0, 11.76), (100.0, 13.0)]) {
+            assert!((got.0 - want.0).abs() < 1e-9 && (got.1 - want.1).abs() < 1e-9, "{got:?} {want:?}");
+        }
+    }
 }
