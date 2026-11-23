@@ -593,22 +593,33 @@ fn members_of(doc: &mut CadDocument, site: Handle) -> Result<(Handle, Vec<Member
                 path: {
                     // An arc other members' crossings split is one arc of
                     // the member: its pieces' sweeps add up.
+                    // An unsplit arc keeps its bulge as stored.
+                    let bulge = |pieces: &[f64]| -> Option<f64> {
+                        match pieces {
+                            [] => None,
+                            [g] => (*g != 0.0).then_some(*g),
+                            _ => {
+                                let sweep: f64 = pieces.iter().map(|g| 4.0 * g.atan()).sum();
+                                (sweep != 0.0).then(|| (sweep / 4.0).tan())
+                            }
+                        }
+                    };
                     let mut path: Vec<PathPoint> = Vec::new();
-                    let mut sweep = 0.0;
+                    let mut pieces: Vec<f64> = Vec::new();
                     for (i, v) in run.iter().enumerate() {
                         if is_own(&v) {
                             if let Some(last) = path.last_mut() {
-                                last.1 = (sweep != 0.0).then(|| (sweep / 4.0_f64).tan());
+                                last.1 = bulge(&pieces);
                             }
                             path.push((v.point, None));
-                            sweep = 0.0;
+                            pieces.clear();
                         }
                         if i + 1 < run.len() || closed {
-                            sweep += 4.0 * v.bulge.atan();
+                            pieces.push(v.bulge);
                         }
                     }
                     if let Some(last) = path.last_mut() {
-                        last.1 = (closed && sweep != 0.0).then(|| (sweep / 4.0_f64).tan());
+                        last.1 = if closed { bulge(&pieces) } else { None };
                     }
                     path
                 },
@@ -697,7 +708,7 @@ fn paths_meet(a: &[PathPoint], b: &[PathPoint]) -> bool {
 /// Adds an alignment like [`super::add_alignment_with_curves`] on `site`
 /// instead of siteless: its edge joins the site's container. Like a lot
 /// line it may cross and touch the site's lot lines and alignments (not
-/// its feature lines, and not where either has an arc): they are split
+/// its feature lines; arcs included): they are split
 /// where they meet and every face it closes or cuts off becomes a parcel
 /// (see [`add_lot_line`]). The site must be one this crate writes.
 pub fn add_alignment_on_site(doc: &mut CadDocument, site: Handle, name: &str, vertices: &[Vector2], curves: &[VertexCurve], layer: Option<&str>) -> Result<Handle, DxfError> {
@@ -1009,7 +1020,7 @@ fn add_lot_line_on(doc: &mut CadDocument, site: Handle, points: &[(Vector2, f64)
 
 /// Joins a new member through `path` to `site`'s container and writes the
 /// parcels of the faces it makes: with `meet`, it may cross or touch the
-/// site's lot lines and alignments (straight segments): each is split
+/// site's lot lines and alignments (arcs included): each is split
 /// where they meet, the faces they cut are split and the parcels of the
 /// parts are written (every parcel's label moves into what is left of its
 /// face). `record` writes the member's own record (its entity, edge id and
@@ -1122,7 +1133,7 @@ pub fn add_parcel(doc: &mut CadDocument, site: Handle, vertices: &[Vector2], lay
 /// a closed line's last bulge is the closing segment's), closed back to
 /// the first vertex when `closed`, and returns it with the parcels it
 /// makes. It may cross and touch the site's other lot lines and its
-/// alignments (not its feature lines, and not where either has an arc):
+/// alignments (not its feature lines; arcs included):
 /// the lines are split where they meet, as the application splits them, every face the
 /// line closes or cuts off becomes a parcel (numbered in the order the
 /// faces are made) and the parcel of a face it cuts keeps the part the
@@ -1191,8 +1202,9 @@ mod tests {
         assert!(add_site(&mut doc, "site 1", "").is_err());
         let a1 = add_alignment_on_site(&mut doc, s1, "AL1", &[v(0.0, 0.0), v(100.0, 0.0), v(200.0, 50.0)], &[VertexCurve::Arc(80.0)], None).unwrap();
         let a2 = add_alignment_on_site(&mut doc, s1, "AL2", &[v(0.0, 50.0), v(100.0, 80.0)], &[], None).unwrap();
-        // Crossing AL1's arc is refused.
-        assert!(add_alignment_on_site(&mut doc, s1, "AL3", &[v(100.0, -20.0), v(100.0, 40.0)], &[], None).is_err());
+        // Crossing AL1's arc is accepted (in a copy, so the drawing below
+        // keeps two alignments).
+        assert!(add_alignment_on_site(&mut doc.clone(), s1, "AL3", &[v(100.0, -20.0), v(100.0, 40.0)], &[], None).is_ok());
         let path = std::env::temp_dir().join(format!("civil-site-{}.dwg", std::process::id()));
         DwgWriter::write_to_file(&path, &doc).unwrap();
         let back = DwgReader::from_file(&path).unwrap().read().unwrap();

@@ -348,6 +348,9 @@ pub(super) fn paths_meet(a: &[(Vector2, Option<f64>)], b: &[(Vector2, Option<f64
 /// The bulge of the part of an arc of bulge `g` from parameter `from` to
 /// `to` (fractions of its sweep).
 fn part_bulge(g: f64, from: f64, to: f64) -> f64 {
+    if from == 0.0 && to == 1.0 {
+        return g;
+    }
     (g.atan() * (to - from)).tan()
 }
 
@@ -392,24 +395,24 @@ pub(super) fn build(members: &[Input]) -> Result<Arrangement, &'static str> {
             for &(member, (a, b, g)) in &crossed_segments {
                 let old = Piece { p: s.nodes[a].0, q: s.nodes[b].0, g };
                 for (t, u, x) in meet(piece, old)? {
-                let tol = 1e-9;
-                let inner_t = t > tol && t < 1.0 - tol;
-                let inner_u = u > tol && u < 1.0 - tol;
-                match (inner_t, inner_u) {
-                    (false, false) => {}
-                    (false, true) => {
-                        // An own point on an earlier segment.
-                        let node = own[if t < 0.5 { i } else { (i + 1) % n }];
-                        on_old.push((a, b, u, node));
-                    }
-                    (true, false) => {
-                        let node = if u < 0.5 { a } else { b };
-                        if !on_new[i].iter().any(|v| v.1 == node) {
-                            on_new[i].push((t, node));
+                    let tol = 1e-9;
+                    let inner_t = t > tol && t < 1.0 - tol;
+                    let inner_u = u > tol && u < 1.0 - tol;
+                    match (inner_t, inner_u) {
+                        (false, false) => {}
+                        (false, true) => {
+                            // An own point on an earlier segment.
+                            let node = own[if t < 0.5 { i } else { (i + 1) % n }];
+                            on_old.push((a, b, u, node));
                         }
+                        (true, false) => {
+                            let node = if u < 0.5 { a } else { b };
+                            if !on_new[i].iter().any(|v| v.1 == node) {
+                                on_new[i].push((t, node));
+                            }
+                        }
+                        (true, true) => crossings.push((member, i, t, x)),
                     }
-                    (true, true) => crossings.push((member, i, t, x)),
-                }
                 }
             }
         }

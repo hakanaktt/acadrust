@@ -1782,7 +1782,7 @@ E-MV-WT06) open with AUDIT 0 errors and the API lists the alignments and
 the new feature line's points.
 
 A new alignment may cross and touch the site's lot lines and alignments
-(straight segments): the members are split at their intersections and
+(arcs included): the members are split at their intersections and
 the closed faces become parcels (WT09; see Alignments and lot lines
 below). A site is accepted only when writing its container from what is
 read gives back its record.
@@ -3720,7 +3720,7 @@ Corridors are listed in §3i-a.
 | sites | name, description, members | yes | yes | §3g |
 | parcels | closed and open, crossing and touching lot lines, arcs, labels | yes | yes | §3g |
 | parcels | members added to containers the application wrote with crossings (its point marks and edge flags kept) | yes | yes | §3g |
-| parcels | lot lines and alignments meeting each other (straight segments), alignments closing loops | yes | yes | §3g (Alignments and lot lines; PC12's face order and some crossing node ids differ) |
+| parcels | lot lines and alignments meeting each other (arcs included), alignments closing loops | yes | yes | §3g (Alignments and lot lines; PC12's face order and some crossing node ids differ) |
 | parcels | arcs where lot lines and alignments meet (arcs split, bulges per piece) | yes | yes | §3g (Arcs where lines meet; labels of faces arc pieces bound differ) |
 | parcels | lot lines meeting feature lines; the rule of the newest member's point marks 0x10/0x20 for members the crate adds | yes | no | §3g (rule not found; marks read are kept) |
 | sites | containers with members without points or nodes (WP01, WP02, WT04 to WT06: alignments without elements on a site), members added to them | yes | yes | §3g (members without points) |
