@@ -916,29 +916,51 @@ would shorten the block and is refused.
   the middle length 0); the connection block's code (the BL at bits 53
   to 62 of the run after value 23) is 3, the six values take the
   radius's place and `BL 1` comes before the bit after them;
-- a clothoid spiral-curve-spiral (CG02, CG06, CG08; CG10 a right turn):
+- a spiral-curve-spiral (CG02, CG06, CG08; CG10 a right turn):
   the lines keep ids 1 and 3 and the curve is a spiral in (kind 259,
-  constraint 0: `BL 256, B clockwise, 2RD start, 2RD direction, BD
+  constraint 0: `BL shape, B clockwise, 2RD start, 2RD direction, BD
   length, BD radius, BD 0, BD 0, BD 1`), a fixed arc (start, middle,
-  end) and a spiral out (constraint 1: `BL 256, B clockwise, BD radius,
+  end) and a spiral out (constraint 1: `BL shape, B clockwise, BD radius,
   BD length, 2RD start, 2RD direction, BD 0, BD 0, BD 1`), ids 4 to 6,
   stored after the lines; the code is 4 and the run ends after it,
   without the overlap, the curve's end station or the radius; the
   record's keys gain `0x0400D783`, a text before the name holding
   `{"CurveType": 4, "CurveParameters": {"CurveRadius", "SpiralInLength",
-  "SpiralOutLength", "Greater180": false, "SpiralType": 256}}`
+  "SpiralOutLength", "Greater180": false, "SpiralType": shape}}`
   (tab-indented lines, numbers in their shortest form).
+
+The spiral shape (`SpiralShape`) is the code of both spirals and of the
+text, the record is otherwise the same (CG09 Bloss; CS01, CS02 every other
+shape, left turns, lengths 3 to 10 against radii 10 to 30):
+
+| code | shape | the spiral of length L ending at radius R |
+|---|---|---|
+| 256 | clothoid | curvature linear in arc length |
+| 257 | sine half-wave | curvature `(1 - cos(pi x/X)) / (2R)` against the tangent offset, `X = L - (1/3 - 3/(2 pi^2)) / 8 L^3 / R^2` |
+| 258 | Japanese cubic | `y = x^3 / (6 R X)`, `X + X^3 / (40 R^2) = L` solved by halving `[0, L]` until it holds within 1e-4 (the stored X is that midpoint) |
+| 259 | Bloss | curvature fraction `3t^2 - 2t^3` of arc length |
+| 260 | cubic parabola | `y = x^3 / (6 R L)` to arc length L |
+| 261 | sinusoidal | curvature fraction `t - sin(2 pi t) / (2 pi)` of arc length |
+| 262 | biquadratic | curvature fraction `2t^2`, then `1 - 2(1-t)^2`, of arc length |
+| 264 | NSW cubic | `y = c x^3` whose curvature is exactly `1/R` at X (X = `2mR / (1+m^2)^1.5`, m the end slope), with L the integral of `2 - sqrt(1 - y'^2)` over `[0, X]` |
+
+The spirals the application stores lie within 1e-6 of these (the shapes
+by arc length and the cubic parabola come from its own integration).
 
 Written for CR00's roads the records equal the samples' apart from the
 stamp and the last bits of values (the application's spiral points lie
 up to 1e-11 from the series; its lines start up to 4e-10 apart). E-CG01,
 E-CG02, E-CG07, E-CG08, E-CG10 and E-CG11 open with AUDIT 0 and the API
-reports the curve group and its parameters; the application solves a
+reports the curve group and its parameters; E-CS01 (every shape, a left
+turn; NSW and Japanese cubic right turns against the outgoing road's
+stationing with spirals of 8 and 5 into radius 12) opens with AUDIT 0, the
+API reports each spiral definition and length and its spiral ends where
+the samples' do; the application solves a
 spiral-curve-spiral again on open (its own points), three arcs as
 written. The application's interface refuses every spiral-spiral group
 (SSCS, SCSS, SSCSS: "No solution because of invalid parameters" for
 the radii, lengths, offsets and stations tried), so they are not
-written; spirals other than the clothoid are not written either.
+written.
 
 ### Station anchors
 
@@ -3539,7 +3561,7 @@ Corridors are listed in §3i-a.
 | alignments | widenings with linear transitions (on lines; of length 0 anywhere) | yes | yes | §3a (offset alignments) |
 | alignments | types: centerline, utility, rail (track gauge) | yes | yes | §3a (alignment types) |
 | alignments | curb returns (connected alignments) of one arc between two roads' offset lines, turning left or right, into the outgoing road along or against its stationing | yes (type, roads) | yes | §3a (curb returns) |
-| alignments | curb returns of three arcs and of a clothoid spiral-curve-spiral | yes | yes | §3a (curb returns; CG01 to CG11) |
+| alignments | curb returns of three arcs and of a spiral-curve-spiral of every spiral shape (clothoid, sine half-wave, Japanese cubic, Bloss, cubic parabola, sinusoidal, biquadratic, NSW cubic) | yes | yes | §3a (curb returns; CG01 to CG11, CS01, CS02) |
 | alignments | curb returns of spiral-spiral groups (SSCS, SCSS, SSCSS) | — | no | the application's interface refuses every set of parameters tried (§3a) |
 | alignments | widening transitions on arcs or curved (kinds 2, 4, 5), offsets of spirals, rail cant | yes (offset parameters and regions, connected alignments, type) | no | not decoded |
 | alignments | lone spirals, other constraints (fixed/floating curves, curves through points) | yes (elements) | no | other element kinds not written; no sample: after a fixed line the API's floating line and floating curve additions never return in a batch run (AE01, AE02) |

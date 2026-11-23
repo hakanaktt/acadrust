@@ -476,9 +476,9 @@ pub enum CurbReturnCurve {
     /// length, the middle one by radius (its length takes the rest of the
     /// turn).
     ThreeCentered { first: (f64, f64), middle: f64, last: (f64, f64) },
-    /// A clothoid of `spiral_in` into an arc of `radius`, then a clothoid
-    /// of `spiral_out` out of it.
-    SpiralCurveSpiral { spiral_in: f64, radius: f64, spiral_out: f64 },
+    /// A spiral of `spiral_in` into an arc of `radius`, then a spiral of
+    /// `spiral_out` out of it, both of `shape`.
+    SpiralCurveSpiral { spiral_in: f64, radius: f64, spiral_out: f64, shape: crate::classes::civil::SpiralShape },
 }
 
 /// A curb return's curve from its start at the origin heading along +x and
@@ -502,41 +502,21 @@ fn curb_curve(curve: CurbReturnCurve, sweep: f64) -> Option<(Vec<Vector2>, Vec<f
             }
             Some((points, turns.to_vec(), first.1 + middle * turns[1] + last.1))
         }
-        CurbReturnCurve::SpiralCurveSpiral { spiral_in, radius, spiral_out } => {
-            let (t1, t3) = (spiral_in / (2.0 * radius), spiral_out / (2.0 * radius));
+        CurbReturnCurve::SpiralCurveSpiral { spiral_in, radius, spiral_out, shape } => {
+            let ((p1, t1), (q, t3)) = (shape.end(spiral_in, radius), shape.end(spiral_out, radius));
             let t2 = sweep - t1 - t3;
             (t2 > 1e-9).then_some(())?;
-            let p1 = clothoid(spiral_in, radius);
             let p2 = arc(p1, t1, radius, t2);
-            // The spiral out seen backwards from its end is a clothoid too.
+            // The spiral out seen backwards from its end is the same spiral.
             let (u, n) = (Vector2::new(sweep.cos(), sweep.sin()), Vector2::new(-sweep.sin(), sweep.cos()));
-            let q = clothoid(spiral_out, radius);
             Some((vec![origin, p1, p2, p2 + u * q.x - n * q.y], vec![t1, t2, t3], spiral_in + radius * t2 + spiral_out))
         }
     }
 }
 
-/// The end of a clothoid of `length` from zero curvature to `1/radius`,
-/// started at the origin along +x turning left (its series in the end
-/// heading `t`: x = L sum (-1)^n t^2n / ((4n+1)(2n)!), y alike).
-fn clothoid(length: f64, radius: f64) -> Vector2 {
-    let t = length / (2.0 * radius);
-    let (mut x, mut y, mut term) = (0.0, 0.0, 1.0);
-    for n in 0..30 {
-        // term = t^n / n!
-        let sign = if n % 4 < 2 { 1.0 } else { -1.0 };
-        if n % 2 == 0 {
-            x += sign * term / (2 * n + 1) as f64;
-        } else {
-            y += sign * term / (2 * n + 1) as f64;
-        }
-        term *= t / (n + 1) as f64;
-    }
-    Vector2::new(x * length, y * length)
-}
-
 /// [`add_curb_return`] with any curve group: an arc, three arcs (CG01,
-/// CG07) or a spiral-curve-spiral (CG02, CG06, CG08). The three arcs are
+/// CG07) or a spiral-curve-spiral of any spiral shape (CG02, CG06, CG08; CG09,
+/// CS01, CS02). The three arcs are
 /// one element; the spiral-curve-spiral is a spiral in, a fixed arc and a
 /// spiral out between the lines (ids 4 to 6, the lines keeping 1 and 3)
 /// and keeps its parameters in a text of the record's second key.
@@ -546,7 +526,7 @@ pub fn add_curb_return_with(doc: &mut CadDocument, name: &str, incoming: Handle,
     let curve_ok = match curve {
         CurbReturnCurve::Arc(r) => positive(r),
         CurbReturnCurve::ThreeCentered { first, middle, last } => [first.0, first.1, middle, last.0, last.1].into_iter().all(positive),
-        CurbReturnCurve::SpiralCurveSpiral { spiral_in, radius, spiral_out } => [spiral_in, radius, spiral_out].into_iter().all(positive),
+        CurbReturnCurve::SpiralCurveSpiral { spiral_in, radius, spiral_out, .. } => [spiral_in, radius, spiral_out].into_iter().all(positive),
     };
     if name.is_empty() || !curve_ok || !positive(overlaps.0) || !positive(overlaps.1) || !offset_in.is_finite() || !offset_out.is_finite() || incoming == outgoing {
         return Err(invalid("a curb return needs a name, two roads, finite offsets and a positive curve and overlaps"));
@@ -659,8 +639,7 @@ pub fn add_curb_return_with(doc: &mut CadDocument, name: &str, incoming: Handle,
             let arcs = [first, (middle, 0.0), last];
             (vec![line(1, 0, 2, start, t_in), AlignmentElement { id: 2, previous: 1, next: 3, kind: AlignmentElementKind::ThreeCenteredArc { arcs } }, line(3, 2, 0, t_out, end)], path, None, None)
         }
-        CurbReturnCurve::SpiralCurveSpiral { spiral_in, radius, spiral_out } => {
-            let shape = crate::classes::civil::SpiralShape::Clothoid;
+        CurbReturnCurve::SpiralCurveSpiral { spiral_in, radius, spiral_out, shape } => {
             let (sc, cs) = (world(joins[1]), world(joins[2]));
             // The arc's middle, and the direction where the spiral out starts.
             let h = turns[0] + turns[1] / 2.0;
@@ -676,7 +655,7 @@ pub fn add_curb_return_with(doc: &mut CadDocument, name: &str, incoming: Handle,
             ];
             let mut path = path_of(&elements);
             path.push((end, None));
-            let text = format!("{{\r\n\t\"CurveType\": 4,\r\n\t\"CurveParameters\": {{\r\n\t\t\"CurveRadius\": {radius},\r\n\t\t\"SpiralInLength\": {spiral_in},\r\n\t\t\"SpiralOutLength\": {spiral_out},\r\n\t\t\"Greater180\": false,\r\n\t\t\"SpiralType\": 256\r\n\t}}\r\n}}");
+            let text = format!("{{\r\n\t\"CurveType\": 4,\r\n\t\"CurveParameters\": {{\r\n\t\t\"CurveRadius\": {radius},\r\n\t\t\"SpiralInLength\": {spiral_in},\r\n\t\t\"SpiralOutLength\": {spiral_out},\r\n\t\t\"Greater180\": false,\r\n\t\t\"SpiralType\": {}\r\n\t}}\r\n}}", shape.code());
             (elements, path, Some((cs, out_dir)), Some(text))
         }
     };
@@ -1227,10 +1206,10 @@ pub(super) fn write_alignment_of(doc: &mut CadDocument, common: EntityCommon, na
                     // start and direction, the spiral out from the start and
                     // direction its connection block keeps; both end with
                     // BD 0, BD 0, BD 1.
-                    AlignmentElementKind::SpiralIn { start, direction, length, radius, clockwise, .. } => {
+                    AlignmentElementKind::SpiralIn { start, direction, length, radius, clockwise, shape } => {
                         curve(w, SPIRAL, 2, 0);
                         ids(w);
-                        w.write_bit_long(SPIRAL_DEFINITION);
+                        w.write_bit_long(shape.code());
                         w.write_bit(clockwise);
                         point(w, start);
                         point(w, direction);
@@ -1238,11 +1217,11 @@ pub(super) fn write_alignment_of(doc: &mut CadDocument, common: EntityCommon, na
                             w.write_bit_double(v);
                         }
                     }
-                    AlignmentElementKind::SpiralOut { radius, length, clockwise, .. } => {
+                    AlignmentElementKind::SpiralOut { radius, length, clockwise, shape } => {
                         let (from, along) = timing.connected.as_ref().and_then(|c| c.spiral_out).unwrap_or_default();
                         curve(w, SPIRAL, 2, 1);
                         ids(w);
-                        w.write_bit_long(SPIRAL_DEFINITION);
+                        w.write_bit_long(shape.code());
                         w.write_bit(clockwise);
                         w.write_bit_double(radius);
                         w.write_bit_double(length);
@@ -2292,6 +2271,7 @@ mod tests {
     use super::*;
     use crate::io::dwg::{DwgReader, DwgWriter};
     use crate::types::DxfVersion;
+    use crate::classes::civil::SpiralShape;
 
     /// A drawing with stand-in nodes (only the keys and references the
     /// alignment writer looks up): a style tree whose alignment styles
@@ -2660,9 +2640,21 @@ mod tests {
         let a = add_alignment(&mut doc, "AL1", &[v(0.0, 0.0), v(200.0, 0.0)], None).unwrap();
         let b = add_alignment(&mut doc, "AL2", &[v(100.0, -100.0), v(100.0, 100.0)], None).unwrap();
         let ccc = CurbReturnCurve::ThreeCentered { first: (30.0, 5.0), middle: 10.0, last: (30.0, 5.0) };
-        let scs = CurbReturnCurve::SpiralCurveSpiral { spiral_in: 6.0, radius: 10.0, spiral_out: 6.0 };
+        let scs = |shape| CurbReturnCurve::SpiralCurveSpiral { spiral_in: 6.0, radius: 10.0, spiral_out: 6.0, shape };
         let h1 = add_curb_return_with(&mut doc, "CR1", a, -10.0, b, -10.0, true, ccc, (5.0, 5.0), None).unwrap();
-        let h2 = add_curb_return_with(&mut doc, "CR2", a, -10.0, b, -10.0, true, scs, (5.0, 5.0), None).unwrap();
+        let h2 = add_curb_return_with(&mut doc, "CR2", a, -10.0, b, -10.0, true, scs(SpiralShape::Clothoid), (5.0, 5.0), None).unwrap();
+        // The other shapes start their spiral in where the samples' do
+        // (CG09, CS01).
+        let shapes = [
+            (SpiralShape::Bloss, 76.9144711223893),
+            (SpiralShape::SineHalfWave, 76.78966791895277),
+            (SpiralShape::JapaneseCubic, 76.72821309623592),
+            (SpiralShape::CubicParabola, 76.7033871330615),
+            (SpiralShape::Sinusoidal, 76.94358128539841),
+            (SpiralShape::Biquadratic, 76.92846040778008),
+            (SpiralShape::NswCubic, 77.28129750696351),
+        ];
+        let others: Vec<_> = shapes.iter().enumerate().map(|(i, (shape, _))| add_curb_return_with(&mut doc, &format!("S{i}"), a, -10.0, b, -10.0, true, scs(*shape), (5.0, 5.0), None).unwrap()).collect();
         let path = std::env::temp_dir().join(format!("civil-curb-groups-{}.dwg", std::process::id()));
         DwgWriter::write_to_file(&path, &doc).unwrap();
         let back = DwgReader::from_file(&path).unwrap().read().unwrap();
@@ -2684,5 +2676,13 @@ mod tests {
         assert_eq!(e.iter().map(|e| e.id).collect::<Vec<_>>(), [1, 3, 4, 5, 6]);
         let AlignmentElementKind::FixedLine { end, .. } = e[0].kind else { panic!() };
         assert!(end.distance(&v(76.85945875683416, 10.0)) < 1e-9);
+        for (h, (shape, x)) in others.into_iter().zip(shapes) {
+            let r = read(h);
+            assert!(r.decode().strings[3].contains(&format!("\"SpiralType\": {}", shape.code())));
+            let e = r.alignment_elements().unwrap();
+            let AlignmentElementKind::SpiralIn { start, shape: read_shape, .. } = e[2].kind else { panic!() };
+            assert_eq!(read_shape, shape);
+            assert!((start.x - x).abs() < 1e-6, "{shape:?} {}", start.x - x);
+        }
     }
 }

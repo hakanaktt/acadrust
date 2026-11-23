@@ -248,9 +248,11 @@ pub enum SpiralShape {
     /// Linear in arc length (type 256), and types not decoded.
     #[default]
     Clothoid,
-    /// `(1 - cos(pi x/X)) / 2` against the tangent offset (257).
+    /// `(1 - cos(pi x/X)) / 2` against the tangent offset, with
+    /// `X = L - (1/3 - 3/(2 pi^2)) / 8 L^3 / R^2` (257).
     SineHalfWave,
-    /// `y = x^3 / (6 R X)`, with `X + X^3 / (40 R^2) = L` (258).
+    /// `y = x^3 / (6 R X)`, with `X + X^3 / (40 R^2) = L` solved by halving
+    /// `[0, L]` until the equation holds within 1e-4 (258).
     JapaneseCubic,
     /// `3t^2 - 2t^3` of arc length (259).
     Bloss,
@@ -260,6 +262,9 @@ pub enum SpiralShape {
     CubicParabola,
     /// `2t^2`, then `1 - 2(1-t)^2`, of arc length (262).
     Biquadratic,
+    /// `y = c x^3` whose curvature is exactly `1/R` at `X`, with `L` the
+    /// integral of `2 - sqrt(1 - y'^2)` over `[0, X]` (264).
+    NswCubic,
 }
 
 impl SpiralShape {
@@ -271,7 +276,128 @@ impl SpiralShape {
             260 => Self::CubicParabola,
             261 => Self::Sinusoidal,
             262 => Self::Biquadratic,
+            264 => Self::NswCubic,
             _ => Self::Clothoid,
+        }
+    }
+
+    /// The spiral definition code the records store.
+    pub(crate) fn code(self) -> i32 {
+        match self {
+            Self::Clothoid => 256,
+            Self::SineHalfWave => 257,
+            Self::JapaneseCubic => 258,
+            Self::Bloss => 259,
+            Self::CubicParabola => 260,
+            Self::Sinusoidal => 261,
+            Self::Biquadratic => 262,
+            Self::NswCubic => 264,
+        }
+    }
+
+    /// The integral over `[0, t]` of the curvature fraction, for the shapes
+    /// defined along the arc (`None` for those given as a tangent offset).
+    fn along(self) -> Option<fn(f64) -> f64> {
+        Some(match self {
+            Self::Clothoid => |t| t * t / 2.0,
+            Self::Bloss => |t| t.powi(3) - t.powi(4) / 2.0,
+            Self::Sinusoidal => |t| t * t / 2.0 + ((2.0 * PI * t).cos() - 1.0) / (4.0 * PI * PI),
+            Self::Biquadratic => |t| {
+                if t <= 0.5 {
+                    2.0 * t.powi(3) / 3.0
+                } else {
+                    1.0 / 12.0 + (t - 0.5) + 2.0 / 3.0 * ((1.0 - t).powi(3) - 0.125)
+                }
+            },
+            _ => return None,
+        })
+    }
+
+    /// Where a spiral of `length` ending at `radius` ends, started at the
+    /// origin along +x and turning left, and the heading it ends on.
+    pub(crate) fn end(self, length: f64, radius: f64) -> (Vector2, f64) {
+        if let Some(f) = self.along() {
+            let heading = |d: f64| length / radius * f(d / length);
+            let x = gauss(|d| heading(d).cos(), 0.0, length);
+            let y = gauss(|d| heading(d).sin(), 0.0, length);
+            return (Vector2::new(x, y), heading(length));
+        }
+        let (x, offset, slope) = offset_curve(self, length, radius);
+        (Vector2::new(x, offset(x)), slope(x).atan())
+    }
+}
+
+/// The integral of `f` over `[a, b]`: five-point Gauss-Legendre on 32 panels.
+fn gauss(f: impl Fn(f64) -> f64, a: f64, b: f64) -> f64 {
+    const X: [f64; 5] = [-0.906_179_845_938_664, -0.538_469_310_105_683_1, 0.0, 0.538_469_310_105_683_1, 0.906_179_845_938_664];
+    const W: [f64; 5] = [0.236_926_885_056_189_1, 0.478_628_670_499_366_5, 0.568_888_888_888_888_9, 0.478_628_670_499_366_5, 0.236_926_885_056_189_1];
+    let h = (b - a) / 32.0;
+    (0..32)
+        .map(|i| {
+            let c = a + (i as f64 + 0.5) * h;
+            X.iter().zip(W).map(|(x, w)| w * f(c + x * h / 2.0)).sum::<f64>() * h / 2.0
+        })
+        .sum()
+}
+
+/// A spiral given as a tangent offset `y(x)` from the tangent at its
+/// zero-curvature end: its `X`, `y` and the slope `y'`.
+#[allow(clippy::type_complexity)]
+fn offset_curve(shape: SpiralShape, length: f64, r: f64) -> (f64, Box<dyn Fn(f64) -> f64>, Box<dyn Fn(f64) -> f64>) {
+    // The value halving `[lo, hi]` finds where `f` rises through zero.
+    let halve = |f: &dyn Fn(f64) -> f64, mut lo: f64, mut hi: f64| {
+        for _ in 0..60 {
+            let mid = (lo + hi) / 2.0;
+            if f(mid) < 0.0 { lo = mid } else { hi = mid }
+        }
+        lo
+    };
+    match shape {
+        SpiralShape::JapaneseCubic => {
+            // X + X^3 / (40 R^2) = L, halved from [0, L] until it holds
+            // within 1e-4 (the stored X of K6 to K8 and CS01).
+            let f = |x: f64| x + x.powi(3) / (40.0 * r * r) - length;
+            let (mut lo, mut hi, mut x) = (0.0, length, length / 2.0);
+            for _ in 0..200 {
+                x = (lo + hi) / 2.0;
+                if f(x).abs() < 1e-4 {
+                    break;
+                }
+                if f(x) < 0.0 { lo = x } else { hi = x }
+            }
+            (x, Box::new(move |t| t.powi(3) / (6.0 * r * x)), Box::new(move |t| t * t / (2.0 * r * x)))
+        }
+        SpiralShape::CubicParabola => {
+            let slope = move |t: f64| t * t / (2.0 * r * length);
+            let x = halve(&|m| gauss(|t| (1.0 + slope(t).powi(2)).sqrt(), 0.0, m) - length, 0.5 * length, length);
+            (x, Box::new(move |t| t.powi(3) / (6.0 * r * length)), Box::new(slope))
+        }
+        SpiralShape::NswCubic => {
+            // By its end slope m: the curvature 1/R at X = 2mR / (1+m^2)^1.5.
+            let at = |m: f64| {
+                let x = 2.0 * m * r / (1.0 + m * m).powf(1.5);
+                (x, m / (3.0 * x * x))
+            };
+            let m = halve(
+                &|m| {
+                    let (x, c) = at(m);
+                    gauss(|t| 2.0 - (1.0 - (3.0 * c * t * t).powi(2)).max(0.0).sqrt(), 0.0, x) - length
+                },
+                0.0,
+                std::f64::consts::FRAC_1_SQRT_2,
+            );
+            let (x, c) = at(m);
+            (x, Box::new(move |t| c * t.powi(3)), Box::new(move |t| 3.0 * c * t * t))
+        }
+        _ => {
+            // Sine half-wave: curvature (1 - cos(pi x/X)) / (2R) against x,
+            // X = L - (1/3 - 3/(2 pi^2)) / 8 L^3 / R^2 (CS01, K9, K10).
+            let x = length - (1.0 / 3.0 - 1.5 / (PI * PI)) / 8.0 * length.powi(3) / (r * r);
+            (
+                x,
+                Box::new(move |t| (t * t / 2.0 - x * x / (PI * PI) * (1.0 - (PI * t / x).cos())) / (2.0 * r)),
+                Box::new(move |t| (t - x / PI * (PI * t / x).sin()) / (2.0 * r)),
+            )
         }
     }
 }
@@ -2200,27 +2326,12 @@ fn three_point_arc(a: Vector2, b: Vector2, c: Vector2) -> Option<(Vec<Vector2>, 
 /// A spiral of `shape` from `s`: curvature rising from zero to `k`
 /// (`inward`), or falling from `k` to zero.
 fn spiral(s: State, k: f64, inward: bool, length: f64, shape: SpiralShape) -> (Vec<Vector2>, State) {
-    use std::f64::consts::PI;
-    // Integral over [0, t] of the curvature fraction, for shapes defined
-    // along the arc.
-    let along: Option<fn(f64) -> f64> = match shape {
-        SpiralShape::Clothoid => None,
-        SpiralShape::Bloss => Some(|t| t.powi(3) - t.powi(4) / 2.0),
-        SpiralShape::Sinusoidal => Some(|t| t * t / 2.0 + ((2.0 * PI * t).cos() - 1.0) / (4.0 * PI * PI)),
-        SpiralShape::Biquadratic => Some(|t| {
-            if t <= 0.5 {
-                2.0 * t.powi(3) / 3.0
-            } else {
-                1.0 / 12.0 + (t - 0.5) + 2.0 / 3.0 * ((1.0 - t).powi(3) - 0.125)
-            }
-        }),
-        _ => {
-            return offset_spiral(s, k, inward, length, shape);
-        }
-    };
-    let Some(integral) = along else {
+    if shape == SpiralShape::Clothoid {
         let (k0, k1) = if inward { (s.curvature, k) } else { (k, 0.0) };
         return pieces(s, &[(k0, k1, length)]);
+    }
+    let Some(integral) = shape.along() else {
+        return offset_spiral(s, k, inward, length, shape);
     };
     // The shapes are symmetric about mid-length, so falling curvature is
     // `k (1 - f(t))`.
@@ -2256,57 +2367,7 @@ fn spiral(s: State, k: f64, inward: bool, length: f64, shape: SpiralShape) -> (V
 /// Spirals given as a tangent offset `y(x)` from the tangent at their
 /// zero-curvature end, out to `x = X`.
 fn offset_spiral(s: State, k: f64, inward: bool, length: f64, shape: SpiralShape) -> (Vec<Vector2>, State) {
-    use std::f64::consts::PI;
-    let r = 1.0 / k.abs();
-    let arc = |slope: &dyn Fn(f64) -> f64, x_end: f64| {
-        let n = 2000;
-        (0..n)
-            .map(|i| {
-                let x = (i as f64 + 0.5) * x_end / n as f64;
-                (1.0 + slope(x).powi(2)).sqrt() * x_end / n as f64
-            })
-            .sum::<f64>()
-    };
-    // `X` from the shape's rule; `y` and its slope.
-    let (x_end, offset, slope): (f64, Box<dyn Fn(f64) -> f64>, Box<dyn Fn(f64) -> f64>) = match shape {
-        SpiralShape::JapaneseCubic => {
-            // X + X^3 / (40 R^2) = L
-            let mut x = length;
-            for _ in 0..50 {
-                x -= (x + x.powi(3) / (40.0 * r * r) - length) / (1.0 + 3.0 * x * x / (40.0 * r * r));
-            }
-            (x, Box::new(move |t| t.powi(3) / (6.0 * r * x)), Box::new(move |t| t * t / (2.0 * r * x)))
-        }
-        SpiralShape::CubicParabola => {
-            let slope = move |t: f64| t * t / (2.0 * r * length);
-            let (mut lo, mut hi) = (0.5 * length, length);
-            for _ in 0..60 {
-                let mid = (lo + hi) / 2.0;
-                if arc(&slope, mid) < length { lo = mid } else { hi = mid }
-            }
-            (lo, Box::new(move |t| t.powi(3) / (6.0 * r * length)), Box::new(slope))
-        }
-        _ => {
-            // Sine half-wave: curvature (1 - cos(pi x/X)) / (2R) against x.
-            // ponytail: X is taken so the arc is `L` long; one sample puts
-            // Civil 3D's X 0.2% shorter, so its end can sit ~0.4 off on a
-            // 200-long spiral. Pin the rule down with more samples.
-            let curve = move |x_end: f64| {
-                move |t: f64| (t - x_end / PI * (PI * t / x_end).sin()) / (2.0 * r)
-            };
-            let (mut lo, mut hi) = (0.5 * length, length);
-            for _ in 0..60 {
-                let mid = (lo + hi) / 2.0;
-                if arc(&curve(mid), mid) < length { lo = mid } else { hi = mid }
-            }
-            let x = lo;
-            (
-                x,
-                Box::new(move |t| (t * t / 2.0 - x * x / (PI * PI) * (1.0 - (PI * t / x).cos())) / (2.0 * r)),
-                Box::new(curve(x)),
-            )
-        }
-    };
+    let (x_end, offset, slope) = offset_curve(shape, length, 1.0 / k.abs());
     let turn = k.signum();
     let n = ((length / STEP).ceil() as usize).clamp(2, 20000);
     // Local points from the zero-curvature end, turning `turn`.
