@@ -48,8 +48,9 @@ use crate::classes::arch::polyline_from_type6;
 use crate::entities::{ProxyGraphicRecord, ProxyGraphics};
 use crate::types::Vector2;
 
-/// Schema word of the parcel segment records.
-const SCHEMA: u32 = 0x1002_5F04;
+/// Schema word of the parcel segment records, shared with the grading
+/// entities' head ([`super::grading`]).
+pub(super) const SCHEMA: u32 = 0x1002_5F04;
 
 /// Geometry a parcel segment record holds.
 #[derive(Debug, Clone, PartialEq)]
