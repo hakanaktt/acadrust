@@ -1978,7 +1978,11 @@ and parcel numbers equal the samples' (PF01 bit for bit but for the
 newest member's point marks and last digits); the label of a face an
 arc piece bounds is not the samples' (PF11: the application puts it at
 (83.863, 18.482), not on the lines through the extents' middle; rule not
-found). A container read gives each member its arcs whole again (the
+found: it is neither the face's centroid (82.670, 21.562), nor that of
+its chord polygon (81.120, 21.798), nor its corners' mean, nor the middle
+of a corner's bisector up to the side it meets, the rule of three-sided
+faces with arcs; the application reports the same point as the parcel's
+centroid). A container read gives each member its arcs whole again (the
 pieces' sweeps added up). A line crossing an arc twice between the same
 two nodes (two pieces joining the same nodes) is refused. Checks E-PF1
 (a new drawing: an arc rectangle with an alignment across the arc, a
@@ -3563,6 +3567,20 @@ application's bodies are the catalog's generated solids; the writer
 writes a cylinder (cylindrical families) or a box of the size's extents
 below the insertion point in each block.
 
+The catalog's bodies are not written. The part builder generates them
+from each part's parametric model, which the catalog keeps in a drawing
+beside the part's definition: the concentric cylindrical structure's
+holds three circular profiles on work planes (`AECCU_COL_PROFILE`,
+`AECCU_COL_WORKPLANE`, `AECCU_COL_GEOMETRY_CIRCARC2D`), two extrusions and
+a transition between them (`AECCU_COL_MODIFIER_EXTRUSION`,
+`AECCU_COL_MODIFIER_TRANSITION`), the dimensions bound to the part's
+fields (`AECCU_COL_DIM_DIAMETER`, `AECCU_COL_DIM_LENGTH`) and the
+constraints between them (`AECCU_COL_CON_CONCENTRIC`). Building a body
+needs that model read and solved for a size; this crate has no reader for
+those records and writes no part's model, so the bodies stay the stand-in
+cylinder or box (the application opens the drawing, lists the part with
+its size and takes its extents from the stand-in).
+
 | written | result |
 |---|---|
 | WT01 with a network, a structure of each of the six families (the eccentric one turned by 0.5 rad), a pipe of each of the eleven families and a concrete pipe connected to the two cylindrical structures (E-N70); the same in a new drawing (E-N71) | AUDIT 0; every part listed with its family and size, positions as written, extents as the application's own (the turned structure's turned), the connected pipe listing both structures and each structure one pipe |
@@ -3980,7 +3998,7 @@ Corridors are listed in §3i-a.
 | intersections | corridor regions of the command | partly (the corridor record is not decoded) | no | WC63 (corridors and profiles on): the command loads its assembly set, eight assemblies of 27 stock subassemblies the product's compiled stock subassembly library defines, imports about 1,100 label styles and other styles with them and builds one corridor (20,885 bits, 172 references) over the roads, offsets and curb returns; the subassemblies are the product's licensed content, which this crate does not write |
 | intersections | roads on a site: offset alignments, curb returns and their profiles joining the site, the parcels of the regions they close | yes | yes | §3k (roads on a site); node and face ids and the marks 0x40/0x80 of crossing nodes are not the application's |
 | gravity pipe networks | every family of the default parts list (one size each), connections | partly | yes | §3m |
-| gravity pipe networks | sizes the parts list does not hold, the catalog's body solids | partly | no | §3m |
+| gravity pipe networks | sizes the parts list does not hold, the catalog's body solids | partly | no | §3m (bodies: the part builder solves each part's parametric model from the catalog, which is not read) |
 | pressure networks | every size of the default catalog (straight and curved pipes, elbows, tees, crosses, gate valves), connections | yes | yes | §3n |
 | pressure networks | parts of other catalogs | partly | no | §3n |
 | gradings | criteria, groups, gradings | partly (criteria) | no | §6a |
