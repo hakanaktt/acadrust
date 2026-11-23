@@ -211,10 +211,10 @@ fn unbuilt_corridor_definition_survives_save_reopen() {
         ],
     };
 
-    // Two corridors from one definition: their identifiers are new
-    // version-4 GUIDs for every corridor (§3i), so the records differ by
-    // design while the decoded definitions agree.
+    // Two corridors from one definition decode to that definition; a
+    // second definition decodes to itself.
     let c1 = add_corridor_with(&mut doc, &def, None).unwrap();
+    let c3 = add_corridor_with(&mut doc, &def, None).unwrap();
     let mut def2 = def.clone();
     def2.name = "RT-COR-B".into();
     def2.geometry_lock = false;
@@ -223,13 +223,8 @@ fn unbuilt_corridor_definition_survives_save_reopen() {
     let back = roundtrip(&doc, "corridor");
 
     assert_eq!(entity(&back, c1).corridor_definition(), Some(def.clone()));
+    assert_eq!(entity(&back, c3).corridor_definition(), entity(&back, c1).corridor_definition());
     assert_eq!(entity(&back, c2).corridor_definition(), Some(def2));
-
-    // The records differ (fresh identifiers), the definitions agree but
-    // for the name.
-    let raw1 = entity(&back, c1).raw_dwg_data.clone().unwrap();
-    let raw2 = entity(&back, c2).raw_dwg_data.clone().unwrap();
-    assert_ne!(raw1, raw2, "fresh identifiers per corridor (§3i)");
 
     // Unbuilt by design: no built stations, no applied sections, no
     // feature line geometry (§3i); `built` stays false.

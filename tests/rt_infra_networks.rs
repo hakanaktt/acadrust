@@ -102,7 +102,7 @@ fn gravity_network_survives_save_reopen_with_connections() {
         .iter()
         .find(|f| f.contains("Headwall"))
         .expect("a headwall family in the default parts list");
-    let s3 = add_structure_of_family(&mut doc, net, headwall, v(200.0, 0.0, -6.0), 0.0).unwrap();
+    let s3 = add_structure_of_family(&mut doc, net, headwall, v(200.0, 0.0, -6.0), 0.75).unwrap();
     let p3 = add_pipe_of_family(&mut doc, net, "Concrete Pipe", v(0.0, 0.0, -5.0), v(90.0, 0.0, -6.0)).unwrap();
 
     let back = roundtrip(&doc, "gravity-network");
@@ -120,9 +120,8 @@ fn gravity_network_survives_save_reopen_with_connections() {
     assert_eq!(st1.structure_position(), Some(v(10.0, 20.0, 3.0)));
     assert_eq!(st1.network_part_rotation(), Some(0.0));
     assert_eq!(entity(&back, s2).structure_position(), Some(v(100.0, 20.0, 2.0)));
-    // The rotated-structure layout is undecoded (documented subset): only
-    // the insertion point is asserted here, written at rotation 0.
     assert_eq!(entity(&back, s3).structure_position(), Some(v(200.0, 0.0, -6.0)));
+    assert_eq!(entity(&back, s3).network_part_rotation(), Some(0.75));
 
     // Pipes: ends as written, part definition and network among the refs.
     let pipe1 = entity(&back, p1);
@@ -247,7 +246,10 @@ fn pressure_network_ports_and_connections_survive() {
     assert_eq!(elbow_back.pressure_part_position(), Some(v(200.0, 0.0, 8.0)));
     assert_eq!(elbow_back.network_part_rotation(), Some(0.5));
     let ports_before = elbow_before.pressure_ports().unwrap();
-    for (port, before) in elbow_back.pressure_ports().unwrap().iter().zip(ports_before) {
+    let ports_back = elbow_back.pressure_ports().unwrap();
+    assert!(!ports_before.is_empty());
+    assert_eq!(ports_back.len(), ports_before.len());
+    for (port, before) in ports_back.iter().zip(ports_before) {
         assert_eq!(port.position, before.position, "port position bit-exact");
         assert_eq!(port.direction, before.direction, "port direction bit-exact");
         assert_eq!(port.outside_diameter, before.outside_diameter);

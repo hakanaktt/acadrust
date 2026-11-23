@@ -285,7 +285,7 @@ fn rt_align_curb_returns_round_trip() {
     let b = add_alignment(&mut doc, "AL2", &[v(100.0, -100.0), v(100.0, 100.0)], None).unwrap();
     let one = add_curb_return(&mut doc, "CR1", a, -10.0, b, -10.0, true, 10.0, (5.0, 5.0), None).unwrap();
     let three = add_curb_return_with(&mut doc, "CR2", a, -10.0, b, -10.0, true, CurbReturnCurve::ThreeCentered { first: (25.0, 6.0), middle: 10.0, last: (25.0, 6.0) }, (5.0, 5.0), None).unwrap();
-    let scs = add_curb_return_with(&mut doc, "CR3", a, -10.0, b, -10.0, true, CurbReturnCurve::SpiralCurveSpiral { spiral_in: 6.0, radius: 10.0, spiral_out: 6.0 }, (5.0, 5.0), None).unwrap();
+    let scs = add_curb_return_with(&mut doc, "CR3", a, -10.0, b, -10.0, true, CurbReturnCurve::SpiralCurveSpiral { spiral_in: 6.0, radius: 10.0, spiral_out: 6.0, shape: acadrust::classes::civil::SpiralShape::Clothoid }, (5.0, 5.0), None).unwrap();
     let back = roundtrip(&doc, "curb");
 
     // One arc: a connected alignment of line, free arc (the given radius),

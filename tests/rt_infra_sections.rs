@@ -3,11 +3,11 @@
 //!
 //! Documented subset (READY-WITH-LIMITS):
 //! - sections are written before the application samples them: a written
-//!   section holds no points, so `section_geometry()` must be `None`
-//!   after the reopen (asserted), and nothing asserts sampled geometry;
+//!   section holds no points, so `section_geometry()` reads an empty
+//!   geometry after the reopen (asserted), and nothing asserts sampled
+//!   geometry;
 //! - corridor and pipe network section sources are not written (§3j);
-//! - views of sampled sections and of lines with several sections are
-//!   not written; the unsampled view constants are -20..20 in elevation
+//! - views of sampled sections are not written; the unsampled view constants are -20..20 in elevation
 //!   with the line's offsets padded by 20 and rounded out to 10 (§3j).
 
 use acadrust::classes::arch::ArchEntityData;
@@ -93,18 +93,15 @@ fn unsampled_sections_survive_and_hold_no_points() {
     for ((_, name), line) in reopened.iter().zip(["SL1", "SL2"]) {
         assert_eq!(name, &format!("SLG-RT - {line} - S-RT(1)"));
     }
-    let _ = names;
+    assert_eq!(reopened.iter().map(|r| r.1.clone()).collect::<Vec<_>>(), names);
 
     // After the reopen: the sections decode with no points (the
     // application samples them; READY-WITH-LIMITS subset). The reader
-    // surfaces the unsampled record as an empty geometry (or None).
+    // surfaces the unsampled record as an empty geometry.
     for h in &sections {
         let s = entity(&back, *h);
         assert_eq!(s.dxf_name, "AECC_SECTION");
-        assert!(
-            s.section_geometry().map(|g| g.points.is_empty()).unwrap_or(true),
-            "a written section is unsampled"
-        );
+        assert!(s.section_geometry().expect("an unsampled geometry").points.is_empty());
     }
 
     // References: soft 0, hard owner 0, section style, sample line
@@ -161,7 +158,7 @@ fn section_views_and_group_plots_survive() {
         frame,
         SectionViewFrame { origin: v(500.0, 0.0), offset_min: -30.0, offset_max: 30.0, elevation_min: -20.0, elevation_max: 20.0, vertical_scale: 1.0 }
     );
-    // The view names its sample line (hard) and its section (soft).
+    // The view names its sample line (hard); the line has no section.
     let vrefs = refs(&entity(&back, view));
     assert_eq!(vrefs.get(3), Some(&lone.value()));
     assert_eq!(entity(&back, view).decode().strings[2], "SV-LONE");
@@ -195,12 +192,12 @@ fn section_views_and_group_plots_survive() {
         .collect();
     assert_eq!(names, ["0+25.00 (1)", "0+50.00 (2)", "0+75.00 (3)"]);
 
-    // The group's plots read back: index, point, views per plot, the
+    // The group's plots read back: index, point, the stored count 3, the
     // constant values -30, 30, 40 (§3j).
     let plots: Vec<SectionViewGroupPlot> = entity(&back, g).section_view_group_plots().unwrap();
     assert_eq!(plots.len(), 1);
     let plot = &plots[0];
-    assert_eq!((plot.index, plot.views), (1, 3));
+    assert_eq!((plot.index, plot.count), (1, 3));
     assert_eq!((plot.origin.x, plot.origin.y, plot.origin.z), (200.0, 0.0, 0.0));
     assert_eq!(plot.values, [-30.0, 30.0, 40.0]);
     assert_eq!(plot.extra, [0.0; 8]);
