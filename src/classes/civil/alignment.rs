@@ -1301,19 +1301,18 @@ pub enum AlignmentPiece {
 
 use AlignmentPiece as Piece;
 
+/// Whether two solved points are the same point, within `1e-9` of the
+/// coordinate magnitude.
+fn same_solved_point(a: Vector2, b: Vector2) -> bool {
+    a.distance(&b) <= 1e-9 * (1.0 + a.x.abs().max(a.y.abs()))
+}
+
 /// `(start, end, kind)` index ranges of the pieces of a solved run. Every
-/// solved piece repeats its first point at the join. A join's repeated
-/// point is the same solved point carried across the boundary, so the
-/// tolerance follows the piece matcher's scale (`1e-9` of the
-/// coordinate magnitude): a joint recomputed along its element's points
-/// can differ in the last ulps of the trigonometry without being a
-/// different point, and an absolute `1e-9` missed it on macOS, whose
-/// libm rounds those ulps differently than the other CI platforms'.
+/// solved piece repeats its first point at the join (see [`same_solved_point`]).
 fn split_points(raw: &[Vector2]) -> Vec<(usize, usize)> {
     let mut joins = vec![0];
     for i in 1..raw.len() {
-        let (a, b) = (raw[i - 1], raw[i]);
-        if a.distance(&b) <= 1e-9 * (1.0 + a.x.abs().max(a.y.abs())) {
+        if same_solved_point(raw[i - 1], raw[i]) {
             joins.push(i);
         }
     }
@@ -1344,7 +1343,7 @@ fn solved_pieces(elements: &[AlignmentElement]) -> (Vec<Vec<Vector2>>, Vec<Vec<(
     WALKED.with(|w| w.borrow_mut().clear());
     let raw = raw_polylines(elements);
     let walked = WALKED.with(|w| std::mem::take(&mut *w.borrow_mut()));
-    let same = |a: Vector2, b: Vector2| a.distance(&b) <= 1e-9 * (1.0 + a.x.abs().max(a.y.abs()));
+    let same = same_solved_point;
     let pieces = raw
         .iter()
         .map(|run| {
@@ -3244,12 +3243,13 @@ const REAL_SETTINGS_MAX_BITS: usize = 16384;
 /// end, so the plain walker's trailing type fields are absent and the
 /// block is located by its head alone (a finite `BD`, then `BL 1`).
 fn real_superelevation_curves(data: &[u8], start: usize, end: usize, first: f64, last: f64) -> Option<Vec<SuperelevationCurveData>> {
-    let (_, _, pos) = post_cache_starts(data, start, end)?.into_iter().find_map(|pos| post_cache_at(data, pos, end, first, last, true))?;
-    let mut bits = Bits::new(data, pos, end);
-    let reference = bits.bit_double()?;
-    reference.is_finite().then_some(())?;
-    (bits.bit_long()? == 1).then_some(())?;
-    real_superelevation(&mut bits, None)
+    post_cache_starts(data, start, end)?.into_iter().find_map(|at| {
+        let (_, _, pos) = post_cache_at(data, at, end, first, last, true)?;
+        let mut bits = Bits::new(data, pos, end);
+        bits.bit_double()?.is_finite().then_some(())?;
+        (bits.bit_long()? == 1).then_some(())?;
+        real_superelevation(&mut bits, None)
+    })
 }
 
 /// A superelevation block of the application's own form, read after its
@@ -4528,9 +4528,9 @@ mod tests {
 
     #[test]
     fn rejects_a_drifted_real_superelevation_read() {
-        // The same block with one flipped bit inside the first station's
-        // kind: no candidate settings length parses the block, and the
-        // reader gives up.
+        // The same block with one flipped bit inside the station's cross
+        // segment kind: no candidate settings length parses the block,
+        // and the reader gives up.
         let bl = |v: i32| match v {
             0 => "10".to_string(),
             -1 => format!("00{}", "1".repeat(32)),
@@ -4538,7 +4538,7 @@ mod tests {
         };
         let bd = |v: f64| format!("00{}", v.to_le_bytes().iter().map(|b| format!("{b:08b}")).collect::<String>());
         let node = format!("{}{}{}{}", bl(3), bl(-1), bl(3), bl(-1));
-        let mut s = [
+        let s = [
             format!("0{}0", bl(1)),
             format!("{node}{}0{}0", bl(0), bl(1)),
             format!("{node}0{node}1{}{}{}{}", "0".repeat(40), "0".repeat(10), bl(0), bl(1)),
@@ -4551,7 +4551,7 @@ mod tests {
         let data: Vec<u8> = s.as_bytes().chunks(8).map(|c| c.iter().enumerate().fold(0u8, |a, (i, b)| a | ((b - b'0') << (7 - i)))).collect();
         let mut bits = Bits::new(&data, 0, s.len());
         assert_eq!(real_superelevation(&mut bits, None).map(|c| c.len()), Some(1));
-        // Flip a bit inside the station's kind and the reader gives up.
+        // The second `BL 7` is the cross segment's kind.
         let flip = s.match_indices(&bl(7)).nth(1).unwrap().0 + 3;
         let flipped = format!("{}{}{}", &s[..flip], if &s[flip..flip + 1] == "0" { "1" } else { "0" }, &s[flip + 1..]);
         let data: Vec<u8> = flipped.as_bytes().chunks(8).map(|c| c.iter().enumerate().fold(0u8, |a, (i, b)| a | ((b - b'0') << (7 - i)))).collect();
