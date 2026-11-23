@@ -2,6 +2,7 @@
 
 use super::assoc::{add_action, ActionBody, Dependency};
 use super::default_styles::{ensure_intersection_label_style, ensure_intersection_styles, KEY_INTERSECTION_STYLES};
+use super::profile::VerticalCurve;
 use super::sample_lines::arch;
 use super::site::default_style_of;
 use super::support::*;
@@ -266,39 +267,137 @@ fn elevation_at(doc: &CadDocument, profile: Handle, station: f64) -> Option<f64>
     points.iter().find(|(_, _, p, _)| station >= p[0].x - tol && station <= p[2].x + tol).map(|(.., curve)| curve.elevation_at(station))
 }
 
-/// The profile locking of a crossing: the other road's profile through its
-/// PVIs outside the crossing and new PVIs at the crossing (the main road's
+/// The command's grade rule for the other road (the record's settings):
+/// beside the locked stretch its grade changes by at most this much, over
+/// this distance.
+const GRADE_CHANGE: f64 = 0.04;
+const GRADE_DISTANCE: f64 = 50.0;
+
+/// A PVI of the profile being locked: its point, its curve (with the
+/// stations the curve covers) and whether the locking adds it.
+type LockPvi = (Vector2, Option<(VerticalCurve, f64, f64)>, bool);
+
+/// The profile locking: the other road's profile keeps its PVIs outside
+/// the locked stretch and takes new PVIs at the crossing (the main road's
 /// elevation) and, with offset profiles (`slope`), where it crosses the
 /// main road's offset lines (the main road's elevation there raised by
-/// `slope` times the offset). The other road's profile must be tangents
-/// only; otherwise it is left as it is.
+/// `slope` times the offset). A tee junction's other road is locked only
+/// with offset profiles, at the junction and the one offset line it
+/// crosses (WC67; WC66 and WC74 without them are not changed).
+///
+/// - A PVI at a new PVI's station is kept unless it has the same
+///   elevation (WC68: the crossing's PVI then follows it, a tangent of no
+///   length between them); curves that reach the locked stretch are
+///   dropped, the others kept (WC68, WC69).
+/// - With offset profiles the grade rule holds on each side: where the
+///   grade beyond the stretch differs from the grade at its end by more
+///   than [`GRADE_CHANGE`], a PVI [`GRADE_DISTANCE`] past the stretch takes
+///   the grade limited to that change and the PVIs before it are dropped
+///   (WC67, WC70, WC72, WC73; WC61, WC69, WC71 within it). Without a PVI
+///   beyond that distance the side is left as it is.
+///
+/// A profile whose curves cannot be read is left as it is.
+// ponytail: the rule's maximum grade (0.05) is not applied: no sample
+// reaches it.
 fn lock_other_profile(doc: &mut CadDocument, roads: &[Road; 2], widths: &[[f64; 2]; 2], slope: Option<f64>) -> Result<(), DxfError> {
+    use crate::classes::civil::ProfilePiece;
     let (m, x) = (&roads[0], &roads[1]);
-    let other = Handle::new(x.profile);
-    let Some(pvis) = arch(doc, other).map(|a| a.profile_pvis()) else { return Ok(()) };
-    if pvis.len() < 2 || pvis.iter().any(|p| p.curve_length != 0.0) {
+    if x.ends.is_some() && slope.is_none() {
         return Ok(());
     }
+    let other = Handle::new(x.profile);
+    let Some(a) = arch(doc, other) else { return Ok(()) };
+    let pvis = a.profile_pvis();
+    let Some(pieces) = a.main_stream().and_then(|(data, start, end)| super::super::profile::entity_points(data, start, end)) else { return Ok(()) };
+    if pvis.len() < 2 {
+        return Ok(());
+    }
+    // Each PVI's curve and the stations it covers.
+    let mut curves: Vec<Option<(VerticalCurve, f64, f64)>> = Vec::with_capacity(pvis.len());
+    for p in &pvis {
+        if p.curve_length == 0.0 {
+            curves.push(None);
+            continue;
+        }
+        let tol = 1e-9 * p.point.x.abs().max(1.0);
+        let Some((_, piece, ends, curve)) = pieces.iter().find(|(_, k, e, _)| *k != ProfilePiece::Tangent && e[0].x <= p.point.x + tol && e[2].x >= p.point.x - tol) else { return Ok(()) };
+        let (lo, hi) = (ends[0].x, ends[2].x);
+        let c = match piece {
+            ProfilePiece::Parabola => VerticalCurve::Parabola(hi - lo),
+            ProfilePiece::AsymmetricParabola => {
+                let pvi = curve.asymmetric_pvi().unwrap_or(p.point.x);
+                VerticalCurve::Asymmetric { before: pvi - lo, after: hi - pvi }
+            }
+            ProfilePiece::Circular => VerticalCurve::CircularLength(hi - lo),
+            ProfilePiece::Tangent => VerticalCurve::None,
+        };
+        curves.push(Some((c, lo, hi)));
+    }
+    let (first, last) = (pvis[0].point.x, pvis[pvis.len() - 1].point.x);
     let unit = |v: Vector2| v * (1.0 / v.length());
     let (d, e) = (unit(m.direction), unit(x.direction));
     let main_z = |t: f64| elevation_at(doc, Handle::new(m.profile), m.station + t).ok_or_else(|| invalid("the main road's profile does not reach the crossing"));
     let mut new = vec![Vector2::new(x.station, main_z(0.0)?)];
     if let Some(slope) = slope {
         // Where the other road meets the main road's offset line `q` off
-        // its centre line: `e u - d t = q`.
+        // its centre line: `e u - d t = q`; a tee's road meets one.
         let left = Vector2::new(-d.y, d.x);
         for q in [left * widths[0][0], left * -widths[0][1]] {
             let den = e.cross(&d);
             let (u, t) = (q.cross(&d) / den, q.cross(&e) / den);
-            new.push(Vector2::new(x.station + u, main_z(t)? + slope * q.length()));
+            let station = x.station + u;
+            if station >= first - 1e-9 && station <= last + 1e-9 {
+                new.push(Vector2::new(station, main_z(t)? + slope * q.length()));
+            }
         }
     }
-    let lo = new.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
-    let hi = new.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+    new.sort_by(|a, b| a.x.total_cmp(&b.x));
+    let (lo, hi) = (new[0].x, new[new.len() - 1].x);
     let tol = 1e-9 * hi.abs().max(1.0);
-    let mut all: Vec<Vector2> = pvis.iter().map(|p| p.point).filter(|p| p.x < lo - tol || p.x > hi + tol).chain(new).collect();
-    all.sort_by(|a, b| a.x.total_cmp(&b.x));
-    super::profile::set_profile_pvis(doc, other, &all)
+    let mut all: Vec<LockPvi> = pvis
+        .iter()
+        .zip(&curves)
+        .filter(|(p, _)| p.point.x <= lo + tol || p.point.x >= hi - tol)
+        .filter(|(p, _)| !new.iter().any(|n| (n.x - p.point.x).abs() <= tol && (n.y - p.point.y).abs() <= tol))
+        .map(|(p, c)| (p.point, c.filter(|c| c.2 < lo - tol || c.1 > hi + tol), false))
+        .chain(new.iter().map(|n| (*n, None, true)))
+        .collect();
+    let order = |all: &mut Vec<LockPvi>| all.sort_by(|a, b| a.0.x.total_cmp(&b.0.x).then(a.2.cmp(&b.2)));
+    order(&mut all);
+    if slope.is_some() {
+        let grade = |a: Vector2, b: Vector2| (b.y - a.y) / (b.x - a.x);
+        // Beyond the stretch's last new PVI.
+        if let Some(i) = all.iter().rposition(|p| p.2).filter(|i| *i > 0 && i + 1 < all.len()) {
+            let (end, g_in, g_out) = (all[i].0, grade(all[i - 1].0, all[i].0), grade(all[i].0, all[i + 1].0));
+            let at = end.x + GRADE_DISTANCE;
+            if (g_out - g_in).abs() > GRADE_CHANGE + 1e-12 && all.iter().any(|p| p.0.x > at + tol) {
+                let g = g_in + GRADE_CHANGE * (g_out - g_in).signum();
+                all.retain(|p| p.2 || p.0.x <= end.x + tol || p.0.x > at + tol);
+                for p in all.iter_mut().filter(|p| p.1.is_some_and(|c| c.1 < at + tol)) {
+                    p.1 = None;
+                }
+                all.push((Vector2::new(at, end.y + g * GRADE_DISTANCE), None, false));
+                order(&mut all);
+            }
+        }
+        // Before its first.
+        if let Some(i) = all.iter().position(|p| p.2).filter(|i| *i > 0 && i + 1 < all.len()) {
+            let (start, g_before, g_after) = (all[i].0, grade(all[i - 1].0, all[i].0), grade(all[i].0, all[i + 1].0));
+            let at = start.x - GRADE_DISTANCE;
+            if (g_after - g_before).abs() > GRADE_CHANGE + 1e-12 && all.iter().any(|p| p.0.x < at - tol) {
+                let g = g_after - GRADE_CHANGE * (g_after - g_before).signum();
+                all.retain(|p| p.2 || p.0.x >= start.x - tol || p.0.x < at - tol);
+                for p in all.iter_mut().filter(|p| p.1.is_some_and(|c| c.2 > at - tol)) {
+                    p.1 = None;
+                }
+                all.push((Vector2::new(at, start.y - g * GRADE_DISTANCE), None, false));
+                order(&mut all);
+            }
+        }
+    }
+    let points: Vec<Vector2> = all.iter().map(|p| p.0).collect();
+    let curves: Vec<VerticalCurve> = all[1..all.len() - 1].iter().map(|p| p.1.map_or(VerticalCurve::None, |c| c.0)).collect();
+    super::profile::set_profile_pvis(doc, other, &points, &curves)
 }
 
 /// A curb return's place: the corner where its offset lines meet, the in
@@ -612,7 +711,7 @@ fn build_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_prof
         }
         // The profile locking reshapes the other road's profile at a
         // crossing (WC61, WC62).
-        if roads[0].profile != 0 && roads[1].profile != 0 && roads[1].ends.is_none() {
+        if roads[0].profile != 0 && roads[1].profile != 0 {
             lock_other_profile(doc, &roads, &widths, curb_profiles.map(|p| p.slope))?;
         }
         let handle = write_record(doc, name, &roads, assembly_sets, layer)?;

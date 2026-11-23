@@ -3107,9 +3107,33 @@ at a crossing (its profile locking): the profile becomes fixed tangents
 through its PVIs outside the crossing and a PVI at the crossing at the
 main road's elevation there (WC62: roads (0, 0)-(200, 0) and (100,
 -100)-(100, 100), profiles 10 to 12 and 11 flat). The intersection
-writers do the same for a crossing whose other road's profile is
-tangents only (a profile with vertical curves is left as it is; tee
-junctions are not reshaped, not sampled).
+writers do the same, with these rules from WC66 to WC75 (crossings and
+tees, other roads' profiles with tangents of other grades and with
+parabolas):
+
+- A PVI already at the crossing's station is kept unless it has the
+  crossing's elevation; the crossing's PVI follows it with a tangent of no
+  length between them (WC68: a crest parabola's PVI at the crossing,
+  13 then 11). Curves that reach the locked stretch are dropped, the
+  others kept (WC68, WC69; WC75 keeps a parabola at station 40).
+- A tee junction's other road is reshaped only with the curb return
+  profiles setting on (WC66, WC74 unchanged; WC67: PVIs at the junction
+  and where the road crosses the one offset line it meets).
+- With that setting the command's grade rule for the other road holds
+  on each side of the locked stretch (the record's settings: maximum
+  grade change 0.04, distance 50): where the grade beyond the stretch
+  differs from the grade at its end by more than 0.04, a PVI 50 past the
+  stretch takes the grade limited to that change and the PVIs before it
+  are dropped (WC67: (12, 10.76) then (62, 11.76), grade 2 % instead of
+  2.5 %; WC70 drops a PVI at 40; WC72 on the near side of a road ending at
+  the junction, (38, 11.76); WC73 above a crossing, (162, 11.76); WC61,
+  WC69, WC71 and the near side of WC73 within the limit). With no PVI
+  beyond those 50 the side is left as it is (not sampled); the rule's
+  maximum grade (0.05) is not applied (no sample reaches it).
+
+Written into the samples' roads (E-L61 to E-L75) the other road's PVIs
+and curves equal the samples' (every profile of the tees E-L67 and E-L72);
+E-L67, E-L68, E-L72, E-L73 and E-L75 open with AUDIT 0 errors.
 
 `add_intersection_with_curb_return_profiles(..., offsets, radius,
 CurbReturnProfiles { slope, incoming, outgoing }, layer)` writes what the

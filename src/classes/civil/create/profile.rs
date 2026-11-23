@@ -1021,13 +1021,19 @@ pub(super) fn write_curb_return_profile(doc: &mut CadDocument, handle: Handle, i
 }
 
 /// Writes the layout profile `profile` again as fixed tangents through
-/// `pvis` (station, elevation), keeping its name, layer, style, helper
-/// records and identifier (the application's profile locking reshapes the
-/// other road's profile this way). Only a layout profile (not an offset,
-/// surface or curb return profile) is rewritten.
-pub(super) fn set_profile_pvis(doc: &mut CadDocument, profile: Handle, pvis: &[Vector2]) -> Result<(), DxfError> {
-    if pvis.len() < 2 || pvis.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) || pvis.windows(2).any(|w| w[1].x <= w[0].x) {
-        return Err(invalid("a profile needs two or more finite PVIs with increasing stations"));
+/// `pvis` (station, elevation) with the vertical curve `curves[j]` at inner
+/// PVI `j + 1`, keeping its name, layer, style, helper records and
+/// identifier (the application's profile locking reshapes the other road's
+/// profile this way). Two PVIs may share a station (a tangent of no
+/// length: WC68) when neither has a curve. Only a layout profile (not an
+/// offset, surface or curb return profile) is rewritten.
+pub(super) fn set_profile_pvis(doc: &mut CadDocument, profile: Handle, pvis: &[Vector2], curves: &[VerticalCurve]) -> Result<(), DxfError> {
+    if pvis.len() < 2 || curves.len() + 2 != pvis.len() || pvis.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) || pvis.windows(2).any(|w| w[1].x < w[0].x) || pvis[pvis.len() - 1].x <= pvis[0].x {
+        return Err(invalid("a profile needs two or more finite PVIs with stations not decreasing, and one curve (or none) per inner PVI"));
+    }
+    let curved = |i: usize| i > 0 && i + 1 < pvis.len() && curves[i - 1].is_some();
+    if (1..pvis.len()).any(|i| pvis[i].x == pvis[i - 1].x && (curved(i) || curved(i - 1))) {
+        return Err(invalid("a curve's PVI shares its station with another PVI"));
     }
     let Some(EntityType::Extended(x)) = doc.get_entity(profile) else { return Err(invalid("profile not found")) };
     let ExtendedEntityData::Arch(a) = &x.data else { return Err(invalid("profile not found")) };
@@ -1042,8 +1048,7 @@ pub(super) fn set_profile_pvis(doc: &mut CadDocument, profile: Handle, pvis: &[V
     let common = x.common.clone();
     let helpers: [Handle; 7] = std::array::from_fn(|i| Handle::new(refs[i]));
     let id = identifier(doc, profile.value()).ok_or_else(|| invalid("the profile's identifier cannot be read"))?;
-    let curves = vec![VerticalCurve::None; pvis.len() - 2];
-    write_profile(doc, common, &name, &parts(pvis, &curves), &helpers, refs[11], Handle::new(refs[12]), &id)?;
+    write_profile(doc, common, &name, &parts(pvis, curves), &helpers, refs[11], Handle::new(refs[12]), &id)?;
     Ok(())
 }
 
