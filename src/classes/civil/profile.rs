@@ -748,6 +748,14 @@ impl ProfileCurve {
     pub(super) fn grade_at(&self, station: f64) -> f64 {
         self.0.grade_at(station)
     }
+
+    /// The PVI station where an asymmetric parabola's two parabolas meet.
+    pub(super) fn asymmetric_pvi(&self) -> Option<f64> {
+        match self.0 {
+            Shape::Placed(Placed { pvi, form: Form::Asymmetric(..), .. }) => Some(pvi.x),
+            _ => None,
+        }
+    }
 }
 
 /// A profile's entities as fixed entities (tangents, parabolas and circular

@@ -1507,8 +1507,11 @@ the parent):
 
 - A circular curve stays circular: each piece is a fixed circular curve
   through three points (`(4, 11)`: start, the point at the middle station,
-  end; no fields after the points). An asymmetric parabola becomes fixed
-  parabolas by three points; every point is on the source's own curve.
+  end; no fields after the points), exact where the offset is constant
+  along a parent line (along a parent arc the stations scale by
+  `(R ± o) / R` and the circle only passes through its three points). An
+  asymmetric parabola becomes fixed parabolas by three points, cut at its
+  PVI; their three points lie on the mapped curve.
 - Each piece is cut where the offset alignment's regions change as well as
   its elements, and is raised by `slope` times the offset where its point
   lies (the widened offset inside a widening). A parent station where a
@@ -1517,13 +1520,14 @@ the parent):
   of the piece that crosses it.
 - A transition along the parent maps its stations linearly and its offset
   runs linearly; a piece along it is a fixed parabola by two points with
-  the grade at its start (`(6, 12)`, the source's grade there in parent
-  stations). Such a piece of a source tangent is listed in the entity map
+  the grade at its start (`(6, 12)`, the mapped curve's grade there: the
+  source's grade plus the rise's, over the stations' scale). Such a piece of a source tangent is listed in the entity map
   under source id 0 (first), a piece of a source curve under the curve.
 
 Written for OC00's and OX00's offset alignments the records equal the
-samples' apart from the stamp, the identifiers and the last bits of
-values; E-OC1 and E-OX1 open with AUDIT 0, the API lists the
+samples' apart from the stamp, the identifiers, the last bits of values
+and the grades of the pieces along transitions (the samples keep the
+source's grade there, which leaves the mapped curve); E-OC1 and E-OX1 open with AUDIT 0, the API lists the
 application's entities, stations and elevations of OC01 to OC03 and OX01,
 and raising a source PVI recomputes them.
 

@@ -857,8 +857,12 @@ const OFFSET_END_ANCHOR: i32 = 0;
 /// stations, raised by `slope` times the offset there. A parent station
 /// where a widening meets the nominal offset takes the nominal side (OW01:
 /// a transition of length 0 follows no parent stations); a piece along a
-/// transition is a parabola between its ends leaving with the source's
-/// grade (OX01). Returns the entities in station order and, by source id,
+/// transition is a parabola between its ends leaving with the grade of the
+/// mapped curve there (OX01). A circular piece is the circle through its
+/// three mapped points: exact where the offset is constant along a parent
+/// line; along a parent arc the stations scale by `(R ± o) / R` and the
+/// mapped curve is an ellipse the circle only passes through at those
+/// points. Returns the entities in station order and, by source id,
 /// the ids (1 up, in station order) made from each.
 #[allow(clippy::type_complexity)]
 fn offset_entities(source: &[(i32, crate::classes::civil::ProfilePiece, [Vector2; 3], super::super::profile::ProfileCurve)], map: &[super::alignment::StationRow], slope: f64) -> Option<(Vec<ProfileEntity>, Vec<(i32, Vec<i32>)>)> {
@@ -880,8 +884,11 @@ fn offset_entities(source: &[(i32, crate::classes::civil::ProfilePiece, [Vector2
     let mut unsourced = Vec::new();
     for (id, piece, [a, _, b], curve) in source {
         let z = |x: f64| curve.elevation_at(x);
+        // Cut where the rows change and where an asymmetric parabola's two
+        // parabolas meet.
         let mut cuts = vec![a.x];
-        cuts.extend(map.iter().map(|m| m.parent.0).filter(|s| *s > a.x + tol && *s < b.x - tol));
+        cuts.extend(map.iter().map(|m| m.parent.0).chain(curve.asymmetric_pvi()).filter(|s| *s > a.x + tol && *s < b.x - tol));
+        cuts.sort_by(f64::total_cmp);
         cuts.push(b.x);
         let mut made = Vec::new();
         for w in cuts.windows(2) {
@@ -889,9 +896,18 @@ fn offset_entities(source: &[(i32, crate::classes::civil::ProfilePiece, [Vector2
                 let (own, rise) = at(x)?;
                 Some(Vector2::new(own, z(x) + rise))
             };
-            let along_transition = row((w[0] + w[1]) / 2.0)?.transition;
+            let m = row((w[0] + w[1]) / 2.0)?;
+            let along_transition = m.transition;
+            // The mapped curve's grade at the piece's start: the source's
+            // grade plus the rise's, over the stations' scale.
+            let grade = || {
+                let span = m.parent.1 - m.parent.0;
+                let sign = if m.offset.0 + m.offset.1 < 0.0 { -1.0 } else { 1.0 };
+                let rise = slope * sign * (m.offset.1 - m.offset.0) / span;
+                (curve.grade_at(w[0]) + rise) / ((m.own.1 - m.own.0) / span)
+            };
             entities.push(match piece {
-                _ if along_transition => ProfileEntity::ParabolaTwoPointsGrade { start: p(w[0])?, end: p(w[1])?, grade: curve.grade_at(w[0]), at_end: false },
+                _ if along_transition => ProfileEntity::ParabolaTwoPointsGrade { start: p(w[0])?, end: p(w[1])?, grade: grade(), at_end: false },
                 ProfilePiece::Tangent => ProfileEntity::Tangent { start: p(w[0])?, end: p(w[1])? },
                 // Circular curves stay circular, asymmetric parabolas become
                 // parabolas through their points (OC01 to OC03).
@@ -1300,6 +1316,53 @@ mod tests {
         let end = p[6].1[0];
         assert!((end.x - 134.07045722206465).abs() < 1e-9);
         assert!((end.y - (16.0 - 4.0 / 120.0 * 48.0 + 0.04 * 15.0)).abs() < 1e-9);
+    }
+
+    /// The offset profile's entities lie on the mapped curve: where the
+    /// offset is constant along a parent line every point of a copied
+    /// circle or asymmetric parabola is the source's raised by the rise, an
+    /// asymmetric parabola is cut at its PVI, and a source tangent's piece
+    /// along a transition is a straight line.
+    #[test]
+    fn offset_profile_entities_lie_on_the_mapped_curve() {
+        use super::super::super::profile::entity_points;
+        use crate::classes::civil::{add_alignment_with_curves, add_offset_alignment_with_widenings, VertexCurve, Widening};
+        let v = Vector2::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let al = add_alignment_with_curves(&mut doc, "AL1", &[v(0.0, 0.0), v(100.0, 0.0), v(200.0, 50.0)], &[VertexCurve::Arc(80.0)], None).unwrap();
+        let fgc = add_profile_with_curves(&mut doc, al, "FGC", &[v(0.0, 5.0), v(40.0, 9.0), v(200.0, 2.0)], &[VerticalCurve::Circular(300.0)], None).unwrap();
+        let fgs = add_profile_with_curves(&mut doc, al, "FGS", &[v(0.0, 5.0), v(50.0, 9.0), v(200.0, 2.0)], &[VerticalCurve::Asymmetric { before: 20.0, after: 25.0 }], None).unwrap();
+        let fga = add_profile(&mut doc, al, "FGA", &[v(0.0, 10.0), v(200.0, 12.0)], &[], None).unwrap();
+        let off = add_offset_alignment_with_widenings(&mut doc, al, "OFFW", 10.0, None, &[Widening { start: 130.0, end: 160.0, offset: 15.0, entry: 8.0, exit: 6.0 }], None).unwrap();
+        let rise = 0.04 * 10.0;
+        let written: Vec<Handle> = [fgc, fgs, fga].iter().map(|s| add_offset_profile(&mut doc, *s, off, "OP", 0.04, None).unwrap()).collect();
+        let curves = |h: Handle| {
+            let a = arch(&doc, h);
+            let (data, start, end) = a.main_stream().unwrap();
+            entity_points(data, start, end).unwrap()
+        };
+        // Before the parent's arc (81.1) the offset alignment's stations are
+        // the parent's.
+        for (source, h) in [(fgc, written[0]), (fgs, written[1])] {
+            let src = curves(source);
+            let z = |x: f64| src.iter().find(|e| e.2[0].x <= x && x <= e.2[2].x).unwrap().3.elevation_at(x);
+            for e in curves(h).iter().filter(|e| e.2[2].x < 81.0) {
+                for t in [0.25, 0.5, 0.75] {
+                    let x = e.2[0].x + t * (e.2[2].x - e.2[0].x);
+                    assert!((e.3.elevation_at(x) - (z(x) + rise)).abs() < 1e-9, "{x}");
+                }
+            }
+        }
+        assert!(curves(written[1]).iter().any(|e| (e.2[2].x - 50.0).abs() < 1e-9), "cut at the PVI");
+        // The tangent's pieces along the transitions are straight.
+        let pieces = curves(written[2]);
+        assert_eq!(pieces.iter().filter(|e| e.1 == crate::classes::civil::ProfilePiece::Parabola).count(), 2);
+        for e in pieces.iter().filter(|e| e.1 == crate::classes::civil::ProfilePiece::Parabola) {
+            let [a, _, b] = e.2;
+            let x = (a.x + b.x) / 2.0;
+            assert!((e.3.elevation_at(x) - (a.y + b.y) / 2.0).abs() < 1e-9);
+        }
     }
 
     #[test]
