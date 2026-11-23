@@ -72,6 +72,31 @@ struct Road {
     offsets: [u64; 2],
     /// Its curb returns by region (0 for none; filled in the first road).
     curb_returns: [u64; 4],
+    /// Its left and right offset profiles (0 for none).
+    offset_profiles: [u64; 2],
+    /// The curb return profiles by region (0 for none; first road).
+    curb_return_profiles: [u64; 4],
+}
+
+/// The curb return profiles the command makes with its curb return
+/// profiles setting on (WC61), and what they need: the grade of the
+/// roads' offset profiles from the roads' profiles and how far each curb
+/// return runs along the incoming and the outgoing lane.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CurbReturnProfiles {
+    /// Grade of the offset profiles away from their road (the
+    /// application's default -0.02).
+    pub slope: f64,
+    /// Length of the curb return's line along the incoming lane (25).
+    pub incoming: f64,
+    /// Length of its line along the outgoing lane (25).
+    pub outgoing: f64,
+}
+
+impl Default for CurbReturnProfiles {
+    fn default() -> Self {
+        CurbReturnProfiles { slope: -0.02, incoming: 25.0, outgoing: 25.0 }
+    }
 }
 
 /// A region between two arms: the arm it starts at (in) and the one it
@@ -157,12 +182,12 @@ fn write_intersection(doc: &mut CadDocument, common: EntityCommon, name: &str, s
     let regions = regions(roads);
     let mut refs = vec![soft_pointer(0), hard_pointer(style)];
     for r in roads {
-        refs.extend([hard_pointer(r.alignment), soft_pointer(r.profile), soft_pointer(r.offsets[0]), soft_pointer(0), soft_pointer(r.offsets[1]), soft_pointer(0)]);
+        refs.extend([hard_pointer(r.alignment), soft_pointer(r.profile), soft_pointer(r.offsets[0]), soft_pointer(r.offset_profiles[0]), soft_pointer(r.offsets[1]), soft_pointer(r.offset_profiles[1])]);
     }
     // Per region: its curb return alignment and profile, in and out roads
     // (WC40), and a closing soft 0.
     for (i, g) in regions.iter().enumerate() {
-        refs.extend([soft_pointer(roads[0].curb_returns[i]), soft_pointer(0), soft_pointer(roads[g.in_road].alignment), soft_pointer(roads[g.out_road].alignment)]);
+        refs.extend([soft_pointer(roads[0].curb_returns[i]), soft_pointer(roads[0].curb_return_profiles[i]), soft_pointer(roads[g.in_road].alignment), soft_pointer(roads[g.out_road].alignment)]);
     }
     refs.push(soft_pointer(0));
     let mut strings = vec!["AeccImpIntersection".to_string(), String::new(), name.to_string(), String::new()];
@@ -206,6 +231,53 @@ fn write_intersection(doc: &mut CadDocument, common: EntityCommon, name: &str, s
 /// The order of a curb return action's dependency on its intersection
 /// (WC40).
 const CURB_RETURN_ORDER: i32 = 0x2_0000;
+/// The order of a curb return profile action's dependency on its
+/// intersection (WC61).
+const CURB_RETURN_PROFILE_ORDER: i32 = 0x3_0000;
+
+/// A profile's elevation at `station` (the entity there).
+fn elevation_at(doc: &CadDocument, profile: Handle, station: f64) -> Option<f64> {
+    let a = arch(doc, profile)?;
+    let (data, start, end) = a.main_stream()?;
+    let points = super::super::profile::entity_points(data, start, end)?;
+    let tol = 1e-9 * station.abs().max(1.0);
+    points.iter().find(|(_, _, p, _)| station >= p[0].x - tol && station <= p[2].x + tol).map(|(.., curve)| curve.elevation_at(station))
+}
+
+/// The profile locking of a crossing: the other road's profile through its
+/// PVIs outside the crossing and new PVIs at the crossing (the main road's
+/// elevation) and, with offset profiles (`slope`), where it crosses the
+/// main road's offset lines (the main road's elevation there raised by
+/// `slope` times the offset). The other road's profile must be tangents
+/// only; otherwise it is left as it is.
+fn lock_other_profile(doc: &mut CadDocument, roads: &[Road; 2], widths: &[[f64; 2]; 2], slope: Option<f64>) -> Result<(), DxfError> {
+    let (m, x) = (&roads[0], &roads[1]);
+    let other = Handle::new(x.profile);
+    let Some(pvis) = arch(doc, other).map(|a| a.profile_pvis()) else { return Ok(()) };
+    if pvis.len() < 2 || pvis.iter().any(|p| p.curve_length != 0.0) {
+        return Ok(());
+    }
+    let unit = |v: Vector2| v * (1.0 / v.length());
+    let (d, e) = (unit(m.direction), unit(x.direction));
+    let main_z = |t: f64| elevation_at(doc, Handle::new(m.profile), m.station + t).ok_or_else(|| invalid("the main road's profile does not reach the crossing"));
+    let mut new = vec![Vector2::new(x.station, main_z(0.0)?)];
+    if let Some(slope) = slope {
+        // Where the other road meets the main road's offset line `q` off
+        // its centre line: `e u - d t = q`.
+        let left = Vector2::new(-d.y, d.x);
+        for q in [left * widths[0][0], left * -widths[0][1]] {
+            let den = e.cross(&d);
+            let (u, t) = (q.cross(&d) / den, q.cross(&e) / den);
+            new.push(Vector2::new(x.station + u, main_z(t)? + slope * q.length()));
+        }
+    }
+    let lo = new.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+    let hi = new.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+    let tol = 1e-9 * hi.abs().max(1.0);
+    let mut all: Vec<Vector2> = pvis.iter().map(|p| p.point).filter(|p| p.x < lo - tol || p.x > hi + tol).chain(new).collect();
+    all.sort_by(|a, b| a.x.total_cmp(&b.x));
+    super::profile::set_profile_pvis(doc, other, &all)
+}
 
 /// A curb return's place: the corner where its offset lines meet, the in
 /// and out arms' directions, the offset alignments (road, side: 0 left, 1
@@ -215,6 +287,9 @@ struct CurbReturnPlace {
     arms: [Vector2; 2],
     sides: [(usize, usize); 2],
     spans: [((usize, usize), f64, f64); 2],
+    /// The arc's tangent length and its sweep.
+    tangent: f64,
+    sweep: f64,
 }
 
 /// A road's station at a point near the crossing (its line there).
@@ -228,7 +303,7 @@ fn station_on(road: &Road, point: Vector2, p: Vector2) -> f64 {
 /// (the road's left offset when the arm runs along the road, else its
 /// right) and away along the outgoing arm's (the road's right when that
 /// arm runs along the road), a unit of line before and after the arc.
-fn curb_returns(roads: &[Road; 2], point: Vector2, widths: &[[f64; 2]; 2], radius: f64) -> Result<Vec<CurbReturnPlace>, DxfError> {
+fn curb_returns(roads: &[Road; 2], point: Vector2, widths: &[[f64; 2]; 2], radius: f64, lines: [f64; 2]) -> Result<Vec<CurbReturnPlace>, DxfError> {
     let mut out = Vec::new();
     for g in regions(roads) {
         let arm = |road: usize, forward: bool| {
@@ -249,11 +324,11 @@ fn curb_returns(roads: &[Road; 2], point: Vector2, widths: &[[f64; 2]; 2], radiu
         let corner = p_in + a_in * ((p_out - p_in).cross(&a_out) / den);
         let sweep = (a_in * -1.0).dot(&a_out).clamp(-1.0, 1.0).acos();
         let tangent = radius * (sweep / 2.0).tan();
-        let span = |side: (usize, usize), a: Vector2| {
-            let (s0, s1) = (station_on(&roads[side.0], point, corner + a * tangent), station_on(&roads[side.0], point, corner + a * (tangent + 1.0)));
+        let span = |side: (usize, usize), a: Vector2, line: f64| {
+            let (s0, s1) = (station_on(&roads[side.0], point, corner + a * tangent), station_on(&roads[side.0], point, corner + a * (tangent + line)));
             (side, s0.min(s1), s0.max(s1))
         };
-        out.push(CurbReturnPlace { corner, arms: [a_in, a_out], sides: [side_in, side_out], spans: [span(side_in, a_in), span(side_out, a_out)] });
+        out.push(CurbReturnPlace { corner, arms: [a_in, a_out], sides: [side_in, side_out], spans: [span(side_in, a_in, lines[0]), span(side_out, a_out, lines[1])], tangent, sweep });
     }
     Ok(out)
 }
@@ -322,7 +397,10 @@ pub fn add_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_pr
 /// the road read, the offset written); a profile locking action
 /// (`AECC_ASSOC_PVILOCKING_MULTIALIGNINTER_ACTION_BODY`: the intersection,
 /// the roads and the main road's profile read, the other road's profile
-/// written; without profiles the intersection and the other road read);
+/// written; without profiles the intersection and the other road read;
+/// at a crossing the other road's profile, when it is tangents only, is
+/// written again with a PVI at the crossing at the main road's elevation,
+/// as the command's locking leaves it: WC62);
 /// the intersection action (`AECC_ASSOC_INTERSECTION_ACTION_BODY`: the roads
 /// read, the intersection written); and the location label
 /// (`AECC_INTERSECTION_LOCATION_LABEL`) with the drawing's default
@@ -350,7 +428,47 @@ pub fn add_intersection_with_curb_returns(doc: &mut CadDocument, name: &str, mai
     if !(radius.is_finite() && radius > 0.0) {
         return Err(invalid("a curb return radius must be positive"));
     }
-    build_intersection(doc, name, main, main_profile, other, other_profile, assembly_sets, Some(offsets), Some(radius), layer)
+    build_intersection(doc, name, main, main_profile, other, other_profile, assembly_sets, Some(offsets), Some((radius, None)), layer)
+}
+
+/// [`add_intersection_with_curb_returns`] with the command's curb return
+/// profiles setting on as well (WC61: roads (0, 0)-(200, 0) and (100,
+/// -100)-(100, 100) with profiles, widths 12, radius 25):
+///
+/// - The curb returns' lines run `profiles.incoming` and
+///   `profiles.outgoing` along the lanes (25 by default); the offset
+///   alignments run over those lines as before (124.248 long in WC61).
+/// - The other road's profile is written again as fixed tangents through
+///   its PVIs outside the crossing and new ones where it crosses the main
+///   road's offset lines and the main road (elevations of the main road's
+///   offset profiles and of its profile there), see
+///   [`add_intersection_with`].
+/// - Every offset alignment gets an offset profile from its road's
+///   profile, `profiles.slope` times its width away from it, named
+///   `<offset alignment> - <slope>%` (three decimals), see
+///   [`super::add_offset_profile`]; the intersection names them.
+/// - Every curb return gets a curb return profile `<curb return> -
+///   Profile` of fixed tangents through the incoming lane's offset profile
+///   at the curb return's start and at its arc's start and the outgoing
+///   lane's at the arc's end and at its end (the command's joining
+///   tangent rule), kept by an action
+///   (`AECC_ASSOC_CURBRETURN_VALIGNMENT_ACTION_BODY`: both offset profiles,
+///   the curb return and the intersection (order `0x30000`) read, the
+///   profile written); the intersection names each region's profile.
+///
+/// Both roads need profiles of tangents; only a crossing is written.
+#[allow(clippy::too_many_arguments)]
+pub fn add_intersection_with_curb_return_profiles(doc: &mut CadDocument, name: &str, main: Handle, main_profile: Handle, other: Handle, other_profile: Handle, assembly_sets: [&str; 2], offsets: IntersectionOffsets, radius: f64, profiles: CurbReturnProfiles, layer: Option<&str>) -> Result<Handle, DxfError> {
+    if !(radius.is_finite() && radius > 0.0) {
+        return Err(invalid("a curb return radius must be positive"));
+    }
+    if !profiles.slope.is_finite() || [profiles.incoming, profiles.outgoing].iter().any(|l| !(l.is_finite() && *l > 0.0)) {
+        return Err(invalid("curb return profiles need a finite slope and positive line lengths"));
+    }
+    if main_profile.is_null() || other_profile.is_null() {
+        return Err(invalid("curb return profiles need both roads' profiles"));
+    }
+    build_intersection(doc, name, main, main_profile, other, other_profile, assembly_sets, Some(offsets), Some((radius, Some(profiles))), layer)
 }
 
 /// How far, as a share of the span of the curb returns' lines on it, an
@@ -361,7 +479,10 @@ pub fn add_intersection_with_curb_returns(doc: &mut CadDocument, name: &str, mai
 pub const CURB_RETURN_MARGIN: f64 = 0.001;
 
 #[allow(clippy::too_many_arguments)]
-fn build_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_profile: Handle, other: Handle, other_profile: Handle, assembly_sets: [&str; 2], offsets: Option<IntersectionOffsets>, curb_radius: Option<f64>, layer: Option<&str>) -> Result<Handle, DxfError> {
+fn build_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_profile: Handle, other: Handle, other_profile: Handle, assembly_sets: [&str; 2], offsets: Option<IntersectionOffsets>, curbs: Option<(f64, Option<CurbReturnProfiles>)>, layer: Option<&str>) -> Result<Handle, DxfError> {
+    let curb_radius = curbs.map(|c| c.0);
+    let curb_profiles = curbs.and_then(|c| c.1);
+    let curb_lines = curb_profiles.map_or([1.0; 2], |p| [p.incoming, p.outgoing]);
     if name.is_empty() {
         return Err(invalid("an intersection needs a name"));
     }
@@ -421,6 +542,8 @@ fn build_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_prof
         ends: None,
         offsets: [0, 0],
         curb_returns: [0; 4],
+        offset_profiles: [0; 2],
+        curb_return_profiles: [0; 4],
     };
     let mut roads = [road(main, main_profile, a), Road { ends, ..road(other, other_profile, b) }];
     if let Some(o) = offsets {
@@ -435,7 +558,7 @@ fn build_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_prof
         // The curb returns: per region its geometry, and the stations its
         // lines take on each offset alignment (road, side).
         let returns = match curb_radius {
-            Some(radius) => Some(curb_returns(&roads, point, &widths, radius)?),
+            Some(radius) => Some(curb_returns(&roads, point, &widths, radius, curb_lines)?),
             None => None,
         };
         for (k, r) in roads.iter_mut().enumerate() {
@@ -461,6 +584,21 @@ fn build_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_prof
                 roads[0].curb_returns[g] = doc.allocate_handle().value();
             }
         }
+        // The profile locking reshapes the other road's profile at a
+        // crossing (WC61, WC62).
+        if roads[0].profile != 0 && roads[1].profile != 0 && roads[1].ends.is_none() {
+            lock_other_profile(doc, &roads, &widths, curb_profiles.map(|p| p.slope))?;
+        }
+        if let Some(p) = curb_profiles {
+            for k in 0..2 {
+                for i in 0..2 {
+                    let offset = Handle::new(roads[k].offsets[i]);
+                    let offset_name = arch(doc, offset).and_then(|a| a.alignment_name()).unwrap_or_default();
+                    let h = super::profile::add_offset_profile(doc, Handle::new(roads[k].profile), offset, &format!("{offset_name} - {:.3}%", p.slope * 100.0), p.slope, layer)?;
+                    roads[k].offset_profiles[i] = h.value();
+                }
+            }
+        }
         let handle = write_record(doc, name, &roads, assembly_sets, layer)?;
         let read = |h: u64| Dependency { object: Handle::new(h), writes: false, order: 0 };
         let wrote = |h: u64| Dependency { object: Handle::new(h), writes: true, order: 0 };
@@ -476,6 +614,16 @@ fn build_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_prof
         add_action(doc, ActionBody { dxf: "AECC_ASSOC_INTERSECTION_ACTION_BODY", refs: vec![handle], tail: "" }, &[read(m.alignment), read(x.alignment), Dependency { order: INTERSECTION_ORDER, ..wrote(handle.value()) }])?;
         if let (Some(c), Some(radius)) = (&returns, curb_radius) {
             let regions = regions(&roads);
+            // The curb return profiles' handles and identifiers: each curb
+            // return lists its profile.
+            let profile_ids: Vec<Option<(Handle, [u8; 16])>> = (0..c.len())
+                .map(|_| {
+                    curb_profiles.map(|_| {
+                        let h = doc.allocate_handle();
+                        (h, super::profile::new_identifier(h.value()))
+                    })
+                })
+                .collect();
             for (g, (cr, region)) in c.iter().zip(&regions).enumerate() {
                 let h = Handle::new(roads[0].curb_returns[g]);
                 let road = |i: usize| Handle::new(roads[i].alignment);
@@ -495,6 +643,8 @@ fn build_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_prof
                     region.in_forward,
                     region.out_forward,
                     radius,
+                    curb_lines,
+                    profile_ids[g],
                     layer,
                 )?;
                 add_action(
@@ -502,6 +652,46 @@ fn build_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_prof
                     ActionBody { dxf: "AECC_ASSOC_CURBRETURN_ALIGNMENT_ACTION_BODY", refs: vec![h], tail: "" },
                     &[read(offset(cr.sides[0]).value()), read(offset(cr.sides[1]).value()), Dependency { order: CURB_RETURN_ORDER, ..read(handle.value()) }, wrote(h.value())],
                 )?;
+            }
+            if let Some(p) = curb_profiles {
+                for (g, (cr, region)) in c.iter().zip(&regions).enumerate() {
+                    let h = Handle::new(roads[0].curb_returns[g]);
+                    let lane = |i: usize| {
+                        let (k, side) = cr.sides[i];
+                        (k, side, Handle::new(roads[k].offset_profiles[side]))
+                    };
+                    // The lanes' offset profiles at the curb return's start,
+                    // its arc's ends and its end.
+                    let z = |i: usize, along: f64| -> Result<f64, DxfError> {
+                        let (k, side, _) = lane(i);
+                        let station = station_on(&roads[k], point, cr.corner + cr.arms[i] * (cr.tangent + along));
+                        Ok(elevation_at(doc, Handle::new(roads[k].profile), station).ok_or_else(|| invalid("a road profile does not reach the curb return"))? + p.slope * widths[k][side])
+                    };
+                    let arc = radius * cr.sweep;
+                    let pvis = [
+                        Vector2::new(0.0, z(0, p.incoming)?),
+                        Vector2::new(p.incoming, z(0, 0.0)?),
+                        Vector2::new(p.incoming + arc, z(1, 0.0)?),
+                        Vector2::new(p.incoming + arc + p.outgoing, z(1, p.outgoing)?),
+                    ];
+                    let cr_name = format!("{name} - {} - Profile", REGION_NAMES[region.quadrant]);
+                    let (incoming, outgoing) = (lane(0).2, lane(1).2);
+                    let (ph, pid) = profile_ids[g].ok_or_else(|| invalid("no curb return profile handle"))?;
+                    let profile = super::profile::write_curb_return_profile(doc, ph, &pid, h, &cr_name, &pvis, incoming, outgoing, layer)?;
+                    add_action(
+                        doc,
+                        ActionBody { dxf: "AECC_ASSOC_CURBRETURN_VALIGNMENT_ACTION_BODY", refs: vec![profile], tail: "" },
+                        &[read(incoming.value()), read(outgoing.value()), read(h.value()), wrote(profile.value()), Dependency { order: CURB_RETURN_PROFILE_ORDER, ..read(handle.value()) }],
+                    )?;
+                    roads[0].curb_return_profiles[g] = profile.value();
+                }
+                // The record again, naming the curb return profiles.
+                let common = match doc.get_entity(handle) {
+                    Some(crate::entities::EntityType::Extended(x)) => x.common.clone(),
+                    _ => return Err(invalid("the intersection was not written")),
+                };
+                let style = arch(doc, handle).and_then(|a| a.typed_handles().get(1).map(|r| r.0)).unwrap_or(0);
+                write_intersection(doc, common, name, style, &roads, assembly_sets)?;
             }
         }
         write_location_label(doc, handle, label, layer)?;
@@ -683,5 +873,43 @@ mod tests {
         let left = arch(&back, Handle::new(refs[4])).unwrap().alignment_offset_parameters().unwrap();
         let margin = 76.0 * CURB_RETURN_MARGIN;
         assert!((left.regions[0].parent_start - (62.0 - margin)).abs() < 1e-9 && (left.regions[0].parent_end - (138.0 + margin)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn curb_return_profiles_join_the_offset_profiles() {
+        let v = Vector2::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let a = add_alignment(&mut doc, "Road A", &[v(0.0, 0.0), v(200.0, 0.0)], None).unwrap();
+        let b = add_alignment(&mut doc, "Road B", &[v(100.0, -100.0), v(100.0, 100.0)], None).unwrap();
+        let pa = add_profile(&mut doc, a, "PA", &[v(0.0, 10.0), v(200.0, 12.0)], &[], None).unwrap();
+        let pb = add_profile(&mut doc, b, "PB", &[v(0.0, 11.0), v(200.0, 11.0)], &[], None).unwrap();
+        assert!(add_intersection_with_curb_return_profiles(&mut doc, "I", a, Handle::NULL, b, pb, ["", ""], IntersectionOffsets::default(), 25.0, CurbReturnProfiles::default(), None).is_err());
+        let i = add_intersection_with_curb_return_profiles(&mut doc, "I", a, pa, b, pb, ["", ""], IntersectionOffsets::default(), 25.0, CurbReturnProfiles::default(), None).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-intersection-curb-return-profiles-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let refs: Vec<u64> = arch(&back, i).unwrap().typed_handles().iter().map(|r| r.0).collect();
+        // The other road's profile meets the main road and its offset
+        // profiles across the crossing.
+        let pvis: Vec<(f64, f64)> = arch(&back, pb).unwrap().profile_pvis().iter().map(|p| (p.point.x, p.point.y)).collect();
+        assert_eq!(pvis.len(), 5);
+        for (got, want) in pvis.iter().zip([(0.0, 11.0), (88.0, 10.76), (100.0, 11.0), (112.0, 10.76), (200.0, 11.0)]) {
+            assert!((got.0 - want.0).abs() < 1e-9 && (got.1 - want.1).abs() < 1e-9, "{got:?} {want:?}");
+        }
+        // Each road's offsets carry offset profiles 2 % below the road.
+        let left = arch(&back, Handle::new(refs[5])).unwrap();
+        assert_eq!(left.profile_name(), Some("Road A-Left-12.000 - -2.000%".into()));
+        assert!((left.profile_offset().unwrap().slope + 0.02).abs() < 1e-12);
+        // The NE curb return's profile: 25 along Road A's left lane, the
+        // arc, 25 along Road B's right lane.
+        let ne = arch(&back, Handle::new(refs[15])).unwrap();
+        assert_eq!(ne.profile_name(), Some("I - NE - Quadrant - Profile".into()));
+        let pvis: Vec<(f64, f64)> = ne.profile_pvis().iter().map(|p| (p.point.x, p.point.y)).collect();
+        let arc = 25.0 * std::f64::consts::FRAC_PI_2;
+        for (got, want) in pvis.iter().zip([(0.0, 11.38), (25.0, 11.13), (25.0 + arc, 10.76 + 0.24 * 25.0 / 88.0 - 0.24), (50.0 + arc, 10.76 + 0.24 * 50.0 / 88.0 - 0.24)]) {
+            assert!((got.0 - want.0).abs() < 1e-9 && (got.1 - want.1).abs() < 1e-9, "{got:?} {want:?}");
+        }
     }
 }

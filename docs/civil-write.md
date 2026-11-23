@@ -3084,8 +3084,75 @@ The span rule holds over WC40 to WC47 (radii 10 to 50, widths 10 to 20).
 Written: E-IC5, E-IC6 (crossings, radius 30 width 12, radius 40 width
 15), E-IC7 to E-IC9 (WC50 to WC52's roads) open with AUDIT 0, the API
 lists the regions with their curb returns, the offset and curb return
-lengths as the samples'. Not written: profiles and corridors of the
-command, roads on a site.
+lengths as the samples'. Not written: corridors of the command, roads on
+a site.
+
+### Profile locking and curb return profiles
+
+With both roads' profiles the command reshapes the other road's profile
+at a crossing (its profile locking): the profile becomes fixed tangents
+through its PVIs outside the crossing and a PVI at the crossing at the
+main road's elevation there (WC62: roads (0, 0)-(200, 0) and (100,
+-100)-(100, 100), profiles 10 to 12 and 11 flat). The intersection
+writers do the same for a crossing whose other road's profile is
+tangents only (a profile with vertical curves is left as it is; tee
+junctions are not reshaped, not sampled).
+
+`add_intersection_with_curb_return_profiles(..., offsets, radius,
+CurbReturnProfiles { slope, incoming, outgoing }, layer)` writes what the
+command writes with its curb return profiles setting on (WC61, the same
+roads with profiles; slope -0.02, 25 and 25 by default):
+
+- The curb returns' lines run `incoming` units along the incoming lane
+  and `outgoing` along the outgoing one (25 each); the offset alignments
+  run over those lines and the margin as before (WC61: 37.876 to
+  162.124, 124.248 long).
+- The other road's profile also gets PVIs where it crosses the main
+  road's offset lines, at the main road's elevation there raised by
+  `slope` times the offset (WC61: (88, 10.76), (100, 11), (112, 10.76)).
+- Every offset alignment gets an offset profile (§3e) from its road's
+  profile, named `<offset alignment> - <slope>%` (three decimals: `Road
+  A-Left-12.000 - -2.000%`), copied over the part of the road the offset
+  follows; the parent's anchors sit at that part's ends (37.876 and
+  162.124, not the road's ends). The intersection names them (references
+  5 and 7 of each road).
+- Every curb return gets a curb return profile `<curb return> - Profile`
+  (type CurbReturnProfile): fixed tangents through the incoming lane's
+  offset profile at the curb return's start and at its arc's start, and
+  the outgoing lane's at the arc's end and at its end (WC61 NE: (0,
+  11.38), (25, 11.13), (64.27, 10.588), (89.27, 10.656)). The curb return
+  lists it (anchored at its start). Its record is a layout profile's
+  with these differences:
+
+```text
+class keys: 0x0400FF80 (type 4) after 0x0400FE0A; its text, after "K",
+  is `{\r\n\t"ProfileCurveType": 0\r\n}`
+BL 0x202 before the five BD (a layout profile 0, an offset profile 0x102)
+after the entity list, per piece (incoming lane, arc, outgoing lane): BL
+  1, the piece as an unlinked fixed tangent (ids 1, 2 and 1)
+after its identifier: PRE, BD 0, MID, four BL 0 and its own constant run
+  in place of END
+references: ..., soft 0, then the incoming and outgoing lanes' offset
+  profiles and the curb return (soft)
+```
+
+- An action keeps each curb return profile
+  (`AECC_ASSOC_CURBRETURN_VALIGNMENT_ACTION_BODY`, hard pointer to the
+  profile): both offset profiles and the curb return read, the profile
+  written, the intersection read (order `0x30000`). The intersection
+  names each region's profile (the second of its four references).
+
+Written into WC61's roads (E-IC10) the profiles' entities equal the
+sample's apart from the geometry stamp, the other road's entity ids
+(written 1 up in station order; the application's keep the old ones) and
+the anchors' kind words; it opens with AUDIT 0 errors and the API lists
+every profile, its type, PVIs and entities as WC61's. E-IC11 (a new
+drawing: a skewed crossing, a parabola on the main road's profile,
+widths 10 and 12, radius 30, slope -0.025, lines 20 and 30) and E-IC12
+(WC62's roads, curb returns without profiles) open with AUDIT 0 errors;
+E-IC12's profiles equal WC62's. Not compared: the styles the command
+gives its offset alignments (`Offsets`), curb returns and profiles
+(`Intersection Basic`); the writer uses the drawing's default styles.
 
 ## 3l. Subassembly packages (`pkt`)
 
@@ -3713,7 +3780,7 @@ taken from the records and checked bit for bit against them.
 | sample line groups and sample lines through two or more vertices | yes | yes, with the drawing's sample line label style (§3j) | yes (§3j) | not needed | lines with all vertices on one side |
 | sections of a TIN surface (unsampled) | yes (geometry once sampled) | yes (§3j) | yes (§3j) | the application samples the source | corridor sources, lines added after sampling |
 | section views of a line (default style, unsampled section) | yes (frame) | yes, with the drawing's section view style or the default one (§3j, §2c) | yes (§3j, §2c) | not needed | sampled sections, several sections |
-| intersections of two crossing roads and tee junctions, with their offset alignments, locking and intersection actions and location label | yes (stations, angles) | yes, with the drawing's intersection style or the default one (§3k, §2c) | yes (§3k, §2c) | not needed | curb returns, corridor regions, roads on a site |
+| intersections of two crossing roads and tee junctions, with their offset alignments, locking and intersection actions, location label, curb returns and curb return profiles | yes (stations, angles) | yes, with the drawing's intersection style or the default one (§3k, §2c) | yes (§3k, §2c) | not needed | corridor regions, roads on a site |
 | gravity pipe networks: every structure and pipe family of the default parts list (its one size each), connections | partly (part positions, pipe ends, connector counts, sizes of older part definitions) | yes (a new drawing gets the default parts list and styles, §3m) | yes (§3m) | not needed (the application recomputes outlines, lengths and extents) | sizes the default parts list does not hold, the catalog's body solids |
 | pressure networks: every pipe, elbow, tee, cross and gate valve size of the default catalog (straight and curved pipes), connections | yes (ports: positions, directions, joint sizes, connections; pipe ends and bulge, part positions and rotations) | yes (a new drawing gets the default pressure part list and styles, §3n) | yes (§3n) | not needed | part kinds of other catalogs, the catalog's body solids |
 | gradings, mass haul | partly (grading criteria, mass haul line and view frame) | no | — | — | no controlled samples (§6a) |
@@ -3806,7 +3873,8 @@ Corridors are listed in §3i-a.
 | intersections | tee junctions with profiles | yes | yes | §3k (tee junctions) |
 | intersections | the offset alignments, profile locking action, intersection action and location label the command makes (siteless roads) | yes | yes | §3k (offset alignments and actions of the command) |
 | intersections | curb returns of crossings and tee junctions (arc, offset alignments over the intersection extents) | yes | yes | §3k (curb returns of the command) |
-| intersections | curb return profiles, corridor regions, roads on a site (offsets in the site's topology) | yes (records) | no | curb return profiles sampled (WC60: with profiles the command makes the curb return lines 25 long, offset profiles at -2% on the four offsets and a profile per curb return reading the two offset profiles beside it), not decoded; corridor regions and site roads not sampled |
+| intersections | curb return profiles, offset profiles of the offsets, the other road's profile locked at a crossing | yes | yes | §3k (profile locking and curb return profiles) |
+| intersections | corridor regions, roads on a site (offsets in the site's topology) | yes (records) | no | not sampled |
 | gravity pipe networks | every family of the default parts list (one size each), connections | partly | yes | §3m |
 | gravity pipe networks | sizes the parts list does not hold, the catalog's body solids | partly | no | §3m |
 | pressure networks | every size of the default catalog (straight and curved pipes, elbows, tees, crosses, gate valves), connections | yes | yes | §3n |

@@ -887,7 +887,9 @@ fn write_intersection_connected(w: &mut DwgMergedWriter, c: &Connected, x: &Inte
 /// along the incoming road's offset line `offsets[0]` (run against the
 /// road's stationing when `in_backward`) into the outgoing road's offset
 /// line `offsets[1]` (run along its stationing when `forward`), a line of
-/// one unit before the free arc of `radius` and one after it. `corner` is
+/// `lines[0]` units before the free arc of `radius` and `lines[1]` after
+/// it; with `profile` (handle and identifier) it lists that curb return
+/// profile. `corner` is
 /// where the offset lines meet, `arms` the in and out arms' directions
 /// (away from the crossing), `stations` maps a point to its station on
 /// each road. Offsets and overlaps in the block are 0 (the lines are the
@@ -908,6 +910,8 @@ pub(super) fn add_intersection_curb_return(
     in_backward: bool,
     forward: bool,
     radius: f64,
+    lines: [f64; 2],
+    profile: Option<(Handle, [u8; 16])>,
     layer: Option<&str>,
 ) -> Result<Handle, DxfError> {
     let unit = |v: Vector2| v * (1.0 / v.length());
@@ -921,16 +925,16 @@ pub(super) fn add_intersection_curb_return(
     let right = turn < 0.0;
     let tangent = radius * (sweep / 2.0).tan();
     let (t_in, t_out) = (corner + a_in * tangent, corner + a_out * tangent);
-    let (start, end) = (corner + a_in * (tangent + 1.0), corner + a_out * (tangent + 1.0));
-    let arc_end = 1.0 + radius * sweep;
-    let total = arc_end + 1.0;
+    let (start, end) = (corner + a_in * (tangent + lines[0]), corner + a_out * (tangent + lines[1]));
+    let arc_end = lines[0] + radius * sweep;
+    let total = arc_end + lines[1];
     // A side's region: the roads' stations of its line, and the own
     // stations there kept a thousandth of the line in from its ends.
     let side = |road: usize, (p, own_p): (Vector2, f64), (q, own_q): (Vector2, f64)| {
         let (sp, sq) = (stations(road, p), stations(road, q));
         if sp <= sq { [0.0, sp, sq, own_p, own_q] } else { [0.0, sq, sp, own_q, own_p] }
     };
-    let region_in = side(0, (start, 0.001), (t_in, 0.999));
+    let region_in = side(0, (start, 0.001), (t_in, lines[0] - 0.001));
     let region_out = side(1, (t_out, arc_end + 0.001), (end, total - 0.001));
     let mut values = [0.0; 31];
     values[2..7].copy_from_slice(&region_in);
@@ -970,7 +974,12 @@ pub(super) fn add_intersection_curb_return(
     write_companion(doc, companion, node, tag, handle, &path, &label, false)?;
     add_node_child(doc, node, tag as i32, companion, &label)?;
     let timing = Timing { connected: Some(connected), ..Timing::default() };
-    write_alignment_of(doc, common, name, &elements, style, companion.value(), 1, None, &[], &[], &[], &[], None, AlignmentKind::Centerline, &timing)
+    // Its curb return profile, tied to its start by its identifier.
+    let (profiles, anchors) = match profile {
+        Some((h, id)) => (vec![h.value()], vec![anchor_at(&elements, 0.0, PROFILE_ANCHOR, id, 0.0).ok_or_else(|| invalid("the curb return's start cannot be placed"))?]),
+        None => (Vec::new(), Vec::new()),
+    };
+    write_alignment_of(doc, common, name, &elements, style, companion.value(), 1, None, &profiles, &anchors, &[], &[], None, AlignmentKind::Centerline, &timing)
 }
 
 /// The class key of the superelevation type (2 superelevation).

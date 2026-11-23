@@ -148,6 +148,7 @@ const CLASSES: &[Class] = &[
     Class { dxf: "AECC_ASSOC_PVILOCKING_MULTIALIGNINTER_ACTION_BODY", cpp: "AeccDbAssocPviLockingMultiAlignInter", module: "AeccLand130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_ASSOC_INTERSECTION_ACTION_BODY", cpp: "AeccDbAssocIntersection", module: "AeccRoadway130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_ASSOC_CURBRETURN_ALIGNMENT_ACTION_BODY", cpp: "AeccDbAssocCurbReturnAlignment", module: "AeccLand130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_ASSOC_CURBRETURN_VALIGNMENT_ACTION_BODY", cpp: "AeccDbAssocCurbReturnVAlignment", module: "AeccLand130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_INTERSECTION_LOCATION_LABEL", cpp: "AeccDbIntersectionLocationLabel", module: "AeccRoadway130", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_ASSOC_DEPENDENCY", cpp: "AeccDbAssocDependency", module: "AeccvBase130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_ASSOC_DEPENDENCY_BODY", cpp: "AeccDbAssocDependencyBody", module: "AeccvBase130", proxy_flags: 0x81, entity: false },
