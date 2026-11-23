@@ -1690,10 +1690,42 @@ computes them to about 1e-10). E-FX5 (FX00 plus the FX03 line) and E-FX9
 (a new drawing with both lines) open without recovery, AUDIT 0, and the
 programming interface lists both lines with their points.
 
-A line that closes or splits a region makes the application add an
-`AECC_GRADING` for the face (FX04: 744 bits) and list the face without a
-parcel; written without the grading such drawings open with errors, so
-the writer refuses the line.
+A line that closes or splits a region no parcel covers makes the
+application add an `AECC_GRADING` for the face (FX04: 744 bits) and list
+the face without a parcel; written without the grading such drawings open
+with errors, so the writer refuses the line.
+
+A line that splits a parcel's face adds no grading: the parcel lies over
+the parts (PD01, PD05, PD06, PD09: a line across a rectangle, straight,
+diagonal or in and out of one side; PD08: two lines, four parts). The
+parcel record lists them (`BL 2, BL n, n x BL face`), the container names
+the parcel once per face but counts it once in its tail, and the label
+keeps its place at the mean elevation of the nodes on the parcel's
+outline (PD01: (0 + 0 + 5.857 + 0 + 0 + 5.143) / 6; PD08: 22 / 8). The
+application numbers the parts anew (PD01: faces 4 and 5 after WP03's 2)
+and marks the crossings and the lot line's points as it does for a line
+read from a file (0x800 and 0x800000 flags); the writer keeps its own
+face ids and marks.
+
+A lot line across such a parcel splits it along its own segments only:
+the faces on either side of a feature line stay together, each group one
+parcel (PD20: a lot line x = 50 across PD01's parcel: two parcels of
+2500 over two faces each). An earlier parcel keeps the group its label
+lies in, the others get new parcels; a parcel's label goes to the middle
+of its outline's extents (PD20: (25, 25) and (75, 25)). The lot line
+takes a feature line's elevation where it crosses it, and its stretches
+between such points and its own points run straight between their
+elevations (PD20: (50, 25) at 5.5, (50, 0) and (50, 50) at 2.444); the
+writer adds those crossings to the lot line as points of its own (the
+application writes them as crossing nodes; straight segments only).
+
+| written | result |
+|---|---|
+| WP03 plus PD01's feature line and PD20's lot line (E-PD20) | AUDIT 0; two parcels of area 2500 with the sample's extents and centroids ((25, 25, 2.5886), (75, 25, 2.7077)) |
+
+| written | result |
+|---|---|
+| a rectangle parcel and PD01's, PD05's or PD09's line (E-PD1, E-PD5, E-PD9); both PD08 lines (E-PD8) | AUDIT 0; one parcel of area 5000, its elevation extents (5.857, 5.778, 6.667) and centroid elevation (1.8333, 2.75, 2) as the samples' |
 
 A feature line is a short record; its points are its edge in the
 container:
@@ -3924,7 +3956,8 @@ Corridors are listed in §3i-a.
 | feature lines | points, elevation points, arcs, on a site | yes | yes | §3g |
 | feature lines | edits: points, arcs, elevations and elevation points replaced, in containers this crate or the application wrote (ids and keys kept) | yes | yes | §3g |
 | feature lines | crossing and touching other members on a site (straight segments), where no region closes | yes | yes | §3g (feature lines that cross) |
-| feature lines | crossings that close or split a region (the application adds a grading of the face), styles other than the default | yes | no | §3g (FX04, FX07); gradings are not written (§6a) |
+| feature lines | crossings that split a parcel's face (the parcel over the parts); lot lines added across such a parcel | yes | yes | §3g (PD01 to PD09, PD20) |
+| feature lines | crossings that close or split a region no parcel covers (the application adds a grading of the face), styles other than the default | yes | no | §3g (FX04, FX07); gradings are not written (§6a) |
 | sample line groups | lines by station or through vertices on both sides | yes | yes | §3j |
 | sample line groups | lines with all vertices on one side | yes | yes | §3j |
 | sample line groups | section sources other than a TIN surface (corridors, corridor surfaces, pipe networks) | yes | no | not sampled |
