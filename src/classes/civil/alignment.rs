@@ -249,10 +249,11 @@ pub enum SpiralShape {
     #[default]
     Clothoid,
     /// `(1 - cos(pi x/X)) / 2` against the tangent offset, with
-    /// `X = L - (1/3 - 3/(2 pi^2)) / 8 L^3 / R^2` (257).
+    /// `X = L - (1/3 - 3/(2 pi^2)) / 8 L^3 / R^2` (257); `X` grows with `L`
+    /// only while `L^2 < R^2 / (3 a)`, `a` that coefficient (see
+    /// [`SpiralShape::length_ok`]).
     SineHalfWave,
-    /// `y = x^3 / (6 R X)`, with `X + X^3 / (40 R^2) = L` solved by halving
-    /// `[0, L]` until the equation holds within 1e-4 (258).
+    /// `y = x^3 / (6 R X)`, with `X + X^3 / (40 R^2) = L` (258).
     JapaneseCubic,
     /// `3t^2 - 2t^3` of arc length (259).
     Bloss,
@@ -262,9 +263,6 @@ pub enum SpiralShape {
     CubicParabola,
     /// `2t^2`, then `1 - 2(1-t)^2`, of arc length (262).
     Biquadratic,
-    /// `y = c x^3` whose curvature is exactly `1/R` at `X`, with `L` the
-    /// integral of `2 - sqrt(1 - y'^2)` over `[0, X]` (264).
-    NswCubic,
 }
 
 impl SpiralShape {
@@ -276,7 +274,6 @@ impl SpiralShape {
             260 => Self::CubicParabola,
             261 => Self::Sinusoidal,
             262 => Self::Biquadratic,
-            264 => Self::NswCubic,
             _ => Self::Clothoid,
         }
     }
@@ -291,7 +288,15 @@ impl SpiralShape {
             Self::CubicParabola => 260,
             Self::Sinusoidal => 261,
             Self::Biquadratic => 262,
-            Self::NswCubic => 264,
+        }
+    }
+
+    /// Whether a spiral of `length` ending at `radius` has this shape's
+    /// geometry: the sine half-wave's `X` must grow with `L`.
+    pub(crate) fn length_ok(self, length: f64, radius: f64) -> bool {
+        match self {
+            Self::SineHalfWave => 3.0 * SINE_HALF_WAVE_X * length * length < radius * radius,
+            _ => true,
         }
     }
 
@@ -327,6 +332,9 @@ impl SpiralShape {
     }
 }
 
+/// The coefficient `a` of the sine half-wave's `X = L - a L^3 / R^2`.
+const SINE_HALF_WAVE_X: f64 = (1.0 / 3.0 - 1.5 / (PI * PI)) / 8.0;
+
 /// The integral of `f` over `[a, b]`: five-point Gauss-Legendre on 32 panels.
 fn gauss(f: impl Fn(f64) -> f64, a: f64, b: f64) -> f64 {
     const X: [f64; 5] = [-0.906_179_845_938_664, -0.538_469_310_105_683_1, 0.0, 0.538_469_310_105_683_1, 0.906_179_845_938_664];
@@ -354,16 +362,15 @@ fn offset_curve(shape: SpiralShape, length: f64, r: f64) -> (f64, Box<dyn Fn(f64
     };
     match shape {
         SpiralShape::JapaneseCubic => {
-            // X + X^3 / (40 R^2) = L, halved from [0, L] until it holds
-            // within 1e-4 (the stored X of K6 to K8 and CS01).
-            let f = |x: f64| x + x.powi(3) / (40.0 * r * r) - length;
-            let (mut lo, mut hi, mut x) = (0.0, length, length / 2.0);
-            for _ in 0..200 {
-                x = (lo + hi) / 2.0;
-                if f(x).abs() < 1e-4 {
+            // X + X^3 / (40 R^2) = L: increasing in X, solved by Newton
+            // from L down to convergence.
+            let mut x = length;
+            for _ in 0..100 {
+                let step = (x + x.powi(3) / (40.0 * r * r) - length) / (1.0 + 3.0 * x * x / (40.0 * r * r));
+                x -= step;
+                if step.abs() <= f64::EPSILON * length {
                     break;
                 }
-                if f(x) < 0.0 { lo = x } else { hi = x }
             }
             (x, Box::new(move |t| t.powi(3) / (6.0 * r * x)), Box::new(move |t| t * t / (2.0 * r * x)))
         }
@@ -372,27 +379,10 @@ fn offset_curve(shape: SpiralShape, length: f64, r: f64) -> (f64, Box<dyn Fn(f64
             let x = halve(&|m| gauss(|t| (1.0 + slope(t).powi(2)).sqrt(), 0.0, m) - length, 0.5 * length, length);
             (x, Box::new(move |t| t.powi(3) / (6.0 * r * length)), Box::new(slope))
         }
-        SpiralShape::NswCubic => {
-            // By its end slope m: the curvature 1/R at X = 2mR / (1+m^2)^1.5.
-            let at = |m: f64| {
-                let x = 2.0 * m * r / (1.0 + m * m).powf(1.5);
-                (x, m / (3.0 * x * x))
-            };
-            let m = halve(
-                &|m| {
-                    let (x, c) = at(m);
-                    gauss(|t| 2.0 - (1.0 - (3.0 * c * t * t).powi(2)).max(0.0).sqrt(), 0.0, x) - length
-                },
-                0.0,
-                std::f64::consts::FRAC_1_SQRT_2,
-            );
-            let (x, c) = at(m);
-            (x, Box::new(move |t| c * t.powi(3)), Box::new(move |t| 3.0 * c * t * t))
-        }
         _ => {
             // Sine half-wave: curvature (1 - cos(pi x/X)) / (2R) against x,
             // X = L - (1/3 - 3/(2 pi^2)) / 8 L^3 / R^2 (CS01, K9, K10).
-            let x = length - (1.0 / 3.0 - 1.5 / (PI * PI)) / 8.0 * length.powi(3) / (r * r);
+            let x = length - SINE_HALF_WAVE_X * length.powi(3) / (r * r);
             (
                 x,
                 Box::new(move |t| (t * t / 2.0 - x * x / (PI * PI) * (1.0 - (PI * t / x).cos())) / (2.0 * r)),
