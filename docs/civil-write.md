@@ -3701,9 +3701,9 @@ Corridors are listed in §3i-a.
 | intersections | curb returns, corridor regions, roads on a site (offsets in the site's topology) | yes (records) | no | curb return records not decoded (hand-off notes); site topology of offset alignments not written |
 | gravity pipe networks | every family of the default parts list (one size each), connections | partly | yes | §3m |
 | gravity pipe networks | every pipe size of the default catalog, whether the parts list holds it or not | yes | yes | §3m (other pipe sizes) |
-| gravity pipe networks | structure sizes other than the parts list's, the catalog's body solids | partly | no | §3m |
+| gravity pipe networks | structure sizes other than the parts list's, the catalog's body solids | partly | no | §3m; a structure size's definition is keyed by its fields' values (`SID48SRS60`, `WTh5FTh6SID48SFH4SFL18SFW18SCH36SRS60`), the sizes the programming interface adds list the fields in another order than the family's own, the adding ignores the rim to sump value and a placed structure's rim to sump height makes no new definition (GZ10, GZ20, GZ21); the derived fields and the bounding shape would need each family's catalog formulas |
 | pressure networks | every size of the default catalog (straight and curved pipes, elbows, tees, crosses, gate valves), connections | yes | yes | §3n |
-| pressure networks | parts of other catalogs | partly | no | §3n |
+| pressure networks | parts of other catalogs | partly | no | §3n; a pressure parts list is bound to its catalog and the programming interface neither sets a drawing's catalog nor adds another catalog's sizes (`PressurePartList.AddPart` takes the list's own) |
 | gradings | criteria, groups, gradings | partly (criteria) | no | §6a |
 | mass haul | line and view | partly | no | §6a |
 | label styles | the defaults of a new drawing (§2b) | partly | yes | §2b |
