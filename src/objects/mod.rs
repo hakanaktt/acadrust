@@ -62,6 +62,7 @@ pub use dgn_linestyle::{
     DgnLsSymbolReference,
 };
 pub use dictionary_variable::DictionaryVariable;
+pub(crate) use dynamic_block::is_purge_preventer;
 pub use dynamic_block::{
     is_dynamic_block_object_name, BlockAction, BlockActionOffsets, BlockActionWithBasePoint,
     BlockAlignmentParameter, BlockAngularConstraintParameter,
