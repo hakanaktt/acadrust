@@ -73,6 +73,10 @@ pub enum PointQuery {
     /// A custom query: comparisons joined by AND and OR, grouped by
     /// parentheses, the first one or group possibly negated.
     Custom(QueryExpression),
+    /// The query with its description patterns matched case and all (the
+    /// query's case-sensitive match setting; PC01). Not over name patterns
+    /// nor inside an exclusion.
+    CaseSensitive(Box<PointQuery>),
 }
 
 /// A point attribute a custom query compares.
@@ -153,6 +157,9 @@ pub(super) struct Statement {
     include: Option<Criteria>,
     exclude: Option<Criteria>,
     custom: Option<QueryExpression>,
+    /// Patterns are matched case and all (the last bit of the statement's
+    /// five-bit head).
+    case_sensitive: bool,
 }
 
 /// The records of a query: the attribute, the comparison every leaf
@@ -172,19 +179,25 @@ impl PointQuery {
         Ok(match self {
             PointQuery::Excluding(include, exclude) => {
                 let plain = |q: &PointQuery| if matches!(q, PointQuery::Excluding(..)) { Err(invalid("an exclusion cannot hold another")) } else { q.criteria() };
-                Statement { include: include.as_deref().map(plain).transpose()?, exclude: Some(plain(exclude)?), custom: None }
+                Statement { include: include.as_deref().map(plain).transpose()?, exclude: Some(plain(exclude)?), custom: None, case_sensitive: false }
             }
             PointQuery::Custom(e) => {
                 custom_terms(e)?;
-                Statement { include: None, exclude: None, custom: Some(e.clone()) }
+                Statement { include: None, exclude: None, custom: Some(e.clone()), case_sensitive: false }
             }
-            q => Statement { include: Some(q.criteria()?), exclude: None, custom: None },
+            PointQuery::CaseSensitive(q) => {
+                if matches!(**q, PointQuery::CaseSensitive(_) | PointQuery::Names(_)) || matches!(&**q, PointQuery::Custom(e) if e.compares_names()) {
+                    return Err(invalid("a case-sensitive query holds no name patterns nor another case-sensitive query"));
+                }
+                Statement { case_sensitive: true, ..q.statement()? }
+            }
+            q => Statement { include: Some(q.criteria()?), exclude: None, custom: None, case_sensitive: false },
         })
     }
 
     fn criteria(&self) -> Result<Criteria, DxfError> {
         Ok(match self {
-            PointQuery::Excluding(..) | PointQuery::Custom(_) => return Err(invalid("an exclusion or custom query is a statement")),
+            PointQuery::Excluding(..) | PointQuery::Custom(_) | PointQuery::CaseSensitive(_) => return Err(invalid("an exclusion, custom or case-sensitive query is a statement")),
             PointQuery::ElevationRange(a, b) => {
                 if !(a.is_finite() && b.is_finite() && a <= b) {
                     return Err(invalid("elevation range needs finite ends, low first"));
@@ -220,30 +233,34 @@ impl PointQuery {
         })
     }
 
-    /// True when the point belongs to the query's group.
-    fn selects(&self, p: &CogoPoint) -> bool {
+    /// True when the point belongs to the query's group (patterns matched
+    /// case and all when `case`).
+    fn selects(&self, p: &CogoPoint, case: bool) -> bool {
         match self {
             PointQuery::Numbers(list) => list.contains(&p.number),
             PointQuery::Elevation(c, v) => c.holds(p.position.z, *v),
             PointQuery::RawDescription(patterns) | PointQuery::FullDescription(patterns) => {
                 let d = p.description.as_deref().unwrap_or("");
-                patterns.iter().any(|q| wildcard(q, d))
+                patterns.iter().any(|q| wildcard(q, d, case))
             }
-            PointQuery::Names(patterns) => p.name.as_deref().is_some_and(|n| patterns.iter().any(|q| wildcard(q, n))),
+            PointQuery::Names(patterns) => p.name.as_deref().is_some_and(|n| patterns.iter().any(|q| wildcard(q, n, case))),
             PointQuery::ElevationRange(a, b) => (*a..=*b).contains(&p.position.z),
-            PointQuery::Excluding(include, exclude) => include.as_ref().map_or(true, |q| q.selects(p)) && !exclude.selects(p),
-            PointQuery::Custom(e) => e.selects(p),
+            PointQuery::Excluding(include, exclude) => include.as_ref().map_or(true, |q| q.selects(p, case)) && !exclude.selects(p, case),
+            PointQuery::Custom(e) => e.selects(p, case),
+            PointQuery::CaseSensitive(q) => q.selects(p, true),
         }
     }
 }
 
-/// `*` / `?` pattern match over the whole text, case ignored.
-fn wildcard(pattern: &str, text: &str) -> bool {
-    let t: Vec<char> = text.to_lowercase().chars().collect();
+/// `*` / `?` pattern match over the whole text, case ignored unless
+/// `case`.
+fn wildcard(pattern: &str, text: &str, case: bool) -> bool {
+    let fold = |s: &str| if case { s.to_string() } else { s.to_lowercase() };
+    let t: Vec<char> = fold(text).chars().collect();
     // ok[j]: the pattern read so far matches t[..j]
     let mut ok = vec![false; t.len() + 1];
     ok[0] = true;
-    for c in pattern.to_lowercase().chars() {
+    for c in fold(pattern).chars() {
         let mut next = vec![false; t.len() + 1];
         for j in 0..=t.len() {
             next[j] = match c {
@@ -402,7 +419,7 @@ pub(super) fn set_query(doc: &mut CadDocument, title: &str, tag: i32, statement:
 
 /// The query of `_All Points`, `(number > 0)`.
 pub(super) fn all_points_query() -> Statement {
-    Statement { include: Some(Criteria { attribute: &POINT_NUMBER, comparison: Comparison::Greater, constants: vec![Constant::Number(0)] }), exclude: None, custom: None }
+    Statement { include: Some(Criteria { attribute: &POINT_NUMBER, comparison: Comparison::Greater, constants: vec![Constant::Number(0)] }), exclude: None, custom: None, case_sensitive: false }
 }
 
 /// The bits that close the last node record of the included part when an
@@ -440,7 +457,7 @@ const RANGE_TEXT_ID: i32 = 8;
 /// queries of WQ03 and the exclusion and range queries of WQ04 bit for bit.
 fn write_query(doc: &mut CadDocument, handle: Handle, outer: Handle, tag: i32, title: &str, st: &Statement) -> Result<(), DxfError> {
     if let Some(e) = &st.custom {
-        return write_custom_query(doc, handle, outer, tag, title, e);
+        return write_custom_query(doc, handle, outer, tag, title, e, st.case_sensitive);
     }
     let parts: Vec<(&Criteria, bool)> = st.include.iter().map(|c| (c, false)).chain(st.exclude.iter().map(|c| (c, true))).collect();
     let both = parts.len() == 2;
@@ -495,7 +512,8 @@ fn write_query(doc: &mut CadDocument, handle: Handle, outer: Handle, tag: i32, t
             w.write_bit_long(tag);
             w.write_bit_long(0);
             w.write_bit_long(0);
-            bits(w, "01000");
+            // The last bit: patterns matched case and all (PC01).
+            bits(w, if st.case_sensitive { "01001" } else { "01000" });
             bl_byte(w, texts.len() as u8);
             zeros(w, 7);
             for (c, excluded) in &parts {
@@ -839,10 +857,10 @@ pub(super) fn write_group(doc: &mut CadDocument, handle: Handle, owner: Handle, 
 
 /// Members of a query among `points` (sorted) and their extents.
 fn members(points: &[CogoPoint], query: &PointQuery) -> (Vec<u32>, Option<(Vector3, Vector3)>) {
-    let mut numbers: Vec<u32> = points.iter().filter(|p| query.selects(p)).map(|p| p.number).collect();
+    let mut numbers: Vec<u32> = points.iter().filter(|p| query.selects(p, false)).map(|p| p.number).collect();
     numbers.sort_unstable();
     let mut extents: Option<(Vector3, Vector3)> = None;
-    for p in points.iter().filter(|p| query.selects(p)) {
+    for p in points.iter().filter(|p| query.selects(p, false)) {
         let q = p.position;
         extents = Some(match extents {
             None => (q, q),
@@ -985,19 +1003,28 @@ fn attribute(a: PointAttribute) -> &'static Attribute {
 const ATTRIBUTES: [PointAttribute; 5] = [PointAttribute::Number, PointAttribute::Elevation, PointAttribute::RawDescription, PointAttribute::FullDescription, PointAttribute::Name];
 
 impl QueryExpression {
-    fn selects(&self, p: &CogoPoint) -> bool {
+    /// It compares a name somewhere.
+    fn compares_names(&self) -> bool {
+        match self {
+            QueryExpression::Compare(a, ..) => *a == PointAttribute::Name,
+            QueryExpression::And(a, b) | QueryExpression::Or(a, b) => a.compares_names() || b.compares_names(),
+            QueryExpression::Not(e) | QueryExpression::Parens(e) => e.compares_names(),
+        }
+    }
+
+    fn selects(&self, p: &CogoPoint, case: bool) -> bool {
         match self {
             QueryExpression::Compare(a, c, v) => match (a, v) {
                 (PointAttribute::Number, QueryConstant::Number(n)) => c.holds(f64::from(p.number), f64::from(*n)),
                 (PointAttribute::Elevation, QueryConstant::Elevation(z)) => c.holds(p.position.z, *z),
-                (PointAttribute::Name, QueryConstant::Pattern(t)) => p.name.as_deref().is_some_and(|n| wildcard(t, n)),
-                (_, QueryConstant::Pattern(t)) => wildcard(t, p.description.as_deref().unwrap_or("")),
+                (PointAttribute::Name, QueryConstant::Pattern(t)) => p.name.as_deref().is_some_and(|n| wildcard(t, n, case)),
+                (_, QueryConstant::Pattern(t)) => wildcard(t, p.description.as_deref().unwrap_or(""), case),
                 _ => false,
             },
-            QueryExpression::And(a, b) => a.selects(p) && b.selects(p),
-            QueryExpression::Or(a, b) => a.selects(p) || b.selects(p),
-            QueryExpression::Not(e) => !e.selects(p),
-            QueryExpression::Parens(e) => e.selects(p),
+            QueryExpression::And(a, b) => a.selects(p, case) && b.selects(p, case),
+            QueryExpression::Or(a, b) => a.selects(p, case) || b.selects(p, case),
+            QueryExpression::Not(e) => !e.selects(p, case),
+            QueryExpression::Parens(e) => e.selects(p, case),
         }
     }
 }
@@ -1151,7 +1178,7 @@ fn constant_text(c: &QueryConstant) -> String {
 /// but after the last. The texts list the constants, then the expression's
 /// nodes in pre-order (AND, OR; NOT and PARENS each with an empty text;
 /// a comparison as in the standard queries, a pattern after its leaf).
-fn write_custom_query(doc: &mut CadDocument, handle: Handle, outer: Handle, tag: i32, title: &str, e: &QueryExpression) -> Result<(), DxfError> {
+fn write_custom_query(doc: &mut CadDocument, handle: Handle, outer: Handle, tag: i32, title: &str, e: &QueryExpression, case_sensitive: bool) -> Result<(), DxfError> {
     let terms = custom_terms(e)?;
     let tree = parse_terms(&terms).ok_or_else(|| invalid("custom query cannot be written"))?;
     let mut strings = vec![title.to_string(), String::new()];
@@ -1187,7 +1214,7 @@ fn write_custom_query(doc: &mut CadDocument, handle: Handle, outer: Handle, tag:
             w.write_bit_long(tag);
             w.write_bit_long(0);
             w.write_bit_long(0);
-            bits(w, "01010");
+            bits(w, if case_sensitive { "01011" } else { "01010" });
             bl_byte(w, terms.len() as u8);
             bits(w, "0000000");
             for t in &terms {
@@ -1279,5 +1306,17 @@ mod tests {
         let e = QueryExpression::And(Box::new(n(Comparison::Equal, 1)), Box::new(QueryExpression::Or(Box::new(n(Comparison::Equal, 2)), Box::new(n(Comparison::Equal, 3)))));
         assert_eq!(custom_terms(&e).unwrap().iter().map(|t| (t.open, t.close)).collect::<Vec<_>>(), vec![(false, false), (true, false), (false, true)]);
         assert!(custom_terms(&QueryExpression::And(Box::new(n(Comparison::Equal, 1)), Box::new(QueryExpression::Not(Box::new(n(Comparison::Equal, 2)))))).is_err());
+    }
+
+    /// A case-sensitive query sets the statement's flag and matches case
+    /// and all (PC01); name patterns are refused.
+    #[test]
+    fn case_sensitive_queries_match_case_and_all() {
+        assert!(wildcard("test*", "TEST", false) && !wildcard("test*", "TEST", true) && wildcard("TE?T", "TEST", true));
+        let raw = |p: &str| PointQuery::RawDescription(vec![p.to_string()]);
+        assert!(PointQuery::CaseSensitive(Box::new(raw("test*"))).statement().unwrap().case_sensitive);
+        assert!(!raw("test*").statement().unwrap().case_sensitive);
+        assert!(PointQuery::CaseSensitive(Box::new(PointQuery::Names(vec!["a".into()]))).statement().is_err());
+        assert!(PointQuery::Excluding(None, Box::new(PointQuery::CaseSensitive(Box::new(raw("a"))))).statement().is_err());
     }
 }
