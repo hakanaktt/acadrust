@@ -225,6 +225,10 @@ fn dxf_save_after_dwg_keeps_the_purge_preventer() {
     let source = source();
     let dwg = DwgWriter::write_to_vec(&read_dxf(&source.dxf)).unwrap();
     let written = DxfWriter::new(&read_dwg(dwg)).write_to_vec().unwrap();
+    let groups = record(&written, TYPE).expect("the purge preventer record");
+    assert!(groups.contains(&pair("100", "AcDbDynamicBlockPurgePreventer")));
+    assert!(groups.contains(&pair("70", "1")));
+    assert!(!groups.iter().any(|g| g.0 == "340"), "no block in DXF");
     let back = read_dxf(&written);
     assert_eq!(version(preventer(&back, source.preventer)), 1);
     assert_eq!(entry(&back, source.dictionary), Some(source.preventer));
