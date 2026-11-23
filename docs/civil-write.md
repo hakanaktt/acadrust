@@ -2396,7 +2396,7 @@ per boundary.
 | boundaries along feature lines | yes (component count) | no | they refer to built feature lines |
 | feature line code settings (connect, draw, pay items) | count only | no | codes exist only once built |
 | built results (stations, applied assemblies, feature lines) | yes (feature lines) | no | written out of date; the application builds them |
-| corridor without baselines | no | no | its record ends in another run after the 32 (one sample) |
+| corridor without baselines | yes | yes | after `RC 32` the record holds a constant 42-bit run in place of the layout, the baselines and the end (CB01, CB02); the code set style is the drawing's default; E-CB1 opens with AUDIT 0 and the API lists the corridor |
 
 ### Code set styles read back
 

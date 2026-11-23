@@ -305,6 +305,9 @@ struct Styles {
     corridor: u64,
     surface: u64,
     material: u64,
+    /// The code set style of a corridor without regions (the drawing's
+    /// default).
+    code_set: u64,
 }
 
 /// The boundaries grouped per surface, in surface order (a list per
@@ -363,7 +366,7 @@ fn write_corridor(doc: &mut CadDocument, common: EntityCommon, def: &CorridorDef
         }
     }
     let targets = entries.iter().any(|e| !e.is_empty());
-    let code_set = asms.first().and_then(|a| a.first()).map_or(0, |a| a.code_set);
+    let code_set = asms.first().and_then(|a| a.first()).map_or(styles.code_set, |a| a.code_set);
     let mut refs = vec![soft_pointer(0), hard_pointer(styles.corridor), hard_pointer(code_set)];
     let mut strings: Vec<String> = ["AeccImpCorridor", "", &def.name, &def.description].iter().map(|s| s.to_string()).collect();
     if targets {
@@ -459,6 +462,10 @@ fn write_corridor(doc: &mut CadDocument, common: EntityCommon, def: &CorridorDef
             w.write_bit(def.rebuild_automatic);
             w.write_bit(true);
             byte(w, 32);
+            if def.baselines.is_empty() {
+                bits(w, crate::classes::civil::corridor::BARE_END);
+                return;
+            }
             byte(w, if def.geometry_lock { 0x28 } else { 0x48 });
             byte(w, (def.baselines.len() as u8) << 3 | 2);
             bits(w, &format!("0{:06b}", def.baselines[0].regions.len()));
@@ -495,7 +502,8 @@ fn alignment_length(al: &ArchEntityData) -> f64 {
     al.alignment_pieces_with_curvature().iter().map(|(_, k, p)| p.windows(2).map(|w| arc(w[0].distance(&w[1]), *k)).sum::<f64>()).sum()
 }
 
-/// Adds the corridor `def` defines on `layer` (layer "0" when `None`):
+/// Adds the corridor `def` defines on `layer` (layer "0" when `None`; a
+/// corridor without baselines takes neither surfaces nor a geometry lock):
 /// baselines along an alignment and one of its profiles, each with
 /// regions applying an assembly of the drawing over a station range with
 /// their frequencies and targets, and the stations added by hand (sorted
@@ -518,8 +526,8 @@ fn alignment_length(al: &ArchEntityData) -> f64 {
 /// application's own makes them hidden); the rebuild follows the alignment
 /// and profile.
 pub fn add_corridor_with(doc: &mut CadDocument, def: &CorridorDefinition, layer: Option<&str>) -> Result<Handle, DxfError> {
-    if def.name.is_empty() || def.baselines.is_empty() || def.baselines.len() > 31 {
-        return Err(invalid("a corridor needs a name and 1 to 31 baselines"));
+    if def.name.is_empty() || def.baselines.len() > 31 || (def.baselines.is_empty() && (!def.surfaces.is_empty() || !def.boundaries.is_empty() || def.geometry_lock)) {
+        return Err(invalid("a corridor needs a name and up to 31 baselines (surfaces and a geometry lock only with baselines)"));
     }
     for b in &def.boundaries {
         let polygon = matches!(b.kind, POLYGON_INSIDE | POLYGON_OUTSIDE | MASK) && b.corners.len() >= 3;
@@ -598,7 +606,12 @@ pub fn add_corridor_with(doc: &mut CadDocument, def: &CorridorDefinition, layer:
         }
     }
     let common = EntityCommon { handle, owner_handle: doc.header.model_space_block_handle, layer: layer.into(), layer_handle: Some(layer_handle), ..EntityCommon::default() };
-    write_corridor(doc, common, &def, Styles { corridor, surface, material }, &asms, &locks)
+    let mut code_set = 0;
+    if def.baselines.is_empty() {
+        super::default_styles::ensure_assembly_styles(doc)?;
+        code_set = default_style_of(doc, super::default_styles::KEY_CODE_SET_STYLES).ok_or_else(|| invalid("drawing has no code set styles"))?;
+    }
+    write_corridor(doc, common, &def, Styles { corridor, surface, material, code_set }, &asms, &locks)
 }
 
 /// Adds a corridor `name` along `alignment` and its `profile` with one
@@ -781,4 +794,21 @@ mod tests {
         assert_eq!(locked, vec![0.0, 40.0, 50.0, 90.0]);
     }
 
+    /// A corridor without baselines (CB01): written with the drawing's
+    /// default code set style, read back with its name and no baselines.
+    #[test]
+    fn corridors_without_baselines() {
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let def = CorridorDefinition { name: "C1".into(), description: String::new(), rebuild_automatic: false, geometry_lock: false, maximum_triangle_side: 0.0, surfaces: vec![], boundaries: vec![], baselines: vec![] };
+        let h = add_corridor_with(&mut doc, &def, None).unwrap();
+        assert!(add_corridor_with(&mut doc, &CorridorDefinition { geometry_lock: true, ..def.clone() }, None).is_err());
+        let path = std::env::temp_dir().join(format!("civil-corridor-bare-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let read = arch(&back, h).unwrap().corridor_definition().unwrap();
+        assert_eq!((read.name.as_str(), read.baselines.len()), ("C1", 0));
+        assert_ne!(arch(&back, h).unwrap().typed_handles()[2].0, 0);
+    }
 }
