@@ -70,6 +70,8 @@ struct Road {
     ends: Option<bool>,
     /// Its left and right offset alignments (0 for none).
     offsets: [u64; 2],
+    /// Its curb returns by region (0 for none; filled in the first road).
+    curb_returns: [u64; 4],
 }
 
 /// A region between two arms: the arm it starts at (in) and the one it
@@ -157,10 +159,12 @@ fn write_intersection(doc: &mut CadDocument, common: EntityCommon, name: &str, s
     for r in roads {
         refs.extend([hard_pointer(r.alignment), soft_pointer(r.profile), soft_pointer(r.offsets[0]), soft_pointer(0), soft_pointer(r.offsets[1]), soft_pointer(0)]);
     }
-    refs.push(soft_pointer(0));
-    for g in &regions {
-        refs.extend([soft_pointer(0), soft_pointer(roads[g.in_road].alignment), soft_pointer(roads[g.out_road].alignment), soft_pointer(0)]);
+    // Per region: its curb return alignment and profile, in and out roads
+    // (WC40), and a closing soft 0.
+    for (i, g) in regions.iter().enumerate() {
+        refs.extend([soft_pointer(roads[0].curb_returns[i]), soft_pointer(0), soft_pointer(roads[g.in_road].alignment), soft_pointer(roads[g.out_road].alignment)]);
     }
+    refs.push(soft_pointer(0));
     let mut strings = vec!["AeccImpIntersection".to_string(), String::new(), name.to_string(), String::new()];
     strings.extend(regions.iter().map(|g| REGION_NAMES[g.quadrant].to_string()));
     strings.extend(assembly_sets.iter().map(|s| s.to_string()));
@@ -197,6 +201,61 @@ fn write_intersection(doc: &mut CadDocument, common: EntityCommon, name: &str, s
         },
         Body { refs, strings },
     )
+}
+
+/// The order of a curb return action's dependency on its intersection
+/// (WC40).
+const CURB_RETURN_ORDER: i32 = 0x2_0000;
+
+/// A curb return's place: the corner where its offset lines meet, the in
+/// and out arms' directions, the offset alignments (road, side: 0 left, 1
+/// right) it runs along, and the stations its lines take on them.
+struct CurbReturnPlace {
+    corner: Vector2,
+    arms: [Vector2; 2],
+    sides: [(usize, usize); 2],
+    spans: [((usize, usize), f64, f64); 2],
+}
+
+/// A road's station at a point near the crossing (its line there).
+fn station_on(road: &Road, point: Vector2, p: Vector2) -> f64 {
+    let d = road.direction * (1.0 / road.direction.length());
+    road.station + (p - point).dot(&d)
+}
+
+/// The curb return of each region of a crossing: it runs toward the
+/// crossing along the incoming arm's offset line on the region's side
+/// (the road's left offset when the arm runs along the road, else its
+/// right) and away along the outgoing arm's (the road's right when that
+/// arm runs along the road), a unit of line before and after the arc.
+fn curb_returns(roads: &[Road; 2], point: Vector2, widths: &[[f64; 2]; 2], radius: f64) -> Result<Vec<CurbReturnPlace>, DxfError> {
+    let mut out = Vec::new();
+    for g in regions(roads) {
+        let arm = |road: usize, forward: bool| {
+            let d = roads[road].direction * (1.0 / roads[road].direction.length());
+            if forward { d } else { d * -1.0 }
+        };
+        let (a_in, a_out) = (arm(g.in_road, g.in_forward), arm(g.out_road, g.out_forward));
+        let side_in = (g.in_road, if g.in_forward { 0 } else { 1 });
+        let side_out = (g.out_road, if g.out_forward { 1 } else { 0 });
+        // The offset lines: the region lies left of the in arm and right
+        // of the out arm.
+        let left = |v: Vector2| Vector2::new(-v.y, v.x);
+        let (p_in, p_out) = (point + left(a_in) * widths[side_in.0][side_in.1], point - left(a_out) * widths[side_out.0][side_out.1]);
+        let den = a_in.cross(&a_out);
+        if den.abs() < 1e-12 {
+            return Err(invalid("the roads are parallel"));
+        }
+        let corner = p_in + a_in * ((p_out - p_in).cross(&a_out) / den);
+        let sweep = (a_in * -1.0).dot(&a_out).clamp(-1.0, 1.0).acos();
+        let tangent = radius * (sweep / 2.0).tan();
+        let span = |side: (usize, usize), a: Vector2| {
+            let (s0, s1) = (station_on(&roads[side.0], point, corner + a * tangent), station_on(&roads[side.0], point, corner + a * (tangent + 1.0)));
+            (side, s0.min(s1), s0.max(s1))
+        };
+        out.push(CurbReturnPlace { corner, arms: [a_in, a_out], sides: [side_in, side_out], spans: [span(side_in, a_in), span(side_out, a_out)] });
+    }
+    Ok(out)
 }
 
 /// The line pieces of an alignment with the station each starts at (NaN
@@ -271,6 +330,34 @@ pub fn add_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_pr
 /// lines and arcs this crate writes.
 #[allow(clippy::too_many_arguments)]
 pub fn add_intersection_with(doc: &mut CadDocument, name: &str, main: Handle, main_profile: Handle, other: Handle, other_profile: Handle, assembly_sets: [&str; 2], offsets: Option<IntersectionOffsets>, layer: Option<&str>) -> Result<Handle, DxfError> {
+    build_intersection(doc, name, main, main_profile, other, other_profile, assembly_sets, offsets, None, layer)
+}
+
+/// [`add_intersection_with`] with the curb returns the command makes in
+/// every region of a crossing (its curb return alignments setting on,
+/// profiles and corridors off; sample WC40): a curb return alignment
+/// named `<intersection> - <region name>` of one unit along the incoming
+/// road's offset alignment, a free arc of `radius` and one unit along the
+/// outgoing road's offset alignment, kept by an associative action that
+/// reads both offset alignments and the intersection. The offset
+/// alignments then run only over the curb returns' stations on their road
+/// and [`CURB_RETURN_MARGIN`] beyond (the command's intersection-extents
+/// option). Tee junctions are refused.
+#[allow(clippy::too_many_arguments)]
+pub fn add_intersection_with_curb_returns(doc: &mut CadDocument, name: &str, main: Handle, main_profile: Handle, other: Handle, other_profile: Handle, assembly_sets: [&str; 2], offsets: IntersectionOffsets, radius: f64, layer: Option<&str>) -> Result<Handle, DxfError> {
+    if !(radius.is_finite() && radius > 0.0) {
+        return Err(invalid("a curb return radius must be positive"));
+    }
+    build_intersection(doc, name, main, main_profile, other, other_profile, assembly_sets, Some(offsets), Some(radius), layer)
+}
+
+/// How far an offset alignment of an intersection with curb returns runs
+/// past the curb returns' lines on it (WC40: 61.924 to 138.076 for lines
+/// over 62 to 63 and 137 to 138).
+pub const CURB_RETURN_MARGIN: f64 = 0.076;
+
+#[allow(clippy::too_many_arguments)]
+fn build_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_profile: Handle, other: Handle, other_profile: Handle, assembly_sets: [&str; 2], offsets: Option<IntersectionOffsets>, curb_radius: Option<f64>, layer: Option<&str>) -> Result<Handle, DxfError> {
     if name.is_empty() {
         return Err(invalid("an intersection needs a name"));
     }
@@ -329,6 +416,7 @@ pub fn add_intersection_with(doc: &mut CadDocument, name: &str, main: Handle, ma
         direction: Vector2::new(q.x - p.x, q.y - p.y),
         ends: None,
         offsets: [0, 0],
+        curb_returns: [0; 4],
     };
     let mut roads = [road(main, main_profile, a), Road { ends, ..road(other, other_profile, b) }];
     if let Some(o) = offsets {
@@ -339,13 +427,34 @@ pub fn add_intersection_with(doc: &mut CadDocument, name: &str, main: Handle, ma
             return Err(invalid("offset widths must be positive"));
         }
         let label = ensure_intersection_label_style(doc)?;
-        for (r, widths) in roads.iter_mut().zip([[o.main_left, o.main_right], [o.other_left, o.other_right]]) {
+        let widths = [[o.main_left, o.main_right], [o.other_left, o.other_right]];
+        // The curb returns: per region its geometry, and the stations its
+        // lines take on each offset alignment (road, side).
+        let returns = match curb_radius {
+            Some(radius) => {
+                if roads[1].ends.is_some() {
+                    return Err(invalid("curb returns are written for crossings only"));
+                }
+                Some(curb_returns(&roads, point, &widths, radius)?)
+            }
+            None => None,
+        };
+        for (k, r) in roads.iter_mut().enumerate() {
             let parent = Handle::new(r.alignment);
             let road_name = arch(doc, parent).and_then(|a| a.alignment_name()).unwrap_or_default();
-            for (i, (side, width)) in [("Left", -widths[0]), ("Right", widths[1])].into_iter().enumerate() {
-                let h = super::alignment::add_kept_offset_alignment(doc, parent, &format!("{road_name}-{side}-{:.3}", width.abs()), width, OFFSET_SPEED, layer)?;
+            for (i, (side, width)) in [("Left", -widths[k][0]), ("Right", widths[k][1])].into_iter().enumerate() {
+                let range = returns.as_ref().map(|c| {
+                    let s: Vec<f64> = c.iter().flat_map(|g| g.spans.iter().filter(|x| x.0 == (k, i)).flat_map(|x| [x.1, x.2])).collect();
+                    (s.iter().copied().fold(f64::INFINITY, f64::min) - CURB_RETURN_MARGIN, s.iter().copied().fold(f64::NEG_INFINITY, f64::max) + CURB_RETURN_MARGIN)
+                });
+                let h = super::alignment::add_kept_offset_alignment(doc, parent, &format!("{road_name}-{side}-{:.3}", width.abs()), width, range, OFFSET_SPEED, layer)?;
                 add_action(doc, ActionBody { dxf: "AECC_ASSOC_OFFSET_ALIGNMENT_ACTION_BODY", refs: vec![h], tail: "" }, &[Dependency { object: parent, writes: false, order: 0 }, Dependency { object: h, writes: true, order: 0 }])?;
                 r.offsets[i] = h.value();
+            }
+        }
+        if let Some(c) = &returns {
+            for g in 0..c.len() {
+                roads[0].curb_returns[g] = doc.allocate_handle().value();
             }
         }
         let handle = write_record(doc, name, &roads, assembly_sets, layer)?;
@@ -361,6 +470,36 @@ pub fn add_intersection_with(doc: &mut CadDocument, name: &str, main: Handle, ma
         };
         add_action(doc, ActionBody { dxf: "AECC_ASSOC_PVILOCKING_MULTIALIGNINTER_ACTION_BODY", refs: refs.map(Handle::new).to_vec(), tail: LOCKING }, &deps)?;
         add_action(doc, ActionBody { dxf: "AECC_ASSOC_INTERSECTION_ACTION_BODY", refs: vec![handle], tail: "" }, &[read(m.alignment), read(x.alignment), Dependency { order: INTERSECTION_ORDER, ..wrote(handle.value()) }])?;
+        if let (Some(c), Some(radius)) = (&returns, curb_radius) {
+            let regions = regions(&roads);
+            for (g, (cr, region)) in c.iter().zip(&regions).enumerate() {
+                let h = Handle::new(roads[0].curb_returns[g]);
+                let road = |i: usize| Handle::new(roads[i].alignment);
+                let offset = |(k, i): (usize, usize)| Handle::new(roads[k].offsets[i]);
+                let stations = |i: usize, p: Vector2| station_on(&roads[[region.in_road, region.out_road][i]], point, p);
+                super::alignment::add_intersection_curb_return(
+                    doc,
+                    h,
+                    &format!("{name} - {}", REGION_NAMES[region.quadrant]),
+                    [road(region.in_road), road(region.out_road)],
+                    [offset(cr.sides[0]), offset(cr.sides[1])],
+                    handle,
+                    g as i32 + 1,
+                    cr.corner,
+                    cr.arms,
+                    &stations,
+                    region.in_forward,
+                    region.out_forward,
+                    radius,
+                    layer,
+                )?;
+                add_action(
+                    doc,
+                    ActionBody { dxf: "AECC_ASSOC_CURBRETURN_ALIGNMENT_ACTION_BODY", refs: vec![h], tail: "" },
+                    &[read(offset(cr.sides[0]).value()), read(offset(cr.sides[1]).value()), Dependency { order: CURB_RETURN_ORDER, ..read(handle.value()) }, wrote(h.value())],
+                )?;
+            }
+        }
         write_location_label(doc, handle, label, layer)?;
         return Ok(handle);
     }
@@ -509,5 +648,35 @@ mod tests {
         assert_eq!(reactors(a).len(), 4);
         let labels = back.entities().filter(|e| matches!(e, crate::entities::EntityType::Extended(x) if matches!(&x.data, crate::entities::ExtendedEntityData::Arch(l) if l.dxf_name == "AECC_INTERSECTION_LOCATION_LABEL"))).count();
         assert_eq!(labels, 1);
+    }
+
+    #[test]
+    fn crossings_get_curb_returns_in_every_region() {
+        let v = Vector2::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let a = add_alignment(&mut doc, "Road A", &[v(0.0, 0.0), v(200.0, 0.0)], None).unwrap();
+        let b = add_alignment(&mut doc, "Road B", &[v(100.0, -100.0), v(100.0, 100.0)], None).unwrap();
+        let t = add_alignment(&mut doc, "Road T", &[v(150.0, 0.0), v(150.0, 100.0)], None).unwrap();
+        assert!(add_intersection_with_curb_returns(&mut doc, "T", a, Handle::NULL, t, Handle::NULL, ["", ""], IntersectionOffsets::default(), 25.0, None).is_err());
+        let i = add_intersection_with_curb_returns(&mut doc, "I", a, Handle::NULL, b, Handle::NULL, ["", ""], IntersectionOffsets::default(), 25.0, None).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-intersection-curb-returns-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let refs: Vec<u64> = arch(&back, i).unwrap().typed_handles().iter().map(|r| r.0).collect();
+        // Per region: curb return, its profile (none), in road, out road.
+        let ne = arch(&back, Handle::new(refs[14])).unwrap();
+        assert_eq!(ne.alignment_name(), Some("I - NE - Quadrant".into()));
+        assert_eq!(ne.alignment_type(), Some(crate::classes::civil::AlignmentType::CurbReturn));
+        // NE runs west along Road A's left offset into Road B's right one.
+        assert_eq!(ne.alignment_intersection_curb_return(), Some(([a.value(), b.value()], [refs[4], refs[12]], i.value())));
+        assert_eq!(ne.alignment_connected_inputs(), Some([a.value(), b.value()]));
+        let e = ne.alignment_elements().unwrap();
+        assert_eq!(e.len(), 3);
+        // The offset alignments run over the curb returns' stations and
+        // the margin: 62 - 0.076 to 138 + 0.076.
+        let left = arch(&back, Handle::new(refs[4])).unwrap().alignment_offset_parameters().unwrap();
+        assert!((left.regions[0].parent_start - (62.0 - CURB_RETURN_MARGIN)).abs() < 1e-9 && (left.regions[0].parent_end - (138.0 + CURB_RETURN_MARGIN)).abs() < 1e-9);
     }
 }

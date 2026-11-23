@@ -34,7 +34,7 @@ pub use alignment::{
     display_station, AlignmentAnchor, AlignmentCriteria, AlignmentElement, AlignmentType, OffsetParameters, OffsetRegion, WideningTransition, AlignmentElementKind, AlignmentPiece, DesignSpeed, GeometryPoint, SpiralShape,
     StationEquation, CriticalStationData, SuperelevationCurveData, SuperelevationView};
 pub use cogo::{CogoPoint, PointGroupClassification, PointGroupOverrides, PropertyValue, UserProperty};
-pub use create::{add_tin_surface_with, add_assembly, add_pkt_subassembly, add_pkt_subassembly_on, PktSource, add_alignment, add_alignment_with_curves, add_offset_alignment, add_offset_alignment_with_widenings, Widening, add_alignment_of_kind, add_design_speeds, add_station_equations, add_superelevation, CriticalStation, CriticalStationKind, SuperelevationCurve, AlignmentKind, VertexCurve, add_corridor, add_corridor_with, add_cogo_point, add_intersection, add_point_group, add_point_group_query, add_profile, add_profile_entities, add_profile_with_curves, add_static_profile, add_surface_profile, ProfileEntity, VerticalCurve, add_profile_view, add_profile_view_with_bands, add_profile_view_with_range, BandKind, BandStagger, ProfileViewBand, add_sample_line, add_sample_line_through, add_sample_line_group, add_sections, add_section_view, add_site, add_alignment_on_site, add_feature_line, add_parcel, add_feature_line_vertices, FeatureLineVertex, add_tin_surface, cogo_points, ensure_civil, remove_cogo_point, set_cogo_point, set_cogo_point_name, set_point_group, set_point_group_overrides, set_point_group_query, Comparison, PointAttribute, PointQuery, QueryConstant, QueryExpression, add_lot_line, add_pipe, add_pipe_network, add_pipe_of_family, add_structure, add_structure_of_family, connect_pipe, network_part_families, add_pressure_appurtenance, add_pressure_arc_pipe, add_pressure_cross, add_pressure_fitting, add_pressure_network, add_pressure_part, add_pressure_pipe, add_pressure_pipe_of_size, add_pressure_tee, connect_pressure_parts, pressure_part_descriptions, add_profile_view_style, add_profile_view_with_style, add_offset_profile, add_section_view_group, add_profile_view_style_with, set_feature_line_vertices, set_cogo_point_label_style, add_label_style, add_point_label_style, label_style, LabelStyle, add_intersection_with, IntersectionOffsets, add_curb_return, add_curb_return_with, CurbReturnCurve, add_point_choice_property, add_point_property, add_point_property_classification, point_properties, set_cogo_point_property};
+pub use create::{add_tin_surface_with, add_assembly, add_pkt_subassembly, add_pkt_subassembly_on, PktSource, add_alignment, add_alignment_with_curves, add_offset_alignment, add_offset_alignment_with_widenings, Widening, add_alignment_of_kind, add_design_speeds, add_station_equations, add_superelevation, CriticalStation, CriticalStationKind, SuperelevationCurve, AlignmentKind, VertexCurve, add_corridor, add_corridor_with, add_cogo_point, add_intersection, add_point_group, add_point_group_query, add_profile, add_profile_entities, add_profile_with_curves, add_static_profile, add_surface_profile, ProfileEntity, VerticalCurve, add_profile_view, add_profile_view_with_bands, add_profile_view_with_range, BandKind, BandStagger, ProfileViewBand, add_sample_line, add_sample_line_through, add_sample_line_group, add_sections, add_section_view, add_site, add_alignment_on_site, add_feature_line, add_parcel, add_feature_line_vertices, FeatureLineVertex, add_tin_surface, cogo_points, ensure_civil, remove_cogo_point, set_cogo_point, set_cogo_point_name, set_point_group, set_point_group_overrides, set_point_group_query, Comparison, PointAttribute, PointQuery, QueryConstant, QueryExpression, add_lot_line, add_pipe, add_pipe_network, add_pipe_of_family, add_structure, add_structure_of_family, connect_pipe, network_part_families, add_pressure_appurtenance, add_pressure_arc_pipe, add_pressure_cross, add_pressure_fitting, add_pressure_network, add_pressure_part, add_pressure_pipe, add_pressure_pipe_of_size, add_pressure_tee, connect_pressure_parts, pressure_part_descriptions, add_profile_view_style, add_profile_view_with_style, add_offset_profile, add_section_view_group, add_profile_view_style_with, set_feature_line_vertices, set_cogo_point_label_style, add_label_style, add_point_label_style, label_style, LabelStyle, add_intersection_with, add_intersection_with_curb_returns, IntersectionOffsets, CURB_RETURN_MARGIN, add_curb_return, add_curb_return_with, CurbReturnCurve, add_point_choice_property, add_point_property, add_point_property_classification, point_properties, set_cogo_point_property};
 pub use corridor::{CorridorBaseline, CorridorBoundary, CorridorDefinition, CorridorRegion, CorridorSurfaceDefinition, CurveStations, RegionFrequency, RegionTarget, TargetCurveStations, TargetKind};
 pub use grading::{CriteriaValue, GradingCriteria, GradingEntity, GradingGroup, GradingGroupRecord, GradingGroupTree};
 pub use intersection::IntersectionLayout;
@@ -441,14 +441,30 @@ impl ArchEntityData {
     }
 
     /// The two alignments a curb return connects: its last six references
-    /// name them as A, A, B, B, A, B.
+    /// name them as A, A, B, B, A, B; an intersection's curb return names
+    /// A, A's offset alignment, B, B's offset alignment and the
+    /// intersection last (see [`Self::alignment_intersection_curb_return`]).
     pub fn alignment_connected_inputs(&self) -> Option<[u64; 2]> {
         if self.alignment_type()? != AlignmentType::CurbReturn {
             return None;
         }
         let handles = self.decode().handles;
         let tail = handles.get(handles.len().checked_sub(6)?..)?;
-        (tail[0] == tail[1] && tail[2] == tail[3] && tail[4] == tail[0] && tail[5] == tail[2]).then(|| [tail[0], tail[2]])
+        if tail[0] == tail[1] && tail[2] == tail[3] && tail[4] == tail[0] && tail[5] == tail[2] {
+            return Some([tail[0], tail[2]]);
+        }
+        self.alignment_intersection_curb_return().map(|(roads, _, _)| roads)
+    }
+
+    /// An intersection's curb return: its two roads, the offset alignments
+    /// it runs along and the intersection (its last five references).
+    pub fn alignment_intersection_curb_return(&self) -> Option<([u64; 2], [u64; 2], u64)> {
+        if self.alignment_type()? != AlignmentType::CurbReturn {
+            return None;
+        }
+        let handles = self.decode().handles;
+        let tail = handles.get(handles.len().checked_sub(5)?..)?;
+        (tail[0] != tail[1] && tail[2] != tail[3] && tail[4] != tail[0] && tail[4] != tail[2] && tail.iter().all(|h| *h != 0)).then(|| ([tail[0], tail[2]], [tail[1], tail[3]], tail[4]))
     }
 
     /// The JSON string a connected alignment keeps its curve settings in

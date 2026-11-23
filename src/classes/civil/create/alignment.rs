@@ -659,7 +659,7 @@ pub fn add_curb_return_with(doc: &mut CadDocument, name: &str, incoming: Handle,
             (elements, path, Some((cs, out_dir)), Some(text))
         }
     };
-    let connected = Connected { values, right, forward, outside_in: values[0] < 0.0, roads: [incoming.value(), outgoing.value()], curve, spiral_out, text };
+    let connected = Connected { values, right, forward, outside_in: values[0] < 0.0, roads: [incoming.value(), outgoing.value()], curve, spiral_out, text, intersection: None };
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
     if default_style(doc).is_none() || companion_node(doc).is_none() {
@@ -712,6 +712,23 @@ pub(super) struct Connected {
     /// The text of the record's second key (a spiral-curve-spiral's
     /// parameters).
     pub text: Option<String>,
+    /// A curb return an intersection's command makes (see
+    /// [`IntersectionCurbReturn`]).
+    pub intersection: Option<IntersectionCurbReturn>,
+}
+
+/// What a curb return of an intersection's region keeps besides a curb
+/// return's block: the region's index (1 up, in the intersection's region
+/// order), the corner where the two offset lines meet, whether it runs
+/// against the incoming road's stationing, the offset alignments it joins
+/// (incoming, outgoing) and the intersection.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct IntersectionCurbReturn {
+    pub region: i32,
+    pub corner: Vector2,
+    pub in_backward: bool,
+    pub offsets: [u64; 2],
+    pub intersection: u64,
 }
 
 /// The constant runs around the connection block's 31 values (the
@@ -770,6 +787,9 @@ const CONNECTED_BACKWARD: (usize, usize) = (29, 11);
 /// ends run 24 after its code and writes neither the overlap, the curve's
 /// end station nor the radius (CG02, CG06, CG08).
 fn write_connected(w: &mut DwgMergedWriter, c: &Connected) {
+    if let Some(x) = &c.intersection {
+        return write_intersection_connected(w, c, x);
+    }
     let flags = [(CONNECTED_RIGHT, c.right), (CONNECTED_FORWARD, c.forward), (CONNECTED_OUTSIDE_IN, c.outside_in), (CONNECTED_BACKWARD, !c.forward)];
     let code = format!("01{:08b}", match c.curve {
         CurbReturnCurve::Arc(_) => 2,
@@ -811,6 +831,146 @@ fn write_connected(w: &mut DwgMergedWriter, c: &Connected) {
             (None, _) => {}
         }
     }
+}
+
+/// The connection block of an intersection's curb return (WC40: the four
+/// regions of a crossing): the runs and values of a curb return's block up
+/// to the radius, with these bits set apart from the samples' runs: run 0
+/// bits 39 and 40 `10`, runs 1 and 13 `0`, run 12 bit 50 the incoming run
+/// against its road, bit 51 the right turn unless it is, bits 61 and 62
+/// `10`, run 24 bits 50 and 51 the outgoing run along its road; then
+/// `B 1, BL region, 2 x BD corner` and the last run (`BL 0, BL 3`) in place
+/// of the roads' meeting point and stations.
+fn write_intersection_connected(w: &mut DwgMergedWriter, c: &Connected, x: &IntersectionCurbReturn) {
+    let set: [((usize, usize), bool); 11] = [
+        ((0, 39), true),
+        ((0, 40), false),
+        ((1, 0), false),
+        ((13, 0), false),
+        ((12, 50), x.in_backward),
+        ((12, 51), c.right != x.in_backward),
+        ((12, 61), true),
+        ((12, 62), false),
+        ((24, 50), c.forward),
+        ((24, 51), c.forward),
+        ((27, 0), true),
+    ];
+    for (i, (len, hex)) in CONNECTED_RUNS.iter().enumerate().take(28) {
+        for bit in 0..*len {
+            let digit = hex.as_bytes()[bit / 4] as char;
+            let mut v = digit.to_digit(16).unwrap_or(0) >> (3 - bit % 4) & 1 == 1;
+            for ((run, at), on) in set {
+                if run == i && at == bit {
+                    v = on;
+                }
+            }
+            if i == 24 && (53..63).contains(&bit) {
+                v = format!("01{:08b}", 2).as_bytes()[bit - 53] == b'1';
+            }
+            w.write_bit(v);
+        }
+        if i < 27 {
+            w.write_bit_double(c.values[i]);
+        }
+    }
+    w.write_bit_long(x.region);
+    w.write_bit_double(x.corner.x);
+    w.write_bit_double(x.corner.y);
+    let (len, hex) = CONNECTED_RUNS[31];
+    for bit in 0..len {
+        let digit = hex.as_bytes()[bit / 4] as char;
+        w.write_bit(digit.to_digit(16).unwrap_or(0) >> (3 - bit % 4) & 1 == 1);
+    }
+}
+
+/// Adds the curb return of an intersection's region `region` (1 up):
+/// along the incoming road's offset line `offsets[0]` (run against the
+/// road's stationing when `in_backward`) into the outgoing road's offset
+/// line `offsets[1]` (run along its stationing when `forward`), a line of
+/// one unit before the free arc of `radius` and one after it. `corner` is
+/// where the offset lines meet, `arms` the in and out arms' directions
+/// (away from the crossing), `stations` maps a point to its station on
+/// each road. Offsets and overlaps in the block are 0 (the lines are the
+/// offset alignments themselves); its region lists name the roads'
+/// stations.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn add_intersection_curb_return(
+    doc: &mut CadDocument,
+    handle: Handle,
+    name: &str,
+    roads: [Handle; 2],
+    offsets: [Handle; 2],
+    intersection: Handle,
+    region: i32,
+    corner: Vector2,
+    arms: [Vector2; 2],
+    stations: &dyn Fn(usize, Vector2) -> f64,
+    in_backward: bool,
+    forward: bool,
+    radius: f64,
+    layer: Option<&str>,
+) -> Result<Handle, DxfError> {
+    let unit = |v: Vector2| v * (1.0 / v.length());
+    let (a_in, a_out) = (unit(arms[0]), unit(arms[1]));
+    let (d1, travel) = (a_in * -1.0, a_out);
+    let sweep = travel.dot(&d1).clamp(-1.0, 1.0).acos();
+    let turn = d1.cross(&travel);
+    if !(radius.is_finite() && radius > 0.0) || turn.abs() < 1e-12 {
+        return Err(invalid("a curb return needs a positive radius between roads that are not parallel"));
+    }
+    let right = turn < 0.0;
+    let tangent = radius * (sweep / 2.0).tan();
+    let (t_in, t_out) = (corner + a_in * tangent, corner + a_out * tangent);
+    let (start, end) = (corner + a_in * (tangent + 1.0), corner + a_out * (tangent + 1.0));
+    let arc_end = 1.0 + radius * sweep;
+    let total = arc_end + 1.0;
+    // A side's region: the roads' stations of its line, and the own
+    // stations there kept a thousandth of the line in from its ends.
+    let side = |road: usize, (p, own_p): (Vector2, f64), (q, own_q): (Vector2, f64)| {
+        let (sp, sq) = (stations(road, p), stations(road, q));
+        if sp <= sq { [0.0, sp, sq, own_p, own_q] } else { [0.0, sq, sp, own_q, own_p] }
+    };
+    let region_in = side(0, (start, 0.001), (t_in, 0.999));
+    let region_out = side(1, (t_out, arc_end + 0.001), (end, total - 0.001));
+    let mut values = [0.0; 31];
+    values[2..7].copy_from_slice(&region_in);
+    values[7..12].copy_from_slice(&region_in);
+    values[14..19].copy_from_slice(&region_out);
+    values[19..24].copy_from_slice(&region_out);
+    values[24] = 1.0;
+    values[25] = arc_end;
+    values[26] = radius;
+    let turn_sign = if right { -1.0 } else { 1.0 };
+    let line = |id, previous, next, start, end| AlignmentElement { id, previous, next, kind: AlignmentElementKind::FixedLine { start, end } };
+    let elements = vec![line(1, 0, 2, start, t_in), AlignmentElement { id: 2, previous: 1, next: 3, kind: AlignmentElementKind::FreeArc { radius } }, line(3, 2, 0, t_out, end)];
+    let path = vec![(start, None), (t_in, Some(turn_sign * (sweep / 4.0).tan())), (t_out, None), (end, None)];
+    let connected = Connected {
+        values,
+        right,
+        forward,
+        outside_in: false,
+        roads: [roads[0].value(), roads[1].value()],
+        curve: CurbReturnCurve::Arc(radius),
+        spiral_out: None,
+        text: None,
+        intersection: Some(IntersectionCurbReturn { region, corner, in_backward, offsets: [offsets[0].value(), offsets[1].value()], intersection: intersection.value() }),
+    };
+    let layer = layer.unwrap_or("0");
+    let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
+    if default_style(doc).is_none() || companion_node(doc).is_none() {
+        ensure_alignment_tree(doc)?;
+    }
+    let style = default_style(doc).ok_or_else(|| invalid("drawing has no alignment styles"))?;
+    let node = companion_node(doc).ok_or_else(|| invalid("drawing has no node for siteless alignments"))?;
+    let used = read_node(doc, node).ok_or_else(|| invalid("feature style node cannot be read"))?;
+    let tag = (FIRST_COMPANION_TAG..).find(|t| used.children.iter().all(|c| c.0 as u32 != *t)).unwrap_or(FIRST_COMPANION_TAG);
+    let common = EntityCommon { handle, owner_handle: doc.header.model_space_block_handle, layer: layer.into(), layer_handle: Some(layer_handle), ..EntityCommon::default() };
+    let companion = doc.allocate_handle();
+    let label = new_name(handle.value());
+    write_companion(doc, companion, node, tag, handle, &path, &label, false)?;
+    add_node_child(doc, node, tag as i32, companion, &label)?;
+    let timing = Timing { connected: Some(connected), ..Timing::default() };
+    write_alignment_of(doc, common, name, &elements, style, companion.value(), 1, None, &[], &[], &[], &[], None, AlignmentKind::Centerline, &timing)
 }
 
 /// The class key of the superelevation type (2 superelevation).
@@ -1074,10 +1234,15 @@ pub(super) fn write_alignment_of(doc: &mut CadDocument, common: EntityCommon, na
     // (see `add_superelevation`).
     refs.extend(superelevation_refs(&timing.superelevation, common.handle.value()));
     refs.extend(offset.map(|o| soft_pointer(o.parent)));
-    // A curb return names its roads last: in, in, out, out, in, out.
+    // A curb return names its roads last: in, in, out, out, in, out; an
+    // intersection's: in road, in offset, out road, out offset, the
+    // intersection (WC40).
     if let Some(c) = &timing.connected {
         let [a, b] = c.roads;
-        refs.extend([a, a, b, b, a, b].map(soft_pointer));
+        match &c.intersection {
+            Some(x) => refs.extend([a, x.offsets[0], b, x.offsets[1], x.intersection].map(soft_pointer)),
+            None => refs.extend([a, a, b, b, a, b].map(soft_pointer)),
+        }
     }
     let mut strings = vec!["AeccImpAlignment".to_string(), String::new(), String::new()];
     strings.extend(timing.connected.as_ref().and_then(|c| c.text.clone()));
@@ -1691,11 +1856,11 @@ pub fn add_offset_alignment_with_widenings(doc: &mut CadDocument, parent: Handle
     write_offset_alignment(doc, parent, name, offset, range, widenings, layer, (0.0, false))
 }
 
-/// [`add_offset_alignment`] over the parent's whole length with its own
-/// design speed `speed`, kept by an associative action (an intersection's
+/// [`add_offset_alignment`] over the parent's whole length (or `range`)
+/// with its own design speed `speed`, kept by an associative action (an intersection's
 /// offset alignments; the caller adds the action).
-pub(super) fn add_kept_offset_alignment(doc: &mut CadDocument, parent: Handle, name: &str, offset: f64, speed: f64, layer: Option<&str>) -> Result<Handle, DxfError> {
-    write_offset_alignment(doc, parent, name, offset, None, &[], layer, (speed, true))
+pub(super) fn add_kept_offset_alignment(doc: &mut CadDocument, parent: Handle, name: &str, offset: f64, range: Option<(f64, f64)>, speed: f64, layer: Option<&str>) -> Result<Handle, DxfError> {
+    write_offset_alignment(doc, parent, name, offset, range, &[], layer, (speed, true))
 }
 
 /// [`add_offset_alignment_with_widenings`]; `kept` is the own design speed
