@@ -2,7 +2,7 @@
 
 use super::support::*;
 use super::templates::{write_templates, Piece::{Children, Run, Time}, Target, Template};
-use super::tree::{ensure_point_tree, KEY_STYLES};
+use super::tree::{ensure_point_tree, DEFAULT_STYLE_ID, KEY_STYLES};
 use crate::error::DxfError;
 use crate::io::dwg::dwg_reference_type::DwgReferenceType::{HardOwnership, HardPointer, SoftPointer};
 use crate::types::Handle;
@@ -44,7 +44,13 @@ pub(super) const SAMPLE_LINE_LABELS: [i32; 3] = [0x112, 0x1002_A00F, 30];
 pub(super) fn default_label_style(doc: &CadDocument, path: [i32; 3]) -> Option<u64> {
     let mut node = root_node(doc, KEY_STYLES);
     for key in std::iter::once(KEY_LABELS).chain(path) {
-        node = node.and_then(|n| read_node(doc, n)).and_then(|n| n.children.iter().find(|c| c.0 == key).map(|c| Handle::new(c.1)));
+        node = node.and_then(|n| read_node(doc, n)).and_then(|n| {
+            n.children.iter().find(|c| c.0 == key).map(|c| Handle::new(c.1)).or_else(|| {
+                // A collection whose styles are all named lists its default
+                // as the first soft pointer after them instead (WC64base).
+                (key == DEFAULT_STYLE_ID).then(|| n.refs.iter().find(|r| r.0 == SoftPointer).map(|r| Handle::new(r.1))).flatten()
+            })
+        });
     }
     node.map(|h| h.value()).filter(|h| *h != 0)
 }

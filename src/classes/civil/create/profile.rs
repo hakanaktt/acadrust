@@ -380,7 +380,14 @@ fn write_profile(doc: &mut CadDocument, common: EntityCommon, name: &str, parts:
 #[allow(clippy::too_many_arguments)]
 fn write_profile_of(doc: &mut CadDocument, common: EntityCommon, name: &str, parts: &[(i32, i32, i32, Part)], helpers: &[Handle; 7], style: u64, alignment: Handle, id: &[u8; 16], sampled: Option<&Sampled>, offset: Option<&OffsetTail>, extent: (f64, f64), curb_return: Option<[u64; 2]>) -> Result<Handle, DxfError> {
     let byte = |w: &mut DwgMergedWriter, v: u8| bits(w, &format!("{v:08b}"));
-    let feature = offset.map_or(0, |o| o.feature);
+    // A profile of an alignment on a site is a member of the site's
+    // container: it names the container in place of a companion and
+    // holds its edge id as an alignment does (WC64, WC65).
+    let site = match super::site::site_container_of(doc, alignment) {
+        Some(c) => Some((c, super::site::join_profile(doc, c, common.handle)?)),
+        None => None,
+    };
+    let feature = site.map_or(offset.map_or(0, |o| o.feature), |s| s.0.value());
     let mut refs: Vec<Ref> = helpers.iter().map(|h| Ref(DwgReferenceType::HardOwnership, h.value())).collect();
     refs.extend([soft_pointer(0), hard_pointer(feature), hard_pointer(feature), soft_pointer(0), hard_pointer(style), hard_pointer(alignment.value()), soft_pointer(sampled.map_or(0, |s| s.surface)), hard_pointer(0), soft_pointer(offset.map_or(0, |o| o.source))]);
     // A curb return profile names the two offset profiles it joins and its
@@ -445,7 +452,10 @@ fn write_profile_of(doc: &mut CadDocument, common: EntityCommon, name: &str, par
                 w.write_bit_double(o.slope);
             }
             bl_byte(w, 0);
-            if offset.is_some() {
+            if let Some((_, edge)) = site {
+                bits(w, &"0".repeat(115));
+                bits(w, &format!("00000010{:08b}{:02b}11010", 0x40 | (edge >> 2), edge & 3));
+            } else if offset.is_some() {
                 bits(w, &"0".repeat(65));
                 w.write_bit_double(2.25);
                 bits(w, "0111010");
@@ -1091,7 +1101,8 @@ pub fn add_offset_profile(doc: &mut CadDocument, source: Handle, offset_alignmen
     profiles.push(ProfileRef { handle: handle.value(), id });
     rewrite(doc, offset_alignment, written, &before, &profiles)?;
     let helpers = write_helpers(doc, handle)?;
-    let feature = super::alignment::add_profile_companion(doc, handle)?;
+    // On a site the profile names the site's container instead.
+    let feature = if super::site::site_container_of(doc, offset_alignment).is_some() { Handle::new(0) } else { super::alignment::add_profile_companion(doc, handle)? };
     let n = entities.len() as i32;
     let parts: Vec<(i32, i32, i32, Part)> = entities.iter().enumerate().map(|(i, e)| {
         let id = i as i32 + 1;

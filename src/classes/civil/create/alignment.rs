@@ -965,21 +965,35 @@ pub(super) fn add_intersection_curb_return(
         ensure_alignment_tree(doc)?;
     }
     let style = default_style(doc).ok_or_else(|| invalid("drawing has no alignment styles"))?;
-    let node = companion_node(doc).ok_or_else(|| invalid("drawing has no node for siteless alignments"))?;
-    let used = read_node(doc, node).ok_or_else(|| invalid("feature style node cannot be read"))?;
-    let tag = (FIRST_COMPANION_TAG..).find(|t| used.children.iter().all(|c| c.0 as u32 != *t)).unwrap_or(FIRST_COMPANION_TAG);
     let common = EntityCommon { handle, owner_handle: doc.header.model_space_block_handle, layer: layer.into(), layer_handle: Some(layer_handle), ..EntityCommon::default() };
-    let companion = doc.allocate_handle();
-    let label = new_name(handle.value());
-    write_companion(doc, companion, node, tag, handle, &path, &label, false)?;
-    add_node_child(doc, node, tag as i32, companion, &label)?;
     let timing = Timing { connected: Some(connected), ..Timing::default() };
     // Its curb return profile, tied to its start by its identifier.
     let (profiles, anchors) = match profile {
         Some((h, id)) => (vec![h.value()], vec![anchor_at(&elements, 0.0, PROFILE_ANCHOR, id, 0.0).ok_or_else(|| invalid("the curb return's start cannot be placed"))?]),
         None => (Vec::new(), Vec::new()),
     };
+    // On the roads' site it joins the site (WC64).
+    if let Some(site) = on_site(doc, roads[0]) {
+        let elevations = vec![0.0; path.len()];
+        let (h, _) = super::site::join_site_as(doc, site, common, path, &elevations, super::site::MemberKind::Alignment, true, |doc, common, edge, container| {
+            write_alignment_of(doc, common, name, &elements, style, container.value(), edge, None, &profiles, &anchors, &[], &[], None, AlignmentKind::Centerline, &timing)
+        })?;
+        return Ok(h);
+    }
+    let node = companion_node(doc).ok_or_else(|| invalid("drawing has no node for siteless alignments"))?;
+    let used = read_node(doc, node).ok_or_else(|| invalid("feature style node cannot be read"))?;
+    let tag = (FIRST_COMPANION_TAG..).find(|t| used.children.iter().all(|c| c.0 as u32 != *t)).unwrap_or(FIRST_COMPANION_TAG);
+    let companion = doc.allocate_handle();
+    let label = new_name(handle.value());
+    write_companion(doc, companion, node, tag, handle, &path, &label, false)?;
+    add_node_child(doc, node, tag as i32, companion, &label)?;
     write_alignment_of(doc, common, name, &elements, style, companion.value(), 1, None, &profiles, &anchors, &[], &[], None, AlignmentKind::Centerline, &timing)
+}
+
+/// The site `alignment` lies on (the owner of its container), `None` for
+/// a siteless one.
+fn on_site(doc: &CadDocument, alignment: Handle) -> Option<Handle> {
+    super::site::site_container_of(doc, alignment).and_then(|c| object(doc, c).map(|o| o.owner))
 }
 
 /// The class key of the superelevation type (2 superelevation).
@@ -1885,8 +1899,10 @@ fn write_offset_alignment(doc: &mut CadDocument, parent: Handle, name: &str, off
     }
     let (written, profiles) = rewritable(doc, parent, |h| super::profile::identifier(doc, h)).ok_or_else(|| invalid("the parent is not an alignment this crate writes"))?;
     if object(doc, Handle::new(written.feature)).is_none_or(|o| o.dxf_name != "AECC_FEATURE_STYLE") {
-        return Err(invalid("the parent is on a site"));
+        return Err(invalid("the parent's companion is missing"));
     }
+    // An offset of an alignment on a site joins that site (WC64).
+    let site = on_site(doc, parent);
     if written.elements.iter().any(|e| !matches!(e.kind, AlignmentElementKind::FixedLine { .. } | AlignmentElementKind::FreeArc { .. })) {
         return Err(invalid("the parent has elements other than lines and arcs"));
     }
@@ -2057,9 +2073,6 @@ fn write_offset_alignment(doc: &mut CadDocument, parent: Handle, name: &str, off
 
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
-    let node = companion_node(doc).ok_or_else(|| invalid("drawing has no node for siteless alignments"))?;
-    let used = read_node(doc, node).ok_or_else(|| invalid("feature style node cannot be read"))?;
-    let tag = (FIRST_COMPANION_TAG..).find(|t| used.children.iter().all(|c| c.0 as u32 != *t)).unwrap_or(FIRST_COMPANION_TAG);
     let common = EntityCommon {
         handle: doc.allocate_handle(),
         owner_handle: doc.header.model_space_block_handle,
@@ -2115,6 +2128,16 @@ fn write_offset_alignment(doc: &mut CadDocument, parent: Handle, name: &str, off
     let groups = written.groups.clone();
     rewrite_adding(doc, parent, written, &profiles, &profiles, None, &groups, &extra, &Timing::default())?;
     let style = default_style(doc).ok_or_else(|| invalid("drawing has no alignment styles"))?;
+    if let Some(site) = site {
+        let elevations = vec![0.0; path.len()];
+        let (h, _) = super::site::join_site_as(doc, site, common, path, &elevations, super::site::MemberKind::Alignment, true, |doc, common, edge, container| {
+            write_alignment(doc, common, name, &elements, style, container.value(), edge, None, &[], &[own_anchor], &[], &[], Some(&record))
+        })?;
+        return Ok(h);
+    }
+    let node = companion_node(doc).ok_or_else(|| invalid("drawing has no node for siteless alignments"))?;
+    let used = read_node(doc, node).ok_or_else(|| invalid("feature style node cannot be read"))?;
+    let tag = (FIRST_COMPANION_TAG..).find(|t| used.children.iter().all(|c| c.0 as u32 != *t)).unwrap_or(FIRST_COMPANION_TAG);
     let companion = doc.allocate_handle();
     let label = new_name(handle.value());
     write_companion(doc, companion, node, tag, handle, &path, &label, true)?;

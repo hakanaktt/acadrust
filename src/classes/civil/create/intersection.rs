@@ -499,6 +499,9 @@ fn build_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_prof
             return Err(invalid("a profile does not belong to its road"));
         }
     }
+    if super::site::site_container_of(doc, main) != super::site::site_container_of(doc, other) {
+        return Err(invalid("the roads must lie on the same site, or both on none"));
+    }
     let (la, lb) = (lines(doc, main).ok_or_else(|| invalid("the main road cannot be solved"))?, lines(doc, other).ok_or_else(|| invalid("the other road cannot be solved"))?);
     // Where a road ends on the other's line: the road's first piece's
     // start or last piece's end; the through road is the main road.
@@ -589,16 +592,6 @@ fn build_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_prof
         if roads[0].profile != 0 && roads[1].profile != 0 && roads[1].ends.is_none() {
             lock_other_profile(doc, &roads, &widths, curb_profiles.map(|p| p.slope))?;
         }
-        if let Some(p) = curb_profiles {
-            for k in 0..2 {
-                for i in 0..2 {
-                    let offset = Handle::new(roads[k].offsets[i]);
-                    let offset_name = arch(doc, offset).and_then(|a| a.alignment_name()).unwrap_or_default();
-                    let h = super::profile::add_offset_profile(doc, Handle::new(roads[k].profile), offset, &format!("{offset_name} - {:.3}%", p.slope * 100.0), p.slope, layer)?;
-                    roads[k].offset_profiles[i] = h.value();
-                }
-            }
-        }
         let handle = write_record(doc, name, &roads, assembly_sets, layer)?;
         let read = |h: u64| Dependency { object: Handle::new(h), writes: false, order: 0 };
         let wrote = |h: u64| Dependency { object: Handle::new(h), writes: true, order: 0 };
@@ -652,6 +645,18 @@ fn build_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_prof
                     ActionBody { dxf: "AECC_ASSOC_CURBRETURN_ALIGNMENT_ACTION_BODY", refs: vec![h], tail: "" },
                     &[read(offset(cr.sides[0]).value()), read(offset(cr.sides[1]).value()), Dependency { order: CURB_RETURN_ORDER, ..read(handle.value()) }, wrote(h.value())],
                 )?;
+            }
+            // The offset profiles come after the curb returns (WC65: their
+            // edges in the site's container follow the curb returns').
+            if let Some(p) = curb_profiles {
+                for k in 0..2 {
+                    for i in 0..2 {
+                        let offset = Handle::new(roads[k].offsets[i]);
+                        let offset_name = arch(doc, offset).and_then(|a| a.alignment_name()).unwrap_or_default();
+                        let h = super::profile::add_offset_profile(doc, Handle::new(roads[k].profile), offset, &format!("{offset_name} - {:.3}%", p.slope * 100.0), p.slope, layer)?;
+                        roads[k].offset_profiles[i] = h.value();
+                    }
+                }
             }
             if let Some(p) = curb_profiles {
                 for (g, (cr, region)) in c.iter().zip(&regions).enumerate() {
@@ -911,5 +916,50 @@ mod tests {
         for (got, want) in pvis.iter().zip([(0.0, 11.38), (25.0, 11.13), (25.0 + arc, 10.76 + 0.24 * 25.0 / 88.0 - 0.24), (50.0 + arc, 10.76 + 0.24 * 50.0 / 88.0 - 0.24)]) {
             assert!((got.0 - want.0).abs() < 1e-9 && (got.1 - want.1).abs() < 1e-9, "{got:?} {want:?}");
         }
+    }
+
+    #[test]
+    fn roads_on_a_site_join_it_with_their_offsets_and_curb_returns() {
+        use crate::classes::civil::{add_alignment_on_site, add_site};
+        let v = Vector2::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let s = add_site(&mut doc, "Site 1", "").unwrap();
+        let a = add_alignment_on_site(&mut doc, s, "Road A", &[v(0.0, 0.0), v(200.0, 0.0)], &[], None).unwrap();
+        let b = add_alignment_on_site(&mut doc, s, "Road B", &[v(100.0, -100.0), v(100.0, 100.0)], &[], None).unwrap();
+        let pa = add_profile(&mut doc, a, "PA", &[v(0.0, 10.0), v(200.0, 12.0)], &[], None).unwrap();
+        let pb = add_profile(&mut doc, b, "PB", &[v(0.0, 11.0), v(200.0, 11.0)], &[], None).unwrap();
+        // A siteless road does not meet roads on a site.
+        let c = add_alignment(&mut doc, "Road C", &[v(150.0, -100.0), v(150.0, 100.0)], None).unwrap();
+        assert!(add_intersection_with_curb_returns(&mut doc, "X", a, Handle::NULL, c, Handle::NULL, ["", ""], IntersectionOffsets::default(), 25.0, None).is_err());
+        add_intersection_with_curb_return_profiles(&mut doc, "I", a, pa, b, pb, ["", ""], IntersectionOffsets::default(), 25.0, CurbReturnProfiles::default(), None).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-intersection-on-site-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        // The roads, their profiles, four offsets, four curb returns and
+        // eight profiles, listed in hash order (id 8 first).
+        let container = arch(&back, s).unwrap().typed_handles()[5].0;
+        let t = object(&back, Handle::new(container)).unwrap().topology().unwrap();
+        assert_eq!(t.edge_ids.len(), 20);
+        assert_eq!(&t.edge_ids[..3], &[8, 16, 1]);
+        // Eight parcels: four squares, four corner regions labelled on
+        // their corner's bisector.
+        let mut labels: Vec<(i32, Vector2)> = back
+            .entities()
+            .filter_map(|e| match e {
+                crate::entities::EntityType::Extended(x) => match &x.data {
+                    crate::entities::ExtendedEntityData::Arch(p) if p.parcel_site() == Some(s.value()) => p.parcel_face().map(|f| f.0).zip(p.parcel_label()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        labels.sort_by_key(|l| l.0);
+        assert_eq!(labels.len(), 8);
+        let at = |i: usize, x: f64, y: f64| (labels[i].1.x - x).abs() < 1e-9 && (labels[i].1.y - y).abs() < 1e-9;
+        let d = 12.0 + 12.5 * (std::f64::consts::SQRT_2 - 1.0) / std::f64::consts::SQRT_2;
+        assert!(at(0, 94.0, -6.0) && at(3, 106.0, 6.0));
+        assert!(at(4, 100.0 + d, d), "{:?}", labels[4]);
     }
 }

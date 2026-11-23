@@ -42,6 +42,9 @@ pub(super) struct Vertex {
     pub shared: bool,
     /// Faces (left, right) of the segment that starts here.
     pub faces: (i32, i32),
+    /// The segment that starts here runs along another member's: 0x1000
+    /// when that member is an earlier one, 0x2000 a later one (WC64).
+    pub along: i32,
 }
 
 pub(super) struct Edge {
@@ -123,8 +126,15 @@ fn near(a: Vector2, b: Vector2) -> bool {
 
 impl State {
     /// Every segment in the graph: (from, to, bulge).
+    /// A stretch two members share is one segment.
     fn segments(&self) -> Vec<(usize, usize, f64)> {
-        self.member_segments().into_iter().map(|(_, s)| s).collect()
+        let mut out: Vec<(usize, usize, f64)> = Vec::new();
+        for (_, (a, b, g)) in self.member_segments() {
+            if !out.iter().any(|&(x, y, _)| (x, y) == (a, b) || (x, y) == (b, a)) {
+                out.push((a, b, g));
+            }
+        }
+        out
     }
 
     /// The segments with the index of the member they belong to.
@@ -139,9 +149,14 @@ impl State {
         out
     }
 
+    /// The direction a half-edge leaves `from` in. An arc leaving along
+    /// another line's direction (a curb return's arc at its tangent point,
+    /// WC64) turns off it: its curvature tips the angle by a hair, to the
+    /// left for a left turn.
     fn angle(&self, from: usize, to: usize, bulge: f64) -> f64 {
         let d = self.nodes[to].0 - self.nodes[from].0;
-        (d.y.atan2(d.x) - 2.0 * bulge.atan()).rem_euclid(TAU)
+        let curvature = 2.0 * (2.0 * bulge.atan()).sin() / d.length();
+        (d.y.atan2(d.x) - 2.0 * bulge.atan() + 1e-9 * curvature.atan()).rem_euclid(TAU)
     }
 
     /// The half-edges leaving `node`, sorted by angle: (to, angle).
@@ -279,13 +294,19 @@ fn meet(a: Piece, b: Piece) -> Result<Vec<(f64, f64, Vector2)>, &'static str> {
             let den = d.cross(&e);
             let scale = d.length() * e.length();
             if den.abs() <= 1e-12 * scale {
+                // Lines along each other meet at the ends of the stretch
+                // they share (each end of one that lies on the other): both
+                // are split there and the stretch is one segment of the
+                // graph that both edges list (WC64).
+                let mut out: Vec<(f64, f64, Vector2)> = Vec::new();
                 if (pa - p).cross(&d).abs() <= 1e-9 * scale.max(1.0) {
-                    let (t0, t1) = (param(p, q, pa), param(p, q, pb));
-                    if t0.max(t1) > 1e-9 && t0.min(t1) < 1.0 - 1e-9 {
-                        return Err("a member runs along another");
+                    for (t, u, x) in [(0.0, param(pa, pb, p), p), (1.0, param(pa, pb, q), q), (param(p, q, pa), 0.0, pa), (param(p, q, pb), 1.0, pb)] {
+                        if within(t) && within(u) && !out.iter().any(|o| near(o.2, x)) {
+                            out.push((t, u, x));
+                        }
                     }
                 }
-                return Ok(Vec::new());
+                return Ok(out);
             }
             let t = (pa - p).cross(&e) / den;
             let u = (pa - p).cross(&d) / den;
@@ -298,8 +319,12 @@ fn meet(a: Piece, b: Piece) -> Result<Vec<(f64, f64, Vector2)>, &'static str> {
             let (qa, qb, qc) = (d.dot(&d), 2.0 * f.dot(&d), f.dot(&f) - r * r);
             let disc = qb * qb - 4.0 * qa * qc;
             if disc >= -1e-12 * qa * r * r {
+                // A line touching the circle (a curb return's arc at its
+                // tangent point) meets it once: rounding splits the double
+                // root by up to about a millionth of the radius.
                 let root = disc.max(0.0).sqrt();
-                for k in [(-qb - root) / (2.0 * qa), (-qb + root) / (2.0 * qa)] {
+                let roots = if root / (2.0 * qa.sqrt()) <= 1e-5 * r { vec![-qb / (2.0 * qa)] } else { vec![(-qb - root) / (2.0 * qa), (-qb + root) / (2.0 * qa)] };
+                for k in roots {
                     points.push(line.p + d * k);
                 }
             }
@@ -319,8 +344,12 @@ fn meet(a: Piece, b: Piece) -> Result<Vec<(f64, f64, Vector2)>, &'static str> {
                 let h = h2.max(0.0).sqrt();
                 let m = c1 + d * (along / dist);
                 let n = Vector2::new(-d.y, d.x) * (1.0 / dist);
-                points.push(m + n * h);
-                points.push(m - n * h);
+                if h <= 1e-5 * r1.min(r2) {
+                    points.push(m);
+                } else {
+                    points.push(m + n * h);
+                    points.push(m - n * h);
+                }
             }
         }
     }
@@ -449,6 +478,16 @@ pub(super) fn build(members: &[Input]) -> Result<Arrangement, &'static str> {
                 }
             }
         }
+        // A node a stretch of two old edges takes once.
+        {
+            let mut seen: Vec<(usize, usize, usize)> = Vec::new();
+            on_old.retain(|o| {
+                let key = (o.0.min(o.1), o.0.max(o.1), o.3);
+                let fresh = !seen.contains(&key);
+                seen.push(key);
+                fresh
+            });
+        }
         // Entries the splits void take the half-edge after them.
         let split: Vec<(usize, usize)> = {
             let mut v: Vec<(usize, usize)> = on_old.iter().map(|o| (o.0, o.1)).collect();
@@ -534,19 +573,17 @@ pub(super) fn build(members: &[Input]) -> Result<Arrangement, &'static str> {
         let on_earlier = |node: usize| node < old_nodes || on_old.iter().any(|o| o.3 == node);
         let loose_start = !s.faces.is_empty() && !on_earlier(own[0]);
         // Two pieces between the same two nodes (a line crossing an arc
-        // twice) are not written.
+        // twice) are not written; a stretch two lines share is.
         {
             let len = vertices.len();
             let count = if m.closed { len } else { len - 1 };
-            let mut pairs: Vec<(usize, usize)> = s.segments().iter().map(|&(a, b, _)| (a.min(b), a.max(b))).collect();
+            let mut pairs: Vec<(usize, usize, bool)> = s.member_segments().iter().map(|&(_, (a, b, g))| (a.min(b), a.max(b), g == 0.0)).collect();
             pairs.extend((0..count).map(|i| {
                 let (a, b) = (vertices[i].node, vertices[(i + 1) % len].node);
-                (a.min(b), a.max(b))
+                (a.min(b), a.max(b), vertices[i].bulge.unwrap_or(0.0) == 0.0)
             }));
-            let total = pairs.len();
             pairs.sort();
-            pairs.dedup();
-            if pairs.len() != total {
+            if pairs.windows(2).any(|w| (w[0].0, w[0].1) == (w[1].0, w[1].1) && !(w[0].2 && w[1].2)) {
                 return Err("two lines meet twice between the same points");
             }
         }
@@ -559,6 +596,11 @@ pub(super) fn build(members: &[Input]) -> Result<Arrangement, &'static str> {
             let a = s.edges[me].vertices[j].node;
             let b = s.edges[me].vertices[(j + 1) % len].node;
             let g = s.edges[me].vertices[j].bulge.unwrap_or(0.0);
+            // A stretch along an earlier line is in the graph already.
+            if segments.iter().any(|&(x, y, _)| (x, y) == (a, b) || (x, y) == (b, a)) {
+                s.edges[me].present = j + 1;
+                continue;
+            }
             let a_free = s.outgoing(&segments, a).is_empty();
             let b_free = s.outgoing(&segments, b).is_empty();
             let face = if s.faces.is_empty() {
@@ -660,8 +702,9 @@ fn finish(s: &State) -> Result<Arrangement, &'static str> {
         }
     }
     let lookup = |h: Half| face_of.iter().find(|x| x.0 == h).map(|x| x.1);
+    let all = s.member_segments();
     let mut edges = Vec::new();
-    for e in &s.edges {
+    for (k, e) in s.edges.iter().enumerate() {
         let len = e.vertices.len();
         let mut vertices = Vec::new();
         for i in 0..len {
@@ -672,7 +715,13 @@ fn finish(s: &State) -> Result<Arrangement, &'static str> {
                 let next = e.vertices[(i + 1) % len].node;
                 (lookup((next, v.node)).ok_or("a loop has no face")?, lookup((v.node, next)).ok_or("a loop has no face")?)
             };
-            vertices.push(Vertex { node: v.node as i32 + 1, bulge: v.bulge, inserted: v.inserted, shared: v.shared, faces });
+            let along = if i + 1 == len && !e.closed {
+                0
+            } else {
+                let next = e.vertices[(i + 1) % len].node;
+                all.iter().filter(|&&(j, (a, b, _))| j != k && ((a, b) == (v.node, next) || (b, a) == (v.node, next))).map(|&(j, _)| if j < k { 0x1000 } else { 0x2000 }).fold(0, |x, y| x | y)
+            };
+            vertices.push(Vertex { node: v.node as i32 + 1, bulge: v.bulge, inserted: v.inserted, shared: v.shared, faces, along });
         }
         edges.push(Edge { vertices, loose_start: e.loose_start, crossed: e.vertices.iter().any(|v| v.inserted) });
     }
@@ -837,7 +886,10 @@ fn label_point(s: &State, segments: &[(usize, usize, f64)], loops: &[Vec<Half>])
     let c = (lo + hi) * 0.5;
     let pieces = face_loops(s, segments, loops);
     let scale = (hi - lo).length().max(1.0);
-    let triangle = ends.len() == 3 && ends.iter().all(|e| e.2 == 0.0);
+    let triangle = ends.len() == 3;
+    if triangle && ends.iter().any(|e| e.2 != 0.0) {
+        return curved_triangle_label(&ends).unwrap_or(c);
+    }
     if !face_holds(&pieces, c) && !triangle {
         let halves: Vec<(Vector2, Vector2)> = pieces.iter().flatten().copied().collect();
         let mut xs: Vec<f64> = halves.iter().filter(|(a, b)| (a.y <= c.y) != (b.y <= c.y)).map(|(a, b)| a.x + (c.y - a.y) * (b.x - a.x) / (b.y - a.y)).collect();
@@ -933,6 +985,50 @@ fn label_point(s: &State, segments: &[(usize, usize, f64)], loops: &[Vec<Half>])
     }
     let bisector_depth = depth(bisector);
     if slid_depth >= 0.94 * bisector_depth && slid_depth <= bisector_depth { slid } else { bisector }
+}
+
+/// The label of a face of three sides, some of them arcs (a curb
+/// return's corner between two offset lines, WC64): the middle of the
+/// largest angle's bisector, up to the opposite side.
+// ponytail: one shape sampled (quarter-circle corners); the slide the
+// straight triangles weigh against the bisector is not tried here.
+fn curved_triangle_label(ends: &[(Vector2, Vector2, f64)]) -> Option<Vector2> {
+    let unit = |a: f64| Vector2::new(a.cos(), a.sin());
+    let chord = |p: Vector2, q: Vector2| (q - p).y.atan2((q - p).x);
+    // At vertex i: the way out along side i and the way back along side
+    // i - 1, as tangent directions.
+    let angle = |i: usize| {
+        let (p, q, g) = ends[i];
+        let (r, s, h) = ends[(i + 2) % 3];
+        let (out, back) = (unit(chord(p, q) - 2.0 * g.atan()), unit(chord(s, r) + 2.0 * h.atan()));
+        (out.dot(&back).clamp(-1.0, 1.0).acos(), out, back)
+    };
+    let i = (0..3).max_by(|x, y| angle(*x).0.total_cmp(&angle(*y).0))?;
+    let (_, out, back) = angle(i);
+    let a = ends[i].0;
+    let dir = out + back;
+    let dir = dir * (1.0 / dir.length());
+    let (p, q, g) = ends[(i + 1) % 3];
+    let side = Piece { p, q, g };
+    let foot = match side.arc() {
+        None => {
+            let e = q - p;
+            let den = dir.cross(&e);
+            (den.abs() > 1e-12).then(|| a + dir * ((p - a).cross(&e) / den))?
+        }
+        Some((centre, r, ..)) => {
+            let f = a - centre;
+            let (b, cc) = (f.dot(&dir), f.dot(&f) - r * r);
+            let disc = b * b - cc;
+            (disc >= 0.0).then_some(())?;
+            [-b - disc.sqrt(), -b + disc.sqrt()]
+                .into_iter()
+                .filter(|t| *t > 1e-9)
+                .map(|t| a + dir * t)
+                .find(|x| side.param_of(*x).is_some_and(|t| (-1e-9..=1.0 + 1e-9).contains(&t)))?
+        }
+    };
+    Some((a + foot) * 0.5)
 }
 
 #[cfg(test)]
