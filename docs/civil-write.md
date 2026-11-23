@@ -1708,11 +1708,11 @@ with a feature line added by the crate (E-MV-WT04, E-MV-WP01,
 E-MV-WT06) open with AUDIT 0 errors and the API lists the alignments and
 the new feature line's points.
 
-A new
-member must not cross or touch the site's members: the application splits
-crossing members at their intersections and makes parcels of the closed
-faces (WT09), which is not written. A site is accepted only when writing
-its container from what is read gives back its record.
+A new alignment may cross and touch the site's lot lines and alignments
+(straight segments): the members are split at their intersections and
+the closed faces become parcels (WT09; see Alignments and lot lines
+below). A site is accepted only when writing its container from what is
+read gives back its record.
 
 A drawing without the node of sites gets it with no label styles, and a
 drawing without parcel or feature line styles gives the site and its
@@ -1837,8 +1837,8 @@ open with AUDIT 0 errors; the API lists every parcel with its number, area
 and extents, and LIST its boundary.
 
 `add_lot_line(doc, site, vertices, closed, layer)` writes an open or
-closed lot line that may cross or touch the site's other lot lines (not
-its alignments or feature lines) and returns it with the parcels of the
+closed lot line that may cross or touch the site's other lot lines and
+its alignments (not its feature lines) and returns it with the parcels of the
 faces it makes. Samples WP04 (a line across a rectangle), WP05 (and a
 disjoint rectangle), WP08 (two open lines closing a loop), WP09 (a T
 junction), WP10 (a loose line crossing one side), WP11 (a T and a cross),
@@ -1881,9 +1881,55 @@ one arc side and an open line with an arc), written for the same lines,
 equals the sample bit for bit (container, both segments and the parcel).
 
 Not written: lot lines that meet another member where either has an arc
-(the arc would need its bulge split), lot lines meeting alignments or
-feature lines, members running along each other. A lot line alone (no closed loop) makes no parcel;
-alignments that close a loop make none either (WP01).
+(the arc would need its bulge split), lot lines meeting feature lines,
+members running along each other. A lot line alone (no closed loop)
+makes no parcel. WP01's alignments make none because they have no
+elements; alignments with elements that close a loop do (PC01).
+
+### Alignments and lot lines
+
+An alignment on a site splits faces like a lot line and the faces it
+closes or cuts off become parcels: lot lines and alignments meet in one
+arrangement (the rules above), whichever comes first. Samples (a site
+with one member, then one more, each added by the programming interface):
+PA01 (a rectangle across an alignment), PA02 (a second alignment across
+both), PB01 and PB01r (an alignment across a rectangle, either
+direction), PB02 (an alignment ending on the first), PB03 (a third
+starting on the rectangle), PB04 and PB04r (across the top and bottom),
+PC01 (two alignments closing a loop), PC11 (an open lot line whose ends
+lie on an alignment), PC20 to PC24 (open lot lines ending on or crossing
+a lone alignment), PE01 (the same on a lone lot line), PE11 and PE12 (a
+lot line across a loop of alignments).
+
+Two rules of the arrangement come from these samples:
+
+- A split face keeps the part its old entry started in when a member
+  split that entry, with the segment as its entry (PB01, PB01r and PB02:
+  the same parcels whichever way the alignment runs).
+- A loose end's entry (the half-edge after it is its own twin: a lone
+  line's outside face) keeps its first piece when one of the new
+  member's own points split it (PC11, PC20, PC23, PE01); otherwise it
+  takes the way back past the member's own points at its start (PA01,
+  PC21, PC24).
+
+Written for the same lines, PA01's container, lot line and parcels equal
+the sample bit for bit; the others equal it in their faces, entries and
+parcels (numbers, faces, labels) but for: the edge flag 0x800 and last
+point flag 8 of edges read from the file (PB01, PB04, PC20 to PC24, PE11,
+PE12), the newest member's point marks 0x10 and 0x20, and the ids of
+crossing nodes where a new line crosses several members' earlier pieces
+(PA02, PB03: the application numbers them in an order neither by member
+nor along either line). PC12 (an alignment across PC11's face; also
+PC12r reversed and PC12l a lot line) differs in the face kept: the
+application gives the face to the left part although PC11's entry (the
+lot line's closing segment, not split) lies in the right one, as if it
+were void; the writer gives it to the right part, so the two parcels'
+numbers are swapped. Checks: E-PA1 (a new drawing: an alignment, a
+rectangle across it, a second alignment across both, two alignments
+closing a loop and a lot line splitting it), E-PA2 (PB03's lines written
+to WP03) and E-PA3 (PC24's and PC12's lines written to PC10) open with
+AUDIT 0 errors; the API lists every parcel with its number, area and
+extents (E-PA2 as PB03).
 
 ## 3h. Profile views
 
@@ -3494,7 +3540,7 @@ taken from the records and checked bit for bit against them.
 | TIN surfaces: points, point groups, breaklines (standard, proximity, non-destructive), contours, boundaries, vertex and edge edits, raise, drawing objects, pasted surfaces, point and imported files, corridor surfaces | yes (every definition kind of the samples) | yes, with the triangulation the definitions build (a new drawing gets §3d) | yes (§3c) | not found; the written triangulation is built by the writer (§3c) | geometry of pasted, file and corridor sources; the cases of §3c |
 | layout profiles (fixed tangents; free symmetric and asymmetric parabolas, free circular curves) | yes | yes (a new drawing gets §3f) | yes (§4) | not needed (the application solves the stored entities) | fixed and floating curves |
 | sites, alignments and feature lines (arcs, elevation points) on a site | yes | yes (a new drawing gets the node of sites and the default parcel and feature line styles, §2c) | yes (§4) | not needed (the application rewrites the site's cache) | alignments or feature lines meeting other members; containers the application edited after inserting elevation points |
-| parcels of closed and open, crossing and touching lot lines, with arcs | yes (number, face, boundary) | yes (§3g) | yes (§3g) | not needed | arcs where lines meet; lot lines meeting alignments or feature lines; the label of a nearly isosceles right triangle; the newest member's point marks 0x10, 0x20 where it meets another |
+| parcels of closed and open, crossing and touching lot lines, with arcs | yes (number, face, boundary) | yes (§3g) | yes (§3g) | not needed | arcs where lines meet; lot lines meeting feature lines; the label of a nearly isosceles right triangle; the newest member's point marks 0x10, 0x20 where it meets another |
 | profile views (automatic or user ranges) and their profile label groups | yes (frame) | yes (a new drawing gets the default view style, §3h) | yes (§3h) | not needed (the application recomputes the view from its style) | other styles and vertical scales |
 | assemblies and package subassemblies | partly (corridor's group block) | yes (a new drawing gets the default assembly, code set, link and shape styles, §2c) | yes (§3i, §2c) | not needed | — |
 | corridors: baselines along alignments, regions, frequencies, placement flags, added stations, targets (unbuilt) | yes (fields of built ones; names and references of unbuilt ones) | yes, with assemblies of the drawing (a new drawing gets the default corridor style, §2c) | yes (§3i, §2c) | the corridor is written out of date and built by the application's rebuild | see §3i-a |
@@ -3565,7 +3611,8 @@ Corridors are listed in §3i-a.
 | sites | name, description, members | yes | yes | §3g |
 | parcels | closed and open, crossing and touching lot lines, arcs, labels | yes | yes | §3g |
 | parcels | members added to containers the application wrote with crossings (its point marks and edge flags kept) | yes | yes | §3g |
-| parcels | lot lines meeting alignments or feature lines; arcs where lines meet; the rule of the newest member's point marks 0x10/0x20 for members the crate adds | yes | no | §3g (rule not found; marks read are kept) |
+| parcels | lot lines and alignments meeting each other (straight segments), alignments closing loops | yes | yes | §3g (Alignments and lot lines; PC12's face order and some crossing node ids differ) |
+| parcels | lot lines meeting feature lines; arcs where lines meet; the rule of the newest member's point marks 0x10/0x20 for members the crate adds | yes | no | §3g (rule not found; marks read are kept) |
 | sites | containers with members without points or nodes (WP01, WP02, WT04 to WT06: alignments without elements on a site), members added to them | yes | yes | §3g (members without points) |
 | feature lines | points, elevation points, arcs, on a site | yes | yes | §3g |
 | feature lines | edits: points, arcs, elevations and elevation points replaced, in containers this crate or the application wrote (ids and keys kept) | yes | yes | §3g |

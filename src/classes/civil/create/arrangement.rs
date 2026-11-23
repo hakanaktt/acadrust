@@ -11,9 +11,12 @@
 //! makes the next face. When a segment splits a face, the part that keeps
 //! the face's entry keeps the face and the other part becomes the new
 //! face, its entry the segment's half-edge on that side. An entry the
-//! member split is void: a split face then keeps the part on the
-//! segment's right with the segment as its entry, and a face that is not
-//! split takes the half-edge that followed the old entry. When a segment
+//! member split is void: a split face then keeps the part its old entry
+//! started in with the segment as its entry, and a face that is not
+//! split takes the half-edge that followed the old entry. A loose end's
+//! entry (the half-edge that follows is its own twin) keeps its first
+//! piece when the member's own point split it, else takes the way back
+//! past the member's own points at its start. When a segment
 //! closes a loop that bounds a face of its own inside a face, the new face
 //! is that bounded part and the outer part stays with the old face.
 
@@ -71,14 +74,15 @@ type Half = (usize, usize);
 #[derive(Clone, Copy)]
 enum Entry {
     Live(Half),
-    /// Split by the member being added: the half-edge that followed it.
-    Void(Half),
+    /// Split by the member being added: the half-edge that followed it,
+    /// and the old entry's first piece.
+    Void(Half, Half),
 }
 
 impl Entry {
     fn half(self) -> Half {
         match self {
-            Entry::Live(h) | Entry::Void(h) => h,
+            Entry::Live(h) | Entry::Void(h, _) => h,
         }
     }
 }
@@ -337,22 +341,33 @@ pub(super) fn build(members: &[Input]) -> Result<Arrangement, &'static str> {
             v
         };
         let is_split = |h: Half| split.iter().any(|&(a, b)| (a, b) == h || (b, a) == h);
-        let first_piece = |h: Half| -> Half {
-            let mut best: Option<(f64, usize)> = None;
-            for o in &on_old {
-                let u = if (o.0, o.1) == h { o.2 } else if (o.1, o.0) == h { 1.0 - o.2 } else { continue };
-                if best.is_none_or(|b| u < b.0) {
-                    best = Some((u, o.3));
-                }
-            }
-            best.map_or(h, |b| (h.0, b.1))
+        // The nodes the splits put on `h`, from its start.
+        let along = |h: Half| -> Vec<usize> {
+            let mut v: Vec<(f64, usize)> = on_old.iter().filter_map(|o| if (o.0, o.1) == h { Some((o.2, o.3)) } else if (o.1, o.0) == h { Some((1.0 - o.2, o.3)) } else { None }).collect();
+            v.sort_by(|x, y| x.0.total_cmp(&y.0));
+            v.into_iter().map(|x| x.1).collect()
         };
+        let first_piece = |h: Half| -> Half { along(h).first().map_or(h, |&x| (h.0, x)) };
         for f in 0..s.faces.len() {
             for k in 0..s.faces[f].entries.len() {
                 if let Entry::Live(h) = s.faces[f].entries[k] {
                     if is_split(h) {
                         let after = s.next(&old_segments, h);
-                        s.faces[f].entries[k] = Entry::Void(first_piece(after));
+                        let nodes = along(h);
+                        s.faces[f].entries[k] = if after != (h.1, h.0) {
+                            Entry::Void(first_piece(after), first_piece(h))
+                        } else if own.contains(&nodes[0]) {
+                            // A loose end the member's own point splits
+                            // keeps its first piece (PE01, PC11, PC20, PC23).
+                            Entry::Live((h.0, nodes[0]))
+                        } else {
+                            // Else the way back, past the member's own points
+                            // at its start (PA01, PC21, PC24).
+                            let back = along(after);
+                            let skip = back.iter().take_while(|x| own.contains(x)).count();
+                            let from = if skip == 0 { after.0 } else { back[skip - 1] };
+                            Entry::Void((from, back.get(skip).copied().unwrap_or(after.1)), first_piece(h))
+                        };
                     }
                 }
             }
@@ -443,7 +458,13 @@ pub(super) fn build(members: &[Input]) -> Result<Arrangement, &'static str> {
                 match k.map(|k| (k, s.faces[face].entries[k])) {
                     Some((_, Entry::Live(h))) if left.contains(&h) => new_entry = (a, b),
                     Some((_, Entry::Live(_))) => new_entry = (b, a),
-                    Some((k, Entry::Void(_))) => {
+                    // The face keeps the part its old entry started in,
+                    // with the segment as its entry (PB01, PB01r, PB02).
+                    Some((k, Entry::Void(_, first))) if left.contains(&first) => {
+                        s.faces[face].entries[k] = Entry::Live((b, a));
+                        new_entry = (a, b);
+                    }
+                    Some((k, Entry::Void(..))) => {
                         s.faces[face].entries[k] = Entry::Live((a, b));
                         new_entry = (b, a);
                     }
