@@ -130,9 +130,7 @@ const DRAGGED: [(&str, K); 13] = [
     ("dragged_text_height", K::Bd),
     ("dragged_border_visible", K::B),
     ("dragged_gap", K::Bd),
-    // A BL: an older release leaves values of the unset dragged state in
-    // it that do not fit a BS (23 collectors of five older drawings did
-    // not read as a BS).
+    // A BL: older releases leave 32-bit values here when unset.
     ("dragged_border_type", K::Bl),
     ("dragged_background_mask", K::B),
     ("dragged_leader_justification", K::B),

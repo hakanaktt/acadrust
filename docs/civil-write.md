@@ -362,12 +362,8 @@ changed per save), LT001-LT035 (bits back to their defaults, colors,
 linetypes, layer, text style, arrowhead style, anchor component and
 point, enumerations stepped twice). Every collector and text component of the application's style tree reads
 (631 records, HB0, N02, N07, P10, LC00). The dragged state's border type
-is a `BL`: collectors of drawings saved by older releases (texts naming an
-older user) leave their unset dragged values as stored memory (the text
-height and gap as doubles of no meaning, the border type as 32-bit words
-like 0x1FFF18A8); read as a `BS` 11 to 26 collectors of each of five such
-drawings failed, as a `BL` every collector of them reads (396, 397, 524,
-553 and 1244 records), as do the application's current ones. E-NL1 (N02 with a copy of each gravity network part label style:
+is a `BL`: drawings of older releases leave 32-bit values there
+(0x1FFF18A8) when the dragged state is unset. E-NL1 (N02 with a copy of each gravity network part label style:
 pipe, structure, section pipe and crossing profile pipe, and of the
 pressure pipe label style; dragged text height and border, orientation,
 leader color, the first component's height changed and a text component
