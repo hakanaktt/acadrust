@@ -31,6 +31,9 @@ fn a_new_layout_reacts_to_its_dictionary() {
     let doc = document();
     let dictionary = doc.header.acad_layout_dict_handle;
     assert_eq!(reactors(&doc, "NEW SHEET"), (dictionary, vec![dictionary]));
+    // The layouts of a new drawing as well.
+    assert_eq!(reactors(&doc, "Model"), (dictionary, vec![dictionary]));
+    assert_eq!(reactors(&doc, "Layout1"), (dictionary, vec![dictionary]));
 }
 
 #[test]

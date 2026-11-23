@@ -2113,6 +2113,7 @@ impl CadDocument {
         let mut model_layout = crate::objects::Layout::new("Model");
         model_layout.handle = model_layout_handle;
         model_layout.owner = self.header.acad_layout_dict_handle;
+        model_layout.reactors.push(self.header.acad_layout_dict_handle);
         model_layout.tab_order = 0;
         model_layout.flags = 1; // model space
         model_layout.block_record = self.header.model_space_block_handle;
@@ -2123,6 +2124,7 @@ impl CadDocument {
         let mut paper_layout = crate::objects::Layout::new("Layout1");
         paper_layout.handle = paper_layout_handle;
         paper_layout.owner = self.header.acad_layout_dict_handle;
+        paper_layout.reactors.push(self.header.acad_layout_dict_handle);
         paper_layout.tab_order = 1;
         paper_layout.block_record = self.header.paper_space_block_handle;
 
@@ -4041,6 +4043,7 @@ impl CadDocument {
         let mut layout = crate::objects::Layout::new(name);
         layout.handle = layout_handle;
         layout.owner = self.header.acad_layout_dict_handle;
+        layout.reactors.push(self.header.acad_layout_dict_handle);
         layout.tab_order = tab_order;
         layout.block_record = br_handle;
 
@@ -4212,6 +4215,7 @@ impl CadDocument {
         let mut layout = crate::objects::Layout::new("Model");
         layout.handle = handle;
         layout.owner = dict_handle;
+        layout.reactors.push(dict_handle);
         layout.tab_order = 0;
         layout.flags = 1; // model space
         layout.block_record = model;
