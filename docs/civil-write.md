@@ -1880,9 +1880,33 @@ goes in the middle of the extents the arcs reach: WP21 (a rectangle with
 one arc side and an open line with an arc), written for the same lines,
 equals the sample bit for bit (container, both segments and the parcel).
 
-Not written: lot lines that meet another member where either has an arc
-(the arc would need its bulge split), lot lines meeting feature lines,
-members running along each other. A lot line alone (no closed loop)
+Arcs where lines meet: a lot line or an alignment may cross or touch a
+member where either has an arc. The arc is split at the meeting points
+like a straight segment; each piece keeps the arc's centre, its bulge the
+tangent of a quarter of its share of the sweep (the parameter along an
+arc is its angle). PF00 (a rectangle whose first side is an arc of bulge
+0.5) with a straight lot line (PF01) or an alignment (PF02) across the
+arc, and WP03 with an arc lot line of bulge 0.3 or -0.3 across two sides
+(PF11, PF12): written for the same lines, nodes, pieces, bulges, faces
+and parcel numbers equal the samples' (PF01 bit for bit but for the
+newest member's point marks and last digits); the label of a face an
+arc piece bounds is not the samples' (PF11: the application puts it at
+(83.863, 18.482), not on the lines through the extents' middle; rule not
+found). A container read gives each member its arcs whole again (the
+pieces' sweeps added up). A line crossing an arc twice between the same
+two nodes (two pieces joining the same nodes) is refused. Checks E-PF1
+(a new drawing: an arc rectangle with an alignment across the arc, a
+rectangle with an arc lot line across it, a curved alignment crossing a
+rectangle's bottom twice) and E-PF2 (PF11's line written to WP03) open
+with AUDIT 0 errors and the API lists the parcels with their areas.
+
+When a member closes a loop around an entry on a line hanging inside the
+loop (a curved alignment entering a rectangle and leaving it again), the
+outer face's entry goes to the first node along the loop from that entry
+that the outer side passes (not sampled).
+
+Not written: lot lines meeting feature lines, members running along each
+other. A lot line alone (no closed loop)
 makes no parcel. WP01's alignments make none because they have no
 elements; alignments with elements that close a loop do (PC01).
 
@@ -3540,7 +3564,7 @@ taken from the records and checked bit for bit against them.
 | TIN surfaces: points, point groups, breaklines (standard, proximity, non-destructive), contours, boundaries, vertex and edge edits, raise, drawing objects, pasted surfaces, point and imported files, corridor surfaces | yes (every definition kind of the samples) | yes, with the triangulation the definitions build (a new drawing gets §3d) | yes (§3c) | not found; the written triangulation is built by the writer (§3c) | geometry of pasted, file and corridor sources; the cases of §3c |
 | layout profiles (fixed tangents; free symmetric and asymmetric parabolas, free circular curves) | yes | yes (a new drawing gets §3f) | yes (§4) | not needed (the application solves the stored entities) | fixed and floating curves |
 | sites, alignments and feature lines (arcs, elevation points) on a site | yes | yes (a new drawing gets the node of sites and the default parcel and feature line styles, §2c) | yes (§4) | not needed (the application rewrites the site's cache) | alignments or feature lines meeting other members; containers the application edited after inserting elevation points |
-| parcels of closed and open, crossing and touching lot lines, with arcs | yes (number, face, boundary) | yes (§3g) | yes (§3g) | not needed | arcs where lines meet; lot lines meeting feature lines; the label of a nearly isosceles right triangle; the newest member's point marks 0x10, 0x20 where it meets another |
+| parcels of closed and open, crossing and touching lot lines, with arcs | yes (number, face, boundary) | yes (§3g) | yes (§3g) | not needed | lot lines meeting feature lines; labels of faces split arcs bound; the label of a nearly isosceles right triangle; the newest member's point marks 0x10, 0x20 where it meets another |
 | profile views (automatic or user ranges) and their profile label groups | yes (frame) | yes (a new drawing gets the default view style, §3h) | yes (§3h) | not needed (the application recomputes the view from its style) | other styles and vertical scales |
 | assemblies and package subassemblies | partly (corridor's group block) | yes (a new drawing gets the default assembly, code set, link and shape styles, §2c) | yes (§3i, §2c) | not needed | — |
 | corridors: baselines along alignments, regions, frequencies, placement flags, added stations, targets (unbuilt) | yes (fields of built ones; names and references of unbuilt ones) | yes, with assemblies of the drawing (a new drawing gets the default corridor style, §2c) | yes (§3i, §2c) | the corridor is written out of date and built by the application's rebuild | see §3i-a |
@@ -3612,7 +3636,8 @@ Corridors are listed in §3i-a.
 | parcels | closed and open, crossing and touching lot lines, arcs, labels | yes | yes | §3g |
 | parcels | members added to containers the application wrote with crossings (its point marks and edge flags kept) | yes | yes | §3g |
 | parcels | lot lines and alignments meeting each other (straight segments), alignments closing loops | yes | yes | §3g (Alignments and lot lines; PC12's face order and some crossing node ids differ) |
-| parcels | lot lines meeting feature lines; arcs where lines meet; the rule of the newest member's point marks 0x10/0x20 for members the crate adds | yes | no | §3g (rule not found; marks read are kept) |
+| parcels | arcs where lot lines and alignments meet (arcs split, bulges per piece) | yes | yes | §3g (Arcs where lines meet; labels of faces arc pieces bound differ) |
+| parcels | lot lines meeting feature lines; the rule of the newest member's point marks 0x10/0x20 for members the crate adds | yes | no | §3g (rule not found; marks read are kept) |
 | sites | containers with members without points or nodes (WP01, WP02, WT04 to WT06: alignments without elements on a site), members added to them | yes | yes | §3g (members without points) |
 | feature lines | points, elevation points, arcs, on a site | yes | yes | §3g |
 | feature lines | edits: points, arcs, elevations and elevation points replaced, in containers this crate or the application wrote (ids and keys kept) | yes | yes | §3g |
