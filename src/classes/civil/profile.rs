@@ -722,18 +722,51 @@ pub(super) fn offset_profile(data: &[u8], start: usize, end: usize) -> Option<Of
     Some(OffsetProfile { source: 0, slope: slope?, offset: own[4], parent_length, entity_map, anchors })
 }
 
-/// A design profile's entities in link order, run after run: id, kind and
-/// the points at its start, middle station and end.
-pub(super) fn entity_points(data: &[u8], start: usize, end: usize) -> Option<Vec<(i32, ProfilePiece, [Vector2; 3])>> {
+/// A design profile's entities in link order, run after run: id, kind, the
+/// points at its start, middle station and end, and its curve.
+pub(super) fn entity_points(data: &[u8], start: usize, end: usize) -> Option<Vec<(i32, ProfilePiece, [Vector2; 3], ProfileCurve)>> {
     let mut out = Vec::new();
     for run in runs(data, start, end) {
         let segments = solve(&run)?;
         (segments.len() == run.len()).then_some(())?;
         for (r, s) in run.iter().zip(&segments) {
-            out.push((r.id, s.shape.piece(), [s.start, s.shape.at((s.start.x + s.end.x) / 2.0), s.end]));
+            out.push((r.id, s.shape.piece(), [s.start, s.shape.at((s.start.x + s.end.x) / 2.0), s.end], ProfileCurve(s.shape)));
         }
     }
     Some(out)
+}
+
+/// A resolved profile entity's elevation along its stations.
+#[derive(Clone, Copy)]
+pub(super) struct ProfileCurve(Shape);
+
+impl ProfileCurve {
+    pub(super) fn elevation_at(&self, station: f64) -> f64 {
+        self.0.elevation_at(station)
+    }
+
+    pub(super) fn grade_at(&self, station: f64) -> f64 {
+        self.0.grade_at(station)
+    }
+}
+
+/// A profile's entities as fixed entities (tangents, parabolas and circular
+/// curves by three points, parabolas by two points and a grade) in link
+/// order; `None` when another kind is among them.
+pub(super) fn fixed_entities(data: &[u8], start: usize, end: usize) -> Option<Vec<crate::classes::civil::ProfileEntity>> {
+    use crate::classes::civil::ProfileEntity as E;
+    let records = chain(data, start, end);
+    (!records.is_empty()).then_some(())?;
+    records
+        .iter()
+        .map(|r| match r.entity {
+            Entity::Tangent(start, end) => Some(E::Tangent { start, end }),
+            Entity::Curve(CurveDef::ParabolaThreePoints([start, middle, end])) => Some(E::ParabolaThreePoints { start, middle, end }),
+            Entity::Curve(CurveDef::CircularThreePoints([start, on, end])) => Some(E::CircularThreePoints { start, on, end }),
+            Entity::Curve(CurveDef::ParabolaTwoPointsGrade(start, end, at_end, grade)) => Some(E::ParabolaTwoPointsGrade { start, end, grade, at_end }),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Every entity record in link order, run after run.

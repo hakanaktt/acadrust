@@ -2191,12 +2191,23 @@ fn offset_record(a: &crate::classes::arch::ArchEntityData, o: crate::classes::ci
     })
 }
 
-/// How an offset alignment's stations follow its parent's: for each parent
-/// element it follows (single region, no transitions), the parent's
-/// station range in the region and its own stations there, in station
-/// order (each maps linearly: a line to its parallel, an arc to the
-/// concentric arc). Returns the parent too.
-pub(super) fn offset_station_map(doc: &CadDocument, alignment: Handle) -> Option<(u64, Vec<[f64; 4]>)> {
+/// How a stretch of an offset alignment follows its parent: the parent's
+/// stations, its own, its offset at both ends, whether it is at the
+/// nominal offset and whether it is a widening's transition.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct StationRow {
+    pub parent: (f64, f64),
+    pub own: (f64, f64),
+    pub offset: (f64, f64),
+    pub nominal: bool,
+    pub transition: bool,
+}
+
+/// The rows of an offset alignment's stations along its parent: one per
+/// parent element and region, and one per transition between regions that
+/// runs along the parent (a transition of length 0 follows no parent
+/// stations, OW01), in parent station order; and the parent.
+pub(super) fn offset_station_map(doc: &CadDocument, alignment: Handle) -> Option<(u64, Vec<StationRow>)> {
     let arch = |h: Handle| match doc.get_entity(h)? {
         crate::entities::EntityType::Extended(x) => match &x.data {
             crate::entities::ExtendedEntityData::Arch(a) if a.dxf_name == "AECC_ALIGNMENT" => Some(a),
@@ -2206,23 +2217,41 @@ pub(super) fn offset_station_map(doc: &CadDocument, alignment: Handle) -> Option
     };
     let a = arch(alignment)?;
     let o = a.alignment_offset_parameters()?;
-    let [region] = o.regions.as_slice() else { return None };
-    o.transitions.is_empty().then_some(())?;
+    (!o.regions.is_empty()).then_some(())?;
     let parent = a.alignment_offset_parent()?;
     let (parent_elements, own_elements) = (arch(Handle::new(parent))?.alignment_elements()?, a.alignment_elements()?);
     let (parent_spans, own_spans) = (spans(&parent_elements)?, spans(&own_elements)?);
     let length = |pieces: &[Piece]| pieces.iter().map(piece_length).sum::<f64>();
     let start = a.alignment_start_station()?;
+    let several = o.regions.len() > 1;
     let mut out = Vec::new();
-    for (pid, ids) in &o.element_map {
-        let (_, from, pieces) = parent_spans.iter().find(|(e, ..)| i32::from(e.id) == *pid)?;
-        let own: Vec<_> = ids.iter().map(|id| own_spans.iter().find(|(e, ..)| i32::from(e.id) == *id)).collect::<Option<_>>()?;
-        let (first, last) = (own.first()?, own.last()?);
-        let (s0, s1) = (from.max(region.parent_start), (from + length(pieces)).min(region.parent_end));
-        (s1 > s0).then_some(())?;
-        out.push([s0, s1, start + first.1, start + last.1 + length(&last.2)]);
+    for region in &o.regions {
+        let tol = 1e-9 * region.end.abs().max(1.0);
+        for (pid, ids) in &o.element_map {
+            let (_, from, pieces) = parent_spans.iter().find(|(e, ..)| i32::from(e.id) == *pid)?;
+            let (s0, s1) = (from.max(region.parent_start), (from + length(pieces)).min(region.parent_end));
+            if s1 <= s0 + tol {
+                continue;
+            }
+            let own: Vec<(f64, f64)> = ids
+                .iter()
+                .map(|id| own_spans.iter().find(|(e, ..)| i32::from(e.id) == *id).map(|(_, f, p)| (start + f, start + f + length(p))))
+                .collect::<Option<Vec<_>>>()?
+                .into_iter()
+                // With widenings each region keeps the elements on its own
+                // stations.
+                .filter(|(a, b)| !several || (*b > region.start + tol && *a < region.end - tol))
+                .collect();
+            let (first, last) = (own.first()?, own.last()?);
+            out.push(StationRow { parent: (s0, s1), own: (first.0, last.1), offset: (region.offset, region.offset), nominal: region.kind != 1, transition: false });
+        }
     }
-    out.sort_by(|a, b| a[0].total_cmp(&b[0]));
+    for w in o.regions.windows(2) {
+        if w[1].parent_start > w[0].parent_end + 1e-9 * w[0].parent_end.abs().max(1.0) {
+            out.push(StationRow { parent: (w[0].parent_end, w[1].parent_start), own: (w[0].end, w[1].start), offset: (w[0].offset, w[1].offset), nominal: false, transition: true });
+        }
+    }
+    out.sort_by(|a, b| a.parent.0.total_cmp(&b.parent.0));
     Some((parent, out))
 }
 

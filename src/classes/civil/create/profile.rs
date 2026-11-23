@@ -210,6 +210,8 @@ pub enum ProfileEntity {
     Tangent { start: Vector2, end: Vector2 },
     /// A fixed symmetric parabola through three points (start, middle, end).
     ParabolaThreePoints { start: Vector2, middle: Vector2, end: Vector2 },
+    /// A fixed circular curve through three points (start, one on it, end).
+    CircularThreePoints { start: Vector2, on: Vector2, end: Vector2 },
     /// A fixed symmetric parabola between two points with its grade at the
     /// start (or at the end).
     ParabolaTwoPointsGrade { start: Vector2, end: Vector2, grade: f64, at_end: bool },
@@ -234,6 +236,7 @@ impl ProfileEntity {
         match self {
             ProfileEntity::Tangent { .. } => (2, 0),
             ProfileEntity::ParabolaThreePoints { .. } => (6, 11),
+            ProfileEntity::CircularThreePoints { .. } => (4, 11),
             ProfileEntity::ParabolaTwoPointsGrade { .. } => (6, 12),
             ProfileEntity::ParabolaTwoPointsK { .. } | ProfileEntity::ParabolaTwoPointsRadius { .. } => (6, 13),
             ProfileEntity::FloatingParabolaK { .. } => (6, 32),
@@ -248,7 +251,7 @@ impl ProfileEntity {
         let k = |v: f64| v.is_finite() && v > 0.0;
         match self {
             ProfileEntity::Tangent { start, end } => p(start) && p(end) && start.x < end.x,
-            ProfileEntity::ParabolaThreePoints { start, middle, end } => p(start) && p(middle) && p(end) && start.x < middle.x && middle.x < end.x,
+            ProfileEntity::ParabolaThreePoints { start, middle, end } | ProfileEntity::CircularThreePoints { start, on: middle, end } => p(start) && p(middle) && p(end) && start.x < middle.x && middle.x < end.x,
             ProfileEntity::ParabolaTwoPointsGrade { start, end, grade, .. } => p(start) && p(end) && start.x < end.x && grade.is_finite(),
             ProfileEntity::ParabolaTwoPointsK { start, end, k: v, .. } | ProfileEntity::ParabolaTwoPointsRadius { start, end, radius: v, .. } => p(start) && p(end) && start.x < end.x && k(v),
             ProfileEntity::FloatingParabolaK { end, k: v, .. } => p(end) && k(v),
@@ -358,7 +361,7 @@ struct OffsetTail {
 /// source profile (soft).
 #[allow(clippy::too_many_arguments)]
 fn write_profile(doc: &mut CadDocument, common: EntityCommon, name: &str, parts: &[(i32, i32, i32, Part)], helpers: &[Handle; 7], style: u64, alignment: Handle, id: &[u8; 16]) -> Result<Handle, DxfError> {
-    write_profile_of(doc, common, name, parts, helpers, style, alignment, id, None, None)
+    write_profile_of(doc, common, name, parts, helpers, style, alignment, id, None, None, (0.0, 0.0))
 }
 
 /// [`write_profile`]; with `sampled` a profile sampled from a surface (no
@@ -366,9 +369,10 @@ fn write_profile(doc: &mut CadDocument, common: EntityCommon, name: &str, parts:
 /// alignment's), `BD start, BD end, BD 30, BD offset`, 12 bits
 /// `101011000010`, then `2 bits 10`, a zero identifier and the tail; the
 /// surface is the reference after the alignment (soft pointer; WS11 to
-/// WS15).
+/// WS15). `extent` is the start and end station a static copy keeps in the
+/// first two `BD` before the entities (0 otherwise; OS01, OS02).
 #[allow(clippy::too_many_arguments)]
-fn write_profile_of(doc: &mut CadDocument, common: EntityCommon, name: &str, parts: &[(i32, i32, i32, Part)], helpers: &[Handle; 7], style: u64, alignment: Handle, id: &[u8; 16], sampled: Option<&Sampled>, offset: Option<&OffsetTail>) -> Result<Handle, DxfError> {
+fn write_profile_of(doc: &mut CadDocument, common: EntityCommon, name: &str, parts: &[(i32, i32, i32, Part)], helpers: &[Handle; 7], style: u64, alignment: Handle, id: &[u8; 16], sampled: Option<&Sampled>, offset: Option<&OffsetTail>, extent: (f64, f64)) -> Result<Handle, DxfError> {
     let byte = |w: &mut DwgMergedWriter, v: u8| bits(w, &format!("{v:08b}"));
     let feature = offset.map_or(0, |o| o.feature);
     let mut refs: Vec<Ref> = helpers.iter().map(|h| Ref(DwgReferenceType::HardOwnership, h.value())).collect();
@@ -443,7 +447,7 @@ fn write_profile_of(doc: &mut CadDocument, common: EntityCommon, name: &str, par
             }
             // `BD 0` and `BS 0` share their bits.
             w.write_bit_long(if offset.is_some() { 0x102 } else { 0 });
-            for v in [0.0, 0.0, 30.0, 0.0, offset.map_or(0.0, |o| o.offset)] {
+            for v in [extent.0, extent.1, 30.0, 0.0, offset.map_or(0.0, |o| o.offset)] {
                 w.write_bit_double(v);
             }
             for _ in 0..3 {
@@ -483,6 +487,14 @@ fn write_profile_of(doc: &mut CadDocument, common: EntityCommon, name: &str, par
                         bits(w, "0000");
                     }
                     Part::Fixed(ProfileEntity::FreeTangent) => bits(w, "0000"),
+                    // A circular curve: its three points only, like the
+                    // other circular curves' values (OC01, OC02).
+                    Part::Fixed(ProfileEntity::CircularThreePoints { start, on, end }) => {
+                        for p in [start, on, end] {
+                            w.write_raw_double(p.x);
+                            w.write_raw_double(p.y);
+                        }
+                    }
                     Part::Fixed(e) => {
                         // BL 0, the points and values, then BL 0, 3 bits
                         // 010 and no minimum K (WE01 to WE08).
@@ -522,7 +534,7 @@ fn write_profile_of(doc: &mut CadDocument, common: EntityCommon, name: &str, par
                                 w.write_bit_long(1);
                                 w.write_bit_double(grade * 100.0);
                             }
-                            ProfileEntity::Tangent { .. } | ProfileEntity::FloatingTangent { .. } | ProfileEntity::FreeTangent => {}
+                            ProfileEntity::Tangent { .. } | ProfileEntity::FloatingTangent { .. } | ProfileEntity::FreeTangent | ProfileEntity::CircularThreePoints { .. } => {}
                         }
                         w.write_bit_long(0);
                         bits(w, "010");
@@ -733,6 +745,12 @@ pub fn add_profile_entities(doc: &mut CadDocument, alignment: Handle, name: &str
         let id = i as i32 + 1;
         (id, id - 1, if id == n { 0 } else { id + 1 }, Part::Fixed(*e))
     }).collect();
+    write_entity_profile(doc, alignment, name, &parts, layer, (0.0, 0.0))
+}
+
+/// Writes the entity profile `parts` on `alignment` (see
+/// [`add_profile_entities`]), with `extent` for a static copy.
+fn write_entity_profile(doc: &mut CadDocument, alignment: Handle, name: &str, parts: &[(i32, i32, i32, Part)], layer: Option<&str>, extent: (f64, f64)) -> Result<Handle, DxfError> {
     let (written, before) = rewritable(doc, alignment, |h| identifier(doc, h)).ok_or_else(|| invalid("the alignment is not one this crate writes"))?;
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
@@ -751,7 +769,38 @@ pub fn add_profile_entities(doc: &mut CadDocument, alignment: Handle, name: &str
         layer_handle: Some(layer_handle),
         ..EntityCommon::default()
     };
-    write_profile(doc, common, name, &parts, &helpers, style, alignment, &id)
+    write_profile_of(doc, common, name, parts, &helpers, style, alignment, &id, None, None, extent)
+}
+
+/// Adds a static layout profile `name` copied from the offset profile
+/// `source` (the application's static finished-ground copy, which it makes
+/// only of derived profiles): on the source's alignment, with the source's
+/// entities as they are stored and its start and end station kept with
+/// them (OS01, OS02); on `layer` (layer "0" when `None`). The source's
+/// alignment must be one this crate writes.
+pub fn add_static_profile(doc: &mut CadDocument, source: Handle, name: &str, layer: Option<&str>) -> Result<Handle, DxfError> {
+    if name.is_empty() {
+        return Err(invalid("a profile needs a name"));
+    }
+    let src = match doc.get_entity(source) {
+        Some(EntityType::Extended(x)) => match &x.data {
+            ExtendedEntityData::Arch(a) if a.dxf_name == "AECC_PROFILE" => a,
+            _ => return Err(invalid("source profile not found")),
+        },
+        _ => return Err(invalid("source profile not found")),
+    };
+    let alignment = src.typed_handles().get(12).map(|r| Handle::new(r.0)).ok_or_else(|| invalid("the source has no alignment"))?;
+    let (data, start, end) = src.main_stream().ok_or_else(|| invalid("source profile cannot be read"))?;
+    super::super::profile::offset_profile(data, start, end).ok_or_else(|| invalid("the source is not an offset profile"))?;
+    let entities = super::super::profile::fixed_entities(data, start, end).ok_or_else(|| invalid("the source's entities are not fixed entities"))?;
+    let points = super::super::profile::entity_points(data, start, end).filter(|p| !p.is_empty()).ok_or_else(|| invalid("source profile cannot be solved"))?;
+    let extent = (points[0].2[0].x, points[points.len() - 1].2[2].x);
+    let n = entities.len() as i32;
+    let parts: Vec<(i32, i32, i32, Part)> = entities.iter().enumerate().map(|(i, e)| {
+        let id = i as i32 + 1;
+        (id, id - 1, if id == n { 0 } else { id + 1 }, Part::Fixed(*e))
+    }).collect();
+    write_entity_profile(doc, alignment, name, &parts, layer, extent)
 }
 
 /// Adds a profile `name` of `alignment` sampled from the TIN surface
@@ -792,7 +841,7 @@ pub fn add_surface_profile(doc: &mut CadDocument, alignment: Handle, surface: Ha
         ..EntityCommon::default()
     };
     let sampled = Sampled { surface: surface.value(), offset, range, whole };
-    write_profile_of(doc, common, name, &[], &helpers, style, alignment, &[0; 16], Some(&sampled), None)
+    write_profile_of(doc, common, name, &[], &helpers, style, alignment, &[0; 16], Some(&sampled), None, (0.0, 0.0))
 }
 
 /// Anchor kinds of an offset profile's start and end on the parent (the
@@ -802,47 +851,66 @@ const OFFSET_START_ANCHOR: i32 = 9;
 const OFFSET_END_ANCHOR: i32 = 0;
 
 /// The entities of an offset profile copied from `source` (link order: id,
-/// kind, points at the start, middle station and end; tangents and
-/// symmetric parabolas only), each cut where `map` (parent stations to the
-/// offset alignment's, see `offset_station_map`) changes and moved to the
-/// offset alignment's stations, raised by `rise`. Returns the entities in
-/// station order and, by source id, the ids (1 up, in station order) made
-/// from each.
-fn offset_entities(source: &[(i32, crate::classes::civil::ProfilePiece, [Vector2; 3])], map: &[[f64; 4]], rise: f64) -> Option<(Vec<ProfileEntity>, Vec<(i32, Vec<i32>)>)> {
+/// kind, points at the start, middle station and end, curve), each cut
+/// where `map` (parent stations to the offset alignment's, see
+/// `offset_station_map`) changes and moved to the offset alignment's
+/// stations, raised by `slope` times the offset there. A parent station
+/// where a widening meets the nominal offset takes the nominal side (OW01:
+/// a transition of length 0 follows no parent stations); a piece along a
+/// transition is a parabola between its ends leaving with the source's
+/// grade (OX01). Returns the entities in station order and, by source id,
+/// the ids (1 up, in station order) made from each.
+#[allow(clippy::type_complexity)]
+fn offset_entities(source: &[(i32, crate::classes::civil::ProfilePiece, [Vector2; 3], super::super::profile::ProfileCurve)], map: &[super::alignment::StationRow], slope: f64) -> Option<(Vec<ProfileEntity>, Vec<(i32, Vec<i32>)>)> {
     use crate::classes::civil::ProfilePiece;
-    let tol = 1e-9 * map.last()?[1].abs().max(1.0);
-    let at = |s: f64| -> Option<f64> {
-        let m = map.iter().find(|m| s >= m[0] - tol && s <= m[1] + tol)?;
-        Some(m[2] + (s - m[0]) * (m[3] - m[2]) / (m[1] - m[0]))
+    let tol = 1e-9 * map.last()?.parent.1.abs().max(1.0);
+    // The row at a parent station, the nominal side first.
+    let row = |s: f64| {
+        let inside = |m: &&super::alignment::StationRow| s >= m.parent.0 - tol && s <= m.parent.1 + tol;
+        map.iter().filter(|m| m.nominal).find(inside).or_else(|| map.iter().find(inside))
+    };
+    // The offset alignment's station and the rise at a parent station.
+    let at = |s: f64| -> Option<(f64, f64)> {
+        let m = row(s)?;
+        let t = (s - m.parent.0) / (m.parent.1 - m.parent.0);
+        Some((m.own.0 + t * (m.own.1 - m.own.0), slope * (m.offset.0 + t * (m.offset.1 - m.offset.0)).abs()))
     };
     let mut entities = Vec::new();
     let mut ids: Vec<(i32, Vec<i32>)> = Vec::new();
-    for (id, piece, [a, m, b]) in source {
-        // Elevation along the entity: its line, or the parabola through its
-        // three points.
-        let z = |x: f64| match piece {
-            ProfilePiece::Tangent => a.y + (b.y - a.y) * (x - a.x) / (b.x - a.x),
-            _ => {
-                let l = |p: Vector2, q: Vector2, r: Vector2| (x - q.x) * (x - r.x) / ((p.x - q.x) * (p.x - r.x)) * p.y;
-                l(*a, *m, *b) + l(*m, *a, *b) + l(*b, *a, *m)
-            }
-        };
-        if !matches!(piece, ProfilePiece::Tangent | ProfilePiece::Parabola) {
-            return None;
-        }
+    let mut unsourced = Vec::new();
+    for (id, piece, [a, _, b], curve) in source {
+        let z = |x: f64| curve.elevation_at(x);
         let mut cuts = vec![a.x];
-        cuts.extend(map.iter().map(|m| m[0]).filter(|s| *s > a.x + tol && *s < b.x - tol));
+        cuts.extend(map.iter().map(|m| m.parent.0).filter(|s| *s > a.x + tol && *s < b.x - tol));
         cuts.push(b.x);
         let mut made = Vec::new();
         for w in cuts.windows(2) {
-            let p = |x: f64| -> Option<Vector2> { Some(Vector2::new(at(x)?, z(x) + rise)) };
+            let p = |x: f64| -> Option<Vector2> {
+                let (own, rise) = at(x)?;
+                Some(Vector2::new(own, z(x) + rise))
+            };
+            let along_transition = row((w[0] + w[1]) / 2.0)?.transition;
             entities.push(match piece {
+                _ if along_transition => ProfileEntity::ParabolaTwoPointsGrade { start: p(w[0])?, end: p(w[1])?, grade: curve.grade_at(w[0]), at_end: false },
                 ProfilePiece::Tangent => ProfileEntity::Tangent { start: p(w[0])?, end: p(w[1])? },
+                // Circular curves stay circular, asymmetric parabolas become
+                // parabolas through their points (OC01 to OC03).
+                ProfilePiece::Circular => ProfileEntity::CircularThreePoints { start: p(w[0])?, on: p((w[0] + w[1]) / 2.0)?, end: p(w[1])? },
                 _ => ProfileEntity::ParabolaThreePoints { start: p(w[0])?, middle: p((w[0] + w[1]) / 2.0)?, end: p(w[1])? },
             });
-            made.push(entities.len() as i32);
+            // A tangent's piece along a transition is listed under id 0
+            // (OX01).
+            if along_transition && *piece == ProfilePiece::Tangent {
+                unsourced.push(entities.len() as i32);
+            } else {
+                made.push(entities.len() as i32);
+            }
         }
         ids.push((*id, made));
+    }
+    if !unsourced.is_empty() {
+        unsourced.sort();
+        ids.push((0, unsourced));
     }
     ids.sort_by_key(|e| e.0);
     Some((entities, ids))
@@ -852,20 +920,21 @@ fn offset_entities(source: &[(i32, crate::classes::civil::ProfilePiece, [Vector2
 /// `source`, a profile of the offset alignment's parent, raised by `slope`
 /// times the offset (the application's "by slope" offset profile), on
 /// `layer` (layer "0" when `None`). Like the application it copies the
-/// source's entities as fixed tangents and fixed parabolas by three
+/// source's entities as fixed tangents, fixed parabolas by three points
+/// (symmetric and asymmetric parabolas) and fixed circular curves by three
 /// points, cut where the offset alignment's elements change, and ties it
 /// to the source and the offset alignment by an action in the drawing's
 /// associative network; the parent gets anchors at the source's start and
 /// end.
 ///
-/// The offset alignment must be one this crate writes with one region and
-/// no widenings, the source a profile of tangents and symmetric parabolas
-/// within the stations the offset alignment follows.
+/// The offset alignment must be one this crate writes (widenings with
+/// linear transitions too), the source a profile within the stations the
+/// offset alignment follows.
 pub fn add_offset_profile(doc: &mut CadDocument, source: Handle, offset_alignment: Handle, name: &str, slope: f64, layer: Option<&str>) -> Result<Handle, DxfError> {
     if name.is_empty() || !slope.is_finite() {
         return Err(invalid("an offset profile needs a name and a finite slope"));
     }
-    let (parent, map) = super::alignment::offset_station_map(doc, offset_alignment).ok_or_else(|| invalid("the offset alignment needs one region without widenings"))?;
+    let (parent, map) = super::alignment::offset_station_map(doc, offset_alignment).ok_or_else(|| invalid("the offset alignment's stations cannot be followed"))?;
     let arch = |h: Handle| match doc.get_entity(h) {
         Some(EntityType::Extended(x)) => match &x.data {
             ExtendedEntityData::Arch(a) => Some(a),
@@ -882,7 +951,7 @@ pub fn add_offset_profile(doc: &mut CadDocument, source: Handle, offset_alignmen
     let offset = arch(offset_alignment).and_then(|a| a.alignment_offset_parameters()).map(|o| o.offset).ok_or_else(|| invalid("offset alignment not found"))?;
     let parent_length = arch(Handle::new(parent)).and_then(|a| super::alignment::length_of(&a.alignment_elements()?)).ok_or_else(|| invalid("the parent cannot be solved"))?;
     let (first, last) = (points[0].2[0].x, points[points.len() - 1].2[2].x);
-    let (entities, ids) = offset_entities(&points, &map, slope * offset.abs()).ok_or_else(|| invalid("the source must have tangents and symmetric parabolas within the offset alignment's stations"))?;
+    let (entities, ids) = offset_entities(&points, &map, slope).ok_or_else(|| invalid("the source must lie within the offset alignment's stations"))?;
     let (written, before) = rewritable(doc, offset_alignment, |h| identifier(doc, h)).ok_or_else(|| invalid("the offset alignment is not one this crate writes"))?;
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
@@ -911,7 +980,7 @@ pub fn add_offset_profile(doc: &mut CadDocument, source: Handle, offset_alignmen
         ..EntityCommon::default()
     };
     let tail = OffsetTail { slope, offset, parent_length, map: ids, anchors, feature: feature.value(), source: source.value() };
-    write_profile_of(doc, common, name, &parts, &helpers, style, offset_alignment, &id, None, Some(&tail))?;
+    write_profile_of(doc, common, name, &parts, &helpers, style, offset_alignment, &id, None, Some(&tail), (0.0, 0.0))?;
     use super::assoc::{add_action, ActionBody, Dependency};
     add_action(
         doc,
@@ -1196,6 +1265,41 @@ mod tests {
         assert!((pvis.last().unwrap().point.x - 195.3635239099919).abs() < 1e-9);
         assert_eq!(x.common.reactors.len(), 1);
         assert!(identifier(&back, op.value()).is_some());
+    }
+
+    /// Circular curves and widenings (OX01): the circle is cut where the
+    /// widening's regions change, a piece along a transition is a parabola
+    /// by two points and a grade, a tangent's piece there is listed under
+    /// id 0; a static copy keeps the entities.
+    #[test]
+    fn offset_profiles_over_widenings_and_their_static_copies() {
+        use crate::classes::civil::{add_alignment_with_curves, add_offset_alignment_with_widenings, ProfilePiece, VertexCurve, Widening};
+        let v = Vector2::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let al = add_alignment_with_curves(&mut doc, "AL1", &[v(0.0, 0.0), v(100.0, 0.0), v(200.0, 50.0)], &[VertexCurve::Arc(80.0)], None).unwrap();
+        let fgr = add_profile_with_curves(&mut doc, al, "FGR", &[v(0.0, 5.0), v(120.0, 9.0), v(200.0, 2.0)], &[VerticalCurve::Circular(800.0)], None).unwrap();
+        let fga = add_profile(&mut doc, al, "FGA", &[v(0.0, 10.0), v(80.0, 16.0), v(200.0, 12.0)], &[20.0], None).unwrap();
+        let off = add_offset_alignment_with_widenings(&mut doc, al, "OFFW", 10.0, None, &[Widening { start: 120.0, end: 160.0, offset: 15.0, entry: 8.0, exit: 6.0 }], None).unwrap();
+        let circle = add_offset_profile(&mut doc, fgr, off, "OPC", 0.04, None).unwrap();
+        let line = add_offset_profile(&mut doc, fga, off, "OPA", 0.04, None).unwrap();
+        let copy = add_static_profile(&mut doc, circle, "SFC", None).unwrap();
+        assert!(add_static_profile(&mut doc, fga, "X", None).is_err());
+        let path = std::env::temp_dir().join(format!("acadrust_offset_widening_{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let pieces = |h| arch(&back, h).profile_pieces().iter().map(|p| p.0).collect::<Vec<_>>();
+        use ProfilePiece::{Circular as C, Parabola as P, Tangent as T};
+        assert_eq!(pieces(circle), [T, C, C, C, P, C, P, C, T]);
+        assert_eq!(pieces(copy), pieces(circle));
+        let o = arch(&back, line).profile_offset().unwrap();
+        assert_eq!(o.entity_map[0], (0, vec![6, 8]));
+        // The widened stretch is raised by the widened offset.
+        let p = arch(&back, line).profile_pieces();
+        let end = p[6].1[0];
+        assert!((end.x - 134.07045722206465).abs() < 1e-9);
+        assert!((end.y - (16.0 - 4.0 / 120.0 * 48.0 + 0.04 * 15.0)).abs() < 1e-9);
     }
 
     #[test]
