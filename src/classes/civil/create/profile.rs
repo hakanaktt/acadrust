@@ -1006,14 +1006,14 @@ fn offset_entities(source: &[(i32, crate::classes::civil::ProfilePiece, [Vector2
 /// two offset profiles and the curb return as its last references (soft;
 /// WC61).
 #[allow(clippy::too_many_arguments)]
-pub(super) fn write_curb_return_profile(doc: &mut CadDocument, handle: Handle, id: &[u8; 16], alignment: Handle, name: &str, pvis: &[Vector2], incoming: Handle, outgoing: Handle, layer: Option<&str>) -> Result<Handle, DxfError> {
+pub(super) fn write_curb_return_profile(doc: &mut CadDocument, handle: Handle, id: &[u8; 16], alignment: Handle, name: &str, pvis: &[Vector2], incoming: Handle, outgoing: Handle, style: Option<u64>, layer: Option<&str>) -> Result<Handle, DxfError> {
     if pvis.len() < 2 || pvis.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) || pvis.windows(2).any(|w| w[1].x <= w[0].x) {
         return Err(invalid("a curb return profile needs two or more finite PVIs with increasing stations"));
     }
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
     ensure_profile_tree(doc)?;
-    let style = default_style(doc).ok_or_else(|| invalid("drawing has no profile styles"))?;
+    let style = match style { Some(s) => s, None => default_style(doc).ok_or_else(|| invalid("drawing has no profile styles"))? };
     let helpers = write_helpers(doc, handle)?;
     let common = EntityCommon { handle, owner_handle: doc.header.model_space_block_handle, layer: layer.into(), layer_handle: Some(layer_handle), ..EntityCommon::default() };
     let curves = vec![VerticalCurve::None; pvis.len() - 2];
@@ -1062,6 +1062,12 @@ pub(super) fn set_profile_pvis(doc: &mut CadDocument, profile: Handle, pvis: &[V
 /// linear transitions too), the source a profile within the stations the
 /// offset alignment follows.
 pub fn add_offset_profile(doc: &mut CadDocument, source: Handle, offset_alignment: Handle, name: &str, slope: f64, layer: Option<&str>) -> Result<Handle, DxfError> {
+    add_offset_profile_styled(doc, source, offset_alignment, name, slope, None, layer)
+}
+
+/// [`add_offset_profile`] with `style` (else the drawing's default
+/// profile style).
+pub(super) fn add_offset_profile_styled(doc: &mut CadDocument, source: Handle, offset_alignment: Handle, name: &str, slope: f64, style: Option<u64>, layer: Option<&str>) -> Result<Handle, DxfError> {
     if name.is_empty() || !slope.is_finite() {
         return Err(invalid("an offset profile needs a name and a finite slope"));
     }
@@ -1091,7 +1097,7 @@ pub fn add_offset_profile(doc: &mut CadDocument, source: Handle, offset_alignmen
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
     ensure_profile_tree(doc)?;
-    let style = default_style(doc).ok_or_else(|| invalid("drawing has no profile styles"))?;
+    let style = match style { Some(s) => s, None => default_style(doc).ok_or_else(|| invalid("drawing has no profile styles"))? };
     let handle = doc.allocate_handle();
     let id = new_identifier(handle.value());
     let anchors = [(first, new_identifier(handle.value() ^ 1)), (last, new_identifier(handle.value() ^ 2))];

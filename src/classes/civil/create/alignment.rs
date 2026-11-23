@@ -912,6 +912,7 @@ pub(super) fn add_intersection_curb_return(
     radius: f64,
     lines: [f64; 2],
     profile: Option<(Handle, [u8; 16])>,
+    style: Option<u64>,
     layer: Option<&str>,
 ) -> Result<Handle, DxfError> {
     let unit = |v: Vector2| v * (1.0 / v.length());
@@ -964,7 +965,10 @@ pub(super) fn add_intersection_curb_return(
     if default_style(doc).is_none() || companion_node(doc).is_none() {
         ensure_alignment_tree(doc)?;
     }
-    let style = default_style(doc).ok_or_else(|| invalid("drawing has no alignment styles"))?;
+    let style = match style {
+        Some(s) => s,
+        None => default_style(doc).ok_or_else(|| invalid("drawing has no alignment styles"))?,
+    };
     let common = EntityCommon { handle, owner_handle: doc.header.model_space_block_handle, layer: layer.into(), layer_handle: Some(layer_handle), ..EntityCommon::default() };
     let timing = Timing { connected: Some(connected), ..Timing::default() };
     // Its curb return profile, tied to its start by its identifier.
@@ -1876,20 +1880,23 @@ struct Stretch {
 /// element per parent element it covers; each transition is one element
 /// from where it starts to where it ends.
 pub fn add_offset_alignment_with_widenings(doc: &mut CadDocument, parent: Handle, name: &str, offset: f64, range: Option<(f64, f64)>, widenings: &[Widening], layer: Option<&str>) -> Result<Handle, DxfError> {
-    write_offset_alignment(doc, parent, name, offset, range, widenings, layer, (0.0, false))
+    write_offset_alignment(doc, parent, name, offset, range, widenings, layer, (0.0, false), None)
 }
 
 /// [`add_offset_alignment`] over the parent's whole length (or `range`)
 /// with its own design speed `speed`, kept by an associative action (an intersection's
 /// offset alignments; the caller adds the action).
-pub(super) fn add_kept_offset_alignment(doc: &mut CadDocument, parent: Handle, name: &str, offset: f64, range: Option<(f64, f64)>, speed: f64, layer: Option<&str>) -> Result<Handle, DxfError> {
-    write_offset_alignment(doc, parent, name, offset, range, &[], layer, (speed, true))
+/// It takes `style` (else the drawing's default alignment style).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn add_kept_offset_alignment(doc: &mut CadDocument, parent: Handle, name: &str, offset: f64, range: Option<(f64, f64)>, speed: f64, style: Option<u64>, layer: Option<&str>) -> Result<Handle, DxfError> {
+    write_offset_alignment(doc, parent, name, offset, range, &[], layer, (speed, true), style)
 }
 
 /// [`add_offset_alignment_with_widenings`]; `kept` is the own design speed
-/// and whether an action keeps it.
+/// and whether an action keeps it, `style` the alignment style (else the
+/// drawing's default).
 #[allow(clippy::too_many_arguments)]
-fn write_offset_alignment(doc: &mut CadDocument, parent: Handle, name: &str, offset: f64, range: Option<(f64, f64)>, widenings: &[Widening], layer: Option<&str>, kept: (f64, bool)) -> Result<Handle, DxfError> {
+fn write_offset_alignment(doc: &mut CadDocument, parent: Handle, name: &str, offset: f64, range: Option<(f64, f64)>, widenings: &[Widening], layer: Option<&str>, kept: (f64, bool), style: Option<u64>) -> Result<Handle, DxfError> {
     if name.is_empty() {
         return Err(invalid("an offset alignment needs a name"));
     }
@@ -2127,7 +2134,10 @@ fn write_offset_alignment(doc: &mut CadDocument, parent: Handle, name: &str, off
     let record = OffsetRecord { parent: parent.value(), offset, range: (own[0], own[count]), regions, transitions, map, anchors, own: own_id, speed: kept.0, associative: kept.1 };
     let groups = written.groups.clone();
     rewrite_adding(doc, parent, written, &profiles, &profiles, None, &groups, &extra, &Timing::default())?;
-    let style = default_style(doc).ok_or_else(|| invalid("drawing has no alignment styles"))?;
+    let style = match style {
+        Some(s) => s,
+        None => default_style(doc).ok_or_else(|| invalid("drawing has no alignment styles"))?,
+    };
     if let Some(site) = site {
         let elevations = vec![0.0; path.len()];
         let (h, _) = super::site::join_site_as(doc, site, common, path, &elevations, super::site::MemberKind::Alignment, true, |doc, common, edge, container| {
