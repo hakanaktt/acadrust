@@ -15746,6 +15746,8 @@ impl<'a> SectionReader<'a> {
                     dim.base.actual_measurement = measurement;
                 }
                 dim.leader_length = leader_length;
+                // The base keeps the chord point, as the DWG reader keeps it.
+                dim.base.definition_point = chord_point;
                 Dimension::Radius(dim)
             }
             DimensionType::Diameter => {
@@ -15761,6 +15763,7 @@ impl<'a> SectionReader<'a> {
                 if let Some(measurement) = actual_measurement {
                     dim.base.actual_measurement = measurement;
                 }
+                dim.leader_length = leader_length;
                 Dimension::Diameter(dim)
             }
             DimensionType::Angular => {

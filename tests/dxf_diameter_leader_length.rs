@@ -1,5 +1,6 @@
 //! A diameter dimension keeps its leader length (group 40) through a DXF
-//! write and read, as a radius dimension does (#603).
+//! write and read, as a radius dimension does, and a radius dimension's
+//! base keeps its chord point as the DWG reader keeps it (#603).
 
 use acadrust::entities::{Dimension, DimensionDiameter, DimensionRadius, EntityType};
 use acadrust::io::dxf::{DxfReader, DxfWriter};
@@ -29,6 +30,7 @@ fn diameter_and_radius_keep_their_leader_length_in_dxf() {
                 }
                 Dimension::Radius(r) => {
                     assert_eq!(r.leader_length, 2.5);
+                    assert_eq!(r.base.definition_point, Vector3::new(2.0, 0.0, 0.0));
                     seen.1 = true;
                 }
                 _ => {}
