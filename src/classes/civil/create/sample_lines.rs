@@ -36,12 +36,13 @@ const LINE_TAIL: &str = "1101010001111111111111111111111111111111100111111111111
 const GROUP_TEXTS: [&str; 7] = ["", "", "0", "0", "", "", ""];
 /// A group plot's constant values (the same in every sample, WX21 to
 /// WX23 and WG01 to WG12): eight `BD 0`, `B 0`, `BD -30`, `BD 30`, `B 0`,
-/// `BD 40`; then after its view count 16 zero bytes and `PLOT_TAIL`.
+/// `BD 40`; then after its count (3) 16 zero bytes and `PLOT_TAIL`.
 const PLOT_VALUES: [f64; 3] = [-30.0, 30.0, 40.0];
 const PLOT_TAIL: &str = "0100001001010101010100100000001011010101010101010101";
 
 /// A group plot of a group's section views: its index (1 up), the group
-/// plot style, the point it was placed at and the number of its views.
+/// plot style, the point it was placed at and its count (3 in every
+/// sample, whatever its views).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct Plot {
     pub index: i32,
@@ -73,7 +74,7 @@ fn head(w: &mut DwgMergedWriter, word: i32) {
 /// BL 80, 0, 80, 80, 0, BL 0x10025F04, BL 0x40000353, 4 bits 0101,
 /// RC 1, the geometry stamp (BL 2, BL 0, BL 0), GROUP_HEAD, BL n lines,
 /// BL k section sources, k x {BL 1, SOURCE_RUN}, 2 bits 10, BL p group
-/// plots, p x {BL index, 3BD origin, PLOT_VALUES, BL views, 16 zero bytes,
+/// plots, p x {BL index, 3BD origin, PLOT_VALUES, BL 3, 16 zero bytes,
 /// PLOT_TAIL}, GROUP_TAIL after its first four bits
 /// references: soft 0, hard owner 0, alignment (hard), hard 0, the lines
 ///   (soft, by station), per source {section style, surface} (soft), per

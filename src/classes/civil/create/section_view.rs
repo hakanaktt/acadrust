@@ -216,9 +216,9 @@ fn write_view(doc: &mut CadDocument, common: EntityCommon, name: &str, origin: V
 /// when `None`), with the drawing's default section view style and the
 /// default range: the line's offsets and the section's elevations padded
 /// by 20 and rounded out to 10. The line must be one this crate writes
-/// (it is written again with the view in its list) and have at most one
-/// section, not yet sampled (as [`super::add_sections`] writes it): the
-/// view spans elevations -20 to 20.
+/// (it is written again with the view in its list) and its sections (one
+/// per source, SM01) not yet sampled (as [`super::add_sections`] writes
+/// them): the view spans elevations -20 to 20.
 pub fn add_section_view(doc: &mut CadDocument, line: Handle, name: &str, origin: Vector2, layer: Option<&str>) -> Result<Handle, DxfError> {
     if name.is_empty() {
         return Err(invalid("a section view needs a name"));
@@ -227,9 +227,6 @@ pub fn add_section_view(doc: &mut CadDocument, line: Handle, name: &str, origin:
         return Err(invalid("a section view needs a finite origin"));
     }
     let mut l = read_line(doc, line).ok_or_else(|| invalid("the sample line is not one this crate writes"))?;
-    if l.sections.len() > 1 {
-        return Err(invalid("views of a line with several sections are not written"));
-    }
     if l.sections.iter().any(|s| arch(doc, Handle::new(*s)).and_then(|a| a.section_geometry()).is_some_and(|g| !g.points.is_empty())) {
         return Err(invalid("views of a sampled section are not written"));
     }
@@ -290,8 +287,8 @@ fn station_text(station: f64) -> String {
 /// counter (`0+25.00 (1)`), placed by the default group plot style (see
 /// `PLOT_MARGIN`), with the default section view style, on `layer` (layer
 /// "0" when `None`). The group lists the plot (its group plot style, the
-/// point, the view count) and each line its view. The lines must be ones
-/// this crate writes, each with at most one section, not yet sampled.
+/// point, the count 3) and each line its view. The lines must be ones
+/// this crate writes, their sections not yet sampled.
 /// Returns the views.
 pub fn add_section_view_group(doc: &mut CadDocument, group: Handle, at: Vector2, layer: Option<&str>) -> Result<Vec<Handle>, DxfError> {
     use super::sample_lines::{read_group, write_group, Plot};
@@ -304,8 +301,8 @@ pub fn add_section_view_group(doc: &mut CadDocument, group: Handle, at: Vector2,
         return Err(invalid("the group has no lines"));
     }
     for l in &lines {
-        if l.sections.len() > 1 || l.sections.iter().any(|s| arch(doc, Handle::new(*s)).and_then(|a| a.section_geometry()).is_some_and(|g| !g.points.is_empty())) {
-            return Err(invalid("views of lines with several or sampled sections are not written"));
+        if l.sections.iter().any(|s| arch(doc, Handle::new(*s)).and_then(|a| a.section_geometry()).is_some_and(|g| !g.points.is_empty())) {
+            return Err(invalid("views of lines with sampled sections are not written"));
         }
     }
     ensure_section_view_styles(doc)?;
@@ -329,7 +326,9 @@ pub fn add_section_view_group(doc: &mut CadDocument, group: Handle, at: Vector2,
         write_line(doc, l)?;
         views.push(handle);
     }
-    g.plots.push(Plot { index, style: plot_style, origin: crate::types::Vector3::new(at.x, at.y, 0.0), views: views.len() as i32 });
+    // The plot's count is 3 whatever its views and sources (WG01 to WG12,
+    // SM02, SM10a to SM13a: 2 to 10 views, one to three sources).
+    g.plots.push(Plot { index, style: plot_style, origin: crate::types::Vector3::new(at.x, at.y, 0.0), views: 3 });
     write_group(doc, &g)?;
     Ok(views)
 }
@@ -402,5 +401,37 @@ mod tests {
         assert_eq!(plots.iter().map(|p| (p.index, p.origin.y, p.views)).collect::<Vec<_>>(), vec![(1, 0.0, 3), (2, -200.0, 3)]);
         assert_eq!(read_line(&back, Handle::new(read_group(&back, g).unwrap().lines[0])).unwrap().views.len(), 2);
         assert_eq!(station_text(125.5), "1+25.50");
+    }
+
+    /// A line with a section of each of two surfaces (SM01, SM02): its view
+    /// lists both sections, and a group plot's count stays 3.
+    #[test]
+    fn views_of_lines_with_several_sections() {
+        use crate::types::Vector3;
+        let v = Vector2::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let al = crate::classes::civil::add_alignment(&mut doc, "AL1", &[v(0.0, 0.0), v(100.0, 0.0)], None).unwrap();
+        let surface = |doc: &mut CadDocument, name: &str, z: f64| {
+            let points: Vec<Vector3> = [-10.0, 50.0, 110.0].iter().flat_map(|x| [-40.0, 0.0, 40.0].map(|y| Vector3::new(*x, y, z + x / 10.0))).collect();
+            crate::classes::civil::add_tin_surface(doc, name, &points, None).unwrap()
+        };
+        let (s1, s2) = (surface(&mut doc, "S1", 10.0), surface(&mut doc, "S2", 8.0));
+        let g = crate::classes::civil::add_sample_line_group(&mut doc, al, "SLG1", None).unwrap();
+        let l1 = crate::classes::civil::add_sample_line(&mut doc, g, "SL1", 50.0, 25.0, 15.0, None).unwrap();
+        crate::classes::civil::add_sample_line(&mut doc, g, "SL2", 75.0, 10.0, 30.0, None).unwrap();
+        let a = crate::classes::civil::add_sections(&mut doc, g, s1).unwrap();
+        let b = crate::classes::civil::add_sections(&mut doc, g, s2).unwrap();
+        let view = add_section_view(&mut doc, l1, "SV1", v(200.0, 0.0), None).unwrap();
+        add_section_view_group(&mut doc, g, v(400.0, 0.0), None).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-section-views-several-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let refs: Vec<u64> = arch(&back, view).unwrap().typed_handles().iter().map(|r| r.0).collect();
+        assert!(refs.contains(&a[0].value()) && refs.contains(&b[0].value()));
+        assert_eq!(arch(&back, view).unwrap().section_view_frame().unwrap().origin, v(200.0, 0.0));
+        assert_eq!(arch(&back, g).unwrap().section_view_group_plots().unwrap()[0].views, 3);
+        assert_eq!(read_line(&back, l1).unwrap().views.len(), 2);
     }
 }
