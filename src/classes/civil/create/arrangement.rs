@@ -11,9 +11,12 @@
 //! makes the next face. When a segment splits a face, the part that keeps
 //! the face's entry keeps the face and the other part becomes the new
 //! face, its entry the segment's half-edge on that side. An entry the
-//! member split is void: a split face then keeps the part on the
-//! segment's right with the segment as its entry, and a face that is not
-//! split takes the half-edge that followed the old entry. When a segment
+//! member split is void: a split face then keeps the part its old entry
+//! started in with the segment as its entry, and a face that is not
+//! split takes the half-edge that followed the old entry. A loose end's
+//! entry (the half-edge that follows is its own twin) keeps its first
+//! piece when the member's own point split it, else takes the way back
+//! past the member's own points at its start. When a segment
 //! closes a loop that bounds a face of its own inside a face, the new face
 //! is that bounded part and the outer part stays with the old face.
 
@@ -71,14 +74,15 @@ type Half = (usize, usize);
 #[derive(Clone, Copy)]
 enum Entry {
     Live(Half),
-    /// Split by the member being added: the half-edge that followed it.
-    Void(Half),
+    /// Split by the member being added: the half-edge that followed it,
+    /// and the old entry's first piece.
+    Void(Half, Half),
 }
 
 impl Entry {
     fn half(self) -> Half {
         match self {
-            Entry::Live(h) | Entry::Void(h) => h,
+            Entry::Live(h) | Entry::Void(h, _) => h,
         }
     }
 }
@@ -171,10 +175,15 @@ impl State {
         out
     }
 
-    /// Twice the signed area a cycle encloses (chords): negative for the
-    /// outline of a bounded face.
-    fn area(&self, cycle: &[Half]) -> f64 {
-        cycle.iter().map(|h| self.nodes[h.0].0.cross(&self.nodes[h.1].0)).sum()
+    /// A cycle's outline with its arcs divided.
+    fn outline(&self, segments: &[(usize, usize, f64)], cycle: &[Half]) -> Vec<(Vector2, Vector2)> {
+        face_loops(self, segments, &[cycle.to_vec()]).pop().unwrap_or_default()
+    }
+
+    /// Twice the signed area a cycle encloses (arcs included): negative
+    /// for the outline of a bounded face.
+    fn area(&self, segments: &[(usize, usize, f64)], cycle: &[Half]) -> f64 {
+        loop_area(&self.outline(segments, cycle))
     }
 
     /// The face whose loop holds `h`.
@@ -190,14 +199,12 @@ impl State {
         for (i, f) in self.faces.iter().enumerate() {
             for e in &f.entries {
                 let cycle = self.cycle(segments, e.half());
-                let area = self.area(&cycle);
+                let pieces = self.outline(segments, &cycle);
+                let area = loop_area(&pieces);
                 if area >= 0.0 {
                     continue;
                 }
-                let inside = cycle.iter().fold(false, |acc, h| {
-                    let (a, b) = (self.nodes[h.0].0, self.nodes[h.1].0);
-                    if (a.y > p.y) != (b.y > p.y) && p.x < a.x + (p.y - a.y) * (b.x - a.x) / (b.y - a.y) { !acc } else { acc }
-                });
+                let inside = inside_loop(&pieces, p);
                 if inside && best.is_none_or(|b| -area < b.0) {
                     best = Some((-area, i));
                 }
@@ -212,6 +219,136 @@ impl State {
         let w = out.iter().find(|o| o.1 > angle).or(out.first())?;
         self.face_of(segments, (node, w.0))
     }
+}
+
+/// A straight or arc piece from `p` to `q` (`g` its bulge, 0 straight).
+#[derive(Clone, Copy)]
+struct Piece {
+    p: Vector2,
+    q: Vector2,
+    g: f64,
+}
+
+impl Piece {
+    /// An arc's centre, radius, start angle and signed sweep.
+    fn arc(&self) -> Option<(Vector2, f64, f64, f64)> {
+        if self.g == 0.0 {
+            return None;
+        }
+        let sweep = 4.0 * self.g.atan();
+        let d = self.q - self.p;
+        let normal = Vector2::new(-d.y, d.x) * (1.0 / d.length());
+        let centre = (self.p + self.q) * 0.5 + normal * (d.length() / 2.0 / (sweep / 2.0).tan());
+        let r = (self.p - centre).length();
+        Some((centre, r, (self.p.y - centre.y).atan2(self.p.x - centre.x), sweep))
+    }
+
+    /// The parameter (0 at `p`, 1 at `q`; by angle along an arc) of a point
+    /// on the piece's line or circle, `None` off it.
+    fn param_of(&self, x: Vector2) -> Option<f64> {
+        let scale = 1.0 + (self.q - self.p).length() + (x - self.p).length();
+        match self.arc() {
+            None => {
+                let d = self.q - self.p;
+                (d.cross(&(x - self.p)).abs() <= 1e-9 * d.length() * scale).then(|| param(self.p, self.q, x))
+            }
+            Some((c, r, a0, sweep)) => {
+                if ((x - c).length() - r).abs() > 1e-9 * scale {
+                    return None;
+                }
+                let a = (x.y - c.y).atan2(x.x - c.x);
+                let along = if sweep > 0.0 { (a - a0).rem_euclid(TAU) } else { -(a0 - a).rem_euclid(TAU) };
+                let t = along / sweep;
+                // Just before the start a full turn reads as past the end.
+                Some(if t > 1.0 && t - TAU / sweep.abs() > -1e-6 { t - TAU / sweep.abs() } else { t })
+            }
+        }
+    }
+}
+
+/// Where two pieces meet: (parameter along `a`, along `b`, point); a
+/// stretch they share is refused.
+fn meet(a: Piece, b: Piece) -> Result<Vec<(f64, f64, Vector2)>, &'static str> {
+    let tol = 1e-9;
+    let within = |t: f64| (-tol..=1.0 + tol).contains(&t);
+    let mut points: Vec<Vector2> = Vec::new();
+    match (a.arc(), b.arc()) {
+        (None, None) => {
+            let (p, q, pa, pb) = (a.p, a.q, b.p, b.q);
+            let (d, e) = (q - p, pb - pa);
+            let den = d.cross(&e);
+            let scale = d.length() * e.length();
+            if den.abs() <= 1e-12 * scale {
+                if (pa - p).cross(&d).abs() <= 1e-9 * scale.max(1.0) {
+                    let (t0, t1) = (param(p, q, pa), param(p, q, pb));
+                    if t0.max(t1) > 1e-9 && t0.min(t1) < 1.0 - 1e-9 {
+                        return Err("a member runs along another");
+                    }
+                }
+                return Ok(Vec::new());
+            }
+            let t = (pa - p).cross(&e) / den;
+            let u = (pa - p).cross(&d) / den;
+            return Ok(if within(t) && within(u) { vec![(t, u, p + d * t)] } else { Vec::new() });
+        }
+        (Some((c, r, ..)), None) | (None, Some((c, r, ..))) => {
+            let line = if a.g == 0.0 { a } else { b };
+            let d = line.q - line.p;
+            let f = line.p - c;
+            let (qa, qb, qc) = (d.dot(&d), 2.0 * f.dot(&d), f.dot(&f) - r * r);
+            let disc = qb * qb - 4.0 * qa * qc;
+            if disc >= -1e-12 * qa * r * r {
+                let root = disc.max(0.0).sqrt();
+                for k in [(-qb - root) / (2.0 * qa), (-qb + root) / (2.0 * qa)] {
+                    points.push(line.p + d * k);
+                }
+            }
+        }
+        (Some((c1, r1, ..)), Some((c2, r2, ..))) => {
+            let d = c2 - c1;
+            let dist = d.length();
+            if dist <= 1e-9 * (r1 + r2) {
+                if (r1 - r2).abs() <= 1e-9 * r1 && [b.p, b.q].iter().any(|x| a.param_of(*x).is_some_and(|t| t > tol && t < 1.0 - tol)) {
+                    return Err("a member runs along another");
+                }
+                return Ok(Vec::new());
+            }
+            let along = (r1 * r1 - r2 * r2 + dist * dist) / (2.0 * dist);
+            let h2 = r1 * r1 - along * along;
+            if h2 >= -1e-9 * r1 * r1 {
+                let h = h2.max(0.0).sqrt();
+                let m = c1 + d * (along / dist);
+                let n = Vector2::new(-d.y, d.x) * (1.0 / dist);
+                points.push(m + n * h);
+                points.push(m - n * h);
+            }
+        }
+    }
+    let mut out: Vec<(f64, f64, Vector2)> = Vec::new();
+    for x in points {
+        // An end within tolerance is the end itself.
+        let x = [a.p, a.q, b.p, b.q].into_iter().find(|e| near(*e, x)).unwrap_or(x);
+        if let (Some(t), Some(u)) = (a.param_of(x), b.param_of(x)) {
+            if within(t) && within(u) && !out.iter().any(|o| near(o.2, x)) {
+                out.push((t, u, x));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Whether two paths (points with the bulge of the segment that starts
+/// there) cross, touch or run along each other.
+pub(super) fn paths_meet(a: &[(Vector2, Option<f64>)], b: &[(Vector2, Option<f64>)]) -> bool {
+    let pieces = |p: &[(Vector2, Option<f64>)]| -> Vec<Piece> { p.windows(2).map(|w| Piece { p: w[0].0, q: w[1].0, g: w[0].1.unwrap_or(0.0) }).collect() };
+    let (pa, pb) = (pieces(a), pieces(b));
+    pa.iter().any(|x| pb.iter().any(|y| meet(*x, *y).map_or(true, |m| !m.is_empty())))
+}
+
+/// The bulge of the part of an arc of bulge `g` from parameter `from` to
+/// `to` (fractions of its sweep).
+fn part_bulge(g: f64, from: f64, to: f64) -> f64 {
+    (g.atan() * (to - from)).tan()
 }
 
 /// A new node `x` on segment `a`-`b`: its parameter along the segment.
@@ -251,33 +388,11 @@ pub(super) fn build(members: &[Input]) -> Result<Arrangement, &'static str> {
         let mut on_old: Vec<(usize, usize, f64, usize)> = Vec::new();
         let mut crossings: Vec<(usize, usize, f64, Vector2)> = Vec::new();
         for i in 0..segs {
-            let (p, q) = (m.path[i].0, m.path[(i + 1) % n].0);
-            let straight = m.path[i].1.is_none();
+            let piece = Piece { p: m.path[i].0, q: m.path[(i + 1) % n].0, g: m.path[i].1.unwrap_or(0.0) };
             for &(member, (a, b, g)) in &crossed_segments {
-                let (pa, pb) = (s.nodes[a].0, s.nodes[b].0);
-                if !straight || g != 0.0 {
-                    continue;
-                }
-                let (d, e) = (q - p, pb - pa);
-                let den = d.cross(&e);
-                let scale = d.length() * e.length();
-                if den.abs() <= 1e-12 * scale {
-                    // Parallel: refuse a shared stretch.
-                    if (pa - p).cross(&d).abs() <= 1e-9 * scale.max(1.0) {
-                        let (t0, t1) = (param(p, q, pa), param(p, q, pb));
-                        if t0.max(t1) > 1e-9 && t0.min(t1) < 1.0 - 1e-9 {
-                            return Err("a member runs along another");
-                        }
-                    }
-                    continue;
-                }
-                let t = (pa - p).cross(&e) / den;
-                let u = (pa - p).cross(&d) / den;
+                let old = Piece { p: s.nodes[a].0, q: s.nodes[b].0, g };
+                for (t, u, x) in meet(piece, old)? {
                 let tol = 1e-9;
-                if !(-tol..=1.0 + tol).contains(&t) || !(-tol..=1.0 + tol).contains(&u) {
-                    continue;
-                }
-                let x = p + d * t;
                 let inner_t = t > tol && t < 1.0 - tol;
                 let inner_u = u > tol && u < 1.0 - tol;
                 match (inner_t, inner_u) {
@@ -294,6 +409,7 @@ pub(super) fn build(members: &[Input]) -> Result<Arrangement, &'static str> {
                         }
                     }
                     (true, true) => crossings.push((member, i, t, x)),
+                }
                 }
             }
         }
@@ -320,11 +436,12 @@ pub(super) fn build(members: &[Input]) -> Result<Arrangement, &'static str> {
         for &(_, _, _, x) in &crossings {
             let node = placed.iter().find(|p| near(p.0, x)).map(|p| p.1).ok_or("a crossing has no node")?;
             for &(a, b, g) in &old_segments {
-                if g == 0.0 && a != node && b != node {
-                    let (pa, pb) = (s.nodes[a].0, s.nodes[b].0);
-                    let u = param(pa, pb, x);
-                    if u > 1e-9 && u < 1.0 - 1e-9 && (pb - pa).cross(&(x - pa)).abs() <= 1e-9 * (pb - pa).length() * (1.0 + (x - pa).length()) && !on_old.iter().any(|o| o.0 == a && o.1 == b && o.3 == node) {
-                        on_old.push((a, b, u, node));
+                if a != node && b != node {
+                    let old = Piece { p: s.nodes[a].0, q: s.nodes[b].0, g };
+                    if let Some(u) = old.param_of(x) {
+                        if u > 1e-9 && u < 1.0 - 1e-9 && !on_old.iter().any(|o| o.0 == a && o.1 == b && o.3 == node) {
+                            on_old.push((a, b, u, node));
+                        }
                     }
                 }
             }
@@ -337,22 +454,33 @@ pub(super) fn build(members: &[Input]) -> Result<Arrangement, &'static str> {
             v
         };
         let is_split = |h: Half| split.iter().any(|&(a, b)| (a, b) == h || (b, a) == h);
-        let first_piece = |h: Half| -> Half {
-            let mut best: Option<(f64, usize)> = None;
-            for o in &on_old {
-                let u = if (o.0, o.1) == h { o.2 } else if (o.1, o.0) == h { 1.0 - o.2 } else { continue };
-                if best.is_none_or(|b| u < b.0) {
-                    best = Some((u, o.3));
-                }
-            }
-            best.map_or(h, |b| (h.0, b.1))
+        // The nodes the splits put on `h`, from its start.
+        let along = |h: Half| -> Vec<usize> {
+            let mut v: Vec<(f64, usize)> = on_old.iter().filter_map(|o| if (o.0, o.1) == h { Some((o.2, o.3)) } else if (o.1, o.0) == h { Some((1.0 - o.2, o.3)) } else { None }).collect();
+            v.sort_by(|x, y| x.0.total_cmp(&y.0));
+            v.into_iter().map(|x| x.1).collect()
         };
+        let first_piece = |h: Half| -> Half { along(h).first().map_or(h, |&x| (h.0, x)) };
         for f in 0..s.faces.len() {
             for k in 0..s.faces[f].entries.len() {
                 if let Entry::Live(h) = s.faces[f].entries[k] {
                     if is_split(h) {
                         let after = s.next(&old_segments, h);
-                        s.faces[f].entries[k] = Entry::Void(first_piece(after));
+                        let nodes = along(h);
+                        s.faces[f].entries[k] = if after != (h.1, h.0) {
+                            Entry::Void(first_piece(after), first_piece(h))
+                        } else if own.contains(&nodes[0]) {
+                            // A loose end the member's own point splits
+                            // keeps its first piece (PE01, PC11, PC20, PC23).
+                            Entry::Live((h.0, nodes[0]))
+                        } else {
+                            // Else the way back, past the member's own points
+                            // at its start (PA01, PC21, PC24).
+                            let back = along(after);
+                            let skip = back.iter().take_while(|x| own.contains(x)).count();
+                            let from = if skip == 0 { after.0 } else { back[skip - 1] };
+                            Entry::Void((from, back.get(skip).copied().unwrap_or(after.1)), first_piece(h))
+                        };
                     }
                 }
             }
@@ -370,8 +498,14 @@ pub(super) fn build(members: &[Input]) -> Result<Arrangement, &'static str> {
                 let mut add: Vec<(f64, usize)> = on_old.iter().filter_map(|o| if (o.0, o.1) == (a, b) { Some((o.2, o.3)) } else if (o.1, o.0) == (a, b) { Some((1.0 - o.2, o.3)) } else { None }).collect();
                 add.sort_by(|x, y| x.0.total_cmp(&y.0));
                 add.dedup_by_key(|x| x.1);
-                for (_, node) in add {
-                    out.push(V { node, bulge: None, inserted: true, shared: false });
+                // An arc's pieces keep its centre: each its share of the sweep.
+                let g = e.vertices[i].bulge;
+                let ends: Vec<f64> = add.iter().map(|x| x.0).chain([1.0]).collect();
+                if let Some(last) = out.last_mut() {
+                    last.bulge = g.map(|g| part_bulge(g, 0.0, ends[0]));
+                }
+                for (k, (u, node)) in add.into_iter().enumerate() {
+                    out.push(V { node, bulge: g.map(|g| part_bulge(g, u, ends[k + 1])), inserted: true, shared: false });
                 }
             }
             e.vertices = out;
@@ -384,13 +518,35 @@ pub(super) fn build(members: &[Input]) -> Result<Arrangement, &'static str> {
             if i < segs {
                 let mut add = on_new[i].clone();
                 add.sort_by(|x, y| x.0.total_cmp(&y.0));
-                for (_, node) in add {
-                    vertices.push(V { node, bulge: None, inserted: true, shared: node < old_nodes });
+                let g = m.path[i].1;
+                let ends: Vec<f64> = add.iter().map(|x| x.0).chain([1.0]).collect();
+                if let Some(last) = vertices.last_mut() {
+                    last.bulge = g.map(|g| part_bulge(g, 0.0, ends[0]));
+                }
+                for (k, (t, node)) in add.into_iter().enumerate() {
+                    vertices.push(V { node, bulge: g.map(|g| part_bulge(g, t, ends[k + 1])), inserted: true, shared: node < old_nodes });
                 }
             }
         }
         let on_earlier = |node: usize| node < old_nodes || on_old.iter().any(|o| o.3 == node);
         let loose_start = !s.faces.is_empty() && !on_earlier(own[0]);
+        // Two pieces between the same two nodes (a line crossing an arc
+        // twice) are not written.
+        {
+            let len = vertices.len();
+            let count = if m.closed { len } else { len - 1 };
+            let mut pairs: Vec<(usize, usize)> = s.segments().iter().map(|&(a, b, _)| (a.min(b), a.max(b))).collect();
+            pairs.extend((0..count).map(|i| {
+                let (a, b) = (vertices[i].node, vertices[(i + 1) % len].node);
+                (a.min(b), a.max(b))
+            }));
+            let total = pairs.len();
+            pairs.sort();
+            pairs.dedup();
+            if pairs.len() != total {
+                return Err("two lines meet twice between the same points");
+            }
+        }
         s.edges.push(EdgeState { vertices, closed: m.closed, present: 0, loose_start });
         let me = s.edges.len() - 1;
         let total = segment_count(&s.edges[me]);
@@ -436,14 +592,20 @@ pub(super) fn build(members: &[Input]) -> Result<Arrangement, &'static str> {
                 continue;
             }
             let left = s.cycle(&segments, (b, a));
-            let (ar, al) = (s.area(&right), s.area(&left));
+            let (ar, al) = (s.area(&segments, &right), s.area(&segments, &left));
             let new_entry;
             if ar < 0.0 && al < 0.0 {
                 let k = s.faces[face].entries.iter().position(|e| right.contains(&e.half()) || left.contains(&e.half()));
                 match k.map(|k| (k, s.faces[face].entries[k])) {
                     Some((_, Entry::Live(h))) if left.contains(&h) => new_entry = (a, b),
                     Some((_, Entry::Live(_))) => new_entry = (b, a),
-                    Some((k, Entry::Void(_))) => {
+                    // The face keeps the part its old entry started in,
+                    // with the segment as its entry (PB01, PB01r, PB02).
+                    Some((k, Entry::Void(_, first))) if left.contains(&first) => {
+                        s.faces[face].entries[k] = Entry::Live((b, a));
+                        new_entry = (a, b);
+                    }
+                    Some((k, Entry::Void(..))) => {
                         s.faces[face].entries[k] = Entry::Live((a, b));
                         new_entry = (b, a);
                     }
@@ -454,8 +616,16 @@ pub(super) fn build(members: &[Input]) -> Result<Arrangement, &'static str> {
                 let (inner, outer, inner_half) = if ar < 0.0 { (&right, &left, (a, b)) } else { (&left, &right, (b, a)) };
                 for e in s.faces[face].entries.iter_mut() {
                     if inner.contains(&e.half()) {
-                        let from = e.half().0;
-                        let h = *outer.iter().find(|h| h.0 == from).ok_or("a loop has no outer side")?;
+                        // From the entry's node, or the first node after it
+                        // along the loop that the outer side passes (a line
+                        // hanging inside the loop).
+                        let at = inner.iter().position(|h| *h == e.half()).unwrap_or(0);
+                        let h = (0..inner.len())
+                            .find_map(|k| {
+                                let from = inner[(at + k) % inner.len()].0;
+                                outer.iter().find(|h| h.0 == from).copied()
+                            })
+                            .ok_or("a loop has no outer side")?;
                         *e = Entry::Live(h);
                     }
                 }
