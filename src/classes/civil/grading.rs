@@ -156,10 +156,9 @@ pub(super) fn criteria(data: &[u8], start: usize, end: usize, handles: &[u64]) -
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct GradingEntity {
-    /// Handle of the `AECC_PARCEL` the grading grades from. The two
-    /// gradings of DE_RE2012_Vorentwurf_5000_2027.dwg point at its two
-    /// parcels; drawings with a single parcel point at it from every
-    /// grading.
+    /// Handle of the `AECC_PARCEL` the grading grades from. In a drawing
+    /// with two parcels each grading points at its own parcel; drawings
+    /// with a single parcel point at it from every grading.
     pub parcel: u64,
     /// Handle of the `AECC_LABEL_COLLECTOR_STYLE` the record hard-points
     /// at — in the samples the label style of the parcels of the site

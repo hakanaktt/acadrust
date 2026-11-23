@@ -1259,7 +1259,7 @@ impl ArchEntityData {
         parcel_segments::geometry(&data, start, end, &graphic)
     }
 
-    /// The references a Civil 3D grading entity (`AECC_GRADING`) record
+    /// The references a grading entity (`AECC_GRADING`) record
     /// carries; see [`grading::GradingEntity`].
     pub fn grading(&self) -> Option<GradingEntity> {
         if self.dxf_name != "AECC_GRADING" {
