@@ -1715,3 +1715,4 @@ impl ArchObject {
         Some((raw, start, start + len))
     }
 }
+#[cfg(test)] mod zz_ic;
