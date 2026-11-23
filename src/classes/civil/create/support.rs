@@ -151,6 +151,8 @@ const CLASSES: &[Class] = &[
     Class { dxf: "AECC_ASSOC_DEPENDENCY", cpp: "AeccDbAssocDependency", module: "AeccvBase130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_ASSOC_DEPENDENCY_BODY", cpp: "AeccDbAssocDependencyBody", module: "AeccvBase130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_COGO_POINT", cpp: "AeccDbCogoPoint", module: "AeccLand130", proxy_flags: 0x33c, entity: true },
+    Class { dxf: "AECC_MASSHAULLINE", cpp: "AeccDbMassHaulLine", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
+    Class { dxf: "AECC_MASS_HAUL_VIEW", cpp: "AeccDbGraphMassHaulView", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
 ];
 
 pub(super) fn invalid(message: &str) -> DxfError {
