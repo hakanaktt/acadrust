@@ -9,6 +9,7 @@
 use super::assembly::{ensure_name_template, entity_common, run};
 use super::network_content::*;
 use super::network_families::{PIPES, STRUCTURES};
+use super::network_sizes::{PIPE_SIZES, SIZE_TEMPLATES};
 use super::profile::new_identifier;
 use super::support::*;
 use crate::classes::arch::ArchEntityData;
@@ -301,9 +302,18 @@ pub fn add_pipe_network(doc: &mut CadDocument, name: &str, layer: Option<&str>) 
 /// Writes a part with `write` (given its entity data, references and
 /// number in the network) and adds it to the network's lists.
 fn place(doc: &mut CadDocument, network: Handle, part: &Family, structure: bool, write: impl FnOnce(&mut CadDocument, EntityCommon, Vec<Ref>, usize) -> Result<Handle, DxfError>) -> Result<Handle, DxfError> {
+    place_with(doc, network, part, structure, None, write)
+}
+
+/// [`place`] with the part definition `definition` (the family's own one
+/// when `None`).
+fn place_with(doc: &mut CadDocument, network: Handle, part: &Family, structure: bool, definition: Option<Handle>, write: impl FnOnce(&mut CadDocument, EntityCommon, Vec<Ref>, usize) -> Result<Handle, DxfError>) -> Result<Handle, DxfError> {
     let mut net = read_network(doc, network).ok_or_else(|| invalid("not a pipe network"))?;
     let (style, rules) = family_style(doc, Handle::new(net.list), part.family).ok_or_else(|| invalid("the network's parts list lacks the part's family"))?;
-    let definition = ensure_definition(doc, part)?;
+    let definition = match definition {
+        Some(h) => h,
+        None => ensure_definition(doc, part)?,
+    };
     let common = entity_common(doc, Some(&net.common.layer))?;
     let refs = vec![
         hard_pointer(0),
@@ -443,6 +453,84 @@ pub fn add_pipe_of_family(doc: &mut CadDocument, network: Handle, name: &str, st
     write_pipe(doc, network, family, start, end)
 }
 
+/// A pipe size of the catalog (see [`add_pipe_of_size`]): its family's
+/// name, catalog row, size name, the template its part definition starts
+/// from (an index into `SIZE_TEMPLATES`; none for the family's own record)
+/// and the changes to that definition: (bit, bits removed, bits inserted,
+/// their hex).
+pub(super) struct PipeSize {
+    pub(super) family: &'static str,
+    pub(super) row: &'static str,
+    pub(super) name: &'static str,
+    pub(super) template: Option<usize>,
+    pub(super) patch: &'static [(u16, u16, u16, &'static str)],
+}
+
+/// A part definition a pipe size starts from where its family's own record
+/// lists its fields in another order (the application writes the sizes it
+/// adds to a family that way).
+pub(super) struct PipeSizeTemplate {
+    pub(super) family: &'static str,
+    pub(super) key_suffix: &'static str,
+    pub(super) definition: (usize, &'static str),
+    pub(super) definition_strings: &'static [&'static str],
+}
+
+/// The pipe sizes of the default catalog for the pipe family `family` (one
+/// of [`network_part_families`]), by the names the application gives them
+/// ("15 inch Corrugated Metal Pipe", "36 x 24 inch Concrete Box Culvert").
+pub fn network_pipe_sizes(family: &str) -> Vec<&'static str> {
+    PIPE_SIZES.iter().filter(|s| s.family == family).map(|s| s.name).collect()
+}
+
+/// Adds a pipe of the catalog size `size` (one of [`network_pipe_sizes`])
+/// from `start` to `end` to `network`, not connected to structures; the
+/// parts list need not hold the size. Its part definition, keyed by family
+/// id, catalog row and the family's flow and material fields:
+///
+/// ```text
+/// the family's definition with the size's changes: the size's values
+/// (inner diameter or width and height, wall thickness, body sizes) and
+/// the cross section geometry the catalog computes from them
+/// texts: the family's, with the row id and the size name
+/// ```
+pub fn add_pipe_of_size(doc: &mut CadDocument, network: Handle, size: &str, start: Vector3, end: Vector3) -> Result<Handle, DxfError> {
+    let sized = PIPE_SIZES.iter().find(|s| s.name == size).ok_or_else(|| invalid("no pipe size of that name"))?;
+    let family = PIPES.iter().find(|f| f.name == sized.family).ok_or_else(|| invalid("no pipe family of that name"))?;
+    let (suffix, (bits, hex), template_strings) = match sized.template {
+        Some(i) => {
+            let t = &SIZE_TEMPLATES[i];
+            (t.key_suffix, t.definition, t.definition_strings)
+        }
+        None => (&family.key[64..], family.definition, family.definition_strings),
+    };
+    let key = format!("{}{}{suffix}", family.family.replace('-', ""), sized.row.replace('-', ""));
+    let definition = patched(bits, hex, sized.patch);
+    let mut strings: Vec<&str> = template_strings.to_vec();
+    for (context, value) in [("Catalog_BasicTableRowID", sized.row), ("Catalog_PartSizeName", sized.name)] {
+        let i = strings.iter().position(|s| *s == context).ok_or_else(|| invalid("the family's definition lacks a size field"))?;
+        strings[i + 2] = value;
+    }
+    let definition = ensure_definition_with(doc, &key, (definition.0, &definition.1), &strings, |_| Ok(Vec::new()))?;
+    place_with(doc, network, family, false, Some(definition), |doc, common, refs, n| write_pipe_record(doc, family, common, refs, n, start, end))
+}
+
+/// The `bits` long run `hex` with `patch` applied (in bit order): at each
+/// bit, the bits removed replaced by those inserted.
+fn patched(bits: usize, hex: &str, patch: &[(u16, u16, u16, &str)]) -> (usize, String) {
+    let bit = |h: &str, i: usize| h.as_bytes().get(i / 4).and_then(|c| (*c as char).to_digit(16)).is_some_and(|v| v >> (3 - i % 4) & 1 == 1);
+    let mut out: Vec<bool> = Vec::with_capacity(bits + 512);
+    let mut at = 0;
+    for (pos, removed, inserted, ins) in patch {
+        out.extend((at..*pos as usize).map(|i| bit(hex, i)));
+        out.extend((0..*inserted as usize).map(|i| bit(ins, i)));
+        at = *pos as usize + *removed as usize;
+    }
+    out.extend((at..bits).map(|i| bit(hex, i)));
+    let hex = out.chunks(4).map(|c| char::from_digit(c.iter().enumerate().fold(0, |v, (i, b)| v | (u32::from(*b) << (3 - i))), 16).unwrap_or('0')).collect();
+    (out.len(), hex)
+}
+
 /// Adds a 12 inch corrugated metal pipe from `start` to `end` to
 /// `network`, not connected to structures. The pipe record (`AECC_PIPE`):
 ///
@@ -461,7 +549,11 @@ fn write_pipe(doc: &mut CadDocument, network: Handle, family: &Family, start: Ve
     if ![start.x, start.y, start.z, end.x, end.y, end.z].iter().all(|v| v.is_finite()) || start.distance(&end) < 1e-9 {
         return Err(invalid("a pipe needs two distinct finite ends"));
     }
-    place(doc, network, family, false, |doc, common, refs, n| {
+    place(doc, network, family, false, |doc, common, refs, n| write_pipe_record(doc, family, common, refs, n, start, end))
+}
+
+fn write_pipe_record(doc: &mut CadDocument, family: &Family, common: EntityCommon, refs: Vec<Ref>, n: usize, start: Vector3, end: Vector3) -> Result<Handle, DxfError> {
+    {
         let id = new_identifier(common.handle.value());
         let mut strings = texts(PIPE_STRINGS);
         strings[2] = family.name.to_string();
@@ -481,7 +573,7 @@ fn write_pipe(doc: &mut CadDocument, network: Handle, family: &Family, start: Ve
             },
             Body { refs, strings },
         )
-    })
+    }
 }
 
 /// A part's identifier: a version-4 GUID (Windows byte order), then the
@@ -774,5 +866,43 @@ mod tests {
         let blocks: Vec<u64> = def.typed_handles().iter().map(|r| r.0).filter(|h| back.block_records.iter().any(|b| b.handle.value() == *h)).collect();
         assert_eq!(blocks.len(), 2);
         assert_ne!(blocks[0], blocks[1]);
+    }
+
+    #[test]
+    fn pipes_of_catalog_sizes_get_their_own_part_definitions() {
+        // A patch replaces, removes and inserts bits in order.
+        assert_eq!(patched(8, "a5", &[(1, 2, 1, "8"), (6, 0, 4, "f")]), (11, "cfa".to_string()));
+        let v = Vector3::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let n = add_pipe_network(&mut doc, "N", None).unwrap();
+        let sizes = network_pipe_sizes("Corrugated Metal Pipe");
+        assert_eq!(sizes.len(), 25);
+        assert!(network_pipe_sizes("Concrete Box Culvert").contains(&"36 x 24 inch Concrete Box Culvert"));
+        assert!(add_pipe_of_size(&mut doc, n, "13 inch Corrugated Metal Pipe", v(0.0, 0.0, 0.0), v(1.0, 0.0, 0.0)).is_err());
+        let p = add_pipe_of_size(&mut doc, n, "15 inch Corrugated Metal Pipe", v(0.0, 0.0, -5.0), v(100.0, 0.0, -6.0)).unwrap();
+        let q = add_pipe_of_size(&mut doc, n, "15 inch Corrugated Metal Pipe", v(0.0, 20.0, -5.0), v(100.0, 20.0, -6.0)).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-pipe-sizes-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        // Both pipes share the size's definition, keyed by family and row.
+        let defs = match back.named_objects_dictionary().and_then(|d| d.get(PART_DEFS)).and_then(|h| back.objects.get(&h)) {
+            Some(ObjectType::Dictionary(d)) => d.clone(),
+            _ => panic!("no part definitions"),
+        };
+        let key = "481DD6EFB926428E99B7A5BE30A17E598AEAAAC3CFFE4D85B96403680E46A993";
+        let def = defs.get(key).unwrap();
+        for pipe in [p, q] {
+            assert_eq!(Handle::new(arch_entity(&back, pipe).unwrap().typed_handles()[4].0), def);
+        }
+        let texts = object(&back, def).unwrap().decode().strings;
+        assert!(texts.iter().any(|t| t == "15 inch Corrugated Metal Pipe"));
+        assert!(texts.iter().any(|t| t == "8AEAAAC3-CFFE-4D85-B964-03680E46A993"));
+        // The inner diameter field (a raw double 154 bits in) holds the
+        // size's 15 inches.
+        let (data, start, _) = object(&back, def).unwrap().main_stream().unwrap();
+        let bytes: Vec<u8> = (0..8).map(|k| (0..8).fold(0u8, |b, i| b << 1 | (data[(start + 154 + 8 * k + i) / 8] >> (7 - (start + 154 + 8 * k + i) % 8) & 1))).collect();
+        assert_eq!(f64::from_le_bytes(bytes.try_into().unwrap()), 15.0);
     }
 }

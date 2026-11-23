@@ -3257,6 +3257,31 @@ null structure's record does not stand for another family: N11 with the
 cylindrical and rectangular structures' records replaced by the null
 structure's (E-N60) does not finish opening.
 
+### Other pipe sizes
+
+`add_pipe_of_size` places a pipe of any size of the default catalog's pipe
+families (`network_pipe_sizes`: 258 sizes, 25 corrugated metal, 23
+concrete, 14 corrugated HDPE, 19 ductile iron, 18 HDPE, 19 PVC pipes, 12
+egg-shaped, 21 elliptical, 12 arch, 24 horizontal elliptical culverts and
+71 box culverts), whether or not the parts list holds the size. A size's
+part definition is keyed by the family id, the size's catalog row id and
+the family's flow and material fields (`ACMan0.013`, ...); its texts are
+the family's with the row id and the size name; its record is the
+family's with the size's values in place: the inner diameter (or width
+and height), the wall thickness, the body sizes and the cross section
+the catalog computes from them (radius, outline points, in drawing
+units, with the computation's rounding). The writer keeps, per size, the
+bits that differ from its family's definition (sample GZ02: every size
+added to WT01's parts list by the API, a pipe of each). Where GZ02's
+records list a family's fields in another order than the record the
+writer places for the family's own size (the concrete pipe and culvert
+families; for corrugated HDPE the sizes the API added), the sizes start
+from GZ02's record.
+
+| written | result |
+|---|---|
+| WT01 with a pipe of every size (E-GZ1); the same in a new drawing (E-GZ2) | AUDIT 0; the 258 pipes listed with their family and size names, inner diameters and extents as GZ02's |
+
 Structure definitions other than the null structure's refer to two
 blocks, each with the body (an anonymous `*U` block with one solid). The
 application's bodies are the catalog's generated solids; the writer
@@ -3584,7 +3609,7 @@ taken from the records and checked bit for bit against them.
 | sections of a TIN surface (unsampled) | yes (geometry once sampled) | yes (§3j) | yes (§3j) | the application samples the source | corridor sources, lines added after sampling |
 | section views of a line (default style, unsampled section) | yes (frame) | yes, with the drawing's section view style or the default one (§3j, §2c) | yes (§3j, §2c) | not needed | sampled sections, several sections |
 | intersections of two crossing roads and tee junctions, with their offset alignments, locking and intersection actions and location label | yes (stations, angles) | yes, with the drawing's intersection style or the default one (§3k, §2c) | yes (§3k, §2c) | not needed | curb returns, corridor regions, roads on a site |
-| gravity pipe networks: every structure and pipe family of the default parts list (its one size each), connections | partly (part positions, pipe ends, connector counts, sizes of older part definitions) | yes (a new drawing gets the default parts list and styles, §3m) | yes (§3m) | not needed (the application recomputes outlines, lengths and extents) | sizes the default parts list does not hold, the catalog's body solids |
+| gravity pipe networks: every structure and pipe family of the default parts list (its one size each), connections | partly (part positions, pipe ends, connector counts, sizes of older part definitions) | yes (a new drawing gets the default parts list and styles, §3m) | yes (§3m) | not needed (the application recomputes outlines, lengths and extents) | structure sizes the default parts list does not hold, the catalog's body solids |
 | pressure networks: every pipe, elbow, tee, cross and gate valve size of the default catalog (straight and curved pipes), connections | yes (ports: positions, directions, joint sizes, connections; pipe ends and bulge, part positions and rotations) | yes (a new drawing gets the default pressure part list and styles, §3n) | yes (§3n) | not needed | part kinds of other catalogs, the catalog's body solids |
 | gradings, mass haul | partly (grading criteria, mass haul line and view frame) | no | — | — | no controlled samples (§6a) |
 
@@ -3675,7 +3700,8 @@ Corridors are listed in §3i-a.
 | intersections | the offset alignments, profile locking action, intersection action and location label the command makes (siteless roads) | yes | yes | §3k (offset alignments and actions of the command) |
 | intersections | curb returns, corridor regions, roads on a site (offsets in the site's topology) | yes (records) | no | curb return records not decoded (hand-off notes); site topology of offset alignments not written |
 | gravity pipe networks | every family of the default parts list (one size each), connections | partly | yes | §3m |
-| gravity pipe networks | sizes the parts list does not hold, the catalog's body solids | partly | no | §3m |
+| gravity pipe networks | every pipe size of the default catalog, whether the parts list holds it or not | yes | yes | §3m (other pipe sizes) |
+| gravity pipe networks | structure sizes other than the parts list's, the catalog's body solids | partly | no | §3m |
 | pressure networks | every size of the default catalog (straight and curved pipes, elbows, tees, crosses, gate valves), connections | yes | yes | §3n |
 | pressure networks | parts of other catalogs | partly | no | §3n |
 | gradings | criteria, groups, gradings | partly (criteria) | no | §6a |
