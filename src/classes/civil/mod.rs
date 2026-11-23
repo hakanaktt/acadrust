@@ -772,7 +772,15 @@ impl ArchEntityData {
         if let Some(reference) = strings.iter().find_map(|s| s.rsplit_once(".dwg:")) {
             return Some(reference.1.to_string());
         }
-        strings.get(3).filter(|s| !s.is_empty()).cloned()
+        // The application stores a created-by name before the alignment's
+        // own (2027 samples: "AeccImpAlignment", "", "", "Administrator",
+        // "Centerline (1)"); records this crate writes keep the name at
+        // index 3. Prefer the first non-empty string from index 4, then 3.
+        strings
+            .get(4)
+            .filter(|s| !s.is_empty())
+            .cloned()
+            .or_else(|| strings.get(3).filter(|s| !s.is_empty()).cloned())
     }
 
     /// The profile's name: the string after its label point names, which
