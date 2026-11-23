@@ -49,7 +49,6 @@ use crate::types::Color;
 #[derive(Clone, Copy, PartialEq)]
 enum K {
     B,
-    Bs,
     Bl,
     Bd,
     Cmc,
@@ -61,7 +60,6 @@ enum K {
 #[derive(Clone, Debug, PartialEq)]
 enum V {
     B(bool),
-    Bs(i16),
     Bl(i32),
     Bd(f64),
     /// Color word of a CMC.
@@ -132,7 +130,10 @@ const DRAGGED: [(&str, K); 13] = [
     ("dragged_text_height", K::Bd),
     ("dragged_border_visible", K::B),
     ("dragged_gap", K::Bd),
-    ("dragged_border_type", K::Bs),
+    // A BL: an older release leaves values of the unset dragged state in
+    // it that do not fit a BS (23 collectors of five older drawings did
+    // not read as a BS).
+    ("dragged_border_type", K::Bl),
     ("dragged_background_mask", K::B),
     ("dragged_leader_justification", K::B),
     ("dragged_color", K::Cmc),
@@ -291,7 +292,6 @@ fn bit_string(data: &[u8], from: usize, to: usize) -> String {
 fn read_value(b: &mut Bits, k: K) -> Option<V> {
     Some(match k {
         K::B => V::B(b.bit()?),
-        K::Bs => V::Bs(b.bit_short()?),
         K::Bl => V::Bl(b.bit_long()?),
         K::Bd => V::Bd(b.bit_double()?),
         K::Cmc => {
@@ -401,7 +401,6 @@ impl LabelFields {
             }
             match &f.value {
                 V::B(v) => w.write_bit(*v),
-                V::Bs(v) => w.write_bit_short(*v),
                 V::Bl(v) => w.write_bit_long(*v),
                 V::Bd(v) => w.write_bit_double(*v),
                 V::Cmc(word) => {
@@ -437,7 +436,6 @@ impl LabelFields {
     fn long(&self, name: &str) -> Option<i32> {
         match self.get(name)? {
             V::Bl(v) => Some(*v),
-            V::Bs(v) => Some(i32::from(*v)),
             _ => None,
         }
     }
@@ -755,7 +753,7 @@ impl LabelFields {
         self.put("mask_c", D_MAX_WIDTH, d.max_text_width, |f, v| f.set("dragged_max_width", V::Bd(v)));
         self.put("mask_c", D_GAP, d.gap, |f, v| f.set("dragged_gap", V::Bd(v)));
         self.put("mask_c", D_BORDER_VISIBLE, d.border_visible, |f, v| f.set("dragged_border_visible", V::B(v)));
-        self.put("mask_c", D_BORDER_TYPE, d.border_type, |f, v| f.set("dragged_border_type", V::Bs(v)));
+        self.put("mask_c", D_BORDER_TYPE, d.border_type, |f, v| f.set("dragged_border_type", V::Bl(i32::from(v))));
         self.put("mask_c", D_BACKGROUND, d.background_mask, |f, v| f.set("dragged_background_mask", V::B(v)));
         self.put("mask_c", D_JUSTIFICATION, d.leader_justification, |f, v| f.set("dragged_leader_justification", V::B(v)));
         self.put("mask_b", LEADER_ATTACHMENT, d.leader_attachment, |f, v| f.set("leader_attachment", V::Bl(v)));

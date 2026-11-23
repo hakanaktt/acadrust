@@ -240,7 +240,7 @@ dragged state, a text component with its text:
 
 ```text
 collector:  B, B, B, B stacked, BD text height, B border visible, BD gap,
-            BS border type, B background mask, B leader justification,
+            BL border type, B background mask, B leader justification,
             CMC color, BL lineweight, BL n,
             n x { BL, BD, BL, 9 bits, BL, BL, BL, BL, B, BL },
             BL, BD max text width
@@ -361,11 +361,13 @@ Samples: LS001-LS040 (one setting of the default point label style
 changed per save), LT001-LT035 (bits back to their defaults, colors,
 linetypes, layer, text style, arrowhead style, anchor component and
 point, enumerations stepped twice). Every collector and text component of the application's style tree reads
-(631 records, HB0, N02, N07, P10, LC00). Collectors of drawings saved by
-older releases (texts naming an older user, e.g. pn2, q7) fail in the
-dragged state in 23 of about 300: their text height, gap and border type
-fields hold 32-bit words that look like memory addresses (0x1FFF18A8),
-not values. E-NL1 (N02 with a copy of each gravity network part label style:
+(631 records, HB0, N02, N07, P10, LC00). The dragged state's border type
+is a `BL`: collectors of drawings saved by older releases (texts naming an
+older user) leave their unset dragged values as stored memory (the text
+height and gap as doubles of no meaning, the border type as 32-bit words
+like 0x1FFF18A8); read as a `BS` 11 to 26 collectors of each of five such
+drawings failed, as a `BL` every collector of them reads (396, 397, 524,
+553 and 1244 records), as do the application's current ones. E-NL1 (N02 with a copy of each gravity network part label style:
 pipe, structure, section pipe and crossing profile pipe, and of the
 pressure pipe label style; dragged text height and border, orientation,
 leader color, the first component's height changed and a text component
@@ -3594,7 +3596,7 @@ Corridors are listed in §3i-a.
 | gradings | criteria, groups, gradings | partly (criteria) | no | §6a |
 | mass haul | line and view | partly | no | §6a |
 | label styles | the defaults of a new drawing (§2b) | partly | yes | §2b |
-| label styles | settings: visibility, layer, text style, orientation, insert option, plan readability, leader, dragged state; text components' contents, height, offsets, angle, attachment, anchor, color, lineweight, border | yes (every record of the application's style tree; 23 collectors of drawings of older releases do not read) | yes, as copies of a drawing's label style (§2d) | §2d |
+| label styles | settings: visibility, layer, text style, orientation, insert option, plan readability, leader, dragged state; text components' contents, height, offsets, angle, attachment, anchor, color, lineweight, border | yes (every record of the application's style tree and of drawings of older releases) | yes, as copies of a drawing's label style (§2d) | §2d |
 | label styles | pipe, structure and pressure part label styles (plan, profile, section, crossing profile) | yes | yes, as copies (§2d, E-NL1) | §2d |
 | label styles | adding and removing text components | yes | yes (§2d) | §2d |
 | label styles | line, block, tick and direction arrow components: settings, adding and removing them | yes | yes, in copies (§2d) | §2d |
