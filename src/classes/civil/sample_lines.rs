@@ -63,8 +63,9 @@ pub struct SampleLines {
 /// A section view group plot of a sample line group (records of the
 /// `0x10025F04` schema whose lines are listed in the record, as acadrust
 /// and the application write them): its index (1 up), the point it was
-/// placed at and its number of views, with the values the record holds
-/// besides (the same in every sample).
+/// placed at and a count (3 in every sample, from 2 to 10 views and one to
+/// three section sources; not the number of views), with the values the
+/// record holds besides (the same in every sample).
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SectionViewGroupPlot {
@@ -72,7 +73,7 @@ pub struct SectionViewGroupPlot {
     pub origin: crate::types::Vector3,
     pub views: i32,
     /// The eight BDs after the point (0), the three values (-30, 30, 40),
-    /// the 16 bytes after the view count (0) and the 52 bits after them.
+    /// the 16 bytes after the count (0) and the 52 bits after them.
     pub extra: [f64; 8],
     pub values: [f64; 3],
     pub flags: [bool; 2],
@@ -85,7 +86,7 @@ pub struct SectionViewGroupPlot {
 /// ```text
 /// (after the keys) 155 bits, BL lines, BL n sources {BL 1, BL 0,
 /// 128 bits, BL, 2 bits}, BL 0, BL p plots {BL index, 3BD point, 8 BD,
-/// B, BD, BD, B, BD, BL views, 16 bytes, 52 bits}
+/// B, BD, BD, B, BD, BL count, 16 bytes, 52 bits}
 /// ```
 pub(super) fn group_plots(data: &[u8], start: usize, end: usize) -> Option<Vec<SectionViewGroupPlot>> {
     let mut bits = Bits::new(data, start, end);

@@ -2690,8 +2690,13 @@ group, two lines (3/33 and 10/10), their sections and three views written
 by acadrust (E-SV2), the drawings open with AUDIT 0 errors and the API
 lists the views with the written locations, the lines' offsets as their
 offset range and the extents of the computed range ((170, 0) to (260, 40)
-for -30..60 at (200, 0)). Views of sampled sections, of lines with several
-sections are not written. A drawing without the section or section view
+for -30..60 at (200, 0)). A line with a section of each of several
+sources gives a view that lists them all (`BL n` sections, one `10000`
+each and their references in the order the line lists them; SM01: two
+TIN surfaces, views of lines 25/15 and 10/30): written for SM00's lines
+the views equal SM01's bit for bit, and E-SM1 opens with AUDIT 0 errors
+with the API listing two sections in each view and the offsets as
+written. Views of sampled sections are not written. A drawing without the section or section view
 styles gets the defaults (§2c).
 
 ### Section view group plots
@@ -2717,8 +2722,9 @@ WX21 to WX23: two plots of one group):
   rows.
 - The group record: after the section sources, `2 bits 10`, `BL p`
   plots, each `BL index, 3BD point, 8 x BD 0, B 0, BD -30, BD 30, B 0,
-  BD 40, BL views, 16 zero bytes` and a constant 52-bit run (the values
-  -30, 30 and 40 are the same in every sample); per plot the references
+  BD 40, BL 3, 16 zero bytes` and a constant 52-bit run (the values
+  -30, 30 and 40 and the 3 are the same in every sample: 2 to 10 views,
+  one to three section sources; the 3 is not the view count); per plot the references
   `group plot style (hard), soft 0, hard 0` after the sources' and three
   empty texts after theirs. Each line lists its view.
 - A drawing without a group plot style gets the default (style tree key
@@ -2730,7 +2736,10 @@ The root settings node's lists of the drawing's objects are not written
 (as for single views). The group records of WX21 to WX23 and the views
 of WG01 are reproduced bit for bit from the plot count on. E-WG3 (three
 lines, two plots) and E-WG7 (seven lines of seven reaches) open with
-AUDIT 0 errors; the API lists the views in "Section View Group - 1" and
+AUDIT 0 errors (they were written with the view count in place of the 3,
+which the application accepts); E-SM2 and E-SM3 (two and four lines with
+sections of two surfaces) equal SM02's and SM13a's group records and
+views apart from the group's stamp and open with AUDIT 0 errors; the API lists the views in "Section View Group - 1" and
 "- 2" with the written locations, the same as the application's WG11a.
 The reader gives a group's plots (`section_view_group_plots()`) and
 reads a view's section count as a `BL` (a view of a line without a
@@ -3575,7 +3584,9 @@ Corridors are listed in §3i-a.
 | sections | of a TIN surface (unsampled) | yes (geometry once sampled) | yes | §3j |
 | section views | one view of a line, default style | yes (frame) | yes | §3j |
 | section views | group plots with the default group plot style, one or more per group | yes | yes | §3j (section view group plots) |
-| section views | group plots with other group plot styles or plot settings (pages, sheets), several sections in a view, views of sampled sections, other styles | partly | no | not sampled |
+| section views | several sections in a view (a section of each source), in single views and group plots | yes | yes | §3j (section views; SM01, SM02, SM13a) |
+| section views | group plots with other group plot styles | partly | no | through the programming interface a plot given another group plot style keeps the default placement after `UpdateLayout` (a start corner of upper left, GS02) or never returns (columns, GS01); no sample of the application's own placement |
+| section views | plot settings (pages, sheets), views of sampled sections, other section view styles | partly | no | not sampled (a sampled section needs the surface's section points, other styles a section view style writer) |
 | assemblies | groups of package subassemblies (offsets, attachments) | partly | yes | §3l, §3i |
 | subassemblies | packages (`pkt`) written by acadrust | yes | yes | §3l |
 | subassemblies | stock subassemblies of the application's library | yes (parameters) | no | their texts carry the library path of the product |
