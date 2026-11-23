@@ -38,6 +38,9 @@ const GROUP_TEXTS: [&str; 7] = ["", "", "0", "0", "", "", ""];
 /// WX23 and WG01 to WG12): eight `BD 0`, `B 0`, `BD -30`, `BD 30`, `B 0`,
 /// `BD 40`; then after its count (3) 16 zero bytes and `PLOT_TAIL`.
 const PLOT_VALUES: [f64; 3] = [-30.0, 30.0, 40.0];
+/// The count a group plot stores after `PLOT_VALUES`: 3 whatever its views
+/// and sources (WG01 to WG12, SM02, SM10a to SM13a).
+pub(super) const PLOT_COUNT: i32 = 3;
 const PLOT_TAIL: &str = "0100001001010101010100100000001011010101010101010101";
 
 /// A group plot of a group's section views: its index (1 up), the group
@@ -48,7 +51,7 @@ pub(super) struct Plot {
     pub index: i32,
     pub style: u64,
     pub origin: crate::types::Vector3,
-    pub views: i32,
+    pub count: i32,
 }
 
 pub(super) fn arch(doc: &CadDocument, h: Handle) -> Option<&ArchEntityData> {
@@ -137,7 +140,7 @@ pub(super) fn write_group(doc: &mut CadDocument, g: &Group) -> Result<Handle, Dx
                 w.write_bit_double(PLOT_VALUES[1]);
                 w.write_bit(false);
                 w.write_bit_double(PLOT_VALUES[2]);
-                w.write_bit_long(p.views);
+                w.write_bit_long(p.count);
                 w.write_bytes(&[0; 16]);
                 bits(w, PLOT_TAIL);
             }
@@ -311,7 +314,7 @@ fn plots_of(a: &ArchEntityData) -> Option<Vec<(i32, crate::types::Vector3, i32)>
     let tail = u64::from_str_radix(PLOT_TAIL, 2).ok()?;
     a.section_view_group_plots()?
         .into_iter()
-        .map(|p| (p.extra == [0.0; 8] && p.values == PLOT_VALUES && p.flags == [false; 2] && p.id == [0; 16] && p.tail == tail).then_some((p.index, p.origin, p.views)))
+        .map(|p| (p.extra == [0.0; 8] && p.values == PLOT_VALUES && p.flags == [false; 2] && p.id == [0; 16] && p.tail == tail).then_some((p.index, p.origin, p.count)))
         .collect()
 }
 
@@ -345,7 +348,7 @@ pub(super) fn read_group(doc: &CadDocument, group: Handle) -> Option<Group> {
         alignment: refs[2].0,
         lines: middle[..n].to_vec(),
         sources,
-        plots: plots.iter().zip(plot_refs.chunks(3)).map(|((index, origin, views), r)| Plot { index: *index, style: r[0], origin: *origin, views: *views }).collect(),
+        plots: plots.iter().zip(plot_refs.chunks(3)).map(|((index, origin, count), r)| Plot { index: *index, style: r[0], origin: *origin, count: *count }).collect(),
         line_style: refs[refs.len() - 2].0,
         label_style: refs[refs.len() - 1].0,
     })

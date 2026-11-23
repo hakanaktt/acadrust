@@ -71,7 +71,9 @@ pub struct SampleLines {
 pub struct SectionViewGroupPlot {
     pub index: i32,
     pub origin: crate::types::Vector3,
-    pub views: i32,
+    /// The count after the values: 3 in every sample, not the number of
+    /// views.
+    pub count: i32,
     /// The eight BDs after the point (0), the three values (-30, 30, 40),
     /// the 16 bytes after the count (0) and the 52 bits after them.
     pub extra: [f64; 8],
@@ -121,7 +123,7 @@ pub(super) fn group_plots(data: &[u8], start: usize, end: usize) -> Option<Vec<S
             let (v0, v1) = (bits.bit_double()?, bits.bit_double()?);
             let b = bits.bit()?;
             let values = [v0, v1, bits.bit_double()?];
-            let views = bits.bit_long()?;
+            let count = bits.bit_long()?;
             let mut id = [0u8; 16];
             for x in &mut id {
                 *x = bits.bits_value(8)?;
@@ -130,7 +132,7 @@ pub(super) fn group_plots(data: &[u8], start: usize, end: usize) -> Option<Vec<S
             for _ in 0..52 {
                 tail = tail << 1 | u64::from(bits.bits_value(1)?);
             }
-            Some(SectionViewGroupPlot { index, origin, views, extra, values, flags: [a, b], id, tail })
+            Some(SectionViewGroupPlot { index, origin, count, extra, values, flags: [a, b], id, tail })
         })
         .collect()
 }

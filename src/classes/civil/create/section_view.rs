@@ -326,9 +326,7 @@ pub fn add_section_view_group(doc: &mut CadDocument, group: Handle, at: Vector2,
         write_line(doc, l)?;
         views.push(handle);
     }
-    // The plot's count is 3 whatever its views and sources (WG01 to WG12,
-    // SM02, SM10a to SM13a: 2 to 10 views, one to three sources).
-    g.plots.push(Plot { index, style: plot_style, origin: crate::types::Vector3::new(at.x, at.y, 0.0), views: 3 });
+    g.plots.push(Plot { index, style: plot_style, origin: crate::types::Vector3::new(at.x, at.y, 0.0), count: super::sample_lines::PLOT_COUNT });
     write_group(doc, &g)?;
     Ok(views)
 }
@@ -398,7 +396,7 @@ mod tests {
         assert_eq!(origins, vec![v(250.5, 0.5), v(342.5, 0.5), v(250.5, 43.0)]);
         assert_eq!(arch(&back, second[0]).unwrap().decode().strings[2], "0+25.00 (4)");
         let plots = arch(&back, g).unwrap().section_view_group_plots().unwrap();
-        assert_eq!(plots.iter().map(|p| (p.index, p.origin.y, p.views)).collect::<Vec<_>>(), vec![(1, 0.0, 3), (2, -200.0, 3)]);
+        assert_eq!(plots.iter().map(|p| (p.index, p.origin.y, p.count)).collect::<Vec<_>>(), vec![(1, 0.0, 3), (2, -200.0, 3)]);
         assert_eq!(read_line(&back, Handle::new(read_group(&back, g).unwrap().lines[0])).unwrap().views.len(), 2);
         assert_eq!(station_text(125.5), "1+25.50");
     }
@@ -429,9 +427,12 @@ mod tests {
         let back = DwgReader::from_file(&path).unwrap().read().unwrap();
         let _ = std::fs::remove_file(&path);
         let refs: Vec<u64> = arch(&back, view).unwrap().typed_handles().iter().map(|r| r.0).collect();
-        assert!(refs.contains(&a[0].value()) && refs.contains(&b[0].value()));
+        // The view lists the line's sections in the line's order.
+        let at = |h: Handle| refs.iter().position(|r| *r == h.value()).expect("section listed");
+        assert!(at(a[0]) < at(b[0]));
+        assert_eq!(read_line(&back, l1).unwrap().sections, vec![a[0].value(), b[0].value()]);
         assert_eq!(arch(&back, view).unwrap().section_view_frame().unwrap().origin, v(200.0, 0.0));
-        assert_eq!(arch(&back, g).unwrap().section_view_group_plots().unwrap()[0].views, 3);
+        assert_eq!(arch(&back, g).unwrap().section_view_group_plots().unwrap()[0].count, 3);
         assert_eq!(read_line(&back, l1).unwrap().views.len(), 2);
     }
 }
