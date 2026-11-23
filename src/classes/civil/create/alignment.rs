@@ -887,7 +887,9 @@ fn write_intersection_connected(w: &mut DwgMergedWriter, c: &Connected, x: &Inte
 /// along the incoming road's offset line `offsets[0]` (run against the
 /// road's stationing when `in_backward`) into the outgoing road's offset
 /// line `offsets[1]` (run along its stationing when `forward`), a line of
-/// one unit before the free arc of `radius` and one after it. `corner` is
+/// `lines[0]` units before the free arc of `radius` and `lines[1]` after
+/// it; with `profile` (handle and identifier) it lists that curb return
+/// profile. `corner` is
 /// where the offset lines meet, `arms` the in and out arms' directions
 /// (away from the crossing), `stations` maps a point to its station on
 /// each road. Offsets and overlaps in the block are 0 (the lines are the
@@ -908,6 +910,8 @@ pub(super) fn add_intersection_curb_return(
     in_backward: bool,
     forward: bool,
     radius: f64,
+    lines: [f64; 2],
+    profile: Option<(Handle, [u8; 16])>,
     layer: Option<&str>,
 ) -> Result<Handle, DxfError> {
     let unit = |v: Vector2| v * (1.0 / v.length());
@@ -921,16 +925,16 @@ pub(super) fn add_intersection_curb_return(
     let right = turn < 0.0;
     let tangent = radius * (sweep / 2.0).tan();
     let (t_in, t_out) = (corner + a_in * tangent, corner + a_out * tangent);
-    let (start, end) = (corner + a_in * (tangent + 1.0), corner + a_out * (tangent + 1.0));
-    let arc_end = 1.0 + radius * sweep;
-    let total = arc_end + 1.0;
+    let (start, end) = (corner + a_in * (tangent + lines[0]), corner + a_out * (tangent + lines[1]));
+    let arc_end = lines[0] + radius * sweep;
+    let total = arc_end + lines[1];
     // A side's region: the roads' stations of its line, and the own
     // stations there kept a thousandth of the line in from its ends.
     let side = |road: usize, (p, own_p): (Vector2, f64), (q, own_q): (Vector2, f64)| {
         let (sp, sq) = (stations(road, p), stations(road, q));
         if sp <= sq { [0.0, sp, sq, own_p, own_q] } else { [0.0, sq, sp, own_q, own_p] }
     };
-    let region_in = side(0, (start, 0.001), (t_in, 0.999));
+    let region_in = side(0, (start, 0.001), (t_in, lines[0] - 0.001));
     let region_out = side(1, (t_out, arc_end + 0.001), (end, total - 0.001));
     let mut values = [0.0; 31];
     values[2..7].copy_from_slice(&region_in);
@@ -970,7 +974,12 @@ pub(super) fn add_intersection_curb_return(
     write_companion(doc, companion, node, tag, handle, &path, &label, false)?;
     add_node_child(doc, node, tag as i32, companion, &label)?;
     let timing = Timing { connected: Some(connected), ..Timing::default() };
-    write_alignment_of(doc, common, name, &elements, style, companion.value(), 1, None, &[], &[], &[], &[], None, AlignmentKind::Centerline, &timing)
+    // Its curb return profile, tied to its start by its identifier.
+    let (profiles, anchors) = match profile {
+        Some((h, id)) => (vec![h.value()], vec![anchor_at(&elements, 0.0, PROFILE_ANCHOR, id, 0.0).ok_or_else(|| invalid("the curb return's start cannot be placed"))?]),
+        None => (Vec::new(), Vec::new()),
+    };
+    write_alignment_of(doc, common, name, &elements, style, companion.value(), 1, None, &profiles, &anchors, &[], &[], None, AlignmentKind::Centerline, &timing)
 }
 
 /// The class key of the superelevation type (2 superelevation).
@@ -1883,7 +1892,9 @@ fn write_offset_alignment(doc: &mut CadDocument, parent: Handle, name: &str, off
     }
     let spans = spans(&written.elements).ok_or_else(|| invalid("the parent cannot be solved"))?;
     let total: f64 = spans.iter().map(|(e, _, p)| piece_lengths(e, p).iter().sum::<f64>()).sum();
-    let (s0, s1) = range.unwrap_or((0.0, total));
+    // An intersection's offsets are cut to the parent's ends (a tee
+    // junction's road ending or starting at the intersection, WC50).
+    let (s0, s1) = range.map_or((0.0, total), |(a, b)| if kept.1 { (a.max(0.0), b.min(total)) } else { (a, b) });
     let tol = 1e-9 * total.max(1.0);
     if !(s0.is_finite() && s1.is_finite() && s0 >= -tol && s1 <= total + tol && s1 - s0 > tol) {
         return Err(invalid("the range must run forward within the parent's stations"));
@@ -2008,8 +2019,10 @@ fn write_offset_alignment(doc: &mut CadDocument, parent: Handle, name: &str, off
     };
     let mut path: Vec<PathPoint> = pieces.iter().map(|p| (starts_of(&p.2).0, p.3)).collect();
     path.push((starts_of(&pieces.last().ok_or_else(|| invalid("the range holds no element"))?.2).1, None));
-    // Own stations of the pieces' ends.
-    let mut own = vec![s0];
+    // Own stations of the pieces' ends. An intersection's clipped offset
+    // alignment starts at 0 (WC40), any other at its parent's station.
+    let clipped = kept.1 && range.is_some();
+    let mut own = vec![if clipped { 0.0 } else { s0 }];
     for p in &pieces {
         own.push(own[own.len() - 1] + p.4);
     }
@@ -2062,16 +2075,35 @@ fn write_offset_alignment(doc: &mut CadDocument, parent: Handle, name: &str, off
         .iter()
         .map(|(s, g)| anchor_at(&written.elements, 0.0, OFFSET_END_ANCHOR, *g, *s).ok_or_else(|| invalid("an anchor cannot be placed on the parent")))
         .collect::<Result<Vec<_>, _>>()?;
-    // Its own anchor lies at the start of its first element.
-    let (first_start, first_end) = starts_of(&pieces[0].2);
+    // Its own anchor lies at the start of its first element; a clipped
+    // intersection offset's anchor names the whole parent element's offset
+    // (WC40: station 0 at the start of the uncut line, 200 remaining).
+    let (mut first_start, mut first_end) = starts_of(&pieces[0].2);
+    let mut remaining = pieces[0].4;
+    if clipped {
+        if let Some((e, from, ps)) = spans.iter().find(|(e, ..)| Some(i32::from(e.id)) == pieces[0].1) {
+            let piece = &ps[0];
+            let length = piece_length(piece);
+            let at = |s: f64| {
+                let (p, u) = piece_point(piece, s);
+                p + right(u) * offset
+            };
+            let _ = from;
+            (first_start, first_end) = (at(0.0), at(length));
+            remaining = match e.kind {
+                AlignmentElementKind::FreeArc { .. } => (1.0 / piece.1.abs() + if piece.1 > 0.0 { offset } else { -offset }) * (length * piece.1).abs(),
+                _ => length,
+            };
+        }
+    }
     let own_anchor = AlignmentAnchor {
         id: own_id,
         flag: true,
         kind: OWN_START_ANCHOR,
         value: 0.0,
-        station: s0,
+        station: own[0],
         along: 0.0,
-        remaining: pieces[0].4,
+        remaining,
         element: ids[0],
         previous: 0,
         next: ids.get(1).copied().unwrap_or(0),
@@ -2079,7 +2111,7 @@ fn write_offset_alignment(doc: &mut CadDocument, parent: Handle, name: &str, off
         element_end: first_end,
         point: first_start,
     };
-    let record = OffsetRecord { parent: parent.value(), offset, range: (s0, own[count]), regions, transitions, map, anchors, own: own_id, speed: kept.0, associative: kept.1 };
+    let record = OffsetRecord { parent: parent.value(), offset, range: (own[0], own[count]), regions, transitions, map, anchors, own: own_id, speed: kept.0, associative: kept.1 };
     let groups = written.groups.clone();
     rewrite_adding(doc, parent, written, &profiles, &profiles, None, &groups, &extra, &Timing::default())?;
     let style = default_style(doc).ok_or_else(|| invalid("drawing has no alignment styles"))?;

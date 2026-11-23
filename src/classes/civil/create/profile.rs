@@ -23,6 +23,10 @@ const TAIL_BITS: &str = "1000111111110000111100000000000000001010000100000001010
 const PRE: &str = "10001111111100001111000000000000000010";
 const MID: &str = "0001000000010100000001";
 const END: &str = "0000000110001010100001011111000000100";
+/// The text of a curb return profile's class key 0x0400FF80 (WC61).
+const CURB_RETURN_CURVE_TYPE: &str = "{\r\n\t\"ProfileCurveType\": 0\r\n}";
+/// A curb return profile's run in place of `END` (constant in WC60, WC61).
+const CURB_RETURN_END: &str = "00000001101010000001001000000011010000001001000000101010100001011111000000100";
 
 /// The helper records a profile owns, in the order of its references (and
 /// of the class keys that refer to them).
@@ -86,19 +90,21 @@ fn default_style(doc: &CadDocument) -> Option<u64> {
 
 /// The identifier a profile record stores after its entities, a
 /// version-4 GUID (the alignment lists its profiles by it): before its
-/// last 107 bits (`TAIL_BITS`), or, after a longer tail (an offset
-/// profile's), where the reader finds it.
+/// last 107 bits (`TAIL_BITS`) or a curb return profile's constant tail,
+/// or, after a longer tail (an offset profile's), where the reader finds
+/// it.
 pub(super) fn identifier(doc: &CadDocument, profile: u64) -> Option<[u8; 16]> {
     let EntityType::Extended(x) = doc.get_entity(Handle::new(profile))? else { return None };
     let ExtendedEntityData::Arch(a) = &x.data else { return None };
     (a.dxf_name == "AECC_PROFILE").then_some(())?;
     let (data, start, end) = a.main_stream()?;
     let bit = |p: usize| data[p / 8] >> (7 - p % 8) & 1;
-    let fixed = end >= start + TAIL && TAIL_BITS.bytes().enumerate().all(|(i, c)| bit(end - TAIL + i) == c - b'0');
-    if !fixed {
+    let ends = |tail: &str| end >= start + tail.len() && tail.bytes().enumerate().all(|(i, c)| bit(end - tail.len() + i) == c - b'0');
+    let curb_return = format!("{PRE}10{MID}10101010{CURB_RETURN_END}");
+    let Some(tail) = [TAIL_BITS, curb_return.as_str()].into_iter().find(|t| ends(t)).map(str::len) else {
         return super::super::profile::after_entities(data, start, end).map(|(id, _)| id);
-    }
-    let at = end.checked_sub(TAIL + 128).filter(|at| *at >= start)?;
+    };
+    let at = end.checked_sub(tail + 128).filter(|at| *at >= start)?;
     let mut id = [0u8; 16];
     for (i, byte) in id.iter_mut().enumerate() {
         for k in 0..8 {
@@ -361,7 +367,7 @@ struct OffsetTail {
 /// source profile (soft).
 #[allow(clippy::too_many_arguments)]
 fn write_profile(doc: &mut CadDocument, common: EntityCommon, name: &str, parts: &[(i32, i32, i32, Part)], helpers: &[Handle; 7], style: u64, alignment: Handle, id: &[u8; 16]) -> Result<Handle, DxfError> {
-    write_profile_of(doc, common, name, parts, helpers, style, alignment, id, None, None, (0.0, 0.0))
+    write_profile_of(doc, common, name, parts, helpers, style, alignment, id, None, None, (0.0, 0.0), None)
 }
 
 /// [`write_profile`]; with `sampled` a profile sampled from a surface (no
@@ -372,16 +378,27 @@ fn write_profile(doc: &mut CadDocument, common: EntityCommon, name: &str, parts:
 /// WS15). `extent` is the start and end station a static copy keeps in the
 /// first two `BD` before the entities (0 otherwise; OS01, OS02).
 #[allow(clippy::too_many_arguments)]
-fn write_profile_of(doc: &mut CadDocument, common: EntityCommon, name: &str, parts: &[(i32, i32, i32, Part)], helpers: &[Handle; 7], style: u64, alignment: Handle, id: &[u8; 16], sampled: Option<&Sampled>, offset: Option<&OffsetTail>, extent: (f64, f64)) -> Result<Handle, DxfError> {
+fn write_profile_of(doc: &mut CadDocument, common: EntityCommon, name: &str, parts: &[(i32, i32, i32, Part)], helpers: &[Handle; 7], style: u64, alignment: Handle, id: &[u8; 16], sampled: Option<&Sampled>, offset: Option<&OffsetTail>, extent: (f64, f64), curb_return: Option<[u64; 2]>) -> Result<Handle, DxfError> {
     let byte = |w: &mut DwgMergedWriter, v: u8| bits(w, &format!("{v:08b}"));
     let feature = offset.map_or(0, |o| o.feature);
     let mut refs: Vec<Ref> = helpers.iter().map(|h| Ref(DwgReferenceType::HardOwnership, h.value())).collect();
-    refs.extend([soft_pointer(0), hard_pointer(feature), hard_pointer(feature), soft_pointer(0), hard_pointer(style), hard_pointer(alignment.value()), soft_pointer(sampled.map_or(0, |s| s.surface)), hard_pointer(0), soft_pointer(offset.map_or(0, |o| o.source)), soft_pointer(0)]);
+    refs.extend([soft_pointer(0), hard_pointer(feature), hard_pointer(feature), soft_pointer(0), hard_pointer(style), hard_pointer(alignment.value()), soft_pointer(sampled.map_or(0, |s| s.surface)), hard_pointer(0), soft_pointer(offset.map_or(0, |o| o.source))]);
+    // A curb return profile names the two offset profiles it joins and its
+    // curb return (WC61); other profiles end with a soft 0.
+    match curb_return {
+        Some([incoming, outgoing]) => refs.extend([soft_pointer(incoming), soft_pointer(outgoing), soft_pointer(alignment.value())]),
+        None => refs.push(soft_pointer(0)),
+    }
     let mut strings = vec!["AeccImpVAlignment".to_string(), String::new(), String::new()];
-    strings.extend(KEYS.iter().filter_map(|(_, k)| match k {
-        Key::Text(t) => Some(t.to_string()),
-        _ => None,
-    }));
+    for (key, k) in &KEYS {
+        if let Key::Text(t) = k {
+            strings.push(t.to_string());
+        }
+        // A curb return profile's key 0x0400FF80 holds its curve type.
+        if curb_return.is_some() && *key == 0x0400_FE0A {
+            strings.push(CURB_RETURN_CURVE_TYPE.to_string());
+        }
+    }
     strings.push(name.to_string());
     let parabolas = parts.iter().filter(|p| matches!(p.3, Part::Curve { curve, .. } if curve.parabola()) || matches!(p.3, Part::Fixed(e) if e.codes().0 == 6)).count();
     strings.extend((0..4 + parabolas).map(|_| String::new()));
@@ -394,7 +411,7 @@ fn write_profile_of(doc: &mut CadDocument, common: EntityCommon, name: &str, par
                 w.write_bit_long(v);
             }
             bits(w, "010101");
-            byte(w, KEYS.len() as u8 + if offset.is_some() { 3 } else { 0 });
+            byte(w, KEYS.len() as u8 + if offset.is_some() { 3 } else { 0 } + u8::from(curb_return.is_some()));
             for (key, value) in &KEYS {
                 w.write_bit_long(*key as i32);
                 match value {
@@ -405,6 +422,9 @@ fn write_profile_of(doc: &mut CadDocument, common: EntityCommon, name: &str, par
                             w.write_bit_long(v);
                         }
                     }
+                }
+                if curb_return.is_some() && *key == 0x0400_FE0A {
+                    w.write_bit_long(0x0400_FF80);
                 }
                 if offset.is_some() {
                     match key {
@@ -446,7 +466,7 @@ fn write_profile_of(doc: &mut CadDocument, common: EntityCommon, name: &str, par
                 return;
             }
             // `BD 0` and `BS 0` share their bits.
-            w.write_bit_long(if offset.is_some() { 0x102 } else { 0 });
+            w.write_bit_long(if offset.is_some() { 0x102 } else if curb_return.is_some() { 0x202 } else { 0 });
             for v in [extent.0, extent.1, 30.0, 0.0, offset.map_or(0.0, |o| o.offset)] {
                 w.write_bit_double(v);
             }
@@ -584,9 +604,36 @@ fn write_profile_of(doc: &mut CadDocument, common: EntityCommon, name: &str, par
                     },
                 }
             }
+            // A curb return profile copies its three pieces (incoming
+            // lane, joining tangent, outgoing lane), each as a list of one
+            // unlinked tangent with ids 1, 2 and 1 (WC61).
+            if curb_return.is_some() {
+                for ((.., part), copy_id) in parts.iter().zip([1, 2, 1]) {
+                    let Part::Tangent(a, b) = part else { continue };
+                    w.write_bit_long(1);
+                    bits(w, &format!("{:011b}{:023b}", 2, 0x08 << 13));
+                    for v in [0, copy_id, 0, 0] {
+                        w.write_bit_long(v);
+                    }
+                    for v in [a.x, a.y, b.x, b.y] {
+                        w.write_raw_double(v);
+                    }
+                    bits(w, "0000");
+                }
+            }
             bits(w, "10");
             w.write_bytes(id);
-            write_tail(w, offset);
+            if curb_return.is_some() {
+                bits(w, PRE);
+                w.write_bit_double(0.0);
+                bits(w, MID);
+                for _ in 0..4 {
+                    w.write_bit_long(0);
+                }
+                bits(w, CURB_RETURN_END);
+            } else {
+                write_tail(w, offset);
+            }
         },
         Body { refs, strings },
     )
@@ -769,7 +816,7 @@ fn write_entity_profile(doc: &mut CadDocument, alignment: Handle, name: &str, pa
         layer_handle: Some(layer_handle),
         ..EntityCommon::default()
     };
-    write_profile_of(doc, common, name, parts, &helpers, style, alignment, &id, None, None, extent)
+    write_profile_of(doc, common, name, parts, &helpers, style, alignment, &id, None, None, extent, None)
 }
 
 /// Adds a static layout profile `name` copied from the offset profile
@@ -841,7 +888,7 @@ pub fn add_surface_profile(doc: &mut CadDocument, alignment: Handle, surface: Ha
         ..EntityCommon::default()
     };
     let sampled = Sampled { surface: surface.value(), offset, range, whole };
-    write_profile_of(doc, common, name, &[], &helpers, style, alignment, &[0; 16], Some(&sampled), None, (0.0, 0.0))
+    write_profile_of(doc, common, name, &[], &helpers, style, alignment, &[0; 16], Some(&sampled), None, (0.0, 0.0), None)
 }
 
 /// Anchor kinds of an offset profile's start and end on the parent (the
@@ -882,7 +929,14 @@ fn offset_entities(source: &[(i32, crate::classes::civil::ProfilePiece, [Vector2
     let mut entities = Vec::new();
     let mut ids: Vec<(i32, Vec<i32>)> = Vec::new();
     let mut unsourced = Vec::new();
+    // The parent stations the offset alignment follows; a source piece is
+    // cut to them (an intersection's offsets follow part of their road).
+    let (lo, hi) = (map.iter().map(|m| m.parent.0).fold(f64::INFINITY, f64::min), map.iter().map(|m| m.parent.1).fold(f64::NEG_INFINITY, f64::max));
     for (id, piece, [a, _, b], curve) in source {
+        let (a, b) = (Vector2::new(a.x.max(lo), curve.elevation_at(a.x.max(lo))), Vector2::new(b.x.min(hi), curve.elevation_at(b.x.min(hi))));
+        if b.x - a.x <= tol {
+            continue;
+        }
         let z = |x: f64| curve.elevation_at(x);
         // Cut where the rows change and where an asymmetric parabola's two
         // parabolas meet.
@@ -932,6 +986,57 @@ fn offset_entities(source: &[(i32, crate::classes::civil::ProfilePiece, [Vector2
     Some((entities, ids))
 }
 
+/// Writes the curb return profile `name` at `handle` with the identifier
+/// `id` on the curb return alignment `alignment` (written listing it):
+/// fixed tangents through `pvis`
+/// (station, elevation), joining the offset profiles `incoming` and
+/// `outgoing` of the lanes it runs along. Its record is a layout
+/// profile's with the class key 0x0400FF80 after 0x0400FE0A, `BL 0x202`
+/// before the five `BD`, its own constant run in place of `END` and the
+/// two offset profiles and the curb return as its last references (soft;
+/// WC61).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn write_curb_return_profile(doc: &mut CadDocument, handle: Handle, id: &[u8; 16], alignment: Handle, name: &str, pvis: &[Vector2], incoming: Handle, outgoing: Handle, layer: Option<&str>) -> Result<Handle, DxfError> {
+    if pvis.len() < 2 || pvis.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) || pvis.windows(2).any(|w| w[1].x <= w[0].x) {
+        return Err(invalid("a curb return profile needs two or more finite PVIs with increasing stations"));
+    }
+    let layer = layer.unwrap_or("0");
+    let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
+    ensure_profile_tree(doc)?;
+    let style = default_style(doc).ok_or_else(|| invalid("drawing has no profile styles"))?;
+    let helpers = write_helpers(doc, handle)?;
+    let common = EntityCommon { handle, owner_handle: doc.header.model_space_block_handle, layer: layer.into(), layer_handle: Some(layer_handle), ..EntityCommon::default() };
+    let curves = vec![VerticalCurve::None; pvis.len() - 2];
+    write_profile_of(doc, common, name, &parts(pvis, &curves), &helpers, style, alignment, id, None, None, (0.0, 0.0), Some([incoming.value(), outgoing.value()]))
+}
+
+/// Writes the layout profile `profile` again as fixed tangents through
+/// `pvis` (station, elevation), keeping its name, layer, style, helper
+/// records and identifier (the application's profile locking reshapes the
+/// other road's profile this way). Only a layout profile (not an offset,
+/// surface or curb return profile) is rewritten.
+pub(super) fn set_profile_pvis(doc: &mut CadDocument, profile: Handle, pvis: &[Vector2]) -> Result<(), DxfError> {
+    if pvis.len() < 2 || pvis.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) || pvis.windows(2).any(|w| w[1].x <= w[0].x) {
+        return Err(invalid("a profile needs two or more finite PVIs with increasing stations"));
+    }
+    let Some(EntityType::Extended(x)) = doc.get_entity(profile) else { return Err(invalid("profile not found")) };
+    let ExtendedEntityData::Arch(a) = &x.data else { return Err(invalid("profile not found")) };
+    if a.dxf_name != "AECC_PROFILE" || a.profile_offset().is_some() {
+        return Err(invalid("only a layout profile is rewritten"));
+    }
+    let refs: Vec<u64> = a.typed_handles().iter().map(|r| r.0).collect();
+    if refs.len() != 17 || refs[13] != 0 {
+        return Err(invalid("only a layout profile is rewritten"));
+    }
+    let name = a.profile_name().unwrap_or_default();
+    let common = x.common.clone();
+    let helpers: [Handle; 7] = std::array::from_fn(|i| Handle::new(refs[i]));
+    let id = identifier(doc, profile.value()).ok_or_else(|| invalid("the profile's identifier cannot be read"))?;
+    let curves = vec![VerticalCurve::None; pvis.len() - 2];
+    write_profile(doc, common, &name, &parts(pvis, &curves), &helpers, refs[11], Handle::new(refs[12]), &id)?;
+    Ok(())
+}
+
 /// Adds an offset profile `name` on `offset_alignment` copied from
 /// `source`, a profile of the offset alignment's parent, raised by `slope`
 /// times the offset (the application's "by slope" offset profile), on
@@ -966,7 +1071,11 @@ pub fn add_offset_profile(doc: &mut CadDocument, source: Handle, offset_alignmen
     let points = super::super::profile::entity_points(data, start, end).filter(|p| !p.is_empty()).ok_or_else(|| invalid("source profile cannot be solved"))?;
     let offset = arch(offset_alignment).and_then(|a| a.alignment_offset_parameters()).map(|o| o.offset).ok_or_else(|| invalid("offset alignment not found"))?;
     let parent_length = arch(Handle::new(parent)).and_then(|a| super::alignment::length_of(&a.alignment_elements()?)).ok_or_else(|| invalid("the parent cannot be solved"))?;
-    let (first, last) = (points[0].2[0].x, points[points.len() - 1].2[2].x);
+    // The parent anchors sit where the copied source starts and ends: on
+    // an offset alignment over part of its parent, at that part's ends
+    // (WC61).
+    let (lo, hi) = (map.iter().map(|m| m.parent.0).fold(f64::INFINITY, f64::min), map.iter().map(|m| m.parent.1).fold(f64::NEG_INFINITY, f64::max));
+    let (first, last) = (points[0].2[0].x.max(lo), points[points.len() - 1].2[2].x.min(hi));
     let (entities, ids) = offset_entities(&points, &map, slope).ok_or_else(|| invalid("the source must lie within the offset alignment's stations"))?;
     let (written, before) = rewritable(doc, offset_alignment, |h| identifier(doc, h)).ok_or_else(|| invalid("the offset alignment is not one this crate writes"))?;
     let layer = layer.unwrap_or("0");
@@ -996,7 +1105,7 @@ pub fn add_offset_profile(doc: &mut CadDocument, source: Handle, offset_alignmen
         ..EntityCommon::default()
     };
     let tail = OffsetTail { slope, offset, parent_length, map: ids, anchors, feature: feature.value(), source: source.value() };
-    write_profile_of(doc, common, name, &parts, &helpers, style, offset_alignment, &id, None, Some(&tail), (0.0, 0.0))?;
+    write_profile_of(doc, common, name, &parts, &helpers, style, offset_alignment, &id, None, Some(&tail), (0.0, 0.0), None)?;
     use super::assoc::{add_action, ActionBody, Dependency};
     add_action(
         doc,
