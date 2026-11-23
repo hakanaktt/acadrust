@@ -3806,7 +3806,7 @@ Corridors are listed in §3i-a.
 | intersections | tee junctions with profiles | yes | yes | §3k (tee junctions) |
 | intersections | the offset alignments, profile locking action, intersection action and location label the command makes (siteless roads) | yes | yes | §3k (offset alignments and actions of the command) |
 | intersections | curb returns of crossings and tee junctions (arc, offset alignments over the intersection extents) | yes | yes | §3k (curb returns of the command) |
-| intersections | curb return profiles, corridor regions, roads on a site (offsets in the site's topology) | yes (records) | no | not sampled |
+| intersections | curb return profiles, corridor regions, roads on a site (offsets in the site's topology) | yes (records) | no | curb return profiles sampled (WC60: with profiles the command makes the curb return lines 25 long, offset profiles at -2% on the four offsets and a profile per curb return reading the two offset profiles beside it), not decoded; corridor regions and site roads not sampled |
 | gravity pipe networks | every family of the default parts list (one size each), connections | partly | yes | §3m |
 | gravity pipe networks | sizes the parts list does not hold, the catalog's body solids | partly | no | §3m |
 | pressure networks | every size of the default catalog (straight and curved pipes, elbows, tees, crosses, gate valves), connections | yes | yes | §3n |
