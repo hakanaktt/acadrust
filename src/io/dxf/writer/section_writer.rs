@@ -11,7 +11,7 @@ use crate::document::CadDocument;
 use crate::entities::*;
 use crate::error::{DxfError, Result};
 use crate::objects::{
-    BlockEvalValue, BlockPropertiesTableValue, BlockVisibilityParameter, BookColor, DataObject,
+    is_purge_preventer, BlockEvalValue, BlockPropertiesTableValue, BlockVisibilityParameter, BookColor, DataObject,
     DataObjectData, Dictionary, DictionaryVariable, DictionaryWithDefault, DimSubtype,
     DynamicBlockData, DynamicBlockObject, GeoData, Group, ImageDefinition, ImageDefinitionReactor,
     Layout, MLineStyle, Material, MaterialColor, MaterialMap, MaterialProceduralValue,
@@ -53,18 +53,6 @@ pub(crate) fn polyline2d_downsaves_to_lwpolyline(polyline: &Polyline2D) -> bool 
     (polyline.flags.bits() & !0x81) == 0
         && polyline.smooth_surface == SmoothSurfaceType::None
         && polyline.vertices.iter().all(|v| v.flags.bits() == 0)
-}
-
-/// Legacy application objects that have no complete DXF representation.
-fn is_unrestorable_assoc_object(type_name: &str) -> bool {
-    // Normalize: the DWG class names carry underscores (e.g.
-    // ACDB_DYNAMICBLOCKPURGEPREVENTER_VERSION) while the DXF records do not.
-    let normalized: String = type_name
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .map(|c| c.to_ascii_uppercase())
-        .collect();
-    normalized.starts_with("ACDBDYNAMICBLOCKPURGEPREVENTER")
 }
 
 /// Writes all DXF sections
@@ -178,33 +166,16 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         // have no DXF representation (Unknown with no raw_dxf_codes):
         // write_unknown_object skips those, so any reference to them would
         // dangle and must be filtered out, or strict CAD readers reject the
-        // file on audit. Unknown associative-framework objects are excluded
-        // as well: applications cannot restore them from the records this
-        // writer produces and audit-skip them, which would leave dangling
-        // dictionary entries behind.
+        // file on audit.
         for (h, obj) in document.objects.iter() {
             match obj {
-                ObjectType::Unknown {
-                    raw_dxf_codes,
-                    type_name,
-                    ..
-                } => {
-                    if raw_dxf_codes.is_none() || is_unrestorable_assoc_object(type_name) {
+                ObjectType::Unknown { raw_dxf_codes, .. } => {
+                    if raw_dxf_codes.is_none() {
                         continue;
                     }
                 }
                 ObjectType::Arch(object) => {
                     if object.raw_dxf_codes.is_none() {
-                        continue;
-                    }
-                }
-                ObjectType::Associative(assoc) => {
-                    if is_unrestorable_assoc_object(&assoc.dxf_name) {
-                        continue;
-                    }
-                }
-                ObjectType::DynamicBlock(dynamic) => {
-                    if is_unrestorable_assoc_object(&dynamic.dxf_name) {
                         continue;
                     }
                 }
@@ -3434,7 +3405,11 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             DynamicBlockData::Representation(value) => {
                 self.writer.write_subclass(&object.cpp_class_name)?;
                 self.writer.write_i16(70, value.flags)?;
-                self.writer.write_handle(340, value.block)?;
+                // The purge preventer's DXF record has no block: the block
+                // it guards is the BLOCK_RECORD that owns its dictionary.
+                if !is_purge_preventer(&object.dxf_name) {
+                    self.writer.write_handle(340, value.block)?;
+                }
             }
             DynamicBlockData::ProxyNode(value) => {
                 self.write_dynamic_eval_dxf(value)?;
@@ -6336,23 +6311,8 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 ObjectType::BlockVisibilityParameter(obj) => {
                     self.write_block_visibility_parameter(obj)?
                 }
-                ObjectType::DynamicBlock(obj) => {
-                    // The purge preventer is unrestorable (see
-                    // is_unrestorable_assoc_object) and gets audit-skipped.
-                    if is_unrestorable_assoc_object(&obj.dxf_name) {
-                        continue;
-                    }
-                    self.write_dynamic_block_object_dxf(obj)?
-                }
-                ObjectType::Associative(obj) => {
-                    // Unrestorable associative-framework objects are not
-                    // written (see is_unrestorable_assoc_object); they were
-                    // already excluded from valid_handles.
-                    if is_unrestorable_assoc_object(&obj.dxf_name) {
-                        continue;
-                    }
-                    self.write_associative_object_dxf(obj)?
-                }
+                ObjectType::DynamicBlock(obj) => self.write_dynamic_block_object_dxf(obj)?,
+                ObjectType::Associative(obj) => self.write_associative_object_dxf(obj)?,
                 ObjectType::ClassObject(obj) => self.write_class_object_dxf(obj)?,
                 ObjectType::DataObject(obj) => self.write_data_object_dxf(obj)?,
                 ObjectType::Field(obj) => self.write_field_object_dxf(obj)?,
@@ -6375,12 +6335,6 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                     raw_dxf_codes,
                     ..
                 } => {
-                    // Unrestorable associative-framework objects are not
-                    // written (see is_unrestorable_assoc_object); they were
-                    // already excluded from valid_handles.
-                    if is_unrestorable_assoc_object(type_name) {
-                        continue;
-                    }
                     self.write_unknown_object(
                         type_name,
                         *handle,

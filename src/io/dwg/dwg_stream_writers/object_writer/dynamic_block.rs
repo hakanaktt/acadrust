@@ -1,6 +1,7 @@
 use super::DwgObjectWriter;
 use crate::io::dwg::dwg_reference_type::DwgReferenceType;
 use crate::objects::*;
+use crate::types::Handle;
 
 impl<'a> DwgObjectWriter<'a> {
     fn write_dynamic_eval_value(&mut self, value: &BlockEvalValue) {
@@ -355,6 +356,26 @@ impl<'a> DwgObjectWriter<'a> {
         }
     }
 
+    /// The block a purge preventer guards: the BLOCK_RECORD that owns its
+    /// dictionary. A DXF record does not carry it, so one read from DXF has a
+    /// null block; the DWG record points at it.
+    fn purge_preventer_block(&self, dictionary: Handle) -> Handle {
+        let owner = match self.document.objects.get(&dictionary) {
+            Some(ObjectType::Dictionary(dictionary)) => dictionary.owner,
+            _ => return Handle::NULL,
+        };
+        if self
+            .document
+            .block_records
+            .iter()
+            .any(|record| record.handle == owner)
+        {
+            owner
+        } else {
+            Handle::NULL
+        }
+    }
+
     pub(super) fn write_dynamic_block(&mut self, object: &DynamicBlockObject) {
         let type_code = self.class_type_code(&object.dxf_name, 500);
         self.write_common_non_entity_data(
@@ -367,9 +388,14 @@ impl<'a> DwgObjectWriter<'a> {
         match &object.data {
             DynamicBlockData::Unknown => return,
             DynamicBlockData::Representation(value) => {
+                let block = if value.block.is_null() && is_purge_preventer(&object.dxf_name) {
+                    self.purge_preventer_block(object.owner)
+                } else {
+                    value.block
+                };
                 self.writer.write_bit_short(value.flags);
                 self.writer
-                    .write_handle(DwgReferenceType::HardPointer, value.block.value());
+                    .write_handle(DwgReferenceType::HardPointer, block.value());
             }
             DynamicBlockData::ProxyNode(value) => self.write_dynamic_eval(value),
             DynamicBlockData::GripLocationComponent(value) => {

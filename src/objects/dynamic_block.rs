@@ -1434,6 +1434,17 @@ pub struct SolidHistoryRevolve {
     pub sweep_entity: Option<crate::entities::EmbeddedEntity>,
 }
 
+/// Whether a DXF class name is the purge preventer a dynamic block's
+/// definition keeps in its extension dictionary, under the
+/// `AcDbDynamicBlockRoundTripPurgePreventer` key. Its data is a version and,
+/// in DWG only, the BLOCK_RECORD that owns that dictionary.
+pub(crate) fn is_purge_preventer(name: &str) -> bool {
+    matches!(
+        name.to_ascii_uppercase().as_str(),
+        "ACDB_DYNAMICBLOCKPURGEPREVENTER_VERSION" | "DYNAMICBLOCKPURGEPREVENTER"
+    )
+}
+
 /// Whether a DXF class name is a dynamic-block object record (parameters,
 /// actions, grips, the evaluation graph and its helpers) — the names the DWG
 /// dynamic-block reader decodes. Entity classes are not included.
