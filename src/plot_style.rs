@@ -88,6 +88,22 @@ pub struct PlotStyleTable {
     /// that did not add up, descriptions in a Windows code page): the file
     /// loaded, but the user deserves to know it was not quite as written.
     pub load_warnings: Vec<String>,
+    /// What the table was read from, kept so that saving it writes the file
+    /// back the way it was: the same lines in the same order, with only the
+    /// values that were edited replaced. `None` for a table built in memory,
+    /// which is written in numeric order.
+    source: Option<Box<TableSource>>,
+}
+
+/// The file a table was read from.
+#[derive(Debug, Clone)]
+struct TableSource {
+    /// The file's bytes, returned as they are when nothing was edited.
+    bytes: Vec<u8>,
+    /// The stored text as read (trailing NULs dropped).
+    text: String,
+    /// The table as parsed from `text`, to tell which values were edited.
+    baseline: PlotStyleTable,
 }
 
 impl PlotStyleTable {
@@ -104,6 +120,7 @@ impl PlotStyleTable {
             aci_entries: (0..=255).map(|_| PlotStyleEntry::default()).collect(),
             named_entries: HashMap::default(),
             load_warnings: Vec::new(),
+            source: None,
         }
     }
 
@@ -113,15 +130,36 @@ impl PlotStyleTable {
         let (text, warnings) = decompress_ctb(raw)?;
         let mut table = parse_plot_style_text(&text, name, is_stb)?;
         table.load_warnings = warnings;
+        // The older begin_plot_style layout is written in the current one,
+        // so only the current layout is replayed.
+        if !text.lines().any(|line| line.trim() == "begin_plot_style") {
+            table.source = Some(Box::new(TableSource {
+                bytes: raw.to_vec(),
+                baseline: table.clone(),
+                text,
+            }));
+        }
         Ok(table)
     }
 
-    /// Encode this table as CTB/STB file bytes.
+    /// Encode this table as CTB/STB file bytes. A table read from a file and
+    /// not edited comes back as the bytes it was read from; an edited one is
+    /// recompressed with the header's checksum and lengths computed from the
+    /// new stream, and keeps the header tag it was read with.
     pub fn to_bytes(&self) -> crate::error::Result<Vec<u8>> {
-        let mut bytes = compress_ctb(self.to_text().as_bytes())?;
-        // A named table is tagged STBVER1 in the same header.
-        if self.is_stb {
-            bytes[19..22].copy_from_slice(b"STB");
+        let text = self.to_text();
+        let source = self.source.as_deref();
+        if let Some(source) = source.filter(|source| source.text == text) {
+            return Ok(source.bytes.clone());
+        }
+        let mut bytes = compress_ctb(text.as_bytes())?;
+        match source {
+            Some(source) if source.bytes.starts_with(b"PIAFILEVERSION_2.0,") => {
+                bytes[19..22].copy_from_slice(&source.bytes[19..22]);
+            }
+            // A named table is tagged STBVER1 in the same header.
+            _ if self.is_stb => bytes[19..22].copy_from_slice(b"STB"),
+            _ => {}
         }
         Ok(bytes)
     }
@@ -180,6 +218,9 @@ impl PlotStyleTable {
 
     /// The table's text body, as stored compressed in the file.
     pub fn to_text(&self) -> String {
+        if let Some(source) = &self.source {
+            return self.replay_source(source);
+        }
         let mut s = String::new();
         let description = self.description.replace(['\r', '\n'], " ");
         s.push_str(&format!("description=\"{description}\n"));
@@ -274,6 +315,139 @@ impl PlotStyleTable {
         }
         s.push_str("}\n");
         s
+    }
+
+    /// The source text with only the edited values replaced: every line the
+    /// model does not name, the order of the entries and the line endings are
+    /// the file's own. A value is edited when it differs from what the file
+    /// parsed to, so putting a value back restores the original line.
+    fn replay_source(&self, source: &TableSource) -> String {
+        #[derive(Clone, Copy, PartialEq)]
+        enum Part {
+            Root,
+            Styles,
+            Weights,
+            Other,
+        }
+        fn pick<'a>(
+            table: &'a PlotStyleTable,
+            index: usize,
+            name: &str,
+        ) -> Option<&'a PlotStyleEntry> {
+            if table.is_stb {
+                table.named_entries.get(name)
+            } else {
+                table.aci_entries.get(index + 1)
+            }
+        }
+        let base = &source.baseline;
+        let mut out = String::with_capacity(source.text.len());
+        let mut part = Part::Root;
+        let mut style: Option<(usize, String)> = None;
+        for raw in source.text.split_inclusive('\n') {
+            let line = raw.trim();
+            let mut replacement: Option<String> = None;
+            if line == "plot_style{" {
+                part = Part::Styles;
+            } else if line == "custom_lineweight_table{" {
+                part = Part::Weights;
+            } else if line.ends_with('{') {
+                match line.trim_end_matches('{').trim().parse::<usize>() {
+                    Ok(index) if part == Part::Styles && style.is_none() => {
+                        style = Some((index, format!("Color_{}", index + 1)));
+                    }
+                    _ => part = Part::Other,
+                }
+            } else if line == "}" {
+                if style.take().is_none() {
+                    part = Part::Root;
+                }
+            } else if let Some((key, value)) = line.split_once('=') {
+                let (key, value) = (key.trim(), value.trim().trim_start_matches('"'));
+                replacement = match (&mut style, part) {
+                    (Some((index, name)), _) => {
+                        if key == "name" {
+                            *name = value.to_string();
+                        }
+                        match (pick(self, *index, name), pick(base, *index, name)) {
+                            (Some(now), Some(then)) => entry_value(key, now, then),
+                            _ => None,
+                        }
+                    }
+                    (None, Part::Root) => self.root_value(base, key),
+                    (None, Part::Weights) => key.parse::<usize>().ok().and_then(|index| {
+                        let now = self.lineweights.get(index)?;
+                        (base.lineweights.get(index) != Some(now)).then(|| full_real(*now))
+                    }),
+                    _ => None,
+                };
+            }
+            match replacement {
+                Some(new) => {
+                    let (key, value) = raw.split_once('=').expect("a replaced line has a key");
+                    let quote = if value.starts_with('"') { "\"" } else { "" };
+                    let ending = &raw[raw.trim_end_matches(['\r', '\n']).len()..];
+                    out.push_str(&format!("{key}={quote}{new}{ending}"));
+                }
+                None => out.push_str(raw),
+            }
+        }
+        out
+    }
+
+    /// The new text of a top-level `key=value` line, when that value was edited.
+    fn root_value(&self, base: &PlotStyleTable, key: &str) -> Option<String> {
+        match key {
+            "description" if self.description != base.description => {
+                Some(self.description.replace(['\r', '\n'], " "))
+            }
+            "scale_factor" if self.scale_factor != base.scale_factor => {
+                Some(full_real(self.scale_factor))
+            }
+            "apply_factor" if self.apply_factor != base.apply_factor => {
+                Some(bool_text(self.apply_factor))
+            }
+            "custom_lineweight_display_units"
+                if self.custom_lineweight_display_units != base.custom_lineweight_display_units =>
+            {
+                Some(self.custom_lineweight_display_units.to_string())
+            }
+            _ => None,
+        }
+    }
+}
+
+fn bool_text(value: bool) -> String {
+    if value { "TRUE" } else { "FALSE" }.to_string()
+}
+
+/// The new text of one `key=value` line of a style entry, when that value
+/// was edited.
+fn entry_value(key: &str, now: &PlotStyleEntry, then: &PlotStyleEntry) -> Option<String> {
+    fn changed<T: PartialEq + ToString>(now: &T, then: &T) -> Option<String> {
+        (now != then).then(|| now.to_string())
+    }
+    match key {
+        "name" => changed(&now.name, &then.name),
+        "localized_name" => changed(&now.localized_name, &then.localized_name),
+        "description" => changed(&now.description, &then.description),
+        "screen" => changed(&now.screening, &then.screening),
+        "lineweight" => changed(&now.lineweight, &then.lineweight),
+        "color_policy" => changed(&now.color_policy, &then.color_policy),
+        "physical_pen_number" => changed(&now.physical_pen_number, &then.physical_pen_number),
+        "virtual_pen_number" => changed(&now.virtual_pen_number, &then.virtual_pen_number),
+        "linepattern_size" => changed(&now.linepattern_size, &then.linepattern_size),
+        "linetype" => changed(&now.linetype, &then.linetype),
+        "fill_style" => changed(&now.fill_style, &then.fill_style),
+        "end_style" => changed(&now.end_style, &then.end_style),
+        "join_style" => changed(&now.join_style, &then.join_style),
+        "adaptive_linetype" => (now.adaptive_linetype != then.adaptive_linetype)
+            .then(|| bool_text(now.adaptive_linetype)),
+        // Object colour is stored as one of several packed values; the file's
+        // own stays unless the colour was edited.
+        "color" | "mode_color" => (now.color != then.color)
+            .then(|| now.color.map_or(-1_006_632_961, packed_rgb).to_string()),
+        _ => None,
     }
 }
 
@@ -663,6 +837,7 @@ fn parse_plot_style_text(
         aci_entries,
         named_entries,
         load_warnings: Vec::new(),
+        source: None,
     })
 }
 
