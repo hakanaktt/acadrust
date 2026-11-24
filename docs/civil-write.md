@@ -3195,9 +3195,18 @@ every profile, its type, PVIs and entities as WC61's. E-IC11 (a new
 drawing: a skewed crossing, a parabola on the main road's profile,
 widths 10 and 12, radius 30, slope -0.025, lines 20 and 30) and E-IC12
 (WC62's roads, curb returns without profiles) open with AUDIT 0 errors;
-E-IC12's profiles equal WC62's. Not compared: the styles the command
-gives its offset alignments (`Offsets`), curb returns and profiles
-(`Intersection Basic`); the writer uses the drawing's default styles.
+E-IC12's profiles equal WC62's.
+
+The command gives its offset alignments the alignment style named
+`Offsets`, its curb returns the alignment style `Intersection Basic` and
+its offset and curb return profiles the profile style `Intersection
+Basic` when the drawing has them (WC40, WC61, WC65: the template's
+styles); in a drawing without them it uses the default styles and writes
+none (WI01: a drawing whose only alignment style is the default). The
+writer does the same: it looks the styles up by name in the style tree's
+alignment and profile style collections (E-IC30, E-IC31: written into
+WC61base and WC65base every alignment and profile takes the sample's
+style; AUDIT 0).
 
 ### Roads on a site
 

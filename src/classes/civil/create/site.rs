@@ -42,6 +42,16 @@ pub(super) fn default_style_of(doc: &CadDocument, key: i32) -> Option<u64> {
     o.decode().handles.get(at).copied().filter(|h| *h != 0)
 }
 
+/// The style named `name` (any case) of the style tree's collection
+/// `key`, when the drawing has one.
+pub(super) fn named_style(doc: &CadDocument, key: i32, name: &str) -> Option<u64> {
+    let tree = read_node(doc, root_node(doc, KEY_STYLES)?)?;
+    let head = tree.children.iter().find(|c| c.0 == key)?.1;
+    let node = read_node(doc, Handle::new(head))?;
+    let text = |k: i32| k as u32 & 0x8000_0000 != 0;
+    node.children.iter().filter(|c| text(c.0)).zip(&node.names).find(|(_, s)| s.eq_ignore_ascii_case(name)).map(|(c, _)| c.1).filter(|h| *h != 0)
+}
+
 /// The node of the sites:
 ///
 /// ```text

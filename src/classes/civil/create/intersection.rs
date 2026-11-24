@@ -99,6 +99,28 @@ impl Default for CurbReturnProfiles {
     }
 }
 
+/// The styles the command gives what it makes when the drawing has them
+/// by name (WC40, WC61: "Offsets" for the offset alignments, "Intersection
+/// Basic" for the curb returns and the profiles); otherwise the drawing's
+/// default ones, as the application uses in a drawing without them (WI01).
+struct CommandStyles {
+    offsets: Option<u64>,
+    curb_returns: Option<u64>,
+    profiles: Option<u64>,
+}
+
+impl CommandStyles {
+    fn of(doc: &CadDocument) -> Self {
+        use super::site::named_style;
+        use super::tree::{KEY_ALIGNMENT_STYLES, KEY_PROFILE_STYLES};
+        CommandStyles {
+            offsets: named_style(doc, KEY_ALIGNMENT_STYLES, "Offsets"),
+            curb_returns: named_style(doc, KEY_ALIGNMENT_STYLES, "Intersection Basic"),
+            profiles: named_style(doc, KEY_PROFILE_STYLES, "Intersection Basic"),
+        }
+    }
+}
+
 /// A region between two arms: the arm it starts at (in) and the one it
 /// ends at (out), counterclockwise, each an alignment and whether the arm
 /// runs along rising stations; `quadrant` indexes `REGION_NAMES`.
@@ -557,6 +579,7 @@ fn build_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_prof
             return Err(invalid("offset widths must be positive"));
         }
         let label = ensure_intersection_label_style(doc)?;
+        let styles = CommandStyles::of(doc);
         let widths = [[o.main_left, o.main_right], [o.other_left, o.other_right]];
         // The curb returns: per region its geometry, and the stations its
         // lines take on each offset alignment (road, side).
@@ -577,7 +600,7 @@ fn build_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_prof
                     let margin = (hi - lo) * CURB_RETURN_MARGIN;
                     (lo - margin, hi + margin)
                 });
-                let h = super::alignment::add_kept_offset_alignment(doc, parent, &format!("{road_name}-{side}-{:.3}", width.abs()), width, range, OFFSET_SPEED, layer)?;
+                let h = super::alignment::add_kept_offset_alignment(doc, parent, &format!("{road_name}-{side}-{:.3}", width.abs()), width, range, OFFSET_SPEED, styles.offsets, layer)?;
                 add_action(doc, ActionBody { dxf: "AECC_ASSOC_OFFSET_ALIGNMENT_ACTION_BODY", refs: vec![h], tail: "" }, &[Dependency { object: parent, writes: false, order: 0 }, Dependency { object: h, writes: true, order: 0 }])?;
                 r.offsets[i] = h.value();
             }
@@ -638,6 +661,7 @@ fn build_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_prof
                     radius,
                     curb_lines,
                     profile_ids[g],
+                    styles.curb_returns,
                     layer,
                 )?;
                 add_action(
@@ -653,7 +677,7 @@ fn build_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_prof
                     for i in 0..2 {
                         let offset = Handle::new(roads[k].offsets[i]);
                         let offset_name = arch(doc, offset).and_then(|a| a.alignment_name()).unwrap_or_default();
-                        let h = super::profile::add_offset_profile(doc, Handle::new(roads[k].profile), offset, &format!("{offset_name} - {:.3}%", p.slope * 100.0), p.slope, layer)?;
+                        let h = super::profile::add_offset_profile_styled(doc, Handle::new(roads[k].profile), offset, &format!("{offset_name} - {:.3}%", p.slope * 100.0), p.slope, styles.profiles, layer)?;
                         roads[k].offset_profiles[i] = h.value();
                     }
                 }
@@ -682,7 +706,7 @@ fn build_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_prof
                     let cr_name = format!("{name} - {} - Profile", REGION_NAMES[region.quadrant]);
                     let (incoming, outgoing) = (lane(0).2, lane(1).2);
                     let (ph, pid) = profile_ids[g].ok_or_else(|| invalid("no curb return profile handle"))?;
-                    let profile = super::profile::write_curb_return_profile(doc, ph, &pid, h, &cr_name, &pvis, incoming, outgoing, layer)?;
+                    let profile = super::profile::write_curb_return_profile(doc, ph, &pid, h, &cr_name, &pvis, incoming, outgoing, styles.profiles, layer)?;
                     add_action(
                         doc,
                         ActionBody { dxf: "AECC_ASSOC_CURBRETURN_VALIGNMENT_ACTION_BODY", refs: vec![profile], tail: "" },
