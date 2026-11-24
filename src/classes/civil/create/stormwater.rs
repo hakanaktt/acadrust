@@ -36,8 +36,8 @@ const CHANNEL_IMAGE: &str = "AeccDbChannel (AeccDrainageChannel130)";
 const IMAGE_AREA: u32 = 3;
 const IMAGE_CHANNEL: u32 = 8;
 
-/// The class-body flags after the shared head and schema word (recorded:
-/// a pond writes 0b0011, a storage or channel 0b0010).
+// The class-body flags after the shared head and schema word (recorded:
+// a pond writes 0b0011, a storage or channel 0b0010).
 
 /// Adds a pond at `origin` with the closed outline `outline` (three or
 /// more finite points; the record repeats the first point at the end, as

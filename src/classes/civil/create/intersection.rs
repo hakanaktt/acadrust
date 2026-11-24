@@ -278,8 +278,12 @@ const GRADE_MAX: f64 = 0.05;
 /// The grade the rule gives beside the locked stretch: `outside` limited to
 /// [`GRADE_CHANGE`] from the stretch's `inside` grade, then to
 /// [`GRADE_MAX`] (WC76: -0.06 becomes -0.05; WC77: -0.055 within the change
-/// becomes -0.05). `None` when `outside` already keeps both.
+/// becomes -0.05). `None` when `outside` already keeps both, or when a
+/// grade is not finite (a PVI sharing the stretch end's station).
 fn ruled_grade(inside: f64, outside: f64) -> Option<f64> {
+    if !inside.is_finite() || !outside.is_finite() {
+        return None;
+    }
     let mut g = outside;
     if (g - inside).abs() > GRADE_CHANGE + 1e-12 {
         g = inside + GRADE_CHANGE * (g - inside).signum();
@@ -289,7 +293,6 @@ fn ruled_grade(inside: f64, outside: f64) -> Option<f64> {
     }
     ((g - outside).abs() > 1e-12).then_some(g)
 }
-
 
 /// A PVI of the profile being locked: its point, its curve (with the
 /// stations the curve covers) and whether the locking adds it.

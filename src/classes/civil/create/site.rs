@@ -729,7 +729,7 @@ fn members_of(doc: &mut CadDocument, site: Handle) -> Result<(Handle, Vec<Member
         .iter()
         .map(|&(h, code)| Ref(if code == 4 { DwgReferenceType::SoftPointer } else { DwgReferenceType::HardPointer }, h))
         .collect();
-    if next.styles.iter().zip(&refs[first_face + 2 * face_ids.len()..]).any(|(r, x)| !matches!(x.1, 4 | 5) || r.1 != x.0) {
+    if next.styles.iter().zip(refs.get(first_face + 2 * face_ids.len()..).unwrap_or_default()).any(|(r, x)| !matches!(x.1, 4 | 5) || r.1 != x.0) {
         return Err(refused());
     }
     let dxf = |h: u64| match doc.get_entity(Handle::new(h)) {
@@ -888,6 +888,10 @@ pub(super) fn join_profile(doc: &mut CadDocument, container: Handle, profile: Ha
     let (container, mut members, parcels, style, next) = members_of(doc, site)?;
     if let Some(i) = members.iter().position(|m| m.handle == profile.value()) {
         return Ok(i as i32 + 1);
+    }
+    // The profile record holds its edge id in one byte.
+    if members.len() >= 255 {
+        return Err(invalid("the site's container has too many members for a profile"));
     }
     members.push(Member { handle: profile.value(), path: Vec::new(), elevations: Vec::new(), elevation_points: Vec::new(), kind: MemberKind::Profile, ids: Vec::new(), read: None });
     write_container(doc, container, site, &members, &parcels, style, next)?;
@@ -1821,7 +1825,6 @@ mod tests {
         let f1 = add_feature_line(&mut doc, s, "FL1", &[p(0.0, 0.0, 10.0), p(50.0, 0.0, 12.0), p(100.0, 30.0, 11.0)], None).unwrap();
         let a = add_alignment_on_site(&mut doc, s, "AL1", &[v(0.0, 100.0), v(100.0, 100.0), v(150.0, 120.0)], &[VertexCurve::None], None).unwrap();
         let f2 = add_feature_line(&mut doc, s, "FL2", &[p(0.0, 50.0, 5.0), p(100.0, 50.0, 6.0)], None).unwrap();
-        assert!(add_feature_line(&mut doc, s, "FL3", &[p(20.0, 50.0, 0.0), p(80.0, 50.0, 0.0)], None).is_err());
         let path = std::env::temp_dir().join(format!("civil-feature-line-{}.dwg", std::process::id()));
         DwgWriter::write_to_file(&path, &doc).unwrap();
         let back = DwgReader::from_file(&path).unwrap().read().unwrap();
@@ -1836,6 +1839,29 @@ mod tests {
         // The alignment keeps its member number (2) as its edge id.
         let (w, _) = super::super::alignment::rewritable(&back, a, |_| None).unwrap();
         assert_eq!(w.edge, 2);
+    }
+
+    #[test]
+    fn a_feature_line_along_another_shares_its_stretch() {
+        let v = Vector2::new;
+        let p = crate::types::Vector3::new;
+        let mut doc = drawing();
+        let s = add_site(&mut doc, "Site 1", "").unwrap();
+        let f2 = add_feature_line(&mut doc, s, "FL2", &[p(0.0, 50.0, 5.0), p(100.0, 50.0, 6.0)], None).unwrap();
+        let f3 = add_feature_line(&mut doc, s, "FL3", &[p(20.0, 50.0, 0.0), p(80.0, 50.0, 0.0)], None).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-feature-line-along-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let c = object(&back, Handle::new(arch(&back, s).typed_handles()[5].0)).unwrap();
+        assert_eq!(c.site_members(), vec![f2.value(), f3.value()]);
+        // The shared stretch (20,50)-(80,50) starts with 0x2000 in the
+        // earlier member and with 0x1000, without the follow marks, in the
+        // later one.
+        let edges = c.topology().unwrap().edges;
+        let start = |mark: i32| edges.iter().flatten().find(|x| x.flags & mark != 0).map(|x| (x.point, x.flags & 0x30));
+        assert_eq!(start(0x2000).map(|x| x.0), Some(v(20.0, 50.0)));
+        assert_eq!(start(0x1000), Some((v(20.0, 50.0), 0)));
     }
 
     #[test]

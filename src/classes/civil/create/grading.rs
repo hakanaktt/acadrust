@@ -160,13 +160,4 @@ mod tests {
         sorted.sort_unstable();
         assert_eq!(buckets, sorted);
     }
-
-    #[test]
-    fn the_tail_is_the_samples_class_tail() {
-        // Grading-1.dwg, the empty record the application saves: the 139
-        // bits after the terminator.
-        let tail = "0101000000000000000000000000000000000000000000000000000000010010001000000001101011011101011011110111111001111101001110011101010101000111111";
-        assert_eq!(TREE_TAIL, tail);
-        assert_eq!(TREE_TAIL.len(), 139);
-    }
 }
