@@ -2,6 +2,13 @@
 
 ### Unreleased
 
+- **DXF writer looks extension dictionaries up in linear time** - Each table
+  record that names no extension dictionary had its owner looked up by walking
+  every object of the document, so writing a DXF was quadratic in block records
+  times objects (a 32 MB DWG with 16 027 block records took 11.3 s to write).
+  The writer now gathers the dictionaries' owners once per write
+  (`CadDocument::owned_dictionaries`); `extension_dictionary_handle` is
+  unchanged.
 - **Extended dimensions keep AcDbDimension base groups** - The
   ARC_DIMENSION and LARGE_RADIAL_DIMENSION reader had no arms for the
   AcDbDimension insertion point (12), horizontal direction (51) and

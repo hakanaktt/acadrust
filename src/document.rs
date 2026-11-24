@@ -4551,6 +4551,57 @@ impl CadDocument {
     }
 
     pub fn extension_dictionary_handle(&self, owner: Handle) -> Option<Handle> {
+        self.extension_dictionary_handle_or(owner, || {
+            self.objects
+                .iter()
+                .find_map(|(handle, object)| match object {
+                    ObjectType::Dictionary(dictionary)
+                        if dictionary.owner == owner && !handle.is_null() =>
+                    {
+                        Some(*handle)
+                    }
+                    _ => None,
+                })
+        })
+    }
+
+    /// [`Self::extension_dictionary_handle`] with its last step, the walk over
+    /// every object for a dictionary `owner` owns, answered from `owned`
+    /// ([`Self::owned_dictionaries`]). For a caller that asks for many owners
+    /// while the document does not change: the DXF writer asks for every
+    /// table record, and walking every object each time made writing
+    /// quadratic in records times objects.
+    pub(crate) fn extension_dictionary_handle_in(
+        &self,
+        owner: Handle,
+        owned: &HashMap<Handle, Handle>,
+    ) -> Option<Handle> {
+        self.extension_dictionary_handle_or(owner, || owned.get(&owner).copied())
+    }
+
+    /// Each owner of a dictionary and that dictionary, the first one in the
+    /// order of `objects` for an owner of several: what the walk in
+    /// [`Self::extension_dictionary_handle`] finds for each owner, gathered in
+    /// one walk.
+    pub(crate) fn owned_dictionaries(&self) -> HashMap<Handle, Handle> {
+        let mut owned = HashMap::new();
+        for (handle, object) in &self.objects {
+            if let ObjectType::Dictionary(dictionary) = object {
+                if !handle.is_null() {
+                    owned.entry(dictionary.owner).or_insert(*handle);
+                }
+            }
+        }
+        owned
+    }
+
+    /// The steps of [`Self::extension_dictionary_handle`] before its walk over
+    /// every object, which `walk` takes.
+    fn extension_dictionary_handle_or(
+        &self,
+        owner: Handle,
+        walk: impl FnOnce() -> Option<Handle>,
+    ) -> Option<Handle> {
         // A record without a handle owns nothing; the search below would
         // otherwise return the root dictionary, whose owner is NULL too.
         if owner.is_null() {
@@ -4585,16 +4636,7 @@ impl CadDocument {
         if matches!(self.objects.get(&owner), Some(ObjectType::Dictionary(_))) {
             return None;
         }
-        self.objects
-            .iter()
-            .find_map(|(handle, object)| match object {
-                ObjectType::Dictionary(dictionary)
-                    if dictionary.owner == owner && !handle.is_null() =>
-                {
-                    Some(*handle)
-                }
-                _ => None,
-            })
+        walk()
     }
 
     /// Resolve a named XRecord in `owner`'s extension dictionary.
