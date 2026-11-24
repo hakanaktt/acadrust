@@ -271,3 +271,30 @@ fn a_caret_at_a_chunk_boundary_survives_the_codecs_own_round_trip() {
         );
     }
 }
+
+/// #633: a class-version-1 record carries raw 64-bit words after the
+/// projection radius; a DWG save writes them back.
+#[test]
+fn a_version_1_trailing_payload_survives_dwg() {
+    let words = vec![0x03f9_d08b_77fe_68d1, 0xb056_205a_c6ab_8251];
+    for version in [DxfVersion::AC1015, DxfVersion::AC1021, DxfVersion::AC1032] {
+        let mut doc = document_with("");
+        doc.version = version;
+        for o in doc.objects.values_mut() {
+            if let ObjectType::GeoData(g) = o {
+                g.version = 1;
+                g.civil_trailing_words = words.clone();
+            }
+        }
+        let back = read_dwg(DwgWriter::write_to_vec(&doc).expect("write DWG"));
+        let geo = back
+            .objects
+            .values()
+            .find_map(|o| match o {
+                ObjectType::GeoData(g) => Some(g.clone()),
+                _ => None,
+            })
+            .expect("a GEODATA");
+        assert_eq!((geo.version, &geo.civil_trailing_words), (1, &words), "{version:?}");
+    }
+}

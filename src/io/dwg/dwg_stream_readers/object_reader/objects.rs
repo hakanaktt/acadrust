@@ -1757,6 +1757,7 @@ pub struct GeoDataData {
     pub civil_unknown_flag2: bool,
     pub civil_north_angle_degrees: f64,
     pub civil_north_angle_radians: f64,
+    pub civil_trailing_words: Vec<u64>,
 }
 
 /// Read the AcDbGeoData object body (after common non-entity data).
@@ -1854,6 +1855,11 @@ pub fn read_geodata(reader: &mut DwgMergedReader) -> GeoDataData {
         d.sea_level_correction = reader.read_bit();
         d.sea_level_elevation = reader.read_bit_double();
         d.coordinate_projection_radius = reader.read_bit_double();
+        // A payload of raw 64-bit words follows in some records; the rest
+        // (under 64 bits) is the byte padding.
+        while reader.main_remaining_bits() >= 64 {
+            d.civil_trailing_words.push(reader.read_raw_double().to_bits());
+        }
     }
     d
 }

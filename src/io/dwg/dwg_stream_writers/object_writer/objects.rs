@@ -3016,6 +3016,9 @@ impl<'a> DwgObjectWriter<'a> {
             self.writer.write_bit_double(geo.sea_level_elevation);
             self.writer
                 .write_bit_double(geo.coordinate_projection_radius);
+            for word in &geo.civil_trailing_words {
+                self.writer.write_raw_double(f64::from_bits(*word));
+            }
         }
 
         self.register_object(geo.handle);

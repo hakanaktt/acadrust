@@ -872,6 +872,9 @@ pub struct GeoData {
     pub civil_unknown_flag2: bool,
     pub civil_north_angle_degrees: f64,
     pub civil_north_angle_radians: f64,
+    /// DWG class-version-1 payload after the projection radius, kept as
+    /// read (raw 64-bit words) so a save writes the record back whole.
+    pub civil_trailing_words: Vec<u64>,
 }
 
 impl GeoData {
@@ -921,6 +924,7 @@ impl GeoData {
             civil_unknown_flag2: false,
             civil_north_angle_degrees: 0.0,
             civil_north_angle_radians: 0.0,
+            civil_trailing_words: Vec::new(),
         }
     }
 }

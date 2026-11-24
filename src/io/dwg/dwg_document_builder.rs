@@ -7017,6 +7017,7 @@ impl DwgDocumentBuilder {
                     obj.civil_unknown_flag2 = data.civil_unknown_flag2;
                     obj.civil_north_angle_degrees = data.civil_north_angle_degrees;
                     obj.civil_north_angle_radians = data.civil_north_angle_radians;
+                    obj.civil_trailing_words = data.civil_trailing_words;
                     document.objects.insert(
                         Handle::from(handle),
                         crate::objects::ObjectType::GeoData(obj),
