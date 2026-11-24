@@ -37,7 +37,13 @@ pub fn dwg_maintenance_version(version: DxfVersion) -> i16 {
         DxfVersion::AC1021 => 25, // 0x19
         DxfVersion::AC1024 => 30, // 0x1E
         DxfVersion::AC1027 => 29, // 0x1D
-        DxfVersion::AC1032 => 4,  // 0x04
+        // The application writes 0 in the file header's two maintenance bytes
+        // (0x0B, 0x12) and the AuxHeader fields of its AC1032 files; a
+        // non-zero byte there makes the application report the drawing as
+        // written by a newer release. The AC1032 section layout does not
+        // depend on the byte (its extra section RL is unconditional), so
+        // the application's own value is the safe one.
+        DxfVersion::AC1032 => 0,
         _ => 0,
     }
 }
@@ -213,9 +219,11 @@ mod tests {
         let data_2000 = write_aux_header(DxfVersion::AC1015, &header);
         let data_2018 = write_aux_header(DxfVersion::AC1032, &header);
 
-        // R2018 widens the three maintenance fields to RL.
+        // R2018 widens the three maintenance fields to RL. The maintenance
+        // value is the reference application's own (0 for AC1032 — see
+        // [`dwg_maintenance_version`]).
         assert_eq!(data_2018.len(), data_2000.len() + 6);
-        assert_eq!(&data_2018[5..9], &[4, 0, 0, 0]);
+        assert_eq!(&data_2018[5..9], &[0, 0, 0, 0]);
         // The educational plot stamp sits right after HANDSEED and must be 0.
         assert_eq!(&data_2018[89..93], &[0, 0, 0, 0]);
     }
