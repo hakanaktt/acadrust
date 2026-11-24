@@ -438,6 +438,15 @@ pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handl
     // crossings took (PD01: crossings 7, 8 then (100, 25) 9, (0, 25) 10;
     // PD03, PD05, PD09; PD08: a second line, the first line's crossings too,
     // 16 to 19, the crossing of the two lines keeping 15).
+    // A new feature line's marks on the lot lines (PD01 to PD09, F01 to
+    // F04): every lot line edge takes 0x800, its crossings by feature
+    // lines no 0x80; a lot line the line meets marks its first point 0x80
+    // and the nodes feature lines put on it 0x800000; one whose face the
+    // line splits marks all its points 0x800 too.
+    let new_line = members.last().filter(|m| m.kind == MemberKind::FeatureLine && m.ids.is_empty()).map(|_| members.len() - 1);
+    let on_feature_lines: Vec<i32> = members.iter().zip(&arrangement.edges).filter(|(m, _)| m.kind == MemberKind::FeatureLine).flat_map(|(_, e)| e.vertices.iter().map(|v| v.node)).collect();
+    let splits = new_line.is_some_and(|k| arrangement_of(&members[..k], next.outside).is_ok_and(|before| before.faces.len() < arrangement.faces.len()));
+    let met_by_new: Vec<bool> = arrangement.edges.iter().map(|e| new_line.is_some_and(|k| e.vertices.iter().any(|v| arrangement.edges[k].vertices.iter().any(|w| w.node == v.node)))).collect();
     if let Some((k, _)) = members.iter().enumerate().last().filter(|(_, m)| m.kind == MemberKind::FeatureLine && m.ids.is_empty()) {
         let on_feature_lines: Vec<i32> = members.iter().zip(&arrangement.edges).filter(|(m, _)| m.kind == MemberKind::FeatureLine).flat_map(|(_, e)| e.vertices.iter().map(|v| v.node)).collect();
         let lot_lines: Vec<&super::arrangement::Edge> = members.iter().zip(&arrangement.edges).filter(|(m, _)| matches!(m.kind, MemberKind::LotLine { .. })).map(|(_, e)| e).collect();
@@ -547,6 +556,14 @@ pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handl
                     own == r.points.len() && edge.vertices.iter().filter(|v| v.inserted).all(|v| r.inserted.iter().any(|(q, _, _)| q.distance(&a.nodes[v.node as usize - 1].0) <= 1e-9))
                 });
                 let flags = if n == 0 || as_read { m.read.as_ref().map_or(flags, |r| r.flags) } else { flags };
+                let lot_line = matches!(m.kind, MemberKind::LotLine { .. });
+                let flags = if new_line.is_some() && lot_line {
+                    let by_others = edge.vertices.iter().any(|v| v.inserted && !on_feature_lines.contains(&v.node));
+                    (flags | 0x800) & if by_others { !0 } else { !CROSSED_EDGE }
+                } else {
+                    flags
+                };
+                let marked = new_line.is_some() && lot_line && met_by_new[e];
                 for v in [0, e as i32 + 1, flags, n as i32, 0] {
                     w.write_bit_long(v);
                 }
@@ -590,6 +607,11 @@ pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handl
                     // first, 0x800000 on the crossings, 0x40 on the line's
                     // last crossing).
                     let flags = flags | read.map_or(0, |f| f & (0x800 | SHARED_NODE | 0x80 | 0x40));
+                    let flags = if marked {
+                        flags | if i == 0 { 0x80 } else { 0 } | if splits { 0x800 } else { 0 } | if v.inserted && on_feature_lines.contains(&v.node) { SHARED_NODE } else { 0 }
+                    } else {
+                        flags
+                    };
                     let (left, right) = (a.face_id(v.faces.0), a.face_id(v.faces.1));
                     for x in [if last { 2 } else if arc.is_some() { 1 } else { 0 }, flags, id_of(v.node), left, right] {
                         w.write_bit_long(x);

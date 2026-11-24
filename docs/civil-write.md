@@ -1746,15 +1746,21 @@ carry and the flags of every edge the new member leaves as read (the
 application moves the outside face's entry by a rule not known: PD01
 (6, 0) at the line's end, PD05 (4, 1) on the lot line).
 
-Point and edge marks of a new line (not written; rule not found): the lot line's edge
-gains 0x800, its points 0x800 when the line splits the parcel (PD01,
-PD05, PD08, PD09) but not when it only enters it (PD03), its first point
-0x80 more; the crossings 0x800000 and 0x800 (0x800430 in PD03, 0x800c30,
-the lot line's last point 0x800c20 in PD01); on the feature line the
-first crossing 0xc10 (0xc50 after an inner point or when it crosses
-another feature line), the last 0x470 or 0xc70, inner points 0x892 and
-0xc90, its end 0x2 once a later line crosses it (PD08). The writer keeps
-its own marks (0x430 for crossings, as for lot lines).
+Marks of a new feature line on the lot lines (F01 to F04: the PD01 line
+at elevation 0, a line entering from below and ending inside, a line
+from the bottom side to the top one, a line inside that meets nothing):
+every lot line edge gains 0x800 (F04 too) and takes no 0x80 for
+crossings by feature lines (PD01: 0x831); a lot line the line meets marks
+its first point 0x80 and the nodes feature lines put on it 0x800000
+(PD03, F02: 0x800430); one whose face the line splits marks all its
+points 0x800 as well (PD01, PD05, PD09, F03; F01 shows the elevations do
+not matter). The writer does the same. Not written (rules not found):
+the closed lot line's last point's 0x10 and 0x20 (0x20 alone in PD01,
+PD03 and F03, 0x10 alone in F02, both in PD05 and PD09) and the marks on
+the feature line's own points (first crossing 0xc10, or 0xc50 after an
+inner point; the crossing that starts the last segment 0x40 more: 0x470,
+0xc70; inner points 0x892; a start on the lot line 0x8d2 in F03; its end
+0x2 once a later line crosses it, PD08).
 
 A lot line across such a parcel splits it along its own segments only:
 the faces on either side of a feature line stay together, each group one
@@ -2104,11 +2110,15 @@ PE12), the newest member's point marks 0x10 and 0x20, and the ids of
 crossing nodes where a new line crosses several members' earlier pieces
 (PA02, PB03: the application numbers them in an order neither by member
 nor along either line). PC12 (an alignment across PC11's face; also
-PC12r reversed and PC12l a lot line) differs in the face kept: the
-application gives the face to the left part although PC11's entry (the
-lot line's closing segment, not split) lies in the right one, as if it
-were void; the writer gives it to the right part, so the two parcels'
-numbers are swapped. Checks: E-PA1 (a new drawing: an alignment, a
+PC12r reversed and PC12l a lot line) keeps the face on the left part
+although PC11's entry (the lot line's closing segment, not split) lies in
+the right one: where a face's first segment in member order is an
+alignment's, the part along that segment keeps the face and takes the
+splitting segment as its entry (PG1: PC11's lot line drawn the other way
+round; PG2, PG3: the alignment across at x = 25 and 75: always the part
+along the first alignment's piece; PA02 alike); where it is a lot
+line's, the part with the entry keeps it (PB03, WP19, PD20). The writer
+does the same. Checks: E-PA1 (a new drawing: an alignment, a
 rectangle across it, a second alignment across both, two alignments
 closing a loop and a lot line splitting it), E-PA2 (PB03's lines written
 to WP03) and E-PA3 (PC24's and PC12's lines written to PC10) open with
@@ -4128,12 +4138,13 @@ Corridors are listed in §3i-a.
 | sites | name, description, members | yes | yes | §3g |
 | parcels | closed and open, crossing and touching lot lines, arcs, labels | yes | yes | §3g |
 | parcels | members added to containers the application wrote with crossings (its point marks and edge flags kept) | yes | yes | §3g |
-| parcels | lot lines and alignments meeting each other (arcs included), alignments closing loops | yes | yes | §3g (Alignments and lot lines; PC12's face order and some crossing node ids differ) |
+| parcels | lot lines and alignments meeting each other (arcs included), alignments closing loops | yes | yes | §3g (Alignments and lot lines; some crossing node ids differ) |
 | parcels | arcs where lot lines and alignments meet (arcs split, bulges per piece) | yes | yes | §3g (Arcs where lines meet; labels of faces arc pieces bound differ) |
 | parcels | lot lines meeting feature lines; the rule of the newest member's point marks 0x10/0x20 for members the crate adds | yes | no | §3g (rule not found; marks read are kept) |
 | parcels | node ids of feature lines meeting lot lines | yes | yes | §3g (feature lines splitting parcels: PD01 to PD09) |
 | parcels | face ids a feature line gives the faces it splits or enters (containers with such ids read and written again) | yes | yes | §3g (feature lines splitting parcels: PD01 to PD20) |
-| parcels | the marks 0x800/0x800000 a new feature line sets on lot lines and crossings, the outside face's entry it moves | yes (kept as read) | no | §3g (rule not found) |
+| parcels | the marks 0x800/0x800000/0x80 a new feature line sets on lot lines and their crossings | yes | yes | §3g (F01 to F04, PD01 to PD09) |
+| parcels | a new feature line's marks on its own points, the closed lot line's last point's 0x10/0x20, the outside face's entry it moves | yes (kept as read) | no | §3g (rules not found) |
 | sites | containers with members without points or nodes (WP01, WP02, WT04 to WT06: alignments without elements on a site), members added to them | yes | yes | §3g (members without points) |
 | feature lines | points, elevation points, arcs, on a site | yes | yes | §3g |
 | feature lines | edits: points, arcs, elevations and elevation points replaced, in containers this crate or the application wrote (ids and keys kept) | yes | yes | §3g |

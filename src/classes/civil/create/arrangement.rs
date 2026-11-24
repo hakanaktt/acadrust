@@ -662,9 +662,28 @@ pub(super) fn build(members: &[Input]) -> Result<Arrangement, &'static str> {
             let new_entry;
             if ar < 0.0 && al < 0.0 {
                 let k = s.faces[face].entries.iter().position(|e| right.contains(&e.half()) || left.contains(&e.half()));
+                // Where the face's first segment in member order is an
+                // alignment's, the part along it keeps the face (PC12,
+                // PC12r, PC12l, PG1 to PG3: the alignment's piece west of
+                // the split, whichever part the entry is in); else the
+                // part with the entry (PB03, WP19, PD20).
+                let first_left = s
+                    .member_segments()
+                    .iter()
+                    .find_map(|&(k, (p, q, _))| {
+                        let (r, l) = (right.contains(&(p, q)) || right.contains(&(q, p)), left.contains(&(p, q)) || left.contains(&(q, p)));
+                        (r != l).then_some((k, l))
+                    })
+                    .filter(|(k, _)| !s.edges[*k].lot_line && !s.edges[*k].feature_line)
+                    .map(|(_, l)| l);
                 match k.map(|k| (k, s.faces[face].entries[k])) {
-                    Some((_, Entry::Live(h))) if left.contains(&h) => new_entry = (a, b),
-                    Some((_, Entry::Live(_))) => new_entry = (b, a),
+                    Some((_, Entry::Live(h))) if first_left.is_none_or(|l| l == left.contains(&h)) => new_entry = if left.contains(&h) { (a, b) } else { (b, a) },
+                    // The keeper takes the segment as its entry.
+                    Some((k, Entry::Live(_))) => {
+                        let keeper_left = first_left == Some(true);
+                        s.faces[face].entries[k] = Entry::Live(if keeper_left { (b, a) } else { (a, b) });
+                        new_entry = if keeper_left { (a, b) } else { (b, a) };
+                    }
                     // The face keeps the part its old entry started in,
                     // with the segment as its entry (PB01, PB01r, PB02).
                     Some((k, Entry::Void(_, first))) if left.contains(&first) => {
