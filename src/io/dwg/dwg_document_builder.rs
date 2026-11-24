@@ -3856,6 +3856,12 @@ impl DwgDocumentBuilder {
         }
         document.header.handle_seed = document.header.handle_seed.max(next_handle);
 
+        // A seeded default the file has no record of - the Standard dimension
+        // style of a drawing that only uses ISO-25 - still names the seeded
+        // text style's handle, which the file may have given to a record of
+        // another table; point it at the file's text style of the same name.
+        crate::io::dxf::rewire_stale_text_style_references(document);
+
         document.header.current_layer_name = document
             .layers
             .iter()

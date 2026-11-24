@@ -1007,8 +1007,8 @@ fn rewire_dangling_layout_block_records(document: &mut CadDocument) {
 /// has since given to an unrelated record - e.g. the ByBlock linetype - and the
 /// writer emits a `340`/`342` that consumers resolve to the wrong table
 /// (issues #64 and #68). Re-point such stale handles at the file's text style
-/// of the same name.
-fn rewire_stale_text_style_references(document: &mut CadDocument) {
+/// of the same name. The DWG reader seeds the same defaults and runs this too.
+pub(crate) fn rewire_stale_text_style_references(document: &mut CadDocument) {
     let text_style_handles: std::collections::HashSet<u64> = document
         .text_styles
         .iter()
