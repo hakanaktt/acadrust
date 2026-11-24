@@ -526,3 +526,30 @@ fn rt_align_offset_profile_round_trip() {
     assert_eq!(own.len(), 2);
     assert!(own.iter().any(|a| a.kind == 32763));
 }
+
+/// The application stores a created-by name before the alignment's own
+/// (2027 samples): the reader must not take the author for the name.
+/// Oracle: the application reads the three alignments of the tutorials'
+/// Sections-Project-Objects.dwg as "Centerline (1)", "Left (1)" and
+/// "Right (1)" (execute_civil_code `Alignment.Name`, 2026-11-23).
+#[test]
+fn an_app_written_alignments_name_is_not_its_created_by_name() {
+    // The application's tutorial drawing, from `ACADRUST_CIVIL_TUTORIALS_DIR`.
+    let Some(dir) = std::env::var_os("ACADRUST_CIVIL_TUTORIALS_DIR") else { return };
+    let path = std::path::Path::new(&dir).join("Sections-Project-Objects.dwg");
+    if !path.exists() {
+        return;
+    }
+    let doc = DwgReader::from_file(&path).unwrap().read().unwrap();
+    let names: Vec<String> = doc
+        .entities()
+        .filter_map(|e| match e {
+            EntityType::Extended(x) => match &x.data {
+                ExtendedEntityData::Arch(a) if a.dxf_name == "AECC_ALIGNMENT" => a.alignment_name(),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(names, vec!["Centerline (1)".to_string(), "Left (1)".to_string(), "Right (1)".to_string()]);
+}

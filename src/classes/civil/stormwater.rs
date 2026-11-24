@@ -1,6 +1,6 @@
 //! Stormwater control entities: pond (`AECC_POND`), underground storage
-//! (`AECC_UNDERGROUNDSTORAGE`) and channel (`AECC_CHANNEL`) of the Civil 3D
-//! stormwater planning tools.
+//! (`AECC_UNDERGROUNDSTORAGE`) and channel (`AECC_CHANNEL`) of the
+//! application's stormwater planning tools.
 //!
 //! All three share the parcel-segment record head (upstream PR #591) and
 //! schema word, and carry their shape in the entity's graphic-image section
@@ -37,10 +37,8 @@
 //! `AECC_COMPONENT` records' text streams, not in these records. There are
 //! no writers upstream for the families; writing them is a follow-up.
 //!
-//! Provenance (D013): the only corpus drawing with these families is
-//! `C3D\Sample\DE_Regenwassersteuerung_2027.dwg`, a language/region-specific
-//! sample shipped with AutoCAD Civil 3D 2027 — cited here for
-//! reproducibility of the finding, not as a reference corpus.
+//! Provenance (D013): the only corpus drawing with these families is the
+//! application's regional sample `DE_Regenwassersteuerung_2027.dwg`.
 
 use super::bits::Bits;
 use crate::types::Vector3;

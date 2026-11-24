@@ -7,6 +7,8 @@ use super::groups::bucket_insert;
 use super::support::*;
 use super::default_styles::{ensure_site_styles, KEY_FEATURE_LINE_STYLES, KEY_PARCEL_STYLES};
 use super::tree::{ensure_alignment_tree, DEFAULT_STYLE_ID, KEY_STYLES};
+use crate::classes::arch::ArchObject;
+use crate::classes::civil::alignment::same_solved_point;
 use crate::entities::{EntityCommon, EntityType, ExtendedEntityData};
 use crate::error::DxfError;
 use crate::io::dwg::dwg_reference_type::DwgReferenceType;
@@ -358,7 +360,7 @@ pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handl
         // Nodes other members' crossings added keep the ids read.
         for v in edge.vertices.iter().filter(|v| v.inserted) {
             let p = arrangement.nodes[v.node as usize - 1].0;
-            if let Some(&(_, id, _)) = m.read.iter().flat_map(|r| &r.inserted).find(|(q, _, _)| q.distance(&p) <= 1e-9) {
+            if let Some(&(_, id, _)) = m.read.iter().flat_map(|r| &r.inserted).find(|(q, _, _)| crate::classes::civil::alignment::same_solved_point(*q, p)) {
                 node_ids[v.node as usize - 1] = id;
             }
         }
@@ -641,11 +643,48 @@ fn members_of(doc: &mut CadDocument, site: Handle) -> Result<(Handle, Vec<Member
     let before = bits_of(doc);
     let rewritten = write_container(doc, container, site, &members, &parcels, style, next);
     let faces = rewritten.as_ref().map_or(0, |a| a.faces.len());
-    if rewritten.is_err() || bits_of(doc) != before || parcels.len() != faces.saturating_sub(1) {
+    // Writing what was read gives back the record: bit for bit — or, on
+    // the record's solved geometry, within the solved tolerances. A
+    // crossing's resplit arcs go through tan and atan chains, and a
+    // platform's libm rounds those ulps its own way (macOS refused its
+    // own earlier writes there), so the bits alone are not the record's
+    // identity.
+    if rewritten.is_err()
+        || parcels.len() != faces.saturating_sub(1)
+        || (bits_of(doc) != before && !rewritten_as_read(doc, container, &o))
+    {
         doc.objects.insert(container, crate::objects::ObjectType::Arch(o));
         return Err(refused());
     }
     Ok((container, members, parcels, style, next))
+}
+
+/// Whether the container now in the document reads as the topology the
+/// record read before had: node and key ids, flags, counts and the
+/// nodes' elevations exactly; the solved points within the shared
+/// solved-point tolerance and the bulges within `1e-9` of their
+/// magnitude — the resplit arcs go through tan and atan chains, and a
+/// platform's libm rounds those ulps its own way.
+fn rewritten_as_read(doc: &CadDocument, container: Handle, before: &ArchObject) -> bool {
+    let Some(before) = before.topology() else { return false };
+    let Some(after) = object(doc, container).and_then(|o| o.topology()) else { return false };
+    before.next_node == after.next_node
+        && before.next_key == after.next_key
+        && before.outside_face_flags == after.outside_face_flags
+        && before.edge_flags == after.edge_flags
+        && before.edges.len() == after.edges.len()
+        && before.edges.iter().zip(&after.edges).all(|(x, y)| {
+            x.len() == y.len()
+                && x.iter().zip(y).all(|(u, v)| {
+                    u.flags == v.flags
+                        && u.node == v.node
+                        && u.key == v.key
+                        && u.faces == v.faces
+                        && u.z == v.z
+                        && same_solved_point(u.point, v.point)
+                        && (u.bulge - v.bulge).abs() <= 1e-9 * (1.0 + u.bulge.abs())
+                })
+        })
 }
 
 /// Adds an empty site named `name` with `description`. It takes the

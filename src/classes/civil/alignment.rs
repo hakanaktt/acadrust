@@ -1419,7 +1419,7 @@ use AlignmentPiece as Piece;
 
 /// Whether two solved points are the same point, within `1e-9` of the
 /// coordinate magnitude.
-fn same_solved_point(a: Vector2, b: Vector2) -> bool {
+pub(crate) fn same_solved_point(a: Vector2, b: Vector2) -> bool {
     a.distance(&b) <= 1e-9 * (1.0 + a.x.abs().max(a.y.abs()))
 }
 
