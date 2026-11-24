@@ -124,6 +124,18 @@ mod tests {
         assert_eq!(v.as_f64(), Some(42.0));
     }
 
+    /// A 17-significant-digit decimal parses bit-exact. The JSON float
+    /// round-trip feature matters: without it serde_json's fast parser is
+    /// up to 1 ulp off such numbers, which shifted coordinates through a
+    /// JSON manifest round-trip (survey point 4039.2756306090996 came
+    /// back 4039.275630609099).
+    #[test]
+    fn a_long_decimal_parses_bit_exact() {
+        let v = JsonValue::parse(r#"{"x": 4039.2756306090996}"#).unwrap();
+        let expected: f64 = "4039.2756306090996".parse().unwrap();
+        assert_eq!(v.get("x").unwrap().as_f64().unwrap().to_bits(), expected.to_bits());
+    }
+
     #[test]
     fn test_parse_string() {
         let v = JsonValue::parse(r#""hello""#).unwrap();
