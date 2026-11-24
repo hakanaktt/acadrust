@@ -22,6 +22,7 @@ mod parameters;
 mod profile;
 mod sample_lines;
 mod section;
+mod stormwater;
 mod style;
 mod subassembly;
 mod tin;
@@ -44,7 +45,7 @@ pub use network::{PartField, PressurePipe, PressurePort};
 pub use parameters::{Parameter, ParameterValue};
 pub use profile::{CurveMinimumK, OffsetProfile, ProfileCriteria, ProfileLocking, ProfilePiece, ProfileViewFrame, Pvi};
 pub use parcel_segments::ParcelSegmentGeometry;
-pub use sample_lines::{SampleLines, SectionViewGroupPlot};
+pub use sample_lines::{SampleLines, SampleLineVertices, SectionViewGroupPlot};
 pub use section::{MassHaulViewFrame, SectionGeometry, SectionViewFrame};
 pub use style::{DisplayComponent, Marker, ProfileViewAxisStyle, ProfileViewAxisTitle, ProfileViewGrid, ProfileViewGridLines, ProfileViewStyleSettings, ProfileViewTicks, ProfileViewTitle, ViewAxes, ViewAxis};
 pub use subassembly::{AssemblyLayout, Attachment, SubassemblyShape};
@@ -772,7 +773,15 @@ impl ArchEntityData {
         if let Some(reference) = strings.iter().find_map(|s| s.rsplit_once(".dwg:")) {
             return Some(reference.1.to_string());
         }
-        strings.get(3).filter(|s| !s.is_empty()).cloned()
+        // The application stores a created-by name before the alignment's
+        // own (2027 samples: "AeccImpAlignment", "", "", "Administrator",
+        // "Centerline (1)"); records this crate writes keep the name at
+        // index 3. Prefer the first non-empty string from index 4, then 3.
+        strings
+            .get(4)
+            .filter(|s| !s.is_empty())
+            .cloned()
+            .or_else(|| strings.get(3).filter(|s| !s.is_empty()).cloned())
     }
 
     /// The profile's name: the string after its label point names, which
@@ -1017,6 +1026,21 @@ impl ArchEntityData {
         }
         let (data, start, end) = self.main_stream()?;
         section::mass_haul_view_frame(data, start, end)
+    }
+
+
+    /// Station and vertex sides of a sample line
+    /// (`AECC_SAMPLE_LINE`): where it crosses its alignment and, per side
+    /// (left first), its vertices as `(offset, station less the line's)`
+    /// from the alignment outwards. The line's swath widths are its
+    /// extreme offsets.
+    pub fn sample_line_vertices(&self) -> Option<SampleLineVertices> {
+        if self.dxf_name != "AECC_SAMPLE_LINE" {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        let (station, sides) = sample_lines::line_station_and_sides(data, start, end)?;
+        Some(SampleLineVertices { station, left: sides[0].clone(), right: sides[1].clone() })
     }
 
     /// Insertion point of a Civil 3D pressure fitting or appurtenance
@@ -1278,6 +1302,24 @@ impl ArchEntityData {
         self.main_stream()
             .map(|(data, start, end)| corridor::feature_line_groups(data, start, end))
             .unwrap_or_default()
+    }
+
+    /// Geometry and style of a stormwater control entity (`AECC_POND`,
+    /// `AECC_UNDERGROUNDSTORAGE` or `AECC_CHANNEL`); see
+    /// [`stormwater::StormWater`]. The hydraulic parameters the application
+    /// shows for these are not persisted in the record — see the module
+    /// notes.
+    pub fn stormwater(&self) -> Option<stormwater::StormWater> {
+        let kind = match self.dxf_name.as_str() {
+            "AECC_POND" => stormwater::StormWaterKind::Pond,
+            "AECC_UNDERGROUNDSTORAGE" => stormwater::StormWaterKind::UndergroundStorage,
+            "AECC_CHANNEL" => stormwater::StormWaterKind::Channel,
+            _ => return None,
+        };
+        let (data, start, end) = self.main_stream()?;
+        let graphic = super::arch::decode::entity_graphic_data(self)?;
+        let handles = self.decode().handles;
+        stormwater::entity(kind, data, start, end, &graphic, &handles)
     }
 
     /// Raw record and the bit range of its class body.

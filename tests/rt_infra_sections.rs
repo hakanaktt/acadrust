@@ -203,3 +203,60 @@ fn section_views_and_group_plots_survive() {
     assert_eq!(plot.extra, [0.0; 8]);
     assert_eq!(plot.flags, [false, false]);
 }
+
+/// A sample line's vertex sides decode in both record layouts, and the
+/// swath widths are the extreme offsets. Oracle: the application reads the
+/// tutorials' Sections-Project-Objects.dwg sample lines at stations 100 to
+/// 1700 (plus one at 0 and one at 1729.048573328025) with vertices 300
+/// left and 300 right of the alignment (execute_civil_code, 2026-11-23:
+/// the three `Location` vertices of each line sit 300 apart).
+#[test]
+fn a_sample_line_s_sides_carry_its_swath_widths() {
+    // A written line: left 25, right 15.
+    let mut doc = CadDocument::new();
+    doc.version = DxfVersion::AC1032;
+    let al = add_alignment(&mut doc, "AL", &[v(0.0, 0.0), v(1000.0, 0.0)], None).unwrap();
+    let g = add_sample_line_group(&mut doc, al, "SLG", None).unwrap();
+    let line = add_sample_line(&mut doc, g, "SL1", 250.0, 25.0, 15.0, None).unwrap();
+    let read = |doc: &CadDocument, h: Handle| match doc.get_entity(h) {
+        Some(EntityType::Extended(x)) => match &x.data {
+            ExtendedEntityData::Arch(a) => a.sample_line_vertices().unwrap(),
+            _ => panic!("not arch"),
+        },
+        _ => panic!("missing"),
+    };
+    let own = read(&doc, line);
+    assert_eq!(own.station, 250.0);
+    assert_eq!(own.left, vec![(-25.0, 0.0)]);
+    assert_eq!(own.right, vec![(15.0, 0.0)]);
+
+    // The application's records decode the same way.
+    // The application's tutorial drawing, from `ACADRUST_CIVIL_TUTORIALS_DIR`.
+    let Some(dir) = std::env::var_os("ACADRUST_CIVIL_TUTORIALS_DIR") else { return };
+    let path = std::path::Path::new(&dir).join("Sections-Project-Objects.dwg");
+    if !path.exists() {
+        return;
+    }
+    let oracle = DwgReader::from_file(&path).unwrap().read().unwrap();
+    let mut lines: Vec<_> = oracle
+        .entities()
+        .filter_map(|e| match e {
+            EntityType::Extended(x) => match &x.data {
+                ExtendedEntityData::Arch(a) if a.dxf_name == "AECC_SAMPLE_LINE" => a.sample_line_vertices(),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    lines.sort_by(|a, b| a.station.total_cmp(&b.station));
+    assert_eq!(lines.len(), 19);
+    assert_eq!(lines[0].station, 0.0);
+    assert_eq!(lines[1].station, 100.0);
+    assert_eq!(lines.last().unwrap().station, 1729.048573328025);
+    for line in &lines {
+        assert_eq!(line.left.len(), 1);
+        assert_eq!(line.right.len(), 1);
+        assert_eq!(line.left[0], (-300.0, 0.0));
+        assert_eq!(line.right[0], (300.0, 0.0));
+    }
+}
