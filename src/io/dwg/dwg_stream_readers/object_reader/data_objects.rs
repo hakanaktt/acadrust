@@ -19,13 +19,14 @@ pub fn read_data_object_data(
     let data = match dxf_name.to_uppercase().as_str() {
         "BREAKDATA" => {
             // Main stream: BS version, BL count, then per reference its
-            // fields through the sub-entity path's type and index and one
-            // reserved BL. Handle stream: the dimension, then per reference
-            // a reserved soft pointer and the sub-entity object.
+            // fields through the trailing BS and, when that is non-zero, the
+            // sub-entity path's type and index and one reserved BL. Handle
+            // stream: the dimension, then per reference a reserved soft
+            // pointer and, when it has a path, the sub-entity object.
             let version = reader.read_bit_short();
             let mut point_references = Vec::new();
             for _ in 0..count(reader.read_bit_long(), reader) {
-                point_references.push(BreakPointReference {
+                let mut reference = BreakPointReference {
                     version: reader.read_bit_short(),
                     reserved: if reader.dxf_version() >= crate::types::DxfVersion::AC1027 {
                         reader.read_bit_short()
@@ -38,16 +39,21 @@ pub fn read_data_object_data(
                     first_point: reader.read_3bit_double(),
                     second_point: reader.read_3bit_double(),
                     trailing_version: reader.read_bit_short(),
-                    subentity_type: reader.read_bit_long(),
-                    subentity_index: reader.read_bit_long(),
-                    subentity_reserved: reader.read_bit_long(),
                     ..BreakPointReference::default()
-                });
+                };
+                if reference.trailing_version != 0 {
+                    reference.subentity_type = reader.read_bit_long();
+                    reference.subentity_index = reader.read_bit_long();
+                    reference.subentity_reserved = reader.read_bit_long();
+                }
+                point_references.push(reference);
             }
             let dimension_reference = Handle::from(reader.read_handle());
             for reference in &mut point_references {
                 reference.reserved_reference = Handle::from(reader.read_handle());
-                reference.subentity_object = Handle::from(reader.read_handle());
+                if reference.trailing_version != 0 {
+                    reference.subentity_object = Handle::from(reader.read_handle());
+                }
             }
             DataObjectData::BreakData(BreakData {
                 version,

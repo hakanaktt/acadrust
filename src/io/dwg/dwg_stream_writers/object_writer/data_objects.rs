@@ -1,9 +1,19 @@
 //! Native DWG writers for database data/index helper objects.
 
 use crate::io::dwg::dwg_reference_type::DwgReferenceType;
-use crate::objects::{DataObject, DataObjectData};
+use crate::objects::{BreakPointReference, DataObject, DataObjectData};
 
 use super::{common, DwgObjectWriter};
+
+/// Whether a BREAKDATA point reference is written with a sub-entity path:
+/// it was read with one (non-zero trailing BS) or one is set on the model.
+fn has_subentity_path(reference: &BreakPointReference) -> bool {
+    reference.trailing_version != 0
+        || !reference.subentity_object.is_null()
+        || reference.subentity_type != 0
+        || reference.subentity_index != 0
+        || reference.subentity_reserved != 0
+}
 
 impl<'a> DwgObjectWriter<'a> {
     pub(super) fn write_data_object(&mut self, object: &DataObject) {
@@ -78,10 +88,15 @@ impl<'a> DwgObjectWriter<'a> {
                     self.writer.write_bit_long(reference.identifier);
                     self.writer.write_3bit_double(reference.first_point);
                     self.writer.write_3bit_double(reference.second_point);
-                    self.writer.write_bit_short(reference.trailing_version);
-                    self.writer.write_bit_long(reference.subentity_type);
-                    self.writer.write_bit_long(reference.subentity_index);
-                    self.writer.write_bit_long(reference.subentity_reserved);
+                    if has_subentity_path(reference) {
+                        self.writer
+                            .write_bit_short(reference.trailing_version.max(1));
+                        self.writer.write_bit_long(reference.subentity_type);
+                        self.writer.write_bit_long(reference.subentity_index);
+                        self.writer.write_bit_long(reference.subentity_reserved);
+                    } else {
+                        self.writer.write_bit_short(0);
+                    }
                 }
                 self.writer.write_handle(
                     DwgReferenceType::SoftPointer,
@@ -92,10 +107,12 @@ impl<'a> DwgObjectWriter<'a> {
                         DwgReferenceType::SoftPointer,
                         reference.reserved_reference.value(),
                     );
-                    self.writer.write_handle(
-                        DwgReferenceType::SoftPointer,
-                        reference.subentity_object.value(),
-                    );
+                    if has_subentity_path(reference) {
+                        self.writer.write_handle(
+                            DwgReferenceType::SoftPointer,
+                            reference.subentity_object.value(),
+                        );
+                    }
                 }
             }
             DataObjectData::BreakPointRef => {}
