@@ -380,7 +380,14 @@ fn write_profile(doc: &mut CadDocument, common: EntityCommon, name: &str, parts:
 #[allow(clippy::too_many_arguments)]
 fn write_profile_of(doc: &mut CadDocument, common: EntityCommon, name: &str, parts: &[(i32, i32, i32, Part)], helpers: &[Handle; 7], style: u64, alignment: Handle, id: &[u8; 16], sampled: Option<&Sampled>, offset: Option<&OffsetTail>, extent: (f64, f64), curb_return: Option<[u64; 2]>) -> Result<Handle, DxfError> {
     let byte = |w: &mut DwgMergedWriter, v: u8| bits(w, &format!("{v:08b}"));
-    let feature = offset.map_or(0, |o| o.feature);
+    // A profile of an alignment on a site is a member of the site's
+    // container: it names the container in place of a companion and
+    // holds its edge id as an alignment does (WC64, WC65).
+    let site = match super::site::site_container_of(doc, alignment) {
+        Some(c) => Some((c, super::site::join_profile(doc, c, common.handle)?)),
+        None => None,
+    };
+    let feature = site.map_or(offset.map_or(0, |o| o.feature), |s| s.0.value());
     let mut refs: Vec<Ref> = helpers.iter().map(|h| Ref(DwgReferenceType::HardOwnership, h.value())).collect();
     refs.extend([soft_pointer(0), hard_pointer(feature), hard_pointer(feature), soft_pointer(0), hard_pointer(style), hard_pointer(alignment.value()), soft_pointer(sampled.map_or(0, |s| s.surface)), hard_pointer(0), soft_pointer(offset.map_or(0, |o| o.source))]);
     // A curb return profile names the two offset profiles it joins and its
@@ -445,7 +452,10 @@ fn write_profile_of(doc: &mut CadDocument, common: EntityCommon, name: &str, par
                 w.write_bit_double(o.slope);
             }
             bl_byte(w, 0);
-            if offset.is_some() {
+            if let Some((_, edge)) = site {
+                bits(w, &"0".repeat(115));
+                bits(w, &format!("00000010{:08b}{:02b}11010", 0x40 | (edge >> 2), edge & 3));
+            } else if offset.is_some() {
                 bits(w, &"0".repeat(65));
                 w.write_bit_double(2.25);
                 bits(w, "0111010");
@@ -996,14 +1006,14 @@ fn offset_entities(source: &[(i32, crate::classes::civil::ProfilePiece, [Vector2
 /// two offset profiles and the curb return as its last references (soft;
 /// WC61).
 #[allow(clippy::too_many_arguments)]
-pub(super) fn write_curb_return_profile(doc: &mut CadDocument, handle: Handle, id: &[u8; 16], alignment: Handle, name: &str, pvis: &[Vector2], incoming: Handle, outgoing: Handle, layer: Option<&str>) -> Result<Handle, DxfError> {
+pub(super) fn write_curb_return_profile(doc: &mut CadDocument, handle: Handle, id: &[u8; 16], alignment: Handle, name: &str, pvis: &[Vector2], incoming: Handle, outgoing: Handle, style: Option<u64>, layer: Option<&str>) -> Result<Handle, DxfError> {
     if pvis.len() < 2 || pvis.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) || pvis.windows(2).any(|w| w[1].x <= w[0].x) {
         return Err(invalid("a curb return profile needs two or more finite PVIs with increasing stations"));
     }
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
     ensure_profile_tree(doc)?;
-    let style = default_style(doc).ok_or_else(|| invalid("drawing has no profile styles"))?;
+    let style = match style { Some(s) => s, None => default_style(doc).ok_or_else(|| invalid("drawing has no profile styles"))? };
     let helpers = write_helpers(doc, handle)?;
     let common = EntityCommon { handle, owner_handle: doc.header.model_space_block_handle, layer: layer.into(), layer_handle: Some(layer_handle), ..EntityCommon::default() };
     let curves = vec![VerticalCurve::None; pvis.len() - 2];
@@ -1011,13 +1021,19 @@ pub(super) fn write_curb_return_profile(doc: &mut CadDocument, handle: Handle, i
 }
 
 /// Writes the layout profile `profile` again as fixed tangents through
-/// `pvis` (station, elevation), keeping its name, layer, style, helper
-/// records and identifier (the application's profile locking reshapes the
-/// other road's profile this way). Only a layout profile (not an offset,
-/// surface or curb return profile) is rewritten.
-pub(super) fn set_profile_pvis(doc: &mut CadDocument, profile: Handle, pvis: &[Vector2]) -> Result<(), DxfError> {
-    if pvis.len() < 2 || pvis.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) || pvis.windows(2).any(|w| w[1].x <= w[0].x) {
-        return Err(invalid("a profile needs two or more finite PVIs with increasing stations"));
+/// `pvis` (station, elevation) with the vertical curve `curves[j]` at inner
+/// PVI `j + 1`, keeping its name, layer, style, helper records and
+/// identifier (the application's profile locking reshapes the other road's
+/// profile this way). Two PVIs may share a station (a tangent of no
+/// length: WC68) when neither has a curve. Only a layout profile (not an
+/// offset, surface or curb return profile) is rewritten.
+pub(super) fn set_profile_pvis(doc: &mut CadDocument, profile: Handle, pvis: &[Vector2], curves: &[VerticalCurve]) -> Result<(), DxfError> {
+    if pvis.len() < 2 || curves.len() + 2 != pvis.len() || pvis.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) || pvis.windows(2).any(|w| w[1].x < w[0].x) || pvis[pvis.len() - 1].x <= pvis[0].x {
+        return Err(invalid("a profile needs two or more finite PVIs with stations not decreasing, and one curve (or none) per inner PVI"));
+    }
+    let curved = |i: usize| i > 0 && i + 1 < pvis.len() && curves[i - 1].is_some();
+    if (1..pvis.len()).any(|i| pvis[i].x == pvis[i - 1].x && (curved(i) || curved(i - 1))) {
+        return Err(invalid("a curve's PVI shares its station with another PVI"));
     }
     let Some(EntityType::Extended(x)) = doc.get_entity(profile) else { return Err(invalid("profile not found")) };
     let ExtendedEntityData::Arch(a) = &x.data else { return Err(invalid("profile not found")) };
@@ -1032,8 +1048,7 @@ pub(super) fn set_profile_pvis(doc: &mut CadDocument, profile: Handle, pvis: &[V
     let common = x.common.clone();
     let helpers: [Handle; 7] = std::array::from_fn(|i| Handle::new(refs[i]));
     let id = identifier(doc, profile.value()).ok_or_else(|| invalid("the profile's identifier cannot be read"))?;
-    let curves = vec![VerticalCurve::None; pvis.len() - 2];
-    write_profile(doc, common, &name, &parts(pvis, &curves), &helpers, refs[11], Handle::new(refs[12]), &id)?;
+    write_profile(doc, common, &name, &parts(pvis, curves), &helpers, refs[11], Handle::new(refs[12]), &id)?;
     Ok(())
 }
 
@@ -1052,6 +1067,12 @@ pub(super) fn set_profile_pvis(doc: &mut CadDocument, profile: Handle, pvis: &[V
 /// linear transitions too), the source a profile within the stations the
 /// offset alignment follows.
 pub fn add_offset_profile(doc: &mut CadDocument, source: Handle, offset_alignment: Handle, name: &str, slope: f64, layer: Option<&str>) -> Result<Handle, DxfError> {
+    add_offset_profile_styled(doc, source, offset_alignment, name, slope, None, layer)
+}
+
+/// [`add_offset_profile`] with `style` (else the drawing's default
+/// profile style).
+pub(super) fn add_offset_profile_styled(doc: &mut CadDocument, source: Handle, offset_alignment: Handle, name: &str, slope: f64, style: Option<u64>, layer: Option<&str>) -> Result<Handle, DxfError> {
     if name.is_empty() || !slope.is_finite() {
         return Err(invalid("an offset profile needs a name and a finite slope"));
     }
@@ -1081,7 +1102,7 @@ pub fn add_offset_profile(doc: &mut CadDocument, source: Handle, offset_alignmen
     let layer = layer.unwrap_or("0");
     let layer_handle = doc.layers.get(layer).map(|l| l.handle).ok_or_else(|| invalid("layer does not exist"))?;
     ensure_profile_tree(doc)?;
-    let style = default_style(doc).ok_or_else(|| invalid("drawing has no profile styles"))?;
+    let style = match style { Some(s) => s, None => default_style(doc).ok_or_else(|| invalid("drawing has no profile styles"))? };
     let handle = doc.allocate_handle();
     let id = new_identifier(handle.value());
     let anchors = [(first, new_identifier(handle.value() ^ 1)), (last, new_identifier(handle.value() ^ 2))];
@@ -1091,7 +1112,8 @@ pub fn add_offset_profile(doc: &mut CadDocument, source: Handle, offset_alignmen
     profiles.push(ProfileRef { handle: handle.value(), id });
     rewrite(doc, offset_alignment, written, &before, &profiles)?;
     let helpers = write_helpers(doc, handle)?;
-    let feature = super::alignment::add_profile_companion(doc, handle)?;
+    // On a site the profile names the site's container instead.
+    let feature = if super::site::site_container_of(doc, offset_alignment).is_some() { Handle::new(0) } else { super::alignment::add_profile_companion(doc, handle)? };
     let n = entities.len() as i32;
     let parts: Vec<(i32, i32, i32, Part)> = entities.iter().enumerate().map(|(i, e)| {
         let id = i as i32 + 1;

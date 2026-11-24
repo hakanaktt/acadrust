@@ -2,6 +2,7 @@
 
 use super::assoc::{add_action, ActionBody, Dependency};
 use super::default_styles::{ensure_intersection_label_style, ensure_intersection_styles, KEY_INTERSECTION_STYLES};
+use super::profile::VerticalCurve;
 use super::sample_lines::arch;
 use super::site::default_style_of;
 use super::support::*;
@@ -96,6 +97,28 @@ pub struct CurbReturnProfiles {
 impl Default for CurbReturnProfiles {
     fn default() -> Self {
         CurbReturnProfiles { slope: -0.02, incoming: 25.0, outgoing: 25.0 }
+    }
+}
+
+/// The styles the command gives what it makes when the drawing has them
+/// by name (WC40, WC61: "Offsets" for the offset alignments, "Intersection
+/// Basic" for the curb returns and the profiles); otherwise the drawing's
+/// default ones, as the application uses in a drawing without them (WI01).
+struct CommandStyles {
+    offsets: Option<u64>,
+    curb_returns: Option<u64>,
+    profiles: Option<u64>,
+}
+
+impl CommandStyles {
+    fn of(doc: &CadDocument) -> Self {
+        use super::site::named_style;
+        use super::tree::{KEY_ALIGNMENT_STYLES, KEY_PROFILE_STYLES};
+        CommandStyles {
+            offsets: named_style(doc, KEY_ALIGNMENT_STYLES, "Offsets"),
+            curb_returns: named_style(doc, KEY_ALIGNMENT_STYLES, "Intersection Basic"),
+            profiles: named_style(doc, KEY_PROFILE_STYLES, "Intersection Basic"),
+        }
     }
 }
 
@@ -244,39 +267,156 @@ fn elevation_at(doc: &CadDocument, profile: Handle, station: f64) -> Option<f64>
     points.iter().find(|(_, _, p, _)| station >= p[0].x - tol && station <= p[2].x + tol).map(|(.., curve)| curve.elevation_at(station))
 }
 
-/// The profile locking of a crossing: the other road's profile through its
-/// PVIs outside the crossing and new PVIs at the crossing (the main road's
+/// The command's grade rule for the other road (the record's settings):
+/// beside the locked stretch its grade changes by at most this much and
+/// stays within this grade, up to the intersection's extents along it
+/// (its distance rule; the record's distance 50 is not used by that rule:
+/// WC85 radius 15 puts the PVI at 52, WC86 lines 10 at 47).
+const GRADE_CHANGE: f64 = 0.04;
+const GRADE_MAX: f64 = 0.05;
+
+/// The grade the rule gives beside the locked stretch: `outside` limited to
+/// [`GRADE_CHANGE`] from the stretch's `inside` grade, then to
+/// [`GRADE_MAX`] (WC76: -0.06 becomes -0.05; WC77: -0.055 within the change
+/// becomes -0.05). `None` when `outside` already keeps both, or when a
+/// grade is not finite (a PVI sharing the stretch end's station).
+fn ruled_grade(inside: f64, outside: f64) -> Option<f64> {
+    if !inside.is_finite() || !outside.is_finite() {
+        return None;
+    }
+    let mut g = outside;
+    if (g - inside).abs() > GRADE_CHANGE + 1e-12 {
+        g = inside + GRADE_CHANGE * (g - inside).signum();
+    }
+    if g.abs() > GRADE_MAX + 1e-12 {
+        g = GRADE_MAX * g.signum();
+    }
+    ((g - outside).abs() > 1e-12).then_some(g)
+}
+
+/// A PVI of the profile being locked: its point, its curve (with the
+/// stations the curve covers) and whether the locking adds it.
+type LockPvi = (Vector2, Option<(VerticalCurve, f64, f64)>, bool);
+
+/// The profile locking: the other road's profile keeps its PVIs outside
+/// the locked stretch and takes new PVIs at the crossing (the main road's
 /// elevation) and, with offset profiles (`slope`), where it crosses the
 /// main road's offset lines (the main road's elevation there raised by
-/// `slope` times the offset). The other road's profile must be tangents
-/// only; otherwise it is left as it is.
-fn lock_other_profile(doc: &mut CadDocument, roads: &[Road; 2], widths: &[[f64; 2]; 2], slope: Option<f64>) -> Result<(), DxfError> {
+/// `slope` times the offset). A tee junction's other road is locked only
+/// with offset profiles, at the junction and the one offset line it
+/// crosses (WC67; WC66 and WC74 without them are not changed).
+///
+/// - A PVI at a new PVI's station is kept unless it has the same
+///   elevation (WC68: the crossing's PVI then follows it, a tangent of no
+///   length between them); curves that reach the locked stretch are
+///   dropped, the others kept (WC68, WC69).
+/// - With offset profiles the grade rule holds on each side: where the
+///   grade beyond the stretch breaks [`ruled_grade`], a PVI at the
+///   intersection's `extents` on that side (the curb returns' farthest
+///   lines on the road) takes the ruled grade and the PVIs before it are
+///   dropped (WC67, WC70, WC72, WC73, WC76 to WC78, WC81 to WC86; WC61,
+///   WC69, WC71 within it). Without a PVI beyond it the new PVI ends the
+///   profile, past its old end (WC79, WC80).
+///
+/// A profile whose curves cannot be read is left as it is.
+fn lock_other_profile(doc: &mut CadDocument, roads: &[Road; 2], widths: &[[f64; 2]; 2], ruled: Option<(f64, (f64, f64))>) -> Result<(), DxfError> {
+    let slope = ruled.map(|r| r.0);
+    use crate::classes::civil::ProfilePiece;
     let (m, x) = (&roads[0], &roads[1]);
-    let other = Handle::new(x.profile);
-    let Some(pvis) = arch(doc, other).map(|a| a.profile_pvis()) else { return Ok(()) };
-    if pvis.len() < 2 || pvis.iter().any(|p| p.curve_length != 0.0) {
+    if x.ends.is_some() && slope.is_none() {
         return Ok(());
     }
+    let other = Handle::new(x.profile);
+    let Some(a) = arch(doc, other) else { return Ok(()) };
+    let pvis = a.profile_pvis();
+    let Some(pieces) = a.main_stream().and_then(|(data, start, end)| super::super::profile::entity_points(data, start, end)) else { return Ok(()) };
+    if pvis.len() < 2 {
+        return Ok(());
+    }
+    // Each PVI's curve and the stations it covers.
+    let mut curves: Vec<Option<(VerticalCurve, f64, f64)>> = Vec::with_capacity(pvis.len());
+    for p in &pvis {
+        if p.curve_length == 0.0 {
+            curves.push(None);
+            continue;
+        }
+        let tol = 1e-9 * p.point.x.abs().max(1.0);
+        let Some((_, piece, ends, curve)) = pieces.iter().find(|(_, k, e, _)| *k != ProfilePiece::Tangent && e[0].x <= p.point.x + tol && e[2].x >= p.point.x - tol) else { return Ok(()) };
+        let (lo, hi) = (ends[0].x, ends[2].x);
+        let c = match piece {
+            ProfilePiece::Parabola => VerticalCurve::Parabola(hi - lo),
+            ProfilePiece::AsymmetricParabola => {
+                let pvi = curve.asymmetric_pvi().unwrap_or(p.point.x);
+                VerticalCurve::Asymmetric { before: pvi - lo, after: hi - pvi }
+            }
+            ProfilePiece::Circular => VerticalCurve::CircularLength(hi - lo),
+            ProfilePiece::Tangent => VerticalCurve::None,
+        };
+        curves.push(Some((c, lo, hi)));
+    }
+    let (first, last) = (pvis[0].point.x, pvis[pvis.len() - 1].point.x);
     let unit = |v: Vector2| v * (1.0 / v.length());
     let (d, e) = (unit(m.direction), unit(x.direction));
     let main_z = |t: f64| elevation_at(doc, Handle::new(m.profile), m.station + t).ok_or_else(|| invalid("the main road's profile does not reach the crossing"));
     let mut new = vec![Vector2::new(x.station, main_z(0.0)?)];
     if let Some(slope) = slope {
         // Where the other road meets the main road's offset line `q` off
-        // its centre line: `e u - d t = q`.
+        // its centre line: `e u - d t = q`; a tee's road meets one.
         let left = Vector2::new(-d.y, d.x);
         for q in [left * widths[0][0], left * -widths[0][1]] {
             let den = e.cross(&d);
             let (u, t) = (q.cross(&d) / den, q.cross(&e) / den);
-            new.push(Vector2::new(x.station + u, main_z(t)? + slope * q.length()));
+            let station = x.station + u;
+            if station >= first - 1e-9 && station <= last + 1e-9 {
+                new.push(Vector2::new(station, main_z(t)? + slope * q.length()));
+            }
         }
     }
-    let lo = new.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
-    let hi = new.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+    new.sort_by(|a, b| a.x.total_cmp(&b.x));
+    let (lo, hi) = (new[0].x, new[new.len() - 1].x);
     let tol = 1e-9 * hi.abs().max(1.0);
-    let mut all: Vec<Vector2> = pvis.iter().map(|p| p.point).filter(|p| p.x < lo - tol || p.x > hi + tol).chain(new).collect();
-    all.sort_by(|a, b| a.x.total_cmp(&b.x));
-    super::profile::set_profile_pvis(doc, other, &all)
+    let mut all: Vec<LockPvi> = pvis
+        .iter()
+        .zip(&curves)
+        .filter(|(p, _)| p.point.x <= lo + tol || p.point.x >= hi - tol)
+        .filter(|(p, _)| !new.iter().any(|n| (n.x - p.point.x).abs() <= tol && (n.y - p.point.y).abs() <= tol))
+        .map(|(p, c)| (p.point, c.filter(|c| c.2 < lo - tol || c.1 > hi + tol), false))
+        .chain(new.iter().map(|n| (*n, None, true)))
+        .collect();
+    let order = |all: &mut Vec<LockPvi>| all.sort_by(|a, b| a.0.x.total_cmp(&b.0.x).then(a.2.cmp(&b.2)));
+    order(&mut all);
+    if let Some((_, extents)) = ruled {
+        let grade = |a: Vector2, b: Vector2| (b.y - a.y) / (b.x - a.x);
+        // Beyond the stretch's last new PVI.
+        if let Some(i) = all.iter().rposition(|p| p.2).filter(|i| *i > 0 && i + 1 < all.len()) {
+            let (end, g_in, g_out) = (all[i].0, grade(all[i - 1].0, all[i].0), grade(all[i].0, all[i + 1].0));
+            let (at, d) = (extents.1, extents.1 - end.x);
+            if let Some(g) = ruled_grade(g_in, g_out).filter(|_| d > tol) {
+                all.retain(|p| p.2 || p.0.x <= end.x + tol || p.0.x > at + tol);
+                for p in all.iter_mut().filter(|p| p.1.is_some_and(|c| c.1 < at + tol)) {
+                    p.1 = None;
+                }
+                all.push((Vector2::new(at, end.y + g * d), None, false));
+                order(&mut all);
+            }
+        }
+        // Before its first.
+        if let Some(i) = all.iter().position(|p| p.2).filter(|i| *i > 0 && i + 1 < all.len()) {
+            let (start, g_before, g_after) = (all[i].0, grade(all[i - 1].0, all[i].0), grade(all[i].0, all[i + 1].0));
+            let (at, d) = (extents.0, start.x - extents.0);
+            if let Some(g) = ruled_grade(g_after, g_before).filter(|_| d > tol) {
+                all.retain(|p| p.2 || p.0.x >= start.x - tol || p.0.x < at - tol);
+                for p in all.iter_mut().filter(|p| p.1.is_some_and(|c| c.2 > at - tol)) {
+                    p.1 = None;
+                }
+                all.push((Vector2::new(at, start.y - g * d), None, false));
+                order(&mut all);
+            }
+        }
+    }
+    let points: Vec<Vector2> = all.iter().map(|p| p.0).collect();
+    let curves: Vec<VerticalCurve> = all[1..all.len() - 1].iter().map(|p| p.1.map_or(VerticalCurve::None, |c| c.0)).collect();
+    super::profile::set_profile_pvis(doc, other, &points, &curves)
 }
 
 /// A curb return's place: the corner where its offset lines meet, the in
@@ -290,6 +430,10 @@ struct CurbReturnPlace {
     /// The arc's tangent length and its sweep.
     tangent: f64,
     sweep: f64,
+    /// The arc's radius and the lines' lengths (shortened on a road that
+    /// ends within them).
+    radius: f64,
+    lines: [f64; 2],
 }
 
 /// A road's station at a point near the crossing (its line there).
@@ -303,7 +447,12 @@ fn station_on(road: &Road, point: Vector2, p: Vector2) -> f64 {
 /// (the road's left offset when the arm runs along the road, else its
 /// right) and away along the outgoing arm's (the road's right when that
 /// arm runs along the road), a unit of line before and after the arc.
-fn curb_returns(roads: &[Road; 2], point: Vector2, widths: &[[f64; 2]; 2], radius: f64, lines: [f64; 2]) -> Result<Vec<CurbReturnPlace>, DxfError> {
+///
+/// Where a road's alignment (its `ranges` of stations) ends before the
+/// arc's end on it the radius is halved until the arc fits, then each line
+/// is halved until it fits (WC82, WC83: radius 12.5 on a road 30 and 33
+/// long, lines 3.125 and 6.25; WC81, WC84: lines 1.5625 and 12.5).
+fn curb_returns(roads: &[Road; 2], point: Vector2, widths: &[[f64; 2]; 2], radius: f64, lines: [f64; 2], ranges: [(f64, f64); 2]) -> Result<Vec<CurbReturnPlace>, DxfError> {
     let mut out = Vec::new();
     for g in regions(roads) {
         let arm = |road: usize, forward: bool| {
@@ -323,12 +472,33 @@ fn curb_returns(roads: &[Road; 2], point: Vector2, widths: &[[f64; 2]; 2], radiu
         }
         let corner = p_in + a_in * ((p_out - p_in).cross(&a_out) / den);
         let sweep = (a_in * -1.0).dot(&a_out).clamp(-1.0, 1.0).acos();
+        let arms = [(side_in, a_in), (side_out, a_out)];
+        let fits = |(side, a): ((usize, usize), Vector2), along: f64| {
+            let s = station_on(&roads[side.0], point, corner + a * along);
+            let (lo, hi) = ranges[side.0];
+            s >= lo - 1e-9 && s <= hi + 1e-9
+        };
+        let (mut radius, mut lines) = (radius, lines);
+        for _ in 0..64 {
+            if arms.iter().all(|arm| fits(*arm, radius * (sweep / 2.0).tan())) {
+                break;
+            }
+            radius /= 2.0;
+        }
         let tangent = radius * (sweep / 2.0).tan();
+        for (line, arm) in lines.iter_mut().zip(arms) {
+            for _ in 0..64 {
+                if fits(arm, tangent + *line) {
+                    break;
+                }
+                *line /= 2.0;
+            }
+        }
         let span = |side: (usize, usize), a: Vector2, line: f64| {
             let (s0, s1) = (station_on(&roads[side.0], point, corner + a * tangent), station_on(&roads[side.0], point, corner + a * (tangent + line)));
             (side, s0.min(s1), s0.max(s1))
         };
-        out.push(CurbReturnPlace { corner, arms: [a_in, a_out], sides: [side_in, side_out], spans: [span(side_in, a_in, lines[0]), span(side_out, a_out, lines[1])], tangent, sweep });
+        out.push(CurbReturnPlace { corner, arms: [a_in, a_out], sides: [side_in, side_out], spans: [span(side_in, a_in, lines[0]), span(side_out, a_out, lines[1])], tangent, sweep, radius, lines });
     }
     Ok(out)
 }
@@ -499,6 +669,9 @@ fn build_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_prof
             return Err(invalid("a profile does not belong to its road"));
         }
     }
+    if super::site::site_container_of(doc, main) != super::site::site_container_of(doc, other) {
+        return Err(invalid("the roads must lie on the same site, or both on none"));
+    }
     let (la, lb) = (lines(doc, main).ok_or_else(|| invalid("the main road cannot be solved"))?, lines(doc, other).ok_or_else(|| invalid("the other road cannot be solved"))?);
     // Where a road ends on the other's line: the road's first piece's
     // start or last piece's end; the through road is the main road.
@@ -554,11 +727,15 @@ fn build_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_prof
             return Err(invalid("offset widths must be positive"));
         }
         let label = ensure_intersection_label_style(doc)?;
+        let styles = CommandStyles::of(doc);
         let widths = [[o.main_left, o.main_right], [o.other_left, o.other_right]];
         // The curb returns: per region its geometry, and the stations its
         // lines take on each offset alignment (road, side).
         let returns = match curb_radius {
-            Some(radius) => Some(curb_returns(&roads, point, &widths, radius, curb_lines)?),
+            Some(radius) => {
+                let range = |k: usize| arch(doc, Handle::new(roads[k].alignment)).and_then(|a| Some((a.alignment_start_station()?, super::corridor::alignment_length(a)))).map_or((f64::NEG_INFINITY, f64::INFINITY), |(s, l)| (s, s + l));
+                Some(curb_returns(&roads, point, &widths, radius, curb_lines, [range(0), range(1)])?)
+            }
             None => None,
         };
         for (k, r) in roads.iter_mut().enumerate() {
@@ -574,7 +751,7 @@ fn build_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_prof
                     let margin = (hi - lo) * CURB_RETURN_MARGIN;
                     (lo - margin, hi + margin)
                 });
-                let h = super::alignment::add_kept_offset_alignment(doc, parent, &format!("{road_name}-{side}-{:.3}", width.abs()), width, range, OFFSET_SPEED, layer)?;
+                let h = super::alignment::add_kept_offset_alignment(doc, parent, &format!("{road_name}-{side}-{:.3}", width.abs()), width, range, OFFSET_SPEED, styles.offsets, layer)?;
                 add_action(doc, ActionBody { dxf: "AECC_ASSOC_OFFSET_ALIGNMENT_ACTION_BODY", refs: vec![h], tail: "" }, &[Dependency { object: parent, writes: false, order: 0 }, Dependency { object: h, writes: true, order: 0 }])?;
                 r.offsets[i] = h.value();
             }
@@ -586,18 +763,14 @@ fn build_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_prof
         }
         // The profile locking reshapes the other road's profile at a
         // crossing (WC61, WC62).
-        if roads[0].profile != 0 && roads[1].profile != 0 && roads[1].ends.is_none() {
-            lock_other_profile(doc, &roads, &widths, curb_profiles.map(|p| p.slope))?;
-        }
-        if let Some(p) = curb_profiles {
-            for k in 0..2 {
-                for i in 0..2 {
-                    let offset = Handle::new(roads[k].offsets[i]);
-                    let offset_name = arch(doc, offset).and_then(|a| a.alignment_name()).unwrap_or_default();
-                    let h = super::profile::add_offset_profile(doc, Handle::new(roads[k].profile), offset, &format!("{offset_name} - {:.3}%", p.slope * 100.0), p.slope, layer)?;
-                    roads[k].offset_profiles[i] = h.value();
-                }
-            }
+        if roads[0].profile != 0 && roads[1].profile != 0 {
+            // The intersection's extents along the other road: its curb
+            // returns' farthest lines on it.
+            let extents = returns.as_ref().map(|c| {
+                let s: Vec<f64> = c.iter().flat_map(|g| g.spans.iter().filter(|x| x.0 .0 == 1).flat_map(|x| [x.1, x.2])).collect();
+                (s.iter().copied().fold(f64::INFINITY, f64::min), s.iter().copied().fold(f64::NEG_INFINITY, f64::max))
+            });
+            lock_other_profile(doc, &roads, &widths, curb_profiles.map(|p| p.slope).zip(extents))?;
         }
         let handle = write_record(doc, name, &roads, assembly_sets, layer)?;
         let read = |h: u64| Dependency { object: Handle::new(h), writes: false, order: 0 };
@@ -612,7 +785,7 @@ fn build_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_prof
         };
         add_action(doc, ActionBody { dxf: "AECC_ASSOC_PVILOCKING_MULTIALIGNINTER_ACTION_BODY", refs: refs.map(Handle::new).to_vec(), tail: LOCKING }, &deps)?;
         add_action(doc, ActionBody { dxf: "AECC_ASSOC_INTERSECTION_ACTION_BODY", refs: vec![handle], tail: "" }, &[read(m.alignment), read(x.alignment), Dependency { order: INTERSECTION_ORDER, ..wrote(handle.value()) }])?;
-        if let (Some(c), Some(radius)) = (&returns, curb_radius) {
+        if let Some(c) = &returns {
             let regions = regions(&roads);
             // The curb return profiles' handles and identifiers: each curb
             // return lists its profile.
@@ -642,9 +815,10 @@ fn build_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_prof
                     &stations,
                     region.in_forward,
                     region.out_forward,
-                    radius,
-                    curb_lines,
+                    cr.radius,
+                    cr.lines,
                     profile_ids[g],
+                    styles.curb_returns,
                     layer,
                 )?;
                 add_action(
@@ -652,6 +826,18 @@ fn build_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_prof
                     ActionBody { dxf: "AECC_ASSOC_CURBRETURN_ALIGNMENT_ACTION_BODY", refs: vec![h], tail: "" },
                     &[read(offset(cr.sides[0]).value()), read(offset(cr.sides[1]).value()), Dependency { order: CURB_RETURN_ORDER, ..read(handle.value()) }, wrote(h.value())],
                 )?;
+            }
+            // The offset profiles come after the curb returns (WC65: their
+            // edges in the site's container follow the curb returns').
+            if let Some(p) = curb_profiles {
+                for k in 0..2 {
+                    for i in 0..2 {
+                        let offset = Handle::new(roads[k].offsets[i]);
+                        let offset_name = arch(doc, offset).and_then(|a| a.alignment_name()).unwrap_or_default();
+                        let h = super::profile::add_offset_profile_styled(doc, Handle::new(roads[k].profile), offset, &format!("{offset_name} - {:.3}%", p.slope * 100.0), p.slope, styles.profiles, layer)?;
+                        roads[k].offset_profiles[i] = h.value();
+                    }
+                }
             }
             if let Some(p) = curb_profiles {
                 for (g, (cr, region)) in c.iter().zip(&regions).enumerate() {
@@ -667,17 +853,17 @@ fn build_intersection(doc: &mut CadDocument, name: &str, main: Handle, main_prof
                         let station = station_on(&roads[k], point, cr.corner + cr.arms[i] * (cr.tangent + along));
                         Ok(elevation_at(doc, Handle::new(roads[k].profile), station).ok_or_else(|| invalid("a road profile does not reach the curb return"))? + p.slope * widths[k][side])
                     };
-                    let arc = radius * cr.sweep;
+                    let ([incoming, outgoing], arc) = (cr.lines, cr.radius * cr.sweep);
                     let pvis = [
-                        Vector2::new(0.0, z(0, p.incoming)?),
-                        Vector2::new(p.incoming, z(0, 0.0)?),
-                        Vector2::new(p.incoming + arc, z(1, 0.0)?),
-                        Vector2::new(p.incoming + arc + p.outgoing, z(1, p.outgoing)?),
+                        Vector2::new(0.0, z(0, incoming)?),
+                        Vector2::new(incoming, z(0, 0.0)?),
+                        Vector2::new(incoming + arc, z(1, 0.0)?),
+                        Vector2::new(incoming + arc + outgoing, z(1, outgoing)?),
                     ];
                     let cr_name = format!("{name} - {} - Profile", REGION_NAMES[region.quadrant]);
                     let (incoming, outgoing) = (lane(0).2, lane(1).2);
                     let (ph, pid) = profile_ids[g].ok_or_else(|| invalid("no curb return profile handle"))?;
-                    let profile = super::profile::write_curb_return_profile(doc, ph, &pid, h, &cr_name, &pvis, incoming, outgoing, layer)?;
+                    let profile = super::profile::write_curb_return_profile(doc, ph, &pid, h, &cr_name, &pvis, incoming, outgoing, styles.profiles, layer)?;
                     add_action(
                         doc,
                         ActionBody { dxf: "AECC_ASSOC_CURBRETURN_VALIGNMENT_ACTION_BODY", refs: vec![profile], tail: "" },
@@ -913,5 +1099,96 @@ mod tests {
         for (got, want) in pvis.iter().zip([(0.0, 11.38), (25.0, 11.13), (25.0 + arc, 10.76 + 0.24 * 25.0 / 88.0 - 0.24), (50.0 + arc, 10.76 + 0.24 * 50.0 / 88.0 - 0.24)]) {
             assert!((got.0 - want.0).abs() < 1e-9 && (got.1 - want.1).abs() < 1e-9, "{got:?} {want:?}");
         }
+    }
+
+    #[test]
+    fn roads_on_a_site_join_it_with_their_offsets_and_curb_returns() {
+        use crate::classes::civil::{add_alignment_on_site, add_site};
+        let v = Vector2::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let s = add_site(&mut doc, "Site 1", "").unwrap();
+        let a = add_alignment_on_site(&mut doc, s, "Road A", &[v(0.0, 0.0), v(200.0, 0.0)], &[], None).unwrap();
+        let b = add_alignment_on_site(&mut doc, s, "Road B", &[v(100.0, -100.0), v(100.0, 100.0)], &[], None).unwrap();
+        let pa = add_profile(&mut doc, a, "PA", &[v(0.0, 10.0), v(200.0, 12.0)], &[], None).unwrap();
+        let pb = add_profile(&mut doc, b, "PB", &[v(0.0, 11.0), v(200.0, 11.0)], &[], None).unwrap();
+        // A siteless road does not meet roads on a site.
+        let c = add_alignment(&mut doc, "Road C", &[v(150.0, -100.0), v(150.0, 100.0)], None).unwrap();
+        assert!(add_intersection_with_curb_returns(&mut doc, "X", a, Handle::NULL, c, Handle::NULL, ["", ""], IntersectionOffsets::default(), 25.0, None).is_err());
+        add_intersection_with_curb_return_profiles(&mut doc, "I", a, pa, b, pb, ["", ""], IntersectionOffsets::default(), 25.0, CurbReturnProfiles::default(), None).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-intersection-on-site-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        // The roads, their profiles, four offsets, four curb returns and
+        // eight profiles, listed in hash order (id 8 first).
+        let container = arch(&back, s).unwrap().typed_handles()[5].0;
+        let t = object(&back, Handle::new(container)).unwrap().topology().unwrap();
+        assert_eq!(t.edge_ids.len(), 20);
+        assert_eq!(&t.edge_ids[..3], &[8, 16, 1]);
+        // Eight parcels: four squares, four corner regions labelled on
+        // their corner's bisector.
+        let mut labels: Vec<(i32, Vector2)> = back
+            .entities()
+            .filter_map(|e| match e {
+                crate::entities::EntityType::Extended(x) => match &x.data {
+                    crate::entities::ExtendedEntityData::Arch(p) if p.parcel_site() == Some(s.value()) => p.parcel_face().map(|f| f.0).zip(p.parcel_label()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        labels.sort_by_key(|l| l.0);
+        assert_eq!(labels.len(), 8);
+        let at = |i: usize, x: f64, y: f64| (labels[i].1.x - x).abs() < 1e-9 && (labels[i].1.y - y).abs() < 1e-9;
+        let d = 12.0 + 12.5 * (std::f64::consts::SQRT_2 - 1.0) / std::f64::consts::SQRT_2;
+        assert!(at(0, 94.0, -6.0) && at(3, 106.0, 6.0));
+        assert!(at(4, 100.0 + d, d), "{:?}", labels[4]);
+    }
+
+    #[test]
+    fn tee_junctions_lock_the_other_profile_by_the_grade_rule() {
+        let v = Vector2::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let a = add_alignment(&mut doc, "Road A", &[v(0.0, 0.0), v(200.0, 0.0)], None).unwrap();
+        let b = add_alignment(&mut doc, "Road B", &[v(100.0, 0.0), v(100.0, 100.0)], None).unwrap();
+        let pa = add_profile(&mut doc, a, "PA", &[v(0.0, 10.0), v(200.0, 12.0)], &[], None).unwrap();
+        let pb = add_profile(&mut doc, b, "PB", &[v(0.0, 11.0), v(100.0, 13.0)], &[], None).unwrap();
+        add_intersection_with_curb_return_profiles(&mut doc, "T", a, pa, b, pb, ["", ""], IntersectionOffsets::default(), 25.0, CurbReturnProfiles::default(), None).unwrap();
+        // The junction, the left offset line, then 2 % (the grade -2 % at
+        // the offset line changed by 4 %) for 50 before the profile's end.
+        let pvis: Vec<(f64, f64)> = arch(&doc, pb).unwrap().profile_pvis().iter().map(|p| (p.point.x, p.point.y)).collect();
+        assert_eq!(pvis.len(), 4);
+        for (got, want) in pvis.iter().zip([(0.0, 11.0), (12.0, 10.76), (62.0, 11.76), (100.0, 13.0)]) {
+            assert!((got.0 - want.0).abs() < 1e-9 && (got.1 - want.1).abs() < 1e-9, "{got:?} {want:?}");
+        }
+    }
+
+    #[test]
+    fn the_grade_rule_keeps_its_maximum_grade_and_short_roads_halve_the_curb_returns() {
+        let v = Vector2::new;
+        let pvis_of = |b_end: f64, pb_end: f64| {
+            let mut doc = CadDocument::new();
+            doc.version = DxfVersion::AC1032;
+            let a = add_alignment(&mut doc, "Road A", &[v(0.0, 0.0), v(200.0, 0.0)], None).unwrap();
+            let b = add_alignment(&mut doc, "Road B", &[v(100.0, 0.0), v(100.0, b_end)], None).unwrap();
+            let pa = add_profile(&mut doc, a, "PA", &[v(0.0, 10.0), v(200.0, 12.0)], &[], None).unwrap();
+            let pb = add_profile(&mut doc, b, "PB", &[v(0.0, 11.0), v(b_end, pb_end)], &[], None).unwrap();
+            add_intersection_with_curb_return_profiles(&mut doc, "T", a, pa, b, pb, ["", ""], IntersectionOffsets::default(), 25.0, CurbReturnProfiles::default(), None).unwrap();
+            arch(&doc, pb).unwrap().profile_pvis().iter().map(|p| (p.point.x, p.point.y)).collect::<Vec<_>>()
+        };
+        let same = |got: Vec<(f64, f64)>, want: &[(f64, f64)]| {
+            assert_eq!(got.len(), want.len(), "{got:?}");
+            for (g, w) in got.iter().zip(want) {
+                assert!((g.0 - w.0).abs() < 1e-9 && (g.1 - w.1).abs() < 1e-9, "{got:?} {want:?}");
+            }
+        };
+        // -6 % beyond the offset line: limited to -2 % - 4 %, then to -5 %,
+        // at the curb returns' end on the road (12 + 25 + 25).
+        same(pvis_of(100.0, 3.0), &[(0.0, 11.0), (12.0, 10.76), (62.0, 8.26), (100.0, 3.0)]);
+        // A road 30 long: the curb returns' radius halved to 12.5 (arc end
+        // at 24.5), their lines to 3.125; the rule's PVI at their end.
+        same(pvis_of(30.0, 12.0), &[(0.0, 11.0), (12.0, 10.76), (27.625, 11.0725), (30.0, 12.0)]);
     }
 }

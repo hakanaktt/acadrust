@@ -68,7 +68,8 @@ owner and reactor: the named objects dictionary
 ```
 
 Keys used by the writer: 32 point group node, 34 point database, 75 outer
-query of `_All Points`. Other keys the application adds: 31 style tree,
+query of `_All Points`, 259 grading group tree (§3o). Other keys the
+application adds: 31 style tree,
 45 root settings node, 5 class nodes, 362 tag manager. New entries are
 appended; existing ones keep their order.
 
@@ -1622,7 +1623,8 @@ elevation points: BL next free key, BL k, k x {BL key, BL 21, BD the
 BL 0x80000001,
 nodes: BL next free id, BL n, BL first id, n x {3BD (z the elevation),
   3 bits 010, BL next id} (ids per member: its ends, then its inner points;
-  records in hash order, seven buckets by (id - 1) mod 7, the newest first)
+  records in hash order: eight buckets by id mod 8, each in id order,
+  more buckets past 64 records)
 edges: BL next free id, BL m, per member BL 0, BL id, BL flags (0x30 an
   alignment, 0x10030 a feature line), BL count,
   BL 0, count x {BL kind (0 line, 1 arc, 2 last), BL flags, BL node,
@@ -1630,14 +1632,26 @@ edges: BL next free id, BL m, per member BL 0, BL id, BL flags (0x30 an
   the keys of the edge's j elevation points in edge order, BL 0 x 3
 faces: BL 2, BL 1 (0 without members), the outside face {BL 1, BL 1,
   BL 14 (6 once a member has an elevation point), BL m, per member {BL 1 + the points of the members before it,
-  BL 0}}, BL 1, 6 x {BL 1, BL 1},
+  BL 0}}, BL s + 1, 6 x {BL 1, BL 1},
   6 x BL 0
 references: hard pointer 0 per elevation point, per member its record
   (soft) and soft pointer 0, then
-  (with members) the site (soft) and soft pointer 0, then the default
-  feature line style (hard)
+  (with members) the site (soft) and soft pointer 0, then s references
+  (none in most drawings), then the default feature line style (hard)
 texts: ""
 ```
+
+The edges and the faces are listed in the hash order of their ids (the
+nodes' order: eight buckets by id mod 8 while a table holds at most 64
+entries, each in id order; WT40 with eight members lists member 8 first,
+WC64 and WC65 with 12 and 20 members, WPLA to WPLC with 16 to 39), and
+the references of the members, of the site and parcels and the list of
+parcel numbers after the faces follow the same order. The s references
+before the style are other feature line styles and empty slots the
+application lists in drawings of the newer template (WC64base: 21; the
+list after the faces starts with 22); a container read keeps them. A
+profile of an alignment on the site is a member without points (edge
+flags 0x30, no points; WC64base: the two roads, then their profiles).
 
 The points of a container run as one chain through its members in edge
 order: a point's flags are 2 (0x400400 for an elevation point), plus 0x30
@@ -1701,11 +1715,53 @@ diagonal or in and out of one side; PD08: two lines, four parts). The
 parcel record lists them (`BL 2, BL n, n x BL face`), the container names
 the parcel once per face but counts it once in its tail, and the label
 keeps its place at the mean elevation of the nodes on the parcel's
-outline (PD01: (0 + 0 + 5.857 + 0 + 0 + 5.143) / 6; PD08: 22 / 8). The
-application numbers the parts anew (PD01: faces 4 and 5 after WP03's 2)
-and marks the crossings and the lot line's points as it does for a line
-read from a file (0x800 and 0x800000 flags); the writer keeps its own
-face ids and marks.
+outline (PD01: (0 + 0 + 5.857 + 0 + 0 + 5.143) / 6; PD08: 22 / 8).
+
+Node ids: a feature line that meets lot lines makes the application give
+its own points and crossings the next ids as for any member and then
+number again every node where a feature line meets a lot line, walking
+the lot lines' points in order (PD01: crossings 7 and 8, then (100, 25)
+9 and (0, 25) 10, next free 11; PD03: one crossing, 7 then 8; PD05,
+PD06, PD09; PD08: the second line's crossings 13 to 15, then (50, 0),
+(100, 25), (50, 50) and (0, 25) 16 to 19, the first line's crossings
+included, the two lines' crossing keeping 15). A lot line added later
+does not (PD20, PD02). The writer does the same.
+
+Face ids: the faces the line splits or enters take new ids. Each split
+first takes the next id as for a lot line, then every face the line went
+into or made (not the outside) is numbered again, walking the lot line
+from the first node a feature line put on it and taking the faces in the
+order its segments meet them (PD01: split face 3, then top 4 and bottom
+5; PD03: a line ending inside, no split, face 2 becomes 3; PD09: split 3,
+then the triangle 4 and the rest 5; PD08: splits 6 and 7, then 8 to 11
+from (50, 0) round the rectangle). Each renumbered face loses the mark of
+a changed face (14) and takes as entry its side of the last lot line
+segment along it (PD01: face 4 (10, 1), face 5 (1, 1)); a parcel lists
+its faces by id (PD01: 4, 5) and the parcel of a face the line only
+entered takes the new id and label (PD03: 3, (25, 25)). The container
+lists the faces in the hash order of their ids and writes the next free
+id. The writer does the same; a container read keeps its face ids
+(1, 4, 5 and so on), the outside face's entries while they still name a
+half-edge of it, the marks 0x800, 0x800000, 0x80 and 0x40 its points
+carry and the flags of every edge the new member leaves as read (the
+application moves the outside face's entry by a rule not known: PD01
+(6, 0) at the line's end, PD05 (4, 1) on the lot line).
+
+Marks of a new feature line on the lot lines (F01 to F04: the PD01 line
+at elevation 0, a line entering from below and ending inside, a line
+from the bottom side to the top one, a line inside that meets nothing):
+every lot line edge gains 0x800 (F04 too) and takes no 0x80 for
+crossings by feature lines (PD01: 0x831); a lot line the line meets marks
+its first point 0x80 and the nodes feature lines put on it 0x800000
+(PD03, F02: 0x800430); one whose face the line splits marks all its
+points 0x800 as well (PD01, PD05, PD09, F03; F01 shows the elevations do
+not matter). The writer does the same. Not written (rules not found):
+the closed lot line's last point's 0x10 and 0x20 (0x20 alone in PD01,
+PD03 and F03, 0x10 alone in F02, both in PD05 and PD09) and the marks on
+the feature line's own points (first crossing 0xc10, or 0xc50 after an
+inner point; the crossing that starts the last segment 0x40 more: 0x470,
+0xc70; inner points 0x892; a start on the lot line 0x8d2 in F03; its end
+0x2 once a later line crosses it, PD08).
 
 A lot line across such a parcel splits it along its own segments only:
 the faces on either side of a feature line stay together, each group one
@@ -1726,6 +1782,9 @@ application writes them as crossing nodes; straight segments only).
 | written | result |
 |---|---|
 | a rectangle parcel and PD01's, PD05's or PD09's line (E-PD1, E-PD5, E-PD9); both PD08 lines (E-PD8) | AUDIT 0; one parcel of area 5000, its elevation extents (5.857, 5.778, 6.667) and centroid elevation (1.8333, 2.75, 2) as the samples' |
+| WP03 plus PD01's line (E-PN1), then PD08's second line (E-PN8) | AUDIT 0; area 5000; node ids, face ids, parcel faces and next free ids as PD01's and PD08's |
+| the application's PD01 read and written again (bit for bit), then a lot line x = 50 (E-PF20) or PD08's second line (E-PF08); WP03 plus PD03's line (E-PF03) | AUDIT 0; face ids, parcel faces and areas as PD20's, PD08's and PD03's |
+| WP03 plus F02's or F03's line (E-F02, E-F03); PC11 plus the alignment at x = 50 or 25 (E-PG12, E-PG2) | AUDIT 0; node ids, face ids, parcel faces and lot line marks as the samples'; parcel numbers by part as PC12's and PG2's (1 west, 2 east; 2 west, 1 east) |
 
 A feature line is a short record; its points are its edge in the
 container:
@@ -1997,7 +2056,11 @@ and parcel numbers equal the samples' (PF01 bit for bit but for the
 newest member's point marks and last digits); the label of a face an
 arc piece bounds is not the samples' (PF11: the application puts it at
 (83.863, 18.482), not on the lines through the extents' middle; rule not
-found). A container read gives each member its arcs whole again (the
+found: it is neither the face's centroid (82.670, 21.562), nor that of
+its chord polygon (81.120, 21.798), nor its corners' mean, nor the middle
+of a corner's bisector up to the side it meets, the rule of three-sided
+faces with arcs; the application reports the same point as the parcel's
+centroid). A container read gives each member its arcs whole again (the
 pieces' sweeps added up). A line crossing an arc twice between the same
 two nodes (two pieces joining the same nodes) is refused. Checks E-PF1
 (a new drawing: an arc rectangle with an alignment across the arc, a
@@ -2049,11 +2112,15 @@ PE12), the newest member's point marks 0x10 and 0x20, and the ids of
 crossing nodes where a new line crosses several members' earlier pieces
 (PA02, PB03: the application numbers them in an order neither by member
 nor along either line). PC12 (an alignment across PC11's face; also
-PC12r reversed and PC12l a lot line) differs in the face kept: the
-application gives the face to the left part although PC11's entry (the
-lot line's closing segment, not split) lies in the right one, as if it
-were void; the writer gives it to the right part, so the two parcels'
-numbers are swapped. Checks: E-PA1 (a new drawing: an alignment, a
+PC12r reversed and PC12l a lot line) keeps the face on the left part
+although PC11's entry (the lot line's closing segment, not split) lies in
+the right one: where a face's first segment in member order is an
+alignment's, the part along that segment keeps the face and takes the
+splitting segment as its entry (PG1: PC11's lot line drawn the other way
+round; PG2, PG3: the alignment across at x = 25 and 75: always the part
+along the first alignment's piece; PA02 alike); where it is a lot
+line's, the part with the entry keeps it (PB03, WP19, PD20). The writer
+does the same. Checks: E-PA1 (a new drawing: an alignment, a
 rectangle across it, a second alignment across both, two alignments
 closing a loop and a lot line splitting it), E-PA2 (PB03's lines written
 to WP03) and E-PA3 (PC24's and PC12's lines written to PC10) open with
@@ -3056,8 +3123,8 @@ stamp and identifiers). E-T42W (WT41's roads and profiles), E-T43W (a
 crossing) and E-T44W (a tee without profiles) open with AUDIT 0 errors
 and the API lists the four offset alignments with their names, types and
 stations and the roads' profiles. Not written: the name template counter
-the command advances, offset alignments of roads on a site, curb
-returns, corridor regions.
+the command advances, curb returns, corridor regions (roads on a site
+and curb returns: below).
 
 ### Curb returns of the command
 
@@ -3116,8 +3183,8 @@ The span rule holds over WC40 to WC47 (radii 10 to 50, widths 10 to 20).
 Written: E-IC5, E-IC6 (crossings, radius 30 width 12, radius 40 width
 15), E-IC7 to E-IC9 (WC50 to WC52's roads) open with AUDIT 0, the API
 lists the regions with their curb returns, the offset and curb return
-lengths as the samples'. Not written: corridors of the command, roads on
-a site.
+lengths as the samples'. Not written: corridors of the command (roads on
+a site: below).
 
 ### Profile locking and curb return profiles
 
@@ -3126,9 +3193,53 @@ at a crossing (its profile locking): the profile becomes fixed tangents
 through its PVIs outside the crossing and a PVI at the crossing at the
 main road's elevation there (WC62: roads (0, 0)-(200, 0) and (100,
 -100)-(100, 100), profiles 10 to 12 and 11 flat). The intersection
-writers do the same for a crossing whose other road's profile is
-tangents only (a profile with vertical curves is left as it is; tee
-junctions are not reshaped, not sampled).
+writers do the same, with these rules from WC66 to WC75 (crossings and
+tees, other roads' profiles with tangents of other grades and with
+parabolas):
+
+- A PVI already at the crossing's station is kept unless it has the
+  crossing's elevation; the crossing's PVI follows it with a tangent of no
+  length between them (WC68: a crest parabola's PVI at the crossing,
+  13 then 11). Curves that reach the locked stretch are dropped, the
+  others kept (WC68, WC69; WC75 keeps a parabola at station 40).
+- A tee junction's other road is reshaped only with the curb return
+  profiles setting on (WC66, WC74 unchanged; WC67: PVIs at the junction
+  and where the road crosses the one offset line it meets).
+- With that setting the command's grade rule for the other road holds
+  on each side of the locked stretch (the record's settings: maximum
+  grade change 0.04, maximum grade 0.05, distance rule "to the
+  intersection extents"): the grade beyond the stretch is limited to 0.04
+  from the grade at its end, then to 0.05; where that changes it, a PVI at
+  the intersection's extents on that side takes the limited grade and the
+  PVIs before it are dropped (WC67: (12, 10.76) then (62, 11.76), grade
+  2 % instead of 2.5 %; WC70 drops a PVI at 40; WC72 on the near side of a
+  road ending at the junction, (38, 11.76); WC73 above a crossing, (162,
+  11.76); WC76: -8.8 % beyond becomes -6 % by the change rule, then -5 %,
+  (62, 8.26); WC77: -5.5 % is within the change but becomes -5 %; WC78
+  both sides of a crossing; WC61, WC69, WC71 and the near side of WC73
+  within the limits).
+- The extents are the farthest ends of the curb returns' lines on the
+  road, not a fixed distance: the record's distance 50 is the default
+  radius 25 plus the default line 25 by chance (WC85: radius 15, PVI at
+  52; WC86: lines 10, PVI at 47).
+- Where the profile ends before the extents the new PVI ends it, the
+  profile running past its old end (WC79: a profile to 140 ends at 162;
+  WC80: one to 40 at 62).
+- Where the road's alignment ends within a curb return, the curb return's
+  radius is halved until its arc ends on the road and then its line on
+  that road is halved until it does (WC82, WC83: roads 30 and 33 long,
+  radius 12.5, lines 3.125 and 6.25; WC81, WC84: roads 40 and 61.9 long,
+  radius 25, lines 1.5625 and 12.5); the offset alignments, the curb
+  return profiles and the rule's PVI follow the shortened lines.
+
+Written into the samples' roads (E-L61 to E-L86) the other road's PVIs
+and curves equal the samples' (every profile of the tees E-L67 and E-L72);
+E-L67, E-L68, E-L72, E-L73, E-L75 and E-L76 to E-L86 open with AUDIT 0
+errors; E-L76 to E-L86 list every profile's PVIs as the samples' but for
+one curb return profile of WC79: there the application ends the middle
+tangent 3 before the curb return's end (on the main road's offset), the
+3 the other road's profile had beyond the arc's start before the locking
+lengthened it (one sample; not written).
 
 `add_intersection_with_curb_return_profiles(..., offsets, radius,
 CurbReturnProfiles { slope, incoming, outgoing }, layer)` writes what the
@@ -3182,9 +3293,75 @@ every profile, its type, PVIs and entities as WC61's. E-IC11 (a new
 drawing: a skewed crossing, a parabola on the main road's profile,
 widths 10 and 12, radius 30, slope -0.025, lines 20 and 30) and E-IC12
 (WC62's roads, curb returns without profiles) open with AUDIT 0 errors;
-E-IC12's profiles equal WC62's. Not compared: the styles the command
-gives its offset alignments (`Offsets`), curb returns and profiles
-(`Intersection Basic`); the writer uses the drawing's default styles.
+E-IC12's profiles equal WC62's.
+
+The command gives its offset alignments the alignment style named
+`Offsets`, its curb returns the alignment style `Intersection Basic` and
+its offset and curb return profiles the profile style `Intersection
+Basic` when the drawing has them (WC40, WC61, WC65: the template's
+styles); in a drawing without them it uses the default styles and writes
+none (WI01: a drawing whose only alignment style is the default). The
+writer does the same: it looks the styles up by name in the style tree's
+alignment and profile style collections (E-IC30, E-IC31: written into
+WC61base and WC65base every alignment and profile takes the sample's
+style; AUDIT 0).
+
+### Roads on a site
+
+With both roads on one site (both siteless, or the intersection is
+refused) the offset alignments, curb returns and their profiles join the
+roads' site: an alignment as on a site (§3g: the container in place of a
+companion, its member number as its edge id), a profile with the
+container twice in place of its companion and, in place of `63 zero bits,
+BD 2, 9 bits` (`65 zero bits, BD 2.25, 7 bits` of an offset profile), an
+alignment's `115 zero bits, 8 bits 00000010, RC 0x40 | edge id >> 2, 2
+bits edge id & 3, 5 bits 11010`; the profile is a member without points.
+A road's own profiles on a site are written the same way. WC64 (roads
+(0, 0)-(200, 0) and (100, -100)-(100, 100) on Site 1 with profiles, curb
+returns of radius 25) and WC65 (with curb return profiles): the records
+equal the siteless samples' (WC62, WC61) but for those fields; the
+members join in the order the command makes them (roads, their profiles,
+offsets, curb returns, offset profiles, curb return profiles: edge ids 1
+to 20 in WC65), so the offset profiles are written after the curb
+returns.
+
+The members meet in the site's arrangement (§3g), with three rules these
+samples add:
+
+- A line along another's line (a curb return's 1-long line on its offset
+  alignment) splits both at the ends of the stretch they share: the
+  stretch is one segment of the arrangement listed by both edges, its
+  start point flagged 0x1000 in the later member (without the marks 0x30)
+  and 0x2000 in the earlier one; its faces are those of the segment.
+- An arc leaving a node along a line's direction (a curb return's arc at
+  its tangent points) turns off the line: half-edges of equal direction
+  are ordered by curvature, a left turn after the line. A line touching
+  an arc meets it once.
+- A face of three sides, arcs among them, takes its label at the middle
+  of its largest angle's bisector up to the opposite side (the four
+  corner regions: (115.661, 15.661) in the corner (112, 12)-(137, 12)-(112,
+  37)).
+
+The regions the members close become parcels numbered in the order they
+close: in WC64 the four 12 x 12 squares beside the crossing (1 to 4, as
+the other road's offsets close them) and the four 134.126 corner regions
+(5 to 8, as the curb returns close them), with labels at their centres
+and the corners' points above. New parcels take the drawing's default
+parcel style (the site WC64base made has "Property", the parcels "Basic")
+and the default parcel area label style; in drawings of the newer
+template a collection whose styles are all named lists its default as the
+first soft pointer after them, and the area labels' collection key is
+`0x0F00B432` (`0x0F00C032` in the older one).
+
+Written into WC64base and WC65base (E-IC20, E-IC21) the container's
+edges, points and faces equal the samples' but for the node and face ids
+(the application skips ids) and the marks 0x40 and 0x80 on nodes the
+crossings add; the records equal the siteless writer's. E-IC20, E-IC21,
+E-IC22 (a new drawing: skewed roads on a site, widths 10 and 12, radius
+30, curb return profiles) and E-IC23 (a tee on a site) open with AUDIT 0
+errors; the API lists the parcels of WC64 and WC65 with the same names,
+styles, label styles, areas and label points, and the offset and curb
+return alignments on the site.
 
 ## 3l. Subassembly packages (`pkt`)
 
@@ -3517,6 +3694,20 @@ application's bodies are the catalog's generated solids; the writer
 writes a cylinder (cylindrical families) or a box of the size's extents
 below the insertion point in each block.
 
+The catalog's bodies are not written. The part builder generates them
+from each part's parametric model, which the catalog keeps in a drawing
+beside the part's definition: the concentric cylindrical structure's
+holds three circular profiles on work planes (`AECCU_COL_PROFILE`,
+`AECCU_COL_WORKPLANE`, `AECCU_COL_GEOMETRY_CIRCARC2D`), two extrusions and
+a transition between them (`AECCU_COL_MODIFIER_EXTRUSION`,
+`AECCU_COL_MODIFIER_TRANSITION`), the dimensions bound to the part's
+fields (`AECCU_COL_DIM_DIAMETER`, `AECCU_COL_DIM_LENGTH`) and the
+constraints between them (`AECCU_COL_CON_CONCENTRIC`). Building a body
+needs that model read and solved for a size; this crate has no reader for
+those records and writes no part's model, so the bodies stay the stand-in
+cylinder or box (the application opens the drawing, lists the part with
+its size and takes its extents from the stand-in).
+
 | written | result |
 |---|---|
 | WT01 with a network, a structure of each of the six families (the eccentric one turned by 0.5 rad), a pipe of each of the eleven families and a concrete pipe connected to the two cylindrical structures (E-N70); the same in a new drawing (E-N71) | AUDIT 0; every part listed with its family and size, positions as written, extents as the application's own (the turned structure's turned), the connected pipe listing both structures and each structure one pipe |
@@ -3704,6 +3895,38 @@ P09's but for the session counter.
 Not written: other part kinds of other catalogs (reducers, caps, plugs,
 other valves), the catalog's body solids.
 
+## 3o. The root grading group
+
+The drawing's grading groups hang from one `AECC_GRADING_GROUP` record the
+root tree node owns, its child key 259 (the record's own key is 259 too;
+the class table values are the samples': `AeccDbGradingGroup`,
+`AeccLand130`, proxy flags 0x81):
+
+```text
+BS 0x04BE, BL 259, BL n, n × BL (0x80000000 | name tag), BL 0,
+139 constant bits — the class tail, the same in every tree-form record
+  of the samples (14 records in 14 drawings, with 0, 1 and 2 members)
+handles: n × member group (soft ownership), then soft pointer 0
+strings: "" (the record's own name; the application names the unnamed
+  record "Grading Group"), then the members' names
+```
+
+`add_grading_group_tree` writes the empty form (n = 0), the one the
+samples store for a drawing without named groups; its 195 main bits are
+the samples' bit for bit.
+
+A named grading group is the same class with the head `BL
+0x80000000 | name tag` and a settings body the application saves per
+record, in two layouts: a short one, 85 bits before the class tail (two
+records, equal but three bits at one offset — values 3 and 4 over a
+two-member and a three-member record) and a long one, an ~83-bit constant
+head followed by a run that differs in every record and changes when the
+application touches the group. No programming interface reads the body
+(the group proxy is a plain `DBObject`: name, description, used), so
+nothing maps it; the writer writes none. A group record with members
+would also need member gradings, which no writer of this crate produces
+(§6a).
+
 ## 4. Reference check
 
 For every written drawing the check opens it in its own reference instance
@@ -3882,10 +4105,11 @@ taken from the records and checked bit for bit against them.
 | sample line groups and sample lines through two or more vertices | yes | yes, with the drawing's sample line label style (§3j) | yes (§3j) | not needed | lines with all vertices on one side |
 | sections of a TIN surface (unsampled) | yes (geometry once sampled) | yes (§3j) | yes (§3j) | the application samples the source | corridor sources, lines added after sampling |
 | section views of a line (default style, unsampled section) | yes (frame) | yes, with the drawing's section view style or the default one (§3j, §2c) | yes (§3j, §2c) | not needed | sampled sections, several sections |
-| intersections of two crossing roads and tee junctions, with their offset alignments, locking and intersection actions, location label, curb returns and curb return profiles | yes (stations, angles) | yes, with the drawing's intersection style or the default one (§3k, §2c) | yes (§3k, §2c) | not needed | corridor regions, roads on a site |
+| intersections of two crossing roads and tee junctions, siteless or on a site, with their offset alignments, locking and intersection actions, location label, curb returns and curb return profiles | yes (stations, angles) | yes, with the drawing's intersection style or the default one (§3k, §2c) | yes (§3k, §2c) | not needed | corridor regions |
 | gravity pipe networks: every structure and pipe family of the default parts list, every catalog pipe size, structures of any catalog size, connections | partly (part positions, pipe ends, connector counts, part definition fields) | yes (a new drawing gets the default parts list and styles, §3m) | yes (§3m) | not needed (the application recomputes outlines, lengths and extents) | the catalog's body solids |
 | pressure networks: every pipe, elbow, tee, cross and gate valve size of the default catalog (straight and curved pipes), connections | yes (ports: positions, directions, joint sizes, connections; pipe ends and bulge, part positions and rotations) | yes (a new drawing gets the default pressure part list and styles, §3n) | yes (§3n) | not needed | part kinds of other catalogs, the catalog's body solids |
-| gradings, mass haul | partly (grading criteria, mass haul line and view frame) | no | — | — | no controlled samples (§6a) |
+| gradings: the root group tree | yes (§3o) | yes (the empty form, §3o) | yes (opens without a dialog, audit clean, the API reads the record as the grading-group class under its default name, an application save keeps it bit for bit) | not needed | named groups (§3o); gradings, mass haul (§6a) |
+| mass haul | partly (mass haul line and view frame) | no | — | — | no controlled samples (§6a) |
 
 ### 6b. Options per kind
 
@@ -3949,9 +4173,13 @@ Corridors are listed in §3i-a.
 | sites | name, description, members | yes | yes | §3g |
 | parcels | closed and open, crossing and touching lot lines, arcs, labels | yes | yes | §3g |
 | parcels | members added to containers the application wrote with crossings (its point marks and edge flags kept) | yes | yes | §3g |
-| parcels | lot lines and alignments meeting each other (arcs included), alignments closing loops | yes | yes | §3g (Alignments and lot lines; PC12's face order and some crossing node ids differ) |
+| parcels | lot lines and alignments meeting each other (arcs included), alignments closing loops | yes | yes | §3g (Alignments and lot lines; some crossing node ids differ) |
 | parcels | arcs where lot lines and alignments meet (arcs split, bulges per piece) | yes | yes | §3g (Arcs where lines meet; labels of faces arc pieces bound differ) |
 | parcels | lot lines meeting feature lines; the rule of the newest member's point marks 0x10/0x20 for members the crate adds | yes | no | §3g (rule not found; marks read are kept) |
+| parcels | node ids of feature lines meeting lot lines | yes | yes | §3g (feature lines splitting parcels: PD01 to PD09) |
+| parcels | face ids a feature line gives the faces it splits or enters (containers with such ids read and written again) | yes | yes | §3g (feature lines splitting parcels: PD01 to PD20) |
+| parcels | the marks 0x800/0x800000/0x80 a new feature line sets on lot lines and their crossings | yes | yes | §3g (F01 to F04, PD01 to PD09) |
+| parcels | a new feature line's marks on its own points, the closed lot line's last point's 0x10/0x20, the outside face's entry it moves | yes (kept as read) | no | §3g (rules not found) |
 | sites | containers with members without points or nodes (WP01, WP02, WT04 to WT06: alignments without elements on a site), members added to them | yes | yes | §3g (members without points) |
 | feature lines | points, elevation points, arcs, on a site | yes | yes | §3g |
 | feature lines | edits: points, arcs, elevations and elevation points replaced, in containers this crate or the application wrote (ids and keys kept) | yes | yes | §3g |
@@ -3977,15 +4205,17 @@ Corridors are listed in §3i-a.
 | intersections | the offset alignments, profile locking action, intersection action and location label the command makes (siteless roads) | yes | yes | §3k (offset alignments and actions of the command) |
 | intersections | curb returns of crossings and tee junctions (arc, offset alignments over the intersection extents) | yes | yes | §3k (curb returns of the command) |
 | intersections | curb return profiles, offset profiles of the offsets, the other road's profile locked at a crossing | yes | yes | §3k (profile locking and curb return profiles) |
+| intersections | the other road's grade rule (maximum change, maximum grade, to the intersection extents) and curb returns shortened on a road ending within them | yes | yes | §3k (profile locking and curb return profiles: WC76 to WC86) |
+| intersections | the curb return profile beside an other-road profile that ended within the curb returns before the locking | yes | no | §3k (WC79: the application ends its middle tangent 3 before the curb return's end; one sample) |
 | intersections | corridor regions of the command | partly (the corridor record is not decoded) | no | WC63 (corridors and profiles on): the command loads its assembly set, eight assemblies of 27 stock subassemblies the product's compiled stock subassembly library defines, imports about 1,100 label styles and other styles with them and builds one corridor (20,885 bits, 172 references) over the roads, offsets and curb returns; the subassemblies are the product's licensed content, which this crate does not write |
-| intersections | roads on a site | yes (records) | no | WC64: the offset alignments and curb returns join the roads' site and the regions they close become parcels (eight: four 12 x 12 squares beside the crossing, four 134.126 corner regions between the offsets and the arcs); not written: the writer puts no offset alignment on a site and does not rewrite a parent on a site |
+| intersections | roads on a site: offset alignments, curb returns and their profiles joining the site, the parcels of the regions they close | yes | yes | §3k (roads on a site); node and face ids and the marks 0x40/0x80 of crossing nodes are not the application's |
 | gravity pipe networks | every family of the default parts list (one size each), connections | partly | yes | §3m |
 | gravity pipe networks | every pipe size of the default catalog, whether the parts list holds it or not | yes | yes | §3m (other pipe sizes) |
 | gravity pipe networks | structures of any catalog size (chosen list and range fields, the catalog's derived fields and size names) | yes | yes | §3m (other structure sizes) |
 | gravity pipe networks | the catalog's body solids | partly | no | §3m; the writer writes a box or cylinder scaled from the family's; where the family's own body is as wide as its frame rather than its walls (rectangular slab top structure: 24 inch frame over 21 inch walls) the scaled box keeps that ratio instead of following the frame |
 | pressure networks | every size of the default catalog (straight and curved pipes, elbows, tees, crosses, gate valves), connections | yes | yes | §3n |
 | pressure networks | parts of other catalogs | partly | no | §3n; a pressure parts list is bound to its catalog and the programming interface neither sets a drawing's catalog nor adds another catalog's sizes (`PressurePartList.AddPart` takes the list's own) |
-| gradings | criteria, groups, gradings | partly (criteria) | no | §6a |
+| gradings | criteria; the root group tree; named groups; gradings | partly (criteria, the root group tree) | yes, the root group tree's empty form | §3o (open, audit, API name, application save); the named groups' settings body: §3o, §6a |
 | mass haul | line and view | partly | no | §6a |
 | label styles | the defaults of a new drawing (§2b) | partly | yes | §2b |
 | label styles | settings: visibility, layer, text style, orientation, insert option, plan readability, leader, dragged state; text components' contents, height, offsets, angle, attachment, anchor, color, lineweight, border | yes (every record of the application's style tree and of drawings of older releases) | yes, as copies of a drawing's label style (§2d) | §2d |

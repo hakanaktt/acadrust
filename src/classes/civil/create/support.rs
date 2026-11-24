@@ -153,7 +153,19 @@ const CLASSES: &[Class] = &[
     Class { dxf: "AECC_ASSOC_DEPENDENCY", cpp: "AeccDbAssocDependency", module: "AeccvBase130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_ASSOC_DEPENDENCY_BODY", cpp: "AeccDbAssocDependencyBody", module: "AeccvBase130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_COGO_POINT", cpp: "AeccDbCogoPoint", module: "AeccLand130", proxy_flags: 0x33c, entity: true },
+    Class { dxf: "AECC_POND", cpp: "AeccDbPond", module: "AeccStormWaterControl130|Product Desc: Autodesk Civil 3D |Company: Autodesk,Inc. |WEB Address: www.autodesk.com", proxy_flags: 0x37d, entity: true },
+    Class { dxf: "AECC_UNDERGROUNDSTORAGE", cpp: "AeccDbUndergroundStorage", module: "AeccStormWaterControl130|Product Desc: Autodesk Civil 3D |Company: Autodesk,Inc. |WEB Address: www.autodesk.com", proxy_flags: 0x37d, entity: true },
+    Class { dxf: "AECC_CHANNEL", cpp: "AeccDbChannel", module: "AeccDrainageChannel130|Product Desc: Autodesk Civil 3D |Company: Autodesk,Inc. |WEB Address: www.autodesk.com", proxy_flags: 0x37d, entity: true },
+    Class { dxf: "AECC_GRADING_GROUP", cpp: "AeccDbGradingGroup", module: "AeccLand130", proxy_flags: 0x81, entity: false },
 ];
+
+/// The class entry's DWG schema version: the stormwater control classes
+/// (pond, underground storage, channel) are recorded with 26 in the
+/// reference application's class table; every other written class keeps
+/// the established 25 the application accepts.
+fn class_dwg_version(dxf: &str) -> i32 {
+    if matches!(dxf, "AECC_POND" | "AECC_UNDERGROUNDSTORAGE" | "AECC_CHANNEL") { 26 } else { 25 }
+}
 
 pub(super) fn invalid(message: &str) -> DxfError {
     DxfError::Parse(message.into())
@@ -168,7 +180,7 @@ pub(super) fn register(doc: &mut CadDocument, dxf: &str) -> Result<i16, DxfError
     let mut entry = if class.entity { DxfClass::new_entity(class.dxf, class.cpp) } else { DxfClass::new(class.dxf, class.cpp) };
     entry.application_name = class.module.into();
     entry.proxy_flags = ProxyFlags(class.proxy_flags);
-    entry.dwg_version = 25;
+    entry.dwg_version = class_dwg_version(dxf);
     doc.classes.add_or_update(entry);
     doc.classes.get_by_name(dxf).map(|c| c.class_number).ok_or_else(|| invalid("civil class was not registered"))
 }
