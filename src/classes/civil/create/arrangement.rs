@@ -29,6 +29,9 @@ pub(super) struct Input<'a> {
     pub path: &'a [(Vector2, Option<f64>)],
     pub elevations: &'a [f64],
     pub closed: bool,
+    /// The member is a feature line, a lot line.
+    pub feature_line: bool,
+    pub lot_line: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -69,7 +72,15 @@ pub(super) struct Arrangement {
     /// Node points and elevations, id i + 1.
     pub nodes: Vec<(Vector2, f64)>,
     pub edges: Vec<Edge>,
+    /// Faces by number (i + 1, the outside first); the record writes each
+    /// under its id in `face_ids` and `next_face` as the next free id.
     pub faces: Vec<Face>,
+    pub face_ids: Vec<i32>,
+    pub next_face: i32,
+    /// Each node's half-edges in angle order (the nodes they lead to), and
+    /// each half-edge's face (on its right).
+    pub outgoing: Vec<Vec<i32>>,
+    pub halves: Vec<((i32, i32), i32)>,
 }
 
 type Half = (usize, usize);
@@ -100,6 +111,8 @@ struct V {
 struct EdgeState {
     vertices: Vec<V>,
     closed: bool,
+    feature_line: bool,
+    lot_line: bool,
     /// Segments in the graph (all but for the member being added).
     present: usize,
     loose_start: bool,
@@ -108,12 +121,14 @@ struct EdgeState {
 struct FaceState {
     dirty: bool,
     entries: Vec<Entry>,
+    id: i32,
 }
 
 struct State {
     nodes: Vec<(Vector2, f64)>,
     edges: Vec<EdgeState>,
     faces: Vec<FaceState>,
+    next_face: i32,
 }
 
 fn segment_count(e: &EdgeState) -> usize {
@@ -392,7 +407,7 @@ fn param(a: Vector2, b: Vector2, x: Vector2) -> f64 {
 /// Builds the arrangement of `members` in order. Only straight segments
 /// may meet; a member must not cross itself or run along another.
 pub(super) fn build(members: &[Input]) -> Result<Arrangement, &'static str> {
-    let mut s = State { nodes: Vec::new(), edges: Vec::new(), faces: Vec::new() };
+    let mut s = State { nodes: Vec::new(), edges: Vec::new(), faces: Vec::new(), next_face: 1 };
     for m in members {
         let old_faces = s.faces.len();
         let old_nodes = s.nodes.len();
@@ -587,9 +602,11 @@ pub(super) fn build(members: &[Input]) -> Result<Arrangement, &'static str> {
                 return Err("two lines meet twice between the same points");
             }
         }
-        s.edges.push(EdgeState { vertices, closed: m.closed, present: 0, loose_start });
+        s.edges.push(EdgeState { vertices, closed: m.closed, feature_line: m.feature_line, lot_line: m.lot_line, present: 0, loose_start });
         let me = s.edges.len() - 1;
         let total = segment_count(&s.edges[me]);
+        // The faces the member's segments go into or make (not the outside).
+        let mut touched: Vec<usize> = Vec::new();
         for j in 0..total {
             let segments = s.segments();
             let len = s.edges[me].vertices.len();
@@ -604,7 +621,8 @@ pub(super) fn build(members: &[Input]) -> Result<Arrangement, &'static str> {
             let a_free = s.outgoing(&segments, a).is_empty();
             let b_free = s.outgoing(&segments, b).is_empty();
             let face = if s.faces.is_empty() {
-                s.faces.push(FaceState { dirty: false, entries: vec![Entry::Live((a, b))] });
+                s.faces.push(FaceState { dirty: false, entries: vec![Entry::Live((a, b))], id: s.next_face });
+                s.next_face += 1;
                 0
             } else if a_free && b_free {
                 let f = s.face_at(&segments, s.nodes[a].0);
@@ -616,6 +634,9 @@ pub(super) fn build(members: &[Input]) -> Result<Arrangement, &'static str> {
                 s.wedge(&segments, b, s.angle(b, a, -g)).ok_or("a face cannot be found")?
             };
             let earlier = face < old_faces;
+            if face > 0 && !touched.contains(&face) {
+                touched.push(face);
+            }
             s.edges[me].present = j + 1;
             let segments = s.segments();
             let right = s.cycle(&segments, (a, b));
@@ -679,15 +700,88 @@ pub(super) fn build(members: &[Input]) -> Result<Arrangement, &'static str> {
             if earlier {
                 s.faces[face].dirty = true;
             }
-            s.faces.push(FaceState { dirty: false, entries: vec![Entry::Live(new_entry)] });
+            s.faces.push(FaceState { dirty: false, entries: vec![Entry::Live(new_entry)], id: s.next_face });
+            s.next_face += 1;
+            touched.push(s.faces.len() - 1);
         }
         for f in s.faces.iter_mut() {
             for e in f.entries.iter_mut() {
                 *e = Entry::Live(e.half());
             }
         }
+        if m.feature_line {
+            renumber_faces(&mut s, me, &touched);
+        }
     }
     finish(&s)
+}
+
+/// A feature line `me` that meets lot lines makes the application number
+/// the faces it went into or made again (the outside keeps 1): walking each
+/// lot line from its first point on a feature line, the faces its segments
+/// border in that order, then the others, take the next ids after those
+/// its splits took (PD01: split 3, then 4 and 5; PD03: a line ending inside
+/// the face, 2 becomes 3; PD08: splits 6 and 7, then 8 to 11 round the
+/// rectangle from (50, 0); PD09: the triangle 4, the rest 5).
+fn renumber_faces(s: &mut State, me: usize, touched: &[usize]) {
+    let mine: Vec<usize> = s.edges[me].vertices.iter().map(|v| v.node).collect();
+    let on_lot_lines = |s: &State, node: usize| s.edges.iter().any(|e| e.lot_line && e.vertices.iter().any(|v| v.node == node));
+    if touched.is_empty() || !mine.iter().any(|n| on_lot_lines(s, *n)) {
+        return;
+    }
+    let segments = s.segments();
+    let mut face_of: Vec<(Half, usize)> = Vec::new();
+    for (i, f) in s.faces.iter().enumerate() {
+        for e in &f.entries {
+            for h in s.cycle(&segments, e.half()) {
+                face_of.push((h, i));
+            }
+        }
+    }
+    let lookup = |h: Half| face_of.iter().find(|x| x.0 == h).map(|x| x.1);
+    let feature_nodes: Vec<usize> = s.edges.iter().filter(|e| e.feature_line).flat_map(|e| e.vertices.iter().map(|v| v.node)).collect();
+    let mut order: Vec<usize> = Vec::new();
+    for e in s.edges.iter().filter(|e| e.lot_line) {
+        let n = e.vertices.len();
+        let Some(start) = e.vertices.iter().position(|v| feature_nodes.contains(&v.node)) else { continue };
+        for k in 0..n {
+            let i = (start + k) % n;
+            if !e.closed && i + 1 >= n {
+                continue;
+            }
+            let (a, b) = (e.vertices[i].node, e.vertices[(i + 1) % n].node);
+            for f in [lookup((b, a)), lookup((a, b))].into_iter().flatten() {
+                if touched.contains(&f) && !order.contains(&f) {
+                    order.push(f);
+                }
+            }
+        }
+    }
+    let rest: Vec<usize> = touched.iter().filter(|f| !order.contains(f)).copied().collect();
+    order.extend(rest);
+    // Each takes as entry the half-edge on its side of the last lot line
+    // segment along it, and loses the mark of a changed face (PD01: (0,
+    // 25) to (0, 50) and (0, 0) to (0, 25); PD08).
+    let mut last: Vec<Option<Half>> = vec![None; s.faces.len()];
+    for e in s.edges.iter().filter(|e| e.lot_line) {
+        let n = e.vertices.len();
+        for i in 0..segment_count(e) {
+            let (a, b) = (e.vertices[i].node, e.vertices[(i + 1) % n].node);
+            for h in [(b, a), (a, b)] {
+                if let Some(f) = lookup(h) {
+                    last[f] = Some(h);
+                }
+            }
+        }
+    }
+    for f in order {
+        s.faces[f].id = s.next_face;
+        s.next_face += 1;
+        s.faces[f].dirty = false;
+        if let (Some(h), 1) = (last[f], s.faces[f].entries.len()) {
+            s.faces[f].entries[0] = Entry::Live(h);
+        }
+    }
 }
 
 fn finish(s: &State) -> Result<Arrangement, &'static str> {
@@ -742,7 +836,9 @@ fn finish(s: &State) -> Result<Arrangement, &'static str> {
             Face { flags: if f.dirty { 6 } else { 14 }, entries, label: label_point(s, &segments, &loops), loops: face_loops(s, &segments, &loops) }
         })
         .collect();
-    Ok(Arrangement { nodes: s.nodes.clone(), edges, faces })
+    let outgoing = (0..s.nodes.len()).map(|n| s.outgoing(&segments, n).iter().map(|o| o.0 as i32 + 1).collect()).collect();
+    let halves = face_of.iter().map(|((a, b), f)| ((*a as i32 + 1, *b as i32 + 1), *f)).collect();
+    Ok(Arrangement { nodes: s.nodes.clone(), edges, faces, face_ids: s.faces.iter().map(|f| f.id).collect(), next_face: s.next_face, outgoing, halves })
 }
 
 /// The arrangement of members that have no points (a container whose
@@ -752,7 +848,9 @@ fn finish(s: &State) -> Result<Arrangement, &'static str> {
 /// WT04R).
 pub(super) fn without_points(outside: i32) -> Arrangement {
     let faces = (outside != 0).then(|| Face { flags: outside, entries: Vec::new(), label: Vector2::new(0.0, 0.0), loops: Vec::new() });
-    Arrangement { nodes: Vec::new(), edges: Vec::new(), faces: faces.into_iter().collect() }
+    let faces: Vec<Face> = faces.into_iter().collect();
+    let face_ids: Vec<i32> = (1..=faces.len() as i32).collect();
+    Arrangement { nodes: Vec::new(), edges: Vec::new(), next_face: faces.len() as i32 + 1, faces, face_ids, outgoing: Vec::new(), halves: Vec::new() }
 }
 
 impl Edge {
@@ -849,6 +947,16 @@ fn loop_area_abs(loops: &Loops) -> f64 {
 }
 
 impl Arrangement {
+    /// The id the record gives face number `face` (0 stays 0).
+    pub(super) fn face_id(&self, face: i32) -> i32 {
+        if face >= 1 { self.face_ids.get(face as usize - 1).copied().unwrap_or(face) } else { face }
+    }
+
+    /// The number of the face the record names `id`.
+    pub(super) fn face_number(&self, id: i32) -> Option<i32> {
+        self.face_ids.iter().position(|f| *f == id).map(|i| i as i32 + 1)
+    }
+
     /// The bounded face holding `p`: `prefer` when `p` lies on its
     /// boundary or inside it, else the smallest face around it.
     pub(super) fn face_at(&self, p: Vector2, prefer: i32) -> Option<i32> {
@@ -1038,7 +1146,7 @@ mod tests {
     fn label(points: &[(f64, f64)]) -> Vector2 {
         let path: Vec<(Vector2, Option<f64>)> = points.iter().map(|p| (Vector2::new(p.0, p.1), None)).collect();
         let z = vec![0.0; path.len()];
-        build(&[Input { path: &path, elevations: &z, closed: true }]).unwrap().faces[1].label
+        build(&[Input { path: &path, elevations: &z, closed: true, feature_line: false, lot_line: true }]).unwrap().faces[1].label
     }
 
     #[test]

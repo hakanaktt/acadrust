@@ -94,6 +94,9 @@ pub struct Topology {
     /// The ids of the container's faces in the order it lists them (1 the
     /// outside face).
     pub face_ids: Vec<i32>,
+    /// The outside face's entries (node id, index of the half-edge among
+    /// the node's).
+    pub outside_entries: Vec<(i32, i32)>,
 }
 
 impl Topology {
@@ -276,27 +279,30 @@ fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> 
 /// The face list at `pos`: `BL next free id, BL count, per face {BL id,
 /// BL id, BL flags, BL loops, per loop {BL entry node, BL entry index}}`;
 /// the ids in list order and the outside face's (id 1) flags.
-fn face_list(data: &[u8], pos: usize, end: usize) -> Option<(Vec<i32>, i32)> {
+fn face_list(data: &[u8], pos: usize, end: usize) -> Option<(Vec<i32>, i32, Vec<(i32, i32)>)> {
     let mut bits = Bits::new(data, pos, end);
     bits.bit_long()?;
     let count = bits.bit_long()?;
     (0..=100_000).contains(&count).then_some(())?;
-    let (mut ids, mut outside) = (Vec::new(), 0);
+    let (mut ids, mut outside, mut entries) = (Vec::new(), 0, Vec::new());
     for _ in 0..count {
         let id = bits.bit_long()?;
         bits.bit_long()?;
         let flags = bits.bit_long()?;
         let loops = bits.bit_long()?;
         (0..=100_000).contains(&loops).then_some(())?;
-        for _ in 0..2 * loops {
-            bits.bit_long()?;
+        for _ in 0..loops {
+            let entry = (bits.bit_long()?, bits.bit_long()?);
+            if id == 1 {
+                entries.push(entry);
+            }
         }
         if id == 1 {
             outside = flags;
         }
         ids.push(id);
     }
-    Some((ids, outside))
+    Some((ids, outside, entries))
 }
 
 /// The topology in a site container or alignment companion body:
@@ -313,8 +319,8 @@ pub(super) fn topology(data: &[u8], start: usize, end: usize) -> Option<Topology
     let read = |pos: usize, next_key: i32| -> Option<Topology> {
         let (nodes, after, next_node) = node_list(data, pos, end)?;
         let (edges, edge_flags, edge_ids, faces) = edges(data, after, end, &nodes)?;
-        let (face_ids, outside_face_flags) = face_list(data, faces, end).unwrap_or_default();
-        Some(Topology { edges, edge_flags, edge_ids, face_ids, next_node, next_key, outside_face_flags })
+        let (face_ids, outside_face_flags, outside_entries) = face_list(data, faces, end).unwrap_or_default();
+        Some(Topology { edges, edge_flags, edge_ids, face_ids, next_node, next_key, outside_face_flags, outside_entries })
     };
     let mut bits = Bits::new(data, start, end);
     (bits.bit_short()? == 0x04BE).then_some(())?;
