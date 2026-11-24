@@ -268,17 +268,16 @@ pub struct DimensionLinear {
 impl DimensionLinear {
     /// Create a new linear dimension
     pub fn new(first_point: Vector3, second_point: Vector3) -> Self {
-        let mut base = DimensionBase::new(DimensionType::Linear);
-        base.actual_measurement = first_point.distance(&second_point);
-
-        Self {
-            base,
+        let mut dim = Self {
+            base: DimensionBase::new(DimensionType::Linear),
             first_point,
             second_point,
             definition_point: Vector3::ZERO,
             rotation: 0.0,
             ext_line_rotation: 0.0,
-        }
+        };
+        dim.refresh_measurement();
+        dim
     }
 
     /// Create a horizontal linear dimension
@@ -288,15 +287,14 @@ impl DimensionLinear {
 
     /// Create a vertical linear dimension
     pub fn vertical(first_point: Vector3, second_point: Vector3) -> Self {
-        let mut dim = Self::new(first_point, second_point);
-        dim.rotation = std::f64::consts::FRAC_PI_2; // 90 degrees
-        dim
+        Self::rotated(first_point, second_point, std::f64::consts::FRAC_PI_2)
     }
 
     /// Create a rotated linear dimension
     pub fn rotated(first_point: Vector3, second_point: Vector3, angle: f64) -> Self {
         let mut dim = Self::new(first_point, second_point);
         dim.rotation = angle;
+        dim.refresh_measurement();
         dim
     }
 
@@ -310,6 +308,11 @@ impl DimensionLinear {
         } else {
             0.0
         }
+    }
+
+    /// Recompute the cached measurement.
+    pub fn refresh_measurement(&mut self) {
+        self.base.actual_measurement = self.measurement();
     }
 
     /// Set the offset distance

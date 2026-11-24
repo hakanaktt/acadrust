@@ -15861,6 +15861,13 @@ impl<'a> SectionReader<'a> {
         if let Dimension::Ordinate(value) = &mut dimension {
             value.refresh_measurement();
         }
+        // Without group 42 the measurement follows the geometry, which is
+        // only complete here: a linear dimension projects in its OCS.
+        if actual_measurement.is_none() {
+            if let Dimension::Linear(value) = &mut dimension {
+                value.refresh_measurement();
+            }
+        }
 
         Ok(Some(dimension))
     }
