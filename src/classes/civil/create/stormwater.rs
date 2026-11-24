@@ -16,8 +16,8 @@
 //! the name the application gives it.
 //!
 //! Provenance (D013): the grammar comes from the one drawing these
-//! families are known from, `C3D\Sample\DE_Regenwassersteuerung_2027.dwg`
-//! — a language/region-specific Sample file, cited for provenance, not a
+//! families are known from, the application's regional sample
+//! `DE_Regenwassersteuerung_2027.dwg` — cited for provenance, not a
 //! reference corpus.
 
 use super::support::{bits, hard_pointer, invalid, put_entity, soft_pointer, Body, Ref};
@@ -260,8 +260,8 @@ mod tests {
         let path = std::env::temp_dir().join(format!("sw_write_{}.dwg", std::process::id()));
         DwgWriter::write_to_file(&path, &doc).unwrap();
         // The file header's two maintenance bytes must carry the reference
-        // application's own value (0): a non-zero byte makes Civil 3D report
-        // the drawing as written by a newer release.
+        // application's own value (0): a non-zero byte makes the
+        // application report the drawing as written by a newer release.
         let bytes = std::fs::read(&path).unwrap();
         assert_eq!(&bytes[0..6], b"AC1032");
         assert_eq!(bytes[0x0B], 0, "maintenance byte 0x0B must match the application's files");

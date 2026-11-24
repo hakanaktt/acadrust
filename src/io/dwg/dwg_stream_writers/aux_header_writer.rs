@@ -37,7 +37,7 @@ pub fn dwg_maintenance_version(version: DxfVersion) -> i16 {
         DxfVersion::AC1021 => 25, // 0x19
         DxfVersion::AC1024 => 30, // 0x1E
         DxfVersion::AC1027 => 29, // 0x1D
-        // Civil 3D 2027 writes 0 in the file header's two maintenance bytes
+        // The application writes 0 in the file header's two maintenance bytes
         // (0x0B, 0x12) and the AuxHeader fields of its AC1032 files; a
         // non-zero byte there makes the application report the drawing as
         // written by a newer release. The AC1032 section layout does not
