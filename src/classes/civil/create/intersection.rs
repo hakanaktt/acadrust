@@ -857,7 +857,9 @@ mod tests {
         let a = add_alignment(&mut doc, "Road A", &[v(0.0, 0.0), v(200.0, 0.0)], None).unwrap();
         let b = add_alignment(&mut doc, "Road B", &[v(100.0, -100.0), v(100.0, 100.0)], None).unwrap();
         let t = add_alignment(&mut doc, "Road T", &[v(150.0, 0.0), v(150.0, 100.0)], None).unwrap();
-        assert!(add_intersection_with_curb_returns(&mut doc, "T", a, Handle::NULL, t, Handle::NULL, ["", ""], IntersectionOffsets::default(), 25.0, None).is_err());
+        // A tee junction gets its curb returns too (in a copy, so the
+        // drawing below holds the crossing alone).
+        assert!(add_intersection_with_curb_returns(&mut doc.clone(), "T", a, Handle::NULL, t, Handle::NULL, ["", ""], IntersectionOffsets::default(), 25.0, None).is_ok());
         let i = add_intersection_with_curb_returns(&mut doc, "I", a, Handle::NULL, b, Handle::NULL, ["", ""], IntersectionOffsets::default(), 25.0, None).unwrap();
         let path = std::env::temp_dir().join(format!("civil-intersection-curb-returns-{}.dwg", std::process::id()));
         DwgWriter::write_to_file(&path, &doc).unwrap();

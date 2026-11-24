@@ -67,20 +67,10 @@ pub struct PartField {
 const MARKERS: [&[u8]; 2] = [b"01100101010000001011111", b"01100101000110000000100"];
 
 pub(super) fn part_fields(data: &[u8], start: usize, end: usize, strings: &[String]) -> Vec<PartField> {
-    let bit = |p: usize| (data[p / 8] >> (7 - p % 8)) & 1;
-    let mut markers = Vec::new();
-    for pos in start..end {
-        if MARKERS.iter().any(|m| pos + m.len() <= end && m.iter().enumerate().all(|(i, c)| bit(pos + i) == c - b'0')) {
-            markers.push(pos);
-        }
-    }
-    // Record `k` ends at marker `k`.
-    data_fields(strings)
+    number_field_slots(data, start, end, strings)
         .into_iter()
-        .zip(markers)
-        .filter(|((.., text), _)| !text)
-        .filter_map(|((code, context, unit, _), marker)| {
-            let value = Bits::new(data, marker.checked_sub(72)?, end).raw_double()?;
+        .filter_map(|(code, context, unit, at)| {
+            let value = Bits::new(data, at, end).raw_double()?;
             (value.is_finite() && (value == 0.0 || (1e-9..1e12).contains(&value.abs()))).then_some(PartField {
                 code,
                 context,
@@ -88,6 +78,31 @@ pub(super) fn part_fields(data: &[u8], start: usize, end: usize, strings: &[Stri
                 value,
             })
         })
+        .collect()
+}
+
+/// The number fields of a part definition and the bit their raw value
+/// starts at: (code, context, unit, bit).
+pub(super) fn number_field_slots(data: &[u8], start: usize, end: usize, strings: &[String]) -> Vec<(String, String, String, usize)> {
+    let bit = |p: usize| (data[p / 8] >> (7 - p % 8)) & 1;
+    let mut markers = Vec::new();
+    for pos in start..end {
+        if MARKERS.iter().any(|m| pos + m.len() <= end && m.iter().enumerate().all(|(i, c)| bit(pos + i) == c - b'0')) {
+            markers.push(pos);
+        }
+    }
+    // Record `k` ends at marker `k` (no marker follows the last one).
+    // A marker also starts the first record when the field count before
+    // it ends in the marker's first bits; it is not a record end.
+    let fields = data_fields(strings);
+    if markers.len() >= fields.len() && markers.len() > 1 {
+        markers.remove(0);
+    }
+    fields
+        .into_iter()
+        .zip(markers)
+        .filter(|((.., text), _)| !text)
+        .filter_map(|((code, context, unit, _), marker)| Some((code, context, unit, marker.checked_sub(72)?)))
         .collect()
 }
 
