@@ -1783,6 +1783,7 @@ application writes them as crossing nodes; straight segments only).
 | a rectangle parcel and PD01's, PD05's or PD09's line (E-PD1, E-PD5, E-PD9); both PD08 lines (E-PD8) | AUDIT 0; one parcel of area 5000, its elevation extents (5.857, 5.778, 6.667) and centroid elevation (1.8333, 2.75, 2) as the samples' |
 | WP03 plus PD01's line (E-PN1), then PD08's second line (E-PN8) | AUDIT 0; area 5000; node ids, face ids, parcel faces and next free ids as PD01's and PD08's |
 | the application's PD01 read and written again (bit for bit), then a lot line x = 50 (E-PF20) or PD08's second line (E-PF08); WP03 plus PD03's line (E-PF03) | AUDIT 0; face ids, parcel faces and areas as PD20's, PD08's and PD03's |
+| WP03 plus F02's or F03's line (E-F02, E-F03); PC11 plus the alignment at x = 50 or 25 (E-PG12, E-PG2) | AUDIT 0; node ids, face ids, parcel faces and lot line marks as the samples'; parcel numbers by part as PC12's and PG2's (1 west, 2 east; 2 west, 1 east) |
 
 A feature line is a short record; its points are its edge in the
 container:
