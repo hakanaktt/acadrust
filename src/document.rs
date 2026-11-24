@@ -4685,6 +4685,23 @@ impl CadDocument {
         }
     }
 
+    /// Whether `object` is the DIMASSOC of a dimension that is no longer in
+    /// the drawing (erased). Such an association points at nothing a reader
+    /// can resolve, so the writers leave it out. One naming no dimension at
+    /// all is kept as it was read.
+    pub fn is_orphan_dimension_association(&self, object: &ObjectType) -> bool {
+        match object {
+            ObjectType::Associative(object) => match &object.data {
+                crate::objects::AssociativeData::DimensionAssociation(association) => {
+                    !association.dimension.is_null()
+                        && self.get_entity(association.dimension).is_none()
+                }
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     /// Ensure an extension dictionary exists for `owner`.
     pub fn ensure_extension_dictionary(&mut self, owner: Handle) -> Handle {
         if let Some(handle) = self.extension_dictionary_handle(owner) {

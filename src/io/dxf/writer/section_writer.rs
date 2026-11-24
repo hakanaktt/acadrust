@@ -200,6 +200,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                         continue;
                     }
                 }
+                _ if document.is_orphan_dimension_association(obj) => continue,
                 _ => {}
             }
             set.insert(*h);
@@ -6333,6 +6334,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                     self.write_block_visibility_parameter(obj)?
                 }
                 ObjectType::DynamicBlock(obj) => self.write_dynamic_block_object_dxf(obj)?,
+                ObjectType::Associative(_) if document.is_orphan_dimension_association(object) => {}
                 ObjectType::Associative(obj) => self.write_associative_object_dxf(obj)?,
                 ObjectType::ClassObject(obj) => self.write_class_object_dxf(obj)?,
                 ObjectType::DataObject(obj) => self.write_data_object_dxf(obj)?,
@@ -9141,7 +9143,13 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         // Allocate new unique sort handles to avoid conflicts with entity handles.
         // Sort entries by original sort_handle to preserve relative draw order,
         // then assign sequential new handles so ascending order is maintained.
-        let entries: Vec<_> = table.entries().collect();
+        // Entries for entities that are not written would point at nothing.
+        let entries: Vec<_> = table
+            .entries()
+            .filter(|entry| {
+                !entry.entity_handle.is_null() && self.handle_is_writable(entry.entity_handle)
+            })
+            .collect();
         let mut sorted_indices: Vec<usize> = (0..entries.len()).collect();
         sorted_indices.sort_by_key(|&i| entries[i].sort_handle.value());
 

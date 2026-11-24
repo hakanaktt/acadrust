@@ -373,7 +373,11 @@ impl<'a> DwgObjectWriter<'a> {
                 if let Some(h) = i.seqend_handle { s.insert(h.value()); }
             }
         }
-        for h in document.objects.keys() { s.insert(h.value()); }
+        for (h, object) in &document.objects {
+            if !document.is_orphan_dimension_association(object) {
+                s.insert(h.value());
+            }
+        }
         macro_rules! tbl { ($t:expr) => { s.insert($t.handle().value()); for x in $t.iter() { s.insert(x.handle().value()); } } }
         tbl!(document.layers); tbl!(document.line_types); tbl!(document.text_styles); tbl!(document.block_records);
         tbl!(document.dim_styles); tbl!(document.app_ids); tbl!(document.views); tbl!(document.vports); tbl!(document.ucss);

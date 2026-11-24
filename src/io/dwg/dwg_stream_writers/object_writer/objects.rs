@@ -376,7 +376,7 @@ impl<'a> DwgObjectWriter<'a> {
 
     /// Write a single non-graphical object record.
     pub(super) fn write_object(&mut self, obj: &ObjectType) {
-        if self.lacks_object_class(obj) {
+        if self.lacks_object_class(obj) || self.document.is_orphan_dimension_association(obj) {
             return;
         }
         let preserved_record = match obj {
@@ -1549,6 +1549,7 @@ impl<'a> DwgObjectWriter<'a> {
                 None => false,
             },
             Some(obj) if self.lacks_object_class(obj) => false,
+            Some(obj) if self.document.is_orphan_dimension_association(obj) => false,
             Some(obj) => match obj {
                 ObjectType::VisualStyle(_) => {
                     (self.version.r2007_plus()
@@ -2672,7 +2673,15 @@ impl<'a> DwgObjectWriter<'a> {
         let type_code = self.class_type_code("SORTENTSTABLE", common::OBJ_SORTENTSTABLE);
         self.write_common_non_entity_data(type_code, table.handle, table.owner_handle, &[], &None);
 
-        let entries: Vec<_> = table.entries().collect();
+        // An entry for an entity that is no longer in the drawing (or for
+        // none at all) would leave the reader a draw order for nothing.
+        let entries: Vec<_> = table
+            .entries()
+            .filter(|entry| {
+                !entry.entity_handle.is_null()
+                    && self.live_handles.contains(&entry.entity_handle.value())
+            })
+            .collect();
         self.writer.write_bit_long(entries.len() as i32);
 
         // Sort handles are stored inline in the DATA section (one per entry);
