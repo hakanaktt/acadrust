@@ -205,7 +205,7 @@ fn section_views_and_group_plots_survive() {
 }
 
 /// A sample line's vertex sides decode in both record layouts, and the
-/// swath widths are the extreme offsets. Oracle: Civil 3D 2027 reads the
+/// swath widths are the extreme offsets. Oracle: the application reads the
 /// tutorials' Sections-Project-Objects.dwg sample lines at stations 100 to
 /// 1700 (plus one at 0 and one at 1729.048573328025) with vertices 300
 /// left and 300 right of the alignment (execute_civil_code, 2026-11-23:
@@ -231,11 +231,13 @@ fn a_sample_line_s_sides_carry_its_swath_widths() {
     assert_eq!(own.right, vec![(15.0, 0.0)]);
 
     // The application's records decode the same way.
-    let path = std::path::Path::new("C:\\Program Files\\Autodesk\\AutoCAD 2027\\C3D\\Help\\Civil Tutorials\\Drawings\\Sections-Project-Objects.dwg");
+    // The application's tutorial drawing, from `ACADRUST_CIVIL_TUTORIALS_DIR`.
+    let Some(dir) = std::env::var_os("ACADRUST_CIVIL_TUTORIALS_DIR") else { return };
+    let path = std::path::Path::new(&dir).join("Sections-Project-Objects.dwg");
     if !path.exists() {
         return;
     }
-    let oracle = DwgReader::from_file(path).unwrap().read().unwrap();
+    let oracle = DwgReader::from_file(&path).unwrap().read().unwrap();
     let mut lines: Vec<_> = oracle
         .entities()
         .filter_map(|e| match e {

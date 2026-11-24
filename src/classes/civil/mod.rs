@@ -1029,7 +1029,7 @@ impl ArchEntityData {
     }
 
 
-    /// Station and vertex sides of a Civil 3D sample line
+    /// Station and vertex sides of a sample line
     /// (`AECC_SAMPLE_LINE`): where it crosses its alignment and, per side
     /// (left first), its vertices as `(offset, station less the line's)`
     /// from the alignment outwards. The line's swath widths are its
