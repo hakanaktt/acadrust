@@ -6752,7 +6752,26 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         }
         self.writer.write_handle(330, object.owner)?;
         self.writer.write_subclass("AcDbProxyObject")?;
-        if object.from_dxf && !object.dxf_data.is_empty() {
+        let decoded_dxf_data = if object.from_dxf && object.dxf_data.is_empty() {
+            super::super::proxy_dxf_filer::decode_proxy_dxf_data(
+                &object.payload,
+                &object.text_payload,
+                &object.object_ids,
+            )
+            .ok()
+        } else {
+            None
+        };
+        let dxf_data = if object.from_dxf {
+            if object.dxf_data.is_empty() {
+                decoded_dxf_data.as_ref()
+            } else {
+                Some(&object.dxf_data)
+            }
+        } else {
+            None
+        };
+        if let Some(dxf_data) = dxf_data {
             // Original data format DXF: the header, then the object's own DXF
             // groups as read, with no binary size, data or 94 terminator
             // (AutoCAD's form; it refuses binary data after 70 1).
@@ -6763,7 +6782,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 object.maintenance_version,
                 true,
             )?;
-            for (code, value) in &object.dxf_data {
+            for (code, value) in dxf_data {
                 self.writer.write_string(*code, value)?;
             }
             return Ok(());

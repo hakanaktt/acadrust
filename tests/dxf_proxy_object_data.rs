@@ -149,3 +149,129 @@ fn binary_proxy_objects_are_written_with_dwg_data_format() {
     assert_eq!(flag.1, "0", "{groups:?}");
     assert!(groups.iter().any(|(code, _)| *code == 310), "{groups:?}");
 }
+
+fn decode_hex(value: &str) -> Vec<u8> {
+    value
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let digit = |byte: u8| (byte as char).to_digit(16).expect("hex digit") as u8;
+            (digit(pair[0]) << 4) | digit(pair[1])
+        })
+        .collect()
+}
+
+fn written_proxy_groups(
+    object: acadrust::objects::ProxyObject,
+    version: acadrust::types::DxfVersion,
+) -> Vec<(i32, String)> {
+    use acadrust::objects::ObjectType;
+    use acadrust::CadDocument;
+    let mut document = CadDocument::with_version(version);
+    let handle = object.handle;
+    document
+        .objects
+        .insert(handle, ObjectType::ProxyObject(object));
+    let written = String::from_utf8(
+        DxfWriter::new(&document)
+            .with_version(version)
+            .write_to_vec()
+            .expect("write dxf"),
+    )
+    .unwrap()
+    .replace("\r\n", "\n");
+    let groups = proxy_groups(&written, &format!("{:X}", handle.value()));
+    let format = groups.iter().position(|(code, _)| *code == 70).expect("70");
+    groups[format..].to_vec()
+}
+
+#[test]
+fn dwg_dxf_format_proxy_object_is_decoded_into_dxf_groups() {
+    // ODA writes these exact streams for the McDbContainer2 proxy 9FCBC of
+    // dwg__120272: BL 499, BL 543, BS 100, BS 0 in the main stream and
+    // BS 14 + UTF-16LE "McDbContainer2" in the string stream.
+    use acadrust::objects::{ProxyObject, ProxyPayload};
+    use acadrust::types::{DxfVersion, Handle};
+    let object = ProxyObject {
+        handle: Handle::from(0x9FCBC),
+        proxy_id: 499,
+        class_id: 543,
+        dxf_subclass: "cn:McDbContainer2".into(),
+        dwg_version: 31,
+        maintenance_version: 55,
+        from_dxf: true,
+        payload: ProxyPayload::from_bits(&decode_hex("3CC0400001F020000592"), 80),
+        text_payload: ProxyPayload::from_bits(
+            &decode_hex("43934018C01100188010C01BC01B801D0018401A401B8019401C800C803A"),
+            234,
+        ),
+        ..Default::default()
+    };
+    assert_eq!(
+        written_proxy_groups(object, DxfVersion::AC1024),
+        vec![
+            (70, "1".into()),
+            (100, "McDbContainer2".into()),
+        ]
+    );
+}
+
+#[test]
+fn dwg_dxf_format_proxy_object_decodes_every_group_value_type() {
+    // Synthetic McDbContainer2 DXF -> DWG -> DXF through ODA. Every value
+    // below round-trips there; 330 consumes the handle stream and 1005 is a
+    // string in the text stream. The streams end exactly after BS 0.
+    use acadrust::objects::{
+        ProxyObject, ProxyObjectReference, ProxyPayload, ProxyReferenceKind,
+    };
+    use acadrust::types::{DxfVersion, Handle};
+    let object = ProxyObject {
+        handle: Handle::from(0x9FCBC),
+        proxy_id: 499,
+        class_id: 543,
+        dxf_subclass: "cn:McDbContainer2".into(),
+        dwg_version: 29,
+        maintenance_version: 6,
+        from_dxf: true,
+        payload: ProxyPayload::from_bits(
+            &decode_hex(concat!(
+                "3CC0400001F0200005915A40901088050108806519034A00000000000000A40428",
+                "000000000000F83F000000000000011000000000000000C4006004FFFF6820AE6AD8",
+                "3894021B00A09BD5B7DDE7681C"
+            )),
+            639,
+        ),
+        text_payload: ProxyPayload::from_bits(
+            &decode_hex(concat!(
+                "43934018C01100188010C01BC01B801D0018401A401B8019401C800C80114430",
+                "06F0066006600650065002D0042007200650061006B0020005100750061006C0069",
+                "0074007900414E40118010C0108010400"
+            )),
+            654,
+        ),
+        object_ids: vec![ProxyObjectReference {
+            handle: Handle::from(0x9FCBA),
+            kind: ProxyReferenceKind::SoftPointer,
+        }],
+        ..Default::default()
+    };
+    let expected = vec![
+        (70, "1".to_string()),
+        (100, "McDbContainer2".to_string()),
+        (90, "2".to_string()),
+        (1, "Coffee-Break Quality".to_string()),
+        (290, "1".to_string()),
+        (290, "0".to_string()),
+        (70, "3".to_string()),
+        (40, "3.25".to_string()),
+        (10, "1.5".to_string()),
+        (20, "2.5".to_string()),
+        (30, "3.5".to_string()),
+        (280, "-1".to_string()),
+        (160, "123456789".to_string()),
+        (330, "9FCBA".to_string()),
+        (310, "DEADBEEF".to_string()),
+        (1005, "9FCBA".to_string()),
+    ];
+    assert_eq!(written_proxy_groups(object, DxfVersion::AC1027), expected);
+}
