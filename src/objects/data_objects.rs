@@ -99,7 +99,9 @@ pub struct BreakPointReference {
     pub identifier: i32,
     pub first_point: Vector3,
     pub second_point: Vector3,
-    /// Internal trailing version field not exposed by Autodesk DXF.
+    /// DWG-only field after the second point, not exposed by DXF: 1 when a
+    /// sub-entity path follows, 0 for a static two-point break, whose record
+    /// has no path and no sub-entity object.
     pub trailing_version: i16,
     /// Object of the sub-entity path (DXF 331).
     /// Missing values in field-named Serde input default to a null handle.

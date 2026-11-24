@@ -350,3 +350,46 @@ fn subentity_paths_round_trip_through_dwg() {
         Vector3::new(3.5, 4.5, 0.0)
     );
 }
+
+/// Control: a static two-point reference between two references with a
+/// sub-entity path goes through a DWG save and read, and the reference
+/// after it stays in step.
+#[test]
+fn static_point_reference_round_trips_through_dwg() {
+    use acadrust::{DwgReader, DwgWriter};
+
+    let mut fixture = fixture();
+    let objects = fixture.objects;
+    let references = fixture
+        .document
+        .objects
+        .values_mut()
+        .find_map(|object| match object {
+            ObjectType::DataObject(DataObject {
+                data: DataObjectData::BreakData(value),
+                ..
+            }) => Some(&mut value.point_references),
+            _ => None,
+        })
+        .unwrap();
+    // [path to object 0, the fixture's static reference, path to object 1]
+    references[0].subentity_object = objects[0];
+    references[0].subentity_type = 2;
+    let mut last = references[0].clone();
+    last.subentity_object = objects[1];
+    references.push(last);
+
+    let bytes = DwgWriter::write_to_vec(&fixture.document).unwrap();
+    let document = DwgReader::from_stream(Cursor::new(bytes)).read().unwrap();
+    let data = break_data(&document);
+    assert_eq!(data.dimension_reference, fixture.dimension);
+    let refs = &data.point_references;
+    assert_eq!(refs.len(), 3);
+    assert_eq!(refs[0].subentity_object, objects[0]);
+    assert_eq!(refs[1].reference_type, 2);
+    assert_eq!(refs[1].identifier, 5);
+    assert_eq!(refs[1].second_point, Vector3::new(3.5, 4.5, 0.0));
+    assert!(refs[1].subentity_object.is_null());
+    assert_eq!(refs[2].subentity_object, objects[1]);
+    assert_eq!(refs[2].subentity_type, 2);
+}

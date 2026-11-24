@@ -1,9 +1,19 @@
 //! Native DWG writers for database data/index helper objects.
 
 use crate::io::dwg::dwg_reference_type::DwgReferenceType;
-use crate::objects::{DataObject, DataObjectData};
+use crate::objects::{BreakPointReference, DataObject, DataObjectData};
 
 use super::{common, DwgObjectWriter};
+
+/// Whether a BREAKDATA point reference is written with a sub-entity path:
+/// it was read with one (non-zero trailing BS) or one is set on the model.
+fn has_subentity_path(reference: &BreakPointReference) -> bool {
+    reference.trailing_version != 0
+        || !reference.subentity_object.is_null()
+        || reference.subentity_type != 0
+        || reference.subentity_index != 0
+        || reference.subentity_reserved != 0
+}
 
 impl<'a> DwgObjectWriter<'a> {
     pub(super) fn write_data_object(&mut self, object: &DataObject) {
@@ -78,10 +88,15 @@ impl<'a> DwgObjectWriter<'a> {
                     self.writer.write_bit_long(reference.identifier);
                     self.writer.write_3bit_double(reference.first_point);
                     self.writer.write_3bit_double(reference.second_point);
-                    self.writer.write_bit_short(reference.trailing_version);
-                    self.writer.write_bit_long(reference.subentity_type);
-                    self.writer.write_bit_long(reference.subentity_index);
-                    self.writer.write_bit_long(reference.subentity_reserved);
+                    if has_subentity_path(reference) {
+                        self.writer
+                            .write_bit_short(reference.trailing_version.max(1));
+                        self.writer.write_bit_long(reference.subentity_type);
+                        self.writer.write_bit_long(reference.subentity_index);
+                        self.writer.write_bit_long(reference.subentity_reserved);
+                    } else {
+                        self.writer.write_bit_short(0);
+                    }
                 }
                 self.writer.write_handle(
                     DwgReferenceType::SoftPointer,
@@ -92,10 +107,12 @@ impl<'a> DwgObjectWriter<'a> {
                         DwgReferenceType::SoftPointer,
                         reference.reserved_reference.value(),
                     );
-                    self.writer.write_handle(
-                        DwgReferenceType::SoftPointer,
-                        reference.subentity_object.value(),
-                    );
+                    if has_subentity_path(reference) {
+                        self.writer.write_handle(
+                            DwgReferenceType::SoftPointer,
+                            reference.subentity_object.value(),
+                        );
+                    }
                 }
             }
             DataObjectData::BreakPointRef => {}
@@ -162,5 +179,133 @@ impl<'a> DwgObjectWriter<'a> {
             }
         }
         self.register_object(object.handle);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! A BREAKDATA is written in AutoCAD's layout: a reference with a
+    //! sub-entity path has a trailing BS of 1, the path's three BLs and,
+    //! after its reserved pointer, the path's object; a static two-point
+    //! reference has a trailing BS of 0 and only the reserved pointer.
+
+    use super::*;
+    use crate::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
+    use crate::io::dwg::dwg_stream_readers::object_reader::DwgObjectReader;
+    use crate::objects::{BreakData, BreakPointReference};
+    use crate::types::{DxfVersion, Handle, Vector3};
+    use crate::CadDocument;
+
+    const VERSIONS: [DxfVersion; 4] = [
+        DxfVersion::AC1015,
+        DxfVersion::AC1018,
+        DxfVersion::AC1024,
+        DxfVersion::AC1032,
+    ];
+
+    /// References: object 0x201 (path set on the model only), static, object 0x202.
+    fn break_data() -> DataObject {
+        let with_path = |object: u64| BreakPointReference {
+            identifier: -1,
+            subentity_object: Handle::from(object),
+            subentity_type: 2,
+            ..BreakPointReference::default()
+        };
+        let mut object = DataObject::new(DataObjectData::BreakData(BreakData {
+            dimension_reference: Handle::from(0x200u64),
+            point_references: vec![
+                with_path(0x201),
+                BreakPointReference {
+                    reference_type: 2,
+                    first_point: Vector3::new(10.0, 20.0, 0.0),
+                    second_point: Vector3::new(15.0, 20.0, 0.0),
+                    ..BreakPointReference::default()
+                },
+                with_path(0x202),
+            ],
+            ..BreakData::default()
+        }));
+        object.handle = Handle::from(0x1000u64);
+        object.owner = Handle::from(0x0cu64);
+        object
+    }
+
+    /// Writes `object` in `version` and returns a reader at its body.
+    fn written_body(version: DxfVersion, object: &DataObject) -> DwgMergedReader {
+        let document = CadDocument::with_version(version);
+        let mut writer = DwgObjectWriter::new(&document).expect("writer");
+        writer.write_data_object(object);
+        let offset = writer.handle_map()[0].1 as usize;
+        let reader = DwgObjectReader::new(writer.output().to_vec(), version, Default::default())
+            .expect("object reader");
+        let (kind, mut record) = reader.read_record_at(offset).expect("record");
+        reader.read_common_non_entity_data(&mut record, kind);
+        record
+    }
+
+    /// Reads one reference's main-stream fields up to its trailing BS.
+    fn reference_head(r: &mut DwgMergedReader, version: DxfVersion) -> (i32, Vector3, i16) {
+        r.read_bit_short(); // version
+        if version >= DxfVersion::AC1027 {
+            r.read_bit_short();
+        } else {
+            r.read_bit();
+        }
+        let reference_type = r.read_bit_long();
+        r.read_bit_short(); // flags
+        r.read_bit_long(); // identifier
+        let first = r.read_3bit_double();
+        r.read_3bit_double();
+        (reference_type, first, r.read_bit_short())
+    }
+
+    #[test]
+    fn static_point_reference_is_written_without_subentity_path() {
+        for version in VERSIONS {
+            let mut r = written_body(version, &break_data());
+            assert_eq!(r.read_bit_short(), 0, "{version:?}: version");
+            assert_eq!(r.read_bit_long(), 3, "{version:?}: count");
+
+            let (kind, _, trailing) = reference_head(&mut r, version);
+            assert_eq!((kind, trailing), (0, 1), "{version:?}: first reference");
+            assert_eq!(
+                [r.read_bit_long(), r.read_bit_long(), r.read_bit_long()],
+                [2, 0, 0],
+                "{version:?}: first path"
+            );
+
+            let (kind, first, trailing) = reference_head(&mut r, version);
+            assert_eq!(kind, 2, "{version:?}: static reference type");
+            assert_eq!(first, Vector3::new(10.0, 20.0, 0.0), "{version:?}");
+            assert_eq!(trailing, 0, "{version:?}: static reference has no path");
+
+            let (kind, first, trailing) = reference_head(&mut r, version);
+            assert_eq!(
+                (kind, first, trailing),
+                (0, Vector3::ZERO, 1),
+                "{version:?}: third"
+            );
+            assert_eq!(
+                [r.read_bit_long(), r.read_bit_long(), r.read_bit_long()],
+                [2, 0, 0],
+                "{version:?}: third path"
+            );
+            r.check_error().unwrap();
+            assert_eq!(r.main_remaining_bits(), 0, "{version:?}: data left over");
+
+            assert_eq!(r.read_handle(), 0x200, "{version:?}: dimension");
+            assert_eq!(
+                [
+                    r.read_handle(),
+                    r.read_handle(),
+                    r.read_handle(),
+                    r.read_handle(),
+                    r.read_handle()
+                ],
+                [0, 0x201, 0, 0, 0x202],
+                "{version:?}: reserved pointers and path objects"
+            );
+            r.check_error().unwrap();
+        }
     }
 }
