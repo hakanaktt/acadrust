@@ -56,7 +56,7 @@ pub use sample_lines::{add_sample_line, add_sample_line_through, add_sample_line
 pub use section_view::{add_section_view, add_section_view_group};
 pub use site::{add_alignment_on_site, add_feature_line, add_lot_line, add_parcel, add_feature_line_vertices, FeatureLineVertex, add_site, set_feature_line_vertices};
 pub use stormwater::{add_channel, add_pond, add_underground_storage};
-pub use points::{add_cogo_point, cogo_points, remove_cogo_point, set_cogo_point, set_cogo_point_name, set_cogo_point_label_style};
+pub use points::{add_cogo_point, cogo_points, create_cogo_point, point_creation_layer, NO_ELEVATION, remove_cogo_point, set_cogo_point, set_cogo_point_name, set_cogo_point_label_style};
 pub use label_style::{add_label_style, add_point_label_style, label_style, LabelStyle};
 pub use support::ensure_civil;
 pub use user_properties::{add_point_choice_property, add_point_property, add_point_property_classification, point_properties, set_cogo_point_property};

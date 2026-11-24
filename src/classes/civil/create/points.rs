@@ -306,6 +306,150 @@ pub fn add_cogo_point(
     put_point(doc, None, number, layer)
 }
 
+/// The stored elevation of a point made without one (`.` at the
+/// elevation prompt).
+pub const NO_ELEVATION: f64 = -1.0e20;
+
+/// The next point number setting of the create-points settings node, a
+/// long key of the node's settings list (`BL 0, B 1, BL count, count x
+/// key` after its children).
+const KEY_NEXT_POINT_NUMBER: u32 = 0x0100_5408;
+
+/// The layer setting of the create-points settings node (a soft pointer
+/// key: the record is the node's reference in the order of its reference
+/// keys).
+const KEY_POINT_LAYER: u32 = 0x0F00_5416;
+
+/// One key of a settings list: its key, value, the bit span of the value
+/// and, for a key that takes a reference, its index among those.
+struct SettingKey {
+    key: u32,
+    value: crate::classes::civil::alignment::KeyValue,
+    span: std::ops::Range<usize>,
+    reference: Option<usize>,
+}
+
+/// The create-points settings node, its record and its settings list.
+fn create_settings(doc: &CadDocument) -> Option<(Handle, NodeTail, Vec<SettingKey>)> {
+    use crate::classes::civil::alignment::{read_key, KeyValue};
+    use crate::classes::civil::bits::Bits;
+    let node = Handle::new(settings_node(doc, "AeccCreatePoints")?.0);
+    let tail = read_node(doc, node)?;
+    let bytes = bit_bytes(&tail.bits);
+    let end = tail.bits.len();
+    let mut b = Bits::new(&bytes, 0, end);
+    (b.bit_long()? == 0 && b.bit()?).then_some(())?;
+    let mut keys = Vec::new();
+    let mut references = 0;
+    for _ in 0..b.bit_long()? {
+        let at = b.pos;
+        let (key, value) = read_key(&mut b)?;
+        let mut k = Bits::new(&bytes, at, end);
+        k.bit_long()?;
+        let reference = KeyValue::has_reference(key).then(|| {
+            references += 1;
+            references - 1
+        });
+        keys.push(SettingKey { key, value, span: k.pos..b.pos, reference });
+    }
+    Some((node, tail, keys))
+}
+
+/// The create-points settings node, its record and the bit span of the
+/// next point number's value in the record's tail, with the value.
+fn next_number_setting(doc: &CadDocument) -> Option<(Handle, NodeTail, std::ops::Range<usize>, u32)> {
+    let (node, tail, keys) = create_settings(doc)?;
+    let k = keys.into_iter().find(|k| k.key == KEY_NEXT_POINT_NUMBER)?;
+    let crate::classes::civil::alignment::KeyValue::Long(v) = k.value else { return None };
+    Some((node, tail, k.span, u32::try_from(v).ok()?))
+}
+
+/// The layer the drawing's point creation settings put new points on;
+/// `None` when they name none (the current layer then).
+pub fn point_creation_layer(doc: &CadDocument) -> Option<String> {
+    let (_, tail, keys) = create_settings(doc)?;
+    let index = keys.iter().find(|k| k.key == KEY_POINT_LAYER)?.reference?;
+    let handle = tail.refs.get(index)?.1;
+    doc.layers.iter().find(|l| l.handle.value() == handle).map(|l| l.name.clone())
+}
+
+/// `bits` ("0"/"1" text, first bit first) packed into bytes.
+fn bit_bytes(bits: &str) -> Vec<u8> {
+    bits.as_bytes().chunks(8).map(|c| c.iter().enumerate().fold(0u8, |b, (i, d)| b | (u8::from(*d == b'1') << (7 - i)))).collect()
+}
+
+/// A bit long as "0"/"1" text.
+fn bit_long_text(v: i32) -> String {
+    match v {
+        0 => "10".to_string(),
+        1..=255 => format!("01{v:08b}"),
+        _ => std::iter::once("00".to_string()).chain(v.to_le_bytes().iter().map(|b| format!("{b:08b}"))).collect(),
+    }
+}
+
+/// Sets the drawing's next point number when its create-points settings
+/// keep one (a drawing without the setting leaves it to the application).
+fn set_next_number(doc: &mut CadDocument, next: u32) -> Result<(), DxfError> {
+    let Some((node, n, span, _)) = next_number_setting(doc) else { return Ok(()) };
+    let bits_text = format!("{}{}{}", &n.bits[..span.start], bit_long_text(next as i32), &n.bits[span.end..]);
+    let o = object(doc, node).ok_or_else(|| invalid("settings node cannot be read"))?;
+    let (dxf, owner, reactors) = (o.dxf_name.clone(), o.owner, o.reactors.clone());
+    let mut refs: Vec<Ref> = n.children.iter().map(|c| soft_owner(c.1)).collect();
+    refs.extend(n.refs);
+    let mut strings = n.own;
+    strings.extend(n.names);
+    strings.extend(n.texts);
+    put_object(
+        doc,
+        &dxf,
+        node,
+        owner,
+        reactors,
+        |w| {
+            w.write_bit_long(n.key);
+            w.write_bit_long(n.children.len() as i32);
+            for c in &n.children {
+                w.write_bit_long(c.0);
+            }
+            bits(w, &bits_text);
+        },
+        Body { refs, strings },
+    )
+}
+
+/// The number a new point takes: the drawing's next point number setting
+/// (the first free number from it), else one above the highest.
+fn next_number(doc: &CadDocument, points: &[CogoPoint]) -> u32 {
+    let used = |n: u32| points.iter().any(|p| p.number == n);
+    let mut n = next_number_setting(doc).map(|s| s.3).filter(|n| *n > 0).unwrap_or_else(|| points.iter().map(|p| p.number).max().unwrap_or(0) + 1);
+    while used(n) {
+        n += 1;
+    }
+    n
+}
+
+/// Adds a COGO point as the point creation commands do: it takes the
+/// drawing's next point number and advances it, and has no point or label
+/// style of its own (its point group's draw it). `position.z` is
+/// [`NO_ELEVATION`] for a point without an elevation. Returns the point and
+/// its number.
+pub fn create_cogo_point(doc: &mut CadDocument, position: Vector3, description: Option<&str>, layer: Option<&str>) -> Result<(Handle, u32), DxfError> {
+    if !finite(position) {
+        return Err(invalid("point position must be finite"));
+    }
+    if layer.is_some_and(|l| doc.layers.get(l).is_none()) {
+        return Err(invalid("layer does not exist"));
+    }
+    let mut points = cogo_points(doc);
+    let number = next_number(doc, &points);
+    let s = support(doc)?;
+    points.push(CogoPoint { number, position, style: 0, label_style: 0, description: description.map(str::to_string), name: None, properties: Vec::new() });
+    store(doc, &s, &points)?;
+    let point = put_point(doc, None, number, layer)?;
+    set_next_number(doc, number + 1)?;
+    Ok((point, number))
+}
+
 /// Changes a point's number, position and description.
 pub fn set_cogo_point(doc: &mut CadDocument, point: Handle, number: u32, position: Vector3, description: Option<&str>) -> Result<(), DxfError> {
     if !finite(position) || number == 0 || number > i32::MAX as u32 {
@@ -446,6 +590,29 @@ mod tests {
         assert_eq!(components.len(), 6);
         assert!(components[0].visible && !components[2].visible);
         assert_eq!(crate::classes::civil::style::marker(data, start, end).map(|m| (m.kind, m.absolute)), Some((3, false)));
+    }
+
+    #[test]
+    fn created_points_take_the_next_number_and_their_groups_styles() {
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        add_cogo_point(&mut doc, Some(4), Vector3::new(1.0, 2.0, 3.0), None, None, None).unwrap();
+        let (_, n) = create_cogo_point(&mut doc, Vector3::new(5.0, 6.0, NO_ELEVATION), Some("D 3"), None).unwrap();
+        assert_eq!(n, 5);
+        let back = round_trip(&doc);
+        let p = cogo_points(&back).into_iter().find(|p| p.number == 5).unwrap();
+        assert_eq!((p.style, p.label_style, p.position.z, p.description.as_deref()), (0, 0, NO_ELEVATION, Some("D 3")));
+        // A written tree keeps no settings of its own: no layer is named.
+        assert_eq!(point_creation_layer(&back), None);
+    }
+
+    #[test]
+    fn bit_long_text_reads_back() {
+        for v in [0, 1, 255, 256, 1234, 777_777, -5] {
+            let t = bit_long_text(v);
+            let bytes = bit_bytes(&t);
+            assert_eq!(crate::classes::civil::bits::Bits::new(&bytes, 0, t.len()).bit_long(), Some(v));
+        }
     }
 
     #[test]
