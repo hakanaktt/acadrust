@@ -22,6 +22,7 @@ mod parameters;
 mod profile;
 mod sample_lines;
 mod section;
+mod stormwater;
 mod style;
 mod subassembly;
 mod tin;
@@ -1301,6 +1302,24 @@ impl ArchEntityData {
         self.main_stream()
             .map(|(data, start, end)| corridor::feature_line_groups(data, start, end))
             .unwrap_or_default()
+    }
+
+    /// Geometry and style of a stormwater control entity (`AECC_POND`,
+    /// `AECC_UNDERGROUNDSTORAGE` or `AECC_CHANNEL`); see
+    /// [`stormwater::StormWater`]. The hydraulic parameters the application
+    /// shows for these are not persisted in the record — see the module
+    /// notes.
+    pub fn stormwater(&self) -> Option<stormwater::StormWater> {
+        let kind = match self.dxf_name.as_str() {
+            "AECC_POND" => stormwater::StormWaterKind::Pond,
+            "AECC_UNDERGROUNDSTORAGE" => stormwater::StormWaterKind::UndergroundStorage,
+            "AECC_CHANNEL" => stormwater::StormWaterKind::Channel,
+            _ => return None,
+        };
+        let (data, start, end) = self.main_stream()?;
+        let graphic = super::arch::decode::entity_graphic_data(self)?;
+        let handles = self.decode().handles;
+        stormwater::entity(kind, data, start, end, &graphic, &handles)
     }
 
     /// Raw record and the bit range of its class body.
