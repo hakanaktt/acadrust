@@ -1703,10 +1703,42 @@ computes them to about 1e-10). E-FX5 (FX00 plus the FX03 line) and E-FX9
 (a new drawing with both lines) open without recovery, AUDIT 0, and the
 programming interface lists both lines with their points.
 
-A line that closes or splits a region makes the application add an
-`AECC_GRADING` for the face (FX04: 744 bits) and list the face without a
-parcel; written without the grading such drawings open with errors, so
-the writer refuses the line.
+A line that closes or splits a region no parcel covers makes the
+application add an `AECC_GRADING` for the face (FX04: 744 bits) and list
+the face without a parcel; written without the grading such drawings open
+with errors, so the writer refuses the line.
+
+A line that splits a parcel's face adds no grading: the parcel lies over
+the parts (PD01, PD05, PD06, PD09: a line across a rectangle, straight,
+diagonal or in and out of one side; PD08: two lines, four parts). The
+parcel record lists them (`BL 2, BL n, n x BL face`), the container names
+the parcel once per face but counts it once in its tail, and the label
+keeps its place at the mean elevation of the nodes on the parcel's
+outline (PD01: (0 + 0 + 5.857 + 0 + 0 + 5.143) / 6; PD08: 22 / 8). The
+application numbers the parts anew (PD01: faces 4 and 5 after WP03's 2)
+and marks the crossings and the lot line's points as it does for a line
+read from a file (0x800 and 0x800000 flags); the writer keeps its own
+face ids and marks.
+
+A lot line across such a parcel splits it along its own segments only:
+the faces on either side of a feature line stay together, each group one
+parcel (PD20: a lot line x = 50 across PD01's parcel: two parcels of
+2500 over two faces each). An earlier parcel keeps the group its label
+lies in, the others get new parcels; a parcel's label goes to the middle
+of its outline's extents (PD20: (25, 25) and (75, 25)). The lot line
+takes a feature line's elevation where it crosses it, and its stretches
+between such points and its own points run straight between their
+elevations (PD20: (50, 25) at 5.5, (50, 0) and (50, 50) at 2.444); the
+writer adds those crossings to the lot line as points of its own (the
+application writes them as crossing nodes; straight segments only).
+
+| written | result |
+|---|---|
+| WP03 plus PD01's feature line and PD20's lot line (E-PD20) | AUDIT 0; two parcels of area 2500 with the sample's extents and centroids ((25, 25, 2.5886), (75, 25, 2.7077)) |
+
+| written | result |
+|---|---|
+| a rectangle parcel and PD01's, PD05's or PD09's line (E-PD1, E-PD5, E-PD9); both PD08 lines (E-PD8) | AUDIT 0; one parcel of area 5000, its elevation extents (5.857, 5.778, 6.667) and centroid elevation (1.8333, 2.75, 2) as the samples' |
 
 A feature line is a short record; its points are its edge in the
 container:
@@ -3561,6 +3593,31 @@ null structure's record does not stand for another family: N11 with the
 cylindrical and rectangular structures' records replaced by the null
 structure's (E-N60) does not finish opening.
 
+### Other pipe sizes
+
+`add_pipe_of_size` places a pipe of any size of the default catalog's pipe
+families (`network_pipe_sizes`: 258 sizes, 25 corrugated metal, 23
+concrete, 14 corrugated HDPE, 19 ductile iron, 18 HDPE, 19 PVC pipes, 12
+egg-shaped, 21 elliptical, 12 arch, 24 horizontal elliptical culverts and
+71 box culverts), whether or not the parts list holds the size. A size's
+part definition is keyed by the family id, the size's catalog row id and
+the family's flow and material fields (`ACMan0.013`, ...); its texts are
+the family's with the row id and the size name; its record is the
+family's with the size's values in place: the inner diameter (or width
+and height), the wall thickness, the body sizes and the cross section
+the catalog computes from them (radius, outline points, in drawing
+units, with the computation's rounding). The writer keeps, per size, the
+bits that differ from its family's definition (sample GZ02: every size
+added to WT01's parts list by the API, a pipe of each). Where GZ02's
+records list a family's fields in another order than the record the
+writer places for the family's own size (the concrete pipe and culvert
+families; for corrugated HDPE the sizes the API added), the sizes start
+from GZ02's record.
+
+| written | result |
+|---|---|
+| WT01 with a pipe of every size (E-GZ1); the same in a new drawing (E-GZ2) | AUDIT 0; the 258 pipes listed with their family and size names, inner diameters and extents as GZ02's |
+
 Structure definitions other than the null structure's refer to two
 blocks, each with the body (an anonymous `*U` block with one solid). The
 application's bodies are the catalog's generated solids; the writer
@@ -3585,6 +3642,51 @@ its size and takes its extents from the stand-in).
 |---|---|
 | WT01 with a network, a structure of each of the six families (the eccentric one turned by 0.5 rad), a pipe of each of the eleven families and a concrete pipe connected to the two cylindrical structures (E-N70); the same in a new drawing (E-N71) | AUDIT 0; every part listed with its family and size, positions as written, extents as the application's own (the turned structure's turned), the connected pipe listing both structures and each structure one pipe |
 | the same with every structure family (E-N72, E-N73) | AUDIT 0; the 22 structures and 12 pipes listed with their families and sizes, extents as N11's about the insertion point (the two-tier eccentric structures' box 5e-6 wider on one side, the application's own extents are not centred) |
+
+### Other structure sizes
+
+`add_structure_of_size` places a structure of any family but the null
+structure with chosen size fields (`network_structure_size_fields`: per
+family the catalog's lists — inner diameter or width and length, wall,
+floor, slab and frame sizes, cone height, headwall sizes — and ranges —
+rim to sump height, base height, a variable headwall's height). A size's
+part definition is the family's with other values:
+
+```text
+fields:  the chosen values; the fields the catalog derives from them
+         (structure diameter, width, length and height, body sizes,
+         offsets, vertical pipe clearance); the rest the family's own
+values: raw bit doubles where the family's record has the short form of
+         0 or 1, every other bit as the family's
+texts:   the family's, with the size name the catalog's pattern makes
+         ("60 inch Cylindrical Structure", "Concentric Structure 96 dia
+         48 x 48 frame 48 cone 8 wall 10 floor")
+key:     family id, then the codes and values of the family's key fields
+         in the family's order (`1D412393942C400EAC7DCECB4D23AEE4SID72SRS96`)
+body:    the family's body blocks scaled along X by the width (or
+         diameter), along Y by the length (or diameter) and along Z by the
+         height, each in feet to five decimals
+```
+
+Sizes the catalog rejects (an eccentric frame not narrower than the
+inner diameter, a two-tier base and cone taller than the rim to sump
+height) and sizes giving a negative length are refused. A record's
+fields are found by their start markers (`BL 80, BS 0x04BE, ...`); in
+the definitions whose field count before the first field ends in the
+marker's first bits, a marker also starts the first field (four
+structure and five pipe families), and the reader no longer takes it
+for the end of the first field (their first values were shifted).
+
+The definition's bounding shape (a list of the body's boxes and
+cylinders in feet after the last field) stays the family's: the
+application's extents come from the body blocks, not from it (samples
+GZ10, GZ20, GZ21: sizes added by the API; GZ20's records of one size
+differ in field order and in the bounding shape only).
+
+| written | result |
+|---|---|
+| WT01 with a structure of the family's own size, of its last list values and ranges raised (SRS +150, SBH +24) and of its first field's second value for each of the 21 families (E-SS1); the same in a new drawing (E-SS2) | AUDIT 0; the 63 structures listed with their families and size names, sumps at the chosen rim to sump heights, extents of the scaled bodies |
+| a 72 inch cylindrical junction structure (E-SS3); every family's own size through `add_structure_of_size` (E-SS4) | AUDIT 0; size names and extents as the application's |
 
 ## 3n. Pressure pipe networks
 
@@ -3902,7 +4004,7 @@ taken from the records and checked bit for bit against them.
 | sections of a TIN surface (unsampled) | yes (geometry once sampled) | yes (§3j) | yes (§3j) | the application samples the source | corridor sources, lines added after sampling |
 | section views of a line (default style, unsampled section) | yes (frame) | yes, with the drawing's section view style or the default one (§3j, §2c) | yes (§3j, §2c) | not needed | sampled sections, several sections |
 | intersections of two crossing roads and tee junctions, siteless or on a site, with their offset alignments, locking and intersection actions, location label, curb returns and curb return profiles | yes (stations, angles) | yes, with the drawing's intersection style or the default one (§3k, §2c) | yes (§3k, §2c) | not needed | corridor regions |
-| gravity pipe networks: every structure and pipe family of the default parts list (its one size each), connections | partly (part positions, pipe ends, connector counts, sizes of older part definitions) | yes (a new drawing gets the default parts list and styles, §3m) | yes (§3m) | not needed (the application recomputes outlines, lengths and extents) | sizes the default parts list does not hold, the catalog's body solids |
+| gravity pipe networks: every structure and pipe family of the default parts list, every catalog pipe size, structures of any catalog size, connections | partly (part positions, pipe ends, connector counts, part definition fields) | yes (a new drawing gets the default parts list and styles, §3m) | yes (§3m) | not needed (the application recomputes outlines, lengths and extents) | the catalog's body solids |
 | pressure networks: every pipe, elbow, tee, cross and gate valve size of the default catalog (straight and curved pipes), connections | yes (ports: positions, directions, joint sizes, connections; pipe ends and bulge, part positions and rotations) | yes (a new drawing gets the default pressure part list and styles, §3n) | yes (§3n) | not needed | part kinds of other catalogs, the catalog's body solids |
 | gradings, mass haul | partly (grading criteria, mass haul line and view frame) | no | — | — | no controlled samples (§6a) |
 
@@ -3975,7 +4077,8 @@ Corridors are listed in §3i-a.
 | feature lines | points, elevation points, arcs, on a site | yes | yes | §3g |
 | feature lines | edits: points, arcs, elevations and elevation points replaced, in containers this crate or the application wrote (ids and keys kept) | yes | yes | §3g |
 | feature lines | crossing and touching other members on a site (straight segments), where no region closes | yes | yes | §3g (feature lines that cross) |
-| feature lines | crossings that close or split a region (the application adds a grading of the face), styles other than the default | yes | no | §3g (FX04, FX07); gradings are not written (§6a) |
+| feature lines | crossings that split a parcel's face (the parcel over the parts); lot lines added across such a parcel | yes | yes | §3g (PD01 to PD09, PD20) |
+| feature lines | crossings that close or split a region no parcel covers (the application adds a grading of the face), styles other than the default | yes | no | §3g (FX04, FX07); gradings are not written (§6a) |
 | sample line groups | lines by station or through vertices on both sides | yes | yes | §3j |
 | sample line groups | lines with all vertices on one side | yes | yes | §3j |
 | sample line groups | section sources other than a TIN surface (corridors, corridor surfaces, pipe networks) | yes | no | not sampled |
@@ -3983,7 +4086,7 @@ Corridors are listed in §3i-a.
 | section views | one view of a line, default style | yes (frame) | yes | §3j |
 | section views | group plots with the default group plot style, one or more per group | yes | yes | §3j (section view group plots) |
 | section views | several sections in a view (a section of each source), in single views and group plots | yes | yes | §3j (section views; SM01, SM02, SM13a) |
-| section views | group plots with other group plot styles | partly | no | through the programming interface a plot given another group plot style keeps the default placement after `UpdateLayout` (a start corner of upper left, GS02) or never returns (columns, GS01); no sample of the application's own placement |
+| section views | group plots with other group plot styles | partly | no | impossible without the style dialog: through the programming interface a plot given another group plot style keeps the default placement after `UpdateLayout` (a start corner of upper left, GS02) or never returns (columns, GS01); a group plot style's setters are ignored (GS20: start corner, plot rule and alignment read back as the defaults; its name and row and column limits throw), and a plot made after changing the drawing's default style never returns (GS11); no sample of the application's own placement |
 | section views | plot settings (pages, sheets), views of sampled sections, other section view styles | partly | no | not sampled (a sampled section needs the surface's section points, other styles a section view style writer) |
 | assemblies | groups of package subassemblies (offsets, attachments) | partly | yes | §3l, §3i |
 | subassemblies | packages (`pkt`) written by acadrust | yes | yes | §3l |
@@ -3998,9 +4101,11 @@ Corridors are listed in §3i-a.
 | intersections | corridor regions of the command | partly (the corridor record is not decoded) | no | WC63 (corridors and profiles on): the command loads its assembly set, eight assemblies of 27 stock subassemblies the product's compiled stock subassembly library defines, imports about 1,100 label styles and other styles with them and builds one corridor (20,885 bits, 172 references) over the roads, offsets and curb returns; the subassemblies are the product's licensed content, which this crate does not write |
 | intersections | roads on a site: offset alignments, curb returns and their profiles joining the site, the parcels of the regions they close | yes | yes | §3k (roads on a site); node and face ids and the marks 0x40/0x80 of crossing nodes are not the application's |
 | gravity pipe networks | every family of the default parts list (one size each), connections | partly | yes | §3m |
-| gravity pipe networks | sizes the parts list does not hold, the catalog's body solids | partly | no | §3m (bodies: the part builder solves each part's parametric model from the catalog, which is not read) |
+| gravity pipe networks | every pipe size of the default catalog, whether the parts list holds it or not | yes | yes | §3m (other pipe sizes) |
+| gravity pipe networks | structures of any catalog size (chosen list and range fields, the catalog's derived fields and size names) | yes | yes | §3m (other structure sizes) |
+| gravity pipe networks | the catalog's body solids | partly | no | §3m; the writer writes a box or cylinder scaled from the family's; where the family's own body is as wide as its frame rather than its walls (rectangular slab top structure: 24 inch frame over 21 inch walls) the scaled box keeps that ratio instead of following the frame |
 | pressure networks | every size of the default catalog (straight and curved pipes, elbows, tees, crosses, gate valves), connections | yes | yes | §3n |
-| pressure networks | parts of other catalogs | partly | no | §3n |
+| pressure networks | parts of other catalogs | partly | no | §3n; a pressure parts list is bound to its catalog and the programming interface neither sets a drawing's catalog nor adds another catalog's sizes (`PressurePartList.AddPart` takes the list's own) |
 | gradings | criteria, groups, gradings | partly (criteria) | no | §6a |
 | mass haul | line and view | partly | no | §6a |
 | label styles | the defaults of a new drawing (§2b) | partly | yes | §2b |
