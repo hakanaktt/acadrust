@@ -156,6 +156,7 @@ const CLASSES: &[Class] = &[
     Class { dxf: "AECC_POND", cpp: "AeccDbPond", module: "AeccStormWaterControl130|Product Desc: Autodesk Civil 3D |Company: Autodesk,Inc. |WEB Address: www.autodesk.com", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_UNDERGROUNDSTORAGE", cpp: "AeccDbUndergroundStorage", module: "AeccStormWaterControl130|Product Desc: Autodesk Civil 3D |Company: Autodesk,Inc. |WEB Address: www.autodesk.com", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_CHANNEL", cpp: "AeccDbChannel", module: "AeccDrainageChannel130|Product Desc: Autodesk Civil 3D |Company: Autodesk,Inc. |WEB Address: www.autodesk.com", proxy_flags: 0x37d, entity: true },
+    Class { dxf: "AECC_GRADING_GROUP", cpp: "AeccDbGradingGroup", module: "AeccLand130", proxy_flags: 0x81, entity: false },
 ];
 
 /// The class entry's DWG schema version: the stormwater control classes

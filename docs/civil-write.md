@@ -68,7 +68,8 @@ owner and reactor: the named objects dictionary
 ```
 
 Keys used by the writer: 32 point group node, 34 point database, 75 outer
-query of `_All Points`. Other keys the application adds: 31 style tree,
+query of `_All Points`, 259 grading group tree (§3o). Other keys the
+application adds: 31 style tree,
 45 root settings node, 5 class nodes, 362 tag manager. New entries are
 appended; existing ones keep their order.
 
@@ -3894,6 +3895,38 @@ P09's but for the session counter.
 Not written: other part kinds of other catalogs (reducers, caps, plugs,
 other valves), the catalog's body solids.
 
+## 3o. The root grading group
+
+The drawing's grading groups hang from one `AECC_GRADING_GROUP` record the
+root tree node owns, its child key 259 (the record's own key is 259 too;
+the class table values are the samples': `AeccDbGradingGroup`,
+`AeccLand130`, proxy flags 0x81):
+
+```text
+BS 0x04BE, BL 259, BL n, n × BL (0x80000000 | name tag), BL 0,
+139 constant bits — the class tail, the same in every tree-form record
+  of the samples (14 records in 14 drawings, with 0, 1 and 2 members)
+handles: n × member group (soft ownership), then soft pointer 0
+strings: "" (the record's own name; the application names the unnamed
+  record "Grading Group"), then the members' names
+```
+
+`add_grading_group_tree` writes the empty form (n = 0), the one the
+samples store for a drawing without named groups; its 195 main bits are
+the samples' bit for bit.
+
+A named grading group is the same class with the head `BL
+0x80000000 | name tag` and a settings body the application saves per
+record, in two layouts: a short one, 85 bits before the class tail (two
+records, equal but three bits at one offset — values 3 and 4 over a
+two-member and a three-member record) and a long one, an ~83-bit constant
+head followed by a run that differs in every record and changes when the
+application touches the group. No programming interface reads the body
+(the group proxy is a plain `DBObject`: name, description, used), so
+nothing maps it; the writer writes none. A group record with members
+would also need member gradings, which no writer of this crate produces
+(§6a).
+
 ## 4. Reference check
 
 For every written drawing the check opens it in its own reference instance
@@ -4075,7 +4108,8 @@ taken from the records and checked bit for bit against them.
 | intersections of two crossing roads and tee junctions, siteless or on a site, with their offset alignments, locking and intersection actions, location label, curb returns and curb return profiles | yes (stations, angles) | yes, with the drawing's intersection style or the default one (§3k, §2c) | yes (§3k, §2c) | not needed | corridor regions |
 | gravity pipe networks: every structure and pipe family of the default parts list, every catalog pipe size, structures of any catalog size, connections | partly (part positions, pipe ends, connector counts, part definition fields) | yes (a new drawing gets the default parts list and styles, §3m) | yes (§3m) | not needed (the application recomputes outlines, lengths and extents) | the catalog's body solids |
 | pressure networks: every pipe, elbow, tee, cross and gate valve size of the default catalog (straight and curved pipes), connections | yes (ports: positions, directions, joint sizes, connections; pipe ends and bulge, part positions and rotations) | yes (a new drawing gets the default pressure part list and styles, §3n) | yes (§3n) | not needed | part kinds of other catalogs, the catalog's body solids |
-| gradings, mass haul | partly (grading criteria, mass haul line and view frame) | no | — | — | no controlled samples (§6a) |
+| gradings: the root group tree | yes (§3o) | yes (the empty form, §3o) | yes (opens without a dialog, audit clean, the API reads the record as the grading-group class under its default name, an application save keeps it bit for bit) | not needed | named groups (§3o); gradings, mass haul (§6a) |
+| mass haul | partly (mass haul line and view frame) | no | — | — | no controlled samples (§6a) |
 
 ### 6b. Options per kind
 
@@ -4181,7 +4215,7 @@ Corridors are listed in §3i-a.
 | gravity pipe networks | the catalog's body solids | partly | no | §3m; the writer writes a box or cylinder scaled from the family's; where the family's own body is as wide as its frame rather than its walls (rectangular slab top structure: 24 inch frame over 21 inch walls) the scaled box keeps that ratio instead of following the frame |
 | pressure networks | every size of the default catalog (straight and curved pipes, elbows, tees, crosses, gate valves), connections | yes | yes | §3n |
 | pressure networks | parts of other catalogs | partly | no | §3n; a pressure parts list is bound to its catalog and the programming interface neither sets a drawing's catalog nor adds another catalog's sizes (`PressurePartList.AddPart` takes the list's own) |
-| gradings | criteria, groups, gradings | partly (criteria) | no | §6a |
+| gradings | criteria; the root group tree; named groups; gradings | partly (criteria, the root group tree) | yes, the root group tree's empty form | §3o (open, audit, API name, application save); the named groups' settings body: §3o, §6a |
 | mass haul | line and view | partly | no | §6a |
 | label styles | the defaults of a new drawing (§2b) | partly | yes | §2b |
 | label styles | settings: visibility, layer, text style, orientation, insert option, plan readability, leader, dragged state; text components' contents, height, offsets, angle, attachment, anchor, color, lineweight, border | yes (every record of the application's style tree and of drawings of older releases) | yes, as copies of a drawing's label style (§2d) | §2d |
