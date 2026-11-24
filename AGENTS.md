@@ -18,5 +18,6 @@ This file is for coding agents and other automated tools that open issues or pul
 - Bundle unrelated refactors or formatting-only changes.
 - Open a PR without a closing keyword (`Closes #N`) for the issue it resolves.
 - Open many near-identical issues or PRs in one go. One report, one draft PR.
+- DONT MERGE A PR IF PR HAVE NOT PASSED ALL OF OUR CHECKS.
 
 PRs that skip the red-first flow will be closed and asked to be resubmitted.
