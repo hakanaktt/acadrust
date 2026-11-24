@@ -405,6 +405,27 @@ pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handl
         *id = next_node;
         next_node += 1;
     }
+    // A feature line joining the site across lot lines makes the
+    // application number every node where a feature line meets a lot line
+    // again, in the lot lines' point order, after the ids the new line's
+    // crossings took (PD01: crossings 7, 8 then (100, 25) 9, (0, 25) 10;
+    // PD03, PD05, PD09; PD08: a second line, the first line's crossings too,
+    // 16 to 19, the crossing of the two lines keeping 15).
+    if let Some((k, _)) = members.iter().enumerate().last().filter(|(_, m)| m.kind == MemberKind::FeatureLine && m.ids.is_empty()) {
+        let on_feature_lines: Vec<i32> = members.iter().zip(&arrangement.edges).filter(|(m, _)| m.kind == MemberKind::FeatureLine).flat_map(|(_, e)| e.vertices.iter().map(|v| v.node)).collect();
+        let lot_lines: Vec<&super::arrangement::Edge> = members.iter().zip(&arrangement.edges).filter(|(m, _)| matches!(m.kind, MemberKind::LotLine { .. })).map(|(_, e)| e).collect();
+        let new_line = &arrangement.edges[k];
+        if lot_lines.iter().any(|e| e.vertices.iter().any(|v| v.inserted && new_line.vertices.iter().any(|w| w.node == v.node))) {
+            let mut done: Vec<i32> = Vec::new();
+            for v in lot_lines.iter().flat_map(|e| &e.vertices).filter(|v| v.inserted && on_feature_lines.contains(&v.node)) {
+                if !done.contains(&v.node) {
+                    done.push(v.node);
+                    node_ids[v.node as usize - 1] = next_node;
+                    next_node += 1;
+                }
+            }
+        }
+    }
     let mut next_key = next.key.max(point_keys.iter().flatten().max().map_or(1, |m| m + 1));
     for (m, keys) in members.iter().zip(&mut point_keys) {
         for (key, _) in keys.iter_mut().zip(&m.elevation_points).filter(|(k, e)| **k == 0 && **e) {
@@ -1751,6 +1772,23 @@ mod tests {
         }
     }
 
+
+    #[test]
+    fn feature_lines_across_lot_lines_number_the_crossings_again() {
+        let p = crate::types::Vector3::new;
+        let w = Vector2::new;
+        let mut doc = drawing();
+        let s = add_site(&mut doc, "Site 1", "").unwrap();
+        add_lot_line(&mut doc, s, &[(w(0.0, 0.0), 0.0), (w(100.0, 0.0), 0.0), (w(100.0, 50.0), 0.0), (w(0.0, 50.0), 0.0)], true, None).unwrap();
+        add_feature_line(&mut doc, s, "FL1", &[p(-20.0, 25.0, 5.0), p(120.0, 25.0, 6.0)], None).unwrap();
+        let (container, ..) = members_of(&mut doc, s).unwrap();
+        let t = object(&doc, container).unwrap().topology().unwrap();
+        // The crossings take 7 and 8 first, then 9 and 10 in the lot
+        // line's order.
+        let ids: Vec<(f64, i32)> = t.edges.iter().flatten().filter(|v| v.point.y == 25.0 && (v.point.x == 0.0 || v.point.x == 100.0)).map(|v| (v.point.x, v.node)).collect();
+        assert!(ids.contains(&(100.0, 9)) && ids.contains(&(0.0, 10)), "{ids:?}");
+        assert_eq!(t.next_node, 11);
+    }
 
     #[test]
     fn edited_feature_lines_keep_their_node_ids_and_keys() {

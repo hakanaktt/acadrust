@@ -1714,11 +1714,37 @@ diagonal or in and out of one side; PD08: two lines, four parts). The
 parcel record lists them (`BL 2, BL n, n x BL face`), the container names
 the parcel once per face but counts it once in its tail, and the label
 keeps its place at the mean elevation of the nodes on the parcel's
-outline (PD01: (0 + 0 + 5.857 + 0 + 0 + 5.143) / 6; PD08: 22 / 8). The
-application numbers the parts anew (PD01: faces 4 and 5 after WP03's 2)
-and marks the crossings and the lot line's points as it does for a line
-read from a file (0x800 and 0x800000 flags); the writer keeps its own
-face ids and marks.
+outline (PD01: (0 + 0 + 5.857 + 0 + 0 + 5.143) / 6; PD08: 22 / 8).
+
+Node ids: a feature line that meets lot lines makes the application give
+its own points and crossings the next ids as for any member and then
+number again every node where a feature line meets a lot line, walking
+the lot lines' points in order (PD01: crossings 7 and 8, then (100, 25)
+9 and (0, 25) 10, next free 11; PD03: one crossing, 7 then 8; PD05,
+PD06, PD09; PD08: the second line's crossings 13 to 15, then (50, 0),
+(100, 25), (50, 50) and (0, 25) 16 to 19, the first line's crossings
+included, the two lines' crossing keeping 15). A lot line added later
+does not (PD20, PD02). The writer does the same.
+
+Face ids (derived, not written: the crate keeps a container's face ids
+1 to n, the reader refuses others): the faces the line splits or enters
+take new ids. Each split first takes the next id as for a lot line, then
+every face the line touched (not the outside) is numbered again,
+walking the lot line from the first node a feature line put on it and
+taking the faces in the order its segments meet them (PD01: split face
+3, then top 4 and bottom 5; PD03: a line ending inside, no split, face 2
+becomes 3; PD09: split 3, then the triangle 4 and the rest 5; PD08: splits
+6 and 7, then 8 to 11 from (50, 0) round the rectangle).
+
+Point and edge marks (not written; rule not found): the lot line's edge
+gains 0x800, its points 0x800 when the line splits the parcel (PD01,
+PD05, PD08, PD09) but not when it only enters it (PD03), its first point
+0x80 more; the crossings 0x800000 and 0x800 (0x800430 in PD03, 0x800c30,
+the lot line's last point 0x800c20 in PD01); on the feature line the
+first crossing 0xc10 (0xc50 after an inner point or when it crosses
+another feature line), the last 0x470 or 0xc70, inner points 0x892 and
+0xc90, its end 0x2 once a later line crosses it (PD08). The writer keeps
+its own marks (0x430 for crossings, as for lot lines).
 
 A lot line across such a parcel splits it along its own segments only:
 the faces on either side of a feature line stay together, each group one
@@ -1739,6 +1765,7 @@ application writes them as crossing nodes; straight segments only).
 | written | result |
 |---|---|
 | a rectangle parcel and PD01's, PD05's or PD09's line (E-PD1, E-PD5, E-PD9); both PD08 lines (E-PD8) | AUDIT 0; one parcel of area 5000, its elevation extents (5.857, 5.778, 6.667) and centroid elevation (1.8333, 2.75, 2) as the samples' |
+| WP03 plus PD01's line (E-PN1), then PD08's second line (E-PN8) | AUDIT 0; area 5000; node ids and next free id as PD01's and PD08's |
 
 A feature line is a short record; its points are its edge in the
 container:
@@ -4093,6 +4120,8 @@ Corridors are listed in §3i-a.
 | parcels | lot lines and alignments meeting each other (arcs included), alignments closing loops | yes | yes | §3g (Alignments and lot lines; PC12's face order and some crossing node ids differ) |
 | parcels | arcs where lot lines and alignments meet (arcs split, bulges per piece) | yes | yes | §3g (Arcs where lines meet; labels of faces arc pieces bound differ) |
 | parcels | lot lines meeting feature lines; the rule of the newest member's point marks 0x10/0x20 for members the crate adds | yes | no | §3g (rule not found; marks read are kept) |
+| parcels | node ids of feature lines meeting lot lines | yes | yes | §3g (feature lines splitting parcels: PD01 to PD09) |
+| parcels | face ids a feature line gives the faces it splits or enters, its marks 0x800/0x800000 on lot lines and crossings | yes | no | §3g (face rule derived from PD01 to PD09; the crate keeps face ids 1 to n; mark rule not found) |
 | sites | containers with members without points or nodes (WP01, WP02, WT04 to WT06: alignments without elements on a site), members added to them | yes | yes | §3g (members without points) |
 | feature lines | points, elevation points, arcs, on a site | yes | yes | §3g |
 | feature lines | edits: points, arcs, elevations and elevation points replaced, in containers this crate or the application wrote (ids and keys kept) | yes | yes | §3g |
