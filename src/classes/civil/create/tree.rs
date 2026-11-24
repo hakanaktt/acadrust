@@ -310,12 +310,13 @@ pub(super) const POINT_STYLE_KEYS: [(u32, Value); 4] = [(0x0400_1008, Value::Tex
 /// one in profile and section) and its marker:
 ///
 /// ```text
-/// BS 3 (cross), 2 bits 10, BD 0.1/12 (size), RC 0 (plotted units),
+/// BS 3 (cross), 2 bits 10, BD size (plotted, in drawing units: 0.1 in
+/// as feet, 2.5 mm as meters), RC 0 (plotted units),
 /// 44 bits the same in every point style of the samples
 /// references after the triples: one empty hard pointer
 /// ```
 #[allow(clippy::too_many_arguments)]
-fn point_style(doc: &mut CadDocument, handle: Handle, owner: Handle, id: i32, children: &[(i32, Handle)], layer: u64, by_block: u64, by_layer: u64) -> Result<(), DxfError> {
+fn point_style(doc: &mut CadDocument, handle: Handle, owner: Handle, id: i32, children: &[(i32, Handle)], layer: u64, by_block: u64, by_layer: u64, size: f64) -> Result<(), DxfError> {
     let plan = |index, visible| Component { index, visible, color: Color::ByBlock, lineweight: -2, linetype: by_block, scale: 1.0 };
     let other = Component { index: 0, visible: true, color: Color::ByBlock, lineweight: -1, linetype: by_layer, scale: 1.0 };
     let lists = [vec![plan(0, true), plan(1, true)], vec![plan(0, false), plan(1, false)], vec![Component { ..other }], vec![other]];
@@ -324,7 +325,7 @@ fn point_style(doc: &mut CadDocument, handle: Handle, owner: Handle, id: i32, ch
     style(doc, handle, owner, st, layer, |w| {
         w.write_bit_short(3);
         bits(w, "10");
-        w.write_bit_double(0.1 / 12.0);
+        w.write_bit_double(size);
         byte(w, 0);
         // ponytail: the 44 bits after the marker's size mode are the same
         // in every point style of the samples; name them once a style
@@ -357,8 +358,12 @@ pub(super) fn ensure_point_tree(doc: &mut CadDocument) -> Result<bool, DxfError>
     let [styles, head, style, classes, class, classification, settings, points, create] = [(); 9].map(|_| doc.allocate_handle());
 
     node(doc, "AECC_TREE_NODE", styles, root, KEY_STYLES as u32, &[(KEY_POINT_STYLES as u32, head)], Tail::Tree, Vec::new(), texts("", false, &[], &[]))?;
-    point_style(doc, head, styles, KEY_POINT_STYLES, &[(DEFAULT_STYLE_ID, style)], layer, by_block, by_layer)?;
-    point_style(doc, style, head, DEFAULT_STYLE_ID, &[], layer, by_block, by_layer)?;
+    // The application's default marker: 0.1 in on imperial drawings, 2.5 mm
+    // on metric ones (measured: a new metric drawing's style holds 0.0025).
+    let imperial = matches!(doc.header.insertion_units, 1 | 2 | 3 | 10 | 21) || (doc.header.insertion_units == 0 && doc.header.measurement == 0);
+    let size = if imperial { 0.1 / 12.0 } else { 0.0025 };
+    point_style(doc, head, styles, KEY_POINT_STYLES, &[(DEFAULT_STYLE_ID, style)], layer, by_block, by_layer, size)?;
+    point_style(doc, style, head, DEFAULT_STYLE_ID, &[], layer, by_block, by_layer, size)?;
 
     let name = "AeccDbCogoPoint";
     node(doc, "AECC_CLASS_NODE", classes, root, KEY_CLASSES as u32, &[(TEXT_POINT_CLASS, class)], Tail::Tree, vec![Ref(DwgReferenceType::HardOwnership, 0)], texts("", false, &[name], &[]))?;
