@@ -437,7 +437,8 @@ pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handl
     // again, in the lot lines' point order, after the ids the new line's
     // crossings took (PD01: crossings 7, 8 then (100, 25) 9, (0, 25) 10;
     // PD03, PD05, PD09; PD08: a second line, the first line's crossings too,
-    // 16 to 19, the crossing of the two lines keeping 15).
+    // 16 to 19, the crossing of the two lines keeping 15; F03: the line's own
+    // points on the lot line keep theirs).
     // A new feature line's marks on the lot lines (PD01 to PD09, F01 to
     // F04): every lot line edge takes 0x800, its crossings by feature
     // lines no 0x80; a lot line the line meets marks its first point 0x80
@@ -448,7 +449,7 @@ pub(super) fn write_container(doc: &mut CadDocument, handle: Handle, site: Handl
     let splits = new_line.is_some_and(|k| arrangement_of(&members[..k], next.outside).is_ok_and(|before| before.faces.len() < arrangement.faces.len()));
     let met_by_new: Vec<bool> = arrangement.edges.iter().map(|e| new_line.is_some_and(|k| e.vertices.iter().any(|v| arrangement.edges[k].vertices.iter().any(|w| w.node == v.node)))).collect();
     if let Some((k, _)) = members.iter().enumerate().last().filter(|(_, m)| m.kind == MemberKind::FeatureLine && m.ids.is_empty()) {
-        let on_feature_lines: Vec<i32> = members.iter().zip(&arrangement.edges).filter(|(m, _)| m.kind == MemberKind::FeatureLine).flat_map(|(_, e)| e.vertices.iter().map(|v| v.node)).collect();
+        let on_feature_lines: Vec<i32> = members.iter().zip(&arrangement.edges).filter(|(m, _)| m.kind == MemberKind::FeatureLine).flat_map(|(_, e)| e.vertices.iter().filter(|v| v.inserted).map(|v| v.node)).collect();
         let lot_lines: Vec<&super::arrangement::Edge> = members.iter().zip(&arrangement.edges).filter(|(m, _)| matches!(m.kind, MemberKind::LotLine { .. })).map(|(_, e)| e).collect();
         let new_line = &arrangement.edges[k];
         if lot_lines.iter().any(|e| e.vertices.iter().any(|v| v.inserted && new_line.vertices.iter().any(|w| w.node == v.node))) {
