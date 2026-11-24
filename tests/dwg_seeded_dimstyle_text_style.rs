@@ -76,3 +76,22 @@ fn a_dwg_written_again_names_a_text_style_in_every_dim_style() {
         "the file's own style keeps its text style"
     );
 }
+
+/// The repair only re-points what names no text style: a file's own Standard
+/// dimension style keeps the text style it names, even one not called Standard.
+#[test]
+fn a_files_own_standard_dim_style_keeps_its_text_style() {
+    let mut doc = CadDocument::with_version(DxfVersion::AC1032);
+    let mut romans = acadrust::tables::TextStyle::new("ROMANS");
+    romans.handle = doc.allocate_handle();
+    let romans_handle = romans.handle;
+    doc.text_styles.add(romans).unwrap();
+    let standard = doc.dim_styles.get_mut("Standard").unwrap();
+    standard.dimtxsty_handle = romans_handle;
+    standard.dimtxsty = "ROMANS".to_string();
+    let loaded = read(DwgWriter::write_to_vec(&doc).expect("write dwg"));
+    assert_eq!(
+        loaded.dim_styles.get("Standard").unwrap().dimtxsty_handle,
+        romans_handle
+    );
+}
