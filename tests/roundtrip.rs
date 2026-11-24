@@ -2333,6 +2333,65 @@ fn dwg_mtext_text_frame_r2004_not_stored() {
 }
 
 #[test]
+fn dwg_mtext_text_frame_window_color_r2018() {
+    // Frame (0x10) combined with the drawing-window background color bit
+    // (0x02): the R2018 reference layout stores the fill payload (BD scale /
+    // CMC color / BL transparency) for this combination — only a frame alone
+    // (0x10) omits it. The ODA writer emits the payload for flags 0x12 and
+    // its reader expects it; omitting desyncs the R2018 block and the record
+    // is rejected with "Object improperly read: <AcDbMText>".
+    let mut mtext = MText::with_value("Framed window color", Vector3::new(30.0, 19.0, 0.0));
+    mtext.height = 0.25;
+    mtext.rectangle_width = 953.0;
+    mtext.background_fill_flags = 0x12;
+    mtext.background_scale = 2.75;
+    mtext.background_color = Color::from_index(1);
+    mtext.background_transparency = 77;
+
+    let rt = dwg_roundtrip_mtext(DxfVersion::AC1032, mtext.clone());
+    assert_eq!(rt.background_fill_flags, 0x12, "R2018 frame+window flags");
+    assert_eq!(
+        rt.background_scale, 2.75,
+        "R2018 frame+window scale must be stored"
+    );
+    assert_eq!(
+        rt.background_color,
+        Color::from_index(1),
+        "R2018 frame+window color must be stored"
+    );
+    assert_eq!(
+        rt.background_transparency, 77,
+        "R2018 frame+window transparency must be stored"
+    );
+    assert_eq!(rt.value, "Framed window color", "value desynced");
+    assert_eq!(rt.height, 0.25, "height desynced");
+}
+
+#[test]
+fn dwg_mtext_text_frame_window_color_r2004_not_stored() {
+    // Pre-R2018 the fill payload is gated on bit 0x01 only: flags 0x12 do
+    // not store scale/color/transparency (the reference R2004/R2007 layouts
+    // carry no payload here either).
+    let mut mtext = MText::with_value("Framed04 window", Vector3::new(0.0, 0.0, 0.0));
+    mtext.background_fill_flags = 0x12;
+    mtext.background_scale = 9.0;
+    mtext.background_color = Color::from_index(5);
+
+    let rt = dwg_roundtrip_mtext(DxfVersion::AC1018, mtext.clone());
+    assert_eq!(rt.background_fill_flags, 0x12, "R2004 flags survive");
+    assert_eq!(
+        rt.background_scale, 1.5,
+        "R2004 frame+window scale not stored"
+    );
+    assert_eq!(
+        rt.background_color,
+        Color::ByLayer,
+        "R2004 frame+window color not stored"
+    );
+    assert_eq!(rt.value, "Framed04 window", "value desynced");
+}
+
+#[test]
 fn dwg_mtext_dynamic_columns_r2018() {
     let mut mtext = MText::with_value("Columns", Vector3::new(0.0, 0.0, 0.0));
     mtext.is_annotative = false;
