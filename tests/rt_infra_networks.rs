@@ -7,8 +7,8 @@
 //! fields docs/civil-write.md documents (§3m, §3n).
 //!
 //! Documented subset (READY-WITH-LIMITS, §3m):
-//! - pipe sizes outside the default parts list and the catalog body
-//!   solids of gravity parts are not written, so nothing asserts them;
+//! - the catalog body solids of gravity parts are not written (a box or
+//!   cylinder of the size's extents is), so nothing asserts them;
 //! - a rotated structure's cached plan outline is not decoded and the
 //!   writer keeps the unrotated outline (§3m), so only the insertion
 //!   point and the rotation itself are asserted for a turned structure.
@@ -18,8 +18,9 @@ use acadrust::classes::civil::{
     add_pipe, add_pipe_network, add_pipe_of_family, add_pressure_appurtenance,
     add_pressure_arc_pipe, add_pressure_cross, add_pressure_fitting, add_pressure_network,
     add_pressure_pipe, add_pressure_pipe_of_size, add_pressure_tee,
-    add_structure, add_structure_of_family, connect_pipe, connect_pressure_parts, ensure_civil,
-    network_part_families, pressure_part_descriptions, PressurePipe,
+    add_structure, add_structure_of_family, add_structure_of_size, connect_pipe, connect_pressure_parts, ensure_civil,
+    network_part_families, network_structure_size_fields, pressure_part_descriptions, PressurePipe,
+    StructureSizeChoice,
 };
 use acadrust::entities::{EntityType, ExtendedEntityData};
 use acadrust::objects::ObjectType;
@@ -304,4 +305,39 @@ fn connectors_of(doc: &CadDocument, part: Handle) -> Vec<Handle> {
 /// The part a connector belongs to (its fourth reference).
 fn connector_part(doc: &CadDocument, connector: Handle) -> u64 {
     refs(&entity(doc, connector))[3]
+}
+
+/// A structure of a size the default parts list lacks: its part definition
+/// holds the chosen values, the fields derived from them and the size
+/// name, keyed by the key fields' values (§3m "Structure sizes").
+#[test]
+fn structure_of_a_catalog_size_carries_its_fields() {
+    let family = "Cylindrical Junction Structure NF";
+    let fields = network_structure_size_fields(family);
+    assert_eq!(fields[0], ("SID", StructureSizeChoice::List(&[48.0, 60.0, 72.0, 96.0])));
+    assert!(matches!(fields[1], ("SRS", StructureSizeChoice::Range(..))));
+
+    let mut doc = doc();
+    ensure_civil(&mut doc).unwrap();
+    let net = add_pipe_network(&mut doc, "RT-SIZES", None).unwrap();
+    let s = add_structure_of_size(&mut doc, net, family, &[("SID", 72.0), ("SRS", 96.0)], v(5.0, 6.0, 0.0), 0.0).unwrap();
+    assert!(add_structure_of_size(&mut doc, net, family, &[("SID", 50.0)], v(0.0, 0.0, 0.0), 0.0).is_err());
+    assert!(add_structure_of_size(&mut doc, net, family, &[("SFD", 18.0)], v(0.0, 0.0, 0.0), 0.0).is_err());
+
+    let back = roundtrip(&doc, "structure-size");
+    let st = entity(&back, s);
+    assert_eq!(st.structure_position(), Some(v(5.0, 6.0, 0.0)));
+    let definition = Handle::new(refs(&st)[4]);
+    let Some(ObjectType::Arch(def)) = back.objects.get(&definition) else { panic!("part definition missing") };
+    let value = |code: &str| def.network_part_fields().iter().find(|f| f.code == code).map(|f| f.value);
+    assert_eq!(value("SID"), Some(72.0));
+    assert_eq!(value("SRS"), Some(96.0));
+    // Derived: diameter = inner diameter + 2 walls, height = rim to sump +
+    // floor.
+    assert_eq!(value("SBSD"), Some(80.0));
+    assert_eq!(value("SBSH"), Some(102.0));
+    assert!(def.decode().strings.iter().any(|t| t == "72 inch Cylindrical Structure"));
+    let defs = back.named_objects_dictionary().and_then(|d| d.get("AECC_NETWORK_PART_DEFS")).unwrap();
+    let Some(ObjectType::Dictionary(defs)) = back.objects.get(&defs) else { panic!("no part definitions") };
+    assert_eq!(defs.get("1D412393942C400EAC7DCECB4D23AEE4SID72SRS96"), Some(definition));
 }
