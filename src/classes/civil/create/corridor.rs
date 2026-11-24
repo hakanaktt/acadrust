@@ -497,7 +497,7 @@ fn write_corridor(doc: &mut CadDocument, common: EntityCommon, def: &CorridorDef
 
 /// The length of an alignment's elements (an arc's chords taken back to
 /// its arc by its curvature).
-fn alignment_length(al: &ArchEntityData) -> f64 {
+pub(super) fn alignment_length(al: &ArchEntityData) -> f64 {
     let arc = |chord: f64, k: f64| if k.abs() < 1e-12 { chord } else { 2.0 / k.abs() * (chord * k.abs() / 2.0).min(1.0).asin() };
     al.alignment_pieces_with_curvature().iter().map(|(_, k, p)| p.windows(2).map(|w| arc(w[0].distance(&w[1]), *k)).sum::<f64>()).sum()
 }

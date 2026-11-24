@@ -3125,19 +3125,39 @@ parabolas):
   and where the road crosses the one offset line it meets).
 - With that setting the command's grade rule for the other road holds
   on each side of the locked stretch (the record's settings: maximum
-  grade change 0.04, distance 50): where the grade beyond the stretch
-  differs from the grade at its end by more than 0.04, a PVI 50 past the
-  stretch takes the grade limited to that change and the PVIs before it
-  are dropped (WC67: (12, 10.76) then (62, 11.76), grade 2 % instead of
-  2.5 %; WC70 drops a PVI at 40; WC72 on the near side of a road ending at
-  the junction, (38, 11.76); WC73 above a crossing, (162, 11.76); WC61,
-  WC69, WC71 and the near side of WC73 within the limit). With no PVI
-  beyond those 50 the side is left as it is (not sampled); the rule's
-  maximum grade (0.05) is not applied (no sample reaches it).
+  grade change 0.04, maximum grade 0.05, distance rule "to the
+  intersection extents"): the grade beyond the stretch is limited to 0.04
+  from the grade at its end, then to 0.05; where that changes it, a PVI at
+  the intersection's extents on that side takes the limited grade and the
+  PVIs before it are dropped (WC67: (12, 10.76) then (62, 11.76), grade
+  2 % instead of 2.5 %; WC70 drops a PVI at 40; WC72 on the near side of a
+  road ending at the junction, (38, 11.76); WC73 above a crossing, (162,
+  11.76); WC76: -8.8 % beyond becomes -6 % by the change rule, then -5 %,
+  (62, 8.26); WC77: -5.5 % is within the change but becomes -5 %; WC78
+  both sides of a crossing; WC61, WC69, WC71 and the near side of WC73
+  within the limits).
+- The extents are the farthest ends of the curb returns' lines on the
+  road, not a fixed distance: the record's distance 50 is the default
+  radius 25 plus the default line 25 by chance (WC85: radius 15, PVI at
+  52; WC86: lines 10, PVI at 47).
+- Where the profile ends before the extents the new PVI ends it, the
+  profile running past its old end (WC79: a profile to 140 ends at 162;
+  WC80: one to 40 at 62).
+- Where the road's alignment ends within a curb return, the curb return's
+  radius is halved until its arc ends on the road and then its line on
+  that road is halved until it does (WC82, WC83: roads 30 and 33 long,
+  radius 12.5, lines 3.125 and 6.25; WC81, WC84: roads 40 and 61.9 long,
+  radius 25, lines 1.5625 and 12.5); the offset alignments, the curb
+  return profiles and the rule's PVI follow the shortened lines.
 
-Written into the samples' roads (E-L61 to E-L75) the other road's PVIs
+Written into the samples' roads (E-L61 to E-L86) the other road's PVIs
 and curves equal the samples' (every profile of the tees E-L67 and E-L72);
-E-L67, E-L68, E-L72, E-L73 and E-L75 open with AUDIT 0 errors.
+E-L67, E-L68, E-L72, E-L73, E-L75 and E-L76 to E-L86 open with AUDIT 0
+errors; E-L76 to E-L86 list every profile's PVIs as the samples' but for
+one curb return profile of WC79: there the application ends the middle
+tangent 3 before the curb return's end (on the main road's offset), the
+3 the other road's profile had beyond the arc's start before the locking
+lengthened it (one sample; not written).
 
 `add_intersection_with_curb_return_profiles(..., offsets, radius,
 CurbReturnProfiles { slope, incoming, outgoing }, layer)` writes what the
@@ -3995,6 +4015,8 @@ Corridors are listed in §3i-a.
 | intersections | the offset alignments, profile locking action, intersection action and location label the command makes (siteless roads) | yes | yes | §3k (offset alignments and actions of the command) |
 | intersections | curb returns of crossings and tee junctions (arc, offset alignments over the intersection extents) | yes | yes | §3k (curb returns of the command) |
 | intersections | curb return profiles, offset profiles of the offsets, the other road's profile locked at a crossing | yes | yes | §3k (profile locking and curb return profiles) |
+| intersections | the other road's grade rule (maximum change, maximum grade, to the intersection extents) and curb returns shortened on a road ending within them | yes | yes | §3k (profile locking and curb return profiles: WC76 to WC86) |
+| intersections | the curb return profile beside an other-road profile that ended within the curb returns before the locking | yes | no | §3k (WC79: the application ends its middle tangent 3 before the curb return's end; one sample) |
 | intersections | corridor regions of the command | partly (the corridor record is not decoded) | no | WC63 (corridors and profiles on): the command loads its assembly set, eight assemblies of 27 stock subassemblies the product's compiled stock subassembly library defines, imports about 1,100 label styles and other styles with them and builds one corridor (20,885 bits, 172 references) over the roads, offsets and curb returns; the subassemblies are the product's licensed content, which this crate does not write |
 | intersections | roads on a site: offset alignments, curb returns and their profiles joining the site, the parcels of the regions they close | yes | yes | §3k (roads on a site); node and face ids and the marks 0x40/0x80 of crossing nodes are not the application's |
 | gravity pipe networks | every family of the default parts list (one size each), connections | partly | yes | §3m |
