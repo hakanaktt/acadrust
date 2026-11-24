@@ -176,26 +176,41 @@ pub(super) fn sample_lines(data: &[u8], start: usize, end: usize) -> Option<Samp
     }
 }
 
-/// One sample line's (`AECC_SAMPLE_LINE`) station:
+/// One sample line's vertex sides: its station and, per side (left
+/// first), its vertices as `(offset, station less the line's)` from the
+/// alignment outwards. The line's swath widths are its extreme offsets.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SampleLineVertices {
+    pub station: f64,
+    pub left: Vec<(f64, f64)>,
+    pub right: Vec<(f64, f64)>,
+}
+
+/// One sample line's (`AECC_SAMPLE_LINE`) station and vertex sides:
 ///
 /// ```text
-/// BL 80, 0, 80, 80, 0, BL 0x10025F04, 6 bits (they vary per record),
-/// 275 bits (constants of the record kind, a per-record GUID among
-/// them), BD station
+/// BL 80, 0, 80, 80, 0, BL 0x10025F04, word, station,
+/// two sides (left, right): BL n, n x {BD 0, BD offset, BD delta}
 /// ```
 ///
-/// A record of the layout the codec writes (`BL 0x40008353` after the
-/// schema word) holds 4 bits, RC 0, 120 bits and 12 BD (origin and
-/// identity) before its station instead.
+/// The word selects the layout before the station: a record this crate
+/// writes (`BL 0x40008353`) holds 4 bits, RC 0, 120 bits and 12 BD (origin
+/// and identity) there; an application record holds 6 tag bits (they vary
+/// per record) and 275 bits (constants of the record kind, a per-record
+/// GUID among them).
 ///
-/// The 275 bits are the same length in every one of the 183 records of
+/// The sides are the line's vertices as `(offset, station less the line's)`
+/// (the offset negative left of the alignment), from the alignment
+/// outwards — the line's swath widths are their extreme offsets. The 275
+/// bits are the same length in every one of the 183 records of
 /// `Sections-Project-Objects.dwg` (19 lines, stations 0 to
-/// 1729.048573328025) and `Mass Haul-2.dwg` (164 lines, 50 to 1658.63)
-/// whose stations the application lists the same way; within them only a
-/// record GUID and the 6 tag bits vary. The line's name is its text
-/// stream's third string, and its group lists its lines in station order
-/// among its references.
-pub(super) fn sample_line_station(data: &[u8], start: usize, end: usize) -> Option<f64> {
+/// 1729.048573328025, each side one vertex at offset ±300) and
+/// `Mass Haul-2.dwg` (164 lines, 50 to 1658.63) whose stations the
+/// application lists the same way; within them only a record GUID and the
+/// 6 tag bits vary. The line's name is its text stream's third string, and
+/// its group lists its lines in station order among its references.
+pub(super) fn line_station_and_sides(data: &[u8], start: usize, end: usize) -> Option<(f64, [Vec<(f64, f64)>; 2])> {
     let mut bits = Bits::new(data, start, end);
     for want in [80, 0, 80, 80, 0] {
         (bits.bit_long()? == want).then_some(())?;
@@ -214,7 +229,22 @@ pub(super) fn sample_line_station(data: &[u8], start: usize, end: usize) -> Opti
         bits.skip(6 + 275)?;
     }
     let station = bits.bit_double()?;
-    (station.is_finite() && (0.0..1e7).contains(&station)).then_some(station)
+    (station.is_finite() && (0.0..1e7).contains(&station)).then_some(())?;
+    let mut sides = [Vec::new(), Vec::new()];
+    for side in &mut sides {
+        for _ in 0..usize::try_from(bits.bit_long()?).ok()? {
+            (bits.bit_double()? == 0.0).then_some(())?;
+            side.push((bits.bit_double()?, bits.bit_double()?));
+        }
+    }
+    Some((station, sides))
+}
+
+/// One sample line's (`AECC_SAMPLE_LINE`) station:
+///
+/// See [`line_station_and_sides`] for the record layout.
+pub(super) fn sample_line_station(data: &[u8], start: usize, end: usize) -> Option<f64> {
+    line_station_and_sides(data, start, end).map(|(station, _)| station)
 }
 
 /// The sources and placements after the class keys of a mapped record,
@@ -323,6 +353,15 @@ mod tests {
             "1".repeat(120),      // the fixed run (a record GUID among the constants)
             "0".repeat(155),
             bd(1729.048573328025),
+            // The vertex sides (Sections-Project-Objects: ±300, delta 0).
+            bl(1),
+            bd(0.0),
+            bd(-300.0),
+            bd(0.0),
+            bl(1),
+            bd(0.0),
+            bd(300.0),
+            bd(0.0),
         ]
         .concat();
         let data: Vec<u8> = s
