@@ -12,19 +12,27 @@
 //!
 //! ```text
 //! BS 0x04BE, BL 34 (its key in the root tree node), BL 0, BL 0, 3 bits (010)
-//! BL count, count × { BL 1, 3BD position, BL number, BS 0x0420 }
+//! BL count, count × { BL 1, 3BD position, BL number, BS 0x0420 marker }
+//!   (the marker is `0x0420` in this crate's records; the application
+//!   writes `0x0421`, and `0x0621` for points a survey created)
 //! BL n, n × BL number           points with their own point style
 //! BL m, m × BL number           points with their own label style
-//! BL 0
+//! BL jA, jA × { BL number, BL tag }     the leading tagged list (see
+//!   `tagged_leading` below; empty in this crate's records)
 //! BL j, j × { BL number, BL name tag }          named points
 //! BL j, j × { BL name tag, BL number }          the same, keyed by name
 //! BL k, k × { BL number, BL description tag }
 //! 13 × slot: BL e, e × { BL key | 0x40000000, BL c, c × { BL number, value } }
 //! handles: n × point style, m × label style, the AeccDbCogoPoint class node
-//! strings: "", the names of the j points, the same names again, the raw
-//!          description of each of the k points in order, then for each
-//!          slot entry its property's key text and its text values
+//! strings: "", the texts of the leading tagged list in order, the names of
+//!          the j points, the same names again, the raw description of each
+//!          of the k points in order, then for each slot entry its
+//!          property's key text and its text values
 //! ```
+//!
+//! The leading tagged list follows the styles in every record the
+//! application writes (the crate reads it and keeps nothing from it yet);
+//! this crate's own records place an empty one there.
 //!
 //! The slots hold the values of user-defined properties by kind: slot 4
 //! doubles (BD), 5 booleans (B; RC in the definitions), 6 texts (none inline: each text follows
@@ -231,11 +239,17 @@ pub(super) fn entity_number(data: &[u8], start: usize, end: usize) -> Option<u32
     u32::try_from(bits.bit_long()?).ok().filter(|n| *n > 0)
 }
 
+/// Flag bits a point record's marker short carries beyond its fixed
+/// `0x0420` base: `0x0001` the application sets on its points, `0x0200`
+/// points a survey created (both observed over the whole tutorial
+/// corpus; the record's layout does not change with them).
+const RECORD_MARKER_FLAGS: i16 = 0x0201;
+
 fn record(bits: &mut Bits) -> Option<(u32, Vector3)> {
     (bits.bit_long()? == 1).then_some(())?;
     let position = Vector3::new(bits.bit_double()?, bits.bit_double()?, bits.bit_double()?);
     let number = u32::try_from(bits.bit_long()?).ok().filter(|n| *n > 0)?;
-    (bits.bit_short()? == 0x0420).then_some(())?;
+    (bits.bit_short()? & !RECORD_MARKER_FLAGS == 0x0420).then_some(())?;
     Some((number, position))
 }
 
@@ -249,6 +263,8 @@ struct PointDatabase {
     records: Vec<(u32, Vector3)>,
     styled: Vec<u32>,
     labelled: Vec<u32>,
+    /// The leading tagged list (numbers; its texts precede the names).
+    tagged_leading: Vec<u32>,
     named: Vec<u32>,
     /// Length of the list after the names (the same names keyed by text).
     again: usize,
@@ -277,7 +293,7 @@ fn database(bits: &mut Bits) -> Option<PointDatabase> {
     let records = (0..count).map(|_| record(bits)).collect::<Option<Vec<_>>>()?;
     let styled = numbers(bits)?;
     let labelled = numbers(bits)?;
-    (bits.bit_long()? == 0).then_some(())?;
+    let tagged_leading = tagged(bits)?;
     let named = tagged(bits)?;
     // The same names keyed by text: { BL tag, BL number }.
     let again = usize::try_from(bits.bit_long()?).ok().filter(|n| *n <= bits.remaining() / 4)?;
@@ -306,7 +322,7 @@ fn database(bits: &mut Bits) -> Option<PointDatabase> {
             values.push((key, list));
         }
     }
-    Some(PointDatabase { records, styled, labelled, named, again, described, values })
+    Some(PointDatabase { records, styled, labelled, tagged_leading, named, again, described, values })
 }
 
 /// Every point of a point database, in record order. `handles` and
@@ -316,7 +332,8 @@ pub(super) fn points(data: &[u8], start: usize, end: usize, handles: &[u64], str
         return Vec::new();
     };
     // Each value entry: its key text, then its text values.
-    let mut texts = strings.iter().skip(1 + db.named.len() + db.again + db.described.len()).cloned();
+    let text_base = 1 + db.tagged_leading.len() + db.named.len() + db.again + db.described.len();
+    let mut texts = strings.iter().skip(text_base).cloned();
     let mut values: Vec<(String, Vec<(u32, PropertyValue)>)> = Vec::new();
     for (_, list) in &db.values {
         let Some(key) = texts.next() else { return Vec::new() };
@@ -343,9 +360,14 @@ pub(super) fn points(data: &[u8], start: usize, end: usize, handles: &[u64], str
                 .described
                 .iter()
                 .position(|n| *n == number)
-                .and_then(|i| strings.get(1 + db.named.len() + db.again + i))
+                .and_then(|i| strings.get(text_base - db.described.len() + i))
                 .cloned(),
-            name: db.named.iter().position(|n| *n == number).and_then(|i| strings.get(1 + i)).cloned(),
+            name: db
+                .named
+                .iter()
+                .position(|n| *n == number)
+                .and_then(|i| strings.get(1 + db.tagged_leading.len() + i))
+                .cloned(),
             properties: values
                 .iter()
                 .filter_map(|(key, list)| list.iter().find(|(n, _)| *n == number).map(|(_, v)| (key.clone(), v.clone())))
