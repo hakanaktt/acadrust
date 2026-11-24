@@ -1003,9 +1003,20 @@ impl<'a> DwgObjectWriter<'a> {
             // Background flags BL 90 (0 = no background)
             self.writer.write_bit_long(e.background_fill_flags);
 
-            // A frame alone does not carry fill properties in the R2018 layout.
-            // Including them shifts the annotative/column fields in ACAD.
-            if (e.background_fill_flags & 0x01) != 0 {
+            // A frame alone (0x10) does not carry fill properties in the
+            // R2018 layout. Including them shifts the annotative/column
+            // fields in ACAD. A frame combined with the fill/window-color
+            // bits (e.g. 0x12) DOES carry them in R2018: the reference
+            // writer emits scale/color/transparency there and its reader
+            // expects them — omitting shifts the R2018 block and the record
+            // is rejected ("Object improperly read: <AcDbMText>").
+            // Pre-R2018 layouts carry fill properties only on bit 0x01.
+            let fill_present = if self.version.r2018_plus(self.dxf_version) {
+                (e.background_fill_flags & 0x03) != 0
+            } else {
+                (e.background_fill_flags & 0x01) != 0
+            };
+            if fill_present {
                 // Background scale factor BD 45
                 self.writer.write_bit_double(e.background_scale);
                 // Background color CMC 63
