@@ -5,10 +5,71 @@
 use acadrust::plot_style::PlotStyleTable;
 use std::io::{Read, Write};
 
-/// A colour table as the application saved it: 255 styles in the
-/// application's own order, placeholder names and descriptions, 4,962 bytes.
-const CTB: &[u8] = include_bytes!("fixtures/ctb/sample_2024-LW0.ctb");
-const CTB_NAME: &str = "sample_2024-LW0.ctb";
+const CTB_NAME: &str = "sample-LW0.ctb";
+
+/// A colour table laid out the way plotting programs save one: 255 styles,
+/// each with its keys in the stored order, ACI 1-9, 209 and 251 plotting
+/// black with lineweight 4 on ACI 7, the rest object colour with linetype 31.
+/// Built here so the test ships no file saved by another program.
+fn ctb_text() -> String {
+    let mut text = String::from(concat!(
+        "description=\"\n",
+        "aci_table_available=TRUE\n",
+        "scale_factor=1.0\n",
+        "apply_factor=FALSE\n",
+        "custom_lineweight_display_units=0\n",
+        "aci_table{\n",
+    ));
+    for i in 0..255 {
+        text += &format!(" {i}=\"Color_{}\n", i + 1);
+    }
+    text += "}\nplot_style{\n";
+    for i in 0..255 {
+        let aci = i + 1;
+        let black = (1..=9).contains(&aci) || aci == 209 || aci == 251;
+        let (color, policy) = if black { (-1023410176i64, 5) } else { (-1006632961, 1) };
+        text += &format!(
+            concat!(
+                " {i}{{\n",
+                "  name=\"Color_{aci}\n",
+                "  localized_name=\"Color_{aci}\n",
+                "  description=\"\n",
+                "  color={color}\n",
+                "  mode_color={color}\n",
+                "  color_policy={policy}\n",
+                "  physical_pen_number=0\n",
+                "  virtual_pen_number=0\n",
+                "  screen=100\n",
+                "  linepattern_size=0.5\n",
+                "  linetype=31\n",
+                "  adaptive_linetype=TRUE\n",
+                "  lineweight={lw}\n",
+                "  fill_style=73\n",
+                "  end_style=4\n",
+                "  join_style=5\n",
+                " }}\n",
+            ),
+            i = i,
+            aci = aci,
+            color = color,
+            policy = policy,
+            lw = if aci == 7 { 4 } else { 0 },
+        );
+    }
+    text += "}\ncustom_lineweight_table{\n";
+    for (i, w) in [0.0, 0.05, 0.09, 0.1, 0.13, 0.15, 0.18, 0.2, 0.25, 0.3]
+        .iter()
+        .enumerate()
+    {
+        text += &format!(" {i}={w:?}\n");
+    }
+    text += "}\n";
+    text
+}
+
+fn ctb() -> Vec<u8> {
+    table_file("CTB", &ctb_text())
+}
 
 /// The stored text of a table: past the 60-byte header, inflated, NUL dropped.
 fn stored_text(file: &[u8]) -> Vec<u8> {
@@ -88,30 +149,33 @@ const STB_TEXT: &str = concat!(
 
 #[test]
 fn ctb_sample_text_rewrite_is_byte_identical() {
-    let table = PlotStyleTable::from_bytes(CTB_NAME, CTB).unwrap();
+    let file = ctb();
+    let table = PlotStyleTable::from_bytes(CTB_NAME, &file).unwrap();
     assert!(
-        table.to_text() == text_of(CTB),
+        table.to_text() == text_of(&file),
         "text differs from the file"
     );
 }
 
 #[test]
 fn ctb_sample_unedited_bytes_are_returned_as_read() {
-    let table = PlotStyleTable::from_bytes(CTB_NAME, CTB).unwrap();
-    assert!(table.to_bytes().unwrap() == CTB, "bytes differ");
+    let file = ctb();
+    let table = PlotStyleTable::from_bytes(CTB_NAME, &file).unwrap();
+    assert!(table.to_bytes().unwrap() == file, "bytes differ");
 }
 
 #[test]
 fn ctb_edit_aci_7_lineweight_then_revert_is_text_identical() {
-    let mut table = PlotStyleTable::from_bytes(CTB_NAME, CTB).unwrap();
+    let file = ctb();
+    let mut table = PlotStyleTable::from_bytes(CTB_NAME, &file).unwrap();
     let original = table.aci_entries[7].lineweight;
     assert_eq!(original, 4);
     table.aci_entries[7].lineweight = 8;
     let edited = table.to_text();
-    assert!(edited != text_of(CTB));
+    assert!(edited != text_of(&file));
     assert!(edited.contains("  lineweight=8\n"));
     table.aci_entries[7].lineweight = original;
-    assert!(table.to_text() == text_of(CTB), "reverted text differs");
+    assert!(table.to_text() == text_of(&file), "reverted text differs");
     // the edit survives a save and a reload
     table.aci_entries[7].lineweight = 8;
     let reloaded = PlotStyleTable::from_bytes(CTB_NAME, &table.to_bytes().unwrap()).unwrap();
@@ -121,16 +185,17 @@ fn ctb_edit_aci_7_lineweight_then_revert_is_text_identical() {
 
 #[test]
 fn ctb_recompressed_header_is_consistent() {
-    let mut table = PlotStyleTable::from_bytes(CTB_NAME, CTB).unwrap();
+    let file = ctb();
+    let mut table = PlotStyleTable::from_bytes(CTB_NAME, &file).unwrap();
     table.aci_entries[7].lineweight = 8;
     let bytes = table.to_bytes().unwrap();
-    assert_eq!(&bytes[..48], &CTB[..48]);
+    assert_eq!(&bytes[..48], &file[..48]);
     let stream = &bytes[60..];
     assert_eq!(le32(&bytes, 48), adler32(stream));
     assert_eq!(le32(&bytes, 56) as usize, stream.len());
     assert_eq!(le32(&bytes, 52) as usize, stored_text(&bytes).len() + 1);
     // one digit swapped for another: the text is as long as the file's
-    assert_eq!(le32(&bytes, 52), le32(CTB, 52));
+    assert_eq!(le32(&bytes, 52), le32(&file, 52));
     assert!(table.load_warnings.is_empty());
     assert!(PlotStyleTable::from_bytes(CTB_NAME, &bytes)
         .unwrap()
@@ -141,7 +206,8 @@ fn ctb_recompressed_header_is_consistent() {
 /// Passes before the change too: reading the sample is not what is broken.
 #[test]
 fn ctb_sample_entries_resolve() {
-    let table = PlotStyleTable::from_bytes(CTB_NAME, CTB).unwrap();
+    let file = ctb();
+    let table = PlotStyleTable::from_bytes(CTB_NAME, &file).unwrap();
     for aci in (1..=9).chain([209, 251]) {
         let entry = &table.aci_entries[aci];
         assert_eq!(entry.color_policy, 5, "ACI {aci}");
