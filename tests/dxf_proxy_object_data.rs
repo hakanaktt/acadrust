@@ -202,7 +202,7 @@ fn dwg_dxf_format_proxy_object_is_decoded_into_dxf_groups() {
         from_dxf: true,
         payload: ProxyPayload::from_bits(&decode_hex("3CC0400001F020000592"), 80),
         text_payload: ProxyPayload::from_bits(
-            &decode_hex("43934018C01100188010C01BC01B801D0018401A401B8019401C800C8"),
+            &decode_hex("43934018C01100188010C01BC01B801D0018401A401B8019401C800C803A"),
             234,
         ),
         ..Default::default()
