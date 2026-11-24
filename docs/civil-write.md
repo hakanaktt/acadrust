@@ -2010,7 +2010,11 @@ and parcel numbers equal the samples' (PF01 bit for bit but for the
 newest member's point marks and last digits); the label of a face an
 arc piece bounds is not the samples' (PF11: the application puts it at
 (83.863, 18.482), not on the lines through the extents' middle; rule not
-found). A container read gives each member its arcs whole again (the
+found: it is neither the face's centroid (82.670, 21.562), nor that of
+its chord polygon (81.120, 21.798), nor its corners' mean, nor the middle
+of a corner's bisector up to the side it meets, the rule of three-sided
+faces with arcs; the application reports the same point as the parcel's
+centroid). A container read gives each member its arcs whole again (the
 pieces' sweeps added up). A line crossing an arc twice between the same
 two nodes (two pieces joining the same nodes) is refused. Checks E-PF1
 (a new drawing: an arc rectangle with an alignment across the arc, a
@@ -3139,9 +3143,33 @@ at a crossing (its profile locking): the profile becomes fixed tangents
 through its PVIs outside the crossing and a PVI at the crossing at the
 main road's elevation there (WC62: roads (0, 0)-(200, 0) and (100,
 -100)-(100, 100), profiles 10 to 12 and 11 flat). The intersection
-writers do the same for a crossing whose other road's profile is
-tangents only (a profile with vertical curves is left as it is; tee
-junctions are not reshaped, not sampled).
+writers do the same, with these rules from WC66 to WC75 (crossings and
+tees, other roads' profiles with tangents of other grades and with
+parabolas):
+
+- A PVI already at the crossing's station is kept unless it has the
+  crossing's elevation; the crossing's PVI follows it with a tangent of no
+  length between them (WC68: a crest parabola's PVI at the crossing,
+  13 then 11). Curves that reach the locked stretch are dropped, the
+  others kept (WC68, WC69; WC75 keeps a parabola at station 40).
+- A tee junction's other road is reshaped only with the curb return
+  profiles setting on (WC66, WC74 unchanged; WC67: PVIs at the junction
+  and where the road crosses the one offset line it meets).
+- With that setting the command's grade rule for the other road holds
+  on each side of the locked stretch (the record's settings: maximum
+  grade change 0.04, distance 50): where the grade beyond the stretch
+  differs from the grade at its end by more than 0.04, a PVI 50 past the
+  stretch takes the grade limited to that change and the PVIs before it
+  are dropped (WC67: (12, 10.76) then (62, 11.76), grade 2 % instead of
+  2.5 %; WC70 drops a PVI at 40; WC72 on the near side of a road ending at
+  the junction, (38, 11.76); WC73 above a crossing, (162, 11.76); WC61,
+  WC69, WC71 and the near side of WC73 within the limit). With no PVI
+  beyond those 50 the side is left as it is (not sampled); the rule's
+  maximum grade (0.05) is not applied (no sample reaches it).
+
+Written into the samples' roads (E-L61 to E-L75) the other road's PVIs
+and curves equal the samples' (every profile of the tees E-L67 and E-L72);
+E-L67, E-L68, E-L72, E-L73 and E-L75 open with AUDIT 0 errors.
 
 `add_intersection_with_curb_return_profiles(..., offsets, radius,
 CurbReturnProfiles { slope, incoming, outgoing }, layer)` writes what the
@@ -3595,6 +3623,20 @@ blocks, each with the body (an anonymous `*U` block with one solid). The
 application's bodies are the catalog's generated solids; the writer
 writes a cylinder (cylindrical families) or a box of the size's extents
 below the insertion point in each block.
+
+The catalog's bodies are not written. The part builder generates them
+from each part's parametric model, which the catalog keeps in a drawing
+beside the part's definition: the concentric cylindrical structure's
+holds three circular profiles on work planes (`AECCU_COL_PROFILE`,
+`AECCU_COL_WORKPLANE`, `AECCU_COL_GEOMETRY_CIRCARC2D`), two extrusions and
+a transition between them (`AECCU_COL_MODIFIER_EXTRUSION`,
+`AECCU_COL_MODIFIER_TRANSITION`), the dimensions bound to the part's
+fields (`AECCU_COL_DIM_DIAMETER`, `AECCU_COL_DIM_LENGTH`) and the
+constraints between them (`AECCU_COL_CON_CONCENTRIC`). Building a body
+needs that model read and solved for a size; this crate has no reader for
+those records and writes no part's model, so the bodies stay the stand-in
+cylinder or box (the application opens the drawing, lists the part with
+its size and takes its extents from the stand-in).
 
 | written | result |
 |---|---|
