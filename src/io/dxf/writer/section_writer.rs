@@ -102,6 +102,11 @@ pub struct SectionWriter<'a, W: DxfStreamWriter> {
     /// Records written per DXF name (upper case), used for the CLASSES
     /// instance counts. `None` keeps each class's stored count.
     class_instance_counts: Option<HashMap<String, i32>>,
+    /// Each dictionary's owner in the document being written
+    /// (`CadDocument::owned_dictionaries`), gathered once: every table record
+    /// is asked for its extension dictionary. `None` walks the document's
+    /// objects for each record.
+    owned_dictionaries: Option<HashMap<Handle, Handle>>,
 }
 
 impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
@@ -128,6 +133,22 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             loft_reference_appid: None,
             source_dwg_context: None,
             class_instance_counts: None,
+            owned_dictionaries: None,
+        }
+    }
+
+    /// Gather the dictionaries' owners of `document` once, for the extension
+    /// dictionaries of its table records. The document must not change while
+    /// this writer writes it.
+    pub(crate) fn gather_owned_dictionaries(&mut self, document: &CadDocument) {
+        self.owned_dictionaries = Some(document.owned_dictionaries());
+    }
+
+    /// `owner`'s extension dictionary, from the gathered owners when there are.
+    fn extension_dictionary(&self, document: &CadDocument, owner: Handle) -> Option<Handle> {
+        match &self.owned_dictionaries {
+            Some(owned) => document.extension_dictionary_handle_in(owner, owned),
+            None => document.extension_dictionary_handle(owner),
         }
     }
 
@@ -2085,7 +2106,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_string(0, "TABLE")?;
         self.writer.write_string(2, name)?;
         self.writer.write_handle(5, table_handle)?;
-        if let Some(handle) = document.extension_dictionary_handle(table_handle) {
+        if let Some(handle) = self.extension_dictionary(document, table_handle) {
             self.writer.write_string(102, "{ACAD_XDICTIONARY")?;
             self.writer.write_handle(360, handle)?;
             self.writer.write_string(102, "}")?;
@@ -2107,7 +2128,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         handle: Handle,
         document: &CadDocument,
     ) -> Result<()> {
-        if let Some(xdictionary) = document.extension_dictionary_handle(handle) {
+        if let Some(xdictionary) = self.extension_dictionary(document, handle) {
             if !xdictionary.is_null()
                 && (self.valid_handles.is_empty() || self.valid_handles.contains(&xdictionary))
             {

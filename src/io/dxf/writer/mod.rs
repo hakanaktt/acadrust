@@ -395,6 +395,7 @@ impl<'a> DxfWriter<'a> {
         let mut section_writer = SectionWriter::new(writer, handle_start, handle_seed);
         section_writer.set_version(output_version);
         section_writer.build_valid_handles(document);
+        section_writer.gather_owned_dictionaries(document);
         if let Some(counts) = class_counts {
             section_writer.set_class_instance_counts(counts);
         }
