@@ -1622,7 +1622,8 @@ elevation points: BL next free key, BL k, k x {BL key, BL 21, BD the
 BL 0x80000001,
 nodes: BL next free id, BL n, BL first id, n x {3BD (z the elevation),
   3 bits 010, BL next id} (ids per member: its ends, then its inner points;
-  records in hash order, seven buckets by (id - 1) mod 7, the newest first)
+  records in hash order: eight buckets by id mod 8, each in id order,
+  more buckets past 64 records)
 edges: BL next free id, BL m, per member BL 0, BL id, BL flags (0x30 an
   alignment, 0x10030 a feature line), BL count,
   BL 0, count x {BL kind (0 line, 1 arc, 2 last), BL flags, BL node,
@@ -1630,14 +1631,26 @@ edges: BL next free id, BL m, per member BL 0, BL id, BL flags (0x30 an
   the keys of the edge's j elevation points in edge order, BL 0 x 3
 faces: BL 2, BL 1 (0 without members), the outside face {BL 1, BL 1,
   BL 14 (6 once a member has an elevation point), BL m, per member {BL 1 + the points of the members before it,
-  BL 0}}, BL 1, 6 x {BL 1, BL 1},
+  BL 0}}, BL s + 1, 6 x {BL 1, BL 1},
   6 x BL 0
 references: hard pointer 0 per elevation point, per member its record
   (soft) and soft pointer 0, then
-  (with members) the site (soft) and soft pointer 0, then the default
-  feature line style (hard)
+  (with members) the site (soft) and soft pointer 0, then s references
+  (none in most drawings), then the default feature line style (hard)
 texts: ""
 ```
+
+The edges and the faces are listed in the hash order of their ids (the
+nodes' order: eight buckets by id mod 8 while a table holds at most 64
+entries, each in id order; WT40 with eight members lists member 8 first,
+WC64 and WC65 with 12 and 20 members, WPLA to WPLC with 16 to 39), and
+the references of the members, of the site and parcels and the list of
+parcel numbers after the faces follow the same order. The s references
+before the style are other feature line styles and empty slots the
+application lists in drawings of the newer template (WC64base: 21; the
+list after the faces starts with 22); a container read keeps them. A
+profile of an alignment on the site is a member without points (edge
+flags 0x30, no points; WC64base: the two roads, then their profiles).
 
 The points of a container run as one chain through its members in edge
 order: a point's flags are 2 (0x400400 for an elevation point), plus 0x30
@@ -3056,8 +3069,8 @@ stamp and identifiers). E-T42W (WT41's roads and profiles), E-T43W (a
 crossing) and E-T44W (a tee without profiles) open with AUDIT 0 errors
 and the API lists the four offset alignments with their names, types and
 stations and the roads' profiles. Not written: the name template counter
-the command advances, offset alignments of roads on a site, curb
-returns, corridor regions.
+the command advances, curb returns, corridor regions (roads on a site
+and curb returns: below).
 
 ### Curb returns of the command
 
@@ -3116,8 +3129,8 @@ The span rule holds over WC40 to WC47 (radii 10 to 50, widths 10 to 20).
 Written: E-IC5, E-IC6 (crossings, radius 30 width 12, radius 40 width
 15), E-IC7 to E-IC9 (WC50 to WC52's roads) open with AUDIT 0, the API
 lists the regions with their curb returns, the offset and curb return
-lengths as the samples'. Not written: corridors of the command, roads on
-a site.
+lengths as the samples'. Not written: corridors of the command (roads on
+a site: below).
 
 ### Profile locking and curb return profiles
 
@@ -3185,6 +3198,63 @@ widths 10 and 12, radius 30, slope -0.025, lines 20 and 30) and E-IC12
 E-IC12's profiles equal WC62's. Not compared: the styles the command
 gives its offset alignments (`Offsets`), curb returns and profiles
 (`Intersection Basic`); the writer uses the drawing's default styles.
+
+### Roads on a site
+
+With both roads on one site (both siteless, or the intersection is
+refused) the offset alignments, curb returns and their profiles join the
+roads' site: an alignment as on a site (§3g: the container in place of a
+companion, its member number as its edge id), a profile with the
+container twice in place of its companion and, in place of `63 zero bits,
+BD 2, 9 bits` (`65 zero bits, BD 2.25, 7 bits` of an offset profile), an
+alignment's `115 zero bits, 8 bits 00000010, RC 0x40 | edge id >> 2, 2
+bits edge id & 3, 5 bits 11010`; the profile is a member without points.
+A road's own profiles on a site are written the same way. WC64 (roads
+(0, 0)-(200, 0) and (100, -100)-(100, 100) on Site 1 with profiles, curb
+returns of radius 25) and WC65 (with curb return profiles): the records
+equal the siteless samples' (WC62, WC61) but for those fields; the
+members join in the order the command makes them (roads, their profiles,
+offsets, curb returns, offset profiles, curb return profiles: edge ids 1
+to 20 in WC65), so the offset profiles are written after the curb
+returns.
+
+The members meet in the site's arrangement (§3g), with three rules these
+samples add:
+
+- A line along another's line (a curb return's 1-long line on its offset
+  alignment) splits both at the ends of the stretch they share: the
+  stretch is one segment of the arrangement listed by both edges, its
+  start point flagged 0x1000 in the later member (without the marks 0x30)
+  and 0x2000 in the earlier one; its faces are those of the segment.
+- An arc leaving a node along a line's direction (a curb return's arc at
+  its tangent points) turns off the line: half-edges of equal direction
+  are ordered by curvature, a left turn after the line. A line touching
+  an arc meets it once.
+- A face of three sides, arcs among them, takes its label at the middle
+  of its largest angle's bisector up to the opposite side (the four
+  corner regions: (115.661, 15.661) in the corner (112, 12)-(137, 12)-(112,
+  37)).
+
+The regions the members close become parcels numbered in the order they
+close: in WC64 the four 12 x 12 squares beside the crossing (1 to 4, as
+the other road's offsets close them) and the four 134.126 corner regions
+(5 to 8, as the curb returns close them), with labels at their centres
+and the corners' points above. New parcels take the drawing's default
+parcel style (the site WC64base made has "Property", the parcels "Basic")
+and the default parcel area label style; in drawings of the newer
+template a collection whose styles are all named lists its default as the
+first soft pointer after them, and the area labels' collection key is
+`0x0F00B432` (`0x0F00C032` in the older one).
+
+Written into WC64base and WC65base (E-IC20, E-IC21) the container's
+edges, points and faces equal the samples' but for the node and face ids
+(the application skips ids) and the marks 0x40 and 0x80 on nodes the
+crossings add; the records equal the siteless writer's. E-IC20, E-IC21,
+E-IC22 (a new drawing: skewed roads on a site, widths 10 and 12, radius
+30, curb return profiles) and E-IC23 (a tee on a site) open with AUDIT 0
+errors; the API lists the parcels of WC64 and WC65 with the same names,
+styles, label styles, areas and label points, and the offset and curb
+return alignments on the site.
 
 ## 3l. Subassembly packages (`pkt`)
 
@@ -3882,7 +3952,7 @@ taken from the records and checked bit for bit against them.
 | sample line groups and sample lines through two or more vertices | yes | yes, with the drawing's sample line label style (§3j) | yes (§3j) | not needed | lines with all vertices on one side |
 | sections of a TIN surface (unsampled) | yes (geometry once sampled) | yes (§3j) | yes (§3j) | the application samples the source | corridor sources, lines added after sampling |
 | section views of a line (default style, unsampled section) | yes (frame) | yes, with the drawing's section view style or the default one (§3j, §2c) | yes (§3j, §2c) | not needed | sampled sections, several sections |
-| intersections of two crossing roads and tee junctions, with their offset alignments, locking and intersection actions, location label, curb returns and curb return profiles | yes (stations, angles) | yes, with the drawing's intersection style or the default one (§3k, §2c) | yes (§3k, §2c) | not needed | corridor regions, roads on a site |
+| intersections of two crossing roads and tee junctions, siteless or on a site, with their offset alignments, locking and intersection actions, location label, curb returns and curb return profiles | yes (stations, angles) | yes, with the drawing's intersection style or the default one (§3k, §2c) | yes (§3k, §2c) | not needed | corridor regions |
 | gravity pipe networks: every structure and pipe family of the default parts list, every catalog pipe size, structures of any catalog size, connections | partly (part positions, pipe ends, connector counts, part definition fields) | yes (a new drawing gets the default parts list and styles, §3m) | yes (§3m) | not needed (the application recomputes outlines, lengths and extents) | the catalog's body solids |
 | pressure networks: every pipe, elbow, tee, cross and gate valve size of the default catalog (straight and curved pipes), connections | yes (ports: positions, directions, joint sizes, connections; pipe ends and bulge, part positions and rotations) | yes (a new drawing gets the default pressure part list and styles, §3n) | yes (§3n) | not needed | part kinds of other catalogs, the catalog's body solids |
 | gradings, mass haul | partly (grading criteria, mass haul line and view frame) | no | — | — | no controlled samples (§6a) |
@@ -3978,7 +4048,7 @@ Corridors are listed in §3i-a.
 | intersections | curb returns of crossings and tee junctions (arc, offset alignments over the intersection extents) | yes | yes | §3k (curb returns of the command) |
 | intersections | curb return profiles, offset profiles of the offsets, the other road's profile locked at a crossing | yes | yes | §3k (profile locking and curb return profiles) |
 | intersections | corridor regions of the command | partly (the corridor record is not decoded) | no | WC63 (corridors and profiles on): the command loads its assembly set, eight assemblies of 27 stock subassemblies the product's compiled stock subassembly library defines, imports about 1,100 label styles and other styles with them and builds one corridor (20,885 bits, 172 references) over the roads, offsets and curb returns; the subassemblies are the product's licensed content, which this crate does not write |
-| intersections | roads on a site | yes (records) | no | WC64: the offset alignments and curb returns join the roads' site and the regions they close become parcels (eight: four 12 x 12 squares beside the crossing, four 134.126 corner regions between the offsets and the arcs); not written: the writer puts no offset alignment on a site and does not rewrite a parent on a site |
+| intersections | roads on a site: offset alignments, curb returns and their profiles joining the site, the parcels of the regions they close | yes | yes | §3k (roads on a site); node and face ids and the marks 0x40/0x80 of crossing nodes are not the application's |
 | gravity pipe networks | every family of the default parts list (one size each), connections | partly | yes | §3m |
 | gravity pipe networks | every pipe size of the default catalog, whether the parts list holds it or not | yes | yes | §3m (other pipe sizes) |
 | gravity pipe networks | structures of any catalog size (chosen list and range fields, the catalog's derived fields and size names) | yes | yes | §3m (other structure sizes) |
