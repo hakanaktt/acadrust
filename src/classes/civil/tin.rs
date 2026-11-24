@@ -444,11 +444,14 @@ fn triangulation_at(data: &[u8], start: usize, end: usize) -> Option<usize> {
     marker(&mut bits)
 }
 
-/// A triangulation at `pos` and where it ends.
+/// A triangulation at `pos` and where it ends. A surface with no
+/// triangulation keeps its shell: the four bounding corners at the drawing
+/// extremes (`Surface-2.dwg` "EG", the snapshot-only surface of
+/// `Pipe Networks-3B.dwg`), with no incident triangle and no triangles.
 fn read_at(data: &[u8], pos: usize, end: usize) -> Option<(TinSurface, usize)> {
     let mut bits = Bits::new(data, pos, end);
     let count = usize::try_from(bits.bit_long()?).ok()?;
-    if count < 7 || count.checked_mul(VERTEX_BITS)? > bits.remaining() {
+    if count < 4 || count.checked_mul(VERTEX_BITS)? > bits.remaining() {
         return None;
     }
     let mut corners = [0u32; 4];
@@ -484,7 +487,12 @@ fn read_at(data: &[u8], pos: usize, end: usize) -> Option<(TinSurface, usize)> {
         return None;
     }
     let triangle_count = usize::try_from(bits.bit_long()?).ok()?;
-    if triangle_count == 0 || triangle_count.checked_mul(TRIANGLE_BITS)? > bits.remaining() {
+    if triangle_count.checked_mul(TRIANGLE_BITS)? > bits.remaining() {
+        return None;
+    }
+    // A corner-only shell (the application's record for a surface it has
+    // not built) has no triangles; anything else needs at least the hull.
+    if triangle_count == 0 && count != 4 {
         return None;
     }
     let mut triangles = Vec::with_capacity(triangle_count);
@@ -636,6 +644,44 @@ mod tests {
     fn bits_of(s: &str) -> Vec<u8> {
         let s: Vec<u8> = s.bytes().filter(|b| *b == b'0' || *b == b'1').collect();
         s.chunks(8).map(|c| c.iter().enumerate().fold(0u8, |a, (i, b)| a | ((b - b'0') << (7 - i)))).collect()
+    }
+
+    /// The empty-surface shell of the tutorials' Surface-2.dwg ("EG"): the
+    /// four bounding corners at the drawing extremes, no triangles.
+    fn empty_shell() -> String {
+        let max = "1".repeat(48) + "11101111 01111111"; // RD f64::MAX (0x7FEF_FFFF_FFFF_FFFF)
+        let corner = |i: &str| match i {
+            "0" => "10".to_string(),
+            i => format!("01 {:08b}", i.parse::<u8>().unwrap()),
+        };
+        let vertex = format!("01000000 00000000 00000000 00000000 {} {max} {max} {max}", "1".repeat(32));
+        format!(
+            "01 00000100 {} {} {} {} {} {} {} {} 10",
+            corner("0"),
+            corner("1"),
+            corner("2"),
+            corner("3"),
+            vertex,
+            vertex,
+            vertex,
+            vertex
+        )
+    }
+
+    #[test]
+    fn reads_an_empty_surface_shell() {
+        let b = bits_of(&empty_shell());
+        let (surface, end) = read_at(&b, 0, b.len() * 8).unwrap();
+        assert_eq!(surface.vertices.len(), 4);
+        assert!(surface.vertices.iter().all(|v| v.flags == 0x40 && v.triangle == -1));
+        assert_eq!(surface.corners, [0, 1, 2, 3]);
+        assert!(surface.triangles.is_empty());
+        assert!(surface.visible_triangles().next().is_none());
+        assert_eq!(end, empty_shell().chars().filter(|c| *c == '0' || *c == '1').count());
+        // The shell is exactly four corners: any other vertex count with no
+        // triangles is not a triangulation.
+        let five = empty_shell().replacen("00000100", "00000101", 1);
+        assert!(read_at(&bits_of(&five), 0, five.len() * 8).is_none());
     }
 
     #[test]

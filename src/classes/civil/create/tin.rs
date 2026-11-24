@@ -80,6 +80,23 @@ pub(super) fn triangulate_in(extent: &[Vector3], points: &[Vector3]) -> Triangul
 }
 
 impl Triangulation {
+    /// The triangulation of a surface with no data: the four bounding
+    /// corners at the drawing extremes, each with no incident triangle, and
+    /// no triangles — the record the application writes for a surface it
+    /// has not built (the "EG" shell of the tutorials' `Surface-2.dwg`).
+    fn empty() -> Triangulation {
+        let m = f64::MAX;
+        Triangulation {
+            vertices: vec![
+                Vector3::new(m, m, m),
+                Vector3::new(-m, m, m),
+                Vector3::new(-m, -m, -m),
+                Vector3::new(m, -m, -m),
+            ],
+            triangles: Vec::new(),
+        }
+    }
+
     /// The triangle across the edge that starts at each vertex.
     fn neighbors(&self) -> Vec<[i32; 3]> {
         let mut by_edge = std::collections::HashMap::new();
@@ -291,18 +308,23 @@ pub(super) fn write_surface(doc: &mut CadDocument, common: EntityCommon, name: &
     let seed = common.handle.value() ^ tin.vertices.len() as u64;
     let triangulation = |w: &mut DwgMergedWriter, tin: &Triangulation, hidden: &[bool]| {
         let neighbors = tin.neighbors();
-        let mut incident = vec![0i32; tin.vertices.len()];
+        // A vertex of a shell surface has no incident triangle (-1); on a
+        // built surface every vertex lies on one.
+        let mut incident = vec![-1i32; tin.vertices.len()];
         for (t, tri) in tin.triangles.iter().enumerate() {
             for v in tri {
                 incident[*v] = t as i32;
             }
         }
+        // A built surface's corners carry the hidden-triangle bits (0x8440);
+        // the shell stores the bare corner flag (0x40), the app's form.
+        let corner = if tin.triangles.is_empty() { 0x40 } else { CORNER };
         w.write_bit_long(tin.vertices.len() as i32);
         for c in 0..4 {
             w.write_bit_long(c);
         }
         for (i, v) in tin.vertices.iter().enumerate() {
-            w.write_raw_long((if i < 4 { CORNER } else { POINT }) as i32);
+            w.write_raw_long((if i < 4 { corner } else { POINT }) as i32);
             w.write_raw_long(incident[i]);
             w.write_raw_double(v.x);
             w.write_raw_double(v.y);
@@ -432,11 +454,25 @@ fn with_source_geometry(doc: &CadDocument, definitions: &[TinDefinition]) -> Res
 
 /// Adds a TIN surface triangulated from `points` (three or more, distinct
 /// in plan) with the drawing's default surface style, on `layer` (layer
-/// "0" when `None`). A drawing without a surface style collection gets
-/// one (`tree.rs`).
+/// "0" when `None`). An empty `points` slice adds the empty surface's
+/// shell (see [`add_empty_tin_surface`]). A drawing without a surface
+/// style collection gets one (`tree.rs`).
 pub fn add_tin_surface(doc: &mut CadDocument, name: &str, points: &[Vector3], layer: Option<&str>) -> Result<Handle, DxfError> {
+    if points.is_empty() {
+        return add_empty_tin_surface(doc, name, layer);
+    }
     let points = TinDefinition { operation: TinOperation::AddPoints(points.to_vec()), id: [0; 16], texts: Vec::new(), sources: Vec::new() };
     add_tin_surface_with(doc, name, &[points], false, layer)
+}
+
+/// Adds an empty TIN surface: the shell the application stores for a
+/// surface it has not built (the four bounding corners at the drawing
+/// extremes, no triangles), with the drawing's default surface style, on
+/// `layer` (layer "0" when `None`). Reading it back yields a
+/// [`TinSurface`][crate::classes::civil::TinSurface] with four vertices and
+/// no triangles.
+pub fn add_empty_tin_surface(doc: &mut CadDocument, name: &str, layer: Option<&str>) -> Result<Handle, DxfError> {
+    add_tin_surface_with(doc, name, &[], false, layer)
 }
 
 /// Adds a TIN surface built from `definitions` in order (each one's `id`
@@ -454,19 +490,40 @@ pub fn add_tin_surface_with(doc: &mut CadDocument, name: &str, definitions: &[Ti
         }
     }
     let resolved = with_source_geometry(doc, definitions)?;
+    // Whether the definitions bring any geometry in: a surface without any
+    // stores the empty shell (the four bounding corners, no triangles), as
+    // the application does for a surface it has not built.
+    let geometry = |ds: &[TinDefinition]| {
+        ds.iter().any(|d| match &d.operation {
+            TinOperation::AddPoints(p) | TinOperation::DrawingObjects { points: p, .. } => !p.is_empty(),
+            TinOperation::Breaklines(_, l) | TinOperation::Contours(l) | TinOperation::Boundary { lines: l, .. } => l.polylines.iter().flatten().next().is_some(),
+            TinOperation::AddVertex(_) | TinOperation::VertexElevation(_) => true,
+            _ => false,
+        })
+    };
     let finite = |p: &Vector3| p.x.is_finite() && p.y.is_finite() && p.z.is_finite();
-    let all_finite = resolved.iter().all(|d| match &d.operation {
-        TinOperation::AddPoints(p) | TinOperation::DrawingObjects { points: p, .. } => p.iter().all(finite),
-        TinOperation::Breaklines(_, l) | TinOperation::Contours(l) | TinOperation::Boundary { lines: l, .. } => l.polylines.iter().flatten().all(finite),
-        TinOperation::AddVertex(p) | TinOperation::VertexElevation(p) => finite(p),
-        _ => true,
-    });
-    let (tin, hidden) = all_finite.then(|| super::tin_build::build(&resolved)).flatten().ok_or_else(|| invalid("a surface needs three or more finite points, distinct in plan"))?;
+    let built = |ds: &[TinDefinition]| -> Result<(Triangulation, Vec<bool>), DxfError> {
+        let all_finite = ds.iter().all(|d| match &d.operation {
+            TinOperation::AddPoints(p) | TinOperation::DrawingObjects { points: p, .. } => p.iter().all(finite),
+            TinOperation::Breaklines(_, l) | TinOperation::Contours(l) | TinOperation::Boundary { lines: l, .. } => l.polylines.iter().flatten().all(finite),
+            TinOperation::AddVertex(p) | TinOperation::VertexElevation(p) => finite(p),
+            _ => true,
+        });
+        if geometry(ds) {
+            if !all_finite {
+                return Err(invalid("a surface needs three or more finite points, distinct in plan"));
+            }
+            super::tin_build::build(ds).ok_or_else(|| invalid("a surface needs three or more finite points, distinct in plan"))
+        } else {
+            Ok((Triangulation::empty(), Vec::new()))
+        }
+    };
+    let (tin, hidden) = built(&resolved)?;
     // A snapshot keeps what the definitions before it build.
     let snapshots: Vec<usize> = definitions.iter().enumerate().filter(|(_, d)| matches!(d.operation, TinOperation::Kind40(_))).map(|(i, _)| i).collect();
     let snapshot = match snapshots.as_slice() {
         [] => None,
-        [k] => Some(super::tin_build::build(&resolved[..*k]).ok_or_else(|| invalid("a snapshot needs a surface of three or more points before it"))?),
+        [k] => Some(built(&resolved[..*k]).map_err(|_| invalid("a snapshot needs a surface of three or more points before it"))?),
         _ => return Err(invalid("a surface holds one snapshot")),
     };
     let layer = layer.unwrap_or("0");
@@ -630,5 +687,34 @@ mod tests {
         let (now, kept) = (a.tin_surface().unwrap(), a.tin_snapshot().unwrap());
         assert_eq!((now.vertices.len(), kept.vertices.len(), now.vertices[4].position.z, kept.vertices[4].position.z), (13, 13, 7.0, 5.0));
         assert_eq!(a.tin_definitions().unwrap().0.len(), 3);
+    }
+
+    /// An empty surface stores the shell (four corners at the drawing
+    /// extremes, no triangles) and decodes back as empty, not `None`; so
+    /// does the snapshot of a snapshot-only surface (Pipe Networks-3B).
+    #[test]
+    fn an_empty_surface_round_trips_as_a_shell() {
+        let mut doc = drawing();
+        let h = crate::classes::civil::add_empty_tin_surface(&mut doc, "EG", None).unwrap();
+        let snapshot_only = [TinDefinition { operation: TinOperation::Kind40(0), id: [0; 16], texts: Vec::new(), sources: Vec::new() }];
+        let hs = add_tin_surface_with(&mut doc, "SNAP", &snapshot_only, false, None).unwrap();
+        let path = std::env::temp_dir().join(format!("civil-tin-empty-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        for (handle, snapshot) in [(h, false), (hs, true)] {
+            let Some(crate::entities::EntityType::Extended(x)) = back.get_entity(handle) else { panic!() };
+            let crate::entities::ExtendedEntityData::Arch(a) = &x.data else { panic!() };
+            let shell = a.tin_surface().unwrap();
+            assert_eq!(shell.vertices.len(), 4);
+            assert!(shell.triangles.is_empty());
+            let m = f64::MAX;
+            assert_eq!(shell.vertices[0].position, Vector3::new(m, m, m));
+            assert_eq!(shell.vertices[3].position, Vector3::new(m, -m, -m));
+            assert_eq!(a.tin_snapshot().is_some(), snapshot);
+            if snapshot {
+                assert_eq!(a.tin_snapshot().unwrap().triangles.len(), 0);
+            }
+        }
     }
 }

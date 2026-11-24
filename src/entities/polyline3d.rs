@@ -536,4 +536,39 @@ mod tests {
         assert_eq!(polyline.start_point(), Some(Vector3::new(0.0, 0.0, 0.0)));
         assert_eq!(polyline.end_point(), Some(Vector3::new(10.0, 0.0, 0.0)));
     }
+
+    /// A closed 3D polyline keeps its closed flag and its vertices through a
+    /// DWG round trip (W4-2: the `_EG-BNDY` surface boundary of the
+    /// tutorials' Surface-1A.dwg is the record that carries the flag).
+    #[test]
+    fn a_closed_3d_polyline_round_trips_closed() {
+        use crate::entities::EntityType;
+        use crate::io::dwg::{DwgReader, DwgWriter};
+        use crate::types::DxfVersion;
+        let mut doc = crate::CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let mut polyline = Polyline3D::new();
+        polyline.flags.closed = true;
+        polyline.vertices = (0..4)
+            .map(|i| Vertex3DPolyline {
+                handle: Handle::NULL,
+                layer: String::new(),
+                position: Vector3::new(i as f64, (i % 2) as f64, i as f64 * 0.5),
+                flags: 0,
+            })
+            .collect();
+        let h = doc.add_entity(EntityType::Polyline3D(polyline)).unwrap();
+        let path = std::env::temp_dir().join(format!("polyline3d-closed-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let Some(EntityType::Polyline3D(p)) = back.get_entity(h) else {
+            panic!("the 3D polyline did not round trip");
+        };
+        assert!(p.flags.closed);
+        assert!(p.flags.is_3d);
+        let expected: Vec<Vector3> = (0..4).map(|i| Vector3::new(i as f64, (i % 2) as f64, i as f64 * 0.5)).collect();
+        let positions: Vec<Vector3> = p.vertices.iter().map(|v| v.position).collect();
+        assert_eq!(positions, expected);
+    }
 }
