@@ -954,11 +954,8 @@ impl ArchEntityData {
     ///   (see [`alignment::key`]), then a closing `BL` — 0 in fresh
     ///   records, 16 or 88 in re-saved ones — then 121 bits.
     /// * `0b01_0010` (Civil 3D 2013 parcels, no keys): 128 bits.
-    /// * `2..=4` (older words): the fields at 160 or at 303 bits; which
-    ///   of the two layouts a record carries is not in the header, so
-    ///   [`Self::parcel_fields_sized`] admits a word only with its whole
-    ///   body validated (label echo, faces, tail, exact end) and the
-    ///   readers return `None` when neither parses.
+    /// * `2..=4` (older words): a per-record prefix whose grammar is not
+    ///   mapped yet; these read `None`.
     fn parcel_fields(&self) -> Option<bits::Bits<'_>> {
         let (data, start, end) = self.main_stream()?;
         let at = parcel_fields_offset(data, start, end)?;
@@ -1812,40 +1809,9 @@ fn parcel_fields_offset(data: &[u8], start: usize, end: usize) -> Option<usize> 
         }
         // Civil 3D 2013: no keys.
         0b01_0010 => Some(b.pos + 128),
-        2..=4 => {
-            let head = b.pos;
-            [160, 303]
-                .into_iter()
-                .find(|&at| parcel_body_ok(data, head + at, end).is_some())
-                .map(|at| head + at)
-        }
+        // ponytail: words 2..=4 carry a per-record prefix (key-like words
+        // of an unmapped type 0x14) whose grammar is not worked out yet;
+        // they read `None` until it is, rather than trying offsets.
         _ => None,
     }
 }
-
-/// Whether a full parcel body parses at `at` (see
-/// [`ArchEntityData::parcel_fields`] for the grammar): the label location
-/// twice over, a face list, and the closing word to the record's exact end.
-fn parcel_body_ok(data: &[u8], at: usize, end: usize) -> Option<()> {
-    let mut b = bits::Bits::new(data, at, end);
-    b.bit_long()?;
-    b.bit_long()?;
-    b.bit_long()?;
-    (b.bit_double()? == 0.0).then_some(())?;
-    let (x, y, z) = (b.bit_double()?, b.bit_double()?, b.bit_double()?);
-    (x.is_finite() && y.is_finite()).then_some(())?;
-    (matches!(b.bit_long()?, 80 | 112) && b.bit_long()? == 1).then_some(())?;
-    (b.bit_double()? == x && b.bit_double()? == y && b.bit_double()? == z).then_some(())?;
-    (b.bit_long()? == 2).then_some(())?;
-    let n = b.bit_long()?;
-    (1..=64).contains(&n).then_some(())?;
-    for _ in 0..n {
-        b.bit_long()?;
-    }
-    (b.bit_long()? == 0).then_some(())?;
-    (b.bit()? == false).then_some(())?;
-    (b.bit_short()? == 0x04BE).then_some(())?;
-    (b.remaining() == 0).then_some(())
-}
-
-
