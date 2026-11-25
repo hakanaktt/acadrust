@@ -1029,6 +1029,30 @@ pub struct FeatureLineVertex {
     pub elevation_point: bool,
 }
 
+/// The vertices of a Civil 3D feature line: the points of its edge in
+/// its site container's [`Topology`](crate::classes::civil::Topology) —
+/// the PIs and elevation points with their elevations and the bulge of
+/// the segment starting at each (see [`FeatureLineVertex`]). `None` when
+/// the record is not a feature line, its site container or its edge
+/// cannot be read, or the container keeps no edge with its id.
+pub fn feature_line_vertices(doc: &CadDocument, feature_line: Handle) -> Option<Vec<FeatureLineVertex>> {
+    let Some(EntityType::Extended(x)) = doc.get_entity(feature_line) else { return None };
+    let ExtendedEntityData::Arch(a) = &x.data else { return None };
+    let container = crate::types::Handle::new(a.feature_line_container()?);
+    let o = match doc.objects.get(&container) {
+        Some(crate::objects::ObjectType::Arch(o)) => o,
+        _ => return None,
+    };
+    let topology = o.topology()?;
+    let edge = a.feature_line_edge()?;
+    let index = topology.edge_ids.iter().position(|id| *id == edge)?;
+    Some(topology.edges[index].iter().map(|v| FeatureLineVertex {
+        point: crate::types::Vector3::new(v.point.x, v.point.y, v.z),
+        bulge: v.bulge,
+        elevation_point: v.is_elevation_point(),
+    }).collect())
+}
+
 /// Adds a feature line through `points` (x, y, elevation; straight
 /// segments, every point a PI) on `site`; see [`add_feature_line_vertices`].
 pub fn add_feature_line(doc: &mut CadDocument, site: Handle, name: &str, points: &[crate::types::Vector3], layer: Option<&str>) -> Result<Handle, DxfError> {
