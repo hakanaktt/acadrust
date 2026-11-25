@@ -1036,7 +1036,8 @@ pub struct FeatureLineVertex {
 /// the segment starting at each (see [`FeatureLineVertex`]). `None` when
 /// the record is not a feature line, its site container or its edge
 /// cannot be read, or the container keeps no edge with its id.
-pub fn feature_line_vertices(doc: &CadDocument, feature_line: Handle) -> Option<Vec<FeatureLineVertex>> {    let Some(EntityType::Extended(x)) = doc.get_entity(feature_line) else { return None };
+pub fn feature_line_vertices(doc: &CadDocument, feature_line: Handle) -> Option<Vec<FeatureLineVertex>> {
+    let Some(EntityType::Extended(x)) = doc.get_entity(feature_line) else { return None };
     let ExtendedEntityData::Arch(a) = &x.data else { return None };
     let container = crate::types::Handle::new(a.feature_line_container()?);
     let o = match doc.objects.get(&container) {
@@ -1058,7 +1059,7 @@ pub fn feature_line_vertices(doc: &CadDocument, feature_line: Handle) -> Option<
 pub const PARCEL_STYLE_NAME: u32 = 167_804_933;
 /// Label property of a parcel's number (the number token in a parcel
 /// style's name template, `<[16809985(...)]>`).
-pub const PARCEL_NUMBER: u32 = 168_099_85;
+pub const PARCEL_NUMBER: u32 = 16_809_985;
 
 /// Formatting option of a name template's style token: show the style's
 /// name in upper case (`Parcel-2C.dwg`: "Road (Local)" reads as
