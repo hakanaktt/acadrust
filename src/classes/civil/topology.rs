@@ -307,12 +307,61 @@ fn face_list(data: &[u8], pos: usize, end: usize) -> Option<(Vec<i32>, i32, Vec<
 
 /// The topology in a site container or alignment companion body:
 ///
+/// The elevation-point table after the shared class head: the next free
+/// key, each point's `(key, vertex index in its feature line)`, and the
+/// position after the table. A point the container records in the form
+/// `k2` 21 keeps its elevation in the table; one in the form `k2` 22
+/// stores none here — the key and its point's index only, the elevation
+/// living elsewhere in the record (in the nodes of the section that
+/// follows the table on a container the application extended). `None`
+/// when the head or the table does not follow the layout.
+///
 /// ```text
 /// BS 0x04BE, BL key (0 for a site container, 0x80000000 | n for a
 /// companion), BL 0, BL 0, BL 32, 7 bits 0111010,
-/// elevation points: BL next free key, BL k, k x {BL key, BL 21, BD the
-///   point's index in its feature line, 17 bits, BL key, BL 0, BL 0,
-///   BD elevation, B 0, BL 0}, BL 1, BL 0,
+/// BL next free key, BL k, k x { BL key, BL 21 or 22, BD the point's
+///   index in its feature line, 17 bits, BL key, BL 0, BL 0,
+///   21: BD elevation, B 0, BL 0 }
+/// ```
+fn elevation_keys(data: &[u8], start: usize, end: usize) -> Option<(i32, Vec<(i32, i32)>, usize)> {
+    let mut bits = Bits::new(data, start, end);
+    (bits.bit_short()? == 0x04BE).then_some(())?;
+    bits.bit_long()?;
+    for want in [0, 0, 32] {
+        (bits.bit_long()? == want).then_some(())?;
+    }
+    bits.skip(7)?;
+    let next_key = bits.bit_long()?;
+    let count = bits.bit_long()?;
+    (0..=100_000).contains(&count).then_some(())?;
+    let mut keys = Vec::new();
+    for _ in 0..count {
+        let key = bits.bit_long()?;
+        let form = bits.bit_long()?;
+        let index = bits.bit_double()?;
+        if !(index.is_finite() && index >= 0.0 && index < 100_000.0 && index.fract() == 0.0) {
+            return None;
+        }
+        bits.skip(17)?;
+        (bits.bit_long()? == key).then_some(())?;
+        (bits.bit_long()? == 0).then_some(())?;
+        (bits.bit_long()? == 0).then_some(())?;
+        keys.push((key, index as i32));
+        if form == 21 {
+            bits.bit_double()?;
+            bits.bit()?;
+            bits.bit_long()?;
+        } else if form != 22 {
+            return None;
+        }
+    }
+    Some((next_key, keys, bits.pos))
+}
+
+/// ```text
+/// BS 0x04BE, BL key (0 for a site container, 0x80000000 | n for a
+/// companion), BL 0, BL 0, BL 32, 7 bits 0111010,
+/// elevation points (see [`elevation_keys`]), BL 1, BL 0,
 /// BL 0x80000001, node list, edge list
 /// ```
 pub(super) fn topology(data: &[u8], start: usize, end: usize) -> Option<Topology> {
@@ -322,38 +371,194 @@ pub(super) fn topology(data: &[u8], start: usize, end: usize) -> Option<Topology
         let (face_ids, outside_face_flags, outside_entries) = face_list(data, faces, end).unwrap_or_default();
         Some(Topology { edges, edge_flags, edge_ids, face_ids, next_node, next_key, outside_face_flags, outside_entries })
     };
-    let mut bits = Bits::new(data, start, end);
-    (bits.bit_short()? == 0x04BE).then_some(())?;
-    bits.bit_long()?;
-    for want in [0, 0, 32] {
-        (bits.bit_long()? == want).then_some(())?;
-    }
-    bits.skip(7)?;
-    let mut next_key = 0;
-    let head = (|| {
-        next_key = bits.bit_long()?;
-        let count = bits.bit_long()?;
-        (0..=100_000).contains(&count).then_some(())?;
-        for _ in 0..count {
+    if let Some((next_key, _, after)) = elevation_keys(data, start, end) {
+        let mut bits = Bits::new(data, after, end);
+        let head = (|| {
             bits.bit_long()?;
             bits.bit_long()?;
-            bits.bit_double()?;
-            bits.skip(17)?;
-            for _ in 0..3 {
-                bits.bit_long()?;
-            }
-            bits.bit_double()?;
-            bits.bit()?;
-            bits.bit_long()?;
+            (bits.bit_long()? as u32 == 0x8000_0001).then_some(())
+        })();
+        if head.is_some() {
+            return read(bits.pos, next_key);
         }
-        bits.bit_long()?;
-        bits.bit_long()?;
-        (bits.bit_long()? as u32 == 0x8000_0001).then_some(())
-    })();
-    if head.is_some() {
-        return read(bits.pos, next_key);
     }
     // debt: a container whose head does not follow the layout above is
     // read by trying positions for its node list.
     (start..end.saturating_sub(40)).find_map(|pos| read(pos, 0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// MSB-first bit writer over a byte buffer, for building the app's
+    /// recorded table forms bit for bit.
+    struct W {
+        bytes: Vec<u8>,
+        n: usize,
+    }
+
+    impl W {
+        fn new() -> Self {
+            Self { bytes: vec![0; 4096], n: 0 }
+        }
+        fn bit(&mut self, b: u8) {
+            if b != 0 {
+                self.bytes[self.n / 8] |= 1 << (7 - self.n % 8);
+            }
+            self.n += 1;
+        }
+        fn raw(&mut self, bytes: &[u8]) {
+            for &b in bytes {
+                for i in (0..8).rev() {
+                    self.bit((b >> i) & 1);
+                }
+            }
+        }
+        fn code(&mut self, c: u8) {
+            self.bit((c >> 1) & 1);
+            self.bit(c & 1);
+        }
+        fn bl(&mut self, v: i32) {
+            match v {
+                0 => self.code(2),
+                1..=255 => {
+                    self.code(1);
+                    self.raw(&[v as u8]);
+                }
+                v => {
+                    self.code(0);
+                    self.raw(&v.to_le_bytes());
+                }
+            }
+        }
+        fn bd(&mut self, v: f64) {
+            if v == 0.0 {
+                self.code(2);
+            } else if v == 1.0 {
+                self.code(1);
+            } else {
+                self.code(0);
+                self.raw(&v.to_le_bytes());
+            }
+        }
+        /// The shared class head and an elevation-point table: `entries`
+        /// as `(key, form, index)` with the 17 bits between the index and
+        /// the key, and the k2 21 entries carrying `668.0`.
+        fn head_and_table(&mut self, entries: &[(i32, i32, f64)]) {
+            self.code(0);
+            self.raw(&0x04BEu16.to_le_bytes());
+            self.bl(30);
+            self.bl(0);
+            self.bl(0);
+            self.bl(32);
+            for b in [0, 1, 1, 1, 0, 1, 0] {
+                self.bit(b);
+            }
+            self.bl(33);
+            self.bl(entries.len() as i32);
+            for &(key, form, index) in entries {
+                self.bl(key);
+                self.bl(form);
+                self.bd(index);
+                for b in [1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0] {
+                    self.bit(b);
+                }
+                self.bl(key);
+                self.bl(0);
+                self.bl(0);
+                if form == 21 {
+                    self.bd(668.0);
+                    self.bit(0);
+                    self.bl(0);
+                }
+            }
+        }
+        fn take(self) -> (Vec<u8>, usize) {
+            (self.bytes[..(self.n + 7) / 8].to_vec(), self.n)
+        }
+    }
+
+    /// The two elevation-point forms the application writes: `k2` 21 with
+    /// the elevation in the table (the form every observed container kept
+    /// before an application extended it) and `k2` 22 without an
+    /// elevation, as recorded bit for bit on the grading tutorial drawing
+    /// (D008 capture, live-API-verified: keys 1, 3-12 with elevations and
+    /// keys 20, 21, 27-32 without, each key's index its point's vertex
+    /// index in its feature line).
+    #[test]
+    fn elevation_table_reads_both_point_forms() {
+        let mut w = W::new();
+        w.head_and_table(&[(8, 21, 1.0), (20, 22, 0.0)]);
+        let (data, bits) = w.take();
+        let (next_key, keys, after) = elevation_keys(&data, 0, data.len() * 8).expect("the table reads");
+        assert_eq!(next_key, 33);
+        assert_eq!(keys, vec![(8, 1), (20, 0)]);
+        // both entries are consumed: the position after the table is the
+        // end of what was written
+        assert_eq!(after, bits);
+    }
+
+    /// A table in another form refuses: the head path returns `None` and
+    /// `topology` falls to the documented scan fallback instead of
+    /// misreading the entries as the k2 21 layout.
+    #[test]
+    fn elevation_table_refuses_another_form() {
+        let mut w = W::new();
+        w.head_and_table(&[(8, 21, 1.0), (20, 23, 0.0)]);
+        let (data, _) = w.take();
+        assert!(elevation_keys(&data, 0, data.len() * 8).is_none());
+    }
+
+    /// A container whose table holds a k2 22 entry feeds the head path:
+    /// `topology` reads the first section after the table with the table's
+    /// next key, exactly as for a k2 21-only table.
+    #[test]
+    fn topology_reads_the_first_section_after_a_k2_22_table() {
+        let mut w = W::new();
+        w.head_and_table(&[(8, 21, 1.0), (20, 22, 0.0)]);
+        // BL 1, BL 0, marker, node list (next free 4, 2 nodes, 1 -> 2 -> end)
+        w.bl(1);
+        w.bl(0);
+        w.bl(0x8000_0001u32 as i32);
+        w.bl(4);
+        w.bl(2);
+        w.bl(1);
+        for (x, y, z) in [(1.5, 2.5, 10.0), (4.5, 5.5, 12.0)] {
+            w.bd(x);
+            w.bd(y);
+            w.bd(z);
+            for b in [0, 1, 0] {
+                w.bit(b);
+            }
+            w.bl(if x == 1.5 { 2 } else { 0 });
+        }
+        // edge list: next free 3, 1 slot: edge 1, flags, 2 vertices, an
+        // empty key list, three zeros
+        w.bl(3);
+        w.bl(1);
+        w.bl(0);
+        w.bl(1);
+        w.bl(0x1_0830);
+        w.bl(2);
+        w.bl(0);
+        for (kind, flags, node, fa, fb) in [(0i32, 50i32, 1i32, 1i32, 1i32), (2, 2, 2, 0, 0)] {
+            w.bl(kind);
+            w.bl(flags);
+            w.bl(node);
+            w.bl(fa);
+            w.bl(fb);
+        }
+        w.bl(0);
+        w.bl(0);
+        w.bl(0);
+        w.bl(0);
+        let (data, _) = w.take();
+        let t = topology(&data, 0, data.len() * 8).expect("the first section reads");
+        assert_eq!(t.edge_ids, vec![1]);
+        assert_eq!(t.next_key, 33);
+        assert_eq!(t.edges.len(), 1);
+        assert_eq!(t.edges[0].iter().map(|v| (v.point.x, v.point.y, v.z)).collect::<Vec<_>>(), vec![(1.5, 2.5, 10.0), (4.5, 5.5, 12.0)]);
+        assert_eq!(t.next_node, 4);
+    }
 }
