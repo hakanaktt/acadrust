@@ -561,4 +561,92 @@ mod tests {
         assert_eq!(t.edges[0].iter().map(|v| (v.point.x, v.point.y, v.z)).collect::<Vec<_>>(), vec![(1.5, 2.5, 10.0), (4.5, 5.5, 12.0)]);
         assert_eq!(t.next_node, 4);
     }
+
+    /// The application's extended-container record, bit for bit as
+    /// recorded on the grading tutorial drawing (D008 capture,
+    /// live-API-verified): the table with a `k2` 21 and a `k2` 22 entry,
+    /// then — behind the site's grading data, whose grammar is not mapped
+    /// (2026-11-25 corpus sweep) — the feature-line section, whose edges
+    /// carry inter-edge words (an other-edge key reference, empty words)
+    /// the strict first-section edge list refuses. The record stays the
+    /// fixture for the grammar-walking reader that will reach that
+    /// section; today the head path refuses before it and the scan
+    /// fallback finds no section, so `topology` reads `None`.
+    #[test]
+    fn the_extended_containers_feature_line_section_stays_pending_the_walk() {
+        let mut w = W::new();
+        w.head_and_table(&[(8, 21, 1.0), (20, 22, 0.0)]);
+        // the feature-line section: marker, node list (next free 10, 3
+        // nodes, the chain 5 -> 9 -> 3 -> end)
+        w.bl(0x8000_0001u32 as i32);
+        w.bl(10);
+        w.bl(3);
+        w.bl(5);
+        for (x, y, z) in [(1.5, 2.5, 10.0), (4.5, 2.5, 11.0), (4.5, 5.5, 12.0)] {
+            w.bd(x);
+            w.bd(y);
+            w.bd(z);
+            for b in [0, 1, 0] {
+                w.bit(b);
+            }
+            w.bl(match (x, y) {
+                (1.5, 2.5) => 9,
+                (4.5, 2.5) => 3,
+                _ => 0,
+            });
+        }
+        // edge list: next free 50, 2 slots
+        w.bl(50);
+        w.bl(2);
+        // slot 1: edge 42, the zero word before the vertices, a key list
+        // with the table's key for vertex 1, then an other-edge key
+        // reference (1, 12) and an empty word
+        w.bl(0);
+        w.bl(42);
+        w.bl(0x1_0830);
+        w.bl(3);
+        w.bl(0);
+        for (kind, flags, node, fa, fb) in [(0i32, 50i32, 5i32, 1i32, 2i32), (0, 0x400_430, 9, 1, 2), (2, 2, 3, 0, 0)] {
+            w.bl(kind);
+            w.bl(flags);
+            w.bl(node);
+            w.bl(fa);
+            w.bl(fb);
+        }
+        w.bl(1);
+        w.bl(8);
+        w.bl(1);
+        w.bl(12);
+        w.bl(0);
+        w.bl(0);
+        // slot 2: edge 43, no zero word (the first vertex's kind is its 0)
+        w.bl(0);
+        w.bl(43);
+        w.bl(0x1_0030);
+        w.bl(2);
+        w.bl(0);
+        w.bl(50);
+        w.bl(5);
+        w.bl(1);
+        w.bl(2);
+        w.bl(2);
+        w.bl(2);
+        w.bl(3);
+        w.bl(0);
+        w.bl(0);
+        w.bl(1);
+        w.bl(7);
+        w.bl(0);
+        let (data, _) = w.take();
+        // the table reads: next key 33, both points with their feature-line
+        // vertex indexes
+        let (next_key, keys, _) = elevation_keys(&data, 0, data.len() * 8).expect("the table reads");
+        assert_eq!(next_key, 33);
+        assert_eq!(keys, vec![(8, 1), (20, 0)]);
+        // the section does not read yet: the fixture has no `BL 1, BL 0`
+        // between the table and the section (the extended container keeps
+        // other words there), so the head path refuses, and the strict
+        // first-section edge list refuses the section's inter-edge words
+        assert!(topology(&data, 0, data.len() * 8).is_none());
+    }
 }

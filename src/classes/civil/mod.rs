@@ -1529,6 +1529,29 @@ impl ArchObject {
         topology::topology(data, start, end)
     }
 
+    /// The feature-line topology of a site container
+    /// (`AECC_FEATURE_STYLE`): the topology the application keeps for the
+    /// container's feature lines once it extended the container (a site
+    /// that gained members after it was first written) — one edge per
+    /// feature line, not split where lines cross, unlike [`Self::topology`]
+    /// on such a container, whose first section the parcels' faces hang
+    /// off.
+    ///
+    /// Not wired yet: the bytes between the container's first section and
+    /// the feature-line section carry the site's grading data, and no
+    /// grammar for them is mapped (on the whole tutorial corpus the parcel
+    /// grammars account for none of that span — 2026-11-25 sweep of all
+    /// 163 drawings). Until that walk is mapped this reads through
+    /// [`Self::topology`], whose first section is the feature lines' own
+    /// on every container this crate writes and on the containers the
+    /// application never extended.
+    pub fn feature_line_topology(&self) -> Option<Topology> {
+        if !self.dxf_name.eq_ignore_ascii_case("AECC_FEATURE_STYLE") {
+            return None;
+        }
+        self.topology()
+    }
+
     /// Alignments and feature lines a site container (`AECC_FEATURE_STYLE`)
     /// lists, in the order of its topology's edges: the references before
     /// the site that owns it.
