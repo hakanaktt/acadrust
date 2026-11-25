@@ -17,7 +17,7 @@
 mod rt_data;
 
 use acadrust::classes::civil::{
-    add_cogo_point, add_point_group, add_point_group_query, add_point_property_classification, cogo_points, set_point_group, set_point_group_overrides, Comparison, PointAttribute, PointGroupClassification, PointGroupOverrides, PointQuery, QueryConstant, QueryExpression,
+    add_cogo_point, add_point_group, add_point_group_query, add_point_property_classification, cogo_points, set_point_group, set_point_group_overrides, set_point_group_styles, Comparison, PointAttribute, PointGroupClassification, PointGroupOverrides, PointQuery, QueryConstant, QueryExpression,
 };
 use acadrust::types::Vector3;
 
@@ -164,4 +164,37 @@ fn a_custom_query_selects_its_members() {
 
     let back = rt_data::rt_data_roundtrip(&doc);
     assert_eq!(group_numbers(&back, "Custom"), vec![1, 2]);
+}
+
+#[test]
+fn a_group_takes_its_styles_and_keeps_its_overrides() {
+    let mut doc = rt_data::rt_data_drawing();
+    four_points(&mut doc);
+    let points = cogo_points(&doc);
+    let g = add_point_group(&mut doc, "Styled", None, &[1, 2]).unwrap();
+    let overrides = PointGroupOverrides { point_style: None, label_style: None, elevation: Some(3.0), raw_description: None, locked: false, classification: PointGroupClassification::None };
+    set_point_group_overrides(&mut doc, g, &overrides).unwrap();
+    set_point_group_styles(&mut doc, g, points[0].style, points[0].label_style).unwrap();
+    // Neither handle a style of the other kind.
+    assert!(set_point_group_styles(&mut doc, g, points[0].label_style, points[0].style).is_err());
+
+    let back = rt_data::rt_data_roundtrip(&doc);
+    let group = group_by_name(&back, "Styled");
+    let refs = group.decode().handles;
+    assert_eq!((refs[0], refs[1]), (points[0].label_style, points[0].style), "label and point style slots");
+    let got = group.point_group_overrides().expect("overrides read back");
+    assert_eq!((got.point_style, got.label_style, got.elevation), (None, None, Some(3.0)), "overrides kept");
+    assert_eq!(group_numbers(&back, "Styled"), vec![1, 2]);
+}
+
+#[test]
+fn a_point_without_elevation_matches_no_elevation_query() {
+    let mut doc = rt_data::rt_data_drawing();
+    four_points(&mut doc);
+    add_cogo_point(&mut doc, Some(5), Vector3::new(40.0, 0.0, acadrust::classes::civil::NO_ELEVATION), Some("NONE"), None, None).unwrap();
+    add_point_group_query(&mut doc, "Low", None, &PointQuery::Elevation(Comparison::Less, 15.0)).unwrap();
+    add_point_group_query(&mut doc, "Band", None, &PointQuery::ElevationRange(-1e30, 26.0)).unwrap();
+    let back = rt_data::rt_data_roundtrip(&doc);
+    assert_eq!(group_numbers(&back, "Low"), vec![1, 3]);
+    assert_eq!(group_numbers(&back, "Band"), vec![1, 3, 4]);
 }

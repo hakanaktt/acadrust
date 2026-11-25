@@ -250,18 +250,24 @@ impl PointQuery {
     fn selects(&self, p: &CogoPoint, case: bool) -> bool {
         match self {
             PointQuery::Numbers(list) => list.contains(&p.number),
-            PointQuery::Elevation(c, v) => c.holds(p.position.z, *v),
+            PointQuery::Elevation(c, v) => elevated(p) && c.holds(p.position.z, *v),
             PointQuery::RawDescription(patterns) | PointQuery::FullDescription(patterns) => {
                 let d = p.description.as_deref().unwrap_or("");
                 patterns.iter().any(|q| wildcard(q, d, case))
             }
             PointQuery::Names(patterns) => p.name.as_deref().is_some_and(|n| patterns.iter().any(|q| wildcard(q, n, case))),
-            PointQuery::ElevationRange(a, b) => (*a..=*b).contains(&p.position.z),
+            PointQuery::ElevationRange(a, b) => elevated(p) && (*a..=*b).contains(&p.position.z),
             PointQuery::Excluding(include, exclude) => include.as_ref().map_or(true, |q| q.selects(p, case)) && !exclude.selects(p, case),
             PointQuery::Custom(e) => e.selects(p, case),
             PointQuery::CaseSensitive(q) => q.selects(p, true),
         }
     }
+}
+
+/// Whether the point has an elevation: a point without one matches no
+/// elevation comparison or range (PG01: `<15` leaves it out).
+fn elevated(p: &CogoPoint) -> bool {
+    p.position.z > super::points::NO_ELEVATION * 0.5
 }
 
 /// `*` / `?` pattern match over the whole text, case ignored unless
@@ -819,6 +825,36 @@ pub fn set_point_group_overrides(doc: &mut CadDocument, group: Handle, o: &Point
     write_group(doc, group, owner, &g)
 }
 
+/// Gives point group `group` its point style (`AECC_POINT_STYLE`) and point
+/// label style (`AECC_LABEL_COLLECTOR_STYLE`): the styles its points draw
+/// with unless they have their own (or always, when the group overrides
+/// them). What the group overrides is kept; the group must be of the form
+/// recent releases write.
+pub fn set_point_group_styles(doc: &mut CadDocument, group: Handle, point_style: u64, label_style: u64) -> Result<(), DxfError> {
+    let bad = || invalid("point group record cannot be rewritten");
+    let is = |h: u64, class: &str| matches!(doc.objects.get(&Handle::new(h)), Some(crate::objects::ObjectType::Arch(a)) if a.dxf_name == class);
+    if !is(point_style, "AECC_POINT_STYLE") || !is(label_style, "AECC_LABEL_COLLECTOR_STYLE") {
+        return Err(invalid("not a point style and a point label style"));
+    }
+    if !plain(doc, group) {
+        return Err(bad());
+    }
+    let obj = object(doc, group).ok_or_else(bad)?;
+    let (owner, d) = (obj.owner, obj.decode());
+    let (data, start, end) = obj.main_stream().ok_or_else(bad)?;
+    let rec = crate::classes::civil::cogo::group_record(data, start, end).ok_or_else(bad)?;
+    let tail = rec.tail.ok_or_else(bad)?;
+    let settings = group_settings(doc, group).ok_or_else(bad)?;
+    let id = fields_of(obj).and_then(|(x, s0, e0)| Bits::new(x, s0, e0).bit_long()).ok_or_else(bad)?;
+    let all = d.strings.iter().any(|s| s == "AeccImpAllPointsPG");
+    let (name, description) = if all { (None, String::new()) } else { (d.strings.first().cloned(), d.strings.get(1).cloned().unwrap_or_default()) };
+    let mut refs = [0, 1, 2, 3, 4, 5].map(|j| d.handles.get(j).copied().unwrap_or(0));
+    refs[0] = label_style;
+    refs[1] = point_style;
+    let g = Group { id, serial: rec.serial.ok_or_else(bad)?, name: name.as_deref(), description: &description, numbers: rec.numbers, extents: Some(tail.extents), refs, settings };
+    write_group(doc, group, owner, &g)
+}
+
 /// `BL id, BL 0, BL 0` (no override lists or keys), `a` = 0 in its byte
 /// form, 5 + 6 constant bits, `BL serial`, the numbers as `RL`, then two
 /// constant bits, `BD 0`, the extents (min, max) and [`GROUP_TAIL`].
@@ -1028,7 +1064,7 @@ impl QueryExpression {
         match self {
             QueryExpression::Compare(a, c, v) => match (a, v) {
                 (PointAttribute::Number, QueryConstant::Number(n)) => c.holds(f64::from(p.number), f64::from(*n)),
-                (PointAttribute::Elevation, QueryConstant::Elevation(z)) => c.holds(p.position.z, *z),
+                (PointAttribute::Elevation, QueryConstant::Elevation(z)) => elevated(p) && c.holds(p.position.z, *z),
                 (PointAttribute::Name, QueryConstant::Pattern(t)) => p.name.as_deref().is_some_and(|n| wildcard(t, n, case)),
                 (_, QueryConstant::Pattern(t)) => wildcard(t, p.description.as_deref().unwrap_or(""), case),
                 _ => false,
