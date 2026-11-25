@@ -180,3 +180,35 @@ fn a_lot_line_across_a_parcel_splits_face_and_parcel() {
     assert_eq!(areas, vec![5000.0, 15000.0], "the two parcel halves' areas");
     assert_eq!(t.outside_face_flags, 6, "a later member split the outside face's face: flag 8 lost");
 }
+
+#[test]
+fn a_written_parcel_sketches_its_outline_in_proxy_graphics() {
+    let mut doc = rt_data::rt_data_drawing();
+    let site = add_site(&mut doc, "P1", "parcels").unwrap();
+    let rect = [Vector2::new(0.0, 0.0), Vector2::new(100.0, 0.0), Vector2::new(100.0, 50.0), Vector2::new(0.0, 50.0)];
+    add_parcel(&mut doc, site, &rect, None).unwrap();
+
+    let back = rt_data::rt_data_roundtrip(&doc);
+    let site_h = site_of(&back, "P1");
+    let parcel = rt_data::rt_data_entities(&back, "AECC_PARCEL")
+        .into_iter()
+        .find(|(_, d)| d.parcel_site() == Some(site_h.value()))
+        .map(|(_, d)| d.clone())
+        .expect("the parcel");
+
+    // The proxy-graphics outline: the face boundary, closed with a copy
+    // of its first vertex, all at elevation 0 — the application's own
+    // records carry the boundary the same way (Labels-Parcels.dwg). The
+    // ring is the topology's own face loop, up to where the walk starts.
+    let outline = parcel.profiles.first().cloned().expect("a profile");
+    assert!(outline.iter().all(|p| p.z == 0.0));
+    let t = container_of(&back, site_h).topology().expect("topology");
+    let face = t.face_polylines(2).into_iter().next().expect("the face loop");
+    let sketch: Vec<[f64; 2]> = outline.iter().map(|p| [p.x, p.y]).collect();
+    let mut expected: Vec<[f64; 2]> = face.iter().map(|p| [p.x, p.y]).collect();
+    expected.pop(); // the reader's ring closes with a copy of its first point
+    let turn = expected.iter().position(|p| *p == sketch[0]).expect("a shared corner");
+    expected.rotate_left(turn);
+    expected.push(sketch[0]);
+    assert_eq!(sketch, expected);
+}

@@ -134,7 +134,7 @@ fn add_stormwater(
         owner_handle: doc.header.model_space_block_handle,
         layer: layer.into(),
         layer_handle: Some(layer_handle),
-        graphic_data: Some(graphic_image(image_kind, image_word, origin, &points)),
+        graphic_data: Some(graphic_image(image_kind, image_word, 1, origin, &[points])),
         ..EntityCommon::default()
     };
     let refs: Vec<Ref> = vec![hard_pointer(style.map(|h| h.value()).unwrap_or(0)), soft_pointer(0), Ref(DwgReferenceType::HardOwnership, 0)];
@@ -177,13 +177,13 @@ fn add_stormwater(
 /// UTF-16 NUL-terminated schema word,
 /// u32 size (=12+24n), u32 6, u32 n, n x (RD x,y,z), u32 8, u32 21
 /// ```
-fn graphic_image(kind: u32, word: &str, origin: Vector3, points: &[Vector3]) -> Vec<u8> {
+pub(super) fn graphic_image(kind: u32, word: &str, nul_units: usize, origin: Vector3, rings: &[Vec<Vector3>]) -> Vec<u8> {
     let mut blob = Vec::new();
     let u32_at = |blob: &mut Vec<u8>, v: u32| blob.extend_from_slice(&v.to_le_bytes());
     let double_at = |blob: &mut Vec<u8>, v: f64| blob.extend_from_slice(&v.to_le_bytes());
     u32_at(&mut blob, 0); // self size, patched below
     u32_at(&mut blob, kind);
-    let text_units = word.encode_utf16().count() + 1;
+    let text_units = word.encode_utf16().count() + nul_units;
     let sections_at = 16 + 96 + text_units * 2;
     u32_at(&mut blob, (sections_at - 8) as u32);
     u32_at(&mut blob, 36);
@@ -198,16 +198,20 @@ fn graphic_image(kind: u32, word: &str, origin: Vector3, points: &[Vector3]) -> 
     for unit in word.encode_utf16() {
         blob.extend_from_slice(&unit.to_le_bytes());
     }
-    blob.extend_from_slice(&[0, 0]);
+    for _ in 0..nul_units {
+        blob.extend_from_slice(&[0, 0]);
+    }
     debug_assert_eq!(blob.len(), sections_at);
-    let size = (12 + points.len() * 24) as u32;
-    u32_at(&mut blob, size);
-    u32_at(&mut blob, 6);
-    u32_at(&mut blob, points.len() as u32);
-    for p in points {
-        double_at(&mut blob, p.x);
-        double_at(&mut blob, p.y);
-        double_at(&mut blob, p.z);
+    for ring in rings {
+        let size = (12 + ring.len() * 24) as u32;
+        u32_at(&mut blob, size);
+        u32_at(&mut blob, 6);
+        u32_at(&mut blob, ring.len() as u32);
+        for p in ring {
+            double_at(&mut blob, p.x);
+            double_at(&mut blob, p.y);
+            double_at(&mut blob, p.z);
+        }
     }
     u32_at(&mut blob, 8);
     u32_at(&mut blob, 21);
