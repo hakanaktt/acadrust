@@ -493,14 +493,19 @@ pub(super) fn read_keys(bits: &mut Bits) -> Option<()> {
     Some(())
 }
 
-/// The class header and keys up to their closing `BL 0` (see
-/// [`read_keys`]).
+/// The class header and keys up to the long that closes them (see
+/// [`read_keys`]). The value is 0 in this crate's records and in most
+/// samples; an alignment that belongs to a site keeps its site's edge
+/// reference there (1, 16 and 32 observed; the fixed-length site data
+/// that follows has the same layout, so the fields after it read the
+/// same).
 pub(super) fn class_keys(bits: &mut Bits) -> Option<()> {
     (class_header(bits)? == KEYED).then_some(())?;
     for _ in 0..bits.bits_value(8)? {
         key(bits)?;
     }
-    (bits.bit_long()? == 0).then_some(())
+    bits.bit_long()?;
+    Some(())
 }
 
 /// Tag of a class record that carries keys; `0b010010` (Civil 3D 2013
@@ -540,7 +545,12 @@ fn section2_with(data: &[u8], start: usize, end: usize, run: usize) -> Option<Se
     let mut bits = Bits::new(data, start, end);
     class_keys(&mut bits)?;
     bits.pos += run;
-    bits.bit_double()?;
+    // The site-edge double: its 2-bit code and 64-bit value — the raw
+    // double for code 0 (2.25 in the samples); the packed 1.0 and 0.0
+    // codes leave the 64 bits to the alignment's site data (an edge of
+    // the site's topology; ROAD1 keeps its corridor baseline's there).
+    bits.bits(2)?;
+    bits.pos += 64;
     bits.pos += 7;
     bits.bit_long()?;
     bits.bit_double()?;

@@ -28,7 +28,7 @@ impl<'a> Bits<'a> {
         (self.remaining() >= count).then(|| self.pos += count)
     }
 
-    fn bits(&mut self, count: usize) -> Option<u8> {
+    pub(crate) fn bits(&mut self, count: usize) -> Option<u8> {
         if self.remaining() < count {
             return None;
         }
