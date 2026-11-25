@@ -7375,15 +7375,31 @@ impl DwgDocumentBuilder {
                             );
                             return;
                         }
-                        if matches!(
-                            class_name_upper.as_str(),
-                            "ACAD_PROXY_OBJECT_WRAPPER"
-                                | "AEC_REFEDIT_STATUS_TRACKER"
-                                | "EXACXREFPANELOBJECT"
-                                | "XREFPANELOBJECT"
-                                | "NPOCOLLECTION"
-                                | "MCDBCONTAINER2"
-                        ) {
+                        // A view whose record carries fields past the ones the
+                        // model reads would be written back short; it keeps its
+                        // stored bytes instead.
+                        let unread_view_rep = class_name_upper == "ACDBVIEWREP" && {
+                            let mut trial = reader.clone();
+                            crate::io::dwg::dwg_stream_readers::object_reader::class_object::read_class_object_data(
+                                &mut trial,
+                                dxf_name,
+                                self.obj_reader.version(),
+                                self.obj_reader.dxf_version(),
+                            )
+                            .is_some()
+                                && trial.main_remaining_bits() > 7
+                        };
+                        if unread_view_rep
+                            || matches!(
+                                class_name_upper.as_str(),
+                                "ACAD_PROXY_OBJECT_WRAPPER"
+                                    | "AEC_REFEDIT_STATUS_TRACKER"
+                                    | "EXACXREFPANELOBJECT"
+                                    | "XREFPANELOBJECT"
+                                    | "NPOCOLLECTION"
+                                    | "MCDBCONTAINER2"
+                            )
+                        {
                             let (payload, object_ids) =
                                 read_registered_payload(&mut reader, handle);
                             document.objects.insert(
