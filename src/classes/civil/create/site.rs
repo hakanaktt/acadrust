@@ -1,6 +1,7 @@
 //! Sites (`AECC_PARCEL` records named `AeccImpFace` without a site of
 //! their own), their containers and the alignments on them.
 
+use super::stormwater::graphic_image;
 use super::arrangement::{build, Arrangement, Input};
 use super::alignment::{default_style as alignment_style, elements, solve, write_alignment, PathPoint, VertexCurve, ARC_EDGE};
 use super::groups::bucket_insert;
@@ -12,7 +13,7 @@ use crate::classes::civil::alignment::same_solved_point;
 use crate::entities::{EntityCommon, EntityType, ExtendedEntityData};
 use crate::error::DxfError;
 use crate::io::dwg::dwg_reference_type::DwgReferenceType;
-use crate::types::{Handle, Vector2};
+use crate::types::{Handle, Vector2, Vector3};
 use crate::CadDocument;
 
 /// Root key of the node that lists the sites.
@@ -1123,7 +1124,7 @@ pub fn add_feature_line_vertices(doc: &mut CadDocument, site: Handle, name: &str
             let refs = a.typed_handles();
             let (Some((number, _)), style, label_style) = (a.parcel_face(), refs.get(3).map_or(0, |r| r.0), refs.get(4).map_or(0, |r| r.0)) else { continue };
             let common = x.common.clone();
-            write_parcel(doc, common, site, number, new.face_ids[i + 1], new.faces[i + 1].label, style, label_style)?;
+            write_parcel(doc, common, site, number, new.face_ids[i + 1], &new.faces[i + 1].outline(), new.faces[i + 1].label, style, label_style)?;
         }
         return Ok(line);
     }
@@ -1171,7 +1172,7 @@ pub fn add_feature_line_vertices(doc: &mut CadDocument, site: Handle, name: &str
         // Its faces by id (PD01: 4, 5; PD08: 8 to 11).
         let mut ids: Vec<i32> = faces.iter().map(|f| new.face_id(*f)).collect();
         ids.sort_unstable();
-        write_parcel_over(doc, common, site, number, &ids, label, z, style, label_style)?;
+        write_parcel_over(doc, common, site, number, &ids, &[], label, z, style, label_style)?;
     }
     Ok(line)
 }
@@ -1284,16 +1285,26 @@ fn write_lot_line(doc: &mut CadDocument, common: EntityCommon, edge: i32, contai
 /// a parcel's area and
 /// boundary come from its face in the site's container (WP03 to WP14:
 /// parcels of other areas have the same record).
-fn write_parcel(doc: &mut CadDocument, common: EntityCommon, site: Handle, number: i32, face: i32, label: Vector2, style: u64, label_style: u64) -> Result<Handle, DxfError> {
-    write_parcel_over(doc, common, site, number, &[face], label, 0.0, style, label_style)
+/// The proxy-graphics class word and kind the application writes on
+/// parcel records (Labels-Parcels.dwg; `AeccDbFace (AeccLand130)`).
+const PARCEL_GRAPHIC_KIND: u32 = 3;
+const PARCEL_GRAPHIC_WORD: &str = "AeccDbFace (AeccLand130)";
+
+fn write_parcel(doc: &mut CadDocument, common: EntityCommon, site: Handle, number: i32, face: i32, outline: &[Vec<Vector3>], label: Vector2, style: u64, label_style: u64) -> Result<Handle, DxfError> {
+    write_parcel_over(doc, common, site, number, &[face], outline, label, 0.0, style, label_style)
 }
 
 /// [`write_parcel`] over the faces `faces` (`BL 2, BL n, n x BL face`; a
 /// feature line splitting a parcel's face leaves the parcel over the
 /// parts, PD01) with the label at elevation `z`.
 #[allow(clippy::too_many_arguments)]
-fn write_parcel_over(doc: &mut CadDocument, common: EntityCommon, site: Handle, number: i32, faces: &[i32], label: Vector2, z: f64, style: u64, label_style: u64) -> Result<Handle, DxfError> {
+fn write_parcel_over(doc: &mut CadDocument, mut common: EntityCommon, site: Handle, number: i32, faces: &[i32], outline: &[Vec<Vector3>], label: Vector2, z: f64, style: u64, label_style: u64) -> Result<Handle, DxfError> {
     let byte = |w: &mut crate::io::dwg::dwg_stream_writers::DwgMergedWriter, v: u8| bits(w, &format!("{v:08b}"));
+    // The outline the record's proxy graphics sketch (one closed piece
+    // per boundary loop); a parcel over several faces has no single face
+    // loop, and goes without one.
+    common.graphic_data = (!outline.is_empty())
+        .then(|| graphic_image(PARCEL_GRAPHIC_KIND, PARCEL_GRAPHIC_WORD, 2, Vector3::new(label.x, label.y, z), outline));
     let refs = vec![soft_pointer(0), hard_pointer(site.value()), Ref(DwgReferenceType::HardOwnership, 0), hard_pointer(style), hard_pointer(label_style)];
     let strings = vec!["AeccImpFace".to_string(), String::new(), String::new()];
     put_entity(
@@ -1491,12 +1502,12 @@ pub(super) fn join_site_as(doc: &mut CadDocument, site: Handle, line: EntityComm
             let refs = a.typed_handles();
             let (style, label_style) = (refs.get(3).map_or(style, |r| r.0), refs.get(4).map_or(label_style, |r| r.0));
             let common = x.common.clone();
-            write_parcel(doc, common, site, number, arrangement.face_ids[i], arrangement.faces[i].label, style, label_style)?;
+            write_parcel(doc, common, site, number, arrangement.face_ids[i], &arrangement.faces[i].outline(), arrangement.faces[i].label, style, label_style)?;
         }
     }
     let mut out = Vec::new();
     for (c, number, face) in made {
-        out.push(write_parcel(doc, c, site, number, arrangement.face_id(face), arrangement.faces[face as usize - 1].label, style, label_style)?);
+        out.push(write_parcel(doc, c, site, number, arrangement.face_id(face), &arrangement.faces[face as usize - 1].outline(), arrangement.faces[face as usize - 1].label, style, label_style)?);
     }
     Ok((segment, out))
 }
@@ -1664,14 +1675,14 @@ fn join_groups(
             _ => arrangement.faces[root].label,
         };
         match made.iter().position(|c| c.handle.value() == h) {
-            Some(k) => out.push(write_parcel_over(doc, made[k].clone(), site, number, &ids, label, z, style, label_style)?),
+            Some(k) => out.push(write_parcel_over(doc, made[k].clone(), site, number, &ids, &[], label, z, style, label_style)?),
             None => {
                 let Some(EntityType::Extended(x)) = doc.get_entity(Handle::new(h)) else { continue };
                 let ExtendedEntityData::Arch(a) = &x.data else { continue };
                 let refs = a.typed_handles();
                 let (style, label_style) = (refs.get(3).map_or(style, |r| r.0), refs.get(4).map_or(label_style, |r| r.0));
                 let common = x.common.clone();
-                write_parcel_over(doc, common, site, number, &ids, label, z, style, label_style)?;
+                write_parcel_over(doc, common, site, number, &ids, &[], label, z, style, label_style)?;
             }
         }
     }

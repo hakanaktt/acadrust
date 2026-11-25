@@ -20,7 +20,7 @@
 //! closes a loop that bounds a face of its own inside a face, the new face
 //! is that bounded part and the outer part stays with the old face.
 
-use crate::types::Vector2;
+use crate::types::{Vector2, Vector3};
 use std::f64::consts::TAU;
 
 /// One member as it is added: its points (with the bulge of the segment
@@ -66,6 +66,33 @@ pub(super) struct Face {
     pub label: Vector2,
     /// The face's boundary loops as straight pieces.
     loops: Loops,
+}
+
+impl Face {
+    /// The face's boundary as closed vertex rings (one per loop, each
+    /// ring's first point repeated at the end; arcs come flattened),
+    /// counterclockwise — the direction the record's topology reads back
+    /// in, and the application's own parcel sketches are drawn in.
+    pub(super) fn outline(&self) -> Vec<Vec<Vector3>> {
+        self.loops
+            .iter()
+            .filter(|ring| !ring.is_empty())
+            .map(|ring| {
+                let mut points = vec![Vector3::new(ring[0].0.x, ring[0].0.y, 0.0)];
+                for piece in ring {
+                    points.push(Vector3::new(piece.1.x, piece.1.y, 0.0));
+                }
+                let area: f64 = (0..points.len() - 1)
+                    .map(|i| points[i].x * points[i + 1].y - points[i + 1].x * points[i].y)
+                    .sum::<f64>()
+                    / 2.0;
+                if area < 0.0 {
+                    points.reverse();
+                }
+                points
+            })
+            .collect()
+    }
 }
 
 pub(super) struct Arrangement {
