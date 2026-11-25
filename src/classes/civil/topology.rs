@@ -305,25 +305,48 @@ fn face_list(data: &[u8], pos: usize, end: usize) -> Option<(Vec<i32>, i32, Vec<
     Some((ids, outside, entries))
 }
 
-/// The topology in a site container or alignment companion body:
-///
-/// The elevation-point table after the shared class head: the next free
-/// key, each point's `(key, vertex index in its feature line)`, and the
+/// The elevation-point table a site container or alignment companion
+/// records after the shared class head (see [`elevation_keys`]).
+#[derive(Debug, Clone, PartialEq, Default)]
+struct ElevationKeys {
+    /// The table's next free key.
+    next_key: i32,
+    /// The elevation points: `(key, the point's vertex index in its
+    /// feature line, form)`, in table order.
+    points: Vec<(i32, i32, i32)>,
+    /// The number of form-25 markers (see [`elevation_keys`]); they carry
+    /// no point.
+    markers: usize,
+    /// The bit position after the table's last counted entry.
+    after: usize,
+}
+
+/// The elevation-point table of a site container or alignment companion
+/// body: the next free key, each point's key and vertex index, and the
 /// position after the table. A point the container records in the form
-/// `k2` 21 keeps its elevation in the table; one in the form `k2` 22
-/// stores none here — the key and its point's index only, the elevation
-/// living elsewhere in the record (in the nodes of the section that
-/// follows the table on a container the application extended). `None`
-/// when the head or the table does not follow the layout.
+/// `k2` 21 keeps its elevation in the table; one in the forms `k2` 22 or
+/// 24 stores none here — the key and its point's index only, the
+/// elevation living elsewhere in the record (in the nodes of the section
+/// that follows the table on a container the application extended; the
+/// two forms' frames are layout-identical, the form word the only
+/// difference — 8/8 verified across the tutorial grading containers).
+/// A grading container also carries one form-25 marker: a field-less
+/// entry `BL key, BL 25` (12 bits, key 0) with no point. The walk stops
+/// exactly at the head's count — what follows is not table grammar (on a
+/// graded site an opaque ShapeManager solid stream intervenes before the
+/// topology section). `None` when the head or the table does not follow
+/// the layout.
 ///
 /// ```text
 /// BS 0x04BE, BL key (0 for a site container, 0x80000000 | n for a
 /// companion), BL 0, BL 0, BL 32, 7 bits 0111010,
-/// BL next free key, BL k, k x { BL key, BL 21 or 22, BD the point's
-///   index in its feature line, 17 bits, BL key, BL 0, BL 0,
-///   21: BD elevation, B 0, BL 0 }
+/// BL next free key, BL k, k x { BL key,
+///   21: BD the point's index in its feature line, 17 bits, BL key,
+///       BL 0, BL 0, BD elevation, B 0, BL 0,
+///   22 or 24: the same frame without the elevation,
+///   25: nothing }
 /// ```
-fn elevation_keys(data: &[u8], start: usize, end: usize) -> Option<(i32, Vec<(i32, i32)>, usize)> {
+fn elevation_keys(data: &[u8], start: usize, end: usize) -> Option<ElevationKeys> {
     let mut bits = Bits::new(data, start, end);
     (bits.bit_short()? == 0x04BE).then_some(())?;
     bits.bit_long()?;
@@ -334,10 +357,16 @@ fn elevation_keys(data: &[u8], start: usize, end: usize) -> Option<(i32, Vec<(i3
     let next_key = bits.bit_long()?;
     let count = bits.bit_long()?;
     (0..=100_000).contains(&count).then_some(())?;
-    let mut keys = Vec::new();
+    let mut table = ElevationKeys { next_key, ..Default::default() };
     for _ in 0..count {
         let key = bits.bit_long()?;
         let form = bits.bit_long()?;
+        if form == 25 {
+            // A marker, not a point: no index, no flags, no second key.
+            (key == 0).then_some(())?;
+            table.markers += 1;
+            continue;
+        }
         let index = bits.bit_double()?;
         if !(index.is_finite() && index >= 0.0 && index < 100_000.0 && index.fract() == 0.0) {
             return None;
@@ -346,16 +375,17 @@ fn elevation_keys(data: &[u8], start: usize, end: usize) -> Option<(i32, Vec<(i3
         (bits.bit_long()? == key).then_some(())?;
         (bits.bit_long()? == 0).then_some(())?;
         (bits.bit_long()? == 0).then_some(())?;
-        keys.push((key, index as i32));
         if form == 21 {
             bits.bit_double()?;
             bits.bit()?;
             bits.bit_long()?;
-        } else if form != 22 {
+        } else if form != 22 && form != 24 {
             return None;
         }
+        table.points.push((key, index as i32, form));
     }
-    Some((next_key, keys, bits.pos))
+    table.after = bits.pos;
+    Some(table)
 }
 
 /// ```text
@@ -371,20 +401,25 @@ pub(super) fn topology(data: &[u8], start: usize, end: usize) -> Option<Topology
         let (face_ids, outside_face_flags, outside_entries) = face_list(data, faces, end).unwrap_or_default();
         Some(Topology { edges, edge_flags, edge_ids, face_ids, next_node, next_key, outside_face_flags, outside_entries })
     };
-    if let Some((next_key, _, after)) = elevation_keys(data, start, end) {
-        let mut bits = Bits::new(data, after, end);
+    // The recorded table's next free key travels with the read even when
+    // the section does not immediately follow the table: on a graded site
+    // container an opaque ShapeManager solid stream intervenes, and the
+    // marker-search fallback below finds the first section.
+    let table = elevation_keys(data, start, end);
+    if let Some(t) = &table {
+        let mut bits = Bits::new(data, t.after, end);
         let head = (|| {
             bits.bit_long()?;
             bits.bit_long()?;
             (bits.bit_long()? as u32 == 0x8000_0001).then_some(())
         })();
         if head.is_some() {
-            return read(bits.pos, next_key);
+            return read(bits.pos, t.next_key);
         }
     }
     // debt: a container whose head does not follow the layout above is
     // read by trying positions for its node list.
-    (start..end.saturating_sub(40)).find_map(|pos| read(pos, 0))
+    (start..end.saturating_sub(40)).find_map(|pos| read(pos, table.as_ref().map_or(0, |t| t.next_key)))
 }
 
 #[cfg(test)]
@@ -479,24 +514,25 @@ mod tests {
         }
     }
 
-    /// The two elevation-point forms the application writes: `k2` 21 with
-    /// the elevation in the table (the form every observed container kept
-    /// before an application extended it) and `k2` 22 without an
-    /// elevation, as recorded bit for bit on the grading tutorial drawing
-    /// (D008 capture, live-API-verified: keys 1, 3-12 with elevations and
-    /// keys 20, 21, 27-32 without, each key's index its point's vertex
-    /// index in its feature line).
+    /// The point forms the application writes: `k2` 21 with the elevation
+    /// in the table (the form every observed container kept before an
+    /// application extended it) and `k2` 22 without an elevation, as
+    /// recorded bit for bit on the grading tutorial drawing (D008 capture,
+    /// live-API-verified: keys 1, 3-12 with elevations and keys 20, 21,
+    /// 27-32 without, each key's index its point's vertex index in its
+    /// feature line).
     #[test]
     fn elevation_table_reads_both_point_forms() {
         let mut w = W::new();
         w.head_and_table(&[(8, 21, 1.0), (20, 22, 0.0)]);
         let (data, bits) = w.take();
-        let (next_key, keys, after) = elevation_keys(&data, 0, data.len() * 8).expect("the table reads");
-        assert_eq!(next_key, 33);
-        assert_eq!(keys, vec![(8, 1), (20, 0)]);
+        let table = elevation_keys(&data, 0, data.len() * 8).expect("the table reads");
+        assert_eq!(table.next_key, 33);
+        assert_eq!(table.points, vec![(8, 1, 21), (20, 0, 22)]);
+        assert_eq!(table.markers, 0);
         // both entries are consumed: the position after the table is the
         // end of what was written
-        assert_eq!(after, bits);
+        assert_eq!(table.after, bits);
     }
 
     /// A table in another form refuses: the head path returns `None` and
@@ -640,13 +676,90 @@ mod tests {
         let (data, _) = w.take();
         // the table reads: next key 33, both points with their feature-line
         // vertex indexes
-        let (next_key, keys, _) = elevation_keys(&data, 0, data.len() * 8).expect("the table reads");
-        assert_eq!(next_key, 33);
-        assert_eq!(keys, vec![(8, 1), (20, 0)]);
+        let table = elevation_keys(&data, 0, data.len() * 8).expect("the table reads");
+        assert_eq!(table.next_key, 33);
+        assert_eq!(table.points, vec![(8, 1, 21), (20, 0, 22)]);
         // the section does not read yet: the fixture has no `BL 1, BL 0`
         // between the table and the section (the extended container keeps
         // other words there), so the head path refuses, and the strict
         // first-section edge list refuses the section's inter-edge words
         assert!(topology(&data, 0, data.len() * 8).is_none());
+    }
+// Generated from the 2026-11-25/26 walk-map evidence pack
+// (walkmap/k2_entry_tables.json + walkmap/full_records.jsonl): the
+// bit-exact elevation-point-table spans of the seven tutorial site
+// containers (`AECC_FEATURE_STYLE` records; the class body starts at
+// record bit 40; each span runs from the table head to the end of the
+// head's counted entries — `walked == count` on every container).
+const TABLES: &[(&str, &str, i32, usize, &[(i32, i32, i32)])] = &[
+    // Grading-3.dwg C69: next_key 13, count 11, table 1987 bits, forms 21+21+21+21+21+21+21+21+21+21+21
+    ("G3", "2f8111ea481d21a85a108a80000000000003081202a4228d847c66c73b68540480a2ac80a901a000000000038211012128a80000000000003881202a426883171aabe5b5854048522a0000000000001020480a90aa07cf70b86270a15012068ab202a40e8eac7787a45798540485a2a0000000000001120480a90ba24d2c2556f70e15012088a80000000000000081202a41285dc357cca979854048622a0000000000001220480a90ca126a073cfcb0e150120a8a80000000000001081202a4168535cbb205b84854048322a0000000000000820480a906a17385b6de8a8a150120e8a80000000000002881202a41e8c5555f3a0db3854040", 13, 1987, &[(8, 6, 21), (1, 1, 21), (9, 7, 21), (10, 8, 21), (3, 1, 21), (11, 9, 21), (4, 2, 21), (12, 10, 21), (5, 3, 21), (6, 4, 21), (7, 5, 21)]),
+    // Grading-3A.dwg C69: next_key 33, count 19, table 2667 bits, forms 21+22+21+21+21+21+21+22+21+21+22+22+21+22+22+21+22+21+22
+    ("G3A", "2f8111ea481d24289a108a80000000000003081202a4228d847c66c73b6854049022c0000000000001320402a920a405156405480d00000000001c108809094540000000000001c4090152134418b8d55f2dac2a024291500000000000008102405485503e7b85c313850a80903455901520747563bc3d22bcc2a0242d1500000000000008902405485d1269612ab7b870a8091b45a801523748222a0000000000000020480a904a1770d5f32a5e615012188a80000000000004881202a432849a81cf3f2c3854048a22d400a914a471160000000000000010200548e520a8a80000000000001081202a4168535cbb205b84854048aa2c0000000000000020400a915a47516a01548ed20c8a80000000000002081202a41a85ce16db7a2a2854048f22c0000000000001320402a91ea41d1500000000000005102405483d18aaabe741b670a8091f45a805523f40", 33, 2667, &[(8, 6, 21), (32, 11, 22), (1, 1, 21), (9, 7, 21), (10, 8, 21), (3, 1, 21), (11, 9, 21), (27, 0, 22), (4, 2, 21), (12, 10, 21), (20, 0, 22), (28, 2, 22), (5, 3, 21), (21, 2, 22), (29, 0, 22), (6, 4, 21), (30, 11, 22), (7, 5, 21), (31, 0, 22)]),
+    // Grading-4.dwg BB4: next_key 25, count 5, table 421 bits, forms 24+22+22+24+25
+    ("G4", "2f8111ea481d23282a308c300aa46290145a805520348122c0000000000000c20402a902a4111800000000000004102015482548c8", 25, 421, &[(24, 1, 24), (1, 0, 22), (2, 6, 22), (4, 4, 24), (0, 0, 25)]),
+    // Grading-5.dwg BB4: next_key 28, count 5, table 421 bits, forms 22+22+25+24+24
+    ("G5", "2f8111ea481d23882a028b500aa4069024580000000000001840805520552328da30c02a91ba411180000000000000410201548250", 28, 421, &[(1, 0, 22), (2, 6, 22), (0, 0, 25), (27, 1, 24), (4, 4, 24)]),
+    // Grading-6.dwg 3533: next_key 7, count 0, table 61 bits, forms 
+    ("G6", "2f8111ea481d20f0", 7, 61, &[]),
+    // Grading-7.dwg 3533: next_key 26, count 5, table 485 bits, forms 22+25+24+24+22
+    ("G7", "2f8111ea481d23482a108b0000000000000628100aa422a46519460000000000000224080552334852300000000000001620402a90aa41d16a015483d0", 26, 485, &[(8, 17, 22), (0, 0, 25), (25, 9, 24), (10, 14, 24), (7, 0, 22)]),
+    // Grading-8.dwg 3533: next_key 28, count 6, table 671 bits, forms 22+24+25+24+21+22
+    ("G8", "2f8111ea481d238832108b0000000000000628100aa42290a4600000000000002c40805521552328da300000000000001120402a91ba4311500000000000000102005486505268845ebff6f08090745a805520f4", 28, 671, &[(8, 17, 22), (10, 14, 24), (0, 0, 25), (27, 9, 24), (12, 2, 21), (7, 0, 22)]),
+];
+// Grading-7.dwg 3533: the counted table plus the trailing
+// 216-bit ShapeManager stream header (magic-anchored kernel data,
+// opaque); its header begins (BL 17, BL 11, ..) — reading past count
+// would misread it as a table entry (the archived "form 11").
+const G7_TABLE_PLUS_ASM_HEADER: &str = "2f8111ea481d23482a108b0000000000000628100aa422a46519460000000000000224080552334852300000000000001620402a90aa41d16a015483d22285a10812100000800055482484a2080a20000180005554808810";
+
+    /// The seven tutorial site containers' recorded tables, bit for bit
+    /// (the 2026-11-25/26 walk-map evidence pack, machine-verified by the
+    /// count-checked walk): every table walks to exactly its head's count
+    /// — the position after the last counted entry is the recorded span's
+    /// end — with the recorded keys, vertex indexes and forms, and the
+    /// form-25 markers counted without reading point fields (they have
+    /// none).
+    #[test]
+    fn recorded_tables_walk_to_their_count() {
+        let mut census = [0usize; 26];
+        for (name, hex, next_key, bits, entries) in TABLES {
+            let data = hex_bytes(hex);
+            let table = elevation_keys(&data, 0, *bits).expect(name);
+            assert_eq!(table.next_key, *next_key, "{name}");
+            assert_eq!(table.after, *bits, "{name}: the walk stops at count");
+            let expect_points: Vec<_> = entries.iter().copied().filter(|e| e.2 != 25).collect();
+            let expect_markers = entries.iter().filter(|e| e.2 == 25).count();
+            assert_eq!(table.points, expect_points, "{name}");
+            assert_eq!(table.markers, expect_markers, "{name}");
+            for &(_, _, form) in &table.points {
+                census[form as usize] += 1;
+            }
+            census[25] += table.markers;
+        }
+        // the corpus form census: 23 x 21 + 16 x 22 + 8 x 24 + 4 x 25
+        assert_eq!((census[21], census[22], census[24], census[25]), (23, 16, 8, 4));
+    }
+
+    /// Grading-7's counted table followed by the trailing 216-bit
+    /// ShapeManager stream header, bit for bit as recorded: the walk
+    /// stops at the head's count and never reads the header — its opening
+    /// words (BL 17, BL 11, ..) would otherwise misread as a table entry
+    /// (the archived "form 11", which does not exist).
+    #[test]
+    fn the_walk_stops_at_count_before_the_solid_stream() {
+        let bytes = hex_bytes(G7_TABLE_PLUS_ASM_HEADER);
+        let table = elevation_keys(&bytes, 0, bytes.len() * 8).expect("the table reads");
+        assert_eq!(table.next_key, 26);
+        assert_eq!(table.after, 485);
+        assert_eq!(table.points, vec![(8, 17, 22), (25, 9, 24), (10, 14, 24), (7, 0, 22)]);
+        assert_eq!(table.markers, 1);
+    }
+
+    /// Decodes the evidence pack's hex fixture strings.
+    fn hex_bytes(hex: &str) -> Vec<u8> {
+        (0..hex.len() / 2)
+            .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).expect("hex"))
+            .collect()
     }
 }
