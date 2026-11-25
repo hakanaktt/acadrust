@@ -2,6 +2,7 @@
 
 ### Unreleased
 
+- **Fix: a plot style's lineweight number picks the table entry before it** - `PlotStyleTable::resolve_lineweight` read entry N of the lineweight list for a style numbered N. The plot style editor lists "Use object lineweight" first and the table's widths after it, so style N now reads entry N - 1: style 1 gives the first width, the last width is reachable, and 0, 255 and a number past the list still keep the object's lineweight.
 - **DXF writer looks extension dictionaries up in linear time** - Each table
   record that names no extension dictionary had its owner looked up by walking
   every object of the document, so writing a DXF was quadratic in block records

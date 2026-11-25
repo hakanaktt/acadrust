@@ -28,7 +28,10 @@ pub struct PlotStyleEntry {
     /// If `Some([r,g,b])`, override the entity color with this RGB value (0..255).
     /// If `None`, use the object color.
     pub color: Option<[u8; 3]>,
-    /// Lineweight index into the table. 0 (and legacy 255) = object lineweight.
+    /// Which lineweight the style uses: 0 (and legacy 255) = object lineweight, otherwise
+    /// entry N - 1 of `PlotStyleTable::lineweights`. The plot style editor lists "Use object
+    /// lineweight" first and the table's widths after it, so the number is one more than the
+    /// table index.
     pub lineweight: u8,
     /// Screen percentage 0–100 (100 = opaque).
     pub screening: u8,
@@ -187,14 +190,15 @@ impl PlotStyleTable {
     }
 
     /// Resolve the effective lineweight in mm for the given ACI index.
-    /// Returns None if no override (use object lineweight).
+    /// Returns None if no override (use object lineweight): style 0 and 255, and a number
+    /// past the end of the table. Style N picks entry N - 1 of `lineweights`.
     pub fn resolve_lineweight(&self, aci: u8) -> Option<f32> {
         let entry = self.aci_entries.get(aci as usize)?;
         if matches!(entry.lineweight, 0 | 255) {
             None
         } else {
             self.lineweights
-                .get(entry.lineweight as usize)
+                .get(entry.lineweight as usize - 1)
                 .copied()
                 .map(|weight| {
                     if self.apply_factor {
@@ -929,7 +933,7 @@ mod round_trip_tests {
         let mut table = PlotStyleTable::identity("scaled.ctb");
         table.apply_factor = true;
         table.scale_factor = 0.25;
-        table.aci_entries[1].lineweight = 13; // 0.50 mm
+        table.aci_entries[1].lineweight = 14; // entry 13, 0.50 mm
         let reloaded = saved_and_reloaded(&table);
         assert_eq!(reloaded.scale_factor, 0.25);
         assert_eq!(reloaded.resolve_lineweight(1), Some(0.125));
@@ -949,7 +953,7 @@ mod round_trip_tests {
     fn custom_lineweights_survive_a_save() {
         let mut table = PlotStyleTable::identity("pens.ctb");
         table.lineweights[1] = 0.035;
-        table.aci_entries[1].lineweight = 1;
+        table.aci_entries[1].lineweight = 2;
         let reloaded = saved_and_reloaded(&table);
         assert_eq!(reloaded.lineweights, table.lineweights);
         assert_eq!(reloaded.resolve_lineweight(1), Some(0.035));
