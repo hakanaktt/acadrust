@@ -999,14 +999,19 @@ impl ArchEntityData {
     /// BL 0, B 0, BS 0x04BE
     /// ```
     ///
-    /// Prefixes on file (all 54 parcels of Labels-Parcels.dwg):
+    /// Prefixes on file (all 54 parcels of Labels-Parcels.dwg, plus the
+    /// parcel drawings Parcel-1E/3A):
     ///
     /// * `0b01_0101` (the word this crate writes): 8-bit key count, keys
     ///   (see [`alignment::key`]), then a closing `BL` — 0 in fresh
     ///   records, 16 or 88 in re-saved ones — then 121 bits.
     /// * `0b01_0010` (Civil 3D 2013 parcels, no keys): 128 bits.
-    /// * `2..=4` (older words): a per-record prefix whose grammar is not
-    ///   mapped yet; these read `None`.
+    /// * older words (`0..=7`): a raw 32-bit head word whose top byte
+    ///   gates the prefix — `0x02`: four raw longs (the 2013 prefix behind
+    ///   a head); `0x05`: 8-bit key count, keys, a closing `BL`, then the
+    ///   same 121 bits the keyed word carries. A record of an older word
+    ///   is admitted only with its whole body validated (label echo,
+    ///   faces, tail, exact end); anything else reads `None`.
     fn parcel_fields(&self) -> Option<bits::Bits<'_>> {
         let (data, start, end) = self.main_stream()?;
         let at = parcel_fields_offset(data, start, end)?;
@@ -1872,7 +1877,11 @@ impl ArchObject {
 /// header gates the prefix.
 fn parcel_fields_offset(data: &[u8], start: usize, end: usize) -> Option<usize> {
     let mut b = bits::Bits::new(data, start, end);
-    match alignment::class_header(&mut b)? {
+    let word = alignment::class_header(&mut b);
+    if std::env::var_os("PARCEL_FIXTURE_DEBUG").is_some() {
+        eprintln!("fixture: word={word:?} pos={}", b.pos);
+    }
+    match word? {
         alignment::KEYED => {
             for _ in 0..b.bits_value(8)? {
                 alignment::key(&mut b)?;
@@ -1883,10 +1892,128 @@ fn parcel_fields_offset(data: &[u8], start: usize, end: usize) -> Option<usize> 
         }
         // Civil 3D 2013: no keys.
         0b01_0010 => Some(b.pos + 128),
-        // ponytail: words 2..=4 carry a per-record prefix (key-like words
-        // of an unmapped type 0x14) whose grammar is not worked out yet;
-        // they read `None` until it is, rather than trying offsets.
-        _ => None,
+        // Older words open their prefix with a raw 32-bit head word whose
+        // top byte gates what follows: `0x02` carries the 2013 prefix (four
+        // raw longs) behind the head; `0x05` carries a keyed block — 8-bit
+        // key count, keys (see [`alignment::key`]), a closing `BL`, then
+        // the same 121 bits the keyed word carries. Either way the body
+        // must validate to the record's exact end.
+        _ => {
+            let kind = b.raw_long()? as u32 >> 24;
+            let at = match kind {
+                0x02 => b.pos + 128,
+                0x05 => {
+                    for _ in 0..b.bits_value(8)? {
+                        alignment::key(&mut b)?;
+                    }
+                    b.bit_long()?;
+                    b.pos + 121
+                }
+                _ => return None,
+            };
+            parcel_body_ok(data, at, end).map(|_| at)
+        }
     }
 }
 
+/// Whether a full parcel body parses at `at` (see
+/// [`ArchEntityData::parcel_fields`] for the grammar): the label location
+/// twice over, a face list, and the closing word to the record's exact end.
+fn parcel_body_ok(data: &[u8], at: usize, end: usize) -> Option<()> {
+    let mut b = bits::Bits::new(data, at, end);
+    b.bit_long()?;
+    b.bit_long()?;
+    b.bit_long()?;
+    (b.bit_double()? == 0.0).then_some(())?;
+    let (x, y, z) = (b.bit_double()?, b.bit_double()?, b.bit_double()?);
+    (x.is_finite() && y.is_finite()).then_some(())?;
+    (matches!(b.bit_long()?, 80 | 112) && b.bit_long()? == 1).then_some(())?;
+    (b.bit_double()? == x && b.bit_double()? == y && b.bit_double()? == z).then_some(())?;
+    (b.bit_long()? == 2).then_some(())?;
+    let n = b.bit_long()?;
+    (1..=64).contains(&n).then_some(())?;
+    for _ in 0..n {
+        b.bit_long()?;
+    }
+    (b.bit_long()? == 0).then_some(())?;
+    (b.bit()? == false).then_some(())?;
+    (b.bit_short()? == 0x04BE).then_some(())?;
+    (b.remaining() == 0).then_some(())
+}
+
+#[cfg(test)]
+mod parcel_word_tests {
+    use super::*;
+
+    fn record(hex: &str) -> Vec<u8> {
+        (0..hex.len() / 2)
+            .map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).unwrap())
+            .collect()
+    }
+
+    /// Word 3, head 0x02040810: four raw longs, body at +160 (the shape of
+    /// the Labels-Parcels word-2 records), parcel 25 at (100.5, -2.5).
+    const WORD3_HEAD02: (&str, usize) = (
+        "542541508045f02100c4020100b8ca4000390a4000394a4000398a4000119a8000000000020594000000000000001302541010000000000081650000000000000004c0902404e804000085f020",
+        613,
+    );
+
+    /// Word 4, head 0x05040840: a ref key and a date key, closing `BL` 16,
+    /// 121 bits, body at +303 (the Labels-Parcels re-save form).
+    const WORD4_HEAD05: (&str, usize) = (
+        "542541508045f02101100201014081010000407c40005800000000000000011000000000000000000000000000000023350000000000040b28000000000000002604a82020000000000102ca000000000000000981204809d00800010be040",
+        756,
+    );
+
+    /// Word 0, head 0x050408f8: four keys (ref, long, date, ref), body at
+    /// +373 (Parcel-1E's re-saved STANDARD parcels).
+    const WORD0_HEAD05_4KEYS: (&str, usize) = (
+        "542541508045f021003e0201014101010000403e00000607c4000580000000000000000048000044400000000000000000000000000000008cd40000000000102ca0000000000000009812a0808000000000040b28000000000000002604812027402000042f8100",
+        826,
+    );
+
+    /// Word 2 with an unmapped head word: not admitted.
+    const WORD2_HEAD_UNKNOWN: (&str, usize) = (
+        "542541508045f0210090020100519a8000000000020594000000000000001302541010000000000081650000000000000004c0902404e804000085f020",
+        485,
+    );
+
+    #[test]
+    fn an_older_word_with_a_type_02_head_reads_the_2013_prefix_behind_it() {
+        let (hex, bits) = WORD3_HEAD02;
+        let data = record(hex);
+        assert_eq!(parcel_fields_offset(&data, 0, bits), Some(74 + 160));
+    }
+
+    #[test]
+    fn an_older_word_with_a_type_05_head_reads_keys_then_121_bits() {
+        let (hex, bits) = WORD4_HEAD05;
+        let data = record(hex);
+        assert_eq!(parcel_fields_offset(&data, 0, bits), Some(74 + 303));
+    }
+
+    #[test]
+    fn a_type_05_head_with_four_keys_lands_past_them() {
+        let (hex, bits) = WORD0_HEAD05_4KEYS;
+        let data = record(hex);
+        assert_eq!(parcel_fields_offset(&data, 0, bits), Some(74 + 373));
+    }
+
+    #[test]
+    fn an_unmapped_head_word_reads_none() {
+        let (hex, bits) = WORD2_HEAD_UNKNOWN;
+        let data = record(hex);
+        assert_eq!(parcel_fields_offset(&data, 0, bits), None);
+    }
+
+    #[test]
+    fn a_head_whose_body_fails_validation_reads_none() {
+        // The keyed form parses, but the 0x04BE closing word of the body is
+        // broken, so the record is not admitted.
+        let (hex, bits) = WORD4_HEAD05;
+        let mut data = record(hex);
+        let last = data.len() - 1;
+        data[last] ^= 0x10;
+        assert_eq!(parcel_fields_offset(&data, 0, bits), None);
+    }
+}
