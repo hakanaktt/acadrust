@@ -886,6 +886,15 @@ pub(super) fn definition(data: &[u8], start: usize, end: usize, strings: &[Strin
     Some(w.definition)
 }
 
+/// The corridor's point codes that have feature lines, in the order of its
+/// code list (the order of each baseline's feature line groups): the texts
+/// after the name, the description and one text per text key.
+pub(super) fn point_codes(data: &[u8], start: usize, end: usize, strings: &[String]) -> Option<Vec<String>> {
+    let w = walk(&mut Bits::new(data, start, end))?;
+    let from = 4 + w.text_keys;
+    strings.get(from..from + w.codes).map(<[String]>::to_vec)
+}
+
 /// A region's block after its stations, returning the record count it gives
 /// for what follows and the region:
 ///

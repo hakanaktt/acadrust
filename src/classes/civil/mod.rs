@@ -1381,6 +1381,19 @@ impl ArchEntityData {
             .unwrap_or_default()
     }
 
+    /// The point codes a corridor draws feature lines for, in the order of
+    /// [`Self::corridor_baselines`]' groups; empty when the record is not
+    /// read.
+    pub fn corridor_point_codes(&self) -> Vec<String> {
+        if self.civil_kind() != Some(CivilKind::Corridor) {
+            return Vec::new();
+        }
+        let strings = self.decode().strings;
+        self.main_stream()
+            .and_then(|(data, start, end)| corridor::point_codes(data, start, end, &strings))
+            .unwrap_or_default()
+    }
+
     /// What a corridor defines: settings, surfaces, baselines with
     /// their regions, frequencies, targets and added stations. Names and
     /// references are filled for a corridor that holds no built station.
