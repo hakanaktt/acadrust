@@ -1036,8 +1036,7 @@ pub struct FeatureLineVertex {
 /// the segment starting at each (see [`FeatureLineVertex`]). `None` when
 /// the record is not a feature line, its site container or its edge
 /// cannot be read, or the container keeps no edge with its id.
-pub fn feature_line_vertices(doc: &CadDocument, feature_line: Handle) -> Option<Vec<FeatureLineVertex>> {
-    let Some(EntityType::Extended(x)) = doc.get_entity(feature_line) else { return None };
+pub fn feature_line_vertices(doc: &CadDocument, feature_line: Handle) -> Option<Vec<FeatureLineVertex>> {    let Some(EntityType::Extended(x)) = doc.get_entity(feature_line) else { return None };
     let ExtendedEntityData::Arch(a) = &x.data else { return None };
     let container = crate::types::Handle::new(a.feature_line_container()?);
     let o = match doc.objects.get(&container) {
@@ -1052,6 +1051,62 @@ pub fn feature_line_vertices(doc: &CadDocument, feature_line: Handle) -> Option<
         bulge: v.bulge,
         elevation_point: v.is_elevation_point(),
     }).collect())
+}
+
+/// Label property of a parcel style's name (the style name token in its
+/// name template, `<[167804933(...)]>`).
+pub const PARCEL_STYLE_NAME: u32 = 167_804_933;
+/// Label property of a parcel's number (the number token in a parcel
+/// style's name template, `<[16809985(...)]>`).
+pub const PARCEL_NUMBER: u32 = 168_099_85;
+
+/// Formatting option of a name template's style token: show the style's
+/// name in upper case (`Parcel-2C.dwg`: "Road (Local)" reads as
+/// "ROAD (LOCAL)"; 2449 keeps it as written — "Standard : 1").
+const NAME_UPPER_CASE: u32 = 2450;
+
+/// The name of a Civil 3D parcel: the string its record stores, or, when
+/// the record stores none (2027 samples: `Parcel-2C.dwg`'s parcels name
+/// empty where the application reads "ROAD (LOCAL): 100"), its style's
+/// name template evaluated — the style's own name (upper case when the
+/// template's style token asks for it) and the parcel's number. `None`
+/// when the record is not a parcel, or the template, the style's name or
+/// the number cannot be read (a style without a name of its own — this
+/// crate's default parcel style — evaluates to no name, as the
+/// application keeps no name for it in the record either).
+pub fn parcel_name(doc: &CadDocument, parcel: Handle) -> Option<String> {
+    let Some(EntityType::Extended(x)) = doc.get_entity(parcel) else { return None };
+    let ExtendedEntityData::Arch(a) = &x.data else { return None };
+    // A record that stores its name (the application's older form,
+    // `Labels-Parcels.dwg` "Road : 9") reads it directly.
+    let (stored, _) = a.face_name().unwrap_or_default();
+    if !stored.is_empty() {
+        return Some(stored);
+    }
+    let style = crate::types::Handle::new(a.parcel_style()?);
+    let o = match doc.objects.get(&style) {
+        Some(crate::objects::ObjectType::Arch(o)) if o.dxf_name == "AECC_PARCEL_STYLE" => o,
+        _ => return None,
+    };
+    let strings = o.decode().strings;
+    let template_at = strings.iter().position(|s| s.contains("<["))?;
+    let style_name = strings[..template_at].iter().find(|s| !s.is_empty())?;
+    let number = a.parcel_face()?.0;
+    let mut name = String::new();
+    for part in super::super::labels::parse_format(&strings[template_at]) {
+        match part {
+            super::super::labels::LabelPart::Text(text) => name.push_str(&text),
+            super::super::labels::LabelPart::NewLine => name.push('\n'),
+            super::super::labels::LabelPart::Field { property, options } => match property {
+                PARCEL_STYLE_NAME => {
+                    name.push_str(&if options.contains(&NAME_UPPER_CASE) { style_name.to_ascii_uppercase() } else { style_name.clone() });
+                }
+                PARCEL_NUMBER => name.push_str(&number.to_string()),
+                _ => return None,
+            },
+        }
+    }
+    (!name.is_empty()).then_some(name)
 }
 
 /// Adds a feature line through `points` (x, y, elevation; straight
