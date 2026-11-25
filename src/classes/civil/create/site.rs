@@ -1044,7 +1044,7 @@ pub fn feature_line_vertices(doc: &CadDocument, feature_line: Handle) -> Option<
         Some(crate::objects::ObjectType::Arch(o)) => o,
         _ => return None,
     };
-    let topology = o.topology()?;
+    let topology = o.feature_line_topology()?;
     let edge = a.feature_line_edge()?;
     let index = topology.edge_ids.iter().position(|id| *id == edge)?;
     Some(topology.edges[index].iter().map(|v| FeatureLineVertex {

@@ -182,3 +182,39 @@ fn a_crossing_takes_the_new_line_s_elevation_and_node() {
     assert_eq!(t.outside_face_flags, 6);
     assert_eq!(t.next_key, 1);
 }
+
+#[test]
+fn the_feature_line_section_of_a_container_this_crate_writes_is_its_first() {
+    let mut doc = rt_data::rt_data_drawing();
+    let site = add_site(&mut doc, "S2", "lines").unwrap();
+    let fl1 = add_feature_line_vertices(
+        &mut doc,
+        site,
+        "FL1",
+        &[vertex((0.0, 0.0, 4.0), 0.0, false), vertex((30.0, 0.0, 5.0), 0.0, false)],
+        None,
+    )
+    .unwrap();
+    let fl2 = add_feature_line_vertices(
+        &mut doc,
+        site,
+        "FL2",
+        &[vertex((0.0, 10.0, 6.0), 0.0, false), vertex((30.0, 10.0, 7.0), 0.0, false)],
+        None,
+    )
+    .unwrap();
+
+    let back = rt_data::rt_data_roundtrip(&doc);
+    let c = container_of(&back, site_of(&back, "S2"));
+    // A container the crate writes keeps no second section: the feature
+    // lines read through the first one, whole.
+    let t = c.topology().expect("topology");
+    let ft = c.feature_line_topology().expect("feature-line topology");
+    assert_eq!(ft.edges, t.edges);
+    assert_eq!(ft.edge_ids, t.edge_ids);
+    assert_eq!(ft.next_node, t.next_node);
+    let verts = acadrust::classes::civil::feature_line_vertices(&back, fl1).expect("FL1's vertices");
+    assert_eq!(verts.iter().map(|v| (v.point.x, v.point.y, v.point.z)).collect::<Vec<_>>(), vec![(0.0, 0.0, 4.0), (30.0, 0.0, 5.0)]);
+    let verts = acadrust::classes::civil::feature_line_vertices(&back, fl2).expect("FL2's vertices");
+    assert_eq!(verts.iter().map(|v| (v.point.x, v.point.y, v.point.z)).collect::<Vec<_>>(), vec![(0.0, 10.0, 6.0), (30.0, 10.0, 7.0)]);
+}
