@@ -921,17 +921,14 @@ impl ArchEntityData {
     /// (see [`Self::parcel_face`]).
     pub fn parcel_faces(&self) -> Option<(i32, Vec<i32>)> {
         self.parcel_site()?;
-        let (data, start, end) = self.main_stream()?;
-        let mut b = bits::Bits::new(data, start, end);
-        alignment::class_keys(&mut b)?;
-        b.pos += 121;
+        let mut b = self.parcel_fields()?;
         let number = b.bit_long()?;
         b.bit_long()?;
         b.bit_long()?;
         for _ in 0..4 {
             b.bit_double()?;
         }
-        (b.bit_long()? == 80 && b.bit_long()? == 1).then_some(())?;
+        (matches!(b.bit_long()?, 80 | 112) && b.bit_long()? == 1).then_some(())?;
         for _ in 0..3 {
             b.bit_double()?;
         }
@@ -941,14 +938,40 @@ impl ArchEntityData {
         Some((number, (0..n).map(|_| b.bit_long()).collect::<Option<_>>()?))
     }
 
+    /// Where a parcel's own fields start: past the class header and its
+    /// schema-word prefix. The header closes `BL 0x10025F04, 6 bits`; the
+    /// word gates the prefix, the parcel fields proper are
+    ///
+    /// ```text
+    /// BL number, BL 0, BL 0, BD 0, 3BD label location, BL 80 or 112,
+    /// BL 1, 3BD label location (a copy), BL 2, BL n, n x BL face,
+    /// BL 0, B 0, BS 0x04BE
+    /// ```
+    ///
+    /// Prefixes on file (all 54 parcels of Labels-Parcels.dwg):
+    ///
+    /// * `0b01_0101` (the word this crate writes): 8-bit key count, keys
+    ///   (see [`alignment::key`]), then a closing `BL` — 0 in fresh
+    ///   records, 16 or 88 in re-saved ones — then 121 bits.
+    /// * `0b01_0010` (Civil 3D 2013 parcels, no keys): 128 bits.
+    /// * `2..=4` (older words): the fields at 160 or at 303 bits; which
+    ///   of the two layouts a record carries is not in the header, so
+    ///   [`Self::parcel_fields_sized`] admits a word only with its whole
+    ///   body validated (label echo, faces, tail, exact end) and the
+    ///   readers return `None` when neither parses.
+    fn parcel_fields(&self) -> Option<bits::Bits<'_>> {
+        let (data, start, end) = self.main_stream()?;
+        let at = parcel_fields_offset(data, start, end)?;
+        let mut b = bits::Bits::new(data, start, end);
+        b.pos = at;
+        Some(b)
+    }
+
     /// Where a parcel's area label sits (the label location after its
     /// number; see [`Self::parcel_face`]).
     pub fn parcel_label(&self) -> Option<Vector2> {
         self.parcel_site()?;
-        let (data, start, end) = self.main_stream()?;
-        let mut b = bits::Bits::new(data, start, end);
-        alignment::class_keys(&mut b)?;
-        b.pos += 121;
+        let mut b = self.parcel_fields()?;
         for _ in 0..3 {
             b.bit_long()?;
         }
@@ -1772,3 +1795,57 @@ impl ArchObject {
         Some((raw, start, start + len))
     }
 }
+
+/// Where a parcel's own fields start in its class body (see
+/// [`ArchEntityData::parcel_fields`]): the schema word after the class
+/// header gates the prefix.
+fn parcel_fields_offset(data: &[u8], start: usize, end: usize) -> Option<usize> {
+    let mut b = bits::Bits::new(data, start, end);
+    match alignment::class_header(&mut b)? {
+        alignment::KEYED => {
+            for _ in 0..b.bits_value(8)? {
+                alignment::key(&mut b)?;
+            }
+            b.bit_long()?;
+            b.pos += 121;
+            Some(b.pos)
+        }
+        // Civil 3D 2013: no keys.
+        0b01_0010 => Some(b.pos + 128),
+        2..=4 => {
+            let head = b.pos;
+            [160, 303]
+                .into_iter()
+                .find(|&at| parcel_body_ok(data, head + at, end).is_some())
+                .map(|at| head + at)
+        }
+        _ => None,
+    }
+}
+
+/// Whether a full parcel body parses at `at` (see
+/// [`ArchEntityData::parcel_fields`] for the grammar): the label location
+/// twice over, a face list, and the closing word to the record's exact end.
+fn parcel_body_ok(data: &[u8], at: usize, end: usize) -> Option<()> {
+    let mut b = bits::Bits::new(data, at, end);
+    b.bit_long()?;
+    b.bit_long()?;
+    b.bit_long()?;
+    (b.bit_double()? == 0.0).then_some(())?;
+    let (x, y, z) = (b.bit_double()?, b.bit_double()?, b.bit_double()?);
+    (x.is_finite() && y.is_finite()).then_some(())?;
+    (matches!(b.bit_long()?, 80 | 112) && b.bit_long()? == 1).then_some(())?;
+    (b.bit_double()? == x && b.bit_double()? == y && b.bit_double()? == z).then_some(())?;
+    (b.bit_long()? == 2).then_some(())?;
+    let n = b.bit_long()?;
+    (1..=64).contains(&n).then_some(())?;
+    for _ in 0..n {
+        b.bit_long()?;
+    }
+    (b.bit_long()? == 0).then_some(())?;
+    (b.bit()? == false).then_some(())?;
+    (b.bit_short()? == 0x04BE).then_some(())?;
+    (b.remaining() == 0).then_some(())
+}
+
+
