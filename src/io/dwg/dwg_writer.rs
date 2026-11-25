@@ -2116,7 +2116,8 @@ fn write_ac18<W: Write + Seek>(
         section_names::APP_INFO,
         &app_info_data,
         false,
-        SMALL_PAGE,
+        // One page, as AutoCAD writes it (0x180..0x300).
+        app_info_data.len().max(1).next_multiple_of(SMALL_PAGE),
     )?;
 
     // ── Section: FileDepList ──
@@ -2348,6 +2349,20 @@ fn build_obj_free_space(
     document: &CadDocument,
     handle_count: usize,
 ) -> Vec<u8> {
+    // R2004+: 64-bit fields, 8 + 8 + 8 + 1 + 4 × 16 = 89 bytes.
+    if version >= DxfVersion::AC1018 {
+        let mut data = Vec::with_capacity(89);
+        data.extend_from_slice(&0u64.to_le_bytes());
+        data.extend_from_slice(&(handle_count as u64).to_le_bytes());
+        data.extend_from_slice(&0u64.to_le_bytes()); // Julian date
+        data.push(4);
+        for v in [0x32u64, 0x64, 0x200, 0xFFFF_FFFF] {
+            data.extend_from_slice(&v.to_le_bytes());
+            data.extend_from_slice(&0u64.to_le_bytes());
+        }
+        return data;
+    }
+
     let mut data = Vec::with_capacity(64);
 
     // Int32: 0
@@ -3468,6 +3483,12 @@ mod tests {
         // Check handle count at offset 4
         let count = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
         assert_eq!(count, 42);
+
+        let data = build_obj_free_space(DxfVersion::AC1032, &doc, 0xA5);
+        assert_eq!(data.len(), 89);
+        assert_eq!(&data[8..16], &0xA5u64.to_le_bytes());
+        assert_eq!(data[24], 4);
+        assert_eq!(&data[73..81], &0xFFFF_FFFFu64.to_le_bytes());
     }
 
     #[test]
