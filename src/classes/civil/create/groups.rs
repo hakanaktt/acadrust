@@ -250,18 +250,24 @@ impl PointQuery {
     fn selects(&self, p: &CogoPoint, case: bool) -> bool {
         match self {
             PointQuery::Numbers(list) => list.contains(&p.number),
-            PointQuery::Elevation(c, v) => c.holds(p.position.z, *v),
+            PointQuery::Elevation(c, v) => elevated(p) && c.holds(p.position.z, *v),
             PointQuery::RawDescription(patterns) | PointQuery::FullDescription(patterns) => {
                 let d = p.description.as_deref().unwrap_or("");
                 patterns.iter().any(|q| wildcard(q, d, case))
             }
             PointQuery::Names(patterns) => p.name.as_deref().is_some_and(|n| patterns.iter().any(|q| wildcard(q, n, case))),
-            PointQuery::ElevationRange(a, b) => (*a..=*b).contains(&p.position.z),
+            PointQuery::ElevationRange(a, b) => elevated(p) && (*a..=*b).contains(&p.position.z),
             PointQuery::Excluding(include, exclude) => include.as_ref().map_or(true, |q| q.selects(p, case)) && !exclude.selects(p, case),
             PointQuery::Custom(e) => e.selects(p, case),
             PointQuery::CaseSensitive(q) => q.selects(p, true),
         }
     }
+}
+
+/// Whether the point has an elevation: a point without one matches no
+/// elevation comparison or range (PG01: `<15` leaves it out).
+fn elevated(p: &CogoPoint) -> bool {
+    p.position.z > super::points::NO_ELEVATION * 0.5
 }
 
 /// `*` / `?` pattern match over the whole text, case ignored unless
@@ -1058,7 +1064,7 @@ impl QueryExpression {
         match self {
             QueryExpression::Compare(a, c, v) => match (a, v) {
                 (PointAttribute::Number, QueryConstant::Number(n)) => c.holds(f64::from(p.number), f64::from(*n)),
-                (PointAttribute::Elevation, QueryConstant::Elevation(z)) => c.holds(p.position.z, *z),
+                (PointAttribute::Elevation, QueryConstant::Elevation(z)) => elevated(p) && c.holds(p.position.z, *z),
                 (PointAttribute::Name, QueryConstant::Pattern(t)) => p.name.as_deref().is_some_and(|n| wildcard(t, n, case)),
                 (_, QueryConstant::Pattern(t)) => wildcard(t, p.description.as_deref().unwrap_or(""), case),
                 _ => false,

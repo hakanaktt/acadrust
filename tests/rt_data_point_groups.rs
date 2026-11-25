@@ -186,3 +186,15 @@ fn a_group_takes_its_styles_and_keeps_its_overrides() {
     assert_eq!((got.point_style, got.label_style, got.elevation), (None, None, Some(3.0)), "overrides kept");
     assert_eq!(group_numbers(&back, "Styled"), vec![1, 2]);
 }
+
+#[test]
+fn a_point_without_elevation_matches_no_elevation_query() {
+    let mut doc = rt_data::rt_data_drawing();
+    four_points(&mut doc);
+    add_cogo_point(&mut doc, Some(5), Vector3::new(40.0, 0.0, acadrust::classes::civil::NO_ELEVATION), Some("NONE"), None, None).unwrap();
+    add_point_group_query(&mut doc, "Low", None, &PointQuery::Elevation(Comparison::Less, 15.0)).unwrap();
+    add_point_group_query(&mut doc, "Band", None, &PointQuery::ElevationRange(-1e30, 26.0)).unwrap();
+    let back = rt_data::rt_data_roundtrip(&doc);
+    assert_eq!(group_numbers(&back, "Low"), vec![1, 3]);
+    assert_eq!(group_numbers(&back, "Band"), vec![1, 3, 4]);
+}
