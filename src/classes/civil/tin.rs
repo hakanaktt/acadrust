@@ -399,6 +399,19 @@ pub(super) fn read_operation(bits: &mut Bits) -> Option<TinDefinition> {
     Some(TinDefinition { operation, id, texts: Vec::new(), sources: Vec::new() })
 }
 
+/// The count of definitions a record's head keeps, when the head is in
+/// the counted form (`10 bits 8 + 32 x count`, see
+/// [`read_definitions`]). `None` in the application's no-definitions
+/// form — the empty shell (`Surface-2.dwg` "EG") keeps another 10-bit
+/// field there and no definitions block; its marker follows the head's
+/// 111-bit run (see [`triangulation_at`]).
+pub(super) fn definitions_count(data: &[u8], start: usize, end: usize) -> Option<usize> {
+    let at = definitions_at(data, start, end)?;
+    let mut bits = Bits::new(data, at, end);
+    let first = usize::from(bits.bits_value(2)?) << 8 | usize::from(bits.bits_value(8)?);
+    (first >= 8 && (first - 8) % 32 == 0).then(|| (first - 8) / 32)
+}
+
 /// Where the definitions start: the graph head (see
 /// profile::graph_head), 3BD origin, 9 BD, BD, `RC n`, `n` x 5 bits.
 pub(super) fn definitions_at(data: &[u8], start: usize, end: usize) -> Option<usize> {

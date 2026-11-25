@@ -230,3 +230,32 @@ fn the_snapshot_keeps_the_triangulation_before_it() {
     let tri = |t: &acadrust::classes::civil::TinSurface| t.triangles.iter().map(|t| t.vertices).collect::<Vec<_>>();
     assert_eq!(tri(&tin), tri(&snapshot));
 }
+
+/// The name reads back from this crate's records too: right after the
+/// definitions' texts, where the application keeps the created-by name.
+#[test]
+fn the_surface_name_reads_back() {
+    let mut doc = rt_data::rt_data_drawing();
+    // An empty surface (no definitions) keeps its name at the third text.
+    add_tin_surface(&mut doc, "Shell", &[], None).unwrap();
+    // A surface with a definition's name keeps its own after it.
+    let pts = pts3();
+    let definitions = vec![
+        TinDefinition { operation: TinOperation::AddPoints(pts.clone()), id: [0; 16], texts: vec![], sources: vec![] },
+        TinDefinition {
+            operation: TinOperation::Breaklines(TinBreaklineType::Standard, TinLines { objects: 0, polylines: vec![vec![Vector3::new(0.0, 50.0, 12.0), Vector3::new(100.0, 50.0, 14.0)]], mid_ordinate: 1.0, maximum_distance: 0.0, weeding_distance: 0.0, weeding_angle: 0.0 }),
+            id: [0; 16],
+            texts: vec!["Group (1)".to_string()],
+            sources: vec![],
+        },
+    ];
+    add_tin_surface_with(&mut doc, "Built", &definitions, false, None).unwrap();
+
+    let back = rt_data::rt_data_roundtrip(&doc);
+    let named: Vec<Option<String>> = rt_data::rt_data_entities(&back, "AECC_TIN_SURFACE")
+        .into_iter()
+        .map(|(_, data)| data.surface_name())
+        .collect();
+    assert_eq!(named.len(), 2);
+    assert!(named.contains(&Some("Shell".to_string())) && named.contains(&Some("Built".to_string())));
+}
