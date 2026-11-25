@@ -1222,11 +1222,26 @@ pub(crate) fn transform_multileader(e: &mut MultiLeader, transform: &Transform) 
 
 pub(crate) fn transform_mline(e: &mut MLine, transform: &Transform) {
     e.common.raw_record = None;
+    // The scale factor and the segment parameters are lengths in drawing
+    // units: a scale changes them with the points.
+    let scale_factor = transform
+        .apply_rotation(Vector3::new(1.0, 0.0, 0.0))
+        .length();
+    e.scale_factor *= scale_factor;
     e.start_point = transform.apply(e.start_point);
     for vertex in &mut e.vertices {
         vertex.position = transform.apply(vertex.position);
         vertex.direction = transform.apply_rotation(vertex.direction).normalize();
         vertex.miter = transform.apply_rotation(vertex.miter).normalize();
+        for segment in &mut vertex.segments {
+            for value in segment
+                .parameters
+                .iter_mut()
+                .chain(segment.area_fill_parameters.iter_mut())
+            {
+                *value *= scale_factor;
+            }
+        }
     }
     e.normal = transform.apply_rotation(e.normal).normalize();
 }
