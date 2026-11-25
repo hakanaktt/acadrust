@@ -49,7 +49,7 @@ pub use sample_lines::{SampleLines, SampleLineVertices, SectionViewGroupPlot};
 pub use section::{MassHaulViewFrame, SectionGeometry, SectionViewFrame};
 pub use style::{DisplayComponent, Marker, ProfileViewAxisStyle, ProfileViewAxisTitle, ProfileViewGrid, ProfileViewGridLines, ProfileViewStyleSettings, ProfileViewTicks, ProfileViewTitle, ViewAxes, ViewAxis};
 pub use subassembly::{AssemblyLayout, Attachment, SubassemblyShape};
-pub use survey::SurveyFigure;
+pub use survey::{SurveyFigure, SurveyFigureGeometry};
 pub use view_frames::{MatchLine, MatchLineGeometry, SheetGeometry, ViewFrame, ViewFrameGeometry};
 pub use topology::{Topology, TopologyVertex};
 pub use tin::{TinBoundaryType, TinBreaklineType, TinDefinition, TinLines, TinOperation, TinSurface, TinTriangle, TinVertex};
@@ -1173,6 +1173,20 @@ impl ArchEntityData {
             return None;
         }
         survey::figure(&self.decode().strings)
+    }
+
+    /// Geometry of a survey figure (`AECC_SVFIGURE`): the traverse vertices
+    /// the record caches (within the shared solved-point tolerance of the
+    /// live application's; see [`survey::SurveyFigureGeometry`]) and the
+    /// elevation range its bbox solid stores (the live application's
+    /// `MinElevation`/`MaxElevation`, bit for bit).
+    pub fn survey_figure_geometry(&self) -> Option<survey::SurveyFigureGeometry> {
+        if self.dxf_name != "AECC_SVFIGURE" {
+            return None;
+        }
+        let graphic = super::arch::decode::entity_graphic_data(self)?;
+        let (data, start, end) = self.main_stream()?;
+        survey::geometry(&data, start, end, &graphic)
     }
 
     /// Name of a survey network (`AECC_SVNETWORK`).

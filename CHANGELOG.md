@@ -3,6 +3,19 @@
 ### Unreleased
 
 - **Fix: a plot style's lineweight number picks the table entry before it** - `PlotStyleTable::resolve_lineweight` read entry N of the lineweight list for a style numbered N. The plot style editor lists "Use object lineweight" first and the table's widths after it, so style N now reads entry N - 1: style 1 gives the first width, the last width is reachable, and 0, 255 and a number past the list still keep the object's lineweight.
+- **Survey figures carry their elevation range and traverse** - A survey
+  figure's (`AECC_SVFIGURE`) graphic-image section draws the figure's XY
+  bounding box as a closed rectangle at two elevations (two five-point
+  rings and four vertical corner connectors); the ring elevations are the
+  figure's own. `SurveyFigureGeometry` carries `min_elevation` /
+  `max_elevation` — on the tutorials' survey drawings the live
+  application's `MinElevation` / `MaxElevation` bit for bit — and the
+  `vertices` of the traverse cache the class body ends with (an 8-bit
+  count word, then count x (RD x, RD y, RD z) at a 66-bit stride,
+  right-anchored 17 bits before the class body's end), within the shared
+  solved-point tolerance of the application's `BaseCurve` (x/y a display
+  cache ~250 ulps off, z exact; the arc parameters are not stored, so
+  curved lengths stay the survey engine's).
 - **DXF writer looks extension dictionaries up in linear time** - Each table
   record that names no extension dictionary had its owner looked up by walking
   every object of the document, so writing a DXF was quadratic in block records
