@@ -1877,11 +1877,7 @@ impl ArchObject {
 /// header gates the prefix.
 fn parcel_fields_offset(data: &[u8], start: usize, end: usize) -> Option<usize> {
     let mut b = bits::Bits::new(data, start, end);
-    let word = alignment::class_header(&mut b);
-    if std::env::var_os("PARCEL_FIXTURE_DEBUG").is_some() {
-        eprintln!("fixture: word={word:?} pos={}", b.pos);
-    }
-    match word? {
+    match alignment::class_header(&mut b)? {
         alignment::KEYED => {
             for _ in 0..b.bits_value(8)? {
                 alignment::key(&mut b)?;
