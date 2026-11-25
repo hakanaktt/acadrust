@@ -732,6 +732,32 @@ pub fn connect_pipe(doc: &mut CadDocument, pipe: Handle, start: Option<Handle>, 
     set_connectors(doc, pipe, false, &[ends[0].value(), ends[1].value()])
 }
 
+/// Names a pipe or structure `name` (what the drawing's part list shows).
+/// The writer names parts `Pipe - (n)` / `Structure - (n)` by their place
+/// in the network; the application may rename a part afterwards (it
+/// suffixes a duplicate with ` (1)`) — this writes that name.
+///
+/// The record keeps every bit; only the class body's name text (the
+/// string the writers put the name at) changes. Names are not checked for
+/// uniqueness: the application resolves a duplicate on open.
+pub fn set_network_part_name(doc: &mut CadDocument, part: Handle, name: &str) -> Result<(), DxfError> {
+    let refused = || invalid("not a pipe network part");
+    if name.trim().is_empty() {
+        return Err(invalid("a part name needs text"));
+    }
+    let a = arch_entity(doc, part).filter(|a| a.dxf_name == "AECC_PIPE" || a.dxf_name == "AECC_STRUCTURE").ok_or_else(refused)?;
+    let (data, start, end) = a.main_stream().ok_or_else(refused)?;
+    let mut strings = a.decode().strings;
+    (strings.len() > 6).then_some(()).ok_or_else(refused)?;
+    strings[6] = name.to_string();
+    let dxf = a.dxf_name.clone();
+    let common = doc.get_entity(part).ok_or_else(refused)?.common().clone();
+    let bits: Vec<bool> = (start..end).map(|p| data[p / 8] >> (7 - p % 8) & 1 == 1).collect();
+    let refs: Vec<Ref> = a.typed_handles().into_iter().map(typed).collect();
+    put_entity(doc, &dxf, common, |w| bits.iter().for_each(|b| w.write_bit(*b)), Body { refs, strings })?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
