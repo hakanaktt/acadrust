@@ -1106,7 +1106,7 @@ impl ProfileViewFrame {
 /// `BL 80, 2 bits, BL, BL, BL version`, then version 5: `BL key count`,
 /// keys (see alignment::key), `BL 0`, 121 bits; version 4 (Civil 3D 2013):
 /// `BL 0`, 128 bits.
-pub(super) fn graph_head(bits: &mut Bits) -> Option<()> {
+pub(super) fn graph_head(bits: &mut Bits) -> Option<i32> {
     (bits.bit_long()? == 80).then_some(())?;
     bits.pos += 2;
     bits.bit_long()?;
@@ -1116,17 +1116,20 @@ pub(super) fn graph_head(bits: &mut Bits) -> Option<()> {
             for _ in 0..bits.bit_long()? {
                 super::alignment::key(bits)?;
             }
-            (bits.bit_long()? == 0).then_some(())?;
+            // Profiles and section views keep 0; the application's surface
+            // records keep a count (21, 26, 50, 64, 93 in the samples).
+            let closed = bits.bit_long()?;
             bits.pos += 121;
+            Some(closed)
         }
         // Civil 3D 2013: no keys.
         4 => {
-            (bits.bit_long()? == 0).then_some(())?;
+            let closed = bits.bit_long()?;
             bits.pos += 128;
+            Some(closed)
         }
         _ => return None,
     }
-    Some(())
 }
 
 fn view_frame_fields(data: &[u8], start: usize, end: usize) -> Option<ProfileViewFrame> {

@@ -257,6 +257,34 @@ impl ArchEntityData {
         tin::find(data, start, end)
     }
 
+    /// The surface's name: the first non-empty string after the
+    /// definitions' texts. The application stores a created-by name before
+    /// them (2027 samples: "", "", "leightkadmin", then the definitions'
+    /// names, the surface's name and its description — `Surface-2.dwg`'s
+    /// empty shell reads "EG"); records this crate writes keep the name
+    /// right after the texts, so it is read there as a fallback. A record
+    /// whose definitions this grammar does not read names `None` — its
+    /// text boundary is unknown.
+    pub fn surface_name(&self) -> Option<String> {
+        if self.civil_kind() != Some(CivilKind::TinSurface) {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        let texts = match tin::definitions(data, start, end) {
+            Some(d) => d.list.iter().map(TinDefinition::text_count).sum::<usize>(),
+            None => match tin::definitions_count(data, start, end) {
+                None => 0,
+                Some(_) => return None,
+            },
+        };
+        let strings = self.decode().strings;
+        strings
+            .get(3 + texts)
+            .filter(|s| !s.is_empty())
+            .cloned()
+            .or_else(|| strings.get(2 + texts).filter(|s| !s.is_empty()).cloned())
+    }
+
     /// Definitions of a TIN surface in build order, with their
     /// texts (before the surface name) and source objects (the references
     /// after the hard owner), and whether the surface
