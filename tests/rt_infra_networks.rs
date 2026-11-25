@@ -20,7 +20,7 @@ use acadrust::classes::civil::{
     add_pressure_pipe, add_pressure_pipe_of_size, add_pressure_tee,
     add_structure, add_structure_of_family, add_structure_of_size, connect_pipe, connect_pressure_parts, ensure_civil,
     network_part_families, network_structure_size_fields, pressure_part_descriptions, PressurePipe,
-    StructureSizeChoice,
+    set_network_part_name, StructureSizeChoice,
 };
 use acadrust::entities::{EntityType, ExtendedEntityData};
 use acadrust::objects::ObjectType;
@@ -186,6 +186,37 @@ fn gravity_network_survives_save_reopen_with_connections() {
     // The parts keep their names (the record's identifier text).
     assert!(entity(&back, s1).decode().strings[6].starts_with("Structure - ("));
     assert!(entity(&back, p1).decode().strings[6].starts_with("Pipe - ("));
+}
+
+/// A renamed part keeps the new name through save/reopen with the rest of
+/// its record untouched (the application renames duplicates with a
+/// ` (1)` suffix; §3m).
+#[test]
+fn renamed_part_keeps_its_name_and_record() {
+    let mut doc = doc();
+    ensure_civil(&mut doc).unwrap();
+    let net = add_pipe_network(&mut doc, "RT-NAMES", None).unwrap();
+    let s = add_structure(&mut doc, net, v(0.0, 0.0, 0.0), 0.0).unwrap();
+    let p = add_pipe(&mut doc, net, v(0.0, 0.0, -2.0), v(50.0, 0.0, -2.0)).unwrap();
+    connect_pipe(&mut doc, p, Some(s), None).unwrap();
+    set_network_part_name(&mut doc, s, "Inlet 12").unwrap();
+    set_network_part_name(&mut doc, p, "Pipe - (10) (1)").unwrap();
+    assert!(set_network_part_name(&mut doc, p, "   ").is_err(), "a part name needs text");
+
+    let back = roundtrip(&doc, "part-names");
+    assert_eq!(entity(&back, s).decode().strings[6], "Inlet 12");
+    assert_eq!(entity(&back, p).decode().strings[6], "Pipe - (10) (1)");
+    // The record is otherwise untouched: ends, position and the
+    // connection survive the rename.
+    assert_eq!(entity(&back, p).pipe_ends(), Some((v(0.0, 0.0, -2.0), v(50.0, 0.0, -2.0))));
+    assert_eq!(entity(&back, s).structure_position(), Some(v(0.0, 0.0, 0.0)));
+    let p_conn = connectors_of(&back, p);
+    assert_eq!(p_conn.len(), 2);
+    assert_eq!(connector_part(&back, p_conn[0]), p.value());
+    // A native entity is not a network part.
+    let line = acadrust::entities::Line { common: Default::default(), start: v(0.0, 0.0, 0.0), end: v(1.0, 0.0, 0.0), thickness: 0.0, normal: v(0.0, 0.0, 1.0) };
+    let lh = doc.add_entity(acadrust::entities::EntityType::Line(line)).unwrap();
+    assert!(set_network_part_name(&mut doc, lh, "X").is_err());
 }
 
 /// The pressure network roundtrip: straight and curved pipes, an elbow, a
