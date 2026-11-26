@@ -237,8 +237,25 @@ pub enum AlignmentElementKind {
     },
     /// Points the record stores, joined in order.
     Points { points: Vec<Vector2> },
+    /// A best-fit arc (the application's `CreateBestFitAlignment` on points
+    /// that fit a curve): the fitted radius and every source point of the
+    /// regression, in regression order, each with its signed offset from
+    /// the fit and its projection onto it.
+    BestFitArc { radius: f64, points: Vec<BestFitPoint> },
     /// Element kind or constraint this crate does not decode.
     Other { element_type: i32, constraint: Option<i32> },
+}
+
+/// One source point of a best-fit arc's regression record.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct BestFitPoint {
+    /// The source point's coordinates.
+    pub point: Vector2,
+    /// Its signed offset from the fitted arc.
+    pub offset: f64,
+    /// Its projection onto the fitted arc.
+    pub projection: Vector2,
 }
 
 /// How a spiral's curvature runs from zero to `1/radius` over its length.
@@ -1040,6 +1057,58 @@ fn read_element(bits: &mut Bits, member: Option<usize>, after_type: Option<usize
                 first_arc: bits.bit_double()?,
             }
         }
+        (258, Some(46)) => {
+            // A best-fit arc's regression record: a head of BS 0 and the
+            // source-point count twice, then one record per point — the
+            // point, the constant 1.0, its offset, its projection — and a
+            // tail of a one-bit 0, BS -193, nine BS 256 markers, the
+            // point's zero-based source index and BS 0. After the last
+            // record: a 79-bit block, the fitted radius, and 162 bits to
+            // the record's end.
+            let head = bits.bit_short()?;
+            let count = bits.bit_short()?;
+            let again = bits.bit_short()?;
+            if !(head == 0 && count == again && (1..=4096).contains(&count)) {
+                return None;
+            }
+            let mut points = Vec::with_capacity(count as usize);
+            let mut radius = None;
+            for _ in 0..count {
+                let x = bits.bit_double()?;
+                let y = bits.bit_double()?;
+                (bits.bit_double()? == 1.0).then_some(())?;
+                let offset = bits.bit_double()?;
+                let px = bits.bit_double()?;
+                let py = bits.bit_double()?;
+                points.push(BestFitPoint {
+                    point: Vector2::new(x, y),
+                    offset,
+                    projection: Vector2::new(px, py),
+                });
+                let selector = bits.bits_value(2)?;
+                if selector == 0b01 {
+                    bits.skip(79)?;
+                    let fitted = bits.bit_double()?;
+                    (fitted.is_finite() && fitted > 0.0).then_some(())?;
+                    radius = Some(fitted);
+                    bits.pos += 162;
+                    break;
+                }
+                (selector == 0b00).then_some(())?;
+                let low = bits.raw_short_byte()?;
+                let high = bits.raw_short_byte()?;
+                (i16::from_le_bytes([low, high]) == -193).then_some(())?;
+                for _ in 0..9 {
+                    (bits.bit_short()? == 256).then_some(())?;
+                }
+                bits.bit_short()?;
+                (bits.bit_short()? == 0).then_some(())?;
+            }
+            let Some(radius) = radius else {
+                return None;
+            };
+            AlignmentElementKind::BestFitArc { radius, points }
+        }
         _ => AlignmentElementKind::Other {
             element_type,
             constraint,
@@ -1103,6 +1172,16 @@ fn read_element(bits: &mut Bits, member: Option<usize>, after_type: Option<usize
             second,
             first_arc,
         } => positive(first[1]) && positive(second[1]) && *first_arc >= 0.0,
+        AlignmentElementKind::BestFitArc { radius, points } => {
+            positive(*radius)
+                && points.iter().all(|p| {
+                    p.point.x.is_finite()
+                        && p.point.y.is_finite()
+                        && p.offset.is_finite()
+                        && p.projection.x.is_finite()
+                        && p.projection.y.is_finite()
+                })
+        }
         _ => true,
     };
     valid.then_some(AlignmentElement {
@@ -2241,8 +2320,11 @@ fn solve_run(run: &[&AlignmentElement], out: &mut Vec<Vec<Vector2>>) {
                 ))
             }
             // Solved with the fixed arc before it; on its own it has no
-            // position.
-            AlignmentElementKind::FreeLine | AlignmentElementKind::Other { .. } => None,
+            // position. A best-fit arc carries its regression, not its
+            // solved geometry.
+            AlignmentElementKind::FreeLine
+            | AlignmentElementKind::BestFitArc { .. }
+            | AlignmentElementKind::Other { .. } => None,
         };
         match solved {
             Some((q, end)) => {
@@ -4380,10 +4462,191 @@ pub(super) fn superelevation_view(strings: &[String], refs: &[(u64, u8)]) -> Opt
 mod tests {
     use super::*;
 
+    #[test]
+    fn reads_the_best_fit_arc_in_a_recorded_alignment() {
+        // Align-4.dwg's AECC_ALIGNMENT entity, main data stream — recorded
+        // 2026-11-25 (artifact bfa_probe1.out, the entity record's bits
+        // 2597..13352). The seven-element list runs from bit 3017 to the
+        // body's end at 13352; the best-fit arc holds its sixth record
+        // (chain id 8, between the fixed line id 4 and
+        // the element id 9; type 258, constraint 46): 16 regression points
+        // (the drawing's 16 COGO points, best-fit sequence order) and the
+        // fitted radius 334.3905128049457, exact against the live
+        // `AlignmentArc.Radius` (read-only capture cap.d010.align4.oracle).
+        const BODY_HEX: &str = concat!(
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000000000000000000000000000000000000000000000000eaa12a0a84022f81082a0440",
+    "880005a0426828d0c1a0c8018639eb8006a0480000000002822502f17329a7a646d502407480d03880a0e00808000204",
+    "901906a22b7dbcbdf5ae40d6424023f2cdaf4039a84a687b0db14026a4f8167ee3af400040400010248120c839cd4253",
+    "43d86d8a013527c0b3f71d7a01e8f6e24ed5cd8a07b5206456632562000202000081241107420f47b71276ae6c503da9",
+    "0322b3192b102b41f3009c55ecd029af7cf4fa186ad00020100004090000000000003c2fc000000000000f0bf4040000",
+    "00000000f0bf47483202811d9fffffffffed080020080002048000000000001e17e000000000000785fa040000000000",
+    "00785f8000000000001e17f20e81208000080000000000000000928000000000000034a0000000000000092800100800",
+    "02048000000000001e17e000000000000785fa02000000000000785fa5c421044264411038fd2f4e6654acd00d47df1f",
+    "34997ab4047022560e179137c03a6ac61332932cd0048c238fc9b69ab400ffffffff40627e25e7ab791acd00d83b8a01",
+    "212dab404506ada3033c53e400b36509c9413acd00511d4980d768ab400ffffffffa0e64bd6faca22cd0096e72148e51",
+    "fab404d034f879243e3b4027cc37325922acd00420b08874656ab400ffffffff40e37fdd0e868a46cd00ae2c262a1f82",
+    "ab40460b6f123b74636c01474e1acaaa42cd00a05ca4849c55ab400ffffffff40a0b56983396f66cd00de259cdd9e96a",
+    "b404105e80c5cc433bc01679b0dae177acd006004bccb1361ab400ffffffff4121f634e41503decd0076a0ce447d47ab",
+    "40460d9d2b777ec31403b78d455b17cacd005c3da705336aab400ffffffff416104051bb3b45ad100dcb21b6241bbab4",
+    "04d0c75b45f9df3ac00f613ddf59086d1005125f21bbf89ab400ffffffff4221f7aebd9f20cad100742d4ec91f6cab40",
+    "42083b7d5a88f34401315397bcecaad100716e87118691ab400ffffffff41a25f086b4b5542d1006c10765249e4ab404",
+    "80aff546f13d31c0113439005f96ad100337536ffb7c7ab400ffffffff41e18eb5986525ced100f29162099283ab4047",
+    "8979afb060f454033bb706fa3d6ed1009c8622ad2bc9ab400ffffffff42639673f9ef516ed1001e24b3a73a26ac40438",
+    "1e77b1f48e42c0091df3e6d85ced1002c9f316edaecab400ffffffff4323a4817edef62ad100a4a59f5e83c5ab404d00",
+    "d711366113e402196790a93dded1002ad8d55b67f3ab400ffffffff42a187089febb68ad1000eda966e44faab4047060",
+    "9ecf75513b4009d72394d423ed1008dcd82374b20ac400ffffffff436106699c21f1d6d10074b03a90c663ac404587a4",
+    "d0b4dfb44c0186f71338ee52d10064f1b436aa2aac400ffffffff42e27f2b6d22a2bad1009ad99d700d58ac404c0f5f0",
+    "b6bcbd16400cc84aa287aaad100ba7933e1e65eac400ffffffff43a15c3909ca264ed100723dba146988ac404a09957c",
+    "753833ec014f0688804ab2d100ce498c672064ac404ffffffff43e40c84282127bcb5147fcce880664255143d5568817",
+    "2f267c3ccbd58807fffffff814020000812000000000000785f8000000000001e17e810000000000001e17e000000000",
+    "000785fa0284a1100002000000000000006029200000000000180a48000000000000034a06f99e272f766daa0124f20c",
+    "29d2956a05480ac2116b0f9f854a3d34014723cf84c6c502a880245fbf3758704040641a88adf6f2f7d6b9035909008f",
+    "cb36bd02c186b1952a02c103635e92d3bf6ebd0288adf6f2f7d6b9035909008fcb36bd02405014060000000000101410",
+    "16108b587cfc2a51e9a00a391e7c263600000000000005940405555520281204814818be040000000000000000000000",
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "0000000000000000000000000000000000000000000000"
+        );
+        let data: Vec<u8> = (0..BODY_HEX.len() / 2)
+            .map(|i| u8::from_str_radix(&BODY_HEX[i * 2..i * 2 + 2], 16).unwrap())
+            .collect();
+        let elements = element_list_at(&data, 3017, 13352).expect("the recorded list reads");
+        assert_eq!(elements.len(), 7);
+        let (id, previous, next) = (elements[5].id, elements[5].previous, elements[5].next);
+        assert_eq!((id, previous, next), (8, 4, 9));
+        let AlignmentElementKind::BestFitArc { radius, points } = &elements[5].kind else {
+            panic!("the sixth record is the best-fit arc, got {:?}", elements[5].kind);
+        };
+        assert_eq!(*radius, 334.3905128049457);
+        assert_eq!(points.len(), 16);
+        // The regression order and every source point: the drawing's 16
+        // COGO points, exact to the last digit.
+        let source: [((f64, f64), (f64, f64, f64)); 16] = [
+            ((4946.598537323272, 3531.644439264879), (4940.790223638506, 3508.8046586739692, -23.56675805666822)),
+            ((4934.870765300845, 3478.5644648740818), (4942.314243486424, 3508.4209006164824, 30.770312360118908)),
+            ((5000.698226307105, 3471.947815951843), (5002.393705140944, 3499.137748957991, 27.2427440863583)),
+            ((5009.635273216262, 3521.06086844726), (5008.6667866006765, 3498.805699478442, -22.27623200083906)),
+            ((5081.3586178035885, 3531.310284499762), (5086.521175616967, 3504.5386637454358, -27.264843314971642)),
+            ((5111.250079724353, 3491.7446655817866), (5106.770848386904, 3509.0996525061037, 17.923701752640568)),
+            ((5142.929386496836, 3549.6277016311487), (5153.392547101769, 3524.8732600851586, -26.87489732256637)),
+            ((5170.782832140915, 3510.0620827131734), (5162.2341292696765, 3528.7618524858776, 20.561169965079102)),
+            ((5200.83523719073, 3570.1432072539374), (5210.492216397139, 3555.8593689935747, -17.24196284769232)),
+            ((5235.28554383977, 3521.7852278521686), (5211.5615044789865, 3556.5853052892035, 42.117400598987786)),
+            ((5211.830017007164, 3603.114560697707), (5235.381283728206, 3574.4266219622423, -37.11684244457541)),
+            ((5258.741079278502, 3554.7565812959383), (5239.309248229843, 3577.701872522962, 30.06796380529505)),
+            ((5282.929598317104, 3581.1336562291317), (5263.313774964808, 3600.1469078899304, 27.318203903356732)),
+            ((5237.484503245506, 3633.887819131889), (5268.2336237871505, 3605.3324486298243, -41.96328870089627)),
+            ((5294.657361733406, 3628.0262498214843), (5290.1192957240155, 3631.450936897859, 5.6852902016229905)),
+            ((5267.536899689198, 3652.2052362632758), (5292.070810482214, 3634.063290008554, -30.512997111212485)),
+        ];
+        for (point, (source, (px, py, offset))) in points.iter().zip(source) {
+            assert_eq!(point.point, Vector2::new(source.0, source.1));
+            assert_eq!(point.offset, offset);
+            assert_eq!(point.projection, Vector2::new(px, py));
+        }
+    }
+
+
+    #[test]
+    fn reads_the_application_best_fit_line_stored_as_a_line() {
+        // S1.dwg — a five-point best-fit LINE created in Civil 3D 2027
+        // (`CreateBestFitAlignment`, spirals off, max radius 1000; saved
+        // 2026-11-26, report oracle bfa_S1_bestfit_report.txt). This
+        // release writes the created fit as a plain fixed line through the
+        // fit's endpoint projections — no best-fit regression record — so
+        // the `(258, Some(46))` arm must not fire here. The line runs from
+        // point 1's on-entity projection to point 5's, exact against the
+        // recorded report (E 1239.4997 / N 1023.8391 … E 999.7178 /
+        // N 1003.2938).
+        const BODY_HEX: &str = concat!(
+    "BE40C09CAD6A38013801000003000000A400000024000000D9DDA2CC8A3E8F40D4DE3298265B8F400000000000000000",
+    "00000000000000000000000000000000000000000000F03F000000000000F03F00000000000000000000000000000000",
+    "9A9999999999C93F000000000000F03F000000000000000041006500630063004400620041006C00690067006E006D00",
+    "65006E0074002000280041006500630063004C0061006E00640031003300300029000000840000000600000005000000",
+    "0C11D6FFBD3D8F40071266CB595A8F400000000000000000CFD00BAEFF5D9340071266CB595A8F400000000000000000",
+    "CFD00BAEFF5D9340DAEF787CB6FE8F4000000000000000000C11D6FFBD3D8F40DAEF787CB6FE8F400000000000000000",
+    "0C11D6FFBD3D8F40071266CB595A8F4000000000000000000800000015000000AB400010EAA12A0A84022F81082A0240",
+    "880005A044D7F714E8C769458E800000000000000000000000000000002407480D03880A0200808000204901ACFD00BA",
+    "EFF5D9340DAEF787CB6FE8F400C11D6FFBD3D8F40071266CB595A8F40AA90180000000000005940A405024090290317C",
+    "08882080328031803180248036803800208036003480338037003680328037003A00521E8200D800D200CE00DC00DA00",
+    "CA00DC00E80040005A00400050006200520155090154937150149CAD149CAD10148ABB943F",
+        );
+        let data: Vec<u8> = (0..BODY_HEX.len() / 2)
+            .map(|i| u8::from_str_radix(&BODY_HEX[i * 2..i * 2 + 2], 16).unwrap())
+            .collect();
+        let elements = element_list_at(&data, 2973, 3463).expect("the recorded list reads");
+        assert_eq!(elements.len(), 1);
+        let (id, previous, next) = (elements[0].id, elements[0].previous, elements[0].next);
+        assert_eq!((id, previous, next), (1, 0, 0));
+        assert_eq!(
+            elements[0].kind,
+            AlignmentElementKind::FixedLine {
+                start: Vector2::new(1239.4996873708913, 1023.8391045997807),
+                end: Vector2::new(999.7177731250717, 1003.2938449835063),
+            }
+        );
+    }
+
+    #[test]
+    fn reads_the_application_best_fit_arc_stored_as_tangent_lines() {
+        // S2.dwg — a five-point best-fit ARC created in Civil 3D 2027
+        // (same session and options as the line above; saved 2026-11-26,
+        // report oracle bfa_S2re_bestfit_report.txt). The fit wrapped past
+        // a full circle (a tangent-to-tangent R 200 proposal, offsets
+        // 0 / -46.791 / -165.270 / -46.791 / 0), and this release stored
+        // the created alignment as the two tangent fixed lines — again no
+        // best-fit regression record. The lines run tangent to the fit at
+        // points 1 and 5 (the generating circle's E/N center 1000/1100,
+        // r 200) and their total span 2268.515 is the live
+        // `Alignment.Length` (bridge read at save time).
+        const BODY_HEX: &str = concat!(
+    "BE40C09CF4AA38013801000003000000A4000000240000002B8FF8BC4A61894075666666663091400000000000000000",
+    "00000000000000000000000000000000000000000000F03F000000000000F03F00000000000000000000000000000000",
+    "9A9999999999C93F000000000000F03F000000000000000041006500630063004400620041006C00690067006E006D00",
+    "65006E0074002000280041006500630063004C0061006E00640031003300300029000000840000000600000005000000",
+    "5EC22BF07D6089400F0000000030914000000000000000006856B1FCFFBF92400F000000003091400000000000000000",
+    "6856B1FCFFBF9240CA4A73DA8374A14000000000000000005EC22BF07D608940CA4A73DA8374A1400000000000000000",
+    "5EC22BF07D6089400F0000000030914000000000000000000800000015000000AB400010EAA12A0A84022F81082A0240",
+    "880005A0419FA376D87BD423E0800000000000000000000000000000002407480D03880A04008080002049019026856B",
+    "1FCFFBF92400F000000003091406856B1FCFFBF9240CA4A73DA8374A14000404000102481203342B58FE7FDFC9206525",
+    "39ED41BA50A02F6115F83EB044A00983E9594EA0C92055480C0000000000002CA0520281204814818BE0444104019401",
+    "8C018C012401B401C0010401B001A4019C01B801B4019401B801D00290F41006C00690067006E006D0065006E0074002",
+    "0002D002000280031002900AA8480AA49B8A80A4E7A2A4E7A280A455DCA1",
+        );
+        let data: Vec<u8> = (0..BODY_HEX.len() / 2)
+            .map(|i| u8::from_str_radix(&BODY_HEX[i * 2..i * 2 + 2], 16).unwrap())
+            .collect();
+        let elements = element_list_at(&data, 2973, 3796).expect("the recorded list reads");
+        assert_eq!(elements.len(), 2);
+        let (id, previous, next) = (elements[0].id, elements[0].previous, elements[0].next);
+        assert_eq!((id, previous, next), (1, 0, 2));
+        let (id, previous, next) = (elements[1].id, elements[1].previous, elements[1].next);
+        assert_eq!((id, previous, next), (2, 1, 0));
+        assert_eq!(
+            elements[0].kind,
+            AlignmentElementKind::FixedLine {
+                start: Vector2::new(1199.999987383746, 1100.0000000000034),
+                end: Vector2::new(1199.999987383746, 2234.2575260189815),
+            }
+        );
+        assert_eq!(
+            elements[1].kind,
+            AlignmentElementKind::FixedLine {
+                start: Vector2::new(1199.999987383746, 2234.2575260189815),
+                end: Vector2::new(812.0614932459537, 1168.404002458269),
+            }
+        );
+    }
+
     fn v(x: f64, y: f64) -> Vector2 {
         Vector2::new(x, y)
     }
-
     #[test]
     fn reads_a_superelevation_block_with_one_lane() {
         let bl = |v: i32| match v {
