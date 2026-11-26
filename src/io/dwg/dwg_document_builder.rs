@@ -1718,6 +1718,32 @@ impl DwgDocumentBuilder {
             }
             _ => None,
         });
+        // The `<layer> @ <n>` layers AutoCAD writes for annotative
+        // decomposition (a drawing with annotative objects saved as 2007 or
+        // older) are ordinary layers, not per-viewport overrides: their record
+        // carries XDATA under AcadAnnotativeDecomposition, and the entities
+        // that reference them stay on them (#677).
+        let decomposition_app_handle = parsed_entries.iter().find_map(|entry| match entry {
+            ParsedEntry::AppId(handle, data)
+                if data.name.eq_ignore_ascii_case("AcadAnnotativeDecomposition") =>
+            {
+                Some(*handle)
+            }
+            _ => None,
+        });
+        if let Some(app_handle) = decomposition_app_handle {
+            for entry in &parsed_entries {
+                if let ParsedEntry::Layer(handle, data) = entry {
+                    let decomposed = document
+                        .eed_by_handle
+                        .get(&Handle::from(*handle))
+                        .is_some_and(|eed| eed.iter().any(|(app, _)| *app == app_handle));
+                    if decomposed {
+                        maps.layers.insert(*handle, data.name.clone());
+                    }
+                }
+            }
+        }
         let eed_is_wide = self.obj_reader.version().r2007_plus();
         let mut cleared_default_vports = false;
         if parsed_entries
