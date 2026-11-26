@@ -187,7 +187,9 @@ pub enum TinOperation {
     /// edges, 2 add points to flat triangles, 4 add points to flat edges,
     /// 8 fill gaps in contour data).
     MinimizeFlatAreas { counts: [i32; 2], options: i32 },
-    /// The surface of a grading group (the group is the source).
+    /// The surface of a grading group (the group is a source); the
+    /// definition keeps one text (empty in the corpus samples) before the
+    /// surface's name.
     GradingGroup,
     /// Simplify: the method (0 point removal, 1 edge contraction), the
     /// options (1 remove a percentage, 2 limit the elevation change), the
@@ -218,7 +220,7 @@ impl TinDefinition {
     pub fn text_count(&self) -> usize {
         match &self.operation {
             TinOperation::Import { .. } => 2,
-            TinOperation::PointGroup | TinOperation::Breaklines(..) | TinOperation::Contours(_) | TinOperation::Boundary { .. } | TinOperation::PasteSurface | TinOperation::DrawingObjects { .. } | TinOperation::PointFile { .. } | TinOperation::CorridorSurface(_) => 1,
+            TinOperation::PointGroup | TinOperation::Breaklines(..) | TinOperation::Contours(_) | TinOperation::Boundary { .. } | TinOperation::PasteSurface | TinOperation::DrawingObjects { .. } | TinOperation::PointFile { .. } | TinOperation::CorridorSurface(_) | TinOperation::TinFile { .. } | TinOperation::GradingGroup => 1,
             _ => 0,
         }
     }

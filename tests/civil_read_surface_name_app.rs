@@ -77,3 +77,52 @@ fn a_surface_with_unreadable_definitions_names_none() {
         assert_eq!(surface_names(&doc), vec![None::<String>], "{drawing}");
     }
 }
+
+/// A surface built from a `.tin` file keeps the file's path as its one
+/// definition text: the name sits after it (`Assembly-2a.dwg`: "", "",
+/// "yed", "..\\Corridor surface.tin", "Existing Ground"). Read without
+/// the path the name decoded as the path itself.
+#[test]
+fn a_surface_built_from_a_tin_file_names_after_its_path() {
+    for drawing in ["Assembly-2a.dwg", "Assembly-2b.dwg", "Assembly-2c.dwg"] {
+        let Some(doc) = app_drawing(drawing) else { continue };
+        assert_eq!(surface_names(&doc), vec![Some("Existing Ground".to_string())], "{drawing}");
+    }
+}
+
+/// A surface built from a grading group keeps one definition text (empty
+/// in the corpus samples) before its name (`Grading-4.dwg`: "", "",
+/// "leightkadmin", "", "Building Pad", "Description"). Read without the
+/// slot the empty name fell back to the created-by name.
+#[test]
+fn a_surface_from_a_grading_group_names_after_its_text_slot() {
+    for (drawing, expected) in [
+        ("Grading-3A.dwg", vec!["EG", "Ditch Drainage AB", "Ditch Drainage BC"]),
+        ("Grading-4.dwg", vec!["EG", "Building Pad"]),
+        ("Grading-5.dwg", vec!["EG", "Building Pad"]),
+    ] {
+        let Some(doc) = app_drawing(drawing) else { continue };
+        let expected: Vec<Option<String>> =
+            expected.into_iter().map(|s| Some(s.to_string())).collect();
+        assert_eq!(surface_names(&doc), expected, "{drawing}");
+    }
+}
+
+/// The corpus roundtrip packets' five surfaces, named as Civil 3D 2027
+/// reads them (read-only oracle opens, 2026-11-26/27 night packets,
+/// `cap.night.*.census.txt`): the name grammar must carry every
+/// definitions-bearing record kind — import, breaklines + boundary,
+/// point group, and the no-definitions shell.
+#[test]
+fn the_corpus_roundtrip_packets_names_match_the_application() {
+    for (drawing, expected) in [
+        ("Grading-1.dwg", "EG"),
+        ("Align-7A.dwg", "Existing Ground"),
+        ("Labels-Surface.dwg", "Composite"),
+        ("Surface-3.dwg", "XGND"),
+        ("Survey-5C.dwg", "Figure Surface 1"),
+    ] {
+        let Some(doc) = app_drawing(drawing) else { continue };
+        assert_eq!(surface_names(&doc), vec![Some(expected.to_string())], "{drawing}");
+    }
+}
