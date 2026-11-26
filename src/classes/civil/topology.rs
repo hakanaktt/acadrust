@@ -401,25 +401,15 @@ pub(super) fn topology(data: &[u8], start: usize, end: usize) -> Option<Topology
         let (face_ids, outside_face_flags, outside_entries) = face_list(data, faces, end).unwrap_or_default();
         Some(Topology { edges, edge_flags, edge_ids, face_ids, next_node, next_key, outside_face_flags, outside_entries })
     };
-    // The recorded table's next free key travels with the read even when
-    // the section does not immediately follow the table: on a graded site
-    // container an opaque ShapeManager solid stream intervenes, and the
-    // marker-search fallback below finds the first section.
-    let table = elevation_keys(data, start, end);
-    if let Some(t) = &table {
-        let mut bits = Bits::new(data, t.after, end);
-        let head = (|| {
-            bits.bit_long()?;
-            bits.bit_long()?;
-            (bits.bit_long()? as u32 == 0x8000_0001).then_some(())
-        })();
-        if head.is_some() {
-            return read(bits.pos, t.next_key);
-        }
-    }
-    // debt: a container whose head does not follow the layout above is
-    // read by trying positions for its node list.
-    (start..end.saturating_sub(40)).find_map(|pos| read(pos, table.as_ref().map_or(0, |t| t.next_key)))
+    // A graded site container keeps its gradings (with their solids)
+    // between the table and the topology section; their layout is not
+    // mapped, so such a container gives no topology.
+    let t = elevation_keys(data, start, end)?;
+    let mut bits = Bits::new(data, t.after, end);
+    bits.bit_long()?;
+    bits.bit_long()?;
+    (bits.bit_long()? as u32 == 0x8000_0001).then_some(())?;
+    read(bits.pos, t.next_key)
 }
 
 #[cfg(test)]
@@ -536,8 +526,8 @@ mod tests {
     }
 
     /// A table in another form refuses: the head path returns `None` and
-    /// `topology` falls to the documented scan fallback instead of
-    /// misreading the entries as the k2 21 layout.
+    /// so does `topology`, instead of misreading the entries as the k2 21
+    /// layout.
     #[test]
     fn elevation_table_refuses_another_form() {
         let mut w = W::new();
@@ -606,8 +596,8 @@ mod tests {
     /// carry inter-edge words (an other-edge key reference, empty words)
     /// the strict first-section edge list refuses. The record stays the
     /// fixture for the grammar-walking reader that will reach that
-    /// section; today the head path refuses before it and the scan
-    /// fallback finds no section, so `topology` reads `None`.
+    /// section; today the head path refuses before it, so `topology`
+    /// reads `None`.
     #[test]
     fn the_extended_containers_feature_line_section_stays_pending_the_walk() {
         let mut w = W::new();

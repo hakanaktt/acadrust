@@ -3555,41 +3555,6 @@ impl DwgDocumentBuilder {
             );
         }
 
-        let acis_started = web_time::Instant::now();
-        // ── AcDs SAB ordering ──────────────────────────────────────────────
-        // R2013+ modeler geometry (3DSOLID/REGION/BODY/SURFACE) is stored as
-        // SAB blobs in the AcDs section, one per entity whose `has_ds_data` bit
-        // is set. The AcDs data-store indexes those blobs through a search
-        // segment sorted ascending by owning-entity handle, and the blobs are
-        // laid out in that same record order — so the i-th blob (in file order)
-        // belongs to the i-th flagged modeler entity taken in ascending handle
-        // order. `attach_acds_sab_blobs` pairs blob[i] with this list's i-th
-        // handle. (Ordering by object-stream file offset instead mispaired
-        // blobs whenever the object-stream order diverged from handle order.)
-        {
-            let mut ordered: Vec<Handle> = document
-                .entities()
-                .filter(|e| {
-                    matches!(
-                        e,
-                        EntityType::Solid3D(_)
-                            | EntityType::Region(_)
-                            | EntityType::Body(_)
-                            | EntityType::Surface(_)
-                    ) && e.common().has_ds_data
-                })
-                .map(|e| e.common().handle)
-                .collect();
-            ordered.sort_by_key(|h| h.value());
-            document.acis_sab_handles = ordered;
-        }
-        if perf {
-            eprintln!(
-                "[perf] dwg-build acis-order={:.1}ms",
-                acis_started.elapsed().as_secs_f64() * 1000.0,
-            );
-        }
-
         let repair_started = web_time::Instant::now();
         // ── Handle-collision repair ────────────────────────────────────────
         // The document is seeded with standard table entries (Standard dim

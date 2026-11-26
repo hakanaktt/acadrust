@@ -32,10 +32,10 @@ mod topology;
 mod view_frames;
 
 pub use alignment::{
-    display_station, AlignmentAnchor, AlignmentCriteria, AlignmentElement, AlignmentType, OffsetParameters, OffsetRegion, WideningTransition, AlignmentElementKind, AlignmentPiece, DesignSpeed, GeometryPoint, SpiralShape,
+    display_station, AlignmentAnchor, AlignmentCriteria, AlignmentElement, AlignmentType, OffsetParameters, OffsetRegion, WideningTransition, AlignmentElementKind, AlignmentPiece, BestFitPoint, DesignSpeed, GeometryPoint, SpiralShape,
     StationEquation, CriticalStationData, SuperelevationCurveData, SuperelevationView};
 pub use cogo::{CogoPoint, PointGroupClassification, PointGroupOverrides, PropertyValue, UserProperty};
-pub use create::{add_empty_tin_surface, add_tin_surface_with, add_assembly, add_pkt_subassembly, add_pkt_subassembly_on, PktSource, add_alignment, add_alignment_with_curves, add_offset_alignment, add_offset_alignment_with_widenings, Widening, add_alignment_of_kind, add_design_speeds, add_station_equations, add_superelevation, CriticalStation, CriticalStationKind, SuperelevationCurve, AlignmentKind, VertexCurve, add_corridor, add_corridor_with, add_cogo_point, create_cogo_point, point_creation_layer, NO_ELEVATION, add_intersection, add_point_group, add_point_group_query, add_profile, add_profile_entities, add_profile_with_curves, add_static_profile, add_surface_profile, ProfileEntity, VerticalCurve, add_profile_view, add_profile_view_with_bands, add_profile_view_with_range, BandKind, BandStagger, ProfileViewBand, add_sample_line, add_sample_line_through, add_sample_line_group, add_sections, add_section_view, add_site, add_alignment_on_site, add_feature_line, add_parcel, parcel_name, PARCEL_STYLE_NAME, PARCEL_NUMBER, add_feature_line_vertices, FeatureLineVertex, add_tin_surface, cogo_points, ensure_civil, feature_line_vertices, remove_cogo_point, set_cogo_point, set_cogo_point_name, set_point_group, set_point_group_overrides, set_point_group_query, set_point_group_styles, Comparison, PointAttribute, PointQuery, QueryConstant, QueryExpression, add_lot_line, add_pipe, add_pipe_network, add_pipe_of_family, add_structure, add_structure_of_family, connect_pipe, set_network_part_name, network_part_families, add_pressure_appurtenance, add_pressure_arc_pipe, add_pressure_cross, add_pressure_fitting, add_pressure_network, add_pressure_part, add_pressure_pipe, add_pressure_pipe_of_size, add_pressure_tee, connect_pressure_parts, pressure_part_descriptions, add_profile_view_style, add_profile_view_with_style, add_offset_profile, add_section_view_group, add_profile_view_style_with, set_feature_line_vertices, set_cogo_point_label_style, add_label_style, add_point_label_style, label_style, LabelStyle, add_intersection_with, add_intersection_with_curb_returns, IntersectionOffsets, CURB_RETURN_MARGIN, add_curb_return, add_curb_return_with, CurbReturnCurve, add_point_choice_property, add_point_property, add_point_property_classification, point_properties, set_cogo_point_property, add_pipe_of_size, network_pipe_sizes, add_structure_of_size, network_structure_size_fields, StructureSizeChoice, add_intersection_with_curb_return_profiles, CurbReturnProfiles};
+pub use create::{add_empty_tin_surface, add_tin_surface_with, add_assembly, add_pkt_subassembly, add_pkt_subassembly_on, PktSource, add_alignment, add_alignment_with_curves, add_offset_alignment, add_offset_alignment_with_widenings, Widening, add_alignment_of_kind, add_design_speeds, add_station_equations, add_superelevation, CriticalStation, CriticalStationKind, SuperelevationCurve, AlignmentKind, VertexCurve, add_corridor, add_corridor_with, add_cogo_point, create_cogo_point, point_creation_layer, NO_ELEVATION, add_intersection, add_point_group, add_point_group_query, add_profile, add_profile_entities, add_profile_with_curves, add_static_profile, add_surface_profile, ProfileEntity, VerticalCurve, add_profile_view, add_profile_view_with_bands, add_profile_view_with_range, BandKind, BandStagger, ProfileViewBand, add_sample_line, add_sample_line_through, add_sample_line_group, add_sections, add_section_view, add_site, add_alignment_on_site, add_feature_line, add_parcel, parcel_name, PARCEL_STYLE_NAME, PARCEL_NUMBER, add_feature_line_vertices, FeatureLineVertex, add_tin_surface, cogo_points, ensure_civil, feature_line_vertices, remove_cogo_point, set_cogo_point, set_cogo_point_name, set_point_group, set_point_group_overrides, set_point_group_query, set_point_group_styles, Comparison, PointAttribute, PointQuery, QueryConstant, QueryExpression, add_lot_line, add_pipe, add_pipe_network, add_pipe_of_family, add_structure, add_structure_of_family, connect_pipe, set_network_part_name, network_part_families, add_pressure_appurtenance, add_pressure_arc_pipe, add_pressure_cross, add_pressure_fitting, add_pressure_network, add_pressure_part, add_pressure_pipe, add_pressure_pipe_of_size, add_pressure_tee, connect_pressure_parts, pressure_part_descriptions, add_profile_view_style, add_profile_view_with_style, add_offset_profile, add_section_view_group, add_profile_view_style_with, set_feature_line_vertices, set_cogo_point_label_style, add_label_style, add_point_label_style, label_style, LabelStyle, add_intersection_with, add_intersection_with_curb_returns, IntersectionOffsets, CURB_RETURN_MARGIN, add_curb_return, add_curb_return_with, CurbReturnCurve, add_point_choice_property, add_point_property, add_point_property_classification, point_properties, set_cogo_point_property, add_pipe_of_size, network_pipe_sizes, add_structure_of_size, network_structure_size_fields, StructureSizeChoice, add_intersection_with_curb_return_profiles, CurbReturnProfiles, add_alignment_label_group, AlignmentGroupLabel, AlignmentLabelGroup, AlignmentLabelGroupKind, LabelKeyValue, LabelOverrideProperty, LabelOverrideValue};
 pub use corridor::{CorridorBaseline, CorridorBoundary, CorridorDefinition, CorridorRegion, CorridorSurfaceDefinition, CurveStations, RegionFrequency, RegionTarget, TargetCurveStations, TargetKind};
 pub use grading::{CriteriaValue, GradingCriteria, GradingEntity, GradingGroup, GradingGroupRecord, GradingGroupTree};
 pub use intersection::IntersectionLayout;
@@ -571,8 +571,13 @@ impl ArchEntityData {
         if self.civil_kind() != Some(CivilKind::Label) {
             return None;
         }
+        let projection = match self.dxf_name.as_str() {
+            "AECC_STATION_ELEVATION_LABEL" => false,
+            "AECC_PROFILE_PROJECTION_LABEL" => true,
+            _ => return None,
+        };
         let (data, start, end) = self.main_stream()?;
-        labels::anchor(data, start, end)
+        labels::anchor(data, start, end, projection)
     }
 
     /// Stations a Civil 3D label group places labels at, in order.
@@ -580,19 +585,13 @@ impl ArchEntityData {
         if self.civil_kind() != Some(CivilKind::Label) {
             return Vec::new();
         }
-        // Groups whose records vary in size (geometry points between
-        // intervals) are only read through their record marker.
         self.main_stream()
-            .map(|(data, start, end)| {
+            .and_then(|(data, start, end)| {
                 if matches!(self.dxf_name.as_str(), "AECC_ALIGNMENT_STATION_LABEL_GROUP" | "AECC_ALIGNMENT_MINOR_STATION_LABEL_GROUP") {
-                    if let Some(stations) = labels::group_stations(data, start, end) {
-                        return stations;
-                    }
+                    labels::group_stations(data, start, end)
+                } else {
+                    labels::stations(data, start, end)
                 }
-                // debt: other label group classes are searched for their
-                // stations.
-                let marked = labels::marked_stations(data, start, end);
-                if marked.len() >= 2 { marked } else { labels::stations(data, start, end) }
             })
             .unwrap_or_default()
     }
@@ -605,10 +604,7 @@ impl ArchEntityData {
             return Vec::new();
         }
         self.main_stream()
-            .map(|(data, start, end)| {
-                // debt: groups whose labels do not read are searched.
-                labels::group_point_kinds(data, start, end).unwrap_or_else(|| labels::geometry_point_kinds(data, start, end))
-            })
+            .and_then(|(data, start, end)| labels::group_point_kinds(data, start, end))
             .unwrap_or_default()
     }
 
@@ -619,7 +615,7 @@ impl ArchEntityData {
             return None;
         }
         let (data, start, end) = self.main_stream()?;
-        labels::dragged_offset(data, start, end)
+        labels::dragged_offset(data, start, end)?
     }
 
     /// Ids of the profile entities a profile label group
@@ -630,7 +626,7 @@ impl ArchEntityData {
             return Vec::new();
         }
         self.main_stream()
-            .map(|(data, start, end)| labels::labelled_entity_ids(data, start, end))
+            .and_then(|(data, start, end)| labels::labelled_entity_ids(data, start, end))
             .unwrap_or_default()
     }
 
@@ -642,7 +638,7 @@ impl ArchEntityData {
             return Vec::new();
         }
         self.main_stream()
-            .map(|(data, start, end)| labels::entity_refs(data, start, end))
+            .and_then(|(data, start, end)| labels::entity_refs(data, start, end))
             .unwrap_or_default()
     }
 
@@ -1336,27 +1332,14 @@ impl ArchEntityData {
             .unwrap_or_default()
     }
 
-    /// Insertion point of a Civil 3D structure (`AECC_STRUCTURE`); a record
-    /// laid out otherwise is searched inside the extents its cached preview
-    /// records.
+    /// Insertion point of a Civil 3D structure (`AECC_STRUCTURE`), read by
+    /// the record's fields.
     pub fn structure_position(&self) -> Option<crate::types::Vector3> {
         if self.dxf_name != "AECC_STRUCTURE" {
             return None;
         }
         let (data, start, end) = self.main_stream()?;
-        if let Some(p) = network::structure_at(data, start, end) {
-            return Some(p);
-        }
-        // debt: a record the field reader rejects is still located through
-        // the cache extents; replace once such a record's layout is known.
-        let mut min = [f64::INFINITY; 2];
-        let mut max = [f64::NEG_INFINITY; 2];
-        for p in self.profiles.iter().flatten() {
-            min = [min[0].min(p.x), min[1].min(p.y)];
-            max = [max[0].max(p.x), max[1].max(p.y)];
-        }
-        (min[0] <= max[0]).then_some(())?;
-        network::structure_position(data, start, end, min, max)
+        network::structure_at(data, start, end)
     }
 
     /// Baseline point of a Civil 3D assembly and where each of its
@@ -1614,15 +1597,16 @@ impl ArchObject {
     /// style class defines them: every component of the plan view, then the
     /// model view and the other view directions.
     ///
-    /// `is_layer` tells layer handles apart; only styles with an unmapped
-    /// block before their component lists need it.
-    pub fn display_components(&self, is_layer: impl Fn(u64) -> bool) -> Vec<DisplayComponent> {
+    /// The references are read by the record's own layout; `is_layer` is
+    /// not consulted (kept for callers). A style whose block before its
+    /// component lists is in neither known form gives no components.
+    pub fn display_components(&self, _is_layer: impl Fn(u64) -> bool) -> Vec<DisplayComponent> {
         if self.civil_kind() != Some(CivilObjectKind::Style) {
             return Vec::new();
         }
         let handles = self.decode().handles;
         self.main_stream()
-            .map(|(data, start, end)| style::components(data, start, end, &handles, is_layer))
+            .map(|(data, start, end)| style::components(data, start, end, &handles))
             .unwrap_or_default()
     }
 
@@ -1639,11 +1623,14 @@ impl ArchObject {
     /// Whether a label style component (text, line, tick, ...) is shown;
     /// `true` when the record does not say.
     pub fn label_component_visible(&self) -> bool {
-        if !self.dxf_name.starts_with("AECC_LABEL_") {
+        // A label style (the collector) is not a component and has no
+        // component visibility.
+        if !self.dxf_name.starts_with("AECC_LABEL_") || self.dxf_name == "AECC_LABEL_COLLECTOR_STYLE" {
             return true;
         }
         self.main_stream()
-            .is_none_or(|(data, start, end)| labels::component_visible(data, start, end))
+            .and_then(|(data, start, end)| labels::component_visible(data, start, end))
+            .unwrap_or(true)
     }
 
     /// Plotted height of a Civil 3D profile view band.

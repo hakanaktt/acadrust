@@ -202,85 +202,11 @@ pub struct CorridorDefinition {
     pub baselines: Vec<CorridorBaseline>,
 }
 
-/// One `4BD` station record, `None` past the end or when implausible.
-fn record(bits: &mut Bits) -> Option<(f64, Vector3)> {
-    let station = bits.bit_double()?;
-    let point = Vector3::new(bits.bit_double()?, bits.bit_double()?, bits.bit_double()?);
-    let plausible = station.is_finite()
-        && station.abs() < 1e7
-        && point.x.is_finite()
-        && point.y.is_finite()
-        && point.x.abs() < 1e9
-        && point.y.abs() < 1e9
-        && point.z.abs() < 1e5
-        && (point.x.abs() > 1.0 || point.y.abs() > 1.0);
-    plausible.then_some((station, point))
-}
-
-/// `BL n`, then `n` records each followed by a flag bit. Stations rise and
-/// neighbors stay close, which rejects random bits that happen to parse.
-fn segment(bits: &mut Bits) -> Option<Vec<(f64, Vector3)>> {
-    let n = usize::try_from(bits.bit_long()?).ok()?;
-    if n == 0 || n > 100_000 {
-        return None;
-    }
-    let mut out: Vec<(f64, Vector3)> = Vec::with_capacity(n.min(4096));
-    for _ in 0..n {
-        let record = record(bits)?;
-        bits.bit()?;
-        if let Some(last) = out.last() {
-            let step = record.0 - last.0;
-            if !(0.0..=1000.0).contains(&step) || record.1.distance(&last.1) > step * 3.0 + 50.0 {
-                return None;
-            }
-        }
-        out.push(record);
-    }
-    Some(out)
-}
-
-/// `BL` segment count, then the segments.
-fn group(bits: &mut Bits, first: bool) -> Option<Vec<Vec<(f64, Vector3)>>> {
-    let n = usize::try_from(bits.bit_long()?).ok()?;
-    if n == 0 || n > 1000 {
-        return None;
-    }
-    let segments: Vec<_> = (0..n).map(|_| segment(bits)).collect::<Option<_>>()?;
-    // A lone record is too weak to anchor the first group.
-    (!first || segments.iter().map(Vec::len).sum::<usize>() >= 2).then_some(segments)
-}
-
 /// Feature lines of a corridor per baseline: each baseline's groups, one
 /// per point code in the order of the corridor's code list, each group
-/// holding that code's segments.
+/// holding that code's segments. Empty for a record [`walk`] does not read.
 pub(super) fn baselines(data: &[u8], start: usize, end: usize) -> Vec<Groups> {
-    if let Some(found) = walk(&mut Bits::new(data, start, end)) {
-        return found.groups;
-    }
-    // debt: records [`walk`] does not read (none in the samples) are found
-    // by probing bit offsets for the first group of each baseline.
-    probe(data, start, end)
-}
-
-fn probe(data: &[u8], start: usize, end: usize) -> Vec<Groups> {
-    let mut out = Vec::new();
-    let mut from = start;
-    while let Some(mut pos) = (from..end).find(|&pos| group(&mut Bits::new(data, pos, end), true).is_some()) {
-        let mut groups = Vec::new();
-        loop {
-            let mut bits = Bits::new(data, pos, end);
-            match group(&mut bits, groups.is_empty()) {
-                Some(found) => {
-                    groups.push(found);
-                    pos = bits.pos;
-                }
-                None => break,
-            }
-        }
-        out.push(groups);
-        from = pos;
-    }
-    out
+    walk(&mut Bits::new(data, start, end)).map(|found| found.groups).unwrap_or_default()
 }
 
 /// A corridor surface's head after its GUID:
@@ -298,8 +224,7 @@ fn surface(bits: &mut Bits) -> Option<CorridorSurfaceDefinition> {
     bits.bit()?;
     let codes = usize::try_from(bits.bit_long()?).ok().filter(|n| *n <= bits.remaining())?;
     let link_codes = (0..codes).map(|_| Some((String::new(), bits.bit()?))).collect::<Option<_>>()?;
-    // debt: this BL has no other value in the samples; what follows a
-    // different one is not mapped.
+    // BL 0 in every record; a record with another value is not this layout.
     (bits.bit_long()? == 0).then_some(())?;
     let feature_codes = usize::try_from(bits.bit_long()?).ok().filter(|n| *n <= bits.remaining())?;
     let feature_line_codes = (0..feature_codes).map(|_| Some((String::new(), bits.bit()?))).collect::<Option<_>>()?;
@@ -391,7 +316,7 @@ struct Walked {
 ///           surfaces x { GUID, head (see [`surface`]) }, BD maximum
 ///           triangle side length, outlines (see [`outlines`]),
 ///           BL 0, B rebuild automatically, B, RC 32, RC layout (older
-///           form: RC 32, RC layout, 2 bits, RC layout), RC baselines (top
+///           form: RC 32, RC, 2 bits, RC layout), RC baselines (top
 ///           5 bits), 1 bit, 6 bits region count, BL record count (both of
 ///           the first baseline's first region)
 /// layout:   0x28: regions are locked to the alignment geometry, each region
@@ -469,16 +394,16 @@ fn walk(bits: &mut Bits) -> Option<Walked> {
     w.outline_lists = outlines(bits)?;
     (bits.bit_long()? == 0).then_some(())?;
     // The bits before the 32 are 01 or 11. Bits 00 are the top of the 32 in
-    // the form one record of the samples has, written by an older program
-    // (it writes the other form once it rebuilds the record): `RC 32,
-    // RC layout, 2 bits, RC layout`.
+    // the form some records have (written before the corridor was rebuilt;
+    // the application writes the other form once it rebuilds the record):
+    // `RC 32, RC, 2 bits, RC layout`. The layout is the second RC: the
+    // station-locked corridors of two such records hold 0x28, then 0x48.
     let at = bits.pos;
     let older = bits.bits_value(2)? == 0;
     bits.pos = at;
-    let mut layout = None;
     if older {
         (bits.raw_short_byte()? == 32).then_some(())?;
-        layout = Some(bits.raw_short_byte()?);
+        bits.raw_short_byte()?;
         bits.skip(2)?;
     } else {
         w.definition.rebuild_automatic = bits.bit()?;
@@ -487,7 +412,7 @@ fn walk(bits: &mut Bits) -> Option<Walked> {
     }
     // A corridor without baselines ends here with a run of its own (CB01,
     // CB02).
-    if layout.is_none() {
+    if !older {
         let at = bits.pos;
         if BARE_END.bytes().all(|c| bits.bit() == Some(c == b'1')) && bits.remaining() == 0 {
             w.unbuilt = true;
@@ -495,9 +420,7 @@ fn walk(bits: &mut Bits) -> Option<Walked> {
         }
         bits.pos = at;
     }
-    let byte = bits.raw_short_byte()?;
-    layout.map_or(true, |first| first == byte).then_some(())?;
-    let guids = match byte {
+    let guids = match bits.raw_short_byte()? {
         0x28 => true,
         0x48 => false,
         _ => return None,
@@ -989,7 +912,8 @@ fn region(bits: &mut Bits, guids: bool, words: Option<u32>, lead: bool, w: &mut 
     Some((next, CorridorRegion { name: String::new(), assembly: 0, start: ends[0], end: ends[1], frequency: f, targets: found }))
 }
 
-/// A feature line group read by its counts, without the probe's checks.
+/// A feature line group read by its counts: `BL n`, `n x { BL m, m x { BD
+/// station, BD x, BD y, BD z, B } }`.
 fn fields_group(bits: &mut Bits) -> Option<Vec<Vec<(f64, Vector3)>>> {
     let n = bits.bit_long()?;
     (0..n)

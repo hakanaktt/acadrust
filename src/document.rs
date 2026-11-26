@@ -1458,14 +1458,6 @@ pub struct CadDocument {
     /// empty preview when `None`. Not part of DXF.
     pub preview: Option<Preview>,
 
-    /// Modeler-entity handles (3DSOLID/REGION/BODY/SURFACE) whose geometry is
-    /// stored as SAB blobs in the `AcDb:AcDsPrototype_1b` data-store section,
-    /// in object-stream (file-offset) order. Populated by the DWG reader so the
-    /// blob→entity attach step pairs each SAB blob with the correct entity
-    /// regardless of the document's handle-sorted entity order. Transient DWG
-    /// read artifact; empty for new/DXF documents.
-    pub(crate) acis_sab_handles: Vec<Handle>,
-
     /// Original decompressed `AcDb:AcDsPrototype_1b` section. Same-version
     /// saves can reuse it when every attached SAB body is still unchanged.
     /// Shared so document snapshots do not duplicate large modeler data.
@@ -1679,7 +1671,6 @@ impl CadDocument {
             block_entity_handles: SeededMap::default(),
             dwg_source_version: None,
             preview: None,
-            acis_sab_handles: Vec::new(),
             raw_acds_data: None,
             r12_header_raw: None,
             r12_table_usage: HashMap::new(),

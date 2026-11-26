@@ -73,15 +73,10 @@ impl TinSurface {
     }
 }
 
-/// The triangulation block of a surface body.
+/// The triangulation block of a surface body, after its definitions (see
+/// [`triangulation_at`]); `None` when the definitions do not read.
 pub(super) fn find(data: &[u8], start: usize, end: usize) -> Option<TinSurface> {
-    if let Some((surface, _)) = triangulation_at(data, start, end).and_then(|pos| read_at(data, pos, end)) {
-        return Some(surface);
-    }
-    // debt: surfaces whose first definition is none of the forms below or
-    // that hold an operation kind not mapped in [`operation`] are found by
-    // probing (none in the samples).
-    (start..end).find_map(|pos| read_at(data, pos, end)).map(|(s, _)| s)
+    triangulation_at(data, start, end).and_then(|pos| read_at(data, pos, end)).map(|(s, _)| s)
 }
 
 /// The triangulation a snapshot keeps: after the surface's triangulation
@@ -185,6 +180,21 @@ pub enum TinOperation {
     /// build is kept after the surface's (`ArchEntityData::tin_snapshot`); the
     /// value is 0 (1 in drawings of older releases).
     Kind40(i32),
+    /// A TIN file read in (its path is in the texts), with the file's date
+    /// as a FILETIME.
+    TinFile { file_time: u64 },
+    /// Minimize flat areas: two counts as stored and the options (1 swap
+    /// edges, 2 add points to flat triangles, 4 add points to flat edges,
+    /// 8 fill gaps in contour data).
+    MinimizeFlatAreas { counts: [i32; 2], options: i32 },
+    /// The surface of a grading group (the group is the source).
+    GradingGroup,
+    /// Simplify: the method (0 point removal, 1 edge contraction), the
+    /// options (1 remove a percentage, 2 limit the elevation change), the
+    /// percentage (25.0 for 25 %) and the elevation change as stored (each
+    /// kept when its option is off), the region (0, the surface border, in
+    /// every sample) and the count of points removed.
+    Simplify { method: i32, options: i32, percentage: f64, elevation_change: f64, region: i32, removed: i32 },
 }
 
 /// One definition: its operation and identifier, and its texts and
@@ -331,6 +341,11 @@ fn guid(bits: &mut Bits) -> Option<[u8; 16]> {
 /// 31 drawing objects:           BL object type, BL maintain edges, BL n, n x 3BD
 /// 30 point file:                BL, BL (a FILETIME, high half first), 3 bits
 /// 41 corridor surface:          GUID
+///  5 TIN file:                  BL, BL (a FILETIME, high half first)
+/// 25 minimize flat areas:       BL, BL, BL options
+/// 29 grading group:             nothing (the group is a source)
+/// 43 simplify:                  BL method, BL options, BD percentage, BD
+///                               elevation change, BL region, BL removed
 /// ```
 pub(super) fn read_operation(bits: &mut Bits) -> Option<TinDefinition> {
     let kind = bits.bit_long()?;
@@ -394,6 +409,21 @@ pub(super) fn read_operation(bits: &mut Bits) -> Option<TinDefinition> {
             TinOperation::PointFile { file_time: (u64::from(high) << 32) | u64::from(low), options: bits.bits_value(3)? }
         }
         41 => TinOperation::CorridorSurface(guid(bits)?),
+        5 => {
+            let high = bits.bit_long()? as u32;
+            let low = bits.bit_long()? as u32;
+            TinOperation::TinFile { file_time: (u64::from(high) << 32) | u64::from(low) }
+        }
+        25 => TinOperation::MinimizeFlatAreas { counts: [bits.bit_long()?, bits.bit_long()?], options: bits.bit_long()? },
+        29 => TinOperation::GradingGroup,
+        43 => TinOperation::Simplify {
+            method: bits.bit_long()?,
+            options: bits.bit_long()?,
+            percentage: bits.bit_double()?,
+            elevation_change: bits.bit_double()?,
+            region: bits.bit_long()?,
+            removed: bits.bit_long()?,
+        },
         _ => return None,
     };
     Some(TinDefinition { operation, id, texts: Vec::new(), sources: Vec::new() })
@@ -695,6 +725,45 @@ mod tests {
         // triangles is not a triangulation.
         let five = empty_shell().replacen("00000100", "00000101", 1);
         assert!(read_at(&bits_of(&five), 0, five.len() * 8).is_none());
+    }
+
+    #[test]
+    fn reads_minimize_flat_areas_a_tin_file_and_a_grading_group() {
+        // Minimize flat areas with every option (BL 1, BL 0, BL 15), as the
+        // application writes it; a TIN file's FILETIME 0x01DD2E44C7AF9BE4;
+        // a grading group's surface, no data.
+        let guid = "0".repeat(128);
+        let minimize = format!("0100011001 0100001001 0100010000 {guid} 10 0100000001 10 0100001111");
+        let tin_file = format!("0100000101 0100001001 0100010000 {guid} 10 00 01000100 00101110 11011101 00000001 00 11100100 10011011 10101111 11000111");
+        let grading = format!("0100011101 0100001001 0100010000 {guid} 10");
+        let b = bits_of(&format!("{minimize} {tin_file} {grading} 10"));
+        let mut bits = Bits::new(&b, 0, b.len() * 8);
+        assert_eq!(read_operation(&mut bits).unwrap().operation, TinOperation::MinimizeFlatAreas { counts: [1, 0], options: 15 });
+        assert_eq!(read_operation(&mut bits).unwrap().operation, TinOperation::TinFile { file_time: 0x01DD_2E44_C7AF_9BE4 });
+        assert_eq!(read_operation(&mut bits).unwrap().operation, TinOperation::GradingGroup);
+        assert_eq!(bits.pos, 3 * (30 + 128 + 2) + 22 + 68);
+    }
+
+    #[test]
+    fn reads_a_simplify() {
+        // Point removal limited to an elevation change of 0.75 (options 2),
+        // with the unused percentage 5000.0 as stored, the surface border as
+        // region and four points removed; then edge contraction of 25 %.
+        let guid = "0".repeat(128);
+        let head = format!("0100101011 0100001001 0100010000 {guid} 10");
+        let change = "10 0100000010 00 0000000000000000000000000000000000000000100010001011001101000000 \
+                      00 0000000000000000000000000000000000000000000000001110100000111111 10 0100000100";
+        let contraction = "0100000001 0100000001 00 0000000000000000000000000000000000000000000000000011100101000000 10 10 0100000010";
+        let b = bits_of(&format!("{head} {change} {head} {contraction}"));
+        let mut bits = Bits::new(&b, 0, b.len() * 8);
+        assert_eq!(
+            read_operation(&mut bits).unwrap().operation,
+            TinOperation::Simplify { method: 0, options: 2, percentage: 5000.0, elevation_change: 0.75, region: 0, removed: 4 }
+        );
+        assert_eq!(
+            read_operation(&mut bits).unwrap().operation,
+            TinOperation::Simplify { method: 1, options: 1, percentage: 25.0, elevation_change: 0.0, region: 0, removed: 2 }
+        );
     }
 
     #[test]

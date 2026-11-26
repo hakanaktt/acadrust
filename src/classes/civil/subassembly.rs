@@ -114,18 +114,42 @@ fn indices(bits: &mut Bits, limit: usize) -> Option<Vec<u32>> {
     Some(out)
 }
 
-/// Where the point list sits, read field by field: the class keys (see
-/// `alignment::class_keys`) and 121 bits, or a record without keys (tag
-/// `010010`, RC 0) and 120 bits; then 3BD origin, 9 BD (rotation), BD,
-/// 62 bits.
-// ponytail: the 120/121 and 62-bit runs are skipped by length (zero or
-// constant in every sample).
+/// Where the point list sits, read field by field. After the class header
+/// (`BL 80, 0, 80, 80, 0, BL`), the 6-bit tag picks the form:
+///
+/// ```text
+/// 010101 (keyed):  RC n, n x key (see alignment::class_keys), BL, 121 bits
+/// 00xxxx (older):  20 bits, BL 1, BL n, n x key, BL, 121 bits
+///                  or 20 bits, BL 0, BL 0, 128 bits
+/// other (no keys): RC 0, 120 bits
+/// ```
+///
+/// then 3BD origin, 9 BD (rotation), BD, 62 bits.
+// ponytail: the 120/121/128, 20 and 62-bit runs are skipped by length
+// (zero or constant in every sample; the 20 bits vary between drawings).
 fn shape_at(data: &[u8], start: usize, end: usize) -> Option<usize> {
     let mut bits = Bits::new(data, start, end);
-    if super::alignment::class_header(&mut bits)? == super::alignment::KEYED {
+    let tag = super::alignment::class_header(&mut bits)?;
+    if tag == super::alignment::KEYED {
         bits = Bits::new(data, start, end);
         super::alignment::class_keys(&mut bits)?;
         bits.pos += 121;
+    } else if tag >> 4 == 0 {
+        bits.skip(20)?;
+        match bits.bit_long()? {
+            1 => {
+                for _ in 0..bits.bit_long()? {
+                    super::alignment::key(&mut bits)?;
+                }
+                bits.bit_long()?;
+                bits.pos += 121;
+            }
+            0 => {
+                (bits.bit_long()? == 0).then_some(())?;
+                bits.pos += 128;
+            }
+            _ => return None,
+        }
     } else {
         (bits.bits_value(8)? == 0).then_some(())?;
         bits.pos += 120;
@@ -148,12 +172,8 @@ fn codes_start(strings: &[String]) -> Option<usize> {
 /// Shape from the point list, with codes from `strings`, the record's text
 /// stream (see `codes_start`).
 pub(super) fn find(data: &[u8], start: usize, end: usize, strings: &[String]) -> Option<SubassemblyShape> {
-    let (mut shape, points, links, areas, _) = match shape_at(data, start, end).and_then(|pos| read_at(data, pos, end)) {
-        Some(found) => found,
-        // debt: a header neither form matches (none in the samples) is
-        // searched for its point list.
-        None => (start..end).find_map(|pos| read_at(data, pos, end))?,
-    };
+    // A header in none of the forms of [`shape_at`] gives no shape.
+    let (mut shape, points, links, areas, _) = read_at(data, shape_at(data, start, end)?, end)?;
     let first = codes_start(strings);
     let mut codes = first.map(|i| strings[i.min(strings.len())..].iter());
     let mut take = |counts: &[usize]| -> Vec<Vec<String>> {
@@ -286,4 +306,32 @@ pub(super) fn assembly_layout(data: &[u8], start: usize, end: usize, handles: &[
         })
         .collect();
     Some(AssemblyLayout { origin, attachments })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bits_of(s: &str) -> Vec<u8> {
+        let s: Vec<u8> = s.bytes().filter(|b| *b == b'0' || *b == b'1').collect();
+        s.chunks(8).map(|c| c.iter().enumerate().fold(0u8, |a, (i, b)| a | ((b - b'0') << (7 - i)))).collect()
+    }
+
+    #[test]
+    fn finds_the_point_list_after_an_older_header() {
+        // Class header, tag 000101, 20 bits, BL 1, BL 2, two keys
+        // (0x0404D01E, 0x0404D020), BL, 121 bits, 13 BD, 62 bits.
+        let keyed = "01010100001001010100000101010000100000000100010111110000001000010000 000101 10111000011100000000 \n             0100000001 0100000010 0000011110110100000000010000000100 \n             0000100000110100000000010000000100 0100000000 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100101010010110101101101 \n             10101001101010011010100101 00001000010101000001010100000000000000000000001011111000000100";
+        // Class header, tag 000100, 20 bits, BL 0, BL 0, 128 bits, 13 BD,
+        // 62 bits.
+        let bare = "01010100001001010100000101010000100000000100010111110000001000010000 000100 00000000000010000000 \n             0100000000 10 00001010000000000000000000000000111111111111111111111111111111110000000100000000000000000000000000000000000000000000000000000000 \n             10101001101010011010100101 00001000010101000001010100000000000000000000001011111000000100";
+        for (s, at) in [(keyed, 401), (bare, 322)] {
+            let b = bits_of(s);
+            assert_eq!(shape_at(&b, 0, b.len() * 8), Some(at));
+        }
+        // Another value where the form holds BL 1 or BL 0 is not this form.
+        let other = bare.replacen("0100000000 10", "0100000010 10", 1);
+        let b = bits_of(&other);
+        assert_eq!(shape_at(&b, 0, b.len() * 8), None);
+    }
 }
