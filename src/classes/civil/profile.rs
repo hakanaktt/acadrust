@@ -1103,15 +1103,18 @@ impl ProfileViewFrame {
 // ponytail: the 121/128, 5-bit and 258-bit runs are skipped by length
 // (zero or constant in every sample).
 /// The class data graph objects (profile views, TIN surfaces) open with:
-/// `BL 80, 2 bits, BL, BL, BL version`, then version 5: `BL key count`,
-/// keys (see alignment::key), `BL 0`, 121 bits; version 4 (Civil 3D 2013):
-/// `BL 0`, 128 bits.
+/// `BL 80, 2 bits, BL, BL, 2 bits, RC version`, then version 5: `BL key
+/// count`, keys (see alignment::key), `BL 0`, 121 bits; version 4 (the
+/// 2013 class records): `BL 0`, 128 bits. The two bits before the version
+/// are `01` in most records, so the pair reads like `BL version`; TIN
+/// surfaces of some tutorial drawings hold `00` there.
 pub(super) fn graph_head(bits: &mut Bits) -> Option<i32> {
     (bits.bit_long()? == 80).then_some(())?;
     bits.pos += 2;
     bits.bit_long()?;
     bits.bit_long()?;
-    match bits.bit_long()? {
+    bits.skip(2)?;
+    match bits.bits_value(8)? {
         5 => {
             for _ in 0..bits.bit_long()? {
                 super::alignment::key(bits)?;

@@ -197,6 +197,10 @@ fn write_operation(w: &mut DwgMergedWriter, operation: &TinOperation, guid: [u8;
         TinOperation::DrawingObjects { .. } => 31,
         TinOperation::PointFile { .. } => 30,
         TinOperation::CorridorSurface(_) => 41,
+        TinOperation::TinFile { .. } => 5,
+        TinOperation::MinimizeFlatAreas { .. } => 25,
+        TinOperation::GradingGroup => 29,
+        TinOperation::Simplify { .. } => 43,
     };
     let k = lines.map_or(0, |l| l.objects as i32 + l.polylines.len() as i32);
     let from_objects = lines.is_some_and(|l| l.objects > 0);
@@ -277,7 +281,24 @@ fn write_operation(w: &mut DwgMergedWriter, operation: &TinOperation, guid: [u8;
             write_points(w, points);
         }
         TinOperation::CorridorSurface(id) => w.write_bytes(id),
-        TinOperation::PointGroup | TinOperation::PasteSurface | TinOperation::Breaklines(..) => {}
+        TinOperation::TinFile { file_time } => {
+            w.write_bit_long((file_time >> 32) as i32);
+            w.write_bit_long(*file_time as i32);
+        }
+        TinOperation::MinimizeFlatAreas { counts, options } => {
+            w.write_bit_long(counts[0]);
+            w.write_bit_long(counts[1]);
+            w.write_bit_long(*options);
+        }
+        TinOperation::Simplify { method, options, percentage, elevation_change, region, removed } => {
+            w.write_bit_long(*method);
+            w.write_bit_long(*options);
+            w.write_bit_double(*percentage);
+            w.write_bit_double(*elevation_change);
+            w.write_bit_long(*region);
+            w.write_bit_long(*removed);
+        }
+        TinOperation::PointGroup | TinOperation::PasteSurface | TinOperation::GradingGroup | TinOperation::Breaklines(..) => {}
     }
 }
 
