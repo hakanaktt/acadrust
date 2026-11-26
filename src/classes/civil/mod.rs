@@ -1336,27 +1336,14 @@ impl ArchEntityData {
             .unwrap_or_default()
     }
 
-    /// Insertion point of a Civil 3D structure (`AECC_STRUCTURE`); a record
-    /// laid out otherwise is searched inside the extents its cached preview
-    /// records.
+    /// Insertion point of a Civil 3D structure (`AECC_STRUCTURE`), read by
+    /// the record's fields.
     pub fn structure_position(&self) -> Option<crate::types::Vector3> {
         if self.dxf_name != "AECC_STRUCTURE" {
             return None;
         }
         let (data, start, end) = self.main_stream()?;
-        if let Some(p) = network::structure_at(data, start, end) {
-            return Some(p);
-        }
-        // debt: a record the field reader rejects is still located through
-        // the cache extents; replace once such a record's layout is known.
-        let mut min = [f64::INFINITY; 2];
-        let mut max = [f64::NEG_INFINITY; 2];
-        for p in self.profiles.iter().flatten() {
-            min = [min[0].min(p.x), min[1].min(p.y)];
-            max = [max[0].max(p.x), max[1].max(p.y)];
-        }
-        (min[0] <= max[0]).then_some(())?;
-        network::structure_position(data, start, end, min, max)
+        network::structure_at(data, start, end)
     }
 
     /// Baseline point of a Civil 3D assembly and where each of its
