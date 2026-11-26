@@ -3009,6 +3009,8 @@ impl<'a> DwgObjectWriter<'a> {
         if geo.version == 1 {
             self.writer.write_bit(geo.civil_data_present);
             self.writer.write_bit(geo.civil_obsolete_flag);
+        }
+        if geo.version == 1 && geo.civil_data_present {
             self.writer.write_2raw_double(geo.civil_reference_point1);
             self.writer.write_2raw_double(geo.civil_reference_point2);
             self.writer.write_bit_long(geo.civil_unknown1);

@@ -9552,7 +9552,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer.write_i32(98, face.second)?;
             self.writer.write_i32(99, face.third)?;
         }
-        if obj.version == 1 {
+        if obj.version == 1 && obj.civil_data_present {
             self.writer.write_string(3, "CIVIL3D_DATA_BEGIN")?;
             self.writer.write_bool(292, obj.civil_obsolete_flag)?;
             self.writer.write_point2d(14, obj.civil_reference_point1)?;

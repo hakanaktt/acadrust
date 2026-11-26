@@ -1840,6 +1840,10 @@ pub fn read_geodata(reader: &mut DwgMergedReader) -> GeoDataData {
     if d.version == 1 {
         d.civil_data_present = reader.read_bit();
         d.civil_obsolete_flag = reader.read_bit();
+        // Without civil data the record ends here (#681).
+        if !d.civil_data_present {
+            return d;
+        }
         d.civil_reference_point1 = reader.read_2raw_double();
         d.civil_reference_point2 = reader.read_2raw_double();
         d.civil_unknown1 = reader.read_bit_long();
