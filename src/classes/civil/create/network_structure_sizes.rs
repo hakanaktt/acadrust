@@ -57,12 +57,6 @@ fn bit(data: &[u8], p: usize) -> u8 {
     data[p / 8] >> (7 - p % 8) & 1
 }
 
-/// The raw double at bit `at`.
-fn read_raw(data: &[u8], at: usize) -> f64 {
-    let bytes: [u8; 8] = std::array::from_fn(|k| (0..8).fold(0u8, |b, i| b << 1 | bit(data, at + 8 * k + i)));
-    f64::from_le_bytes(bytes)
-}
-
 /// The size fields of the structure family `family` (one of
 /// [`super::network_part_families`] but the null structure) and the values
 /// each takes, by code (`SID` inner diameter, `SRS` rim to sump height,
@@ -109,20 +103,11 @@ pub fn add_structure_of_size(doc: &mut CadDocument, network: Handle, family: &st
     let mut data: Vec<u8> = (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(hex.get(i..i + 2).unwrap_or("0"), 16).unwrap_or(0)).collect();
     data.resize(bits.div_ceil(8) + 8, 0);
     let strings: Vec<String> = part.definition_strings.iter().map(|s| s.to_string()).collect();
-    let slots = super::super::network::number_field_slots(&data, 0, bits, &strings);
-    // A value is a bit double ending 8 bits before the next record: a raw
-    // one (`00` and 64 bits) or the 2-bit form of 0 (`10`) or 1 (`01`).
-    let slots: Vec<(String, usize, usize, f64)> = slots
+    // Each number field's `BD`: a raw one (`00` and 64 bits) or the 2-bit
+    // form of 0 (`10`) or 1 (`01`).
+    let slots: Vec<(String, usize, usize, f64)> = super::super::network::number_field_slots(&data, 0, bits, &strings)
         .into_iter()
-        .map(|(code, _, _, at)| {
-            let raw = read_raw(&data, at);
-            if bit(&data, at - 2) | bit(&data, at - 1) == 0 && raw.is_finite() && (raw == 0.0 || (1e-9..1e12).contains(&raw.abs())) {
-                (code, at - 2, 66, raw)
-            } else {
-                let short = (bit(&data, at + 62), bit(&data, at + 63));
-                (code, at + 62, 2, if short == (0, 1) { 1.0 } else { 0.0 })
-            }
-        })
+        .map(|(code, _, _, (at, end), value)| (code, at, end - at, value))
         .collect();
     let own = Dims(slots.iter().map(|(code, _, _, value)| (code.clone(), *value)).collect());
     let mut dims = own.clone();

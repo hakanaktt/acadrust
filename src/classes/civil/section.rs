@@ -75,22 +75,36 @@ pub(super) fn mass_haul_view_frame(data: &[u8], start: usize, end: usize) -> Opt
 }
 
 /// Stations and volumes of a mass haul line (`AECC_MASSHAULLINE`): its
-/// balance curve as `BL n, n x 3BD (station, volume, 0)`, stations rising.
-// debt: found as the first such list in the record; the fields before it
-// (a section-like head with two GUIDs) are not mapped, one drawing at hand.
+/// balance curve, read by the record's fields:
+///
+/// ```text
+/// BL 80, 0, 80, 80, 0, BL, BL, 2 bits, BL 0, GUID, 2 bits, GUID,
+/// 127 bits, BD, BL 1, BL 0, BL n, n x 3BD (station, volume, 0)
+/// ```
+///
+/// The first GUID is all zero bits in a line the wizard made and all one
+/// bits in the tutorial's line; the BD is 300 and 500 in the two.
+// ponytail: the 2-bit runs and the 127 bits (zero in every record) are
+// read past by their sizes; name them once a drawing varies them.
 pub(super) fn mass_haul_points(data: &[u8], start: usize, end: usize) -> Option<Vec<Vector2>> {
-    (start..end.min(start + 4096)).find_map(|pos| {
-        let mut bits = Bits::new(data, pos, end);
-        let n = usize::try_from(bits.bit_long()?).ok().filter(|n| *n >= 2 && n * 6 <= bits.remaining())?;
-        let mut points = Vec::with_capacity(n);
-        for _ in 0..n {
+    let mut bits = Bits::new(data, start, end);
+    for want in [80, 0, 80, 80, 0] {
+        (bits.bit_long()? == want).then_some(())?;
+    }
+    bits.bit_long()?;
+    bits.bit_long()?;
+    bits.skip(2)?;
+    (bits.bit_long()? == 0).then_some(())?;
+    bits.skip(128 + 2 + 128 + 127)?;
+    bits.bit_double()?;
+    (bits.bit_long()? == 1 && bits.bit_long()? == 0).then_some(())?;
+    let n = usize::try_from(bits.bit_long()?).ok().filter(|n| n * 6 <= bits.remaining())?;
+    (0..n)
+        .map(|_| {
             let p = Vector2::new(bits.bit_double()?, bits.bit_double()?);
-            (p.x.is_finite() && p.y.is_finite() && bits.bit_double()? == 0.0).then_some(())?;
-            points.push(p);
-        }
-        let rising = points.windows(2).all(|w| w[0].x <= w[1].x) && points[0].x < points[n - 1].x;
-        rising.then_some(points)
-    })
+            (bits.bit_double()? == 0.0).then_some(p)
+        })
+        .collect()
 }
 
 /// A section view's frame: the drawing position of offset 0 at the lowest
@@ -244,5 +258,32 @@ mod tests {
         let read = geometry(&b, 0, len).unwrap();
         assert_eq!(read.points, vec![Vector2::new(0.0, 1.0), Vector2::new(1.0, 0.0)]);
         assert_eq!(read.links, vec![(0, 1)]);
+    }
+
+    #[test]
+    fn reads_a_mass_haul_lines_balance_curve() {
+        // Head, two GUIDs, the 127 zero bits, BD 500, BL 1, BL 0, then
+        // (0, 0) and (25, -641.5).
+        let raw = |v: f64| v.to_le_bytes().iter().map(|b| format!("{b:08b}")).collect::<String>();
+        let s = format!(
+            "0101010000 10 0101010000 0101010000 10 10 10 00 10 {} 11 {} {} 00{} 0100000001 10
+             0100000010 10 10 10 00{} 00{} 10",
+            "0".repeat(128),
+            "01".repeat(64),
+            "0".repeat(127),
+            raw(500.0),
+            raw(25.0),
+            raw(-641.5)
+        );
+        let b = bits_of(&s);
+        let len = s.bytes().filter(|c| *c == b'0' || *c == b'1').count();
+        let read = mass_haul_points(&b, 0, len).unwrap();
+        assert_eq!(read, vec![Vector2::new(0.0, 0.0), Vector2::new(25.0, -641.5)]);
+        // A record with another value where BL 1 stands is not this layout.
+        let other = s.replacen("0100000001 10
+", "0100000010 10
+", 1);
+        let b = bits_of(&other);
+        assert_eq!(mass_haul_points(&b, 0, len), None);
     }
 }
