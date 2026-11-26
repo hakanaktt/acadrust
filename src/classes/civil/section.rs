@@ -83,9 +83,22 @@ pub(super) fn mass_haul_view_frame(data: &[u8], start: usize, end: usize) -> Opt
 /// ```
 ///
 /// The first GUID is all zero bits in a line the wizard made and all one
-/// bits in the tutorial's line; the BD is 300 and 500 in the two.
+/// bits in the tutorial's line; the BD is 300 and 500 in the two. The two
+/// BLs are 268590852 and 1073775415 in the tutorial's line; their meaning
+/// is unnamed, and the values are unverified in a second record.
+///
+/// After the curve the record carries a derived cache, mapped 2026-11-26
+/// from the tutorial's record: an identity index table, a bit-verbatim
+/// copy of the whole curve record, a second index table, segment arrays
+/// of verbatim curve pairs, and mixed regions the curve drives under an
+/// unnamed rule (stations resampled on an adaptive grid, byte index
+/// maps, zero-crossing stations). Head, curve and tables re-encode
+/// bit-exact from the fields above; the mixed regions do not, so no
+/// writer emits this record yet.
 // ponytail: the 2-bit runs and the 127 bits (zero in every record) are
 // read past by their sizes; name them once a drawing varies them.
+// ponytail: the mixed tail regions' resampling rule; a second record
+// (the wizard-made line) is the capture that names it.
 pub(super) fn mass_haul_points(data: &[u8], start: usize, end: usize) -> Option<Vec<Vector2>> {
     let mut bits = Bits::new(data, start, end);
     for want in [80, 0, 80, 80, 0] {
