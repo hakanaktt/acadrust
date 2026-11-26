@@ -105,7 +105,6 @@ pub(super) fn census(d: &CadDocument) -> Result<u64> {
         block_entity_handles: _,
         dwg_source_version: _,
         preview: _,
-        acis_sab_handles: _,
         raw_acds_data: _,
         r12_header_raw: _,
         r12_table_usage: _,
@@ -155,7 +154,6 @@ pub(super) fn census(d: &CadDocument) -> Result<u64> {
     tables::visit(d, &mut u)?;
     u.refs(&d.vx_control_entries);
     u.refs(&d.section_view_reps);
-    u.refs(&d.acis_sab_handles);
     for h in &d.dwg_data_store_handles {
         u.protect(*h);
     }
