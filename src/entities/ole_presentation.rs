@@ -40,45 +40,43 @@ impl crate::entities::Ole2Frame {
 }
 
 /// Extract the picture from a raw OLE2FRAME data blob (frame header + CFB).
+/// `None` when the data does not have the saved frame layout.
 pub fn extract_presentation(data: &[u8]) -> Option<OlePresentation> {
-    if let Some(cfb) = find_cfb(data).and_then(Cfb::parse) {
-        // Native raster first — it's the full-quality object; the
-        // presentation stream is only a preview of it.
-        for name in ["\u{1}Ole10Native", "CONTENTS", "Package"] {
-            if let Some(stream) = cfb.stream(name) {
-                let body = native_body(name, &stream);
-                if is_raster(body) {
-                    return Some(OlePresentation::Raster(body.to_vec()));
-                }
-            }
-        }
-        // Cached presentation streams.
-        for name in ["\u{2}OlePres000", "\u{2}OlePres001", "\u{2}OlePres002"] {
-            if let Some(stream) = cfb.stream(name) {
-                if let Some(p) = decode_olepres(&stream) {
-                    return Some(p);
-                }
-            }
-        }
-        // Native metafile content (static metafile objects).
-        for name in ["CONTENTS", "\u{1}Ole10Native"] {
-            if let Some(stream) = cfb.stream(name) {
-                if let Some(p) = classify_metafile(native_body(name, &stream)) {
-                    return Some(p);
-                }
+    let cfb = Cfb::parse(compound_file(data)?)?;
+    // Native raster first — it's the full-quality object; the
+    // presentation stream is only a preview of it.
+    for name in ["\u{1}Ole10Native", "CONTENTS", "Package"] {
+        if let Some(stream) = cfb.stream(name) {
+            let body = native_body(name, &stream);
+            if is_raster(body) {
+                return Some(OlePresentation::Raster(body.to_vec()));
             }
         }
     }
-    // Legacy fallback: scan the raw blob for a self-consistent BMP file.
-    // Catches R14-era blobs that store the DIB outside a compound file.
-    scan_bmp(data).map(OlePresentation::Raster)
+    // Cached presentation streams.
+    for name in ["\u{2}OlePres000", "\u{2}OlePres001", "\u{2}OlePres002"] {
+        if let Some(stream) = cfb.stream(name) {
+            if let Some(p) = decode_olepres(&stream) {
+                return Some(p);
+            }
+        }
+    }
+    // Native metafile content (static metafile objects).
+    for name in ["CONTENTS", "\u{1}Ole10Native"] {
+        if let Some(stream) = cfb.stream(name) {
+            if let Some(p) = classify_metafile(native_body(name, &stream)) {
+                return Some(p);
+            }
+        }
+    }
+    None
 }
 
 /// The object's user type ("Adobe Photoshop Image", "Paintbrush Picture"),
 /// read from the `\x01CompObj` stream of a raw OLE2FRAME data blob: the
 /// first length-prefixed ANSI string after the 28-byte stream header.
 pub fn ole_user_type(data: &[u8]) -> Option<String> {
-    let cfb = find_cfb(data).and_then(Cfb::parse)?;
+    let cfb = Cfb::parse(compound_file(data)?)?;
     let stream = cfb.stream("\u{1}CompObj")?;
     let len = u32::from_le_bytes(stream.get(28..32)?.try_into().ok()?) as usize;
     let text = stream.get(32..32 + len)?;
@@ -95,12 +93,10 @@ fn native_body<'a>(name: &str, stream: &'a [u8]) -> &'a [u8] {
     }
 }
 
-/// Locate the CFB signature within the blob (it sits after the OLE frame
-/// header, whose exact size varies by writer).
-fn find_cfb(data: &[u8]) -> Option<&[u8]> {
-    const MAGIC: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
-    let pos = data.windows(8).take(4096).position(|w| w == MAGIC)?;
-    Some(&data[pos..])
+/// The compound file of OLE2FRAME data, read from its frame header
+/// ([`crate::entities::OleFrameEnvelope`]).
+fn compound_file(data: &[u8]) -> Option<&[u8]> {
+    crate::entities::ole2frame::frame_parts(data).map(|(_, _, _, compound)| compound)
 }
 
 /// Does the body start like a self-contained raster file?
@@ -218,36 +214,6 @@ fn decode_olepres(d: &[u8]) -> Option<OlePresentation> {
             }
         }
     }
-}
-
-/// Scan a blob for a plausible embedded BMP file and return its bytes.
-fn scan_bmp(data: &[u8]) -> Option<Vec<u8>> {
-    let mut i = 0usize;
-    while i + 54 <= data.len() {
-        if &data[i..i + 2] != b"BM" {
-            i += 1;
-            continue;
-        }
-        let file_size = u32::from_le_bytes(data[i + 2..i + 6].try_into().unwrap()) as usize;
-        let dib_size = u32::from_le_bytes(data[i + 14..i + 18].try_into().unwrap());
-        // A plausible BITMAPFILEHEADER points at a known DIB-header size and
-        // a sane pixel-data offset within the remaining bytes.
-        let px_off = u32::from_le_bytes(data[i + 10..i + 14].try_into().unwrap()) as usize;
-        if matches!(dib_size, 12 | 40 | 52 | 56 | 64 | 108 | 124)
-            && px_off >= 26
-            && px_off < data.len() - i
-            && file_size >= 54
-        {
-            let end = if i + file_size <= data.len() {
-                i + file_size
-            } else {
-                data.len()
-            };
-            return Some(data[i..end].to_vec());
-        }
-        i += 1;
-    }
-    None
 }
 
 // ── WMFC → EMF reassembly ───────────────────────────────────────────────────

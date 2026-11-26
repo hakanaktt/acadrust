@@ -34,17 +34,20 @@ fn pattern(n: usize, seed: u32) -> Vec<u8> {
         .collect()
 }
 
-/// A frame whose data has the DWG wrapper with the frame's corners, a compound file with one
-/// stream (larger than one 4096-byte record) and trailing bytes.
+/// A frame whose data has the 128-byte frame header with the frame's corners, then a compound
+/// file with one stream (larger than one 4096-byte record) and trailing bytes.
 fn framed(object_type: OleObjectType, lock_aspect: u8) -> Ole2Frame {
     let mut ole = Ole2Frame::new();
     ole.upper_left_corner = Vector3::new(10.25, 40.5, 0.0);
     ole.lower_right_corner = Vector3::new(70.125, 5.75, 0.0);
     ole.ole_object_type = object_type;
     ole.lock_aspect = lock_aspect;
+    // A frame turned off the axes: its other two corners are its own.
     ole.envelope = OleFrameEnvelope::Geometry {
-        marker: 0x0080,
-        extension_records: BinaryRecord::split(&pattern(37, 1), 4096),
+        marker: 0x5581,
+        upper_right: Vector3::new(75.5, 39.0, 0.0),
+        lower_left: Vector3::new(4.875, 7.25, 0.0),
+        extension_records: BinaryRecord::split(&pattern(26, 1), 4096),
     };
     let mut root = CompoundStorage::root();
     root.entries.push(CompoundEntry::Stream(CompoundStream {

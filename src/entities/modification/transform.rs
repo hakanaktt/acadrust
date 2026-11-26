@@ -1486,6 +1486,15 @@ pub(crate) fn transform_ole2frame(e: &mut Ole2Frame, transform: &Transform) {
     e.common.raw_record = None;
     e.upper_left_corner = transform.apply(e.upper_left_corner);
     e.lower_right_corner = transform.apply(e.lower_right_corner);
+    if let crate::entities::OleFrameEnvelope::Geometry {
+        upper_right,
+        lower_left,
+        ..
+    } = &mut e.envelope
+    {
+        *upper_right = transform.apply(*upper_right);
+        *lower_left = transform.apply(*lower_left);
+    }
 }
 
 // ── PolygonMesh ──────────────────────────────────────────────────────────────
