@@ -974,6 +974,11 @@ pub fn add_alignment_on_site(doc: &mut CadDocument, site: Handle, name: &str, ve
     if curves.len() + 2 != vertices.len() {
         return Err(invalid("an alignment needs one curve per inner vertex"));
     }
+    // A spanning arc replaces a segment, which the site's topology (one
+    // member per segment) has no place for.
+    if curves.iter().any(|c| c.spans()) {
+        return Err(invalid("an alignment on a site cannot carry spanning arcs (write it siteless)"));
+    }
     let elements = elements(vertices, curves);
     let path = solve(vertices, curves, &elements).ok_or_else(|| invalid("a curve has no turn or is not positive, or the curves do not fit on the lines"))?;
     if alignment_style(doc).is_none() {

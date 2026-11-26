@@ -13,7 +13,7 @@
 
 use acadrust::classes::arch::ArchEntityData;
 use acadrust::classes::civil::{
-    add_alignment, add_alignment_of_kind, add_alignment_with_curves, add_curb_return, add_curb_return_with, add_design_speeds, add_offset_alignment, add_offset_alignment_with_widenings, add_offset_profile, add_profile, add_profile_entities, add_profile_with_curves, add_station_equations, add_surface_profile, add_tin_surface, ensure_civil, display_station, AlignmentElementKind, AlignmentKind, AlignmentPiece, AlignmentType, CurbReturnCurve, DesignSpeed, ProfileEntity, ProfilePiece, StationEquation, VertexCurve, VerticalCurve, Widening,
+    add_alignment, add_alignment_of_kind, add_alignment_with_curves, add_curb_return, add_curb_return_with, add_design_speeds, add_offset_alignment, add_offset_alignment_with_widenings, add_offset_profile, add_profile, add_profile_entities, add_profile_with_curves, add_station_equations, add_surface_profile, add_tin_surface, ensure_civil, display_station, AlignmentElement, AlignmentElementKind, AlignmentKind, AlignmentPiece, AlignmentType, CurbReturnCurve, DesignSpeed, ProfileEntity, ProfilePiece, StationEquation, VertexCurve, VerticalCurve, Widening,
 };
 use acadrust::entities::{EntityType, ExtendedEntityData};
 use acadrust::io::dwg::{DwgReader, DwgWriter};
@@ -552,4 +552,169 @@ fn an_app_written_alignments_name_is_not_its_created_by_name() {
         })
         .collect();
     assert_eq!(names, vec!["Centerline (1)".to_string(), "Left (1)".to_string(), "Right (1)".to_string()]);
+}
+
+/// The elements of `elements` in station order: from the element nothing
+/// comes into, along the `next` links.
+fn station_chain(elements: &[AlignmentElement]) -> Vec<AlignmentElementKind> {
+    let mut out = Vec::new();
+    let mut at = elements.iter().find(|e| e.previous == 0);
+    while let Some(e) = at {
+        out.push(e.kind.clone());
+        at = if e.next == 0 { None } else { elements.iter().find(|x| x.id == e.next) };
+    }
+    out
+}
+
+/// 9. Spanning arcs: a fixed arc through three points (corpus gap #9 —
+///    the Sections-Project-Objects alignments carry fixed arcs) and a free
+///    arc fitted between two lines that do not share a vertex. Both
+///    replace the segment between their end vertices, which gets no line.
+#[test]
+fn rt_align_spanning_arcs_round_trip() {
+    use AlignmentElementKind::{FixedArc, FixedLine, FreeArc};
+    let v = Vector2::new;
+    let mut doc = drawing();
+    // A fixed arc from (100, 0) through (150, 40) to (200, 0): not tangent
+    // to the lines, which keep those vertices as their ends.
+    let mid = v(150.0, 40.0);
+    let fixed = add_alignment_with_curves(&mut doc, "AL1", &[v(0.0, 0.0), v(100.0, 0.0), v(200.0, 0.0), v(300.0, 0.0)], &[VertexCurve::FixedArc { mid }, VertexCurve::None], None).unwrap();
+    // A free arc replacing the middle segment: fitted tangent to the two
+    // written lines, whose ends stand at the arc's ends.
+    let free = add_alignment_with_curves(&mut doc, "AL2", &[v(0.0, 0.0), v(300.0, 0.0), v(200.0, 50.0), v(150.0, 150.0)], &[VertexCurve::FreeArc(50.0), VertexCurve::None], None).unwrap();
+    let back = roundtrip(&doc, "spanning");
+
+    let a = arch(&back, fixed);
+    let elements = a.alignment_elements().unwrap();
+    // Two lines and the arc, ids lines-first, linked line - arc - line.
+    assert_eq!(elements.iter().map(|e| (e.id, e.previous, e.next)).collect::<Vec<_>>(), [(1, 0, 3), (2, 3, 0), (3, 1, 2)]);
+    assert_eq!(elements[0].kind, FixedLine { start: v(0.0, 0.0), end: v(100.0, 0.0) });
+    assert_eq!(elements[1].kind, FixedLine { start: v(200.0, 0.0), end: v(300.0, 0.0) });
+    assert_eq!(elements[2].kind, FixedArc { start: v(100.0, 0.0), mid, end: v(200.0, 0.0) });
+    // The solved run keeps the stored ends (the arc is not tangent to the
+    // lines) and stands on the three points.
+    let pieces = a.alignment_pieces();
+    assert_eq!(pieces.iter().map(|p| p.0).collect::<Vec<_>>(), [AlignmentPiece::Line, AlignmentPiece::Curve, AlignmentPiece::Line]);
+    assert_eq!((pieces[0].1[0], pieces[0].1[pieces[0].1.len() - 1]), (v(0.0, 0.0), v(100.0, 0.0)));
+    assert_eq!((pieces[2].1[0], pieces[2].1[pieces[2].1.len() - 1]), (v(200.0, 0.0), v(300.0, 0.0)));
+    let run = a.alignment_polylines();
+    assert_eq!(run.len(), 1);
+    // The solved arc runs on the circle through the three stored points.
+    let (a2, b2, c2) = (v(100.0, 0.0), mid, v(200.0, 0.0));
+    let d = 2.0 * (a2.x * (b2.y - c2.y) + b2.x * (c2.y - a2.y) + c2.x * (a2.y - b2.y));
+    let center = Vector2::new(
+        ((a2.x * a2.x + a2.y * a2.y) * (b2.y - c2.y) + (b2.x * b2.x + b2.y * b2.y) * (c2.y - a2.y) + (c2.x * c2.x + c2.y * c2.y) * (a2.y - b2.y)) / d,
+        ((a2.x * a2.x + a2.y * a2.y) * (c2.x - b2.x) + (b2.x * b2.x + b2.y * b2.y) * (a2.x - c2.x) + (c2.x * c2.x + c2.y * c2.y) * (b2.x - a2.x)) / d,
+    );
+    let radius = center.distance(&a2);
+    let curve = &pieces[1].1;
+    assert!(curve.iter().all(|p| (p.distance(&center) - radius).abs() < 1e-6 * radius), "the arc runs on the circle through its three points");
+
+    // The free arc between the non-adjacent lines.
+    let a = arch(&back, free);
+    let elements = a.alignment_elements().unwrap();
+    assert_eq!(elements.iter().map(|e| (e.id, e.previous, e.next)).collect::<Vec<_>>(), [(1, 0, 3), (2, 3, 0), (3, 1, 2)]);
+    assert_eq!(elements[2].kind, FreeArc { radius: 50.0 });
+    assert_eq!(elements[0].kind, FixedLine { start: v(0.0, 0.0), end: v(300.0, 0.0) });
+    assert_eq!(elements[1].kind, FixedLine { start: v(200.0, 50.0), end: v(150.0, 150.0) });
+    let pieces = a.alignment_pieces();
+    assert_eq!(pieces.iter().map(|p| p.0).collect::<Vec<_>>(), [AlignmentPiece::Line, AlignmentPiece::Curve, AlignmentPiece::Line]);
+    // The arc is fitted tangent to the two lines, of the given radius: it
+    // leaves the first line where it touches it and hands over to the
+    // second there.
+    let curvature = a.alignment_pieces_with_curvature()[1].1;
+    assert!((curvature * 50.0 - 1.0).abs() < 1e-9, "radius 50 vs curvature {curvature}");
+    let (line0, arc, line1) = (&pieces[0].1, &pieces[1].1, &pieces[2].1);
+    assert_eq!(line0[line0.len() - 1], arc[0], "the arc starts where the first line ends");
+    assert_eq!(arc[arc.len() - 1], line1[0], "the arc ends where the second line starts");
+    assert!(line0[line0.len() - 1].y.abs() < 1e-9, "the arc leaves on the first line's carrier");
+    let (b, t) = (v(200.0, 50.0), v(150.0, 150.0));
+    let on_second = line1[0] - b;
+    let along = t - b;
+    let s = on_second.dot(&along) / along.dot(&along);
+    assert!((0.0..=1.0).contains(&s), "the arc arrives on the second line: s={s}");
+
+    // The refusals: a spanning free arc at the last inner vertex has no
+    // line after it to be fitted to, and it needs written lines on either
+    // side (not another spanning arc's place).
+    let mut doc = drawing();
+    assert!(add_alignment_with_curves(&mut doc, "AL3", &[v(0.0, 0.0), v(100.0, 0.0), v(200.0, 50.0)], &[VertexCurve::FreeArc(50.0)], None).is_err());
+    assert!(add_alignment_with_curves(&mut doc, "AL4", &[v(0.0, 0.0), v(100.0, 0.0), v(200.0, 50.0), v(300.0, 50.0), v(400.0, 0.0)], &[VertexCurve::FreeArc(50.0), VertexCurve::FreeArc(50.0), VertexCurve::None], None).is_err());
+    // A fixed arc may close the alignment (its ends are its vertices).
+    assert!(add_alignment_with_curves(&mut doc, "AL5", &[v(0.0, 0.0), v(100.0, 0.0), v(200.0, 0.0), v(300.0, 0.0)], &[VertexCurve::None, VertexCurve::FixedArc { mid }], None).is_ok());
+}
+
+/// The corpus gate for gap #9: rebuilding the three alignments of the
+/// tutorials' Sections-Project-Objects.dwg from the oracle's own typed
+/// elements through the public writer gives records whose decode is the
+/// oracle's — the stationing drifts (+23.15 / +2.36 / +11.15 on the
+/// corner-only rebuild) are 0: the polylines, and with them the raw
+/// ending stations, come back bit-exact.
+#[test]
+fn rt_align_the_oracle_fixed_arcs_rebuild_station_exact() {
+    let Some(dir) = std::env::var_os("ACADRUST_CIVIL_TUTORIALS_DIR") else { return };
+    let path = std::path::Path::new(&dir).join("Sections-Project-Objects.dwg");
+    if !path.exists() {
+        return;
+    }
+    let oracle = DwgReader::from_file(&path).unwrap().read().unwrap();
+    let alignments: Vec<_> = oracle
+        .entities()
+        .filter_map(|e| match e {
+            EntityType::Extended(x) => match &x.data {
+                ExtendedEntityData::Arch(a) if a.dxf_name == "AECC_ALIGNMENT" => Some(a.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(alignments.len(), 3);
+    let mut doc = drawing();
+    let mut inputs = Vec::new();
+    for a in &alignments {
+        let elements = a.alignment_elements().expect("the oracle elements decode");
+        // The public API's natural expression of the oracle's records: the
+        // vertices are the written lines' ends; the one curve spans the
+        // segment between them (a free arc fitted between two lines that
+        // do not share a vertex, or a fixed arc through its three points).
+        let lines: Vec<(acadrust::types::Vector2, acadrust::types::Vector2)> = elements
+            .iter()
+            .filter_map(|e| match &e.kind {
+                AlignmentElementKind::FixedLine { start, end } => Some((*start, *end)),
+                _ => None,
+            })
+            .collect();
+        let curves: Vec<AlignmentElementKind> = elements.iter().filter(|e| !matches!(e.kind, AlignmentElementKind::FixedLine { .. })).map(|e| e.kind.clone()).collect();
+        assert!(lines.len() >= 2 && curves.len() == 1, "the oracle alignments are line - arc - line");
+        let (v0, v1, v2, v3) = (lines[0].0, lines[0].1, lines[1].0, lines[1].1);
+        let curve = match &curves[0] {
+            AlignmentElementKind::FixedArc { mid, .. } => VertexCurve::FixedArc { mid: *mid },
+            AlignmentElementKind::FreeArc { radius } => VertexCurve::FreeArc(*radius),
+            other => panic!("unexpected oracle element {other:?}"),
+        };
+        let h = add_alignment_with_curves(&mut doc, "REBUILT", &[v0, v1, v2, v3], &[curve, VertexCurve::None], None).unwrap();
+        inputs.push((h, station_chain(&elements), a.alignment_polylines()));
+    }
+    let back = roundtrip(&doc, "oracle_fixed_arcs");
+
+    for (h, oracle_chain, oracle_run) in &inputs {
+        let a = arch(&back, *h);
+        // The same elements in station order, kinds and points bit-exact
+        // (the crate's ids number the records lines-first, the oracle's by
+        // creation order, so links are compared through the chain).
+        assert_eq!(station_chain(&a.alignment_elements().unwrap()), *oracle_chain);
+        // The gate: the solved geometry is the oracle's, bit-exact — the
+        // rebuilt ending station (the polyline length) has no drift.
+        let run = a.alignment_polylines();
+        assert_eq!(run.len(), oracle_run.len(), "the run solves");
+        for (r, o) in run.iter().zip(oracle_run.iter()) {
+            assert_eq!(r.len(), o.len(), "same sample count");
+            for (rp, op) in r.iter().zip(o.iter()) {
+                assert_eq!(rp.x.to_bits(), op.x.to_bits(), "polyline x bit-exact");
+                assert_eq!(rp.y.to_bits(), op.y.to_bits(), "polyline y bit-exact");
+            }
+        }
+        let length = |run: &[Vec<acadrust::types::Vector2>]| -> f64 { run[0].windows(2).map(|w| w[0].distance(&w[1])).sum() };
+        assert_eq!(length(&run).to_bits(), length(oracle_run).to_bits(), "ending station bit-exact");
+    }
 }

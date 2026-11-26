@@ -53,6 +53,17 @@ pub enum VertexCurve {
     /// A free spiral-curve-spiral between the lines: spirals of these
     /// lengths and an arc of this radius.
     SpiralCurveSpiral { spiral_in: f64, radius: f64, spiral_out: f64 },
+    /// A fixed arc from this vertex through `mid` to the next vertex: it
+    /// replaces the segment between them (no line is written there), the
+    /// lines before and after keep those vertices as their ends, and the
+    /// record stores the arc's three points. The arc need not be tangent
+    /// to the lines.
+    FixedArc { mid: Vector2 },
+    /// A free arc of this radius replacing the segment from this vertex to
+    /// the next one: fitted tangent to the lines before and after it,
+    /// whose stored ends stand at the arc's ends (the application solves
+    /// its tangent points on the two lines).
+    FreeArc(f64),
 }
 
 impl VertexCurve {
@@ -60,53 +71,94 @@ impl VertexCurve {
         self != VertexCurve::None
     }
 
+    /// A curve that replaces the segment after its vertex instead of
+    /// fitting at the vertex itself.
+    pub(super) fn spans(self) -> bool {
+        matches!(self, VertexCurve::FixedArc { .. } | VertexCurve::FreeArc(_))
+    }
+
     fn valid(self) -> bool {
         let positive = |v: f64| v.is_finite() && v > 0.0;
         match self {
             VertexCurve::None => true,
-            VertexCurve::Arc(r) => positive(r),
+            VertexCurve::Arc(r) | VertexCurve::FreeArc(r) => positive(r),
             VertexCurve::SpiralCurveSpiral { spiral_in, radius, spiral_out } => positive(spiral_in) && positive(radius) && positive(spiral_out),
+            VertexCurve::FixedArc { mid } => mid.x.is_finite() && mid.y.is_finite(),
         }
     }
 }
 
 /// The design elements of an alignment through `vertices`: the lines (ids
-/// 1..n in station order, from vertex to vertex) then a curve element per
-/// curved inner vertex (ids after the lines, in station order), linked
-/// along the path.
+/// 1..m in station order over the written segments) then a curve element
+/// per curve (ids after the lines, in station order), linked along the
+/// path in station order. A spanning curve replaces the segment after its
+/// vertex: that segment gets no line, the arc runs from this vertex to
+/// the next one.
 pub(super) fn elements(vertices: &[Vector2], curves: &[VertexCurve]) -> Vec<AlignmentElement> {
     let n = vertices.len() - 1;
-    let mut next = n as i16;
-    let ids: Vec<Option<i16>> = curves
+    // Line `i` is not written when the curve at vertex `i` spans (a
+    // spanning curve sits at vertex `j + 1` in `curves[j]` and replaces
+    // segment `j + 1`).
+    let dropped: Vec<bool> = (0..n).map(|i| i > 0 && curves.get(i - 1).map(|c| c.spans()).unwrap_or(false)).collect();
+    // A spanning curve needs the segment after its vertex to exist and,
+    // for a free arc (fitted to the written lines on either side), a
+    // written line before and after it. The rest is refused (the solve
+    // reports it).
+    for (j, c) in curves.iter().enumerate() {
+        if c.spans() && (j + 1 >= n || (matches!(c, VertexCurve::FreeArc(_)) && (dropped[j] || dropped.get(j + 2).copied().unwrap_or(false)))) {
+            return Vec::new();
+        }
+    }
+    // The station walk: every written line, then the curve at its end
+    // vertex.
+    let mut steps: Vec<(bool, usize)> = Vec::new();
+    for j in 0..n {
+        if !dropped[j] {
+            steps.push((true, j));
+        }
+        if curves.get(j).map(|c| c.is_some()).unwrap_or(false) {
+            steps.push((false, j));
+        }
+    }
+    let mut line_id = 0i16;
+    let mut curve_id = steps.iter().filter(|(line, _)| *line).count() as i16;
+    let mut id_of = |line: bool| {
+        if line {
+            line_id += 1;
+            line_id
+        } else {
+            curve_id += 1;
+            curve_id
+        }
+    };
+    // Links in station order (a curve between two written lines links to
+    // them and nothing between), ids and records in the crate's order: the
+    // lines first, then the curves.
+    let ids: Vec<i16> = steps.iter().map(|(line, _)| id_of(*line)).collect();
+    let mut walked: Vec<AlignmentElement> = steps
         .iter()
-        .map(|c| {
-            c.is_some().then(|| {
-                next += 1;
-                next
-            })
-        })
-        .collect();
-    let mut out: Vec<AlignmentElement> = (0..n)
-        .map(|i| {
-            let id = i as i16 + 1;
+        .enumerate()
+        .map(|(k, (line, j))| {
+            let kind = if *line {
+                AlignmentElementKind::FixedLine { start: vertices[*j], end: vertices[*j + 1] }
+            } else {
+                match curves[*j] {
+                    VertexCurve::Arc(radius) | VertexCurve::FreeArc(radius) => AlignmentElementKind::FreeArc { radius },
+                    VertexCurve::SpiralCurveSpiral { spiral_in, radius, spiral_out } => AlignmentElementKind::FreeSpiralCurveSpiral { spiral_in, radius, spiral_out },
+                    VertexCurve::FixedArc { mid } => AlignmentElementKind::FixedArc { start: vertices[*j + 1], mid, end: vertices[*j + 2] },
+                    VertexCurve::None => AlignmentElementKind::FreeLine,
+                }
+            };
             AlignmentElement {
-                id,
-                previous: if i == 0 { 0 } else { ids[i - 1].unwrap_or(id - 1) },
-                next: if i + 1 == n { 0 } else { ids[i].unwrap_or(id + 1) },
-                kind: AlignmentElementKind::FixedLine { start: vertices[i], end: vertices[i + 1] },
+                id: ids[k],
+                previous: if k == 0 { 0 } else { ids[k - 1] },
+                next: if k + 1 == steps.len() { 0 } else { ids[k + 1] },
+                kind,
             }
         })
         .collect();
-    for (j, c) in curves.iter().enumerate() {
-        let Some(id) = ids[j] else { continue };
-        let kind = match *c {
-            VertexCurve::Arc(radius) => AlignmentElementKind::FreeArc { radius },
-            VertexCurve::SpiralCurveSpiral { spiral_in, radius, spiral_out } => AlignmentElementKind::FreeSpiralCurveSpiral { spiral_in, radius, spiral_out },
-            VertexCurve::None => continue,
-        };
-        out.push(AlignmentElement { id, previous: j as i16 + 1, next: j as i16 + 2, kind });
-    }
-    out
+    walked.sort_by_key(|e| e.id);
+    walked
 }
 /// Key of the geometry stamp setting.
 const STAMP: i32 = 0x0B00_1081;
@@ -161,34 +213,65 @@ pub(super) type PathPoint = (Vector2, Option<f64>);
 /// vertex has no turn or a curve is not positive, or the curves do not fit
 /// on the lines (a line would run backwards or a piece is missing).
 pub(super) fn solve(vertices: &[Vector2], curves: &[VertexCurve], elements: &[AlignmentElement]) -> Option<Vec<PathPoint>> {
+    let n = vertices.len() - 1;
+    // Line `i` is not written when the curve at vertex `i` spans.
+    let dropped: Vec<bool> = (0..n).map(|i| i > 0 && curves.get(i - 1).map(|c| c.spans()).unwrap_or(false)).collect();
+    let kept: Vec<usize> = (0..n).filter(|i| !dropped[*i]).collect();
+    let scale = vertices.iter().map(|p| p.x.abs().max(p.y.abs())).fold(1.0, f64::max);
     for (j, c) in curves.iter().enumerate() {
-        let (u, v) = (vertices[j + 1] - vertices[j], vertices[j + 2] - vertices[j + 1]);
-        let turn = u.cross(&v).atan2(u.dot(&v));
-        (c.valid() && (!c.is_some() || (turn.abs() > 1e-9 && turn.abs() < std::f64::consts::PI - 1e-9))).then_some(())?;
+        let at = |i: usize| dropped.get(i).copied().unwrap_or(false);
+        match *c {
+            VertexCurve::None => {}
+            // A curve fitted at the vertex needs the written lines before
+            // and after it, and the lines have to turn.
+            VertexCurve::Arc(_) | VertexCurve::SpiralCurveSpiral { .. } => {
+                (c.valid() && !at(j) && !at(j + 1) && j + 2 < vertices.len()).then_some(())?;
+                let (u, v) = (vertices[j + 1] - vertices[j], vertices[j + 2] - vertices[j + 1]);
+                let turn = u.cross(&v).atan2(u.dot(&v));
+                (turn.abs() > 1e-9 && turn.abs() < std::f64::consts::PI - 1e-9).then_some(())?;
+            }
+            // A fixed arc through three points stands on its own (its ends
+            // are this and the next vertex): the middle point must leave
+            // the chord.
+            VertexCurve::FixedArc { mid } => {
+                (j + 2 < vertices.len()).then_some(())?;
+                let (a, b) = (vertices[j + 1], vertices[j + 2]);
+                (mid.distance(&a) > 0.0 && mid.distance(&b) > 0.0 && (b - a).cross(&(mid - a)).abs() > 1e-9 * scale).then_some(())?;
+            }
+            // A spanning free arc is fitted between the written lines on
+            // either side, which have to turn.
+            VertexCurve::FreeArc(radius) => {
+                let positive = radius.is_finite() && radius > 0.0;
+                (positive && j + 2 < n && !at(j) && !at(j + 2)).then_some(())?;
+                let (u, v) = (vertices[j + 1] - vertices[j], vertices[j + 3] - vertices[j + 2]);
+                let turn = u.cross(&v).atan2(u.dot(&v));
+                (turn.abs() > 1e-9 && turn.abs() < std::f64::consts::PI - 1e-9).then_some(())?;
+            }
+        }
     }
     let pieces = pieces_with_curvature(elements);
     let curve_pieces: usize = curves
         .iter()
         .map(|c| match c {
             VertexCurve::None => 0,
-            VertexCurve::Arc(_) => 1,
+            VertexCurve::Arc(_) | VertexCurve::FreeArc(_) | VertexCurve::FixedArc { .. } => 1,
             VertexCurve::SpiralCurveSpiral { .. } => 3,
         })
         .sum();
-    let scale = vertices.iter().map(|p| p.x.abs().max(p.y.abs())).fold(1.0, f64::max);
     let mut path: Vec<PathPoint> = Vec::new();
     let mut line = 0;
     for piece in &pieces {
         let (kind, _, points) = piece;
         if *kind == AlignmentPiece::Line {
             let (first, last) = (*points.first()?, *points.last()?);
-            let along = *vertices.get(line + 1)? - vertices[line];
+            let vi = *kept.get(line)?;
+            let along = vertices[vi + 1] - vertices[vi];
             (along.dot(&(last - first)) >= -1e-9 * scale * along.length()).then_some(())?;
             line += 1;
         }
         push_piece(&mut path, piece, scale);
     }
-    (pieces.len() == vertices.len() - 1 + curve_pieces && line == vertices.len() - 1).then_some(())?;
+    (pieces.len() == kept.len() + curve_pieces && line == kept.len()).then_some(())?;
     path.push((*vertices.last()?, None));
     Some(path)
 }
@@ -1795,8 +1878,12 @@ pub fn add_alignment(doc: &mut CadDocument, name: &str, vertices: &[Vector2], la
 
 /// Adds an alignment of fixed lines through `vertices` with `curves[j]` at
 /// inner vertex `j + 1`: a free arc or spiral-curve-spiral tangent to the
-/// lines before and after the vertex, which end where it meets them. The
-/// curves must fit on the lines between them.
+/// lines before and after the vertex, which end where it meets them. A
+/// fixed arc through three points (`FixedArc`) or a free arc fitted
+/// between the lines (`FreeArc`) spans instead: it replaces the segment
+/// from this vertex to the next one, which gets no line, and runs from
+/// this vertex to the next vertex (the lines keep those ends). The curves
+/// must fit on the lines between them.
 pub fn add_alignment_with_curves(doc: &mut CadDocument, name: &str, vertices: &[Vector2], curves: &[VertexCurve], layer: Option<&str>) -> Result<Handle, DxfError> {
     add_alignment_of_kind(doc, name, vertices, curves, AlignmentKind::Centerline, layer)
 }
