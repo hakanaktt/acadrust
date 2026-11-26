@@ -737,9 +737,17 @@ pub fn connect_pipe(doc: &mut CadDocument, pipe: Handle, start: Option<Handle>, 
 /// in the network; the application may rename a part afterwards (it
 /// suffixes a duplicate with ` (1)`) — this writes that name.
 ///
-/// The record keeps every bit; only the class body's name text (the
-/// string the writers put the name at) changes. Names are not checked for
-/// uniqueness: the application resolves a duplicate on open.
+/// The name goes to the first text with the class's part-list prefix —
+/// the slot rule the read side's part-name scan uses. Records this crate
+/// writes keep it at `strings[6]`; the application's carriers hold it
+/// past their `AeccNetworkPartDataField` texts (normal pipes
+/// `strings[7]`, catalog-size pipes `strings[24]`, headwall structures
+/// `strings[13]` — Pipe Networks-3B), so a re-saved app-written record
+/// keeps the name in its slot. A record with no such text is refused:
+/// the slot is never invented.
+///
+/// The record keeps every bit; only the name text changes. Names are not
+/// checked for uniqueness: the application resolves a duplicate on open.
 pub fn set_network_part_name(doc: &mut CadDocument, part: Handle, name: &str) -> Result<(), DxfError> {
     let refused = || invalid("not a pipe network part");
     if name.trim().is_empty() {
@@ -748,8 +756,9 @@ pub fn set_network_part_name(doc: &mut CadDocument, part: Handle, name: &str) ->
     let a = arch_entity(doc, part).filter(|a| a.dxf_name == "AECC_PIPE" || a.dxf_name == "AECC_STRUCTURE").ok_or_else(refused)?;
     let (data, start, end) = a.main_stream().ok_or_else(refused)?;
     let mut strings = a.decode().strings;
-    (strings.len() > 6).then_some(()).ok_or_else(refused)?;
-    strings[6] = name.to_string();
+    let prefix = if a.dxf_name == "AECC_STRUCTURE" { "Structure - (" } else { "Pipe - (" };
+    let slot = strings.iter().position(|s| s.starts_with(prefix)).ok_or_else(refused)?;
+    strings[slot] = name.to_string();
     let dxf = a.dxf_name.clone();
     let common = doc.get_entity(part).ok_or_else(refused)?.common().clone();
     let bits: Vec<bool> = (start..end).map(|p| data[p / 8] >> (7 - p % 8) & 1 == 1).collect();
@@ -939,5 +948,84 @@ mod tests {
         let (data, start, _) = object(&back, def).unwrap().main_stream().unwrap();
         let bytes: Vec<u8> = (0..8).map(|k| (0..8).fold(0u8, |b, i| b << 1 | (data[(start + 154 + 8 * k + i) / 8] >> (7 - (start + 154 + 8 * k + i) % 8) & 1))).collect();
         assert_eq!(f64::from_le_bytes(bytes.try_into().unwrap()), 15.0);
+    }
+
+    /// The application's carriers hold a part's name past its
+    /// `AeccNetworkPartDataField` texts, not at the writer's `strings[6]`
+    /// (Pipe Networks-3B probe: normal pipes `strings[7]`, catalog-size
+    /// pipes `strings[24]`, the headwall structure `strings[13]`). A
+    /// rename lands in the carrier's slot and survives save/reopen; a
+    /// record with no part-list text at all is refused, the slot never
+    /// invented (#675).
+    #[test]
+    fn part_names_go_to_the_slot_the_carrier_holds() {
+        let v = Vector3::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let n = add_pipe_network(&mut doc, "NW-SLOTS", None).unwrap();
+        let s = add_structure(&mut doc, n, v(0.0, 0.0, 0.0), 0.0).unwrap();
+        let p1 = add_pipe(&mut doc, n, v(0.0, 0.0, -2.0), v(50.0, 0.0, -2.0)).unwrap();
+        let p2 = add_pipe(&mut doc, n, v(50.0, 0.0, -2.0), v(100.0, 0.0, -2.0)).unwrap();
+
+        // Re-body a real record with an application-shaped text stream:
+        // the body's bits and references stay, the texts become the
+        // carrier's.
+        fn rebody(doc: &mut CadDocument, part: Handle, strings: Vec<String>) {
+            let a = arch_entity(doc, part).unwrap();
+            let (data, start, end) = a.main_stream().unwrap();
+            let bits: Vec<bool> = (start..end).map(|p| data[p / 8] >> (7 - p % 8) & 1 == 1).collect();
+            let refs: Vec<Ref> = a.typed_handles().into_iter().map(typed).collect();
+            let dxf = a.dxf_name.clone();
+            let common = doc.get_entity(part).unwrap().common().clone();
+            put_entity(doc, &dxf, common, |w| bits.iter().for_each(|b| w.write_bit(*b)), Body { refs, strings }).unwrap();
+        }
+
+        // The headwall's carrier: the field-group tag at the writer's
+        // name slot, the name six texts later (0x1007).
+        let mut headwall = texts(STRUCTURE_STRINGS);
+        headwall[6] = "AeccNetworkPartDataField".into();
+        headwall.resize(13, String::new());
+        headwall.push("Structure - (11)".into());
+        rebody(&mut doc, s, headwall);
+
+        // A normal pipe: the name one text past the writer's (0xEEE…).
+        let mut normal = texts(PIPE_STRINGS);
+        normal[6] = String::new();
+        normal.insert(7, "Pipe - (1)".into());
+        rebody(&mut doc, p1, normal);
+
+        // A catalog-size pipe: the name past three field-group texts
+        // (0x1009/0x1022).
+        let mut sized = texts(PIPE_STRINGS);
+        sized[6] = "AeccNetworkPartDataField".into();
+        sized.resize(24, String::new());
+        sized.push("Pipe - (10)".into());
+        rebody(&mut doc, p2, sized);
+
+        set_network_part_name(&mut doc, s, "Structure - (12)").unwrap();
+        set_network_part_name(&mut doc, p1, "Pipe - (2)").unwrap();
+        set_network_part_name(&mut doc, p2, "Pipe - (10) (1)").unwrap();
+        let a = arch_entity(&doc, s).unwrap().decode().strings;
+        assert_eq!((a[6].as_str(), a[13].as_str()), ("AeccNetworkPartDataField", "Structure - (12)"));
+        let a = arch_entity(&doc, p1).unwrap().decode().strings;
+        assert_eq!((a[6].as_str(), a[7].as_str()), ("", "Pipe - (2)"));
+        let a = arch_entity(&doc, p2).unwrap().decode().strings;
+        assert_eq!((a[6].as_str(), a[24].as_str()), ("AeccNetworkPartDataField", "Pipe - (10) (1)"));
+
+        // The re-saved record keeps the name in the carrier's slot.
+        let path = std::env::temp_dir().join(format!("civil-part-slots-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let a = arch_entity(&back, s).unwrap().decode().strings;
+        assert_eq!((a[6].as_str(), a[13].as_str()), ("AeccNetworkPartDataField", "Structure - (12)"));
+        let a = arch_entity(&back, p1).unwrap().decode().strings;
+        assert_eq!(a[7], "Pipe - (2)");
+        let a = arch_entity(&back, p2).unwrap().decode().strings;
+        assert_eq!(a[24], "Pipe - (10) (1)");
+
+        // No part-list text, no slot: the rename is refused.
+        rebody(&mut doc, p1, vec![String::new(); 8]);
+        assert!(set_network_part_name(&mut doc, p1, "Pipe - (2)").is_err());
     }
 }
