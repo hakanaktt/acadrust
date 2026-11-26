@@ -373,8 +373,38 @@ fn read_hatch_scale_context_data(
 /// Pending vertex data collected during Pass 2, keyed by owner (parent polyline) handle.
 enum PendingVertex {
     V2D(entities::Vertex2DData),
-    V3D(entities::Vertex3DData, Box<EntityCommon>),
+    V3D(entities::Vertex3DData, PendingVertexCommon),
     PfaceFace(entities::PfaceFaceData, Box<EntityCommon>),
+}
+
+/// The part of a pending vertex's entity record that its owner uses: a
+/// `Polyline3D` vertex takes only its layer, mesh and polyface vertices
+/// keep the whole record.
+enum PendingVertexCommon {
+    Layer(String),
+    Full(Box<EntityCommon>),
+}
+
+impl PendingVertexCommon {
+    fn layer(self) -> String {
+        match self {
+            PendingVertexCommon::Layer(layer) => layer,
+            PendingVertexCommon::Full(common) => common.layer,
+        }
+    }
+
+    /// The vertex's entity record. A `VERTEX_3D` owned by a mesh or
+    /// polyface (malformed file) only has its handle and layer.
+    fn into_common(self, handle: Handle) -> EntityCommon {
+        match self {
+            PendingVertexCommon::Layer(layer) => EntityCommon {
+                handle,
+                layer,
+                ..EntityCommon::new()
+            },
+            PendingVertexCommon::Full(common) => *common,
+        }
+    }
 }
 
 impl PendingVertex {
@@ -2725,6 +2755,8 @@ impl DwgDocumentBuilder {
                                 }
                             })
                             .collect();
+                        // collect() reuses the larger pending buffer
+                        e.vertices.shrink_to_fit();
                     }
                     EntityType::Polyline3D(ref mut e) => {
                         e.vertices = verts
@@ -2733,7 +2765,7 @@ impl DwgDocumentBuilder {
                                 if let PendingVertex::V3D(d, ec) = v {
                                     Some(crate::entities::polyline3d::Vertex3DPolyline {
                                         handle: d.handle,
-                                        layer: ec.layer,
+                                        layer: ec.layer(),
                                         position: d.position,
                                         flags: d.flags as i32,
                                     })
@@ -2742,13 +2774,14 @@ impl DwgDocumentBuilder {
                                 }
                             })
                             .collect();
+                        e.vertices.shrink_to_fit();
                     }
                     EntityType::PolyfaceMesh(ref mut e) => {
                         for v in verts {
                             match v {
                                 PendingVertex::V3D(d, ec) => {
                                     e.vertices.push(crate::entities::polyface_mesh::PolyfaceVertex {
-                                        common: *ec,
+                                        common: ec.into_common(d.handle),
                                         location: d.position,
                                         flags: crate::entities::polyface_mesh::PolyfaceVertexFlags::from_bits_truncate(d.flags as i16),
                                         bulge: 0.0,
@@ -2772,6 +2805,8 @@ impl DwgDocumentBuilder {
                                 _ => {}
                             }
                         }
+                        e.vertices.shrink_to_fit();
+                        e.faces.shrink_to_fit();
                         // Restore the seqend handle for this polyface mesh
                         if let Some(sh) = pending.seqends.get(&poly_handle).copied() {
                             e.seqend_handle = Some(sh);
@@ -2783,7 +2818,7 @@ impl DwgDocumentBuilder {
                             .filter_map(|v| {
                                 if let PendingVertex::V3D(d, ec) = v {
                                     Some(crate::entities::polygon_mesh::PolygonMeshVertex {
-                                        common: *ec,
+                                        common: ec.into_common(d.handle),
                                         location: d.position,
                                         flags: i16::from(d.flags),
                                     })
@@ -2792,6 +2827,7 @@ impl DwgDocumentBuilder {
                                 }
                             })
                             .collect();
+                        e.vertices.shrink_to_fit();
                     }
                     _ => {}
                 }
@@ -5517,23 +5553,29 @@ impl DwgDocumentBuilder {
                         .or_default()
                         .push(PendingVertex::V2D(data));
                 }
-                OBJ_VERTEX_3D | OBJ_VERTEX_MESH => {
+                OBJ_VERTEX_3D => {
                     let mut data = entities::read_vertex3d(&mut reader);
                     data.handle = entity_common.handle;
                     pending
                         .vertices
                         .entry(entity_data.owner_handle)
                         .or_default()
-                        .push(PendingVertex::V3D(data, Box::new(entity_common)));
+                        .push(PendingVertex::V3D(
+                            data,
+                            PendingVertexCommon::Layer(entity_common.layer),
+                        ));
                 }
-                OBJ_VERTEX_PFACE => {
+                OBJ_VERTEX_MESH | OBJ_VERTEX_PFACE => {
                     let mut data = entities::read_vertex3d(&mut reader);
                     data.handle = entity_common.handle;
                     pending
                         .vertices
                         .entry(entity_data.owner_handle)
                         .or_default()
-                        .push(PendingVertex::V3D(data, Box::new(entity_common)));
+                        .push(PendingVertex::V3D(
+                            data,
+                            PendingVertexCommon::Full(Box::new(entity_common)),
+                        ));
                 }
                 OBJ_VERTEX_PFACE_FACE => {
                     let mut data = entities::read_pface_face(&mut reader);
@@ -9272,7 +9314,7 @@ mod pending_vertex_order_tests {
                         flags: 0,
                         position: Vector3::ZERO,
                     },
-                    Box::new(EntityCommon::new()),
+                    super::PendingVertexCommon::Layer(String::new()),
                 )
             })
             .collect()
