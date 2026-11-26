@@ -19,18 +19,23 @@
 //! BL k, k x key                     (see alignment::read_key)
 //! 2 bits, RC, BL
 //! BL k, k x BL                      ids of the keys the label carries
-//! BL 0                              nested labels (counts above zero are
-//!                                   not decoded: the record reads as None)
+//! BL n, n x nested label
 //! BL m, m x override
-//! override:  BL 1, BL, BL, 2 bits, RC 8 x p, p x property
+//! nested label: the label's fields up to its nested labels, without
+//!            overrides (BL k, k x key, 2 bits, RC, BL, BL k, k x BL,
+//!            BL n, n x nested label)
+//! override:  BL b, b x block
+//! block:     BL, BL, 2 bits, RC (8 x the property count in all but one
+//!            sample), properties up to the one marked last
 //! property:  RC id, 16 bits (the property set), 7-bit type, value by
 //!            type, 3 bits (010 after the last property, else 000)
 //! values:    2 BD, 3 RC, 8 and 9 three BD (a point, an offset),
-//!            13 BL, 16 none (the value is a reference), 25 BL, 26 RC
+//!            13 BL, 16 none (the value is a reference), 24 BL byte
+//!            count and UTF-16 text (a text override), 25 BL, 26 RC
 //! ```
 //!
-//! The label text itself is generated from the label style and is not
-//! stored.
+//! The label text itself is generated from the label style; only a text
+//! override (value type 24) is stored.
 
 use super::alignment::{read_key, KeyValue};
 use super::bits::Bits;
@@ -58,6 +63,11 @@ struct Label {
     properties: Vec<(u16, u8, Option<[f64; 3]>)>,
 }
 
+/// How deep labels nest at most (a superelevation band's label holds the
+/// critical point it labels, the point its alignment element); a deeper
+/// record reads as None.
+const NESTING: usize = 4;
+
 /// A label record read up to its settings.
 struct Record {
     labels: Vec<Label>,
@@ -83,7 +93,9 @@ fn header(bits: &mut Bits) -> Option<()> {
     Some(())
 }
 
-fn property(bits: &mut Bits) -> Option<(u16, u8, Option<[f64; 3]>)> {
+/// One property of an override block (see the module docs), and whether
+/// it is the block's last.
+fn property(bits: &mut Bits) -> Option<((u16, u8, Option<[f64; 3]>), bool)> {
     let id = bits.raw_short_byte()?;
     let set = u16::from_le_bytes([bits.raw_short_byte()?, bits.raw_short_byte()?]);
     let mut value = None;
@@ -99,13 +111,23 @@ fn property(bits: &mut Bits) -> Option<(u16, u8, Option<[f64; 3]>)> {
             bits.bit_long()?;
         }
         16 => {}
+        24 => {
+            let bytes = usize::try_from(bits.bit_long()?).ok().filter(|n| n * 8 <= bits.remaining())?;
+            bits.skip(bytes * 8)?;
+        }
         _ => return None,
     }
-    bits.bits_value(3)?;
-    Some((set, id, value))
+    let last = match bits.bits_value(3)? {
+        0b010 => true,
+        0b000 => false,
+        _ => return None,
+    };
+    Some(((set, id, value), last))
 }
 
-fn label(bits: &mut Bits) -> Option<Label> {
+/// A label's fields up to its overrides; nested labels end there.
+fn node(bits: &mut Bits, depth: usize) -> Option<Label> {
+    (depth < NESTING).then_some(())?;
     let mut keys = Vec::new();
     for _ in 0..bits.bit_long()? {
         // The value starts after the key's own BL.
@@ -122,20 +144,30 @@ fn label(bits: &mut Bits) -> Option<Label> {
     for _ in 0..bits.bit_long()? {
         bits.bit_long()?;
     }
-    (bits.bit_long()? == 0).then_some(())?;
-    let mut properties = Vec::new();
     for _ in 0..bits.bit_long()? {
-        (bits.bit_long()? == 1).then_some(())?;
-        bits.bit_long()?;
-        bits.bit_long()?;
-        bits.bits_value(2)?;
-        let size = bits.raw_short_byte()?;
-        (size % 8 == 0).then_some(())?;
-        for _ in 0..size / 8 {
-            properties.push(property(bits)?);
+        node(bits, depth + 1)?;
+    }
+    Some(Label { keys, properties: Vec::new() })
+}
+
+fn label(bits: &mut Bits) -> Option<Label> {
+    let mut label = node(bits, 0)?;
+    for _ in 0..bits.bit_long()? {
+        for _ in 0..bits.bit_long()? {
+            bits.bit_long()?;
+            bits.bit_long()?;
+            bits.bits_value(2)?;
+            (bits.raw_short_byte()? != 0).then_some(())?;
+            loop {
+                let (property, last) = property(bits)?;
+                label.properties.push(property);
+                if last {
+                    break;
+                }
+            }
         }
     }
-    Some(Label { keys, properties })
+    Some(label)
 }
 
 fn record(data: &[u8], start: usize, end: usize) -> Option<Record> {
@@ -151,18 +183,42 @@ fn record(data: &[u8], start: usize, end: usize) -> Option<Record> {
 ///
 /// ```text
 /// BL k, k x key    (keys that take references)
-/// BL, BL, 5 x BD
+/// BL
+/// BL               default dimension anchor option (see [`LabelDimensionAnchor`])
+/// BD               default dimension anchor value
+/// BD               weeding
+/// BL               label stagger: 0 none, 1 both sides, 2 right, 3 left
+/// BD, BD           the second is the stagger line height
 /// ```
-fn settings(bits: &mut Bits) -> Option<()> {
+fn settings(bits: &mut Bits) -> Option<LabelDimensionAnchor> {
     for _ in 0..bits.bit_long()? {
         read_key(bits)?;
     }
     bits.bit_long()?;
+    let option = u32::try_from(bits.bit_long()?).ok()?;
+    let value = bits.bit_double()?;
+    bits.bit_double()?;
     bits.bit_long()?;
-    for _ in 0..5 {
-        bits.bit_double()?;
-    }
-    Some(())
+    bits.bit_double()?;
+    bits.bit_double()?;
+    Some(LabelDimensionAnchor { option, value })
+}
+
+/// Where a label record anchors its labels' dimension by default (profile
+/// and section view labels): the option code (1 above the labelled point,
+/// 2 below it) and the value (a plotted distance).
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct LabelDimensionAnchor {
+    pub option: u32,
+    pub value: f64,
+}
+
+/// The default dimension anchor a label record's settings hold (see
+/// [`settings`]).
+pub(super) fn dimension_anchor(data: &[u8], start: usize, end: usize) -> Option<LabelDimensionAnchor> {
+    let r = record(data, start, end)?;
+    settings(&mut Bits::new(data, r.settings, end))
 }
 
 /// The settings of a label group along an alignment, after [`settings`]:
@@ -254,11 +310,21 @@ pub(super) fn anchor(data: &[u8], start: usize, end: usize, projection: bool) ->
 /// labels: its dragged offset override (a zero offset leaves the label in
 /// place). `Some(None)` when no label is dragged.
 pub(super) fn dragged_offset(data: &[u8], start: usize, end: usize) -> Option<Option<crate::types::Vector2>> {
-    let labels = labels(data, start, end)?;
-    Some(labels.iter().flat_map(|l| &l.properties).find_map(|(set, id, value)| match (*set, *id, value) {
+    Some(dragged_offsets(data, start, end)?.into_iter().flatten().next())
+}
+
+/// Each label's dragged offset, in record order (the order the
+/// application numbers a group's labels by); `None` for a label left in
+/// place.
+pub(super) fn dragged_offsets(data: &[u8], start: usize, end: usize) -> Option<Vec<Option<crate::types::Vector2>>> {
+    Some(labels(data, start, end)?.iter().map(label_drag).collect())
+}
+
+fn label_drag(label: &Label) -> Option<crate::types::Vector2> {
+    label.properties.iter().find_map(|(set, id, value)| match (*set, *id, value) {
         (OVERRIDE_SET, DRAGGED_OFFSET, Some([x, y, _])) if (*x, *y) != (0.0, 0.0) => Some(crate::types::Vector2::new(*x, *y)),
         _ => None,
-    }))
+    })
 }
 
 /// Every profile entity id a profile label group's labels name (see
@@ -430,12 +496,18 @@ pub struct LabelText {
     pub anchor_point: Option<u8>,
     /// `false` when the label style hides the component.
     pub visible: bool,
+    /// Whether the x and y offsets are taken from the component this one
+    /// copies (a style's dragged-state copy whose own x or y offset was
+    /// never set); the offsets read above are then not the ones shown.
+    pub inherits_offset: [bool; 2],
 }
 
 /// The head every label style component's class data opens with (after
 /// the style's component lists): `BL, 2 bits, BD height, BL, BL color, BL
-/// type tag, BL, BL, BL`. Returns the height, the type tag and where the
-/// general block starts.
+/// tag, BL, BL, BL`. The tag's bits flag the properties set on the
+/// component (in a dragged-state copy 0x40 the x offset, 0x80 the y
+/// offset, 0x10000 the border gap) and its kind (see [`DRAGGED_COPY`]).
+/// Returns the height, the tag and where the general block starts.
 fn component_head(data: &[u8], start: usize, end: usize) -> Option<(f64, u32, usize)> {
     let mut bits = Bits::new(data, super::style::class_data(data, start, end)?, end);
     bits.bit_long()?;
@@ -479,31 +551,24 @@ fn full_double(data: &[u8], pos: usize, end: usize) -> Option<f64> {
     (bits.pos == pos + 66 && value.is_finite()).then_some(value)
 }
 
+/// The tag bit (see [`component_head`]) of a style's dragged-state copy
+/// of a component: set in every copy, in no other text, line, block or
+/// arrow component.
+const DRAGGED_COPY: u32 = 0x0020_0000;
+
 /// X offset, y offset and border gap read by their fields: the general
-/// head (see [`general_head`]), `1000`, 6 BL, B, BD x, BD, BD y, BD, B,
-/// BD gap; or, in components with type tag 0x0022001F, `1000`, 5 BL,
-/// BD angle, BD, BD, B, BD x, BD y, B, BD gap. Also returns the bit after
-/// the gap.
-fn general_offsets(data: &[u8], at: usize, end: usize, turned: bool) -> Option<(f64, f64, f64, usize)> {
+/// head (see [`general_head`]), `1000`, 6 BL (5 BL and a BD in a
+/// dragged-state copy, see [`DRAGGED_COPY`]), B, BD x, BD, BD y, BD, B,
+/// BD gap. Also returns the bit after the gap.
+fn general_offsets(data: &[u8], at: usize, end: usize, copy: bool) -> Option<(f64, f64, f64, usize)> {
     let mut bits = Bits::new(data, at, end);
     general_head(&mut bits)?;
     (bits.bits_value(4)? == 0b1000).then_some(())?;
-    if turned {
-        for _ in 0..5 {
-            bits.bit_long()?;
-        }
-        for _ in 0..3 {
-            bits.bit_double()?;
-        }
-        bits.bit()?;
-        let x = bits.bit_double()?;
-        let y = bits.bit_double()?;
-        bits.bit()?;
-        let gap = bits.bit_double()?;
-        return Some((x, y, gap, bits.pos));
-    }
-    for _ in 0..6 {
+    for _ in 0..if copy { 5 } else { 6 } {
         bits.bit_long()?;
+    }
+    if copy {
+        bits.bit_double()?;
     }
     bits.bit()?;
     let x = bits.bit_double()?;
@@ -593,7 +658,8 @@ pub(super) fn line_component(data: &[u8], start: usize, end: usize) -> Option<(f
 pub(super) fn text_component(data: &[u8], start: usize, end: usize) -> Option<LabelText> {
     let (height, tag, general) = component_head(data, start, end)?;
     let height = (0.0..1.0).contains(&height).then_some(height).filter(|v| *v > 0.0);
-    let (x_offset, y_offset, gap, after_gap) = general_offsets(data, general, end, tag == 0x0022_001F)?;
+    let copy = tag & DRAGGED_COPY != 0;
+    let (x_offset, y_offset, gap, after_gap) = general_offsets(data, general, end, copy)?;
     let (content, after) = content(data, content_at(data, after_gap, end)?, end)?;
     let mut bits = Bits::new(data, after, end);
     let rotation = bits.bit_double()?;
@@ -615,6 +681,7 @@ pub(super) fn text_component(data: &[u8], start: usize, end: usize) -> Option<La
         attachment,
         anchor_point,
         visible,
+        inherits_offset: [copy && tag & 0x40 == 0, copy && tag & 0x80 == 0],
     })
 }
 
@@ -713,10 +780,22 @@ mod tests {
     /// A label at `station` naming profile entity `entity`, dragged by
     /// `drag`.
     fn label(station: f64, entity: u32, drag: Option<(f64, f64)>) -> String {
+        nesting(station, entity, drag, &[])
+    }
+
+    /// A nested label: one key, the 2 bits, RC, BL, its key ids and its
+    /// own nested labels; nested labels carry no overrides.
+    fn nested(inner: &[String]) -> String {
+        let s = bl(1) + &bl(0x0200_D61D) + &bd(1.0) + "00" + &rc(1) + &bl(0x1001) + &bl(1) + &bl(0x0200_D61D);
+        s + &bl(inner.len() as u32) + &inner.concat()
+    }
+
+    /// [`label`] holding the `inner` nested labels.
+    fn nesting(station: f64, entity: u32, drag: Option<(f64, f64)>, inner: &[String]) -> String {
         let mut s = bl(2) + &bl(STATION) + &bd(station) + &bl(0x0100_FC31) + &bl(entity);
         s += &("00".to_string() + &rc(0) + &bl(0));
         s += &(bl(1) + &bl(5));
-        s += &bl(0);
+        s += &(bl(inner.len() as u32) + &inner.concat());
         match drag {
             None => s += &bl(0),
             Some((x, y)) => {
@@ -729,7 +808,7 @@ mod tests {
     }
 
     fn settings() -> String {
-        bl(0) + &bl(0) + &bl(0) + &bd(0.0).repeat(5)
+        bl(0) + &bl(69) + &bl(1) + &bd(0.0) + &bd(0.0) + &bl(0) + &bd(0.025) + &bd(0.05)
     }
 
     fn close() -> String {
@@ -791,10 +870,65 @@ mod tests {
     }
 
     #[test]
-    fn nested_labels_are_not_read() {
-        let nested = label(0.0, 0, None).replacen(&(bl(1) + &bl(5) + &bl(0)), &(bl(1) + &bl(5) + &bl(1)), 1);
-        let (data, end) = record(&[nested], "");
+    fn nested_labels_are_read_past() {
+        // A superelevation band label: its critical point, the point's two
+        // element ends.
+        let point = nested(&[nested(&[]), nested(&[])]);
+        let (data, end) = record(&[nesting(25.0, 0, None, &[point]), nesting(50.0, 0, Some((1.5, -2.0)), &[nested(&[])])], "");
+        assert_eq!(stations(&data, 0, end), Some(vec![25.0, 50.0]));
+        let drags = dragged_offsets(&data, 0, end).unwrap();
+        assert_eq!(drags.len(), 2);
+        assert!(drags[0].is_none());
+        assert_eq!(drags[1].map(|d| (d.x, d.y)), Some((1.5, -2.0)));
+        // Deeper nesting than any record holds is not read.
+        let mut deep = nested(&[]);
+        for _ in 0..NESTING {
+            deep = nested(&[deep]);
+        }
+        let (data, end) = record(&[nesting(25.0, 0, None, &[deep])], "");
         assert_eq!(stations(&data, 0, end), None);
+    }
+
+    #[test]
+    fn override_blocks_end_at_their_last_property() {
+        let prop = |id: u8, ty: &str, value: &str, last: bool| rc(id) + &rc(0xC0) + &rc(0x0C) + ty + value + if last { "010" } else { "000" };
+        let text: String = "<[1]>".encode_utf16().flat_map(|u| u.to_le_bytes()).map(rc).collect();
+        let mut s = bl(1) + &bl(STATION) + &bd(10.0) + "00" + &rc(1) + &bl(0x1003) + &bl(0) + &bl(0);
+        // One override of two blocks: a reset flag and the drag (RC 16
+        // over three properties, as one application drawing holds), then
+        // a text override.
+        s += &(bl(1) + &bl(2));
+        s += &(bl(0) + &bl(0) + "00" + &rc(16));
+        s += &prop(0x5A, "0011001", &bl(1), false);
+        s += &prop(0x04, "0000011", &rc(0), false);
+        s += &prop(DRAGGED_OFFSET, "0001001", &(bd(4.0) + &bd(-1.0) + &bd(0.0)), true);
+        s += &(bl(0) + &bl(0) + "00" + &rc(8));
+        s += &prop(0x2C, "0011000", &(bl(10) + &text), true);
+        let (data, end) = record(&[s], "");
+        assert_eq!(stations(&data, 0, end), Some(vec![10.0]));
+        let d = dragged_offset(&data, 0, end).unwrap().unwrap();
+        assert_eq!((d.x, d.y), (4.0, -1.0));
+    }
+
+    #[test]
+    fn settings_hold_the_dimension_anchor_weeding_and_stagger() {
+        // BL 69, BL 2 (below), BD 0.0625, BD weeding 12.5, BL stagger 2,
+        // BD, BD; then a station group's range and increment.
+        let settings = bl(0) + &bl(69) + &bl(2) + &bd(0.0625) + &bd(12.5) + &bl(2) + &bd(0.025) + &bd(0.005);
+        let tail = "000".to_string() + &bd(0.0) + &bd(60.0) + &bd(20.0);
+        let s = header() + &bl(1) + &label(20.0, 0, None) + &settings + &tail + &close();
+        let data = bytes(&s);
+        assert_eq!(dimension_anchor(&data, 0, s.len()), Some(LabelDimensionAnchor { option: 2, value: 0.0625 }));
+        assert_eq!(group_stations(&data, 0, s.len()), Some(vec![20.0]));
+    }
+
+    #[test]
+    fn a_128_bit_key_is_read_past() {
+        // Sectional data band labels open with keys of type 0x15.
+        let mut s = bl(3) + &bl(0x1501_7822) + &"0".repeat(128) + &bl(0x0F01_7824) + &bl(STATION) + &bd(329.5);
+        s += &("00".to_string() + &rc(1) + &bl(0x9001) + &bl(0) + &bl(0) + &bl(0));
+        let (data, end) = record(&[s], "");
+        assert_eq!(stations(&data, 0, end), Some(vec![329.5]));
     }
 
     #[test]
@@ -807,6 +941,19 @@ mod tests {
         let s = "0000".to_string() + "00000000" + &"1".repeat(32) + "0010" + &"0".repeat(20);
         let data = bytes(&s);
         assert_eq!(general_head(&mut Bits::new(&data, 0, s.len())), Some((false, 0b0010)));
+    }
+
+    #[test]
+    fn offsets_follow_the_component_kind() {
+        let head = "0100".to_string() + "10000000" + "0000" + &"0".repeat(20) + "1000";
+        let block = "0".to_string() + &bd(0.125) + &bd(0.0) + &bd(-0.0625) + &bd(0.0) + "0" + &bd(0.03125);
+        let normal = head.clone() + &bl(0).repeat(3) + &bl(1) + &bl(0) + &bl(0) + &block;
+        let data = bytes(&normal);
+        assert_eq!(general_offsets(&data, 0, normal.len(), false), Some((0.125, -0.0625, 0.03125, normal.len())));
+        // A dragged-state copy: 5 BL and a BD before the same block.
+        let turned = head + &bl(0).repeat(3) + &bl(1) + &bl(1) + &bd(1.919_862_177_193_762_5) + &block;
+        let data = bytes(&turned);
+        assert_eq!(general_offsets(&data, 0, turned.len(), true), Some((0.125, -0.0625, 0.03125, turned.len())));
     }
 
     #[test]
