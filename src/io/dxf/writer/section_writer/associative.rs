@@ -515,9 +515,12 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer
             .write_bool(290, value.surface_body.is_semi_override)?;
         self.writer.write_i16(70, value.surface_body.grip_status)?;
-        self.writer
-            .write_subclass("AcDbAssocPathBasedSurfaceActionBody")?;
-        self.writer.write_i32(90, value.path_status)?;
+        // The offset action body has no path-based subclass.
+        if value.kind != AssocSurfaceActionKind::Offset {
+            self.writer
+                .write_subclass("AcDbAssocPathBasedSurfaceActionBody")?;
+            self.writer.write_i32(90, value.path_status)?;
+        }
         let section = match value.kind {
             AssocSurfaceActionKind::Plane => "AcDbAssocPlaneSurfaceActionBody",
             AssocSurfaceActionKind::Extend => "AcDbAssocExtendSurfaceActionBody",
@@ -1001,10 +1004,15 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             AssociativeData::AsmBodyActionParam(value) => {
                 self.write_assoc_single_dependency(
                     &value.single_dependency,
-                    "AcDbAssocAsmbodyActionParam",
+                    "AcDbAssocAsmBodyActionParam",
                 )?;
-                self.writer.write_subclass("AcDbModelerGeometry")?;
-                self.write_acis_data(&value.acis_data)?;
+                let has_body =
+                    !value.acis_data.sat_data.is_empty() || !value.acis_data.sab_data.is_empty();
+                self.writer.write_bool(290, has_body)?;
+                if has_body {
+                    self.writer.write_subclass("AcDbModelerGeometry")?;
+                    self.write_acis_data(&value.acis_data)?;
+                }
             }
             AssociativeData::ArrayParameters(value) => {
                 self.write_assoc_array_parameters(value)?;

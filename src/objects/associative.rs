@@ -1551,7 +1551,7 @@ pub fn associative_cpp_class_name(name: &str) -> Option<&'static str> {
         "ASSOCDIMDEPENDENCYBODY" => "AcDbAssocDimDependencyBody",
         "ASSOCFACEACTIONPARAM" => "AcDbAssocFaceActionParam",
         "ASSOCVERTEXACTIONPARAM" => "AcDbAssocVertexActionParam",
-        "ASSOCASMBODYACTIONPARAM" => "AcDbAssocAsmbodyActionParam",
+        "ASSOCASMBODYACTIONPARAM" => "AcDbAssocAsmBodyActionParam",
         "ASSOCARRAYMODIFYPARAMETERS" => "AcDbAssocArrayModifyParameters",
         "ASSOCARRAYPATHPARAMETERS" => "AcDbAssocArrayPathParameters",
         "ASSOCARRAYPOLARPARAMETERS" => "AcDbAssocArrayPolarParameters",

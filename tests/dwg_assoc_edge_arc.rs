@@ -70,7 +70,7 @@ fn round_trip(version: DxfVersion, edge: &AssocEdgeActionParam) {
 fn four_scalar_arcs_preserve_nonzero_fourth_value() {
     let mut edge = arc();
     edge.curve.push(AssocCurveValue::Real(7.25));
-    for version in [DxfVersion::AC1024, DxfVersion::AC1027, DxfVersion::AC1032] {
+    for version in [DxfVersion::AC1027, DxfVersion::AC1032] {
         round_trip(version, &edge);
     }
 }
@@ -97,17 +97,19 @@ fn ellipse_and_lines_keep_their_layouts() {
 }
 
 #[test]
-fn composite_arc_keeps_four_scalars_and_following_line() {
-    let mut edge = arc();
-    let mut curve = vec![AssocCurveValue::Int(2), AssocCurveValue::Int(11)];
-    curve.extend(edge.curve.clone());
-    curve.push(AssocCurveValue::Real(8.5));
-    curve.push(AssocCurveValue::Int(19));
-    curve.extend(edge.curve[..2].iter().cloned());
-    edge.action_type = 47;
-    edge.subcurve_kind = AssocSubcurveKind::None;
-    edge.curve = curve;
-    for version in [DxfVersion::AC1024, DxfVersion::AC1032] {
+fn composite_arc_keeps_its_scalars_and_following_line() {
+    // A nested arc has the same layout as a terminal one: three scalars
+    // before AC1027, four from AC1027 on.
+    for (version, fourth) in [(DxfVersion::AC1024, None), (DxfVersion::AC1032, Some(8.5))] {
+        let mut edge = arc();
+        let mut curve = vec![AssocCurveValue::Int(2), AssocCurveValue::Int(11)];
+        curve.extend(edge.curve.clone());
+        curve.extend(fourth.map(AssocCurveValue::Real));
+        curve.push(AssocCurveValue::Int(19));
+        curve.extend(edge.curve[..2].iter().cloned());
+        edge.action_type = 47;
+        edge.subcurve_kind = AssocSubcurveKind::None;
+        edge.curve = curve;
         round_trip(version, &edge);
     }
 }
@@ -160,30 +162,23 @@ fn scalar_count(edge: &AssocEdgeActionParam) -> usize {
         .count()
 }
 
-/// AutoCAD writes a terminal AC1024 arc with three scalars (radius, start and
-/// end angle); the fourth scalar exists only from AC1027.
+/// An arc stores radius, start and end angle before AC1027; AC1027 and later
+/// add a fourth scalar.
 #[test]
-fn terminal_ac1024_arc_with_three_scalars_is_a_typed_edge() {
+fn arcs_before_ac1027_store_three_scalars() {
     let edge = arc();
     assert_eq!(scalar_count(&edge), 3);
-    round_trip(DxfVersion::AC1024, &edge);
-    let decoded = decoded_edge(DxfVersion::AC1024, &edge).expect("typed edge");
-    assert_eq!(scalar_count(&decoded), 3);
-    assert_eq!(decoded.curve, edge.curve);
-}
-
-#[test]
-fn four_scalar_ac1024_arc_keeps_four_scalars() {
-    let mut edge = arc();
-    edge.curve.push(AssocCurveValue::Real(0.0));
-    round_trip(DxfVersion::AC1024, &edge);
-    let decoded = decoded_edge(DxfVersion::AC1024, &edge).expect("typed edge");
-    assert_eq!(scalar_count(&decoded), 4);
+    for version in [DxfVersion::AC1018, DxfVersion::AC1021, DxfVersion::AC1024] {
+        round_trip(version, &edge);
+        let decoded = decoded_edge(version, &edge).expect("typed edge");
+        assert_eq!(scalar_count(&decoded), 3);
+        assert_eq!(decoded.curve, edge.curve);
+    }
 }
 
 #[test]
 fn incomplete_arcs_are_not_accepted_as_typed_edges() {
-    // Fewer than three scalars, in any version.
+    // Fewer scalars than the version stores.
     let mut two = arc();
     two.curve.pop();
     let mut one = two.clone();
@@ -192,34 +187,7 @@ fn incomplete_arcs_are_not_accepted_as_typed_edges() {
         assert_rejected(version, &two, "two scalars");
         assert_rejected(version, &one, "one scalar");
     }
-    // The fourth scalar is only optional in AC1024.
     for version in [DxfVersion::AC1027, DxfVersion::AC1032] {
         assert_rejected(version, &arc(), "three scalars");
-    }
-    // Only a terminal arc may omit it.
-    let mut nested = arc();
-    nested.action_type = 47;
-    nested.subcurve_kind = AssocSubcurveKind::None;
-    nested
-        .curve
-        .splice(0..0, [AssocCurveValue::Int(1), AssocCurveValue::Int(11)]);
-    assert_rejected(DxfVersion::AC1024, &nested, "nested three scalars");
-}
-
-/// Bits left after the third scalar are read as a fourth scalar, never taken
-/// as its absence: the guard applies only when the main stream is exhausted.
-#[test]
-fn ac1024_arc_with_bits_after_third_scalar_is_not_read_as_three_scalars() {
-    for trailing in [
-        vec![AssocCurveValue::Bool(true)],
-        vec![AssocCurveValue::Bool(false)],
-        vec![AssocCurveValue::Bool(true), AssocCurveValue::Bool(true)],
-        vec![AssocCurveValue::Int(7)],
-    ] {
-        let mut edge = arc();
-        edge.curve.extend(trailing);
-        if let Some(decoded) = decoded_edge(DxfVersion::AC1024, &edge) {
-            assert_ne!(scalar_count(&decoded), 3, "{:?}", decoded.curve);
-        }
     }
 }

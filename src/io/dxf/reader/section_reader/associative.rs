@@ -1579,7 +1579,7 @@ impl<'a> SectionReader<'a> {
                 let (section, class_code) = match canonical.as_str() {
                     "ASSOCFACEACTIONPARAM" => ("AcDbAssocFaceActionParam", 90),
                     "ASSOCVERTEXACTIONPARAM" => ("AcDbAssocVertexActionParam", 90),
-                    "ASSOCASMBODYACTIONPARAM" => ("AcDbAssocAsmbodyActionParam", 90),
+                    "ASSOCASMBODYACTIONPARAM" => ("AcDbAssocAsmBodyActionParam", 90),
                     _ => ("AcDbAssocObjectActionParam", 90),
                 };
                 let single = AssocSingleDependencyActionParam {

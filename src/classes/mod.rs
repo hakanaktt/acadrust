@@ -541,7 +541,7 @@ pub(crate) fn default_classes() -> Vec<DxfClass> {
         ("ACDBASSOCEDGEACTIONPARAM", "AcDbAssocEdgeActionParam", 0, "ObjectDBX Classes", false),
         ("ACDBASSOCFACEACTIONPARAM", "AcDbAssocFaceActionParam", 0, "ObjectDBX Classes", false),
         ("ACDBASSOCVERTEXACTIONPARAM", "AcDbAssocVertexActionParam", 0, "ObjectDBX Classes", false),
-        ("ACDBASSOCASMBODYACTIONPARAM", "AcDbAssocAsmbodyActionParam", 0, "ObjectDBX Classes", false),
+        ("ACDBASSOCASMBODYACTIONPARAM", "AcDbAssocAsmBodyActionParam", 0, "ObjectDBX Classes", false),
         ("ACDBASSOCDIMDEPENDENCYBODY", "AcDbAssocDimDependencyBody", 0, "ObjectDBX Classes", false),
         ("ACDBASSOCPLANESURFACEACTIONBODY", "AcDbAssocPlaneSurfaceActionBody", 0, "ObjectDBX Classes", false),
         ("ACDBASSOCEXTENDSURFACEACTIONBODY", "AcDbAssocExtendSurfaceActionBody", 0, "ObjectDBX Classes", false),

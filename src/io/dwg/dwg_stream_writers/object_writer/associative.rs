@@ -145,7 +145,9 @@ impl<'a> DwgObjectWriter<'a> {
         self.writer.write_bit_long(value.surface_body.marker);
         self.writer.write_bit(value.surface_body.is_semi_override);
         self.writer.write_bit_short(value.surface_body.grip_status);
-        self.writer.write_bit_long(value.path_status);
+        if value.kind != AssocSurfaceActionKind::Offset {
+            self.writer.write_bit_long(value.path_status);
+        }
         match value.kind {
             AssocSurfaceActionKind::Network
             | AssocSurfaceActionKind::Patch
@@ -1056,14 +1058,21 @@ impl<'a> DwgObjectWriter<'a> {
             }
             AssociativeData::AsmBodyActionParam(value) => {
                 self.write_assoc_single_dependency(&value.single_dependency);
-                self.write_acis_data(
-                    value.point_of_reference,
-                    &value.acis_data,
-                    &value.wires,
-                    &value.silhouettes,
-                );
-                if value.acis_data.is_binary {
-                    self.write_assoc_handle(DwgReferenceType::SoftPointer, value.history);
+                // Whether the parameter keeps a body of its own. Without one
+                // the record ends after this bit.
+                let has_body =
+                    !value.acis_data.sat_data.is_empty() || !value.acis_data.sab_data.is_empty();
+                self.writer.write_bit(has_body);
+                if has_body {
+                    self.write_acis_data(
+                        value.point_of_reference,
+                        &value.acis_data,
+                        &value.wires,
+                        &value.silhouettes,
+                    );
+                    if value.acis_data.is_binary {
+                        self.write_assoc_handle(DwgReferenceType::SoftPointer, value.history);
+                    }
                 }
             }
             AssociativeData::ArrayParameters(value) => self.write_assoc_array_parameters(value),
