@@ -3953,15 +3953,7 @@ pub(super) fn masked_ranges(data: &[u8], start: usize, end: usize, first: f64, l
             return None;
         }
         let mut out = Vec::with_capacity(n);
-        // A station other than the alignment's ends is written in full; the
-        // two-bit 0.0 / 1.0 forms would match random bits too easily.
-        let station = |bits: &mut Bits| -> Option<f64> {
-            let at = bits.pos;
-            let v = bits.bit_double()?;
-            let full = bits.pos - at == 66;
-            let at_end = (v - first).abs() <= slack || (v - last).abs() <= slack;
-            (fits(v) && (full || at_end)).then_some(v)
-        };
+        let station = |bits: &mut Bits| -> Option<f64> { bits.bit_double().filter(|v| fits(*v)) };
         for _ in 0..n {
             let from = station(&mut bits)?;
             let to = station(&mut bits)?;
@@ -3990,12 +3982,9 @@ pub(super) fn masked_ranges(data: &[u8], start: usize, end: usize, first: f64, l
             _ => read(after).unwrap_or_default(),
         };
     }
-    if post_cache_starts(data, start, end).is_none() {
-        return Vec::new();
-    }
-    // debt: Civil 2013 records with the list before the type (type not
-    // read): the last list that parses near the end of the body wins.
-    (start..end).rev().find_map(read).unwrap_or_default()
+    // A record whose type does not read (the list before the type in older
+    // class versions) gives no ranges.
+    Vec::new()
 }
 
 /// End of `parts` walked from `state`, integrated without keeping points

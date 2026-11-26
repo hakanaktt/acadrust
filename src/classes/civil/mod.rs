@@ -1597,15 +1597,16 @@ impl ArchObject {
     /// style class defines them: every component of the plan view, then the
     /// model view and the other view directions.
     ///
-    /// `is_layer` tells layer handles apart; only styles with an unmapped
-    /// block before their component lists need it.
-    pub fn display_components(&self, is_layer: impl Fn(u64) -> bool) -> Vec<DisplayComponent> {
+    /// The references are read by the record's own layout; `is_layer` is
+    /// not consulted (kept for callers). A style whose block before its
+    /// component lists is in neither known form gives no components.
+    pub fn display_components(&self, _is_layer: impl Fn(u64) -> bool) -> Vec<DisplayComponent> {
         if self.civil_kind() != Some(CivilObjectKind::Style) {
             return Vec::new();
         }
         let handles = self.decode().handles;
         self.main_stream()
-            .map(|(data, start, end)| style::components(data, start, end, &handles, is_layer))
+            .map(|(data, start, end)| style::components(data, start, end, &handles))
             .unwrap_or_default()
     }
 

@@ -586,7 +586,7 @@ mod tests {
         let o = object(&back, Handle::new(style)).unwrap();
         let (data, start, end) = o.main_stream().unwrap();
         let handles = o.decode().handles;
-        let components = crate::classes::civil::style::components(data, start, end, &handles, |h| h == back.layers.get("0").unwrap().handle.value());
+        let components = crate::classes::civil::style::components(data, start, end, &handles);
         assert_eq!(components.len(), 6);
         assert!(components[0].visible && !components[2].visible);
         assert_eq!(crate::classes::civil::style::marker(data, start, end).map(|m| (m.kind, m.absolute)), Some((3, false)));
