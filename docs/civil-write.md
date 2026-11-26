@@ -1077,6 +1077,66 @@ three stations, slopes, a profile added afterwards): AUDIT 0, the
 application lists both curves and the stations with their slopes and
 edits a slope.
 
+### Alignment label groups
+
+`add_alignment_label_group(doc, alignment, style, layer, group)` writes
+an alignment's station, minor station or geometry point label group
+(`AlignmentLabelGroupKind`; `AECC_ALIGNMENT_STATION_LABEL_GROUP`,
+`AECC_ALIGNMENT_MINOR_STATION_LABEL_GROUP`,
+`AECC_ALIGNMENT_GEOMPOINT_LABEL_GROUP`) as an entity in model space. The
+record is the one `labels.rs` reads (§3h's band label groups share the
+grammar), by its fields:
+
+```text
+BL 80, 0, 80, 80, 0, 0x10025F04, 6 bits 010010, 16 residual bytes,
+BL 80, 80, 0x04BE0000, 0xFFFFFF, 3 bits 010
+BL n, n labels:
+  label: BL k, k x (BL key, value by the key's type), 2 bits 00, RC 1,
+         BL flag (0x1000 station and minor station, 0x1003 geometry
+         point), BL m, m x BL (the label set's key ids: a station group
+         lists the station and the begin/end marks 0x0200D020,
+         0x0300D622, 0x0300D623; a minor group the station; a geometry
+         point group 0x0100D068, 0x0100D61E, 0x0100D621, 0x0200D61D),
+         BL 0 (no nested labels), BL o, o x override
+  override: BL 1, BL 0, BL 0, 2 bits 00, RC 8 x properties
+  property: RC id, RC, RC (the property set, C0 0C for a label's own),
+            7-bit type, value by type, 3 bits (010 after the last)
+settings: BL 1, key 0x0F00B401 (station; ...402 minor, ...403 geometry
+  point; type 0x0F carries no value), BL 69, BL 1, 5 BD
+range: 3 bits 111, BD start, BD end (0, 0 — an automatic range)
+tail: BD increment (station and minor station), or BL n, n x full BL
+  (mode 00, 32 bits; each 0x0100 | kind) for the geometry point kinds
+B 0, BS 0x04BE
+handles: soft pointer 0, soft pointer 0, alignment (soft), label style
+  (hard), per label { alignment (soft) }
+texts: "AeccDbAlignmentStationLabeling (AeccLand130)" (MinorStation...,
+  GeomPoint...), three empty texts
+```
+
+A station group's labels run begin mark (keys `0x0300D622` byte 1 and
+the major interval `0x0200D61F`), one label per station (keys the major
+interval and the station `0x0200D020`), end mark (`0x0300D623`); a group
+of an alignment labeled the other way stores them end first (Parcel-1A).
+A minor station group's labels carry the major and minor intervals and a
+station each, no marks. A geometry point group's labels carry the mark
+(`0x0200D61D`, 0 at the alignment's beginning), the point's property
+(`0x0100D068`: `0x0200D004`/`0x0200D005` at the beginning and end,
+`0x0400D052` at curves) and the point's index (`0x0100D61E`).
+
+The 16 bytes after the class tag are residual in the application's
+records (across the corpus: zeros, UTF-16 string fragments, heap
+addresses); the writer stores what `AlignmentLabelGroup::guid` carries —
+zeros for a new group, the recorded bytes for a rebuilt one. The label
+text itself is generated from the label style and is not stored.
+
+The groups of Align-2, Align-3, Align-4, Align-6A, Align-6B,
+Labels-Alignments, Parcel-1A, Profile-1, Profile-4A, Profile-4B and
+Assembly-1a (40 records: stations every 20 to 100 with their marks, 71
+to 45-label minor groups, geometry point groups with their property and
+index keys, Parcel-1A's flipped end labels with a type 3 override in the
+label's own property set) rebuild through the writer bit for bit: every
+main stream equals the oracle's.
+
 ### Offset alignments
 
 `add_offset_alignment(doc, parent, name, offset, range, layer)` writes an
