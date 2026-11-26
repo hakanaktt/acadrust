@@ -401,7 +401,7 @@ pub(super) enum KeyValue {
     Long(i32),
     /// 0x02: BD.
     Double(f64),
-    /// 0x03: one byte.
+    /// 0x03, 0x1A: one byte.
     Byte(u8),
     /// 0x09: three BD.
     Vector([f64; 3]),
@@ -432,7 +432,7 @@ pub(super) fn read_key(bits: &mut Bits) -> Option<(u32, KeyValue)> {
     let value = match key >> 24 {
         0x01 | 0x0A | 0x0D => KeyValue::Long(bits.bit_long()?),
         0x02 => KeyValue::Double(bits.bit_double()?),
-        0x03 => KeyValue::Byte(bits.bits_value(8)?),
+        0x03 | 0x1A => KeyValue::Byte(bits.bits_value(8)?),
         0x04 | 0x0F | 0x10 | 0x12 => KeyValue::None,
         0x09 => KeyValue::Vector([bits.bit_double()?, bits.bit_double()?, bits.bit_double()?]),
         0x0B | 0x19 => {

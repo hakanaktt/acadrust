@@ -1,270 +1,287 @@
-//! Label groups.
+//! Labels and label groups, read by their fields.
 //!
-//! A label group stores one fixed-size record per label, each opening with
-//! the label's station as a BD; the label text itself is generated from the
-//! label style and is not stored.
+//! A single label and a label group share one record layout; a single
+//! label is a group of one:
+//!
+//! ```text
+//! BL 80, 0, 80, 80, 0, BL, 6-bit class tag    0b010010; 0b010110 adds 3 bits
+//! 16 raw bytes                                 (a GUID; zero in most records)
+//! BL 80, BL 80, BL 0x04BE0000, BL, 3 bits
+//! BL n, n x label
+//! settings                                     (see [`settings`])
+//! B, BS 0x04BE                                 closes the record
+//! ```
+//!
+//! A label is a property set of the labeled feature with the overrides
+//! the user gave the label:
+//!
+//! ```text
+//! BL k, k x key                     (see alignment::read_key)
+//! 2 bits, RC, BL
+//! BL k, k x BL                      ids of the keys the label carries
+//! BL 0                              nested labels (counts above zero are
+//!                                   not decoded: the record reads as None)
+//! BL m, m x override
+//! override:  BL 1, BL, BL, 2 bits, RC 8 x p, p x property
+//! property:  RC id, 16 bits (the property set), 7-bit type, value by
+//!            type, 3 bits (010 after the last property, else 000)
+//! values:    2 BD, 3 RC, 8 and 9 three BD (a point, an offset),
+//!            13 BL, 16 none (the value is a reference), 25 BL, 26 RC
+//! ```
+//!
+//! The label text itself is generated from the label style and is not
+//! stored.
 
+use super::alignment::{read_key, KeyValue};
 use super::bits::Bits;
 
-/// Bits that open a label record in groups whose records vary in size
-/// (geometry points between interval stations); the station follows as a
-/// `BD`.
-const RECORD_MARKER: &[u8] = b"00100000110100000000000000000010";
+/// A label's station key.
+const STATION: u32 = 0x0200_D020;
 
-/// Stations of the records opened by [`RECORD_MARKER`], in record order.
-/// Other fields open with the same bits; only a full-width double is taken,
-/// and a leading zero station (stored in two bits) when the first record
-/// holds one.
-pub(super) fn marked_stations(data: &[u8], start: usize, end: usize) -> Vec<f64> {
-    let bit = |p: usize| (data[p / 8] >> (7 - p % 8)) & 1;
-    let mut stations = Vec::new();
-    let mut first = true;
-    for pos in start..end.saturating_sub(RECORD_MARKER.len() + 66) {
-        if !RECORD_MARKER.iter().enumerate().all(|(i, c)| bit(pos + i) == c - b'0') {
-            continue;
-        }
-        let mut bits = Bits::new(data, pos + RECORD_MARKER.len(), end);
-        let at = bits.pos;
-        let Some(value) = bits.bit_double() else { continue };
-        if first && value == 0.0 {
-            stations.push(0.0);
-        }
-        first = false;
-        if bits.pos - at == 66 && value.is_finite() && value.abs() < 1e7 && value.abs() > 1e-9 {
-            stations.push(value);
-        }
-    }
-    stations
+/// Keys a profile label names the labelled profile entity by: a tangent
+/// (line labels), the tangent before and after a PVI (PVI labels, 0 at
+/// the profile's ends) and a vertical curve (sag and crest curve labels).
+const PROFILE_ENTITY_KEYS: [u32; 4] = [0x0100_FC31, 0x0100_FC32, 0x0100_FC33, 0x0100_FC34];
+
+/// The label override property set (bytes C0 0C) and, in it, the dragged
+/// offset property: a type 9 value whose X and Y are the offset from the
+/// labelled point to the dragged label.
+const OVERRIDE_SET: u16 = 0x0CC0;
+const DRAGGED_OFFSET: u8 = 0x02;
+
+/// One label of a label record.
+struct Label {
+    /// Keys with their values and the bit where each value starts.
+    keys: Vec<(u32, KeyValue, usize)>,
+    /// The overrides' properties: `(set, id, value)`, the value kept
+    /// when it is a point or an offset.
+    properties: Vec<(u16, u8, Option<[f64; 3]>)>,
 }
 
-/// The labels of an alignment label group read by their fields: a 293-bit
-/// header, `BL n`, `n` labels. A label is a key block (`BL k`, `k` keys; a
-/// station label's station is key 0x0200D020, the first label holds the
-/// group's settings), 44 bits, a key list (`BL k`, `k` keys without values),
-/// `BL`, `BL m` and `m` items: `BL x3, BL mask`, then for mask 0x0CC04E08
-/// 18 bits, for mask 0x0CC00208 (a dragged label) 7 bits, `BD`, `BD`, 5
-/// bits. Returns the station keys' values and the bit after the labels.
-// ponytail: the header, the 44 bits and the item bits around the BDs are
-// skipped by length (constant in every sample); name them once a drawing
-// varies them.
-fn group_labels(data: &[u8], start: usize, end: usize) -> Option<(Vec<f64>, usize)> {
-    const HEADER: usize = 293;
-    const STATION: u32 = 0x0200_D020;
-    let mut bits = Bits::new(data, start + HEADER, end);
-    let n = bits.bit_long()?;
-    let mut stations = Vec::new();
-    for _ in 0..n {
-        for _ in 0..bits.bit_long()? {
-            if let (STATION, super::alignment::KeyValue::Double(station)) = super::alignment::read_key(&mut bits)? {
-                stations.push(station);
-            }
+/// A label record read up to its settings.
+struct Record {
+    labels: Vec<Label>,
+    /// Where the settings start.
+    settings: usize,
+}
+
+/// The record header (see the module docs).
+fn header(bits: &mut Bits) -> Option<()> {
+    match super::alignment::class_header(bits)? {
+        0b01_0010 => {}
+        0b01_0110 => {
+            bits.bits_value(3)?;
         }
-        bits.skip(44)?;
-        for _ in 0..bits.bit_long()? {
+        _ => return None,
+    }
+    bits.skip(128)?;
+    for want in [80, 80, 0x04BE_0000] {
+        (bits.bit_long()? == want).then_some(())?;
+    }
+    bits.bit_long()?;
+    bits.bits_value(3)?;
+    Some(())
+}
+
+fn property(bits: &mut Bits) -> Option<(u16, u8, Option<[f64; 3]>)> {
+    let id = bits.raw_short_byte()?;
+    let set = u16::from_le_bytes([bits.raw_short_byte()?, bits.raw_short_byte()?]);
+    let mut value = None;
+    match bits.bits_value(7)? {
+        2 => {
+            bits.bit_double()?;
+        }
+        3 | 26 => {
+            bits.raw_short_byte()?;
+        }
+        8 | 9 => value = Some([bits.bit_double()?, bits.bit_double()?, bits.bit_double()?]),
+        13 | 25 => {
             bits.bit_long()?;
         }
+        16 => {}
+        _ => return None,
+    }
+    bits.bits_value(3)?;
+    Some((set, id, value))
+}
+
+fn label(bits: &mut Bits) -> Option<Label> {
+    let mut keys = Vec::new();
+    for _ in 0..bits.bit_long()? {
+        // The value starts after the key's own BL.
+        let key_at = bits.pos;
         bits.bit_long()?;
-        for _ in 0..bits.bit_long()? {
-            for _ in 0..3 {
-                bits.bit_long()?;
-            }
-            match bits.bit_long()? as u32 {
-                0x0CC0_4E08 => bits.skip(18)?,
-                0x0CC0_0208 => {
-                    bits.skip(7)?;
-                    bits.bit_double()?;
-                    bits.bit_double()?;
-                    bits.skip(5)?;
-                }
-                _ => return None,
-            }
+        let at = bits.pos;
+        bits.pos = key_at;
+        let (k, v) = read_key(bits)?;
+        keys.push((k, v, at));
+    }
+    bits.bits_value(2)?;
+    bits.raw_short_byte()?;
+    bits.bit_long()?;
+    for _ in 0..bits.bit_long()? {
+        bits.bit_long()?;
+    }
+    (bits.bit_long()? == 0).then_some(())?;
+    let mut properties = Vec::new();
+    for _ in 0..bits.bit_long()? {
+        (bits.bit_long()? == 1).then_some(())?;
+        bits.bit_long()?;
+        bits.bit_long()?;
+        bits.bits_value(2)?;
+        let size = bits.raw_short_byte()?;
+        (size % 8 == 0).then_some(())?;
+        for _ in 0..size / 8 {
+            properties.push(property(bits)?);
         }
     }
-    Some((stations, bits.pos))
+    Some(Label { keys, properties })
 }
 
-/// Stations of a station or minor station label group: its labels (see
-/// [`group_labels`]), then a 294-bit trailer.
-pub(super) fn group_stations(data: &[u8], start: usize, end: usize) -> Option<Vec<f64>> {
-    let (stations, at) = group_labels(data, start, end)?;
-    (end - at == 294).then_some(stations)
+fn record(data: &[u8], start: usize, end: usize) -> Option<Record> {
+    let mut bits = Bits::new(data, start, end);
+    header(&mut bits)?;
+    let n = bits.bit_long()?;
+    let labels = (0..n).map(|_| label(&mut bits)).collect::<Option<Vec<_>>>()?;
+    Some(Record { labels, settings: bits.pos })
 }
 
-/// Geometry point kinds a geometry point label group lists, read after its
-/// labels (see [`group_labels`]): a key block, `BL` x5, `BD, BD`, 7
-/// bits, `BL count`, `count` x `BL` (the low byte is the kind: 1 the
-/// alignment's beginning, 2 its end, 3 and up the points between), then 19
-/// bits.
-// ponytail: the 7 and 19 bits are skipped by length (constant in every
-// sample).
-pub(super) fn group_point_kinds(data: &[u8], start: usize, end: usize) -> Option<Vec<u8>> {
-    let (_, at) = group_labels(data, start, end)?;
-    let mut bits = Bits::new(data, at, end);
+/// The settings every label record holds after its labels, up to the
+/// class's own:
+///
+/// ```text
+/// BL k, k x key    (keys that take references)
+/// BL, BL, 5 x BD
+/// ```
+fn settings(bits: &mut Bits) -> Option<()> {
     for _ in 0..bits.bit_long()? {
-        super::alignment::read_key(&mut bits)?;
+        read_key(bits)?;
     }
+    bits.bit_long()?;
+    bits.bit_long()?;
     for _ in 0..5 {
-        bits.bit_long()?;
+        bits.bit_double()?;
     }
+    Some(())
+}
+
+/// The settings of a label group along an alignment, after [`settings`]:
+/// 3 bits, BD range start, BD range end.
+fn range(bits: &mut Bits) -> Option<()> {
+    bits.bits_value(3)?;
     bits.bit_double()?;
     bits.bit_double()?;
-    bits.skip(7)?;
+    Some(())
+}
+
+/// `B, BS 0x04BE` closing the record at its end.
+fn close(bits: &mut Bits) -> Option<()> {
+    bits.bit()?;
+    (bits.bit_short()? == 0x04BE && bits.remaining() == 0).then_some(())
+}
+
+/// The record's labels, when its settings open with their key block.
+fn labels(data: &[u8], start: usize, end: usize) -> Option<Vec<Label>> {
+    let r = record(data, start, end)?;
+    let mut bits = Bits::new(data, r.settings, end);
+    for _ in 0..bits.bit_long()? {
+        read_key(&mut bits)?;
+    }
+    Some(r.labels)
+}
+
+fn station(label: &Label) -> Option<f64> {
+    label.keys.iter().find_map(|(k, v, _)| match (*k, v) {
+        (STATION, KeyValue::Double(s)) => Some(*s),
+        _ => None,
+    })
+}
+
+/// Stations of the labels that carry one, in record order.
+pub(super) fn stations(data: &[u8], start: usize, end: usize) -> Option<Vec<f64>> {
+    Some(labels(data, start, end)?.iter().filter_map(station).collect())
+}
+
+/// Stations of a station or minor station label group: its labels'
+/// stations (the first label, at the range start, carries none); the
+/// group's settings are [`settings`], [`range`], BD increment.
+pub(super) fn group_stations(data: &[u8], start: usize, end: usize) -> Option<Vec<f64>> {
+    let r = record(data, start, end)?;
+    let mut bits = Bits::new(data, r.settings, end);
+    settings(&mut bits)?;
+    range(&mut bits)?;
+    bits.bit_double()?;
+    close(&mut bits)?;
+    Some(r.labels.iter().filter_map(station).collect())
+}
+
+/// Geometry point kinds a geometry point label group lists, from its
+/// settings: [`settings`], [`range`], `BL count`, `count` x `BL` (the low
+/// byte is the kind: 1 the alignment's beginning, 2 its end, 3 and up the
+/// points between).
+pub(super) fn group_point_kinds(data: &[u8], start: usize, end: usize) -> Option<Vec<u8>> {
+    let r = record(data, start, end)?;
+    let mut bits = Bits::new(data, r.settings, end);
+    settings(&mut bits)?;
+    range(&mut bits)?;
     let count = bits.bit_long()?;
     let kinds = (0..count).map(|_| bits.bit_long().map(|v| (v & 0xFF) as u8)).collect::<Option<Vec<_>>>()?;
-    (bits.remaining() == 19).then_some(kinds)
+    close(&mut bits)?;
+    Some(kinds)
 }
 
-/// Bits before each geometry point kind a label group labels (groups
-/// written from Civil 3D 2018 on).
-const POINT_KIND_MARKER: &[u8] = b"0011001101010010011111111110100100000001";
-
-/// Geometry point kinds a geometry point label group labels: `1` the
-/// alignment's beginning, `2` its end. Each is the low byte of the `BL`
-/// after [`POINT_KIND_MARKER`].
-pub(super) fn geometry_point_kinds(data: &[u8], start: usize, end: usize) -> Vec<u8> {
-    let bit = |p: usize| (data[p / 8] >> (7 - p % 8)) & 1;
-    (start..end.saturating_sub(POINT_KIND_MARKER.len() + 34))
-        .filter(|&pos| POINT_KIND_MARKER.iter().enumerate().all(|(i, c)| bit(pos + i) == c - b'0'))
-        .filter_map(|pos| Bits::new(data, pos + POINT_KIND_MARKER.len(), end).bit_long())
-        .map(|v| (v & 0xFF) as u8)
-        .collect()
+/// Where a single station elevation or profile projection label is
+/// anchored, from its settings: [`settings`], BD x, BD y, 3 bits, then
+/// (profile projection labels) BL 80, BL 80, BL 0x04BE0000.
+pub(super) fn anchor(data: &[u8], start: usize, end: usize, projection: bool) -> Option<crate::types::Vector2> {
+    let r = record(data, start, end)?;
+    (r.labels.len() == 1).then_some(())?;
+    let mut bits = Bits::new(data, r.settings, end);
+    settings(&mut bits)?;
+    let x = bits.bit_double()?;
+    let y = bits.bit_double()?;
+    bits.bits_value(3)?;
+    if projection {
+        for want in [80, 80, 0x04BE_0000] {
+            (bits.bit_long()? == want).then_some(())?;
+        }
+    }
+    close(&mut bits)?;
+    Some(crate::types::Vector2::new(x, y))
 }
 
-/// Bits of the `BD` that opens a label's placement block (groups written
-/// from Civil 3D 2018 on); read as a double it is about -26.515625.
-const PLACEMENT_MARKER: f64 = -26.515625;
-
-/// Where a dragged label sits, from the point it labels: the two `BD`s
-/// 178 and 244 bits past [`PLACEMENT_MARKER`]. A label left in place has
-/// no full doubles there.
-pub(super) fn dragged_offset(data: &[u8], start: usize, end: usize) -> Option<crate::types::Vector2> {
-    let at = (start..end).find(|&pos| full_double(data, pos, end).is_some_and(|v| (v - PLACEMENT_MARKER).abs() < 1e-6))?;
-    let x = full_double(data, at + 178, end)?;
-    let y = full_double(data, at + 244, end)?;
-    (x.abs() < 1e5 && y.abs() < 1e5).then(|| crate::types::Vector2::new(x, y))
+/// Where the first dragged label of a record sits, from the point it
+/// labels: its dragged offset override (a zero offset leaves the label in
+/// place). `Some(None)` when no label is dragged.
+pub(super) fn dragged_offset(data: &[u8], start: usize, end: usize) -> Option<Option<crate::types::Vector2>> {
+    let labels = labels(data, start, end)?;
+    Some(labels.iter().flat_map(|l| &l.properties).find_map(|(set, id, value)| match (*set, *id, value) {
+        (OVERRIDE_SET, DRAGGED_OFFSET, Some([x, y, _])) if (*x, *y) != (0.0, 0.0) => Some(crate::types::Vector2::new(*x, *y)),
+        _ => None,
+    }))
 }
 
-/// Bits before the profile entity id of each label in a profile label
-/// group; 56 bits on the record holds a `BL` of the form `0x00FC____`
-/// (`0x00FC3108` for tangent labels, `0x00FC3408` for curve labels,
-/// `0x00FC320C` for PVI labels).
-const ENTITY_LABEL_PREFIX: &[u8] = b"00000000000001";
-
-fn is_entity_label_check(v: i32) -> bool {
-    v >> 16 == 0xFC && matches!(v & 0xFF, 0x08 | 0x0C)
-}
-
-/// Every value read as an entity id after [`ENTITY_LABEL_PREFIX`], with
-/// its bit offset from `start`, checked or not. A PVI label's record names
-/// the tangents on both sides of its PVI (one at the profile's ends).
-pub(super) fn entity_refs(data: &[u8], start: usize, end: usize) -> Vec<(usize, i32)> {
-    let bit = |p: usize| (data[p / 8] >> (7 - p % 8)) & 1;
-    let n = ENTITY_LABEL_PREFIX.len();
-    (start + n..end.saturating_sub(34))
-        .filter(|&pos| ENTITY_LABEL_PREFIX.iter().enumerate().all(|(i, c)| bit(pos - n + i) == c - b'0'))
-        .filter_map(|pos| Some((pos - start, Bits::new(data, pos, end).bit_long().filter(|v| *v > 0)?)))
-        .collect()
+/// Every profile entity id a profile label group's labels name (see
+/// [`PROFILE_ENTITY_KEYS`]), with the bit offset of its value from
+/// `start`, in record order; 0 (no entity) is left out.
+pub(super) fn entity_refs(data: &[u8], start: usize, end: usize) -> Option<Vec<(usize, i32)>> {
+    let labels = labels(data, start, end)?;
+    Some(
+        labels
+            .iter()
+            .flat_map(|l| &l.keys)
+            .filter_map(|(k, v, at)| match v {
+                KeyValue::Long(id) if PROFILE_ENTITY_KEYS.contains(k) && *id != 0 => Some((at - start, *id)),
+                _ => None,
+            })
+            .collect(),
+    )
 }
 
 /// Ids of the profile entities a profile label group labels, in record
-/// order.
-pub(super) fn labelled_entity_ids(data: &[u8], start: usize, end: usize) -> Vec<i32> {
-    let bit = |p: usize| (data[p / 8] >> (7 - p % 8)) & 1;
-    let n = ENTITY_LABEL_PREFIX.len();
-    (start + n..end.saturating_sub(90))
-        .filter(|&pos| ENTITY_LABEL_PREFIX.iter().enumerate().all(|(i, c)| bit(pos - n + i) == c - b'0'))
-        .filter(|&pos| Bits::new(data, pos + 56, end).bit_long().is_some_and(is_entity_label_check))
-        .filter_map(|pos| Bits::new(data, pos, end).bit_long())
-        .collect()
-}
-
-/// Stations of the longest run of equally spaced records with rising values.
-/// A record whose station is 0 is 64 bits shorter: the BD stores zero in
-/// two bits.
-pub(super) fn stations(data: &[u8], start: usize, end: usize) -> Vec<f64> {
-    let mut found: Vec<(usize, f64)> = Vec::new();
-    for pos in start..end {
-        let mut bits = Bits::new(data, pos, end);
-        let raw = bits.bit().zip(bits.bit());
-        if raw != Some((false, false)) {
-            continue;
-        }
-        let Some(value) = bits.raw_double() else { continue };
-        let centi = value * 100.0;
-        if value.abs() >= 0.01 && value.abs() < 1e7 && (centi - centi.round()).abs() < 1e-6 {
-            found.push((pos, value));
-        }
-    }
-    let full = |at: usize| found.iter().find(|(p, _)| *p == at).map(|&(_, v)| v);
-    let zero = |at: usize| {
-        let mut bits = Bits::new(data, at, end);
-        bits.bit() == Some(true) && bits.bit() == Some(false)
-    };
-    let mut best: Vec<f64> = Vec::new();
-    for (i, &(first, value)) in found.iter().enumerate() {
-        for &(second, next) in &found[i + 1..] {
-            let stride = second - first;
-            if stride > 2000 {
-                break;
-            }
-            if stride < 128 || next <= value {
-                continue;
-            }
-            let mut run = vec![value, next];
-            let mut at = second + stride;
-            loop {
-                let last = *run.last().unwrap();
-                match full(at) {
-                    Some(v) if v > last => {
-                        run.push(v);
-                        at += stride;
-                    }
-                    None if last < 0.0 && zero(at) => {
-                        run.push(0.0);
-                        at += stride - 64;
-                    }
-                    _ => break,
-                }
-            }
-            // Records before the run: a zero station, then negative ones.
-            let mut at = first;
-            loop {
-                let head = run[0];
-                if head > 0.0 && at >= start + stride - 64 && zero(at - (stride - 64)) {
-                    run.insert(0, 0.0);
-                    at -= stride - 64;
-                } else if let Some(v) = at.checked_sub(stride).and_then(full).filter(|v| *v < head) {
-                    run.insert(0, v);
-                    at -= stride;
-                } else {
-                    break;
-                }
-            }
-            if run.len() > best.len() {
-                best = run;
-            }
-        }
-    }
-    best.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
-    if best.len() < 2 {
-        best.clear();
-    }
-    best
-}
-
-/// Anchor point of a single label: the first pair of full-width BDs that
-/// reads as a drawing position (both coordinates above 1000 in size).
-// ponytail: positional guess that holds for station/elevation labels; parse
-// the label record properly if other single labels need it.
-pub(super) fn anchor(data: &[u8], start: usize, end: usize) -> Option<crate::types::Vector2> {
-    (start..end).find_map(|pos| {
-        let mut bits = Bits::new(data, pos, end);
-        let x = bits.bit_double()?;
-        let y = (bits.pos == pos + 66).then(|| bits.bit_double()).flatten()?;
-        let full = bits.pos == pos + 132;
-        (full && x.is_finite() && y.is_finite() && x.abs() > 1e3 && y.abs() > 1e3 && x.abs() < 1e8 && y.abs() < 1e8)
-            .then(|| crate::types::Vector2::new(x, y))
-    })
+/// order (see [`entity_refs`]).
+pub(super) fn labelled_entity_ids(data: &[u8], start: usize, end: usize) -> Option<Vec<i32>> {
+    Some(entity_refs(data, start, end)?.into_iter().map(|(_, id)| id).collect())
 }
 
 /// One piece of a label text component's content.
@@ -415,18 +432,44 @@ pub struct LabelText {
     pub visible: bool,
 }
 
-/// Bits that open a text component's general block; its visibility is
-/// the third bit after them.
-const COMPONENT_GENERAL: &[u8] = b"1110100100101101";
+/// The head every label style component's class data opens with (after
+/// the style's component lists): `BL, 2 bits, BD height, BL, BL color, BL
+/// type tag, BL, BL, BL`. Returns the height, the type tag and where the
+/// general block starts.
+fn component_head(data: &[u8], start: usize, end: usize) -> Option<(f64, u32, usize)> {
+    let mut bits = Bits::new(data, super::style::class_data(data, start, end)?, end);
+    bits.bit_long()?;
+    bits.bits_value(2)?;
+    let height = bits.bit_double()?;
+    let mut header = [0; 6];
+    for v in &mut header {
+        *v = bits.bit_long()?;
+    }
+    Some((height, header[2] as u32, bits.pos))
+}
 
-/// Whether a text component is shown: unread (visible) without the block.
-pub(super) fn component_visible(data: &[u8], start: usize, end: usize) -> bool {
-    let bit = |p: usize| (data[p / 8] >> (7 - p % 8)) & 1;
-    let n = COMPONENT_GENERAL.len();
-    (start..end.saturating_sub(n + 3))
-        .take(1200)
-        .find(|&pos| COMPONENT_GENERAL.iter().enumerate().all(|(i, c)| bit(pos + i) == c - b'0'))
-        .is_none_or(|pos| bit(pos + n + 2) == 1)
+/// The general block up to its fields: 4 bits (the second is the
+/// component's visibility), 8 flag bits, 32 bits more when flag 0x80 is
+/// clear, then the anchor point (4 bits) and 20 bits; then the block's
+/// fields open with `1000`. Returns the visibility and the anchor point.
+fn general_head(bits: &mut Bits) -> Option<(bool, u8)> {
+    let lead = bits.bits_value(4)?;
+    if bits.bits_value(8)? & 0x80 == 0 {
+        bits.skip(32)?;
+    }
+    let point = bits.bits_value(4)?;
+    bits.skip(20)?;
+    Some((lead & 0b0100 != 0, point))
+}
+
+/// Whether a label style component is shown, read from its general
+/// block (see [`general_head`]); `None` when the component's class data
+/// does not read that far.
+pub(super) fn component_visible(data: &[u8], start: usize, end: usize) -> Option<bool> {
+    let (_, _, at) = component_head(data, start, end)?;
+    let mut bits = Bits::new(data, at, end);
+    let (visible, _) = general_head(&mut bits)?;
+    (bits.bits_value(4)? == 0b1000).then_some(visible)
 }
 
 /// BD at `pos` written in full.
@@ -434,32 +477,6 @@ fn full_double(data: &[u8], pos: usize, end: usize) -> Option<f64> {
     let mut bits = Bits::new(data, pos, end);
     let value = bits.bit_double()?;
     (bits.pos == pos + 66 && value.is_finite()).then_some(value)
-}
-
-/// A plotted size: zero, or a short decimal well under a drawing unit.
-fn plotted_size(v: f64) -> bool {
-    v == 0.0 || ((1e-6..0.1).contains(&v.abs()) && ((v * 1e6).round() - v * 1e6).abs() < 1e-3)
-}
-
-/// `BD x offset, BD, BD y offset, BD, B, BD gap`, the first run of them
-/// after the component's header that reads as plotted sizes.
-// ponytail: found by probing; the fields before it vary with the style's
-// overrides. Read them in order once those are decoded.
-fn offsets(data: &[u8], from: usize, end: usize) -> Option<(f64, f64, f64, usize)> {
-    offsets_within(data, from, end.min(from + 600))
-}
-
-/// The general block up to its fields: 12 flag bits, 32 bits more when
-/// flag 4 is clear, then the anchor point (4 bits) and 20 bits. Returns
-/// the anchor point.
-fn general_head(bits: &mut Bits) -> Option<u8> {
-    bits.bits_value(4)?;
-    if bits.bits_value(8)? & 0x80 == 0 {
-        bits.skip(32)?;
-    }
-    let point = bits.bits_value(4)?;
-    bits.skip(20)?;
-    Some(point)
 }
 
 /// X offset, y offset and border gap read by their fields: the general
@@ -530,19 +547,18 @@ fn content_at(data: &[u8], pos: usize, end: usize) -> Option<usize> {
     Some(bits.pos)
 }
 
-/// X offset, y offset and border gap, with where the block starts.
-fn offsets_within(data: &[u8], from: usize, end: usize) -> Option<(f64, f64, f64, usize)> {
-    (from..end).find_map(|pos| {
-        let mut bits = Bits::new(data, pos, end);
-        let mut values = [0.0; 4];
-        for v in &mut values {
-            *v = bits.bit_double().filter(|v| plotted_size(*v))?;
-        }
-        bits.bit()?;
-        let at = bits.pos;
-        let gap = bits.bit_double()?;
-        (bits.pos == at + 66 && gap > 0.0 && plotted_size(gap)).then_some((values[0], values[2], gap, pos))
-    })
+/// The content string at `pos`: `BL byte length`, UTF-16 code units, the
+/// last one 0. Returns the text and the bit after it.
+fn content(data: &[u8], pos: usize, end: usize) -> Option<(String, usize)> {
+    let mut bits = Bits::new(data, pos, end);
+    let length = usize::try_from(bits.bit_long()?).ok()?;
+    (length >= 2 && length % 2 == 0 && length * 8 <= bits.remaining()).then_some(())?;
+    let mut units = Vec::with_capacity(length / 2);
+    for _ in 0..length / 2 {
+        units.push(u16::from_le_bytes([bits.raw_short_byte()?, bits.raw_short_byte()?]));
+    }
+    (units.pop() == Some(0)).then_some(())?;
+    Some((String::from_utf16(&units).ok()?, bits.pos))
 }
 
 /// A line component closes with its length and then its angle, both
@@ -570,55 +586,25 @@ pub(super) fn line_component(data: &[u8], start: usize, end: usize) -> Option<(f
     Some((full_double(data, length_at, end)?, full_double(data, angle_at, end)?))
 }
 
+/// A label text component read by its fields: the component head (see
+/// [`component_head`]; a height of 1.0, a drawing unit, is the unset
+/// one), the general block and its offsets (see [`general_offsets`]), the
+/// content (see [`content_at`]), then BD rotation, BD, BS attachment.
 pub(super) fn text_component(data: &[u8], start: usize, end: usize) -> Option<LabelText> {
-    // After the style's component lists: `BL, 2 bits, BD height, BL, BL
-    // color`, then the component itself: `BL type tag, BL, BL, BL`, then its
-    // general block. A height of 1.0 (a drawing unit) is the unset one.
-    let head = super::style::class_data(data, start, end).and_then(|at| {
-        let mut bits = Bits::new(data, at, end);
-        bits.bit_long()?;
-        bits.pos += 2;
-        let height = bits.bit_double()?;
-        let mut header = [0; 6];
-        for v in &mut header {
-            *v = bits.bit_long()?;
-        }
-        Some(((0.0..1.0).contains(&height).then_some(height).filter(|v| *v > 0.0), bits.pos, header[2] == 0x0022_001F))
-    });
-    let height = head.and_then(|(height, ..)| height);
-    let general = head.map(|(_, at, _)| at);
-    let fields = head.and_then(|(_, at, turned)| general_offsets(data, at, end, turned));
-    // The content string, then rotation and attachment.
-    let (content, after) = fields
-        .and_then(|(.., pos)| content_at(data, pos, end))
-        .and_then(|pos| string_at(data, pos, end))
-        .or_else(|| {
-            // debt: components the fields above do not read (none in the
-            // samples) take the longest format string.
-            inline_strings_at(data, start, end)
-                .into_iter()
-                .max_by_key(|(s, _)| (s.contains("<["), s.len()))
-        })?;
+    let (height, tag, general) = component_head(data, start, end)?;
+    let height = (0.0..1.0).contains(&height).then_some(height).filter(|v| *v > 0.0);
+    let (x_offset, y_offset, gap, after_gap) = general_offsets(data, general, end, tag == 0x0022_001F)?;
+    let (content, after) = content(data, content_at(data, after_gap, end)?, end)?;
     let mut bits = Bits::new(data, after, end);
-    let rotation = bits.bit_double().filter(|v| v.abs() <= 10.0).unwrap_or(0.0);
-    bits.bit_double();
-    let attachment = bits.bit_short().and_then(|v| u8::try_from(v).ok()).filter(|v| *v <= 8).unwrap_or(6);
-    let (x_offset, y_offset, gap) = fields
-        .map(|(x, y, gap, _)| (x, y, gap))
-        .or_else(|| {
-            // debt: components whose general block does not read (none in
-            // the samples) are found by probing.
-            general.and_then(|at| offsets(data, at, end).map(|(x, y, gap, _)| (x, y, gap)))
-        })
-        .unwrap_or((0.0, 0.0, 0.0));
+    let rotation = bits.bit_double()?;
+    bits.bit_double()?;
+    let attachment = u8::try_from(bits.bit_short()?).ok().filter(|v| *v <= 8)?;
     // The anchor point, when the component's settings block (opening
     // 1011) follows it.
-    let anchor_point = general.and_then(|at| {
-        let mut bits = Bits::new(data, at, end);
-        let point = general_head(&mut bits)?;
-        bits.pos -= 20;
-        (bits.bits_value(4)? == 0b1011).then_some(point)
-    });
+    let mut bits = Bits::new(data, general, end);
+    let (visible, point) = general_head(&mut bits)?;
+    bits.pos -= 20;
+    let anchor_point = (bits.bits_value(4)? == 0b1011).then_some(point);
     Some(LabelText {
         content: parse_format(&content),
         height,
@@ -628,7 +614,7 @@ pub(super) fn text_component(data: &[u8], start: usize, end: usize) -> Option<La
         rotation,
         attachment,
         anchor_point,
-        visible: component_visible(data, start, end),
+        visible,
     })
 }
 
@@ -678,4 +664,158 @@ fn string_at(data: &[u8], pos: usize, end: usize) -> Option<(String, usize)> {
         return None;
     }
     Some((String::from_utf16(&units).ok()?, bits.pos))
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Bits as written, padded to whole bytes.
+    fn bytes(bits: &str) -> Vec<u8> {
+        let mut bits = bits.to_string();
+        while bits.len() % 8 != 0 {
+            bits.push('0');
+        }
+        bits.as_bytes()
+            .chunks(8)
+            .map(|c| u8::from_str_radix(std::str::from_utf8(c).unwrap(), 2).unwrap())
+            .collect()
+    }
+
+    fn raw(le: &[u8]) -> String {
+        le.iter().map(|b| format!("{b:08b}")).collect()
+    }
+
+    fn rc(v: u8) -> String {
+        format!("{v:08b}")
+    }
+
+    fn bl(v: u32) -> String {
+        match v {
+            0 => "10".into(),
+            1..=255 => format!("01{}", rc(v as u8)),
+            _ => format!("00{}", raw(&v.to_le_bytes())),
+        }
+    }
+
+    fn bd(v: f64) -> String {
+        format!("00{}", raw(&v.to_le_bytes()))
+    }
+
+    fn header() -> String {
+        let mut s: String = [80, 0, 80, 80, 0, 7].into_iter().map(bl).collect();
+        s += "010010";
+        s += &"0".repeat(128);
+        s + &bl(80) + &bl(80) + &bl(0x04BE_0000) + &bl(3) + "000"
+    }
+
+    /// A label at `station` naming profile entity `entity`, dragged by
+    /// `drag`.
+    fn label(station: f64, entity: u32, drag: Option<(f64, f64)>) -> String {
+        let mut s = bl(2) + &bl(STATION) + &bd(station) + &bl(0x0100_FC31) + &bl(entity);
+        s += &("00".to_string() + &rc(0) + &bl(0));
+        s += &(bl(1) + &bl(5));
+        s += &bl(0);
+        match drag {
+            None => s += &bl(0),
+            Some((x, y)) => {
+                s += &(bl(1) + &bl(1) + &bl(0) + &bl(0) + "00" + &rc(8));
+                s += &(rc(DRAGGED_OFFSET) + &rc(0xC0) + &rc(0x0C) + "0001001");
+                s += &(bd(x) + &bd(y) + &bd(0.0) + "010");
+            }
+        }
+        s
+    }
+
+    fn settings() -> String {
+        bl(0) + &bl(0) + &bl(0) + &bd(0.0).repeat(5)
+    }
+
+    fn close() -> String {
+        "0".to_string() + "00" + &raw(&0x04BEu16.to_le_bytes())
+    }
+
+    fn record(labels: &[String], tail: &str) -> (Vec<u8>, usize) {
+        let s = header() + &bl(labels.len() as u32) + &labels.concat() + &settings() + tail + &close();
+        (bytes(&s), s.len())
+    }
+
+    #[test]
+    fn station_group_reads_its_labels_stations() {
+        let tail = "000".to_string() + &bd(0.0) + &bd(60.0) + &bd(20.0);
+        let (data, end) = record(&[label(20.0, 0, None), label(40.0, 0, None)], &tail);
+        assert_eq!(group_stations(&data, 0, end), Some(vec![20.0, 40.0]));
+        assert_eq!(stations(&data, 0, end), Some(vec![20.0, 40.0]));
+        // A record that does not close where the settings say is not read.
+        assert_eq!(group_stations(&data, 0, end - 1), None);
+    }
+
+    #[test]
+    fn geometry_point_kinds_are_low_bytes() {
+        let tail = "000".to_string() + &bd(0.0) + &bd(60.0) + &bl(2) + &bl(0x0101) + &bl(3);
+        let (data, end) = record(&[label(0.0, 0, None)], &tail);
+        assert_eq!(group_point_kinds(&data, 0, end), Some(vec![1, 3]));
+    }
+
+    #[test]
+    fn single_labels_are_anchored_by_their_settings() {
+        let tail = bd(12.5) + &bd(-4.0) + "000";
+        let (data, end) = record(&[label(5.0, 0, None)], &tail);
+        let a = anchor(&data, 0, end, false).unwrap();
+        assert_eq!((a.x, a.y), (12.5, -4.0));
+        assert_eq!(anchor(&data, 0, end, true), None);
+        let tail = bd(1.0) + &bd(2.0) + "000" + &bl(80) + &bl(80) + &bl(0x04BE_0000);
+        let (data, end) = record(&[label(5.0, 0, None)], &tail);
+        let a = anchor(&data, 0, end, true).unwrap();
+        assert_eq!((a.x, a.y), (1.0, 2.0));
+    }
+
+    #[test]
+    fn dragged_offset_is_the_first_nonzero_override() {
+        let (data, end) = record(&[label(0.0, 0, Some((0.0, 0.0))), label(1.0, 0, Some((3.0, -2.0)))], "");
+        let d = dragged_offset(&data, 0, end).unwrap().unwrap();
+        assert_eq!((d.x, d.y), (3.0, -2.0));
+        let (data, end) = record(&[label(0.0, 0, None)], "");
+        assert_eq!(dragged_offset(&data, 0, end), Some(None));
+    }
+
+    #[test]
+    fn entity_ids_point_at_their_values() {
+        let (data, end) = record(&[label(0.0, 0x1234, None), label(1.0, 0, None), label(2.0, 7, None)], "");
+        let refs = entity_refs(&data, 0, end).unwrap();
+        assert_eq!(refs.iter().map(|r| r.1).collect::<Vec<_>>(), vec![0x1234, 7]);
+        for (at, id) in refs {
+            assert_eq!(Bits::new(&data, at, end).bit_long(), Some(id));
+        }
+    }
+
+    #[test]
+    fn nested_labels_are_not_read() {
+        let nested = label(0.0, 0, None).replacen(&(bl(1) + &bl(5) + &bl(0)), &(bl(1) + &bl(5) + &bl(1)), 1);
+        let (data, end) = record(&[nested], "");
+        assert_eq!(stations(&data, 0, end), None);
+    }
+
+    #[test]
+    fn general_head_reads_visibility_and_anchor_point() {
+        let s = "0100".to_string() + "10000000" + "1011" + &"0".repeat(20) + "1000";
+        let data = bytes(&s);
+        let mut bits = Bits::new(&data, 0, s.len());
+        assert_eq!(general_head(&mut bits), Some((true, 0b1011)));
+        assert_eq!(bits.bits_value(4), Some(0b1000));
+        let s = "0000".to_string() + "00000000" + &"1".repeat(32) + "0010" + &"0".repeat(20);
+        let data = bytes(&s);
+        assert_eq!(general_head(&mut Bits::new(&data, 0, s.len())), Some((false, 0b0010)));
+    }
+
+    #[test]
+    fn content_is_a_terminated_utf16_string() {
+        let units: String = "A\nb\0".encode_utf16().flat_map(|u| u.to_le_bytes()).map(rc).collect();
+        let s = bl(8) + &units;
+        let data = bytes(&s);
+        assert_eq!(content(&data, 0, s.len()), Some(("A\nb".to_string(), s.len())));
+        let s = bl(2) + &rc(b'x') + &rc(0);
+        assert_eq!(content(&bytes(&s), 0, s.len()), None);
+    }
 }
