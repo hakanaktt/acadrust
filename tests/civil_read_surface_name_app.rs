@@ -50,21 +50,30 @@ fn an_app_written_shells_name_is_not_its_created_by_name() {
 /// A built surface's name sits after its definitions' names: the point
 /// group, breaklines and boundary of `Surface-3.dwg` leave "XGND" after
 /// them (2027 samples: "", "", "leightkadmin", "Existing Ground Points",
-/// "XGND-Breakline", "XGND-Boundary", "XGND", ...).
+/// "XGND-Breakline", "XGND-Boundary", "XGND", ...), and the two
+/// breaklines and outer boundary of `Corridor-1a.dwg` leave "EG" after
+/// them (2027 sample: "", "", "leightkadmin", "Contours from polylines",
+/// "Edge of pavement - existing road", "EG - Outer", "EG", ...).
 #[test]
 fn an_app_written_surfaces_name_follows_its_definitions_texts() {
-    for (drawing, expected) in [("Surface-3.dwg", "XGND"), ("Surface-7.dwg", "XGND")] {
+    for (drawing, expected) in [
+        ("Surface-3.dwg", "XGND"),
+        ("Surface-7.dwg", "XGND"),
+        ("Corridor-1a.dwg", "EG"),
+    ] {
         let Some(doc) = app_drawing(drawing) else { continue };
         assert_eq!(surface_names(&doc), vec![Some(expected.to_string())], "{drawing}");
     }
 }
 
 /// A surface record whose definitions block this grammar does not read
-/// (the multi-breakline preamble of `Corridor-1a.dwg`) names `None` — its
-/// text boundary is unknown, and the created-by name or a definition's
-/// name must not be read for it.
+/// (the built ground surfaces of `Intro-2.dwg`, `Parcel-1E.dwg` and
+/// `Parcel-3A.dwg`) names `None` — its text boundary is unknown, and the
+/// created-by name or a definition's name must not be read for it.
 #[test]
 fn a_surface_with_unreadable_definitions_names_none() {
-    let Some(doc) = app_drawing("Corridor-1a.dwg") else { return };
-    assert_eq!(surface_names(&doc), vec![None::<String>]);
+    for drawing in ["Intro-2.dwg", "Parcel-1E.dwg", "Parcel-3A.dwg"] {
+        let Some(doc) = app_drawing(drawing) else { return };
+        assert_eq!(surface_names(&doc), vec![None::<String>], "{drawing}");
+    }
 }
