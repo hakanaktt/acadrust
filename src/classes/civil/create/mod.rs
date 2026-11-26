@@ -14,6 +14,7 @@ mod assoc;
 mod corridor;
 mod default_styles;
 mod grading;
+mod grading_entity;
 mod groups;
 mod intersection;
 mod labels;
@@ -51,6 +52,7 @@ pub use network_structure_sizes::{add_structure_of_size, network_structure_size_
 pub use pressure::{add_pressure_appurtenance, add_pressure_arc_pipe, add_pressure_cross, add_pressure_fitting, add_pressure_network, add_pressure_part, add_pressure_pipe, add_pressure_pipe_of_size, add_pressure_tee, connect_pressure_parts, pressure_part_descriptions};
 pub use groups::{add_point_group, add_point_group_query, set_point_group, set_point_group_overrides, set_point_group_query, set_point_group_styles, Comparison, PointAttribute, PointQuery, QueryConstant, QueryExpression};
 pub use grading::add_grading_group_tree;
+pub use grading_entity::{add_grading_minimal, GradingSkeleton};
 pub use profile::{add_profile, add_profile_entities, add_profile_with_curves, add_static_profile, add_surface_profile, ProfileEntity, VerticalCurve, add_offset_profile};
 pub use profile_view::{add_profile_view, add_profile_view_with_bands, add_profile_view_with_range, add_profile_view_style, add_profile_view_with_style, add_profile_view_style_with};
 pub use bands::{BandKind, BandStagger, ProfileViewBand};
