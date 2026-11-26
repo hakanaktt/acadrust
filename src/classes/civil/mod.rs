@@ -571,8 +571,13 @@ impl ArchEntityData {
         if self.civil_kind() != Some(CivilKind::Label) {
             return None;
         }
+        let projection = match self.dxf_name.as_str() {
+            "AECC_STATION_ELEVATION_LABEL" => false,
+            "AECC_PROFILE_PROJECTION_LABEL" => true,
+            _ => return None,
+        };
         let (data, start, end) = self.main_stream()?;
-        labels::anchor(data, start, end)
+        labels::anchor(data, start, end, projection)
     }
 
     /// Stations a Civil 3D label group places labels at, in order.
@@ -580,19 +585,13 @@ impl ArchEntityData {
         if self.civil_kind() != Some(CivilKind::Label) {
             return Vec::new();
         }
-        // Groups whose records vary in size (geometry points between
-        // intervals) are only read through their record marker.
         self.main_stream()
-            .map(|(data, start, end)| {
+            .and_then(|(data, start, end)| {
                 if matches!(self.dxf_name.as_str(), "AECC_ALIGNMENT_STATION_LABEL_GROUP" | "AECC_ALIGNMENT_MINOR_STATION_LABEL_GROUP") {
-                    if let Some(stations) = labels::group_stations(data, start, end) {
-                        return stations;
-                    }
+                    labels::group_stations(data, start, end)
+                } else {
+                    labels::stations(data, start, end)
                 }
-                // debt: other label group classes are searched for their
-                // stations.
-                let marked = labels::marked_stations(data, start, end);
-                if marked.len() >= 2 { marked } else { labels::stations(data, start, end) }
             })
             .unwrap_or_default()
     }
@@ -605,10 +604,7 @@ impl ArchEntityData {
             return Vec::new();
         }
         self.main_stream()
-            .map(|(data, start, end)| {
-                // debt: groups whose labels do not read are searched.
-                labels::group_point_kinds(data, start, end).unwrap_or_else(|| labels::geometry_point_kinds(data, start, end))
-            })
+            .and_then(|(data, start, end)| labels::group_point_kinds(data, start, end))
             .unwrap_or_default()
     }
 
@@ -619,7 +615,7 @@ impl ArchEntityData {
             return None;
         }
         let (data, start, end) = self.main_stream()?;
-        labels::dragged_offset(data, start, end)
+        labels::dragged_offset(data, start, end)?
     }
 
     /// Ids of the profile entities a profile label group
@@ -630,7 +626,7 @@ impl ArchEntityData {
             return Vec::new();
         }
         self.main_stream()
-            .map(|(data, start, end)| labels::labelled_entity_ids(data, start, end))
+            .and_then(|(data, start, end)| labels::labelled_entity_ids(data, start, end))
             .unwrap_or_default()
     }
 
@@ -642,7 +638,7 @@ impl ArchEntityData {
             return Vec::new();
         }
         self.main_stream()
-            .map(|(data, start, end)| labels::entity_refs(data, start, end))
+            .and_then(|(data, start, end)| labels::entity_refs(data, start, end))
             .unwrap_or_default()
     }
 
@@ -1626,11 +1622,14 @@ impl ArchObject {
     /// Whether a label style component (text, line, tick, ...) is shown;
     /// `true` when the record does not say.
     pub fn label_component_visible(&self) -> bool {
-        if !self.dxf_name.starts_with("AECC_LABEL_") {
+        // A label style (the collector) is not a component and has no
+        // component visibility.
+        if !self.dxf_name.starts_with("AECC_LABEL_") || self.dxf_name == "AECC_LABEL_COLLECTOR_STYLE" {
             return true;
         }
         self.main_stream()
-            .is_none_or(|(data, start, end)| labels::component_visible(data, start, end))
+            .and_then(|(data, start, end)| labels::component_visible(data, start, end))
+            .unwrap_or(true)
     }
 
     /// Plotted height of a Civil 3D profile view band.
