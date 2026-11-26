@@ -311,12 +311,6 @@ fn private_reference_slots_protect_orphans() {
     {
         let mut d = CadDocument::new();
         let h = Handle::new(HIGH);
-        d.acis_sab_handles.push(h);
-        assert!(census(&d).unwrap() >= HIGH, "acis_sab_handles");
-    }
-    {
-        let mut d = CadDocument::new();
-        let h = Handle::new(HIGH);
         d.dwg_data_store_handles.insert(h);
         assert!(census(&d).unwrap() >= HIGH, "dwg_data_store_handles");
     }
