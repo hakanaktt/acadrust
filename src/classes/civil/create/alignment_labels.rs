@@ -11,8 +11,8 @@
 //!
 //! ```text
 //! references: soft 0, soft 0, alignment (soft), label style (hard),
-//!   per label { alignment (soft) }
-//! texts: the kind's class text, three empty texts
+//!   per label { alignment (hard) }
+//! texts: the kind's implementation class text (`AeccImp*`), three empty texts
 //! ```
 //!
 //! The form is the corpus's (Align-2, Align-6A, Labels-Alignments,
@@ -53,12 +53,14 @@ impl AlignmentLabelGroupKind {
         }
     }
 
-    /// The class text the record carries (strings[0]).
+    /// The class text the record carries (strings[0]): the implementation
+    /// class's name — Civil creates the object through its `AeccImp*` class,
+    /// and the enabler resolves that name at load.
     fn class_text(self) -> &'static str {
         match self {
-            Self::Station => "AeccDbAlignmentStationLabeling (AeccLand130)",
-            Self::MinorStation => "AeccDbAlignmentMinorStationLabeling (AeccLand130)",
-            Self::GeomPoint => "AeccDbAlignmentGeomPointLabeling (AeccLand130)",
+            Self::Station => "AeccImpAlignmentStationLabeling",
+            Self::MinorStation => "AeccImpAlignmentMinorStationLabeling",
+            Self::GeomPoint => "AeccImpAlignmentGeomPointLabeling",
         }
     }
 
@@ -298,7 +300,7 @@ pub fn add_alignment_label_group(
     };
     let mut refs = vec![soft_pointer(0), soft_pointer(0), soft_pointer(alignment.value()), hard_pointer(style.value())];
     for _ in &group.labels {
-        refs.push(soft_pointer(alignment.value()));
+        refs.push(hard_pointer(alignment.value()));
     }
     let strings = vec![group.kind.class_text().to_string(), String::new(), String::new(), String::new()];
     put_entity(
@@ -522,7 +524,7 @@ mod tests {
         assert_eq!(r[2], (al.value(), 4));
         assert_eq!(r[3], (style.value(), 5));
         assert_eq!(r.len(), 4 + group.labels.len());
-        assert!(r[4..].iter().all(|r| *r == (al.value(), 4)));
+        assert!(r[4..].iter().all(|r| *r == (al.value(), 5)));
     }
 
     #[test]
