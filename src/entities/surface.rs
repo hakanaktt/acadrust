@@ -216,7 +216,81 @@ pub struct Surface {
     pub silhouettes: Vec<Silhouette>,
 }
 
+/// The lofted surface data that a drawing saved in a format before AC1027
+/// keeps for a lofted or network surface it writes as a plain surface (see
+/// [`Surface::lofted_round_trip`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoftedSurfaceRoundTrip {
+    /// The surface's u isoline count (the record itself keeps the default).
+    pub u_isolines: i16,
+    /// The surface's v isoline count.
+    pub v_isolines: i16,
+    /// The lofted surface class data ([`SurfaceData::Lofted`]).
+    pub data: SurfaceData,
+}
+
 impl Surface {
+    /// The `AcadLoftedSurfaceData` this surface keeps in its extension
+    /// dictionary's `ACAD_XREC_ROUNDTRIP` record: a lofted or network surface
+    /// saved in a format before AC1027 is written as a plain surface record
+    /// with default isoline counts, and its own counts and lofted data are
+    /// kept there. `None` when the surface has no such data or it does not
+    /// read to its end.
+    pub fn lofted_round_trip(
+        &self,
+        document: &crate::document::CadDocument,
+    ) -> Option<LoftedSurfaceRoundTrip> {
+        use crate::objects::{ObjectType, XRecordValue};
+        const TAG: &str = "AcadLoftedSurfaceData";
+        let dictionary = match document.objects.get(&self.common.xdictionary_handle?)? {
+            ObjectType::Dictionary(dictionary) => dictionary,
+            _ => return None,
+        };
+        let record = dictionary
+            .entries
+            .iter()
+            .find(|(name, _)| name == "ACAD_XREC_ROUNDTRIP")
+            .and_then(|(_, handle)| document.objects.get(handle))?;
+        let ObjectType::XRecord(record) = record else {
+            return None;
+        };
+        // The group starts at its 102 name, then a 90 byte count and the
+        // 310 chunks, up to the next 102 name.
+        let mut entries = record
+            .entries
+            .iter()
+            .skip_while(|entry| {
+                !matches!(&entry.value, XRecordValue::String(name) if entry.code == 102 && name == TAG)
+            })
+            .skip(1)
+            .take_while(|entry| entry.code != 102);
+        let length = match entries.next()?.value {
+            XRecordValue::Int32(length) => usize::try_from(length).ok()?,
+            _ => return None,
+        };
+        let mut bytes = Vec::with_capacity(length);
+        for entry in entries {
+            match &entry.value {
+                XRecordValue::Chunk(chunk) if entry.code == 310 => {
+                    bytes.extend_from_slice(chunk)
+                }
+                _ => return None,
+            }
+        }
+        if bytes.len() != length {
+            return None;
+        }
+        let (u_isolines, v_isolines, data) =
+            crate::io::dwg::dwg_stream_readers::object_reader::entities::read_lofted_round_trip(
+                &bytes,
+            )?;
+        Some(LoftedSurfaceRoundTrip {
+            u_isolines,
+            v_isolines,
+            data,
+        })
+    }
+
     /// Creates a new empty surface of the given kind.
     pub fn new(kind: SurfaceKind) -> Self {
         Self {

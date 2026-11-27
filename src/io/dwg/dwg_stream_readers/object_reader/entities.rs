@@ -5940,6 +5940,115 @@ fn read_surface_embedded_entity(
     )
 }
 
+/// The class data of a lofted surface after its isoline counts: the loft
+/// transform, the cross-section, guide and path counts, the loft options and
+/// the embedded entities.
+fn read_lofted_surface_data(
+    reader: &mut DwgMergedReader,
+    version: DwgVersion,
+    dxf_version: DxfVersion,
+) -> SurfaceData {
+    let loft_transform = read_surface_matrix(reader);
+    let mut cross_section_entities = Vec::new();
+    let mut guide_entities = Vec::new();
+    let mut path_entity = None;
+    let (
+        plane_normal_lofting_type,
+        start_draft_angle,
+        end_draft_angle,
+        start_draft_magnitude,
+        end_draft_magnitude,
+        arc_length_parameterization,
+        no_twist,
+        align_direction,
+        simple_surfaces,
+        closed_surfaces,
+        solid,
+        ruled_surface,
+        virtual_guide,
+    ) = {
+        let cross_count = safe_count(reader.read_bit_short() as i32, reader);
+        let guide_count = safe_count(reader.read_bit_short() as i32, reader);
+        let has_path = reader.read_bit();
+        let values = (
+            reader.read_bit_double(),
+            reader.read_bit_double(),
+            reader.read_bit_double(),
+            reader.read_bit_double(),
+            reader.read_bit(),
+            reader.read_bit(),
+            reader.read_bit(),
+            reader.read_bit(),
+            reader.read_bit(),
+            reader.read_bit(),
+            reader.read_bit(),
+            reader.read_bit(),
+            reader.read_bit_long(),
+        );
+        cross_section_entities.reserve(cross_count as usize);
+        guide_entities.reserve(guide_count as usize);
+        for _ in 0..cross_count {
+            if let Some(entity) = read_surface_embedded_entity(reader, version, dxf_version)
+            {
+                cross_section_entities.push(entity);
+            }
+        }
+        for _ in 0..guide_count {
+            if let Some(entity) = read_surface_embedded_entity(reader, version, dxf_version)
+            {
+                guide_entities.push(entity);
+            }
+        }
+        if has_path {
+            path_entity = read_surface_embedded_entity(reader, version, dxf_version);
+        }
+        (
+            values.12, values.0, values.1, values.2, values.3, values.4, values.5,
+            values.6, values.7, values.8, values.9, values.10, values.11,
+        )
+    };
+    SurfaceData::Lofted {
+        loft_transform,
+        cross_section_entities,
+        guide_entities,
+        path_entity,
+        plane_normal_lofting_type,
+        start_draft_angle,
+        end_draft_angle,
+        start_draft_magnitude,
+        end_draft_magnitude,
+        arc_length_parameterization,
+        no_twist,
+        align_direction,
+        simple_surfaces,
+        closed_surfaces,
+        solid,
+        ruled_surface,
+        virtual_guide,
+        cross_sections: Vec::new(),
+        guide_curves: Vec::new(),
+        path_curve: None,
+    }
+}
+
+/// The `AcadLoftedSurfaceData` round-trip data a drawing saved in a format
+/// before AC1027 keeps for a lofted (or network) surface it writes as a
+/// plain surface: BS u and BS v isoline counts, one RC (0 in every saved
+/// record), then the lofted surface class data in its AC1027 form. `None`
+/// unless the data reads to its end (only byte padding left).
+pub(crate) fn read_lofted_round_trip(bytes: &[u8]) -> Option<(i16, i16, SurfaceData)> {
+    let dxf_version = DxfVersion::AC1032;
+    let version = DwgVersion::from_dxf_version(dxf_version).ok()?;
+    let mut reader = DwgMergedReader::new(bytes.to_vec(), dxf_version, bytes.len() as i64 * 8);
+    let u_isolines = reader.read_bit_short();
+    let v_isolines = reader.read_bit_short();
+    let _reserved = reader.read_byte();
+    let data = read_lofted_surface_data(&mut reader, version, dxf_version);
+    let remaining = bytes.len() as i64 * 8 - reader.position_in_bits();
+    (reader.check_error().is_ok() && (0..8).contains(&remaining))
+        .then_some((u_isolines, v_isolines, data))
+}
+
 pub fn read_surface(
     reader: &mut DwgMergedReader,
     version: DwgVersion,
@@ -5990,89 +6099,7 @@ pub fn read_surface(
                 sweep_transform,
             }
         }
-        SurfaceKind::Lofted => {
-            let loft_transform = read_surface_matrix(reader);
-            let mut cross_section_entities = Vec::new();
-            let mut guide_entities = Vec::new();
-            let mut path_entity = None;
-            let (
-                plane_normal_lofting_type,
-                start_draft_angle,
-                end_draft_angle,
-                start_draft_magnitude,
-                end_draft_magnitude,
-                arc_length_parameterization,
-                no_twist,
-                align_direction,
-                simple_surfaces,
-                closed_surfaces,
-                solid,
-                ruled_surface,
-                virtual_guide,
-            ) = {
-                let cross_count = safe_count(reader.read_bit_short() as i32, reader);
-                let guide_count = safe_count(reader.read_bit_short() as i32, reader);
-                let has_path = reader.read_bit();
-                let values = (
-                    reader.read_bit_double(),
-                    reader.read_bit_double(),
-                    reader.read_bit_double(),
-                    reader.read_bit_double(),
-                    reader.read_bit(),
-                    reader.read_bit(),
-                    reader.read_bit(),
-                    reader.read_bit(),
-                    reader.read_bit(),
-                    reader.read_bit(),
-                    reader.read_bit(),
-                    reader.read_bit(),
-                    reader.read_bit_long(),
-                );
-                cross_section_entities.reserve(cross_count as usize);
-                guide_entities.reserve(guide_count as usize);
-                for _ in 0..cross_count {
-                    if let Some(entity) = read_surface_embedded_entity(reader, version, dxf_version)
-                    {
-                        cross_section_entities.push(entity);
-                    }
-                }
-                for _ in 0..guide_count {
-                    if let Some(entity) = read_surface_embedded_entity(reader, version, dxf_version)
-                    {
-                        guide_entities.push(entity);
-                    }
-                }
-                if has_path {
-                    path_entity = read_surface_embedded_entity(reader, version, dxf_version);
-                }
-                (
-                    values.12, values.0, values.1, values.2, values.3, values.4, values.5,
-                    values.6, values.7, values.8, values.9, values.10, values.11,
-                )
-            };
-            SurfaceData::Lofted {
-                loft_transform,
-                cross_section_entities,
-                guide_entities,
-                path_entity,
-                plane_normal_lofting_type,
-                start_draft_angle,
-                end_draft_angle,
-                start_draft_magnitude,
-                end_draft_magnitude,
-                arc_length_parameterization,
-                no_twist,
-                align_direction,
-                simple_surfaces,
-                closed_surfaces,
-                solid,
-                ruled_surface,
-                virtual_guide,
-                cross_sections: Vec::new(),
-                guide_curves: Vec::new(),
-                path_curve: None,
-            }
-        }
+        SurfaceKind::Lofted => read_lofted_surface_data(reader, version, dxf_version),
         SurfaceKind::Revolved => {
             let (
                 draft_angle,
@@ -6294,6 +6321,53 @@ mod tests {
     use crate::io::dwg::dwg_stream_writers::merged_writer::DwgMergedWriter;
     use crate::io::dwg::dwg_version::DwgVersion;
     use crate::types::DxfVersion;
+
+    /// The round-trip data of a network surface as a drawing saved before
+    /// AC1027 keeps it: BS u, BS v, RC 0, then the lofted class data (here
+    /// with no cross sections, guides or path).
+    #[test]
+    fn lofted_round_trip_reads_its_isolines_and_class_data() {
+        let mut writer = DwgMergedWriter::new(DwgVersion::AC18, DxfVersion::AC1018);
+        writer.write_bit_short(3);
+        writer.write_bit_short(4);
+        writer.write_byte(0);
+        for index in 0..16 {
+            writer.write_bit_double(if index % 5 == 0 { 1.0 } else { 0.0 });
+        }
+        writer.write_bit_short(0); // cross sections
+        writer.write_bit_short(0); // guides
+        writer.write_bit(false); // no path
+        for value in [0.0, 0.0, 0.0, 0.0] {
+            writer.write_bit_double(value); // draft angles and magnitudes
+        }
+        for flag in [false, true, false, true, false, false, false, true] {
+            writer.write_bit(flag);
+        }
+        writer.write_bit_long(5); // plane normal lofting type
+        let bytes = writer.merge();
+        let (u, v, data) = read_lofted_round_trip(&bytes).expect("round-trip data");
+        assert_eq!((u, v), (3, 4));
+        match data {
+            SurfaceData::Lofted {
+                loft_transform,
+                no_twist,
+                virtual_guide,
+                plane_normal_lofting_type,
+                ..
+            } => {
+                assert_eq!(loft_transform[0], 1.0);
+                assert_eq!(loft_transform[5], 1.0);
+                assert!(no_twist);
+                assert!(virtual_guide);
+                assert_eq!(plane_normal_lofting_type, 5);
+            }
+            other => panic!("{other:?}"),
+        }
+        // Data that does not read to its end is not taken.
+        let mut longer = bytes.clone();
+        longer.extend_from_slice(&[0xFF; 4]);
+        assert!(read_lofted_round_trip(&longer).is_none());
+    }
 
     fn make_reader(
         dwg: DwgVersion,
