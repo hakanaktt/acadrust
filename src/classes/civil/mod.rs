@@ -17,6 +17,7 @@ mod grading;
 mod intersection;
 mod labels;
 mod label_style;
+mod section_bands;
 mod network;
 mod parameters;
 mod profile;
@@ -40,6 +41,7 @@ pub use corridor::{CorridorBaseline, CorridorBoundary, CorridorDefinition, Corri
 pub use grading::{CriteriaValue, GradingCriteria, GradingEntity, GradingGroup, GradingGroupRecord, GradingGroupTree};
 pub use intersection::IntersectionLayout;
 pub use labels::{parse_format, property, LabelDimensionAnchor, LabelPart, LabelText};
+pub use section_bands::{BandKeyValue, SectionDataBandGroup, SectionDataBandLabel};
 pub use label_style::{LabelArrowComponent, LabelBlockComponent, LabelBorder, LabelDraggedState, LabelIteratorComponent, LabelLeader, LabelLineComponent, LabelStyleSettings, LabelTextComponent, LabelTickComponent};
 pub use network::{PartField, PressurePipe, PressurePort};
 pub use parameters::{Parameter, ParameterValue};
@@ -161,6 +163,11 @@ pub const ENTITY_CLASSES: &[(&str, &str, CivilKind)] = &[
     (
         "AECC_SAMPLELINE_LABELING",
         "AeccDbSampleLineLabeling",
+        CivilKind::Label,
+    ),
+    (
+        "AECC_SECTIONDATABAND_LABELGROUP",
+        "AeccDbSectionDataBandLabeling",
         CivilKind::Label,
     ),
     (
@@ -627,6 +634,26 @@ impl ArchEntityData {
         self.main_stream()
             .and_then(|(data, start, end)| labels::group_point_kinds(data, start, end))
             .unwrap_or_default()
+    }
+
+    /// A section view data band's label group
+    /// (`AECC_SECTIONDATABAND_LABELGROUP`), by its fields; `None` when the
+    /// record stores a form the crate does not read (a label set in the
+    /// settings, nested labels, overrides, or key values beyond numbers —
+    /// the corpus's 19 records carry none of these).
+    pub fn section_data_band_group(&self) -> Option<SectionDataBandGroup> {
+        if self.dxf_name != "AECC_SECTIONDATABAND_LABELGROUP" {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        section_bands::group(data, start, end)
+    }
+
+    /// Offsets a section view data band's labels name (see
+    /// [`Self::section_data_band_group`]), in record order; empty for a
+    /// group this crate does not read.
+    pub fn section_data_band_offsets(&self) -> Vec<f64> {
+        self.section_data_band_group().map(|g| g.offsets()).unwrap_or_default()
     }
 
     /// Offset from the labelled point to where a dragged label sits, `None`
