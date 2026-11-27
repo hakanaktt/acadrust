@@ -43,11 +43,13 @@ mod tin;
 mod tin_build;
 mod tree;
 mod user_properties;
+mod valignment_labels;
 
 pub use assembly::{add_assembly, add_pkt_subassembly, add_pkt_subassembly_on, PktSource};
 pub use section_band::add_section_data_band_label_group;
 pub use alignment::{add_curb_return, add_curb_return_with, CurbReturnCurve, add_alignment, add_alignment_with_curves, add_offset_alignment, add_offset_alignment_with_widenings, add_alignment_of_kind, add_design_speeds, add_station_equations, add_superelevation, CriticalStation, CriticalStationKind, SuperelevationCurve, AlignmentKind, VertexCurve, Widening};
 pub use alignment_labels::{add_alignment_label_group, AlignmentGroupLabel, AlignmentLabelGroup, AlignmentLabelGroupKind, LabelKeyValue, LabelOverrideProperty, LabelOverrideValue};
+pub use valignment_labels::{add_valignment_curve_label_group, CurveKind, CurveLabelGroup, ClassRun, default_class_run};
 pub use corridor::{add_corridor, add_corridor_with};
 pub use intersection::{add_intersection, add_intersection_with, add_intersection_with_curb_returns, IntersectionOffsets, CURB_RETURN_MARGIN, add_intersection_with_curb_return_profiles, CurbReturnProfiles};
 pub use network::{add_pipe, add_pipe_network, add_pipe_of_family, add_structure, add_structure_of_family, connect_pipe, set_network_part_name, network_part_families, add_pipe_of_size, network_pipe_sizes};

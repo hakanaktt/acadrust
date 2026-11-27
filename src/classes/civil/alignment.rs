@@ -411,7 +411,8 @@ fn offset_curve(shape: SpiralShape, length: f64, r: f64) -> (f64, Box<dyn Fn(f64
 
 /// The value of one class key, by the key's type byte.
 #[derive(Debug, Clone, PartialEq)]
-pub(super) enum KeyValue {
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum KeyValue {
     /// 0x04; 0x0F, 0x10 and 0x12 take a reference from the handle stream.
     None,
     /// 0x01, 0x0A, 0x0D: BL.

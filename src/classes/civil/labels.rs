@@ -652,6 +652,552 @@ pub(super) fn text_component(data: &[u8], start: usize, end: usize) -> Option<La
 }
 
 
+// ---- The lossless label-record model ----
+//
+// The accessors above read the grammar's fields they name and skip the
+// rest; the model here keeps every stored field so a record decodes into
+// [`LabelGroupRecord`] and encodes back bit for bit. Everything is
+// structural: a field the grammar does not map (an unknown property type,
+// an unknown class tag, text that is not UTF-16, a color key whose index
+// word is not the codec's 0) refuses the record — `None`, never a guess
+// (the #518 ground).
+
+/// The stored value of a label override's property, by the property's
+/// 7-bit type. Each variant maps back to the one type it was read from.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum LabelValue {
+    /// Type 2: a BD.
+    Double(f64),
+    /// Type 3: one byte.
+    Byte(u8),
+    /// Type 8: three BD (a point).
+    Point([f64; 3]),
+    /// Type 9: three BD (a dragged offset).
+    Offset([f64; 3]),
+    /// Type 13: a BL.
+    Long(u32),
+    /// Type 24: a BL byte count and UTF-16 text.
+    Text(String),
+    /// Type 16: the property names a reference (in the handle stream); no
+    /// stored value.
+    Ref,
+    /// Type 25: a BL (the long form of type 13).
+    Long25(u32),
+    /// Type 26: one byte (the long form of type 3).
+    Byte26(u8),
+}
+
+impl LabelValue {
+    /// The property's 7-bit type code.
+    fn type_bits(&self) -> u32 {
+        match self {
+            Self::Double(_) => 2,
+            Self::Byte(_) => 3,
+            Self::Point(_) => 8,
+            Self::Offset(_) => 9,
+            Self::Long(_) => 13,
+            Self::Text(_) => 24,
+            Self::Ref => 16,
+            Self::Long25(_) => 25,
+            Self::Byte26(_) => 26,
+        }
+    }
+
+    fn write(&self, w: &mut crate::io::dwg::dwg_stream_writers::merged_writer::DwgMergedWriter) {
+        match self {
+            Self::Double(v) => w.write_bit_double(*v),
+            Self::Byte(v) | Self::Byte26(v) => w.write_byte(*v),
+            Self::Point(v) | Self::Offset(v) => {
+                for c in v {
+                    w.write_bit_double(*c);
+                }
+            }
+            Self::Long(v) | Self::Long25(v) => w.write_bit_long(*v as i32),
+            Self::Text(text) => {
+                let units: Vec<u16> = text.encode_utf16().collect();
+                w.write_bit_long((units.len() * 2) as i32);
+                for u in units {
+                    w.write_byte(u as u8);
+                    w.write_byte((u >> 8) as u8);
+                }
+            }
+            Self::Ref => {}
+        }
+    }
+}
+
+/// One property of a label override block: the property's `id` in its
+/// property `set` (bytes C0 0C for the label's own overrides), and the
+/// typed value.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct LabelProperty {
+    pub id: u8,
+    pub set: u16,
+    pub value: LabelValue,
+}
+
+/// One block of a label override: the block's two words, its 2 bits, the
+/// RC byte (8 x the property count in all but one sample — carried, not
+/// recomputed), and the block's properties in stored order (the last one
+/// is marked by its trailing 3 bits `010`).
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct LabelOverrideBlock {
+    pub words: (u32, u32),
+    pub bits: u8,
+    pub rc: u8,
+    pub properties: Vec<LabelProperty>,
+}
+
+/// One override of a label: `BL b, b x block`.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct LabelOverride {
+    pub blocks: Vec<LabelOverrideBlock>,
+}
+
+/// The fields a label shares with a nested label: its keys with their
+/// values, in stored order, the node head (2 bits, the RC byte, the
+/// label flag), the key ids it lists, and its nested labels.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct LabelNode {
+    pub keys: Vec<(u32, KeyValue)>,
+    /// The 2 bits, the RC byte and the flag long of the node head.
+    pub head: (u8, u8, u32),
+    pub ids: Vec<u32>,
+    pub nested: Vec<LabelNode>,
+}
+
+/// One label of a label record: its [`LabelNode`] and, for a top-level
+/// label, the overrides (one per dragged or flipped state; a nested label
+/// carries none — the grammar ends it at its nested labels).
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct LabelGroupLabel {
+    pub node: LabelNode,
+    pub overrides: Vec<LabelOverride>,
+}
+
+/// The settings a label record holds after its labels (see
+/// [`settings`]): the keys that take references, two words (the second is
+/// the default dimension anchor option), four doubles (the anchor value,
+/// the weeding, and the two stagger line heights) and the label stagger.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct LabelGroupSettings {
+    pub keys: Vec<(u32, KeyValue)>,
+    pub words: (u32, u32),
+    pub doubles: [f64; 4],
+    pub stagger: u32,
+}
+
+/// A whole label record, lossless (see the module docs for the layout).
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct LabelGroupRecord {
+    /// The shared class header's 6-bit class tag (`0b010010` in every
+    /// corpus record so far).
+    pub tag: u8,
+    /// The 3 extra bits of the `0b010110` tag form, `None` for the plain
+    /// `0b010010` form.
+    pub tag_bits: Option<u8>,
+    /// The 16 bytes the record carries after its class tag (the corpus's
+    /// VALIGNMENT curve records carry UTF-16 string fragments and heap
+    /// addresses — residual bytes, like the alignment groups').
+    pub guid: [u8; 16],
+    /// The long between the `0x04BE0000` word and the trailing 3 bits
+    /// (`0x00FFFFFF` in the writers' form).
+    pub word: u32,
+    /// The 3 trailing bits of the header (`0b010` in the writers' form).
+    pub bits: u8,
+    /// The shared class header's own long, between the fixed
+    /// `80, 0, 80, 80, 0` words and the class tag (`0x10025F04` in the
+    /// writers' form).
+    pub class_word: u32,
+    /// The labels, in stored order.
+    pub labels: Vec<LabelGroupLabel>,
+    pub settings: LabelGroupSettings,
+    /// The class's own run: the bits between the settings' end and the
+    /// closing bit — a class-specific section this crate does not map
+    /// (the VALIGNMENT curve groups hold their cached per-curve label
+    /// data here). Carried verbatim, byte-aligned from the section's
+    /// start, so a record rebuilt from a decoded one writes it back
+    /// exactly (the #688 guid precedent); `bits` may be fewer than
+    /// `bytes.len() * 8` — the last byte holds the run's final bits.
+    pub residual: Vec<u8>,
+    pub residual_bits: usize,
+    /// The record's closing bit (false in every record so far), before
+    /// the closing `BS 0x04BE`.
+    pub close: bool,
+}
+
+impl LabelGroupRecord {
+    /// The record's own bits, re-encoded (the writer pads the stream to
+    /// whole bytes; compare bit for bit against the source's class body).
+    pub fn encoded(&self) -> Vec<u8> {
+        let mut w = crate::io::dwg::dwg_stream_writers::merged_writer::DwgMergedWriter::new(
+            crate::io::dwg::DwgVersion::AC24,
+            crate::types::DxfVersion::AC1032,
+        );
+        write_record(&mut w, self);
+        w.main().to_bytes_snapshot()
+    }
+}
+
+/// One class key read exactly: [`super::alignment::read_key`] with the
+/// text value required to be UTF-16 and the color key's index word
+/// required to be 0 (the codec writes 0; the value word carries the
+/// color).
+fn key_exact(bits: &mut Bits) -> Option<(u32, KeyValue)> {
+    let key = bits.bit_long()? as u32;
+    let count = |bits: &mut Bits| usize::try_from(bits.bit_long()?).ok().filter(|n| *n <= bits.remaining() / 2);
+    let value = match key >> 24 {
+        0x01 | 0x0A | 0x0D => KeyValue::Long(bits.bit_long()?),
+        0x02 => KeyValue::Double(bits.bit_double()?),
+        0x03 | 0x1A => KeyValue::Byte(bits.bits_value(8)?),
+        0x04 | 0x0F | 0x10 | 0x12 => KeyValue::None,
+        0x06 => KeyValue::Point([bits.raw_double()?, bits.raw_double()?]),
+        0x09 => KeyValue::Vector([bits.bit_double()?, bits.bit_double()?, bits.bit_double()?]),
+        0x0B | 0x19 => {
+            let n = count(bits)?;
+            KeyValue::Longs((0..n).map(|_| bits.bit_long()).collect::<Option<_>>()?)
+        }
+        0x0C => {
+            let n = count(bits)?;
+            KeyValue::Doubles((0..n).map(|_| bits.bit_double()).collect::<Option<_>>()?)
+        }
+        0x0E => {
+            (bits.bit_short()? == 0).then_some(())?;
+            let color = bits.bit_long()? as u32;
+            bits.bits_value(8)?;
+            KeyValue::Color(color)
+        }
+        0x13 | 0x16 => {
+            let low = bits.raw_long()? as u32;
+            let high = bits.raw_long()? as u32;
+            KeyValue::Raw(u64::from(high) << 32 | u64::from(low))
+        }
+        0x15 => {
+            let mut value = 0u128;
+            for i in 0..16 {
+                value |= u128::from(bits.bits_value(8)?) << (8 * i);
+            }
+            KeyValue::Raw128(value)
+        }
+        0x18 => {
+            let bytes = usize::try_from(bits.bit_long()?).ok().filter(|n| n % 2 == 0 && n * 8 <= bits.remaining())?;
+            let units = (0..bytes / 2)
+                .map(|_| {
+                    let lo = bits.bits_value(8)?;
+                    let hi = bits.bits_value(8)?;
+                    String::from_utf16(&[u16::from_le_bytes([lo, hi])]).ok()
+                })
+                .collect::<Option<Vec<_>>>()?;
+            KeyValue::Text(units.concat())
+        }
+        _ => return None,
+    };
+    Some((key, value))
+}
+
+/// The record header, lossless (see the module docs): the shared class
+/// header, the 16 residual bytes, the `80, 80, 0x04BE0000` words, the
+/// long between them and the trailing 3 bits.
+fn header_full(bits: &mut Bits) -> Option<(u8, Option<u8>, [u8; 16], u32, u8, u32)> {
+    for want in [80, 0, 80, 80, 0] {
+        (bits.bit_long()? == want).then_some(())?;
+    }
+    let class_word = bits.bit_long()? as u32;
+    let (tag, tag_bits) = match bits.bits_value(6)? {
+        0b01_0010 => (0b01_0010, None),
+        0b01_0110 => (0b01_0110, Some(bits.bits_value(3)? as u8)),
+        _ => return None,
+    };
+    let mut guid = [0u8; 16];
+    for byte in &mut guid {
+        *byte = bits.bits_value(8)?;
+    }
+    for want in [80, 80, 0x04BE_0000] {
+        (bits.bit_long()? == want).then_some(())?;
+    }
+    let word = bits.bit_long()? as u32;
+    let bits3 = bits.bits_value(3)? as u8;
+    Some((tag, tag_bits, guid, word, bits3, class_word))
+}
+
+/// A label node, lossless (see [`LabelNode`]).
+fn node_full(bits: &mut Bits, depth: usize) -> Option<LabelNode> {
+    (depth < NESTING).then_some(())?;
+    let mut keys = Vec::new();
+    for _ in 0..bits.bit_long()? {
+        keys.push(key_exact(bits)?);
+    }
+    let b2 = bits.bits_value(2)? as u8;
+    let rc = bits.raw_short_byte()?;
+    let flag = bits.bit_long()? as u32;
+    let ids = (0..bits.bit_long()?).map(|_| bits.bit_long().map(|v| v as u32)).collect::<Option<Vec<_>>>()?;
+    let nested = (0..bits.bit_long()?).map(|_| node_full(bits, depth + 1)).collect::<Option<Vec<_>>>()?;
+    Some(LabelNode { keys, head: (b2, rc, flag), ids, nested })
+}
+
+/// One override block's properties, lossless (see [`LabelOverrideBlock`]).
+fn property_full(bits: &mut Bits) -> Option<(LabelProperty, bool)> {
+    let id = bits.raw_short_byte()?;
+    let set = u16::from_le_bytes([bits.raw_short_byte()?, bits.raw_short_byte()?]);
+    let value = match bits.bits_value(7)? {
+        2 => LabelValue::Double(bits.bit_double()?),
+        3 => LabelValue::Byte(bits.raw_short_byte()?),
+        26 => LabelValue::Byte26(bits.raw_short_byte()?),
+        8 => LabelValue::Point([bits.bit_double()?, bits.bit_double()?, bits.bit_double()?]),
+        9 => LabelValue::Offset([bits.bit_double()?, bits.bit_double()?, bits.bit_double()?]),
+        13 => LabelValue::Long(bits.bit_long()? as u32),
+        25 => LabelValue::Long25(bits.bit_long()? as u32),
+        16 => LabelValue::Ref,
+        24 => {
+            let bytes = usize::try_from(bits.bit_long()?).ok().filter(|n| n % 2 == 0 && n * 8 <= bits.remaining())?;
+            let units = (0..bytes / 2)
+                .map(|_| {
+                    let lo = bits.bits_value(8)?;
+                    let hi = bits.bits_value(8)?;
+                    String::from_utf16(&[u16::from_le_bytes([lo, hi])]).ok()
+                })
+                .collect::<Option<Vec<_>>>()?;
+            LabelValue::Text(units.concat())
+        }
+        _ => return None,
+    };
+    let last = match bits.bits_value(3)? {
+        0b010 => true,
+        0b000 => false,
+        _ => return None,
+    };
+    Some((LabelProperty { id, set, value }, last))
+}
+
+/// A label with its overrides, lossless (see [`LabelGroupLabel`]).
+fn label_full(bits: &mut Bits) -> Option<LabelGroupLabel> {
+    let node = node_full(bits, 0)?;
+    let mut overrides = Vec::new();
+    for _ in 0..bits.bit_long()? {
+        let mut blocks = Vec::new();
+        for _ in 0..bits.bit_long()? {
+            let words = (bits.bit_long()? as u32, bits.bit_long()? as u32);
+            let b2 = bits.bits_value(2)? as u8;
+            let rc = bits.raw_short_byte()?;
+            (rc != 0).then_some(())?;
+            let mut properties = Vec::new();
+            loop {
+                let (property, last) = property_full(bits)?;
+                properties.push(property);
+                if last {
+                    break;
+                }
+            }
+            blocks.push(LabelOverrideBlock { words, bits: b2, rc, properties });
+        }
+        overrides.push(LabelOverride { blocks });
+    }
+    Some(LabelGroupLabel { node, overrides })
+}
+
+/// The settings, lossless (see [`LabelGroupSettings`]).
+fn settings_full(bits: &mut Bits) -> Option<LabelGroupSettings> {
+    let mut keys = Vec::new();
+    for _ in 0..bits.bit_long()? {
+        keys.push(key_exact(bits)?);
+    }
+    let words = (bits.bit_long()? as u32, bits.bit_long()? as u32);
+    let d0 = bits.bit_double()?;
+    let d1 = bits.bit_double()?;
+    let stagger = bits.bit_long()? as u32;
+    let d2 = bits.bit_double()?;
+    let d3 = bits.bit_double()?;
+    Some(LabelGroupSettings { keys, words, doubles: [d0, d1, d2, d3], stagger })
+}
+
+/// A whole label record, lossless; `None` for any form the grammar does
+/// not map (an unknown class tag or property type, non-UTF-16 text, a
+/// color key with an index word, an over-deep nesting, trailing bits).
+pub(super) fn record_full(data: &[u8], start: usize, end: usize) -> Option<LabelGroupRecord> {
+    let mut bits = Bits::new(data, start, end);
+    let (tag, tag_bits, guid, word, bits3, class_word) = header_full(&mut bits)?;
+    let labels = (0..bits.bit_long()?).map(|_| label_full(&mut bits)).collect::<Option<Vec<_>>>()?;
+    let settings = settings_full(&mut bits)?;
+    (end >= bits.pos + 19).then_some(())?; // the close (B + BS 0x04BE) must fit
+    let residual_bits = end - bits.pos - 19;
+    let mut residual = Vec::new();
+    for _ in 0..residual_bits / 8 {
+        residual.push(bits.bits_value(8)?);
+    }
+    let rem = residual_bits % 8;
+    if rem > 0 {
+        residual.push(bits.bits_value(rem)? << (8 - rem));
+    }
+    let close = bits.bit()?;
+    (bits.bit_short()? == 0x04BE && bits.remaining() == 0).then_some(())?;
+    Some(LabelGroupRecord { tag, tag_bits, guid, word, bits: bits3, class_word, labels, settings, residual, residual_bits, close })
+}
+
+// ---- The encoder side of the shared label grammar ----
+
+/// Writes the constant bit run `bits` ("0"/"1" characters).
+fn bit_run(w: &mut crate::io::dwg::dwg_stream_writers::merged_writer::DwgMergedWriter, bits: &str) {
+    for b in bits.bytes() {
+        w.write_bit(b == b'1');
+    }
+}
+
+/// Writes one class key and its value (see [`key_exact`]).
+pub(super) fn write_key(w: &mut crate::io::dwg::dwg_stream_writers::merged_writer::DwgMergedWriter, key: u32, value: &KeyValue) {
+    w.write_bit_long(key as i32);
+    match value {
+        KeyValue::None => {}
+        KeyValue::Long(v) => w.write_bit_long(*v),
+        KeyValue::Double(v) => w.write_bit_double(*v),
+        KeyValue::Byte(v) => w.write_byte(*v),
+        KeyValue::Point(p) => {
+            w.write_raw_double(p[0]);
+            w.write_raw_double(p[1]);
+        }
+        KeyValue::Vector(v) => {
+            for c in v {
+                w.write_bit_double(*c);
+            }
+        }
+        KeyValue::Longs(list) => {
+            w.write_bit_long(list.len() as i32);
+            for v in list {
+                w.write_bit_long(*v);
+            }
+        }
+        KeyValue::Doubles(list) => {
+            w.write_bit_long(list.len() as i32);
+            for v in list {
+                w.write_bit_double(*v);
+            }
+        }
+        KeyValue::Color(color) => {
+            w.write_bit_short(0);
+            w.write_bit_long(*color as i32);
+            bit_run(w, "00000000");
+        }
+        KeyValue::Raw(raw) => {
+            w.write_raw_long(*raw as i32);
+            w.write_raw_long((*raw >> 32) as i32);
+        }
+        KeyValue::Raw128(raw) => {
+            for i in 0..16 {
+                w.write_byte((raw >> (8 * i)) as u8);
+            }
+        }
+        KeyValue::Text(text) => {
+            let units: Vec<u16> = text.encode_utf16().collect();
+            w.write_bit_long((units.len() * 2) as i32);
+            for u in units {
+                w.write_byte(u as u8);
+                w.write_byte((u >> 8) as u8);
+            }
+        }
+    }
+}
+
+fn write_node(w: &mut crate::io::dwg::dwg_stream_writers::merged_writer::DwgMergedWriter, node: &LabelNode) {
+    w.write_bit_long(node.keys.len() as i32);
+    for (k, v) in &node.keys {
+        write_key(w, *k, v);
+    }
+    let (b2, rc, flag) = node.head;
+    bit_run(w, &format!("{b2:02b}"));
+    w.write_byte(rc);
+    w.write_bit_long(flag as i32);
+    w.write_bit_long(node.ids.len() as i32);
+    for id in &node.ids {
+        w.write_bit_long(*id as i32);
+    }
+    w.write_bit_long(node.nested.len() as i32);
+    for nested in &node.nested {
+        write_node(w, nested);
+    }
+}
+
+fn write_label(w: &mut crate::io::dwg::dwg_stream_writers::merged_writer::DwgMergedWriter, label: &LabelGroupLabel) {
+    write_node(w, &label.node);
+    w.write_bit_long(label.overrides.len() as i32);
+    for override_ in &label.overrides {
+        w.write_bit_long(override_.blocks.len() as i32);
+        for block in &override_.blocks {
+            w.write_bit_long(block.words.0 as i32);
+            w.write_bit_long(block.words.1 as i32);
+            bit_run(w, &format!("{:02b}", block.bits));
+            w.write_byte(block.rc);
+            for (i, p) in block.properties.iter().enumerate() {
+                w.write_byte(p.id);
+                let set = p.set.to_le_bytes();
+                w.write_byte(set[0]);
+                w.write_byte(set[1]);
+                bit_run(w, &format!("{:07b}", p.value.type_bits()));
+                p.value.write(w);
+                bit_run(w, if i + 1 == block.properties.len() { "010" } else { "000" });
+            }
+        }
+    }
+}
+
+/// Writes a whole label record (see [`record_full`]); the stream holds
+/// exactly the record's bits when it closes (the writer pads to whole
+/// bytes outside this call).
+pub(super) fn write_record(w: &mut crate::io::dwg::dwg_stream_writers::merged_writer::DwgMergedWriter, record: &LabelGroupRecord) {
+    for v in [80u32, 0, 80, 80, 0] {
+        w.write_bit_long(v as i32);
+    }
+    w.write_bit_long(record.class_word as i32);
+    bit_run(w, &format!("{:06b}", record.tag));
+    if let Some(extra) = record.tag_bits {
+        bit_run(w, &format!("{:03b}", extra));
+    }
+    w.write_bytes(&record.guid);
+    for v in [80u32, 80, 0x04BE_0000] {
+        w.write_bit_long(v as i32);
+    }
+    w.write_bit_long(record.word as i32);
+    bit_run(w, &format!("{:03b}", record.bits));
+    w.write_bit_long(record.labels.len() as i32);
+    for label in &record.labels {
+        write_label(w, label);
+    }
+    let settings = &record.settings;
+    w.write_bit_long(settings.keys.len() as i32);
+    for (k, v) in &settings.keys {
+        write_key(w, *k, v);
+    }
+    w.write_bit_long(settings.words.0 as i32);
+    w.write_bit_long(settings.words.1 as i32);
+    w.write_bit_double(settings.doubles[0]);
+    w.write_bit_double(settings.doubles[1]);
+    w.write_bit_long(settings.stagger as i32);
+    w.write_bit_double(settings.doubles[2]);
+    w.write_bit_double(settings.doubles[3]);
+    // The class's own run, verbatim (whole bytes, then the run's final
+    // partial byte bit by bit — the byte may hold padding bits beyond
+    // `residual_bits`).
+    let whole = record.residual_bits / 8;
+    let rem = record.residual_bits % 8;
+    for byte in &record.residual[..whole] {
+        w.write_byte(*byte);
+    }
+    if rem > 0 {
+        let last = record.residual[whole];
+        for i in 0..rem {
+            w.write_bit((last >> (7 - i)) & 1 == 1);
+        }
+    }
+    w.write_bit(record.close);
+    w.write_bit_short(0x04BE);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -883,4 +1429,236 @@ mod tests {
         let s = bl(2) + &rc(b'x') + &rc(0);
         assert_eq!(content(&bytes(&s), 0, s.len()), None);
     }
+
+    /// The bytes of a hex literal.
+    fn hex_bytes(hex: &str) -> Vec<u8> {
+        (0..hex.len() / 2)
+            .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).expect("hex"))
+            .collect()
+    }
+
+    /// The oracle record's lossless decode re-encodes bit for bit (the
+    /// encoder side of the shared label grammar, pinned on the capture).
+    #[test]
+    fn oracle_curve_label_groups_round_trip_bit_exact() {
+        for cap in CURVE_CAPTURES {
+            let data = hex_bytes(cap.raw);
+            let record = record_full(&data, cap.start, cap.end).expect("the capture decodes");
+            let mut w = crate::io::dwg::dwg_stream_writers::merged_writer::DwgMergedWriter::new(
+                crate::io::dwg::DwgVersion::AC24,
+                crate::types::DxfVersion::AC1032,
+            );
+            write_record(&mut w, &record);
+            let out = w.main().to_bytes_snapshot();
+            let nbits = cap.end - cap.start;
+            assert!(out.len() * 8 >= nbits, "re-encode too short");
+            for i in 0..nbits {
+                let got = (out[i / 8] >> (7 - (i % 8))) & 1;
+                let want = (data[(cap.start + i) / 8] >> (7 - ((cap.start + i) % 8))) & 1;
+                assert_eq!(got, want, "bit {i} of the {} run for profile {:X}", cap.kind, cap.profile);
+            }
+            // The decoded fields: the group form (no labels; the settings
+            // carry the label set reference and the recorded words and
+            // doubles), and the class run's two recorded lengths.
+            assert!(record.labels.is_empty(), "the group form carries no labels");
+            assert_eq!(record.settings.words, (69, 1));
+            assert_eq!(record.settings.doubles, [0.125, 0.0, 0.083_333_333_333_333_33, 0.166_666_666_666_666_66]);
+            assert_eq!(record.settings.stagger, 0);
+            assert_eq!(record.settings.keys.len(), 1);
+            assert_eq!(record.settings.keys[0].0, 0x0F00_B413, "the profile label set key");
+            assert_eq!(record.tag, 0b01_0010);
+            assert_eq!(record.class_word, 0x1002_5F04);
+            let run_bits = record.residual_bits;
+            let expected = if nbits == 769 { 189 } else { 125 };
+            assert_eq!(run_bits, expected, "the class run length of the {} record", cap.kind);
+        }
+    }
+
+    /// The record grammar refuses a truncated class run (the close must
+    /// fit) — the decoder's graceful None, never a guess.
+    #[test]
+    fn a_record_without_room_for_its_close_is_refused() {
+        let cap = &CURVE_CAPTURES[0];
+        let mut data = hex_bytes(cap.raw);
+        let end = cap.end - 10;
+        // Trim the stream so the close cannot fit: the reader must refuse.
+        let trimmed = cap.end - 10;
+        while data.len() * 8 > trimmed {
+            data.pop();
+        }
+        assert_eq!(record_full(&data, cap.start, end), None);
+    }
+
+    /// One oracle record's capture (Sections-Project-Objects.dwg): the
+    /// entity's DWG body bytes (hex), the class body's bit range, and the
+    /// group's references (profile, label style, view) as recorded.
+    struct CurveCapture {
+        kind: &'static str,
+        profile: u64,
+        style: u64,
+        view: u64,
+        start: usize,
+        end: usize,
+        raw: &'static str,
+    }
+
+    /// The drawing's 8 standalone VALIGNMENT curve label groups
+    /// (AeccDbVAlignmentSagCurveLabeling x4, CrestCurveLabeling x4), as
+    /// captured from the drawing.
+    const CURVE_CAPTURES: &[CurveCapture] = &[
+        CurveCapture { kind: "sag", profile: 0x639F, style: 0x49BE, view: 0x63A1, start: 2885, end: 3654, raw: concat!(
+            "80010098ed6a5c015c01000003000000c8000000240000009a9999999999b93f",
+            "9a9999999999b93f000000000000000000000000000000000000000000000000",
+            "000000000000f03f000000000000f03f00000000000000000000000000000000",
+            "9a9999999999c93f000000000000f03f00000000000000004100650063006300",
+            "44006200560041006c00690067006e006d0065006e0074005300610067004300",
+            "75007200760065004c006100620065006c0069006e0067002000280041006500",
+            "630063004c0061006e0064003100330030002900000000008400000006000000",
+            "0500000000000000000000000000000000000000000000000000000000000000",
+            "0000f03f00000000000000000000000000000000000000000000f03f9a999999",
+            "9999d93f000000000000000000000000000000009a9999999999d93f00000000",
+            "0000000000000000000000000000000000000000000000000000000008000000",
+            "15000000ab400010eaa12a0a84022f81082468006c005c00660070004e005800",
+            "7000a82a000005f021fffffe00a40413b4000f51501000000000000300fe8555",
+            "555555555b53f155555555555714ff80000000000a0867a6866e24a898dcda02",
+            "a0a8000017c082f81121410065006300630049006d007000560041006c006900",
+            "67006e006d0065006e007400530061006700430075007200760065004c006100",
+            "620065006c0069006e006700aa2202a88820202131cfa924df2131d0ff",
+        ) },
+        CurveCapture { kind: "crest", profile: 0x639F, style: 0x49BE, view: 0x63A1, start: 2917, end: 3686, raw: concat!(
+            "80410098edaa60016001000003000000cc000000240000009a9999999999b93f",
+            "9a9999999999b93f000000000000000000000000000000000000000000000000",
+            "000000000000f03f000000000000f03f00000000000000000000000000000000",
+            "9a9999999999c93f000000000000f03f00000000000000004100650063006300",
+            "44006200560041006c00690067006e006d0065006e0074004300720065007300",
+            "7400430075007200760065004c006100620065006c0069006e00670020002800",
+            "41006500630063004c0061006e00640031003300300029000000000084000000",
+            "0600000005000000000000000000000000000000000000000000000000000000",
+            "000000000000f03f00000000000000000000000000000000000000000000f03f",
+            "9a9999999999d93f000000000000000000000000000000009a9999999999d93f",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            "0800000015000000ab400010eaa12a0a84022f8108246e006e005c006c006c00",
+            "4e0058007000a82a000005f021fffffe00a40413b4000f515010000000000003",
+            "00fe8555555555555b53f155555555555714ff80000000000a0867a6866e24a8",
+            "98dcda02a0a8000017c082f81123410065006300630049006d00700056004100",
+            "6c00690067006e006d0065006e00740043007200650073007400430075007200",
+            "760065004c006100620065006c0069006e006700aa4202a88820202131cfa924",
+            "df2131d0ff",
+        ) },
+        CurveCapture { kind: "sag", profile: 0x63A0, style: 0x49BE, view: 0x63A1, start: 2885, end: 3590, raw: concat!(
+            "80010098edea5c015c01000003000000c8000000240000009a9999999999b93f",
+            "9a9999999999b93f000000000000000000000000000000000000000000000000",
+            "000000000000f03f000000000000f03f00000000000000000000000000000000",
+            "9a9999999999c93f000000000000f03f00000000000000004100650063006300",
+            "44006200560041006c00690067006e006d0065006e0074005300610067004300",
+            "75007200760065004c006100620065006c0069006e0067002000280041006500",
+            "630063004c0061006e0064003100330030002900000000008400000006000000",
+            "0500000000000000000000000000000000000000000000000000000000000000",
+            "0000f03f00000000000000000000000000000000000000000000f03f9a999999",
+            "9999d93f000000000000000000000000000000009a9999999999d93f00000000",
+            "0000000000000000000000000000000000000000000000000000000008000000",
+            "15000000ab400010eaa12a0a84022f8108240000000000000000000000000000",
+            "0000a82a000005f021fffffe00a40413b4000f51501000000000000300fe8555",
+            "555555555b53f155555555555714ffc04559ade98824da02a0a8000017c082f8",
+            "1121410065006300630049006d007000560041006c00690067006e006d006500",
+            "6e007400530061006700430075007200760065004c006100620065006c006900",
+            "6e006700aa2202a88820202131d02924df2131d0ff",
+        ) },
+        CurveCapture { kind: "crest", profile: 0x63A0, style: 0x49BE, view: 0x63A1, start: 2917, end: 3622, raw: concat!(
+            "80410098ee2a60016001000003000000cc000000240000009a9999999999b93f",
+            "9a9999999999b93f000000000000000000000000000000000000000000000000",
+            "000000000000f03f000000000000f03f00000000000000000000000000000000",
+            "9a9999999999c93f000000000000f03f00000000000000004100650063006300",
+            "44006200560041006c00690067006e006d0065006e0074004300720065007300",
+            "7400430075007200760065004c006100620065006c0069006e00670020002800",
+            "41006500630063004c0061006e00640031003300300029000000000084000000",
+            "0600000005000000000000000000000000000000000000000000000000000000",
+            "000000000000f03f00000000000000000000000000000000000000000000f03f",
+            "9a9999999999d93f000000000000000000000000000000009a9999999999d93f",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            "0800000015000000ab400010eaa12a0a84022f810824000000000000e8000000",
+            "000000000000a82a000005f021fffffe00a40413b4000f515010000000000003",
+            "00fe8555555555555b53f155555555555714ffc04559ade98824da02a0a80000",
+            "17c082f81123410065006300630049006d007000560041006c00690067006e00",
+            "6d0065006e00740043007200650073007400430075007200760065004c006100",
+            "620065006c0069006e006700aa4202a88820202131d02924df2131d0ff",
+        ) },
+        CurveCapture { kind: "sag", profile: 0x63A7, style: 0x49BE, view: 0x63A9, start: 2885, end: 3590, raw: concat!(
+            "80010098ee6a5c015c01000003000000c8000000240000009a9999999999b93f",
+            "9a9999999999b93f000000000000000000000000000000000000000000000000",
+            "000000000000f03f000000000000f03f00000000000000000000000000000000",
+            "9a9999999999c93f000000000000f03f00000000000000004100650063006300",
+            "44006200560041006c00690067006e006d0065006e0074005300610067004300",
+            "75007200760065004c006100620065006c0069006e0067002000280041006500",
+            "630063004c0061006e0064003100330030002900000000008400000006000000",
+            "0500000000000000000000000000000000000000000000000000000000000000",
+            "0000f03f00000000000000000000000000000000000000000000f03f9a999999",
+            "9999d93f000000000000000000000000000000009a9999999999d93f00000000",
+            "0000000000000000000000000000000000000000000000000000000008000000",
+            "15000000ab400010eaa12a0a84022f81082440008800c200e800c200b8008200",
+            "ea00a82a000005f021fffffe00a40413b4000f51501000000000000300fe8555",
+            "555555555b53f155555555555714ffc3d94815ef6764da02a0a8000017c082f8",
+            "1121410065006300630049006d007000560041006c00690067006e006d006500",
+            "6e007400530061006700430075007200760065004c006100620065006c006900",
+            "6e006700aa2202a88820202131d3a924df2131d4ff",
+        ) },
+        CurveCapture { kind: "crest", profile: 0x63A7, style: 0x49BE, view: 0x63A9, start: 2917, end: 3622, raw: concat!(
+            "80410098eeaa60016001000003000000cc000000240000009a9999999999b93f",
+            "9a9999999999b93f000000000000000000000000000000000000000000000000",
+            "000000000000f03f000000000000f03f00000000000000000000000000000000",
+            "9a9999999999c93f000000000000f03f00000000000000004100650063006300",
+            "44006200560041006c00690067006e006d0065006e0074004300720065007300",
+            "7400430075007200760065004c006100620065006c0069006e00670020002800",
+            "41006500630063004c0061006e00640031003300300029000000000084000000",
+            "0600000005000000000000000000000000000000000000000000000000000000",
+            "000000000000f03f00000000000000000000000000000000000000000000f03f",
+            "9a9999999999d93f000000000000000000000000000000009a9999999999d93f",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            "0800000015000000ab400010eaa12a0a84022f810825f800018606000187f800",
+            "01860e000186a82a000005f021fffffe00a40413b4000f515010000000000003",
+            "00fe8555555555555b53f155555555555714ffc3d94815ef6764da02a0a80000",
+            "17c082f81123410065006300630049006d007000560041006c00690067006e00",
+            "6d0065006e00740043007200650073007400430075007200760065004c006100",
+            "620065006c0069006e006700aa4202a88820202131d3a924df2131d4ff",
+        ) },
+        CurveCapture { kind: "sag", profile: 0x63A8, style: 0x49BE, view: 0x63A9, start: 2885, end: 3654, raw: concat!(
+            "80010098eeea5c015c01000003000000c8000000240000009a9999999999b93f",
+            "9a9999999999b93f000000000000000000000000000000000000000000000000",
+            "000000000000f03f000000000000f03f00000000000000000000000000000000",
+            "9a9999999999c93f000000000000f03f00000000000000004100650063006300",
+            "44006200560041006c00690067006e006d0065006e0074005300610067004300",
+            "75007200760065004c006100620065006c0069006e0067002000280041006500",
+            "630063004c0061006e0064003100330030002900000000008400000006000000",
+            "0500000000000000000000000000000000000000000000000000000000000000",
+            "0000f03f00000000000000000000000000000000000000000000f03f9a999999",
+            "9999d93f000000000000000000000000000000009a9999999999d93f00000000",
+            "0000000000000000000000000000000000000000000000000000000008000000",
+            "15000000ab400010eaa12a0a84022f8108242e00000030000000320000003400",
+            "0000a82a000005f021fffffe00a40413b4000f51501000000000000300fe8555",
+            "555555555b53f155555555555714ff8000000000110aa7a527d00def6764da02",
+            "a0a8000017c082f81121410065006300630049006d007000560041006c006900",
+            "67006e006d0065006e007400530061006700430075007200760065004c006100",
+            "620065006c0069006e006700aa2202a88820202131d42924df2131d4ff",
+        ) },
+        CurveCapture { kind: "crest", profile: 0x63A8, style: 0x49BE, view: 0x63A9, start: 2917, end: 3686, raw: concat!(
+            "80410098ef2a60016001000003000000cc000000240000009a9999999999b93f",
+            "9a9999999999b93f000000000000000000000000000000000000000000000000",
+            "000000000000f03f000000000000f03f00000000000000000000000000000000",
+            "9a9999999999c93f000000000000f03f00000000000000004100650063006300",
+            "44006200560041006c00690067006e006d0065006e0074004300720065007300",
+            "7400430075007200760065004c006100620065006c0069006e00670020002800",
+            "41006500630063004c0061006e00640031003300300029000000000084000000",
+            "0600000005000000000000000000000000000000000000000000000000000000",
+            "000000000000f03f00000000000000000000000000000000000000000000f03f",
+            "9a9999999999d93f000000000000000000000000000000009a9999999999d93f",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            "0800000015000000ab400010eaa12a0a84022f810825f800018606000187f800",
+            "01860e000186a82a000005f021fffffe00a40413b4000f515010000000000003",
+            "00fe8555555555555b53f155555555555714ff8000000000110aa7a527d00def",
+            "6764da02a0a8000017c082f81123410065006300630049006d00700056004100",
+            "6c00690067006e006d0065006e00740043007200650073007400430075007200",
+            "760065004c006100620065006c0069006e006700aa4202a88820202131d42924",
+            "df2131d4ff",
+        ) },
+    ];
 }
