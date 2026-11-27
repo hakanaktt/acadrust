@@ -122,7 +122,8 @@ fn write_database<'a>(doc: &mut CadDocument, handle: Handle, root: Handle, point
     let styled: Vec<&CogoPoint> = points.iter().filter(|p| p.style != 0).collect();
     let labelled: Vec<&CogoPoint> = points.iter().filter(|p| p.label_style != 0).collect();
     let named: Vec<&CogoPoint> = points.iter().filter(|p| p.name.is_some()).collect();
-    let described: Vec<&CogoPoint> = points.iter().filter(|p| p.description.is_some()).collect();
+    // A built-in word keeps its id and has no text here.
+    let described: Vec<&CogoPoint> = points.iter().filter(|p| p.description.is_some() || p.builtin_description.is_some()).collect();
     let formatted: Vec<&CogoPoint> = points.iter().filter(|p| p.description_format.is_some()).collect();
     // Formats, names and descriptions share the text ids; equal texts share one.
     let mut texts: Vec<&str> = Vec::new();
@@ -135,7 +136,13 @@ fn write_database<'a>(doc: &mut CadDocument, handle: Handle, root: Handle, point
     };
     let format_tags: Vec<i32> = formatted.iter().map(|p| tag(p.description_format.as_deref().unwrap_or(""))).collect();
     let name_tags: Vec<i32> = named.iter().map(|p| tag(p.name.as_deref().unwrap_or(""))).collect();
-    let tags: Vec<i32> = described.iter().map(|p| tag(p.description.as_deref().unwrap_or(""))).collect();
+    let tags: Vec<i32> = described
+        .iter()
+        .map(|p| match (&p.description, p.builtin_description) {
+            (None, Some(id)) => id as i32,
+            (d, _) => tag(d.as_deref().unwrap_or("")),
+        })
+        .collect();
     let mut refs: Vec<Ref> = styled.iter().map(|p| hard_pointer(p.style)).collect();
     refs.extend(labelled.iter().map(|p| hard_pointer(p.label_style)));
     refs.push(soft_pointer(class_node));
@@ -144,7 +151,7 @@ fn write_database<'a>(doc: &mut CadDocument, handle: Handle, root: Handle, point
     for _ in 0..2 {
         strings.extend(named.iter().map(|p| p.name.clone().unwrap_or_default()));
     }
-    strings.extend(described.iter().map(|p| p.description.clone().unwrap_or_default()));
+    strings.extend(described.iter().filter_map(|p| p.description.clone()));
     // Property values by slot, one entry per key in key order, points in
     // database order; each entry's key text, then its text values.
     let mut slots: Vec<Vec<(i32, Vec<(u32, &PropertyValue)>)>> = vec![Vec::new(); 13];
@@ -208,7 +215,16 @@ fn write_database<'a>(doc: &mut CadDocument, handle: Handle, root: Handle, point
                 w.write_bit_long(p.number as i32);
                 w.write_bit_long(*tag);
             }
-            for slot in &slots {
+            for (k, slot) in slots.iter().enumerate() {
+                if super::super::cogo::OVERRIDE_SLOTS.contains(&k) {
+                    let set: Vec<(u32, f64)> = points.iter().filter_map(|p| p.overrides.get(k).map(|v| (p.number, v))).collect();
+                    w.write_bit_long(set.len() as i32);
+                    for (number, v) in set {
+                        w.write_bit_long(number as i32);
+                        w.write_bit_double(v);
+                    }
+                    continue;
+                }
                 w.write_bit_long(slot.len() as i32);
                 for (key, values) in slot {
                     w.write_bit_long(key | 0x4000_0000);
@@ -308,7 +324,7 @@ pub fn add_cogo_point(
         description: description.map(str::to_string),
         name: None,
         description_format: None,
-        properties: Vec::new(),
+        ..Default::default()
     });
     store(doc, &s, &points)?;
     put_point(doc, None, number, layer)
@@ -478,7 +494,7 @@ pub fn create_cogo_point(doc: &mut CadDocument, position: Vector3, description: 
     let mut points = cogo_points(doc);
     let number = next_number(doc, &points);
     let s = support(doc)?;
-    points.push(CogoPoint { number, position, style: 0, label_style: 0, description: description.map(str::to_string), name: None, description_format: None, properties: Vec::new() });
+    points.push(CogoPoint { number, position, description: description.map(str::to_string), ..Default::default() });
     store(doc, &s, &points)?;
     let point = put_point(doc, None, number, layer)?;
     set_next_number(doc, number + 1)?;
