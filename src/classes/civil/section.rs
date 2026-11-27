@@ -83,22 +83,35 @@ pub(super) fn mass_haul_view_frame(data: &[u8], start: usize, end: usize) -> Opt
 /// ```
 ///
 /// The first GUID is all zero bits in a line the wizard made and all one
-/// bits in the tutorial's line; the BD is 300 and 500 in the two. The two
-/// BLs are 268590852 and 1073775415 in the tutorial's line; their meaning
-/// is unnamed, and the values are unverified in a second record.
+/// bits in the tutorial's line; the BD is 300 and 500 in the two. The
+/// tutorial's first BL is 268590852; the second read 1073775415 in the
+/// shipped file and 1082132272 after the application resaved the record
+/// (2026-11-26: an edit + wizard pass updates the line in place, keeps the
+/// GUID and BD, and rewrites the second BL) — so neither BL is a constant a
+/// writer could bake, and their meaning is unnamed.
 ///
-/// After the curve the record carries a derived cache, mapped 2026-11-26
-/// from the tutorial's record: an identity index table, a bit-verbatim
-/// copy of the whole curve record, a second index table, segment arrays
-/// of verbatim curve pairs, and mixed regions the curve drives under an
-/// unnamed rule (stations resampled on an adaptive grid, byte index
-/// maps, zero-crossing stations). Head, curve and tables re-encode
-/// bit-exact from the fields above; the mixed regions do not, so no
-/// writer emits this record yet.
+/// After the curve the record carries its derived display data, mapped from
+/// the tutorial's record (2026-11-26, re-walked bit-exact): a vertex table
+/// (BL 131, BD 0.0, 131 x (BL, BL) identity rows, last (131, 132)), a
+/// bit-verbatim copy of the whole curve record (the 132-vertex drawn line),
+/// a second copy of the table with last row (131, 166), then exactly 166
+/// (station, volume, 0) triplets — the free-haul construction drawn from the
+/// curve and the head BD: the curve's points; its linear zero crossings;
+/// the curve shifted +BD (a point's station + BD with that point's volume);
+/// the stations where the curve meets its shift (curve(x) = curve(x + BD),
+/// here 214.936…, 605.953…, and at the local-minimum ordinate); baseline
+/// points at the crossings. A byte index map then re-samples those 166
+/// vertices for display, and smaller paths (connectors, closing runs) reuse
+/// the same vertices. Every value is curve-derived — but the record is not
+/// writable yet: the application's derived stations differ from any
+/// interpolation of the stored curve by 1-2 ULP (38.5931834845066 recorded,
+/// 38.59318348450661 from the natural formulas), and the vertex order, the
+/// resampling step and the smaller paths' composition are unnamed.
 // ponytail: the 2-bit runs and the 127 bits (zero in every record) are
 // read past by their sizes; name them once a drawing varies them.
-// ponytail: the mixed tail regions' resampling rule; a second record
-// (the wizard-made line) is the capture that names it.
+// ponytail: name the application's floating-point pipeline for the derived
+// stations and the display-path composition rules; then this record gets a
+// writer fed from the typed curve.
 pub(super) fn mass_haul_points(data: &[u8], start: usize, end: usize) -> Option<Vec<Vector2>> {
     let mut bits = Bits::new(data, start, end);
     for want in [80, 0, 80, 80, 0] {
