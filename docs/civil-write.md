@@ -1952,6 +1952,14 @@ line; its inside becomes a new face of the container's topology, and the
 parcel (an `AECC_PARCEL` named `AeccImpFace` with the site as its second
 reference) points at that face.
 
+`add_parcel_meeting(doc, site, vertices, layer)` is the same writer with
+`add_lot_line`'s meet semantics: the ring may cross or touch the site's
+other lot lines, each is split where they meet, the faces they cut are
+split and the parcels of the parts are written. It returns every parcel
+the ring makes (one for a ring that only touches its neighbours, the cut
+parts plus its own when it crosses them). This is the form for survey
+parcel outlines that share their boundaries with already-placed parcels.
+
 ```text
 lot line (AECC_PARCEL_SEGMENT):
 BL 80, BL 0, BL 80, BL 80, BL 0, BL 0x10025F04, 6 bits 010010,

@@ -1764,6 +1764,34 @@ pub fn add_parcel(doc: &mut CadDocument, site: Handle, vertices: &[Vector2], lay
     parcels.into_iter().next().ok_or_else(|| invalid("the lot line closes no face"))
 }
 
+/// Adds a parcel on `site` bounded by a closed lot line (a parcel
+/// segment) through `vertices` (straight segments; the line closes back to
+/// the first vertex), the way [`add_parcel`] does, but meeting: the line
+/// may cross or touch the site's other lot lines (the same members
+/// [`add_lot_line`] may meet — the site's alignments ride along through
+/// the same machinery). Each line it meets is split where they meet, the
+/// faces they cut are split and the parcels of the parts are written
+/// (every parcel's label moves into what is left of its face); the
+/// function returns the parcels made. Without a face the ring closes (the
+/// ring already lies on the site's members), no parcel is made and the
+/// error is [`add_parcel`]'s. The parcels take the site's parcel style and
+/// the drawing's default parcel area label style — the application's
+/// create-form constants the other parcel writers carry (WC64: the site
+/// "Property", its parcels "Basic").
+///
+/// This is the writer form for rings that share their boundaries with the
+/// parcels already on the site, as a survey's parcel outlines do: it
+/// populates one site the way the application's topology engine does
+/// instead of refusing every ring that touches a placed member.
+pub fn add_parcel_meeting(doc: &mut CadDocument, site: Handle, vertices: &[Vector2], layer: Option<&str>) -> Result<Vec<Handle>, DxfError> {
+    let points: Vec<(Vector2, f64)> = vertices.iter().map(|p| (*p, 0.0)).collect();
+    let (_, parcels) = add_lot_line_on(doc, site, &points, true, true, layer)?;
+    if parcels.is_empty() {
+        return Err(invalid("the lot line closes no face"));
+    }
+    Ok(parcels)
+}
+
 /// Adds a lot line (a parcel segment) through `vertices` on `site`, each
 /// with the bulge of the segment that starts there (0 for a straight one;
 /// positive counterclockwise, the tangent of a quarter of the arc's angle;
@@ -2135,6 +2163,53 @@ mod tests {
         assert_eq!((left.len(), right.len()), (4, 2));
         assert_eq!(arch(&back, made[0]).parcel_label().map(|l| (l.x, l.y)), Some((87.5, 25.0)));
     }
+    #[test]
+    fn meeting_parcels_populate_one_site() {
+        let v = Vector2::new;
+        let mut doc = drawing();
+        let s = add_site(&mut doc, "Site 1", "").unwrap();
+        // The first ring builds like any parcel.
+        let first = add_parcel(&mut doc, s, &[v(0.0, 0.0), v(100.0, 0.0), v(100.0, 50.0), v(0.0, 50.0)], None).unwrap();
+        // A plain parcel may not touch it.
+        assert!(add_parcel(&mut doc, s, &[v(100.0, 0.0), v(200.0, 0.0), v(200.0, 50.0), v(100.0, 50.0)], None).is_err());
+        // A meeting parcel shares its edge: the site takes it and the two
+        // parcels read back with their rings.
+        let made = add_parcel_meeting(&mut doc, s, &[v(100.0, 0.0), v(200.0, 0.0), v(200.0, 50.0), v(100.0, 50.0)], None).unwrap();
+        assert_eq!(made.len(), 1);
+        // A ring crossing both cuts each along it: the parcels of the
+        // parts are written — the cut-off part of each neighbour and the
+        // strip the ring closes of its own.
+        let cut = add_parcel_meeting(&mut doc, s, &[v(50.0, -10.0), v(150.0, -10.0), v(150.0, 25.0), v(50.0, 25.0)], None).unwrap();
+        assert_eq!(cut.len(), 3);
+        let path = std::env::temp_dir().join(format!("civil-parcel-meeting-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let records: Vec<(i32, i32, Vec<Vec<crate::types::Vector3>>)> = back
+            .entities()
+            .filter_map(|e| match e {
+                EntityType::Extended(x) => match &x.data {
+                    ExtendedEntityData::Arch(a) if a.dxf_name == "AECC_PARCEL" && a.parcel_site().is_some() => {
+                        Some((a.parcel_face().unwrap_or_default().0, a.parcel_face().unwrap_or_default().1, a.profiles.clone()))
+                    }
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        // Five parcels: the two rings' own, and the three parts the cut
+        // leaves (the piece below the cut in each, and the strip between).
+        assert_eq!(records.len(), 5);
+        for (number, _, loops) in &records {
+            assert!((*number, loops.len()) >= (1, 1), "parcel {number} carries no ring");
+            for loop_ in loops {
+                assert_eq!(loop_.first(), loop_.last(), "parcel {number}'s ring is open");
+            }
+        }
+        // The first parcel keeps its number.
+        assert!(records.iter().any(|(n, _, _)| *n == arch(&back, first).parcel_face().unwrap().0));
+    }
+
     #[test]
     fn crossing_lot_lines_split_the_parcels() {
         let v = Vector2::new;
