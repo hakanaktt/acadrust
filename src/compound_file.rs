@@ -15,23 +15,15 @@ pub struct StructuredStoragePayload {
 }
 
 impl StructuredStoragePayload {
+    /// Decode `data` as a compound file followed by trailing bytes. Data that
+    /// does not start with a compound file is kept as read, undecoded.
     pub fn decode(data: &[u8]) -> Self {
-        let Some(offset) = data
-            .windows(CFB_MAGIC.len())
-            .position(|window| window == CFB_MAGIC)
-        else {
-            return Self {
-                leading_records: BinaryRecord::split(data, 4096),
-                compound_file: None,
-                trailing_records: Vec::new(),
-            };
-        };
-        match CompoundFile::decode(&data[offset..]) {
+        match CompoundFile::decode(data) {
             Some((compound_file, consumed)) => Self {
-                leading_records: BinaryRecord::split(&data[..offset], 4096),
+                leading_records: Vec::new(),
                 compound_file: Some(compound_file),
                 trailing_records: BinaryRecord::split(
-                    data.get(offset + consumed..).unwrap_or_default(),
+                    data.get(consumed..).unwrap_or_default(),
                     4096,
                 ),
             },

@@ -139,7 +139,7 @@ pub use solid3d::{
     AcisData, AcisMaterial, AcisVersion, Body, Region, Silhouette, Solid3D, Wire, WireType,
 };
 pub use spline::{Spline, SplineFlags};
-pub use surface::{Surface, SurfaceData, SurfaceKind, SurfaceSweepOptions};
+pub use surface::{Surface, SurfaceData, SurfaceKind, SurfaceRoundTrip, SurfaceSweepOptions};
 pub use table::{
     BorderPropertyFlags, BorderType, BreakFlowDirection, BreakOptionFlags, CellBorder, CellContent,
     CellContentGeometry, CellEdgeFlags, CellRange, CellStateFlags, CellStyle,

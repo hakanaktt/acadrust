@@ -1,4 +1,3 @@
-use crate::entities::solid3d::AcisVersion;
 use crate::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
 use crate::io::dwg::dwg_version::DwgVersion;
 use crate::objects::*;
@@ -15,26 +14,20 @@ fn read_edge_curve(
     let point = |reader: &mut DwgMergedReader| AssocCurveValue::Point(reader.read_3bit_double());
     let real = |reader: &mut DwgMergedReader| AssocCurveValue::Real(reader.read_bit_double());
     match curve_type {
-        // Arc and ellipse: three vectors, then four or five reals.
+        // Arc and ellipse: three vectors (centre, normal, reference axis),
+        // then the reals. An arc stores radius, start and end angle; from
+        // AC1027 on it stores a fourth real after them. An ellipse stores
+        // five reals.
         11 | 17 => {
             for _ in 0..3 {
                 out.push(point(reader));
             }
-            let scalar_count = if curve_type == 11 { 4 } else { 5 };
-            for index in 0..scalar_count {
-                // AutoCAD writes a terminal AC1024 edge arc without the
-                // fourth scalar; AC1027 and later add it. Never infer a
-                // missing value in nested curves, other versions, or a
-                // partially read scalar.
-                if curve_type == 11
-                    && index == 3
-                    && depth == 0
-                    && reader.dxf_version() == DxfVersion::AC1024
-                    && !reader.has_error()
-                    && reader.main_remaining_bits() == 0
-                {
-                    break;
-                }
+            let scalar_count = match curve_type {
+                11 if reader.dxf_version() >= DxfVersion::AC1027 => 4,
+                11 => 3,
+                _ => 5,
+            };
+            for _ in 0..scalar_count {
                 out.push(real(reader));
             }
         }
@@ -379,7 +372,9 @@ fn read_surface_action(
     } else {
         AssocSurfaceBody::default()
     };
-    let path_status = if has_surface_tail {
+    // The offset action body derives from the surface action body itself,
+    // not from the path-based one, so it has no path status.
+    let path_status = if has_surface_tail && kind != AssocSurfaceActionKind::Offset {
         reader.read_bit_long()
     } else {
         0
@@ -1484,36 +1479,16 @@ pub fn read_associative_data(
         }
         "ASSOCASMBODYACTIONPARAM" => {
             let single_dependency = read_single_dependency(reader, version, dxf_version);
-            let data = super::entities::read_acis_entity(reader, version, dxf_version, false);
-            let history = if data.version > 1 {
-                handle(reader)
-            } else {
-                Handle::NULL
-            };
-            let mut acis_data = crate::entities::AcisData::new();
-            acis_data.version = if data.is_binary {
-                AcisVersion::Version2
-            } else {
-                AcisVersion::Version1
-            };
-            acis_data.sat_data = data.sat_data;
-            acis_data.sab_data = data.sab_data;
-            acis_data.is_binary = data.is_binary;
-            acis_data.revision = data.revision;
-            acis_data.materials = data.materials;
-            acis_data.wireframe_data_present = data.wireframe_data_present;
-            acis_data.wireframe_point_present = data.wireframe_point_present;
-            acis_data.wireframe_isoline_present = data.wireframe_isoline_present;
-            acis_data.acis_empty_bit = data.acis_empty_bit;
-            acis_data.extra_acis_data = data.extra_acis_data.map(Box::new);
-            acis_data.wireframe_isolines = data.isolines;
+            // B (DXF 290): whether the parameter keeps a body of its own. A
+            // parameter whose body comes from its dependency ends here. A
+            // stored body has not been seen in a saved file, so its layout is
+            // not decoded and the record is kept as read.
+            if reader.read_bit() {
+                return None;
+            }
             AssociativeData::AsmBodyActionParam(AssocAsmBodyActionParam {
                 single_dependency,
-                acis_data,
-                point_of_reference: data.point,
-                wires: data.wires,
-                silhouettes: data.silhouettes,
-                history,
+                ..AssocAsmBodyActionParam::default()
             })
         }
         "ASSOCARRAYMODIFYPARAMETERS"
@@ -1621,13 +1596,94 @@ pub fn read_associative_data(
 
 #[cfg(test)]
 mod tests {
-    use super::read_surface_action;
+    use super::{read_associative_data, read_surface_action};
     use crate::io::dwg::dwg_reference_type::DwgReferenceType::HardPointer;
     use crate::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
     use crate::io::dwg::dwg_stream_writers::merged_writer::DwgMergedWriter;
     use crate::io::dwg::dwg_version::DwgVersion;
-    use crate::objects::AssocSurfaceActionKind;
+    use crate::objects::{AssocSurfaceActionKind, AssociativeData};
     use crate::types::DxfVersion;
+
+    /// The surface-body fields every surface action stores after the action
+    /// (and, before R2013, the parameter) body.
+    fn write_surface_body(writer: &mut DwgMergedWriter, marker: i32) {
+        writer.write_bit_long(0); // surface body version
+        writer.write_handle(HardPointer, 0x2D6); // the surface
+        writer.write_bit(false); // semi-associative
+        writer.write_bit_long(marker);
+        writer.write_bit(false); // semi-associative override
+        writer.write_bit_short(0); // grip status
+    }
+
+    /// The offset action body derives from the surface action body, not
+    /// from the path-based one: after the surface body come its class
+    /// version and its flag, with no path status (an AC1018 save of an
+    /// associative offset surface).
+    #[test]
+    fn offset_surface_action_has_no_path_status() {
+        let dwg = DwgVersion::AC18;
+        let dxf = DxfVersion::AC1018;
+        let mut writer = DwgMergedWriter::new(dwg, dxf);
+        writer.write_bit_long(1); // action body version
+        writer.write_bit_long(0); // parameter version
+        writer.write_bit_long(0); // minor
+        writer.write_bit_long(0); // no dependencies
+        writer.write_bit_long(0); // marker
+        writer.write_bit_long(0); // no values
+        writer.write_bit_long(0); // empty-value marker
+        writer.write_handle(HardPointer, 0);
+        write_surface_body(&mut writer, 7);
+        writer.write_bit_long(0); // offset class version
+        writer.write_bit(true); // offset flag
+        let mut reader = DwgMergedReader::new(writer.merge(), dxf, writer.handle_start_bits());
+        let action = read_surface_action(&mut reader, dwg, dxf, AssocSurfaceActionKind::Offset);
+        reader.check_error().expect("offset action");
+        assert_eq!(action.action_body.version, 1);
+        assert_eq!(action.surface_body.dependency.value(), 0x2D6);
+        assert_eq!(action.surface_body.marker, 7);
+        assert_eq!(action.path_status, 0);
+        assert_eq!(action.class_version, 0);
+        assert!(action.flags[0]);
+        // Only the byte padding is left.
+        assert!(reader.main_remaining_bits() < 8);
+    }
+
+    fn asm_body_param(has_body: bool) -> Option<AssociativeData> {
+        let dwg = DwgVersion::AC18;
+        let dxf = DxfVersion::AC1018;
+        let mut writer = DwgMergedWriter::new(dwg, dxf);
+        writer.write_bit_short(0); // action parameter
+        writer.write_variable_text("OffsetBody");
+        writer.write_bit_long(0); // dependency class version
+        writer.write_handle(HardPointer, 0x2D8);
+        writer.write_bit_long(0); // class version
+        writer.write_bit(has_body);
+        let mut reader = DwgMergedReader::new(writer.merge(), dxf, writer.handle_start_bits());
+        let data = read_associative_data(&mut reader, "ACDBASSOCASMBODYACTIONPARAM", dwg, dxf);
+        if data.is_some() {
+            reader.check_error().expect("asm body parameter");
+            // Only the byte padding is left.
+            assert!(reader.main_remaining_bits() < 8);
+        }
+        data
+    }
+
+    /// The parameter's class version is followed by one bit (DXF 290) that
+    /// says whether it keeps a body of its own; without one the record ends
+    /// there. A kept body has not been seen in a saved file and is not read.
+    #[test]
+    fn asm_body_parameter_reads_its_body_flag() {
+        match asm_body_param(false) {
+            Some(AssociativeData::AsmBodyActionParam(value)) => {
+                assert_eq!(value.single_dependency.action_param.name, "OffsetBody");
+                assert_eq!(value.single_dependency.dependency.value(), 0x2D8);
+                assert!(value.acis_data.sab_data.is_empty());
+                assert!(value.acis_data.sat_data.is_empty());
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(asm_body_param(true).is_none());
+    }
 
     #[test]
     fn r2004_plane_surface_action_ends_after_the_parameter_body() {

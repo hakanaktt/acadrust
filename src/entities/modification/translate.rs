@@ -529,6 +529,15 @@ pub(crate) fn translate_seqend(_e: &mut Seqend, _offset: Vector3) {
 pub(crate) fn translate_ole2frame(e: &mut Ole2Frame, offset: Vector3) {
     e.upper_left_corner = e.upper_left_corner + offset;
     e.lower_right_corner = e.lower_right_corner + offset;
+    if let crate::entities::OleFrameEnvelope::Geometry {
+        upper_right,
+        lower_left,
+        ..
+    } = &mut e.envelope
+    {
+        *upper_right = *upper_right + offset;
+        *lower_left = *lower_left + offset;
+    }
 }
 
 // ── PolygonMesh ──────────────────────────────────────────────────────────────

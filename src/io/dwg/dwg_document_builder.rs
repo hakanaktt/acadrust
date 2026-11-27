@@ -3093,12 +3093,15 @@ impl DwgDocumentBuilder {
             document.header.handle_seed = max_from_reader + 1;
         }
 
-        // ── Post-pass: Resolve root dictionary handle ──────────────────
+        // ── Post-pass: root dictionary ─────────────────────────────────
         //
-        // The DWG header often stores dictionary handles as relative
-        // references that resolve to 0 during header reading.  Now that
-        // all objects have been read, scan for the actual root dictionary
-        // (owner == NULL) and update the header.
+        // The header's named-objects dictionary reference (an absolute hard
+        // owner reference, read with the other header handles) names the
+        // root dictionary. When that record is not a dictionary the file is
+        // damaged: some damaged files point NOD at a table control and give
+        // every top-level dictionary that same invalid owner. Preserve those
+        // valid child dictionaries behind a fresh root instead of writing a
+        // null NOD, which makes ODA demand recovery.
         let root_is_dictionary = matches!(
             document
                 .objects
@@ -3106,210 +3109,188 @@ impl DwgDocumentBuilder {
             Some(crate::objects::ObjectType::Dictionary(_))
         );
         if !root_is_dictionary {
-            let mut best = Handle::NULL;
-            let mut best_count = 0usize;
-            for (h, obj) in &document.objects {
-                if let crate::objects::ObjectType::Dictionary(dict) = obj {
-                    if dict.owner.is_null() {
-                        if dict.entries.len() > best_count
-                            || (dict.entries.len() == best_count && h.value() > best.value())
-                        {
-                            best = *h;
-                            best_count = dict.entries.len();
-                        }
+            let header_root = document.header.named_objects_dict_handle;
+            let mut invalid_root_votes: HashMap<Handle, usize> = HashMap::new();
+            for (handle, reactors) in &document.reactors_by_handle {
+                if !matches!(
+                    document.objects.get(handle),
+                    Some(
+                        crate::objects::ObjectType::Dictionary(_)
+                            | crate::objects::ObjectType::DictionaryWithDefault(_)
+                    )
+                ) {
+                    continue;
+                }
+                for reactor in reactors {
+                    if !matches!(
+                        document.objects.get(reactor),
+                        Some(crate::objects::ObjectType::Dictionary(_))
+                    ) {
+                        *invalid_root_votes.entry(*reactor).or_default() += 1;
                     }
                 }
             }
-            if !best.is_null() {
-                document.header.named_objects_dict_handle = best;
-            } else {
-                // Some damaged files point NOD at a table control and give
-                // every top-level dictionary that same invalid owner. Preserve
-                // those valid child dictionaries behind a fresh root instead
-                // of writing a null NOD, which makes ODA demand recovery.
-                let header_root = document.header.named_objects_dict_handle;
-                let mut invalid_root_votes: HashMap<Handle, usize> = HashMap::new();
-                for (handle, reactors) in &document.reactors_by_handle {
-                    if !matches!(
-                        document.objects.get(handle),
-                        Some(
-                            crate::objects::ObjectType::Dictionary(_)
-                                | crate::objects::ObjectType::DictionaryWithDefault(_)
-                        )
-                    ) {
-                        continue;
-                    }
-                    for reactor in reactors {
-                        if !matches!(
-                            document.objects.get(reactor),
-                            Some(crate::objects::ObjectType::Dictionary(_))
-                        ) {
-                            *invalid_root_votes.entry(*reactor).or_default() += 1;
-                        }
-                    }
+            let previous_root = invalid_root_votes
+                .into_iter()
+                .max_by_key(|(_, count)| *count)
+                .map(|(handle, _)| handle)
+                .filter(|handle| !handle.is_null())
+                .unwrap_or(header_root);
+            let root_handle = document.allocate_handle();
+            let children = [
+                ("ACAD_GROUP", document.header.acad_group_dict_handle),
+                (
+                    "ACAD_MLINESTYLE",
+                    document.header.acad_mlinestyle_dict_handle,
+                ),
+                ("ACAD_LAYOUT", document.header.acad_layout_dict_handle),
+                (
+                    "ACAD_PLOTSETTINGS",
+                    document.header.acad_plotsettings_dict_handle,
+                ),
+                (
+                    "ACAD_PLOTSTYLENAME",
+                    document.header.acad_plotstylename_dict_handle,
+                ),
+                ("ACAD_MATERIAL", document.header.acad_material_dict_handle),
+                ("ACAD_COLOR", document.header.acad_color_dict_handle),
+                (
+                    "ACAD_VISUALSTYLE",
+                    document.header.acad_visualstyle_dict_handle,
+                ),
+            ];
+            let mut root = crate::objects::Dictionary::new();
+            root.handle = root_handle;
+            for (name, child_handle) in children {
+                let child_is_dictionary = matches!(
+                    document.objects.get(&child_handle),
+                    Some(
+                        crate::objects::ObjectType::Dictionary(_)
+                            | crate::objects::ObjectType::DictionaryWithDefault(_)
+                    )
+                );
+                if !child_is_dictionary {
+                    continue;
                 }
-                let previous_root = invalid_root_votes
-                    .into_iter()
-                    .max_by_key(|(_, count)| *count)
-                    .map(|(handle, _)| handle)
-                    .filter(|handle| !handle.is_null())
-                    .unwrap_or(header_root);
-                let root_handle = document.allocate_handle();
-                let children = [
-                    ("ACAD_GROUP", document.header.acad_group_dict_handle),
-                    (
-                        "ACAD_MLINESTYLE",
-                        document.header.acad_mlinestyle_dict_handle,
-                    ),
-                    ("ACAD_LAYOUT", document.header.acad_layout_dict_handle),
-                    (
-                        "ACAD_PLOTSETTINGS",
-                        document.header.acad_plotsettings_dict_handle,
-                    ),
-                    (
-                        "ACAD_PLOTSTYLENAME",
-                        document.header.acad_plotstylename_dict_handle,
-                    ),
-                    ("ACAD_MATERIAL", document.header.acad_material_dict_handle),
-                    ("ACAD_COLOR", document.header.acad_color_dict_handle),
-                    (
-                        "ACAD_VISUALSTYLE",
-                        document.header.acad_visualstyle_dict_handle,
-                    ),
-                ];
-                let mut root = crate::objects::Dictionary::new();
-                root.handle = root_handle;
-                for (name, child_handle) in children {
-                    let child_is_dictionary = matches!(
-                        document.objects.get(&child_handle),
-                        Some(
-                            crate::objects::ObjectType::Dictionary(_)
-                                | crate::objects::ObjectType::DictionaryWithDefault(_)
-                        )
-                    );
-                    if !child_is_dictionary {
-                        continue;
-                    }
-                    root.add_entry(name, child_handle);
-                    if let Some(child) = document.objects.get_mut(&child_handle) {
-                        match child {
-                            crate::objects::ObjectType::Dictionary(dictionary) => {
-                                dictionary.owner = root_handle;
-                            }
-                            crate::objects::ObjectType::DictionaryWithDefault(dictionary) => {
-                                dictionary.owner = root_handle;
-                            }
-                            _ => {}
-                        }
-                    }
-                    if let Some(reactors) = document.reactors_by_handle.get_mut(&child_handle) {
-                        for reactor in reactors {
-                            if *reactor == previous_root {
-                                *reactor = root_handle;
-                            }
-                        }
-                    }
-                }
-
-                // A damaged NOD often leaves every former root child with a
-                // reactor pointing at the non-dictionary header handle. Repair
-                // all of those references, not only the few child handles that
-                // survived header decoding. Keep every recovered dictionary
-                // reachable from the fresh root; known roles retain their
-                // standard names, unknown roles get stable recovery names.
-                let top_level: Vec<Handle> = document
-                    .reactors_by_handle
-                    .iter()
-                    .filter_map(|(handle, reactors)| {
-                        reactors.contains(&previous_root).then_some(*handle)
-                    })
-                    .collect();
-                for child_handle in top_level {
-                    let inferred_name = match document.objects.get(&child_handle) {
-                        Some(crate::objects::ObjectType::Dictionary(dictionary)) => {
-                            let values: Vec<&crate::objects::ObjectType> = dictionary
-                                .entries
-                                .iter()
-                                .filter_map(|(_, handle)| document.objects.get(handle))
-                                .collect();
-                            if values.iter().any(|object| {
-                                matches!(object, crate::objects::ObjectType::Layout(_))
-                            }) {
-                                "ACAD_LAYOUT".to_string()
-                            } else if values.iter().any(|object| {
-                                matches!(object, crate::objects::ObjectType::MLineStyle(_))
-                            }) {
-                                "ACAD_MLINESTYLE".to_string()
-                            } else if values.iter().any(|object| {
-                                matches!(object, crate::objects::ObjectType::PlotSettings(_))
-                            }) {
-                                "ACAD_PLOTSETTINGS".to_string()
-                            } else if values.iter().any(|object| {
-                                matches!(object, crate::objects::ObjectType::MultiLeaderStyle(_))
-                            }) {
-                                "ACAD_MLEADERSTYLE".to_string()
-                            } else if values.iter().any(|object| {
-                                matches!(object, crate::objects::ObjectType::TableStyle(_))
-                            }) {
-                                "ACAD_TABLESTYLE".to_string()
-                            } else if values.iter().any(|object| {
-                                matches!(object, crate::objects::ObjectType::Scale(_))
-                            }) {
-                                "ACAD_SCALELIST".to_string()
-                            } else if values.iter().any(|object| {
-                                matches!(object, crate::objects::ObjectType::VisualStyle(_))
-                            }) {
-                                "ACAD_VISUALSTYLE".to_string()
-                            } else if values.iter().any(|object| {
-                                matches!(object, crate::objects::ObjectType::Material(_))
-                            }) {
-                                "ACAD_MATERIAL".to_string()
-                            } else if values.iter().any(|object| {
-                                matches!(object, crate::objects::ObjectType::BookColor(_))
-                            }) {
-                                "ACAD_COLOR".to_string()
-                            } else if values.iter().any(|object| {
-                                matches!(object, crate::objects::ObjectType::Group(_))
-                            }) {
-                                "ACAD_GROUP".to_string()
-                            } else if dictionary.get("AcDsRecords").is_some()
-                                || dictionary.get("AcDsSchemas").is_some()
-                            {
-                                "ACAD_ACDSRECORDS".to_string()
-                            } else if dictionary.get("CANNOSCALE").is_some() {
-                                "AcDbVariableDictionary".to_string()
-                            } else {
-                                format!("RECOVERED_{:X}", child_handle.value())
-                            }
-                        }
-                        _ => continue,
-                    };
-                    let name = if root.get(&inferred_name).is_some() {
-                        format!("RECOVERED_{:X}", child_handle.value())
-                    } else {
-                        inferred_name
-                    };
-                    root.add_entry(name, child_handle);
-                    if let Some(crate::objects::ObjectType::Dictionary(dictionary)) =
-                        document.objects.get_mut(&child_handle)
-                    {
-                        if dictionary.owner.is_null() || dictionary.owner == previous_root {
+                root.add_entry(name, child_handle);
+                if let Some(child) = document.objects.get_mut(&child_handle) {
+                    match child {
+                        crate::objects::ObjectType::Dictionary(dictionary) => {
                             dictionary.owner = root_handle;
                         }
+                        crate::objects::ObjectType::DictionaryWithDefault(dictionary) => {
+                            dictionary.owner = root_handle;
+                        }
+                        _ => {}
                     }
-                    if let Some(reactors) = document.reactors_by_handle.get_mut(&child_handle) {
-                        for reactor in reactors {
-                            if *reactor == previous_root {
-                                *reactor = root_handle;
-                            }
+                }
+                if let Some(reactors) = document.reactors_by_handle.get_mut(&child_handle) {
+                    for reactor in reactors {
+                        if *reactor == previous_root {
+                            *reactor = root_handle;
                         }
                     }
                 }
-                document
-                    .objects
-                    .insert(root_handle, crate::objects::ObjectType::Dictionary(root));
-                document.header.named_objects_dict_handle = root_handle;
             }
+
+            // A damaged NOD often leaves every former root child with a
+            // reactor pointing at the non-dictionary header handle. Repair
+            // all of those references, not only the few child handles that
+            // survived header decoding. Keep every recovered dictionary
+            // reachable from the fresh root; known roles retain their
+            // standard names, unknown roles get stable recovery names.
+            let top_level: Vec<Handle> = document
+                .reactors_by_handle
+                .iter()
+                .filter_map(|(handle, reactors)| {
+                    reactors.contains(&previous_root).then_some(*handle)
+                })
+                .collect();
+            for child_handle in top_level {
+                let inferred_name = match document.objects.get(&child_handle) {
+                    Some(crate::objects::ObjectType::Dictionary(dictionary)) => {
+                        let values: Vec<&crate::objects::ObjectType> = dictionary
+                            .entries
+                            .iter()
+                            .filter_map(|(_, handle)| document.objects.get(handle))
+                            .collect();
+                        if values.iter().any(|object| {
+                            matches!(object, crate::objects::ObjectType::Layout(_))
+                        }) {
+                            "ACAD_LAYOUT".to_string()
+                        } else if values.iter().any(|object| {
+                            matches!(object, crate::objects::ObjectType::MLineStyle(_))
+                        }) {
+                            "ACAD_MLINESTYLE".to_string()
+                        } else if values.iter().any(|object| {
+                            matches!(object, crate::objects::ObjectType::PlotSettings(_))
+                        }) {
+                            "ACAD_PLOTSETTINGS".to_string()
+                        } else if values.iter().any(|object| {
+                            matches!(object, crate::objects::ObjectType::MultiLeaderStyle(_))
+                        }) {
+                            "ACAD_MLEADERSTYLE".to_string()
+                        } else if values.iter().any(|object| {
+                            matches!(object, crate::objects::ObjectType::TableStyle(_))
+                        }) {
+                            "ACAD_TABLESTYLE".to_string()
+                        } else if values.iter().any(|object| {
+                            matches!(object, crate::objects::ObjectType::Scale(_))
+                        }) {
+                            "ACAD_SCALELIST".to_string()
+                        } else if values.iter().any(|object| {
+                            matches!(object, crate::objects::ObjectType::VisualStyle(_))
+                        }) {
+                            "ACAD_VISUALSTYLE".to_string()
+                        } else if values.iter().any(|object| {
+                            matches!(object, crate::objects::ObjectType::Material(_))
+                        }) {
+                            "ACAD_MATERIAL".to_string()
+                        } else if values.iter().any(|object| {
+                            matches!(object, crate::objects::ObjectType::BookColor(_))
+                        }) {
+                            "ACAD_COLOR".to_string()
+                        } else if values.iter().any(|object| {
+                            matches!(object, crate::objects::ObjectType::Group(_))
+                        }) {
+                            "ACAD_GROUP".to_string()
+                        } else if dictionary.get("AcDsRecords").is_some()
+                            || dictionary.get("AcDsSchemas").is_some()
+                        {
+                            "ACAD_ACDSRECORDS".to_string()
+                        } else if dictionary.get("CANNOSCALE").is_some() {
+                            "AcDbVariableDictionary".to_string()
+                        } else {
+                            format!("RECOVERED_{:X}", child_handle.value())
+                        }
+                    }
+                    _ => continue,
+                };
+                let name = if root.get(&inferred_name).is_some() {
+                    format!("RECOVERED_{:X}", child_handle.value())
+                } else {
+                    inferred_name
+                };
+                root.add_entry(name, child_handle);
+                if let Some(crate::objects::ObjectType::Dictionary(dictionary)) =
+                    document.objects.get_mut(&child_handle)
+                {
+                    if dictionary.owner.is_null() || dictionary.owner == previous_root {
+                        dictionary.owner = root_handle;
+                    }
+                }
+                if let Some(reactors) = document.reactors_by_handle.get_mut(&child_handle) {
+                    for reactor in reactors {
+                        if *reactor == previous_root {
+                            *reactor = root_handle;
+                        }
+                    }
+                }
+            }
+            document
+                .objects
+                .insert(root_handle, crate::objects::ObjectType::Dictionary(root));
+            document.header.named_objects_dict_handle = root_handle;
         }
 
         document.name_mleader_styles_from_dictionary();
@@ -5662,7 +5643,9 @@ impl DwgDocumentBuilder {
                     let data = entities::read_ole2frame(&mut reader, self.obj_reader.version());
                     let mut e = Ole2Frame::new();
                     e.common = entity_common;
-                    e.ole_object_type = OleObjectType::from_i16(data.object_type);
+                    // The record's leading BS is the OLE version (DXF 70); the
+                    // item type comes from the frame header (set_payload).
+                    e.version = data.object_type;
                     (e.upper_left_corner, e.lower_right_corner) = e.set_payload(&data.data);
                     e.dwg_mode = data.mode;
                     e.is_paper_space = data.mode == 1;

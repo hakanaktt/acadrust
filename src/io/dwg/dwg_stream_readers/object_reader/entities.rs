@@ -4355,6 +4355,7 @@ pub fn read_wipeout(reader: &mut DwgMergedReader, version: DwgVersion) -> Raster
 }
 
 pub fn read_ole2frame(reader: &mut DwgMergedReader, version: DwgVersion) -> Ole2FrameData {
+    // The OLE version (DXF 70), 2 in every saved frame.
     let object_type = reader.read_bit_short();
     let mode = if version.r2000_plus() {
         reader.read_bit_short()
@@ -4368,6 +4369,7 @@ pub fn read_ole2frame(reader: &mut DwgMergedReader, version: DwgVersion) -> Ole2
     let declared = reader.read_bit_long();
     let data_len = reader.checked_main_count(i64::from(declared), 8) as usize;
     let data = reader.read_bytes(data_len);
+    // The plot quality (DXF 73), kept in `lock_aspect`.
     let lock_aspect = if version.r2000_plus() {
         reader.read_byte()
     } else {
@@ -5938,6 +5940,134 @@ fn read_surface_embedded_entity(
     )
 }
 
+/// The class data of a lofted surface after its isoline counts: the loft
+/// transform, the cross-section, guide and path counts, the loft options and
+/// the embedded entities.
+fn read_lofted_surface_data(
+    reader: &mut DwgMergedReader,
+    version: DwgVersion,
+    dxf_version: DxfVersion,
+) -> SurfaceData {
+    let loft_transform = read_surface_matrix(reader);
+    let mut cross_section_entities = Vec::new();
+    let mut guide_entities = Vec::new();
+    let mut path_entity = None;
+    let (
+        plane_normal_lofting_type,
+        start_draft_angle,
+        end_draft_angle,
+        start_draft_magnitude,
+        end_draft_magnitude,
+        arc_length_parameterization,
+        no_twist,
+        align_direction,
+        simple_surfaces,
+        closed_surfaces,
+        solid,
+        ruled_surface,
+        virtual_guide,
+    ) = {
+        let cross_count = safe_count(reader.read_bit_short() as i32, reader);
+        let guide_count = safe_count(reader.read_bit_short() as i32, reader);
+        let has_path = reader.read_bit();
+        let values = (
+            reader.read_bit_double(),
+            reader.read_bit_double(),
+            reader.read_bit_double(),
+            reader.read_bit_double(),
+            reader.read_bit(),
+            reader.read_bit(),
+            reader.read_bit(),
+            reader.read_bit(),
+            reader.read_bit(),
+            reader.read_bit(),
+            reader.read_bit(),
+            reader.read_bit(),
+            reader.read_bit_long(),
+        );
+        cross_section_entities.reserve(cross_count as usize);
+        guide_entities.reserve(guide_count as usize);
+        for _ in 0..cross_count {
+            if let Some(entity) = read_surface_embedded_entity(reader, version, dxf_version)
+            {
+                cross_section_entities.push(entity);
+            }
+        }
+        for _ in 0..guide_count {
+            if let Some(entity) = read_surface_embedded_entity(reader, version, dxf_version)
+            {
+                guide_entities.push(entity);
+            }
+        }
+        if has_path {
+            path_entity = read_surface_embedded_entity(reader, version, dxf_version);
+        }
+        (
+            values.12, values.0, values.1, values.2, values.3, values.4, values.5,
+            values.6, values.7, values.8, values.9, values.10, values.11,
+        )
+    };
+    SurfaceData::Lofted {
+        loft_transform,
+        cross_section_entities,
+        guide_entities,
+        path_entity,
+        plane_normal_lofting_type,
+        start_draft_angle,
+        end_draft_angle,
+        start_draft_magnitude,
+        end_draft_magnitude,
+        arc_length_parameterization,
+        no_twist,
+        align_direction,
+        simple_surfaces,
+        closed_surfaces,
+        solid,
+        ruled_surface,
+        virtual_guide,
+        cross_sections: Vec::new(),
+        guide_curves: Vec::new(),
+        path_curve: None,
+    }
+}
+
+/// The class data of an AC1027 NURBS surface after its isoline counts.
+fn read_nurb_surface_data(reader: &mut DwgMergedReader) -> SurfaceData {
+    SurfaceData::Nurb {
+        short_170: reader.read_bit_short(),
+        cv_hull_display: reader.read_bit(),
+        u_vector1: reader.read_3bit_double(),
+        v_vector1: reader.read_3bit_double(),
+        u_vector2: reader.read_3bit_double(),
+        v_vector2: reader.read_3bit_double(),
+    }
+}
+
+/// The round-trip data a drawing saved in a format before AC1027 keeps for a
+/// lofted (or network) or NURBS surface it writes as a plain surface: BS u
+/// and BS v isoline counts, one RC (0 in every saved record), then the class
+/// data of `kind` in its AC1027 form. `None` for another kind, or unless the
+/// data reads to its end (only byte padding left).
+pub(crate) fn read_surface_round_trip(
+    bytes: &[u8],
+    kind: SurfaceKind,
+) -> Option<(i16, i16, SurfaceData)> {
+    let dxf_version = DxfVersion::AC1032;
+    let version = DwgVersion::from_dxf_version(dxf_version).ok()?;
+    let mut reader = DwgMergedReader::new(bytes.to_vec(), dxf_version, bytes.len() as i64 * 8);
+    let u_isolines = reader.read_bit_short();
+    let v_isolines = reader.read_bit_short();
+    let _reserved = reader.read_byte();
+    let data = match kind {
+        SurfaceKind::Lofted => read_lofted_surface_data(&mut reader, version, dxf_version),
+        SurfaceKind::Nurb => read_nurb_surface_data(&mut reader),
+        _ => return None,
+    };
+    let remaining = bytes.len() as i64 * 8 - reader.position_in_bits();
+    (reader.check_error().is_ok() && (0..8).contains(&remaining))
+        .then_some((u_isolines, v_isolines, data))
+}
+
 pub fn read_surface(
     reader: &mut DwgMergedReader,
     version: DwgVersion,
@@ -5945,16 +6075,15 @@ pub fn read_surface(
     has_ds_data: bool,
     kind: SurfaceKind,
 ) -> SurfaceEntityData {
-    // The optional extra modeler block belongs to AcDs-backed (R2013+) surfaces.
-    // On inline pre-R2013 ACIS surfaces, the next fields are the surface isoline counts;
-    // probing them inside read_acis_entity_impl shifts the record by one bit.
-    let allow_extra = has_ds_data || version.r2013_plus(dxf_version);
-    let Some(mut acis) = read_acis_entity_impl(
+    // A clear extra-body flag (the bit after the wireframe) means a second
+    // modeler body follows it, in every version: the surface isoline counts
+    // come after that body, or right after the flag when it is set.
+    let Some(acis) = read_acis_entity_impl(
         reader,
         version,
         dxf_version,
         has_ds_data,
-        allow_extra,
+        true,
         false,
         None,
     ) else {
@@ -5970,27 +6099,8 @@ pub fn read_surface(
     };
     // Surface records do not have the 3DSOLID history-id handle slot.
     let history_handle = 0;
-    // The modeler version is already part of the ACIS header. Native
-    // surfaces begin with the two isoline counts immediately after it,
-    // except when an R2004 surface keeps a second modeler body there.
-    // That body uses the extra-modeler framing (unknown bit, version,
-    // SAB/SAT) while the COMMON_3DSOLID gate stays set, so the shared
-    // solid reader leaves it in the stream. Accept it only when the
-    // following isoline counts are plausible; otherwise rewind.
+    // The modeler version is already part of the ACIS header.
     let modeler_format_version = 1;
-    if acis.extra_acis_data.is_none() && !reader.has_error() {
-        let body_start = reader.position_in_bits();
-        if let Some(body) = read_extra_acis_data(reader, None) {
-            let mut peek = reader.clone();
-            let u = peek.read_bit_short();
-            let v = peek.read_bit_short();
-            if (0..=512).contains(&u) && (0..=512).contains(&v) && !peek.has_error() {
-                acis.extra_acis_data = Some(body);
-            } else {
-                reader.set_position_in_bits(body_start);
-            }
-        }
-    }
     let u_isolines = reader.read_bit_short();
     let v_isolines = reader.read_bit_short();
     let surface_data = match kind {
@@ -6008,89 +6118,7 @@ pub fn read_surface(
                 sweep_transform,
             }
         }
-        SurfaceKind::Lofted => {
-            let loft_transform = read_surface_matrix(reader);
-            let mut cross_section_entities = Vec::new();
-            let mut guide_entities = Vec::new();
-            let mut path_entity = None;
-            let (
-                plane_normal_lofting_type,
-                start_draft_angle,
-                end_draft_angle,
-                start_draft_magnitude,
-                end_draft_magnitude,
-                arc_length_parameterization,
-                no_twist,
-                align_direction,
-                simple_surfaces,
-                closed_surfaces,
-                solid,
-                ruled_surface,
-                virtual_guide,
-            ) = {
-                let cross_count = safe_count(reader.read_bit_short() as i32, reader);
-                let guide_count = safe_count(reader.read_bit_short() as i32, reader);
-                let has_path = reader.read_bit();
-                let values = (
-                    reader.read_bit_double(),
-                    reader.read_bit_double(),
-                    reader.read_bit_double(),
-                    reader.read_bit_double(),
-                    reader.read_bit(),
-                    reader.read_bit(),
-                    reader.read_bit(),
-                    reader.read_bit(),
-                    reader.read_bit(),
-                    reader.read_bit(),
-                    reader.read_bit(),
-                    reader.read_bit(),
-                    reader.read_bit_long(),
-                );
-                cross_section_entities.reserve(cross_count as usize);
-                guide_entities.reserve(guide_count as usize);
-                for _ in 0..cross_count {
-                    if let Some(entity) = read_surface_embedded_entity(reader, version, dxf_version)
-                    {
-                        cross_section_entities.push(entity);
-                    }
-                }
-                for _ in 0..guide_count {
-                    if let Some(entity) = read_surface_embedded_entity(reader, version, dxf_version)
-                    {
-                        guide_entities.push(entity);
-                    }
-                }
-                if has_path {
-                    path_entity = read_surface_embedded_entity(reader, version, dxf_version);
-                }
-                (
-                    values.12, values.0, values.1, values.2, values.3, values.4, values.5,
-                    values.6, values.7, values.8, values.9, values.10, values.11,
-                )
-            };
-            SurfaceData::Lofted {
-                loft_transform,
-                cross_section_entities,
-                guide_entities,
-                path_entity,
-                plane_normal_lofting_type,
-                start_draft_angle,
-                end_draft_angle,
-                start_draft_magnitude,
-                end_draft_magnitude,
-                arc_length_parameterization,
-                no_twist,
-                align_direction,
-                simple_surfaces,
-                closed_surfaces,
-                solid,
-                ruled_surface,
-                virtual_guide,
-                cross_sections: Vec::new(),
-                guide_curves: Vec::new(),
-                path_curve: None,
-            }
-        }
+        SurfaceKind::Lofted => read_lofted_surface_data(reader, version, dxf_version),
         SurfaceKind::Revolved => {
             let (
                 draft_angle,
@@ -6147,14 +6175,7 @@ pub fn read_surface(
         }
         SurfaceKind::Nurb => {
             if version.r2013_plus(dxf_version) {
-                SurfaceData::Nurb {
-                    short_170: reader.read_bit_short(),
-                    cv_hull_display: reader.read_bit(),
-                    u_vector1: reader.read_3bit_double(),
-                    v_vector1: reader.read_3bit_double(),
-                    u_vector2: reader.read_3bit_double(),
-                    v_vector2: reader.read_3bit_double(),
-                }
+                read_nurb_surface_data(reader)
             } else {
                 SurfaceData::Nurb {
                     short_170: 0,
@@ -6313,6 +6334,85 @@ mod tests {
     use crate::io::dwg::dwg_version::DwgVersion;
     use crate::types::DxfVersion;
 
+    /// The round-trip data of a network surface as a drawing saved before
+    /// AC1027 keeps it: BS u, BS v, RC 0, then the lofted class data (here
+    /// with no cross sections, guides or path).
+    #[test]
+    fn lofted_round_trip_reads_its_isolines_and_class_data() {
+        let mut writer = DwgMergedWriter::new(DwgVersion::AC18, DxfVersion::AC1018);
+        writer.write_bit_short(3);
+        writer.write_bit_short(4);
+        writer.write_byte(0);
+        for index in 0..16 {
+            writer.write_bit_double(if index % 5 == 0 { 1.0 } else { 0.0 });
+        }
+        writer.write_bit_short(0); // cross sections
+        writer.write_bit_short(0); // guides
+        writer.write_bit(false); // no path
+        for value in [0.0, 0.0, 0.0, 0.0] {
+            writer.write_bit_double(value); // draft angles and magnitudes
+        }
+        for flag in [false, true, false, true, false, false, false, true] {
+            writer.write_bit(flag);
+        }
+        writer.write_bit_long(5); // plane normal lofting type
+        let bytes = writer.merge();
+        let (u, v, data) =
+            read_surface_round_trip(&bytes, SurfaceKind::Lofted).expect("round-trip data");
+        assert_eq!((u, v), (3, 4));
+        match data {
+            SurfaceData::Lofted {
+                loft_transform,
+                no_twist,
+                virtual_guide,
+                plane_normal_lofting_type,
+                ..
+            } => {
+                assert_eq!(loft_transform[0], 1.0);
+                assert_eq!(loft_transform[5], 1.0);
+                assert!(no_twist);
+                assert!(virtual_guide);
+                assert_eq!(plane_normal_lofting_type, 5);
+            }
+            other => panic!("{other:?}"),
+        }
+        // Data that does not read to its end is not taken.
+        let mut longer = bytes.clone();
+        longer.extend_from_slice(&[0xFF; 4]);
+        assert!(read_surface_round_trip(&longer, SurfaceKind::Lofted).is_none());
+    }
+
+    /// The round-trip data of a NURBS surface: BS u, BS v, RC 0, then the
+    /// AC1027 NURBS class data (BS, B, four 3BD).
+    #[test]
+    fn nurb_round_trip_reads_its_isolines_and_class_data() {
+        let mut writer = DwgMergedWriter::new(DwgVersion::AC18, DxfVersion::AC1018);
+        writer.write_bit_short(7);
+        writer.write_bit_short(2);
+        writer.write_byte(0);
+        writer.write_bit_short(1);
+        writer.write_bit(true);
+        for value in [1.0, 2.0, 3.0, 4.0] {
+            writer.write_3bit_double(Vector3::new(value, 0.0, 0.0));
+        }
+        let bytes = writer.merge();
+        let (u, v, data) =
+            read_surface_round_trip(&bytes, SurfaceKind::Nurb).expect("round-trip data");
+        assert_eq!((u, v), (7, 2));
+        assert_eq!(
+            data,
+            SurfaceData::Nurb {
+                short_170: 1,
+                cv_hull_display: true,
+                u_vector1: Vector3::new(1.0, 0.0, 0.0),
+                v_vector1: Vector3::new(2.0, 0.0, 0.0),
+                u_vector2: Vector3::new(3.0, 0.0, 0.0),
+                v_vector2: Vector3::new(4.0, 0.0, 0.0),
+            }
+        );
+        assert!(read_surface_round_trip(&bytes, SurfaceKind::Plane).is_none());
+    }
+
     fn make_reader(
         dwg: DwgVersion,
         dxf: DxfVersion,
@@ -6415,29 +6515,54 @@ mod tests {
         assert!(reader.check_error().is_err());
     }
 
-    #[test]
-    fn r2004_surface_keeps_a_second_modeler_body_ahead_of_isolines() {
+    /// An R2004 surface record: the inline body (empty flag, unknown bit,
+    /// BS version 2, SAB), the wireframe flag, then the extra-body flag. A
+    /// clear flag is followed by the second body (unknown bit, BS version 2,
+    /// SAB), and the isoline counts follow that body; a set flag is followed
+    /// by the isoline counts.
+    fn r2004_surface(second_body: Option<&[u8]>) -> (SurfaceEntityData, Vec<u8>) {
         let sab = crate::entities::acis::SabWriter::write(
             &crate::entities::acis::primitives::build_box([0.0, 0.0, 0.0], 1.0, 2.0, 3.0),
         );
         let dwg = DwgVersion::AC18;
         let dxf = DxfVersion::AC1018;
         let mut reader = make_reader(dwg, dxf, |writer| {
-            writer.write_bit(true); // no inline primary body
-            writer.write_bit(false); // no wireframe cache
-            writer.write_bit(true); // COMMON_3DSOLID extra gate stays set
+            writer.write_bit(false); // inline body present
             writer.write_bit(false);
             writer.write_bit_short(2);
             writer.write_bytes(&sab);
+            writer.write_bit(false); // no wireframe cache
+            writer.write_bit(second_body.is_none());
+            if let Some(body) = second_body {
+                writer.write_bit(false);
+                writer.write_bit_short(2);
+                writer.write_bytes(body);
+            }
             writer.write_bit_short(6);
             writer.write_bit_short(4);
         });
         let surface = read_surface(&mut reader, dwg, dxf, false, SurfaceKind::Generic);
         reader.check_error().expect("surface record");
-        assert_eq!(surface.u_isolines, 6);
-        assert_eq!(surface.v_isolines, 4);
-        let extra = surface.acis.extra_acis_data.expect("second modeler body");
-        assert_eq!(extra.sab_data, sab);
+        (surface, sab)
+    }
+
+    #[test]
+    fn r2004_surface_reads_the_second_body_its_flag_announces() {
+        let second = crate::entities::acis::SabWriter::write(
+            &crate::entities::acis::primitives::build_box([5.0, 0.0, 0.0], 1.0, 1.0, 1.0),
+        );
+        let (surface, sab) = r2004_surface(Some(&second));
+        assert_eq!(surface.acis.sab_data, sab);
+        assert_eq!(surface.acis.extra_acis_data.expect("second body").sab_data, second);
+        assert_eq!((surface.u_isolines, surface.v_isolines), (6, 4));
+    }
+
+    #[test]
+    fn r2004_surface_without_the_flag_reads_the_isolines_next() {
+        let (surface, sab) = r2004_surface(None);
+        assert_eq!(surface.acis.sab_data, sab);
+        assert!(surface.acis.extra_acis_data.is_none());
+        assert_eq!((surface.u_isolines, surface.v_isolines), (6, 4));
     }
 
     #[test]
