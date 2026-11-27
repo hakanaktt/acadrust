@@ -260,8 +260,9 @@ impl ArchEntityData {
     /// The surface's name: the first non-empty string after the
     /// definitions' texts. The application stores a created-by name before
     /// them (2027 samples: "", "", "leightkadmin", then the definitions'
-    /// names, the surface's name and its description — `Surface-2.dwg`'s
-    /// empty shell reads "EG"); records this crate writes keep the name
+    /// names, two texts per elevation analysis range, the surface's name
+    /// and its description — `Surface-2.dwg`'s empty shell reads "EG");
+    /// records this crate writes keep the name
     /// right after the texts, so it is read there as a fallback. A record
     /// whose definitions this grammar does not read names `None` — its
     /// text boundary is unknown.
@@ -271,7 +272,7 @@ impl ArchEntityData {
         }
         let (data, start, end) = self.main_stream()?;
         let texts = match tin::definitions(data, start, end) {
-            Some(d) => d.list.iter().map(TinDefinition::text_count).sum::<usize>(),
+            Some(d) => d.list.iter().map(TinDefinition::text_count).sum::<usize>() + 2 * d.ranges,
             None => match tin::definitions_count(data, start, end) {
                 None => 0,
                 Some(_) => return None,

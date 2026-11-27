@@ -200,7 +200,8 @@ fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> 
     let mut bits = Bits::new(data, pos, end);
     let next_free = bits.bit_long()?;
     let slots = bits.bit_long()?;
-    if !(1..=10_000).contains(&slots) || slots >= next_free {
+    // A face's own graph may hold no edges (`BL 1, BL 0`).
+    if !(0..=10_000).contains(&slots) || slots >= next_free {
         return None;
     }
     let mut out = Vec::new();
@@ -253,7 +254,7 @@ fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> 
             run.push(TopologyVertex { bulge: 0.0, faces: (0, 0), ..first });
         }
         // A list after the vertices (empty on alignments; one entry once a
-        // feature line has an elevation point), then three zeros.
+        // feature line has an elevation point), then three more lists.
         let listed = bits.bit_long()?;
         if !(0..=100_000).contains(&listed) {
             return None;
@@ -266,20 +267,29 @@ fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> 
                 v.key = key;
             }
         }
+        // Three lists `BL n, n x BL`, empty on alignments and in the
+        // containers this crate writes; in a graded site's graph they name
+        // other edges (Grading-3A: `(), (22), ()`; Grading-4: `(2), (), ()`
+        // and `(), (1, 3), ()`).
         for _ in 0..3 {
-            (bits.bit_long()? == 0).then_some(())?;
+            let n = usize::try_from(bits.bit_long()?).ok().filter(|n| n * 2 <= bits.remaining())?;
+            for _ in 0..n {
+                bits.bit_long()?;
+            }
         }
         out.push(run);
         all_flags.push(edge_flags);
         ids.push(id);
     }
-    (!out.is_empty()).then_some((out, all_flags, ids, bits.pos))
+    Some((out, all_flags, ids, bits.pos))
 }
 
 /// The face list at `pos`: `BL next free id, BL count, per face {BL id,
 /// BL id, BL flags, BL loops, per loop {BL entry node, BL entry index}}`;
-/// the ids in list order and the outside face's (id 1) flags.
-fn face_list(data: &[u8], pos: usize, end: usize) -> Option<(Vec<i32>, i32, Vec<(i32, i32)>)> {
+/// the ids in list order, the outside face's (id 1) flags and entries, and
+/// the position after the list.
+#[allow(clippy::type_complexity)]
+fn face_list(data: &[u8], pos: usize, end: usize) -> Option<(Vec<i32>, i32, Vec<(i32, i32)>, usize)> {
     let mut bits = Bits::new(data, pos, end);
     bits.bit_long()?;
     let count = bits.bit_long()?;
@@ -302,7 +312,89 @@ fn face_list(data: &[u8], pos: usize, end: usize) -> Option<(Vec<i32>, i32, Vec<
         }
         ids.push(id);
     }
-    Some((ids, outside, entries))
+    Some((ids, outside, entries, bits.pos))
+}
+
+/// A graph's nodes, edges and faces at `pos`; the position after the
+/// faces.
+fn graph_end(data: &[u8], pos: usize, end: usize) -> Option<usize> {
+    let (nodes, after, _) = node_list(data, pos, end)?;
+    let (_, _, _, faces) = edges(data, after, end, &nodes)?;
+    face_list(data, faces, end).map(|f| f.3)
+}
+
+/// The elements a container keeps between its elevation-point table and
+/// its graph: `BL next free id, BL n`, then `n` elements (see
+/// [`element`]); the position after them. A site without gradings and an
+/// alignment companion keep none (`BL 1, BL 0`). A graded site keeps
+/// groups and faces (Grading-4: 3 elements; Grading-7: 11, the
+/// application's ids 6 to 16), in no particular order.
+fn elements(data: &[u8], pos: usize, end: usize) -> Option<usize> {
+    let mut bits = Bits::new(data, pos, end);
+    bits.bit_long()?;
+    let n = usize::try_from(bits.bit_long()?).ok().filter(|n| n * 2 <= bits.remaining())?;
+    let mut pos = bits.pos;
+    for _ in 0..n {
+        pos = element(data, pos, end)?;
+    }
+    Some(pos)
+}
+
+/// One element:
+///
+/// ```text
+/// BL id, BL kind (1 a face, 2 a group), BL id, BL flags, BD, 6 x BL,
+/// BL (a group: the id of one of its faces),
+/// a face: B 0, B 0, BS 2, the face's body (a modeler binary stream,
+///   read to its end record), BL 3, BL 0, BL 0, BL 1, BL 0, the face's
+///   own elements and graph (`BL 1, BL 0` and an empty graph in the
+///   samples, or nodes and edges), BL 0, BL parent (the group's id),
+///   BL previous face, BL next face (0: none), BD, BD
+/// ```
+///
+/// Proved on the six graded tutorial containers (Grading-3A to Grading-8):
+/// each walks its count of elements and ends exactly at the site graph's
+/// `BL 0x80000001`, and the site graph that follows holds the site's
+/// feature lines (Grading-7: edges of 90, 19 and 17 vertices, as the
+/// application reports for its three feature lines).
+// ponytail: the flags, the BD, the six BLs and the two closing BDs are
+// read past unnamed; name them from a drawing that varies one grading
+// property at a time.
+fn element(data: &[u8], pos: usize, end: usize) -> Option<usize> {
+    let mut bits = Bits::new(data, pos, end);
+    let id = bits.bit_long()?;
+    let kind = bits.bit_long()?;
+    (bits.bit_long()? == id).then_some(())?;
+    bits.bit_long()?;
+    bits.bit_double()?;
+    for _ in 0..7 {
+        bits.bit_long()?;
+    }
+    match kind {
+        2 => return Some(bits.pos),
+        1 => {}
+        _ => return None,
+    }
+    (!bits.bit()? && !bits.bit()? && bits.bit_short()? == 2).then_some(())?;
+    let body: Vec<u8> = {
+        let mut copy = Bits::new(data, bits.pos, end);
+        (0..copy.remaining() / 8).map(|_| copy.raw_short_byte()).collect::<Option<_>>()?
+    };
+    let (_, used) = crate::entities::acis::SabReader::read_with_consumed(&body).ok()?;
+    bits.skip(used.checked_mul(8)?)?;
+    for want in [3, 0, 0, 1, 0] {
+        (bits.bit_long()? == want).then_some(())?;
+    }
+    let mut bits = Bits::new(data, elements(data, bits.pos, end)?, end);
+    (bits.bit_long()? as u32 == 0x8000_0001).then_some(())?;
+    let mut bits = Bits::new(data, graph_end(data, bits.pos, end)?, end);
+    (bits.bit_long()? == 0).then_some(())?;
+    for _ in 0..3 {
+        bits.bit_long()?;
+    }
+    bits.bit_double()?;
+    bits.bit_double()?;
+    Some(bits.pos)
 }
 
 /// The elevation-point table a site container or alignment companion
@@ -332,26 +424,46 @@ struct ElevationKeys {
 /// difference — 8/8 verified across the tutorial grading containers).
 /// A grading container also carries one form-25 marker: a field-less
 /// entry `BL key, BL 25` (12 bits, key 0) with no point. The walk stops
-/// exactly at the head's count — what follows is not table grammar (on a
-/// graded site an opaque ShapeManager solid stream intervenes before the
-/// topology section). `None` when the head or the table does not follow
-/// the layout.
+/// exactly at the head's count — what follows is not table grammar (the
+/// elements, see [`elements`]). `None` when the head or the table does not
+/// follow the layout.
 ///
 /// ```text
 /// BS 0x04BE, BL key (0 for a site container, 0x80000000 | n for a
-/// companion), BL 0, BL 0, BL 32, 7 bits 0111010,
+/// companion), BL 0, BL 0, [BL 0, B 1, RC n, n x key,] BL 32,
+/// 7 bits 0111010,
 /// BL next free key, BL k, k x { BL key,
 ///   21: BD the point's index in its feature line, 17 bits, BL key,
 ///       BL 0, BL 0, BD elevation, B 0, BL 0,
 ///   22 or 24: the same frame without the elevation,
 ///   25: nothing }
 /// ```
+///
+/// The bracketed keys (the shared key grammar, `alignment::key`) are
+/// written on companions only: one key, 0x0300D012 with byte 1, in all
+/// 68 such records of the samples (8 with a non-empty topology: the
+/// alignments the application made for corridor feature-line baselines,
+/// and E-K4's companion once the application rebuilt that corridor).
+/// The rest of the record is the plain form's bit for bit (KA07 "DCE"
+/// against the same companion in E-K4-rb).
 fn elevation_keys(data: &[u8], start: usize, end: usize) -> Option<ElevationKeys> {
     let mut bits = Bits::new(data, start, end);
     (bits.bit_short()? == 0x04BE).then_some(())?;
     bits.bit_long()?;
-    for want in [0, 0, 32] {
-        (bits.bit_long()? == want).then_some(())?;
+    for _ in 0..2 {
+        (bits.bit_long()? == 0).then_some(())?;
+    }
+    match bits.bit_long()? {
+        32 => {}
+        // The keyed form: `BL 0, B 1, RC n, n x key, BL 32`.
+        0 => {
+            bits.bit()?.then_some(())?;
+            for _ in 0..bits.bits_value(8)? {
+                super::alignment::key(&mut bits)?;
+            }
+            (bits.bit_long()? == 32).then_some(())?;
+        }
+        _ => return None,
     }
     bits.skip(7)?;
     let next_key = bits.bit_long()?;
@@ -390,24 +502,21 @@ fn elevation_keys(data: &[u8], start: usize, end: usize) -> Option<ElevationKeys
 
 /// ```text
 /// BS 0x04BE, BL key (0 for a site container, 0x80000000 | n for a
-/// companion), BL 0, BL 0, BL 32, 7 bits 0111010,
-/// elevation points (see [`elevation_keys`]), BL 1, BL 0,
-/// BL 0x80000001, node list, edge list
+/// companion), BL 0, BL 0, [keys,] BL 32, 7 bits 0111010,
+/// elevation points (see [`elevation_keys`]), elements (see
+/// [`elements`]; `BL 1, BL 0` without gradings), BL 0x80000001, node
+/// list, edge list
 /// ```
 pub(super) fn topology(data: &[u8], start: usize, end: usize) -> Option<Topology> {
     let read = |pos: usize, next_key: i32| -> Option<Topology> {
         let (nodes, after, next_node) = node_list(data, pos, end)?;
         let (edges, edge_flags, edge_ids, faces) = edges(data, after, end, &nodes)?;
-        let (face_ids, outside_face_flags, outside_entries) = face_list(data, faces, end).unwrap_or_default();
+        (!edges.is_empty()).then_some(())?;
+        let (face_ids, outside_face_flags, outside_entries) = face_list(data, faces, end).map(|f| (f.0, f.1, f.2)).unwrap_or_default();
         Some(Topology { edges, edge_flags, edge_ids, face_ids, next_node, next_key, outside_face_flags, outside_entries })
     };
-    // A graded site container keeps its gradings (with their solids)
-    // between the table and the topology section; their layout is not
-    // mapped, so such a container gives no topology.
     let t = elevation_keys(data, start, end)?;
-    let mut bits = Bits::new(data, t.after, end);
-    bits.bit_long()?;
-    bits.bit_long()?;
+    let mut bits = Bits::new(data, elements(data, t.after, end)?, end);
     (bits.bit_long()? as u32 == 0x8000_0001).then_some(())?;
     read(bits.pos, t.next_key)
 }
@@ -588,92 +697,223 @@ mod tests {
         assert_eq!(t.next_node, 4);
     }
 
-    /// The application's extended-container record, bit for bit as
-    /// recorded on the grading tutorial drawing (D008 capture,
-    /// live-API-verified): the table with a `k2` 21 and a `k2` 22 entry,
-    /// then — behind the site's grading data, whose grammar is not mapped
-    /// (2026-11-25 corpus sweep) — the feature-line section, whose edges
-    /// carry inter-edge words (an other-edge key reference, empty words)
-    /// the strict first-section edge list refuses. The record stays the
-    /// fixture for the grammar-walking reader that will reach that
-    /// section; today the head path refuses before it, so `topology`
-    /// reads `None`.
+    /// A companion in the keyed head form, as the application writes it
+    /// (KA07-KA12 "E2B"/"E41", and E-K4 "DCE" once the application
+    /// rebuilt the corridor; the rest of the record is the plain form's,
+    /// bit for bit): `BL 0, B 1,
+    /// RC 1`, the key 0x0300D012 with byte 1, then the plain form's
+    /// `BL 32`. The topology reads; a third value other than 0 or 32
+    /// does not.
     #[test]
-    fn the_extended_containers_feature_line_section_stays_pending_the_walk() {
-        let mut w = W::new();
-        w.head_and_table(&[(8, 21, 1.0), (20, 22, 0.0)]);
-        // the feature-line section: marker, node list (next free 10, 3
-        // nodes, the chain 5 -> 9 -> 3 -> end)
-        w.bl(0x8000_0001u32 as i32);
-        w.bl(10);
-        w.bl(3);
-        w.bl(5);
-        for (x, y, z) in [(1.5, 2.5, 10.0), (4.5, 2.5, 11.0), (4.5, 5.5, 12.0)] {
-            w.bd(x);
-            w.bd(y);
-            w.bd(z);
-            for b in [0, 1, 0] {
+    fn topology_reads_after_the_keyed_head() {
+        let record = |third: i32| {
+            let mut w = W::new();
+            w.code(0);
+            w.raw(&0x04BEu16.to_le_bytes());
+            w.bl(0x8000_06AEu32 as i32);
+            w.bl(0);
+            w.bl(0);
+            w.bl(third);
+            if third == 0 {
+                w.bit(1);
+                w.raw(&[1]);
+                w.bl(0x0300_D012);
+                w.raw(&[1]);
+                w.bl(32);
+            }
+            for b in [0, 1, 1, 1, 0, 1, 0] {
                 w.bit(b);
             }
-            w.bl(match (x, y) {
-                (1.5, 2.5) => 9,
-                (4.5, 2.5) => 3,
-                _ => 0,
-            });
+            // next free key 1, no elevation points, BL 1, BL 0, marker
+            w.bl(1);
+            w.bl(0);
+            w.bl(1);
+            w.bl(0);
+            w.bl(0x8000_0001u32 as i32);
+            // nodes: next free 3, two nodes 1 -> 2
+            w.bl(3);
+            w.bl(2);
+            w.bl(1);
+            for (x, next) in [(0.0, 2), (300.0, 0)] {
+                w.bd(x);
+                w.bd(-10.0);
+                w.bd(0.0);
+                for b in [0, 1, 0] {
+                    w.bit(b);
+                }
+                w.bl(next);
+            }
+            // edges: next free 2, one slot: edge 1 from node 1 to node 2
+            w.bl(2);
+            w.bl(1);
+            w.bl(0);
+            w.bl(1);
+            w.bl(0x30);
+            w.bl(2);
+            w.bl(0);
+            for (kind, flags, node, fa, fb) in [(0, 2, 1, 1, 1), (2, 10, 2, 0, 0)] {
+                w.bl(kind);
+                w.bl(flags);
+                w.bl(node);
+                w.bl(fa);
+                w.bl(fb);
+            }
+            for _ in 0..4 {
+                w.bl(0);
+            }
+            w.take().0
+        };
+        let data = record(0);
+        let t = topology(&data, 0, data.len() * 8).expect("the keyed head reads");
+        assert_eq!(t.edges[0].iter().map(|v| (v.point.x, v.point.y)).collect::<Vec<_>>(), vec![(0.0, -10.0), (300.0, -10.0)]);
+        assert_eq!(t.next_node, 3);
+        let plain = record(32);
+        assert_eq!(topology(&plain, 0, plain.len() * 8), Some(t));
+        let other = record(16);
+        assert!(topology(&other, 0, other.len() * 8).is_none());
+    }
+
+    /// A minimal modeler binary stream: the header (no records) and the
+    /// end record, as the face bodies begin and end.
+    fn body() -> Vec<u8> {
+        let mut b = b"ASM BinaryFile4".to_vec();
+        for v in [22300u32, 0, 0, 0] {
+            b.extend_from_slice(&v.to_le_bytes());
         }
-        // edge list: next free 50, 2 slots
-        w.bl(50);
-        w.bl(2);
-        // slot 1: edge 42, the zero word before the vertices, a key list
-        // with the table's key for vertex 1, then an other-edge key
-        // reference (1, 12) and an empty word
-        w.bl(0);
-        w.bl(42);
-        w.bl(0x1_0830);
-        w.bl(3);
-        w.bl(0);
-        for (kind, flags, node, fa, fb) in [(0i32, 50i32, 5i32, 1i32, 2i32), (0, 0x400_430, 9, 1, 2), (2, 2, 3, 0, 0)] {
+        for text in ["Modeler", "229.2", "Mon Feb  6 04:27:52 2023"] {
+            b.push(7);
+            b.push(text.len() as u8);
+            b.extend_from_slice(text.as_bytes());
+        }
+        for v in [1e-6f64, 1e-10] {
+            b.push(6);
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+        for sub in ["End", "of", "ASM"] {
+            b.push(0x0E);
+            b.push(sub.len() as u8);
+            b.extend_from_slice(sub.as_bytes());
+        }
+        b.extend_from_slice(&[0x0D, 4]);
+        b.extend_from_slice(b"data");
+        b
+    }
+
+    /// A graded site container in the layout of Grading-4 and Grading-5:
+    /// the table, then `BL 4, BL 3` and three elements — a face (id 1,
+    /// flags 801 with its BD 90, its body, its own graph of two nodes and
+    /// one edge, parent 2, next face 3), the group (id 2, kind 2, its face
+    /// 1) and a face (id 3, an empty graph, parent 2, previous face 1) —
+    /// then the site graph, whose second edge carries the second of its
+    /// three closing lists (`(), (1, 3), ()`). `topology` reads the site
+    /// graph; one element too few leaves the walk short of the graph's
+    /// marker.
+    #[test]
+    fn a_graded_site_reads_its_graph_after_the_elements() {
+        let nodes = |w: &mut W, points: &[(f64, f64, f64)]| {
+            w.bl(points.len() as i32 + 1);
+            w.bl(points.len() as i32);
+            w.bl(if points.is_empty() { 0 } else { 1 });
+            for (i, &(x, y, z)) in points.iter().enumerate() {
+                w.bd(x);
+                w.bd(y);
+                w.bd(z);
+                for b in [0, 1, 0] {
+                    w.bit(b);
+                }
+                w.bl(if i + 1 == points.len() { 0 } else { i as i32 + 2 });
+            }
+        };
+        let edge = |w: &mut W, id: i32, ends: (i32, i32), lists: [&[i32]; 3]| {
+            w.bl(0);
+            w.bl(id);
+            w.bl(0x30);
+            w.bl(2);
+            w.bl(0);
+            for (kind, flags, node, fa, fb) in [(0, 0x32, ends.0, 1, 1), (2, 0xA, ends.1, 0, 0)] {
+                w.bl(kind);
+                w.bl(flags);
+                w.bl(node);
+                w.bl(fa);
+                w.bl(fb);
+            }
+            w.bl(0);
+            for list in lists {
+                w.bl(list.len() as i32);
+                for &v in list {
+                    w.bl(v);
+                }
+            }
+        };
+        let fields = |w: &mut W, id: i32, kind: i32, flags: i32, bd: f64, six: [i32; 6], link: i32| {
+            w.bl(id);
             w.bl(kind);
+            w.bl(id);
             w.bl(flags);
-            w.bl(node);
-            w.bl(fa);
-            w.bl(fb);
-        }
-        w.bl(1);
-        w.bl(8);
-        w.bl(1);
-        w.bl(12);
-        w.bl(0);
-        w.bl(0);
-        // slot 2: edge 43, no zero word (the first vertex's kind is its 0)
-        w.bl(0);
-        w.bl(43);
-        w.bl(0x1_0030);
-        w.bl(2);
-        w.bl(0);
-        w.bl(50);
-        w.bl(5);
-        w.bl(1);
-        w.bl(2);
-        w.bl(2);
-        w.bl(2);
-        w.bl(3);
-        w.bl(0);
-        w.bl(0);
-        w.bl(1);
-        w.bl(7);
-        w.bl(0);
-        let (data, _) = w.take();
-        // the table reads: next key 33, both points with their feature-line
-        // vertex indexes
-        let table = elevation_keys(&data, 0, data.len() * 8).expect("the table reads");
-        assert_eq!(table.next_key, 33);
-        assert_eq!(table.points, vec![(8, 1, 21), (20, 0, 22)]);
-        // the section does not read yet: the fixture has no `BL 1, BL 0`
-        // between the table and the section (the extended container keeps
-        // other words there), so the head path refuses, and the strict
-        // first-section edge list refuses the section's inter-edge words
-        assert!(topology(&data, 0, data.len() * 8).is_none());
+            w.bd(bd);
+            for v in six {
+                w.bl(v);
+            }
+            w.bl(link);
+        };
+        let face = |w: &mut W, points: &[(f64, f64, f64)], tail: [i32; 3]| {
+            w.bit(0);
+            w.bit(0);
+            w.code(1);
+            w.raw(&[2]);
+            w.raw(&body());
+            for v in [3, 0, 0, 1, 0, 1, 0] {
+                w.bl(v);
+            }
+            w.bl(0x8000_0001u32 as i32);
+            nodes(w, points);
+            if points.is_empty() {
+                w.bl(1);
+                w.bl(0);
+            } else {
+                w.bl(2);
+                w.bl(1);
+                edge(w, 1, (1, 2), [&[], &[], &[]]);
+            }
+            w.bl(2);
+            w.bl(0);
+            w.bl(0);
+            for v in tail {
+                w.bl(v);
+            }
+            w.bd(103.5);
+            w.bd(422.25);
+        };
+        let record = |count: i32| {
+            let mut w = W::new();
+            w.bytes.resize(16384, 0);
+            w.head_and_table(&[(8, 21, 1.0), (20, 22, 0.0)]);
+            w.bl(4);
+            w.bl(count);
+            fields(&mut w, 1, 1, 801, 90.0, [24, 4, 3, 2, 0, 0], 1);
+            face(&mut w, &[(5398.5, 3347.25, 761.5), (5398.5, 3327.25, 755.0)], [2, 0, 3]);
+            fields(&mut w, 2, 2, 801, 0.0, [1, 2, 0, 2, 0, 0], 1);
+            fields(&mut w, 3, 1, 769, 0.0, [4, 24, 3, 2, 0, 0], 9);
+            face(&mut w, &[], [2, 1, 0]);
+            w.bl(0x8000_0001u32 as i32);
+            nodes(&mut w, &[(5398.5, 3347.25, 761.5), (5398.5, 3327.25, 755.0), (5433.75, 3327.25, 766.75)]);
+            w.bl(3);
+            w.bl(2);
+            edge(&mut w, 1, (1, 2), [&[2], &[], &[]]);
+            edge(&mut w, 2, (2, 3), [&[], &[1, 3], &[]]);
+            w.bl(2);
+            w.bl(0);
+            w.take().0
+        };
+        let data = record(3);
+        let t = topology(&data, 0, data.len() * 8).expect("the site graph reads");
+        assert_eq!(t.edge_ids, vec![1, 2]);
+        assert_eq!(t.next_key, 33);
+        assert_eq!(t.edges[1].iter().map(|v| (v.point.x, v.point.y, v.z)).collect::<Vec<_>>(), vec![(5398.5, 3327.25, 755.0), (5433.75, 3327.25, 766.75)]);
+        // Counting two elements, the walk stops at the third element's id
+        // instead of the graph's marker.
+        let short = record(2);
+        assert!(topology(&short, 0, short.len() * 8).is_none());
     }
     // Generated from the 2026-11-25/26 walk-map evidence pack
     // (walkmap/k2_entry_tables.json + walkmap/full_records.jsonl): the
@@ -697,10 +937,11 @@ mod tests {
         // Grading-8.dwg 3533: next_key 28, count 6, table 671 bits, forms 22+24+25+24+21+22
         ("G8", "2f8111ea481d238832108b0000000000000628100aa42290a4600000000000002c40805521552328da300000000000001120402a91ba4311500000000000000102005486505268845ebff6f08090745a805520f4", 28, 671, &[(8, 17, 22), (10, 14, 24), (0, 0, 25), (27, 9, 24), (12, 2, 21), (7, 0, 22)]),
     ];
-    // Grading-7.dwg 3533: the counted table plus the trailing
-    // 216-bit ShapeManager stream header (magic-anchored kernel data,
-    // opaque); its header begins (BL 17, BL 11, ..) — reading past count
-    // would misread it as a table entry (the archived "form 11").
+    // Grading-7.dwg 3533: the counted table plus the 216 bits that follow
+    // it: the element list's `BL 17, BL 11` (next free id, count) and the
+    // first two elements up to the first face's body (`B 0, B 0, BS 2`) —
+    // reading past count would misread them as a table entry (the
+    // archived "form 11").
     const G7_TABLE_PLUS_ASM_HEADER: &str = "2f8111ea481d23482a108b0000000000000628100aa422a46519460000000000000224080552334852300000000000001620402a90aa41d16a015483d22285a10812100000800055482484a2080a20000180005554808810";
 
     /// The seven tutorial site containers' recorded tables, bit for bit
@@ -731,11 +972,11 @@ mod tests {
         assert_eq!((census[21], census[22], census[24], census[25]), (23, 16, 8, 4));
     }
 
-    /// Grading-7's counted table followed by the trailing 216-bit
-    /// ShapeManager stream header, bit for bit as recorded: the walk
-    /// stops at the head's count and never reads the header — its opening
-    /// words (BL 17, BL 11, ..) would otherwise misread as a table entry
-    /// (the archived "form 11", which does not exist).
+    /// Grading-7's counted table followed by the 216 bits after it (the
+    /// element list's head and first elements), bit for bit as recorded:
+    /// the walk stops at the head's count — the opening words (BL 17,
+    /// BL 11, ..) would otherwise misread as a table entry (the archived
+    /// "form 11", which does not exist).
     #[test]
     fn the_walk_stops_at_count_before_the_solid_stream() {
         let bytes = hex_bytes(G7_TABLE_PLUS_ASM_HEADER);
