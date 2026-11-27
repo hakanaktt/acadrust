@@ -164,6 +164,12 @@ const CLASSES: &[Class] = &[
     Class { dxf: "AECC_CHANNEL", cpp: "AeccDbChannel", module: "AeccDrainageChannel130|Product Desc: Autodesk Civil 3D |Company: Autodesk,Inc. |WEB Address: www.autodesk.com", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_GRADING_GROUP", cpp: "AeccDbGradingGroup", module: "AeccLand130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_GRADING", cpp: "AeccDbGrading", module: "AeccLand130|Product Desc: Autodesk Civil 3D |Company: Autodesk,Inc. |WEB Address: www.autodesk.com", proxy_flags: 0x37d, entity: true },
+    // The stormwater model context's classes, recorded from the application's
+    // own class table (see the context readers in `stormwater.rs`).
+    Class { dxf: "AECC_COMPONENT", cpp: "AeccDbComponent", module: "AECCDRAINAGEDESIGNBASE130|Product Desc: Autodesk Civil 3D |Company: Autodesk,Inc. |WEB Address: www.autodesk.com", proxy_flags: 0x400, entity: false },
+    Class { dxf: "AECC_ENTITY_COMPONENT_VERSIONS", cpp: "AeccDbEntityComponentVersions", module: "AECCDRAINAGEDESIGNBASE130|Product Desc: Autodesk Civil 3D |Company: Autodesk,Inc. |WEB Address: www.autodesk.com", proxy_flags: 0x400, entity: false },
+    Class { dxf: "AECC_SCHEMA_BASED_OBJECT", cpp: "AeccDbSchemaBasedObject", module: "AECCDRAINAGEDESIGNBASE130|Product Desc: Autodesk Civil 3D |Company: Autodesk,Inc. |WEB Address: www.autodesk.com", proxy_flags: 0x400, entity: false },
+    Class { dxf: "AECC_DRAINAGE_CONNECTOR", cpp: "AeccDbDrainageConnector", module: "AeccvBase130|Product Desc: Autodesk Civil 3D |Company: Autodesk,Inc. |WEB Address: www.autodesk.com", proxy_flags: 0x400, entity: false },
 ];
 
 /// The class entry's DWG schema version: the stormwater control classes
@@ -171,7 +177,20 @@ const CLASSES: &[Class] = &[
 /// reference application's class table; every other written class keeps
 /// the established 25 the application accepts.
 fn class_dwg_version(dxf: &str) -> i32 {
-    if matches!(dxf, "AECC_POND" | "AECC_UNDERGROUNDSTORAGE" | "AECC_CHANNEL") { 26 } else { 25 }
+    if matches!(
+        dxf,
+        "AECC_POND"
+            | "AECC_UNDERGROUNDSTORAGE"
+            | "AECC_CHANNEL"
+            | "AECC_COMPONENT"
+            | "AECC_ENTITY_COMPONENT_VERSIONS"
+            | "AECC_SCHEMA_BASED_OBJECT"
+            | "AECC_DRAINAGE_CONNECTOR"
+    ) {
+        26
+    } else {
+        25
+    }
 }
 
 pub(super) fn invalid(message: &str) -> DxfError {
