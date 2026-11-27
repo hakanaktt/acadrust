@@ -1754,7 +1754,6 @@ pub struct GeoDataData {
     pub civil_unknown_flag1: bool,
     pub civil_zero_point1: Vector2,
     pub civil_zero_point2: Vector2,
-    pub civil_unknown_flag2: bool,
     pub civil_north_angle_degrees: f64,
     pub civil_north_angle_radians: f64,
     pub civil_trailing_words: Vec<u64>,
@@ -1851,7 +1850,6 @@ pub fn read_geodata(reader: &mut DwgMergedReader) -> GeoDataData {
         d.civil_unknown_flag1 = reader.read_bit();
         d.civil_zero_point1 = reader.read_2raw_double();
         d.civil_zero_point2 = reader.read_2raw_double();
-        d.civil_unknown_flag2 = reader.read_bit();
         d.civil_north_angle_degrees = reader.read_bit_double();
         d.civil_north_angle_radians = reader.read_bit_double();
         d.scale_estimation_method = reader.read_bit_long();

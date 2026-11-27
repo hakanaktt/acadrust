@@ -869,7 +869,6 @@ pub struct GeoData {
     pub civil_unknown_flag1: bool,
     pub civil_zero_point1: Vector2,
     pub civil_zero_point2: Vector2,
-    pub civil_unknown_flag2: bool,
     pub civil_north_angle_degrees: f64,
     pub civil_north_angle_radians: f64,
     /// DWG class-version-1 payload after the projection radius, kept as
@@ -921,7 +920,6 @@ impl GeoData {
             civil_unknown_flag1: false,
             civil_zero_point1: Vector2::default(),
             civil_zero_point2: Vector2::default(),
-            civil_unknown_flag2: false,
             civil_north_angle_degrees: 0.0,
             civil_north_angle_radians: 0.0,
             civil_trailing_words: Vec::new(),

@@ -7036,7 +7036,6 @@ impl DwgDocumentBuilder {
                     obj.civil_unknown_flag1 = data.civil_unknown_flag1;
                     obj.civil_zero_point1 = data.civil_zero_point1;
                     obj.civil_zero_point2 = data.civil_zero_point2;
-                    obj.civil_unknown_flag2 = data.civil_unknown_flag2;
                     obj.civil_north_angle_degrees = data.civil_north_angle_degrees;
                     obj.civil_north_angle_radians = data.civil_north_angle_radians;
                     obj.civil_trailing_words = data.civil_trailing_words;

@@ -3018,7 +3018,6 @@ impl<'a> DwgObjectWriter<'a> {
             self.writer.write_bit(geo.civil_unknown_flag1);
             self.writer.write_2raw_double(geo.civil_zero_point1);
             self.writer.write_2raw_double(geo.civil_zero_point2);
-            self.writer.write_bit(geo.civil_unknown_flag2);
             self.writer.write_bit_double(geo.civil_north_angle_degrees);
             self.writer.write_bit_double(geo.civil_north_angle_radians);
             self.writer.write_bit_long(geo.scale_estimation_method);
