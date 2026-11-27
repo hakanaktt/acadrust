@@ -4272,8 +4272,8 @@ impl<'a> DwgObjectWriter<'a> {
     fn write_ole2frame(&mut self, e: &Ole2Frame) {
         self.entity_preamble(common::OBJ_OLE2FRAME, &e.common);
 
-        // OLE object type (DXF group 71)
-        self.writer.write_bit_short(e.ole_object_type as i16);
+        // OLE version (DXF group 70); the item type is in the frame header.
+        self.writer.write_bit_short(e.version);
 
         // R2000+: Mode BS (tile mode descriptor)
         if self.version.r2000_plus() {

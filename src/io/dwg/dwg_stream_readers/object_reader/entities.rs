@@ -4355,6 +4355,7 @@ pub fn read_wipeout(reader: &mut DwgMergedReader, version: DwgVersion) -> Raster
 }
 
 pub fn read_ole2frame(reader: &mut DwgMergedReader, version: DwgVersion) -> Ole2FrameData {
+    // The OLE version (DXF 70), 2 in every saved frame.
     let object_type = reader.read_bit_short();
     let mode = if version.r2000_plus() {
         reader.read_bit_short()
@@ -4368,6 +4369,7 @@ pub fn read_ole2frame(reader: &mut DwgMergedReader, version: DwgVersion) -> Ole2
     let declared = reader.read_bit_long();
     let data_len = reader.checked_main_count(i64::from(declared), 8) as usize;
     let data = reader.read_bytes(data_len);
+    // The plot quality (DXF 73), kept in `lock_aspect`.
     let lock_aspect = if version.r2000_plus() {
         reader.read_byte()
     } else {

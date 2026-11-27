@@ -21,7 +21,10 @@ pub enum OleFrameEnvelope {
         marker: u16,
         upper_right: Vector3,
         lower_left: Vector3,
-        /// The 26 bytes between the corners and the compound-file size.
+        /// The 26 bytes between the corners and the compound-file size. The
+        /// u32 at their offset 16 (header offset 114) is the item type: 1 for
+        /// an embedded and 0 for a static object (equal to what the
+        /// application reports for all 24 frames checked).
         extension_records: Vec<crate::compound_file::BinaryRecord>,
     },
     /// Data of any other layout, kept as read.
@@ -32,6 +35,10 @@ pub enum OleFrameEnvelope {
 
 /// Length of the OLE2FRAME frame header (see [`OleFrameEnvelope`]).
 const FRAME_HEADER_LEN: usize = 128;
+
+/// Offset of the item type field (u32) within the undecoded header bytes,
+/// which start at header offset 98: header offset 114.
+const ITEM_TYPE_OFFSET: usize = 16;
 
 /// The header kind, the four corners, the undecoded header bytes and the
 /// compound file of OLE2FRAME data, when it has the saved layout
@@ -93,7 +100,8 @@ pub struct Ole2Frame {
     pub upper_left_corner: Vector3,
     /// Lower-right corner of the OLE frame
     pub lower_right_corner: Vector3,
-    /// Object type (link, embedded, static)
+    /// Object type (link, embedded, static). In DWG data with the saved frame
+    /// header it is the header's item type field (see [`OleFrameEnvelope`]).
     pub ole_object_type: OleObjectType,
     /// Whether the object is in paper space
     pub is_paper_space: bool,
@@ -103,7 +111,9 @@ pub struct Ole2Frame {
     pub envelope: OleFrameEnvelope,
     /// DWG tile mode descriptor (0=model, 1=paper, 2=model in layout)
     pub dwg_mode: i16,
-    /// Preserve the OLE object's aspect ratio while resizing.
+    /// The frame's plot quality (DXF 73): the byte after the data in a DWG
+    /// record (0 monochrome, 1 low graphics, 2 high graphics, as the
+    /// application reports it). The name is kept for compatibility.
     pub lock_aspect: u8,
     /// Compound-file bytes exactly as read, written back while `storage` is unchanged.
     #[cfg_attr(feature = "serde", serde(skip))]
@@ -176,6 +186,9 @@ impl Ole2Frame {
         let (storage, envelope, upper_left, lower_right) = Self::decode_payload(data);
         self.storage = storage;
         self.envelope = envelope;
+        if let Some(kind) = self.header_item_type() {
+            self.ole_object_type = kind;
+        }
         self.source_storage = OleSourceStorage::default();
         // The envelope's length does not depend on its field values.
         if let Some(raw) = data.get(self.encoded_envelope(0).len()..) {
@@ -216,6 +229,25 @@ impl Ole2Frame {
             corners[0],
             corners[2],
         )
+    }
+
+    /// The item type field of the frame header (offset 114, a u32: 1 for an
+    /// embedded and 0 for a static object). Other values are not known and
+    /// give `None`.
+    fn header_item_type(&self) -> Option<OleObjectType> {
+        let OleFrameEnvelope::Geometry {
+            extension_records, ..
+        } = &self.envelope
+        else {
+            return None;
+        };
+        let extension = crate::compound_file::BinaryRecord::join(extension_records);
+        let field = extension.get(ITEM_TYPE_OFFSET..ITEM_TYPE_OFFSET + 4)?;
+        match u32::from_le_bytes(field.try_into().ok()?) {
+            1 => Some(OleObjectType::Embedded),
+            0 => Some(OleObjectType::Static),
+            _ => None,
+        }
     }
 
     pub fn encoded_payload(&self) -> Vec<u8> {
@@ -261,9 +293,21 @@ impl Ole2Frame {
                     bytes.extend_from_slice(&point.y.to_le_bytes());
                     bytes.extend_from_slice(&point.z.to_le_bytes());
                 }
-                bytes.extend_from_slice(&crate::compound_file::BinaryRecord::join(
-                    extension_records,
-                ));
+                let mut extension = crate::compound_file::BinaryRecord::join(extension_records);
+                // The item type is written from `ole_object_type` when the header
+                // field holds a known value; a link keeps the field as read.
+                let item_type = match self.ole_object_type {
+                    OleObjectType::Embedded => Some(1u32),
+                    OleObjectType::Static => Some(0u32),
+                    OleObjectType::Link => None,
+                };
+                if let (Some(value), Some(field)) = (
+                    item_type.filter(|_| self.header_item_type().is_some()),
+                    extension.get_mut(ITEM_TYPE_OFFSET..ITEM_TYPE_OFFSET + 4),
+                ) {
+                    field.copy_from_slice(&value.to_le_bytes());
+                }
+                bytes.extend_from_slice(&extension);
                 bytes.extend_from_slice(&(storage_len as u32).to_le_bytes());
                 bytes
             }
@@ -378,5 +422,34 @@ mod tests {
             assert_eq!(frame.encoded_payload(), data);
             assert_eq!(crate::entities::extract_presentation(&data), None);
         }
+    }
+    /// The u32 at header offset 114 is the item type: 1 for an embedded and
+    /// 0 for a static object. It is read into `ole_object_type`, written back
+    /// from it, and an unknown value leaves both as they are.
+    #[test]
+    fn header_item_type_is_read_and_written() {
+        let compound = compound();
+        for (value, kind) in [(1u32, OleObjectType::Embedded), (0, OleObjectType::Static)] {
+            let mut data = saved(0x5581, [Vector3::ZERO; 4], &compound);
+            data[114..118].copy_from_slice(&value.to_le_bytes());
+            let mut frame = Ole2Frame::new();
+            (frame.upper_left_corner, frame.lower_right_corner) = frame.set_payload(&data);
+            assert_eq!(frame.ole_object_type, kind);
+            assert_eq!(frame.encoded_payload(), data);
+            frame.ole_object_type = match kind {
+                OleObjectType::Embedded => OleObjectType::Static,
+                _ => OleObjectType::Embedded,
+            };
+            let mut changed = data.clone();
+            changed[114..118].copy_from_slice(&(1 - value).to_le_bytes());
+            assert_eq!(frame.encoded_payload(), changed);
+        }
+        let mut data = saved(0x5580, [Vector3::ZERO; 4], &compound);
+        data[114..118].copy_from_slice(&7u32.to_le_bytes());
+        let mut frame = Ole2Frame::new();
+        frame.ole_object_type = OleObjectType::Static;
+        (frame.upper_left_corner, frame.lower_right_corner) = frame.set_payload(&data);
+        assert_eq!(frame.ole_object_type, OleObjectType::Static);
+        assert_eq!(frame.encoded_payload(), data);
     }
 }

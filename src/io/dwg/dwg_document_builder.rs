@@ -5643,7 +5643,9 @@ impl DwgDocumentBuilder {
                     let data = entities::read_ole2frame(&mut reader, self.obj_reader.version());
                     let mut e = Ole2Frame::new();
                     e.common = entity_common;
-                    e.ole_object_type = OleObjectType::from_i16(data.object_type);
+                    // The record's leading BS is the OLE version (DXF 70); the
+                    // item type comes from the frame header (set_payload).
+                    e.version = data.object_type;
                     (e.upper_left_corner, e.lower_right_corner) = e.set_payload(&data.data);
                     e.dwg_mode = data.mode;
                     e.is_paper_space = data.mode == 1;
