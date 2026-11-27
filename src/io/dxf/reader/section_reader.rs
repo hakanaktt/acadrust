@@ -975,7 +975,7 @@ fn dynamic_block_cpp_name(name: &str) -> &'static str {
         "BLOCKLOOKUPGRIP" => "AcDbBlockLookupGrip",
         "BLOCKROTATIONGRIP" => "AcDbBlockRotationGrip",
         "BLOCKMOVEACTION" => "AcDbBlockMoveAction",
-        "BLOCKROTATEACTION" => "AcDbBlockRotationAction",
+        "BLOCKROTATEACTION" => "AcDbBlockRotateAction",
         "BLOCKSCALEACTION" => "AcDbBlockScaleAction",
         "BLOCKVISIBILITYGRIP" => "AcDbBlockVisibilityGrip",
         "BLOCKVISIBILITYPARAMETER" => "AcDbBlockVisibilityParameter",
