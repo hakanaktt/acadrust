@@ -329,6 +329,18 @@ fn graph_end(data: &[u8], pos: usize, end: usize) -> Option<usize> {
 /// alignment companion keep none (`BL 1, BL 0`). A graded site keeps
 /// groups and faces (Grading-4: 3 elements; Grading-7: 11, the
 /// application's ids 6 to 16), in no particular order.
+///
+/// A parcel-site container keeps interaction records (kind 0) instead —
+/// the application's record of how the site's lot lines meet, whose
+/// frames are unmapped (Labels-Parcels `Site`: 25, Parcel-2C
+/// `Subdivision A`: 18, Parcel-1C: 4, Parcel-1D: 16, Parcel-2A/2B: 18
+/// each; no modeler stream in any of them). They refuse here, and the
+/// site graph they replace does not exist in the record: the
+/// `BL 0x80000001` gate word never occurs in those six containers, so
+/// the topology reads `None` with the table decoded (see
+/// `elevation_keys`). The parcel-site containers that DO carry the
+/// standard graph (Parcel-1B: 13 edges, Parcel-1E: 82, Parcel-3A: 80)
+/// keep no elements and read through.
 fn elements(data: &[u8], pos: usize, end: usize) -> Option<usize> {
     let mut bits = Bits::new(data, pos, end);
     bits.bit_long()?;
@@ -343,7 +355,8 @@ fn elements(data: &[u8], pos: usize, end: usize) -> Option<usize> {
 /// One element:
 ///
 /// ```text
-/// BL id, BL kind (1 a face, 2 a group), BL id, BL flags, BD, 6 x BL,
+/// BL id, BL kind (1 a face, 2 a group, 0 a parcel-site interaction
+///   record — its frame unmapped, it refuses), BL id, BL flags, BD, 6 x BL,
 /// BL (a group: the id of one of its faces),
 /// a face: B 0, B 0, BS 2, the face's body (a modeler binary stream,
 ///   read to its end record), BL 3, BL 0, BL 0, BL 1, BL 0, the face's
@@ -416,17 +429,21 @@ struct ElevationKeys {
 /// The elevation-point table of a site container or alignment companion
 /// body: the next free key, each point's key and vertex index, and the
 /// position after the table. A point the container records in the form
-/// `k2` 21 keeps its elevation in the table; one in the forms `k2` 22 or
-/// 24 stores none here — the key and its point's index only, the
+/// `k2` 21 keeps its elevation in the table; one in the forms `k2` 22,
+/// 24 or 15 stores none here — the key and its point's index only, the
 /// elevation living elsewhere in the record (in the nodes of the section
 /// that follows the table on a container the application extended; the
-/// two forms' frames are layout-identical, the form word the only
-/// difference — 8/8 verified across the tutorial grading containers).
-/// A grading container also carries one form-25 marker: a field-less
-/// entry `BL key, BL 25` (12 bits, key 0) with no point. The walk stops
-/// exactly at the head's count — what follows is not table grammar (the
-/// elements, see [`elements`]). `None` when the head or the table does not
-/// follow the layout.
+/// forms' frames are layout-identical, the form word the only
+/// difference — 8/8 verified across the tutorial grading containers, and
+/// form 15 on the parcel-site containers: Labels-Parcels `Site` 0x4676
+/// (13 entries), Parcel-2C `Subdivision A` 0xC38 (9), and the
+/// Parcel-1C/1D/2A/2B sites (2/8/9/9), the parcel-site form word the
+/// only difference from 22/24 — 41/41 entries). A grading container also
+/// carries one form-25 marker: a field-less entry `BL key, BL 25` (12
+/// bits, key 0) with no point. The walk stops exactly at the head's
+/// count — what follows is not table grammar (the elements, see
+/// [`elements`]). `None` when the head or the table does not follow the
+/// layout.
 ///
 /// ```text
 /// BS 0x04BE, BL key (0 for a site container, 0x80000000 | n for a
@@ -435,7 +452,7 @@ struct ElevationKeys {
 /// BL next free key, BL k, k x { BL key,
 ///   21: BD the point's index in its feature line, 17 bits, BL key,
 ///       BL 0, BL 0, BD elevation, B 0, BL 0,
-///   22 or 24: the same frame without the elevation,
+///   22, 24 or 15: the same frame without the elevation,
 ///   25: nothing }
 /// ```
 ///
@@ -491,7 +508,7 @@ fn elevation_keys(data: &[u8], start: usize, end: usize) -> Option<ElevationKeys
             bits.bit_double()?;
             bits.bit()?;
             bits.bit_long()?;
-        } else if form != 22 && form != 24 {
+        } else if form != 22 && form != 24 && form != 15 {
             return None;
         }
         table.points.push((key, index as i32, form));
@@ -936,6 +953,12 @@ mod tests {
         ("G7", "2f8111ea481d23482a108b0000000000000628100aa422a46519460000000000000224080552334852300000000000001620402a90aa41d16a015483d0", 26, 485, &[(8, 17, 22), (0, 0, 25), (25, 9, 24), (10, 14, 24), (7, 0, 22)]),
         // Grading-8.dwg 3533: next_key 28, count 6, table 671 bits, forms 22+24+25+24+21+22
         ("G8", "2f8111ea481d238832108b0000000000000628100aa42290a4600000000000002c40805521552328da300000000000001120402a91ba4311500000000000000102005486505268845ebff6f08090745a805520f4", 28, 671, &[(8, 17, 22), (10, 14, 24), (0, 0, 25), (27, 9, 24), (12, 2, 21), (7, 0, 22)]),
+        // Labels-Parcels.dwg `Site` 0x4676: next_key 52, count 13, table
+        // 1582 bits, forms 15 x13 — the parcel-site point form (the same
+        // frame as 22/24, no elevation), 2026-11-28 round
+        ("LP4676", "2f812a481d26886a508780000000000004481002a4a293043c00000000000037408015261494a1e0000000000001320400a929a4c50f0000000000000e102005498d2548780000000000005081002a4aa93243c0000000000003a408015265495a1e0000000000001520400a92ba4b10f0000000000000c502005496524a8780000000000002081002a49692d43c0000000000003240801525b49321e0000000000000c20400a926a49d0f00000000000007102005493d25e8780000000000006c81002a4be91e", 52, 1582, &[(40, 9, 15), (48, 23, 15), (41, 11, 15), (49, 24, 15), (42, 12, 15), (50, 26, 15), (43, 13, 15), (44, 17, 15), (37, 4, 15), (45, 18, 15), (38, 6, 15), (39, 7, 15), (47, 22, 15)]),
+        // Parcel-2C.dwg `Subdivision A` 0xC38: next_key 11, count 9, table 866 bits, forms 15 x9
+        ("P2C38", "2f8111ea481d21684a1087b002a42290143c00000000000010408015203484a1e0000000000000820400a909a4090f00000000000000102005481521487d002a42a90343d801520748221e0000000000000020400a904a4150f6005482d20e8780000000000000081002a41e91", 11, 866, &[(8, 1, 15), (1, 4, 15), (9, 4, 15), (2, 2, 15), (10, 0, 15), (3, 1, 15), (4, 2, 15), (5, 1, 15), (7, 2, 15)]),
     ];
     // Grading-7.dwg 3533: the counted table plus the 216 bits that follow
     // it: the element list's `BL 17, BL 11` (next free id, count) and the
@@ -969,7 +992,9 @@ mod tests {
             census[25] += table.markers;
         }
         // the corpus form census: 23 x 21 + 16 x 22 + 8 x 24 + 4 x 25
-        assert_eq!((census[21], census[22], census[24], census[25]), (23, 16, 8, 4));
+        // + the parcel-site form 15 (13 on Labels-Parcels `Site`,
+        // 9 on Parcel-2C `Subdivision A`)
+        assert_eq!((census[21], census[22], census[24], census[25], census[15]), (23, 16, 8, 4, 22));
     }
 
     /// Grading-7's counted table followed by the 216 bits after it (the
@@ -985,6 +1010,53 @@ mod tests {
         assert_eq!(table.after, 485);
         assert_eq!(table.points, vec![(8, 17, 22), (25, 9, 24), (10, 14, 24), (7, 0, 22)]);
         assert_eq!(table.markers, 1);
+    }
+
+
+    /// Parcel-2C.dwg `Subdivision A`'s site container (0xC38), the whole
+    /// record bit for bit: the interaction-area form. Its table carries
+    /// the parcel-site form 15 (see [`elevation_keys`]); after it the
+    /// container lists interaction records (kind 0, frames unmapped) and
+    /// no site graph follows — the `BL 0x80000001` gate word never occurs
+    /// in the record, so the topology reads `None` with the table decoded
+    /// (2026-11-28 parcel-site round; the coordinates the records carry
+    /// agree bit-exactly with the lot lines' own).
+    const PARCEL_2C_SITE: &str = "6500830e2a2f8111ea481d21684a1087b002a42290143c00000000000010408015203484a1e0000000000000820400a909a4090f00000000000000102005481521487d002a42a90343d801520748221e0000000000000020400a904a4150f6005482d20e8780000000000000081002a41e915449089080540c0002a4791444244014030000a922459019010100c00009c077b0020ecebbf40646902426424040300000d4c3ec32842f88fd0591f459119110100c0000006ba0d0c9f0e3bf4264951440a408140300002701dec0083b3aefe91a4510a90a0500c0000000000000040fe3ca47d0244a44814030000183e869b0c387aefe925409039030100c00003326a651222234be40a46d0244e44c050300001d78de40083b3aefd0a92e41d049040500c00003326a651222234bea46d15452450150300001d78de40083b3aefe92e459059050140c000240e475014364340403000090792140d069060540c0002a4751443a43814030000000000001c01252f6921459079070140c00024124790143e43c0403000090892240c010000804cd1c4200060214cd9009340003a01c4b9e46490248c000c04299b201268000287808f380c8a049280008338739b765d000050f011e70191409260004c0d4995e2cb20001e023f68c072881240400100d4cd9509340003a01c4b9ea64d02484800201a99b201268000287808f3c4caa04921003008f3e9bae55000050f011e7899540925200182ada60efcb20001913bb98327248124c400c023cfa6eb954000143c0479c06450248100141f2d2bf5d2a800074038973d4c9a0492200040353365325d0000e80712e745934092640010670e736ecba0000a1e023cf132a81240c00c023cfa6eb9540001638f2153164902491800c04299b2f1308000287808f3a2c9a04904003008f3e9bae550000782c5b79c6934092480020301185f6c9a0001d00e25cf53268124b000e8facdb5f79440003a01c4b9f864902482800c04299b2a126800074038973f0c920491d00180853365e261000050f011e7899540924a0020301185f6c9a0000a1e023cf132a8124b400e8facdb5f7944000143c0479c06450248300141f2d2bf5d2a800074038973f0c920491e00180853365e261000050f011e7019140924c00040c675afbca20001d00e25cf53268124b800585d230bed9340003a01c4b9f864902483800201a99b20126800074038973fcc9a0492700020633ad7de51000050f011e7899540925e002c2e9185f6c9a0000a1e023ce032281293147a4203008000040a93241daa4050240908aaa9280c0200002aaa404300800004129b2405a76aa0c0100001246a5aa830040000499ad6a90240902a40903412a9090c020000102a6c90969d014090241eaaa4443008000040a932421ac4050240918aaa9210c020000102a6c92c6bdab409024b6a9024350ea4a430080000aaa9020c0200001059012c8003c05036a9ae08518c97fd96f58fe40430040f014a5aa6c042ea8ee20a0ad23f9010c0103c05226a9a81eef5fdf5e23f50fe40430040f014c1aa698f680e2442accd33f90240904a40902406a91a0c020000102a4c9046b5a640902486a90240502a4883008000040a9b24b9ab6b1024092faa4090f44292a0c0200002aaa40c300800004129b2415aa6b20c01000012e6a9ab8300400004b1aa6bd0240906a4090841ea91b0c020000102a4c9226a1b04090248ea90240d04a4ac30080000aaa9040c0200001029010c8003c050769daa0cbbff265e60b68fe40902406aaa4503008000041a9324250169e0c010000125405a983004000049d016b60c010000121405a68300400004c9016a1024091da40509aa47030080000aaa9240c0200002aaa4b030080000aaa9050c0200001029010c8003c05056b1aa0cbbff265e60b68fe40902422aaa4543008000040e932475016a20c010000123405b04090247aaaa4743008000040a932491a76a50240925aa4090541a9250c020000102a449326a1a6409024c2a90244512a4183008000040a40432000f01409ad6a82ae1d1e6b55fcc3f90240904aaa9160c020000106a4c91e405b08300400004a1016ba0c010000131405af8300400004b5016ae0401000012f405ac40902462901416a91e0c020000102a489266a5ad4090249ea90241d08a4b83008000040a93240dae6bd0240931aa409134529070c020000102901048003c05036bdaa0b787479ad57f30fe4090241a90142aa91f0c020000102a449286b9b0409024a6a9024250aa49c30080000aaa6c50c6c1b0419014a1016a1a8419014c2405014190141d016a5a94190149d026a9aa4190140e6adab419014b5026b1ac419014bd026b5ad41901499016b9ae419014c501699a6419014c90269da741901495026bdaf419014190196f5c901591015910159101591015910b5a1695a96b5916c5956d5996e59eaa8080300a0a0a0a0a0a0a0a0a08418708418708418708418708418708418708418708418708418708418708418708418708418708418708418708418708418708418708418708418708418708418708418708418708418708418708418708418708418708418708418708418708418708418708418708418708423b280842ce4808423a4808423b6808423c680842c9080842ce6808423a680842c7480842c9480842ce8808423a880842c7880842cea808423aa808423cc80842c7e80842c9c80842cec808423ac808423d680842c8080842c9e808423ae808423d880842c8480842cf0808423b080842c8880842ce280842c8a80842ca08084186e808423ce808423b480842c7680842c9680842c8680842c9280842c7a80842c8280842cf281";
+
+    /// Parcel-1B.dwg's site container (0xC38), the whole record bit for
+    /// bit: the graph form. No elements; the standard graph follows the
+    /// gate and reads — the parcel site the application wrote as a graph.
+    const PARCEL_1B_SITE: &str = "6500830e2a2f8111ea481d20320300200010090a1884000c04299b20126800074038973c8c920491800180853364024d000050f011e70191409202000806a66ca849a0001d00e25cf532681242400100d4cd900934000143c0479e26550248100141f2d2bf5d2a800074038973d4c9a04903003008f3e9bae55000058e3c854c592409208006011e7d375caa0000f058b6f38d268124140060214cd9509340003a01c4b9f86490248e800c04299b2f1308000287808f3c4caa0490600283e5a57eba550000e80712e7e19240923c003010a66cbc4c20000a1e023ce032281241c00100d4cd9009340003a01c4b9fe64d02523286c8406010000081526483a6680a0481211555202180400002054d92029a266812048155548486010000081536484a6880a048120f555222180400002054992109a202812048c55548106010000081480964001e0281a669a0586e7c1815f40a8120481209555206180400002054d920a99a68812048355548206010000081480864001e0283a6899865dff932f305b47f204812035552281804000020549921280a68812048ed5548286010000081480864001e0282a6899865dff932f305b47f2048121155522a1804000020549923a80a68812048f55548306010000081480864001e028126899855c3a3cd6abf987f2048120955522c1804000020549923c80a68812048c55548386010000081480824001e0281a689985bc3a3cd6abf987f2048120d5549aa0680a028320283a0299a668320281c9a2688320283203202b6a02b2202b2202b2202b2202b2204b22cb5540401804211d9404211d2404211db404211e3404211d3404211d4404211d5404211e6404211d6404211eb404211d7404211ec404211d840420c37404211da404211e740";
+
+    /// The interaction-area parcel-site container: the table decodes
+    /// (Parcel-2C's recorded form-15 entries), the interaction records
+    /// refuse, and the topology is `None` — the named partial.
+    #[test]
+    fn a_parcel_site_interaction_container_reads_its_table_and_refuses_by_name() {
+        let data = hex_bytes(PARCEL_2C_SITE);
+        let table = elevation_keys(&data, 40, data.len() * 8).expect("the form-15 table reads");
+        assert_eq!(table.next_key, 11);
+        assert_eq!(table.points, vec![(8, 1, 15), (1, 4, 15), (9, 4, 15), (2, 2, 15), (10, 0, 15), (3, 1, 15), (4, 2, 15), (5, 1, 15), (7, 2, 15)]);
+        let end = data.len() * 8;
+        // the interaction records (kind-0 elements) do not follow the
+        // element grammar, and no graph follows them
+        assert!(elements(&data, table.after, end).is_none());
+        assert!(topology(&data, 40, end).is_none());
+    }
+
+    /// The graph-form parcel-site container reads: Parcel-1B's 13 lot
+    /// lines with the recorded slot order, nodes and faces.
+    #[test]
+    fn a_parcel_site_graph_container_reads() {
+        let data = hex_bytes(PARCEL_1B_SITE);
+        let t = topology(&data, 40, data.len() * 8).expect("the parcel site's graph reads");
+        assert_eq!(t.edges.len(), 13);
+        assert_eq!(t.edge_ids, vec![8, 1, 9, 17, 2, 3, 4, 20, 5, 21, 6, 22, 7]);
+        assert_eq!(t.next_node, 33);
+        assert_eq!(t.next_key, 1);
+        assert_eq!(t.face_ids, vec![1, 51, 52]);
+        assert_eq!(t.outside_face_flags, 0x6);
+        assert_eq!(t.outside_entries, vec![(7, 1)]);
     }
 
     /// Decodes the evidence pack's hex fixture strings.
