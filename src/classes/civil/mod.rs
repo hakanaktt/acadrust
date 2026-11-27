@@ -1557,21 +1557,22 @@ impl ArchObject {
     }
 
     /// The feature-line topology of a site container
-    /// (`AECC_FEATURE_STYLE`): the topology the application keeps for the
-    /// container's feature lines once it extended the container (a site
-    /// that gained members after it was first written) — one edge per
-    /// feature line, not split where lines cross, unlike [`Self::topology`]
-    /// on such a container, whose first section the parcels' faces hang
-    /// off.
+    /// (`AECC_FEATURE_STYLE`): one edge per feature line, not split where
+    /// lines cross. This reads through [`Self::topology`]: on a site that
+    /// gained gradings after it was first written, the record keeps its
+    /// grading data between the elevation-point table and the site graph
+    /// as elements whose faces' bodies are modeler binary streams, and
+    /// `topology` reads each body to its end record, steps over the
+    /// elements' own graphs, and lands on the site graph that follows —
+    /// the feature lines'. On the six graded tutorial containers
+    /// (Grading-3A to Grading-8) the walk ends exactly there (Grading-3A:
+    /// 14 edges, ids in the recorded slot order), so the two read the
+    /// same graph.
     ///
-    /// Not wired yet: the bytes between the container's first section and
-    /// the feature-line section carry the site's grading data, and no
-    /// grammar for them is mapped (on the whole tutorial corpus the parcel
-    /// grammars account for none of that span — 2026-11-25 sweep of all
-    /// 163 drawings). Until that walk is mapped this reads through
-    /// [`Self::topology`], whose first section is the feature lines' own
-    /// on every container this crate writes and on the containers the
-    /// application never extended.
+    /// One limit stays at the record level: a feature line the user
+    /// imported (`AeccImpFeatureLine`) keeps no edge word in its own
+    /// record, so it decodes to `None` even where the site's graph holds
+    /// its edge — handle 0xC88 on the Grading-4 and Grading-5 drawings.
     pub fn feature_line_topology(&self) -> Option<Topology> {
         if !self.dxf_name.eq_ignore_ascii_case("AECC_FEATURE_STYLE") {
             return None;
