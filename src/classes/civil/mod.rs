@@ -1633,14 +1633,11 @@ impl ArchObject {
             .unwrap_or_default()
     }
 
-    /// Plotted length and angle (radians, to the anchor's direction) of a
-    /// Civil 3D label line component.
+    /// Plotted fixed length and angle (radians, to the anchor's direction)
+    /// of a Civil 3D label line component, read by its fields; `None` for a
+    /// dragged-state copy that shows the copied component's values.
     pub fn label_line(&self) -> Option<(f64, f64)> {
-        if self.dxf_name != "AECC_LABEL_RADIAL_LINE_STYLE" {
-            return None;
-        }
-        let (data, start, end) = self.main_stream()?;
-        labels::line_component(data, start, end)
+        self.label_component_fields(true)?.0.line_shown()
     }
 
     /// Whether a label style component (text, line, tick, ...) is shown;
@@ -1892,11 +1889,12 @@ impl ArchObject {
             .unwrap_or_default()
     }
 
-    /// UTF-16 strings the record stores inline (label formats and the
-    /// like), in record order.
+    /// UTF-16 texts a style's settings keys hold inline (label formats and
+    /// the like), in key order; empty for a record that is not a style or
+    /// whose settings do not read.
     pub fn inline_strings(&self) -> Vec<String> {
         self.main_stream()
-            .map(|(data, start, end)| labels::inline_strings(data, start, end))
+            .and_then(|(data, start, end)| style::key_texts(data, start, end))
             .unwrap_or_default()
     }
 

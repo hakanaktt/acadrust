@@ -156,7 +156,9 @@ const LINE: [(&str, K); 18] = [
     ("end_y_offset", K::Bd),
     ("l10", K::Bd),
     ("fixed_length", K::Bd),
-    ("l12", K::Bd),
+    // A BL: 0 in a line anchored to the label, a value in one whose start
+    // is anchored to another component.
+    ("l12", K::Bl),
     ("line_angle", K::Bd),
     ("l14", K::Bd),
     ("length_type", K::Bl),
@@ -240,6 +242,11 @@ const TEXT_LINEWEIGHT: u32 = 0x80_0000;
 /// Mask C bits of a line component's start point offsets (LL02, LL03).
 const START_X_OFFSET: u32 = 0x1;
 const START_Y_OFFSET: u32 = 0x2;
+/// Mask C bits of a dragged-state copy's own line length and angle.
+const LINE_FIXED_LENGTH: u32 = 0x80;
+const LINE_ANGLE: u32 = 0x100;
+/// Mask A bit of a style's dragged-state copy of a component.
+const DRAGGED_COPY: u32 = 0x20_0000;
 /// A line component's own linetype (LL16).
 const COMPONENT_LINETYPE: u32 = 0x40_0000;
 const LEADER_COLOR: u32 = 0x0800_0000;
@@ -810,6 +817,15 @@ impl LabelFields {
             fixed_length: self.double("fixed_length")?,
             percent_length: self.double("percent_length")?,
         })
+    }
+
+    /// A line component's fixed length and angle as shown: `None` for a
+    /// style's dragged-state copy (mask A bit [`DRAGGED_COPY`]) that does
+    /// not hold its own length (mask C 0x80) or angle (0x100), whose shown
+    /// values are those of the component it copies.
+    pub(super) fn line_shown(&self) -> Option<(f64, f64)> {
+        let own = self.mask("mask_a") & DRAGGED_COPY == 0 || self.mask("mask_c") & (LINE_FIXED_LENGTH | LINE_ANGLE) == LINE_FIXED_LENGTH | LINE_ANGLE;
+        own.then(|| Some((self.double("fixed_length")?, self.double("line_angle")?))).flatten()
     }
 
     /// Writes a line component's values into its fields and references.

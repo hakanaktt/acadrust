@@ -544,32 +544,23 @@ pub(super) fn component_visible(data: &[u8], start: usize, end: usize) -> Option
     (bits.bits_value(4)? == 0b1000).then_some(visible)
 }
 
-/// BD at `pos` written in full.
-fn full_double(data: &[u8], pos: usize, end: usize) -> Option<f64> {
-    let mut bits = Bits::new(data, pos, end);
-    let value = bits.bit_double()?;
-    (bits.pos == pos + 66 && value.is_finite()).then_some(value)
-}
-
-/// The tag bit (see [`component_head`]) of a style's dragged-state copy
-/// of a component: set in every copy, in no other text, line, block or
-/// arrow component.
+/// The tag bit (see [`component_head`]; mask A of the label style
+/// fields) of a style's dragged-state copy of a component: set in every
+/// copy, in no other text, line, block or arrow component.
 const DRAGGED_COPY: u32 = 0x0020_0000;
 
 /// X offset, y offset and border gap read by their fields: the general
-/// head (see [`general_head`]), `1000`, 6 BL (5 BL and a BD in a
-/// dragged-state copy, see [`DRAGGED_COPY`]), B, BD x, BD, BD y, BD, B,
-/// BD gap. Also returns the bit after the gap.
-fn general_offsets(data: &[u8], at: usize, end: usize, copy: bool) -> Option<(f64, f64, f64, usize)> {
+/// head (see [`general_head`]), `1000`, 5 BL, BD (the readable bias; 0, a
+/// `BL`-sized `10`, except in dragged-state copies), B, BD x, BD, BD y,
+/// BD, B, BD gap. Also returns the bit after the gap.
+fn general_offsets(data: &[u8], at: usize, end: usize) -> Option<(f64, f64, f64, usize)> {
     let mut bits = Bits::new(data, at, end);
     general_head(&mut bits)?;
     (bits.bits_value(4)? == 0b1000).then_some(())?;
-    for _ in 0..if copy { 5 } else { 6 } {
+    for _ in 0..5 {
         bits.bit_long()?;
     }
-    if copy {
-        bits.bit_double()?;
-    }
+    bits.bit_double()?;
     bits.bit()?;
     let x = bits.bit_double()?;
     bits.bit_double()?;
@@ -626,31 +617,6 @@ fn content(data: &[u8], pos: usize, end: usize) -> Option<(String, usize)> {
     Some((String::from_utf16(&units).ok()?, bits.pos))
 }
 
-/// A line component closes with its length and then its angle, both
-/// written in full. The length starts 142 bits before the record's end;
-/// a line along the label's direction has no angle and its length starts
-/// 86 bits before the end.
-pub(super) fn line_component(data: &[u8], start: usize, end: usize) -> Option<(f64, f64)> {
-    let length_at = |back: usize| {
-        end.checked_sub(back)
-            .filter(|p| *p >= start)
-            .and_then(|p| full_double(data, p, end))
-            .filter(|v| (1e-6..1.0).contains(v))
-    };
-    if length_at(142).is_none() {
-        if let Some(length) = length_at(86) {
-            return Some((length, 0.0));
-        }
-    }
-    let angle_at = (start..end)
-        .rev()
-        .find(|&p| full_double(data, p, end).is_some_and(|v| (1e-3..=std::f64::consts::TAU).contains(&v.abs())))?;
-    let length_at = (start..angle_at.checked_sub(66)?).rev().find(|&p| {
-        full_double(data, p, end).is_some_and(|v| (1e-6..1.0).contains(&v) && ((v * 1e6).round() - v * 1e6).abs() < 1e-3)
-    })?;
-    Some((full_double(data, length_at, end)?, full_double(data, angle_at, end)?))
-}
-
 /// A label text component read by its fields: the component head (see
 /// [`component_head`]; a height of 1.0, a drawing unit, is the unset
 /// one), the general block and its offsets (see [`general_offsets`]), the
@@ -659,7 +625,7 @@ pub(super) fn text_component(data: &[u8], start: usize, end: usize) -> Option<La
     let (height, tag, general) = component_head(data, start, end)?;
     let height = (0.0..1.0).contains(&height).then_some(height).filter(|v| *v > 0.0);
     let copy = tag & DRAGGED_COPY != 0;
-    let (x_offset, y_offset, gap, after_gap) = general_offsets(data, general, end, copy)?;
+    let (x_offset, y_offset, gap, after_gap) = general_offsets(data, general, end)?;
     let (content, after) = content(data, content_at(data, after_gap, end)?, end)?;
     let mut bits = Bits::new(data, after, end);
     let rotation = bits.bit_double()?;
@@ -683,54 +649,6 @@ pub(super) fn text_component(data: &[u8], start: usize, end: usize) -> Option<La
         visible,
         inherits_offset: [copy && tag & 0x40 == 0, copy && tag & 0x80 == 0],
     })
-}
-
-/// UTF-16 strings stored inline as `BL byte length` + code units with a
-/// null terminator, in record order.
-pub(super) fn inline_strings(data: &[u8], start: usize, end: usize) -> Vec<String> {
-    inline_strings_at(data, start, end).into_iter().map(|(s, _)| s).collect()
-}
-
-/// Inline strings with the bit position after each.
-fn inline_strings_at(data: &[u8], start: usize, end: usize) -> Vec<(String, usize)> {
-    // A misaligned read can look valid inside a real string; keep the
-    // longest of any overlapping candidates.
-    let mut found: Vec<(usize, usize, String)> = (start..end)
-        .filter_map(|pos| string_at(data, pos, end).map(|(text, next)| (pos, next, text)))
-        .collect();
-    found.sort_by(|a, b| (b.1 - b.0).cmp(&(a.1 - a.0)));
-    let mut kept: Vec<(usize, usize, String)> = Vec::new();
-    for candidate in found {
-        if kept.iter().all(|k| candidate.1 <= k.0 || candidate.0 >= k.1) {
-            kept.push(candidate);
-        }
-    }
-    kept.sort_by_key(|k| k.0);
-    kept.into_iter().map(|k| (k.2, k.1)).collect()
-}
-
-fn string_at(data: &[u8], pos: usize, end: usize) -> Option<(String, usize)> {
-    let mut bits = Bits::new(data, pos, end);
-    let length = usize::try_from(bits.bit_long()?).ok()?;
-    if !(4..=4096).contains(&length) || length % 2 != 0 || bits.remaining() < length * 8 {
-        return None;
-    }
-    let mut units = Vec::with_capacity(length / 2);
-    for _ in 0..length / 2 {
-        units.push(u16::from_le_bytes([bits.raw_short_byte()?, bits.raw_short_byte()?]));
-    }
-    if units.pop() != Some(0) {
-        return None;
-    }
-    // Label text is in a written script; control codes, surrogates and
-    // private-use units mean a misaligned read.
-    let script = |u: u16| {
-        matches!(u, 0x09 | 0x20..=0x24F | 0x370..=0x52F | 0x590..=0x6FF | 0x900..=0x97F | 0xE00..=0xEFF | 0x2000..=0x206F | 0x2100..=0x22FF | 0x3000..=0x30FF | 0x4E00..=0x9FFF | 0xAC00..=0xD7A3)
-    };
-    if units.is_empty() || !units.iter().all(|&u| script(u)) {
-        return None;
-    }
-    Some((String::from_utf16(&units).ok()?, bits.pos))
 }
 
 
@@ -944,16 +862,16 @@ mod tests {
     }
 
     #[test]
-    fn offsets_follow_the_component_kind() {
+    fn offsets_follow_the_readable_bias() {
         let head = "0100".to_string() + "10000000" + "0000" + &"0".repeat(20) + "1000";
         let block = "0".to_string() + &bd(0.125) + &bd(0.0) + &bd(-0.0625) + &bd(0.0) + "0" + &bd(0.03125);
         let normal = head.clone() + &bl(0).repeat(3) + &bl(1) + &bl(0) + &bl(0) + &block;
         let data = bytes(&normal);
-        assert_eq!(general_offsets(&data, 0, normal.len(), false), Some((0.125, -0.0625, 0.03125, normal.len())));
-        // A dragged-state copy: 5 BL and a BD before the same block.
+        assert_eq!(general_offsets(&data, 0, normal.len()), Some((0.125, -0.0625, 0.03125, normal.len())));
+        // A dragged-state copy writes its readable bias in full.
         let turned = head + &bl(0).repeat(3) + &bl(1) + &bl(1) + &bd(1.919_862_177_193_762_5) + &block;
         let data = bytes(&turned);
-        assert_eq!(general_offsets(&data, 0, turned.len(), true), Some((0.125, -0.0625, 0.03125, turned.len())));
+        assert_eq!(general_offsets(&data, 0, turned.len()), Some((0.125, -0.0625, 0.03125, turned.len())));
     }
 
     #[test]
