@@ -23,6 +23,10 @@
 //! BL j, j × { BL name tag, BL number }          the same, keyed by name
 //! BL k, k × { BL number, BL description tag }
 //! 13 × slot: BL e, e × { BL key | 0x40000000, BL c, c × { BL number, value } }
+//!   except slots 1, 2, 3 and 11: BL e, e × { BL number, BD value }, the
+//!   point's own marker X-Y scale, marker Z scale, marker rotation and
+//!   label rotation (radians); a point at the default (scale 1, rotation
+//!   0) is not listed
 //! handles: n × point style, m × label style, the AeccDbCogoPoint class node
 //! strings: "", the description formats in list order, the names of
 //!          the j points, the same names again, the raw description of each
@@ -43,10 +47,15 @@
 //! Records are in the database's own order, not by number. A point without
 //! its own style draws with its point group's; the description tag
 //! (`0x80000000 | n`) is the application's id for the description text and
-//! equal texts share it. A tag without the top bit (seen: `0x0200D214`)
-//! has no text in the record: the texts follow only the tags with it, so
-//! such an entry is read without a text and the others keep theirs. The
-//! values given as constants are the same in every sample.
+//! equal texts share it. A tag without the top bit is one of the
+//! application's built-in text ids: a text equal to one of its own words
+//! is stored as that word's id and its text is not in the drawing (the
+//! same id in every drawing; measured: "A" `0x0200D214`, "K" `0x0200D21D`,
+//! "C" `0x101`, "Standard" `0x1E`, "Description" `0x04001005`). The texts
+//! follow only the tags with the top bit, so such an entry is read without
+//! a text (its id is kept, [`CogoPoint::builtin_description`]) and the
+//! others keep theirs. The values given as constants are the same in
+//! every sample.
 //!
 //! A point group (`AECC_POINT_PG`) lists the numbers of the points it holds:
 //!
@@ -78,7 +87,7 @@ use super::bits::Bits;
 use crate::types::Vector3;
 
 /// One point of the drawing's point database.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CogoPoint {
     pub number: u32,
@@ -101,6 +110,50 @@ pub struct CogoPoint {
     /// Values of user-defined properties the point holds, by the
     /// property's key text ([`UserProperty::key`]).
     pub properties: Vec<(String, PropertyValue)>,
+    /// A raw description that is one of the application's built-in words:
+    /// its text id (the text is not in the drawing; `description` is
+    /// `None`). Kept so the point keeps it when the database is rewritten.
+    pub builtin_description: Option<u32>,
+    /// The point's own marker and label settings.
+    pub overrides: PointOverrides,
+}
+
+/// A point's own marker scale and rotations; `None` takes the default
+/// (scale 1, rotation 0).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct PointOverrides {
+    pub xy_scale: Option<f64>,
+    pub z_scale: Option<f64>,
+    /// Marker rotation, radians.
+    pub rotation: Option<f64>,
+    /// Label rotation, radians.
+    pub label_rotation: Option<f64>,
+}
+
+/// Slots of the database holding [`PointOverrides`], in its field order.
+pub(super) const OVERRIDE_SLOTS: [usize; 4] = [1, 2, 3, 11];
+
+impl PointOverrides {
+    pub(super) fn get(&self, slot: usize) -> Option<f64> {
+        match slot {
+            1 => self.xy_scale,
+            2 => self.z_scale,
+            3 => self.rotation,
+            11 => self.label_rotation,
+            _ => None,
+        }
+    }
+
+    fn set(&mut self, slot: usize, v: f64) {
+        match slot {
+            1 => self.xy_scale = Some(v),
+            2 => self.z_scale = Some(v),
+            3 => self.rotation = Some(v),
+            11 => self.label_rotation = Some(v),
+            _ => {}
+        }
+    }
 }
 
 impl CogoPoint {
@@ -309,6 +362,8 @@ struct PointDatabase {
     described: Vec<(u32, i32)>,
     /// Property values: (key, values by number; text values `None`).
     values: Vec<(i32, Vec<(u32, Option<PropertyValue>)>)>,
+    /// Override slots: (slot, number, value).
+    overrides: Vec<(usize, u32, f64)>,
 }
 
 /// `BL k, k × { BL number, BL text tag }`: the numbers and tags.
@@ -360,7 +415,15 @@ fn database(bits: &mut Bits) -> Option<PointDatabase> {
     }
     let described = tagged(bits)?;
     let mut values = Vec::new();
+    let mut overrides = Vec::new();
     for slot in 0..13 {
+        if OVERRIDE_SLOTS.contains(&slot) {
+            for _ in 0..bits.bit_long()? {
+                let number = u32::try_from(bits.bit_long()?).ok()?;
+                overrides.push((slot, number, bits.bit_double()?));
+            }
+            continue;
+        }
         for _ in 0..bits.bit_long()? {
             let key = bits.bit_long()? & !0x4000_0000;
             let code = key_code(key);
@@ -380,7 +443,7 @@ fn database(bits: &mut Bits) -> Option<PointDatabase> {
             values.push((key, list));
         }
     }
-    Some(PointDatabase { records, styled, labelled, tagged_leading, named, again, described, values })
+    Some(PointDatabase { records, styled, labelled, tagged_leading, named, again, described, values, overrides })
 }
 
 /// Every point of a point database, in record order. `handles` and
@@ -425,6 +488,11 @@ pub(super) fn points(data: &[u8], start: usize, end: usize, handles: &[u64], str
                 .iter()
                 .filter_map(|(key, list)| list.iter().find(|(n, _)| *n == number).map(|(_, v)| (key.clone(), v.clone())))
                 .collect(),
+            builtin_description: db.described.iter().find(|e| e.0 == number && !own_text(e.1)).map(|e| e.1 as u32),
+            overrides: db.overrides.iter().filter(|o| o.1 == number).fold(PointOverrides::default(), |mut o, &(slot, _, v)| {
+                o.set(slot, v);
+                o
+            }),
         })
         .collect()
 }
@@ -620,6 +688,35 @@ mod tests {
         let points = points(&b, 0, len, &[0x185], &["".into(), "G1".into(), "G2".into()]);
         let descriptions: Vec<Option<&str>> = points.iter().map(|p| p.description.as_deref()).collect();
         assert_eq!(descriptions, [None, Some("G1"), Some("G2")]);
+    }
+
+    #[test]
+    fn marker_and_label_overrides_and_builtin_ids_are_read() {
+        // Measured: point 1 has scales 2 and 3 and rotations 30 and 45
+        // degrees, point 2 a marker rotation of 1 radian; point 1's raw
+        // description "A" is the built-in id 0x0200D214.
+        let bs_04be = "00 10111110 00000100";
+        let bs_0420 = "00 00100000 00000100";
+        let record = |n: u32| format!("{} {}{}{} {} {bs_0420}", bl(1), bd(1.0), bd(2.0), bd(3.0), bl(n));
+        let slot = |e: &[(u32, f64)]| format!("{}{}", bl(e.len() as u32), e.iter().map(|(n, v)| format!("{}{}", bl(*n), bd(*v))).collect::<String>());
+        let (r30, r45) = (std::f64::consts::FRAC_PI_6, std::f64::consts::FRAC_PI_4);
+        let s = [
+            format!("{bs_04be} {}{}{} 010", bl(34), bl(0), bl(0)),
+            format!("{} {}{}", bl(2), record(1), record(2)),
+            format!("{}{}{}{}", bl(0), bl(0), bl(0), bl(0)),
+            format!("{} {}{} {}{}", bl(2), bl(1), bl(0x0200_D214), bl(2), bl(0x8000_0B09)),
+            format!("{}{}{}{}", bl(0), slot(&[(1, 2.0)]), slot(&[(1, 3.0)]), slot(&[(1, r30), (2, 1.0)])),
+            bl(0).repeat(7),
+            format!("{}{}", slot(&[(1, r45)]), bl(0)),
+        ]
+        .concat();
+        let b = bits_of(&s);
+        let len = s.bytes().filter(|c| *c == b'0' || *c == b'1').count();
+        let points = points(&b, 0, len, &[0x185], &["".into(), "B".into()]);
+        assert_eq!(points[0].builtin_description, Some(0x0200_D214));
+        assert_eq!(points[1].description.as_deref(), Some("B"));
+        assert_eq!(points[0].overrides, PointOverrides { xy_scale: Some(2.0), z_scale: Some(3.0), rotation: Some(r30), label_rotation: Some(r45) });
+        assert_eq!(points[1].overrides, PointOverrides { rotation: Some(1.0), ..Default::default() });
     }
 
     #[test]
