@@ -100,6 +100,35 @@ pub struct CogoPoint {
     pub properties: Vec<(String, PropertyValue)>,
 }
 
+impl CogoPoint {
+    /// The full description: the raw description in the point's
+    /// description format (`$*` the whole raw description, `$0`…`$9` its
+    /// words, none past the last), else the raw description. "MH1" under
+    /// "MANHOLE $1" reads "MANHOLE ", "TREE OAK" under "$0 KEY" reads
+    /// "TREE KEY" (both as the application shows them).
+    pub fn full_description(&self) -> Option<String> {
+        let Some(format) = &self.description_format else { return self.description.clone() };
+        let raw = self.description.as_deref().unwrap_or("");
+        let words: Vec<&str> = raw.split(' ').filter(|w| !w.is_empty()).collect();
+        let mut out = String::new();
+        let mut chars = format.chars().peekable();
+        while let Some(c) = chars.next() {
+            match (c, chars.peek().copied()) {
+                ('$', Some('*')) => {
+                    chars.next();
+                    out.push_str(raw);
+                }
+                ('$', Some(d)) if d.is_ascii_digit() => {
+                    chars.next();
+                    out.push_str(words.get(d as usize - '0' as usize).copied().unwrap_or(""));
+                }
+                _ => out.push(c),
+            }
+        }
+        Some(out)
+    }
+}
+
 /// Value of a user-defined property.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

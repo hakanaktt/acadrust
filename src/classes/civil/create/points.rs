@@ -630,6 +630,9 @@ mod tests {
         let formats: Vec<Option<&str>> = back.iter().map(|p| p.description_format.as_deref()).collect();
         assert_eq!(formats, [Some("$0 KEY"), Some("$0 KEY"), None]);
         assert_eq!(back[0].description.as_deref(), Some("TREE OAK"));
+        assert_eq!(back[0].full_description().as_deref(), Some("TREE KEY"));
+        let mh = CogoPoint { description: Some("MH1".into()), description_format: Some("MANHOLE $1".into()), ..back[2].clone() };
+        assert_eq!(mh.full_description().as_deref(), Some("MANHOLE "));
     }
 
     #[test]
