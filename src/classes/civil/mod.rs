@@ -290,6 +290,17 @@ impl ArchEntityData {
     /// texts (before the surface name) and source objects (the references
     /// after the hard owner), and whether the surface
     /// rebuilds itself when a source changes.
+    ///
+    /// The two layouts' text streams differ in one slot: the application
+    /// keeps a created-by name between the two empty strings and the
+    /// definitions' texts, records this crate writes start the texts
+    /// right there. Which layout a record keeps follows from its own
+    /// lengths — the stream runs the two empty strings, the created-by
+    /// name (application only), the definitions' texts, two texts per
+    /// elevation range, the surface's name, its description and one empty
+    /// string, and the definitions' text need is known from their kinds.
+    /// A record of neither length keeps an unmapped stream: `None` rather
+    /// than a guessed boundary.
     pub fn tin_definitions(&self) -> Option<(Vec<TinDefinition>, bool)> {
         if self.civil_kind() != Some(CivilKind::TinSurface) {
             return None;
@@ -298,7 +309,14 @@ impl ArchEntityData {
         let found = tin::definitions(data, start, end)?;
         let strings = self.decode().strings;
         let refs = self.typed_handles();
-        let mut text = 2;
+        let need = found.list.iter().map(TinDefinition::text_count).sum::<usize>() + 2 * found.ranges;
+        let mut text = if strings.len() == 3 + need + 3 {
+            3
+        } else if strings.len() == 2 + need + 3 {
+            2
+        } else {
+            return None;
+        };
         let mut source = refs.iter().position(|r| r.1 == 3)? + 1;
         let mut list = found.list;
         for d in &mut list {
@@ -2058,3 +2076,4 @@ mod parcel_word_tests {
         assert_eq!(parcel_fields_offset(&data, 0, bits), None);
     }
 }
+

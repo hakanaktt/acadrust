@@ -66,15 +66,16 @@ fn an_app_written_surfaces_name_follows_its_definitions_texts() {
     }
 }
 
-/// A surface record whose definitions block this grammar does not read
-/// (the built ground surfaces of `Intro-2.dwg`, `Parcel-1E.dwg` and
-/// `Parcel-3A.dwg`) names `None` — its text boundary is unknown, and the
-/// created-by name or a definition's name must not be read for it.
+/// The elevation-analysis surfaces whose definitions the grammar did not
+/// read before their elevation ranges were mapped (`Intro-2.dwg`,
+/// `Parcel-1E.dwg` and `Parcel-3A.dwg`, eight ranges each) now name as
+/// the application does: the two texts each range keeps sit between the
+/// definitions' texts and the surface's name.
 #[test]
-fn a_surface_with_unreadable_definitions_names_none() {
+fn the_elevation_surfaces_name_after_their_ranges() {
     for drawing in ["Intro-2.dwg", "Parcel-1E.dwg", "Parcel-3A.dwg"] {
         let Some(doc) = app_drawing(drawing) else { return };
-        assert_eq!(surface_names(&doc), vec![None::<String>], "{drawing}");
+        assert_eq!(surface_names(&doc), vec![Some("XGND".to_string())], "{drawing}");
     }
 }
 
