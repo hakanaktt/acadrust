@@ -6031,19 +6031,38 @@ fn read_lofted_surface_data(
     }
 }
 
-/// The `AcadLoftedSurfaceData` round-trip data a drawing saved in a format
-/// before AC1027 keeps for a lofted (or network) surface it writes as a
-/// plain surface: BS u and BS v isoline counts, one RC (0 in every saved
-/// record), then the lofted surface class data in its AC1027 form. `None`
-/// unless the data reads to its end (only byte padding left).
-pub(crate) fn read_lofted_round_trip(bytes: &[u8]) -> Option<(i16, i16, SurfaceData)> {
+/// The class data of an AC1027 NURBS surface after its isoline counts.
+fn read_nurb_surface_data(reader: &mut DwgMergedReader) -> SurfaceData {
+    SurfaceData::Nurb {
+        short_170: reader.read_bit_short(),
+        cv_hull_display: reader.read_bit(),
+        u_vector1: reader.read_3bit_double(),
+        v_vector1: reader.read_3bit_double(),
+        u_vector2: reader.read_3bit_double(),
+        v_vector2: reader.read_3bit_double(),
+    }
+}
+
+/// The round-trip data a drawing saved in a format before AC1027 keeps for a
+/// lofted (or network) or NURBS surface it writes as a plain surface: BS u
+/// and BS v isoline counts, one RC (0 in every saved record), then the class
+/// data of `kind` in its AC1027 form. `None` for another kind, or unless the
+/// data reads to its end (only byte padding left).
+pub(crate) fn read_surface_round_trip(
+    bytes: &[u8],
+    kind: SurfaceKind,
+) -> Option<(i16, i16, SurfaceData)> {
     let dxf_version = DxfVersion::AC1032;
     let version = DwgVersion::from_dxf_version(dxf_version).ok()?;
     let mut reader = DwgMergedReader::new(bytes.to_vec(), dxf_version, bytes.len() as i64 * 8);
     let u_isolines = reader.read_bit_short();
     let v_isolines = reader.read_bit_short();
     let _reserved = reader.read_byte();
-    let data = read_lofted_surface_data(&mut reader, version, dxf_version);
+    let data = match kind {
+        SurfaceKind::Lofted => read_lofted_surface_data(&mut reader, version, dxf_version),
+        SurfaceKind::Nurb => read_nurb_surface_data(&mut reader),
+        _ => return None,
+    };
     let remaining = bytes.len() as i64 * 8 - reader.position_in_bits();
     (reader.check_error().is_ok() && (0..8).contains(&remaining))
         .then_some((u_isolines, v_isolines, data))
@@ -6156,14 +6175,7 @@ pub fn read_surface(
         }
         SurfaceKind::Nurb => {
             if version.r2013_plus(dxf_version) {
-                SurfaceData::Nurb {
-                    short_170: reader.read_bit_short(),
-                    cv_hull_display: reader.read_bit(),
-                    u_vector1: reader.read_3bit_double(),
-                    v_vector1: reader.read_3bit_double(),
-                    u_vector2: reader.read_3bit_double(),
-                    v_vector2: reader.read_3bit_double(),
-                }
+                read_nurb_surface_data(reader)
             } else {
                 SurfaceData::Nurb {
                     short_170: 0,
@@ -6345,7 +6357,8 @@ mod tests {
         }
         writer.write_bit_long(5); // plane normal lofting type
         let bytes = writer.merge();
-        let (u, v, data) = read_lofted_round_trip(&bytes).expect("round-trip data");
+        let (u, v, data) =
+            read_surface_round_trip(&bytes, SurfaceKind::Lofted).expect("round-trip data");
         assert_eq!((u, v), (3, 4));
         match data {
             SurfaceData::Lofted {
@@ -6366,7 +6379,38 @@ mod tests {
         // Data that does not read to its end is not taken.
         let mut longer = bytes.clone();
         longer.extend_from_slice(&[0xFF; 4]);
-        assert!(read_lofted_round_trip(&longer).is_none());
+        assert!(read_surface_round_trip(&longer, SurfaceKind::Lofted).is_none());
+    }
+
+    /// The round-trip data of a NURBS surface: BS u, BS v, RC 0, then the
+    /// AC1027 NURBS class data (BS, B, four 3BD).
+    #[test]
+    fn nurb_round_trip_reads_its_isolines_and_class_data() {
+        let mut writer = DwgMergedWriter::new(DwgVersion::AC18, DxfVersion::AC1018);
+        writer.write_bit_short(7);
+        writer.write_bit_short(2);
+        writer.write_byte(0);
+        writer.write_bit_short(1);
+        writer.write_bit(true);
+        for value in [1.0, 2.0, 3.0, 4.0] {
+            writer.write_3bit_double(Vector3::new(value, 0.0, 0.0));
+        }
+        let bytes = writer.merge();
+        let (u, v, data) =
+            read_surface_round_trip(&bytes, SurfaceKind::Nurb).expect("round-trip data");
+        assert_eq!((u, v), (7, 2));
+        assert_eq!(
+            data,
+            SurfaceData::Nurb {
+                short_170: 1,
+                cv_hull_display: true,
+                u_vector1: Vector3::new(1.0, 0.0, 0.0),
+                v_vector1: Vector3::new(2.0, 0.0, 0.0),
+                u_vector2: Vector3::new(3.0, 0.0, 0.0),
+                v_vector2: Vector3::new(4.0, 0.0, 0.0),
+            }
+        );
+        assert!(read_surface_round_trip(&bytes, SurfaceKind::Plane).is_none());
     }
 
     fn make_reader(

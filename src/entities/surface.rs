@@ -216,32 +216,35 @@ pub struct Surface {
     pub silhouettes: Vec<Silhouette>,
 }
 
-/// The lofted surface data that a drawing saved in a format before AC1027
-/// keeps for a lofted or network surface it writes as a plain surface (see
-/// [`Surface::lofted_round_trip`]).
+/// The data that a drawing saved in a format before AC1027 keeps for a
+/// lofted (or network) or NURBS surface it writes as a plain surface (see
+/// [`Surface::round_trip_data`]).
 #[derive(Debug, Clone, PartialEq)]
-pub struct LoftedSurfaceRoundTrip {
+pub struct SurfaceRoundTrip {
+    /// The surface kind the data belongs to ([`SurfaceKind::Lofted`] or
+    /// [`SurfaceKind::Nurb`]).
+    pub kind: SurfaceKind,
     /// The surface's u isoline count (the record itself keeps the default).
     pub u_isolines: i16,
     /// The surface's v isoline count.
     pub v_isolines: i16,
-    /// The lofted surface class data ([`SurfaceData::Lofted`]).
+    /// The surface class data ([`SurfaceData::Lofted`] or [`SurfaceData::Nurb`]).
     pub data: SurfaceData,
 }
 
 impl Surface {
-    /// The `AcadLoftedSurfaceData` this surface keeps in its extension
-    /// dictionary's `ACAD_XREC_ROUNDTRIP` record: a lofted or network surface
-    /// saved in a format before AC1027 is written as a plain surface record
-    /// with default isoline counts, and its own counts and lofted data are
-    /// kept there. `None` when the surface has no such data or it does not
-    /// read to its end.
-    pub fn lofted_round_trip(
+    /// The round-trip data this surface keeps in its extension dictionary's
+    /// `ACAD_XREC_ROUNDTRIP` record: a lofted, network or NURBS surface saved
+    /// in a format before AC1027 is written as a plain surface record with
+    /// default isoline counts, and its own counts and class data are kept in
+    /// the record's `AcadLoftedSurfaceData` or `AcadNurbSurfaceData` group.
+    /// `None` when the surface has no such data or it does not read to its
+    /// end.
+    pub fn round_trip_data(
         &self,
         document: &crate::document::CadDocument,
-    ) -> Option<LoftedSurfaceRoundTrip> {
+    ) -> Option<SurfaceRoundTrip> {
         use crate::objects::{ObjectType, XRecordValue};
-        const TAG: &str = "AcadLoftedSurfaceData";
         let dictionary = match document.objects.get(&self.common.xdictionary_handle?)? {
             ObjectType::Dictionary(dictionary) => dictionary,
             _ => return None,
@@ -254,15 +257,22 @@ impl Surface {
         let ObjectType::XRecord(record) = record else {
             return None;
         };
-        // The group starts at its 102 name, then a 90 byte count and the
-        // 310 chunks, up to the next 102 name.
-        let mut entries = record
+        // A group starts at its 102 name, then a 90 byte count and the 310
+        // chunks, up to the next 102 name.
+        let (start, kind) = record
             .entries
             .iter()
-            .skip_while(|entry| {
-                !matches!(&entry.value, XRecordValue::String(name) if entry.code == 102 && name == TAG)
-            })
-            .skip(1)
+            .enumerate()
+            .find_map(|(index, entry)| match &entry.value {
+                XRecordValue::String(name) if entry.code == 102 => match name.as_str() {
+                    "AcadLoftedSurfaceData" => Some((index, SurfaceKind::Lofted)),
+                    "AcadNurbSurfaceData" => Some((index, SurfaceKind::Nurb)),
+                    _ => None,
+                },
+                _ => None,
+            })?;
+        let mut entries = record.entries[start + 1..]
+            .iter()
             .take_while(|entry| entry.code != 102);
         let length = match entries.next()?.value {
             XRecordValue::Int32(length) => usize::try_from(length).ok()?,
@@ -281,10 +291,11 @@ impl Surface {
             return None;
         }
         let (u_isolines, v_isolines, data) =
-            crate::io::dwg::dwg_stream_readers::object_reader::entities::read_lofted_round_trip(
-                &bytes,
+            crate::io::dwg::dwg_stream_readers::object_reader::entities::read_surface_round_trip(
+                &bytes, kind,
             )?;
-        Some(LoftedSurfaceRoundTrip {
+        Some(SurfaceRoundTrip {
+            kind,
             u_isolines,
             v_isolines,
             data,
