@@ -14,7 +14,7 @@
 //!   planar figure's elevation, read as both min and max; the capture's
 //!   TESTFIG1 sits at z 0).
 //! * the **class body** ends with a cache of the traverse vertices, in one
-//!   of two mapped forms:
+//!   of three mapped forms:
 //!   - the **3D form** (the tutorials' database-backed records): an 8-bit
 //!     count word, two 0 bits, then `count` entries of (RD x, RD y, RD z)
 //!     at a 66-bit stride — a closed figure with curves repeats its first
@@ -23,6 +23,14 @@
 //!     `count = (class_end - 6167) / 198` with no remainder, and the count
 //!     word at the stream head confirms it (both checked; the samples' 170
 //!     records — Survey-2B and Survey-3, 85 figures each — pass).
+//!   - the **described 3D form** (the tutorials' Survey-4D / Survey-5B lot
+//!     records, whose text stream grows to six strings — name, an empty
+//!     slot, a `" (1)"`-style description, site): the 3D entry shape and
+//!     trailer verbatim behind a head 32 bits longer (up to the count word:
+//!     567 bits vs the 3D form's 535). The frame closes as
+//!     `count = (class_end - class_start - 594) / 198` with no remainder,
+//!     the count word at the anchored stream head confirms it, and the
+//!     bbox solid is the 3D two-ring form (the graphic reader is shared).
 //!   - the **2D form** (figures the application writes against a SQLite
 //!     survey database it created in-session — e.g. TESTFIG1 of the
 //!     2026-11-27 svfig capture, a planar polyline figure): the same count
@@ -33,10 +41,11 @@
 //!     `count = (class_end - class_start - 530) / 134` with no remainder,
 //!     the count word confirms it, and every entry's `1000` tag re-confirms
 //!     the form; the 17-bit trailer is byte-identical to the 3D form's.
-//!     The two forms' frame arithmetics are mutually exclusive (the 3D
-//!     anchor underflows the shorter 2D class body; a 3D stream length
-//!     minus 530 is not divisible by 134), so each record's frame closes
-//!     for exactly one form.
+//!     The three forms' frame arithmetics are mutually exclusive: a
+//!     198-stride stream length is congruent to exactly one of {562, 594}
+//!     modulo 198 (the described head is 32 bits longer), and the 2D anchor
+//!     differs modulo 134 — so each record's frame closes for exactly one
+//!     form.
 //!
 //! The cache is a display cache: its x/y values sit within the shared
 //! solved-point tolerance of the application's `BaseCurve` vertices
@@ -65,11 +74,27 @@ pub struct SurveyFigure {
     pub site: String,
 }
 
-/// A survey figure's name and site (its text stream reads `AeccImpSvFigure`,
-/// ``, ``, name, site name).
+/// A survey figure's name and site. The plain text stream reads
+/// `AeccImpSvFigure`, ``, ``, name, site name; the described 3D form's
+/// six-string stream reads `AeccImpSvFigure`, ``, name, ``,
+/// description, site name — the description (e.g. `" (1)"`) is not part of
+/// this read.
 pub(super) fn figure(strings: &[String]) -> Option<SurveyFigure> {
-    Some(SurveyFigure { name: strings.get(3)?.clone(), site: strings.get(4)?.clone() })
+    let plain = Some(SurveyFigure {
+        name: strings.get(3)?.clone(),
+        site: strings.get(4)?.clone(),
+    })
+    .filter(|f| !f.name.is_empty());
+    plain.or_else(|| {
+        // the described form: the name fills the third slot, the fourth
+        // stays empty, the description follows, the site comes last
+        (strings.len() == 6 && strings[3].is_empty()).then_some(())?;
+        Some(SurveyFigure {
+            name: strings[2].clone(),
+            site: strings[5].clone(),
+        })
         .filter(|f| !f.name.is_empty())
+    })
 }
 
 /// A survey network's (`AECC_SVNETWORK`) name: its text stream's third
@@ -103,9 +128,9 @@ pub struct SurveyFigureGeometry {
 
 /// The geometry of a survey figure record: `graphic` is its graphic-image
 /// section, `data`/`start`/`end` its class stream. The frame arithmetic
-/// picks the form (see the [module](self) documentation): a 3D cache pairs
-/// with the two-ring bbox solid, a 2D cache with the single flat bbox
-/// rectangle.
+/// picks the form (see the [module](self) documentation): a 3D or described
+/// 3D cache pairs with the two-ring bbox solid, a 2D cache with the single
+/// flat bbox rectangle.
 pub(super) fn geometry(
     data: &[u8],
     start: usize,
@@ -116,18 +141,23 @@ pub(super) fn geometry(
         let (min_elevation, max_elevation) = elevations(graphic)?;
         return Some(SurveyFigureGeometry { vertices, min_elevation, max_elevation });
     }
+    if let Some(vertices) = traverse_3d_described(data, start, end) {
+        let (min_elevation, max_elevation) = elevations(graphic)?;
+        return Some(SurveyFigureGeometry { vertices, min_elevation, max_elevation });
+    }
     let vertices = traverse_2d(data, start, end)?;
     let (min_elevation, max_elevation) = elevations_2d(graphic)?;
     Some(SurveyFigureGeometry { vertices, min_elevation, max_elevation })
 }
 
 /// The traverse vertex cache at the class stream's tail. The 3D form
-/// anchors the stream at `end - 6167` with a 198-bit entry stride; the 2D
-/// form anchors it at `start + 503` (the fixed 2D head) with a 134-bit
-/// stride (see the [module](self) documentation). Each form's frame closes
-/// exactly for exactly one form — the arithmetics are mutually exclusive —
-/// and the count word at the anchored stream head confirms the division
-/// before any entry is read.
+/// anchors the stream at `end - 6167` with a 198-bit entry stride; the
+/// described 3D form anchors it at `start + 594` (the described head plus
+/// trailer) with the same stride; the 2D form anchors it at `start + 503`
+/// (the fixed 2D head) with a 134-bit stride (see the [module](self)
+/// documentation). Each form's frame closes exactly for exactly one form —
+/// the arithmetics are mutually exclusive — and the count word at the
+/// anchored stream head confirms the division before any entry is read.
 fn traverse_3d(data: &[u8], start: usize, end: usize) -> Option<Vec<Vector3>> {
     let tail = end.checked_sub(6167)?;
     let (count, 0) = (tail / 198, tail % 198) else { return None };
@@ -135,6 +165,35 @@ fn traverse_3d(data: &[u8], start: usize, end: usize) -> Option<Vec<Vector3>> {
     let stream_start = end - 17 - 198 * count;
     let head = stream_start.checked_sub(10)?.checked_sub(start)?;
     let mut bits = Bits::new(data, start + head, end);
+    // the count word: the stream's own entry count, confirming the anchor
+    (bits.raw_short_byte()? as usize == count).then_some(())?;
+    bits.skip(2)?;
+    (0..count)
+        .map(|_| {
+            let x = bits.raw_double()?;
+            bits.skip(2)?;
+            let y = bits.raw_double()?;
+            bits.skip(2)?;
+            let z = bits.raw_double()?;
+            bits.skip(2)?;
+            Some(Vector3::new(x, y, z))
+        })
+        .collect()
+}
+
+/// The described 3D form's cache: the 3D entry shape and trailer verbatim
+/// behind a head 32 bits longer — the six-string (description-carrying)
+/// records, e.g. the tutorials' Survey-4D / Survey-5B lots. The head up to
+/// the count word is a fixed 567 bits, so the frame closes as
+/// `count = (end - start - 594) / 198` with no remainder and the count word
+/// at the anchored stream head confirms it (see the [module](self)
+/// documentation; the plain 3D and described anchors are mutually exclusive
+/// modulo 198).
+fn traverse_3d_described(data: &[u8], start: usize, end: usize) -> Option<Vec<Vector3>> {
+    let frame = end.checked_sub(start)?.checked_sub(594)?;
+    let (count, 0) = (frame / 198, frame % 198) else { return None };
+    (count > 0).then_some(())?;
+    let mut bits = Bits::new(data, end.checked_sub(27 + 198 * count)?, end);
     // the count word: the stream's own entry count, confirming the anchor
     (bits.raw_short_byte()? as usize == count).then_some(())?;
     bits.skip(2)?;
@@ -511,5 +570,129 @@ mod tests {
         let (data, start, end) = two_d_cache_bytes();
         // the 3D form's two-ring solid is not the 2D section shape
         assert_eq!(geometry(&data, start, end, &section_bytes()), None);
+    }
+
+    /// The class stream of the tutorials' Survey-4D `LOT1 (1)` record
+    /// (handle `381F`, the described 3D form, 1782 bits): the record's own
+    /// bytes from bit 5605, handed over at slice bit 5 (224 bytes).
+    fn described_cache_bytes() -> (Vec<u8>, usize, usize) {
+        let hex = concat!(
+            "EAA12A0A84022F8108076010080501100C3621534E35E10E0C37610A0C37203A",
+            "10677488CCF3AFA1DDEA95BD28F04FB3A026C8200000413C3A34794B7853E30E",
+            "0E4C11504E4E4D50600328BF3BE9C6D5000062C385FBE2B3402588F8914D459C",
+            "10000EC4C82FA00B5400026280DBEF8ACD00E3D3A8042B2D70400028B29ABE80",
+            "2D500001AB33EFB46B44018B6372B0696DBD0000801FB2FA96B540003922993E",
+            "D1AD100389861D71ABB6F400014A5DCBEA5AD5000000B2BDFA07B44011601FA4",
+            "64F91BD0000CA1675FC71B54000333A39FEB8ACD009623E2453516704017C088",
+        );
+        let data = (0..hex.len() / 2)
+            .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).expect("hex"))
+            .collect();
+        (data, 5, 1787)
+    }
+
+    /// The graphic-image section of the same record: the 3D two-ring bbox
+    /// solid — two closed five-point rectangles at z 250.847… / 258.823…
+    /// plus four vertical corner connectors (688 bytes, the record's own).
+    fn described_section_bytes() -> Vec<u8> {
+        let hex = concat!(
+            "B002000008000000A8000000240000009A3B64041401B5402E1AFF846BDBB340",
+            "62D8DCAC1A5B6F4000000000000000000000000000000000000000000000F03F",
+            "000000000000F03F000000000000000000000000000000009A9999999999C93F",
+            "000000000000F03F000000000000000041006500630063004400620053007600",
+            "4600690067007500720065002000280041006500630063005300750072007600",
+            "6500790031003300300029000000000084000000060000000500000000A2CA6A",
+            "FA00B540948065EB51DBB34062D8DCAC1A5B6F406ECCE6D0A39EB540948065EB",
+            "51DBB34062D8DCAC1A5B6F406ECCE6D0A39EB54000E48A64FB46B44062D8DCAC",
+            "1A5B6F4000A2CA6AFA00B54000E48A64FB46B44062D8DCAC1A5B6F4000A2CA6A",
+            "FA00B540948065EB51DBB34062D8DCAC1A5B6F40840000000600000005000000",
+            "6ECCE6D0A39EB54000E48A64FB46B440E3D3A8042B2D70406ECCE6D0A39EB540",
+            "948065EB51DBB340E3D3A8042B2D704000A2CA6AFA00B540948065EB51DBB340",
+            "E3D3A8042B2D704000A2CA6AFA00B54000E48A64FB46B440E3D3A8042B2D7040",
+            "6ECCE6D0A39EB54000E48A64FB46B440E3D3A8042B2D70403C00000006000000",
+            "020000006ECCE6D0A39EB54000E48A64FB46B440E3D3A8042B2D70406ECCE6D0",
+            "A39EB54000E48A64FB46B44062D8DCAC1A5B6F403C0000000600000002000000",
+            "6ECCE6D0A39EB540948065EB51DBB340E3D3A8042B2D70406ECCE6D0A39EB540",
+            "948065EB51DBB34062D8DCAC1A5B6F403C000000060000000200000000A2CA6A",
+            "FA00B540948065EB51DBB340E3D3A8042B2D704000A2CA6AFA00B540948065EB",
+            "51DBB34062D8DCAC1A5B6F403C000000060000000200000000A2CA6AFA00B540",
+            "00E48A64FB46B440E3D3A8042B2D704000A2CA6AFA00B54000E48A64FB46B440",
+            "62D8DCAC1A5B6F400800000015000000",
+        );
+        (0..hex.len() / 2)
+            .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).expect("hex"))
+            .collect()
+    }
+
+    #[test]
+    fn reads_a_described_records_geometry() {
+        let (data, start, end) = described_cache_bytes();
+        let at =
+            geometry(&data, start, end, &described_section_bytes()).expect("described decodes");
+        assert_eq!(at.vertices.len(), 6);
+        // bit-exact against the record (the sixth entry is the closure)
+        assert_eq!(
+            at.vertices[0],
+            Vector3::new(5489.979708658997, 5090.982509814668, 257.3880060990863)
+        );
+        assert_eq!(
+            at.vertices[2],
+            Vector3::new(5376.978192009497, 5190.981425470207, 250.84700625547254)
+        );
+        // the sixth entry is the curve closure: the first vertex repeated
+        // to within the closing curve's chord (x/y ~6e-3 apart, z bit-exact)
+        assert_eq!(at.vertices[5].z, at.vertices[0].z);
+        assert!((at.vertices[5].x - at.vertices[0].x).abs() < 1e-2);
+        assert!((at.vertices[5].y - at.vertices[0].y).abs() < 1e-2);
+        // the bbox solid's two ring elevations are the vertex z range
+        assert_eq!(at.min_elevation, 250.84700625547254);
+        assert_eq!(at.max_elevation, 258.8230024905044);
+    }
+
+    #[test]
+    fn reads_a_described_records_name_and_site() {
+        let strings = [
+            "AeccImpSvFigure".to_string(),
+            String::new(),
+            "LOT1".to_string(),
+            String::new(),
+            " (1)".to_string(),
+            "Survey Site".to_string(),
+        ];
+        let f = figure(&strings).expect("described text form decodes");
+        assert_eq!(f.name, "LOT1");
+        assert_eq!(f.site, "Survey Site");
+    }
+
+    #[test]
+    fn the_3d_anchor_does_not_read_the_described_form() {
+        let (data, start, end) = described_cache_bytes();
+        // the 3D anchor's modulo-198 residue differs by the 32-bit head
+        assert_eq!(traverse_3d(&data, start, end), None);
+        // and the described frame does not close on a plain 3D stream length
+        let (data, start, end) = traverse_bytes(&[(1.0, 2.0, 3.0), (4.0, 5.0, 6.0)]);
+        assert_eq!(traverse_3d_described(&data, start, end), None);
+    }
+
+    #[test]
+    fn a_described_frame_that_does_not_close_is_no_geometry() {
+        let (data, start, end) = described_cache_bytes();
+        // one bit short of the 198-bit cadence
+        assert_eq!(geometry(&data, start, end - 1, &described_section_bytes()), None);
+    }
+
+    #[test]
+    fn a_described_count_word_that_contradicts_the_frame_is_no_geometry() {
+        let (mut data, start, end) = described_cache_bytes();
+        // the count word at bit 567 of the stream (6 -> 7)
+        data[579 / 8] |= 1 << (7 - 579 % 8);
+        assert_eq!(geometry(&data, start, end, &described_section_bytes()), None);
+    }
+
+    #[test]
+    fn a_described_record_without_the_two_ring_solid_is_no_geometry() {
+        let (data, start, end) = described_cache_bytes();
+        // the 2D form's single flat rectangle is not the described section
+        assert_eq!(geometry(&data, start, end, &two_d_section_bytes()), None);
     }
 }
