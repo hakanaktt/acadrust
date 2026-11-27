@@ -43,8 +43,10 @@
 //! Records are in the database's own order, not by number. A point without
 //! its own style draws with its point group's; the description tag
 //! (`0x80000000 | n`) is the application's id for the description text and
-//! equal texts share it. The values given as constants are the same in
-//! every sample.
+//! equal texts share it. A tag without the top bit (seen: `0x0200D214`)
+//! has no text in the record: the texts follow only the tags with it, so
+//! such an entry is read without a text and the others keep theirs. The
+//! values given as constants are the same in every sample.
 //!
 //! A point group (`AECC_POINT_PG`) lists the numbers of the points it holds:
 //!
@@ -299,25 +301,44 @@ struct PointDatabase {
     styled: Vec<u32>,
     labelled: Vec<u32>,
     /// Points with a description format (their texts precede the names).
-    tagged_leading: Vec<u32>,
-    named: Vec<u32>,
-    /// Length of the list after the names (the same names keyed by text).
-    again: usize,
-    described: Vec<u32>,
+    tagged_leading: Vec<(u32, i32)>,
+    named: Vec<(u32, i32)>,
+    /// The text ids of the list after the names (the same names keyed by
+    /// text).
+    again: Vec<i32>,
+    described: Vec<(u32, i32)>,
     /// Property values: (key, values by number; text values `None`).
     values: Vec<(i32, Vec<(u32, Option<PropertyValue>)>)>,
 }
 
-/// `BL k, k × { BL number, BL text tag }`: the numbers.
-fn tagged(bits: &mut Bits) -> Option<Vec<u32>> {
+/// `BL k, k × { BL number, BL text tag }`: the numbers and tags.
+fn tagged(bits: &mut Bits) -> Option<Vec<(u32, i32)>> {
     let k = usize::try_from(bits.bit_long()?).ok().filter(|n| *n <= bits.remaining() / 4)?;
     (0..k)
         .map(|_| {
             let number = u32::try_from(bits.bit_long()?).ok()?;
-            bits.bit_long()?;
-            Some(number)
+            Some((number, bits.bit_long()?))
         })
         .collect()
+}
+
+/// Whether a tag is a text id whose text the point database keeps: ids
+/// with the top bit (`0x80000000 | n`). Other tags (seen: `0x0200D214` on a
+/// point whose description the record holds no text for) have no text in
+/// this record.
+fn own_text(tag: i32) -> bool {
+    tag as u32 & 0x8000_0000 != 0
+}
+
+/// The texts a tagged list holds: one per entry with its own text.
+fn texts_in(list: &[(u32, i32)]) -> usize {
+    list.iter().filter(|e| own_text(e.1)).count()
+}
+
+/// Index among `list`'s texts of `number`'s text, when it has one.
+fn text_of(list: &[(u32, i32)], number: u32) -> Option<usize> {
+    let i = list.iter().position(|e| e.0 == number)?;
+    own_text(list[i].1).then(|| texts_in(&list[..i]))
 }
 
 fn database(bits: &mut Bits) -> Option<PointDatabase> {
@@ -331,8 +352,10 @@ fn database(bits: &mut Bits) -> Option<PointDatabase> {
     let tagged_leading = tagged(bits)?;
     let named = tagged(bits)?;
     // The same names keyed by text: { BL tag, BL number }.
-    let again = usize::try_from(bits.bit_long()?).ok().filter(|n| *n <= bits.remaining() / 4)?;
-    for _ in 0..2 * again {
+    let k = usize::try_from(bits.bit_long()?).ok().filter(|n| *n <= bits.remaining() / 4)?;
+    let mut again = Vec::with_capacity(k);
+    for _ in 0..k {
+        again.push(bits.bit_long()?);
         bits.bit_long()?;
     }
     let described = tagged(bits)?;
@@ -367,7 +390,10 @@ pub(super) fn points(data: &[u8], start: usize, end: usize, handles: &[u64], str
         return Vec::new();
     };
     // Each value entry: its key text, then its text values.
-    let text_base = 1 + db.tagged_leading.len() + db.named.len() + db.again + db.described.len();
+    let formats = texts_in(&db.tagged_leading);
+    let names = texts_in(&db.named);
+    let again = db.again.iter().filter(|t| own_text(**t)).count();
+    let text_base = 1 + formats + names + again + texts_in(&db.described);
     let mut texts = strings.iter().skip(text_base).cloned();
     let mut values: Vec<(String, Vec<(u32, PropertyValue)>)> = Vec::new();
     for (_, list) in &db.values {
@@ -381,6 +407,7 @@ pub(super) fn points(data: &[u8], start: usize, end: usize, handles: &[u64], str
         }
         values.push((key, entry));
     }
+    let described_base = 1 + formats + names + again;
     let handle = |list: &[u32], offset: usize, number: u32| {
         list.iter().position(|n| *n == number).and_then(|i| handles.get(offset + i)).copied().unwrap_or(0)
     };
@@ -391,19 +418,9 @@ pub(super) fn points(data: &[u8], start: usize, end: usize, handles: &[u64], str
             position,
             style: handle(&db.styled, 0, number),
             label_style: handle(&db.labelled, db.styled.len(), number),
-            description: db
-                .described
-                .iter()
-                .position(|n| *n == number)
-                .and_then(|i| strings.get(text_base - db.described.len() + i))
-                .cloned(),
-            name: db
-                .named
-                .iter()
-                .position(|n| *n == number)
-                .and_then(|i| strings.get(1 + db.tagged_leading.len() + i))
-                .cloned(),
-            description_format: db.tagged_leading.iter().position(|n| *n == number).and_then(|i| strings.get(1 + i)).cloned(),
+            description: text_of(&db.described, number).and_then(|i| strings.get(described_base + i)).cloned(),
+            name: text_of(&db.named, number).and_then(|i| strings.get(1 + formats + i)).cloned(),
+            description_format: text_of(&db.tagged_leading, number).and_then(|i| strings.get(1 + i)).cloned(),
             properties: values
                 .iter()
                 .filter_map(|(key, list)| list.iter().find(|(n, _)| *n == number).map(|(_, v)| (key.clone(), v.clone())))
@@ -577,6 +594,28 @@ mod tests {
         assert_eq!((points[0].number, points[0].style, points[0].label_style, points[0].description.as_deref()), (9, 0, 0, None));
         assert_eq!(points[1].position, Vector3::new(100.0, 200.0, 10.0));
         assert_eq!((points[1].style, points[1].label_style, points[1].description.as_deref()), (0x68D, 0x690, Some("TEST")));
+    }
+
+    #[test]
+    fn a_description_tag_without_a_text_shifts_no_other_description() {
+        // Measured: point 1's tag 0x0200D214 has no text in the record; the
+        // texts that follow belong to points 2 and 3.
+        let bs_04be = "00 10111110 00000100";
+        let bs_0420 = "00 00100000 00000100";
+        let record = |n: u32| format!("{} {}{}{} {} {bs_0420}", bl(1), bd(1.0), bd(2.0), bd(3.0), bl(n));
+        let s = [
+            format!("{bs_04be} {}{}{} 010", bl(34), bl(0), bl(0)),
+            format!("{} {}{}{}", bl(3), record(1), record(2), record(3)),
+            format!("{}{}{}{}{}", bl(0), bl(0), bl(0), bl(0), bl(0)),
+            format!("{} {}{} {}{} {}{}", bl(3), bl(1), bl(0x0200_D214), bl(2), bl(0x8000_0B0A), bl(3), bl(0x8000_0B0B)),
+            bl(0).repeat(13),
+        ]
+        .concat();
+        let b = bits_of(&s);
+        let len = s.bytes().filter(|c| *c == b'0' || *c == b'1').count();
+        let points = points(&b, 0, len, &[0x185], &["".into(), "G1".into(), "G2".into()]);
+        let descriptions: Vec<Option<&str>> = points.iter().map(|p| p.description.as_deref()).collect();
+        assert_eq!(descriptions, [None, Some("G1"), Some("G2")]);
     }
 
     #[test]
