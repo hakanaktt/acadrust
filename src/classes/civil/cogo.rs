@@ -58,8 +58,9 @@
 //! ```
 //!
 //! Groups made or edited by recent releases store flags below 4 (1 the
-//! raw description overridden, 2 the elevation) and a serial that counts
-//! the groups made; the 5 bits are the label style overridden, the point
+//! raw description overridden, 2 the elevation) and a serial, the
+//! group's draw order (0 for the group listed last; a new group takes the
+//! next one); the 5 bits are the label style overridden, the point
 //! style overridden, two unset bits and locked. Older releases' groups
 //! store other flags (0x48, 0x4A) and nothing before the count. The
 //! override texts follow the group's own (name, description,

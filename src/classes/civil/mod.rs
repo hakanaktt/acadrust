@@ -1578,6 +1578,19 @@ impl ArchObject {
         cogo::group_overrides(data, start, end, &d.handles, &d.strings)
     }
 
+    /// The draw order of a point group (`AECC_POINT_PG`) of the form recent
+    /// releases write: 0 for the group listed last, the top group highest
+    /// (the field the module documentation calls the serial: moving groups
+    /// in the application's point group order rewrites it, a new group
+    /// takes the next one and so goes on top).
+    pub fn point_group_draw_order(&self) -> Option<i32> {
+        if self.dxf_name != "AECC_POINT_PG" {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        cogo::group_record(data, start, end)?.serial
+    }
+
     /// Numbers of the points a Civil 3D point group (`AECC_POINT_PG`) holds.
     pub fn point_group_numbers(&self) -> Vec<u32> {
         if self.dxf_name != "AECC_POINT_PG" {
