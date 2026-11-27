@@ -420,6 +420,8 @@ pub(super) enum KeyValue {
     Double(f64),
     /// 0x03, 0x1A: one byte.
     Byte(u8),
+    /// 0x06: two RD (a plan point).
+    Point([f64; 2]),
     /// 0x09: three BD.
     Vector([f64; 3]),
     /// 0x0B, 0x19: BL n, n x BL.
@@ -453,6 +455,7 @@ pub(super) fn read_key(bits: &mut Bits) -> Option<(u32, KeyValue)> {
         0x02 => KeyValue::Double(bits.bit_double()?),
         0x03 | 0x1A => KeyValue::Byte(bits.bits_value(8)?),
         0x04 | 0x0F | 0x10 | 0x12 => KeyValue::None,
+        0x06 => KeyValue::Point([bits.raw_double()?, bits.raw_double()?]),
         0x09 => KeyValue::Vector([bits.bit_double()?, bits.bit_double()?, bits.bit_double()?]),
         0x0B | 0x19 => {
             let n = count(bits)?;
@@ -4880,5 +4883,17 @@ mod tests {
         let mut bits = Bits::new(&data, 0, s.len());
         assert_eq!(real_superelevation(&mut bits, None), None);
     }
-}
 
+    #[test]
+    fn reads_a_plan_point_key() {
+        // BL 0x06034486 (00 + four bytes, low first), then two RD.
+        let mut bits = String::from("00");
+        for b in 0x0603_4486u32.to_le_bytes().iter().chain(1.5f64.to_le_bytes().iter()).chain((-2.25f64).to_le_bytes().iter()) {
+            bits += &format!("{b:08b}");
+        }
+        let data: Vec<u8> = bits.as_bytes().chunks(8).map(|c| c.iter().fold(0u8, |v, d| v << 1 | u8::from(*d == b'1'))).collect();
+        let mut b = Bits::new(&data, 0, bits.len());
+        assert_eq!(read_key(&mut b), Some((0x0603_4486, KeyValue::Point([1.5, -2.25]))));
+        assert_eq!(b.pos, bits.len());
+    }
+}
