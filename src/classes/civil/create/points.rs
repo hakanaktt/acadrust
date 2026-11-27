@@ -339,9 +339,16 @@ struct SettingKey {
 
 /// The create-points settings node, its record and its settings list.
 fn create_settings(doc: &CadDocument) -> Option<(Handle, NodeTail, Vec<SettingKey>)> {
+    let node = Handle::new(settings_node(doc, "AeccCreatePoints")?.0);
+    let (tail, keys) = settings_keys(doc, node)?;
+    Some((node, tail, keys))
+}
+
+/// A settings node's record and its settings list: after the node's
+/// children, `BL 0, B 1, BL n, n x key` (keys as class keys).
+fn settings_keys(doc: &CadDocument, node: Handle) -> Option<(NodeTail, Vec<SettingKey>)> {
     use crate::classes::civil::alignment::{read_key, KeyValue};
     use crate::classes::civil::bits::Bits;
-    let node = Handle::new(settings_node(doc, "AeccCreatePoints")?.0);
     let tail = read_node(doc, node)?;
     let bytes = bit_bytes(&tail.bits);
     let end = tail.bits.len();
@@ -360,7 +367,27 @@ fn create_settings(doc: &CadDocument) -> Option<(Handle, NodeTail, Vec<SettingKe
         });
         keys.push(SettingKey { key, value, span: k.pos..b.pos, reference });
     }
-    Some((node, tail, keys))
+    Some((tail, keys))
+}
+
+/// Root settings: whether the drawing's coordinate transformation (its
+/// geographic data's local-to-grid transformation) is applied.
+const KEY_APPLY_TRANSFORMATION: u32 = 0x0303_448C;
+
+/// Whether the drawing settings apply the drawing's coordinate
+/// transformation (local to grid coordinates); `None` when the drawing has
+/// no root settings node or the node keeps no such setting.
+pub fn transformation_applied(doc: &CadDocument) -> Option<bool> {
+    use crate::classes::civil::alignment::KeyValue;
+    let node = doc.objects.iter().find_map(|(h, o)| match o {
+        crate::objects::ObjectType::Arch(a) if a.dxf_name == "AECC_ROOT_SETTINGS_NODE" => Some(*h),
+        _ => None,
+    })?;
+    let (_, keys) = settings_keys(doc, node)?;
+    match keys.into_iter().find(|k| k.key == KEY_APPLY_TRANSFORMATION)?.value {
+        KeyValue::Byte(b) => Some(b != 0),
+        _ => None,
+    }
 }
 
 /// The create-points settings node, its record and the bit span of the
