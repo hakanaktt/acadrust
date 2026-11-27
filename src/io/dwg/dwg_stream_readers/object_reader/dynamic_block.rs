@@ -658,6 +658,52 @@ pub fn read_solid_history_data(
     Some(DynamicBlockData::SolidHistoryNode(operation))
 }
 
+/// The type of a properties table's value that holds nothing: an empty cell,
+/// or a column without a value.
+const PROPERTIES_TABLE_NO_VALUE: i16 = -9999;
+
+/// Reads one typed value of a properties table into its DXF groups: the type
+/// (group 170), then the value in the group of that type. An empty value is
+/// the type alone. `None` for a type this reader does not know: the length of
+/// its value is unknown, so nothing after it can be read.
+fn read_properties_table_value(
+    reader: &mut DwgMergedReader,
+    fields: &mut Vec<BlockPropertiesTableField>,
+) -> Option<()> {
+    let value_type = reader.read_bit_short();
+    fields.push(BlockPropertiesTableField {
+        code: 170,
+        value: BlockPropertiesTableValue::Integer(i64::from(value_type)),
+    });
+    let (code, value) = match value_type {
+        PROPERTIES_TABLE_NO_VALUE => return Some(()),
+        40 => (
+            140,
+            BlockPropertiesTableValue::Real(reader.read_bit_double()),
+        ),
+        1 => (
+            300,
+            BlockPropertiesTableValue::Text(reader.read_variable_text()),
+        ),
+        90 => (
+            90,
+            BlockPropertiesTableValue::Integer(i64::from(reader.read_bit_long())),
+        ),
+        70 => (
+            170,
+            BlockPropertiesTableValue::Integer(i64::from(reader.read_bit_short())),
+        ),
+        91 => (
+            340,
+            BlockPropertiesTableValue::Handle(Handle::from(reader.read_handle())),
+        ),
+        290 => (290, BlockPropertiesTableValue::Boolean(reader.read_bit())),
+        _ => return None,
+    };
+    fields.push(BlockPropertiesTableField { code, value });
+    Some(())
+}
+
 pub fn read_dynamic_block_data(
     reader: &mut DwgMergedReader,
     dxf_name: &str,
@@ -1060,13 +1106,10 @@ pub fn read_dynamic_block_data(
                     });
                 }
                 integer!(90, reader.read_bit_long());
+                // Two typed values, each a type and the value in that type's
+                // form, as a row's cells are stored.
                 for _ in 0..2 {
-                    fields.push(BlockPropertiesTableField {
-                        code: 170,
-                        value: BlockPropertiesTableValue::Integer(i64::from(
-                            reader.read_bit_short(),
-                        )),
-                    });
+                    read_properties_table_value(reader, &mut fields)?;
                 }
                 for code in 290..=294 {
                     fields.push(BlockPropertiesTableField {
@@ -1088,29 +1131,7 @@ pub fn read_dynamic_block_data(
             for _ in 0..row_count {
                 integer!(90, reader.read_bit_long());
                 for _ in 0..column_count {
-                    let value_type = reader.read_bit_short();
-                    integer!(170, value_type);
-                    let value = match value_type {
-                        40 => BlockPropertiesTableValue::Real(reader.read_bit_double()),
-                        1 => BlockPropertiesTableValue::Text(reader.read_variable_text()),
-                        90 => BlockPropertiesTableValue::Integer(i64::from(reader.read_bit_long())),
-                        70 => {
-                            BlockPropertiesTableValue::Integer(i64::from(reader.read_bit_short()))
-                        }
-                        91 => BlockPropertiesTableValue::Handle(Handle::from(reader.read_handle())),
-                        290 => BlockPropertiesTableValue::Boolean(reader.read_bit()),
-                        _ => return None,
-                    };
-                    let code = match value_type {
-                        40 => 140,
-                        1 => 300,
-                        90 => 90,
-                        70 => 170,
-                        91 => 340,
-                        290 => 290,
-                        _ => unreachable!(),
-                    };
-                    fields.push(BlockPropertiesTableField { code, value });
+                    read_properties_table_value(reader, &mut fields)?;
                 }
             }
             integer!(93, reader.read_bit_long());
