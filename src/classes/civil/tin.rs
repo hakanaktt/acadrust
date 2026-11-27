@@ -15,6 +15,25 @@
 //! 0x40) span the surface extents, and the triangles that use them have
 //! flag bit 0 set and are not drawn. A second copy of the block follows the
 //! first; the first is the built surface.
+//!
+//! The stored lists are the surface's full triangulation database; the
+//! application's live `TinSurface.Vertices`/`Triangles` collections surface
+//! the drawn mesh only. Every vertex kept only by hidden triangles — the
+//! four extent corners among them — is absent from the live collection, as
+//! is every hidden triangle. Recorded 2026-11-27 (execute_civil_code,
+//! cap.night.*.census.txt): the tutorials' Grading-1, Align-7A,
+//! Labels-Surface and Surface-3 keep 782/10158/35815/2410 stored vertices
+//! and 1558/20310/71624/4814 stored triangles, where the application reads
+//! 778/8572/35677/2405 vertices and 1388/16868/70602/4593 triangles — each
+//! live count equals the drawn-mesh subset exactly (the vertices referenced
+//! by at least one non-hidden triangle, and the non-hidden triangles), on
+//! every file. A surface the application has not built keeps only the shell
+//! (the four corners at the drawing extremes, no triangles), which the live
+//! collections read as 0/0. Both denominators are faithful: this crate keeps
+//! the stored lists as stored (the #543/#559 scaffold adjudication, the F3
+//! denominator rule) — count the drawn subset ([`TinSurface::visible_triangles`],
+//! or vertices whose flag bit 0 is clear and whose incident triangle draws)
+//! to compare against the application.
 
 use super::bits::Bits;
 use crate::types::{Vector2, Vector3};
@@ -57,7 +76,12 @@ impl TinTriangle {
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TinSurface {
+    /// Every vertex as stored, including the ones only hidden triangles use
+    /// (the live application collections read fewer — the module header has
+    /// the denominator).
     pub vertices: Vec<TinVertex>,
+    /// Every triangle as stored; hidden ones ([`TinTriangle::is_visible`]
+    /// false) carry the scaffold the live application does not count.
     pub triangles: Vec<TinTriangle>,
     /// Indices of the four bounding corner vertices.
     pub corners: [u32; 4],
