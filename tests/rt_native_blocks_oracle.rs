@@ -10,15 +10,15 @@ use acadrust::entities::EntityType;
 use acadrust::types::DxfVersion;
 use acadrust::{CadDocument, DwgReader, DwgWriter};
 
-fn oracle() -> CadDocument {
-    let dir = std::env::var("ACADRUST_CIVIL_TUTORIALS_DIR").expect("set ACADRUST_CIVIL_TUTORIALS_DIR");
+fn oracle() -> Option<CadDocument> {
+    let dir = std::env::var_os("ACADRUST_CIVIL_TUTORIALS_DIR")?;
     let path = std::path::Path::new(&dir).join("Sections-Project-Objects.dwg");
     let mut doc = DwgReader::from_file(&path)
         .expect("open the oracle")
         .read()
         .expect("parse the oracle");
     doc.version = DxfVersion::AC1032;
-    doc
+    Some(doc)
 }
 
 fn roundtrip(doc: &CadDocument) -> CadDocument {
@@ -95,7 +95,7 @@ fn member_snapshot(doc: &CadDocument) -> Vec<(u64, String)> {
 
 #[test]
 fn the_oracle_block_definitions_and_inserts_roundtrip() {
-    let oracle = oracle();
+    let Some(oracle) = oracle() else { return };
     assert_eq!(oracle.block_records.len(), 64, "the oracle's block records");
     let inserts = insert_snapshot(&oracle);
     assert_eq!(inserts.len(), 19, "the oracle's inserts in model space");
@@ -128,7 +128,7 @@ fn the_oracle_block_definitions_and_inserts_roundtrip() {
 /// oracle's last byte is 0xFF/0x87) — decode-neutral.
 #[test]
 fn the_aec_mv_block_records_survive_the_same_save() {
-    let oracle = oracle();
+    let Some(oracle) = oracle() else { return };
     let back = roundtrip(&oracle);
 
     let raws = |doc: &CadDocument| -> Vec<(u64, Vec<u8>)> {
