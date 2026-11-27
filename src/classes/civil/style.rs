@@ -128,6 +128,21 @@ pub(super) fn class_data(data: &[u8], start: usize, end: usize) -> Option<usize>
     Some(layout(data, start, end)?.end)
 }
 
+/// The texts a style's settings keys hold inline (type 0x18, without
+/// their terminating NUL), in key order.
+pub(super) fn key_texts(data: &[u8], start: usize, end: usize) -> Option<Vec<String>> {
+    Some(
+        layout(data, start, end)?
+            .keys
+            .into_iter()
+            .filter_map(|(_, value)| match value {
+                KeyValue::Text(text) => Some(text.trim_end_matches('\0').to_string()),
+                _ => None,
+            })
+            .collect(),
+    )
+}
+
 /// Where a style's class data starts, the index of its own reference
 /// (the first after the header's lists and the keys' references) and how
 /// many keys hold a text (their texts follow the record's own ones).
