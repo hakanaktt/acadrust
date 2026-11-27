@@ -7112,6 +7112,15 @@ impl<'a> SectionReader<'a> {
                             let object =
                                 self.read_dynamic_block_object_dxf(name, document.version)?;
                             if let DynamicBlockData::VisibilityParameter(parameter) = &object.data {
+                                // The parameter's own type has no reactor
+                                // list: its reactors go where the DWG reader
+                                // keeps them, and both writers take them from
+                                // there.
+                                if !object.reactors.is_empty() && !parameter.handle.is_null() {
+                                    document
+                                        .reactors_by_handle
+                                        .insert(parameter.handle, object.reactors.clone());
+                                }
                                 document
                                     .block_visibility_params
                                     .insert(parameter.handle, parameter.clone());
