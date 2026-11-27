@@ -1391,6 +1391,22 @@ impl ArchEntityData {
         view_frames::match_line_geometry(data, start, end, &graphic)
     }
 
+    /// Name a Civil 3D pipe network part (`AECC_PIPE`, `AECC_STRUCTURE`)
+    /// carries: the text its record's layout pins the name slot to — the
+    /// text after the record's `AeccNetworkPartDataField` groups (see
+    /// [`network::part_name_slot`]). `None` when the record's layout does
+    /// not pin the slot.
+    pub fn network_part_name(&self) -> Option<String> {
+        let structure = self.dxf_name == "AECC_STRUCTURE";
+        if !structure && self.dxf_name != "AECC_PIPE" {
+            return None;
+        }
+        let strings = self.decode().strings;
+        let (data, start, end) = self.main_stream()?;
+        network::part_name_slot(&data, start, end, &strings, structure)
+            .map(|slot| strings[slot].clone())
+    }
+
     /// Number fields of the part data a Civil 3D pipe (`AECC_PIPE`) keeps
     /// itself: flow coefficients, minimum curve radius and the like.
     pub fn pipe_part_fields(&self) -> Vec<PartField> {

@@ -737,9 +737,20 @@ pub fn connect_pipe(doc: &mut CadDocument, pipe: Handle, start: Option<Handle>, 
 /// in the network; the application may rename a part afterwards (it
 /// suffixes a duplicate with ` (1)`) — this writes that name.
 ///
-/// The record keeps every bit; only the class body's name text (the
-/// string the writers put the name at) changes. Names are not checked for
-/// uniqueness: the application resolves a duplicate on open.
+/// The name goes to the slot the record's own layout pins: the text after
+/// the record's `AeccNetworkPartDataField` groups, the one slot rule the
+/// read and the write side share. Records this crate writes list no
+/// fields, so the name
+/// stays at `strings[6]`; the application's carriers hold it past their
+/// field groups (Pipe Networks-3B census: no-group pipes with an extra
+/// description text `strings[7]`, three number-field groups `strings[25]`,
+/// a headwall's one text-field group `strings[13]`), so a re-saved
+/// app-written record keeps the name in its slot and a renamed part can be
+/// renamed again whatever text its slot holds. A record whose layout does
+/// not pin the slot is refused: the slot is never invented.
+///
+/// The record keeps every bit; only the name text changes. Names are not
+/// checked for uniqueness: the application resolves a duplicate on open.
 pub fn set_network_part_name(doc: &mut CadDocument, part: Handle, name: &str) -> Result<(), DxfError> {
     let refused = || invalid("not a pipe network part");
     if name.trim().is_empty() {
@@ -748,8 +759,9 @@ pub fn set_network_part_name(doc: &mut CadDocument, part: Handle, name: &str) ->
     let a = arch_entity(doc, part).filter(|a| a.dxf_name == "AECC_PIPE" || a.dxf_name == "AECC_STRUCTURE").ok_or_else(refused)?;
     let (data, start, end) = a.main_stream().ok_or_else(refused)?;
     let mut strings = a.decode().strings;
-    (strings.len() > 6).then_some(()).ok_or_else(refused)?;
-    strings[6] = name.to_string();
+    let structure = a.dxf_name == "AECC_STRUCTURE";
+    let slot = super::super::network::part_name_slot(&data, start, end, &strings, structure).ok_or_else(refused)?;
+    strings[slot] = name.to_string();
     let dxf = a.dxf_name.clone();
     let common = doc.get_entity(part).ok_or_else(refused)?.common().clone();
     let bits: Vec<bool> = (start..end).map(|p| data[p / 8] >> (7 - p % 8) & 1 == 1).collect();
@@ -939,5 +951,173 @@ mod tests {
         let (data, start, _) = object(&back, def).unwrap().main_stream().unwrap();
         let bytes: Vec<u8> = (0..8).map(|k| (0..8).fold(0u8, |b, i| b << 1 | (data[(start + 154 + 8 * k + i) / 8] >> (7 - (start + 154 + 8 * k + i) % 8) & 1))).collect();
         assert_eq!(f64::from_le_bytes(bytes.try_into().unwrap()), 15.0);
+    }
+
+    /// Bit-string helpers for application-shaped carrier records (the
+    /// encodings the read side's module docs describe).
+    fn bl(v: u32) -> String {
+        match v {
+            0 => "10".to_string(),
+            1..=255 => format!("01{v:08b}"),
+            _ => format!("00{}", v.to_le_bytes().iter().map(|b| format!("{b:08b}")).collect::<String>()),
+        }
+    }
+
+    fn bs(v: u16) -> String {
+        match v {
+            0 => "10".to_string(),
+            1..=255 => format!("01{v:08b}"),
+            _ => format!("00{}", v.to_le_bytes().iter().map(|b| format!("{b:08b}")).collect::<String>()),
+        }
+    }
+
+    fn bd(v: f64) -> String {
+        format!("00{}", v.to_le_bytes().iter().map(|b| format!("{b:08b}")).collect::<String>())
+    }
+
+    /// One part-record field after the list's `BL 0`: kind, the two bits,
+    /// the type and its value bits.
+    fn field(kind: u16, two: &str, ty: u8, value: &str) -> String {
+        format!("{}{}{}{}{}{two}{}{}{}{value}{}", bl(0), bl(80), bs(0x04BE), bl(0), bs(kind), bl(0), "00001000", format!("{ty:08b}"), bl(1))
+    }
+
+    /// A carrier record's head: class header without keys, the 3-bit tag
+    /// and the GUID.
+    fn part_head() -> String {
+        format!("{}{}{}{}{}{}01010100000000010{}", bl(80), bl(0), bl(80), bl(80), bl(0), bl(0), "0".repeat(128))
+    }
+
+    /// A structure's part record whose field list holds `fields` (`n`
+    /// fields).
+    fn structure_record(fields: &str, n: u32) -> String {
+        format!("{}{}{}{}{}{}{}{fields}{}{}", part_head(), "0".repeat(794), bl(80), bs(0x04BE), bl(80), bl(80), bl(n), bl(0), "0".repeat(256))
+    }
+
+    /// A pipe's part record whose field list holds `fields` (`n` fields).
+    fn pipe_record(fields: &str, n: u32) -> String {
+        format!("{}{}{}{}{}{}{}{fields}{}{}", part_head(), "0".repeat(26), bl(80), bs(0x04BE), bl(80), bl(80), bl(n), bl(0), "0".repeat(256))
+    }
+
+    /// A bit string as written.
+    fn bits_of(bits: &str) -> Vec<bool> {
+        bits.chars().map(|c| c == '1').collect()
+    }
+
+    /// One `AeccNetworkPartDataField` group of a text stream.
+    fn group(code: &str, desc: &str, context: &str, unit: &str, text: Option<&str>) -> Vec<String> {
+        let mut g: Vec<String> = ["AeccNetworkPartDataField", "", code, desc, context, unit].map(String::from).to_vec();
+        g.extend(text.map(String::from));
+        g
+    }
+
+    /// Re-bodies a part with an application-shaped record: `bits` and
+    /// `strings` as given, references kept.
+    fn rebody(doc: &mut CadDocument, part: Handle, bits: Vec<bool>, strings: Vec<String>) {
+        let a = arch_entity(doc, part).unwrap();
+        let refs: Vec<Ref> = a.typed_handles().into_iter().map(typed).collect();
+        let dxf = a.dxf_name.clone();
+        let common = doc.get_entity(part).unwrap().common().clone();
+        put_entity(doc, &dxf, common, |w| bits.iter().for_each(|b| w.write_bit(*b)), Body { refs, strings }).unwrap();
+    }
+
+    /// A record's main-stream bits as written.
+    fn record_bits(doc: &CadDocument, part: Handle) -> Vec<bool> {
+        let a = arch_entity(doc, part).unwrap();
+        let (data, start, end) = a.main_stream().unwrap();
+        (start..end).map(|p| data[p / 8] >> (7 - p % 8) & 1 == 1).collect()
+    }
+
+    /// The application's carriers hold the name where the record's layout
+    /// pins it — past the `AeccNetworkPartDataField` groups its field list
+    /// frames (Pipe Networks-3B census: a no-group pipe with an extra
+    /// description text 7, a headwall's one text-field group 13, a
+    /// catalog-size pipe's three number-field groups 25; this crate's own
+    /// no-group records 6). The slot is the read side's too, so a renamed
+    /// part keeps reading its name and can be renamed again whatever its
+    /// slot holds; a record whose layout pins no slot is refused (#675,
+    /// the reviews of #693).
+    #[test]
+    fn part_names_go_to_the_slot_the_record_pins() {
+        let v = Vector3::new;
+        let mut doc = CadDocument::new();
+        doc.version = DxfVersion::AC1032;
+        let n = add_pipe_network(&mut doc, "NW-SLOTS", None).unwrap();
+        let s = add_structure(&mut doc, n, v(0.0, 0.0, 0.0), 0.0).unwrap();
+        let p1 = add_pipe(&mut doc, n, v(0.0, 0.0, -2.0), v(50.0, 0.0, -2.0)).unwrap();
+        let p2 = add_pipe(&mut doc, n, v(50.0, 0.0, -2.0), v(100.0, 0.0, -2.0)).unwrap();
+
+        // This crate's own records list no fields: the name stays at
+        // strings[6], and a part can be renamed again and again, the
+        // second time to a name without the part-list prefix.
+        set_network_part_name(&mut doc, s, "Storm 1").unwrap();
+        set_network_part_name(&mut doc, s, "Storm 2").unwrap();
+        set_network_part_name(&mut doc, p1, "Storm 1").unwrap();
+        set_network_part_name(&mut doc, p1, "Storm 2").unwrap();
+        assert_eq!(arch_entity(&doc, s).unwrap().decode().strings[6], "Storm 2");
+        assert_eq!(arch_entity(&doc, p1).unwrap().decode().strings[6], "Storm 2");
+
+        // The application's normal pipe: one description text before the
+        // `AeccNetworkPartRecord` word (the writer's extra "leightk" text
+        // in the sample), so the name sits one text later. The writer's
+        // zero-field record bits stand.
+        let mut normal = texts(PIPE_STRINGS);
+        normal.insert(3, "leightk".into());
+        let bits = record_bits(&doc, p2);
+        rebody(&mut doc, p2, bits, normal);
+        assert_eq!(arch_entity(&doc, p2).unwrap().decode().strings[7], "Pipe - (1)");
+        set_network_part_name(&mut doc, p2, "Storm 1").unwrap();
+        set_network_part_name(&mut doc, p2, "Storm 2").unwrap();
+        assert_eq!(arch_entity(&doc, p2).unwrap().decode().strings[7], "Storm 2");
+
+        // The headwall's carrier: one text-field group at the writer's
+        // name slot (its "Reinforced Concrete" value is the group's
+        // seventh text), the name after it.
+        let mut headwall: Vec<String> = ["AeccImpStructure", "", "44 x 6 x 37 inch Concrete Rectangular Headwall", "AeccNetworkPartRecord", "", ""].iter().map(|s| s.to_string()).collect();
+        headwall.extend(group("Mat", "Material", "Material_Type", "", Some("Reinforced Concrete")));
+        headwall.extend(["Storm 1", "XC_STORM", "EG"].map(String::from));
+        rebody(&mut doc, s, bits_of(&structure_record(&field(301, "00", 0x82, "0"), 1)), headwall);
+        set_network_part_name(&mut doc, s, "MAIN-01").unwrap();
+        assert_eq!(arch_entity(&doc, s).unwrap().decode().strings[13], "MAIN-01");
+        set_network_part_name(&mut doc, s, "Storm 2").unwrap();
+        assert_eq!(arch_entity(&doc, s).unwrap().decode().strings[13], "Storm 2");
+        assert_eq!(arch_entity(&doc, s).unwrap().decode().strings[12], "Reinforced Concrete");
+
+        // A catalog-size pipe: three number-field groups, the name past
+        // them.
+        let mut sized: Vec<String> = ["AeccImpPipe", "", "24 inch Concrete Pipe", "leightk", "AeccNetworkPartRecord", "", ""].iter().map(|s| s.to_string()).collect();
+        sized.extend(group("ACDW", "Darcy Weisbach Factor", "FlowAnalysis_DarcyWeisbach", "", None));
+        sized.extend(group("ACHW", "Hazen Williams Coefficient", "FlowAnalysis_HazenWilliams", "", None));
+        sized.extend(group("MCR", "Minimum Curve Radius", "MinCurveRadius", "in", None));
+        sized.extend(["MAIN-02", "XC_STORM", "EG", "Catalog Item"].map(String::from));
+        let fields = [&0.013f64, &100.0, &75.0].map(|d| field(104, "10", 0x80, &format!("1{}", bd(*d)))).concat();
+        rebody(&mut doc, p2, bits_of(&pipe_record(&fields, 3)), sized);
+        set_network_part_name(&mut doc, p2, "MAIN-02").unwrap();
+        assert_eq!(arch_entity(&doc, p2).unwrap().decode().strings[25], "MAIN-02");
+
+        // The read side reads the same slots: a renamed part keeps its
+        // name.
+        assert_eq!(arch_entity(&doc, s).unwrap().network_part_name().as_deref(), Some("Storm 2"));
+        assert_eq!(arch_entity(&doc, p2).unwrap().network_part_name().as_deref(), Some("MAIN-02"));
+
+        // The re-saved records keep the names in their slots.
+        let path = std::env::temp_dir().join(format!("civil-part-slots-{}.dwg", std::process::id()));
+        DwgWriter::write_to_file(&path, &doc).unwrap();
+        let back = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let _ = std::fs::remove_file(&path);
+        let a = arch_entity(&back, s).unwrap();
+        assert_eq!((a.decode().strings[6].as_str(), a.decode().strings[12].as_str(), a.decode().strings[13].as_str()), ("AeccNetworkPartDataField", "Reinforced Concrete", "Storm 2"));
+        let a = arch_entity(&back, p2).unwrap();
+        assert_eq!((a.decode().strings[7].as_str(), a.decode().strings[25].as_str()), ("AeccNetworkPartDataField", "MAIN-02"));
+        assert_eq!(arch_entity(&back, s).unwrap().network_part_name().as_deref(), Some("Storm 2"));
+        assert_eq!(arch_entity(&back, p2).unwrap().network_part_name().as_deref(), Some("MAIN-02"));
+
+        // A record without the `AeccNetworkPartRecord` word, and a record
+        // whose field list does not read: the layout pins no slot, the
+        // rename is refused.
+        let bits = record_bits(&doc, p1);
+        rebody(&mut doc, p1, bits, vec![String::new(); 8]);
+        assert!(set_network_part_name(&mut doc, p1, "Storm 3").is_err());
+        rebody(&mut doc, p1, vec![false; 512], texts(PIPE_STRINGS));
+        assert!(set_network_part_name(&mut doc, p1, "Storm 3").is_err());
     }
 }

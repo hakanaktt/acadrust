@@ -329,6 +329,78 @@ fn part_record(bits: &mut Bits, count_at: &mut (usize, usize)) -> Option<(Vec<Op
     Some((numbers, connectors))
 }
 
+/// The part-record fields of a pipe's or structure's carrier: the type byte
+/// of each field of the record's `BL n, n x { BL 0, field }` list, in
+/// record order (`0x80` number, `0x81` flag or integer, `0x82` text);
+/// `None` when the record is not laid out as the module docs describe.
+fn carrier_field_types(data: &[u8], start: usize, end: usize, structure: bool) -> Option<Vec<u8>> {
+    let mut bits = Bits::new(data, start, end);
+    part_head(&mut bits)?;
+    if structure {
+        for _ in 0..4 {
+            point(&mut bits)?;
+        }
+        bits.skip(2)?;
+    } else {
+        bits.skip(26)?;
+    }
+    (bits.bit_long()? == 80 && bits.bit_short()? == 0x04BE).then_some(())?;
+    (bits.bit_long()? == 80 && bits.bit_long()? == 80).then_some(())?;
+    let n = usize::try_from(bits.bit_long()?).ok().filter(|n| *n <= 10_000)?;
+    (0..n)
+        .map(|_| {
+            (bits.bit_long()? == 0).then_some(())?;
+            (bits.bit_long()? == 80 && bits.bit_short()? == 0x04BE).then_some(())?;
+            bits.bit_long()?;
+            bits.bit_short()?;
+            bits.skip(2)?;
+            bits.bit_long()?;
+            bits.bits_value(8)?;
+            let ty = bits.bits_value(8)?;
+            let set = bits.bit()?;
+            match (ty, set) {
+                (0x80, true) => {
+                    bits.bit_double()?;
+                }
+                (0x81, true) => {
+                    bits.bit()?;
+                }
+                (0x81, false) => {
+                    bits.bit_long()?;
+                }
+                (0x82, false) => {}
+                _ => return None,
+            }
+            matches!(bits.bit_long()?, 1 | 2).then_some(ty)
+        })
+        .collect()
+}
+
+/// The text slot a pipe's or structure's name occupies, read from the
+/// record's own layout: the record's field list (`BL n, n x { BL 0,
+/// field }`, see [`carrier_field_types`]) frames exactly `n`
+/// `AeccNetworkPartDataField` groups of its text stream, which begin three
+/// texts after the stream's `AeccNetworkPartRecord` word; a group is six
+/// texts plus the one more a field of type `0x82` keeps in the stream.
+/// The name follows the last group — three texts after the word when the
+/// record lists no fields. `None` when the record's layout does not pin
+/// the slot (no word, unreadable fields, a group start without its tag,
+/// or the slot past the stream).
+///
+/// This is the one slot rule for the read and the write side: a renamed
+/// part keeps its slot, whatever text it holds (Pipe Networks-3B census:
+/// no-group carriers 6 and 7, one text-field group 13, three number-field
+/// groups 25).
+pub(super) fn part_name_slot(data: &[u8], start: usize, end: usize, strings: &[String], structure: bool) -> Option<usize> {
+    let mut slot = strings.iter().position(|s| s == "AeccNetworkPartRecord")? + 3;
+    for ty in carrier_field_types(data, start, end, structure)? {
+        (strings.get(slot)? == "AeccNetworkPartDataField").then_some(())?;
+        slot += 6 + usize::from(ty == 0x82);
+    }
+    strings.get(slot)?;
+    Some(slot)
+}
+
 /// Bit range and value of a pipe's or structure's connector count (see
 /// [`part_record`]).
 pub(crate) fn connector_count(data: &[u8], start: usize, end: usize, structure: bool) -> Option<(usize, usize, i32)> {
