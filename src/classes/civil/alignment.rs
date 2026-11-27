@@ -430,6 +430,8 @@ pub(super) enum KeyValue {
     Color(u32),
     /// 0x13, 0x16 (a FILETIME): 64 raw bits.
     Raw(u64),
+    /// 0x15: 128 raw bits, little-endian (zero in every sample).
+    Raw128(u128),
     /// 0x18: BL byte count, UTF-16LE text.
     Text(String),
 }
@@ -470,6 +472,13 @@ pub(super) fn read_key(bits: &mut Bits) -> Option<(u32, KeyValue)> {
             let low = bits.raw_long()? as u32;
             let high = bits.raw_long()? as u32;
             KeyValue::Raw(u64::from(high) << 32 | u64::from(low))
+        }
+        0x15 => {
+            let mut value = 0u128;
+            for i in 0..16 {
+                value |= u128::from(bits.bits_value(8)?) << (8 * i);
+            }
+            KeyValue::Raw128(value)
         }
         0x18 => {
             let bytes = usize::try_from(bits.bit_long()?).ok().filter(|n| n % 2 == 0 && n * 8 <= bits.remaining())?;

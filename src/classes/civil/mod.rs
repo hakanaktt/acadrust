@@ -39,7 +39,7 @@ pub use create::{add_empty_tin_surface, add_tin_surface_with, add_assembly, add_
 pub use corridor::{CorridorBaseline, CorridorBoundary, CorridorDefinition, CorridorRegion, CorridorSurfaceDefinition, CurveStations, RegionFrequency, RegionTarget, TargetCurveStations, TargetKind};
 pub use grading::{CriteriaValue, GradingCriteria, GradingEntity, GradingGroup, GradingGroupRecord, GradingGroupTree};
 pub use intersection::IntersectionLayout;
-pub use labels::{parse_format, property, LabelPart, LabelText};
+pub use labels::{parse_format, property, LabelDimensionAnchor, LabelPart, LabelText};
 pub use label_style::{LabelArrowComponent, LabelBlockComponent, LabelBorder, LabelDraggedState, LabelIteratorComponent, LabelLeader, LabelLineComponent, LabelStyleSettings, LabelTextComponent, LabelTickComponent};
 pub use network::{PartField, PressurePipe, PressurePort};
 pub use parameters::{Parameter, ParameterValue};
@@ -616,6 +616,29 @@ impl ArchEntityData {
         }
         let (data, start, end) = self.main_stream()?;
         labels::dragged_offset(data, start, end)?
+    }
+
+    /// Each label's offset from the point it labels to where it was
+    /// dragged, in the order the record numbers its labels (a group's
+    /// sub-labels); `None` for a label left in place. Empty when the record
+    /// does not read.
+    pub fn label_dragged_offsets(&self) -> Vec<Option<Vector2>> {
+        if self.civil_kind() != Some(CivilKind::Label) {
+            return Vec::new();
+        }
+        self.main_stream()
+            .and_then(|(data, start, end)| labels::dragged_offsets(data, start, end))
+            .unwrap_or_default()
+    }
+
+    /// The dimension anchor a Civil 3D label record gives its labels by
+    /// default (see [`LabelDimensionAnchor`]).
+    pub fn label_dimension_anchor(&self) -> Option<LabelDimensionAnchor> {
+        if self.civil_kind() != Some(CivilKind::Label) {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        labels::dimension_anchor(data, start, end)
     }
 
     /// Ids of the profile entities a profile label group
