@@ -91,7 +91,8 @@ pub struct SectionWriter<'a, W: DxfStreamWriter> {
     /// Block-record names needed by legacy TABLE INSERT data.
     block_record_names: HashMap<Handle, String>,
     /// Reactors of objects whose model has no reactor list (SCALE,
-    /// MLINESTYLE, ACDBDICTIONARYWDFLT), from `reactors_by_handle`.
+    /// MLINESTYLE, ACDBDICTIONARYWDFLT, BLOCKVISIBILITYPARAMETER), from
+    /// `reactors_by_handle`.
     kept_reactors: HashMap<Handle, Vec<Handle>>,
     /// Typed inputs for loft surfaces whose native data contains references.
     loft_input_entities: HashMap<Handle, EmbeddedEntity>,
@@ -214,6 +215,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                     ObjectType::Scale(_)
                         | ObjectType::MLineStyle(_)
                         | ObjectType::DictionaryWithDefault(_)
+                        | ObjectType::BlockVisibilityParameter(_)
                 )
             })
             .filter_map(|(handle, _)| {
@@ -9953,6 +9955,9 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     fn write_block_visibility_parameter(&mut self, obj: &BlockVisibilityParameter) -> Result<()> {
         self.writer.write_string(0, "BLOCKVISIBILITYPARAMETER")?;
         self.writer.write_handle(5, obj.handle)?;
+        // The parameter's own type has no reactor list; a block properties
+        // table that sets the visibility state is one of its reactors.
+        self.write_kept_reactors(obj.handle)?;
         self.writer.write_handle(330, obj.owner)?;
         // Same AcDbEvalExpr layout as every other parameter: a -9999 "no
         // value" sentinel emits nothing after 99 (a "70 -9999" pair makes
