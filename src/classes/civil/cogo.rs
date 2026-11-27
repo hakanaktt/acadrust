@@ -703,7 +703,7 @@ mod tests {
         let s = [
             format!("{bs_04be} {}{}{} 010", bl(34), bl(0), bl(0)),
             format!("{} {}{}", bl(2), record(1), record(2)),
-            format!("{}{}{}{}", bl(0), bl(0), bl(0), bl(0)),
+            format!("{}{}{}{}{}", bl(0), bl(0), bl(0), bl(0), bl(0)),
             format!("{} {}{} {}{}", bl(2), bl(1), bl(0x0200_D214), bl(2), bl(0x8000_0B09)),
             format!("{}{}{}{}", bl(0), slot(&[(1, 2.0)]), slot(&[(1, 3.0)]), slot(&[(1, r30), (2, 1.0)])),
             bl(0).repeat(7),
