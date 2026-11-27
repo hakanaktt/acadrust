@@ -19,6 +19,7 @@ mod groups;
 mod intersection;
 mod labels;
 mod label_style;
+mod mass_haul;
 mod network;
 mod network_content;
 mod network_families;
@@ -59,6 +60,7 @@ pub use profile::{add_profile, add_profile_entities, add_profile_with_curves, ad
 pub use profile_view::{add_profile_view, add_profile_view_with_bands, add_profile_view_with_range, add_profile_view_style, add_profile_view_with_style, add_profile_view_style_with};
 pub use bands::{BandKind, BandStagger, ProfileViewBand};
 pub use sample_lines::{add_sample_line, add_sample_line_through, add_sample_line_group, add_sections};
+pub use mass_haul::add_mass_haul_line;
 pub use section_view::{add_section_view, add_section_view_group};
 pub use site::{add_alignment_on_site, add_feature_line, add_lot_line, add_parcel, add_feature_line_vertices, feature_line_vertices, parcel_name, FeatureLineVertex, add_site, set_feature_line_vertices, PARCEL_STYLE_NAME, PARCEL_NUMBER};
 pub use stormwater::{add_channel, add_pond, add_underground_storage};
