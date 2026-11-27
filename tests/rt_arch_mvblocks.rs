@@ -14,15 +14,15 @@ use acadrust::objects::ObjectType;
 use acadrust::types::DxfVersion;
 use acadrust::{CadDocument, DwgReader, DwgWriter};
 
-fn oracle() -> CadDocument {
-    let dir = std::env::var("ACADRUST_CIVIL_TUTORIALS_DIR").expect("set ACADRUST_CIVIL_TUTORIALS_DIR");
+fn oracle() -> Option<CadDocument> {
+    let dir = std::env::var_os("ACADRUST_CIVIL_TUTORIALS_DIR")?;
     let path = std::path::Path::new(&dir).join("Sections-Project-Objects.dwg");
     let mut doc = DwgReader::from_file(&path)
         .expect("open the oracle")
         .read()
         .expect("parse the oracle");
     doc.version = DxfVersion::AC1032;
-    doc
+    Some(doc)
 }
 
 fn roundtrip(doc: &CadDocument) -> CadDocument {
@@ -69,7 +69,7 @@ fn oracle_defs(doc: &CadDocument) -> Vec<MvBlockDef> {
 /// the recorded class-body run.
 #[test]
 fn the_oracle_mv_block_records_decode() {
-    let doc = oracle();
+    let Some(doc) = oracle() else { return };
     let defs = oracle_defs(&doc);
     assert_eq!(defs.len(), 1, "one definition");
     let def = &defs[0];
@@ -113,7 +113,7 @@ fn the_oracle_mv_block_records_decode() {
 /// gives records whose decode is the oracle's, class bodies bit for bit.
 #[test]
 fn the_oracle_mv_block_records_rebuild_bit_exact() {
-    let mut doc = oracle();
+    let Some(mut doc) = oracle() else { return };
     let defs = oracle_defs(&doc);
     let refs = oracle_refs(&doc);
     let _added_def = add_mv_block_def(&mut doc, &defs[0]).expect("write the definition");
@@ -158,7 +158,7 @@ fn the_oracle_mv_block_records_rebuild_bit_exact() {
 /// the texts, or a class body that is not a recorded run.
 #[test]
 fn a_reference_outside_the_recorded_grammar_is_refused() {
-    let mut doc = oracle();
+    let Some(mut doc) = oracle() else { return };
     let defs = oracle_defs(&doc);
     let refs = oracle_refs(&doc);
     let real = &refs[0];
