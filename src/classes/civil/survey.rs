@@ -24,8 +24,9 @@
 //!     word at the stream head confirms it (both checked; the samples' 170
 //!     records — Survey-2B and Survey-3, 85 figures each — pass).
 //!   - the **described 3D form** (the tutorials' Survey-4D / Survey-5B lot
-//!     records, whose text stream grows to six strings — name, an empty
-//!     slot, a `" (1)"`-style description, site): the 3D entry shape and
+//!     records, whose text stream grows to six strings — an identifier
+//!     slot, an empty slot, the `" (1)"`-style name, site): the 3D entry
+//!     shape and
 //!     trailer verbatim behind a head 32 bits longer (up to the count word:
 //!     567 bits vs the 3D form's 535). The frame closes as
 //!     `count = (class_end - class_start - 594) / 198` with no remainder,
@@ -76,9 +77,12 @@ pub struct SurveyFigure {
 
 /// A survey figure's name and site. The plain text stream reads
 /// `AeccImpSvFigure`, ``, ``, name, site name; the described 3D form's
-/// six-string stream reads `AeccImpSvFigure`, ``, name, ``,
-/// description, site name — the description (e.g. `" (1)"`) is not part of
-/// this read.
+/// six-string stream reads `AeccImpSvFigure`, ``, an identifier, ``,
+/// name, site name — the name is the fifth string (the slot before the
+/// site, e.g. `" (1)"`), live-verified against the application's `Name`
+/// property on the Survey-4D lot figures (2026-11-27 capture: Name
+/// `" (1)"` on all 8, `Description` empty); the identifier (e.g.
+/// `LOT1`) is not part of this read.
 pub(super) fn figure(strings: &[String]) -> Option<SurveyFigure> {
     let plain = Some(SurveyFigure {
         name: strings.get(3)?.clone(),
@@ -86,11 +90,12 @@ pub(super) fn figure(strings: &[String]) -> Option<SurveyFigure> {
     })
     .filter(|f| !f.name.is_empty());
     plain.or_else(|| {
-        // the described form: the name fills the third slot, the fourth
-        // stays empty, the description follows, the site comes last
+        // the described form: the slot after the identifier stays empty,
+        // the name is the next slot (the application's `Name`), the site
+        // comes last
         (strings.len() == 6 && strings[3].is_empty()).then_some(())?;
         Some(SurveyFigure {
-            name: strings[2].clone(),
+            name: strings[4].clone(),
             site: strings[5].clone(),
         })
         .filter(|f| !f.name.is_empty())
@@ -651,17 +656,23 @@ mod tests {
 
     #[test]
     fn reads_a_described_records_name_and_site() {
-        let strings = [
-            "AeccImpSvFigure".to_string(),
-            String::new(),
-            "LOT1".to_string(),
-            String::new(),
-            " (1)".to_string(),
-            "Survey Site".to_string(),
-        ];
-        let f = figure(&strings).expect("described text form decodes");
-        assert_eq!(f.name, "LOT1");
-        assert_eq!(f.site, "Survey Site");
+        // the Survey-4D captured form: the application's `Name` is the
+        // fifth string — `" (1)"` on all 8 lot figures (2026-11-27 live
+        // capture; `Description` empty) — not the `LOT1`..`LOT8`
+        // identifier in the third string
+        for lot in ["LOT1", "LOT2", "LOT3", "LOT4", "LOT5", "LOT6", "LOT7", "LOT8"] {
+            let strings = [
+                "AeccImpSvFigure".to_string(),
+                String::new(),
+                lot.to_string(),
+                String::new(),
+                " (1)".to_string(),
+                "Survey Site".to_string(),
+            ];
+            let f = figure(&strings).expect("described text form decodes");
+            assert_eq!(f.name, " (1)");
+            assert_eq!(f.site, "Survey Site");
+        }
     }
 
     #[test]
