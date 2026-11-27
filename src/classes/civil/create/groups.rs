@@ -842,6 +842,11 @@ pub fn set_point_group_draw_order(doc: &mut CadDocument, top_first: &[Handle]) -
 fn set_draw_order(doc: &mut CadDocument, group: Handle, order: i32) -> Result<(), DxfError> {
     let bad = || invalid("point group record cannot be rewritten");
     let obj = object(doc, group).filter(|o| o.dxf_name == "AECC_POINT_PG").ok_or_else(bad)?;
+    // Before R2007 the texts sit in the main stream, so the copied tail
+    // would carry them twice.
+    if obj.raw_dwg_version.is_some_and(|v| v < crate::types::DxfVersion::AC1021) {
+        return Err(bad());
+    }
     let (data, start, end) = obj.main_stream().ok_or_else(bad)?;
     let rec = crate::classes::civil::cogo::group_record(data, start, end).ok_or_else(bad)?;
     if rec.serial == Some(order) {
@@ -1377,8 +1382,6 @@ fn read_custom_query(b: &mut Bits, texts: &[String], k: usize) -> Option<QueryEx
 mod tests {
     use super::*;
 
-    /// A custom query's comparisons in text order with their joints and
-    /// parentheses, and the tree its texts list (PQ01 C8, PQ02 D2).
     #[test]
     fn draw_order_is_rewritten_top_first() {
         use crate::types::Vector3;
@@ -1405,6 +1408,8 @@ mod tests {
         }
     }
 
+    /// A custom query's comparisons in text order with their joints and
+    /// parentheses, and the tree its texts list (PQ01 C8, PQ02 D2).
     #[test]
     fn custom_queries_read_as_the_application_parses_them() {
         let cmp = |a, c, v| QueryExpression::Compare(a, c, v);
