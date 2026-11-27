@@ -134,7 +134,7 @@ pub(crate) fn entity_graphic_data(data: &ArchEntityData) -> Option<Vec<u8>> {
 
 
 
-fn open_object(object: &ArchObject) -> crate::error::Result<DwgMergedReader> {
+pub(crate) fn open_object(object: &ArchObject) -> crate::error::Result<DwgMergedReader> {
     let raw = object.raw_dwg_data.as_deref().ok_or_else(|| {
         crate::error::DxfError::Parse("architecture object has no DWG body".into())
     })?;
@@ -206,7 +206,7 @@ fn read_handles(reader: &DwgMergedReader) -> Vec<u64> {
     handles
 }
 
-fn read_entity_tag(reader: &mut DwgMergedReader) -> (Option<i16>, Option<AecPlacement>) {
+pub(crate) fn read_entity_tag(reader: &mut DwgMergedReader) -> (Option<i16>, Option<AecPlacement>) {
     if reader.read_bit_short() != 80 || !reader.read_bit() || !reader.read_bit() {
         return (None, None);
     }
@@ -260,7 +260,7 @@ fn read_entity_tag(reader: &mut DwgMergedReader) -> (Option<i16>, Option<AecPlac
     )
 }
 
-fn read_object_tag(reader: &mut DwgMergedReader) -> Option<i16> {
+pub(crate) fn read_object_tag(reader: &mut DwgMergedReader) -> Option<i16> {
     if reader.read_bit_short() != 80 || !reader.read_bit() || !reader.read_bit() {
         return None;
     }

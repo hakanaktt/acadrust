@@ -9,6 +9,14 @@
 //!
 //! The calling guide is
 //! [src/classes/arch/API.md](https://github.com/hakanaktt/acadrust/blob/main/src/classes/arch/API.md).
+//!
+//! Multi-view blocks: [`mvblock::add_mv_block_def`] writes a multi-view block
+//! definition (one record per name in the drawing's `AEC_MVBLOCK_DEFS`
+//! dictionary, each view a display representation plus a native block
+//! record), and [`mvblock::add_mv_block_ref`] places one in model space.
+//! Both rebuild the records the application stored — the class bodies are
+//! recorded runs carried verbatim, so a drawing rebuilt from its own records
+//! keeps them bit for bit; a form the typed fields cannot hold is refused.
 
 mod continuous;
 mod create;
@@ -18,6 +26,7 @@ mod fields;
 mod geometry;
 mod host;
 mod metrics;
+pub mod mvblock;
 mod object;
 mod setters;
 
@@ -37,6 +46,10 @@ pub(crate) use host::{is_architecture_entity, objects_owned_by};
 pub use metrics::{
     door_size, member_size, opening_size, stair_size, window_size, MemberSize, OpeningSize,
     StairSize,
+};
+pub use mvblock::{
+    add_mv_block_def, add_mv_block_ref, ClassBody, MvBlockDef, MvBlockRef, MvBlockView,
+    MV_BLOCK_DEF_SCHEMA, MV_BLOCK_REF_SCHEMA,
 };
 pub use object::ArchObject;
 pub use setters::{
