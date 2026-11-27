@@ -3003,6 +3003,54 @@ with the API listing two sections in each view and the offsets as
 written. Views of sampled sections are not written. A drawing without the section or section view
 styles gets the defaults (§2c).
 
+### Section data bands
+
+`add_section_data_band_label_group(doc, view, layer, group)` writes a
+section view's data band label group
+(`AECC_SECTIONDATABAND_LABELGROUP`) as an entity in model space. The
+record is the one `section_bands.rs` reads — the label grammar of
+`labels.rs` (§3h) with the band label groups' shape (§3h's bands) — by
+its fields:
+
+```text
+BL 80, 0, 80, 80, 0, 0x10025F04, 6 bits 010010, 16 residual bytes,
+BL 80, 80, 0x04BE0000, 0xFFFFFF, 3 bits 010
+BL n, n labels:
+  label: BL k, k x (BL key, value by the key's type), 2 bits 00, RC 1,
+         BL run, BL m, m x BL (the keys the label lists), BL 0, BL 0
+settings: BL 0, BL 69, BL 1, BD anchor, BD weeding, BL stagger, 2 BD
+range: 3 bits 111, BD start, BD end (0, 0 — an automatic range)
+BL band (the group's number in the view's bands)
+B 0, BS 0x04BE
+handles: soft pointer 0, soft pointer 0, the section view (soft), hard 0,
+  per label { the view (hard) }
+texts: "AeccImpSectionDataBandLabeling", three empty texts
+```
+
+The corpus's form (Sections-Project-Objects, one band per view, 19
+records): the band's start edge (keys `0x0302C108` byte 1 and the band
+number `0x01015013`), the offset-0 label (the band number alone, run
+word `0xA003` over its one key id), 58 offset labels (keys the offset
+`0x0202C012` and the band number, run word `0xA001` over the group's
+four key ids), the end edge (`0x0302C109`). The run word sits between
+the label's property-set bytes and its key list; the reader carries
+each label's run word and key ids, and the writer writes them back —
+new groups can name runs and id lists of their own.
+
+The 16 bytes after the class tag are residual in the application's
+records (across the corpus: zeros, UTF-16 string fragments, heap
+addresses); the writer stores what `SectionDataBandGroup::guid`
+carries — zeros for a new group, the recorded bytes for a rebuilt one.
+The label text itself is generated from the band's label style and is
+not stored. Groups the reader refuses (a settings label set, nested
+labels, overrides, non-numeric key values) are not writable: the typed
+fields cannot hold them.
+
+The drawing's 19 bands (edges, offsets -290 to 290 every 10 with 0
+carried by the offset-0 label, settings 69/1/0/0/stagger 0/0/1/6,
+automatic ranges, band 1) rebuild through the writer bit for bit: every
+class body equals the oracle's.
+
 ### Section view group plots
 
 `add_section_view_group(doc, group, at, layer)` writes what the

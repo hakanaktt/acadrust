@@ -120,6 +120,7 @@ const CLASSES: &[Class] = &[
     Class { dxf: "AECC_SAMPLE_LINE_GROUP_STYLE", cpp: "AeccDbSampleLineGroupStyle", module: "AeccLand130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_SECTION_VIEW_STYLE", cpp: "AeccDbGraphStyleCrossSection", module: "AeccLand130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_SECTION_VIEW_BAND_STYLE_SET", cpp: "AeccDbGraphSectionBandStyleSet", module: "AeccLand130", proxy_flags: 0x81, entity: false },
+    Class { dxf: "AECC_SECTIONDATABAND_LABELGROUP", cpp: "AeccDbSectionDataBandLabeling", module: "AeccLand130", proxy_flags: 0x37d, entity: true },
     Class { dxf: "AECC_INTERSECTION_STYLE", cpp: "AeccDbIntersectionStyle", module: "AeccRoadway130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_ROADWAYMARKER_STYLE", cpp: "AeccDbRoadwayMarkerStyle", module: "AeccLand130", proxy_flags: 0x81, entity: false },
     Class { dxf: "AECC_LABEL_NODE", cpp: "AeccDbLabelNode", module: "AeccLand130", proxy_flags: 0x81, entity: false },
