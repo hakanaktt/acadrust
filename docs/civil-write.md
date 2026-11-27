@@ -3987,6 +3987,71 @@ nothing maps it; the writer writes none. A group record with members
 would also need member gradings, which no writer of this crate produces
 (§6a).
 
+## 3p. The minimal grading entity (the adopt-test writer)
+
+`add_grading_minimal` writes an `AECC_GRADING` entity whose unmapped
+parts are taken verbatim from a record the application wrote
+(`GradingSkeleton`: the record's 137 opening bits — its per-record head
+word and header body — its section counters, its run, its three text
+strings) around a typed anchor. The class stream is the source record's
+bit for bit when the source's own anchor is used.
+
+The record's grammar, over the 109-record corpus of the tutorials and
+sample drawings (the class stream after the constant 132-bit schema
+head; the schema head opens the class body — an AEC entity carries no
+version word):
+
+```text
+'00' + 16-bit head word, then a 119-bit header body   (137 bits, verbatim)
+BS 0, BS 0, BD x y z (the anchor, full doubles), BS 16, BS k,
+BD x y z (the record's bit-verbatim copy of the anchor),
+k × (BS 1, BS 1, BS counter; between a k = 2 record's sections the
+  second point), BS 0,
+744-bit form: BS 0, BS 0 — otherwise BS flag (1 or 2), BS a, BS b
+  (flag 2 ⇒ a == b),
+'00' + 607 (0x25F), one 0 pad bit
+handles: soft pointer 0, hard pointer parcel, hard ownership 0, hard
+  pointer 0, hard pointer label style, soft pointer 0
+texts: "", "", a label template ("<[67326721(2449)]> :
+  <[67112990(2449)]>" in 44 of 46 records; the named Grading-4 records
+  carry "<[Grading Name Template(CP)]>" in the third text)
+```
+
+Every observed record carries the three texts, and they are app-read:
+a record written without them does not resolve — the application
+opened such a file clean but listed the entity as an unresolved
+`AcRxObject` with one null-or-erased reference.
+
+The writer writes both references null, and that is the verified form.
+Reference check (Civil 3D 2027, one open/audit/save cycle, 2026-11-26):
+
+- opened read-only: no recovery, no dialog; the census lists
+  `AeccDbGrading=1` (besides the written `AeccDbFace` 2 and
+  `AeccDbLotLine` 1), the audit counts 0 null-or-erased references, and
+  the programming interface reads the entity as a managed
+  `Autodesk.Civil.DatabaseServices.Grading` (`IsAProxy=False`,
+  handle preserved, `Area=0`);
+- the application save rewrote exactly the unnamed regions — the
+  `BS 16` word 16→17 (as in the recorded clone experiment, §6a), the
+  second section header 1→0, the counter 139→0, the run fields
+  0,0→0,12 — and kept the skeleton bit for bit: the schema head, the
+  137 verbatim opening bits, the anchor (to the last digit) and its
+  copy, the section header, the 607 terminator. 770 bits became 744.
+- on the save it also re-pointed the record's null parcel reference
+  into its own tree (the site's `AECC_PARCEL_NODE`), added the entity a
+  60-byte graphic image, and rebuilt the drawing's settings and style
+  tree (29,704 → 470,764 bytes).
+
+An emission with the texts but hard references into a fresh drawing's
+objects has **not** been verified: that form wedged the reference
+application's open once (the open never completed, the session was lost
+to it), so the writer refuses non-null references.
+
+| written | result |
+|---|---|
+| the minimal grading (skeleton of Grading-3A.dwg's 13da record, the record's own anchor; E-GW1) in a new drawing | opens without a message; AUDIT 0 null-or-erased references; the API lists a managed `Grading` with the written handle; the application save keeps the skeleton bit for bit and normalizes the counters and run; the saved record re-parses under the grammar |
+| the same with the second anchor (13ea's) and the 744-bit source's skeleton (Grading-4.dwg's c89) | the class streams are the source records' bit for bit (codec gate); not app-checked |
+
 ## 4. Reference check
 
 For every written drawing the check opens it in its own reference instance
