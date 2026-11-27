@@ -17,22 +17,23 @@
 //!   writes `0x0421`, and `0x0621` for points a survey created)
 //! BL n, n × BL number           points with their own point style
 //! BL m, m × BL number           points with their own label style
-//! BL jA, jA × { BL number, BL tag }     the leading tagged list (see
-//!   `tagged_leading` below; empty in this crate's records)
+//! BL jA, jA × { BL number, BL tag }     description formats: the format
+//!   of the description key that matched each point's raw description
 //! BL j, j × { BL number, BL name tag }          named points
 //! BL j, j × { BL name tag, BL number }          the same, keyed by name
 //! BL k, k × { BL number, BL description tag }
 //! 13 × slot: BL e, e × { BL key | 0x40000000, BL c, c × { BL number, value } }
 //! handles: n × point style, m × label style, the AeccDbCogoPoint class node
-//! strings: "", the texts of the leading tagged list in order, the names of
+//! strings: "", the description formats in list order, the names of
 //!          the j points, the same names again, the raw description of each
 //!          of the k points in order, then for each slot entry its
 //!          property's key text and its text values
 //! ```
 //!
-//! The leading tagged list follows the styles in every record the
-//! application writes (the crate reads it and keeps nothing from it yet);
-//! this crate's own records place an empty one there.
+//! The description formats list holds only the points a description key
+//! matched when they were made (`$*` the whole raw description, `$n` its
+//! n-th word); the format is the point's, a later change of the key leaves
+//! it as it was.
 //!
 //! The slots hold the values of user-defined properties by kind: slot 4
 //! doubles (BD), 5 booleans (B; RC in the definitions), 6 texts (none inline: each text follows
@@ -90,6 +91,10 @@ pub struct CogoPoint {
     pub description: Option<String>,
     /// Point name, `None` when the point has none.
     pub name: Option<String>,
+    /// The description format of the description key that matched the
+    /// point (its full description is the raw description so formatted),
+    /// `None` when no key matched.
+    pub description_format: Option<String>,
     /// Values of user-defined properties the point holds, by the
     /// property's key text ([`UserProperty::key`]).
     pub properties: Vec<(String, PropertyValue)>,
@@ -263,7 +268,7 @@ struct PointDatabase {
     records: Vec<(u32, Vector3)>,
     styled: Vec<u32>,
     labelled: Vec<u32>,
-    /// The leading tagged list (numbers; its texts precede the names).
+    /// Points with a description format (their texts precede the names).
     tagged_leading: Vec<u32>,
     named: Vec<u32>,
     /// Length of the list after the names (the same names keyed by text).
@@ -368,6 +373,7 @@ pub(super) fn points(data: &[u8], start: usize, end: usize, handles: &[u64], str
                 .position(|n| *n == number)
                 .and_then(|i| strings.get(1 + db.tagged_leading.len() + i))
                 .cloned(),
+            description_format: db.tagged_leading.iter().position(|n| *n == number).and_then(|i| strings.get(1 + i)).cloned(),
             properties: values
                 .iter()
                 .filter_map(|(key, list)| list.iter().find(|(n, _)| *n == number).map(|(_, v)| (key.clone(), v.clone())))
