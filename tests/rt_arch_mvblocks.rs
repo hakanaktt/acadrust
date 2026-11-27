@@ -117,9 +117,8 @@ fn the_oracle_mv_block_records_rebuild_bit_exact() {
     let defs = oracle_defs(&doc);
     let refs = oracle_refs(&doc);
     let _added_def = add_mv_block_def(&mut doc, &defs[0]).expect("write the definition");
-    let mut added_refs = Vec::new();
     for r in &refs {
-        added_refs.push(add_mv_block_ref(&mut doc, r, None).expect("write the reference"));
+        add_mv_block_ref(&mut doc, r, None).expect("write the reference");
     }
 
     let back = roundtrip(&doc);
@@ -131,7 +130,7 @@ fn the_oracle_mv_block_records_rebuild_bit_exact() {
 
     let mut back_refs = oracle_refs(&back);
     assert_eq!(back_refs.len(), 42, "stored + rebuilt references");
-    for (oracle_ref, handle) in refs.iter().zip(added_refs.iter()) {
+    for oracle_ref in &refs {
         let index = back_refs
             .iter()
             .position(|r| r.guid == oracle_ref.guid && r.body == oracle_ref.body)

@@ -293,7 +293,7 @@ mod tests {
     #[test]
     fn residual_bytes_and_a_named_layer_round_trip() {
         let (mut doc, view) = with_view("GUID");
-        doc.layers.add(crate::tables::Layer::new("C-SECT-BAND"));
+        doc.layers.add(crate::tables::Layer::new("C-SECT-BAND")).unwrap();
         let mut group = group(&[-10.0, 10.0]);
         // The corpus's first record's residual bytes: UTF-16 fragments.
         group.guid = [
