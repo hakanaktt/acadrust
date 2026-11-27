@@ -4100,6 +4100,62 @@ to it), so the writer refuses non-null references.
 | the minimal grading (skeleton of Grading-3A.dwg's 13da record, the record's own anchor; E-GW1) in a new drawing | opens without a message; AUDIT 0 null-or-erased references; the API lists a managed `Grading` with the written handle; the application save keeps the skeleton bit for bit and normalizes the counters and run; the saved record re-parses under the grammar |
 | the same with the second anchor (13ea's) and the 744-bit source's skeleton (Grading-4.dwg's c89) | the class streams are the source records' bit for bit (codec gate); not app-checked |
 
+## 3q. Mass haul lines
+
+`add_mass_haul_line(doc, group, style, name, free_haul, curve, guid, layer)`
+writes a mass haul line (`AECC_MASSHAULLINE`, an entity in model space) in
+the record form the wizard's create path stores (the fresh line of
+Mass Haul-2.dwg's 2026-11-27 recreate, handle 0x6657). `curve` is the
+balance curve as (station, cumulative volume) pairs over strictly
+increasing stations, `free_haul` the head's free-haul distance (500 in the
+create sample, 300 in the tutorial's original), `group` the line's sample
+line group and `style` its mass haul line style (the create sample
+references the group and style its own line references — both read back
+from a written line's references), `guid` the record's second GUID (the
+application assigns sequential ones; a caller passes its own — the
+application keeps a written one).
+
+```text
+BL 80, 0, 80, 80, 0, BL 0x10025F04, BL 0x40809313, 2 bits 0, BL 0,
+GUID 1 (128 zero bits — the create path's form; the tutorial's original
+  reads all ones), 2 bits 3, GUID 2, 127 zero bits,
+BD free haul, BL 1, BL 0, BL n,
+n x {BD station, BD volume, BD 0},
+BL n-1, BD 0, (n-2) x {BL i, BL i}, BL n-1, BL n      (vertex table 1),
+the curve again (the drawn polyline 1, bit-verbatim),
+BL n-1, BD 0, (n-2) x {BL i, BL i}, BL n-1, BL 0      (vertex table 2:
+  the free-haul display polyline is EMPTY on the create path — the
+  application draws its 166-vertex construction when it regenerates the
+  display, which is the update path and is not written),
+13 x BD 0, BD curve volume min, BD curve volume max,
+the 19-bit closing run of the section and sample line records
+references: soft 0, soft group, soft style
+texts: "AeccImpMassHaulLine", "", name, ""
+```
+
+The word after 0x10025F04 is per-record and unnamed: 0x40008337 in the
+tutorial's original, 0x40800730 after a resave, 0x40809313 in the fresh
+create — not derivable from the curve, the free haul or the display data
+(three values over a bit-identical curve). The writer emits the create
+path's word; the application rewrites it on its first save.
+
+Reference check (Civil 3D 2027, one open/audit/save cycle over a copy of
+Mass Haul-2.dwg with the written line added by the codec, 2026-11-27):
+
+- opened write-intent in 1.9 s without a dialog; the census lists the
+  written handle as a managed `Autodesk.Civil.DatabaseServices.
+  MassHaulLine` (not a zombie) with `Name` and `StyleName` read back
+  (`COUNT MassHaulLine=2 MassHaulView=1`), and the audit counts 0
+  null-or-erased references; `Database.SaveAs` accepted the save on the
+  first attempt.
+- the application save kept the class stream bit for bit except the head
+  word (0x40809313 → 0x4000142a; 9 bits of the 41,113-bit grammar span),
+  normalized the common data region to its own form, and kept the written
+  GUID; its own line's record in the same save differs in 3 of 14,258
+  bytes from the codec-written file.
+- the saved records re-parse under the reader's grammar; the written
+  line's curve reads back value-identical.
+
 ## 4. Reference check
 
 For every written drawing the check opens it in its own reference instance
@@ -4282,7 +4338,7 @@ taken from the records and checked bit for bit against them.
 | gravity pipe networks: every structure and pipe family of the default parts list, every catalog pipe size, structures of any catalog size, connections | partly (part positions, pipe ends, connector counts, part definition fields) | yes (a new drawing gets the default parts list and styles, §3m) | yes (§3m) | not needed (the application recomputes outlines, lengths and extents) | the catalog's body solids |
 | pressure networks: every pipe, elbow, tee, cross and gate valve size of the default catalog (straight and curved pipes), connections | yes (ports: positions, directions, joint sizes, connections; pipe ends and bulge, part positions and rotations) | yes (a new drawing gets the default pressure part list and styles, §3n) | yes (§3n) | not needed | part kinds of other catalogs, the catalog's body solids |
 | gradings: the root group tree | yes (§3o) | yes (the empty form, §3o) | yes (opens without a dialog, audit clean, the API reads the record as the grading-group class under its default name, an application save keeps it bit for bit) | not needed | named groups (§3o); gradings, mass haul (§6a) |
-| mass haul | partly (mass haul line and view frame) | no | — | — | no controlled samples (§6a) |
+| mass haul lines (the create path) | partly (mass haul line and view frame) | yes (§3q) | yes (§3q: managed MassHaulLine, name and style read back, audit 0, save accepted; the app save rewrites only the unnamed head word) | not needed | the view (`AECC_MASS_HAUL_VIEW`) and the update path's 166-vertex display construction (§6a); the line style record |
 
 ### 6b. Options per kind
 
@@ -4389,7 +4445,7 @@ Corridors are listed in §3i-a.
 | pressure networks | every size of the default catalog (straight and curved pipes, elbows, tees, crosses, gate valves), connections | yes | yes | §3n |
 | pressure networks | parts of other catalogs | partly | no | §3n; a pressure parts list is bound to its catalog and the programming interface neither sets a drawing's catalog nor adds another catalog's sizes (`PressurePartList.AddPart` takes the list's own) |
 | gradings | criteria; the root group tree; named groups; gradings | partly (criteria, the root group tree) | yes, the root group tree's empty form | §3o (open, audit, API name, application save); the named groups' settings body: §3o, §6a |
-| mass haul | line and view | partly | no | §6a |
+| mass haul | line and view | partly | yes, the line's create path (§3q) | §3q (managed MassHaulLine, name/style read back, audit 0, save accepted); the view and the display construction: §6a |
 | label styles | the defaults of a new drawing (§2b) | partly | yes | §2b |
 | label styles | settings: visibility, layer, text style, orientation, insert option, plan readability, leader, dragged state; text components' contents, height, offsets, angle, attachment, anchor, color, lineweight, border | yes (every record of the application's style tree and of drawings of older releases) | yes, as copies of a drawing's label style (§2d) | §2d |
 | label styles | pipe, structure and pressure part label styles (plan, profile, section, crossing profile) | yes | yes, as copies (§2d, E-NL1) | §2d |
@@ -4400,7 +4456,7 @@ Corridors are listed in §3i-a.
 
 ### 6a. Gradings and mass haul
 
-No sample of the application's own making could be produced for either:
+No sample of the application's own making could be produced for gradings:
 
 - The programming interfaces create neither: the .NET classes for gradings
   and grading groups have no create methods, the COM interfaces only read
@@ -4417,3 +4473,13 @@ No sample of the application's own making could be produced for either:
   site's topology, computed by the application from the target surface and
   the criteria, so a grading cannot be written by changing values in a
   copied record; the writer would have to build that geometry itself.
+
+For mass haul a wizard-created sample exists since 2026-11-27 (erasing the
+tutorial's line forced the wizard to create: Mass Haul-2.dwg recreated,
+fresh line 0x6657, §3q), and the line's create path is written. What is
+left there: the mass haul view (`AECC_MASS_HAUL_VIEW`, whose create form
+needs the graph-layout record and its style class mapped) and the update
+path's derived display data — the 166-vertex free-haul construction, whose
+vertex order, resampling step and smaller paths are unnamed, and whose
+derived stations differ from any interpolation of the stored curve by
+1-2 ULP (2026-11-26).
