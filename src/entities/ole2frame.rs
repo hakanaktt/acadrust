@@ -8,8 +8,10 @@ use crate::types::{BoundingBox3D, Transform, Vector3};
 /// As saved, the data is a 128-byte header and then the compound file. The
 /// header: u16 kind (`0x5580` or `0x5581`), the frame's four corners (upper
 /// left, upper right, lower right, lower left; three RD each), 26 bytes not
-/// decoded, then u32 size of the compound file, which fills the rest of the
-/// data. The upper-left and lower-right corners are the frame's own fields;
+/// decoded, then a u32 size, and the compound file, which fills the rest of
+/// the data. The size is the compound file's length in most drawings and one
+/// 512-byte sector more in some; it is kept as read while the compound file is
+/// written back unchanged. The upper-left and lower-right corners are the frame's own fields;
 /// the other two are kept here, since a frame need not be axis aligned.
 #[derive(Debug, Clone, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -42,13 +44,12 @@ const ITEM_TYPE_OFFSET: usize = 16;
 
 /// The header kind, the four corners, the undecoded header bytes and the
 /// compound file of OLE2FRAME data, when it has the saved layout
-/// ([`OleFrameEnvelope`]): a known kind and a compound-file size equal to
-/// what follows the header.
+/// ([`OleFrameEnvelope`]): a known kind, then the compound file after the
+/// 128-byte header.
 pub(crate) fn frame_parts(data: &[u8]) -> Option<(u16, [Vector3; 4], &[u8], &[u8])> {
     let header = data.get(..FRAME_HEADER_LEN)?;
     let kind = u16::from_le_bytes([header[0], header[1]]);
-    let size = u32::from_le_bytes(header[124..128].try_into().ok()?) as usize;
-    if !matches!(kind, 0x5580 | 0x5581) || size != data.len() - FRAME_HEADER_LEN {
+    if !matches!(kind, 0x5580 | 0x5581) {
         return None;
     }
     let value = |at: usize| f64::from_le_bytes(header[at..at + 8].try_into().unwrap());
@@ -126,7 +127,7 @@ pub struct Ole2Frame {
 /// Keeping the source bytes makes an unedited (or only moved/resized) frame round-trip
 /// verbatim. Never part of entity equality.
 #[derive(Clone, Default)]
-pub struct OleSourceStorage(Option<(u64, std::sync::Arc<Vec<u8>>)>);
+pub struct OleSourceStorage(Option<(u64, std::sync::Arc<Vec<u8>>, Option<u32>)>);
 
 impl OleSourceStorage {
     fn digest(bytes: &[u8]) -> u64 {
@@ -137,12 +138,13 @@ impl OleSourceStorage {
         hasher.finish()
     }
 
-    /// Source bytes, if `encoded` still matches what they decoded to.
-    fn matching(&self, encoded: &[u8]) -> Option<&[u8]> {
+    /// Source bytes and the frame header's size as read, if `encoded` still
+    /// matches what they decoded to.
+    fn matching(&self, encoded: &[u8]) -> Option<(&[u8], Option<u32>)> {
         self.0
             .as_ref()
-            .filter(|(digest, _)| *digest == Self::digest(encoded))
-            .map(|(_, raw)| raw.as_slice())
+            .filter(|(digest, _, _)| *digest == Self::digest(encoded))
+            .map(|(_, raw, size)| (raw.as_slice(), *size))
     }
 }
 
@@ -155,7 +157,7 @@ impl PartialEq for OleSourceStorage {
 impl std::fmt::Debug for OleSourceStorage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.0 {
-            Some((_, raw)) => write!(f, "OleSourceStorage({} bytes)", raw.len()),
+            Some((_, raw, _)) => write!(f, "OleSourceStorage({} bytes)", raw.len()),
             None => f.write_str("OleSourceStorage(None)"),
         }
     }
@@ -193,8 +195,14 @@ impl Ole2Frame {
         // The envelope's length does not depend on its field values.
         if let Some(raw) = data.get(self.encoded_envelope(0).len()..) {
             let digest = OleSourceStorage::digest(&self.storage.encode());
+            let size = match self.envelope {
+                OleFrameEnvelope::Geometry { .. } => Some(u32::from_le_bytes(
+                    data[FRAME_HEADER_LEN - 4..FRAME_HEADER_LEN].try_into().unwrap(),
+                )),
+                _ => None,
+            };
             self.source_storage =
-                OleSourceStorage(Some((digest, std::sync::Arc::new(raw.to_vec()))));
+                OleSourceStorage(Some((digest, std::sync::Arc::new(raw.to_vec()), size)));
         }
         (upper_left, lower_right)
     }
@@ -251,9 +259,12 @@ impl Ole2Frame {
     }
 
     pub fn encoded_payload(&self) -> Vec<u8> {
-        let storage = self.storage.encode();
-        let storage = self.source_storage.matching(&storage).unwrap_or(&storage);
-        let mut output = self.encoded_envelope(storage.len());
+        let encoded = self.storage.encode();
+        let (storage, size) = self
+            .source_storage
+            .matching(&encoded)
+            .unwrap_or((&encoded, None));
+        let mut output = self.encoded_envelope(size.unwrap_or(storage.len() as u32));
         output.extend_from_slice(storage);
         output
     }
@@ -269,8 +280,8 @@ impl Ole2Frame {
                 .is_none()
     }
 
-    /// The DWG wrapper in front of the compound file of `storage_len` bytes.
-    fn encoded_envelope(&self, storage_len: usize) -> Vec<u8> {
+    /// The DWG wrapper in front of the compound file, with `size` in its size field.
+    fn encoded_envelope(&self, size: u32) -> Vec<u8> {
         match &self.envelope {
             OleFrameEnvelope::None => Vec::new(),
             OleFrameEnvelope::Legacy { records } => {
@@ -308,7 +319,7 @@ impl Ole2Frame {
                     field.copy_from_slice(&value.to_le_bytes());
                 }
                 bytes.extend_from_slice(&extension);
-                bytes.extend_from_slice(&(storage_len as u32).to_le_bytes());
+                bytes.extend_from_slice(&size.to_le_bytes());
                 bytes
             }
         }
@@ -403,16 +414,34 @@ mod tests {
         assert_eq!(frame.encoded_payload(), data);
     }
 
-    /// Data without the saved header (another kind, or a size that does not
-    /// match what follows) is kept as read and no compound file is searched
-    /// for in it.
+    /// Some drawings store a size one 512-byte sector larger than the compound
+    /// file after the header. The compound file is still read, the size is
+    /// written back as read while it is unchanged, and an edited compound file
+    /// gets its own length.
+    #[test]
+    fn a_size_past_the_compound_file_is_kept_as_read() {
+        let compound = compound();
+        let mut data = saved(0x5580, [Vector3::ZERO; 4], &compound);
+        data[124..128].copy_from_slice(&(compound.len() as u32 + 512).to_le_bytes());
+        let mut frame = Ole2Frame::new();
+        (frame.upper_left_corner, frame.lower_right_corner) = frame.set_payload(&data);
+        assert!(matches!(frame.envelope, OleFrameEnvelope::Geometry { .. }));
+        assert!(frame.storage.compound_file.is_some());
+        assert_eq!(frame.encoded_payload(), data);
+
+        frame.storage = StructuredStoragePayload::default();
+        let edited = frame.encoded_payload();
+        let size = u32::from_le_bytes(edited[124..128].try_into().unwrap()) as usize;
+        assert_eq!(size, edited.len() - FRAME_HEADER_LEN);
+    }
+
+    /// Data without the saved header (another kind) is kept as read and no
+    /// compound file is searched for in it.
     #[test]
     fn other_layouts_stay_as_read() {
         let corners = [Vector3::ZERO; 4];
         let compound = compound();
-        let mut wrong_size = saved(0x5581, corners, &compound);
-        wrong_size.push(0);
-        for data in [saved(0x0080, corners, &compound), wrong_size] {
+        for data in [saved(0x0080, corners, &compound)] {
             let mut frame = Ole2Frame::new();
             let (upper_left, lower_right) = frame.set_payload(&data);
             assert_eq!(upper_left, Vector3::new(1.0, 1.0, 0.0));

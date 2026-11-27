@@ -34,9 +34,17 @@ fn pattern(n: usize, seed: u32) -> Vec<u8> {
         .collect()
 }
 
-/// A frame whose data has the 128-byte frame header with the frame's corners, then a compound
-/// file with one stream (larger than one 4096-byte record) and trailing bytes.
+/// A frame whose data has the 128-byte frame header with the frame's corners and item type
+/// (the u32 at header offset 114: 1 embedded, 0 static), then a compound file with one stream
+/// (larger than one 4096-byte record) and trailing bytes.
 fn framed(object_type: OleObjectType, lock_aspect: u8) -> Ole2Frame {
+    let item_type: u32 = match object_type {
+        OleObjectType::Embedded => 1,
+        OleObjectType::Static => 0,
+        OleObjectType::Link => panic!("a link's item type value is not known"),
+    };
+    let mut extension = pattern(26, 1);
+    extension[16..20].copy_from_slice(&item_type.to_le_bytes());
     let mut ole = Ole2Frame::new();
     ole.upper_left_corner = Vector3::new(10.25, 40.5, 0.0);
     ole.lower_right_corner = Vector3::new(70.125, 5.75, 0.0);
@@ -47,7 +55,7 @@ fn framed(object_type: OleObjectType, lock_aspect: u8) -> Ole2Frame {
         marker: 0x5581,
         upper_right: Vector3::new(75.5, 39.0, 0.0),
         lower_left: Vector3::new(4.875, 7.25, 0.0),
-        extension_records: BinaryRecord::split(&pattern(26, 1), 4096),
+        extension_records: BinaryRecord::split(&extension, 4096),
     };
     let mut root = CompoundStorage::root();
     root.entries.push(CompoundEntry::Stream(CompoundStream {
@@ -66,7 +74,9 @@ fn framed(object_type: OleObjectType, lock_aspect: u8) -> Ole2Frame {
     ole
 }
 
-/// A frame whose data is opaque bytes without the DWG wrapper (kept as they are).
+/// A frame whose data is opaque bytes without the DWG wrapper (kept as they are). Its type
+/// has no field in a DWG record (the record's leading BS is the OLE version), so it reads
+/// back as the default, embedded.
 fn opaque() -> Ole2Frame {
     let mut ole = Ole2Frame::new();
     ole.ole_object_type = OleObjectType::Static;
@@ -91,7 +101,11 @@ fn same_frame(version: DxfVersion, a: &Ole2Frame, b: &Ole2Frame) {
         b.encoded_payload(),
         "{version:?}: the OLE data bytes"
     );
-    assert_eq!(a.ole_object_type, b.ole_object_type, "{version:?}");
+    let object_type = match a.envelope {
+        OleFrameEnvelope::Geometry { .. } => a.ole_object_type,
+        _ => OleObjectType::Embedded,
+    };
+    assert_eq!(b.ole_object_type, object_type, "{version:?}");
     assert_eq!(a.lock_aspect, b.lock_aspect, "{version:?}");
     assert_eq!(a.is_paper_space, b.is_paper_space, "{version:?}");
     assert_eq!(a.upper_left_corner, b.upper_left_corner, "{version:?}");
@@ -130,7 +144,7 @@ fn ole_frames_survive_dxf_to_dwg_to_dxf() {
         let mut doc = CadDocument::with_version(version);
         let h = doc
             .add_entity(EntityType::Ole2Frame(Box::new(framed(
-                OleObjectType::Link,
+                OleObjectType::Static,
                 0,
             ))))
             .unwrap();
