@@ -138,7 +138,20 @@ impl DwgObjectWriter<'_> {
         reactors: &[Handle],
         body: impl FnOnce(&mut DwgMergedWriter),
     ) -> (Vec<u8>, i64) {
-        self.write_common_non_entity_data(type_code, handle, owner, reactors, &None);
+        self.encode_civil_object_with(type_code, handle, owner, reactors, &None, body)
+    }
+
+    /// [`Self::encode_civil_object`] with the record's extension dictionary.
+    pub(crate) fn encode_civil_object_with(
+        &mut self,
+        type_code: i16,
+        handle: Handle,
+        owner: Handle,
+        reactors: &[Handle],
+        xdictionary: &Option<Handle>,
+        body: impl FnOnce(&mut DwgMergedWriter),
+    ) -> (Vec<u8>, i64) {
+        self.write_common_non_entity_data(type_code, handle, owner, reactors, xdictionary);
         body(&mut self.writer);
         self.finish_architecture_record()
     }

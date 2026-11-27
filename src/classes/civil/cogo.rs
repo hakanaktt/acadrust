@@ -454,6 +454,8 @@ pub(super) struct GroupRecord {
     pub flags: u8,
     pub run: u8,
     pub serial: Option<i32>,
+    /// Bit span of the serial's `BL` in the record data.
+    pub serial_span: Option<(usize, usize)>,
     pub numbers: Vec<u32>,
     pub tail: Option<GroupTail>,
 }
@@ -488,11 +490,13 @@ pub(super) fn group_record(data: &[u8], start: usize, end: usize) -> Option<Grou
     let flags = u8::try_from(bits.bit_long()?).ok()?;
     let run = bits.bits_value(5)?;
     let recent = flags & !3 == 0;
-    let serial = if recent {
+    let (serial, serial_span) = if recent {
         bits.skip(6)?;
-        Some(bits.bit_long()?)
+        let from = bits.pos;
+        let serial = bits.bit_long()?;
+        (Some(serial), Some((from, bits.pos)))
     } else {
-        None
+        (None, None)
     };
     let n = usize::try_from(bits.bit_long()?).ok().filter(|n| n * 32 <= bits.remaining())?;
     let numbers = (0..n).map(|_| u32::try_from(bits.raw_long()?).ok()).collect::<Option<Vec<_>>>()?;
@@ -505,7 +509,7 @@ pub(super) fn group_record(data: &[u8], start: usize, end: usize) -> Option<Grou
             Some(GroupTail { extents, elevation: bits.bit_double()?, raw_tag: bits.bit_long()?, classification: bits.bit_long()?, rest: bits.pos })
         })
         .flatten();
-    Some(GroupRecord { flags, run, serial, numbers, tail })
+    Some(GroupRecord { flags, run, serial, serial_span, numbers, tail })
 }
 
 /// The overrides of a recent point group record; `handles` and `strings`
