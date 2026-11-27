@@ -159,7 +159,7 @@ fn an_import_keeps_its_name_and_file_texts() {
         defs[0].texts,
         vec!["..\\Composite_Surface.xml".to_string(), "Composite".to_string()]
     );
-    /// Kind 40 keeps the stored value (1 in drawings of older releases).
+    // Kind 40 keeps the stored value (1 in drawings of older releases).
     assert!(matches!(defs[1].operation, TinOperation::Kind40(_)));
     assert!(defs[1].texts.is_empty());
     assert_eq!(defs[2].texts, vec!["Boundary1".to_string()]);

@@ -300,7 +300,9 @@ impl ArchEntityData {
     /// elevation range, the surface's name, its description and one empty
     /// string, and the definitions' text need is known from their kinds.
     /// A record of neither length keeps an unmapped stream: `None` rather
-    /// than a guessed boundary.
+    /// than a guessed boundary — unless its definitions keep no texts, when
+    /// no boundary is needed (the Civil 2013 surfaces, whose leading texts
+    /// also hold the source drawing's path).
     pub fn tin_definitions(&self) -> Option<(Vec<TinDefinition>, bool)> {
         if self.civil_kind() != Some(CivilKind::TinSurface) {
             return None;
@@ -312,7 +314,7 @@ impl ArchEntityData {
         let need = found.list.iter().map(TinDefinition::text_count).sum::<usize>() + 2 * found.ranges;
         let mut text = if strings.len() == 3 + need + 3 {
             3
-        } else if strings.len() == 2 + need + 3 {
+        } else if strings.len() == 2 + need + 3 || need == 0 {
             2
         } else {
             return None;
@@ -2076,4 +2078,3 @@ mod parcel_word_tests {
         assert_eq!(parcel_fields_offset(&data, 0, bits), None);
     }
 }
-
