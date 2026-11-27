@@ -2,6 +2,19 @@
 
 ### Unreleased
 
+- **Civil: the parcel-site containers' elevation-point tables read** - The
+  site containers of the parcel drawings record their elevation-point
+  table entries in the unmapped "form 15"; it is the parcel-site point
+  form and its frame is the recorded 22/24 frame bit for bit (the form
+  word the only difference — 41/41 recorded entries across the
+  Labels-Parcels, Parcel-1C/1D/2A/2B/2C sites). `topology` now walks
+  those containers' tables (Labels-Parcels `Site`: 13 entries,
+  Parcel-2C `Subdivision A`: 9) and refuses only at the interaction
+  records that follow: those six parcel sites keep NO site graph in the
+  container at all (the `BL 0x80000001` gate word never occurs in the
+  record) — the graph form exists on the parcel sites written as a
+  graph (Parcel-1B: 13 edges, Parcel-1E: 82, Parcel-3A: 80), which read
+  unchanged. Pinned bit for bit on the recorded containers.
 - **Fix: a plot style's lineweight number picks the table entry before it** - `PlotStyleTable::resolve_lineweight` read entry N of the lineweight list for a style numbered N. The plot style editor lists "Use object lineweight" first and the table's widths after it, so style N now reads entry N - 1: style 1 gives the first width, the last width is reachable, and 0, 255 and a number past the list still keep the object's lineweight.
 - **Survey figures carry their elevation range and traverse** - A survey
   figure's (`AECC_SVFIGURE`) graphic-image section draws the figure's XY

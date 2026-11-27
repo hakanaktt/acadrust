@@ -1631,6 +1631,20 @@ impl ArchObject {
     /// imported (`AeccImpFeatureLine`) keeps no edge word in its own
     /// record, so it decodes to `None` even where the site's graph holds
     /// its edge — handle 0xC88 on the Grading-4 and Grading-5 drawings.
+    ///
+    /// Parcel sites record two container forms. A parcel site the
+    /// application wrote with the standard graph (Parcel-1B: 13 edges,
+    /// Parcel-1E: 82, Parcel-3A: 80) reads through this walk. A parcel
+    /// site the application stores as interaction pieces keeps no graph
+    /// at all — the `BL 0x80000001` gate word never occurs in the
+    /// record; after the elevation-point table (whose entries carry the
+    /// parcel-site point form 15) the container lists interaction
+    /// records (kind 0 elements, frames unmapped) and the walk refuses
+    /// there: Labels-Parcels `Site` (54 parcels), Parcel-1C/1D/2A/2B/2C.
+    /// The stored pieces' geometry agrees with the lot lines' own
+    /// coordinates (56 bit-exact coordinate hits against the
+    /// Parcel-2C manifest), so the graph's absence is a recorded form,
+    /// not missing data.
     pub fn feature_line_topology(&self) -> Option<Topology> {
         if !self.dxf_name.eq_ignore_ascii_case("AECC_FEATURE_STYLE") {
             return None;
