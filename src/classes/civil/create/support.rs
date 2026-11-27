@@ -292,6 +292,44 @@ fn put_record(
     Ok(())
 }
 
+/// Re-encodes the civil object at `handle` with new fields, keeping its
+/// class, owner, reactors and extension dictionary.
+pub(super) fn rewrite_object(doc: &mut CadDocument, handle: Handle, fields: impl FnOnce(&mut DwgMergedWriter), body: Body) -> Result<(), DxfError> {
+    let old = object(doc, handle).ok_or_else(|| invalid("no civil object to rewrite"))?.clone();
+    let type_code = register(doc, &old.dxf_name)?;
+    let mut writer = DwgObjectWriter::new(doc)?;
+    let (raw, handle_bits) = writer.encode_civil_object_with(type_code, handle, old.owner, &old.reactors, &old.xdictionary_handle, |w| {
+        w.write_bit_short(VERSION);
+        fields(w);
+        finish(w, &body);
+    });
+    let mut object = old;
+    object.raw_dwg_data = Some(raw);
+    object.raw_dwg_handle_bits = handle_bits;
+    object.raw_dwg_version = Some(DxfVersion::AC1032);
+    doc.objects.insert(handle, ObjectType::Arch(object));
+    Ok(())
+}
+
+/// The references of a civil object as written: kind and handle, in
+/// stream order.
+pub(super) fn refs_of(object: &ArchObject) -> Option<Vec<Ref>> {
+    object
+        .typed_handles()
+        .into_iter()
+        .map(|(h, kind)| {
+            let kind = match kind {
+                2 => DwgReferenceType::SoftOwnership,
+                3 => DwgReferenceType::HardOwnership,
+                4 => DwgReferenceType::SoftPointer,
+                5 => DwgReferenceType::HardPointer,
+                _ => return None,
+            };
+            Some(Ref(kind, h))
+        })
+        .collect()
+}
+
 /// Encodes a civil entity and stores it (replacing one with the same handle).
 pub(super) fn put_entity(
     doc: &mut CadDocument,

@@ -825,6 +825,50 @@ pub fn set_point_group_overrides(doc: &mut CadDocument, group: Handle, o: &Point
     write_group(doc, group, owner, &g)
 }
 
+/// Sets the draw order of the drawing's point groups. `top_first` names
+/// the groups as the application's point group list shows them, the top
+/// one first; each group's draw order field (the record's serial) becomes
+/// its place from the bottom, 0 for the last (as the application numbers
+/// them when the order is changed). Every group must be of the form recent
+/// releases write; the records are copied with only that field changed.
+pub fn set_point_group_draw_order(doc: &mut CadDocument, top_first: &[Handle]) -> Result<(), DxfError> {
+    let n = top_first.len();
+    for (i, group) in top_first.iter().enumerate() {
+        set_draw_order(doc, *group, (n - 1 - i) as i32)?;
+    }
+    Ok(())
+}
+
+fn set_draw_order(doc: &mut CadDocument, group: Handle, order: i32) -> Result<(), DxfError> {
+    let bad = || invalid("point group record cannot be rewritten");
+    let obj = object(doc, group).filter(|o| o.dxf_name == "AECC_POINT_PG").ok_or_else(bad)?;
+    let (data, start, end) = obj.main_stream().ok_or_else(bad)?;
+    let rec = crate::classes::civil::cogo::group_record(data, start, end).ok_or_else(bad)?;
+    if rec.serial == Some(order) {
+        return Ok(());
+    }
+    let (from, to) = rec.serial_span.ok_or_else(bad)?;
+    let (_, fields, _) = fields_of(obj).ok_or_else(bad)?;
+    let bit = |i: usize| data[i / 8] >> (7 - i % 8) & 1 == 1;
+    let before: Vec<bool> = (fields..from).map(bit).collect();
+    let after: Vec<bool> = (to..end).map(bit).collect();
+    let body = Body { refs: refs_of(obj).ok_or_else(bad)?, strings: obj.decode().strings };
+    rewrite_object(
+        doc,
+        group,
+        |w| {
+            for b in before {
+                w.write_bit(b);
+            }
+            w.write_bit_long(order);
+            for b in after {
+                w.write_bit(b);
+            }
+        },
+        body,
+    )
+}
+
 /// Gives point group `group` its point style (`AECC_POINT_STYLE`) and point
 /// label style (`AECC_LABEL_COLLECTOR_STYLE`): the styles its points draw
 /// with unless they have their own (or always, when the group overrides
@@ -1335,6 +1379,32 @@ mod tests {
 
     /// A custom query's comparisons in text order with their joints and
     /// parentheses, and the tree its texts list (PQ01 C8, PQ02 D2).
+    #[test]
+    fn draw_order_is_rewritten_top_first() {
+        use crate::types::Vector3;
+        let mut doc = CadDocument::new();
+        doc.version = crate::types::DxfVersion::AC1032;
+        crate::classes::civil::add_cogo_point(&mut doc, Some(1), Vector3::new(1.0, 2.0, 3.0), None, None, None).unwrap();
+        let a = add_point_group(&mut doc, "A", None, &[1]).unwrap();
+        let b = add_point_group(&mut doc, "B", Some("second"), &[1]).unwrap();
+        let all = super::super::points::support(&mut doc).unwrap().all_points;
+        let order = |doc: &CadDocument, h: Handle| match doc.objects.get(&h) {
+            Some(crate::objects::ObjectType::Arch(o)) => o.point_group_draw_order(),
+            _ => None,
+        };
+        // Measured: moving a group renumbers every group 0 (last) up.
+        set_point_group_draw_order(&mut doc, &[a, all, b]).unwrap();
+        assert_eq!([order(&doc, a), order(&doc, all), order(&doc, b)], [Some(2), Some(1), Some(0)]);
+        // The rest of the record is kept.
+        match doc.objects.get(&b) {
+            Some(crate::objects::ObjectType::Arch(o)) => {
+                assert_eq!(o.point_group_numbers(), vec![1]);
+                assert_eq!(o.decode().strings.get(1).map(String::as_str), Some("second"));
+            }
+            _ => panic!("group B is gone"),
+        }
+    }
+
     #[test]
     fn custom_queries_read_as_the_application_parses_them() {
         let cmp = |a, c, v| QueryExpression::Compare(a, c, v);
