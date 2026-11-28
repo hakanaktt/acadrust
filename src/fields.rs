@@ -2980,6 +2980,18 @@ impl CadDocument {
                 let own_content = laid.as_deref().and_then(|cell| cell.contents.first());
                 let style_sets = |p: P| own.filter(|s| s.sets(p));
                 let content_sets = |p: P| own_content.filter(|c| c.sets(p));
+                // What the cell's own style, else its column's, else its row's
+                // overrides (the column's wins where the two cross). A table
+                // scaled as a whole states each row's text height this way.
+                let column_style = t.columns.get(c).and_then(|column| column.style.as_ref());
+                let styled = |p: P| {
+                    style_sets(p).or_else(|| {
+                        [column_style, row.style.as_ref()]
+                            .into_iter()
+                            .flatten()
+                            .find(|s| s.sets(p))
+                    })
+                };
                 if let Some(s) = style_sets(P::BACKGROUND_COLOR).filter(|s| s.fill_enabled) {
                     let (w, h) = span[r][c];
                     let (x0, x1, y0, y1) = (xs[c], xs[c + w], -ys[r], -ys[r + h]);
@@ -3009,20 +3021,36 @@ impl CadDocument {
                 {
                     align = s.alignment;
                 }
-                if let Some(c) = content_sets(P::TEXT_HEIGHT).filter(|c| c.text_height > 0.0) {
-                    height = c.text_height;
+                if let Some(own_height) = content_sets(P::TEXT_HEIGHT)
+                    .map(|c| c.text_height)
+                    .filter(|h| *h > 0.0)
+                    .or_else(|| {
+                        styled(P::TEXT_HEIGHT)
+                            .map(|s| s.text_height)
+                            .filter(|h| *h > 0.0)
+                    })
+                {
+                    height = own_height;
                 }
                 let (w, h) = span[r][c];
                 let (x0, x1, y0, y1) = (xs[c], xs[c + w], ys[r], ys[r + h]);
-                // The text sits where its alignment puts it inside the margins.
+                // The text sits where its alignment puts it inside the margins:
+                // the cell's, column's or row's own, else the table style's.
+                let side = |p: P, of: fn(&crate::entities::table::CellStyle) -> f64, table: f64| {
+                    styled(p).map(of).filter(|m| *m > 0.0).unwrap_or(table)
+                };
+                let left = side(P::MARGIN_LEFT, |s| s.margin_left, margin);
+                let right = side(P::MARGIN_RIGHT, |s| s.margin_right, margin);
+                let top = side(P::MARGIN_TOP, |s| s.margin_top, vmargin);
+                let bottom = side(P::MARGIN_BOTTOM, |s| s.margin_bottom, vmargin);
                 let a = (align.clamp(1, 9) - 1) as usize;
-                let x = [x0 + margin, (x0 + x1) / 2.0, x1 - margin][a % 3];
-                let y = [-(y0 + vmargin), -(y0 + y1) / 2.0, -(y1 - vmargin)][a / 3];
+                let x = [x0 + left, (x0 + x1) / 2.0, x1 - right][a % 3];
+                let y = [-(y0 + top), -(y0 + y1) / 2.0, -(y1 - bottom)][a / 3];
                 let mut m = MText::new();
                 by_block(&mut m.common);
                 m.value = text;
                 m.height = height;
-                m.rectangle_width = (x1 - x0) - 2.0 * margin;
+                m.rectangle_width = (x1 - x0) - left - right;
                 m.insertion_point = Vector3::new(x, y, 0.0);
                 m.attachment_point = attachment(align);
                 m.drawing_direction = crate::entities::DrawingDirection::ByStyle;
