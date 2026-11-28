@@ -1010,6 +1010,78 @@ impl ArchEntityData {
         })
     }
 
+    /// Site container (`AECC_FEATURE_STYLE`) of a corridor-generated
+    /// feature line (`AECC_AUTO_FEATURE_LINE`). The class shares the
+    /// regular feature line's envelope: body handles null, then the site
+    /// container twice (an `AECC_FEATURELINE_STYLE` handle may follow).
+    ///
+    /// Census (the 161 Civil Tutorials Drawings, 2026-11-28): the class
+    /// occurs only in Corridor-2a/2b, one record each, byte-identical —
+    /// its container is the "Corridor Targets" site's (handle 0x1306,
+    /// owner the parcel 0x1305).
+    pub fn auto_feature_line_container(&self) -> Option<u64> {
+        if self.dxf_name != "AECC_AUTO_FEATURE_LINE" {
+            return None;
+        }
+        self.decode().handles.iter().copied().find(|h| *h != 0)
+    }
+
+    /// The auto feature line's edge in its site container's
+    /// [`Topology`] (see [`Self::auto_feature_line_container`]). The
+    /// record keeps no geometry; like the regular feature line it names
+    /// the container edge that carries its points.
+    ///
+    /// The class body opens with the shared civil header, then the feature
+    /// line family schema `BL 0x10025F04` and a 6-bit form word:
+    ///
+    /// * form `0b01_0101` (keyed, the corridor records' form): 8-bit key
+    ///   count, that many keys ([`alignment::key`]), a closing `BL`, then
+    ///   121 raw bits — the prefix the parcels use;
+    /// * form `0b01_0010` (Civil 3D 2013): 128 raw bits.
+    ///
+    /// Both then read `BL 0, BL edge`. After the edge the corridor record
+    /// carries a 103-bit unnamed tail (compare the site containers' unnamed
+    /// record tail); this reads only the head, so the tail needs no mapping.
+    /// `None` on any other form word, a non-zero first long, or a refused
+    /// key — the keyed prefix's grammar is the parcels'.
+    pub fn auto_feature_line_edge(&self) -> Option<i32> {
+        if self.dxf_name != "AECC_AUTO_FEATURE_LINE" {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        let mut b = bits::Bits::new(data, start, end);
+        for _ in 0..6 {
+            b.bit_long()?;
+        }
+        match b.bits_value(6)? {
+            alignment::KEYED => {
+                for _ in 0..b.bits_value(8)? {
+                    alignment::key(&mut b)?;
+                }
+                b.bit_long()?;
+                b.pos += 121;
+            }
+            0b01_0010 => b.skip(128)?,
+            _ => return None,
+        }
+        (b.bit_long()? == 0).then_some(())?;
+        b.bit_long()
+    }
+
+    /// Name and creator of a corridor-generated feature line
+    /// (`AECC_AUTO_FEATURE_LINE`). The class writes the name at string 4
+    /// and the creating user at string 3, after the class tag string
+    /// (`AeccImpAutoFeatureLine`) and two empties — one position later than
+    /// the regular feature line, which has no creator.
+    pub fn auto_feature_line_name(&self) -> Option<(String, String)> {
+        if self.dxf_name != "AECC_AUTO_FEATURE_LINE" {
+            return None;
+        }
+        let strings = self.decode().strings;
+        (strings.first().map(String::as_str) == Some("AeccImpAutoFeatureLine"))
+            .then(|| (strings.get(4).cloned().unwrap_or_default(), strings.get(3).cloned().unwrap_or_default()))
+    }
+
     /// Name and description of a site or parcel (`AECC_PARCEL`).
     pub fn face_name(&self) -> Option<(String, String)> {
         if self.dxf_name != "AECC_PARCEL" {
