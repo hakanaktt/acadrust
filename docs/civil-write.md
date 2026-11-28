@@ -4156,6 +4156,60 @@ Mass Haul-2.dwg with the written line added by the codec, 2026-11-27):
 - the saved records re-parse under the reader's grammar; the written
   line's curve reads back value-identical.
 
+## 3r. Survey figures (the straight 2D form)
+
+`add_survey_figure(doc, site_face, display_style, figure_style, name, site,
+vertices, layer)` writes a closed straight survey figure (`AECC_SVFIGURE`,
+an entity in model space) in the 2D record form the application writes
+against its SQLite survey database (the 2026-11-27 svfig capture's
+app-written records: TESTFIG1 of state1.dwg `0x2647` and LONG-NAME-CAPTURE-…
+of captures.dwg `0x2643`; the 2D record of CURVED-CAPTURE-1 `0x2654` pins
+the same class stream — the arc lives only in the application's object
+model, so a written figure is straight by construction, and curved or 3D
+DB-route figures stay unwritten: the record keeps neither bulges nor the
+z values). `vertices` is the traverse (three or more finite points; the
+record's count word is vertices + 1 and the last entry repeats the first —
+the closed figure's closure), `site` the site name the texts keep, and the
+three references the record's handle stream keeps are the site's face
+(`AECC_PARCEL`, an entity record), the figure's display style
+(`AECC_FEATURE_STYLE`, referenced twice) and the figure style
+(`AECC_SVFIGURE_STYLE`); the record carries no survey-network reference —
+the network association lives in the survey database alone.
+
+```text
+head (513 bits to the entries):
+  BL 80, 0, 80, 80, 0, BL 0x045F0210, BL(byte) 0x20, BL 0 x3, BL 0x901,
+  2 bits 3, GUID (the survey database's 128-bit id), 11 bits,
+  the per-figure block (81 bits) — head bits [216,344) and [355,436) are
+  the application's own and appear in no other record of the drawing, so
+  the writer carries them from the drawing's own straight-2D survey figure
+  and refuses a drawing that has none: a survey figure joins the drawing's
+  survey database, and a writer that invented a database id would write a
+  figure belonging to no database
+67-bit straight tail (eight 0x18 bytes, then 001), 8-bit count word,
+2 bits 0, count x {RD x, 2 bits 0, RD y, 4 bits 1000}   (z is absent),
+17-bit trailer 01011111000000100
+references: soft 0, hard display style, hard display style, soft 0,
+  hard figure style, soft 0, hard site face
+texts: "AeccImpSvFigure", "", "", name, site
+graphic image (kind 3): the traverse's bbox rectangle — one closed
+  five-point axis-aligned rectangle at z 0 under the
+  "AeccDbSvFigure (AeccSurvey130)" schema word, the origin 0.1 drawing
+  units past the low corner. The application's own corners are recomputed
+  from its database and sit within the shared solved-point tolerance of
+  the cache doubles without matching them bit for bit (the pins' corners:
+  three of TESTFIG1's four reproduce exactly under the nearest-multiple-
+  of-256-ulps rounding the writer emits, the fourth 0xD0 ulps off; all of
+  CURVED's own-PI corners exact).
+```
+
+The head's context block (head bits [0,355): the class words, the schema
+word `0x045F0210` and the database GUID) is bit-identical across all four
+of the capture's app-written records — one survey database. Whether it is
+also identical across databases is unproven (the one-context-change
+experiment is the named follow-up); the writer never needs the answer,
+since it carries the block from the drawing's own figure.
+
 ## 4. Reference check
 
 For every written drawing the check opens it in its own reference instance
@@ -4339,6 +4393,7 @@ taken from the records and checked bit for bit against them.
 | pressure networks: every pipe, elbow, tee, cross and gate valve size of the default catalog (straight and curved pipes), connections | yes (ports: positions, directions, joint sizes, connections; pipe ends and bulge, part positions and rotations) | yes (a new drawing gets the default pressure part list and styles, §3n) | yes (§3n) | not needed | part kinds of other catalogs, the catalog's body solids |
 | gradings: the root group tree | yes (§3o) | yes (the empty form, §3o) | yes (opens without a dialog, audit clean, the API reads the record as the grading-group class under its default name, an application save keeps it bit for bit) | not needed | named groups (§3o); gradings, mass haul (§6a) |
 | mass haul lines (the create path) | partly (mass haul line and view frame) | yes (§3q) | yes (§3q: managed MassHaulLine, name and style read back, audit 0, save accepted; the app save rewrites only the unnamed head word) | not needed | the view (`AECC_MASS_HAUL_VIEW`) and the update path's 166-vertex display construction (§6a); the line style record |
+| survey figures of the straight 2D database form | yes (name, site, traverse, elevations; §3r) | yes (§3r) | the class stream is bit-exact against the capture's records behind the carried context (§3r); the application-side adopt census is recorded in the PR | not needed | curved and 3D database-route figures (the bulge and the z values are not projected into the record); open figures (unproven head flags); a drawing without its own survey figure (the database context is not inventable) |
 
 ### 6b. Options per kind
 
