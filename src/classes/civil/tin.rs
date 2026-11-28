@@ -34,6 +34,29 @@
 //! denominator rule) — count the drawn subset ([`TinSurface::visible_triangles`],
 //! or vertices whose flag bit 0 is clear and whose incident triangle draws)
 //! to compare against the application.
+//!
+//! ## Flag words
+//!
+//! Vertex flags: 0x80 a surface point, 0x40 a bounding corner (the corner
+//! words carry per-file high bits — Align-3 0x6e9fe240, Align-7B
+//! 0x619d0040 — only 0x40 is invariant), bit 0 a deleted vertex. Triangle
+//! flags: bit 0 hidden, bit 2 (0x4) deleted. Bits 0x8/0x10/0x20 are
+//! unnamed per-op markers: a census of 173 tutorial-corpus surfaces shows
+//! them only on surfaces whose definitions apply Breaklines, Boundary,
+//! Contours or MinimizeFlatAreas (e.g. Surface-4A "XGND": 735/819/896
+//! triangles), never on import- or point-group-only surfaces; they occur
+//! on visible and hidden triangles alike and do not affect visibility.
+//! They are kept as stored. The hidden state of an imported surface rides
+//! in with the import: the definitions' `Import` op references a file
+//! (e.g. `..\Parcel Boundary and EG Surfaces.xml`) whose surface data
+//! carries the points AND the face list — the drawn set (the EG file: 778
+//! points, 1388 faces; its `area2DSurf` 3455019.763 is the drawn area).
+//! The stored triangulation is the engine's triangulation of those points
+//! (corners included), and every triangle the face list does not hold is
+//! marked hidden: 1558 − 1388 = the EG's 170 (113 corner-touching + 57
+//! interior, in two blobs). Recorded 2026-11-28 (tin_hidden probe,
+//! harness_f); the writer carries such hidden regions with
+//! [`create::add_tin_surface_hidden`][crate::classes::civil::add_tin_surface_hidden].
 
 use super::bits::Bits;
 use crate::types::{Vector2, Vector3};
@@ -41,6 +64,10 @@ use crate::types::{Vector2, Vector3};
 const CORNER_FLAG: i32 = 0x40;
 const HIDDEN_FLAG: i32 = 0x1;
 const DELETED_FLAG: i32 = 0x4;
+/// Unnamed per-op markers (see the module header): present only on surfaces
+/// whose definitions apply Breaklines, Boundary, Contours or
+/// MinimizeFlatAreas, on visible and hidden triangles alike. Kept as stored.
+const OP_MARKER_BITS: i32 = 0x8 | 0x10 | 0x20;
 const VERTEX_BITS: usize = 2 * 32 + 3 * 64;
 const TRIANGLE_BITS: usize = 8 * 32;
 
@@ -62,14 +89,21 @@ pub struct TinTriangle {
     pub vertices: [u32; 3],
     /// Neighbor across the edge starting at the same-index vertex, -1 on the hull.
     pub neighbors: [i32; 3],
-    /// Bit 0: hidden, bit 2: deleted (an edit removed it). Higher bits are
-    /// kept as stored.
+    /// Bit 0: hidden, bit 2: deleted (an edit removed it); bits 0x8/0x10/0x20
+    /// are unnamed per-op markers ([`TinTriangle::op_markers`]). Higher bits
+    /// are kept as stored.
     pub flags: i32,
 }
 
 impl TinTriangle {
     pub fn is_visible(&self) -> bool {
         self.flags & (HIDDEN_FLAG | DELETED_FLAG) == 0
+    }
+
+    /// The triangle's unnamed per-op marker bits (see the module header):
+    /// 0x8/0x10/0x20 as stored, with no named meaning.
+    pub fn op_markers(&self) -> i32 {
+        self.flags & OP_MARKER_BITS
     }
 }
 
@@ -180,8 +214,13 @@ pub enum TinOperation {
     /// The edge through this plan position.
     DeleteLine(Vector2),
     Raise(f64),
-    /// Points read from a file (its path is in the texts), with the file's
-    /// date as a FILETIME.
+    /// Points read from a file (its path is the first text, the imported
+    /// surface's name the second), with the file's date as a FILETIME. For
+    /// a LandXML surface file the data carries the points AND the face
+    /// list — the drawn set — so the imported surface's hidden regions are
+    /// the triangles the engine's triangulation of those points adds over
+    /// that face list (see the module header's "Flag words"); the `value`
+    /// is 0 in the corpus samples.
     Import { file_time: u64, value: i32 },
     /// The vertices inside this plan polygon.
     Polygon(Vec<Vector2>),
