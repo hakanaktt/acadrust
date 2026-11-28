@@ -37,6 +37,7 @@ mod section_band;
 mod section_view;
 mod site;
 mod stormwater;
+mod survey_figure;
 mod support;
 mod templates;
 mod tin;
@@ -61,6 +62,7 @@ pub use profile_view::{add_profile_view, add_profile_view_with_bands, add_profil
 pub use bands::{BandKind, BandStagger, ProfileViewBand};
 pub use sample_lines::{add_sample_line, add_sample_line_through, add_sample_line_group, add_sections};
 pub use mass_haul::add_mass_haul_line;
+pub use survey_figure::add_survey_figure;
 pub use section_view::{add_section_view, add_section_view_group};
 pub use site::{add_alignment_on_site, add_feature_line, add_lot_line, add_parcel, add_feature_line_vertices, feature_line_vertices, parcel_name, FeatureLineVertex, add_site, set_feature_line_vertices, PARCEL_STYLE_NAME, PARCEL_NUMBER};
 pub use stormwater::{
