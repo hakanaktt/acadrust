@@ -19,6 +19,8 @@ const ARC: i32 = 258;
 const BETWEEN_LINES: i32 = 29;
 /// Constraint of a fixed arc (an offset alignment's arcs).
 const FIXED_ARC: i32 = 2;
+/// Constraint of a best-fit arc's regression record.
+const BEST_FIT_ARC: i32 = 46;
 /// Element kind and constraint of a widening transition of an offset
 /// alignment (its points).
 const TRANSITION: i32 = 267;
@@ -30,6 +32,10 @@ const SCS_BETWEEN_LINES: i32 = 0;
 const SPIRAL_DEFINITION: i32 = 256;
 /// Element kind of a spiral.
 const SPIRAL: i32 = 259;
+/// Element kind of a floating spiral-spiral-curve leaving the curve
+/// before it (its constraint 1; the record body opens with an unnamed
+/// long the reader skips).
+const FLOATING_SPIRAL_SPIRAL_CURVE: i32 = 266;
 /// Flags of an arc edge in the companion topology, besides the line flags.
 pub(super) const ARC_EDGE: i32 = 0x010F_0000;
 
@@ -64,6 +70,22 @@ pub enum VertexCurve {
     /// whose stored ends stand at the arc's ends (the application solves
     /// its tangent points on the two lines).
     FreeArc(f64),
+    /// A best-fit arc replayed as its primitives, ending the alignment:
+    /// the fixed arc of the fit through `start`, `mid` and `end` (the
+    /// regression's circle; `start` stands where the line before meets
+    /// it), then the recorded floating spiral-spiral-curve that leaves the
+    /// fit where its chain reaches the last vertex (spiralling out of the
+    /// fit, reversing into an arc of `curve_radius` there). The leave
+    /// point solves from the last vertex, the way the pair solves in a
+    /// record, and is the fixed arc's stored end.
+    BestFitArcTo {
+        start: Vector2,
+        mid: Vector2,
+        end: Vector2,
+        spiral_out: f64,
+        spiral_in: f64,
+        curve_radius: f64,
+    },
 }
 
 impl VertexCurve {
@@ -74,7 +96,7 @@ impl VertexCurve {
     /// A curve that replaces the segment after its vertex instead of
     /// fitting at the vertex itself.
     pub(super) fn spans(self) -> bool {
-        matches!(self, VertexCurve::FixedArc { .. } | VertexCurve::FreeArc(_))
+        matches!(self, VertexCurve::FixedArc { .. } | VertexCurve::FreeArc(_) | VertexCurve::BestFitArcTo { .. })
     }
 
     fn valid(self) -> bool {
@@ -84,6 +106,12 @@ impl VertexCurve {
             VertexCurve::Arc(r) | VertexCurve::FreeArc(r) => positive(r),
             VertexCurve::SpiralCurveSpiral { spiral_in, radius, spiral_out } => positive(spiral_in) && positive(radius) && positive(spiral_out),
             VertexCurve::FixedArc { mid } => mid.x.is_finite() && mid.y.is_finite(),
+            VertexCurve::BestFitArcTo { start, mid, end, spiral_out, spiral_in, curve_radius } => {
+                [start, mid, end].iter().all(|p| p.x.is_finite() && p.y.is_finite())
+                    && positive(spiral_out)
+                    && positive(spiral_in)
+                    && positive(curve_radius)
+            }
         }
     }
 }
@@ -110,7 +138,9 @@ pub(super) fn elements(vertices: &[Vector2], curves: &[VertexCurve]) -> Vec<Alig
         }
     }
     // The station walk: every written line, then the curve at its end
-    // vertex.
+    // vertex — the steps in station order (a best-fit group writes two
+    // records: the fit's fixed arc, then the floating spiral-spiral-curve
+    // running to the last vertex).
     let mut steps: Vec<(bool, usize)> = Vec::new();
     for j in 0..n {
         if !dropped[j] {
@@ -120,43 +150,86 @@ pub(super) fn elements(vertices: &[Vector2], curves: &[VertexCurve]) -> Vec<Alig
             steps.push((false, j));
         }
     }
-    let mut line_id = 0i16;
-    let mut curve_id = steps.iter().filter(|(line, _)| *line).count() as i16;
-    let mut id_of = |line: bool| {
-        if line {
-            line_id += 1;
-            line_id
-        } else {
-            curve_id += 1;
-            curve_id
-        }
-    };
-    // Links in station order (a curve between two written lines links to
-    // them and nothing between), ids and records in the crate's order: the
-    // lines first, then the curves.
-    let ids: Vec<i16> = steps.iter().map(|(line, _)| id_of(*line)).collect();
-    let mut walked: Vec<AlignmentElement> = steps
+    let step_kinds: Vec<Vec<AlignmentElementKind>> = steps
         .iter()
-        .enumerate()
-        .map(|(k, (line, j))| {
-            let kind = if *line {
-                AlignmentElementKind::FixedLine { start: vertices[*j], end: vertices[*j + 1] }
+        .map(|(line, j)| {
+            if *line {
+                vec![AlignmentElementKind::FixedLine { start: vertices[*j], end: vertices[*j + 1] }]
             } else {
                 match curves[*j] {
-                    VertexCurve::Arc(radius) | VertexCurve::FreeArc(radius) => AlignmentElementKind::FreeArc { radius },
-                    VertexCurve::SpiralCurveSpiral { spiral_in, radius, spiral_out } => AlignmentElementKind::FreeSpiralCurveSpiral { spiral_in, radius, spiral_out },
-                    VertexCurve::FixedArc { mid } => AlignmentElementKind::FixedArc { start: vertices[*j + 1], mid, end: vertices[*j + 2] },
-                    VertexCurve::None => AlignmentElementKind::FreeLine,
+                    VertexCurve::Arc(radius) | VertexCurve::FreeArc(radius) => vec![AlignmentElementKind::FreeArc { radius }],
+                    VertexCurve::SpiralCurveSpiral { spiral_in, radius, spiral_out } => vec![AlignmentElementKind::FreeSpiralCurveSpiral { spiral_in, radius, spiral_out }],
+                    VertexCurve::FixedArc { mid } => vec![AlignmentElementKind::FixedArc { start: vertices[*j + 1], mid, end: vertices[*j + 2] }],
+                    // The fit's stored three points; where the tail leaves
+                    // the fit solves from the last vertex (the recorded
+                    // design's junction), and the tail ends there.
+                    VertexCurve::BestFitArcTo { start, mid, end, spiral_out, spiral_in, curve_radius } => {
+                        let Some((center, radius, ccw)) = super::super::alignment::circle(start, mid, end) else {
+                            return Vec::new();
+                        };
+                        let Some(sweep) = super::super::alignment::reverse_curve_leave(center, radius, ccw, start, spiral_out, spiral_in, curve_radius, vertices[*j + 2]) else {
+                            return Vec::new();
+                        };
+                        let a = (start.y - center.y).atan2(start.x - center.x) + if ccw { sweep } else { -sweep };
+                        let leave = Vector2::new(center.x + radius * a.cos(), center.y + radius * a.sin());
+                        vec![
+                            AlignmentElementKind::FixedArc { start, mid, end: leave },
+                            AlignmentElementKind::FloatingSpiralSpiralCurve { spiral_out, spiral_in, radius: curve_radius, end: vertices[*j + 2] },
+                        ]
+                    }
+                    VertexCurve::None => Vec::new(),
                 }
-            };
-            AlignmentElement {
-                id: ids[k],
-                previous: if k == 0 { 0 } else { ids[k - 1] },
-                next: if k + 1 == steps.len() { 0 } else { ids[k + 1] },
-                kind,
             }
         })
         .collect();
+    // The ids: every line, then the curves (the crate's record order),
+    // both in station order; links run along the path.
+    let lines: usize = step_kinds.iter().filter(|k| matches!(k.first(), Some(AlignmentElementKind::FixedLine { .. }))).count();
+    let mut line_id = 0i16;
+    let mut curve_id = lines as i16;
+    let ids: Vec<Vec<i16>> = step_kinds
+        .iter()
+        .map(|k| {
+            if matches!(k.first(), Some(AlignmentElementKind::FixedLine { .. })) {
+                line_id += 1;
+                vec![line_id]
+            } else {
+                (0..k.len())
+                    .map(|_| {
+                        curve_id += 1;
+                        curve_id
+                    })
+                    .collect()
+            }
+        })
+        .collect();
+    let flat: Vec<(AlignmentElementKind, i16)> = step_kinds
+        .iter()
+        .zip(&ids)
+        .flat_map(|(kinds, ids)| kinds.iter().zip(ids).map(|(kind, id)| (kind.clone(), *id)).collect::<Vec<_>>())
+        .collect();
+    // Chain the links over the flattened station order.
+    let mut walked: Vec<AlignmentElement> = flat
+        .into_iter()
+        .scan(0i16, |prev, (kind, id)| {
+            let e = AlignmentElement {
+                id,
+                previous: *prev,
+                next: 0,
+                kind: kind.clone(),
+            };
+            *prev = id;
+            Some(e)
+        })
+        .collect();
+    for i in 0..walked.len() {
+        if i > 0 {
+            walked[i - 1].next = walked[i].id;
+        }
+        if i + 1 == walked.len() {
+            walked[i].next = 0;
+        }
+    }
     walked.sort_by_key(|e| e.id);
     walked
 }
@@ -247,6 +320,14 @@ pub(super) fn solve(vertices: &[Vector2], curves: &[VertexCurve], elements: &[Al
                 let turn = u.cross(&v).atan2(u.dot(&v));
                 (turn.abs() > 1e-9 && turn.abs() < std::f64::consts::PI - 1e-9).then_some(())?;
             }
+            // The replayed best-fit group ends the alignment at the last
+            // vertex, its fit's three points leave the chord, and its tail
+            // carries positive lengths and a positive radius.
+            VertexCurve::BestFitArcTo { start, mid, end, spiral_out, spiral_in, curve_radius } => {
+                let positive = |v: f64| v.is_finite() && v > 0.0;
+                (c.valid() && j + 2 == vertices.len() - 1 && positive(spiral_out) && positive(spiral_in) && positive(curve_radius)).then_some(())?;
+                ((mid - start).cross(&(end - start)).abs() > 1e-9 * scale).then_some(())?;
+            }
         }
     }
     let pieces = pieces_with_curvature(elements);
@@ -256,6 +337,8 @@ pub(super) fn solve(vertices: &[Vector2], curves: &[VertexCurve], elements: &[Al
             VertexCurve::None => 0,
             VertexCurve::Arc(_) | VertexCurve::FreeArc(_) | VertexCurve::FixedArc { .. } => 1,
             VertexCurve::SpiralCurveSpiral { .. } => 3,
+            // The fit's arc, its two spirals and the tail's arc.
+            VertexCurve::BestFitArcTo { .. } => 4,
         })
         .sum();
     let mut path: Vec<PathPoint> = Vec::new();
@@ -1466,6 +1549,56 @@ pub(super) fn write_alignment_of(doc: &mut CadDocument, common: EntityCommon, na
                             w.write_bit_double(v);
                         }
                     }
+                    AlignmentElementKind::FloatingSpiralSpiralCurve { spiral_out, spiral_in, radius, end } => {
+                        curve(w, FLOATING_SPIRAL_SPIRAL_CURVE, line_flags, 1);
+                        ids(w);
+                        // The group's spiral definition (the clothoid code
+                        // the record's head carries).
+                        w.write_bit_long(SPIRAL_DEFINITION);
+                        for v in [spiral_out, spiral_in, radius] {
+                            w.write_bit_double(v);
+                        }
+                        point(w, end);
+                    }
+                    AlignmentElementKind::BestFitArc { radius, ref points } => {
+                        curve(w, ARC, line_flags, BEST_FIT_ARC);
+                        w.write_bit(false);
+                        ids(w);
+                        // The regression record: BS 0, the source-point
+                        // count twice, then one record per point — the
+                        // point, the constant 1.0, its offset, its
+                        // projection — and a tail of a one-bit 0, BS -193,
+                        // nine BS 256 markers, the point's zero-based
+                        // source index and BS 0. After the last record: a
+                        // 79-bit block, the fitted radius, and 162 bits to
+                        // the record's end.
+                        w.write_bit_short(0);
+                        let n = points.len().min(i16::MAX as usize) as i16;
+                        w.write_bit_short(n);
+                        w.write_bit_short(n);
+                        for (i, p) in points.iter().enumerate() {
+                            w.write_bit_double(p.point.x);
+                            w.write_bit_double(p.point.y);
+                            w.write_bit_double(1.0);
+                            w.write_bit_double(p.offset);
+                            w.write_bit_double(p.projection.x);
+                            w.write_bit_double(p.projection.y);
+                            if i + 1 == points.len() {
+                                bits(w, "01");
+                                bits(w, &"0".repeat(79));
+                                w.write_bit_double(radius);
+                                bits(w, &"0".repeat(162));
+                                break;
+                            }
+                            bits(w, "00");
+                            w.write_raw_short(-193);
+                            for _ in 0..9 {
+                                w.write_bit_short(256);
+                            }
+                            w.write_bit_short(i as i16);
+                            w.write_bit_short(0);
+                        }
+                    }
                     AlignmentElementKind::ThreeCenteredArc { arcs } => {
                         curve(w, TRANSITION, 2, 1);
                         ids(w);
@@ -1882,15 +2015,57 @@ pub fn add_alignment(doc: &mut CadDocument, name: &str, vertices: &[Vector2], la
 /// fixed arc through three points (`FixedArc`) or a free arc fitted
 /// between the lines (`FreeArc`) spans instead: it replaces the segment
 /// from this vertex to the next one, which gets no line, and runs from
-/// this vertex to the next vertex (the lines keep those ends). The curves
-/// must fit on the lines between them.
+/// this vertex to the next vertex (the lines keep those ends). A replayed
+/// best-fit group (`BestFitArcTo`) spans the same way and ends the
+/// alignment: the fit's fixed arc through its three stored points, then
+/// the recorded floating spiral-spiral-curve to the last vertex. The
+/// curves must fit on the lines between them.
 pub fn add_alignment_with_curves(doc: &mut CadDocument, name: &str, vertices: &[Vector2], curves: &[VertexCurve], layer: Option<&str>) -> Result<Handle, DxfError> {
     add_alignment_of_kind(doc, name, vertices, curves, AlignmentKind::Centerline, layer)
+}
+
+/// A decoded best-fit arc's regression, replayed as its record form: the
+/// fitted radius and every source point, in regression order.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BestFitRegression {
+    pub radius: f64,
+    pub points: Vec<crate::classes::civil::BestFitPoint>,
+}
+
+/// [`add_alignment_with_curves`], with each best-fit group
+/// (`VertexCurve::BestFitArcTo`) recorded as its regression form:
+/// `regression` is the decoded best-fit record (the fitted radius and its
+/// source points) written back as it was read, so the application solves
+/// the replayed group the way it solves the drawing's own. The solve runs
+/// on the group's primitive fixed arc either way.
+pub fn add_alignment_with_best_fit_regression(doc: &mut CadDocument, name: &str, vertices: &[Vector2], curves: &[VertexCurve], regression: Option<&BestFitRegression>, layer: Option<&str>) -> Result<Handle, DxfError> {
+    add_alignment_of(doc, name, vertices, curves, AlignmentKind::Centerline, regression, layer)
+}
+
+/// The recorded elements with each best-fit group's fixed arc written as
+/// its regression form.
+fn with_record_regression(elements: &[AlignmentElement], regression: &BestFitRegression) -> Vec<AlignmentElement> {
+    elements
+        .iter()
+        .map(|e| {
+            let next = elements.iter().find(|n| n.id == e.next).map(|n| &n.kind);
+            match (&e.kind, next) {
+                (AlignmentElementKind::FixedArc { .. }, Some(AlignmentElementKind::FloatingSpiralSpiralCurve { .. })) => {
+                    AlignmentElement { kind: AlignmentElementKind::BestFitArc { radius: regression.radius, points: regression.points.clone() }, ..e.clone() }
+                }
+                _ => e.clone(),
+            }
+        })
+        .collect()
 }
 
 /// [`add_alignment_with_curves`] of type `kind`: a utility alignment, or a
 /// rail alignment with a positive track gauge.
 pub fn add_alignment_of_kind(doc: &mut CadDocument, name: &str, vertices: &[Vector2], curves: &[VertexCurve], kind: AlignmentKind, layer: Option<&str>) -> Result<Handle, DxfError> {
+    add_alignment_of(doc, name, vertices, curves, kind, None, layer)
+}
+
+fn add_alignment_of(doc: &mut CadDocument, name: &str, vertices: &[Vector2], curves: &[VertexCurve], kind: AlignmentKind, regression: Option<&BestFitRegression>, layer: Option<&str>) -> Result<Handle, DxfError> {
     if matches!(kind, AlignmentKind::Rail { gauge } if !(gauge.is_finite() && gauge > 0.0)) {
         return Err(invalid("a rail alignment needs a positive track gauge"));
     }
@@ -1923,7 +2098,8 @@ pub fn add_alignment_of_kind(doc: &mut CadDocument, name: &str, vertices: &[Vect
     let label = new_name(handle.value());
     write_companion(doc, companion, node, tag, handle, &path, &label, false)?;
     add_node_child(doc, node, tag as i32, companion, &label)?;
-    write_alignment_of(doc, common, name, &elements, style, companion.value(), 1, None, &[], &[], &[], &[], None, kind, &Timing::default())
+    let recorded = regression.map(|r| with_record_regression(&elements, r)).unwrap_or_else(|| elements.clone());
+    write_alignment_of(doc, common, name, &recorded, style, companion.value(), 1, None, &[], &[], &[], &[], None, kind, &Timing::default())
 }
 
 /// A widening of an offset alignment: from the parent's station `start` it
