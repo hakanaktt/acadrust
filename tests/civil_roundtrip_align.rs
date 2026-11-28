@@ -718,3 +718,133 @@ fn rt_align_the_oracle_fixed_arcs_rebuild_station_exact() {
         assert_eq!(length(&run).to_bits(), length(oracle_run).to_bits(), "ending station bit-exact");
     }
 }
+
+/// 17. The alignment tail rebuild (live-equivalence Gap C): Align-4.dwg's
+///     record ends in a best-fit arc and a floating spiral-spiral-curve,
+///     which the stroked piece walk cannot solve — a rebuild through the
+///     tangent-PI walk dropped them both (the built alignment ran 731.45
+///     ft short) and seated the spiral group on a chord-fit PI 7.8048 ft
+///     inside the true one. The replay instead rebuilds from the decoded
+///     elements: the fit as its primitive fixed arc (the regression
+///     circle; the line before meets it there), then the recorded tail,
+///     on the stored lines' own tangent intersections. The live oracle
+///     (2026-11-28 capture, artifacts/2026-11-28T12-0x_live_equivalence):
+///     Length 1995.7103622345194 over 7 entities — Line 0..261.51361024060316,
+///     Arc ..507.46623162817593, Line ..723.8199033557896,
+///     Spiral-Arc-Spiral ..773.8199033557896..903.7577637572404..953.7577637572404,
+///     Line ..1235.8578690140675, Arc ..1610.3610314359485, Spiral-Spiral-Arc
+///     ..1685.3610314359485..1760.3610314359485..1995.7103622345194.
+#[test]
+fn rt_align_the_best_fit_tail_rebuilds_live_station_exact() {
+    let v = Vector2::new;
+    // Align-4.dwg's decoded record (the #683 fixtures pin the same values
+    // bit-exact): three stored lines, a free arc, a spiral-curve-spiral,
+    // the best-fit arc (radius and regression projections) and the tail.
+    let l1 = (v(3962.8705786815417, 4070.972925193938), v(4365.482060113974, 4081.746269006765));
+    let l2 = (v(4365.482060113974, 4081.746269006765), v(4537.852689511664, 3634.399490733277));
+    let l3 = (v(4537.852689511664, 3634.399490733277), v(4951.441448928713, 3504.9547420662884));
+    let head_radius = 199.99999999999943_f64;
+    let scs = (50.0_f64, 200.0_f64, 50.0_f64);
+    let fit_radius = 334.3905128049457_f64;
+    let projections = [
+        v(4940.790223638506, 3508.8046586739692),
+        v(5210.492216397139, 3555.8593689935747),
+        v(5292.070810482214, 3634.063290008554),
+    ];
+    let tail = (75.0_f64, 75.0_f64, 200.0_f64, v(5581.933193457283, 3753.1142979150336));
+    // The stored lines' tangent intersections (the free-curve writers'
+    // own input).
+    let pi = |a: (Vector2, Vector2), b: (Vector2, Vector2)| -> Vector2 {
+        let d1 = a.1 - a.0;
+        let d2 = b.1 - b.0;
+        let den = d1.x * d2.y - d1.y * d2.x;
+        let t = ((b.0.x - a.0.x) * d2.y - (b.0.y - a.0.y) * d2.x) / den;
+        a.0 + d1 * t
+    };
+    let (pi1, pi2) = (pi(l1, l2), pi(l2, l3));
+    // The fit's circle through three projections; the line before meets
+    // it at the fit arc's start.
+    let (p0, pm, pf) = (projections[0], projections[1], projections[2]);
+    let d = 2.0 * ((p0.x - pm.x) * (pm.y - pf.y) - (p0.y - pm.y) * (pm.x - pf.x));
+    let (s0, sm, sf) = (p0.x * p0.x + p0.y * p0.y, pm.x * pm.x + pm.y * pm.y, pf.x * pf.x + pf.y * pf.y);
+    let center = v((s0 * (pm.y - pf.y) + sm * (pf.y - p0.y) + sf * (p0.y - pm.y)) / d, (s0 * (pf.x - pm.x) + sm * (p0.x - pf.x) + sf * (pm.x - p0.x)) / d);
+    assert!((center.distance(&p0) - fit_radius).abs() < 1e-6, "the projections carry the fitted radius");
+    let along = l3.1 - l3.0;
+    let u = along / along.length();
+    let f = l3.0 - center;
+    let b = 2.0 * f.dot(&u);
+    let c = f.dot(&f) - fit_radius * fit_radius;
+    // The line meets the fit's circle within the record's own precision
+    // (the junction is the fit's tangent foot to a hair): the crossing is
+    // the foot point, at most sqrt(-disc) from either root.
+    let t = -b / 2.0 + 0.5 * (b * b - 4.0 * c).max(0.0).sqrt();
+    let crossing = l3.0 + u * t;
+
+    let mut doc = drawing();
+    let vertices = [l1.0, pi1, pi2, l3.1, tail.3];
+    let curves = [
+        VertexCurve::Arc(head_radius),
+        VertexCurve::SpiralCurveSpiral { spiral_in: scs.0, radius: scs.1, spiral_out: scs.2 },
+        VertexCurve::BestFitArcTo { start: crossing, mid: pm, end: pf, spiral_out: tail.0, spiral_in: tail.1, curve_radius: tail.2 },
+    ];
+    let h = match add_alignment_with_curves(&mut doc, "REBUILT", &vertices, &curves, None) {
+        Ok(h) => h,
+        Err(e) => {
+            // Which curve refuses? Bisect: the head alone, then with the
+            // group.
+            let r1 = add_alignment_with_curves(&mut doc, "B1", &[l1.0, pi1, pi2, l3.1], &[curves[0], curves[1], VertexCurve::None], None);
+            eprintln!("bisect head-only: {r1:?}");
+            let r2 = add_alignment_with_curves(&mut doc, "B2", &vertices, &[curves[0], curves[1], VertexCurve::None], None);
+            eprintln!("bisect no-group-5v: {r2:?}");
+            panic!("the replay rebuilds: {e}");
+        }
+    };
+    let back = roundtrip(&doc, "best_fit_tail");
+    let a = arch(&back, h);
+    use AlignmentElementKind as K;
+    let elements = a.alignment_elements().expect("the rebuilt record decodes");
+    assert_eq!(elements.len(), 7);
+    let chain = station_chain(&elements);
+    assert_eq!(chain.len(), 7);
+    assert!(matches!(chain[0], K::FixedLine { .. }));
+    assert!(matches!(chain[1], K::FreeArc { .. }));
+    assert!(matches!(chain[2], K::FixedLine { .. }));
+    assert!(matches!(chain[3], K::FreeSpiralCurveSpiral { spiral_in, radius, spiral_out } if spiral_in == scs.0 && radius == scs.1 && spiral_out == scs.2));
+    assert!(matches!(chain[4], K::FixedLine { .. }));
+    let K::FixedArc { start, mid, end } = &chain[5] else {
+        panic!("the sixth record is the fit's fixed arc, got {:?}", chain[5]);
+    };
+    assert_eq!((*start, *mid, *end), (crossing, pm, pf));
+    let K::FloatingSpiralSpiralCurve { spiral_out, spiral_in, radius, end } = &chain[6] else {
+        panic!("the last record is the tail, got {:?}", chain[6]);
+    };
+    assert_eq!((spiral_out.to_bits(), spiral_in.to_bits(), radius.to_bits()), (tail.0.to_bits(), tail.1.to_bits(), tail.2.to_bits()));
+    assert_eq!(*end, tail.3);
+    // The solved stations against the live oracle walk: the shared head is
+    // exact, the tail lands on the recorded end within the solver's own
+    // reach tolerance.
+    let pieces = a.alignment_pieces_with_curvature();
+    assert_eq!(pieces.len(), 11);
+    let mut at = 0.0_f64;
+    let mut bounds = Vec::new();
+    for (_, _, pts) in &pieces {
+        at += pts.windows(2).map(|w| w[0].distance(&w[1])).sum::<f64>();
+        bounds.push(at);
+    }
+    let oracle = [
+        261.51361024060316,
+        507.46623162817593,
+        723.8199033557896,
+        773.8199033557896,
+        903.7577637572404,
+        953.7577637572404,
+        1235.8578690140675,
+        1610.3610314359485,
+        1685.3610314359485,
+        1760.3610314359485,
+        1995.7103622345194,
+    ];
+    for (got, want) in bounds.iter().zip(oracle) {
+        assert!((got - want).abs() < 5e-3, "station {got} vs live {want}");
+    }
+}
