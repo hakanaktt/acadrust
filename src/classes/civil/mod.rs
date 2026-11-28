@@ -36,7 +36,7 @@ pub use alignment::{
     display_station, AlignmentAnchor, AlignmentCriteria, AlignmentElement, AlignmentType, OffsetParameters, OffsetRegion, WideningTransition, AlignmentElementKind, AlignmentPiece, BestFitPoint, DesignSpeed, GeometryPoint, SpiralShape,
     StationEquation, CriticalStationData, SuperelevationCurveData, SuperelevationView};
 pub use cogo::{CogoPoint, PointGroupClassification, PointGroupOverrides, PointOverrides, PropertyValue, UserProperty};
-pub use create::{add_empty_tin_surface, add_tin_surface_with, add_assembly, add_pkt_subassembly, add_pkt_subassembly_on, PktSource, add_alignment, add_alignment_with_curves, add_offset_alignment, add_offset_alignment_with_widenings, Widening, add_alignment_of_kind, add_design_speeds, add_station_equations, add_superelevation, CriticalStation, CriticalStationKind, SuperelevationCurve, AlignmentKind, VertexCurve, add_corridor, add_corridor_with, add_cogo_point, create_cogo_point, point_creation_layer, transformation_applied, NO_ELEVATION, add_intersection, add_point_group, add_point_group_query, add_profile, add_profile_entities, add_profile_with_curves, add_static_profile, add_surface_profile, ProfileEntity, VerticalCurve, add_profile_view, add_profile_view_with_bands, add_profile_view_with_range, BandKind, BandStagger, ProfileViewBand, add_sample_line, add_sample_line_through, add_sample_line_group, add_sections, add_mass_haul_line, add_section_view, add_site, add_alignment_on_site, add_feature_line, add_parcel, parcel_name, PARCEL_STYLE_NAME, PARCEL_NUMBER, add_feature_line_vertices, FeatureLineVertex, add_tin_surface, cogo_points, ensure_civil, feature_line_vertices, remove_cogo_point, set_cogo_point, set_cogo_point_name, set_point_group, set_point_group_draw_order, set_point_group_overrides, set_point_group_query, set_point_group_styles, Comparison, PointAttribute, PointQuery, QueryConstant, QueryExpression, add_lot_line, add_pipe, add_pipe_network, add_pipe_of_family, add_structure, add_structure_of_family, connect_pipe, set_network_part_name, network_part_families, add_pressure_appurtenance, add_pressure_arc_pipe, add_pressure_cross, add_pressure_fitting, add_pressure_network, add_pressure_part, add_pressure_pipe, add_pressure_pipe_of_size, add_pressure_tee, connect_pressure_parts, pressure_part_descriptions, add_profile_view_style, add_profile_view_with_style, add_offset_profile, add_section_view_group, add_profile_view_style_with, set_feature_line_vertices, set_cogo_point_label_style, add_label_style, add_point_label_style, label_style, LabelStyle, add_intersection_with, add_intersection_with_curb_returns, IntersectionOffsets, CURB_RETURN_MARGIN, add_curb_return, add_curb_return_with, CurbReturnCurve, add_point_choice_property, add_point_property, add_point_property_classification, point_properties, set_cogo_point_property, add_pipe_of_size, network_pipe_sizes, add_structure_of_size, network_structure_size_fields, StructureSizeChoice, add_intersection_with_curb_return_profiles, CurbReturnProfiles, add_section_data_band_label_group, add_alignment_label_group, AlignmentGroupLabel, AlignmentLabelGroup, AlignmentLabelGroupKind, LabelKeyValue, LabelOverrideProperty, LabelOverrideValue,
+pub use create::{add_empty_tin_surface, add_tin_surface_with, add_assembly, add_pkt_subassembly, add_pkt_subassembly_on, PktSource, add_alignment, add_alignment_with_curves, add_offset_alignment, add_offset_alignment_with_widenings, Widening, add_alignment_of_kind, add_design_speeds, add_station_equations, add_superelevation, CriticalStation, CriticalStationKind, SuperelevationCurve, AlignmentKind, VertexCurve, add_corridor, add_corridor_with, add_cogo_point, create_cogo_point, point_creation_layer, transformation_applied, NO_ELEVATION, add_intersection, add_point_group, add_point_group_query, add_profile, add_profile_entities, add_profile_with_curves, add_static_profile, add_surface_profile, ProfileEntity, VerticalCurve, add_profile_view, add_profile_view_with_bands, add_profile_view_with_range, BandKind, BandStagger, ProfileViewBand, add_sample_line, add_sample_line_through, add_sample_line_group, add_sections, add_mass_haul_line, add_section_view, add_site, add_alignment_on_site, add_feature_line, add_parcel, parcel_name, PARCEL_STYLE_NAME, PARCEL_NUMBER, add_feature_line_vertices, FeatureLineVertex, add_tin_surface, cogo_points, ensure_civil, feature_line_vertices, auto_feature_line_vertices, remove_cogo_point, set_cogo_point, set_cogo_point_name, set_point_group, set_point_group_draw_order, set_point_group_overrides, set_point_group_query, set_point_group_styles, Comparison, PointAttribute, PointQuery, QueryConstant, QueryExpression, add_lot_line, add_pipe, add_pipe_network, add_pipe_of_family, add_structure, add_structure_of_family, connect_pipe, set_network_part_name, network_part_families, add_pressure_appurtenance, add_pressure_arc_pipe, add_pressure_cross, add_pressure_fitting, add_pressure_network, add_pressure_part, add_pressure_pipe, add_pressure_pipe_of_size, add_pressure_tee, connect_pressure_parts, pressure_part_descriptions, add_profile_view_style, add_profile_view_with_style, add_offset_profile, add_section_view_group, add_profile_view_style_with, set_feature_line_vertices, set_cogo_point_label_style, add_label_style, add_point_label_style, label_style, LabelStyle, add_intersection_with, add_intersection_with_curb_returns, IntersectionOffsets, CURB_RETURN_MARGIN, add_curb_return, add_curb_return_with, CurbReturnCurve, add_point_choice_property, add_point_property, add_point_property_classification, point_properties, set_cogo_point_property, add_pipe_of_size, network_pipe_sizes, add_structure_of_size, network_structure_size_fields, StructureSizeChoice, add_intersection_with_curb_return_profiles, CurbReturnProfiles, add_section_data_band_label_group, add_alignment_label_group, AlignmentGroupLabel, AlignmentLabelGroup, AlignmentLabelGroupKind, LabelKeyValue, LabelOverrideProperty, LabelOverrideValue,
     stormwater_component_versions, stormwater_model_context, stormwater_schema_root,
     StormWaterComponentContext, StormWaterComponentVersions, StormWaterModelContext};
 pub use corridor::{CorridorBaseline, CorridorBoundary, CorridorDefinition, CorridorRegion, CorridorSurfaceDefinition, CurveStations, RegionFrequency, RegionTarget, TargetCurveStations, TargetKind};
@@ -1010,6 +1010,78 @@ impl ArchEntityData {
         })
     }
 
+    /// Site container (`AECC_FEATURE_STYLE`) of a corridor-generated
+    /// feature line (`AECC_AUTO_FEATURE_LINE`). The class shares the
+    /// regular feature line's envelope: body handles null, then the site
+    /// container twice (an `AECC_FEATURELINE_STYLE` handle may follow).
+    ///
+    /// Census (the 161 Civil Tutorials Drawings, 2026-11-28): the class
+    /// occurs only in Corridor-2a/2b, one record each, byte-identical —
+    /// its container is the "Corridor Targets" site's (handle 0x1306,
+    /// owner the parcel 0x1305).
+    pub fn auto_feature_line_container(&self) -> Option<u64> {
+        if self.dxf_name != "AECC_AUTO_FEATURE_LINE" {
+            return None;
+        }
+        self.decode().handles.iter().copied().find(|h| *h != 0)
+    }
+
+    /// The auto feature line's edge in its site container's
+    /// [`Topology`] (see [`Self::auto_feature_line_container`]). The
+    /// record keeps no geometry; like the regular feature line it names
+    /// the container edge that carries its points.
+    ///
+    /// The class body opens with the shared civil header, then the feature
+    /// line family schema `BL 0x10025F04` and a 6-bit form word:
+    ///
+    /// * form `0b01_0101` (keyed, the corridor records' form): 8-bit key
+    ///   count, that many keys ([`alignment::key`]), a closing `BL`, then
+    ///   121 raw bits — the prefix the parcels use;
+    /// * form `0b01_0010` (Civil 3D 2013): 128 raw bits.
+    ///
+    /// Both then read `BL 0, BL edge`. After the edge the corridor record
+    /// carries a 103-bit unnamed tail (compare the site containers' unnamed
+    /// record tail); this reads only the head, so the tail needs no mapping.
+    /// `None` on any other form word, a non-zero first long, or a refused
+    /// key — the keyed prefix's grammar is the parcels'.
+    pub fn auto_feature_line_edge(&self) -> Option<i32> {
+        if self.dxf_name != "AECC_AUTO_FEATURE_LINE" {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        let mut b = bits::Bits::new(data, start, end);
+        for _ in 0..6 {
+            b.bit_long()?;
+        }
+        match b.bits_value(6)? {
+            alignment::KEYED => {
+                for _ in 0..b.bits_value(8)? {
+                    alignment::key(&mut b)?;
+                }
+                b.bit_long()?;
+                b.pos += 121;
+            }
+            0b01_0010 => b.skip(128)?,
+            _ => return None,
+        }
+        (b.bit_long()? == 0).then_some(())?;
+        b.bit_long()
+    }
+
+    /// Name and creator of a corridor-generated feature line
+    /// (`AECC_AUTO_FEATURE_LINE`). The class writes the name at string 4
+    /// and the creating user at string 3, after the class tag string
+    /// (`AeccImpAutoFeatureLine`) and two empties — one position later than
+    /// the regular feature line, which has no creator.
+    pub fn auto_feature_line_name(&self) -> Option<(String, String)> {
+        if self.dxf_name != "AECC_AUTO_FEATURE_LINE" {
+            return None;
+        }
+        let strings = self.decode().strings;
+        (strings.first().map(String::as_str) == Some("AeccImpAutoFeatureLine"))
+            .then(|| (strings.get(4).cloned().unwrap_or_default(), strings.get(3).cloned().unwrap_or_default()))
+    }
+
     /// Name and description of a site or parcel (`AECC_PARCEL`).
     pub fn face_name(&self) -> Option<(String, String)> {
         if self.dxf_name != "AECC_PARCEL" {
@@ -1612,6 +1684,25 @@ impl ArchObject {
         }
         let (data, start, end) = self.main_stream()?;
         topology::topology(data, start, end)
+    }
+
+    /// The vertices of one edge of a corridor-target site container
+    /// (`AECC_FEATURE_STYLE`), read from the auto feature line
+    /// (`AECC_AUTO_FEATURE_LINE`) that names it: the corridor form's
+    /// edges-area head `BL 1, BL 1` (Corridor-2a/2b, the form's only two
+    /// samples) refuses [`Self::topology`], so this is the auto
+    /// feature line's own route — the two head words unnamed, the single
+    /// slot keyed by the referencing line's edge id, every following
+    /// structure validated under the shipped grammars (see
+    /// `topology::auto_feature_line_edge_vertices`). `None` when the
+    /// record is not a container, the head or graph does not read, or the
+    /// container keeps no edge with `edge`'s id.
+    pub fn corridor_edge_vertices(&self, edge: i32) -> Option<Vec<TopologyVertex>> {
+        if !self.dxf_name.eq_ignore_ascii_case("AECC_FEATURE_STYLE") {
+            return None;
+        }
+        let (data, start, end) = self.main_stream()?;
+        topology::auto_feature_line_edge_vertices(data, start, end, edge)
     }
 
     /// The feature-line topology of a site container
