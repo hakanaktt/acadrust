@@ -13,7 +13,7 @@
 
 use acadrust::classes::arch::ArchEntityData;
 use acadrust::classes::civil::{
-    add_alignment, add_alignment_of_kind, add_alignment_with_curves, add_curb_return, add_curb_return_with, add_design_speeds, add_offset_alignment, add_offset_alignment_with_widenings, add_offset_profile, add_profile, add_profile_entities, add_profile_with_curves, add_station_equations, add_surface_profile, add_tin_surface, ensure_civil, display_station, AlignmentElement, AlignmentElementKind, AlignmentKind, AlignmentPiece, AlignmentType, CurbReturnCurve, DesignSpeed, ProfileEntity, ProfilePiece, StationEquation, VertexCurve, VerticalCurve, Widening,
+    add_alignment, add_alignment_of_kind, add_alignment_with_best_fit_regression, add_alignment_with_curves, add_curb_return, add_curb_return_with, add_design_speeds, add_offset_alignment, add_offset_alignment_with_widenings, add_offset_profile, add_profile, add_profile_entities, add_profile_with_curves, add_station_equations, add_surface_profile, add_tin_surface, ensure_civil, display_station, AlignmentElement, AlignmentElementKind, AlignmentKind, BestFitPoint, BestFitRegression, AlignmentPiece, AlignmentType, CurbReturnCurve, DesignSpeed, ProfileEntity, ProfilePiece, StationEquation, VertexCurve, VerticalCurve, Widening,
 };
 use acadrust::entities::{EntityType, ExtendedEntityData};
 use acadrust::io::dwg::{DwgReader, DwgWriter};
@@ -724,10 +724,11 @@ fn rt_align_the_oracle_fixed_arcs_rebuild_station_exact() {
 ///     which the stroked piece walk cannot solve — a rebuild through the
 ///     tangent-PI walk dropped them both (the built alignment ran 731.45
 ///     ft short) and seated the spiral group on a chord-fit PI 7.8048 ft
-///     inside the true one. The replay instead rebuilds from the decoded
-///     elements: the fit as its primitive fixed arc (the regression
-///     circle; the line before meets it there), then the recorded tail,
-///     on the stored lines' own tangent intersections. The live oracle
+///     inside the true one. The replay rebuilds from the decoded elements
+///     alone: the stored lines' own tangent intersections carry the free
+///     arc and the spiral-curve-spiral, and the best-fit group is recorded
+///     back as its regression form, so the application solves the replayed
+///     tail the way it solves the drawing's own. The live oracle
 ///     (2026-11-28 capture, artifacts/2026-11-28T12-0x_live_equivalence):
 ///     Length 1995.7103622345194 over 7 entities — Line 0..261.51361024060316,
 ///     Arc ..507.46623162817593, Line ..723.8199033557896,
@@ -739,18 +740,34 @@ fn rt_align_the_best_fit_tail_rebuilds_live_station_exact() {
     let v = Vector2::new;
     // Align-4.dwg's decoded record (the #683 fixtures pin the same values
     // bit-exact): three stored lines, a free arc, a spiral-curve-spiral,
-    // the best-fit arc (radius and regression projections) and the tail.
+    // the best-fit arc (the fitted radius and the 16 COGO source points)
+    // and the floating spiral-spiral-curve that ends the alignment.
     let l1 = (v(3962.8705786815417, 4070.972925193938), v(4365.482060113974, 4081.746269006765));
     let l2 = (v(4365.482060113974, 4081.746269006765), v(4537.852689511664, 3634.399490733277));
     let l3 = (v(4537.852689511664, 3634.399490733277), v(4951.441448928713, 3504.9547420662884));
     let head_radius = 199.99999999999943_f64;
     let scs = (50.0_f64, 200.0_f64, 50.0_f64);
-    let fit_radius = 334.3905128049457_f64;
-    let projections = [
-        v(4940.790223638506, 3508.8046586739692),
-        v(5210.492216397139, 3555.8593689935747),
-        v(5292.070810482214, 3634.063290008554),
-    ];
+    let regression = BestFitRegression {
+        radius: 334.3905128049457,
+        points: vec![
+        BestFitPoint { point: v(4946.598537323272, 3531.644439264879), offset: -23.56675805666822, projection: v(4940.790223638506, 3508.8046586739692) },
+        BestFitPoint { point: v(4934.870765300845, 3478.5644648740818), offset: 30.770312360118908, projection: v(4942.314243486424, 3508.4209006164824) },
+        BestFitPoint { point: v(5000.698226307105, 3471.947815951843), offset: 27.2427440863583, projection: v(5002.393705140944, 3499.137748957991) },
+        BestFitPoint { point: v(5009.635273216262, 3521.06086844726), offset: -22.27623200083906, projection: v(5008.6667866006765, 3498.805699478442) },
+        BestFitPoint { point: v(5081.3586178035885, 3531.310284499762), offset: -27.264843314971642, projection: v(5086.521175616967, 3504.5386637454358) },
+        BestFitPoint { point: v(5111.250079724353, 3491.7446655817866), offset: 17.923701752640568, projection: v(5106.770848386904, 3509.0996525061037) },
+        BestFitPoint { point: v(5142.929386496836, 3549.6277016311487), offset: -26.87489732256637, projection: v(5153.392547101769, 3524.8732600851586) },
+        BestFitPoint { point: v(5170.782832140915, 3510.0620827131734), offset: 20.561169965079102, projection: v(5162.2341292696765, 3528.7618524858776) },
+        BestFitPoint { point: v(5200.83523719073, 3570.1432072539374), offset: -17.24196284769232, projection: v(5210.492216397139, 3555.8593689935747) },
+        BestFitPoint { point: v(5235.28554383977, 3521.7852278521686), offset: 42.117400598987786, projection: v(5211.5615044789865, 3556.5853052892035) },
+        BestFitPoint { point: v(5211.830017007164, 3603.114560697707), offset: -37.11684244457541, projection: v(5235.381283728206, 3574.4266219622423) },
+        BestFitPoint { point: v(5258.741079278502, 3554.7565812959383), offset: 30.06796380529505, projection: v(5239.309248229843, 3577.701872522962) },
+        BestFitPoint { point: v(5282.929598317104, 3581.1336562291317), offset: 27.318203903356732, projection: v(5263.313774964808, 3600.1469078899304) },
+        BestFitPoint { point: v(5237.484503245506, 3633.887819131889), offset: -41.96328870089627, projection: v(5268.2336237871505, 3605.3324486298243) },
+        BestFitPoint { point: v(5294.657361733406, 3628.0262498214843), offset: 5.6852902016229905, projection: v(5290.1192957240155, 3631.450936897859) },
+        BestFitPoint { point: v(5267.536899689198, 3652.2052362632758), offset: -30.512997111212485, projection: v(5292.070810482214, 3634.063290008554) },
+        ],
+    };
     let tail = (75.0_f64, 75.0_f64, 200.0_f64, v(5581.933193457283, 3753.1142979150336));
     // The stored lines' tangent intersections (the free-curve writers'
     // own input).
@@ -762,21 +779,20 @@ fn rt_align_the_best_fit_tail_rebuilds_live_station_exact() {
         a.0 + d1 * t
     };
     let (pi1, pi2) = (pi(l1, l2), pi(l2, l3));
-    // The fit's circle through three projections; the line before meets
-    // it at the fit arc's start.
-    let (p0, pm, pf) = (projections[0], projections[1], projections[2]);
+    // The fit's circle through three regression projections; the line
+    // before meets it at the fit arc's start (the junction is the fit's
+    // tangent foot to a hair): the crossing is the foot point, at most
+    // sqrt(-disc) from either root.
+    let (p0, pm, pf) = (regression.points[0].projection, regression.points[8].projection, regression.points[15].projection);
     let d = 2.0 * ((p0.x - pm.x) * (pm.y - pf.y) - (p0.y - pm.y) * (pm.x - pf.x));
     let (s0, sm, sf) = (p0.x * p0.x + p0.y * p0.y, pm.x * pm.x + pm.y * pm.y, pf.x * pf.x + pf.y * pf.y);
     let center = v((s0 * (pm.y - pf.y) + sm * (pf.y - p0.y) + sf * (p0.y - pm.y)) / d, (s0 * (pf.x - pm.x) + sm * (p0.x - pf.x) + sf * (pm.x - p0.x)) / d);
-    assert!((center.distance(&p0) - fit_radius).abs() < 1e-6, "the projections carry the fitted radius");
+    assert!((center.distance(&p0) - regression.radius).abs() < 1e-6, "the projections carry the fitted radius");
     let along = l3.1 - l3.0;
     let u = along / along.length();
     let f = l3.0 - center;
     let b = 2.0 * f.dot(&u);
-    let c = f.dot(&f) - fit_radius * fit_radius;
-    // The line meets the fit's circle within the record's own precision
-    // (the junction is the fit's tangent foot to a hair): the crossing is
-    // the foot point, at most sqrt(-disc) from either root.
+    let c = f.dot(&f) - regression.radius * regression.radius;
     let t = -b / 2.0 + 0.5 * (b * b - 4.0 * c).max(0.0).sqrt();
     let crossing = l3.0 + u * t;
 
@@ -787,64 +803,47 @@ fn rt_align_the_best_fit_tail_rebuilds_live_station_exact() {
         VertexCurve::SpiralCurveSpiral { spiral_in: scs.0, radius: scs.1, spiral_out: scs.2 },
         VertexCurve::BestFitArcTo { start: crossing, mid: pm, end: pf, spiral_out: tail.0, spiral_in: tail.1, curve_radius: tail.2 },
     ];
-    let h = match add_alignment_with_curves(&mut doc, "REBUILT", &vertices, &curves, None) {
-        Ok(h) => h,
-        Err(e) => {
-            // Which curve refuses? Bisect: the head alone, then with the
-            // group.
-            let r1 = add_alignment_with_curves(&mut doc, "B1", &[l1.0, pi1, pi2, l3.1], &[curves[0], curves[1], VertexCurve::None], None);
-            eprintln!("bisect head-only: {r1:?}");
-            let r2 = add_alignment_with_curves(&mut doc, "B2", &vertices, &[curves[0], curves[1], VertexCurve::None], None);
-            eprintln!("bisect no-group-5v: {r2:?}");
-            panic!("the replay rebuilds: {e}");
-        }
-    };
+    let h = add_alignment_with_best_fit_regression(&mut doc, "REBUILT", &vertices, &curves, Some(&regression), None).expect("the replay rebuilds");
     let back = roundtrip(&doc, "best_fit_tail");
     let a = arch(&back, h);
-    use AlignmentElementKind as K;
     let elements = a.alignment_elements().expect("the rebuilt record decodes");
+    // The rebuilt record is the oracle's: the same seven elements in
+    // station order, the regression and the tail bit-exact.
     assert_eq!(elements.len(), 7);
     let chain = station_chain(&elements);
     assert_eq!(chain.len(), 7);
+    use AlignmentElementKind as K;
     assert!(matches!(chain[0], K::FixedLine { .. }));
-    assert!(matches!(chain[1], K::FreeArc { .. }));
+    assert!(matches!(chain[1], K::FreeArc { radius } if radius.to_bits() == head_radius.to_bits()));
     assert!(matches!(chain[2], K::FixedLine { .. }));
     assert!(matches!(chain[3], K::FreeSpiralCurveSpiral { spiral_in, radius, spiral_out } if spiral_in == scs.0 && radius == scs.1 && spiral_out == scs.2));
     assert!(matches!(chain[4], K::FixedLine { .. }));
-    let K::FixedArc { start, mid, end } = &chain[5] else {
-        panic!("the sixth record is the fit's fixed arc, got {:?}", chain[5]);
+    let K::BestFitArc { radius, points } = &chain[5] else {
+        panic!("the sixth record is the best-fit arc, got {:?}", chain[5]);
     };
-    assert_eq!((*start, *mid, *end), (crossing, pm, pf));
+    assert_eq!(*radius, regression.radius);
+    assert_eq!(points, &regression.points);
     let K::FloatingSpiralSpiralCurve { spiral_out, spiral_in, radius, end } = &chain[6] else {
         panic!("the last record is the tail, got {:?}", chain[6]);
     };
     assert_eq!((spiral_out.to_bits(), spiral_in.to_bits(), radius.to_bits()), (tail.0.to_bits(), tail.1.to_bits(), tail.2.to_bits()));
     assert_eq!(*end, tail.3);
-    // The solved stations against the live oracle walk: the shared head is
-    // exact, the tail lands on the recorded end within the solver's own
-    // reach tolerance.
+    // The solved head (through the line before the group) against the live
+    // oracle walk: the shared head stays exact. The line keeps its stored
+    // end in the crate's own solve — exactly what the oracle file's read
+    // gives (1265.3186683309943, the same value the source decode carries):
+    // the tail's geometry is the application's own solve of the regression
+    // record, which the live leg gates.
     let pieces = a.alignment_pieces_with_curvature();
-    assert_eq!(pieces.len(), 11);
+    assert_eq!(pieces.len(), 7);
     let mut at = 0.0_f64;
     let mut bounds = Vec::new();
     for (_, _, pts) in &pieces {
         at += pts.windows(2).map(|w| w[0].distance(&w[1])).sum::<f64>();
         bounds.push(at);
     }
-    let oracle = [
-        261.51361024060316,
-        507.46623162817593,
-        723.8199033557896,
-        773.8199033557896,
-        903.7577637572404,
-        953.7577637572404,
-        1235.8578690140675,
-        1610.3610314359485,
-        1685.3610314359485,
-        1760.3610314359485,
-        1995.7103622345194,
-    ];
-    for (got, want) in bounds.iter().zip(oracle) {
+    let oracle_head = [261.51361024060316, 507.46623162817593, 723.8199033557896, 773.8199033557896, 903.7577637572404, 953.7577637572404, 1265.3186683309943];
+    for (got, want) in bounds.iter().zip(oracle_head) {
         assert!((got - want).abs() < 5e-3, "station {got} vs live {want}");
     }
 }

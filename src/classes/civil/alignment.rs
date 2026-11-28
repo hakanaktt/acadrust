@@ -727,8 +727,7 @@ fn raw_bit_long(bits: &mut Bits) -> Option<i32> {
 
 fn read_element(bits: &mut Bits, member: Option<usize>, after_type: Option<usize>) -> Option<AlignmentElement> {
     let element_type = raw_bit_long(bits)?;
-    let mut closed = false;
-    // `BS 0 / 2` covers the usual flag and type bytes up to the type's
+    let mut closed = false;    // `BS 0 / 2` covers the usual flag and type bytes up to the type's
     // last bit; other flag bytes are skipped by their layout.
     if !matches!(bits.bit_short()?, 0 | 2) {
         bits.pos = after_type? - 1;
@@ -2375,7 +2374,64 @@ fn close(points: &mut Vec<Vector2>, pending: &mut Option<PendingLine>, end: Vect
     }
 }
 
-fn circle(a: Vector2, b: Vector2, c: Vector2) -> Option<(Vector2, f64, bool)> {
+/// Where a floating spiral-spiral-curve that ends an alignment leaves the
+/// circle it continues (through `from`, turning `ccw`): the sweep from
+/// `from`, in the circle's own direction, whose tail — spiralling
+/// `spiral_out` out of the circle's curvature, reversing into
+/// `curve_radius` over `spiral_in` — ends its final arc on `end`. A
+/// sweep's final arc is the one curve of the chain still free, so the
+/// sweep solves where its arc's circle passes through `end`; the smallest
+/// sweep in `(0, TAU)` is the design's (the live oracle's recorded
+/// junction is the short way round). `None` when no sweep reaches.
+pub(super) fn reverse_curve_leave(
+    center: Vector2,
+    radius: f64,
+    ccw: bool,
+    from: Vector2,
+    spiral_out: f64,
+    spiral_in: f64,
+    curve_radius: f64,
+    end: Vector2,
+) -> Option<f64> {
+    let dir = if ccw { 1.0 } else { -1.0 };
+    let k_fit = dir / radius;
+    let k_tail = -dir / curve_radius;
+    let a0 = (from.y - center.y).atan2(from.x - center.x);
+    let h0 = a0 + dir * std::f64::consts::FRAC_PI_2;
+    let normal = |h: f64, k: f64| direction(h + if k > 0.0 { std::f64::consts::FRAC_PI_2 } else { -std::f64::consts::FRAC_PI_2 });
+    // How far `end` lies off the final arc's circle at this sweep (signed
+    // so a sign change is a root).
+    let miss = |sweep: f64| -> Option<f64> {
+        let a = a0 + dir * sweep;
+        let point = Vector2::new(center.x + radius * a.cos(), center.y + radius * a.sin());
+        let (_, at_zero) = pieces(State { point, heading: h0 + dir * sweep, curvature: k_fit }, &[(k_fit, 0.0, spiral_out)]);
+        let (_, sc) = pieces(at_zero, &[(0.0, k_tail, spiral_in)]);
+        let c2 = sc.point + normal(sc.heading, k_tail) * curve_radius;
+        Some(end.distance(&c2) - curve_radius)
+    };
+    const STEPS: usize = 2048;
+    let mut previous = miss(1e-9)?;
+    for i in 1..=STEPS {
+        let sweep = std::f64::consts::TAU * i as f64 / STEPS as f64;
+        let current = miss(sweep)?;
+        if previous * current <= 0.0 {
+            let (mut lo, mut hi) = (sweep - std::f64::consts::TAU / STEPS as f64, sweep);
+            for _ in 0..80 {
+                let mid = 0.5 * (lo + hi);
+                if miss(lo)? * miss(mid)? <= 0.0 {
+                    hi = mid;
+                } else {
+                    lo = mid;
+                }
+            }
+            return Some(0.5 * (lo + hi));
+        }
+        previous = current;
+    }
+    None
+}
+
+pub(super) fn circle(a: Vector2, b: Vector2, c: Vector2) -> Option<(Vector2, f64, bool)> {
     let d = 2.0 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
     if d.abs() < 1e-12 {
         return None;
