@@ -120,3 +120,111 @@ fn the_corridor_site_container_s_edges_head_stays_refused() {
     o.raw_dwg_handle_bits = 75;
     assert!(o.topology().is_none(), "the BL 1, BL 1 edges head refuses (the corridor round's named residual)");
 }
+
+/// The corridor feature line's points: the live-API harvest (D010 bridge
+/// round, 2026-11-28, oracle Corridor-2a.dwg opened readOnly) read
+/// Feature 1's `GetPoints(FeatureLinePointType.AllPoints)` as exactly
+/// five PIs — the container edge's five nodes (the edge is arc + 3
+/// tangents, the arc's bulge on its third vertex). The record keeps no
+/// geometry; the read routes through the referenced site container's
+/// edge (id 3), whose `BL 1, BL 1` edges head the general topology
+/// reader refuses — this is the auto feature line's own route, keyed by
+/// the line's edge id and validated to the record end. Values below are
+/// the live PIs bit for bit.
+#[test]
+fn the_corridor_feature_line_s_vertices_are_the_container_edge_s_nodes() {
+    let mut doc = acadrust::CadDocument::new();
+    let mut common = acadrust::entities::EntityCommon::default();
+    common.handle = doc.allocate_handle();
+    let fl = doc
+        .add_entity(acadrust::entities::EntityType::Extended(Box::new(acadrust::entities::ExtendedEntity {
+            common,
+            data: acadrust::entities::ExtendedEntityData::Arch(record("AECC_AUTO_FEATURE_LINE")),
+        })))
+        .expect("the auto feature line entity");
+    let mut o = acadrust::classes::arch::ArchObject::new(
+        "AECC_FEATURE_STYLE",
+        Handle::new(0x1306),
+        Handle::new(0x1305),
+    );
+    o.raw_dwg_data = Some(
+        (0..CORRIDOR_CONTAINER.len() / 2)
+            .map(|i| u8::from_str_radix(&CORRIDOR_CONTAINER[2 * i..2 * i + 2], 16).expect("hex"))
+            .collect(),
+    );
+    o.raw_dwg_handle_bits = 75;
+    doc.objects.insert(Handle::new(0x1306), acadrust::objects::ObjectType::Arch(o));
+
+    let verts = acadrust::classes::civil::auto_feature_line_vertices(&doc, fl)
+        .expect("the corridor feature line's vertices via its container edge");
+    let expected: [( (f64, f64, f64), f64); 5] = [
+        ((5291.483859234955, 4902.347749042325, 627.7777376193553), 0.0),
+        ((5020.969096780289, 4598.648817697074, 0.0), 0.0),
+        ((4778.723650314845, 4341.133256702218, 0.0), -0.09285940132137133),
+        ((4571.848781052511, 4190.393763345666, 0.0), 0.0),
+        ((4552.954437973443, 4181.030021611601, 0.0), 0.0),
+    ];
+    assert_eq!(verts.len(), expected.len());
+    for (v, (p, bulge)) in verts.iter().zip(expected) {
+        assert_eq!((v.point.x, v.point.y, v.point.z), p, "PI does not match the live GetPoints value");
+        assert_eq!(v.bulge, bulge);
+        assert!(!v.elevation_point);
+    }
+}
+
+/// The read is graceful: without the referenced container in the
+/// document, or for a record that is not an auto feature line, it is
+/// `None` — never a guess.
+#[test]
+fn the_vertices_read_refuses_without_the_container_or_the_class() {
+    let mut doc = acadrust::CadDocument::new();
+    let mut common = acadrust::entities::EntityCommon::default();
+    common.handle = doc.allocate_handle();
+    let fl = doc
+        .add_entity(acadrust::entities::EntityType::Extended(Box::new(acadrust::entities::ExtendedEntity {
+            common,
+            data: acadrust::entities::ExtendedEntityData::Arch(record("AECC_AUTO_FEATURE_LINE")),
+        })))
+        .expect("the auto feature line entity");
+    assert!(acadrust::classes::civil::auto_feature_line_vertices(&doc, fl).is_none());
+
+    let mut common = acadrust::entities::EntityCommon::default();
+    common.handle = doc.allocate_handle();
+    let not_auto = doc
+        .add_entity(acadrust::entities::EntityType::Extended(Box::new(acadrust::entities::ExtendedEntity {
+            common,
+            data: acadrust::entities::ExtendedEntityData::Arch(record("AECC_FEATURE_LINE")),
+        })))
+        .expect("the regular feature line entity");
+    let mut o = acadrust::classes::arch::ArchObject::new(
+        "AECC_FEATURE_STYLE",
+        Handle::new(0x1306),
+        Handle::new(0x1305),
+    );
+    o.raw_dwg_data = Some(
+        (0..CORRIDOR_CONTAINER.len() / 2)
+            .map(|i| u8::from_str_radix(&CORRIDOR_CONTAINER[2 * i..2 * i + 2], 16).expect("hex"))
+            .collect(),
+    );
+    o.raw_dwg_handle_bits = 75;
+    doc.objects.insert(Handle::new(0x1306), acadrust::objects::ObjectType::Arch(o));
+    assert!(acadrust::classes::civil::auto_feature_line_vertices(&doc, not_auto).is_none());
+}
+
+/// A container edge id the record does not name refuses: the single slot
+/// must carry the referencing line's own edge id.
+#[test]
+fn the_corridor_edge_read_refuses_another_edge_id() {
+    let mut o = acadrust::classes::arch::ArchObject::new(
+        "AECC_FEATURE_STYLE",
+        Handle::new(0x1306),
+        Handle::new(0x1305),
+    );
+    o.raw_dwg_data = Some(
+        (0..CORRIDOR_CONTAINER.len() / 2)
+            .map(|i| u8::from_str_radix(&CORRIDOR_CONTAINER[2 * i..2 * i + 2], 16).expect("hex"))
+            .collect(),
+    );
+    o.raw_dwg_handle_bits = 75;
+    assert!(o.corridor_edge_vertices(4).is_none(), "no slot with edge id 4");
+}

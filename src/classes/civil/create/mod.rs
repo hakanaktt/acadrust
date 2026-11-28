@@ -62,7 +62,7 @@ pub use bands::{BandKind, BandStagger, ProfileViewBand};
 pub use sample_lines::{add_sample_line, add_sample_line_through, add_sample_line_group, add_sections};
 pub use mass_haul::add_mass_haul_line;
 pub use section_view::{add_section_view, add_section_view_group};
-pub use site::{add_alignment_on_site, add_feature_line, add_lot_line, add_parcel, add_feature_line_vertices, feature_line_vertices, parcel_name, FeatureLineVertex, add_site, set_feature_line_vertices, PARCEL_STYLE_NAME, PARCEL_NUMBER};
+pub use site::{add_alignment_on_site, add_feature_line, add_lot_line, add_parcel, add_feature_line_vertices, feature_line_vertices, auto_feature_line_vertices, parcel_name, FeatureLineVertex, add_site, set_feature_line_vertices, PARCEL_STYLE_NAME, PARCEL_NUMBER};
 pub use stormwater::{
     add_channel, add_pond, add_underground_storage, stormwater_component_versions,
     stormwater_model_context, stormwater_schema_root, StormWaterComponentContext,

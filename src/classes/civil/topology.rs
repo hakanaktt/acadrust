@@ -218,70 +218,107 @@ fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> 
         // in one go, any free ID once members moved between containers.
         let id = bits.bit_long()?;
         (1..next_free).contains(&id).then_some(())?;
-        // Edge flags: bit 1 marks a closed edge (a lot line around a
-        // parcel), whose last vertex starts the segment back to the first.
-        let edge_flags = bits.bit_long()?;
-        let closed = edge_flags & 1 != 0;
-        // An edge can be left with no vertices; it keeps its place.
-        let n = bits.bit_long()?;
-        if !(0..=100_000).contains(&n) || bits.bit_long()? != 0 {
-            return None;
-        }
-        let mut run = Vec::with_capacity(n as usize);
-        for i in 0..n {
-            let kind = bits.bit_long()?;
-            let flags = bits.bit_long()?;
-            let node = bits.bit_long()?;
-            let faces = (bits.bit_long()?, bits.bit_long()?);
-            // The last vertex ends the edge (2), or on a closed edge starts
-            // the segment (0) or arc (1, a circle) back to the first one.
-            let last = i + 1 == n;
-            if !(0..=2).contains(&kind) || (!last && kind == 2) || (last && kind == 0 && !closed) {
-                return None;
-            }
-            let bulge = if kind == 1 {
-                let b = bits.bit_double().filter(|b| b.is_finite())?;
-                (bits.bit_long()? == 0).then_some(b)?
-            } else {
-                0.0
-            };
-            let &(_, point, z) = nodes.iter().find(|m| m.0 == node)?;
-            run.push(TopologyVertex { point, z, flags, faces, bulge, node, key: 0 });
-        }
-        // A closed edge ends with a copy of its first vertex.
-        if run.last().is_some_and(|v| v.bulge != 0.0 || v.faces != (0, 0)) {
-            let first = run[0];
-            run.push(TopologyVertex { bulge: 0.0, faces: (0, 0), ..first });
-        }
-        // A list after the vertices (empty on alignments; one entry once a
-        // feature line has an elevation point), then three more lists.
-        let listed = bits.bit_long()?;
-        if !(0..=100_000).contains(&listed) {
-            return None;
-        }
-        // The keys of the edge's elevation points, in edge order.
-        let mut points = run.iter_mut().filter(|v| v.is_elevation_point());
-        for _ in 0..listed {
-            let key = bits.bit_long()?;
-            if let Some(v) = points.next() {
-                v.key = key;
-            }
-        }
-        // Three lists `BL n, n x BL`, empty on alignments and in the
-        // containers this crate writes; in a graded site's graph they name
-        // other edges (Grading-3A: `(), (22), ()`; Grading-4: `(2), (), ()`
-        // and `(), (1, 3), ()`).
-        for _ in 0..3 {
-            let n = usize::try_from(bits.bit_long()?).ok().filter(|n| n * 2 <= bits.remaining())?;
-            for _ in 0..n {
-                bits.bit_long()?;
-            }
-        }
+        let (run, edge_flags) = edge_body(&mut bits, nodes)?;
         out.push(run);
         all_flags.push(edge_flags);
         ids.push(id);
     }
     Some((out, all_flags, ids, bits.pos))
+}
+
+/// An edge's body after its slot tag and id: flags, the vertex run (a
+/// closed edge ends with a copy of its first vertex), the edge's
+/// elevation-point keys and the three closing lists. Shared by the
+/// shipped edges reader and the corridor-target site's single edge (see
+/// [`auto_feature_line_edge_vertices`]).
+fn edge_body(bits: &mut Bits, nodes: &[(i32, Vector2, f64)]) -> Option<(Vec<TopologyVertex>, i32)> {
+    // Edge flags: bit 1 marks a closed edge (a lot line around a
+    // parcel), whose last vertex starts the segment back to the first.
+    let edge_flags = bits.bit_long()?;
+    let closed = edge_flags & 1 != 0;
+    // An edge can be left with no vertices; it keeps its place.
+    let n = bits.bit_long()?;
+    if !(0..=100_000).contains(&n) || bits.bit_long()? != 0 {
+        return None;
+    }
+    let mut run = Vec::with_capacity(n as usize);
+    for i in 0..n {
+        let kind = bits.bit_long()?;
+        let flags = bits.bit_long()?;
+        let node = bits.bit_long()?;
+        let faces = (bits.bit_long()?, bits.bit_long()?);
+        // The last vertex ends the edge (2), or on a closed edge starts
+        // the segment (0) or arc (1, a circle) back to the first one.
+        let last = i + 1 == n;
+        if !(0..=2).contains(&kind) || (!last && kind == 2) || (last && kind == 0 && !closed) {
+            return None;
+        }
+        let bulge = if kind == 1 {
+            let b = bits.bit_double().filter(|b| b.is_finite())?;
+            (bits.bit_long()? == 0).then_some(b)?
+        } else {
+            0.0
+        };
+        let &(_, point, z) = nodes.iter().find(|m| m.0 == node)?;
+        run.push(TopologyVertex { point, z, flags, faces, bulge, node, key: 0 });
+    }
+    // A closed edge ends with a copy of its first vertex.
+    if run.last().is_some_and(|v| v.bulge != 0.0 || v.faces != (0, 0)) {
+        let first = run[0];
+        run.push(TopologyVertex { bulge: 0.0, faces: (0, 0), ..first });
+    }
+    // A list after the vertices (empty on alignments; one entry once a
+    // feature line has an elevation point), then three more lists.
+    let listed = bits.bit_long()?;
+    if !(0..=100_000).contains(&listed) {
+        return None;
+    }
+    // The keys of the edge's elevation points, in edge order.
+    let mut points = run.iter_mut().filter(|v| v.is_elevation_point());
+    for _ in 0..listed {
+        let key = bits.bit_long()?;
+        if let Some(v) = points.next() {
+            v.key = key;
+        }
+    }
+    // Three lists `BL n, n x BL`, empty on alignments and in the
+    // containers this crate writes; in a graded site's graph they name
+    // other edges (Grading-3A: `(), (22), ()`; Grading-4: `(2), (), ()`
+    // and `(), (1, 3), ()`).
+    for _ in 0..3 {
+        let n = usize::try_from(bits.bit_long()?).ok().filter(|n| n * 2 <= bits.remaining())?;
+        for _ in 0..n {
+            bits.bit_long()?;
+        }
+    }
+    Some((run, edge_flags))
+}
+
+/// The one edge of a corridor-target site container, read from the auto
+/// feature line (`AECC_AUTO_FEATURE_LINE`) that references it: the
+/// container's edges area opens `BL 1, BL 1` (Corridor-2a/2b — the
+/// form's only two samples, byte-identical), words the shipped edges
+/// grammar refuses (slots >= next free, and the slot's own edge id
+/// outside `1..next_free`), so [`topology`] returns `None` — the
+/// corridor round's named residual. From the auto feature line route the
+/// two head words are read unnamed and the single slot must carry
+/// exactly the referencing line's edge id; everything after (the edge's
+/// vertices, its elevation-point list, the three closing lists, the face
+/// list) must parse under the shipped grammars bit-exact or the read is
+/// `None` — one deterministic interpretation, total validation, no scan.
+pub(super) fn auto_feature_line_edge_vertices(data: &[u8], start: usize, end: usize, edge: i32) -> Option<Vec<TopologyVertex>> {
+    let t = elevation_keys(data, start, end)?;
+    let mut bits = Bits::new(data, elements(data, t.after, end)?, end);
+    (bits.bit_long()? as u32 == 0x8000_0001).then_some(())?;
+    let (nodes, after, _) = node_list(data, bits.pos, end)?;
+    let mut bits = Bits::new(data, after, end);
+    bits.bit_long()?;
+    bits.bit_long()?;
+    (bits.bit_long()? == 0).then_some(())?;
+    (bits.bit_long()? == edge).then_some(())?;
+    let (run, _) = edge_body(&mut bits, &nodes)?;
+    face_list(data, bits.pos, end)?;
+    Some(run)
 }
 
 /// The face list at `pos`: `BL next free id, BL count, per face {BL id,

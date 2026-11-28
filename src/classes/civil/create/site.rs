@@ -1059,6 +1059,34 @@ pub fn feature_line_vertices(doc: &CadDocument, feature_line: Handle) -> Option<
     }).collect())
 }
 
+/// The vertices of a corridor-generated feature line
+/// (`AECC_AUTO_FEATURE_LINE`): the points of the edge it names in its
+/// corridor-target site container — the PIs with their elevations and
+/// the bulge of the segment starting at each (see [`FeatureLineVertex`];
+/// the corridor edge is arc + 3 tangents over 5 nodes, the arc's bulge
+/// on its first vertex). The corridor container's edges head is the
+/// `BL 1, BL 1` form the general topology reader refuses, so this routes
+/// through the auto feature line's own read
+/// ([`crate::classes::civil::ArchObject::corridor_edge_vertices`])
+/// instead of [`feature_line_vertices`]'s topology route. `None` when the
+/// record is not an auto feature line, its container or edge cannot be
+/// read, or the container keeps no edge with its id.
+pub fn auto_feature_line_vertices(doc: &CadDocument, feature_line: Handle) -> Option<Vec<FeatureLineVertex>> {
+    let Some(EntityType::Extended(x)) = doc.get_entity(feature_line) else { return None };
+    let ExtendedEntityData::Arch(a) = &x.data else { return None };
+    let container = crate::types::Handle::new(a.auto_feature_line_container()?);
+    let edge = a.auto_feature_line_edge()?;
+    let o = match doc.objects.get(&container) {
+        Some(crate::objects::ObjectType::Arch(o)) => o,
+        _ => return None,
+    };
+    Some(o.corridor_edge_vertices(edge)?.iter().map(|v| FeatureLineVertex {
+        point: crate::types::Vector3::new(v.point.x, v.point.y, v.z),
+        bulge: v.bulge,
+        elevation_point: v.is_elevation_point(),
+    }).collect())
+}
+
 /// Label property of a parcel style's name (the style name token in its
 /// name template, `<[167804933(...)]>`).
 pub const PARCEL_STYLE_NAME: u32 = 167_804_933;
