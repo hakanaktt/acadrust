@@ -7,11 +7,16 @@
 //! ```text
 //! nodes: BL next free id, BL n, BL first id,
 //!        n x { BD x, BD y, BD z, 3 bits 010, BL next id (0 last) }
-//! edges: BL next free id, BL slots, then per slot either BL 2 (a free
-//!        slot: its member left) or BL 0, BL edge id, BL flags, BL n, BL 0,
+//! edges: two head words, then per slot either BL 2 (a free slot: its
+//!        member left) or BL 0, BL edge id, BL flags, BL n, BL 0,
 //!        n x { BL kind (0 line, 1 arc, 2 last), BL flags, BL node,
 //!        BL face a, BL face b, [arc: BD bulge, BL 0] },
 //!        BL m, m x BL, BL 0 x 3
+//!
+//! The two head words come in two recorded forms, told apart by their own
+//! bytes (see [`edges`]): the standard `(next free id, slots)` with
+//! slots < next free id, and a count-form `(count, count)` whose words are
+//! equal — the corridor-target site containers (Corridor-2a/2b).
 //! ```
 //!
 //! A feature line is an edge of its site's topology with its elevations in
@@ -195,13 +200,45 @@ fn node_list(data: &[u8], pos: usize, end: usize) -> Option<(Vec<(i32, Vector2, 
     Some((nodes, bits.pos, next_free))
 }
 
+/// The edge area at `pos`: its two head words, then the slots.
+///
+/// The head words come in two recorded forms (the 2026-11-28 corridor-site
+/// live-capture pair, Corridor-2a before/after a feature line joined its
+/// site — md5 2946fc0e… / 75df0030…):
+///
+/// - the standard `(next free edge id, slots)` of the parcel-site and
+///   grading corpora, where every observed record keeps slots < next free
+///   (the empty form `(1, 0)` included), and an edge's id must fall below
+///   the next free id;
+/// - the corridor-target site containers' count-form `(count, count)`:
+///   both words are the occupied slot count and count up together on a
+///   member add (`BL 1, BL 1` with one edge of id 3; `BL 2, BL 2` with
+///   edge ids 1 and 3 after a second feature line joined) — word1 is no
+///   id bound there (the recorded ids exceed it), so the id check for the
+///   form is a positive-id sanity bound only.
+///
+/// Which form a record carries is deterministic from its own bytes, and
+/// the forms falsify each other: the two words' equality admits the
+/// count-form and is exactly what the standard form's own rule (slots
+/// < next free) refuses — a count-form head read as standard hits
+/// slots >= next free, and a standard head read as count-form fails the
+/// equality (every standard record of the census — 274 x (2, 1),
+/// (4, 1), (8, 7), (13, 12), (34, 33), (103, 102), (170, 78/80/82),
+/// (260, 157), (90, 1), (25, 13), (4, 3), (3, 2), (12, 4), (34, 21),
+/// (37, 27), (38, 1), (40, 2), (57, 52), (259, 231) — keeps its second
+/// word below its first). No record satisfies both rules, so the branch
+/// is total and no second parse is ever tried. The count-form's slots are
+/// all occupied (count == slots), so a free-slot `2` would contradict the
+/// head and refuses; the slots themselves decode by the shared grammar.
 #[allow(clippy::type_complexity)]
 fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> Option<(Vec<Vec<TopologyVertex>>, Vec<i32>, Vec<i32>, usize)> {
     let mut bits = Bits::new(data, pos, end);
-    let next_free = bits.bit_long()?;
+    let first = bits.bit_long()?;
     let slots = bits.bit_long()?;
-    // A face's own graph may hold no edges (`BL 1, BL 0`).
-    if !(0..=10_000).contains(&slots) || slots >= next_free {
+    // The count-form's words are equal; the standard form's second word
+    // sits below its first; a second word above the first fits neither.
+    let count_form = slots == first;
+    if !(0..=10_000).contains(&slots) || (!count_form && slots >= first) {
         return None;
     }
     let mut out = Vec::new();
@@ -210,14 +247,18 @@ fn edges(data: &[u8], pos: usize, end: usize, nodes: &[(i32, Vector2, f64)]) -> 
     for _ in 0..slots {
         // A member that left keeps its slot as a lone 2.
         match bits.bit_long()? {
+            2 if count_form => return None,
             2 => continue,
             0 => {}
             _ => return None,
         }
         // The slot's edge ID: its slot number in a container Civil 3D wrote
-        // in one go, any free ID once members moved between containers.
+        // in one go, any free ID once members moved between containers —
+        // and, on the count-form records, free of the head word (id 3
+        // under a head of 1): a positive-id sanity bound only.
         let id = bits.bit_long()?;
-        (1..next_free).contains(&id).then_some(())?;
+        let valid_id = if count_form { (1..=1_000_000).contains(&id) } else { (1..first).contains(&id) };
+        valid_id.then_some(())?;
         // Edge flags: bit 1 marks a closed edge (a lot line around a
         // parcel), whose last vertex starts the segment back to the first.
         let edge_flags = bits.bit_long()?;
@@ -992,5 +1033,207 @@ mod tests {
         (0..hex.len() / 2)
             .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).expect("hex"))
             .collect()
+    }
+
+    // The 2026-11-28 corridor-site live-capture pair (the write-path probe's
+    // C:\Temp\flsite\Corridor-2a-scratch.dwg, md5 2946fc0e94d4dba89f312c77e2
+    // e0e101 = the oracle bytes, and its SaveAs
+    // Corridor-2a-scratch-fladded.dwg, md5 75df0030648fa8af67ebdc180edac552):
+    // the "Corridor Targets" site's container (handle 0x1306, owner 0x1305,
+    // an AECC_FEATURE_STYLE record) before and after a second feature line
+    // joined the site, bit for bit as recorded. The pair is the evidence for
+    // the edges area's count-form head (see [`edges`]): `BL 1, BL 1` before,
+    // `BL 2, BL 2` after.
+    const CORRIDOR_BEFORE: &str = "650084c1aa2f812a481d20320300200010083a0a80801484a8373556480003d0e0e917ad82049020000ae85be272cd0000a6ea18a6f6b14092060073196f3dd5da2000198280cb24d6680002040671c4f41a02410000a0c56f4c8b14000041febc1d56c1024828001d6e93b3b76280005a5666b22f58204a405019030c020040105a4c9034050193240901405010c8003c0501405011d0ab34ee8b16defe902415014050240904aaa40901405014190140e9015910159101591015910159101592aaa0200c021097c20210982a07";
+    const CORRIDOR_AFTER: &str = "650084c1aa2f812a481d20320300200010085a12840000000000181648000000000001858a04901002909506e6aac900007a1c1d22f5b040921200000000002e59200000000000135608124080002ba16f89cb3400029ba8629bdac5024850004d4e5998f16480005c7d211962d820490300398cb79eeaed10000cc14065926b340001020338e27a0d012080005062b7a6458a000020ff5e0eab60812414000eb749d9dbb140002d2b335917ac10248380000000001f1628000000000003458204a409029012c000040104a6c90740501932425014060c01000010a405014090a422aaa40cb008010041a93240d014064c9024050140432000f0140501404c174a153038299bf9010c0103c050a4050112474b213696ac6fe932415014050240904aaa409014050141d0140e9015910159101591015910159101592aaa0200c02110d42021097c20210982a07f";
+
+    /// The corridor container at `hex` as the document reader hands it to
+    /// [`crate::classes::arch::ArchObject::topology`] (the record's raw
+    /// bytes and the bit offset of its handle stream).
+    fn corridor_container(hex: &str, handle_bits: i64) -> crate::classes::arch::ArchObject {
+        let mut object = crate::classes::arch::ArchObject::new("AECC_FEATURE_STYLE", crate::types::Handle::new(0x1306), crate::types::Handle::new(0x1305));
+        object.raw_dwg_data = Some(hex_bytes(hex));
+        object.raw_dwg_handle_bits = handle_bits;
+        object.raw_dwg_version = Some(crate::types::DxfVersion::AC1032);
+        object
+    }
+
+    /// The distinct node ids an edge run references, in id order.
+    fn node_ids(t: &Topology) -> Vec<i32> {
+        let mut nodes: Vec<i32> = t.edges.iter().flat_map(|e| e.iter().map(|v| v.node)).collect();
+        nodes.sort_unstable();
+        nodes.dedup();
+        nodes
+    }
+
+    /// The corridor pair decodes end to end through the record reader —
+    /// the before container's one edge (the auto feature line's: 5
+    /// vertices over the recorded 5 nodes, one arc, the outside face
+    /// entering at node 3) and the after container's two (the new feature
+    /// line takes the first free id 1, the existing edge keeps id 3 and
+    /// its vertex run is split at the shared intersection node, 9 nodes,
+    /// next free 11) — and the container's member list front-inserts the
+    /// new member (recent first).
+    #[test]
+    fn the_corridor_site_containers_decode_end_to_end() {
+        let before = corridor_container(CORRIDOR_BEFORE, 75);
+        let t = before.topology().expect("the before container decodes");
+        assert_eq!(t.edge_ids, vec![3]);
+        assert_eq!(t.next_node, 7);
+        assert_eq!(t.next_key, 1);
+        assert_eq!(node_ids(&t), vec![1, 2, 3, 4, 5]);
+        assert_eq!(t.edges.len(), 1);
+        assert_eq!(t.edges[0].len(), 5);
+        assert_eq!(t.edges[0][2].bulge, -0.09285940132137133);
+        assert_eq!(t.face_ids, vec![1]);
+        assert_eq!(t.outside_face_flags, 0x6);
+        assert_eq!(t.outside_entries, vec![(3, 0)]);
+        assert_eq!(before.site_members(), vec![0x12f8]);
+
+        let after = corridor_container(CORRIDOR_AFTER, 111);
+        let t = after.topology().expect("the after container decodes");
+        assert_eq!(t.edge_ids, vec![1, 3]);
+        assert_eq!(t.next_node, 11);
+        assert_eq!(t.next_key, 1);
+        assert_eq!(node_ids(&t), vec![1, 2, 3, 4, 5, 7, 8, 9, 10]);
+        assert_eq!(t.edges.len(), 2);
+        // The new edge: the probe's three points; the split edge: the
+        // original five vertices plus the intersection split vertex.
+        assert_eq!(t.edges[0].len(), 4);
+        assert_eq!(t.edges[1].len(), 6);
+        // The intersection node both runs share, at the application's
+        // computed crossing point.
+        let cross = t.edges[0].iter().find(|v| v.node == 10).expect("the crossing node");
+        assert_eq!((cross.point.x, cross.point.y), (4728.797556349542, 4293.19633452408));
+        assert!(t.edges[1].iter().any(|v| v.node == 10));
+        // The split edge keeps its arc: the original bulge is carried by
+        // the two sub-arcs the split left (tangent-continuous at node 10).
+        assert_eq!(t.edges[1][2].bulge, -0.024910022715961547);
+        assert_eq!(t.edges[1][3].bulge, -0.0677925656019528);
+        assert_eq!(t.face_ids, vec![1]);
+        assert_eq!(t.outside_face_flags, 0x7);
+        assert_eq!(after.site_members(), vec![0x21a8, 0x12f8]);
+    }
+
+    /// The edge area at the record's graph, for head-word probes: the
+    /// fixed prefix (empty table, no elements, the graph's gate, two
+    /// chained nodes) parsed by the same functions `topology` uses.
+    fn probe_edges(data: &[u8]) -> Option<(Vec<Vec<TopologyVertex>>, Vec<i32>, Vec<i32>, usize)> {
+        let end = data.len() * 8;
+        let table = elevation_keys(data, 0, end)?;
+        let at = elements(data, table.after, end)?;
+        let mut bits = Bits::new(data, at, end);
+        (bits.bit_long()? as u32 == 0x8000_0001).then_some(())?;
+        let (nodes, after, _) = node_list(data, bits.pos, end)?;
+        edges(data, after, end, &nodes)
+    }
+
+    /// A minimal site graph with the given edges-head words and one or
+    /// two slots: `slot` is the tag of each slot's first word (`None` a
+    /// free slot), then id, flags and a two-vertex run 1 -> 2.
+    fn head_words(words: (i32, i32), slots: &[Option<i32>]) -> Vec<u8> {
+        let mut w = W::new();
+        w.head_and_table(&[]);
+        w.bl(1);
+        w.bl(0);
+        w.bl(0x8000_0001u32 as i32);
+        w.bl(3);
+        w.bl(2);
+        w.bl(1);
+        for (x, next) in [(0.0, 2), (300.0, 0)] {
+            w.bd(x);
+            w.bd(-10.0);
+            w.bd(0.0);
+            for b in [0, 1, 0] {
+                w.bit(b);
+            }
+            w.bl(next);
+        }
+        w.bl(words.0);
+        w.bl(words.1);
+        for slot in slots {
+            match *slot {
+                None => w.bl(2),
+                Some(id) => {
+                    w.bl(0);
+                    w.bl(id);
+                    w.bl(0x30);
+                    w.bl(2);
+                    w.bl(0);
+                    for (kind, flags, node, fa, fb) in [(0, 2, 1, 1, 1), (2, 10, 2, 0, 0)] {
+                        w.bl(kind);
+                        w.bl(flags);
+                        w.bl(node);
+                        w.bl(fa);
+                        w.bl(fb);
+                    }
+                    for _ in 0..4 {
+                        w.bl(0);
+                    }
+                }
+            }
+        }
+        w.take().0
+    }
+
+    /// The two head-word forms falsify each other, from the record's own
+    /// bytes: the count-form's words are equal — exactly what the standard
+    /// form's rule (slots < next free) refuses — and the standard form's
+    /// second word sits below its first, so the equality fails; a second
+    /// word above the first fits neither form. The recorded census's
+    /// standard heads (every edges-area head of the 1405-record sweep plus
+    /// the corridor pair's neighbours: (2, 1) x 274, (4, 1), (8, 7),
+    /// (13, 12), (34, 33), (103, 102), (170, 78/80/82), (260, 157), (90, 1),
+    /// (25, 13), (4, 3), (3, 2), (12, 4), (34, 21), (37, 27), (38, 1),
+    /// (40, 2), (57, 52), (259, 231), and the empty (1, 0)) all keep
+    /// second < first; the count-form occurs only on the corridor pair
+    /// ((1, 1) and (2, 2)), so the admission is deterministic and no
+    /// second parse is ever tried.
+    #[test]
+    fn the_head_word_forms_falsify_each_other() {
+        // Every recorded standard head: second word below first, so the
+        // count-form's equality refuses it.
+        for (first, slots) in [(2, 1), (1, 0), (4, 1), (8, 7), (13, 12), (34, 33), (103, 102), (170, 78), (170, 80), (170, 82), (260, 157), (90, 1), (25, 13), (4, 3), (3, 2), (12, 4), (34, 21), (37, 27), (38, 1), (40, 2), (57, 52), (259, 231)] {
+            assert!(slots < first, "({first}, {slots})");
+        }
+        // The count-form heads (the corridor pair): equal words — which
+        // the standard rule refuses (slots >= next free).
+        for (first, slots) in [(1, 1), (2, 2)] {
+            assert_eq!(first, slots);
+            assert!(slots >= first);
+        }
+        // The embedded corridor records carry exactly those words at
+        // their edges areas.
+        for (hex, words) in [(CORRIDOR_BEFORE, (1, 1)), (CORRIDOR_AFTER, (2, 2))] {
+            let data = hex_bytes(hex);
+            let end = data.len() * 8;
+            // the class body starts at record bit 40 (the container form's
+            // shared header before it)
+            let table = elevation_keys(&data, 40, end).expect("the table reads");
+            let at = elements(&data, table.after, end).expect("the elements read");
+            let mut bits = Bits::new(&data, at, end);
+            assert_eq!(bits.bit_long().expect("gate") as u32, 0x8000_0001);
+            // the node list consumes its entries, then the edges area's
+            // two head words follow
+            let (_, after_nodes, _) = node_list(&data, bits.pos, end).expect("the nodes read");
+            let mut bits = Bits::new(&data, after_nodes, end);
+            let (a, b) = (bits.bit_long().expect("first"), bits.bit_long().expect("second"));
+            assert_eq!((a, b), words, "the recorded head words");
+        }
+        // The synthetic forms: a standard head keeps its id below the
+        // first word; a count-form head does not bind it (the corridor
+        // records' ids 3 above a head word of 1); a free slot contradicts
+        // the count-form (count == slots) but keeps its place in the
+        // standard form; words with the second above the first fit
+        // neither form.
+        assert_eq!(probe_edges(&head_words((3, 1), &[Some(2)])).map(|(_, _, ids, _)| ids).as_deref(), Some(&[2][..]));
+        assert!(probe_edges(&head_words((3, 1), &[Some(3)])).is_none());
+        assert_eq!(probe_edges(&head_words((1, 1), &[Some(3)])).map(|(_, _, ids, _)| ids).as_deref(), Some(&[3][..]));
+        assert_eq!(probe_edges(&head_words((2, 2), &[Some(1), Some(3)])).map(|(_, _, ids, _)| ids).as_deref(), Some(&[1, 3][..]));
+        assert!(probe_edges(&head_words((1, 1), &[None])).is_none());
+        assert_eq!(probe_edges(&head_words((2, 1), &[None])).map(|(edges, _, _, _)| edges.len()), Some(0));
+        for words in [(1, 2), (2, 3)] {
+            assert!(probe_edges(&head_words(words, &[Some(1)])).is_none());
+        }
     }
 }
