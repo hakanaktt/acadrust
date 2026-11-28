@@ -1173,9 +1173,12 @@ station order are nominal, entry transition, widening, exit transition,
 nominal, ...; each nominal or widening stretch is a region (`BL 2` nominal,
 `BL 1` widening) with one element per parent element it covers, each
 transition one element `BL 267, BS 0, B 0, B 0, BD -1, BD -1, BS 1, BD -1,
-BL 3, ids, BL 1, BL 4096, BL 2, 2 x 2RD` from the point where it starts
-(previous offset) to where it ends (new offset; a transition of length 0
-is a jump at one station). The block lists the transitions `{BL 1
+BL 3, ids, BL 1, BL 4096, BL 2, 2 x 2RD` over the points where it starts
+(previous offset), crosses a parent arc (its midpoint, the offset
+interpolated), crosses an element boundary, and ends (new offset; a
+transition of length 0 is a jump at one station) — the application's form
+over arcs (Align-6D). Chained widenings share the transition between them:
+one ramp joins the two regions' offsets. The block lists the transitions `{BL 1
 (linear), BD length, BL element, BD 0, BD 0, BL 2, BD 0}` (entry then
 exit per widening), the element map gives each parent element its
 elements in station order (transitions excluded), and the parent gets an
