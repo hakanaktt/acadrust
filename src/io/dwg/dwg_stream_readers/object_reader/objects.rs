@@ -1306,8 +1306,9 @@ pub fn read_multileader_style(
         "read_multileader_style.block_content_connection",
     );
     let scale_factor = reader.read_bit_double();
-    let property_changed = reader.read_bit();
+    // B is_annotative (DXF 296) comes before B property_changed (DXF 295).
     let is_annotative = reader.read_bit();
+    let property_changed = reader.read_bit();
     let break_gap_size = reader.read_bit_double();
 
     let mut text_attachment_direction = 0i16;
