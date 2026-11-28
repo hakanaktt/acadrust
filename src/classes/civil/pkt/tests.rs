@@ -122,6 +122,39 @@ fn foreign_parts_are_refused() {
     assert!(write_pkt(&q).is_err());
 }
 
+/// An installed catalog omits what it keeps compiled or derived — the tool
+/// tip, the workflow version, the empty code part — names its workflow
+/// part `.dll` and lists that extension in its content types. Such a
+/// package reads, and its workflow version reads as empty.
+#[test]
+fn catalog_form_is_read() {
+    let p = lane();
+    let part = p.part.clone();
+    let mut parts = parts(&p).unwrap();
+    parts.retain(|(n, _)| !n.ends_with(".cdmd"));
+    parts.push((format!("{part}.dll"), vec![0, 1, 2]));
+    for (n, d) in &mut parts {
+        if n.ends_with(".atc") {
+            let mut s = std::str::from_utf8(d).unwrap().to_string();
+            let (a, b) = (s.find("<ToolTip>").unwrap(), s.find("</ToolTip>").unwrap() + "</ToolTip>".len());
+            s.replace_range(a..b, "");
+            s = s.replace(&format!("<Version>{}</Version>", p.version), "");
+            s = s.replace(&format!(r#"Assembly="{part}.xaml""#), &format!(r#"Assembly="{part}.dll""#));
+            *d = s.into_bytes();
+        }
+        if n == "[Content_Types].xml" {
+            let s = std::str::from_utf8(d).unwrap().to_string();
+            *d = s.replace(r#"<Default Extension="cdmd" ContentType="" />"#, r#"<Default Extension="dll" ContentType="" />"#).into_bytes();
+        }
+    }
+    let back = read_pkt(&zip::write(&parts).unwrap()).unwrap();
+    assert_eq!(back.part, part);
+    assert_eq!(back.version, "");
+    assert_eq!(back.parameters, p.parameters);
+    assert_eq!(back.units, p.units);
+    assert_eq!(back.name, p.name);
+}
+
 #[test]
 fn part_names_are_stable_version_4_guids() {
     let a = new_part_name("Lane");
