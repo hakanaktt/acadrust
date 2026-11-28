@@ -486,6 +486,18 @@ pub fn add_tin_surface(doc: &mut CadDocument, name: &str, points: &[Vector3], la
     add_tin_surface_with(doc, name, &[points], false, layer)
 }
 
+/// Adds a TIN surface triangulated from `points` (as
+/// [`add_tin_surface`]) with the triangles at the `hidden` triples' plan
+/// positions marked hidden (see [`mark_hidden`]) — an imported surface's
+/// own hidden regions, the triangles its engine's triangulation adds over
+/// the imported data's face list. A `hidden` triple may be given in any
+/// vertex order; `hidden` triples that match no built triangle (its
+/// tie-break diagonal differs from the source's) are dropped.
+pub fn add_tin_surface_hidden(doc: &mut CadDocument, name: &str, points: &[Vector3], hidden: &[[Vector3; 3]], layer: Option<&str>) -> Result<Handle, DxfError> {
+    let points = TinDefinition { operation: TinOperation::AddPoints(points.to_vec()), id: [0; 16], texts: Vec::new(), sources: Vec::new() };
+    add_tin_surface_with_hidden(doc, name, &[points], false, layer, hidden)
+}
+
 /// Adds an empty TIN surface: the shell the application stores for a
 /// surface it has not built (the four bounding corners at the drawing
 /// extremes, no triangles), with the drawing's default surface style, on
@@ -502,6 +514,49 @@ pub fn add_empty_tin_surface(doc: &mut CadDocument, name: &str, layer: Option<&s
 /// triangulation applies the definitions in order (`tin_build`), with the
 /// geometry of their sources read from the drawing.
 pub fn add_tin_surface_with(doc: &mut CadDocument, name: &str, definitions: &[TinDefinition], auto_rebuild: bool, layer: Option<&str>) -> Result<Handle, DxfError> {
+    add_tin_surface_with_hidden(doc, name, definitions, auto_rebuild, layer, &[])
+}
+
+/// Marks every built triangle whose three vertices sit at a `hidden`
+/// triple's plan positions (exact coordinates), and returns how many
+/// triples matched. This carries a source surface's own hidden regions
+/// into the rebuild: an imported surface stores the engine's
+/// triangulation of its points with every triangle the imported data's
+/// face list does not hold marked hidden (the `tin` module header), so
+/// the hidden regions ride in with the import, not a hide boundary. A
+/// triple with no matching triangle is dropped — the built engine's
+/// tie-break diagonal on a cocircular quad can differ from the source's.
+fn mark_hidden(tin: &mut Triangulation, hidden: &mut [bool], tris: &[[Vector3; 3]]) -> usize {
+    if tris.is_empty() {
+        return 0;
+    }
+    let key = |p: &Vector3| (p.x.to_bits(), p.y.to_bits());
+    let want: std::collections::HashSet<[(u64, u64); 3]> = tris
+        .iter()
+        .map(|t| {
+            let mut k: Vec<_> = t.iter().map(key).collect();
+            k.sort();
+            [k[0], k[1], k[2]]
+        })
+        .collect();
+    let mut matched = 0;
+    for (t, h) in tin.triangles.iter().zip(hidden.iter_mut()) {
+        let mut k: Vec<_> = t.iter().map(|&v| key(&tin.vertices[v])).collect();
+        k.sort();
+        if want.contains(&[k[0], k[1], k[2]]) {
+            *h = true;
+            matched += 1;
+        }
+    }
+    matched
+}
+
+/// Adds a TIN surface built from `definitions` (as
+/// [`add_tin_surface_with`]) with the triangles at the `hidden_tris`
+/// triples' plan positions marked hidden (see [`mark_hidden`]): the stored form of
+/// an imported surface, whose hidden regions are the triangles its
+/// engine's triangulation adds over the imported data's own face list.
+pub fn add_tin_surface_with_hidden(doc: &mut CadDocument, name: &str, definitions: &[TinDefinition], auto_rebuild: bool, layer: Option<&str>, hidden_tris: &[[Vector3; 3]]) -> Result<Handle, DxfError> {
     if definitions.len() > 31 {
         return Err(invalid("a surface holds at most 31 definitions"));
     }
@@ -539,7 +594,8 @@ pub fn add_tin_surface_with(doc: &mut CadDocument, name: &str, definitions: &[Ti
             Ok((Triangulation::empty(), Vec::new()))
         }
     };
-    let (tin, hidden) = built(&resolved)?;
+    let (mut tin, mut hidden) = built(&resolved)?;
+    mark_hidden(&mut tin, &mut hidden, hidden_tris);
     // A snapshot keeps what the definitions before it build.
     let snapshots: Vec<usize> = definitions.iter().enumerate().filter(|(_, d)| matches!(d.operation, TinOperation::Kind40(_))).map(|(i, _)| i).collect();
     let snapshot = match snapshots.as_slice() {
@@ -708,6 +764,43 @@ mod tests {
         let (now, kept) = (a.tin_surface().unwrap(), a.tin_snapshot().unwrap());
         assert_eq!((now.vertices.len(), kept.vertices.len(), now.vertices[4].position.z, kept.vertices[4].position.z), (13, 13, 7.0, 5.0));
         assert_eq!(a.tin_definitions().unwrap().0.len(), 3);
+    }
+
+    /// An imported surface's hidden regions ride in with the rebuild: a
+    /// triangle hidden by triple (its vertices' plan positions, any
+    /// order) reads back hidden; triples that match no built triangle are
+    /// dropped (the tie-break diagonal can differ).
+    #[test]
+    fn a_hidden_triple_hides_its_triangle() {
+        let mut doc = drawing();
+        let pts: Vec<Vector3> = [(0.0, 0.0, 0.0), (10.0, 0.0, 1.0), (0.0, 10.0, 2.0), (10.0, 10.0, 3.0), (20.0, 0.0, 1.5), (20.0, 10.0, 2.5), (5.0, 5.0, 4.0), (15.0, 5.0, 3.5), (0.0, 20.0, 2.0), (20.0, 20.0, 5.0)].iter().map(|p| Vector3::new(p.0, p.1, p.2)).collect();
+        let built = |doc: &mut CadDocument| {
+            let h = add_tin_surface(doc, "S", &pts, None).unwrap();
+            let Some(crate::entities::EntityType::Extended(x)) = doc.get_entity(h) else { panic!() };
+            let crate::entities::ExtendedEntityData::Arch(a) = &x.data else { panic!() };
+            a.tin_surface().unwrap()
+        };
+        let t = built(&mut doc);
+        let first = t.visible_triangles().next().unwrap();
+        let mut moved = first;
+        moved.reverse();
+        let mut doc = drawing();
+        let t = add_tin_surface_hidden(&mut doc, "S", &pts, &[moved], None).unwrap();
+        let Some(crate::entities::EntityType::Extended(x)) = doc.get_entity(t) else { panic!() };
+        let crate::entities::ExtendedEntityData::Arch(a) = &x.data else { panic!() };
+        let tin = a.tin_surface().unwrap();
+        let (corner, interior) = tin.triangles.iter().filter(|tr| tr.flags & 1 != 0).partition::<Vec<_>, _>(|tr| tr.vertices.iter().any(|v| *v < 4));
+        assert_eq!(interior.len(), 1);
+        assert_eq!(corner.len(), tin.triangles.iter().filter(|tr| tr.flags & 1 != 0).count() - 1);
+        let hidden = interior[0].vertices.map(|v| tin.vertices[v as usize].position);
+        assert!(hidden.iter().all(|p| first.iter().any(|q| (p.x - q.x).abs() < 1e-9 && (p.y - q.y).abs() < 1e-9)));
+        // A triple at plan positions no triangle holds is dropped.
+        let mut doc = drawing();
+        let t = add_tin_surface_hidden(&mut doc, "S", &pts, &[moved, [Vector3::new(-1.0, -1.0, 0.0), Vector3::new(-2.0, -1.0, 0.0), Vector3::new(-1.0, -2.0, 0.0)]], None).unwrap();
+        let Some(crate::entities::EntityType::Extended(x)) = doc.get_entity(t) else { panic!() };
+        let crate::entities::ExtendedEntityData::Arch(a) = &x.data else { panic!() };
+        let tin = a.tin_surface().unwrap();
+        assert_eq!(tin.triangles.iter().filter(|tr| tr.flags & 1 != 0 && tr.vertices.iter().all(|v| *v >= 4)).count(), 1);
     }
 
     /// An empty surface stores the shell (four corners at the drawing

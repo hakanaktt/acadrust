@@ -72,4 +72,4 @@ pub use points::{add_cogo_point, cogo_points, create_cogo_point, point_creation_
 pub use label_style::{add_label_style, add_point_label_style, label_style, LabelStyle};
 pub use support::ensure_civil;
 pub use user_properties::{add_point_choice_property, add_point_property, add_point_property_classification, point_properties, set_cogo_point_property};
-pub use tin::{add_empty_tin_surface, add_tin_surface, add_tin_surface_with};
+pub use tin::{add_empty_tin_surface, add_tin_surface, add_tin_surface_hidden, add_tin_surface_with, add_tin_surface_with_hidden};
