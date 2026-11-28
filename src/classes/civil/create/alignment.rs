@@ -1926,10 +1926,16 @@ pub fn add_alignment_of_kind(doc: &mut CadDocument, name: &str, vertices: &[Vect
     write_alignment_of(doc, common, name, &elements, style, companion.value(), 1, None, &[], &[], &[], &[], None, kind, &Timing::default())
 }
 
-/// A widening of an offset alignment: from the parent's station `start` it
-/// moves to `offset` (from the parent, negative to the left) over `entry`
-/// along the parent, keeps it to `end`, and comes back to the nominal
-/// offset over `exit` after `end`, by linear transitions.
+/// One widening of an offset alignment: from the parent's station `start`
+/// it moves to `offset` (from the parent, negative to the left) over
+/// `entry` along the parent, keeps it to `end`, and comes back over `exit`
+/// after `end`, by linear transitions. Chained widenings share the
+/// transition between them: when the next widening's entry ramp ends where
+/// this one's exit does (`start + entry` of the next == `end + exit` of
+/// this one), the application stores ONE transition joining the two
+/// regions' offsets (Align-6D), and so does this writer — give the next
+/// widening its `start` at this one's `end` (its own entry ramp replaces
+/// the shared stretch).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Widening {
     pub start: f64,
@@ -1961,11 +1967,13 @@ struct Stretch {
     widening: bool,
 }
 
-/// [`add_offset_alignment`] with `widenings` (in station order, apart, with
-/// their transitions within the range; a transition longer than 0 must lie
-/// on one line of the parent). Each widening is a region of its own with an
-/// element per parent element it covers; each transition is one element
-/// from where it starts to where it ends.
+/// [`add_offset_alignment`] with `widenings` (in station order, with their
+/// transitions within the range; chained widenings may share the transition
+/// between them, see [`Widening`]). Each widening is a region of its own
+/// with an element per parent element it covers; each transition is one
+/// element from where it starts to where it ends — a polyline over the
+/// parent's elements, sampled at the arc midpoints and the element
+/// boundaries it crosses, with the offset interpolated along the parent.
 pub fn add_offset_alignment_with_widenings(doc: &mut CadDocument, parent: Handle, name: &str, offset: f64, range: Option<(f64, f64)>, widenings: &[Widening], layer: Option<&str>) -> Result<Handle, DxfError> {
     write_offset_alignment(doc, parent, name, offset, range, widenings, layer, (0.0, false), None)
 }
@@ -1977,6 +1985,13 @@ pub fn add_offset_alignment_with_widenings(doc: &mut CadDocument, parent: Handle
 #[allow(clippy::too_many_arguments)]
 pub(super) fn add_kept_offset_alignment(doc: &mut CadDocument, parent: Handle, name: &str, offset: f64, range: Option<(f64, f64)>, speed: f64, style: Option<u64>, layer: Option<&str>) -> Result<Handle, DxfError> {
     write_offset_alignment(doc, parent, name, offset, range, &[], layer, (speed, true), style)
+}
+
+/// Pushes a widening's stretch, recording its index in the widening's
+/// slot table.
+fn push_slot(stretches: &mut Vec<Stretch>, s: &mut [usize; 4], at: usize, stretch: Stretch) {
+    stretches.push(stretch);
+    s[at] = stretches.len() - 1;
 }
 
 /// [`add_offset_alignment_with_widenings`]; `kept` is the own design speed
@@ -2010,17 +2025,44 @@ fn write_offset_alignment(doc: &mut CadDocument, parent: Handle, name: &str, off
         return Err(invalid("the range must run forward within the parent's stations"));
     }
     // The stretches in station order: nominal, entry, widening, exit, ...
+    // Chained widenings share the transition between them (the application
+    // stores one ramp per gap, Align-6D): when a widening's entry ramp ends
+    // at the previous widening's exit ramp (`start + entry == cursor`), the
+    // previous exit IS the transition and no entry is stored.
     let mut stretches = Vec::new();
+    let mut slots: Vec<[usize; 4]> = Vec::new();
     let mut cursor = s0;
     for w in widenings {
         let finite = [w.start, w.end, w.entry, w.exit].iter().all(|v| v.is_finite());
-        if !finite || w.entry < 0.0 || w.exit < 0.0 || w.start <= cursor + tol || w.start + w.entry >= w.end - tol || w.end + w.exit >= s1 - tol {
+        let full_start = w.start + w.entry;
+        let shared = (full_start - cursor).abs() <= tol;
+        // A transition of length 0 is a jump; the crate refuses it (the
+        // application's shared transitions come from chained widenings,
+        // whose ramps have length).
+        if !finite || w.entry <= 0.0 || w.exit <= 0.0 || full_start < cursor - tol || full_start >= w.end - tol || w.end + w.exit >= s1 - tol {
             return Err(invalid("widenings must lie apart, in station order, with their transitions inside the range"));
         }
-        stretches.push(Stretch { from: cursor, to: w.start, offset, ramp: None, widening: false });
-        stretches.push(Stretch { from: w.start, to: w.start + w.entry, offset, ramp: Some(w.offset), widening: false });
-        stretches.push(Stretch { from: w.start + w.entry, to: w.end, offset: w.offset, ramp: None, widening: true });
-        stretches.push(Stretch { from: w.end, to: w.end + w.exit, offset: w.offset, ramp: Some(offset), widening: false });
+        let mut s = [0usize; 4];
+        if !shared {
+            if w.start > cursor + tol {
+                push_slot(&mut stretches, &mut s, 0, Stretch { from: cursor, to: w.start, offset, ramp: None, widening: false });
+            } else {
+                s[0] = stretches.len();
+            }
+            push_slot(&mut stretches, &mut s, 1, Stretch { from: w.start, to: full_start, offset, ramp: Some(w.offset), widening: false });
+        } else {
+            // The entry ramp is the previous exit's stretch, and it runs to
+            // THIS widening's offset (the transition joins the two
+            // regions' offsets, Align-6D: 24 to 42 over 450..550).
+            s[0] = stretches.len();
+            s[1] = stretches.len() - 1;
+            if let Some(exit) = stretches.last_mut() {
+                exit.ramp = Some(w.offset);
+            }
+        }
+        push_slot(&mut stretches, &mut s, 2, Stretch { from: full_start, to: w.end, offset: w.offset, ramp: None, widening: true });
+        push_slot(&mut stretches, &mut s, 3, Stretch { from: w.end, to: w.end + w.exit, offset: w.offset, ramp: Some(offset), widening: false });
+        slots.push(s);
         cursor = w.end + w.exit;
     }
     stretches.push(Stretch { from: cursor, to: s1, offset, ramp: None, widening: false });
@@ -2036,14 +2078,38 @@ fn write_offset_alignment(doc: &mut CadDocument, parent: Handle, name: &str, off
     for (si, st) in stretches.iter().enumerate() {
         if let Some(to_offset) = st.ramp {
             let (a, b) = (at(st.from, st.offset).ok_or_else(|| invalid("a transition cannot be placed"))?, at(st.to, to_offset).ok_or_else(|| invalid("a transition cannot be placed"))?);
-            if st.to - st.from > tol {
-                let mid = (st.from + st.to) / 2.0;
-                let line = spans.iter().find(|(e, from, ps)| matches!(e.kind, AlignmentElementKind::FixedLine { .. }) && mid >= *from && mid <= from + piece_length(&ps[0]));
-                if line.is_none_or(|(_, from, ps)| st.from < from - tol || st.to > from + piece_length(&ps[0]) + tol) {
-                    return Err(invalid("a transition must lie on one line of the parent"));
+            // A transition with no length (adjacent widenings share it)
+            // stores nothing.
+            if st.to - st.from <= tol {
+                continue;
+            }
+            // The ramp over the parent's elements: the application stores
+            // the offset-interpolated points at the start, at every parent
+            // element's midpoint (when the ramp crosses an arc) and end,
+            // and at every parent boundary the ramp crosses (Align-6D: an
+            // arc-to-line ramp keeps start, the arc's midpoint, the
+            // boundary, its end; a line-to-arc ramp start, the boundary,
+            // the arc's midpoint, its end).
+            let along = |s: f64| st.offset + (to_offset - st.offset) * (s - st.from) / (st.to - st.from);
+            let mut points = vec![a];
+            for (e, from, ps) in &spans {
+                let length = piece_length(&ps[0]);
+                let lo = (st.from - from).max(0.0);
+                let hi = (st.to - from).min(length);
+                if hi - lo <= tol {
+                    continue;
+                }
+                if matches!(e.kind, AlignmentElementKind::FreeArc { .. }) {
+                    let mid = from + (lo + hi) / 2.0;
+                    points.push(at(mid, along(mid)).ok_or_else(|| invalid("a transition cannot be placed"))?);
+                }
+                if from + length < st.to - tol {
+                    points.push(at(from + length, along(from + length)).ok_or_else(|| invalid("a transition cannot be placed"))?);
                 }
             }
-            pieces.push((si, None, AlignmentElementKind::Points { points: vec![a, b] }, None, a.distance(&b)));
+            points.push(b);
+            let length: f64 = points.windows(2).map(|w| w[0].distance(&w[1])).sum();
+            pieces.push((si, None, AlignmentElementKind::Points { points }, None, length));
             continue;
         }
         for (e, from, ps) in &spans {
@@ -2094,9 +2160,16 @@ fn write_offset_alignment(doc: &mut CadDocument, parent: Handle, name: &str, off
         }
     }
     let mut next = base + in_range.len() as i32;
-    for w in 0..widenings.len() {
-        let (entry, wide, exit, after) = (4 * w + 1, 4 * w + 2, 4 * w + 3, 4 * w + 4);
-        for stretch in [wide, after] {
+    // The nominal stretch that follows each widening's exit (its pieces
+    // take the widening's ids).
+    let after = |exit: usize| -> Option<usize> {
+        stretches
+            .iter()
+            .enumerate()
+            .position(|(i, st)| i > exit && st.ramp.is_none() && !st.widening)
+    };
+    for s in slots.iter() {
+        for stretch in [Some(s[2]), after(s[3])].into_iter().flatten() {
             for (i, p) in pieces.iter().enumerate() {
                 if p.0 == stretch && ids[i].is_none() {
                     ids[i] = Some(next);
@@ -2104,8 +2177,12 @@ fn write_offset_alignment(doc: &mut CadDocument, parent: Handle, name: &str, off
                 }
             }
         }
-        for stretch in [entry, exit] {
-            if let Some(i) = pieces.iter().position(|p| p.0 == stretch) {
+        for stretch in [s[1], s[3]] {
+            if let Some((i, _)) = pieces
+                .iter()
+                .enumerate()
+                .find(|(i, p)| p.0 == stretch && ids[*i].is_none())
+            {
                 ids[i] = Some(next);
                 next += 1;
             }
@@ -2140,16 +2217,16 @@ fn write_offset_alignment(doc: &mut CadDocument, parent: Handle, name: &str, off
         .iter()
         .enumerate()
         .filter(|(_, st)| st.ramp.is_none())
-        .map(|(si, st)| {
+        .filter_map(|(si, st)| {
             let held: Vec<usize> = (0..count).filter(|i| pieces[*i].0 == si).collect();
-            let (first, last) = (held[0], held[held.len() - 1]);
-            OffsetRegionRecord { offset: st.offset, parent: (st.from, st.to), own: (own[first], own[last + 1]), widening: st.widening, first: ids[first], last: ids[last] }
+            let (first, last) = (*held.first()?, *held.last()?);
+            Some(OffsetRegionRecord { offset: st.offset, parent: (st.from, st.to), own: (own[first], own[last + 1]), widening: st.widening, first: ids[first], last: ids[last] })
         })
         .collect();
     let transitions: Vec<(f64, i32)> = stretches
         .iter()
         .enumerate()
-        .filter(|(_, st)| st.ramp.is_some())
+        .filter(|(_, st)| st.ramp.is_some() && st.to - st.from > tol)
         .map(|(si, st)| (st.to - st.from, ids[pieces.iter().position(|p| p.0 == si).unwrap_or(0)]))
         .collect();
     let mut map: Vec<(i32, Vec<i32>)> = in_range.iter().map(|e| (*e, (0..count).filter(|i| pieces[*i].1 == Some(*e)).map(|i| ids[i]).collect())).collect();

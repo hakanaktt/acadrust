@@ -4,8 +4,10 @@
 //! documented fields on the decoded records.
 //!
 //! Boundaries (per the write-surface audit):
-//! - offset alignments: transitions that do not lie on one parent line are
-//!   out of scope (the writer refuses them);
+//! - offset alignments: transitions follow their parent over arcs as the
+//!   application stores them (sampled at the arc midpoints and element
+//!   boundaries); the application's shared transitions between chained
+//!   widenings are written;
 //! - curb returns: one-arc, three-arc and clothoid spiral-curve-spiral
 //!   groups (spiral-spiral groups and 0/1 overlaps are refused, not tested);
 //! - surface profiles carry no elevations by design (the application samples
@@ -164,9 +166,10 @@ fn rt_align_anchors_speeds_and_equations_round_trip() {
     assert_eq!(arch(&back, p).profile_name().as_deref(), Some("P1"));
 }
 
-/// 3. Offset alignments, with and without widenings. Transitions on arcs
-///    are out of scope (the writer refuses a transition longer than 0 that
-///    does not lie on one parent line).
+/// 3. Offset alignments, with and without widenings. A transition longer
+///    than 0 that crosses parent arcs is stored the application's way:
+///    offset-interpolated points at the arc midpoints and the element
+///    boundaries it crosses.
 #[test]
 fn rt_align_offset_and_widenings_round_trip() {
     let v = [Vector2::new(0.0, 0.0), Vector2::new(100.0, 0.0), Vector2::new(200.0, 50.0)];
@@ -533,8 +536,7 @@ fn rt_align_offset_profile_round_trip() {
 /// Sections-Project-Objects.dwg as "Centerline (1)", "Left (1)" and
 /// "Right (1)" (execute_civil_code `Alignment.Name`, 2026-11-23).
 #[test]
-fn an_app_written_alignments_name_is_not_its_created_by_name() {
-    // The application's tutorial drawing, from `ACADRUST_CIVIL_TUTORIALS_DIR`.
+fn an_app_written_alignments_name_is_not_its_created_by_name() {    // The application's tutorial drawing, from `ACADRUST_CIVIL_TUTORIALS_DIR`.
     let Some(dir) = std::env::var_os("ACADRUST_CIVIL_TUTORIALS_DIR") else { return };
     let path = std::path::Path::new(&dir).join("Sections-Project-Objects.dwg");
     if !path.exists() {
@@ -552,6 +554,225 @@ fn an_app_written_alignments_name_is_not_its_created_by_name() {
         })
         .collect();
     assert_eq!(names, vec!["Centerline (1)".to_string(), "Left (1)".to_string(), "Right (1)".to_string()]);
+}
+
+/// 9b. The corpus carrier of transitions over arcs (the tutorials'
+///     Align-6D): the parent rebuilt through the writers (its recorded
+///     arcs are the junction fillets, tangent length 200·tan(turn/2)) and
+///     the offset written with the recorded widenings decodes to the
+///     application's own record — regions, transitions, anchors and the
+///     transition points to 1.3e-12 (most bit-exact). The element ids and
+///     the parent's stored element ends differ by convention (the crate
+///     numbers records lines-first and trims its lines at the tangent
+///     points; the application keeps full vertices), everything the
+///     solved geometry decides agrees.
+#[test]
+fn rt_align_the_oracle_transitions_over_arcs_rebuild() {
+    let Some(dir) = std::env::var_os("ACADRUST_CIVIL_TUTORIALS_DIR") else { return };
+    let path = std::path::Path::new(&dir).join("Align-6D.dwg");
+    if !path.exists() {
+        return;
+    }
+    let mut reader = DwgReader::from_file(&path).unwrap();
+    let oracle = reader.read().unwrap();
+    let mut parent = None;
+    let mut offset = None;
+    for e in oracle.entities() {
+        if let EntityType::Extended(x) = e {
+            if let ExtendedEntityData::Arch(a) = &x.data {
+                if a.dxf_name == "AECC_ALIGNMENT" {
+                    match a.alignment_name().as_deref() {
+                        Some("Alignment - (1)") => parent = Some(x.common.handle),
+                        Some("Alignment - (1)-Right-12.000") => offset = Some(x.common.handle),
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    let (parent, offset) = (parent.expect("parent"), offset.expect("offset"));
+    let oracle_offset = match oracle.get_entity(offset) {
+        Some(EntityType::Extended(x)) => match &x.data {
+            ExtendedEntityData::Arch(a) => a.clone(),
+            _ => panic!("not an arch entity"),
+        },
+        _ => panic!("offset missing"),
+    };
+    let o = oracle_offset.alignment_offset_parameters().expect("the oracle offset decodes");
+    // The recorded widenings: the full-offset regions [150, 450] at 24,
+    // [550, 750] at 42 and [850, 1000] at 24, each transition 100 long,
+    // chained (one shared transition per gap).
+    let ws = [
+        Widening { start: 50.0, end: 450.0, offset: 24.0, entry: 100.0, exit: 100.0 },
+        Widening { start: 450.0, end: 750.0, offset: 42.0, entry: 100.0, exit: 100.0 },
+        Widening { start: 750.0, end: 1000.0, offset: 24.0, entry: 100.0, exit: 100.0 },
+    ];
+    // The parent's recorded elements: lines and the junction fillets.
+    let parent_arch = match oracle.get_entity(parent) {
+        Some(EntityType::Extended(x)) => match &x.data {
+            ExtendedEntityData::Arch(a) => a.clone(),
+            _ => panic!("not an arch entity"),
+        },
+        _ => panic!("parent missing"),
+    };
+    let elems = parent_arch.alignment_elements().expect("the parent's elements decode");
+    let mut chain: Vec<&AlignmentElement> = Vec::new();
+    let mut at = elems.iter().find(|e| e.previous == 0);
+    while let Some(e) = at {
+        chain.push(e);
+        at = if e.next == 0 { None } else { elems.iter().find(|x| x.id == e.next) };
+    }
+    let mut verts: Vec<Vector2> = Vec::new();
+    let mut curves: Vec<VertexCurve> = Vec::new();
+    let mut pending: Option<f64> = None;
+    let mut first = true;
+    for e in &chain {
+        match &e.kind {
+            AlignmentElementKind::FixedLine { start, end } => {
+                if first {
+                    verts.push(*start);
+                    first = false;
+                } else {
+                    curves.push(pending.take().map_or(VertexCurve::None, VertexCurve::Arc));
+                }
+                verts.push(*end);
+            }
+            AlignmentElementKind::FreeArc { radius } => pending = Some(*radius),
+            other => panic!("parent element {other:?}"),
+        }
+    }
+    let mut doc = drawing();
+    let new_parent = add_alignment_with_curves(&mut doc, "P", &verts, &curves, None).unwrap();
+    let new_offset = add_offset_alignment_with_widenings(&mut doc, new_parent, "OR", 12.0, None, &ws, None).unwrap();
+    let back = roundtrip(&doc, "oracle_transitions_over_arcs");
+
+    // The offset record: regions, transitions, anchors.
+    let r = match back.get_entity(new_offset) {
+        Some(EntityType::Extended(x)) => match &x.data {
+            ExtendedEntityData::Arch(a) => a.clone(),
+            _ => panic!("not an arch entity"),
+        },
+        _ => panic!("offset missing"),
+    };
+    assert_eq!(r.alignment_type(), Some(AlignmentType::Offset));
+    let p = r.alignment_offset_parameters().expect("the rebuilt offset decodes");
+    assert_eq!((p.dynamic, p.offset, p.left, p.regions.len(), p.transitions.len()), (true, 12.0, false, 5, 4));
+    for (region, want) in p.regions.iter().zip(&o.regions) {
+        assert_eq!(region.offset, want.offset);
+        assert_eq!(region.kind, want.kind);
+        // The parent station ranges: exact where the range ends on a
+        // written vertex, to 2e-9 across the fillets' tangent stations.
+        assert!((region.parent_start - want.parent_start).abs() < 2e-9, "region start {:?} vs {:?}", region.parent_start, want.parent_start);
+        assert!((region.parent_end - want.parent_end).abs() < 2e-9, "region end {:?} vs {:?}", region.parent_end, want.parent_end);
+    }
+    assert!(p.transitions.iter().all(|t| t.kind == 1 && t.length == 100.0 && t.radii.is_empty()));
+    assert_eq!(p.anchors.len(), o.anchors.len());
+    for (anchor, want) in p.anchors.iter().zip(&o.anchors) {
+        assert!((anchor.0 - want.0).abs() < 2e-9, "anchor {:?} vs {:?}", anchor.0, want.0);
+    }
+    // The transition points: the sampled form's points against the
+    // application's own.
+    let points_of = |a: &acadrust::classes::arch::ArchEntityData, id: i32| match a.alignment_elements().unwrap().into_iter().find(|e| i32::from(e.id) == id).map(|e| e.kind) {
+        Some(AlignmentElementKind::Points { points }) => points,
+        other => panic!("transition element {other:?}"),
+    };
+    for (t, want) in p.transitions.iter().zip(&o.transitions) {
+        let (points, oracle) = (points_of(&r, t.element), points_of(&oracle_offset, want.element));
+        assert_eq!(points.len(), oracle.len(), "transition point count");
+        for (a, b) in points.iter().zip(&oracle) {
+            assert!(a.distance(b) < 2e-12, "transition point {a:?} vs {b:?}");
+        }
+    }
+}
+
+/// 3b. Transitions over arcs and chained widenings: a ramp crossing an arc
+///     keeps four points (start, the arc's midpoint, the boundary, its
+///     end), and chained widenings share the transition between them —
+///     one ramp joining the two regions' offsets.
+#[test]
+fn rt_align_transitions_over_arcs_round_trip() {
+    let v = Vector2::new;
+    // A parent with two 90-degree fillet arcs of radius 50: the solved
+    // spans run line 0..50, arc 50..128.5398, line ..150, arc ..228.5398,
+    // line ..478.5398.
+    let parent = |doc: &mut CadDocument| add_alignment_with_curves(doc, "AL1", &[v(0.0, 0.0), v(100.0, 0.0), v(100.0, 200.0), v(400.0, 200.0)], &[VertexCurve::Arc(50.0), VertexCurve::Arc(50.0)], None).unwrap();
+    let mut doc = drawing();
+    let p = parent(&mut doc);
+    let back = roundtrip(&doc, "transitions_over_arcs_parent");
+    let spans = match back.get_entity(p) {
+        Some(EntityType::Extended(x)) => match &x.data {
+            ExtendedEntityData::Arch(a) => a.alignment_pieces_with_curvature(),
+            _ => panic!("not an arch entity"),
+        },
+        _ => panic!("parent missing"),
+    };
+    let arc: Vec<(f64, f64)> = spans
+        .iter()
+        .filter(|(kind, k, _)| *kind == AlignmentPiece::Curve && k.abs() > 0.0)
+        .scan(0.0, |at, (kind, k, pts)| {
+            let len: f64 = pts.windows(2).map(|w| w[0].distance(&w[1])).sum();
+            let span = (*at, *at + len);
+            *at += len;
+            let _ = (kind, k);
+            Some(span)
+        })
+        .collect();
+    assert_eq!(arc.len(), 2, "two fillet arcs: {spans:?}");
+
+    // Two chained widenings: full offsets [50, 100] at 20 and [150, 160]
+    // at 40, the shared transition 100..150 joining 20 to 40 over the
+    // first arc's tail and the line after it.
+    let mut doc = drawing();
+    let parent = parent(&mut doc);
+    let ws = [
+        Widening { start: 20.0, end: 100.0, offset: 20.0, entry: 30.0, exit: 50.0 },
+        Widening { start: 100.0, end: 160.0, offset: 40.0, entry: 50.0, exit: 50.0 },
+    ];
+    let off = add_offset_alignment_with_widenings(&mut doc, parent, "OR", 10.0, None, &ws, None).unwrap();
+    let back = roundtrip(&doc, "transitions_over_arcs_shared");
+    let (o, elements) = match back.get_entity(off) {
+        Some(EntityType::Extended(x)) => match &x.data {
+            ExtendedEntityData::Arch(a) => (a.alignment_offset_parameters().expect("decodes"), a.alignment_elements().unwrap()),
+            _ => panic!("not an arch entity"),
+        },
+        _ => panic!("offset missing"),
+    };
+    // Regions: nominal 0..20 at 10, widening 50..100 at 20, widening
+    // 150..250 at 40, nominal 300.. at 10.
+    assert_eq!(o.regions.len(), 4, "{:?}", o.regions);
+    assert_eq!(o.regions.iter().map(|r| (r.offset, r.kind)).collect::<Vec<_>>(), [(10.0, 2), (20.0, 1), (40.0, 1), (10.0, 2)]);
+    // One shared transition per gap: three ramps, the middle one the
+    // shared 20-to-40 one.
+    assert_eq!(o.transitions.len(), 3, "{:?}", o.transitions);
+    assert_eq!(o.transitions.iter().map(|t| (t.kind, t.length, t.radii.is_empty())).collect::<Vec<_>>(), [(1, 30.0, true), (1, 50.0, true), (1, 50.0, true)]);
+    // The ramp kinds: the shared ramp crosses the first arc's tail and the
+    // line after it (start, the arc's midpoint, the boundary, its end);
+    // the others lie on one line (start, end).
+    let piece = |id: i32| elements.iter().find(|e| i32::from(e.id) == id).unwrap();
+    let kinds: Vec<usize> = o.transitions.iter().map(|t| match &piece(t.element).kind {
+        AlignmentElementKind::Points { points } => points.len(),
+        other => panic!("transition {other:?}"),
+    }).collect();
+    assert_eq!(kinds, [2, 4, 2], "start, arc midpoint, boundary, end per crossing ramp");
+    // The crossing ramp's points sit at the recorded stations: its start,
+    // its end, the arc's midpoint halfway along its arc subrange and the
+    // arc's end boundary. Its ends join the neighboring regions' pieces
+    // exactly.
+    let crossing = &piece(o.transitions[1].element).kind;
+    let AlignmentElementKind::Points { points } = crossing else { panic!() };
+    let (first, last) = (points[0], points[points.len() - 1]);
+    let region_piece = |region: &acadrust::classes::civil::OffsetRegion, first_point: bool| {
+        let id = if first_point { region.first_element } else { region.last_element };
+        match &piece(id).kind {
+            AlignmentElementKind::FixedLine { start, end } => if first_point { *start } else { *end },
+            AlignmentElementKind::FixedArc { start, end, .. } => if first_point { *start } else { *end },
+            other => panic!("region piece {other:?}"),
+        }
+    };
+    // The ramp ends where the first widening's region ends and where the
+    // second's begins.
+    assert_eq!(first, region_piece(&o.regions[1], false), "the shared ramp starts at the first widening's end");
+    assert_eq!(last, region_piece(&o.regions[2], true), "the shared ramp ends at the second widening's start");
 }
 
 /// The elements of `elements` in station order: from the element nothing

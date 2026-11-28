@@ -3282,8 +3282,14 @@ fn plain_superelevation(bits: &mut Bits) -> Option<Vec<SuperelevationCurveData>>
     };
     (!bits.bit()?).then_some(())?;
     let n = bits.bit_long()?;
-    (1..=1000).contains(&n).then_some(())?;
+    (0..=1000).contains(&n).then_some(())?;
     (!bits.bit()?).then_some(())?;
+    if n == 0 {
+        // The application's no-curves block (every tutorial offset and
+        // curb return carries one).
+        bits.bit()?;
+        return Some(Vec::new());
+    }
     let mut elements = Vec::new();
     for i in 0..n {
         elements.push(node(bits)?);
@@ -3377,7 +3383,22 @@ fn plain_superelevation_curves(data: &[u8], start: usize, end: usize, first: f64
     bits.bit_double()?;
     match bits.bit_long()? {
         0 => Some(Vec::new()),
-        1 => plain_superelevation(&mut bits),
+        1 => {
+            // The application's no-curves block (every tutorial offset,
+            // curb return and unsuperelevated alignment carries one): the
+            // fixed form without the final cross-segment count, which
+            // carries no curve data. The walk validates its extent.
+            let block = bits.pos;
+            if superelevation_walk(&mut bits).is_some() {
+                let mut probe = Bits::new(data, block, end);
+                probe.bit()?;
+                if probe.bit_long()? == 0 {
+                    return Some(Vec::new());
+                }
+            }
+            bits.pos = block;
+            plain_superelevation(&mut bits)
+        }
         _ => None,
     }
 }
@@ -3595,29 +3616,52 @@ fn typed_at(data: &[u8], pos: usize, end: usize, first: f64, last: f64, empty: b
     let (_, _, pos) = post_cache_at(data, pos, end, first, last, empty)?;
     let mut bits = Bits::new(data, pos, end);
     bits.bit_double()?;
+    // The type head after the superelevation block: `BL m, m x BD, BL
+    // type`, confirmed by the block that follows (a centerline's
+    // `BL 2, 2, 2`, an offset's parameters, a curb return's `BL 1|2,
+    // BL 1|2`).
+    let complete = |at: usize| -> Option<(AlignmentType, usize)> {
+        let mut probe = Bits::new(data, at, end);
+        let m = probe.bit_long()?;
+        (0..=10_000).contains(&m).then_some(())?;
+        for _ in 0..m {
+            probe.bit_double()?;
+        }
+        let kind = AlignmentType::from_code(probe.bit_long()?);
+        let after = probe.pos;
+        let confirmed = match kind {
+            AlignmentType::Offset => offset_parameters(data, after, end).is_some(),
+            AlignmentType::CurbReturn => (0..2).all(|_| probe.bit_long().is_some_and(|v| (1..=2).contains(&v))),
+            _ => (0..3).all(|_| probe.bit_long() == Some(2)),
+        };
+        confirmed.then_some((kind, after))
+    };
     match bits.bit_long()? {
         0 => {}
-        1 => superelevation(&mut bits)?,
+        1 => {
+            // The superelevation block has three forms: the plain one (a
+            // fixed 582-bit settings run, with or without the final
+            // cross-segment count — the application's records omit it when
+            // the table is empty) and the application's real one (a
+            // settings run whose length is resolved by what follows). The
+            // plain form can parse a real-form run and land short, so an
+            // end is kept only when the whole type head after it reads and
+            // the block that follows the type confirms it.
+            let at = bits.pos;
+            let mut ends = Vec::new();
+            if let Some((full, without_cross)) = superelevation_walk(&mut bits) {
+                ends.push(without_cross);
+                ends.push(full);
+            }
+            bits.pos = at;
+            if real_superelevation(&mut bits, None).is_some() {
+                ends.push(bits.pos);
+            }
+            return ends.into_iter().find_map(complete);
+        }
         _ => return None,
     }
-    let m = bits.bit_long()?;
-    if !(0..=10_000).contains(&m) {
-        return None;
-    }
-    for _ in 0..m {
-        bits.bit_double()?;
-    }
-    let code = bits.bit_long()?;
-    let kind = AlignmentType::from_code(code);
-    let after = bits.pos;
-    // What follows the type confirms it: a centerline's `BL 2, 2, 2`,
-    // an offset's block, a curb return's `BL 1|2, BL 1|2`.
-    let confirmed = match kind {
-        AlignmentType::Offset => offset_parameters(data, after, end).is_some(),
-        AlignmentType::CurbReturn => (0..2).all(|_| bits.bit_long().is_some_and(|v| (1..=2).contains(&v))),
-        _ => (0..3).all(|_| bits.bit_long() == Some(2)),
-    };
-    confirmed.then_some((kind, after))
+    complete(bits.pos)
 }
 
 /// A superelevation node's head: `BL id, BL other, BL id, BL other` (the
@@ -3676,7 +3720,7 @@ fn superelevation_entry(bits: &mut Bits, fields: usize) -> Option<()> {
 /// ```
 // ponytail: the 582-bit settings, the 10 bits after them and the 4 lane
 // groups are the same in every sample.
-fn superelevation(bits: &mut Bits) -> Option<()> {
+fn superelevation_walk(bits: &mut Bits) -> Option<(usize, usize)> {
     bits.bit()?;
     let curves = bits.bit_long()?;
     (0..=1000).contains(&curves).then_some(())?;
@@ -3739,14 +3783,32 @@ fn superelevation(bits: &mut Bits) -> Option<()> {
         superelevation_entry(bits, 1)?;
     }
     (bits.bit_long()? == 0 && bits.bit_long()? == 0).then_some(())?;
-    let n = bits.bit_long()?;
-    (0..=64).contains(&n).then_some(())?;
-    for _ in 0..3 * n {
-        bits.bit_long()?;
-    }
-    Some(())
+    let before_cross = bits.pos;
+    // This crate's own records close the block with a cross-segment
+    // count and its table; the application's records end the block here
+    // (the type word follows). The count is kept only when the whole
+    // table reads under it.
+    let full = match bits.bit_long() {
+        Some(n) if (0..=64).contains(&n) => {
+            let at = bits.pos;
+            let table = (0..3 * n).all(|_| bits.bit_long().is_some());
+            if table {
+                Some(bits.pos)
+            } else {
+                bits.pos = at;
+                None
+            }
+        }
+        _ => {
+            bits.pos = before_cross;
+            None
+        }
+    };
+    Some((full.unwrap_or(before_cross), before_cross))
 }
 
+/// The record's alignment type: the first candidate position whose type
+/// word reads and is confirmed (see [`typed_at`]).
 pub(super) fn alignment_type(data: &[u8], start: usize, end: usize, first: f64, last: f64) -> Option<(AlignmentType, usize)> {
     let typed = |pos: usize, empty: bool| typed_at(data, pos, end, first, last, empty);
     post_cache_starts(data, start, end)?.into_iter().find_map(|pos| typed(pos, true))
@@ -4675,7 +4737,7 @@ mod tests {
         let s: Vec<u8> = s.bytes().filter(|b| *b == b'0' || *b == b'1').collect();
         let data: Vec<u8> = s.chunks(8).map(|c| c.iter().enumerate().fold(0u8, |a, (i, b)| a | ((b - b'0') << (7 - i)))).collect();
         let mut bits = Bits::new(&data, 0, s.len());
-        assert_eq!(superelevation(&mut bits), Some(()));
+        assert!(superelevation_walk(&mut bits).is_some());
         assert_eq!(bits.pos, s.len());
     }
 
@@ -4711,7 +4773,7 @@ mod tests {
         let s: Vec<u8> = s.bytes().filter(|b| *b == b'0' || *b == b'1').collect();
         let data: Vec<u8> = s.chunks(8).map(|c| c.iter().enumerate().fold(0u8, |a, (i, b)| a | ((b - b'0') << (7 - i)))).collect();
         let mut bits = Bits::new(&data, 0, s.len());
-        assert_eq!(superelevation(&mut bits), Some(()));
+        assert!(superelevation_walk(&mut bits).is_some());
         assert_eq!(bits.pos, s.len());
     }
 
