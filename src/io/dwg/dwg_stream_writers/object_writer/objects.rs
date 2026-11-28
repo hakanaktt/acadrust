@@ -2241,8 +2241,9 @@ impl<'a> DwgObjectWriter<'a> {
             .write_bit_short(style.block_content_connection as i16);
 
         self.writer.write_bit_double(style.scale_factor);
-        self.writer.write_bit(style.property_changed);
+        // B is_annotative (DXF 296) comes before B property_changed (DXF 295).
         self.writer.write_bit(style.is_annotative);
+        self.writer.write_bit(style.property_changed);
         self.writer.write_bit_double(style.break_gap_size);
 
         // R2010+ additional fields
