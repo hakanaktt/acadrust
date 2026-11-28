@@ -163,6 +163,21 @@ pub const ENTITY_CLASSES: &[(&str, &str, CivilKind)] = &[
         CivilKind::Label,
     ),
     (
+        "AECC_VALIGNMENT_STATION_LABEL_GROUP",
+        "AeccDbVAlignmentStationLabeling",
+        CivilKind::Label,
+    ),
+    (
+        "AECC_VALIGNMENT_MINOR_STATION_LABEL_GROUP",
+        "AeccDbVAlignmentMinorStationLabeling",
+        CivilKind::Label,
+    ),
+    (
+        "AECC_VALIGNMENT_HAGEOMPOINT_LABEL_GROUP",
+        "AeccDbVAlignmentHAGeomPointLabeling",
+        CivilKind::Label,
+    ),
+    (
         "AECC_SAMPLELINE_LABELING",
         "AeccDbSampleLineLabeling",
         CivilKind::Label,
@@ -610,13 +625,21 @@ impl ArchEntityData {
         labels::anchor(data, start, end, projection)
     }
 
-    /// Stations a Civil 3D label group places labels at, in order.
+    /// Stations a Civil 3D label group places labels at, in order. The
+    /// station label groups (`AECC_ALIGNMENT_STATION_LABEL_GROUP` and the
+    /// profile's `AECC_VALIGNMENT_STATION_LABEL_GROUP`, with their minor
+    /// station groups) and the profile curve/PVI/line groups read here;
+    /// a group whose labels name no station (the geometry point groups)
+    /// stays empty.
     pub fn label_stations(&self) -> Vec<f64> {
         if self.civil_kind() != Some(CivilKind::Label) {
             return Vec::new();
         }
         self.main_stream()
             .and_then(|(data, start, end)| {
+                // The alignment station groups close their settings with a
+                // range and an increment (see `group_stations`); the
+                // profile station groups go straight to their class run.
                 if matches!(self.dxf_name.as_str(), "AECC_ALIGNMENT_STATION_LABEL_GROUP" | "AECC_ALIGNMENT_MINOR_STATION_LABEL_GROUP") {
                     labels::group_stations(data, start, end)
                 } else {
