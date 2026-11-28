@@ -302,6 +302,29 @@ pub fn add_alignment_label_group(
     for _ in &group.labels {
         refs.push(hard_pointer(alignment.value()));
     }
+    // A minor-station group ends its reference list with a hard pointer to
+    // its sibling station group — the station group of the same alignment,
+    // when the drawing carries one (the oracles' every minor-station group:
+    // Profile-4A/4B's ends 66820/5, the station group of 66819; Align-2's
+    // 8107/5; Align-6C's 24637/5; Assembly-1a's). Station and geometry-point
+    // groups carry no such tail. The reference section is what the
+    // application walks per label (the C-2 lesson: the class stream can be
+    // bit-identical while a reference-list desync has the record erased).
+    let sibling = if group.kind == AlignmentLabelGroupKind::MinorStation {
+        doc.entities().find_map(|e| {
+            let crate::entities::EntityType::Extended(x) = e else { return None };
+            let crate::entities::ExtendedEntityData::Arch(a) = &x.data else { return None };
+            if a.dxf_name != AlignmentLabelGroupKind::Station.dxf() {
+                return None;
+            }
+            a.typed_handles().get(2).filter(|r| r.0 == alignment.value()).map(|_| x.common.handle)
+        })
+    } else {
+        None
+    };
+    if let Some(sibling) = sibling {
+        refs.push(hard_pointer(sibling.value()));
+    }
     let strings = vec![group.kind.class_text().to_string(), String::new(), String::new(), String::new()];
     put_entity(
         doc,
@@ -544,6 +567,35 @@ mod tests {
         assert_eq!(p.dxf_name, "AECC_ALIGNMENT_GEOMPOINT_LABEL_GROUP");
         assert_eq!(p.label_stations(), Vec::<f64>::new());
         assert_eq!(p.label_geometry_point_kinds(), (1..=13).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_minor_station_group_points_at_its_sibling_station_group() {
+        // The oracles' every minor-station group ends its reference list
+        // with a hard pointer to the station group of the same alignment
+        // (Profile-4A/4B: 66820/5; Align-2: 8107/5; Align-6C: 24637/5);
+        // station and geometry-point groups carry no such tail. E-3: the
+        // reference section is what the application walks per label (C-2).
+        let mut doc = drawing();
+        let al = add_alignment(&mut doc, "AL-S", &[Vector2::new(0.0, 0.0), Vector2::new(1400.0, 0.0)], None).unwrap();
+        let other = add_alignment(&mut doc, "AL-T", &[Vector2::new(0.0, 500.0), Vector2::new(1400.0, 500.0)], None).unwrap();
+        let style = crate::classes::civil::add_point_label_style(&mut doc, "GROUP LABEL", |_| {}).unwrap();
+        let hs = add_alignment_label_group(&mut doc, al, style, None, &align2_station()).unwrap();
+        let hm = add_alignment_label_group(&mut doc, al, style, None, &align2_minor()).unwrap();
+        // A minor-station group of ANOTHER alignment must not adopt this
+        // alignment's station group.
+        let ho = add_alignment_label_group(&mut doc, other, style, None, &align2_minor()).unwrap();
+        let back = roundtrip(&doc, "sibling");
+        let r = refs(&entity(&back, hm));
+        assert_eq!(r.len(), 4 + align2_minor().labels.len() + 1);
+        assert_eq!(*r.last().unwrap(), (hs.value(), 5));
+        assert!(r[4..r.len() - 1].iter().all(|r| *r == (al.value(), 5)));
+        // The station group itself, and the unpaired minor-station group,
+        // carry no tail.
+        assert_eq!(refs(&entity(&back, hs)).len(), 4 + align2_station().labels.len());
+        assert_eq!(refs(&entity(&back, ho)).len(), 4 + align2_minor().labels.len());
+        // The fields still round-trip with the tail in place.
+        assert_eq!(entity(&back, hm).label_stations(), (0..13).map(|i| 50.0 + i as f64 * 100.0).collect::<Vec<_>>());
     }
 
     #[test]
