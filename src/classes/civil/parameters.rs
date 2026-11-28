@@ -79,6 +79,44 @@ pub(super) fn read_with(bits: &mut Bits, text: &mut dyn FnMut() -> Option<String
     Some(out)
 }
 
+/// The texts a parameter set consumes, read from the bits alone: per item
+/// the name, its display name, its description and an empty text, each
+/// choice's name and display name, and a string item's value.
+pub(super) fn text_count(bits: &mut Bits) -> Option<usize> {
+    (bits.bit_long()? == 0 && bits.bit_long()? == 0).then_some(())?;
+    (bits.bits_value(6)? == 0b01_1010).then_some(())?;
+    let mut used = 0;
+    for (kind, base) in [(INTEGER, 4), (DOUBLE, 4), (STRING, 5)] {
+        let n = bits.bit_long()?;
+        (0..=10_000).contains(&n).then_some(())?;
+        for _ in 0..n {
+            (bits.bit_long()? & TYPE == kind).then_some(())?;
+            bits.bit_long()?;
+            match kind {
+                INTEGER => {
+                    bits.bit_long()?;
+                }
+                DOUBLE => {
+                    bits.bit_double()?;
+                }
+                _ => {}
+            }
+            bits.bit()?;
+            let mut choices = 0;
+            if bits.bit()? {
+                choices = bits.bit_long()?;
+                (0..=10_000).contains(&choices).then_some(())?;
+                for _ in 0..choices {
+                    bits.bit_long()?;
+                }
+            }
+            bits.bit_long()?;
+            used += base + 2 * choices as usize;
+        }
+    }
+    Some(used)
+}
+
 fn item(bits: &mut Bits, text: &mut dyn FnMut() -> Option<String>, kind: i32) -> Option<Parameter> {
     (bits.bit_long()? & TYPE == kind).then_some(())?;
     let field = bits.bit_long()?;
