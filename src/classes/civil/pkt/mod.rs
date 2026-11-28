@@ -39,7 +39,7 @@ pub use build::{EDITOR_NAMESPACES, EDITOR_PRODUCT, EDITOR_VERSION, EDITOR_VERSIO
 pub use layout::{layout, PktLayout, PktLayoutLink, PktLayoutPoint, PktLayoutShape, PktSide, PktValue};
 
 use crate::error::DxfError;
-use xml::Element;
+use xml::{Element, Node};
 
 fn err(m: impl Into<String>) -> DxfError {
     DxfError::Parse(format!("package: {}", m.into()))
@@ -600,10 +600,22 @@ fn read_atc(e: &Element, pkg: &mut PktPackage) -> Result<(), DxfError> {
     pkg.help_command = text(props, &["Help", "HelpCommand"])?;
     pkg.help_data = text(props, &["Help", "HelpData"])?;
     let data = tool.first("Data").ok_or_else(|| err("tool data"))?;
-    pkg.version = text(data, &["AeccDbSubassembly", "Version"])?;
+    let sub = data.first("AeccDbSubassembly").ok_or_else(|| err("tool script data"))?;
+    // The editor stores the workflow version under the script data; the
+    // installed catalogs omit it (their tools carry the version in their
+    // compiled part).
+    pkg.version = sub
+        .first("Version")
+        .or_else(|| sub.first("Params").and_then(|p| p.first("Version")))
+        .map(|v| v.inner_text().to_string())
+        .unwrap_or_default();
     pkg.units = text(data, &["Units"])?;
-    let class = data.first("AeccDbSubassembly").and_then(|a| a.first("DotNetClass")).ok_or_else(|| err("script"))?;
-    pkg.part = attr(class, "Assembly")?.strip_suffix(".xaml").ok_or_else(|| err("script part"))?.to_string();
+    let class = sub.first("DotNetClass").ok_or_else(|| err("script"))?;
+    // The editor stores its workflow part `<id>.xaml`; an installed catalog
+    // names its compiled part `<id>.dll` instead.
+    let assembly = attr(class, "Assembly")?;
+    let part = assembly.strip_suffix(".xaml").or_else(|| assembly.strip_suffix(".dll"));
+    pkg.part = part.ok_or_else(|| err("script part"))?.to_string();
     Ok(())
 }
 
@@ -703,8 +715,7 @@ pub fn write_pkt(pkg: &PktPackage) -> Result<Vec<u8>, DxfError> {
 /// Reads a package archive. A package whose tool parameters, content
 /// types or code part do not follow from its workflow and settings (none
 /// the package editor writes) is refused.
-pub fn read_pkt(bytes: &[u8]) -> Result<PktPackage, DxfError> {
-    let archive = zip::read(bytes)?;
+pub fn read_pkt(bytes: &[u8]) -> Result<PktPackage, DxfError> {    let archive = zip::read(bytes)?;
     let get = |n: &str| archive.iter().find(|p| p.0 == n).map(|p| p.1.as_slice());
     let doc = |n: &str| -> Result<Element, DxfError> {
         let b = get(n).ok_or_else(|| err(format!("no part {n}")))?;
@@ -742,21 +753,111 @@ pub fn read_pkt(bytes: &[u8]) -> Result<PktPackage, DxfError> {
     if !pkg.help_name.is_empty() {
         pkg.help = Some(get(&pkg.help_name).ok_or_else(|| err("no help part"))?.to_vec());
     }
-    // what the settings derive from the workflow must be what was stored
-    if atc_element(&pkg)?.normalized() != atc.normalized() {
+    // what the settings derive from the workflow must be what was stored.
+    // An installed catalog leaves out what it keeps compiled or derived —
+    // the tool tip text, the workflow version — and names its compiled
+    // part `.dll`; none of that says anything the workflow does not carry.
+    if strip_derived(atc_element(&pkg)?).normalized() != strip_derived(atc.clone()).normalized() {
         return Err(err("the tool catalog does not follow from the package"));
     }
-    if doc(&format!("{p}.cdmd"))?.normalized() != cdmd_element().normalized() {
-        return Err(err("code data is not supported"));
+    // The editor writes an (empty) code part; an installed catalog has none.
+    if let Some(c) = get(&format!("{p}.cdmd")) {
+        let stored = xml::parse(std::str::from_utf8(c).map_err(|_| err("the code part is not UTF-8"))?).map_err(|m| err(format!(".cdmd: {m}")))?;
+        if stored.normalized() != cdmd_element().normalized() {
+            return Err(err("code data is not supported"));
+        }
     }
-    let types = xml::parse(&content_types(&pkg)).map_err(err)?.normalized();
-    if types != doc("[Content_Types].xml")?.normalized() {
+    // the content types list exactly the archive's parts
+    let stored_types = doc("[Content_Types].xml")?;
+    let expected_types = xml::parse(&content_types_from(&archive)?).map_err(err)?;
+    if content_type_pairs(&stored_types) != content_type_pairs(&expected_types) {
         return Err(err("content types do not follow from the parts"));
     }
-    if archive.len() != parts(&pkg)?.len() {
+    // parts the editor writes — an installed catalog omits the (empty)
+    // code part and adds its compiled workflow
+    let expected = parts(&pkg)?.len() + usize::from(get(&format!("{p}.dll")).is_some())
+        - usize::from(get(&format!("{p}.cdmd")).is_none());
+    if archive.len() != expected {
         return Err(err("the package holds parts that are not supported"));
     }
     Ok(pkg)
+}
+
+/// Removes what [`read_pkt`] re-derives — the tool tip text, the workflow
+/// version leaf — and reduces the script part's name to its stem, so a
+/// catalog that omits or renames them still compares against what the
+/// settings follow from the workflow.
+fn strip_derived(e: Element) -> Element {
+    let Element { name, attrs, children } = e;
+    // the category's display name is user-chosen, not derived
+    let children = if name == "Category" {
+        children
+            .into_iter()
+            .map(|n| match n {
+                Node::Element(mut p) if p.name == "Properties" => {
+                    p.children.retain(|c| !matches!(c, Node::Element(c) if c.name == "ItemName"));
+                    Node::Element(p)
+                }
+                other => other,
+            })
+            .collect()
+    } else {
+        children
+    };
+    let children = children
+        .into_iter()
+        .filter_map(|n| match n {
+            Node::Element(c) if c.name == "ToolTip" || (c.name == "Version" && c.attrs.is_empty()) => None,
+            Node::Element(c) => {
+                let c = if c.name == "DotNetClass" {
+                    let attrs = c
+                        .attrs
+                        .into_iter()
+                        .map(|(k, v)| (k, v.trim_end_matches(".xaml").trim_end_matches(".dll").to_string()))
+                        .collect();
+                    Element { name: c.name, attrs, children: c.children }
+                } else {
+                    strip_derived(c)
+                };
+                Some(Node::Element(c))
+            }
+            other => Some(other),
+        })
+        .collect();
+    Element { name, attrs, children }
+}
+
+/// The `(extension, content type)` pairs of a `[Content_Types].xml`, sorted.
+fn content_type_pairs(types: &Element) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = types
+        .children
+        .iter()
+        .filter_map(|n| match n {
+            Node::Element(e) if e.name == "Default" => Some((e.get("Extension").unwrap_or_default().to_string(), e.get("ContentType").unwrap_or_default().to_string())),
+            _ => None,
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// The content types the archive's parts call for: one `Default` per part
+/// extension (`[Content_Types].xml` itself excepted), empty content types.
+fn content_types_from(archive: &[(String, Vec<u8>)]) -> Result<String, DxfError> {
+    let mut exts: Vec<&str> = archive
+        .iter()
+        .filter(|(n, _)| n != "[Content_Types].xml")
+        .map(|(n, _)| extension(n))
+        .filter(|x| !x.is_empty())
+        .collect();
+    exts.sort_unstable();
+    exts.dedup();
+    let mut out = format!("\u{feff}<?xml version=\"1.0\" encoding=\"utf-8\"?><Types xmlns=\"{TYPES}\">");
+    for x in exts {
+        out.push_str(&format!("<Default Extension=\"{x}\" ContentType=\"\" />"));
+    }
+    out.push_str("</Types>");
+    Ok(out)
 }
 
 /// Whether two packages have equal parts: XML parts equal as documents
