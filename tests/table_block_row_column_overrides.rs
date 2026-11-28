@@ -1,5 +1,5 @@
-//! The picture block of a table takes a cell's text height and margins from
-//! the row and column overrides too, not only from the cell and the table
+//! The picture block of a table takes a cell's text height, alignment and
+//! margins from the row and column overrides too, not only from the cell and the table
 //! style. A table scaled as a whole states the text height on each row.
 
 use acadrust::entities::table::{CellStyle, CellStylePropertyFlags as P};
@@ -133,4 +133,34 @@ fn margin_overrides_place_the_text_and_set_its_width() {
     // Without an override the table style's margins stay in use.
     let b1 = text("B1");
     assert!(b1.rectangle_width > 20.0 - 1.0, "{}", b1.rectangle_width);
+}
+
+#[test]
+fn row_and_column_alignment_overrides_reach_the_picture() {
+    use acadrust::entities::AttachmentPoint;
+    let mut doc = CadDocument::new();
+    let mut table = table();
+    // Row 2 is bottom left; column B is middle right, which wins where they cross.
+    let mut row = overriding(P::ALIGNMENT);
+    row.alignment = 7;
+    table.rows[1].style = Some(row);
+    let mut column = overriding(P::ALIGNMENT);
+    column.alignment = 6;
+    table.columns[1].style = Some(column);
+    let handle = doc.add_entity(EntityType::Table(Box::new(table))).unwrap();
+
+    assert!(doc.refresh_table_block(handle));
+    let texts = texts(&doc, handle);
+    let attachment = |name: &str| {
+        texts
+            .iter()
+            .find(|t| t.value == name)
+            .unwrap()
+            .attachment_point
+    };
+    assert_eq!(attachment("A2"), AttachmentPoint::BottomLeft);
+    assert_eq!(attachment("B1"), AttachmentPoint::MiddleRight);
+    assert_eq!(attachment("B2"), AttachmentPoint::MiddleRight);
+    assert_ne!(attachment("A1"), AttachmentPoint::BottomLeft);
+    assert_ne!(attachment("A1"), AttachmentPoint::MiddleRight);
 }

@@ -3016,9 +3016,8 @@ impl CadDocument {
                     continue;
                 }
                 let (mut height, mut align) = row_style(r);
-                // A cell overriding its style brings its own alignment.
-                if let Some(s) = style_sets(P::ALIGNMENT).filter(|s| (1..=9).contains(&s.alignment))
-                {
+                // A cell, column or row overriding its style brings its own alignment.
+                if let Some(s) = styled(P::ALIGNMENT).filter(|s| (1..=9).contains(&s.alignment)) {
                     align = s.alignment;
                 }
                 if let Some(own_height) = content_sets(P::TEXT_HEIGHT)
